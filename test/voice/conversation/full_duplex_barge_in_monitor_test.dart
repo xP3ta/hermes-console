@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/services/secure_storage.dart';
@@ -33,9 +34,28 @@ class _FakeCaptureSource implements FullDuplexCaptureSource {
   @override
   Future<bool> hasPermission() async => permission;
 
+  /// What the next [start] answers instead of a stream.
+  Object? startError;
+
+  /// Holds [start] open, like Android while it configures the capture; a
+  /// [stop] meanwhile makes it fail, as a superseded native request does.
+  Completer<void>? startGate;
+  bool _starting = false;
+
   @override
   Future<Stream<Uint8List>> start() async {
     starts++;
+    final error = startError;
+    if (error != null) throw error;
+    final gate = startGate;
+    if (gate != null) {
+      _starting = true;
+      try {
+        await gate.future;
+      } finally {
+        _starting = false;
+      }
+    }
     return audio.stream;
   }
 
@@ -50,6 +70,15 @@ class _FakeCaptureSource implements FullDuplexCaptureSource {
   @override
   Future<void> stop() async {
     stops++;
+    final gate = startGate;
+    if (_starting && gate != null && !gate.isCompleted) {
+      gate.completeError(
+        PlatformException(
+          code: 'capture_configure_failed',
+          message: 'Capture request was superseded',
+        ),
+      );
+    }
   }
 
   @override
@@ -890,6 +919,129 @@ void main() {
       expect(monitor.armed, isTrue);
     },
   );
+
+  group('a speaker without echo cancellation', () {
+    const speaker = FullDuplexPlaybackSafety(
+      aecEnabled: false,
+      privateOutput: false,
+      playbackSafe: false,
+    );
+
+    Future<List<String>> logged(Future<void> Function() body) async {
+      final lines = <String>[];
+      final original = debugPrint;
+      debugPrint = (String? message, {int? wrapWidth}) {
+        if (message != null) lines.add(message);
+      };
+      try {
+        await body();
+      } finally {
+        debugPrint = original;
+      }
+      return lines;
+    }
+
+    test('cancels the capture that was opening without an error', () async {
+      final source = _FakeCaptureSource()..startGate = Completer<void>();
+      final monitor = FullDuplexBargeInMonitor(
+        source: source,
+        playbackSafetyProbe: () async => speaker,
+      );
+      addTearDown(monitor.dispose);
+
+      late bool armed;
+      late bool playbackAccepted;
+      final lines = await logged(() async {
+        // As on the phone: Hermes starts talking while the monitor's
+        // capture is still opening.
+        final arming = monitor.arm(
+          onSpeechStart: () {},
+          onTranscript: (_) async {},
+        );
+        await _settle();
+        expect(source.starts, 1);
+        playbackAccepted = await monitor.setPlaybackActive(true);
+        armed = await arming;
+      });
+
+      expect(playbackAccepted, isFalse);
+      expect(armed, isFalse);
+      expect(monitor.active, isFalse);
+      expect(monitor.playbackUnsafeLatched, isTrue);
+      // Expected and quiet: the cancelled start is not reported as a failure.
+      expect(lines.where((line) => line.contains('arm_failed')), isEmpty);
+      expect(lines.where((line) => line.contains('Exception')), isEmpty);
+      expect(
+        lines.where((line) => line.contains('voice.barge.arm cancelled')),
+        hasLength(1),
+      );
+      expect(
+        lines.where((line) => line.contains('barge.unsafe_playback_route')),
+        hasLength(1),
+      );
+
+      // Once Hermes stops talking the route is probed again.
+      await monitor.setPlaybackActive(false);
+      expect(monitor.playbackUnsafeLatched, isFalse);
+    });
+
+    test("takes Android's refusal to open the capture as the same "
+        'verdict', () async {
+      final source = _FakeCaptureSource()
+        ..startError = PlatformException(
+          code: 'unsafe_playback_route',
+          message: 'Playback has no proven echo cancellation',
+        );
+      final monitor = FullDuplexBargeInMonitor(
+        source: source,
+        playbackSafetyProbe: () async => speaker,
+      );
+      addTearDown(monitor.dispose);
+
+      late bool armed;
+      final lines = await logged(() async {
+        armed = await monitor.arm(
+          onSpeechStart: () {},
+          onTranscript: (_) async {},
+        );
+      });
+
+      expect(armed, isFalse);
+      expect(monitor.active, isFalse);
+      expect(monitor.playbackUnsafeLatched, isTrue);
+      expect(source.stops, greaterThanOrEqualTo(1));
+      expect(lines.where((line) => line.contains('arm_failed')), isEmpty);
+      expect(lines.where((line) => line.contains('Exception')), isEmpty);
+      expect(
+        lines.where((line) => line.contains('action=arm_refused')),
+        hasLength(1),
+      );
+    });
+
+    test('still reports a capture that really fails', () async {
+      final source = _FakeCaptureSource()
+        ..startError = PlatformException(code: 'capture_configure_failed');
+      final monitor = FullDuplexBargeInMonitor(
+        source: source,
+        playbackSafetyProbe: () async => speaker,
+      );
+      addTearDown(monitor.dispose);
+
+      late bool armed;
+      final lines = await logged(() async {
+        armed = await monitor.arm(
+          onSpeechStart: () {},
+          onTranscript: (_) async {},
+        );
+      });
+
+      expect(armed, isFalse);
+      expect(
+        lines.where((line) => line.contains('voice.barge.arm_failed')),
+        hasLength(1),
+      );
+    });
+  });
 
   test('unsafe verdict during playback disarms until playback stops', () async {
     final source = _FakeCaptureSource();

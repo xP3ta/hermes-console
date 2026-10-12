@@ -27,9 +27,13 @@
     <string name="rich_reply_failed">Couldn’t send · open to retry</string>
     <string name="rich_action_failed">Couldn’t send · open Hermes</string>
     <!-- Lock-screen summary of the quiet (non-approval) Hermes cards. -->
-    <string name="rich_quiet_title" translatable="false">Hermes Console</string>
+    <string name="rich_quiet_title" translatable="false">Console</string>
     <plurals name="rich_quiet_more">
         <item quantity="one">%d more</item>
         <item quantity="other">%d more</item>
+    </plurals>
+    <plurals name="rich_auto_summary">
+        <item quantity="one">%d automation</item>
+        <item quantity="other">%d automations</item>
     </plurals>
 </resources>

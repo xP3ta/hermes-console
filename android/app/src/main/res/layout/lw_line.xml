@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Hairline between two rows of a board. It takes no room (1 dp tall, the
+     next row starts 1 dp higher, on it): the rows share the whole body, so
+     three rows in 144 dp are 48 dp each, not 47. -->
+<ImageView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="1dp"
+    android:layout_marginBottom="-1dp"
+    android:background="@color/lw_line"
+    android:importantForAccessibility="no" />

@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/theme/theme_contrast.dart';
 import 'package:hermes_android/core/widgets/hermes_notice.dart';
+import 'package:hermes_android/core/widgets/island.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 
 const _card = ValueKey('hermes-notice-card-under-test');
@@ -70,6 +71,11 @@ BuildContext _ctx(WidgetTester tester) =>
 
 Finder get _notices => find.byType(HermesNoticeCard);
 
+/// The floating shape of the notice in the top lane (the island's shape).
+Finder get _surface =>
+    find.descendant(of: _notices, matching: find.byType(IslandSurface)).first;
+Finder get _line => find.byKey(const ValueKey('island-event-line'));
+
 Future<void> _settle(WidgetTester tester) async {
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 400));
@@ -125,6 +131,50 @@ HermesNoticeCard _sample({
 
 void main() {
   group('HermesNotice: posicion y solapes', () {
+    // Owner (1.2.15): on a screen with an island (chats, rooms) the island
+    // says the notice; nothing floats over the chat. The whole behaviour is
+    // in island_test.dart; here, the lane's side of it.
+    testWidgets('with an island in view the lane draws nothing of its own, '
+        'and keeps the timers', (tester) async {
+      _phone(tester, top: 40, bottom: 24);
+      addTearDown(IslandPresenters.resetForTesting);
+      final owner = Object();
+      var inView = true;
+      IslandPresenters.claim(owner, () => inView);
+      await tester.pumpWidget(_app());
+      HermesNotice.of(_ctx(tester)).show(message: 'No se pudo copiar');
+      await _settle(tester);
+      expect(_notices, findsNothing);
+      expect(
+        find.byKey(const ValueKey('hermes-notice-in-island')),
+        findsOneWidget,
+      );
+      // The island reads it from the feed.
+      final feed = HermesNotice.feedOf(_ctx(tester))!;
+      expect(feed.current!.line, 'No se pudo copiar');
+      expect(feed.waiting, 0);
+      // Covered by another route: the usual top lane, same notice.
+      inView = false;
+      IslandPresenters.changed();
+      await _settle(tester);
+      expect(tester.getRect(_surface).top, 40 + 8);
+      expect(find.text('No se pudo copiar'), findsOneWidget);
+      // In view again: back in the island.
+      inView = true;
+      IslandPresenters.changed();
+      await _settle(tester);
+      expect(_notices, findsNothing);
+      // Its time is up all the same (4 s since it was shown).
+      await tester.pump(const Duration(seconds: 4));
+      await _settle(tester);
+      expect(feed.current, isNull);
+      // Released: the top lane again.
+      IslandPresenters.release(owner);
+      HermesNotice.of(_ctx(tester)).show(message: 'Otra vez');
+      await _settle(tester);
+      expect(tester.getRect(_surface).top, 40 + 8);
+    });
+
     testWidgets('flota ARRIBA, bajo la barra de estado (safe area)', (
       tester,
     ) async {
@@ -134,10 +184,13 @@ void main() {
       await _settle(tester);
 
       expect(_notices, findsOneWidget);
-      final rect = tester.getRect(_notices);
+      final rect = tester.getRect(_surface);
       expect(rect.top, 40 + 8, reason: 'safe area + 8 dp de respiro');
-      expect(rect.left, 16);
-      expect(rect.right, 320 - 16);
+      // La forma de la isla: centrada, tan ancha como su linea.
+      expect(rect.center.dx, closeTo(160, 0.5));
+      expect(rect.left, greaterThanOrEqualTo(16));
+      expect(rect.right, lessThanOrEqualTo(320 - 16));
+      expect(rect.height, IslandMetrics.eventHeight);
       expect(rect.bottom, lessThan(640 / 3));
       expect(find.byType(SnackBar), findsNothing);
     });
@@ -152,13 +205,13 @@ void main() {
       await tester.pumpWidget(_app());
       HermesNotice.of(_ctx(tester)).show(message: 'Copiado');
       await _settle(tester);
-      final rect = tester.getRect(_notices);
+      final rect = tester.getRect(_surface);
       expect(rect.left, greaterThanOrEqualTo(44 + 16));
       expect(rect.right, lessThanOrEqualTo(640 - 44 - 16));
     });
 
     testWidgets(
-      'nunca toca el composer, el dock ni el teclado (ni con 3 lineas)',
+      'nunca toca el composer, el dock ni el teclado (ni con texto largo)',
       (tester) async {
         _phone(tester, top: 24, bottom: 24, keyboard: 300);
         await tester.pumpWidget(_app(textScale: 1.3));
@@ -173,7 +226,7 @@ void main() {
         );
         await _settle(tester);
 
-        final notice = tester.getRect(_notices);
+        final notice = tester.getRect(_surface);
         final composer = tester.getRect(
           find.byKey(const ValueKey('fake-composer')),
         );
@@ -184,6 +237,23 @@ void main() {
         }
         expect(notice.top, 24 + 8);
         expect(notice.bottom, lessThan(640 / 2));
+        // Una linea y una accion: el texto largo se corta, la accion no.
+        expect(tester.widget<Text>(_line).maxLines, 1);
+        final action = tester.getRect(
+          find.byKey(const ValueKey('hermes-notice-action')),
+        );
+        expect(action.right, lessThanOrEqualTo(notice.right));
+        expect(find.text('Ir'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+        // Tocarlo lo abre: el texto entero, sin salirse hacia el composer.
+        await tester.tap(_line);
+        await _settle(tester);
+        final open = tester.getRect(_surface);
+        expect(open.top, 24 + 8);
+        expect(open.height, greaterThan(notice.height));
+        for (final other in [composer, dock, keyboard]) {
+          expect(open.overlaps(other), isFalse, reason: '$open vs $other');
+        }
         expect(tester.takeException(), isNull);
       },
     );
@@ -218,6 +288,31 @@ void main() {
       expect(find.text('Copiado'), findsNothing);
     });
 
+    // QA 9491: a notice with an action (Undo) yielded to the queue after
+    // 2.5 s, too short to reach the button. It holds 6 s, then yields.
+    testWidgets('un aviso con accion espera 6 s antes de ceder a la cola', (
+      tester,
+    ) async {
+      _phone(tester);
+      await tester.pumpWidget(_app());
+      final notices = HermesNotice.of(_ctx(tester));
+      notices.show(
+        message: 'Oculto',
+        action: const HermesNoticeAction(label: 'Deshacer', onPressed: _noop),
+      );
+      await _settle(tester);
+      notices.show(message: 'Siguiente');
+      for (var t = 0; t < 55; t++) {
+        await tester.pump(const Duration(milliseconds: 100));
+        expect(find.text('Oculto'), findsOneWidget, reason: '${t + 1}00 ms');
+      }
+      for (var t = 0; t < 10; t++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      expect(find.text('Siguiente'), findsOneWidget);
+      expect(find.text('Oculto'), findsNothing);
+    });
+
     testWidgets('la cola es corta: se descartan los mas antiguos', (
       tester,
     ) async {
@@ -244,6 +339,43 @@ void main() {
       await tester.pump(const Duration(seconds: 7));
       await tester.pump(const Duration(milliseconds: 300));
       expect(_notices, findsNothing);
+    });
+
+    testWidgets('en la cola, lo que fallo pasa delante de lo que informa', (
+      tester,
+    ) async {
+      _phone(tester);
+      await tester.pumpWidget(_app());
+      final notices = HermesNotice.of(_ctx(tester));
+      notices.show(message: 'Uno');
+      notices.show(message: 'Guardado', kind: HermesNoticeKind.success);
+      notices.show(message: 'Aviso', kind: HermesNoticeKind.warning);
+      notices.show(message: 'Fallo', kind: HermesNoticeKind.error);
+      await _settle(tester);
+      expect(find.text('Uno'), findsOneWidget);
+      // Uno a la vez; los que esperan se cuentan detras.
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('island-waiting')),
+          matching: find.text('+3'),
+        ),
+        findsOneWidget,
+      );
+      final seen = <String>[];
+      for (var step = 0; step < 3; step++) {
+        await tester.pump(const Duration(milliseconds: 2600));
+        await tester.pump(const Duration(milliseconds: 300));
+        for (final message in ['Guardado', 'Aviso', 'Fallo']) {
+          if (find.text(message).evaluate().isNotEmpty &&
+              !seen.contains(message)) {
+            seen.add(message);
+          }
+        }
+        expect(_notices.evaluate().length, lessThanOrEqualTo(1));
+      }
+      expect(seen, ['Fallo', 'Aviso', 'Guardado']);
+      HermesNotice.of(_ctx(tester)).clearSnackBars();
+      await _settle(tester);
     });
 
     testWidgets('hide muestra el siguiente y clear vacia toda la cola', (
@@ -362,22 +494,31 @@ void main() {
       );
       await _settle(tester);
       await tester.pump(const Duration(seconds: 30));
-      expect(find.text('Necesita tu permiso'), findsOneWidget);
+      const approval = 'Necesita tu permiso · Aprobacion pendiente';
+      expect(find.text(approval), findsOneWidget);
 
       notices.show(message: 'Copiado');
       await _settle(tester);
       expect(_notices, findsOneWidget);
       expect(find.text('Copiado'), findsOneWidget);
-      expect(find.text('Necesita tu permiso'), findsNothing);
+      expect(find.text(approval), findsNothing);
       expect(closed, 0, reason: 'aparcado, no cerrado');
+      // El que espera asoma detras.
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('island-waiting')),
+          matching: find.text('+1'),
+        ),
+        findsOneWidget,
+      );
 
       await tester.pump(const Duration(seconds: 4));
       await tester.pump(const Duration(milliseconds: 400));
       expect(find.text('Copiado'), findsNothing);
-      expect(find.text('Necesita tu permiso'), findsOneWidget);
+      expect(find.text(approval), findsOneWidget);
       expect(closed, 0);
       await tester.pump(const Duration(seconds: 30));
-      expect(find.text('Necesita tu permiso'), findsOneWidget);
+      expect(find.text(approval), findsOneWidget);
     });
 
     testWidgets('hideCurrentSnackBar nunca retira un aviso importante', (
@@ -408,7 +549,10 @@ void main() {
       var pressed = 0;
       HermesNotice.of(_ctx(tester)).show(
         message: 'Borrado',
-        action: HermesNoticeAction(label: 'Deshacer', onPressed: () => pressed++),
+        action: HermesNoticeAction(
+          label: 'Deshacer',
+          onPressed: () => pressed++,
+        ),
       );
       await _settle(tester);
       final action = find.byKey(const ValueKey('hermes-notice-action'));
@@ -438,7 +582,11 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('hermes-notice-action')));
       await _settle(tester);
       expect(pressed, 1);
-      expect(_notices, findsOneWidget, reason: 'sigue hasta que el dueño cierre');
+      expect(
+        _notices,
+        findsOneWidget,
+        reason: 'sigue hasta que el dueño cierre',
+      );
       handle!.dismiss();
       await _settle(tester);
       expect(_notices, findsNothing);
@@ -492,11 +640,13 @@ void main() {
         dismissLabel: 'Descartar',
       );
       await _settle(tester);
-      await tester.tap(find.text('Respuesta lista'));
+      await tester.tap(find.text('Respuesta lista · Toca para abrir'));
       await tester.pump();
       expect(opened, 1);
       expect(_notices, findsOneWidget, reason: 'onTap propio no cierra');
-      await tester.tap(find.byTooltip('Descartar'));
+      // Sin X: se retira deslizandolo hacia arriba.
+      expect(find.byTooltip('Descartar'), findsNothing);
+      await tester.fling(_line, const Offset(0, -60), 800);
       await _settle(tester);
       expect(closed, 1);
       expect(_notices, findsNothing);
@@ -573,9 +723,9 @@ void main() {
       HermesNotice.of(_ctx(tester)).show(message: 'Copiado');
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 30));
-      final early = tester.getRect(_notices);
+      final early = tester.getRect(_surface);
       await tester.pump(const Duration(milliseconds: 400));
-      final settled = tester.getRect(_notices);
+      final settled = tester.getRect(_surface);
       expect(early.top, lessThan(settled.top), reason: 'viene desde arriba');
       expect(settled.top, 8);
     });
@@ -587,11 +737,9 @@ void main() {
       await tester.pumpWidget(_app(reduceMotion: true));
       HermesNotice.of(_ctx(tester)).show(message: 'Copiado');
       await tester.pump();
-      expect(tester.getRect(_notices).top, 8);
+      expect(tester.getRect(_surface).top, 8);
       final opacity = tester.widget<Opacity>(
-        find
-            .ancestor(of: _notices, matching: find.byType(Opacity))
-            .first,
+        find.ancestor(of: _notices, matching: find.byType(Opacity)).first,
       );
       expect(opacity.opacity, 1);
       HermesNotice.of(_ctx(tester)).clearSnackBars();
@@ -753,7 +901,10 @@ void main() {
           colors.textPrimary,
         );
         expect(
-          tester.widget<Text>(find.text('Hermes termino el trabajo.')).style?.color,
+          tester
+              .widget<Text>(find.text('Hermes termino el trabajo.'))
+              .style
+              ?.color,
           colors.textSecondary,
         );
         expect(tester.takeException(), isNull);
@@ -822,21 +973,26 @@ void main() {
       }
     });
 
-    testWidgets('es un anuncio accesible: region viva con prefijo de severidad', (
-      tester,
-    ) async {
-      final handle = tester.ensureSemantics();
-      await tester.pumpWidget(
-        _cardHost(
-          _sample(kind: HermesNoticeKind.error).copyForTest(kindLabel: 'Error'),
-        ),
-      );
-      final node = tester.getSemantics(
-        find.bySemanticsLabel('Error. Respuesta lista. Hermes termino el trabajo.'),
-      );
-      expect(node.flagsCollection.isLiveRegion, isTrue);
-      handle.dispose();
-    });
+    testWidgets(
+      'es un anuncio accesible: region viva con prefijo de severidad',
+      (tester) async {
+        final handle = tester.ensureSemantics();
+        await tester.pumpWidget(
+          _cardHost(
+            _sample(
+              kind: HermesNoticeKind.error,
+            ).copyForTest(kindLabel: 'Error'),
+          ),
+        );
+        final node = tester.getSemantics(
+          find.bySemanticsLabel(
+            'Error. Respuesta lista. Hermes termino el trabajo.',
+          ),
+        );
+        expect(node.flagsCollection.isLiveRegion, isTrue);
+        handle.dispose();
+      },
+    );
 
     testWidgets('26 temas x 4 severidades: glifo legible y sin errores', (
       tester,

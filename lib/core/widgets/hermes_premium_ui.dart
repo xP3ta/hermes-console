@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import '../theme/component_profile.dart';
 import '../theme/motion.dart';
+import '../design/floating.dart';
 import '../design/modal.dart' show showHermesSurface;
 
 /// Legacy entry point of the ONE floating modal container (spec 080).
@@ -441,6 +442,9 @@ class HermesListRow extends StatelessWidget {
   final Color? iconColor;
   final Widget? leading;
   final String title;
+
+  /// Lines the title may take before it ends in an ellipsis.
+  final int titleMaxLines;
   final String? subtitle;
   final Widget? trailing;
   final VoidCallback? onTap;
@@ -454,6 +458,7 @@ class HermesListRow extends StatelessWidget {
 
   const HermesListRow({
     required this.title,
+    this.titleMaxLines = 2,
     this.icon,
     this.iconColor,
     this.leading,
@@ -469,6 +474,38 @@ class HermesListRow extends StatelessWidget {
     this.padding = const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
     super.key,
   });
+
+  /// Title text style of a list row. Rows that cannot be a
+  /// [HermesListRow] (e.g. an [ExpansionTile] header) use it so they match
+  /// their sibling rows.
+  static TextStyle? titleStyle(
+    ThemeData theme, {
+    required Color color,
+    bool selected = false,
+  }) => theme.textTheme.bodyLarge?.copyWith(
+    color: color,
+    fontSize: 15,
+    fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+    height: 1.2,
+    letterSpacing: -0.1,
+  );
+
+  /// Subtitle text style of a list row; see [titleStyle].
+  static TextStyle? subtitleStyle(ThemeData theme, {required Color color}) =>
+      theme.textTheme.bodySmall?.copyWith(color: color, height: 1.3);
+
+  /// Width of the leading icon slot of a list row.
+  static const double leadingExtent = 30;
+
+  /// Gap between the leading icon and the text of a list row.
+  static const double leadingGap = 11;
+
+  /// Gives a [ListTile]-based row (e.g. an [ExpansionTile] header) whose
+  /// leading is a [leadingExtent] icon slot the same gap as a
+  /// [HermesListRow], so its text starts where the sibling rows' does.
+  /// ListTile's default 16 dp gap pushed it to the right.
+  static Widget alignTile({required Widget child}) =>
+      ListTileTheme.merge(horizontalTitleGap: leadingGap, child: child);
 
   @override
   Widget build(BuildContext context) {
@@ -518,13 +555,13 @@ class HermesListRow extends StatelessWidget {
                     leading!
                   else if (icon != null)
                     SizedBox.square(
-                      dimension: 30,
+                      dimension: leadingExtent,
                       child: ExcludeSemantics(
                         child: Icon(icon, size: 21, color: effectiveIconColor),
                       ),
                     ),
                   if (leading != null || icon != null)
-                    const SizedBox(width: 11),
+                    const SizedBox(width: leadingGap),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -532,16 +569,12 @@ class HermesListRow extends StatelessWidget {
                       children: [
                         Text(
                           title,
-                          maxLines: 2,
+                          maxLines: titleMaxLines,
                           overflow: TextOverflow.ellipsis,
-                          style: theme.textTheme.bodyLarge?.copyWith(
+                          style: titleStyle(
+                            theme,
                             color: foreground,
-                            fontSize: 15,
-                            fontWeight: selected
-                                ? FontWeight.w600
-                                : FontWeight.w500,
-                            height: 1.2,
-                            letterSpacing: -0.1,
+                            selected: selected,
                           ),
                         ),
                         if (subtitle != null && subtitle!.isNotEmpty) ...[
@@ -550,10 +583,7 @@ class HermesListRow extends StatelessWidget {
                             subtitle!,
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: secondary,
-                              height: 1.3,
-                            ),
+                            style: subtitleStyle(theme, color: secondary),
                           ),
                         ],
                       ],
@@ -706,6 +736,10 @@ class HermesSegment<T> {
   final int flex;
   final double horizontalPadding;
 
+  /// A segment that is shown but cannot be chosen right now. A disabled
+  /// segment may still be the selected one.
+  final bool enabled;
+
   const HermesSegment({
     required this.value,
     required this.label,
@@ -713,6 +747,7 @@ class HermesSegment<T> {
     this.key,
     this.flex = 1,
     this.horizontalPadding = 13,
+    this.enabled = true,
   }) : assert(flex > 0),
        assert(horizontalPadding >= 0);
 }
@@ -723,11 +758,16 @@ class HermesSegmentedControl<T> extends StatelessWidget {
   final ValueChanged<T> onChanged;
   final String? semanticLabel;
 
+  /// True paints the track as floating chrome: for a view switch that stays
+  /// in place over a list scrolling under it.
+  final bool floating;
+
   const HermesSegmentedControl({
     required this.value,
     required this.segments,
     required this.onChanged,
     this.semanticLabel,
+    this.floating = false,
     super.key,
   });
 
@@ -741,40 +781,46 @@ class HermesSegmentedControl<T> extends StatelessWidget {
           key: segment.key,
           segment: segment,
           selected: segment.value == value,
-          onTap: () => onChanged(segment.value),
+          round: floating,
+          onTap: segment.enabled ? () => onChanged(segment.value) : null,
         ),
     ];
 
+    final radius = BorderRadius.circular(
+      Theme.of(context).hermesComponents.profile.shape.fieldRadius,
+    );
+    final track = Padding(
+      padding: const EdgeInsets.all(3),
+      child: useScrollable
+          ? SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(children: children),
+            )
+          : Row(
+              children: [
+                for (var index = 0; index < children.length; index++)
+                  Expanded(flex: segments[index].flex, child: children[index]),
+              ],
+            ),
+    );
     return Semantics(
       container: true,
       label: semanticLabel,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: Theme.of(
-            context,
-          ).hermes.surfaceVariant.withValues(alpha: 0.46),
-          borderRadius: BorderRadius.circular(
-            Theme.of(context).hermesComponents.profile.shape.fieldRadius,
-          ),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.all(3),
-          child: useScrollable
-              ? SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(children: children),
-                )
-              : Row(
-                  children: [
-                    for (var index = 0; index < children.length; index++)
-                      Expanded(
-                        flex: segments[index].flex,
-                        child: children[index],
-                      ),
-                  ],
-                ),
-        ),
-      ),
+      child: floating
+          // Floating, it is a pill like every other floating piece.
+          ? HermesFloatingSurface(
+              key: const ValueKey('hermes-segmented-floating'),
+              child: track,
+            )
+          : DecoratedBox(
+              decoration: BoxDecoration(
+                color: Theme.of(
+                  context,
+                ).hermes.surfaceVariant.withValues(alpha: 0.46),
+                borderRadius: radius,
+              ),
+              child: track,
+            ),
     );
   }
 }
@@ -782,12 +828,16 @@ class HermesSegmentedControl<T> extends StatelessWidget {
 class _HermesSegmentButton<T> extends StatelessWidget {
   final HermesSegment<T> segment;
   final bool selected;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
+
+  /// True rounds the segment fully, inside a track that is a pill.
+  final bool round;
 
   const _HermesSegmentButton({
     required this.segment,
     required this.selected,
     required this.onTap,
+    this.round = false,
     super.key,
   });
 
@@ -799,16 +849,32 @@ class _HermesSegmentButton<T> extends StatelessWidget {
     final label = segment.count == null
         ? segment.label
         : '${segment.label} ${segment.count}';
+    final corner = BorderRadius.circular(
+      round ? 999 : profile.shape.fieldRadius - 3,
+    );
+    final text = Text(
+      label,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: theme.textTheme.labelLarge?.copyWith(
+        color: selected ? colors.textPrimary : colors.textSecondary,
+        fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+        letterSpacing: 0,
+      ),
+    );
 
     return Semantics(
       button: true,
       selected: selected,
+      // Only a segment that cannot be chosen says so; the rest keep the
+      // semantics they always had.
+      enabled: onTap == null ? false : null,
       label: label,
       child: Material(
         color: Colors.transparent,
         child: InkWell(
           onTap: onTap,
-          borderRadius: BorderRadius.circular(profile.shape.fieldRadius - 3),
+          borderRadius: corner,
           child: AnimatedContainer(
             duration: Duration(
               milliseconds: MediaQuery.disableAnimationsOf(context)
@@ -827,9 +893,7 @@ class _HermesSegmentButton<T> extends StatelessWidget {
               color: selected
                   ? colors.surface.withValues(alpha: 0.94)
                   : Colors.transparent,
-              borderRadius: BorderRadius.circular(
-                profile.shape.fieldRadius - 3,
-              ),
+              borderRadius: corner,
               boxShadow: selected && profile.elevation.resting > 0
                   ? [
                       BoxShadow(
@@ -842,16 +906,9 @@ class _HermesSegmentButton<T> extends StatelessWidget {
             ),
             alignment: Alignment.center,
             child: ExcludeSemantics(
-              child: Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: theme.textTheme.labelLarge?.copyWith(
-                  color: selected ? colors.textPrimary : colors.textSecondary,
-                  fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
-                  letterSpacing: 0,
-                ),
-              ),
+              // Only a segment that cannot be chosen is dimmed; every other
+              // segment is built exactly as before.
+              child: onTap == null ? Opacity(opacity: 0.45, child: text) : text,
             ),
           ),
         ),
@@ -1604,6 +1661,10 @@ class HermesComposerSurface extends StatelessWidget {
     super.key,
   }) : assert(unfocusedHorizontalInset >= 0);
 
+  /// How solid the capsule is: what scrolls behind it must not read through
+  /// what is written in it.
+  static const double fillOpacity = 0.97;
+
   final Widget child;
   final bool focused;
   final EdgeInsetsGeometry padding;
@@ -1629,7 +1690,7 @@ class HermesComposerSurface extends StatelessWidget {
         constraints: const BoxConstraints(minHeight: 48),
         padding: padding,
         decoration: BoxDecoration(
-          color: colors.surfaceVariant.withValues(alpha: 0.90),
+          color: colors.surfaceVariant.withValues(alpha: fillOpacity),
           borderRadius: BorderRadius.circular(28),
           border: Border.all(
             color: focused

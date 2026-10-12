@@ -11,8 +11,6 @@ void main() {
         label: 'Hermes lab',
         useHttps: true,
         dashboardUrl: 'http://100.101.102.103:9119',
-        bridgeUrl: 'https://100.101.102.103/bridge-proxy',
-        bridgeToken: 'bridge-only-token',
       );
       final parsed = PairingLink.tryParse(link.build())!;
       expect(parsed.host, link.host);
@@ -21,8 +19,6 @@ void main() {
       expect(parsed.label, link.label);
       expect(parsed.useHttps, isTrue);
       expect(parsed.dashboardUrl, link.dashboardUrl);
-      expect(parsed.bridgeUrl, link.bridgeUrl);
-      expect(parsed.bridgeToken, link.bridgeToken);
     });
 
     test(
@@ -41,10 +37,99 @@ void main() {
         expect(parsed.useHttps, isFalse);
         expect(parsed.label, isNull);
         expect(parsed.dashboardUrl, isNull);
-        expect(parsed.bridgeUrl, isNull);
-        expect(parsed.bridgeToken, isNull);
       },
     );
+
+    test('a link can carry the existing Dashboard sign-in', () {
+      final parsed = PairingLink.tryParse(
+        'hermes://pair?host=lab.example&port=8642&token=gateway-key'
+        '&dashboard=http%3A%2F%2Flab.example%3A9119'
+        '&dash_user=%20owner%20&dash_pass=p%40ss%20word%2B%26',
+      )!;
+      expect(parsed.hasDashboardLogin, isTrue);
+      expect(parsed.dashboardUser, 'owner');
+      // The password keeps every character, spaces included.
+      expect(parsed.dashboardPassword, 'p@ss word+&');
+      final again = PairingLink.tryParse(parsed.build())!;
+      expect(again.dashboardUser, 'owner');
+      expect(again.dashboardPassword, 'p@ss word+&');
+      expect(again.dashboardUrl, 'http://lab.example:9119');
+      // The login never becomes part of the saved connection metadata.
+      final draft = parsed.toDraftConnection();
+      expect(draft.toMap().toString(), isNot(contains('p@ss word+&')));
+      expect(draft.toMap().toString(), isNot(contains('owner')));
+    });
+
+    // The exact text the setup helper prints (xP3ta/hermes-setup, branch
+    // v2-no-bridge): its Unix script encodes with Python's urlencode ("+"
+    // for a space), its Windows script with [Uri]::EscapeDataString ("%20").
+    // Both have to give back the same sign-in, character for character.
+    test('the code the setup helper shows gives back its sign-in exactly', () {
+      const user = 'ana maría';
+      const password = 'p@ss word+&=%/é"\'#?';
+      const unix =
+          'hermes://pair?host=192.168.1.40&port=8642&token=SYNTHETIC-KEY'
+          '&dashboard=http%3A%2F%2F192.168.1.40%3A9119'
+          '&dash_user=ana+mar%C3%ADa'
+          '&dash_pass=p%40ss+word%2B%26%3D%25%2F%C3%A9%22%27%23%3F';
+      const windows =
+          'hermes://pair?host=192.168.1.40&port=8642&token=SYNTHETIC-KEY'
+          '&dashboard=http%3A%2F%2F192.168.1.40%3A9119'
+          '&dash_user=ana%20mar%C3%ADa'
+          '&dash_pass=p%40ss%20word%2B%26%3D%25%2F%C3%A9%22%27%23%3F';
+      for (final raw in [unix, windows]) {
+        final link = PairingLink.tryParse(raw)!;
+        expect(link.host, '192.168.1.40');
+        expect(link.port, 8642);
+        expect(link.token, 'SYNTHETIC-KEY');
+        expect(link.dashboardUrl, 'http://192.168.1.40:9119');
+        expect(link.hasDashboardLogin, isTrue);
+        expect(link.dashboardUser, user);
+        expect(link.dashboardPassword, password);
+        // What the app would show again carries the same sign-in.
+        final again = PairingLink.tryParse(link.build())!;
+        expect(again.dashboardUser, user);
+        expect(again.dashboardPassword, password);
+      }
+    });
+
+    test('a helper code without the sign-in connects the Gateway alone', () {
+      // What the helper prints when Hermes already had a Dashboard password
+      // it does not know: the app then asks for it once.
+      final link = PairingLink.tryParse(
+        'hermes://pair?host=192.168.1.40&port=8642&token=SYNTHETIC-KEY'
+        '&dashboard=http%3A%2F%2F192.168.1.40%3A9119',
+      )!;
+      expect(link.hasDashboardLogin, isFalse);
+      expect(link.dashboardUser, isNull);
+      expect(link.dashboardPassword, isNull);
+      expect(link.toDraftConnection().apiKey, 'SYNTHETIC-KEY');
+    });
+
+    test('half a Dashboard sign-in is no sign-in', () {
+      for (final query in [
+        'dash_user=owner',
+        'dash_pass=secret',
+        'dash_user=&dash_pass=secret',
+        'dash_user=owner&dash_pass=',
+        'dash_user=owner&dash_pass=%FF',
+      ]) {
+        final parsed = PairingLink.tryParse(
+          'hermes://pair?host=lab.example&port=8642&token=gateway-key&$query',
+        )!;
+        expect(parsed.token, 'gateway-key', reason: query);
+        expect(parsed.hasDashboardLogin, isFalse, reason: query);
+        expect(parsed.dashboardUser, isNull, reason: query);
+        expect(parsed.dashboardPassword, isNull, reason: query);
+        expect(parsed.build(), isNot(contains('dash_')), reason: query);
+      }
+    });
+
+    test('a link without the Dashboard sign-in is what it was', () {
+      const link = PairingLink(host: 'h.example', port: 8642, token: 'tok');
+      expect(link.hasDashboardLogin, isFalse);
+      expect(link.build(), 'hermes://pair?host=h.example&port=8642&token=tok');
+    });
 
     test('genera un draft de conexión usable', () {
       const link = PairingLink(

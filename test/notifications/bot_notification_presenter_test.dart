@@ -20,11 +20,17 @@ void main() {
 
   test('face bitmap renders a PNG once and reuses the file', () async {
     final cache = BotFaceBitmapCache(directory: () async => dir);
-    final a = await cache.pathFor(profile: 'builder', state: BotFaceBitmapState.working);
+    final a = await cache.pathFor(
+      profile: 'builder',
+      state: BotFaceBitmapState.working,
+    );
     expect(a, isNotNull);
     final bytes = await File(a!).readAsBytes();
     expect(bytes.sublist(1, 4), 'PNG'.codeUnits);
-    final b = await cache.pathFor(profile: 'builder', state: BotFaceBitmapState.working);
+    final b = await cache.pathFor(
+      profile: 'builder',
+      state: BotFaceBitmapState.working,
+    );
     expect(b, a);
     final idle = await cache.pathFor(profile: 'builder');
     expect(idle, isNot(a));
@@ -40,63 +46,108 @@ void main() {
     expect(png!.length, greaterThan(100));
   });
 
-  test('room presenter: group conversation with member faces and reply', () async {
-    final prefs = await SharedPreferences.getInstance();
-    final sink = _Sink();
-    final presenter = RichRoomNoticePresenter(
-      sink: sink,
-      prefs: prefs,
-      faces: BotFaceBitmapCache(directory: () async => dir),
-    );
-    final seq = EventSeq();
-    final mention = buildLog([
-      seq.member('m-builder', 'builder', '**Done**. @user please merge', 'd1'),
-    ]).events.single;
-    await presenter.present('c1', buildRoom(), [
-      RoomApprovalNotice(driver(pending: [approvalAction()]).approvals.single),
-      RoomMentionNotice(mention),
-      const RoomLiveNotice(
-        working: true,
-        members: [(memberId: 'm-builder', state: 'working')],
-        workingMemberId: 'm-builder',
-        startedAtMs: 5,
-      ),
-    ]);
-    final approval = sink.posts.firstWhere((p) => p['channel'] == 'approvals');
-    expect(approval['title'], 'Console Devs');
-    expect(approval['text'], 'Needs your OK to run “gh pr ready 51”');
-    final action = NotificationActionPayload.tryParse(approval['actionPayload'] as String)!;
-    expect(action.isRoomApproval, isTrue);
-    final conv = sink.posts.firstWhere((p) => p['channel'] == 'conversations');
-    expect(conv['isGroup'], isTrue);
-    final message = (conv['messages'] as List).single as Map;
-    expect(message['senderName'], 'Builder');
-    expect(message['text'], 'Done. @user please merge');
-    expect(message['iconPath'], isNotNull);
-    expect(conv['alert'], isTrue);
-    expect(sink.live.single['text'], 'Builder is working…');
-    expect(sink.live.single['trackerIconPath'], isNotNull);
-  });
+  test(
+    'room presenter: group conversation with member faces and reply',
+    () async {
+      final prefs = await SharedPreferences.getInstance();
+      final sink = _Sink();
+      final presenter = RichRoomNoticePresenter(
+        sink: sink,
+        prefs: prefs,
+        faces: BotFaceBitmapCache(directory: () async => dir),
+      );
+      final seq = EventSeq();
+      final mention = buildLog([
+        seq.member(
+          'm-builder',
+          'builder',
+          '**Done**. @user please merge',
+          'd1',
+        ),
+      ]).events.single;
+      await presenter.present('c1', buildRoom(), [
+        RoomApprovalNotice(
+          driver(pending: [approvalAction()]).approvals.single,
+        ),
+        RoomMentionNotice(mention),
+        const RoomLiveNotice(
+          working: true,
+          members: [(memberId: 'm-builder', state: 'working')],
+          workingMemberId: 'm-builder',
+          startedAtMs: 5,
+        ),
+      ]);
+      final approval = sink.posts.firstWhere(
+        (p) => p['channel'] == 'approvals',
+      );
+      expect(approval['title'], 'Console Devs');
+      expect(approval['text'], 'Allow “gh pr ready 51”?');
+      final action = NotificationActionPayload.tryParse(
+        approval['actionPayload'] as String,
+      )!;
+      expect(action.isRoomApproval, isTrue);
+      final conv = sink.posts.firstWhere(
+        (p) => p['channel'] == 'conversations',
+      );
+      expect(conv['isGroup'], isTrue);
+      final message = (conv['messages'] as List).single as Map;
+      expect(message['senderName'], 'Builder');
+      expect(message['text'], 'Done. @user please merge');
+      expect(message['iconPath'], isNotNull);
+      expect(conv['alert'], isTrue);
+      expect(sink.live.single['text'], 'Builder is working…');
+      expect(sink.live.single['trackerIconPath'], isNotNull);
+    },
+  );
 
-  test('round finished ends the live update and posts an alerting summary', () async {
-    final prefs = await SharedPreferences.getInstance();
-    final sink = _Sink();
-    await RichRoomNoticePresenter(
-      sink: sink,
-      prefs: prefs,
-      faces: BotFaceBitmapCache(directory: () async => dir),
-    ).present('c1', buildRoom(), [
-      const RoomRoundFinishedNotice(['m-builder', 'm-review'], 9, lastMemberId: 'm-review'),
-    ]);
-    expect(sink.cancels, [RichNotificationIds.live]);
-    final conv = sink.posts.single;
-    // A finished round is news: it must reach the shade.
-    expect(conv['alert'], isTrue);
-    final only = (conv['messages'] as List).single as Map;
-    // Without reply lines the last Bot speaks the verdict (not the room).
-    expect(only['senderName'], 'Review');
-    expect(only['text'], 'Round done · Builder and Review replied');
-  });
+  test(
+    'a cleared approval is not claimed to be answered on another device',
+    () async {
+      // The watcher only sees the request leave pending_actions: it may have
+      // been answered in the room on this phone, or withdrawn by Stop all.
+      final prefs = await SharedPreferences.getInstance();
+      final sink = _Sink();
+      final presenter = RichRoomNoticePresenter(
+        sink: sink,
+        prefs: prefs,
+        faces: BotFaceBitmapCache(directory: () async => dir),
+      );
+      await presenter.present('c1', buildRoom(), [
+        const RoomApprovalClearedNotice('apr-1'),
+      ]);
+      final confirm = sink.confirms.single;
+      expect(confirm.id, RichNotificationIds.approval('apr-1'));
+      expect(confirm.text, isNot(contains('elsewhere')));
+      expect(confirm.text, 'No longer pending');
+    },
+  );
+
+  test(
+    'round finished ends the live update and posts an alerting summary',
+    () async {
+      final prefs = await SharedPreferences.getInstance();
+      final sink = _Sink();
+      await RichRoomNoticePresenter(
+        sink: sink,
+        prefs: prefs,
+        faces: BotFaceBitmapCache(directory: () async => dir),
+      ).present('c1', buildRoom(), [
+        const RoomRoundFinishedNotice(
+          ['m-builder', 'm-review'],
+          9,
+          lastMemberId: 'm-review',
+        ),
+      ]);
+      expect(sink.cancels, [RichNotificationIds.live]);
+      final conv = sink.posts.single;
+      // A finished round is news: it must reach the shade.
+      expect(conv['alert'], isTrue);
+      final only = (conv['messages'] as List).single as Map;
+      // Without reply lines the last Bot speaks the verdict (not the room).
+      expect(only['senderName'], 'Review');
+      expect(only['text'], 'Round done · Builder and Review replied');
+    },
+  );
 
   test('round finished lists each Bot reply as its own line', () async {
     final prefs = await SharedPreferences.getInstance();
@@ -132,7 +183,10 @@ void main() {
     expect(messages[0]['text'], 'Teide verses line two');
     expect((messages[1]['text'] as String).length, lessThanOrEqualTo(240));
     expect((messages[1]['text'] as String).endsWith('…'), isTrue);
-    expect(sink.posts.single['subText'], 'Round done · Radar and Builder replied');
+    expect(
+      sink.posts.single['subText'],
+      'Round done · Radar and Builder replied',
+    );
     expect(sink.posts.single['alert'], isTrue);
   });
 
@@ -239,6 +293,7 @@ final class _Sink implements RichNotificationSink {
   final posts = <Map<String, Object?>>[];
   final live = <Map<String, Object?>>[];
   final cancels = <int>[];
+  final confirms = <({int id, String text})>[];
   @override
   Future<void> cancel({required int id, String? tag}) async => cancels.add(id);
   @override
@@ -249,7 +304,7 @@ final class _Sink implements RichNotificationSink {
     required String text,
     int timeoutMs = 4000,
     bool onlyIfActive = false,
-  }) async {}
+  }) async => confirms.add((id: id, text: text));
   @override
   Future<bool> postConversation(Map<String, Object?> args) async {
     posts.add(args);
@@ -257,5 +312,6 @@ final class _Sink implements RichNotificationSink {
   }
 
   @override
-  Future<void> postLiveUpdate(Map<String, Object?> args) async => live.add(args);
+  Future<void> postLiveUpdate(Map<String, Object?> args) async =>
+      live.add(args);
 }

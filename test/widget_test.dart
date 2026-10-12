@@ -17,8 +17,6 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/screens/home_dashboard_screen.dart';
 import 'package:hermes_android/core/screens/onboarding_screen.dart';
-import 'package:hermes_android/core/screens/onboarding/connect_chooser_screen.dart';
-import 'package:hermes_android/core/screens/onboarding/server_setup_screen.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/hermes_app_bar.dart';
@@ -58,9 +56,15 @@ class _EmptyHomeClient extends ApiClient {
   Future<bool> healthCheck() async => true;
 
   @override
+  Future<bool> healthReachable() => healthCheck();
+
+  @override
   Future<List<Session>> getSessions({
     bool includeChildren = false,
     String? profile,
+    int pageSize = 200,
+    bool Function(List<Session> sessions)? enough,
+    int? maxPages,
   }) async => [
     Session(
       id: 'mob-aux-voice-old-session',
@@ -104,9 +108,15 @@ class _DeferredHomeClient extends ApiClient {
   Future<bool> healthCheck() => health.future;
 
   @override
+  Future<bool> healthReachable() => healthCheck();
+
+  @override
   Future<List<Session>> getSessions({
     bool includeChildren = false,
     String? profile,
+    int pageSize = 200,
+    bool Function(List<Session> sessions)? enough,
+    int? maxPages,
   }) async => [
     Session(
       id: 'chat-loaded',
@@ -145,8 +155,14 @@ void main() {
       await tester.pump(const Duration(milliseconds: 600));
 
       // Sin instancias guardadas y sin red: aparece el onboarding vacío.
-      expect(find.text('▸ sin instancias configuradas'), findsOneWidget);
-      expect(find.text('agregar instancia'), findsOneWidget);
+      // One plain sentence and one button: no ports, no jargon.
+      expect(
+        find.text('Conecta Console con tu Hermes para empezar.'),
+        findsOneWidget,
+      );
+      expect(find.text('Conectar'), findsOneWidget);
+      expect(find.textContaining('8642'), findsNothing);
+      expect(find.textContaining('sin instancias'), findsNothing);
       expect(tester.takeException(), isNull);
     });
 
@@ -158,13 +174,16 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 600));
 
-      // La pantalla principal tiene su AppBar y el título por defecto.
+      // La pantalla principal tiene su AppBar y el título por defecto:
+      // «CONSOLE».
       expect(find.byType(HermesAppBar), findsOneWidget);
-      expect(find.text('HERMES CONSOLE'), findsOneWidget);
+      expect(find.text('CONSOLE'), findsOneWidget);
+      expect(find.text('HERMES CONSOLE'), findsNothing);
     });
 
     testWidgets(
-      'mantiene una carga limpia hasta resolver las conversaciones iniciales',
+      'mientras cargan las conversaciones Home ya está entero y solo la '
+      'lista muestra un marcador en línea',
       (tester) async {
         final secureValues = <String, String>{};
         const secureChannel = MethodChannel(
@@ -204,14 +223,12 @@ void main() {
         );
         final client = _DeferredHomeClient();
         var initialLoadSignals = 0;
-        final initialLoadProgress = <double>[];
 
         await tester.pumpWidget(
           _host(
             HomeDashboardScreen(
               connManager: manager,
               clientFactory: (_) => client,
-              onInitialLoadProgress: initialLoadProgress.add,
               onInitialLoadComplete: () => initialLoadSignals++,
             ),
           ),
@@ -226,7 +243,9 @@ void main() {
           find.byKey(const ValueKey('home-empty-conversations')),
           findsNothing,
         );
-        expect(find.text('Nuevo chat'), findsNothing);
+        // The real Home is there (no full-screen loader), only the recents
+        // wait, and no false «empty» or «offline» state shows meanwhile.
+        expect(find.byType(HermesAppBar), findsOneWidget);
         expect(initialLoadSignals, 0);
 
         client.health.complete(true);
@@ -239,12 +258,6 @@ void main() {
         );
         expect(find.text('Conversación cargada'), findsOneWidget);
         expect(initialLoadSignals, 1);
-        expect(initialLoadProgress, isNotEmpty);
-        expect(initialLoadProgress.last, 1);
-        expect(
-          initialLoadProgress,
-          orderedEquals(initialLoadProgress.toList()..sort()),
-        );
         expect(tester.takeException(), isNull);
       },
     );
@@ -301,7 +314,7 @@ void main() {
         for (var attempt = 0; attempt < 40; attempt++) {
           await tester.pump(const Duration(milliseconds: 50));
           if (find
-              .byKey(const ValueKey('home-empty-conversations'))
+              .byKey(const ValueKey('home-now-calm'))
               .evaluate()
               .isNotEmpty) {
             break;
@@ -309,23 +322,14 @@ void main() {
         }
         await tester.pump(const Duration(milliseconds: 100));
 
-        expect(
-          find.byKey(const ValueKey('home-empty-conversations')),
-          findsOneWidget,
-        );
-        expect(find.text('Aún no hay conversaciones'), findsOneWidget);
+        // The useful empty Home is the default widget board: Ahora says
+        // all is quiet and Chats has nothing to resume; auxiliary sessions
+        // are never offered.
+        expect(find.byKey(const ValueKey('home-now-calm')), findsOneWidget);
+        expect(find.text('Aún no hay chats'), findsOneWidget);
+        expect(find.byKey(const ValueKey('home-first-chat')), findsOneWidget);
+        expect(find.text('Hablar con Hermes'), findsOneWidget);
         expect(find.text('Nuevo chat'), findsNothing);
-        final emptyState = find.byKey(
-          const ValueKey('home-empty-conversations'),
-        );
-        expect(
-          find.descendant(of: emptyState, matching: find.byType(Icon)),
-          findsNothing,
-        );
-        expect(
-          find.descendant(of: emptyState, matching: find.byType(FilledButton)),
-          findsNothing,
-        );
         expect(find.text('Internal voice session'), findsNothing);
         expect(find.text('Informe cron interno'), findsNothing);
         expect(tester.takeException(), isNull);
@@ -334,175 +338,24 @@ void main() {
   });
 
   group('OnboardingScreen', () {
-    testWidgets('renderiza la primera página y los controles de navegación', (
-      tester,
-    ) async {
-      final manager = await emptyManager();
-      await tester.pumpWidget(
-        _host(OnboardingScreen(connManager: manager, onDone: () {})),
-      );
-      // El glow de fondo usa repeat(): NO usar pumpAndSettle (no se asienta).
-      await tester.pump(const Duration(milliseconds: 50));
-
-      expect(find.text('Hermes Console'), findsOneWidget);
-      expect(find.text('Saltar'), findsOneWidget);
-      // Botón de avance (aún no es la última página).
-      expect(find.text('Siguiente'), findsOneWidget);
-      expect(tester.takeException(), isNull);
-    });
-
-    testWidgets('"Saltar" invoca onDone', (tester) async {
-      final manager = await emptyManager();
-      var done = false;
-      await tester.pumpWidget(
-        _host(
-          OnboardingScreen(connManager: manager, onDone: () => done = true),
-        ),
-      );
-      await tester.pump(const Duration(milliseconds: 50));
-
-      await tester.tap(find.text('Saltar'));
-      await tester.pump();
-
-      expect(done, isTrue);
-    });
-
-    testWidgets('no desborda en viewport horizontal con fuente al 200 %', (
-      tester,
-    ) async {
-      // 1280x800 físicos a 240 dpi en el laboratorio Android equivalen a
-      // ~853x533 puntos lógicos para Flutter.
-      await tester.binding.setSurfaceSize(const Size(853, 533));
-      addTearDown(() => tester.binding.setSurfaceSize(null));
-      final manager = await emptyManager();
-
-      await tester.pumpWidget(
-        _host(
-          OnboardingScreen(connManager: manager, onDone: () {}),
-          textScale: 2,
-        ),
-      );
-      await tester.pump(const Duration(milliseconds: 50));
-
-      expect(find.text('Hermes Console'), findsOneWidget);
-      expect(find.text('Siguiente'), findsOneWidget);
-      expect(tester.takeException(), isNull);
-    });
-  });
-
-  group('Remote onboarding', () {
-    testWidgets('empieza con QR o preparar servidor, sin preguntas técnicas', (
-      tester,
-    ) async {
-      final manager = await emptyManager();
-      await tester.pumpWidget(
-        _host(ConnectChooserScreen(connManager: manager)),
-      );
-      await tester.pump();
-
-      expect(find.text('¿Cómo quieres conectar?'), findsOneWidget);
-      expect(find.text('Escanear QR'), findsOneWidget);
-      expect(find.text('Preparar servidor'), findsOneWidget);
-      expect(find.text('¿Ya tienes Hermes Agent?'), findsNothing);
-      expect(find.text('¿Está preparado para el móvil?'), findsNothing);
-      expect(tester.takeException(), isNull);
-    });
-
-    testWidgets('preparar va directo a elegir sistema, copiar y escanear', (
-      tester,
-    ) async {
-      final manager = await emptyManager();
-      await tester.pumpWidget(
-        _host(ConnectChooserScreen(connManager: manager)),
-      );
-      await tester.pump();
-
-      await tester.ensureVisible(find.text('Preparar servidor'));
-      await tester.tap(find.text('Preparar servidor'));
-      await tester.pumpAndSettle();
-
-      expect(find.byType(ServerSetupScreen), findsOneWidget);
-      await tester.drag(find.byType(ListView), const Offset(0, -260));
-      await tester.pump();
-      expect(find.text('Linux / Termux'), findsOneWidget);
-      expect(find.text('Windows / WSL2'), findsOneWidget);
-      expect(find.text('¿Cómo accedes a Hermes?'), findsNothing);
-
-      final linuxOption = find.widgetWithText(ChoiceChip, 'Linux / Termux');
-      await tester.ensureVisible(linuxOption);
-      await tester.pumpAndSettle();
-      await tester.tap(linuxOption);
-      await tester.pumpAndSettle();
-
-      expect(tester.widget<ChoiceChip>(linuxOption).selected, isTrue);
-      final pageScroll = find.byType(Scrollable).first;
-      await tester.scrollUntilVisible(
-        find.text('Copia para una terminal de confianza'),
-        160,
-        scrollable: pageScroll,
-      );
-      expect(find.text('Copia para una terminal de confianza'), findsOneWidget);
-      await tester.scrollUntilVisible(
-        find.textContaining('hermes-mobile-setup.sh'),
-        240,
-        scrollable: pageScroll,
-      );
-      expect(find.textContaining('hermes-mobile-setup.sh'), findsOneWidget);
-      await tester.scrollUntilVisible(
-        find.text('Ya veo el QR · abrir cámara'),
-        240,
-        scrollable: pageScroll,
-      );
-      expect(find.text('Ya veo el QR · abrir cámara'), findsOneWidget);
-      expect(tester.takeException(), isNull);
-    });
-
-    testWidgets('mostrar QR explica el comando antes de abrir la cámara', (
-      tester,
-    ) async {
-      final manager = await emptyManager();
-      await tester.pumpWidget(
-        _host(
-          ServerSetupScreen(connManager: manager, mode: ServerSetupMode.showQr),
-        ),
-      );
-      await tester.pump();
-
-      expect(find.text('Mostrar mi QR'), findsOneWidget);
-      expect(find.text('Linux / Termux'), findsOneWidget);
-      expect(find.text('Windows / WSL2'), findsOneWidget);
-      expect(find.textContaining('hermes-pair.sh'), findsNothing);
-
-      await tester.tap(find.text('Linux / Termux'));
-      await tester.pump();
-      await tester.drag(find.byType(ListView), const Offset(0, -420));
-      await tester.pump();
-
-      expect(find.text('Ya veo el QR · abrir cámara'), findsOneWidget);
-      expect(find.textContaining('hermes-pair.sh'), findsOneWidget);
-      expect(tester.takeException(), isNull);
-    });
-
-    testWidgets('mostrar QR ofrece PowerShell en Windows', (tester) async {
-      final manager = await emptyManager();
-      await tester.pumpWidget(
-        _host(
-          ServerSetupScreen(connManager: manager, mode: ServerSetupMode.showQr),
-        ),
-      );
-      await tester.pump();
-
-      await tester.tap(find.text('Windows / WSL2'));
-      await tester.pump();
-
-      expect(find.textContaining('fuera de WSL'), findsOneWidget);
-      await tester.drag(find.byType(ListView), const Offset(0, -620));
-      await tester.pump();
-
-      expect(find.textContaining('hermes-pair.ps1'), findsOneWidget);
-      expect(find.textContaining('| iex'), findsOneWidget);
-      expect(find.textContaining('hermes-pair.sh'), findsNothing);
-      expect(tester.takeException(), isNull);
-    });
+    testWidgets(
+      'the welcome has one primary action and the real Console mark',
+      (tester) async {
+        final manager = await emptyManager();
+        await tester.pumpWidget(
+          _host(OnboardingScreen(connManager: manager, onDone: () {})),
+        );
+        // The opening plays here (the ambient light never settles).
+        await tester.pump(const Duration(milliseconds: 3000));
+        expect(find.text('Conecta con tu Hermes'), findsOneWidget);
+        expect(find.text('Escanear código'), findsOneWidget);
+        expect(find.text('No tengo código'), findsOneWidget);
+        expect(find.text('Conectar a mano'), findsOneWidget);
+        expect(find.byKey(const ValueKey('console-mark')), findsOneWidget);
+        expect(find.text('Saltar'), findsNothing);
+        expect(find.byType(PageView), findsNothing);
+        expect(tester.takeException(), isNull);
+      },
+    );
   });
 }

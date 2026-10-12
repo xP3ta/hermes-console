@@ -238,6 +238,51 @@ void main() {
       expect(sentToMain, hasLength(1));
     });
 
+    test('foreground notice of another profile keeps that profile', () async {
+      // The in-app "Ir" opens the run with the payload this envelope
+      // carries. Without the owner profile the app looked the run up in the
+      // ACTIVE profile, did not find it and opened nothing useful.
+      await prefs.setBool(BackgroundListener.uiForegroundKey, true);
+      Map<String, dynamic> radarJob(String execution, String status) => {
+        ..._job('job-r', execution, status),
+        'profile': 'radar',
+      };
+      dashboard.jobs = [radarJob('e1', 'completed')];
+      await cronTick();
+      dashboard.jobs = [radarJob('e2', 'failed')];
+      await cronTick();
+      expect(sentToMain, hasLength(1));
+      final notice = BackgroundListener.automationNoticeFromData(
+        sentToMain.single,
+      )!;
+      expect(notice.open.jobId, 'job-r');
+      expect(notice.open.profile, 'radar');
+    });
+
+    test('automation envelope round-trips session and profile', () {
+      final event = DurableDiscoveryNotification(
+        identity: const NotificationEventIdentity(
+          connId: _connId,
+          profile: 'radar',
+          sourceKind: 'cron',
+          objectId: 'exec-1',
+          eventKind: 'terminal',
+          sourceVersion: 'exec-1:completed',
+        ),
+        destinationKind: 'cron_terminal',
+        kind: NotificationKind.run,
+        title: 'Done',
+        body: 'Body',
+        sessionId: 'cron_job-r_20261006_081500',
+      );
+      final notice = BackgroundListener.automationNoticeFromData(
+        BackgroundListener.automationNoticeEnvelope(_connId, event),
+      )!;
+      expect(notice.open.sessionId, 'cron_job-r_20261006_081500');
+      expect(notice.open.profile, 'radar');
+      expect(notice.open.jobId, isNull);
+    });
+
     test('foreground + muted job: no in-app notice either', () async {
       await prefs.setBool(BackgroundListener.uiForegroundKey, true);
       await mutes().setCronPolicy(
@@ -321,13 +366,9 @@ void main() {
     });
 
     test('a silent run delivered to a chat target stays silent', () async {
-      dashboard.jobs = [
-        serverJob(execution: 'e1', deliver: 'bot-chat:atlas'),
-      ];
+      dashboard.jobs = [serverJob(execution: 'e1', deliver: 'bot-chat:atlas')];
       await cronTick();
-      dashboard.jobs = [
-        serverJob(execution: 'e2', deliver: 'bot-chat:atlas'),
-      ];
+      dashboard.jobs = [serverJob(execution: 'e2', deliver: 'bot-chat:atlas')];
       await cronTick();
       expect(shows, isEmpty);
     });

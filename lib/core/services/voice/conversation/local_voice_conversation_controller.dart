@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 
 import '../../active_chat_service.dart';
 import '../../connection_manager.dart';
+import '../../prompt_client_surface.dart';
 import '../session/voice_ui_surface.dart';
 import '../hermes_speech_stream.dart';
 import '../spoken_text.dart';
@@ -14,6 +15,7 @@ import '../voice_service.dart';
 import '../voice_settings.dart';
 import 'full_duplex_barge_in_monitor.dart';
 import 'streaming_narration_queue.dart';
+import 'voice_conversation_engine.dart';
 import 'voice_conversation_runtime.dart';
 
 const int _maxVoicePublicCommentaryRunes = 160;
@@ -38,7 +40,7 @@ bool voiceConversationMustSuspendFullDuplexInBackground({
 /// No crea sesiones, talkers ni acuses auxiliares. Toda operación asíncrona
 /// captura [_epoch]; Pausa, Stop, Cancel y X la rotan antes de tocar plugins.
 class LocalVoiceConversationController extends ChangeNotifier
-    implements VoiceUiSurface {
+    implements VoiceUiSurface, VoiceConversationEngine {
   LocalVoiceConversationController(
     this.voice, {
     FullDuplexBargeInMonitor? fullDuplexMonitor,
@@ -134,6 +136,7 @@ class LocalVoiceConversationController extends ChangeNotifier
   /// True only while Android audio resources are needed or their release is
   /// still awaiting a physical/plugin ACK. A logical paused conversation stays
   /// [active] without retaining the microphone/media FGS or local models.
+  @override
   bool get audioLeaseRequired =>
       active &&
       (!userPaused || _userPauseReleaseTask != null || _privacyCleanupInFlight);
@@ -209,6 +212,7 @@ class LocalVoiceConversationController extends ChangeNotifier
   @override
   Stream<SttCheck> get unavailable => _unavailable.stream;
 
+  @override
   String? get sessionId => active ? _chat?.serverSessionId : null;
 
   @visibleForTesting
@@ -598,7 +602,10 @@ class LocalVoiceConversationController extends ChangeNotifier
         // Una transcripción nueva durante un run activo siempre pertenece al
         // turno siguiente. Voz comparte la cola FIFO del chat y no muta el run
         // vivo mediante session.redirect/session.steer.
-        chat.enqueue(text);
+        chat.enqueue(
+          text,
+          clientSurface: const PromptClientSurface.voiceChat(),
+        );
         _runtime.markSubmissionQueued(turn);
         _notify();
         // El monitor consume una captura por interjección. Rearmarlo después de
@@ -614,6 +621,7 @@ class LocalVoiceConversationController extends ChangeNotifier
       _latencyTurn?.mark(VoiceLatencyPoint.submitStarted);
       final accepted = await chat.send(
         fullText: text,
+        clientSurface: const PromptClientSurface.voiceChat(),
         model: _model,
         // Voz y teclado comparten exactamente el mismo contexto. El modo voz
         // no añade instrucciones ocultas de brevedad ni cambia la personalidad
@@ -1050,6 +1058,7 @@ class LocalVoiceConversationController extends ChangeNotifier
     if (event == ActiveChatEvent.responseMetrics ||
         event == ActiveChatEvent.dashboardAuthChanged ||
         event == ActiveChatEvent.goalUpdated ||
+        event == ActiveChatEvent.reactionsChanged ||
         event == ActiveChatEvent.backgroundTaskComplete) {
       return;
     }
@@ -1226,6 +1235,7 @@ class LocalVoiceConversationController extends ChangeNotifier
       case ActiveChatEvent.warning:
       case ActiveChatEvent.dashboardAuthChanged:
       case ActiveChatEvent.goalUpdated:
+      case ActiveChatEvent.reactionsChanged:
       case ActiveChatEvent.backgroundTaskComplete:
         break;
     }
@@ -2117,8 +2127,10 @@ class LocalVoiceConversationController extends ChangeNotifier
     final microphoneCleanup = _disarmFullDuplex();
     final subscriptionCleanup = subscription?.cancel();
     final releaseLocalModels = !voice.nativeVoiceActive;
+    // The microphone is released now; the recogniser stays loaded for a
+    // while so Resume does not pay its load again.
     final sttCleanup = releaseLocalModels
-        ? voice.disposeSttForVoiceExit()
+        ? voice.disposeSttForVoiceExit(keepRecognizerWarm: true)
         : null;
     _sttReleasedForPause = sttCleanup != null;
 
@@ -2435,7 +2447,9 @@ class LocalVoiceConversationController extends ChangeNotifier
     } catch (_) {
       if (!_isCurrent(operation)) return;
       paused = true;
-      note = 'No se pudo guardar Stop de forma segura. Reinténtalo.';
+      note = _isEnglish
+          ? "Couldn't save Stop safely. Try again."
+          : 'No se pudo guardar Stop de forma segura. Reinténtalo.';
       _notify();
       return;
     }
@@ -2488,8 +2502,10 @@ class LocalVoiceConversationController extends ChangeNotifier
     _notify();
   }
 
+  @override
   Future<void> pauseFromSystemControl() async => pauseConversation();
 
+  @override
   Future<void> resumeFromSystemControl() async {
     if (_fullDuplexPrivacySuspended) {
       if (!_privacyReleaseRequested) return;
@@ -2505,8 +2521,10 @@ class LocalVoiceConversationController extends ChangeNotifier
     await _resumeConversation();
   }
 
+  @override
   Future<void> onAppBackgrounded() => suspendForPrivacy();
 
+  @override
   void onAppResumed({required bool appUnlocked}) {
     if (_disposed || !appUnlocked || _privacyPauseTask != null) return;
     // Volver visible solo retira la valla que impedía Play. `userPaused` sigue
@@ -2530,6 +2548,7 @@ class LocalVoiceConversationController extends ChangeNotifier
   /// turno y después libera recorder, STT, TTS y modelos, incluso si el usuario
   /// ya había pulsado Pause. El desbloqueo solo retira la valla; nunca llama a
   /// Play ni abre de nuevo el micrófono por sí solo.
+  @override
   Future<void> suspendForPrivacy() async {
     if (_disposed) return;
     _privacyReleaseRequested = false;
@@ -2580,9 +2599,9 @@ class LocalVoiceConversationController extends ChangeNotifier
 
     final fullDuplexStop = _suspendFullDuplexNow();
     final stopSpeaking = voice.stopSpeaking();
-    final sttCleanup = _sttReleasedForPause
-        ? Future<void>.value()
-        : voice.disposeSttForVoiceExit();
+    // A pause only kept the recogniser loaded for Resume. A lock or the
+    // background releases it for good, like everything else here.
+    final sttCleanup = voice.disposeSttForVoiceExit();
     final ttsCleanup = _ttsReleasedForPause
         ? Future<void>.value()
         : voice.disposeTtsForVoiceExit();
@@ -2621,6 +2640,7 @@ class LocalVoiceConversationController extends ChangeNotifier
   /// Al perder foreground, una conversación conserva barge-in solo si el
   /// usuario aceptó continuar con la pantalla bloqueada. App Lock continúa
   /// ganando siempre.
+  @override
   Future<void> suspendFullDuplexForAppBackground() async {
     if (_disposed) return;
     _fullDuplexLifecycleSuspended = true;
@@ -2634,6 +2654,7 @@ class LocalVoiceConversationController extends ChangeNotifier
 
   /// Rearma la interrupción solo al volver visible y desbloqueado, y solo si
   /// todavía existe una fase en la que interrumpir tiene sentido.
+  @override
   Future<void> resumeFullDuplexCaptureIfNeeded() async {
     if (_disposed) return;
     _privacyReleaseRequested = true;
@@ -2746,7 +2767,7 @@ class LocalVoiceConversationController extends ChangeNotifier
     final stopSpeaking = voice.stopSpeaking();
     final sttCleanup = _sttReleasedForPause
         ? (pendingPauseRelease ?? Future<void>.value())
-        : voice.disposeSttForVoiceExit();
+        : voice.disposeSttForVoiceExit(keepRecognizerWarm: true);
     final ttsCleanup = _ttsReleasedForPause
         ? (pendingPauseRelease ?? Future<void>.value())
         : voice.disposeTtsForVoiceExit();

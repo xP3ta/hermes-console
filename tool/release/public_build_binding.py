@@ -19,7 +19,7 @@ PUBLIC_APKS = {
 }
 BUILD_COMMAND = (
     "flutter build apk --release --flavor full --split-per-abi "
-    "--dart-define=HERMES_FLAVOR=full --dart-define=HERMES_LOCAL_AGENT=true"
+    "--dart-define=HERMES_FLAVOR=full"
 )
 
 

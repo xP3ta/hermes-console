@@ -1,4 +1,4 @@
-# Política de Seguridad — Hermes Mobile Client
+# Política de Seguridad — Console
 
 ## Principios
 
@@ -34,9 +34,9 @@ aplican antes `TransportPrivacy.requireAllowed`:
 - HTTP/WS público: bloqueado en runtime; no basta con aceptar un aviso.
 
 La frontera se aplica también a los caminos auxiliares que podrían saltarse el
-cliente principal: diagnóstico Gateway/Dashboard/Bridge, historial cron, panel y
-gestor de estado, provisión estática del Bridge, vigilancia/aprobaciones en
-segundo plano y proveedores configurables de STT/TTS/OlliteRT/OpenAI-compatible.
+cliente principal: diagnóstico Gateway/Dashboard, historial cron, panel y
+gestor de estado, el sondeo único de retirada del Mobile Bridge,
+vigilancia/aprobaciones en segundo plano y proveedores configurables de STT/TTS/OlliteRT/OpenAI-compatible.
 Una entrada persistida antigua o corrupta se descarta antes de leer credenciales.
 LAN, Tailscale, loopback y HTTPS/WSS permanecen compatibles.
 
@@ -71,7 +71,7 @@ Keystore; la caché en memoria no se persiste.
 | Dato                    | Almacenamiento     | Razón                          |
 |-------------------------|--------------------|--------------------------------|
 | API Key                 | flutter_secure_storage | Secreto — Keystore            |
-| Token de Mobile Bridge  | flutter_secure_storage | Secreto por instancia — Keystore |
+| Acceso al Dashboard     | flutter_secure_storage | Secreto por instancia — Keystore |
 | Claves/token de STT/TTS remoto | flutter_secure_storage | Secreto — Keystore      |
 | URL del Gateway         | SharedPreferences  | No es secreto                  |
 | URL/plantilla TTS REST  | SharedPreferences  | Configuración no secreta       |
@@ -102,34 +102,20 @@ Keystore; la caché en memoria no se persiste.
 
 ### Actualización automática de componentes
 
-- Hermes y Mobile Bridge comparten una única autorización opt-in. La migración
-  conserva una autorización anterior, pero nunca activa la política si el
-  usuario no había habilitado ninguna de las dos actualizaciones.
-- El mantenimiento automático del Bridge solo actúa si un bridge ya instalado
-  responde, anuncia una versión inferior a la empaquetada y la conexión permite
-  escritura. Nunca instala uno ausente, nunca hace downgrade y deduplica las
-  comprobaciones concurrentes.
+- La actualización automática es solo la de Hermes, con una única
+  autorización opt-in. Se conserva una autorización anterior, pero nunca se
+  activa si el usuario no la había habilitado.
 - Con App Lock activo o una conexión en modo solo lectura no se inicia una
   mutación automática. La actualización manual sigue requiriendo la conexión y
   credenciales ya autorizadas por el usuario.
-- El canal remoto del Bridge usa manifest y payload HTTPS de rutas compiladas;
-  el manifest no puede redirigir a otro origen. Se validan schema cerrado,
-  compatibilidad de build, semver, límites durante streaming, tamaño, SHA-256,
-  UTF-8 y `VERSION` antes de aceptar código.
-- El mantenimiento automático nunca lanza ni autoaprueba herramientas de un
-  agente. Solo usa `POST /bridge/self-update`, autenticado con scope `config`.
-  El Bridge repite las validaciones, compila, sustituye atómicamente y conserva
-  rollback con watchdog. Un Bridge legacy requiere un bootstrap manual.
-- La app prueba primero el token del Bridge guardado por instancia. Solo intenta
-  reprovisionarlo con la API key confiada del Gateway si falta o el Bridge lo
-  rechaza, y reemplaza el secreto en Keystore. Una instalación que deshabilite
-  `/bridge/provision` después del setup sigue pudiendo actualizarse con su token
-  manual o con el recibido por QR.
-- El instalador legacy no envía la API key al modelo. Lee `API_SERVER_KEY`
-  dentro del servidor y falla cerrado si no existe; la alternativa sigue siendo
-  el comando público que el propietario ejecuta en su terminal.
-- SHA-256 garantiza coherencia entre manifest y payload, pero no sustituye una
-  firma independiente frente al compromiso de la cuenta/repositorio de GitHub.
+- El Mobile Bridge se retiró en 1.2.15. La app no lo instala, no lo actualiza
+  ni le envía ninguna petición. En el primer arranque tras actualizar sondea
+  una vez el Dashboard de cada instancia (`/api/status` y el inicio de sesión
+  que la app ya hace, con las credenciales guardadas), borra del Keystore los
+  secretos `bridge_url_<id>` / `bridge_token_<id>` y la preferencia
+  `bridge_auto_update`, y avisa una sola vez si a una instancia le falta el
+  acceso al Dashboard. El servicio que quede en el servidor lo para el
+  propietario; la app solo enseña cómo.
 
 ---
 
@@ -141,8 +127,17 @@ Keystore; la caché en memoria no se persiste.
 |----------------------|-----------------------------------------------|
 | INTERNET             | Conexión al Gateway (imprescindible)           |
 | ACCESS_NETWORK_STATE | Reintento inmediato al recuperar conectividad  |
-| POST_NOTIFICATIONS   | Solo si se implementan notificaciones locales  |
+| POST_NOTIFICATIONS   | Notificaciones locales de respuestas, aprobaciones y tareas (sin push de terceros) |
+| POST_PROMOTED_NOTIFICATIONS | Live Updates de Android 16 para un turno en marcha |
 | RECORD_AUDIO         | Dictado y conversación iniciados por el usuario |
+| MODIFY_AUDIO_SETTINGS | Audio mode of the opt-in GPT-Live WebRTC session (flutter_webrtc); normal permission |
+| CHANGE_NETWORK_STATE | Network handling of the same WebRTC session; normal permission |
+| BLUETOOTH (`maxSdkVersion` 30) | Lets GPT-Live call audio follow a Bluetooth headset on Android 11 and older; added by the call-audio library under flutter_webrtc, normal install-time permission, no scanning or pairing; `android.hardware.bluetooth` stays optional |
+| CAMERA | Scanning a connection QR code or taking an attachment photo, only after a user action |
+| VIBRATE | Notification feedback |
+| USE_BIOMETRIC | Optional App Lock; verification is delegated to Android |
+| WRITE_EXTERNAL_STORAGE (`maxSdkVersion` 28) | Saving a generated image on Android 9 and older, only when the user taps Save |
+| WAKE_LOCK, USE_FINGERPRINT | Added by flutter_foreground_task and local_auth; not held without work, no biometric data |
 | FOREGROUND_SERVICE_MICROPHONE | Continuidad de Voz con opt-in y notificación |
 | FOREGROUND_SERVICE_MEDIA_PLAYBACK | TTS y respuestas de Voz solicitados |
 | FOREGROUND_SERVICE_DATA_SYNC | SSH/SFTP y fallback de escucha opt-in en API ≤34 |
@@ -160,7 +155,10 @@ Keystore; la caché en memoria no se persiste.
   legacy intenta implicarlo.
 - `WRITE_EXTERNAL_STORAGE` — únicamente con `maxSdkVersion=28` para guardar
   una imagen por acción expresa en Android 9 o anterior; nunca para adjuntos.
-- `CAMERA` — solo si se añade captura de fotos
+- `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`, `com.termux.permission.RUN_COMMAND`,
+  `QUERY_ALL_PACKAGES` y cualquier `<queries><package>` — retirados con la
+  instancia local en 1.2.15; `tool/release/full_release_policy.json` los
+  prohíbe en todos los flavors
 - `ACCESS_FINE_LOCATION` — no tiene sentido en esta app
 - Ningún permiso de datos de contactos, SMS, o sensores
 
@@ -273,10 +271,11 @@ Esto puede ser logueado por proxies, firewalls y herramientas de debug.
   el token de sesión que ya exige el Dashboard.
 - Tickets, tokens, URL completa y texto nunca se escriben en logs ni se
   persisten fuera del Keystore/caché en memoria existente.
-- La reparación automática de una vinculación antigua solo se intenta si la
-  conexión ya posee una API key confiada y el Mobile Bridge puede canjearla por
-  un token con scope de configuración. La nueva contraseña del Dashboard se
-  genera con CSPRNG, no se registra ni se muestra y se guarda en Keystore.
+- La app nunca crea ni rota credenciales del servidor. El acceso al Dashboard
+  lo escribe el usuario, o llega en un enlace de emparejado que lo traiga
+  (`dash_user`, `dash_pass`); en ambos casos se guarda en Keystore, no se
+  registra ni se muestra, y se descarta sin enviarse si el formulario se
+  apunta a otro servidor.
 - `session.redirect` y `session.steer` permanecen como primitivas del cliente de
   Gateway para compatibilidad y superficies explícitamente autorizadas, cercadas
   por propiedad exclusiva de la sesión. El Chat y la Voz ordinarios de `1.2.10`
@@ -289,14 +288,11 @@ Esto puede ser logueado por proxies, firewalls y herramientas de debug.
 
 ### Borrado de tareas programadas
 
-- El borrado desde un informe usa `DELETE /bridge/cron/jobs/{id}` con token
-  Bearer y scope `cron`. El bridge rechaza modo solo lectura e IDs fuera de una
-  allowlist estricta, ejecuta `hermes cron remove` sin shell y confirma después
-  que el job ya no figure en `cron/jobs.json`; nunca modifica ese archivo.
-- Un token del bridge obsoleto solo se renueva si la conexión ya posee la API
-  key confiada del Gateway. No se cambia ni se expone la contraseña del
-  Dashboard. En servidores antiguos, la API autenticada del Dashboard permanece
-  como fallback de compatibilidad.
+- El borrado desde un informe usa el Dashboard
+  (`DELETE /api/cron/jobs/{id}?profile=`), la misma ruta que Desktop, con la
+  sesión ya autorizada de esa instancia. El ID se valida contra una allowlist
+  estricta antes de construir ningún cliente. No se cambia ni se expone la
+  contraseña del Dashboard.
 - La conversación cron se elimina únicamente después de confirmar que la
   programación se detuvo. Las continuaciones compactadas se borran de hojas a
   raíz para que ninguna sesión hija reaparezca como conversación principal.
@@ -402,4 +398,4 @@ El contrato operativo y la allowlist exacta están documentados en
 Si se descubre un secreto filtrado en el repo:
 1. Rotar el secreto inmediatamente (generar nueva API key en Hermes)
 2. Eliminar el secreto del historial git (`git filter-branch` o BFG)
-3. Documentar en `docs/DECISIONS.md` lo que pasó y cómo se corrigió
+3. Registrar en privado lo que pasó y cómo se corrigió, y avisar a quien corresponda ([SECURITY.md](../SECURITY.md))

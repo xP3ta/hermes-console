@@ -1,0 +1,214 @@
+import 'dart:convert';
+
+import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/services/app_error_log.dart';
+import 'package:hermes_android/core/models/session.dart';
+import 'package:hermes_android/core/services/cold_start_store.dart';
+import 'package:hermes_android/main.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  const channel = MethodChannel('plugins.it_nomads.com/flutter_secure_storage');
+  final secure = <String, String>{};
+  final writes = <String>[];
+  final reads = <String>[];
+  String? failReadKey;
+
+  setUp(() {
+    AppErrorLog.resetForTesting();
+    secure.clear();
+    writes.clear();
+    reads.clear();
+    failReadKey = null;
+    TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+          final args = (call.arguments as Map).cast<String, dynamic>();
+          final key = args['key'] as String?;
+          switch (call.method) {
+            case 'read':
+              reads.add(key!);
+              if (key == failReadKey) {
+                throw PlatformException(code: 'storage-unavailable');
+              }
+              return secure[key];
+            case 'readAll':
+              return Map<String, String>.of(secure);
+            case 'write':
+              writes.add(key!);
+              secure[key] = args['value'] as String;
+            case 'delete':
+              writes.add('delete:$key');
+              secure.remove(key);
+          }
+          return null;
+        });
+  });
+
+  Map<String, Object> savedConnection() => {
+    'saved_connections': [
+      jsonEncode({
+        'id': 'conn-a',
+        'label': 'Server',
+        'host': 'example.invalid',
+        'port': 443,
+        'use_https': true,
+      }),
+    ],
+    'default_connection_id': 'conn-a',
+  };
+
+  test('a corrupt Stop tombstone blob does not block startup and is kept '
+      'untouched', () async {
+    SharedPreferences.setMockInitialValues(savedConnection());
+    secure['cancelled_turn_tombstones_v2'] = '{corrupt';
+    secure['api_key_conn-a'] = 'key-a';
+
+    final app = await bootstrapHermesApp();
+
+    expect(app, isA<HermesApp>());
+    final hermes = app as HermesApp;
+    expect(hermes.connManager.getConnections().single.apiKey, 'key-a');
+    expect(hermes.connManager.activeConnectionId.value, 'conn-a');
+    expect(secure['cancelled_turn_tombstones_v2'], '{corrupt');
+    expect(writes, isEmpty);
+    expect(
+      AppErrorLog.recent.map((r) => (r.source, r.errorType)),
+      contains(('startup', 'FormatException')),
+    );
+  });
+
+  test('an unreadable activity journal does not block startup', () async {
+    SharedPreferences.setMockInitialValues(savedConnection());
+    failReadKey = 'global_public_activity_journal_v1';
+
+    final app = await bootstrapHermesApp();
+
+    expect(app, isA<HermesApp>());
+    expect((app as HermesApp).activeChats.globalActivity.activities, isEmpty);
+  });
+
+  test('a Keystore failure on a saved key still fails closed without '
+      'rewriting connection metadata', () async {
+    final initial = savedConnection();
+    SharedPreferences.setMockInitialValues(initial);
+    failReadKey = 'api_key_conn-a';
+
+    await expectLater(bootstrapHermesApp(), throwsA(isA<PlatformException>()));
+    final prefs = await SharedPreferences.getInstance();
+    expect(
+      prefs.getStringList('saved_connections'),
+      initial['saved_connections'],
+    );
+    expect(writes, isEmpty);
+  });
+
+  testWidgets('without stored data the app is built with the same defaults', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    final app = await tester.runAsync(bootstrapHermesApp);
+
+    expect(app, isA<HermesApp>());
+    final hermes = app! as HermesApp;
+    expect(hermes.connManager.getConnections(), isEmpty);
+    expect(hermes.connManager.activeConnectionId.value, isNull);
+    expect(AppErrorLog.recent, isEmpty);
+    expect(app, isA<Widget>());
+  });
+
+  for (final locked in [true, false]) {
+    test('cold-start tails ${locked ? 'stay encrypted until unlock' : ''
+                  'are decrypted while the first frames paint'} with App Lock '
+        '${locked ? 'on' : 'off'}', () async {
+      SharedPreferences.setMockInitialValues({
+        ...savedConnection(),
+        if (locked) 'app_lock_enabled': true,
+      });
+      secure['api_key_conn-a'] = 'key-a';
+      final key = ColdStartStore.tailKey('conn-a', 'default', 's');
+      secure[ColdStartStore.indexKey] = jsonEncode({
+        'v': 1,
+        'routes': {},
+        'tails': [
+          {
+            'k': key,
+            'c': 'conn-a',
+            'p': 'default',
+            's': 's',
+            'a': ['s'],
+            'b': 10,
+            't': DateTime.now().millisecondsSinceEpoch,
+          },
+        ],
+      });
+      secure[key] = jsonEncode({
+        'v': 1,
+        'c': 'conn-a',
+        'p': 'default',
+        's': 's',
+        'r': 's',
+        'a': ['s'],
+        'rows': [
+          {'role': 'assistant', 'content': 'privado'},
+        ],
+      });
+
+      final app = await bootstrapHermesApp() as HermesApp;
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(reads.contains(key), !locked);
+      if (locked) {
+        expect(app.appLock.locked.value, isTrue);
+        expect(reads, isNot(contains(ColdStartStore.indexKey)));
+      }
+    });
+  }
+
+  for (final locked in [false, true]) {
+    test(
+      'Home recents are ${locked ? 'not read' : 'decrypted for the first '
+                'frame'} before runApp with App Lock ${locked ? 'on' : 'off'}',
+      () async {
+        SharedPreferences.setMockInitialValues({
+          ...savedConnection(),
+          'last_connection_id': 'conn-a',
+          if (locked) 'app_lock_enabled': true,
+        });
+        secure['api_key_conn-a'] = 'key-a';
+        final key = ColdStartStore.recentsKey('conn-a', 'default');
+        await ColdStartStore().saveRecents(
+          connectionId: 'conn-a',
+          profile: 'default',
+          sessions: const [
+            Session(
+              id: 's1',
+              title: 'privado',
+              model: '',
+              source: 'cli',
+              messageCount: 1,
+              isActive: false,
+              preview: '',
+              startedAt: 1790000000,
+            ),
+          ],
+        );
+        reads.clear();
+
+        final app = await bootstrapHermesApp() as HermesApp;
+        final peek = app.activeChats.coldStartStore!.peekRecents(
+          connectionId: 'conn-a',
+          profile: 'default',
+        );
+        if (locked) {
+          expect(reads, isNot(contains(key)));
+          expect(peek, isNull);
+        } else {
+          expect(reads, contains(key));
+          expect(peek?.single.title, 'privado');
+        }
+      },
+    );
+  }
+}

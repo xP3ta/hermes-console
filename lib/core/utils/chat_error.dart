@@ -12,21 +12,45 @@ enum ChatErrorKind {
   firstTokenTimeout,
   searchToolUnavailable,
   sessionTooLarge,
+  profileDashboardAccess,
+
+  /// The turn needed this instance's Dashboard and the Dashboard refused
+  /// this phone: it has no working sign-in. One action fixes it.
+  dashboardSignInRequired,
   unknown,
+}
+
+/// Stable text of a turn that could not start because the Dashboard of its
+/// instance refused this client (no sign-in, or one it no longer accepts).
+/// The chat says it in the reader's language; this text is never shown.
+const dashboardSignInRequiredError = 'dashboard_sign_in_required';
+
+/// Stable text of a turn that needed Hermes' own live channel (profiles, Bot
+/// Chats, local instances) and that channel was not there to take it.
+const officialChannelUnavailableError = 'official_channel_unavailable';
+
+/// True when [raw] is one of the stable texts above: a code for the screen to
+/// put into words, not something to print.
+bool isChatErrorCode(String raw) {
+  final code = raw.trim();
+  return code == dashboardSignInRequiredError ||
+      code == officialChannelUnavailableError;
 }
 
 extension ChatErrorKindMeta on ChatErrorKind {
   IconData get icon => switch (this) {
-        ChatErrorKind.connection => Icons.wifi_off_rounded,
-        ChatErrorKind.model => Icons.cloud_off_rounded,
-        ChatErrorKind.tool => Icons.build_circle_outlined,
-        ChatErrorKind.local => Icons.phonelink_erase_outlined,
-        ChatErrorKind.localColdStart => Icons.hourglass_empty_rounded,
-        ChatErrorKind.firstTokenTimeout => Icons.hourglass_empty_rounded,
-        ChatErrorKind.searchToolUnavailable => Icons.search_off_rounded,
-        ChatErrorKind.sessionTooLarge => Icons.history_toggle_off_rounded,
-        ChatErrorKind.unknown => Icons.error_outline_rounded,
-      };
+    ChatErrorKind.connection => Icons.wifi_off_rounded,
+    ChatErrorKind.model => Icons.cloud_off_rounded,
+    ChatErrorKind.tool => Icons.build_circle_outlined,
+    ChatErrorKind.local => Icons.phonelink_erase_outlined,
+    ChatErrorKind.localColdStart => Icons.hourglass_empty_rounded,
+    ChatErrorKind.firstTokenTimeout => Icons.hourglass_empty_rounded,
+    ChatErrorKind.searchToolUnavailable => Icons.search_off_rounded,
+    ChatErrorKind.sessionTooLarge => Icons.history_toggle_off_rounded,
+    ChatErrorKind.profileDashboardAccess => Icons.lock_outline_rounded,
+    ChatErrorKind.dashboardSignInRequired => Icons.lock_outline_rounded,
+    ChatErrorKind.unknown => Icons.error_outline_rounded,
+  };
 }
 
 /// Clasifica un string de error en una categoría accionable para la UI.
@@ -42,6 +66,18 @@ ChatErrorKind classifyChatError(String raw) {
   //     de inactividad no emite este prefijo.
   if (e.startsWith('firsttokentimeout:') || has(['firsttokentimeout'])) {
     return ChatErrorKind.firstTokenTimeout;
+  }
+
+  // 1a''. Perfil con nombre sin clave propia en el gateway y sin acceso al
+  //       Dashboard: reintentar en bucle no sirve, hace falta acceso.
+  if (has(['profile_dashboard_access_required'])) {
+    return ChatErrorKind.profileDashboardAccess;
+  }
+
+  // 1a'''. El turno necesitaba el Dashboard de la instancia y este rechazó
+  //        al cliente: hace falta iniciar sesión, no reintentar.
+  if (has([dashboardSignInRequiredError])) {
+    return ChatErrorKind.dashboardSignInRequired;
   }
 
   // 1a'. Sesión que ya no cabe en el contexto del modelo ni se puede compactar
@@ -72,7 +108,6 @@ ChatErrorKind classifyChatError(String raw) {
   }
 
   // 1c. Modelo local en arranque en frío / primer token tardando.
-  //    Generado por _humanizeBridgeError en active_chat_service.dart.
   if (has([
     'tardó demasiado',
     'timed out',
@@ -84,9 +119,8 @@ ChatErrorKind classifyChatError(String raw) {
     return ChatErrorKind.localColdStart;
   }
 
-  // 2. Agente local caído / bridge no disponible (ANTES que model).
+  // 2. Agente local caído (ANTES que model).
   if (has([
-    'bridge',
     'local agent',
     'agente local',
     'localhost',
@@ -95,7 +129,6 @@ ChatErrorKind classifyChatError(String raw) {
     'proceso se cerró',
     'arranca el agente',
     'no se pudo conectar con el agente',
-    'mobile bridge',
     'falta de memoria',
   ])) {
     return ChatErrorKind.local;
@@ -112,6 +145,10 @@ ChatErrorKind classifyChatError(String raw) {
     'handshake',
     'certificate',
     'no route to host',
+    officialChannelUnavailableError,
+    // The same two failures as older builds stored them, in English.
+    'official hermes gateway unavailable',
+    'session lifecycle is required',
   ])) {
     return ChatErrorKind.connection;
   }

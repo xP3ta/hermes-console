@@ -45,13 +45,18 @@ final class RoomLogCursor {
   HostedGroupLogPage? _log;
   Future<RoomLogDelta>? _flight;
 
+  /// [initial] resumes from a log this client already read (e.g. the last
+  /// snapshot of a screen that was closed): the first pull asks only for
+  /// `since_seq = initial.cursor`. A rotated authority or rewound log still
+  /// restarts from zero, exactly like a live cursor.
   RoomLogCursor({
     required this.roomId,
     required this.load,
     this.pageLimit = 100,
     this.maxPagesPerPull = 64,
     this.maxEvents = 2000,
-  });
+    HostedGroupLogPage? initial,
+  }) : _log = initial;
 
   HostedGroupLogPage? get log => _log;
 
@@ -64,6 +69,34 @@ final class RoomLogCursor {
   });
 
   void reset() => _log = null;
+
+  /// Takes a page the caller already read and verified (the tail
+  /// `groups.send` checks after its acknowledgement) as the next delta,
+  /// without another read. Only a page that continues this cursor exactly
+  /// is taken: same authority, first event right after [cursor], nothing
+  /// left after it and no read in flight. Otherwise returns `null` and the
+  /// caller reads the delta as usual.
+  RoomLogDelta? absorb(HostedGroupLogPage page) {
+    final previous = _log;
+    if (previous == null ||
+        _flight != null ||
+        page.hasMore ||
+        page.events.isEmpty ||
+        page.events.first.sequence != previous.cursor + 1) {
+      return null;
+    }
+    try {
+      final next = HostedGroupLogPage.append(
+        previous,
+        page,
+        maxEvents: maxEvents,
+      );
+      _log = next;
+      return RoomLogDelta(added: page.events, log: next, reset: false);
+    } on FormatException {
+      return null;
+    }
+  }
 
   Future<RoomLogDelta> _pull() async {
     final previous = _log;
@@ -132,22 +165,37 @@ final class RoomLogCursor {
       );
 }
 
-/// Poll cadence for a visible room: 3 s while the driver works or the log
-/// just changed, doubling to a 15 s ceiling while idle (plan.md § Rules).
+/// Poll cadence for a visible room: 3 s while the driver works or the room
+/// saw activity in the last [activeWindow], doubling to a 15 s ceiling once
+/// it has been idle that long (plan.md § Rules). Hidden rooms never poll.
 final class RoomPollBackoff {
+  /// How long a visible room keeps the fast cadence after its last activity.
+  static const activeWindow = Duration(minutes: 2);
+
   final Duration fast;
   final Duration slow;
+  final DateTime Function() _clock;
   Duration _current;
 
   RoomPollBackoff({
     this.fast = const Duration(seconds: 3),
     this.slow = const Duration(seconds: 15),
-  }) : _current = fast;
+    DateTime Function()? clock,
+  }) : _current = fast,
+       _clock = clock ?? DateTime.now;
 
   Duration get current => _current;
 
+  DateTime? _lastActivity;
+
+  /// 3 s while the driver works, the log just changed or the room saw
+  /// activity in the last [activeWindow] (rc1215: bots answer tens of seconds
+  /// after the message they reply to); doubling to [slow] only after that.
   Duration next({required bool working, required bool changed}) {
-    if (working || changed) {
+    final now = _clock();
+    if (working || changed) _lastActivity = now;
+    final last = _lastActivity;
+    if (last != null && now.difference(last) < activeWindow) {
       _current = fast;
     } else {
       final doubled = _current * 2;
@@ -156,7 +204,11 @@ final class RoomPollBackoff {
     return _current;
   }
 
-  void resetFast() => _current = fast;
+  /// The room was (re)opened or the user just wrote: both open the window.
+  void resetFast() {
+    _current = fast;
+    _lastActivity = _clock();
+  }
 }
 
 typedef RoomPollTimerFactory =

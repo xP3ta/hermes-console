@@ -9,11 +9,11 @@ import '../theme/theme_profile_derivation.dart';
 import '../theme/theme_profile_store.dart';
 import '../theme/theme_profile_validator.dart';
 import '../widgets/hermes_app_bar.dart';
-import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_premium_ui.dart';
 import '../widgets/theme_color_picker.dart';
 import '../design/hermes_design.dart'
-    show showHermesReviewPage;
+    show HermesFadedEnd, HermesOption, HermesSelectField, showHermesReviewPage;
+import '../feedback/feedback_policy.dart';
 
 class ThemeStudioScreen extends StatefulWidget {
   final ThemeProfile initialProfile;
@@ -269,7 +269,7 @@ class _ThemeStudioScreenState extends State<ThemeStudioScreen> {
       return;
     }
     setState(() => _profile = repaired);
-    _showMessage(Strings.of(context).themesRepairApplied);
+    _showMessage(Strings.of(context).themesRepairApplied, FeedbackKind.routine);
   }
 
   Future<void> _save({required bool activate}) async {
@@ -297,7 +297,10 @@ class _ThemeStudioScreenState extends State<ThemeStudioScreen> {
         Navigator.of(context).pop(true);
       } else {
         setState(() => _profile = saved);
-        _showMessage(Strings.of(context).themesDraftSaved);
+        _showMessage(
+          Strings.of(context).themesDraftSaved,
+          FeedbackKind.routine,
+        );
       }
     } on ThemeProfileStoreException catch (error) {
       if (mounted) _showMessage(error.message);
@@ -306,10 +309,8 @@ class _ThemeStudioScreenState extends State<ThemeStudioScreen> {
     }
   }
 
-  void _showMessage(String message) {
-    HermesNotice.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+  void _showMessage(String message, [FeedbackKind kind = FeedbackKind.error]) {
+    AppFeedback.notify(context, kind, message);
   }
 
   @override
@@ -331,73 +332,75 @@ class _ThemeStudioScreenState extends State<ThemeStudioScreen> {
           letterSpacing: 0,
         ),
       ),
-      body: CustomScrollView(
-        slivers: [
-          SliverPadding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 2),
-            sliver: SliverToBoxAdapter(
-              child: _StudioCard(
-                padding: const EdgeInsets.symmetric(horizontal: 14),
-                child: TextField(
-                  key: const Key('theme_studio_name'),
-                  controller: _name,
-                  maxLength: 48,
-                  style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w500,
-                    letterSpacing: 0,
-                  ),
-                  onChanged: (_) => setState(() {}),
-                  decoration: InputDecoration(
-                    labelText: strings.themesNameLabel,
-                    counterText: '',
-                    border: InputBorder.none,
-                    enabledBorder: InputBorder.none,
-                    focusedBorder: InputBorder.none,
-                    filled: false,
-                    contentPadding: const EdgeInsets.symmetric(vertical: 9),
+      body: HermesFadedEnd(
+        child: CustomScrollView(
+          slivers: [
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 2),
+              sliver: SliverToBoxAdapter(
+                child: _StudioCard(
+                  padding: const EdgeInsets.symmetric(horizontal: 14),
+                  child: TextField(
+                    key: const Key('theme_studio_name'),
+                    controller: _name,
+                    maxLength: 48,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                      letterSpacing: 0,
+                    ),
+                    onChanged: (_) => setState(() {}),
+                    decoration: InputDecoration(
+                      labelText: strings.themesNameLabel,
+                      counterText: '',
+                      border: InputBorder.none,
+                      enabledBorder: InputBorder.none,
+                      focusedBorder: InputBorder.none,
+                      filled: false,
+                      contentPadding: const EdgeInsets.symmetric(vertical: 9),
+                    ),
                   ),
                 ),
               ),
             ),
-          ),
-          SliverPersistentHeader(
-            pinned: true,
-            delegate: _ThemePreviewHeaderDelegate(
-              theme: previewTheme,
-              name: candidate.name.isEmpty
-                  ? strings.themesStudioTitle
-                  : candidate.name,
+            SliverPersistentHeader(
+              pinned: true,
+              delegate: _ThemePreviewHeaderDelegate(
+                theme: previewTheme,
+                name: candidate.name.isEmpty
+                    ? strings.themesStudioTitle
+                    : candidate.name,
+              ),
             ),
-          ),
-          SliverPadding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 28),
-            sliver: SliverList(
-              delegate: SliverChildListDelegate([
-                _PaletteSummary(
-                  title: strings.themesBaseColors,
-                  subtitle: strings.themesPaletteSubtitle,
-                  colors: [
-                    _profile.palette.background,
-                    _profile.palette.surface,
-                    _profile.palette.accent,
-                    _profile.palette.secondary,
-                    _profile.palette.textPrimary,
-                  ],
-                  onTap: _openPaletteEditor,
-                ),
-                const SizedBox(height: 16),
-                _typographyAndBrightness(),
-                const SizedBox(height: 18),
-                _ContrastPanel(
-                  validation: validation,
-                  onRepair: _repairContrast,
-                ),
-                const SizedBox(height: 110),
-              ]),
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 28),
+              sliver: SliverList(
+                delegate: SliverChildListDelegate([
+                  _PaletteSummary(
+                    title: strings.themesBaseColors,
+                    subtitle: strings.themesPaletteSubtitle,
+                    colors: [
+                      _profile.palette.background,
+                      _profile.palette.surface,
+                      _profile.palette.accent,
+                      _profile.palette.secondary,
+                      _profile.palette.textPrimary,
+                    ],
+                    onTap: _openPaletteEditor,
+                  ),
+                  const SizedBox(height: 16),
+                  _typographyAndBrightness(),
+                  const SizedBox(height: 18),
+                  _ContrastPanel(
+                    validation: validation,
+                    onRepair: _repairContrast,
+                  ),
+                  const SizedBox(height: 110),
+                ]),
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
       bottomNavigationBar: _StudioSaveBar(
         busy: _busy,
@@ -439,15 +442,6 @@ class _ThemeStudioScreenState extends State<ThemeStudioScreen> {
             await _pickColor(entry.token, entry.label, basic: true);
             onUpdated?.call();
           },
-        ),
-        const SizedBox(height: 9),
-        Text(
-          s.themesDerivedHint,
-          style: TextStyle(
-            color: Theme.of(context).hermes.textDisabled,
-            fontSize: 11.5,
-            height: 1.35,
-          ),
         ),
       ],
     );
@@ -504,54 +498,34 @@ class _ThemeStudioScreenState extends State<ThemeStudioScreen> {
     final fonts = ThemeProfileCodec.packagedFontFamilies.toList()
       ..sort((left, right) => _fontLabel(left).compareTo(_fontLabel(right)));
     final stackFont = MediaQuery.textScalerOf(context).scale(1) > 1.3;
-    final fontDropdown = DropdownButtonHideUnderline(
-      child: SizedBox(
-        width: stackFont ? double.infinity : 164,
-        child: DropdownButton<String>(
-          key: ValueKey('theme_studio_font_${_profile.typography.fontFamily}'),
-          value: _profile.typography.fontFamily,
-          isExpanded: true,
-          menuMaxHeight: 360,
-          dropdownColor: colors.surface,
-          borderRadius: BorderRadius.circular(14),
-          icon: Icon(
-            Icons.unfold_more_rounded,
-            size: 17,
-            color: colors.textSecondary,
-          ),
-          style: TextStyle(
-            color: colors.textPrimary,
-            fontSize: 13,
-            fontWeight: FontWeight.w500,
-            letterSpacing: 0,
-          ),
-          items: [
-            for (final font in fonts)
-              DropdownMenuItem(
-                value: font,
-                child: Text(
-                  _fontLabel(font),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontFamily: font,
-                    color: colors.textPrimary,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w400,
-                    letterSpacing: 0,
-                  ),
-                ),
-              ),
-          ],
-          onChanged: (value) {
-            if (value == null) return;
-            setState(() {
-              _profile = _profile.copyWith(
-                typography: _profile.typography.copyWith(fontFamily: value),
-              );
-            });
-          },
+    final fontDropdown = SizedBox(
+      width: stackFont ? double.infinity : 164,
+      child: HermesSelectField<String>(
+        key: ValueKey('theme_studio_font_${_profile.typography.fontFamily}'),
+        value: _profile.typography.fontFamily,
+        inline: true,
+        icon: const Icon(Icons.unfold_more_rounded, size: 17),
+        style: TextStyle(
+          color: colors.textPrimary,
+          fontSize: 13,
+          fontWeight: FontWeight.w500,
+          letterSpacing: 0,
         ),
+        options: [
+          for (final font in fonts)
+            HermesOption(
+              value: font,
+              label: _fontLabel(font),
+              fontFamily: font,
+            ),
+        ],
+        onChanged: (value) {
+          setState(() {
+            _profile = _profile.copyWith(
+              typography: _profile.typography.copyWith(fontFamily: value),
+            );
+          });
+        },
       ),
     );
     final fontLabel = Text(
@@ -875,7 +849,7 @@ class _ColorTile extends StatelessWidget {
                 Text(
                   _displayHex,
                   style: TextStyle(
-                    color: colors.textDisabled,
+                    color: colors.textTertiary,
                     fontSize: 10,
                     fontFamily: 'monospace',
                     letterSpacing: 0,
@@ -1110,7 +1084,6 @@ class _StudioSaveBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
     final stack = MediaQuery.textScalerOf(context).scale(1) > 1.3;
     final draft = TextButton(
       key: const Key('theme_studio_save_draft'),
@@ -1139,17 +1112,14 @@ class _StudioSaveBar extends StatelessWidget {
         style: const TextStyle(fontSize: 13, letterSpacing: 0),
       ),
     );
+    // No band and no line: the two buttons sit on the page, and the editor
+    // above dissolves before reaching them.
     return Material(
-      color: colors.surface.withValues(alpha: 0.97),
+      type: MaterialType.transparency,
       child: SafeArea(
         top: false,
-        child: Container(
+        child: Padding(
           padding: const EdgeInsets.fromLTRB(16, 7, 16, 9),
-          decoration: BoxDecoration(
-            border: Border(
-              top: BorderSide(color: colors.divider.withValues(alpha: 0.65)),
-            ),
-          ),
           child: stack
               ? Column(
                   mainAxisSize: MainAxisSize.min,
@@ -1438,7 +1408,7 @@ class _FullPreview extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    color: colors.textDisabled,
+                    color: colors.textTertiary,
                     fontSize: 9.5,
                     letterSpacing: 0,
                   ),

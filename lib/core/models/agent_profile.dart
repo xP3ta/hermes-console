@@ -38,9 +38,30 @@ final class AgentProfileSessionSummary {
     return AgentProfileSessionSummary(
       id: id,
       resolvedId: _boundedText(map['resolved_id'], 512),
-      title: _boundedText(map['title'] is String ? stripBotMentionNote(map['title'] as String) : map['title'], 512) ?? '',
-      rootTitle: _boundedText(map['root_title'] is String ? stripBotMentionNote(map['root_title'] as String) : map['root_title'], 512) ?? '',
-      preview: _boundedText(map['preview'] is String ? stripBotMentionNote(map['preview'] as String) : map['preview'], 512) ?? '',
+      title:
+          _boundedText(
+            map['title'] is String
+                ? stripBotMentionNote(map['title'] as String)
+                : map['title'],
+            512,
+          ) ??
+          '',
+      rootTitle:
+          _boundedText(
+            map['root_title'] is String
+                ? stripBotMentionNote(map['root_title'] as String)
+                : map['root_title'],
+            512,
+          ) ??
+          '',
+      preview:
+          _boundedText(
+            map['preview'] is String
+                ? stripBotMentionNote(map['preview'] as String)
+                : map['preview'],
+            512,
+          ) ??
+          '',
       startedAt: _nonNegativeFinite(map['started_at']),
       lastActive: _nonNegativeFinite(map['last_active']),
       messageCount: _nonNegativeInt(map['message_count']) ?? 0,
@@ -170,11 +191,6 @@ class AgentProfile {
   final bool hasAlias;
   final RoomMirror roomMirror;
 
-  /// Raw `ui_meta['hermes-bots-groups']` of the default profile (Desktop's
-  /// read-only room projection); `null` elsewhere. Parsed on demand by
-  /// `DesktopProjectionRooms.parse` so hosted rooms can be excluded.
-  final Object? groupsProjection;
-
   const AgentProfile({
     required this.name,
     this.path = '',
@@ -202,7 +218,6 @@ class AgentProfile {
     this.distributionSource,
     this.hasAlias = false,
     this.roomMirror = RoomMirror.empty,
-    this.groupsProjection,
   });
 
   bool get isDistribution =>
@@ -238,7 +253,9 @@ class AgentProfile {
   String? get canonicalBotChatSessionId {
     final summary = canonicalSession;
     if (summary == null) return null;
-    final id = _safeGatewaySessionId(summary.resolvedId) ?? _safeGatewaySessionId(summary.id);
+    final id =
+        _safeGatewaySessionId(summary.resolvedId) ??
+        _safeGatewaySessionId(summary.id);
     return id;
   }
 
@@ -319,6 +336,12 @@ class AgentProfile {
         ? value
         : null;
   }
+
+  /// Older Blobatars stored a dormant classic colour. Only an explicit
+  /// choice in the face picker applies it to the procedural silhouette.
+  bool get botUsesShapeColor => botModeUiMeta['useShapeColor'] == true;
+
+  String? get botFaceColorHex => botUsesShapeColor ? botColorHex : null;
 
   String? _botMetaText(String key, int maxRunes) {
     final raw = botModeUiMeta[key];
@@ -406,9 +429,6 @@ class AgentProfile {
       roomMirror: json['name'] == 'default' && json['ui_meta'] is Map
           ? RoomMirror.parse((json['ui_meta'] as Map)['hermes-bots-groups'])
           : RoomMirror.empty,
-      groupsProjection: json['name'] == 'default' && json['ui_meta'] is Map
-          ? (json['ui_meta'] as Map)['hermes-bots-groups']
-          : null,
     );
   }
 }

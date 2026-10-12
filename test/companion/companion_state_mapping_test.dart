@@ -1,22 +1,22 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/companion/models/companion_animation_state.dart';
-import 'package:hermes_android/core/widgets/hermes_spark_mascot.dart';
+import 'package:hermes_android/core/companion/models/companion_mood.dart';
 
 void main() {
   group('companionStateForMood', () {
-    const expected = <HermesSparkMood, CompanionAnimationState>{
-      HermesSparkMood.idle: CompanionAnimationState.idle,
-      HermesSparkMood.thinking: CompanionAnimationState.run,
-      HermesSparkMood.connecting: CompanionAnimationState.waiting,
-      HermesSparkMood.waiting: CompanionAnimationState.waiting,
-      HermesSparkMood.success: CompanionAnimationState.wave,
-      HermesSparkMood.error: CompanionAnimationState.failed,
-      HermesSparkMood.offline: CompanionAnimationState.idle,
-      HermesSparkMood.jump: CompanionAnimationState.jump,
+    const expected = <CompanionMood, CompanionAnimationState>{
+      CompanionMood.idle: CompanionAnimationState.idle,
+      CompanionMood.thinking: CompanionAnimationState.run,
+      CompanionMood.connecting: CompanionAnimationState.waiting,
+      CompanionMood.waiting: CompanionAnimationState.waiting,
+      CompanionMood.success: CompanionAnimationState.wave,
+      CompanionMood.error: CompanionAnimationState.failed,
+      CompanionMood.offline: CompanionAnimationState.idle,
+      CompanionMood.jump: CompanionAnimationState.jump,
     };
 
-    test('cubre todos los HermesSparkMood', () {
-      expect(expected.keys.toSet(), HermesSparkMood.values.toSet());
+    test('cubre todos los CompanionMood', () {
+      expect(expected.keys.toSet(), CompanionMood.values.toSet());
     });
 
     for (final entry in expected.entries) {

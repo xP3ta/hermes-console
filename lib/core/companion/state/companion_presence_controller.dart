@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
-import '../../widgets/hermes_spark_mascot.dart';
+import '../models/companion_mood.dart';
 
 /// Eventos de app que afectan al ánimo de la presencia (feature 006).
 enum PresenceEvent {
@@ -19,7 +19,7 @@ enum PresenceEvent {
 enum PresenceConnection { online, connecting, offline }
 
 /// Fuente **central** de ánimo del Companion (feature 006). Traduce eventos de
-/// app + estado de conexión a un [HermesSparkMood], reutilizando el mapeo
+/// app + estado de conexión a un [CompanionMood], reutilizando el mapeo
 /// `companionStateForMood` existente (sin estados/animaciones nuevos).
 ///
 /// Modelo de "overlay":
@@ -58,26 +58,26 @@ class CompanionPresenceController extends ChangeNotifier {
   bool _approvalPending = false; // entre approvalNeeded y resolución
 
   // --- overlay transitorio ---
-  HermesSparkMood? _transient; // success | error
+  CompanionMood? _transient; // success | error
   Timer? _decayTimer;
   int _replayToken = 0;
 
   /// Ánimo actual resuelto por prioridad.
-  HermesSparkMood get mood {
+  CompanionMood get mood {
     final overlay = _transient;
-    if (overlay == HermesSparkMood.error) return HermesSparkMood.error;
-    if (_approvalPending) return HermesSparkMood.waiting;
+    if (overlay == CompanionMood.error) return CompanionMood.error;
+    if (_approvalPending) return CompanionMood.waiting;
     // Salto breve al enviar: se muestra por encima de "pensando" y decae a él.
-    if (overlay == HermesSparkMood.jump) return HermesSparkMood.jump;
-    if (_runActive) return HermesSparkMood.thinking;
-    if (overlay == HermesSparkMood.success) return HermesSparkMood.success;
+    if (overlay == CompanionMood.jump) return CompanionMood.jump;
+    if (_runActive) return CompanionMood.thinking;
+    if (overlay == CompanionMood.success) return CompanionMood.success;
     switch (_connection) {
       case PresenceConnection.offline:
-        return HermesSparkMood.offline;
+        return CompanionMood.offline;
       case PresenceConnection.connecting:
-        return HermesSparkMood.connecting;
+        return CompanionMood.connecting;
       case PresenceConnection.online:
-        return HermesSparkMood.idle;
+        return CompanionMood.idle;
     }
   }
 
@@ -96,12 +96,12 @@ class CompanionPresenceController extends ChangeNotifier {
     switch (event) {
       case PresenceEvent.appOpened:
       case PresenceEvent.petTapped:
-        _setTransient(HermesSparkMood.success, greetDuration);
+        _setTransient(CompanionMood.success, greetDuration);
         break;
       case PresenceEvent.messageSent:
         _runActive = true;
         // Gesto de salto breve que luego revela "pensando" (run).
-        _setTransient(HermesSparkMood.jump, jumpDuration);
+        _setTransient(CompanionMood.jump, jumpDuration);
         break;
       case PresenceEvent.approvalNeeded:
         _approvalPending = true;
@@ -111,17 +111,17 @@ class CompanionPresenceController extends ChangeNotifier {
       case PresenceEvent.responseCompleted:
         _runActive = false;
         _approvalPending = false;
-        _setTransient(HermesSparkMood.success, successDuration);
+        _setTransient(CompanionMood.success, successDuration);
         break;
       case PresenceEvent.runFailed:
         _runActive = false;
         _approvalPending = false;
-        _setTransient(HermesSparkMood.error, errorDuration);
+        _setTransient(CompanionMood.error, errorDuration);
         break;
     }
   }
 
-  void _setTransient(HermesSparkMood overlay, Duration duration) {
+  void _setTransient(CompanionMood overlay, Duration duration) {
     _transient = overlay;
     _replayToken++; // reinicia el one-shot en el render
     _decayTimer?.cancel();
@@ -138,7 +138,7 @@ class CompanionPresenceController extends ChangeNotifier {
     _transient = null;
   }
 
-  HermesSparkMood _lastEmitted = HermesSparkMood.idle;
+  CompanionMood _lastEmitted = CompanionMood.idle;
 
   void _emit() {
     final next = mood;

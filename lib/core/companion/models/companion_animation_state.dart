@@ -1,4 +1,4 @@
-import '../../widgets/hermes_spark_mascot.dart';
+import 'companion_mood.dart';
 
 /// Estados de animación de una mascota "Companion", alineados con el formato
 /// Petdex. En Fase A se usan idle/run/waiting/wave/failed; `review` y `jump`
@@ -27,28 +27,28 @@ extension CompanionAnimationStateX on CompanionAnimationState {
       this == CompanionAnimationState.waiting;
 }
 
-/// Mapea el estado visual de la app (`HermesSparkMood`) al estado de animación
+/// Mapea el estado visual de la app (`CompanionMood`) al estado de animación
 /// de la mascota. Tabla fijada en data-model.md (Clarifications 2026-06-25):
 ///
 /// idle→idle, thinking→run, connecting→waiting, waiting→waiting,
 /// success→wave, error→failed, offline→idle.
-CompanionAnimationState companionStateForMood(HermesSparkMood mood) {
+CompanionAnimationState companionStateForMood(CompanionMood mood) {
   switch (mood) {
-    case HermesSparkMood.idle:
+    case CompanionMood.idle:
       return CompanionAnimationState.idle;
-    case HermesSparkMood.thinking:
+    case CompanionMood.thinking:
       return CompanionAnimationState.run;
-    case HermesSparkMood.connecting:
+    case CompanionMood.connecting:
       return CompanionAnimationState.waiting;
-    case HermesSparkMood.waiting:
+    case CompanionMood.waiting:
       return CompanionAnimationState.waiting;
-    case HermesSparkMood.success:
+    case CompanionMood.success:
       return CompanionAnimationState.wave;
-    case HermesSparkMood.error:
+    case CompanionMood.error:
       return CompanionAnimationState.failed;
-    case HermesSparkMood.offline:
+    case CompanionMood.offline:
       return CompanionAnimationState.idle;
-    case HermesSparkMood.jump:
+    case CompanionMood.jump:
       return CompanionAnimationState.jump;
   }
 }

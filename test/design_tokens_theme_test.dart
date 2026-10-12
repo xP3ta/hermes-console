@@ -21,7 +21,7 @@ void main() {
   });
 
   group('theme titles', () {
-    for (final id in const ['amber', 'mocha', 'crimson']) {
+    for (final id in const ['amber', 'gruvbox-light', 'bordeaux-light']) {
       test('$id: titleLarge/titleMedium use textPrimary, not accent', () {
         final theme = AppTheme.fromId(id);
         final colors = theme.hermes;

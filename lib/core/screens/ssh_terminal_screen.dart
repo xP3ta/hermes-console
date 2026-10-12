@@ -11,10 +11,12 @@ import '../services/ssh_commands.dart';
 import '../services/ssh_session_service.dart';
 import '../screens/lock_screen.dart';
 import '../theme/app_theme.dart';
+import '../utils/ssh_error.dart';
 import '../widgets/hermes_app_bar.dart';
 import '../widgets/hermes_premium_ui.dart';
 import '../widgets/ssh_host_key_dialog.dart';
 import 'sftp_browser_screen.dart';
+import '../widgets/console_loader.dart';
 import '../design/hermes_design.dart'
     show HermesDialogAction, HermesDialogActionStyle, showHermesFormDialog;
 
@@ -122,17 +124,7 @@ class _SshTerminalScreenState extends State<SshTerminalScreen> {
       backgroundColor: colors.background,
       appBar: HermesAppBar(
         centerTitle: false,
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(Strings.of(context).sshTitle),
-            Text(
-              widget.connection.label,
-              style: TextStyle(fontSize: 10.5, color: colors.textSecondary),
-            ),
-          ],
-        ),
+        title: Text(Strings.of(context).sshTitle),
         actions: [
           IconButton(
             tooltip: Strings.of(context).sshFilesSftp,
@@ -154,13 +146,13 @@ class _SshTerminalScreenState extends State<SshTerminalScreen> {
   Widget _body(HermesThemeColors colors) {
     final session = _session;
     if (_preparing || session == null) {
-      return _loader(colors, Strings.of(context).sshConnecting);
+      return _loader(Strings.of(context).sshConnecting);
     }
     return ValueListenableBuilder<SshSessionPhase>(
       valueListenable: session.phase,
       builder: (context, phase, _) {
         if (phase == SshSessionPhase.connecting) {
-          return _loader(colors, Strings.of(context).sshConnecting);
+          return _loader(Strings.of(context).sshConnecting);
         }
         if (phase == SshSessionPhase.error) {
           return Center(
@@ -172,7 +164,12 @@ class _SshTerminalScreenState extends State<SshTerminalScreen> {
                   Icon(Icons.error_outline, size: 44, color: colors.error),
                   const SizedBox(height: 16),
                   Text(
-                    session.error ?? Strings.of(context).sshConnError,
+                    session.failure == null
+                        ? Strings.of(context).sshConnError
+                        : localizedSshError(
+                            Strings.of(context),
+                            session.failure!,
+                          ),
                     textAlign: TextAlign.center,
                     style: TextStyle(fontSize: 13, color: colors.textSecondary),
                   ),
@@ -219,16 +216,7 @@ class _SshTerminalScreenState extends State<SshTerminalScreen> {
     );
   }
 
-  Widget _loader(HermesThemeColors colors, String msg) => Center(
-    child: Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        const CircularProgressIndicator(strokeWidth: 2),
-        const SizedBox(height: 16),
-        Text(msg, style: TextStyle(fontSize: 13, color: colors.textSecondary)),
-      ],
-    ),
-  );
+  Widget _loader(String msg) => Center(child: ConsoleLoader.large(label: msg));
 
   Widget _reconnectBar(HermesThemeColors colors) => Container(
     width: double.infinity,
@@ -334,7 +322,9 @@ class _CommandsEditorState extends State<_CommandsEditor> {
         children: [
           TextField(
             controller: labelCtrl,
-            decoration: InputDecoration(labelText: Strings.of(context).sshLabel),
+            decoration: InputDecoration(
+              labelText: Strings.of(context).sshLabel,
+            ),
           ),
           const SizedBox(height: 10),
           TextField(
@@ -409,7 +399,7 @@ class _CommandsEditorState extends State<_CommandsEditor> {
                       Strings.of(context).sshNoCommands,
                       style: TextStyle(
                         fontSize: 13,
-                        color: colors.textDisabled,
+                        color: colors.textTertiary,
                       ),
                     ),
                   )
@@ -443,6 +433,7 @@ class _CommandsEditorState extends State<_CommandsEditor> {
                           size: 18,
                           color: colors.error.withValues(alpha: 0.8),
                         ),
+                        tooltip: Strings.of(context).commonDelete,
                         onPressed: () => setState(() => _items.removeAt(i)),
                       ),
                     ),

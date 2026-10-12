@@ -2,8 +2,10 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/design/edges.dart';
 import 'package:hermes_android/core/widgets/session_status_tone.dart';
 import 'package:hermes_android/core/models/desktop_active_session.dart';
 import 'package:hermes_android/core/models/desktop_control_center.dart';
@@ -16,6 +18,7 @@ import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/compression_restore_store.dart';
 import 'package:hermes_android/core/services/desktop_control_gateway.dart';
 import 'package:hermes_android/core/services/dock_preferences_store.dart';
+import 'package:hermes_android/core/services/session_archive.dart';
 import 'package:hermes_android/core/services/session_repository.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
@@ -26,6 +29,7 @@ import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
+import 'support/home_chat_finders.dart';
 
 /// Rediseño de Conversaciones (drawer › "Conversaciones").
 ///
@@ -123,9 +127,15 @@ class _HomeActivityClient extends ApiClient {
   Future<bool> healthCheck() async => true;
 
   @override
+  Future<bool> healthReachable() => healthCheck();
+
+  @override
   Future<List<Session>> getSessions({
     bool includeChildren = false,
     String? profile,
+    int pageSize = 200,
+    bool Function(List<Session> sessions)? enough,
+    int? maxPages,
   }) async {
     sessionReads += 1;
     return sessions;
@@ -223,6 +233,7 @@ Future<void> _pumpUntil(
 }
 
 void main() {
+  useRecentsHomeBoard();
   TestWidgetsFlutterBinding.ensureInitialized();
 
   final dock = DockPreferencesController.instance;
@@ -270,6 +281,7 @@ void main() {
     WidgetTester tester,
     List<Map<String, dynamic>> rows, {
     ActiveChatService? activeChats,
+    DateTime Function()? clock,
   }) async {
     final prefs = await SharedPreferences.getInstance();
     final manager = await ConnectionManager.create(prefs);
@@ -303,6 +315,7 @@ void main() {
           clientOverride: gateway,
           repositoryOverride: repository,
           activeChatsOverride: activeChats,
+          clockOverride: clock,
         ),
       ),
     );
@@ -310,6 +323,62 @@ void main() {
   }
 
   int nowSeconds() => DateTime.now().millisecondsSinceEpoch ~/ 1000;
+
+  testWidgets('the header says «Conversaciones» and nothing under it: the '
+      'connection is a dot beside the name, said in words', (tester) async {
+    final handle = tester.ensureSemantics();
+    tester.view.physicalSize = const Size(1170, 2532);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.reset);
+    final now = DateTime(2026, 10, 14, 12, 0);
+    await pump(tester, [
+      _row(
+        'hoy-1',
+        title: 'Firma del keystore en CI',
+        lastActive: now.millisecondsSinceEpoch ~/ 1000,
+      ),
+    ], clock: () => now);
+    await _pumpUntil(tester, find.text('Firma del keystore en CI'));
+
+    final pill = find.byKey(const ValueKey('hermes-app-bar-title'));
+    final name = find.descendant(
+      of: pill,
+      matching: find.text('Conversaciones'),
+    );
+    final dot = find.descendant(
+      of: pill,
+      matching: find.byKey(const ValueKey('session-list-connection-dot')),
+    );
+    expect(name, findsOneWidget);
+    expect(dot, findsOneWidget);
+    // One line: the name is the only text of the pill, and the instance's
+    // name is not repeated anywhere in the header.
+    expect(
+      find.descendant(of: pill, matching: find.byType(Text)),
+      findsOneWidget,
+    );
+    expect(find.text('Redesign QA'), findsNothing);
+    expect(
+      tester.getRect(dot).left,
+      greaterThanOrEqualTo(tester.getRect(name).right),
+    );
+    expect(
+      tester.getRect(dot).center.dy,
+      closeTo(tester.getRect(name).center.dy, 2),
+    );
+    expect(tester.getSize(pill).height, lessThanOrEqualTo(44));
+    // The state is said, whichever it is at this moment.
+    final strings = Strings.of(tester.element(pill));
+    expect(
+      tester.getSemantics(dot).label,
+      anyOf(
+        contains(strings.hwServerOnline),
+        contains(strings.hwServerOffline),
+        contains(strings.hwServerChecking),
+      ),
+    );
+    handle.dispose();
+  });
 
   testWidgets('las secciones llevan etiqueta en mayúsculas y su cuenta', (
     tester,
@@ -319,25 +388,16 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
 
-    final today = nowSeconds();
-    // Un offset fijo de 26h puede caer dos días atrás si el test corre de
-    // madrugada (antes de las 02:00), en vez de "ayer" — se ancla al
-    // mediodía del día calendario anterior para que sea independiente de
-    // la hora a la que corra la suite.
-    final now = DateTime.now();
-    final yesterday =
-        DateTime(
-          now.year,
-          now.month,
-          now.day - 1,
-          12,
-        ).millisecondsSinceEpoch ~/
-        1000;
+    // The sections follow the human day (04:00 rollover), so the test fixes
+    // the clock instead of depending on the hour the suite runs at.
+    final now = DateTime(2026, 10, 14, 12, 0);
+    final today = now.millisecondsSinceEpoch ~/ 1000;
+    final yesterday = DateTime(2026, 10, 13, 12).millisecondsSinceEpoch ~/ 1000;
     await pump(tester, [
       _row('hoy-1', title: 'Firma del keystore en CI', lastActive: today),
       _row('hoy-2', title: 'Notas de la release', lastActive: today - 60),
       _row('ayer-1', title: 'Deploy a staging', lastActive: yesterday),
-    ]);
+    ], clock: () => now);
     await _pumpUntil(tester, find.text('Firma del keystore en CI'));
 
     final strings = Strings.of(tester.element(find.byType(SessionListScreen)));
@@ -347,6 +407,36 @@ void main() {
     expect(find.text('2'), findsOneWidget);
     expect(find.text('1'), findsOneWidget);
   });
+
+  testWidgets(
+    'a rename or archive made on another screen repaints the list at once',
+    (tester) async {
+      tester.view.physicalSize = const Size(1170, 2532);
+      tester.view.devicePixelRatio = 3;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final today = nowSeconds();
+      final manager = await pump(tester, [
+        _row('keep-1', title: 'Firma del keystore en CI', lastActive: today),
+        _row('arch-1', title: 'Notas de la release', lastActive: today - 60),
+      ]);
+      await _pumpUntil(tester, find.text('Notas de la release'));
+      await tester.pumpAndSettle();
+
+      // Home / chat auto-title write through the same per-connection store.
+      final other = await SessionArchive.load(manager.prefs, _connectionId);
+      await other.setTitle('keep-1', 'Renombrada en Inicio');
+      await tester.pump();
+      expect(find.text('Renombrada en Inicio'), findsOneWidget);
+      expect(find.text('Firma del keystore en CI'), findsNothing);
+
+      await other.archive('arch-1');
+      await tester.pump();
+      expect(find.text('Notas de la release'), findsNothing);
+      expect(find.text('Renombrada en Inicio'), findsOneWidget);
+    },
+  );
 
   testWidgets('las fijadas van en su propia sección, antes que los días', (
     tester,
@@ -379,6 +469,50 @@ void main() {
     );
     expect(pinnedHeader.dy, lessThan(todayHeader.dy));
   });
+
+  testWidgets(
+    'rebuilds without a list change reuse the filtered view, and pin/unpin '
+    'still regroup it',
+    (tester) async {
+      tester.view.physicalSize = const Size(1170, 2532);
+      tester.view.devicePixelRatio = 3;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final today = nowSeconds();
+      await pump(tester, [
+        _row('hoy-1', title: 'Firma del keystore en CI', lastActive: today),
+        _row('pin-1', title: 'Migrar tests de pagos', lastActive: today - 600),
+      ]);
+      await _pumpUntil(tester, find.text('Migrar tests de pagos'));
+      await tester.pumpAndSettle();
+      final strings = Strings.of(
+        tester.element(find.byType(SessionListScreen)),
+      );
+
+      final passes = SessionListScreen.debugFilterPasses;
+      for (var i = 0; i < 3; i++) {
+        tester.element(find.byType(SessionListScreen)).markNeedsBuild();
+        await tester.pump();
+      }
+      expect(SessionListScreen.debugFilterPasses, passes);
+
+      await tester.drag(
+        find.text('Migrar tests de pagos'),
+        const Offset(400, 0),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text(strings.sesPinned.toUpperCase()), findsOneWidget);
+      expect(SessionListScreen.debugFilterPasses, greaterThan(passes));
+
+      await tester.drag(
+        find.text('Migrar tests de pagos'),
+        const Offset(400, 0),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text(strings.sesPinned.toUpperCase()), findsNothing);
+    },
+  );
 
   testWidgets(
     'el borrador se hila en la vista previa en vez de una píldora de color',
@@ -421,7 +555,7 @@ void main() {
   );
 
   testWidgets(
-    'la lista nunca muestra JSON de tools y recupera el último texto humano',
+    'la lista nunca muestra JSON de tools ni inventa otra vista previa',
     (tester) async {
       tester.view.physicalSize = const Size(1170, 2532);
       tester.view.devicePixelRatio = 3;
@@ -449,8 +583,11 @@ void main() {
       await _pumpUntil(tester, find.text('Deploy a staging'));
 
       expect(find.text(rawToolCall), findsNothing);
-      expect(find.text('Comprueba el despliegue'), findsOneWidget);
-      expect(find.text('Sin mensajes visibles'), findsOneWidget);
+      // As the Desktop sidebar: only the row's own preview, never the last
+      // turn in its place, and no placeholder line when there is none.
+      expect(find.text('Comprueba el despliegue'), findsNothing);
+      expect(find.text('Sin mensajes visibles'), findsNothing);
+      expect(find.text('Tarea automatizada'), findsOneWidget);
     },
   );
 
@@ -496,8 +633,10 @@ void main() {
     await _pumpUntil(tester, find.text('Deploy a staging'));
 
     double bottomPadding() {
-      final list = tester.widget<ListView>(find.byType(ListView).first);
-      return list.padding!.resolve(TextDirection.ltr).bottom;
+      final list = tester.widget<SliverPadding>(
+        find.byType(SliverPadding).first,
+      );
+      return list.padding.resolve(TextDirection.ltr).bottom;
     }
 
     // El dock se pinta encima de la lista: sin reserva la última conversación
@@ -546,20 +685,18 @@ void main() {
       gateway.emit('message.complete', const {'text': 'proceso iniciado'});
       await done.timeout(const Duration(seconds: 1));
 
-      await pump(
-        tester,
-        [
-          _row(
-            'background-1',
-            title: 'Informe prolongado',
-            lastActive: nowSeconds(),
-          ),
-        ],
-        activeChats: activeChats,
-      );
-      await _pumpUntil(tester, find.text('Informe prolongado'));
+      await pump(tester, [
+        _row(
+          'background-1',
+          title: 'Informe prolongado',
+          lastActive: nowSeconds(),
+        ),
+      ], activeChats: activeChats);
+      await _pumpUntil(tester, find.textContaining('Informe prolongado'));
 
-      final strings = Strings.of(tester.element(find.byType(SessionListScreen)));
+      final strings = Strings.of(
+        tester.element(find.byType(SessionListScreen)),
+      );
       expect(find.text(strings.chaBackgroundActivityCount(1)), findsOneWidget);
       expect(
         find.byKey(const ValueKey('session-running-background-1')),
@@ -629,25 +766,23 @@ void main() {
       expect(chat.desktopManualCompressionInFlight, isFalse);
       expect(chat.sessionActivity.active, isFalse);
 
-      await pump(
-        tester,
-        [
-          _row(
-            'compacting-1',
-            title: 'Sesión compactando',
-            lastActive: nowSeconds(),
-          ),
-        ],
-        activeChats: activeChats,
-      );
+      await pump(tester, [
+        _row(
+          'compacting-1',
+          title: 'Sesión compactando',
+          lastActive: nowSeconds(),
+        ),
+      ], activeChats: activeChats);
       await _pumpUntil(tester, find.text('Sesión compactando'));
 
-      final strings = Strings.of(tester.element(find.byType(SessionListScreen)));
+      final strings = Strings.of(
+        tester.element(find.byType(SessionListScreen)),
+      );
       expect(
         find.byKey(const ValueKey('session-running-compacting-1')),
         findsOneWidget,
       );
-      expect(find.text(strings.slActivityCompacting), findsOneWidget);
+      expect(find.text(strings.liveCompacting), findsOneWidget);
       // The status line has its own semantic colour, smaller and lighter
       // than the title (it used to be the same white as the title).
       final colors = Theme.of(
@@ -683,102 +818,100 @@ void main() {
     },
   );
 
-  testWidgets(
-    'inicio pinta el roster frío por id durable, nunca por título',
-    (tester) async {
-      tester.view.physicalSize = const Size(1170, 2532);
-      tester.view.devicePixelRatio = 3;
-      addTearDown(tester.view.resetPhysicalSize);
-      addTearDown(tester.view.resetDevicePixelRatio);
+  testWidgets('inicio pinta el roster frío por id durable, nunca por título', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1170, 2532);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
 
-      final prefs = await SharedPreferences.getInstance();
-      final manager = await ConnectionManager.create(prefs);
-      await manager.saveConnection(
-        'Redesign QA',
-        '127.0.0.1',
-        8642,
-        'gateway-key',
-        kind: InstanceKind.vps,
-      );
-      final connection = manager.getConnections().single;
-      final aggregate = GlobalActivityAggregate.inMemory();
-      final activeChats = ActiveChatService(
-        globalActivity: aggregate,
-        compressionRestoreStore: testCompressionRestoreStore(),
-      );
-      addTearDown(activeChats.dispose);
-      final generation = aggregate.beginRosterRequest(
-        connection.id,
-        'default',
-      );
-      aggregate.applyRoster(
-        connectionId: connection.id,
-        profile: 'default',
-        replayEpoch: 'cold-start',
-        requestGeneration: generation,
-        roster: const DesktopActiveSessionList(
-          sessions: [
-            DesktopActiveSession(
-              runtimeSessionId: 'runtime-busy-row',
-              storedSessionId: 'busy-row',
-              status: 'working',
-            ),
-          ],
-        ),
-      );
-      final now = DateTime.now().millisecondsSinceEpoch / 1000;
-      final client = _HomeActivityClient(
+    final prefs = await SharedPreferences.getInstance();
+    final manager = await ConnectionManager.create(prefs);
+    await manager.saveConnection(
+      'Redesign QA',
+      '127.0.0.1',
+      8642,
+      'gateway-key',
+      kind: InstanceKind.vps,
+    );
+    final connection = manager.getConnections().single;
+    final aggregate = GlobalActivityAggregate.inMemory();
+    final activeChats = ActiveChatService(
+      globalActivity: aggregate,
+      compressionRestoreStore: testCompressionRestoreStore(),
+    );
+    addTearDown(activeChats.dispose);
+    final generation = aggregate.beginRosterRequest(connection.id, 'default');
+    aggregate.applyRoster(
+      connectionId: connection.id,
+      profile: 'default',
+      replayEpoch: 'cold-start',
+      requestGeneration: generation,
+      roster: const DesktopActiveSessionList(
         sessions: [
-          Session(
-            id: 'busy-row',
-            title: 'Título repetido',
-            model: 'hermes-agent',
-            source: 'mobile',
-            messageCount: 2,
-            isActive: false,
-            preview: 'Fila ocupada',
-            startedAt: now,
-          ),
-          Session(
-            id: 'idle-row',
-            title: 'Título repetido',
-            model: 'hermes-agent',
-            source: 'mobile',
-            messageCount: 2,
-            isActive: false,
-            preview: 'Fila inactiva',
-            startedAt: now - 1,
+          DesktopActiveSession(
+            runtimeSessionId: 'runtime-busy-row',
+            storedSessionId: 'busy-row',
+            status: 'working',
           ),
         ],
-      );
-
-      await tester.pumpWidget(
-        MaterialApp(
-          locale: const Locale('es'),
-          theme: AppTheme.fromId('dark'),
-          localizationsDelegates: Strings.localizationsDelegates,
-          supportedLocales: Strings.supportedLocales,
-          home: HomeDashboardScreen(
-            connManager: manager,
-            clientFactory: (_) => client,
-            activeChatsOverride: activeChats,
-          ),
+      ),
+    );
+    final now = DateTime.now().millisecondsSinceEpoch / 1000;
+    final client = _HomeActivityClient(
+      sessions: [
+        Session(
+          id: 'busy-row',
+          title: 'Título repetido',
+          model: 'hermes-agent',
+          source: 'mobile',
+          messageCount: 2,
+          isActive: false,
+          preview: 'Fila ocupada',
+          startedAt: now,
         ),
-      );
-      await _pumpUntil(tester, find.text('Título repetido'));
+        Session(
+          id: 'idle-row',
+          title: 'Título repetido',
+          model: 'hermes-agent',
+          source: 'mobile',
+          messageCount: 2,
+          isActive: false,
+          preview: 'Fila inactiva',
+          startedAt: now - 1,
+        ),
+      ],
+    );
 
-      expect(
-        find.byKey(const ValueKey('home-activity-busy-row')),
-        findsOneWidget,
-      );
-      expect(
-        find.byKey(const ValueKey('home-activity-idle-row')),
-        findsNothing,
-      );
-      await tester.pumpWidget(const SizedBox.shrink());
-      await tester.pump(const Duration(seconds: 10));
-    },
-  );
+    await tester.pumpWidget(
+      MaterialApp(
+        locale: const Locale('es'),
+        theme: AppTheme.fromId('dark'),
+        localizationsDelegates: Strings.localizationsDelegates,
+        supportedLocales: Strings.supportedLocales,
+        home: HomeDashboardScreen(
+          connManager: manager,
+          clientFactory: (_) => client,
+          activeChatsOverride: activeChats,
+        ),
+      ),
+    );
+    await _pumpUntil(tester, find.text('Título repetido'));
+
+    // Home: Continuar marks the working chat, matched by its durable id
+    // (both rows share the title).
+    expect(
+      find.byKey(const ValueKey('home-chat-working-busy-row')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('home-chat-working-idle-row')),
+      findsNothing,
+    );
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(seconds: 10));
+  });
 
   testWidgets(
     'inicio hidrata active_list y exige dos ausencias antes de quedar inactivo',
@@ -851,7 +984,7 @@ void main() {
       );
       await _pumpUntil(
         tester,
-        find.byKey(const ValueKey('home-activity-cold-running')),
+        find.byKey(const ValueKey('home-chat-working-cold-running')),
       );
       expect(rosterReads, greaterThanOrEqualTo(1));
       final initialRosterReads = rosterReads;
@@ -875,7 +1008,7 @@ void main() {
       }
       expect(client.sessionReads, greaterThan(initialSessionReads));
       expect(
-        find.byKey(const ValueKey('home-activity-cold-running')),
+        find.byKey(const ValueKey('home-chat-working-cold-running')),
         findsOneWidget,
       );
 
@@ -901,8 +1034,10 @@ void main() {
             ?.stale,
         isTrue,
       );
+      // The first absence remains visually continuous while the next read
+      // settles; the second absence below removes it.
       expect(
-        find.byKey(const ValueKey('home-activity-cold-running')),
+        find.byKey(const ValueKey('home-chat-working-cold-running')),
         findsOneWidget,
       );
 
@@ -925,61 +1060,134 @@ void main() {
       expect(rosterReads, greaterThanOrEqualTo(initialRosterReads + 3));
       await tester.pump(const Duration(milliseconds: 250));
       expect(
-        find.byKey(const ValueKey('home-activity-cold-running')),
+        find.byKey(const ValueKey('home-chat-working-cold-running')),
         findsNothing,
       );
-      expect(find.text('Vista previa actualizada'), findsOneWidget);
+      // Calm again; the refreshed chat is still listed in Continuar.
+      expect(
+        find.byKey(const ValueKey('home-continue-cold-running')),
+        findsOneWidget,
+      );
 
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump(const Duration(seconds: 10));
     },
   );
 
-  testWidgets(
-    'inicio conserva el proceso de fondo tras acabar el turno',
-    (tester) async {
-      tester.view.physicalSize = const Size(1170, 2532);
-      tester.view.devicePixelRatio = 3;
-      addTearDown(tester.view.resetPhysicalSize);
-      addTearDown(tester.view.resetDevicePixelRatio);
+  testWidgets('inicio conserva el proceso de fondo tras acabar el turno', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1170, 2532);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
 
-      final prefs = await SharedPreferences.getInstance();
-      final manager = await ConnectionManager.create(prefs);
-      await manager.saveConnection(
-        'Redesign QA',
-        '127.0.0.1',
-        8642,
-        'gateway-key',
-        kind: InstanceKind.vps,
-      );
-      final connection = manager.getConnections().single;
-      final gateway = _ProcessActivityGateway();
-      final activeChats = ActiveChatService(
-        compressionRestoreStore: testCompressionRestoreStore(),
-      );
-      addTearDown(activeChats.dispose);
-      addTearDown(gateway.close);
-      final chat = activeChats.attach(
-        connection: connection,
-        sessionId: 'background-1',
-        sessionTitle: 'Informe prolongado',
-        desktopGateway: gateway,
-        disableForegroundKeepAlive: true,
-      )..smoothStreaming = false;
-      expect(
-        await chat.send(
-          fullText: 'genera el informe',
-          model: 'hermes-agent',
-          history: const [],
+    final prefs = await SharedPreferences.getInstance();
+    final manager = await ConnectionManager.create(prefs);
+    await manager.saveConnection(
+      'Redesign QA',
+      '127.0.0.1',
+      8642,
+      'gateway-key',
+      kind: InstanceKind.vps,
+    );
+    final connection = manager.getConnections().single;
+    final gateway = _ProcessActivityGateway();
+    final activeChats = ActiveChatService(
+      compressionRestoreStore: testCompressionRestoreStore(),
+    );
+    addTearDown(activeChats.dispose);
+    addTearDown(gateway.close);
+    final chat = activeChats.attach(
+      connection: connection,
+      sessionId: 'background-1',
+      sessionTitle: 'Informe prolongado',
+      desktopGateway: gateway,
+      disableForegroundKeepAlive: true,
+    )..smoothStreaming = false;
+    expect(
+      await chat.send(
+        fullText: 'genera el informe',
+        model: 'hermes-agent',
+        history: const [],
+      ),
+      isTrue,
+    );
+    await chat.refreshBackgroundProcessesForTesting();
+    final done = chat.changes.firstWhere(
+      (event) => event == ActiveChatEvent.done,
+    );
+    gateway.emit('message.complete', const {'text': 'proceso iniciado'});
+    await done.timeout(const Duration(seconds: 1));
+    activeChats.globalActivity.applyRoster(
+      connectionId: connection.id,
+      profile: 'default',
+      replayEpoch: 'current',
+      requestGeneration: activeChats.globalActivity.beginRosterRequest(
+        connection.id,
+        'default',
+      ),
+      roster: const DesktopActiveSessionList(
+        sessions: [
+          DesktopActiveSession(
+            runtimeSessionId: 'runtime-background-1',
+            storedSessionId: 'background-1',
+            status: 'working',
+          ),
+        ],
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        locale: const Locale('es'),
+        theme: AppTheme.fromId('dark'),
+        localizationsDelegates: Strings.localizationsDelegates,
+        supportedLocales: Strings.supportedLocales,
+        home: HomeDashboardScreen(
+          connManager: manager,
+          clientFactory: (_) => _HomeActivityClient(),
+          activeChatsOverride: activeChats,
         ),
-        isTrue,
-      );
-      await chat.refreshBackgroundProcessesForTesting();
-      final done = chat.changes.firstWhere(
-        (event) => event == ActiveChatEvent.done,
-      );
-      gateway.emit('message.complete', const {'text': 'proceso iniciado'});
-      await done.timeout(const Duration(seconds: 1));
+      ),
+    );
+    await _pumpUntil(tester, find.textContaining('Informe prolongado'));
+
+    final strings = Strings.of(
+      tester.element(find.byType(HomeDashboardScreen)),
+    );
+    // Home: a chat whose turn ended but keeps a background process is not
+    // «working» (Continuar marks turns only).
+    expect(
+      find.byKey(const ValueKey('home-chat-working-background-1')),
+      findsNothing,
+    );
+
+    gateway.snapshot = const AgentCenterSnapshot(
+      snapshots: [],
+      processes: [
+        BackgroundProcessEntry(
+          opaqueId: 'process-1',
+          status: AgentCenterStatus.completed,
+          uptimeSeconds: 4,
+        ),
+      ],
+    );
+    await chat.refreshBackgroundProcessesForTesting();
+    expect(chat.hasActiveBackgroundProcesses, isFalse);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+
+    // re1215: the busy roster row was read right after this chat saw its
+    // own turn end (Hermes clears `running` after post-processing and may
+    // run a background review); it is the finished turn, not new work.
+    expect(find.text(strings.ss1215StatusWorking), findsNothing);
+    expect(
+      find.byKey(const ValueKey('home-chat-working-background-1')),
+      findsNothing,
+    );
+
+    for (var probe = 0; probe < 2; probe++) {
       activeChats.globalActivity.applyRoster(
         connectionId: connection.id,
         profile: 'default',
@@ -988,16 +1196,58 @@ void main() {
           connection.id,
           'default',
         ),
-        roster: const DesktopActiveSessionList(
-          sessions: [
-            DesktopActiveSession(
-              runtimeSessionId: 'runtime-background-1',
-              storedSessionId: 'background-1',
-              status: 'working',
-            ),
-          ],
-        ),
+        roster: const DesktopActiveSessionList(),
       );
+    }
+    expect(
+      activeChats.globalActivity.activityFor(
+        connection.id,
+        'default',
+        'background-1',
+      ),
+      isNull,
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(
+      find.byKey(const ValueKey('home-chat-working-background-1')),
+      findsNothing,
+    );
+    await tester.pump(const Duration(seconds: 10));
+  });
+
+  testWidgets(
+    'el anillo del punto en vivo repinta solo el punto, no la fila entera',
+    (tester) async {
+      tester.view.physicalSize = const Size(320, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final prefs = await SharedPreferences.getInstance();
+      final manager = await ConnectionManager.create(prefs);
+      final aggregate = GlobalActivityAggregate.inMemory();
+      addTearDown(aggregate.dispose);
+      final dashboard = DashboardClient(
+        host: '127.0.0.1',
+        port: 9119,
+        manualToken: 'dashboard-token',
+        httpClientOverride: MockClient((request) async {
+          if (request.method == 'GET' && request.url.path == '/api/sessions') {
+            return _page([
+              _row('live-1', title: 'Migrar tests de pagos', lastActive: 2),
+            ]);
+          }
+          return http.Response('{}', 404);
+        }),
+      );
+      final gateway = _gateway();
+      final repository = SessionRepository(dashboard, gateway);
+      addTearDown(() {
+        repository.close();
+        dashboard.close();
+      });
 
       await tester.pumpWidget(
         MaterialApp(
@@ -1005,78 +1255,53 @@ void main() {
           theme: AppTheme.fromId('dark'),
           localizationsDelegates: Strings.localizationsDelegates,
           supportedLocales: Strings.supportedLocales,
-          home: HomeDashboardScreen(
+          home: SessionListScreen(
+            connection: _connection(),
             connManager: manager,
-            clientFactory: (_) => _HomeActivityClient(),
-            activeChatsOverride: activeChats,
+            clientOverride: gateway,
+            repositoryOverride: repository,
+            globalActivityOverride: aggregate,
+            activeSessionListLoader: () async => const DesktopActiveSessionList(
+              sessions: [
+                DesktopActiveSession(
+                  runtimeSessionId: 'runtime-live-1',
+                  storedSessionId: 'live-1',
+                  status: 'working',
+                ),
+              ],
+            ),
           ),
         ),
       );
-      await _pumpUntil(tester, find.text('Informe prolongado'));
-
-      final strings = Strings.of(
-        tester.element(find.byType(HomeDashboardScreen)),
+      await _pumpUntil(
+        tester,
+        find.byKey(const ValueKey('session-running-live-1')),
       );
-      expect(find.text(strings.chaBackgroundActivityCount(1)), findsOneWidget);
-      expect(
-        find.byKey(const ValueKey('home-activity-background-1')),
-        findsOneWidget,
-      );
+      await tester.pump(const Duration(seconds: 1));
 
-      gateway.snapshot = const AgentCenterSnapshot(
-        snapshots: [],
-        processes: [
-          BackgroundProcessEntry(
-            opaqueId: 'process-1',
-            status: AgentCenterStatus.completed,
-            uptimeSeconds: 4,
-          ),
-        ],
-      );
-      await chat.refreshBackgroundProcessesForTesting();
-      expect(chat.hasActiveBackgroundProcesses, isFalse);
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 200));
-
-      expect(find.text(strings.slActivityBackground), findsNothing);
-      expect(find.text(strings.chaBackgroundActivityCount(1)), findsNothing);
-      expect(find.text(strings.chaPipelineThinking), findsOneWidget);
-      expect(
-        find.byKey(const ValueKey('home-activity-background-1')),
-        findsOneWidget,
-      );
-
-      for (var probe = 0; probe < 2; probe++) {
-        activeChats.globalActivity.applyRoster(
-          connectionId: connection.id,
-          profile: 'default',
-          replayEpoch: 'current',
-          requestGeneration: activeChats.globalActivity.beginRosterRequest(
-            connection.id,
-            'default',
-          ),
-          roster: const DesktopActiveSessionList(),
-        );
+      // The 1.8 s ring ticks every frame while the row is live. Each tick
+      // must repaint the dot's own layer, never the title, preview or card.
+      final painted = <RenderObject>{};
+      debugOnProfilePaint = painted.add;
+      addTearDown(() => debugOnProfilePaint = null);
+      for (var frame = 0; frame < 10; frame++) {
+        await tester.pump(const Duration(milliseconds: 16));
       }
+      debugOnProfilePaint = null;
+      final paragraphs = painted.whereType<RenderParagraph>().length;
       expect(
-        activeChats.globalActivity.activityFor(
-          connection.id,
-          'default',
-          'background-1',
-        ),
-        isNull,
+        paragraphs,
+        0,
+        reason: 'the row text must not be repainted by the ring animation',
       );
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 200));
-      await tester.pump(const Duration(milliseconds: 200));
-      expect(
-        find.byKey(const ValueKey('home-activity-background-1')),
-        findsNothing,
-      );
-      await tester.pump(const Duration(seconds: 10));
+      expect(painted, isNotEmpty, reason: 'the ring itself keeps animating');
+      // Leaving the screen (opaque route on top) stops the ticker.
+      Navigator.of(
+        tester.element(find.byType(SessionListScreen)),
+      ).push(MaterialPageRoute<void>(builder: (_) => const SizedBox()));
+      await tester.pumpAndSettle();
     },
   );
-
   testWidgets(
     'el punto en vivo no deja una animación colgada con movimiento reducido',
     (tester) async {
@@ -1153,11 +1378,8 @@ void main() {
       await tester.pumpAndSettle();
       // La actividad ocupa la línea de vista previa (estructura del mockup) y
       // se anuncia como un único nodo accesible.
-      expect(find.bySemanticsLabel('trabajando'), findsOneWidget);
-      expect(
-        find.byKey(const ValueKey('session-row-stop')),
-        findsOneWidget,
-      );
+      expect(find.bySemanticsLabel('Trabajando…'), findsOneWidget);
+      expect(find.byKey(const ValueKey('session-row-stop')), findsOneWidget);
       expect(
         find.byKey(const ValueKey('session-running-live-2')),
         findsNothing,
@@ -1165,6 +1387,186 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  group('pantallas tapadas por otra ruta', () {
+    // Durante un run con subagentes ActiveChatService fuerza una notificación
+    // de `activeIds` por cada evento `subagentActivity`, aunque el conjunto no
+    // cambie. Inicio y Conversaciones siguen montados debajo del chat y se
+    // reconstruían enteros, robando tiempo a los frames del chat visible.
+    int builds(WidgetTester tester, Type type) =>
+        tester.widgetList(find.byType(type, skipOffstage: false)).length;
+
+    Future<int> countRebuilds(
+      WidgetTester tester,
+      Type rowType,
+      Future<void> Function() action,
+    ) async {
+      var count = 0;
+      final previous = debugOnRebuildDirtyWidget;
+      debugOnRebuildDirtyWidget = (element, builtOnce) {
+        if (element.widget.runtimeType == rowType) count++;
+      };
+      try {
+        await action();
+      } finally {
+        debugOnRebuildDirtyWidget = previous;
+      }
+      return count;
+    }
+
+    Future<void> pushCover(WidgetTester tester, Type screen) async {
+      Navigator.of(tester.element(find.byType(screen))).push(
+        MaterialPageRoute<void>(
+          builder: (_) => const Scaffold(body: Text('chat encima')),
+        ),
+      );
+      await tester.pumpAndSettle(const Duration(milliseconds: 50));
+      expect(find.text('chat encima'), findsOneWidget);
+    }
+
+    testWidgets(
+      'Conversaciones no reconstruye su lista mientras está tapada y se '
+      'pone al día al volver',
+      (tester) async {
+        tester.view.physicalSize = const Size(1170, 2532);
+        tester.view.devicePixelRatio = 3;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        final activeChats = ActiveChatService(
+          compressionRestoreStore: testCompressionRestoreStore(),
+        );
+        addTearDown(activeChats.dispose);
+        await pump(tester, [
+          _row('cubierta-1', title: 'Fila tapada', lastActive: nowSeconds()),
+        ], activeChats: activeChats);
+        await _pumpUntil(tester, find.text('Fila tapada'));
+        expect(builds(tester, HermesSliverRows), greaterThan(0));
+
+        // Visible: una notificación sí repinta la lista (comportamiento
+        // existente que no debe perderse).
+        final visibleRebuilds = await countRebuilds(
+          tester,
+          HermesSliverRows,
+          () async {
+            activeChats.activeIds.value = <String>{};
+            await tester.pump();
+          },
+        );
+        expect(visibleRebuilds, greaterThan(0));
+
+        await pushCover(tester, SessionListScreen);
+        final hiddenRebuilds = await countRebuilds(
+          tester,
+          HermesSliverRows,
+          () async {
+            for (var i = 0; i < 20; i++) {
+              activeChats.activeIds.value = <String>{};
+              // The streaming chat on top produces a frame every vsync.
+              tester.binding.scheduleFrame();
+              await tester.pump(const Duration(milliseconds: 16));
+            }
+          },
+        );
+        expect(hiddenRebuilds, 0);
+
+        // Al volver se entrega UNA puesta al día.
+        final returnRebuilds = await countRebuilds(
+          tester,
+          HermesSliverRows,
+          () async {
+            Navigator.of(tester.element(find.text('chat encima'))).pop();
+            await tester.pumpAndSettle(const Duration(milliseconds: 50));
+          },
+        );
+        expect(returnRebuilds, greaterThan(0));
+        expect(find.text('Fila tapada'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'Inicio no se reconstruye mientras está tapado y se pone al día al '
+      'volver',
+      (tester) async {
+        tester.view.physicalSize = const Size(1170, 2532);
+        tester.view.devicePixelRatio = 3;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        final prefs = await SharedPreferences.getInstance();
+        final manager = await ConnectionManager.create(prefs);
+        await manager.saveConnection(
+          'Redesign QA',
+          '127.0.0.1',
+          8642,
+          'gateway-key',
+          kind: InstanceKind.vps,
+        );
+        await manager.setActiveConnection(manager.getConnections().single.id);
+        final aggregate = GlobalActivityAggregate.inMemory();
+        final activeChats = ActiveChatService(
+          globalActivity: aggregate,
+          compressionRestoreStore: testCompressionRestoreStore(),
+        );
+        addTearDown(activeChats.dispose);
+        final client = _HomeActivityClient();
+        await tester.pumpWidget(
+          MaterialApp(
+            locale: const Locale('es'),
+            theme: AppTheme.fromId('dark'),
+            localizationsDelegates: Strings.localizationsDelegates,
+            supportedLocales: Strings.supportedLocales,
+            home: HomeDashboardScreen(
+              connManager: manager,
+              clientFactory: (_) => client,
+              activeChatsOverride: activeChats,
+              activeSessionListLoader: () async =>
+                  const DesktopActiveSessionList(),
+              eventStreamOverride: const Stream<TuiGatewayEvent>.empty(),
+            ),
+          ),
+        );
+        await _pumpUntil(tester, find.textContaining('Informe prolongado'));
+
+        final visibleRebuilds = await countRebuilds(
+          tester,
+          HomeDashboardScreen,
+          () async {
+            activeChats.activeIds.value = <String>{};
+            await tester.pump();
+            await tester.pump();
+          },
+        );
+        expect(visibleRebuilds, greaterThan(0));
+
+        await pushCover(tester, HomeDashboardScreen);
+        final hiddenRebuilds = await countRebuilds(
+          tester,
+          HomeDashboardScreen,
+          () async {
+            for (var i = 0; i < 20; i++) {
+              activeChats.activeIds.value = <String>{};
+              // The streaming chat on top produces a frame every vsync.
+              tester.binding.scheduleFrame();
+              await tester.pump(const Duration(milliseconds: 16));
+            }
+          },
+        );
+        expect(hiddenRebuilds, 0);
+
+        final returnRebuilds = await countRebuilds(
+          tester,
+          HomeDashboardScreen,
+          () async {
+            Navigator.of(tester.element(find.text('chat encima'))).pop();
+            await tester.pumpAndSettle(const Duration(milliseconds: 50));
+          },
+        );
+        expect(returnRebuilds, greaterThan(0));
+        expect(find.textContaining('Informe prolongado'), findsOneWidget);
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump(const Duration(seconds: 10));
+      },
+    );
+  });
 }
 
 final class _RunningCompressionGateway extends _ProcessActivityGateway
@@ -1193,4 +1595,3 @@ final class _MemoryRestoreStorage implements CompressionRestoreStorage {
   @override
   Future<void> write(String value) async => this.value = value;
 }
-

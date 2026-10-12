@@ -112,7 +112,7 @@ void main() {
     );
 
     test(
-      'la selección explícita del Spark sobrevive a recrear el controller',
+      'la selección explícita de la cara del perfil sobrevive a recrear el controller',
       () async {
         SharedPreferences.setMockInitialValues({
           CompanionPreferences.slugKey: 'boba',

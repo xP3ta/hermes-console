@@ -72,7 +72,7 @@ class ModulePlaceholderScreen extends StatelessWidget {
                   'status: not_linked · $phase',
                   style: TextStyle(
                     fontSize: 11,
-                    color: colors.textDisabled,
+                    color: colors.textTertiary,
                     letterSpacing: 0.3,
                   ),
                 ),

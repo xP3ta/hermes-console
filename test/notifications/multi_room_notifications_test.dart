@@ -280,10 +280,10 @@ void main() {
         ]);
         final first = sink.live.single;
         expect(first['text'], 'Radar está pensando… · Atlas en espera');
-        expect(first['segments'], [
-          {'state': 'working'},
-          {'state': 'pending'},
-        ]);
+        expect(
+          [for (final r in first['rows']! as List) (r as Map)['state']],
+          ['working', 'pending'],
+        );
         expect(first['largeIconPath'] as String, contains('tile_'));
         expect(first['trackerIconPath'] as String, contains('working'));
         expect(first['shortText'], 'Radar');
@@ -302,11 +302,11 @@ void main() {
         ]);
         final second = sink.live.last;
         expect(second['text'], 'Atlas está trabajando… · Radar respondió');
-        expect(second['segments'], [
-          {'state': 'done'},
-          {'state': 'working'},
-        ]);
-        // Nobody addressed nor started: the room works, one segment each.
+        expect(
+          [for (final r in second['rows']! as List) (r as Map)['state']],
+          ['done', 'working'],
+        );
+        // Nobody addressed nor started: the room works, one row each.
         await presenter.present('c1', qa, [
           const RoomLiveNotice(working: true, startedAtMs: 1000),
         ]);
@@ -314,7 +314,7 @@ void main() {
           sink.live.last['text'] as String,
           startsWith('La sala está trabajando…'),
         );
-        expect(sink.live.last['segments'], hasLength(2));
+        expect(sink.live.last['rows'], hasLength(2));
         expect(sink.live.last['trackerIconPath'] as String, contains('tile_'));
       },
     );
@@ -352,14 +352,15 @@ void main() {
       'working…',
       'Working…',
       ' replied',
-      'Needs your OK',
+      'Asks permission',
+      'Allow “',
       'Round done',
       'is working',
       'Stop all',
       'rooms working',
       'New activity',
       "couldn’t finish",
-      'Approve',
+      'Allow',
       'Deny',
     ];
 
@@ -402,7 +403,7 @@ void main() {
       for (final phrase in english) {
         expect(text, isNot(contains(phrase)), reason: phrase);
       }
-      expect(text, contains('Necesita tu OK'));
+      expect(text, contains('¿Permitir «'));
       expect(text, contains('3 salas trabajando'));
       expect(text, contains('Parar ronda'));
       expect(text, contains('Abrir sala'));
@@ -413,7 +414,7 @@ void main() {
         for (final m
             in RegExp(r'<string name="([^"]+)">([^<]*)</string>').allMatches(
               File(
-                'android/app/src/main/res/$locale/bot_mode_widgets.xml',
+                'android/app/src/main/res/$locale/launcher_widgets_strings.xml',
               ).readAsStringSync(),
             ))
           m.group(1)!: m.group(2)!,
@@ -430,18 +431,16 @@ void main() {
           );
         }
       }
-      // Widget-side templates that used to leak English from Dart.
-      expect(es['botw_step_replied'], '%1\$s respondió');
-      expect(es['botw_step_working'], '%1\$s trabajando…');
-      expect(es['botw_step_needs_you'], '%1\$s te necesita');
-      // The widget builds the room ticker from these resources, not from
-      // the published (Dart) strings.
-      final glance = File(
-        'android/app/src/main/kotlin/com/hermesagent/hermes_android/HermesBotModeWidgets.kt',
+      // The words a room or a bot card shows come from these resources, in
+      // the device's language, not from text published by Dart.
+      expect(es['lw_responding'], 'Responde');
+      expect(es['lw_working'], 'Trabaja');
+      expect(es['lw_bot_works'], '%1\$s trabaja');
+      final widgets = File(
+        'android/app/src/main/kotlin/com/hermesagent/hermes_android/LauncherWidgets.kt',
       ).readAsStringSync();
-      expect(glance, contains('R.string.botw_step_replied'));
-      expect(glance, isNot(contains('room.steps.')));
-      expect(glance, isNot(contains('room.steps)')));
+      expect(widgets, contains('R.string.lw_responding'));
+      expect(widgets, isNot(contains('room.steps')));
     });
   });
 

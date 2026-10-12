@@ -12,12 +12,16 @@ import '../services/dock_preferences_store.dart';
 import 'package:http/http.dart' as http;
 
 import '../app_header_title.dart';
-import '../models/session_category.dart';
 import '../services/chat_draft_store.dart';
 import '../services/connection_manager.dart';
+import '../services/active_profile_scope.dart';
+import '../widgets/profile_scope.dart';
 
 import '../services/font_size_service.dart';
 import '../services/local_transcript_store.dart';
+import '../settings/settings_deep_link.dart';
+import '../settings/settings_list_detail.dart';
+import '../settings/settings_sections.dart';
 import '../services/session_deletion.dart';
 import '../services/turn_outbox_store.dart';
 import '../theme/app_theme.dart';
@@ -27,8 +31,9 @@ import '../theme/theme_profile_store.dart';
 import '../utils/api_error.dart';
 import '../utils/transport_privacy.dart';
 
-import '../services/bridge_update_service.dart';
+import '../services/hermes_update_preferences.dart';
 import '../services/hermes_update_monitor.dart';
+import '../services/hermes_update_probes.dart';
 import '../../main.dart';
 import '../widgets/general_dock_shell.dart';
 import '../widgets/hermes_notice.dart';
@@ -36,26 +41,49 @@ import '../widgets/hermes_ui.dart';
 import '../widgets/hermes_update_card.dart';
 import '../widgets/read_only.dart';
 import 'about_screen.dart';
-import 'bridge_file_editor_screen.dart';
 import 'lock_screen.dart';
 import 'gateway_manager_screen.dart';
 import 'instance_edit_screen.dart';
-import 'local_instance_control_screen.dart';
 import 'models_screen.dart';
 import 'permissions_screen.dart';
 import 'security_info_screen.dart';
 import 'themes_screen.dart';
-import 'dock_settings_screen.dart';
+import 'gesture_dock_settings_screen.dart';
+import 'guided_tours_screen.dart';
+import 'embed_settings_screen.dart';
 import 'notification_settings_screen.dart';
 import 'voice_settings_screen.dart';
 
 import 'package:package_info_plus/package_info_plus.dart';
 
+import '../services/message_reaction_prefs.dart';
+import '../services/pinned_prompt_prefs.dart';
 import '../widgets/hermes_app_bar.dart';
+import 'backup_restore_screen.dart';
 import '../widgets/diagnostic_bundle_tile.dart';
 import '../widgets/install_source_section.dart';
+import '../design/content.dart' show HermesToggleRow;
 import '../design/hermes_design.dart'
-    show HermesDialogAction, HermesDialogActionStyle, showHermesDialog;
+    show
+        HermesDialogAction,
+        HermesDialogActionStyle,
+        HermesOption,
+        HermesSelectField,
+        showHermesDialog,
+        showHermesDialogRoute;
+import '../feedback/feedback_policy.dart';
+
+/// Readable, localized label for a gateway platform state (`connected`…).
+/// Unknown states are shown raw as a fallback (spec 028 A-026).
+String gatewayPlatformStateLabel(Strings s, String state) => switch (state) {
+  'connected' => s.i18n1215PlatformConnected,
+  'disconnected' => s.i18n1215PlatformDisconnected,
+  'connecting' => s.i18n1215PlatformConnecting,
+  'error' => s.i18n1215PlatformError,
+  'starting' => s.i18n1215PlatformStarting,
+  'stopped' => s.i18n1215PlatformStopped,
+  _ => state,
+};
 
 /// Estado del único canal que consume Hermes Console.
 ///
@@ -117,7 +145,7 @@ SettingsThemePresentation settingsThemePresentation(
     colors: custom == null
         ? preset.colors
         : ThemeProfileAdapter.colorsFromProfile(custom),
-    total: AppTheme.presets.length + snapshot.customProfiles.length,
+    total: AppTheme.familyCount + snapshot.customProfiles.length,
   );
 }
 
@@ -168,7 +196,14 @@ class SettingsScreen extends StatelessWidget {
                       (candidate) => candidate.id == id,
                     );
                     final conn = matches.isEmpty ? connection : matches.first;
-                    return _buildBody(context, conn);
+                    return SettingsListDetail(
+                      rowsFor: (context, section) =>
+                          _sectionRows(context, conn, section),
+                      scaffold: (context, body) =>
+                          _buildScaffold(context, conn, body),
+                      list: (context, scroll) =>
+                          _buildList(context, conn, scroll),
+                    );
                   },
                 );
               },
@@ -179,7 +214,11 @@ class SettingsScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildBody(BuildContext context, SavedConnection conn) {
+  Widget _buildScaffold(
+    BuildContext context,
+    SavedConnection conn,
+    Widget body,
+  ) {
     return Scaffold(
       appBar: HermesAppBar(title: Text(Strings.of(context).setTitle)),
       // Ajustes es una pantalla de navegación de nivel superior alcanzable
@@ -190,131 +229,280 @@ class SettingsScreen extends StatelessWidget {
       body: GeneralDockShell(
         connection: conn,
         connManager: connManager,
+        pet: false,
         includeSettingsAction: false,
-        // El dock se pinta ENCIMA de este cuerpo, así que la lista tiene que
-        // reservar su hueco o la última sección ("Acerca de") queda detrás de
-        // la barra. `ListenableBuilder` es necesario porque el interruptor
-        // "Usar dock flotante" vive en esta misma pantalla: al apagarlo la
-        // reserva debe desaparecer sin salir y volver a entrar.
-        body: ListenableBuilder(
-          listenable: DockPreferencesController.instance.listenable,
-          builder: (context, _) => ListView(
-            padding: EdgeInsets.fromLTRB(
-              16,
-              0,
-              16,
-              dockScrollReservation(
+        // Expanded windows: categories and page side by side over the full
+        // width beside the rail.
+        paneLayout: true,
+        body: body,
+      ),
+    );
+  }
+
+  /// The rows of one Settings category, exactly as the phone list shows
+  /// them. The tablet list-detail shows one category at a time with the same
+  /// rows, built with the right pane's context so their pages open there.
+  List<Widget> _sectionRows(
+    BuildContext context,
+    SavedConnection conn,
+    SettingsSection section,
+  ) => switch (section) {
+    SettingsSection.connection => [
+      _SectionHeader(Strings.of(context).setSecConnection),
+      SettingsDeepLinkTarget(
+        section: SettingsSection.connection,
+        child: _ConnectionCard(connection: conn, connManager: connManager),
+      ),
+    ],
+    SettingsSection.appearance => [
+      _SectionHeader(Strings.of(context).setSecAppearance),
+      SettingsDeepLinkTarget(
+        section: SettingsSection.appearance,
+        child: HermesGroup(
+          children: [
+            _ThemesEntry(),
+            _FontStyleEntry(),
+            _LanguageEntry(),
+            _HeaderTitleField(),
+            _UseDockTile(),
+            _DockTile(),
+            _GuidedTourTile(connection: conn, connManager: connManager),
+            _StartupDestinationTile(),
+          ],
+        ),
+      ),
+    ],
+    SettingsSection.chat => [
+      _SectionHeader(Strings.of(context).setSecChat),
+      SettingsDeepLinkTarget(
+        section: SettingsSection.chat,
+        child: HermesGroup(
+          children: [
+            _ActiveModelTile(
+              key: ValueKey((
+                conn.id,
+                connManager.connectionRevisionFor(conn.id).value,
+              )),
+              connection: conn,
+              profileScope: ActiveProfileScope.of(connManager, conn.id),
+            ),
+            HermesNavRow(
+              key: const ValueKey('settings-rich-embeds'),
+              icon: Icons.play_circle_outline_rounded,
+              title: Strings.of(context).embedSettingsTitle,
+              subtitle: Strings.of(context).embedSettingsSubtitle,
+              onTap: () => Navigator.push(
                 context,
-                useDock: DockPreferencesController.instance.value.useDock,
+                MaterialPageRoute(builder: (_) => const EmbedSettingsScreen()),
               ),
             ),
-            children: [
-              // Orden de secciones: de lo esencial (a qué instancia hablas) a lo
-              // avanzado, con voz y notificaciones como apartados propios en vez
-              // de filas sueltas dentro de "chat" (spec 028 U-08).
-              _SectionHeader(Strings.of(context).setSecConnection),
-              _ConnectionCard(connection: conn, connManager: connManager),
-              _SectionHeader(Strings.of(context).setSecAppearance),
-              HermesGroup(
-                children: [
-                  _ThemesEntry(),
-                  _FontStyleEntry(),
-                  _LanguageEntry(),
-                  _HeaderTitleField(),
-                  _UseDockTile(),
-                  _DockTile(),
-                  _StartupDestinationTile(),
-                ],
+            ListenableBuilder(
+              listenable: MessageReactionPrefs.shared,
+              builder: (context, _) => HermesToggleRow(
+                key: const ValueKey('settings-reactions'),
+                icon: Icons.add_reaction_outlined,
+                title: Strings.of(context).reactSettingsTitle,
+                subtitle: Strings.of(context).reactSettingsSubtitle,
+                value: MessageReactionPrefs.shared.enabled,
+                onChanged: MessageReactionPrefs.shared.setEnabled,
               ),
-              _SectionHeader(Strings.of(context).setSecChat),
-              HermesGroup(
-                children: [
-                  _ActiveModelTile(key: ValueKey(conn.id), connection: conn),
-                ],
+            ),
+            ListenableBuilder(
+              listenable: PinnedPromptPrefs.shared,
+              builder: (context, _) => HermesToggleRow(
+                key: const ValueKey('settings-pinned-prompt'),
+                icon: Icons.vertical_align_top_rounded,
+                title: Strings.of(context).cs1215PinnedPromptSetting,
+                subtitle: Strings.of(context).cs1215PinnedPromptSettingSubtitle,
+                value: PinnedPromptPrefs.shared.enabled,
+                onChanged: PinnedPromptPrefs.shared.setEnabled,
               ),
-              _SectionHeader(Strings.of(context).voiceTitle),
-              HermesGroup(children: [_VoiceTile(connection: conn)]),
-              _SectionHeader(Strings.of(context).notifTitle),
-              HermesGroup(children: [_NotificationsTile()]),
-              _SectionHeader(Strings.of(context).setSecSecurity),
-              HermesGroup(
-                children: [
-                  HermesNavRow(
-                    icon: Icons.shield_outlined,
-                    title: Strings.of(context).setSecurity,
-                    subtitle: Strings.of(context).setSecuritySub,
-                    onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) =>
-                            SecurityInfoScreen(connManager: connManager),
+            ),
+          ],
+        ),
+      ),
+    ],
+    SettingsSection.voice => [
+      _SectionHeader(Strings.of(context).voiceTitle),
+      SettingsDeepLinkTarget(
+        section: SettingsSection.voice,
+        child: HermesGroup(children: [_VoiceTile(connection: conn)]),
+      ),
+    ],
+    SettingsSection.notifications => [
+      _SectionHeader(Strings.of(context).notifTitle),
+      SettingsDeepLinkTarget(
+        section: SettingsSection.notifications,
+        child: HermesGroup(children: [_NotificationsTile()]),
+      ),
+    ],
+    SettingsSection.security => [
+      _SectionHeader(Strings.of(context).setSecSecurity),
+      SettingsDeepLinkTarget(
+        section: SettingsSection.security,
+        child: HermesGroup(
+          children: [
+            HermesNavRow(
+              icon: Icons.shield_outlined,
+              title: Strings.of(context).setSecurity,
+              subtitle: Strings.of(context).setSecuritySub,
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => SecurityInfoScreen(connManager: connManager),
+                ),
+              ),
+            ),
+            HermesNavRow(
+              icon: Icons.verified_user_outlined,
+              title: Strings.of(context).setPermissions,
+              subtitle: Strings.of(context).setPermissionsSub,
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => PermissionsScreen(connection: conn),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    ],
+    SettingsSection.system => [
+      _SectionHeader(Strings.of(context).setSecSystem),
+      SettingsDeepLinkTarget(
+        section: SettingsSection.system,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _MaintenanceSection(
+              key: ValueKey('maint-${conn.id}'),
+              connection: conn,
+              connManager: connManager,
+            ),
+          ],
+        ),
+      ),
+    ],
+    SettingsSection.data => [
+      _SectionHeader(Strings.of(context).setSecData),
+      SettingsDeepLinkTarget(
+        section: SettingsSection.data,
+        child: HermesGroup(
+          children: [
+            if (!conn.readOnly)
+              HermesNavRow(
+                key: const ValueKey('settings-backup'),
+                icon: Icons.settings_backup_restore_rounded,
+                title: Strings.of(context).backupTitle,
+                subtitle: Strings.of(context).backupSubtitle,
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => BackupRestoreScreen(
+                      connection: conn,
+                      profile: Session.profileOwner(
+                        connManager.activeProfileFor(conn.id),
                       ),
-                    ),
-                  ),
-                  HermesNavRow(
-                    icon: Icons.verified_user_outlined,
-                    title: Strings.of(context).setPermissions,
-                    subtitle: Strings.of(context).setPermissionsSub,
-                    onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => PermissionsScreen(connection: conn),
-                      ),
-                    ),
-                  ),
-                  HermesNavRow(
-                    icon: Icons.tune_outlined,
-                    title: Strings.of(context).setServerConfig,
-                    subtitle: Strings.of(context).setServerConfigSub,
-                    onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => BridgeFileEditorScreen(
-                          connectionId: conn.id,
-                          target: Strings.of(context).setSecConfig,
-                          titleLabel: 'config.yaml',
-                          readOnly: true,
+                      onOpenSecurity: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) =>
+                              SecurityInfoScreen(connManager: connManager),
                         ),
                       ),
                     ),
                   ),
-                ],
+                ),
               ),
-              _SectionHeader(Strings.of(context).setSecSystem),
-              _MaintenanceSection(
-                key: ValueKey('maint-${conn.id}'),
-                connection: conn,
-                connManager: connManager,
-              ),
-              _SectionHeader(Strings.of(context).setSecBridge),
-              HermesGroup(children: [_BridgeAutoUpdateTile(connection: conn)]),
-              _SectionHeader(Strings.of(context).setSecData),
-              HermesGroup(
-                children: [
-                  DiagnosticBundleTile(
-                    controller: DiagnosticBundleController(
-                      manager: connManager,
-                    ),
-                  ),
-                ],
-              ),
-              HistoryCleanupSection(
-                key: ValueKey('history-cleanup-${conn.id}'),
-                connection: conn,
-                connManager: connManager,
-                verifyHistoryCleanupForTesting: verifyHistoryCleanupForTesting,
-              ),
-              _OrphanDataTile(connManager: connManager),
-              _SectionHeader(Strings.of(context).setSecAbout),
-              _AboutCard(),
-              const SizedBox(height: 10),
-              const InstallSourceSection(),
-              const SizedBox(height: 24),
-            ],
-          ),
+            DiagnosticBundleTile(
+              controller: DiagnosticBundleController(manager: connManager),
+            ),
+          ],
         ),
       ),
+      HistoryCleanupSection(
+        key: ValueKey('history-cleanup-${conn.id}'),
+        connection: conn,
+        connManager: connManager,
+        verifyHistoryCleanupForTesting: verifyHistoryCleanupForTesting,
+      ),
+      _OrphanDataTile(connManager: connManager),
+    ],
+    SettingsSection.about => [
+      _SectionHeader(Strings.of(context).setSecAbout),
+      SettingsDeepLinkTarget(
+        section: SettingsSection.about,
+        child: _AboutCard(),
+      ),
+      const SizedBox(height: 10),
+      const InstallSourceSection(),
+      const SizedBox(height: 24),
+    ],
+  };
+
+  Widget _buildList(
+    BuildContext context,
+    SavedConnection conn,
+    ScrollController scroll,
+  ) {
+    // El dock se pinta ENCIMA de este cuerpo, así que la lista tiene que
+    // reservar su hueco o la última sección ("Acerca de") queda detrás de
+    // la barra. `ListenableBuilder` es necesario porque el interruptor
+    // "Usar dock flotante" vive en esta misma pantalla: al apagarlo la
+    // reserva debe desaparecer sin salir y volver a entrar.
+    return ListenableBuilder(
+      listenable: DockPreferencesController.instance.listenable,
+      builder: (context, _) => ListView(
+        clipBehavior: hermesUnderHeader,
+        controller: scroll,
+        padding: EdgeInsets.fromLTRB(
+          16,
+          0,
+          16,
+          dockScrollReservation(
+            context,
+            useDock: DockPreferencesController.instance.value.useDock,
+          ),
+        ),
+        // Orden de secciones: de lo esencial (a qué instancia hablas) a lo
+        // avanzado, con voz y notificaciones como apartados propios en vez
+        // de filas sueltas dentro de "chat" (spec 028 U-08).
+        // Built sections stay alive: at the bottom of this bouncing list a
+        // section on the cache edge was disposed and rebuilt over and over,
+        // re-running its async check and changing its height each time,
+        // and the screen never stopped drawing frames.
+        children: _keptAlive([
+          for (final section in SettingsSection.values)
+            ..._sectionRows(context, conn, section),
+        ]),
+      ),
     );
+  }
+}
+
+List<Widget> _keptAlive(List<Widget> sections) => [
+  for (final section in sections) _KeptAliveSection(child: section),
+];
+
+class _KeptAliveSection extends StatefulWidget {
+  const _KeptAliveSection({required this.child});
+
+  final Widget child;
+
+  @override
+  State<_KeptAliveSection> createState() => _KeptAliveSectionState();
+}
+
+class _KeptAliveSectionState extends State<_KeptAliveSection>
+    with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    return widget.child;
   }
 }
 
@@ -452,7 +640,7 @@ class _ThemesEntryState extends State<_ThemesEntry> {
         context,
         activeName: preset.name,
         previewColors: preset.colors,
-        total: AppTheme.presets.length,
+        total: AppTheme.familyCount,
       );
     }
     return ValueListenableBuilder(
@@ -612,17 +800,11 @@ class _FontStyleEntryState extends State<_FontStyleEntry> {
     return _PrefField(
       title: Strings.of(context).setFontStyle,
       caption: Strings.of(context).setAppliesInstantly,
-      child: DropdownButtonFormField<String>(
+      child: HermesSelectField<String>(
         key: ValueKey('settings-font-$current'),
-        initialValue: AppFonts.byId(current).id,
-        isExpanded: true,
-        menuMaxHeight: 420,
-        dropdownColor: colors.surface,
-        borderRadius: BorderRadius.circular(14),
-        icon: Icon(
-          Icons.keyboard_arrow_down_rounded,
-          color: colors.textSecondary,
-        ),
+        value: AppFonts.byId(current).id,
+        title: Strings.of(context).setFontStyle,
+        icon: const Icon(Icons.keyboard_arrow_down_rounded),
         style: TextStyle(
           color: colors.textPrimary,
           fontSize: 14,
@@ -632,45 +814,15 @@ class _FontStyleEntryState extends State<_FontStyleEntry> {
         decoration: const InputDecoration(
           contentPadding: EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         ),
-        selectedItemBuilder: (context) => [
+        options: [
           for (final font in AppFonts.all)
-            Align(
-              alignment: AlignmentDirectional.centerStart,
-              child: Text(
-                font.label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontFamily: AppFonts.resolvedFamily(font),
-                  color: colors.textPrimary,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                  letterSpacing: 0,
-                ),
-              ),
-            ),
-        ],
-        items: [
-          for (final font in AppFonts.all)
-            DropdownMenuItem(
+            HermesOption(
               value: font.id,
-              child: Text(
-                font.label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontFamily: AppFonts.resolvedFamily(font),
-                  color: colors.textPrimary,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                  letterSpacing: 0,
-                ),
-              ),
+              label: font.label,
+              fontFamily: AppFonts.resolvedFamily(font),
             ),
         ],
-        onChanged: (id) {
-          if (id != null) _select(id);
-        },
+        onChanged: _select,
       ),
     );
   }
@@ -889,16 +1041,47 @@ class _StartupDestinationTileState extends State<_StartupDestinationTile> {
   }
 }
 
+/// Ajustes › Recorrido guiado: every tour (General, Chat, Bots).
+class _GuidedTourTile extends StatelessWidget {
+  final SavedConnection connection;
+  final ConnectionManager connManager;
+
+  const _GuidedTourTile({required this.connection, required this.connManager});
+
+  @override
+  Widget build(BuildContext context) {
+    final strings = Strings.of(context);
+    return HermesNavRow(
+      key: const ValueKey('settings-guided-tour'),
+      icon: Icons.tour_outlined,
+      title: strings.gt1215SettingsTitle,
+      subtitle: strings.gt1215SettingsSubtitle,
+      onTap: () => Navigator.push(
+        context,
+        MaterialPageRoute<void>(
+          builder: (_) => GuidedToursScreen(
+            connection: connection,
+            connManager: connManager,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Ajustes › Dock: the dock's own settings (solid surface, hiding it, its
+/// items). Whether there is a dock at all is the switch above it.
 class _DockTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return HermesNavRow(
+      key: const ValueKey('settings-dock'),
       icon: Icons.dashboard_customize_outlined,
       title: Strings.of(context).dockSettingsTitle,
       subtitle: Strings.of(context).dockSettingsSubtitle,
       onTap: () => Navigator.push(
         context,
-        MaterialPageRoute(builder: (_) => const DockSettingsScreen()),
+        MaterialPageRoute(builder: (_) => const GestureDockSettingsScreen()),
       ),
     );
   }
@@ -1068,22 +1251,40 @@ class _ConnectionCard extends StatelessWidget {
 
 class _ActiveModelTile extends StatefulWidget {
   final SavedConnection connection;
-  const _ActiveModelTile({super.key, required this.connection});
+  final ActiveProfileScope profileScope;
+  const _ActiveModelTile({
+    super.key,
+    required this.connection,
+    required this.profileScope,
+  });
 
   @override
   State<_ActiveModelTile> createState() => _ActiveModelTileState();
 }
 
-class _ActiveModelTileState extends State<_ActiveModelTile> {
+class _ActiveModelTileState extends State<_ActiveModelTile>
+    with ActiveProfileFollower<_ActiveModelTile> {
   late final DashboardClient _client;
-  // null = desconocido: mejor sin subtítulo que un valor congelado.
+  // null = pending or failed; empty = confirmed absence of configuration.
   String? _model;
+  bool _modelLoadFailed = false;
+  int _loadGeneration = 0;
 
   @override
   void initState() {
     super.initState();
     _client = DashboardClient.lazy(widget.connection);
+    followActiveProfile(widget.profileScope);
     _load();
+  }
+
+  @override
+  void onActiveProfileChanged() {
+    setState(() {
+      _model = null;
+      _modelLoadFailed = false;
+    });
+    unawaited(_load());
   }
 
   @override
@@ -1092,18 +1293,60 @@ class _ActiveModelTileState extends State<_ActiveModelTile> {
     super.dispose();
   }
 
-  /// Lee el modelo activo real de /api/model/info (la misma fuente que usa el
-  /// chat). Antes se leía la pref 'selected_model', que nada escribe, y el
-  /// tile mostraba "hermes-agent" para siempre (spec 028 A-022).
+  /// Configuration read, not proof of the model executing a turn.
+  /// Desktop 0e21933114c model-settings.tsx:281–318 starts independent
+  /// info/auxiliary reads together and prefers info, including empty info.
+  /// This single tile can publish valid config while the live probe is pending.
   Future<void> _load() async {
-    try {
-      final info = await _client.getModelInfo();
-      if (!mounted) return;
-      setState(() => _model = info.model);
-    } catch (e) {
-      debugPrint('[settings] no se pudo leer el modelo activo: $e');
-      if (mounted) setState(() => _model = null);
+    if (!mounted) return;
+    // Returning from Models can reload the same profile without changing its
+    // epoch. Only the newest load owns publication from either source.
+    final generation = ++_loadGeneration;
+    final ticket = profileReadTicket();
+    String? infoModel;
+    String? auxiliaryModel;
+    var infoSettled = false;
+    var auxiliarySettled = false;
+
+    void publish() {
+      if (!mounted || !ticket.isCurrent || generation != _loadGeneration) {
+        return;
+      }
+      final model = infoModel ?? auxiliaryModel;
+      setState(() {
+        _model = model;
+        _modelLoadFailed = infoSettled && auxiliarySettled && model == null;
+      });
     }
+
+    Future<void> readInfo() async {
+      try {
+        final info = await _client.getModelInfo(profile: ticket.name);
+        infoModel = info.model;
+      } catch (_) {
+        // Independent failure does not discard auxiliary configuration.
+      }
+      infoSettled = true;
+      publish();
+    }
+
+    Future<void> readAuxiliary() async {
+      try {
+        final auxiliary = await _client.getAuxiliaryModels(
+          profile: ticket.name,
+        );
+        final main = auxiliary['main'];
+        if (main is Map && main['model'] is String) {
+          auxiliaryModel = main['model'] as String;
+        }
+      } catch (_) {
+        // Independent failure does not discard successful info.
+      }
+      auxiliarySettled = true;
+      publish();
+    }
+
+    await Future.wait([readInfo(), readAuxiliary()]);
   }
 
   @override
@@ -1111,11 +1354,18 @@ class _ActiveModelTileState extends State<_ActiveModelTile> {
     return HermesNavRow(
       icon: Icons.smart_toy_outlined,
       title: Strings.of(context).setActiveModelLabel,
-      subtitle: _model,
+      subtitle: _modelLoadFailed
+          ? Strings.of(context).mdlLoadError
+          : _model == ''
+          ? Strings.of(context).mdlNoActiveModelTitle
+          : _model,
       onTap: () => Navigator.push(
         context,
         MaterialPageRoute(
-          builder: (_) => ModelsScreen(connection: widget.connection),
+          builder: (_) => ModelsScreen(
+            connection: widget.connection,
+            profileScope: widget.profileScope,
+          ),
         ),
       ).then((_) => _load()),
     );
@@ -1162,14 +1412,11 @@ final class HistoryCleanupSelection {
       );
 }
 
-/// Una sesión cuenta como automatización si Hermes Agent la publica con un
-/// origen de automatización o si es un informe programado (`cron_<job>_…`).
-/// Se reutiliza el mismo criterio que la biblioteca de conversaciones
-/// ([SessionCategoryScope]) para que el filtro "Automatización" de la lista y
-/// esta limpieza no puedan discrepar.
+/// Una sesión cuenta como automatización solo por su `source` del servidor
+/// ([Session.isAutomation]): el mismo campo por el que filtra la pestaña
+/// "Automatización", así que la limpieza borra justo lo que esa lista enseña.
 @visibleForTesting
-bool isAutomationSessionRow(Session session) =>
-    session.isJob || AutomationSessionSources.contains(session.source);
+bool isAutomationSessionRow(Session session) => session.isAutomation;
 
 /// IDs a borrar en el servidor, hojas primero.
 ///
@@ -1225,13 +1472,20 @@ final class RemoteConversationClearSummary {
   final int skipped;
   final bool cancelled;
 
+  /// Of [deleted], the automation runs (Cron, tools, webhooks…). The result
+  /// names them apart so the notice says what was really removed.
+  final int deletedAutomations;
+
   const RemoteConversationClearSummary({
     required this.deleted,
     required this.rejected,
     required this.failed,
     this.skipped = 0,
     this.cancelled = false,
+    this.deletedAutomations = 0,
   });
+
+  int get deletedChats => deleted - deletedAutomations;
 
   static const RemoteConversationClearSummary none =
       RemoteConversationClearSummary(deleted: 0, rejected: 0, failed: 0);
@@ -1259,8 +1513,10 @@ Future<RemoteConversationClearSummary> clearRemoteConversations({
   required Future<bool> Function(String sessionId) deleteSession,
   void Function(int done, int total)? onProgress,
   bool Function()? isCancelled,
+  bool Function(String sessionId)? isAutomation,
 }) async {
   var deleted = 0;
+  var deletedAutomations = 0;
   var rejected = 0;
   var failed = 0;
   var cancelled = false;
@@ -1276,6 +1532,9 @@ Future<RemoteConversationClearSummary> clearRemoteConversations({
     switch (result.status) {
       case RemoteSessionDeleteStatus.deleted:
         deleted += 1;
+        if (isAutomation?.call(deleteOrder[index]) ?? false) {
+          deletedAutomations += 1;
+        }
       case RemoteSessionDeleteStatus.rejected:
         rejected += 1;
       case RemoteSessionDeleteStatus.failed:
@@ -1289,6 +1548,27 @@ Future<RemoteConversationClearSummary> clearRemoteConversations({
     failed: failed,
     skipped: deleteOrder.length - (deleted + rejected + failed),
     cancelled: cancelled,
+    deletedAutomations: deletedAutomations,
+  );
+}
+
+/// What the cleanup would remove from the server for each scope, counted
+/// from the same listing the deletion then uses. The scope dialog shows
+/// these numbers, so the confirmation says exactly what goes.
+@visibleForTesting
+({int chats, int automations}) historyCleanupCounts(
+  Iterable<Session> sessions,
+) {
+  final all = sessions.toList(growable: false);
+  int count(HistoryCleanupSelection selection) =>
+      historyCleanupDeleteOrder(all, selection).length;
+  return (
+    chats: count(
+      const HistoryCleanupSelection(chats: true, automations: false),
+    ),
+    automations: count(
+      const HistoryCleanupSelection(chats: false, automations: true),
+    ),
   );
 }
 
@@ -1298,10 +1578,14 @@ Future<RemoteConversationClearSummary> clearRemoteConversations({
 class HistoryCleanupScopeDialog extends StatefulWidget {
   const HistoryCleanupScopeDialog({
     this.initial = HistoryCleanupSelection.chatsOnly,
+    this.counts,
     super.key,
   });
 
   final HistoryCleanupSelection initial;
+
+  /// Server rows per scope, read before asking. Null when unknown.
+  final ({int chats, int automations})? counts;
 
   @override
   State<HistoryCleanupScopeDialog> createState() =>
@@ -1315,6 +1599,7 @@ class _HistoryCleanupScopeDialogState extends State<HistoryCleanupScopeDialog> {
   Widget build(BuildContext context) {
     final s = Strings.of(context);
     final colors = Theme.of(context).hermes;
+    final counts = widget.counts;
     return AlertDialog(
       title: Text(s.setClearConvos),
       content: Column(
@@ -1327,6 +1612,16 @@ class _HistoryCleanupScopeDialogState extends State<HistoryCleanupScopeDialog> {
             controlAffinity: ListTileControlAffinity.leading,
             value: _selection.chats,
             title: Text(s.slFilterAll),
+            subtitle: counts == null
+                ? null
+                : Text(
+                    s.au1215CleanupChats(counts.chats),
+                    key: const ValueKey('history-cleanup-count-chats'),
+                    style: TextStyle(
+                      fontSize: 11.5,
+                      color: colors.textSecondary,
+                    ),
+                  ),
             onChanged: (value) => setState(
               () => _selection = _selection.copyWith(chats: value ?? false),
             ),
@@ -1338,7 +1633,10 @@ class _HistoryCleanupScopeDialogState extends State<HistoryCleanupScopeDialog> {
             value: _selection.automations,
             title: Text(s.slFilterAutomation),
             subtitle: Text(
-              s.slFilterReports,
+              counts == null
+                  ? s.slFilterReports
+                  : s.au1215CleanupRuns(counts.automations),
+              key: const ValueKey('history-cleanup-count-automations'),
               style: TextStyle(fontSize: 11.5, color: colors.textSecondary),
             ),
             onChanged: (value) => setState(
@@ -1346,6 +1644,17 @@ class _HistoryCleanupScopeDialogState extends State<HistoryCleanupScopeDialog> {
                   _selection = _selection.copyWith(automations: value ?? false),
             ),
           ),
+          if (counts != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              s.au1215CleanupWillDelete(
+                (_selection.chats ? counts.chats : 0) +
+                    (_selection.automations ? counts.automations : 0),
+              ),
+              key: const ValueKey('history-cleanup-will-delete'),
+              style: TextStyle(fontSize: 12.5, color: colors.textSecondary),
+            ),
+          ],
         ],
       ),
       actions: [
@@ -1404,8 +1713,12 @@ class _HistoryCleanupSectionState extends State<HistoryCleanupSection> {
   /// no pasaba nada y no había explicación posible en pantalla.
   void _showCleanupNotice(String message) {
     if (!mounted) return;
-    HermesNotice.of(context).showSnackBar(
-      SnackBar(content: Text(message), duration: const Duration(seconds: 5)),
+    AppFeedback.notify(
+      context,
+      FeedbackKind.error,
+      message,
+      warning: true,
+      duration: const Duration(seconds: 5),
     );
   }
 
@@ -1431,7 +1744,12 @@ class _HistoryCleanupSectionState extends State<HistoryCleanupSection> {
       // leía como un fallo mudo.
       parts.add(s.slEmptyFilter);
     } else {
-      if (remote.deleted > 0) parts.add(s.setConvosCleared(remote.deleted));
+      if (remote.deletedChats > 0) {
+        parts.add(s.setConvosCleared(remote.deletedChats));
+      }
+      if (remote.deletedAutomations > 0) {
+        parts.add(s.au1215CleanupRunsDeleted(remote.deletedAutomations));
+      }
       if (remote.rejected > 0 || remote.failed > 0) {
         parts.add(
           s.crnCleanupPartial(remote.deleted, remote.rejected + remote.failed),
@@ -1500,58 +1818,46 @@ class _HistoryCleanupSectionState extends State<HistoryCleanupSection> {
     setState(() => _cancelRequested = true);
   }
 
-  /// Borra en el SERVIDOR las conversaciones del ámbito elegido.
+  /// Borra en el SERVIDOR las conversaciones del ámbito elegido, tomadas del
+  /// mismo listado [sessions] cuyo recuento mostró la confirmación.
   ///
   /// Esta es la mitad que faltaba: la acción solo limpiaba el estado local del
   /// perfil, así que las sesiones seguían en el servidor y volvían a aparecer
-  /// en la lista al refrescar ("no se suelen eliminar todas"). Se pide
-  /// `includeChildren` porque el servidor pliega las continuaciones dentro de
-  /// su padre y, sin verlas, quedaban huérfanas y reaparecían como filas
-  /// principales nuevas.
+  /// en la lista al refrescar ("no se suelen eliminar todas").
   Future<RemoteConversationClearSummary> _clearRemote({
-    required SavedConnection targetConnection,
+    required ApiClient client,
+    required List<Session> sessions,
     required String targetProfile,
     required HistoryCleanupSelection selection,
   }) async {
-    final override = widget.remoteClientOverride;
-    final client =
-        override ??
-        ApiClient(
-          baseUrl: targetConnection.baseUrl,
-          apiKey: targetConnection.apiKey,
-          connectionId: targetConnection.id,
-        );
-    try {
-      final sessions = await client.getSessions(
-        includeChildren: true,
-        profile: targetProfile,
-      );
-      final order = historyCleanupDeleteOrder(sessions, selection);
-      if (order.isEmpty) return RemoteConversationClearSummary.none;
-      if (mounted) {
-        setState(() {
-          _remoteDone = 0;
-          _remoteTotal = order.length;
-        });
-      }
-      return await clearRemoteConversations(
-        deleteOrder: order,
-        deleteSession: (sessionId) =>
-            client.deleteSession(sessionId, profile: targetProfile),
-        onProgress: (done, total) {
-          if (!mounted) return;
-          setState(() {
-            _remoteDone = done;
-            _remoteTotal = total;
-          });
-        },
-        // Cancelar desde la propia fila: mientras el lote avanza, el botón
-        // de la fila levanta esta bandera y el bucle deja de emitir DELETEs.
-        isCancelled: () => _cancelRequested || !mounted,
-      );
-    } finally {
-      if (override == null) client.close();
+    final order = historyCleanupDeleteOrder(sessions, selection);
+    if (order.isEmpty) return RemoteConversationClearSummary.none;
+    final automationIds = {
+      for (final session in sessions)
+        if (isAutomationSessionRow(session)) session.id,
+    };
+    if (mounted) {
+      setState(() {
+        _remoteDone = 0;
+        _remoteTotal = order.length;
+      });
     }
+    return await clearRemoteConversations(
+      deleteOrder: order,
+      deleteSession: (sessionId) =>
+          client.deleteSession(sessionId, profile: targetProfile),
+      onProgress: (done, total) {
+        if (!mounted) return;
+        setState(() {
+          _remoteDone = done;
+          _remoteTotal = total;
+        });
+      },
+      // Cancelar desde la propia fila: mientras el lote avanza, el botón
+      // de la fila levanta esta bandera y el bucle deja de emitir DELETEs.
+      isCancelled: () => _cancelRequested || !mounted,
+      isAutomation: automationIds.contains,
+    );
   }
 
   Future<void> _clearNormal() async {
@@ -1565,6 +1871,14 @@ class _HistoryCleanupSectionState extends State<HistoryCleanupSection> {
       _clearingNormal = true;
       _cancelRequested = false;
     });
+    final override = widget.remoteClientOverride;
+    final client =
+        override ??
+        ApiClient(
+          baseUrl: targetConnection.baseUrl,
+          apiKey: targetConnection.apiKey,
+          connectionId: targetConnection.id,
+        );
 
     try {
       if (!await _authorizeHistoryCleanup(
@@ -1574,11 +1888,26 @@ class _HistoryCleanupSectionState extends State<HistoryCleanupSection> {
         return;
       }
       if (!mounted) return;
+      // The server rows are listed BEFORE asking, and that same listing is
+      // what gets deleted: the dialog states exactly how many conversations
+      // and automation runs go, and the result counts the same rows.
+      // `includeChildren`: the server folds continuations into their parent
+      // and, unseen, they were left orphaned and came back as new rows.
+      final sessions = await client.getSessions(
+        includeChildren: true,
+        profile: targetProfile,
+      );
+      if (!mounted) return;
+      if (widget.connection.id != targetConnection.id) {
+        _showCleanupNotice(_connectionLostMessage());
+        return;
+      }
       // Elección explícita de ámbito: chats normales, automatizaciones (Cron)
       // o ambos. Antes la acción era única y Cron quedaba siempre fuera.
-      final selection = await showDialog<HistoryCleanupSelection>(
+      final counts = historyCleanupCounts(sessions);
+      final selection = await showHermesDialogRoute<HistoryCleanupSelection>(
         context: context,
-        builder: (_) => const HistoryCleanupScopeDialog(),
+        builder: (_) => HistoryCleanupScopeDialog(counts: counts),
       );
       if (!mounted) return;
       // Cancelar en el diálogo (o no elegir ámbito) es una decisión del
@@ -1590,7 +1919,8 @@ class _HistoryCleanupSectionState extends State<HistoryCleanupSection> {
       }
 
       final remote = await _clearRemote(
-        targetConnection: targetConnection,
+        client: client,
+        sessions: sessions,
         targetProfile: targetProfile,
         selection: selection,
       );
@@ -1616,6 +1946,16 @@ class _HistoryCleanupSectionState extends State<HistoryCleanupSection> {
         return;
       }
 
+      // cs1215: the encrypted cold-start tails and the remembered route of
+      // this profile may name chats just deleted; a cache is never worth
+      // keeping over a cleanup the user asked for.
+      if (remote.deleted > 0 || selection.clearsLocalProfileState) {
+        await context
+            .findAncestorStateOfType<HermesAppState>()
+            ?.activeChats
+            .forgetColdStartProfile(targetConnection.id, targetProfile);
+        if (!mounted) return;
+      }
       LocalConversationClearSummary? result;
       // Cancelado a mitad: NO se arrastra además el estado local del perfil.
       // Pedir parar tiene que parar todo lo que no se haya hecho ya.
@@ -1656,22 +1996,25 @@ class _HistoryCleanupSectionState extends State<HistoryCleanupSection> {
       }
       final allSucceeded =
           (result?.allSucceeded ?? true) && remote.allSucceeded;
-      HermesNotice.of(context).showSnackBar(
-        SnackBar(
-          content: Text(_summaryMessage(Strings.of(context), result, remote)),
-          duration: Duration(seconds: allSucceeded ? 3 : 5),
-        ),
+      AppFeedback.notify(
+        context,
+        allSucceeded && remote.total > 0
+            ? FeedbackKind.routine
+            : FeedbackKind.critical,
+        _summaryMessage(Strings.of(context), result, remote),
+        warning: !allSucceeded,
+        duration: const Duration(seconds: 5),
       );
     } catch (e) {
       // Las fuentes locales se aíslan dentro del coordinador; este fallback
       // cubre el listado/borrado remoto y los fallos al preparar la operación.
       if (!mounted) return;
       final s = Strings.of(context);
-      HermesNotice.of(context).showSnackBar(
-        SnackBar(content: Text(s.setClearError(localizedApiError(s, e)))),
-        kind: HermesNoticeKind.error,
-      );
+      AppFeedback.of(
+        context,
+      ).notify(FeedbackKind.error, s.setClearError(localizedApiError(s, e)));
     } finally {
+      if (override == null) client.close();
       if (mounted) {
         setState(() {
           _clearingNormal = false;
@@ -1945,20 +2288,15 @@ class _OrphanDataTileState extends State<_OrphanDataTile> {
       final removed = await widget.connManager.pruneOrphanData();
       if (!mounted) return;
       final s = Strings.of(context);
-      HermesNotice.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            removed == 0 ? s.secNoOrphans : s.secOrphansRemoved(removed),
-          ),
-        ),
+      AppFeedback.of(context).notify(
+        FeedbackKind.routine,
+        removed == 0 ? s.secNoOrphans : s.secOrphansRemoved(removed),
       );
     } catch (e) {
       if (!mounted) return;
-      HermesNotice.of(context).showSnackBar(
-        SnackBar(
-          content: Text(Strings.of(context).secCleanFailed(e.toString())),
-        ),
-        kind: HermesNoticeKind.error,
+      AppFeedback.of(context).notify(
+        FeedbackKind.error,
+        Strings.of(context).secCleanFailed(e.toString()),
       );
     } finally {
       if (mounted) setState(() => _cleaning = false);
@@ -2020,7 +2358,14 @@ final class HermesUpdateProgress {
   final HermesUpdateStep step;
   final int elapsedSeconds;
 
-  const HermesUpdateProgress({required this.step, this.elapsedSeconds = 0});
+  /// Latest useful line of the server's update log, shown while running.
+  final String? detail;
+
+  const HermesUpdateProgress({
+    required this.step,
+    this.elapsedSeconds = 0,
+    this.detail,
+  });
 
   /// Pasos que se pintan como recorrido (los terminales no añaden un paso).
   static const List<HermesUpdateStep> track = <HermesUpdateStep>[
@@ -2098,6 +2443,31 @@ HermesUpdateVerdict classifyHermesUpdatePoll({
   return HermesUpdateVerdict.keepWaiting;
 }
 
+/// What the user is told when an update ends.
+@visibleForTesting
+String hermesUpdateResultMessage(Strings s, HermesUpdateResult result) {
+  switch (result.outcome) {
+    case HermesUpdateOutcome.failed:
+      final detail = result.issue == HermesUpdateIssue.serverNoReturn
+          ? s.setUpdateServerNoReturn
+          : result.detail;
+      return s.setUpdateError(
+        detail == null || detail.isEmpty ? s.setUpdateFailedNoDetail : detail,
+      );
+    case HermesUpdateOutcome.partial:
+      return result.issue == HermesUpdateIssue.gatewayNotConfirmed
+          ? s.setUpdateGatewayNotConfirmed
+          : s.setUpdatePartial;
+    case HermesUpdateOutcome.unverified:
+      return s.setUpdateUnconfirmed;
+    case HermesUpdateOutcome.confirmed:
+      final version = (result.version ?? '').trim();
+      return version.isEmpty
+          ? s.setHermesUpdated
+          : s.setHermesUpdatedTo(version);
+  }
+}
+
 /// Indicador de progreso real (barra + paso n/N), no un spinner: el usuario
 /// no tenía forma de saber si "Actualizar Hermes" estaba haciendo algo.
 @visibleForTesting
@@ -2164,6 +2534,16 @@ class HermesUpdateProgressPanel extends StatelessWidget {
                 ),
               ),
               if (!progress.finished) ...[
+                if (progress.detail case final detail?) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    detail,
+                    key: const ValueKey('hermes-update-progress-detail'),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 12, color: colors.textSecondary),
+                  ),
+                ],
                 const SizedBox(height: 6),
                 Text(
                   '${progress.elapsedSeconds}s',
@@ -2224,7 +2604,7 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
     super.initState();
     _connection = widget.connection;
     _client = DashboardClient.lazy(_connection);
-    BridgeUpdateService.hermesAutoUpdateEnabled().then((v) {
+    HermesUpdatePreferences.enabled().then((v) {
       if (mounted) setState(() => _hermesAutoUpdate = v);
     });
     _refresh();
@@ -2235,7 +2615,19 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) unawaited(_presentHermesUpdate(pending));
       });
+    } else {
+      unawaited(_resumePersistedUpdate());
     }
+  }
+
+  /// An update persisted before Android killed the app resumes here too, so
+  /// Settings shows its progress instead of offering another one.
+  Future<void> _resumePersistedUpdate() async {
+    final session = await HermesUpdateSession.resumePersisted(_connection.id);
+    if (session == null) return;
+    // Tracked even if this screen is gone: the session releases itself.
+    unawaited(session.track(hermesUpdateProbesFor(_connection, session)));
+    if (mounted) unawaited(_presentHermesUpdate(session));
   }
 
   @override
@@ -2459,51 +2851,6 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
 
   bool _hermesAutoTriggered = false;
 
-  /// Fuentes de datos para seguir la actualización. Usan un cliente propio
-  /// (no el de la pantalla) porque la sesión sobrevive a este widget.
-  HermesUpdateProbes _updateProbes(HermesUpdateSession session) {
-    final connection = _connection;
-    final client = DashboardClient.lazy(connection);
-    session.result.whenComplete(client.close);
-    Future<Map<String, dynamic>?> publicStatus() async {
-      try {
-        final base = connection.effectiveDashboardUrl.replaceAll(
-          RegExp(r'/+$'),
-          '',
-        );
-        final res = await http
-            .get(Uri.parse(TransportPrivacy.requireAllowed('$base/api/status')))
-            .timeout(const Duration(seconds: 8));
-        if (res.statusCode != 200) return null;
-        final data = jsonDecode(res.body);
-        return data is Map<String, dynamic> ? data : null;
-      } catch (_) {
-        return null;
-      }
-    }
-
-    return HermesUpdateProbes(
-      actionStatus: () async {
-        try {
-          return await client.getUpdateActionStatus();
-        } on DashboardHttpException catch (e) {
-          if (e.statusCode == 404) throw const HermesUpdateEndpointMissing();
-          rethrow;
-        }
-      },
-      serverStatus: publicStatus,
-      updateStillAvailable: () async {
-        try {
-          final check = await client.checkUpdate(force: true);
-          final available = check['update_available'];
-          return available is bool ? available : null;
-        } catch (_) {
-          return null;
-        }
-      },
-    );
-  }
-
   /// Si el toggle de auto-actualización de Hermes está activo y hay una versión
   /// nueva, la aplica automáticamente (una vez por carga de pantalla). No aplica
   /// al agente local.
@@ -2514,7 +2861,7 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
     if (widget.connection.onDeviceLoopback) return;
     // Instancia solo-lectura: la auto-actualización se salta en silencio.
     if (widget.connection.readOnly) return;
-    if (!await BridgeUpdateService.hermesAutoUpdateEnabled()) return;
+    if (!await HermesUpdatePreferences.enabled()) return;
     if (!mounted) return;
     // Con App Lock activo, aplicar en auto lanzaría una pantalla de desbloqueo
     // que el usuario no pidió: esta pasada se salta en silencio y la
@@ -2522,9 +2869,9 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
     final lock = context.findAncestorStateOfType<HermesAppState>()?.appLock;
     if (lock != null && lock.enabled) return;
     _hermesAutoTriggered = true;
-    HermesNotice.of(context).showSnackBar(
-      SnackBar(content: Text(Strings.of(context).setUpdatingHermesAuto)),
-    );
+    AppFeedback.of(
+      context,
+    ).notify(FeedbackKind.critical, Strings.of(context).setUpdatingHermesAuto);
     await _applyUpdate(auto: true);
   }
 
@@ -2536,45 +2883,6 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
       if (!auto) showReadOnlyNotice(context);
       return;
     }
-    // El agente local NO se actualiza por el endpoint del dashboard
-    // (`hermes update`): en el dispositivo ese flujo reinstala el perfil amplio
-    // `.[termux-all]` server-side, tarda muchísimo y devuelve 500 dejando la
-    // instalación a medias (lo que luego rompía al reparar). Para local,
-    // redirigimos a la vía robusta: Reparar/Reinstalar desde el panel del agente
-    // local (perfil base + compilación Rust en serie).
-    if (widget.connection.onDeviceLoopback) {
-      if (auto) return; // la auto-actualización no aplica al agente local
-      // Aviso accionable: explica por qué y abre directamente el panel local
-      // (Reparar/Reinstalar), la vía robusta para actualizar el agente on-device.
-      final goPanel = await showHermesDialog<bool>(
-        context: context,
-        title: Strings.of(context).setUpdateLocalTitle,
-        message: Strings.of(context).setUpdateLocalBody,
-        actions: [
-          HermesDialogAction(
-            label: Strings.of(context).commonClose,
-            value: false,
-            style: HermesDialogActionStyle.cancel,
-          ),
-          HermesDialogAction(
-            label: Strings.of(context).setOpenLocalPanel,
-            value: true,
-          ),
-        ],
-      );
-      if (goPanel == true && mounted) {
-        await Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (_) => LocalInstanceControlScreen(
-              connection: widget.connection,
-              connManager: widget.connManager,
-            ),
-          ),
-        );
-        if (mounted) await _refresh(forceUpdate: true);
-      }
-      return;
-    }
     final behind = (_update?['behind'] as num?)?.toInt() ?? 0;
     final method = (_update?['install_method'] ?? 'git').toString();
     // En modo auto saltamos la confirmación (el usuario optó por automático),
@@ -2584,18 +2892,15 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
         context: context,
         title: Strings.of(context).setUpdateHermes,
         message: Strings.of(
-                    context,
-                  ).setUpdateBody(behind > 0 ? ' ($behind commits)' : '', method),
+          context,
+        ).setUpdateBody(behind > 0 ? ' ($behind commits)' : '', method),
         actions: [
           HermesDialogAction(
             label: Strings.of(context).commonCancel,
             value: false,
             style: HermesDialogActionStyle.cancel,
           ),
-          HermesDialogAction(
-            label: Strings.of(context).setUpdate,
-            value: true,
-          ),
+          HermesDialogAction(label: Strings.of(context).setUpdate, value: true),
         ],
       );
       if (confirm != true || !mounted) return;
@@ -2615,7 +2920,7 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
       previousVersion: (_status?['version'] ?? '').toString().trim(),
     );
     if (session == null) {
-      _snack(Strings.of(context).setUpdateAlreadyRunning);
+      _snack(Strings.of(context).setUpdateAlreadyRunning, FeedbackKind.error);
       return;
     }
     // La instancia queda reservada ANTES del POST: desde aquí ninguna otra
@@ -2638,15 +2943,18 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
     }
     session
       ..actionId = applyResult.actionId
-      ..responseConfirmed = applyResult.responseConfirmed;
+      ..responseConfirmed = applyResult.responseConfirmed
+      ..attachedToRunningUpdate = applyResult.alreadyRunning
+      ..adoptServerTime(applyResult.serverDate);
     if (mounted) {
       _snack(
         applyResult.alreadyRunning
             ? Strings.of(context).setUpdateAlreadyRunning
             : Strings.of(context).setUpdateStarted,
+        applyResult.alreadyRunning ? FeedbackKind.error : FeedbackKind.routine,
       );
     }
-    unawaited(session.track(_updateProbes(session)));
+    unawaited(session.track(hermesUpdateProbesFor(_connection, session)));
   }
 
   /// Muestra el progreso de una sesión de actualización (recién lanzada o
@@ -2665,11 +2973,13 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
             HermesUpdateSessionStep.verifying => HermesUpdateStep.verifying,
           },
           elapsedSeconds: session.elapsedSeconds,
+          detail: session.progressLine.value,
         );
       });
     }
 
     session.step.addListener(publish);
+    session.progressLine.addListener(publish);
     // Refresca el contador de segundos aunque el paso no cambie.
     final ticker = Timer.periodic(const Duration(seconds: 1), (_) => publish());
     if (mounted) setState(() => _busy = true);
@@ -2680,23 +2990,26 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
     } finally {
       ticker.cancel();
       session.step.removeListener(publish);
+      session.progressLine.removeListener(publish);
     }
     if (!mounted) return;
     setState(() => _busy = false);
     await _refresh(forceUpdate: true);
     if (!mounted) return;
     final s = Strings.of(context);
+    final message = hermesUpdateResultMessage(
+      s,
+      HermesUpdateResult(
+        result.outcome,
+        detail: result.detail,
+        issue: result.issue,
+        version: (result.version ?? _status?['version'] ?? '').toString(),
+      ),
+    );
     switch (result.outcome) {
       case HermesUpdateOutcome.failed:
         setState(() => _updateProgress = null);
-        final detail = result.detail;
-        _snack(
-          s.setUpdateError(
-            detail == null || detail.isEmpty
-                ? s.setUpdateFailedNoDetail
-                : detail,
-          ),
-        );
+        _snack(message);
         return;
       case HermesUpdateOutcome.partial:
         setState(
@@ -2704,30 +3017,37 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
             step: HermesUpdateStep.unverified,
           ),
         );
-        _snack(s.setUpdatePartial);
+        if (result.issue == HermesUpdateIssue.gatewayNotConfirmed) {
+          // Code updated, gateway unconfirmed: offer to check it again.
+          AppFeedback.of(context).notify(
+            FeedbackKind.critical,
+            message,
+            action: HermesNoticeAction(
+              label: s.setUpdateCheckGateway,
+              onPressed: () {
+                if (mounted) unawaited(_waitForGatewayBack());
+              },
+            ),
+          );
+        } else {
+          _snack(message, FeedbackKind.critical);
+        }
       case HermesUpdateOutcome.unverified:
         setState(
           () => _updateProgress = const HermesUpdateProgress(
             step: HermesUpdateStep.unverified,
           ),
         );
-        _snack(s.setUpdateUnconfirmed);
+        _snack(message, FeedbackKind.critical);
       case HermesUpdateOutcome.confirmed:
         setState(
           () => _updateProgress = const HermesUpdateProgress(
             step: HermesUpdateStep.done,
           ),
         );
-        final nv = (result.version ?? _status?['version'] ?? '')
-            .toString()
-            .trim();
-        _snack(nv.isEmpty ? s.setHermesUpdated : s.setHermesUpdatedTo(nv));
-        // Con la actualización cerrada se comprueba el bridge bajo la misma
-        // preferencia.
-        unawaited(
-          BridgeUpdateService.maintainIfEnabled(widget.connection, force: true),
-        );
+        _snack(message, FeedbackKind.routine);
     }
+
     // El panel terminal queda unos segundos y luego desaparece.
     await Future.delayed(const Duration(seconds: 6));
     if (mounted) setState(() => _updateProgress = null);
@@ -2740,7 +3060,7 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
       return;
     }
     if (HermesUpdateGuard.isActive(widget.connection.id)) {
-      _snack(Strings.of(context).setUpdateAlreadyRunning);
+      _snack(Strings.of(context).setUpdateAlreadyRunning, FeedbackKind.error);
       return;
     }
     final confirm = await showHermesDialog<bool>(
@@ -2753,10 +3073,7 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
           value: false,
           style: HermesDialogActionStyle.cancel,
         ),
-        HermesDialogAction(
-          label: Strings.of(context).setRestart,
-          value: true,
-        ),
+        HermesDialogAction(label: Strings.of(context).setRestart, value: true),
       ],
     );
     if (confirm != true || !mounted) return;
@@ -2766,16 +3083,42 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
     }
 
     setState(() => _busy = true);
+    Object? requestError;
     try {
-      await _client.restartGateway();
-      if (!mounted) return;
-      _snack(Strings.of(context).setGatewayRestarting);
       // Espera resiliente a que el gateway vuelva (en vez de un delay fijo que
-      // dejaba la app pillada si el reinicio tardaba).
-      await _waitForGatewayBack();
-      if (mounted) _snack(Strings.of(context).setGatewayRestarted);
-    } catch (e) {
-      if (mounted) _snack(Strings.of(context).setRestartError(e.toString()));
+      // dejaba la app pillada si el reinicio tardaba). Only a gateway seen
+      // running again is announced as restarted.
+      final outcome = await runGatewayRestart(
+        restart: () async {
+          try {
+            await _client.restartGateway();
+          } catch (e) {
+            requestError = e;
+            rethrow;
+          }
+        },
+        waitUntilBack: () => _waitForGatewayBack(),
+        onRequested: () {
+          if (mounted) {
+            _snack(
+              Strings.of(context).setGatewayRestarting,
+              FeedbackKind.routine,
+            );
+          }
+        },
+      );
+      if (!mounted) return;
+      final s = Strings.of(context);
+      _snack(
+        switch (outcome) {
+          GatewayRestartOutcome.back => s.setGatewayRestarted,
+          GatewayRestartOutcome.notBack => s.setGatewayNotBack,
+          GatewayRestartOutcome.failed => s.setRestartError('$requestError'),
+        },
+        outcome == GatewayRestartOutcome.back
+            ? FeedbackKind.routine
+            : FeedbackKind.error,
+      );
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -2799,10 +3142,7 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
           value: false,
           style: HermesDialogActionStyle.cancel,
         ),
-        HermesDialogAction(
-          label: Strings.of(context).setUpdate,
-          value: true,
-        ),
+        HermesDialogAction(label: Strings.of(context).setUpdate, value: true),
       ],
     );
     if (confirm != true || !mounted) return;
@@ -2816,13 +3156,13 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
       final res = await _client.migrateConfig();
       if (!mounted) return;
       if (res['ok'] == true) {
-        _snack(Strings.of(context).setMigrateStarted);
+        _snack(Strings.of(context).setMigrateStarted, FeedbackKind.routine);
         // Es detached: esperamos y refrescamos para confirmar el nuevo número.
         await Future.delayed(const Duration(seconds: 4));
         if (!mounted) return;
         await _refresh();
         if (mounted && !_configOutdated) {
-          _snack(Strings.of(context).setConfigUpToDate);
+          _snack(Strings.of(context).setConfigUpToDate, FeedbackKind.routine);
         }
       } else {
         _snack(Strings.of(context).setMigrateFailed);
@@ -2835,8 +3175,8 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
     }
   }
 
-  void _snack(String msg) {
-    HermesNotice.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  void _snack(String msg, [FeedbackKind kind = FeedbackKind.error]) {
+    AppFeedback.notify(context, kind, msg);
   }
 
   // ── Diagnóstico derivado de /api/status ──────────────────────────────
@@ -2852,18 +3192,6 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
     final latest = (_status?['latest_config_version'] as num?)?.toInt();
     return cur != null && latest != null && cur < latest;
   }
-
-  /// Estados de plataforma del gateway ("connected"…) en español legible; los
-  /// desconocidos se muestran crudos como fallback (spec 028 A-026).
-  String _platformStateEs(String state) => switch (state) {
-    'connected' => 'conectada',
-    'disconnected' => 'desconectada',
-    'connecting' => 'conectando',
-    'error' => 'con error',
-    'starting' => 'arrancando',
-    'stopped' => 'detenida',
-    _ => state,
-  };
 
   /// Lista de avisos legibles; vacía = todo en orden. La versión del esquema de
   /// config NO es un aviso: el agente funciona igual y solo indica que hay un
@@ -2881,9 +3209,10 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
     for (final e in _platforms.entries) {
       if (e.value != 'connected') {
         w.add(
-          Strings.of(
-            context,
-          ).setPlatformStatus(e.key, _platformStateEs(e.value)),
+          Strings.of(context).setPlatformStatus(
+            e.key,
+            gatewayPlatformStateLabel(Strings.of(context), e.value),
+          ),
         );
       }
     }
@@ -3067,7 +3396,7 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
               _diagRow(
                 colors,
                 e.key,
-                _platformStateEs(e.value),
+                gatewayPlatformStateLabel(Strings.of(context), e.value),
                 e.value == 'connected',
               ),
             _diagRow(
@@ -3115,7 +3444,7 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
                 padding: const EdgeInsets.only(top: 6),
                 child: Text(
                   Strings.of(context).setAddsNewOptions,
-                  style: TextStyle(fontSize: 11, color: colors.textDisabled),
+                  style: TextStyle(fontSize: 11, color: colors.textTertiary),
                 ),
               ),
             ],
@@ -3127,30 +3456,6 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
                   : Strings.of(context).setActiveSessionsRunning(sessions),
               true,
               neutral: true,
-            ),
-            Padding(
-              padding: const EdgeInsets.only(top: 5, bottom: 2),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Icon(
-                    Icons.info_outline_rounded,
-                    size: 13,
-                    color: colors.textSecondary,
-                  ),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: Text(
-                      Strings.of(context).setActiveSessionsNote,
-                      style: TextStyle(
-                        fontSize: 11,
-                        height: 1.35,
-                        color: colors.textSecondary,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
             ),
             _diagRow(
               colors,
@@ -3276,7 +3581,7 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
                 value: _hermesAutoUpdate,
                 onChanged: (v) async {
                   setState(() => _hermesAutoUpdate = v);
-                  await BridgeUpdateService.setHermesAutoUpdate(v);
+                  await HermesUpdatePreferences.setEnabled(v);
                   if (v) _maybeAutoUpdateHermes();
                 },
               ),
@@ -3336,9 +3641,11 @@ class _AboutCardState extends State<_AboutCard> {
   Future<void> _loadVersion() async {
     try {
       final info = await PackageInfo.fromPlatform();
+      if (!mounted) return;
       setState(() => _version = '${info.version}+${info.buildNumber}');
     } catch (e) {
       debugPrint('[settings] no se pudo leer PackageInfo: $e');
+      if (!mounted) return;
       setState(() => _version = '1.0.0');
     }
   }
@@ -3351,7 +3658,7 @@ class _AboutCardState extends State<_AboutCard> {
       child: _HistoryCleanupActionRow(
         actionKey: const ValueKey('about-hermes-console'),
         icon: Icons.info_outline,
-        title: 'Hermes Console',
+        title: 'Console',
         subtitle: Strings.of(
           context,
         ).setClientVersion(_version.isNotEmpty ? _version : '…'),
@@ -3431,8 +3738,8 @@ class _HeaderTitleEditScreenState extends State<_HeaderTitleEditScreen> {
           textCapitalization: TextCapitalization.characters,
           style: TextStyle(color: colors.textPrimary),
           decoration: InputDecoration(
-            hintText: 'HERMES CONSOLE',
-            hintStyle: TextStyle(color: colors.textDisabled),
+            hintText: kDefaultHeaderTitle,
+            hintStyle: TextStyle(color: colors.textTertiary),
             counterStyle: TextStyle(color: colors.textSecondary),
             enabledBorder: UnderlineInputBorder(
               borderSide: BorderSide(color: colors.divider),
@@ -3443,205 +3750,6 @@ class _HeaderTitleEditScreenState extends State<_HeaderTitleEditScreen> {
           ),
           onSubmitted: (v) => Navigator.pop(context, v),
         ),
-      ),
-    );
-  }
-}
-
-/// Estado y acción manual del Mobile Bridge. La política automática se controla
-/// una sola vez en Sistema y cubre Hermes + Bridge (spec 035).
-class _BridgeAutoUpdateTile extends StatefulWidget {
-  /// En instancias locales (on-device) el bridge NO se descarga ni depende de
-  /// este control: el agente local lo redespliega solo desde los assets del APK
-  /// en cada conexión (`ensureFreshBridge`).
-  final SavedConnection connection;
-  const _BridgeAutoUpdateTile({required this.connection});
-
-  bool get local => connection.onDeviceLoopback;
-
-  @override
-  State<_BridgeAutoUpdateTile> createState() => _BridgeAutoUpdateTileState();
-}
-
-class _BridgeAutoUpdateTileState extends State<_BridgeAutoUpdateTile> {
-  bool _checking = false;
-  bool _updating = false;
-  BridgeUpdateCheck _check = BridgeUpdateCheck.none;
-  String? _updateDetail;
-
-  @override
-  void initState() {
-    super.initState();
-    if (widget.local) return; // en local no hay toggle: no cargamos la pref
-    _load();
-  }
-
-  @override
-  void didUpdateWidget(covariant _BridgeAutoUpdateTile oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.connection.id != widget.connection.id) {
-      _check = BridgeUpdateCheck.none;
-      _updateDetail = null;
-      if (!widget.local) _load();
-    }
-  }
-
-  Future<void> _load() async {
-    final enabled = await BridgeUpdateService.automaticUpdatesEnabled();
-    if (!mounted) return;
-    await _refresh(updateIfEnabled: enabled, allowRemote: enabled);
-  }
-
-  Future<void> _refresh({
-    bool updateIfEnabled = false,
-    bool allowRemote = false,
-  }) async {
-    if (_checking || _updating || widget.local) return;
-    setState(() => _checking = true);
-    final check = await BridgeUpdateService.check(
-      widget.connection,
-      allowRemote: allowRemote,
-    );
-    if (!mounted) return;
-    setState(() {
-      _check = check;
-      _checking = false;
-    });
-    if (updateIfEnabled && check.outdated && !widget.connection.readOnly) {
-      await _updateNow(automatic: true);
-    }
-  }
-
-  Future<void> _updateNow({bool automatic = false}) async {
-    if (_updating || widget.connection.readOnly) return;
-    setState(() {
-      _updating = true;
-      _updateDetail = null;
-    });
-    final result = await BridgeUpdateService.update(
-      widget.connection,
-      automatic: automatic,
-      onProgress: (message) {
-        if (mounted) setState(() => _updateDetail = message);
-      },
-    );
-    if (!mounted) return;
-    setState(() {
-      _updating = false;
-      _updateDetail = result.detail;
-    });
-    if (result.ok) await _refresh(allowRemote: true);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
-    if (widget.local) {
-      // Nota honesta: el bridge local se mantiene fresco automaticamente.
-      return Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        child: Row(
-          children: [
-            Icon(Icons.check_circle_outline, size: 20, color: colors.success),
-            const SizedBox(width: 15),
-            Expanded(
-              child: Text(
-                Strings.of(context).setBridgeLocalAutoFresh,
-                style: TextStyle(fontSize: 13, color: colors.textSecondary),
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-    final s = Strings.of(context);
-    final status = _updating
-        ? (_updateDetail ?? s.bridgeUpdating)
-        : _checking
-        ? s.setBridgeChecking
-        : !_check.reachable
-        ? s.setBridgeStatusUnavailable
-        : _check.outdated
-        ? s.bridgeUpdateAvailable(
-            _check.installed ?? '?',
-            _check.available ?? BridgeUpdateService.packagedVersion,
-          )
-        : s.setBridgeStatusCurrent(_check.installed ?? '?');
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      child: Row(
-        children: [
-          Icon(Icons.system_update_alt, size: 20, color: colors.accent),
-          const SizedBox(width: 15),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  s.setBridgeAutoUpdateTitle,
-                  style: TextStyle(
-                    fontSize: 14.5,
-                    fontWeight: FontWeight.w600,
-                    color: colors.textPrimary,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  s.setBridgeAutoUpdateSub,
-                  style: TextStyle(fontSize: 12, color: colors.textSecondary),
-                ),
-                const SizedBox(height: 7),
-                Row(
-                  children: [
-                    if (_checking || _updating) ...[
-                      const SizedBox(
-                        width: 12,
-                        height: 12,
-                        child: CircularProgressIndicator(strokeWidth: 1.6),
-                      ),
-                      const SizedBox(width: 7),
-                    ] else ...[
-                      Icon(
-                        _check.reachable && !_check.outdated
-                            ? Icons.check_circle_outline
-                            : Icons.info_outline,
-                        size: 14,
-                        color: _check.reachable && !_check.outdated
-                            ? colors.success
-                            : colors.textSecondary,
-                      ),
-                      const SizedBox(width: 7),
-                    ],
-                    Expanded(
-                      child: Text(
-                        widget.connection.readOnly
-                            ? s.setBridgeReadOnly
-                            : status,
-                        style: TextStyle(
-                          fontSize: 11.5,
-                          color: colors.textSecondary,
-                        ),
-                      ),
-                    ),
-                    if (_check.outdated &&
-                        !_updating &&
-                        !widget.connection.readOnly)
-                      TextButton(
-                        onPressed: _updateNow,
-                        child: Text(s.setBridgeUpdateNow),
-                      )
-                    else if (!_checking && !_updating)
-                      IconButton(
-                        tooltip: s.commonRefresh,
-                        onPressed: () => _refresh(allowRemote: true),
-                        icon: const Icon(Icons.refresh, size: 18),
-                      ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ],
       ),
     );
   }

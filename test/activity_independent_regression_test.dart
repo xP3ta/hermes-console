@@ -16,6 +16,7 @@ import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/compression_restore_store.dart';
 
 import 'session_authority_probe_test.dart' as helpers;
+import 'support/official_resume_server.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -412,7 +413,11 @@ void main() {
   }
   test(
     'B2 rejected stale send cannot contaminate next fresh transcript',
-    () async {
+    () => HttpOverrides.runZoned(() async {
+      // The transcript is the official server's: the chat keeps no local
+      // copy, so contamination is checked where a turn can actually land.
+      final server = await OfficialResumeServer.start();
+      addTearDown(server.close);
       final slow = helpers.SlowFenceStorage();
       final service = ActiveChatService(
         compressionRestoreStore: CompressionRestoreStore(storage: slow),
@@ -421,7 +426,8 @@ void main() {
         id: 'c',
         label: 'synthetic',
         host: '127.0.0.1',
-        port: 8642,
+        port: server.server.port,
+        dashboardUrl: 'http://127.0.0.1:${server.server.port}',
         apiKey: '',
         kind: InstanceKind.localhost,
         onDeviceLoopback: true,
@@ -469,33 +475,51 @@ void main() {
         ),
         isTrue,
       );
-      // Any storage write disposes the service at that seam, before transport.
-      hook = (call) async {
-        if (call.method == 'write') chat.dispose();
-      };
       slow.release!.complete();
       final firstOutcome = await sending.timeout(const Duration(seconds: 3));
-      final before = await LocalTranscriptStore.load(
-        'c',
-        's',
-        profile: 'default',
-      );
       expect(firstOutcome, isA<LocalConversationWriteRejected>());
-      expect(before, isEmpty);
-      await helpers.result(
-        chat.send(
+      expect(
+        await LocalTranscriptStore.load('c', 's', profile: 'default'),
+        isEmpty,
+      );
+      expect(
+        server.frames.where((f) => f['method'] == 'prompt.submit'),
+        isEmpty,
+      );
+      expect(
+        chat.messages.where((row) => row['content'] == 'STALE_BEFORE_CLEANUP'),
+        isEmpty,
+      );
+
+      expect(
+        await chat.send(
           fullText: 'FRESH_AFTER_CLEANUP',
           model: 'm',
           history: const [],
         ),
+        isTrue,
       );
-      final after = await LocalTranscriptStore.load(
-        'c',
-        's',
-        profile: 'default',
+      await server.completeTurn(chat, 'FRESH_AFTER_CLEANUP');
+      await chat.loadMessages(profile: 'default', passiveOnly: true);
+      const freshTurn = ['FRESH_AFTER_CLEANUP', 'reply:FRESH_AFTER_CLEANUP'];
+      expect(server.history.map((row) => row['content']), freshTurn);
+      expect(
+        server.frames
+            .where((f) => f['method'] == 'prompt.submit')
+            .map((f) => (f['params'] as Map)['text']),
+        ['FRESH_AFTER_CLEANUP'],
       );
-      expect(after.map((row) => row['content']), ['FRESH_AFTER_CLEANUP']);
-    },
+      expect(chat.messages.reversed.map((row) => row['content']), freshTurn);
+      // No local writer on the official path.
+      expect(
+        await LocalTranscriptStore.load('c', 's', profile: 'default'),
+        isEmpty,
+      );
+      expect(
+        secure.keys.where((key) => key.startsWith('hermes.transcript.v3.')),
+        isEmpty,
+      );
+    }, createHttpClient: RealFixtureHttp().createHttpClient),
   );
   test(
     'B5 alias-only overlap fences shared destination but preserves disjoint owner',

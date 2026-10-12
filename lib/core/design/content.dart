@@ -3,10 +3,14 @@ import 'package:flutter/services.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../theme/app_theme.dart';
+import '../utils/markdown_clipboard.dart';
+import '../utils/plain_preview.dart';
+import '../widgets/compact_markdown.dart';
 import '../widgets/hermes_app_bar.dart';
-import '../widgets/hermes_notice.dart';
 import 'list.dart';
+import 'edges.dart';
 import 'tokens.dart';
+import '../feedback/feedback_policy.dart';
 
 /// 6 px dot + support label in the status colour + optional "· meta". No box.
 class HermesStatusText extends StatelessWidget {
@@ -248,13 +252,21 @@ class _HermesTextBlockState extends State<HermesTextBlock> {
           0.0,
           double.infinity,
         );
+        // rt1215: agent text written in Markdown renders as compact
+        // Markdown (never raw `**`); plain or mono text stays a literal Text.
+        final markdown = !widget.mono && looksLikeMarkdown(widget.text);
         final painter = TextPainter(
-          text: TextSpan(text: widget.text, style: style),
+          text: TextSpan(
+            text: markdown ? markdownToClipboardText(widget.text) : widget.text,
+            style: style,
+          ),
           textDirection: Directionality.of(context),
           textScaler: MediaQuery.textScalerOf(context),
           maxLines: widget.collapsedLines,
         )..layout(maxWidth: width);
         final overflows = painter.didExceedMaxLines;
+        final foldedHeight =
+            painter.preferredLineHeight * widget.collapsedLines;
         painter.dispose();
         final collapsed = overflows && !_expanded;
         final actions = <Widget>[
@@ -287,11 +299,9 @@ class _HermesTextBlockState extends State<HermesTextBlock> {
               onPressed: () async {
                 await Clipboard.setData(ClipboardData(text: widget.text));
                 if (context.mounted) {
-                  HermesNotice.show(
+                  AppFeedback.of(
                     context,
-                    message: s.designCopied,
-                    kind: HermesNoticeKind.success,
-                  );
+                  ).notify(FeedbackKind.routine, s.designCopied);
                 }
               },
               icon: const Icon(Icons.copy_rounded),
@@ -307,13 +317,31 @@ class _HermesTextBlockState extends State<HermesTextBlock> {
                 HermesSpace.rowH,
                 actions.length > 1 ? 0 : HermesSpace.x3,
               ),
-              child: Text(
-                widget.text,
-                key: const ValueKey('hermes-text-block-text'),
-                style: style,
-                maxLines: collapsed ? widget.collapsedLines : null,
-                overflow: collapsed ? TextOverflow.fade : null,
-              ),
+              child: markdown
+                  ? KeyedSubtree(
+                      key: const ValueKey('hermes-text-block-text'),
+                      child: collapsed
+                          ? FoldedFadeBox(
+                              maxHeight: foldedHeight,
+                              child: CompactMarkdown(
+                                data: widget.text,
+                                tone: CompactMarkdownTone.body,
+                                fontSize: style.fontSize ?? 14,
+                              ),
+                            )
+                          : CompactMarkdown(
+                              data: widget.text,
+                              tone: CompactMarkdownTone.body,
+                              fontSize: style.fontSize ?? 14,
+                            ),
+                    )
+                  : Text(
+                      widget.text,
+                      key: const ValueKey('hermes-text-block-text'),
+                      style: style,
+                      maxLines: collapsed ? widget.collapsedLines : null,
+                      overflow: collapsed ? TextOverflow.fade : null,
+                    ),
             ),
             if (actions.length > 1)
               Padding(
@@ -380,11 +408,9 @@ class HermesLogPage extends StatelessWidget {
             onPressed: () async {
               await Clipboard.setData(ClipboardData(text: text));
               if (context.mounted) {
-                HermesNotice.show(
+                AppFeedback.of(
                   context,
-                  message: s.designCopied,
-                  kind: HermesNoticeKind.success,
-                );
+                ).notify(FeedbackKind.routine, s.designCopied);
               }
             },
           ),
@@ -394,6 +420,7 @@ class HermesLogPage extends StatelessWidget {
         top: false,
         child: SelectionArea(
           child: ListView(
+            clipBehavior: hermesUnderHeader,
             key: const ValueKey('hermes-log-page'),
             padding: const EdgeInsets.fromLTRB(
               HermesSpace.pageH,
@@ -572,39 +599,44 @@ Future<bool> showHermesReviewPage({
             child: Column(
               children: [
                 Expanded(
-                  child: SelectionArea(
-                    child: ListView(
-                      key: const ValueKey('hermes-review-scroll'),
-                      padding: const EdgeInsets.fromLTRB(
-                        HermesSpace.pageH,
-                        HermesSpace.pageTop,
-                        HermesSpace.pageH,
-                        HermesSpace.pageBottom,
-                      ),
-                      children: [
-                        if (message != null && message.isNotEmpty) ...[
-                          Text(
-                            message,
-                            style: HermesType.text.copyWith(
-                              color: colors.textSecondary,
-                            ),
-                          ),
-                          const SizedBox(height: HermesSpace.x4),
-                        ],
-                        Text(
-                          text,
-                          style: mono
-                              ? TextStyle(
-                                  fontFamily: 'monospace',
-                                  fontSize: 12.5,
-                                  height: 1.5,
-                                  color: colors.textPrimary,
-                                )
-                              : HermesType.text.copyWith(
-                                  color: colors.textPrimary,
-                                ),
+                  // The text dissolves before the two buttons, which sit
+                  // on the page with no band.
+                  child: HermesFadedEnd(
+                    child: SelectionArea(
+                      child: ListView(
+                        key: const ValueKey('hermes-review-scroll'),
+                        clipBehavior: hermesUnderHeader,
+                        padding: const EdgeInsets.fromLTRB(
+                          HermesSpace.pageH,
+                          HermesSpace.pageTop,
+                          HermesSpace.pageH,
+                          HermesSpace.pageBottom,
                         ),
-                      ],
+                        children: [
+                          if (message != null && message.isNotEmpty) ...[
+                            Text(
+                              message,
+                              style: HermesType.text.copyWith(
+                                color: colors.textSecondary,
+                              ),
+                            ),
+                            const SizedBox(height: HermesSpace.x4),
+                          ],
+                          Text(
+                            text,
+                            style: mono
+                                ? TextStyle(
+                                    fontFamily: 'monospace',
+                                    fontSize: 12.5,
+                                    height: 1.5,
+                                    color: colors.textPrimary,
+                                  )
+                                : HermesType.text.copyWith(
+                                    color: colors.textPrimary,
+                                  ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),

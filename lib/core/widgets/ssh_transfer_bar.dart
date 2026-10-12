@@ -76,9 +76,9 @@ class SshTransferBar extends StatelessWidget {
                     const SizedBox(width: 8),
                     Text(
                       err
-                          ? 'error'
+                          ? Strings.of(context).m1215TransferError
                           : ok
-                              ? 'listo'
+                              ? Strings.of(context).m1215TransferDone
                               : (pct == null ? '…' : '$pct%'),
                       style: TextStyle(fontSize: 11, color: tone),
                     ),

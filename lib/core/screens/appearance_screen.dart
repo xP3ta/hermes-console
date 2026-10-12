@@ -22,6 +22,7 @@ class AppearanceScreen extends StatelessWidget {
     return Scaffold(
       appBar: HermesAppBar(title: Text(strings.setSecAppearance)),
       body: ListView(
+        clipBehavior: hermesUnderHeader,
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
         children: [
           _AppearanceScope(connectionLabel: connection.label),
@@ -32,7 +33,7 @@ class AppearanceScreen extends StatelessWidget {
                 key: const ValueKey('appearance-theme-presets'),
                 icon: Icons.palette_outlined,
                 title: strings.themesTitle,
-                subtitle: strings.themesHint(AppTheme.presets.length),
+                subtitle: strings.themesHint(AppTheme.familyCount),
                 onTap: () => Navigator.of(context).push<void>(
                   MaterialPageRoute<void>(builder: (_) => const ThemesScreen()),
                 ),

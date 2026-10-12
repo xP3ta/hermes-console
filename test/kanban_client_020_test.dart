@@ -347,6 +347,104 @@ void main() {
   );
 
   test(
+    'orchestration reads typed state and writes one field per request',
+    () async {
+      final requests = <http.Request>[];
+      final dashboard = DashboardClient(
+        host: 'hermes.local',
+        manualToken: 'session-token',
+        httpClientOverride: MockClient((request) async {
+          requests.add(request);
+          switch ((request.method, request.url.path)) {
+            case ('GET', '/api/plugins/kanban/orchestration'):
+            case ('PUT', '/api/plugins/kanban/orchestration'):
+              return http.Response(
+                jsonEncode({
+                  'orchestrator_profile': 'lead',
+                  'default_assignee': null,
+                  'auto_decompose': true,
+                  'resolved_orchestrator_profile': 'lead',
+                  'resolved_default_assignee': 'builder',
+                  'active_profile': 'default',
+                }),
+                200,
+              );
+            case ('PATCH', '/api/plugins/kanban/profiles/builder'):
+              return http.Response(
+                '{"ok":true,"profile":"builder","description":"Builds"}',
+                200,
+              );
+            case ('POST', '/api/plugins/kanban/profiles/builder/describe-auto'):
+              return http.Response(
+                '{"ok":false,"profile":"builder","reason":"No model","description":""}',
+                200,
+              );
+            default:
+              return http.Response('{}', 404);
+          }
+        }),
+      );
+      final client = KanbanClient(connection(), dashboardClient: dashboard);
+      addTearDown(client.close);
+
+      final state = await client.getOrchestration();
+      final updated = await client.setOrchestration(
+        orchestratorProfile: 'lead',
+      );
+      final cleared = await client.setOrchestration(defaultAssignee: '');
+      final description = await client.setProfileDescription(
+        'builder',
+        '  Builds  ',
+      );
+      final automatic = await client.autoDescribeProfile('builder');
+
+      expect(state!.orchestratorProfile, 'lead');
+      expect(state.defaultAssignee, isNull);
+      expect(state.autoDecompose, isTrue);
+      expect(updated.resolvedOrchestratorProfile, 'lead');
+      expect(cleared.resolvedDefaultAssignee, 'builder');
+      expect(description.description, 'Builds');
+      expect(automatic.ok, isFalse);
+      expect(automatic.reason, 'No model');
+      expect(jsonDecode(requests[1].body), {'orchestrator_profile': 'lead'});
+      expect(jsonDecode(requests[2].body), {'default_assignee': ''});
+      expect(jsonDecode(requests[3].body), {'description': 'Builds'});
+      expect(jsonDecode(requests[4].body), {'overwrite': false});
+    },
+  );
+
+  test('create override fields follow the Desktop omit rule', () async {
+    final bodies = <Map<String, dynamic>>[];
+    final dashboard = DashboardClient(
+      host: 'hermes.local',
+      manualToken: 'session-token',
+      httpClientOverride: MockClient((request) async {
+        bodies.add(Map<String, dynamic>.from(jsonDecode(request.body) as Map));
+        return http.Response('{}', 200);
+      }),
+    );
+    final client = KanbanClient(connection(), dashboardClient: dashboard);
+    addTearDown(client.close);
+
+    await client.createTask(title: 'Profile defaults');
+    await client.createTask(
+      title: 'Override',
+      modelOverride: 'gpt-5.6',
+      providerOverride: 'openai',
+      reasoningEffort: 'high',
+    );
+
+    expect(bodies.first, {'title': 'Profile defaults'});
+    expect(bodies.first.keys.where((key) => key.startsWith('clear_')), isEmpty);
+    expect(bodies.last, {
+      'title': 'Override',
+      'model_override': 'gpt-5.6',
+      'provider_override': 'openai',
+      'reasoning_effort': 'high',
+    });
+  });
+
+  test(
     'modo solo lectura bloquea todas las mutaciones antes de la red',
     () async {
       var calls = 0;
@@ -367,6 +465,9 @@ void main() {
       final mutations = <Future<void>>[
         client.addComment('t1', 'nota'),
         client.createTask(title: 'nueva'),
+        client.setOrchestration(autoDecompose: true).then((_) {}),
+        client.setProfileDescription('builder', 'Builds').then((_) {}),
+        client.autoDescribeProfile('builder').then((_) {}),
         client.moveTask('t1', 'done'),
         client.updateTask('t1', title: 'cambio'),
         client.deleteTask('t1'),

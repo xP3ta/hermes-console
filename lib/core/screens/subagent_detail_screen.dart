@@ -23,19 +23,27 @@ import '../../l10n/app_localizations.dart';
 import '../../main.dart' show hermesRouteObserver;
 import '../design/hermes_design.dart';
 import '../models/subagent_activity.dart';
+import '../services/active_chat_service.dart'
+    show ProfileTranscriptAccessRequired;
+import '../services/subagent_live_watch.dart';
+import '../services/delegation_control.dart';
+import '../services/tui_gateway_client.dart' show TuiGatewayRpcError;
 import '../theme/app_theme.dart';
 import '../utils/assistant_content.dart' show finalizedPublicAssistantText;
+import '../utils/plain_preview.dart';
 import '../widgets/activity_pill.dart' show formatTurnElapsed;
 import '../widgets/chat/chat_markdown_body.dart';
 import '../widgets/hermes_app_bar.dart';
-import '../widgets/hermes_notice.dart';
+import '../widgets/console_loader.dart';
 import '../widgets/subagent_activity_card.dart'
     show
         SubagentTailView,
         SubagentTailLoader,
         SubagentSteerSender,
         SubagentStopRequester,
-        SubagentTailScheduler;
+        SubagentTailScheduler,
+        SubagentLiveWatchOpener;
+import '../feedback/feedback_policy.dart';
 
 /// Human status of a subagent (label + tone), shared by the in-chat row, the
 /// floating list and the detail page so the same entity reads the same way.
@@ -102,7 +110,9 @@ Duration? subagentElapsed(SubagentActivity activity, DateTime now) {
 String subagentTitle(Strings s, SubagentActivity activity, {int? maxChars}) {
   final goal = activity.goalPreview?.trim() ?? '';
   if (goal.isEmpty) return s.subagentUiRowTitle;
-  final line = goal.split('\n').first.trim();
+  // rt1215: a goal is agent Markdown; its title line is plain text.
+  final line = plainPreview(goal.split('\n').first);
+  if (line.isEmpty) return s.subagentUiRowTitle;
   if (maxChars != null && line.runes.length > maxChars) {
     return '${String.fromCharCodes(line.runes.take(maxChars)).trimRight()}…';
   }
@@ -214,6 +224,14 @@ class SubagentDetailScreen extends StatefulWidget {
   final VoidCallback Function()? acquirePresentation;
 
   final SubagentTailScheduler? scheduleTailPoll;
+
+  /// Live watch of the child's mirrored turn. While it is up the polled tail
+  /// stays off; it is the fallback when the watch cannot be opened.
+  final SubagentLiveWatchOpener? openLiveWatch;
+
+  /// Server-wide "pause new subagents" switch, offered in the overflow menu.
+  /// Null hides the menu.
+  final HermesDelegationGateway? delegationControl;
   final DateTime Function()? clock;
 
   /// Route observer used to know when this page is covered (tests inject one).
@@ -239,6 +257,8 @@ class SubagentDetailScreen extends StatefulWidget {
     this.isOpenPending,
     this.acquirePresentation,
     this.scheduleTailPoll,
+    this.openLiveWatch,
+    this.delegationControl,
     this.clock,
     this.routeObserver,
     this.hideGoal = false,
@@ -267,8 +287,15 @@ class _SubagentDetailScreenState extends State<SubagentDetailScreen>
   );
   int _tailGeneration = 0;
   bool _tailInFlight = false;
+  bool _tailDirty = false;
   VoidCallback? _cancelTailPoll;
   Duration _tailInterval = SubagentDetailScreen.tailFast;
+
+  // Live watch of the child's mirrored turn. While it is up it is the only
+  // source of the log; once it cannot be served the polled tail takes over
+  // for the rest of this page's life.
+  SubagentLiveWatch? _watch;
+  bool _watchUnavailable = false;
 
   final TextEditingController _steer = TextEditingController();
   bool _steerPending = false;
@@ -277,6 +304,9 @@ class _SubagentDetailScreenState extends State<SubagentDetailScreen>
   bool _steerUnsupported = false;
   bool _stopAwaiting = false;
   bool _technicalOpen = false;
+  final GlobalKey _moreKey = GlobalKey(debugLabel: 'subagent-detail-more');
+  bool _delegationUnsupported = false;
+  bool _delegationBusy = false;
   Timer? _clockTimer;
 
   @override
@@ -309,6 +339,7 @@ class _SubagentDetailScreenState extends State<SubagentDetailScreen>
     WidgetsBinding.instance.removeObserver(this);
     _observer?.unsubscribe(this);
     widget.roster.removeListener(_onRoster);
+    _stopWatch();
     _stopTail();
     _clockTimer?.cancel();
     _release?.call();
@@ -362,6 +393,10 @@ class _SubagentDetailScreenState extends State<SubagentDetailScreen>
   void _onRoster() {
     if (!mounted) return;
     final current = _find();
+    // A new snapshot of this child means it emitted an event: its tail has
+    // likely grown, so read it now instead of waiting out the poll backoff.
+    final childChanged =
+        current != null && _last != null && !identical(current, _last);
     // Keep the last known snapshot when the roster momentarily empties
     // (cover/poll gap): absence is not evidence of what the child did.
     if (current != null) {
@@ -370,7 +405,35 @@ class _SubagentDetailScreenState extends State<SubagentDetailScreen>
     }
     setState(() {});
     _syncClock();
-    _syncTail();
+    if (childChanged) {
+      _tailOnChildEvent();
+    } else {
+      _syncTail();
+    }
+  }
+
+  /// Event-driven tail read, coalesced: a burst during an in-flight read
+  /// yields exactly one follow-up read when it lands.
+  void _tailOnChildEvent() {
+    if (_watch != null) {
+      // The watch is the source, but the roster still decides whether the
+      // child is alive: a child that ended without message.complete must not
+      // keep the runtime and the listener.
+      _syncTail();
+      return;
+    }
+    if (!_visible || !_canTailNow(_find())) {
+      _syncTail();
+      return;
+    }
+    _tailInterval = SubagentDetailScreen.tailFast;
+    if (_tailInFlight) {
+      _tailDirty = true;
+      return;
+    }
+    _cancelTailPoll?.call();
+    _cancelTailPoll = null;
+    _pollTail();
   }
 
   void _syncClock() {
@@ -395,6 +458,10 @@ class _SubagentDetailScreenState extends State<SubagentDetailScreen>
 
   void _syncTail() {
     if (!mounted) return;
+    if (_syncWatch()) {
+      _stopTail();
+      return;
+    }
     if (_visible && _canTailNow(_find())) {
       if (_cancelTailPoll == null && !_tailInFlight) _pollTail();
     } else {
@@ -402,7 +469,67 @@ class _SubagentDetailScreenState extends State<SubagentDetailScreen>
     }
   }
 
+  /// Keeps the live watch open exactly while the page is visible and the child
+  /// is working. Returns whether the watch is the log's source right now.
+  bool _syncWatch() {
+    final activity = _find();
+    final wanted =
+        _visible &&
+        activity != null &&
+        subagentIsLive(activity) &&
+        widget.openLiveWatch != null &&
+        !_watchUnavailable;
+    if (!wanted) {
+      _stopWatch();
+      return false;
+    }
+    if (_watch == null) {
+      final watch = widget.openLiveWatch!(activity);
+      if (watch == null) {
+        _watchUnavailable = true;
+        return false;
+      }
+      _watch = watch
+        ..addListener(_onWatch)
+        ..start();
+    }
+    return true;
+  }
+
+  void _stopWatch({bool fromListener = false}) {
+    final watch = _watch;
+    if (watch == null) return;
+    _watch = null;
+    watch.removeListener(_onWatch);
+    // A notifier cannot be disposed while it is still notifying.
+    if (fromListener) {
+      scheduleMicrotask(watch.dispose);
+    } else {
+      watch.dispose();
+    }
+  }
+
+  void _onWatch() {
+    final watch = _watch;
+    if (!mounted || watch == null) return;
+    final view = watch.value;
+    if (view.status == SubagentLiveWatchStatus.unavailable) {
+      _stopWatch(fromListener: true);
+      _watchUnavailable = true;
+      setState(() {});
+      _syncTail();
+      return;
+    }
+    if (view.status != SubagentLiveWatchStatus.opening) {
+      _tail.value = _tail.value.apply(
+        SubagentTailView(available: true, content: view.text, truncated: false),
+      );
+    }
+    setState(() {});
+  }
+
   void _stopTail() {
+    _tailDirty = false;
     _tailGeneration++;
     _cancelTailPoll?.call();
     _cancelTailPoll = null;
@@ -440,6 +567,12 @@ class _SubagentDetailScreenState extends State<SubagentDetailScreen>
         .whenComplete(() {
           if (!mounted || generation != _tailGeneration) return;
           _tailInFlight = false;
+          if (_tailDirty) {
+            _tailDirty = false;
+            _tailInterval = SubagentDetailScreen.tailFast;
+            _pollTail();
+            return;
+          }
           _scheduleNextTail(generation);
         });
   }
@@ -527,6 +660,52 @@ class _SubagentDetailScreenState extends State<SubagentDetailScreen>
 
   // ── Build ────────────────────────────────────────────────────────────────
 
+  /// One `delegation.status` read per menu open; the item states its scope
+  /// (the whole server; running subagents continue).
+  Future<void> _openDelegationMenu() async {
+    final control = widget.delegationControl;
+    if (control == null || _delegationBusy) return;
+    final s = Strings.of(context);
+    final notices = AppFeedback.of(context);
+    setState(() => _delegationBusy = true);
+    try {
+      final paused = await control.delegationPaused();
+      if (!mounted) return;
+      final chosen = await showHermesMenu<bool>(
+        context: context,
+        anchorKey: _moreKey,
+        title: s.subagentUiPauseScope,
+        actions: [
+          HermesAction(
+            key: const ValueKey('subagent-detail-pause'),
+            value: !paused,
+            label: paused ? s.subagentUiResumeNew : s.subagentUiPauseNew,
+            icon: paused ? Icons.play_arrow_rounded : Icons.pause_rounded,
+          ),
+        ],
+      );
+      if (chosen == null || !mounted) return;
+      final now = await control.setDelegationPaused(chosen);
+      if (!mounted) return;
+      notices.notify(
+        FeedbackKind.routine,
+        now ? s.subagentUiPausedNotice : s.subagentUiResumedNotice,
+      );
+    } on TuiGatewayRpcError catch (error) {
+      if (!mounted) return;
+      if (error.code == -32601) {
+        setState(() => _delegationUnsupported = true);
+      } else {
+        notices.notify(FeedbackKind.error, s.subagentUiPauseFailed);
+      }
+    } catch (_) {
+      if (!mounted) return;
+      notices.notify(FeedbackKind.error, s.subagentUiPauseFailed);
+    } finally {
+      if (mounted) setState(() => _delegationBusy = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final s = Strings.of(context);
@@ -595,13 +774,28 @@ class _SubagentDetailScreenState extends State<SubagentDetailScreen>
         meta: elapsed == null ? null : formatTurnElapsed(elapsed),
       ),
       primaryAction: primary,
+      actions: [
+        if (widget.delegationControl != null && !_delegationUnsupported)
+          IconButton(
+            key: _moreKey,
+            tooltip: s.cphMore,
+            icon: const Icon(Icons.more_vert_rounded),
+            onPressed: _delegationBusy ? null : _openDelegationMenu,
+          ),
+      ],
       sections: [
         if (live && widget.onTail != null) ...[
           HermesSectionHeader(
             s.subagentUiSectionLive,
             trailing: _LiveDot(active: _visible),
           ),
-          _LivePanel(tail: _tail, onOpen: _openLivePage, paused: !_visible),
+          _LivePanel(
+            tail: _tail,
+            onOpen: _openLivePage,
+            paused: !_visible,
+            reconnecting:
+                _watch?.value.status == SubagentLiveWatchStatus.reconnecting,
+          ),
         ],
         if (canSteer) ...[
           HermesSectionHeader(s.subagentUiSectionGuide),
@@ -744,6 +938,7 @@ class _LivePanel extends StatelessWidget {
   final ValueListenable<SubagentLiveTail> tail;
   final VoidCallback onOpen;
   final bool paused;
+  final bool reconnecting;
 
   static const int visibleLines = 10;
 
@@ -751,6 +946,7 @@ class _LivePanel extends StatelessWidget {
     required this.tail,
     required this.onOpen,
     required this.paused,
+    this.reconnecting = false,
   });
 
   @override
@@ -774,7 +970,9 @@ class _LivePanel extends StatelessWidget {
               ? lines.length - visibleLines
               : 0;
           final visible = lines.sublist(start).join('\n').trimRight();
-          note = paused
+          note = reconnecting
+              ? s.chaConnectionLostReconnecting
+              : paused
               ? s.subagentUiLivePaused
               : value.truncated || start > 0
               ? s.subagentUiLiveTruncated
@@ -1115,11 +1313,9 @@ class _SubagentLiveLogPageState extends State<SubagentLiveLogPage> {
                 ClipboardData(text: widget.tail.value.text),
               );
               if (context.mounted) {
-                HermesNotice.show(
+                AppFeedback.of(
                   context,
-                  message: s.designCopied,
-                  kind: HermesNoticeKind.success,
-                );
+                ).notify(FeedbackKind.routine, s.designCopied);
               }
             },
           ),
@@ -1141,6 +1337,7 @@ class _SubagentLiveLogPageState extends State<SubagentLiveLogPage> {
         child: ValueListenableBuilder<SubagentLiveTail>(
           valueListenable: widget.tail,
           builder: (context, value, _) => ListView.builder(
+            clipBehavior: hermesUnderHeader,
             key: const ValueKey('subagent-live-log'),
             controller: _scroll,
             padding: const EdgeInsets.fromLTRB(
@@ -1202,16 +1399,25 @@ class _SubagentTranscriptPageState extends State<SubagentTranscriptPage> {
           children.add(
             const Padding(
               padding: EdgeInsets.all(40),
-              child: Center(child: CircularProgressIndicator()),
+              child: Center(child: ConsoleLoader.medium(showLabel: true)),
             ),
           );
         } else if (snap.hasError) {
           children.add(
             HermesEmptyStateView(
               icon: Icons.cloud_off_rounded,
-              title: s.subagentUiTranscriptError,
+              title: snap.error is ProfileTranscriptAccessRequired
+                  ? s.chaErrProfileDashboardAccess
+                  : s.subagentUiTranscriptError,
               actionLabel: s.subagentUiRetry,
-              onAction: () => setState(() => _future = widget.load()),
+              onAction: () {
+                // FutureBuilder subscribes on the next frame: keep a failed
+                // retry from surfacing as an uncaught error before then.
+                final retry = widget.load()..ignore();
+                setState(() {
+                  _future = retry;
+                });
+              },
             ),
           );
         } else {

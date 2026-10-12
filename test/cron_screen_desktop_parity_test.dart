@@ -159,6 +159,8 @@ void main() {
       matching: find.byType(EditableText),
     );
     await tester.enterText(promptField, 'Summarize the day');
+    // Save is enabled once the frame with the typed instruction is built.
+    await tester.pump();
     await tester.tap(find.byKey(const ValueKey('cron-editor-submit')));
     await tester.pumpAndSettle();
 
@@ -228,9 +230,10 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(requestedProfiles.first, 'research');
-    expect(find.byType(FloatingActionButton), findsOneWidget);
+    expect(find.byKey(const ValueKey('cron-create')), findsOneWidget);
     // Spec 080: anchored Hermes menus replace PopupMenuButton.
-    expect(find.byKey(const ValueKey('cron-screen-more')), findsOneWidget);
+    // The exclusive raw-file entry is intentionally retired.
+    expect(find.byKey(const ValueKey('cron-screen-more')), findsNothing);
     expect(
       find.byKey(const ValueKey('cron-job-menu-active-job')),
       findsOneWidget,
@@ -259,7 +262,7 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('Read only'), findsOneWidget);
-    expect(find.byType(FloatingActionButton), findsNothing);
+    expect(find.byKey(const ValueKey('cron-create')), findsNothing);
     expect(find.byKey(const ValueKey('cron-screen-more')), findsNothing);
     expect(find.byKey(const ValueKey('cron-job-menu-all-job')), findsNothing);
     expect(tester.takeException(), isNull);

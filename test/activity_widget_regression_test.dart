@@ -7,7 +7,6 @@ import 'package:hermes_android/core/screens/chat_screen.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/app_lock.dart';
 import 'package:hermes_android/core/services/approval_policy.dart';
-import 'package:hermes_android/core/services/bridge_manager.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/font_size_service.dart';
 import 'package:hermes_android/core/services/notifications/notification_service.dart';
@@ -117,7 +116,7 @@ void main() {
           appLock: AppLockService(prefs),
           approvalPolicy: ApprovalPolicyService(prefs),
           fontSize: FontSizeService(prefs),
-          bridgeManager: BridgeManager(secure, manager),
+
           sshManager: SshManager(secure, manager),
           sftpTransfers: SftpTransferService(
             SshManager(secure, manager),

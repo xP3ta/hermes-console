@@ -117,6 +117,12 @@ de los paquetes empaquetados).
 | flutter_foreground_task | MIT |
 | dartssh2 | MIT |
 | xterm | MIT |
+| webview_flutter | BSD-3-Clause |
+| webview_flutter_android | BSD-3-Clause |
+| flutter_webrtc | MIT |
+| dart_webrtc | MIT |
+| webrtc_interface | MIT |
+| logger | MIT |
 
 ## Artwork propio y companions CC0
 
@@ -124,6 +130,43 @@ La procedencia, licencia y SHA-256 de la identidad visual propia y de los tres
 spritesheets locales se documentan en [`ASSET_PROVENANCE.md`](ASSET_PROVENANCE.md).
 El texto legal completo CC0-1.0 aplicable a los companions está en
 [`assets/companions/CC0-1.0.txt`](assets/companions/CC0-1.0.txt).
+
+## Logos de proveedores (Simple Icons, CC0; LobeHub Icons, MIT)
+
+Las marcas monocromas de proveedores del selector de modelos y de Modelos usan
+los trazados vectoriales de Simple Icons 16.1.0 (`CC0-1.0`), sin sus colores.
+Las marcas que Simple Icons no incluye (OpenAI, DeepSeek, xAI, Nous Research,
+Moonshot AI, Z.ai, Microsoft, LM Studio) usan los trazados monocromos de
+LobeHub Icons, npm `@lobehub/icons-static-svg@1.95.1` (commit
+`49a2130df7bfa5eb1b088261bff20a37e2967789`), con licencia MIT, también sin colores.
+Detalle por proveedor en [`ASSET_PROVENANCE.md`](ASSET_PROVENANCE.md). Las
+marcas pertenecen a sus titulares y solo identifican al proveedor del modelo.
+
+Aviso de LobeHub Icons (https://github.com/lobehub/lobe-icons):
+
+```text
+MIT License
+
+Copyright (c) 2023 LobeHub
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
 
 ## Componentes Android transitivos relevantes
 
@@ -134,6 +177,15 @@ El texto legal completo CC0-1.0 aplicable a los companions está en
   usa ZXing Core explícitamente.
 - **AndroidX** — Apache License 2.0; componentes de compatibilidad, ciclo de
   vida, cámara y UI incluidos transitivamente por los plugins Android.
+- **AndroidX WebKit 1.15.0** — Apache License 2.0; capa de compatibilidad de
+  `webview_flutter_android` sobre el WebView del sistema. El visor de
+  artefactos no empaqueta motor web propio.
+- **libwebrtc (`io.github.webrtc-sdk:android` 150.7871.01)** — BSD 3-Clause;
+  WebRTC media stack used by `flutter_webrtc` for the opt-in GPT-Live voice.
+- **AudioSwitch (`com.github.davidliu:audioswitch`, fork of Twilio
+  AudioSwitch)** — Apache License 2.0; audio focus and routing for
+  `flutter_webrtc`. It is resolved from the JitPack repository that the plugin
+  declares.
 
 El escáner QR es local: no envía fotogramas, contenido, resultados ni métricas
 del escáner a XPeta Lab o a otro servicio.
@@ -150,4 +202,8 @@ El texto completo y los avisos de copyright están en
 de → Licencias open source**.
 
 Dependencias de desarrollo (no se distribuyen en el APK): flutter_test,
-flutter_lints, build_runner, json_serializable.
+flutter_lints, build_runner, json_serializable, sqflite_common_ffi,
+webview_flutter_platform_interface, url_launcher_platform_interface,
+plugin_platform_interface (estas tres últimas también llegan al APK como
+transitivas de webview_flutter/url_launcher; aquí solo se declaran para los
+dobles de prueba).

@@ -5,12 +5,12 @@ import '../../models/agent_profile.dart';
 import '../../models/connection.dart';
 import '../../models/desktop_active_session.dart';
 import '../../models/hosted_groups.dart';
+import '../../services/bot_roster_store.dart';
 import '../../services/shared_gateway_pool.dart';
 import '../../services/tui_gateway_client.dart';
 import '../state/attention.dart';
 import '../state/bot_chat_target.dart';
 import '../state/bot_presence.dart';
-import 'desktop_projection_rooms.dart';
 import 'room_log_cursor.dart';
 
 /// Gateway surface Bot Mode reads. [TuiGatewayClient] implements it through
@@ -152,14 +152,12 @@ final class BotModeRow {
 final class BotModeSnapshot {
   final List<BotModeRow> bots;
   final List<BotModeRoom> rooms;
-  final DesktopProjectionRooms projectionRooms;
   final GroupsCapabilities? capabilities;
   final DateTime loadedAt;
 
   const BotModeSnapshot({
     required this.bots,
     required this.rooms,
-    required this.projectionRooms,
     required this.capabilities,
     required this.loadedAt,
   });
@@ -192,9 +190,16 @@ final class BotModeRepository {
   int? _cursorGeneration;
   bool _closed = false;
 
+  /// When set, every roster read is published to the connection's shared
+  /// [BotRosterStore] ([rosterRegistry], else the shared registry).
+  final SavedConnection? connection;
+  final BotRosterRegistry? rosterRegistry;
+
   BotModeRepository({
     required this.gateway,
     this.onClose,
+    this.connection,
+    this.rosterRegistry,
     DateTime Function()? now,
     this.logPageLimit = 100,
   }) : _now = now ?? DateTime.now;
@@ -211,6 +216,7 @@ final class BotModeRepository {
     return BotModeRepository(
       gateway: TuiBotModeGateway(lease.client),
       onClose: lease.release,
+      connection: connection,
     );
   }
 
@@ -240,6 +246,11 @@ final class BotModeRepository {
 
   Future<BotModeSnapshot> load() async {
     _requireOpen();
+    final connection = this.connection;
+    final roster = connection == null
+        ? null
+        : rosterRegistry ?? BotRosterRegistry.shared;
+    final rosterTicket = roster?.beginRead(connection!.id);
     final profilesFuture = gateway.listProfiles();
     final activeFuture = gateway.listActiveSessions().then<List<DesktopActiveSession>>(
       (list) => list.sessions,
@@ -249,10 +260,27 @@ final class BotModeRepository {
       (value) => value,
       onError: (Object _) => (caps: null, rooms: const <BotModeRoom>[]),
     );
-    final profiles = await profilesFuture;
+    var profiles = await profilesFuture;
     final active = await activeFuture;
     final hosted = await roomsFuture;
     _requireOpen();
+    if (roster != null) {
+      // A bot created, renamed or deleted while this read was on the wire
+      // stays as the store has it: an older roster never wins.
+      final accepted = roster.publish(
+        connection!.id,
+        connection.label,
+        profiles,
+        ticket: rosterTicket,
+        // [BotModeGateway.listProfiles] asks for session projections.
+        sessions: true,
+      );
+      // Accepted: the store holds this read with every confirmed mutation
+      // newer than it replayed (even over a cached roster). Rejected: a
+      // newer live read already landed there.
+      final store = roster.store(connection.id);
+      if (accepted || store.isLive) profiles = store.profiles;
+    }
     final snapshot = HostedGroupsSnapshot(
       capabilities: hosted.caps,
       rooms: [for (final r in hosted.rooms) r.room],
@@ -278,17 +306,9 @@ final class BotModeRepository {
           attention: attention.forProfile(profile.name, snapshot),
         ),
     ];
-    final hostedIds = {for (final r in hosted.rooms) r.room.roomId};
-    final defaults = profiles.where((p) => p.isDefault || p.name == 'default');
     return BotModeSnapshot(
       bots: List.unmodifiable(bots),
       rooms: hosted.rooms,
-      projectionRooms: defaults.isEmpty
-          ? DesktopProjectionRooms.empty
-          : DesktopProjectionRooms.parse(
-              defaults.first.groupsProjection,
-              hostedRoomIds: hostedIds,
-            ),
       capabilities: hosted.caps,
       loadedAt: now,
     );

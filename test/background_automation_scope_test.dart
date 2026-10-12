@@ -790,33 +790,38 @@ void main() {
     expect(revalidation, contains('prefKey'));
   });
 
-  test(
-    'Ollama progress never mutates or stops the shared foreground service',
-    () {
-      final screen = File(
+  test('retired Android installer cannot own a foreground operation', () {
+    expect(
+      File(
         'lib/core/screens/onboarding/local_install_screen.dart',
-      ).readAsStringSync();
-      final start = screen.indexOf('class _OllamaInstallNotif');
-      expect(start, isNonNegative);
-      final block = screen.substring(start);
-
-      expect(block, contains('operationProgress('));
-      expect(block, contains('cancelOperation('));
-      expect(block, isNot(contains('FlutterForegroundTask.')));
-      expect(block, isNot(contains('BackgroundListener.stop()')));
-    },
-  );
+      ).existsSync(),
+      isFalse,
+    );
+  });
 
   test('notification updates re-sanitize the durable restart contract', () {
     final listener = File(
       'lib/core/services/notifications/background_listener.dart',
     ).readAsStringSync();
 
+    // The network card re-posted by start() when what holds the service
+    // changed.
+    final sameMode = listener.indexOf(
+      'if (running && _activeNetworkMode == mode) {',
+    );
+    final sameModeEnd = listener.indexOf(
+      'if (running) await _hardStopFlutterRuntime();',
+      sameMode,
+    );
+    expect(sameMode, isNonNegative);
+    final sameModeBlock = listener.substring(sameMode, sameModeEnd);
+    expect(
+      sameModeBlock.indexOf('_persistDurableRestartContract(prefs)'),
+      greaterThan(sameModeBlock.indexOf('_syncNetworkCard(prefs)')),
+    );
+    expect(sameModeBlock.indexOf('_syncNetworkCard(prefs)'), isNonNegative);
+
     for (final boundaries in const <(String, String)>[
-      (
-        'static Future<void> _updateTextSerialized(',
-        'static Future<bool> isEnabled()',
-      ),
       (
         'static Future<void> _updateReadAloudNotificationSerialized({',
         '/// Proyecta Voz',

@@ -120,6 +120,32 @@ void main() {
     );
   });
 
+  // QA 9491: a MenuAnchor has no route, so Back skipped it and closed what
+  // was underneath. Back closes the instance menu only; the next Back closes
+  // the drawer.
+  testWidgets('Atrás con el selector abierto cierra solo el selector', (
+    tester,
+  ) async {
+    final manager = await managerWith([demo, secondary]);
+    await manager.setActiveConnection(demo.id);
+    await pumpDrawer(tester, manager: manager, connection: demo);
+
+    await tester.tap(find.byKey(const ValueKey('drawer-instance-selector')));
+    await tester.pumpAndSettle();
+    final option = find.byKey(const ValueKey('drawer-instance-option-demo'));
+    expect(option, findsOne);
+
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    expect(option, findsNothing);
+    expect(find.byType(Drawer), findsOneWidget);
+
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    expect(find.byType(Drawer), findsNothing);
+    expect(manager.activeConnectionId.value, demo.id);
+  });
+
   testWidgets('una sola instancia sigue siendo legible con texto al 200 %', (
     tester,
   ) async {

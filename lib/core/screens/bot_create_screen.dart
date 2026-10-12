@@ -17,6 +17,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../companion/data/petdex_remote_service.dart';
 import '../models/agent_profile.dart';
 import '../models/bot_visual_identity.dart';
 import '../models/profile_pet.dart';
@@ -31,15 +32,25 @@ import '../design/modal.dart'
 import '../theme/app_theme.dart';
 import '../utils/api_error.dart';
 import '../widgets/bot_settings_group.dart';
+import '../widgets/bot_capabilities.dart';
 import '../widgets/hermes_app_bar.dart';
 import '../widgets/hermes_bot_face.dart';
 import '../widgets/bot_face_options.dart';
-import '../widgets/bot_avatar_generate_button.dart';
-import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_ui.dart';
+import 'companion/petdex_gallery_screen.dart';
 import 'mission_control_copy.dart';
+import '../widgets/console_loader.dart';
 import '../design/hermes_design.dart'
-    show HermesDialogAction, HermesDialogActionStyle, showHermesDialog;
+    show
+        HermesDialogAction,
+        HermesDialogActionStyle,
+        HermesFadedEnd,
+        HermesOption,
+        HermesSelectField,
+        HermesSpace,
+        HermesType,
+        showHermesDialog;
+import '../feedback/feedback_policy.dart';
 
 typedef BotCreateImagePicker = Future<XFile?> Function();
 typedef BotCreateImageNormalizer =
@@ -110,6 +121,12 @@ class BotCreateScreen extends StatefulWidget {
   final BotCreateImagePicker? imagePicker;
   @visibleForTesting
   final BotCreateImageNormalizer? imageNormalizer;
+  @visibleForTesting
+  final PetdexRemoteService? petdexService;
+
+  /// Dashboard used when the Gateway has no `profiles.create` (tests).
+  @visibleForTesting
+  final DashboardClient? dashboardForTesting;
 
   const BotCreateScreen({
     required this.connection,
@@ -121,6 +138,8 @@ class BotCreateScreen extends StatefulWidget {
     this.petVisualMaterializer,
     this.imagePicker,
     this.imageNormalizer,
+    this.petdexService,
+    this.dashboardForTesting,
     super.key,
   });
 
@@ -147,14 +166,11 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
   final _titleCtrl = TextEditingController();
   final _descCtrl = TextEditingController();
   final _soulCtrl = TextEditingController();
-  final _providerCtrl = TextEditingController();
-  final _modelCtrl = TextEditingController();
 
   String _cloneFrom = 'default';
   bool _shareAuth = true;
   bool _noSkills = false;
   bool _advanced = false;
-  bool _skillsExpanded = false;
   bool _busy = false;
   bool _profileCreated = false;
   bool _identityApplied = false;
@@ -168,17 +184,25 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
   _CreateIdentityMode _identityMode = _CreateIdentityMode.face;
   ClassicFaceIdentity? _classic;
   BlobatarShapeWire _blobatar = BlobatarShapeWire.parse('blobatar');
-  static const String _dormantColorHex = '#8b5cf6';
+  String _dormantColorHex = '#8b5cf6';
+  bool _useShapeColor = false;
   String? _selectedPetSlug;
   AgentProfileAvatar? _pickedAvatar;
   bool _pickingImage = false;
   ProfilePetGallery? _gallery;
   Future<ProfilePetGallery?>? _galleryFuture;
+
+  /// `pet.gallery` no respondió (distinto de un Hermes sin `pet.*`).
+  bool _galleryFailed = false;
+
+  /// Mascota elegida en la galería Petdex que la lista del perfil no trae:
+  /// Hermes la instala en el perfil al crearlo.
+  ProfilePetGalleryEntry? _petdexPick;
   final Map<String, Future<String?>> _thumbFutures = {};
 
   /// Catálogo de modelos del profile origen; `null` mientras carga y
-  /// [_modelFailed] cuando el gateway no lo publica (fallback a texto libre,
-  /// como el ModelPicker de Desktop con un inventario vacío).
+  /// [_modelFailed] cuando el gateway no lo publica (el perfil hereda el
+  /// modelo y la fila vuelve a pedir el catálogo; nunca se escribe a mano).
   List<ModelProvider>? _modelCatalog;
   bool _modelFailed = false;
   ({String provider, String model})? _model;
@@ -210,44 +234,48 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
   }
 
   Widget _capabilityOptions(String field, String wire, String title) {
+    final s = Strings.of(context);
     final entries = (_capabilities?[field] as List? ?? const [])
         .whereType<Map>()
         .where((e) => e['name'] is String)
         .toList();
-    return ExpansionTile(
-      title: Text(title),
-      tilePadding: EdgeInsets.zero,
-      children: [
-        if (field == 'toolsets') Text(Strings.of(context).botToolsetsInherit),
-        for (final entry in entries)
-          CheckboxListTile(
-            contentPadding: EdgeInsets.zero,
-            title: Text(
-              entry['label'] is String
-                  ? entry['label'] as String
-                  : entry['name'] as String,
-            ),
-            value:
-                _capabilityChanges[wire]?.contains(entry['name']) ??
-                entry['enabled'] != false,
-            onChanged: _busy
-                ? null
-                : (value) => setState(() {
-                    final selected =
-                        _capabilityChanges[wire]?.toSet() ??
-                        entries
-                            .where((e) => e['enabled'] != false)
-                            .map((e) => e['name'] as String)
-                            .toSet();
-                    if (value == true) {
-                      selected.add(entry['name'] as String);
-                    } else {
-                      selected.remove(entry['name']);
-                    }
-                    _capabilityChanges[wire] = selected.toList()..sort();
-                  }),
-          ),
-      ],
+    final selected = _capabilityChanges[wire];
+    final options = [
+      for (final entry in entries)
+        BotCapabilityEntry.fromMap(
+          entry,
+          enabled:
+              selected?.contains(entry['name']) ?? entry['enabled'] != false,
+        ),
+    ];
+    final inherited =
+        field == 'toolsets' &&
+        (selected != null
+            ? selected.isEmpty
+            : _capabilities?['toolsets_pinned'] == false);
+    return BotCapabilitiesRow(
+      key: ValueKey('bot-create-$field-row'),
+      title: title,
+      summary: botCapabilitySummary(context, options, inherited: inherited),
+      keyPrefix: 'bot-create-$field',
+      entries: options,
+      emptyText: field == 'mcp_servers' ? s.botMcpEmpty : s.botToolsEmpty,
+      inheritedHint: field == 'toolsets' ? s.botToolsetsInherit : null,
+      enabled: !_busy,
+      onChanged: (name, value) => setState(() {
+        final values =
+            _capabilityChanges[wire]?.toSet() ??
+            entries
+                .where((e) => e['enabled'] != false)
+                .map((e) => e['name'] as String)
+                .toSet();
+        if (value) {
+          values.add(name);
+        } else {
+          values.remove(name);
+        }
+        _capabilityChanges[wire] = values.toList()..sort();
+      }),
     );
   }
 
@@ -262,15 +290,15 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
       _titleCtrl.text.isNotEmpty ||
       _descCtrl.text.isNotEmpty ||
       _soulCtrl.text.isNotEmpty ||
-      _providerCtrl.text.isNotEmpty ||
-      _modelCtrl.text.isNotEmpty ||
       _model != null ||
       _cloneFrom != 'default' ||
       !_shareAuth ||
       _noSkills ||
-      _advanced ||
+      _skillsTouched ||
+      _capabilityChanges.isNotEmpty ||
       _identityMode != _CreateIdentityMode.face ||
       _classic != null ||
+      _useShapeColor ||
       _blobatar.wire != 'blobatar';
 
   bool get _spanish =>
@@ -346,13 +374,7 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
             ),
       );
     }
-    for (final controller in [
-      _titleCtrl,
-      _descCtrl,
-      _soulCtrl,
-      _providerCtrl,
-      _modelCtrl,
-    ]) {
+    for (final controller in [_titleCtrl, _descCtrl, _soulCtrl]) {
       controller.addListener(_onFormChanged);
     }
     unawaited(_loadModels());
@@ -372,13 +394,7 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
   @override
   void dispose() {
     _nameCtrl.dispose();
-    for (final controller in [
-      _titleCtrl,
-      _descCtrl,
-      _soulCtrl,
-      _providerCtrl,
-      _modelCtrl,
-    ]) {
+    for (final controller in [_titleCtrl, _descCtrl, _soulCtrl]) {
       controller
         ..removeListener(_onFormChanged)
         ..dispose();
@@ -394,6 +410,14 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
     if (!_valid) return copy.agentNameInvalid;
     if (_taken) return copy.agentNameTaken;
     return null;
+  }
+
+  void _retryModels() {
+    setState(() {
+      _modelCatalog = null;
+      _modelFailed = false;
+    });
+    unawaited(_loadModels());
   }
 
   Future<void> _loadModels() async {
@@ -418,9 +442,18 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
     final service = _petService;
     if (service == null) return null;
     final source = _catalogSource;
-    final gallery = await service.gallery(profile: source);
+    final ProfilePetGallery? gallery;
+    try {
+      gallery = await service.gallery(profile: source);
+    } catch (_) {
+      if (mounted && source == _catalogSource) {
+        setState(() => _galleryFailed = true);
+      }
+      return null;
+    }
     if (!mounted || source != _catalogSource) return null;
     setState(() {
+      _galleryFailed = false;
       _gallery = gallery;
       if (_selectedPetSlug == null && gallery?.pets.isNotEmpty == true) {
         _selectedPetSlug = gallery!.pets.first.slug;
@@ -438,6 +471,39 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
       slug: entry.slug,
       url: entry.spritesheetUrl,
     );
+  }
+
+  /// La entrada de [slug]: de la lista del perfil o la elegida en Petdex.
+  ProfilePetGalleryEntry? _petEntry(String? slug) {
+    if (slug == null) return null;
+    final listed = _gallery?.pets.where((pet) => pet.slug == slug).firstOrNull;
+    return listed ?? (_petdexPick?.slug == slug ? _petdexPick : null);
+  }
+
+  void _retryGallery() => setState(() {
+    _galleryFailed = false;
+    _galleryFuture = _loadGallery();
+  });
+
+  /// La galería Petdex, con su buscador: la mascota elegida vuelve aquí como
+  /// identidad del perfil nuevo.
+  Future<void> _pickFromPetdex() async {
+    final pet = await Navigator.of(context).push<PetdexRemotePet>(
+      MaterialPageRoute<PetdexRemotePet>(
+        builder: (_) =>
+            PetdexGalleryScreen.picker(service: widget.petdexService),
+      ),
+    );
+    if (pet == null || !mounted) return;
+    _changeIdentity(() {
+      _identityMode = _CreateIdentityMode.pet;
+      _selectedPetSlug = pet.slug;
+      _petdexPick = ProfilePetGalleryEntry(
+        slug: pet.slug,
+        displayName: pet.displayName,
+        spritesheetUrl: pet.spritesheetUrl.toString(),
+      );
+    });
   }
 
   void _changeIdentity(VoidCallback mutation) {
@@ -459,7 +525,7 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
   Future<void> _pickImage() async {
     if (_pickingImage || _busy || _identityLocked) return;
     setState(() => _pickingImage = true);
-    final messenger = HermesNotice.of(context);
+    final messenger = AppFeedback.of(context);
     try {
       final file =
           await (widget.imagePicker?.call() ??
@@ -478,15 +544,13 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
       });
     } catch (_) {
       if (!mounted) return;
-      messenger.showSnackBar(
-        SnackBar(
-          content: Text(
-            _text(
-              'Usa una imagen PNG, JPEG, WebP o GIF de hasta 15 MB.',
-              'Use a PNG, JPEG, WebP, or GIF image up to 15 MB.',
-            ),
-          ),
+      messenger.notify(
+        FeedbackKind.error,
+        _text(
+          'Usa una imagen PNG, JPEG, WebP o GIF de hasta 15 MB.',
+          'Use a PNG, JPEG, WebP, or GIF image up to 15 MB.',
         ),
+        warning: true,
       );
     } finally {
       if (mounted) setState(() => _pickingImage = false);
@@ -498,6 +562,7 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
       ProceduralFaceIdentity(
         shapeWire: _blobatar.wire,
         dormantColorHex: _dormantColorHex,
+        useShapeColor: _useShapeColor,
       );
 
   Future<BotVisualIdentity> _selectedIdentity() async {
@@ -516,12 +581,8 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
 
   BotVisualIdentity _selectedPetIdentity() {
     final slug = _selectedPetSlug;
-    final gallery = _gallery;
-    if (slug == null || gallery == null) {
-      throw const FormatException('No pet selected');
-    }
-    final entry = gallery.pets.where((pet) => pet.slug == slug).firstOrNull;
-    if (entry == null) throw const FormatException('Pet unavailable');
+    if (slug == null) throw const FormatException('No pet selected');
+    if (_petEntry(slug) == null) throw const FormatException('Pet unavailable');
     return PetSpriteIdentity(slug: slug);
   }
 
@@ -570,13 +631,14 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
       _skillsEpoch++;
       _skillsTouched = false;
       _gallery = null;
-      _selectedPetSlug = null;
+      _galleryFailed = false;
+      // La elegida en Petdex no depende del perfil de origen.
+      if (_selectedPetSlug != _petdexPick?.slug) _selectedPetSlug = null;
       _thumbFutures.clear();
     });
     unawaited(_loadModels());
     unawaited(_loadCapabilities());
     _galleryFuture = _loadGallery();
-    if (_skillsExpanded) unawaited(_loadSkills());
   }
 
   void _toggleSkill(String name, bool enabled) {
@@ -586,9 +648,7 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
       _skillsTouched = true;
       _skills = [
         for (final skill in skills)
-          skill.name == name
-              ? DesktopProfileSkill(name: skill.name, enabled: enabled)
-              : skill,
+          skill.name == name ? skill.withEnabled(enabled) : skill,
       ];
     });
   }
@@ -625,6 +685,57 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
     setState(() => _model = picked);
   }
 
+  /// Older Gateways without `profiles.create`: the profile is created through
+  /// the Dashboard, as the former Profiles wizard did. Identity, skills and
+  /// Bot Mode metadata need the newer RPCs and stay as inherited; a chosen
+  /// model is not applied because legacy `model/set` moves the running
+  /// default Gateway.
+  Future<void> _createLegacy({
+    required String slug,
+    required String? cloneFrom,
+    required String description,
+    required String soul,
+    required bool wantsModel,
+  }) async {
+    final str = Strings.of(context);
+    final notice = AppFeedback.of(context);
+    final owned = widget.dashboardForTesting == null && _ownedDashboard == null;
+    final dashboard =
+        widget.dashboardForTesting ??
+        _ownedDashboard ??
+        DashboardClient.lazy(widget.connection);
+    try {
+      await dashboard.createProfile(
+        name: slug,
+        cloneFrom: cloneFrom,
+        description: description,
+      );
+      _profileCreated = true;
+      if (soul.trim().isNotEmpty) {
+        try {
+          await dashboard.setProfileSoul(slug, soul);
+        } catch (error) {
+          notice.notify(
+            FeedbackKind.error,
+            str.prfSoulWarning(humanizeApiError(error)),
+            warning: true,
+          );
+        }
+      }
+      if (wantsModel) {
+        notice.notify(
+          FeedbackKind.error,
+          str.prfModelWarning(
+            'profiles.create is unavailable on this Hermes Gateway',
+          ),
+          warning: true,
+        );
+      }
+    } finally {
+      if (owned) dashboard.close();
+    }
+  }
+
   /// Orden autoritativo: `profiles.create` primero y, solo después, identidad
   /// tipada (pet/asset/ui_meta). Si la identidad no queda confirmada la
   /// pantalla permanece abierta y no navega como si el bot estuviera listo.
@@ -643,10 +754,6 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
       description,
     ].where((part) => part.isNotEmpty).join(' — ');
     final model = _model;
-    final fallbackProvider = _providerCtrl.text.trim();
-    final fallbackModel = _modelCtrl.text.trim();
-    final wantsFallbackModel =
-        _modelFailed && fallbackProvider.isNotEmpty && fallbackModel.isNotEmpty;
     try {
       final mutation = _identityMutation;
       if (mutation == null) {
@@ -654,22 +761,41 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
       }
       final identityPlan = _identityApplied ? null : await _selectedIdentity();
       if (!_profileCreated) {
-        await _gateway.createProfileNative(
-          name: slug,
-          cloneFrom: _noSkills || _cloneFrom == _freshClone ? null : _cloneFrom,
-          description: descriptionText,
-          soul: composeBotSoul(
-            slug: slug,
-            title: title,
-            description: description,
-            customSoul: _soulCtrl.text,
-          ),
-          model: model?.model ?? (wantsFallbackModel ? fallbackModel : ''),
-          provider:
-              model?.provider ?? (wantsFallbackModel ? fallbackProvider : ''),
-          noSkills: _noSkills,
-          shareAuth: _shareAuth,
+        final cloneFrom = _noSkills || _cloneFrom == _freshClone
+            ? null
+            : _cloneFrom;
+        final soul = composeBotSoul(
+          slug: slug,
+          title: title,
+          description: description,
+          customSoul: _soulCtrl.text,
         );
+        try {
+          await _gateway.createProfileNative(
+            name: slug,
+            cloneFrom: cloneFrom,
+            description: descriptionText,
+            soul: soul,
+            model: model?.model ?? '',
+            provider: model?.provider ?? '',
+            noSkills: _noSkills,
+            shareAuth: _shareAuth,
+          );
+        } on TuiGatewayRpcError catch (error) {
+          // -32601: this Gateway predates `profiles.create`.
+          if (error.code != -32601) rethrow;
+          await _createLegacy(
+            slug: slug,
+            cloneFrom: cloneFrom,
+            description: descriptionText,
+            soul: soul,
+            wantsModel: model != null,
+          );
+          if (!mounted) return;
+          _allowPop = true;
+          Navigator.of(context).pop(slug);
+          return;
+        }
         _profileCreated = true;
         _createdProfileSlug = slug;
         _createdAtMs = DateTime.now().millisecondsSinceEpoch;
@@ -742,16 +868,16 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
         };
         _error = switch (error) {
           final _BotCreateIdentityFailure failure when failure.uncertain => _text(
-            'El bot existe, pero su identidad quedó en estado incierto. Revísala y vuelve a intentar.',
-            'The bot exists, but its identity is uncertain. Review it and try again.',
+            'El perfil existe, pero no sabemos si su identidad se guardó. Revísala y vuelve a intentarlo.',
+            'The profile exists, but its identity is uncertain. Review it and try again.',
           ),
           _BotCreateIdentityFailure() => _text(
-            'El bot existe, pero no se pudo aplicar su identidad. Corrige el problema y vuelve a intentar.',
-            'The bot exists, but its identity could not be applied. Fix the issue and try again.',
+            'El perfil existe, pero no se pudo aplicar su identidad. Corrige el problema y vuelve a intentarlo.',
+            'The profile exists, but its identity could not be applied. Fix the issue and try again.',
           ),
           FormatException() => _text(
-            'Elige una identidad válida antes de crear el bot.',
-            'Choose a valid identity before creating the bot.',
+            'Elige una identidad válida antes de crear el perfil.',
+            'Choose a valid identity before creating the profile.',
           ),
           _ => copy.createAgentError(humanizeApiError(error)),
         };
@@ -767,14 +893,14 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
       surfaceKey: const ValueKey('bot-create-discard-dialog'),
       title: _text('¿Descartar cambios?', 'Discard changes?'),
       message: _profileCreated
-                  ? _text(
-                      'El perfil ya existe, pero su configuración visual no terminó. Si sales, no se abrirá su chat automático.',
-                      'The profile already exists, but its visual setup is incomplete. Leaving will not open its automatic chat.',
-                    )
-                  : _text(
-                      'Perderás la configuración de este bot.',
-                      'You will lose this bot setup.',
-                    ),
+          ? _text(
+              'El perfil ya existe, pero su configuración visual no terminó. Si sales, no se abrirá su chat automático.',
+              'The profile already exists, but its visual setup is incomplete. Leaving will not open its automatic chat.',
+            )
+          : _text(
+              'Perderás la configuración de este perfil.',
+              'You will lose this profile setup.',
+            ),
       actions: [
         HermesDialogAction(
           key: const ValueKey('bot-create-keep-editing'),
@@ -807,314 +933,303 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
         if (!didPop) unawaited(_confirmDiscard());
       },
       child: Scaffold(
-        appBar: HermesAppBar(
-          title: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(copy.newAgent),
-              Text(
-                _text(
-                  'Solo el nombre es obligatorio',
-                  'Only the name is required',
-                ),
-                style: TextStyle(
-                  color: colors.textSecondary,
-                  fontSize: 11.5,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ],
-          ),
-        ),
+        appBar: HermesAppBar(title: Text(copy.newAgent)),
         body: Column(
           children: [
             Expanded(
-              child: ListView(
-                key: const ValueKey('bot-create-form'),
-                padding: const EdgeInsets.fromLTRB(20, 16, 20, 28),
-                children: [
-                  Text(
-                    copy.createAgentSubtitle,
-                    style: TextStyle(color: colors.textSecondary, fontSize: 13),
-                  ),
-                  const SizedBox(height: 16),
-                  Center(child: _buildIdentityPreview()),
-                  const SizedBox(height: 18),
-                  IgnorePointer(
-                    ignoring: _profileCreated,
-                    child: Opacity(
-                      opacity: _profileCreated ? 0.62 : 1,
-                      child: HermesField(
-                        key: const ValueKey('bot-create-name'),
-                        controller: _nameCtrl,
-                        label: copy.agentNameLabel,
-                        hint: copy.agentNameHint,
-                        errorText: _nameError,
-                        helperText: _valid ? '@$_targetSlug' : null,
-                        autofocus: true,
-                        onChanged: (_) => setState(() {
-                          _uncertain = false;
-                          _error = null;
-                        }),
+              child: HermesFadedEnd(
+                child: ListView(
+                  key: const ValueKey('bot-create-form'),
+                  clipBehavior: hermesUnderHeader,
+                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 44),
+                  children: [
+                    Text(
+                      copy.createAgentSubtitle,
+                      style: TextStyle(
+                        color: colors.textSecondary,
+                        fontSize: 13,
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 22),
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.baseline,
-                    textBaseline: TextBaseline.alphabetic,
-                    children: [
-                      Expanded(
-                        child: Text(
-                          _text('Personalizar', 'Customize'),
-                          style: TextStyle(
-                            color: colors.textPrimary,
-                            fontWeight: FontWeight.w800,
-                            fontSize: 14.5,
+                    const SizedBox(height: 16),
+                    Center(child: _buildIdentityPreview()),
+                    const SizedBox(height: 18),
+                    IgnorePointer(
+                      ignoring: _profileCreated,
+                      child: Opacity(
+                        opacity: _profileCreated ? 0.62 : 1,
+                        child: HermesField(
+                          key: const ValueKey('bot-create-name'),
+                          controller: _nameCtrl,
+                          label: copy.agentNameLabel,
+                          hint: copy.agentNameHint,
+                          errorText: _nameError,
+                          helperText: _valid ? '@$_targetSlug' : null,
+                          autofocus: true,
+                          onChanged: (_) => setState(() {
+                            _uncertain = false;
+                            _error = null;
+                          }),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 22),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.baseline,
+                      textBaseline: TextBaseline.alphabetic,
+                      children: [
+                        Expanded(
+                          child: Text(
+                            _text('Personalizar', 'Customize'),
+                            style: TextStyle(
+                              color: colors.textPrimary,
+                              fontWeight: FontWeight.w800,
+                              fontSize: 14.5,
+                            ),
                           ),
                         ),
-                      ),
-                      Text(
-                        _text('opcional', 'optional'),
-                        style: TextStyle(
-                          color: colors.textDisabled,
-                          fontSize: 12.5,
-                          fontWeight: FontWeight.w600,
+                        Text(
+                          _text('opcional', 'optional'),
+                          style: TextStyle(
+                            color: colors.textTertiary,
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  BotSettingsGroup(
-                    children: [
-                      BotSettingsRow(
-                        rowKey: const ValueKey('bot-create-identity-row'),
-                        initiallyExpanded: false,
-                        label: _text('Identidad visual', 'Visual identity'),
-                        summary: switch (_identityMode) {
-                          _CreateIdentityMode.pet => _text('Mascota', 'Pet'),
-                          _CreateIdentityMode.image => _text('Imagen', 'Image'),
-                          _CreateIdentityMode.face => _text('Cara', 'Face'),
-                        },
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            _identitySelector(colors),
-                            const SizedBox(height: 8),
-                            switch (_identityMode) {
-                              _CreateIdentityMode.pet => _buildPetSection(
-                                copy,
-                                colors,
-                              ),
-                              _CreateIdentityMode.image => _buildImageSection(
-                                colors,
-                              ),
-                              _CreateIdentityMode.face => _buildFaceSection(
-                                colors,
-                              ),
-                            },
-                          ],
-                        ),
-                      ),
-                      BotSettingsRow(
-                        rowKey: const ValueKey('bot-create-title-desc-row'),
-                        initiallyExpanded: false,
-                        label: _text(
-                          'Título y descripción',
-                          'Title and description',
-                        ),
-                        summary:
-                            _titleCtrl.text.trim().isEmpty &&
-                                _descCtrl.text.trim().isEmpty
-                            ? _text('Sin rellenar', 'Not filled in')
-                            : _titleCtrl.text.trim().isNotEmpty
-                            ? _titleCtrl.text.trim()
-                            : _descCtrl.text.trim(),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            HermesField(
-                              key: const ValueKey('bot-create-title'),
-                              controller: _titleCtrl,
-                              label: copy.agentTitleLabel,
-                              hint: copy.agentTitleHint,
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    BotSettingsGroup(
+                      children: [
+                        BotSettingsRow(
+                          rowKey: const ValueKey('bot-create-identity-row'),
+                          initiallyExpanded: false,
+                          label: _text('Identidad visual', 'Visual identity'),
+                          summary: switch (_identityMode) {
+                            _CreateIdentityMode.pet => _text('Mascota', 'Pet'),
+                            _CreateIdentityMode.image => _text(
+                              'Imagen',
+                              'Image',
                             ),
-                            const SizedBox(height: 12),
-                            HermesField(
-                              key: const ValueKey('bot-create-description'),
-                              controller: _descCtrl,
-                              label: copy.agentDescriptionLabel,
-                              hint: copy.agentDescriptionHint,
-                              minLines: 2,
-                              maxLines: 4,
-                            ),
-                          ],
+                            _CreateIdentityMode.face => _text('Cara', 'Face'),
+                          },
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              _identitySelector(colors),
+                              const SizedBox(height: 8),
+                              switch (_identityMode) {
+                                _CreateIdentityMode.pet => _buildPetSection(
+                                  copy,
+                                  colors,
+                                ),
+                                _CreateIdentityMode.image => _buildImageSection(
+                                  colors,
+                                ),
+                                _CreateIdentityMode.face => _buildFaceSection(
+                                  colors,
+                                ),
+                              },
+                            ],
+                          ),
                         ),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            Text(
-                              copy.modelLabel,
-                              style: TextStyle(
-                                color: colors.textPrimary,
-                                fontWeight: FontWeight.w700,
-                                fontSize: 15,
+                        BotSettingsRow(
+                          rowKey: const ValueKey('bot-create-title-desc-row'),
+                          initiallyExpanded: false,
+                          label: _text(
+                            'Título y descripción',
+                            'Title and description',
+                          ),
+                          summary:
+                              _titleCtrl.text.trim().isEmpty &&
+                                  _descCtrl.text.trim().isEmpty
+                              ? _text('Sin rellenar', 'Not filled in')
+                              : _titleCtrl.text.trim().isNotEmpty
+                              ? _titleCtrl.text.trim()
+                              : _descCtrl.text.trim(),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              HermesField(
+                                key: const ValueKey('bot-create-title'),
+                                controller: _titleCtrl,
+                                label: copy.agentTitleLabel,
+                                hint: copy.agentTitleHint,
                               ),
-                            ),
-                            const SizedBox(height: 8),
-                            _buildModelSection(copy, colors),
-                          ],
+                              const SizedBox(height: 12),
+                              HermesField(
+                                key: const ValueKey('bot-create-description'),
+                                controller: _descCtrl,
+                                label: copy.agentDescriptionLabel,
+                                hint: copy.agentDescriptionHint,
+                                minLines: 2,
+                                maxLines: null,
+                              ),
+                            ],
+                          ),
                         ),
-                      ),
-                      BotSettingsRow(
-                        rowKey: const ValueKey('bot-create-skills-row'),
-                        label: copy.skills,
-                        summary: _noSkills
-                            ? _text('Ninguna', 'None')
-                            : _text('Las incluidas', 'The included ones'),
-                        expanded: _skillsExpanded,
-                        onToggle: (value) {
-                          setState(() => _skillsExpanded = value);
-                          if (value &&
-                              _skills == null &&
-                              !_skillsLoading &&
-                              !_skillsUnsupported) {
-                            unawaited(_loadSkills());
-                          }
-                        },
-                        child: _noSkills
-                            ? Text(
-                                copy.noSkillsLabel,
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(
+                            HermesSpace.rowH,
+                            HermesSpace.rowV + 4,
+                            HermesSpace.rowH,
+                            HermesSpace.rowV + 4,
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              Text(
+                                copy.modelLabel,
+                                style: HermesType.body.copyWith(
+                                  color: colors.textPrimary,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              _buildModelSection(copy, colors),
+                            ],
+                          ),
+                        ),
+                        BotCapabilitiesRow(
+                          key: const ValueKey('bot-create-skills-row'),
+                          keyPrefix: 'bot-create-skill',
+                          title: copy.skills,
+                          summary: _noSkills
+                              ? Strings.of(context).botCapabilitiesNone
+                              : botCapabilitySummary(
+                                  context,
+                                  _skillOptions,
+                                  inherited: !_skillsTouched,
+                                ),
+                          entries: _noSkills ? const [] : _skillOptions,
+                          emptyText: Strings.of(context).botSkillsEmpty,
+                          unavailableText: Strings.of(
+                            context,
+                          ).botSkillCatalogUnavailable,
+                          enabled: !_busy,
+                          loadEntries: () async {
+                            if (_skills == null && !_skillsUnsupported) {
+                              await _loadSkills();
+                            }
+                            return mounted ? _skillOptions : null;
+                          },
+                          onChanged: _toggleSkill,
+                        ),
+                        if (_capabilities?['toolsets'] is List)
+                          _capabilityOptions(
+                            'toolsets',
+                            'enabled_toolsets',
+                            Strings.of(context).botTools,
+                          ),
+                        if (_capabilities?['mcp_servers'] is List)
+                          _capabilityOptions(
+                            'mcp_servers',
+                            'enabled_mcp_servers',
+                            Strings.of(context).botMcp,
+                          ),
+                        BotSettingsRow(
+                          rowKey: const ValueKey('bot-create-advanced'),
+                          label: copy.advanced,
+                          summary: _text(
+                            'Soul · Clonar de',
+                            'Soul · Clone from',
+                          ),
+                          expanded: _advanced,
+                          onToggle: (value) =>
+                              setState(() => _advanced = value),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              HermesSectionHeader(copy.cloneFromLabel),
+                              HermesSelectField<String>(
+                                key: const ValueKey('bot-create-clone'),
+                                value: _cloneFrom,
+                                options: [
+                                  HermesOption(
+                                    value: _freshClone,
+                                    label: copy.cloneFresh,
+                                  ),
+                                  const HermesOption(
+                                    value: 'default',
+                                    label: 'default',
+                                  ),
+                                  for (final name in widget.existing)
+                                    if (name != 'default')
+                                      HermesOption(value: name, label: name),
+                                ],
+                                onChanged: _busy ? null : _selectCloneSource,
+                              ),
+                              HermesSectionHeader(copy.soulOptionalLabel),
+                              Text(
+                                copy.soulOptionalHint,
                                 style: TextStyle(
                                   color: colors.textSecondary,
-                                  fontSize: 12.5,
+                                  fontSize: 12,
                                 ),
-                              )
-                            : _buildSkillsSection(copy, colors),
-                      ),
-                      if (_capabilities?['toolsets'] is List)
-                        _capabilityOptions(
-                          'toolsets',
-                          'enabled_toolsets',
-                          Strings.of(context).botTools,
-                        ),
-                      if (_capabilities?['mcp_servers'] is List)
-                        _capabilityOptions(
-                          'mcp_servers',
-                          'enabled_mcp_servers',
-                          Strings.of(context).botMcp,
-                        ),
-                      BotSettingsRow(
-                        rowKey: const ValueKey('bot-create-advanced'),
-                        label: copy.advanced,
-                        summary: _text('Soul · Clonar de', 'Soul · Clone from'),
-                        expanded: _advanced,
-                        onToggle: (value) => setState(() => _advanced = value),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            HermesSectionHeader(copy.cloneFromLabel),
-                            DropdownButtonFormField<String>(
-                              key: const ValueKey('bot-create-clone'),
-                              initialValue: _cloneFrom,
-                              items: [
-                                DropdownMenuItem(
-                                  value: _freshClone,
-                                  child: Text(copy.cloneFresh),
-                                ),
-                                DropdownMenuItem(
-                                  value: 'default',
-                                  child: Text('default'),
-                                ),
-                                for (final name in widget.existing)
-                                  if (name != 'default')
-                                    DropdownMenuItem(
-                                      value: name,
-                                      child: Text(name),
-                                    ),
-                              ],
-                              onChanged: _busy
-                                  ? null
-                                  : (value) {
-                                      if (value != null) {
-                                        _selectCloneSource(value);
-                                      }
-                                    },
-                            ),
-                            HermesSectionHeader(copy.soulOptionalLabel),
-                            Text(
-                              copy.soulOptionalHint,
-                              style: TextStyle(
-                                color: colors.textSecondary,
-                                fontSize: 12,
                               ),
-                            ),
-                            const SizedBox(height: 8),
-                            HermesField(
-                              key: const ValueKey('bot-create-soul'),
-                              controller: _soulCtrl,
-                              label: copy.soul,
-                              hint: '# $slugPlaceholder',
-                              minLines: 4,
-                              maxLines: 8,
-                            ),
-                            HermesSwitchTile(
-                              key: const ValueKey('bot-create-share-auth'),
-                              contentPadding: EdgeInsets.zero,
-                              title: copy.shareAuthLabel,
-                              value: _shareAuth,
-                              onChanged: _busy
-                                  ? null
-                                  : (value) =>
-                                        setState(() => _shareAuth = value),
-                            ),
-                            Text(
-                              _cloneFrom != _freshClone
-                                  ? Strings.of(context).botCloneCredentialsHint
-                                  : copy.shareAuthHint,
-                              style: TextStyle(
-                                color: colors.textDisabled,
-                                fontSize: 11.5,
+                              const SizedBox(height: 8),
+                              HermesField(
+                                key: const ValueKey('bot-create-soul'),
+                                controller: _soulCtrl,
+                                label: copy.soul,
+                                hint: '# $slugPlaceholder',
+                                minLines: 6,
+                                maxLines: null,
                               ),
-                            ),
-                            HermesSwitchTile(
-                              key: const ValueKey('bot-create-no-skills'),
-                              contentPadding: EdgeInsets.zero,
-                              title: copy.noSkillsLabel,
-                              value: _noSkills,
-                              onChanged: _busy
-                                  ? null
-                                  : (value) => setState(() {
-                                      _noSkills = value;
-                                      if (value) {
-                                        _cloneFrom = _freshClone;
-                                        _capabilities = null;
-                                        _capabilityChanges.clear();
-                                        unawaited(_loadCapabilities());
-                                      }
-                                    }),
-                            ),
-                          ],
+                              HermesSwitchTile(
+                                key: const ValueKey('bot-create-share-auth'),
+                                contentPadding: EdgeInsets.zero,
+                                title: copy.shareAuthLabel,
+                                value: _shareAuth,
+                                onChanged: _busy
+                                    ? null
+                                    : (value) =>
+                                          setState(() => _shareAuth = value),
+                              ),
+                              Text(
+                                _cloneFrom != _freshClone
+                                    ? Strings.of(
+                                        context,
+                                      ).botCloneCredentialsHint
+                                    : copy.shareAuthHint,
+                                style: TextStyle(
+                                  color: colors.textTertiary,
+                                  fontSize: 11.5,
+                                ),
+                              ),
+                              HermesSwitchTile(
+                                key: const ValueKey('bot-create-no-skills'),
+                                contentPadding: EdgeInsets.zero,
+                                title: copy.noSkillsLabel,
+                                value: _noSkills,
+                                onChanged: _busy
+                                    ? null
+                                    : (value) => setState(() {
+                                        _noSkills = value;
+                                        if (value) {
+                                          _cloneFrom = _freshClone;
+                                          _capabilities = null;
+                                          _capabilityChanges.clear();
+                                          unawaited(_loadCapabilities());
+                                        }
+                                      }),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    if (_error != null) ...[
+                      const SizedBox(height: 12),
+                      Text(
+                        _error!,
+                        key: const ValueKey('bot-create-error'),
+                        style: TextStyle(
+                          color: _uncertain ? colors.warning : colors.error,
+                          fontSize: 12.5,
                         ),
                       ),
                     ],
-                  ),
-                  if (_error != null) ...[
-                    const SizedBox(height: 12),
-                    Text(
-                      _error!,
-                      key: const ValueKey('bot-create-error'),
-                      style: TextStyle(
-                        color: _uncertain ? colors.warning : colors.error,
-                        fontSize: 12.5,
-                      ),
-                    ),
                   ],
-                ],
+                ),
               ),
             ),
             _buildFixedCreate(copy, colors),
@@ -1219,17 +1334,21 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
       width: 120,
       height: 120,
       alignment: Alignment.center,
-      decoration: BoxDecoration(
-        color: Theme.of(context).hermes.surfaceVariant.withValues(alpha: 0.28),
-        borderRadius: BorderRadius.circular(28),
-        boxShadow: [
-          BoxShadow(
-            color: accent.withValues(alpha: 0.28),
-            blurRadius: 18,
-            spreadRadius: -2,
-          ),
-        ],
-      ),
+      decoration: _identityMode == _CreateIdentityMode.face
+          ? null
+          : BoxDecoration(
+              color: Theme.of(
+                context,
+              ).hermes.surfaceVariant.withValues(alpha: 0.28),
+              borderRadius: BorderRadius.circular(28),
+              boxShadow: [
+                BoxShadow(
+                  color: accent.withValues(alpha: 0.28),
+                  blurRadius: 18,
+                  spreadRadius: -2,
+                ),
+              ],
+            ),
       child: switch (_identityMode) {
         _CreateIdentityMode.pet => _petPreview(),
         _CreateIdentityMode.image => _imagePreview(),
@@ -1239,9 +1358,7 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
   }
 
   Widget _petPreview() {
-    final slug = _selectedPetSlug;
-    final gallery = _gallery;
-    final entry = gallery?.pets.where((pet) => pet.slug == slug).firstOrNull;
+    final entry = _petEntry(_selectedPetSlug);
     if (entry == null) {
       return Icon(
         Icons.pets_outlined,
@@ -1307,11 +1424,12 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
         : HermesBlobatarFaceVisual.tryParse(
             shapeWire: _blobatar.wire,
             profileName: profileName,
+            colorHex: _useShapeColor ? _dormantColorHex : null,
           )!;
     return HermesBotFace(
       visual: visual,
       size: size,
-      semanticLabel: _text('Cara del bot', 'Bot face'),
+      semanticLabel: _text('Cara del perfil', 'Profile face'),
       animate: true,
     );
   }
@@ -1319,14 +1437,6 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
   Widget _buildImageSection(HermesThemeColors colors) => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
-      if (_gateway is BotAvatarGenerationGateway)
-        BotAvatarGenerateButton(
-          gateway: _gateway as BotAvatarGenerationGateway,
-          enabled: !_busy && !_identityLocked,
-          onSelected: (avatar) => _changeIdentity(() {
-            _pickedAvatar = avatar;
-          }),
-        ),
       Text(
         _text(
           'PNG, JPEG, WebP o GIF. Se recorta al centro y se guarda cuadrada.',
@@ -1348,71 +1458,31 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
     ],
   );
 
-  Widget _buildFaceSection(HermesThemeColors colors) => Column(
-    crossAxisAlignment: CrossAxisAlignment.stretch,
-    children: [
-      BotFaceOptions(
-        name: slugPlaceholder,
-        blob: _blobatar,
-        classic: _classic,
-        enabled: !_busy,
-        onBlob: (value) => _changeIdentity(() {
-          _classic = null;
-          _blobatar = value;
-        }),
-        onClassic: (value) => _changeIdentity(() => _classic = value),
-      ),
-      HermesSectionHeader(_text('Silueta', 'Silhouette')),
-      Wrap(
-        spacing: 8,
-        runSpacing: 8,
-        children: [
-          _blobatarOption(null, colors),
-          for (final kind in BlobatarShapeWire.kinds)
-            _blobatarOption(kind, colors),
-        ],
-      ),
-    ],
+  Widget _buildFaceSection(HermesThemeColors colors) => BotFaceOptions(
+    name: slugPlaceholder,
+    keyPrefix: 'bot-create',
+    blob: _blobatar,
+    classic: _classic,
+    colorHex: _useShapeColor ? _dormantColorHex : null,
+    fallbackColorHex: _dormantColorHex,
+    enabled: !_busy,
+    onBlob: (value) => _changeIdentity(() {
+      _classic = null;
+      _blobatar = value;
+    }),
+    onClassic: (value) => _changeIdentity(() {
+      _classic = value;
+      _dormantColorHex = value.colorHex;
+      _useShapeColor = true;
+    }),
+    onColor: (color) => _changeIdentity(() {
+      _dormantColorHex = color;
+      _useShapeColor = true;
+      if (_classic != null) {
+        _classic = ClassicFaceIdentity(shape: _classic!.shape, colorHex: color);
+      }
+    }),
   );
-
-  Widget _blobatarOption(String? kind, HermesThemeColors colors) {
-    final selected = _blobatar.kind == kind;
-    final wire = _blobatar.withKind(kind).wire;
-    final visual = HermesBlobatarFaceVisual.tryParse(
-      shapeWire: wire,
-      profileName: slugPlaceholder,
-    )!;
-    return Tooltip(
-      message: kind ?? _text('Automática', 'Automatic'),
-      child: Semantics(
-        selected: selected,
-        button: true,
-        child: InkWell(
-          key: ValueKey('bot-create-blobatar-${kind ?? 'auto'}'),
-          borderRadius: BorderRadius.circular(12),
-          onTap: _busy
-              ? null
-              : () => _changeIdentity(() {
-                  _classic = null;
-                  _blobatar = _blobatar.withKind(kind);
-                }),
-          child: Container(
-            width: 52,
-            height: 52,
-            padding: const EdgeInsets.all(4),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                color: selected ? colors.accent : colors.divider,
-                width: selected ? 1.8 : 1,
-              ),
-            ),
-            child: HermesBotFace(visual: visual, size: 42),
-          ),
-        ),
-      ),
-    );
-  }
 
   Widget _buildPetSection(MissionControlCopy copy, HermesThemeColors colors) =>
       FutureBuilder<ProfilePetGallery?>(
@@ -1422,23 +1492,23 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Padding(
               padding: EdgeInsets.symmetric(vertical: 24),
-              child: Center(child: CircularProgressIndicator()),
+              child: Center(child: ConsoleLoader.medium(showLabel: true)),
             );
           }
           final gallery = snapshot.data;
-          if (gallery == null) {
+          if (gallery == null && !_galleryFailed) {
             return Text(
               copy.botSpriteUnsupported,
               style: TextStyle(color: colors.textSecondary, fontSize: 12.5),
             );
           }
-          final visible = gallery.pets.take(48).toList();
-          if (visible.isEmpty) {
-            return Text(
-              copy.botSpriteEmpty,
-              style: TextStyle(color: colors.textSecondary, fontSize: 12.5),
-            );
-          }
+          final listed = gallery?.pets ?? const <ProfilePetGalleryEntry>[];
+          final pick = _petdexPick;
+          final unlisted =
+              pick != null && !listed.any((pet) => pet.slug == pick.slug)
+              ? pick
+              : null;
+          final visible = [?unlisted, ...listed].take(48).toList();
           return Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -1447,30 +1517,59 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
                 style: TextStyle(color: colors.textSecondary, fontSize: 12.5),
               ),
               const SizedBox(height: 12),
-              LayoutBuilder(
-                builder: (context, constraints) {
-                  final scale = MediaQuery.textScalerOf(
-                    context,
-                  ).scale(1).clamp(1.0, 2.0);
-                  return GridView.builder(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    itemCount: visible.length,
-                    gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
-                      maxCrossAxisExtent: 92,
-                      mainAxisExtent: 86 + 14 * (scale - 1),
-                      mainAxisSpacing: 8,
-                      crossAxisSpacing: 8,
-                    ),
-                    itemBuilder: (context, index) =>
-                        _petTile(visible[index], colors),
-                  );
-                },
+              if (_galleryFailed)
+                _buildPetListNotice(copy.botSpriteLoadFailed, colors)
+              else if (listed.isEmpty)
+                _buildPetListNotice(copy.botSpriteEmpty, colors),
+              if (visible.isNotEmpty)
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    final scale = MediaQuery.textScalerOf(
+                      context,
+                    ).scale(1).clamp(1.0, 2.0);
+                    return GridView.builder(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      itemCount: visible.length,
+                      gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+                        maxCrossAxisExtent: 92,
+                        mainAxisExtent: 86 + 14 * (scale - 1),
+                        mainAxisSpacing: 8,
+                        crossAxisSpacing: 8,
+                      ),
+                      itemBuilder: (context, index) =>
+                          _petTile(visible[index], colors),
+                    );
+                  },
+                ),
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                key: const ValueKey('bot-create-petdex'),
+                onPressed: _busy || _identityLocked ? null : _pickFromPetdex,
+                icon: const Icon(Icons.travel_explore_outlined),
+                label: Text(Strings.of(context).petdexGalleryTitle),
               ),
             ],
           );
         },
       );
+
+  /// La lista del perfil no está: lo dice en una línea, con el reintento.
+  Widget _buildPetListNotice(String line, HermesThemeColors colors) => Row(
+    children: [
+      Expanded(
+        child: Text(
+          line,
+          style: TextStyle(color: colors.textSecondary, fontSize: 12.5),
+        ),
+      ),
+      TextButton(
+        key: const ValueKey('bot-create-pets-retry'),
+        onPressed: _busy ? null : _retryGallery,
+        child: Text(Strings.of(context).commonRetry),
+      ),
+    ],
+  );
 
   Widget _petTile(ProfilePetGalleryEntry pet, HermesThemeColors colors) {
     final selected = _selectedPetSlug == pet.slug;
@@ -1552,50 +1651,38 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
           top: false,
           child: Container(
             padding: const EdgeInsets.fromLTRB(20, 9, 20, 12),
-            decoration: BoxDecoration(
-              border: Border(top: BorderSide(color: colors.divider)),
-            ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text(
-                  _uncertain
-                      ? _text(
-                          'Estado incierto: revisa y vuelve a intentar.',
-                          'Uncertain state: review and try again.',
-                        )
-                      : _profileCreated
-                      ? _text(
-                          'Perfil creado · falta confirmar la identidad',
-                          'Profile created · identity confirmation pending',
-                        )
-                      : _dirty
-                      ? _text('Configuración sin crear', 'Uncreated setup')
-                      : _text(
-                          'Completa el nombre para empezar',
-                          'Enter a name to start',
-                        ),
-                  key: ValueKey(
+                if (_uncertain ||
+                    _profileCreated ||
+                    _nameCtrl.text.trim().isEmpty) ...[
+                  Text(
                     _uncertain
-                        ? 'bot-create-uncertain'
-                        : _dirty
-                        ? 'bot-create-dirty'
-                        : 'bot-create-clean',
+                        ? _text(
+                            'Estado incierto: revisa y vuelve a intentar.',
+                            'Uncertain state: review and try again.',
+                          )
+                        : _profileCreated
+                        ? _text(
+                            'Perfil creado · falta confirmar la identidad',
+                            'Profile created · identity confirmation pending',
+                          )
+                        : Strings.of(context).botCreateNameRequired,
+                    key: ValueKey(
+                      _uncertain ? 'bot-create-uncertain' : 'bot-create-clean',
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: _uncertain ? colors.warning : colors.textSecondary,
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: _uncertain
-                        ? colors.warning
-                        : _dirty
-                        ? colors.accent
-                        : colors.textSecondary,
-                    fontSize: 11.5,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(height: 7),
+                  const SizedBox(height: 7),
+                ],
                 HermesPrimaryButton(
                   key: const ValueKey('bot-create-submit'),
                   label: _busy
@@ -1612,39 +1699,21 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
         ),
       );
 
+  /// The model is chosen from the catalog, never typed. Without a catalog
+  /// the profile inherits its model, and the tile reads the catalog again.
   Widget _buildModelSection(MissionControlCopy copy, HermesThemeColors colors) {
-    if (_modelFailed) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            copy.modelCatalogEmpty,
-            style: TextStyle(color: colors.textSecondary, fontSize: 12.5),
-          ),
-          const SizedBox(height: 10),
-          HermesField(
-            key: const ValueKey('bot-create-provider'),
-            controller: _providerCtrl,
-            label: copy.providerLabel,
-            hint: 'openai',
-          ),
-          const SizedBox(height: 10),
-          HermesField(
-            key: const ValueKey('bot-create-model'),
-            controller: _modelCtrl,
-            label: copy.modelLabel,
-            hint: 'gpt-5.2',
-          ),
-        ],
-      );
-    }
     final selected = _model;
+    final loading = _modelCatalog == null && !_modelFailed;
     return Material(
       color: Colors.transparent,
       child: InkWell(
         key: const ValueKey('bot-create-model-tile'),
         borderRadius: BorderRadius.circular(12),
-        onTap: _modelCatalog == null || _busy ? null : _pickModel,
+        onTap: loading || _busy
+            ? null
+            : _modelFailed
+            ? _retryModels
+            : _pickModel,
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
           decoration: BoxDecoration(
@@ -1655,8 +1724,8 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
             children: [
               Expanded(
                 child: Text(
-                  _modelCatalog == null
-                      ? copy.skillsLoading
+                  loading
+                      ? Strings.of(context).commonLoading
                       : selected == null
                       ? copy.modelInherited
                       : '${selected.model} · ${selected.provider}',
@@ -1665,16 +1734,21 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
                   style: TextStyle(color: colors.textPrimary, fontSize: 13.5),
                 ),
               ),
-              if (_modelCatalog == null)
+              if (loading)
                 const SizedBox.square(
                   dimension: 16,
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
               else
                 Icon(
-                  Icons.chevron_right_rounded,
+                  _modelFailed
+                      ? Icons.refresh_rounded
+                      : Icons.chevron_right_rounded,
                   size: 20,
                   color: colors.textSecondary,
+                  semanticLabel: _modelFailed
+                      ? Strings.of(context).commonRetry
+                      : null,
                 ),
             ],
           ),
@@ -1683,52 +1757,16 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
     );
   }
 
-  Widget _buildSkillsSection(
-    MissionControlCopy copy,
-    HermesThemeColors colors,
-  ) {
-    if (_skillsLoading) {
-      return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 8),
-        child: Text(
-          copy.skillsLoading,
-          style: TextStyle(color: colors.textSecondary, fontSize: 12.5),
-        ),
-      );
-    }
-    final skills = _skills;
-    if (_skillsUnsupported || skills == null) {
-      return Text(
-        copy.skillsUnavailable,
-        style: TextStyle(color: colors.textSecondary, fontSize: 12.5),
-      );
-    }
-    if (skills.isEmpty) {
-      return Text(
-        copy.botSpriteEmpty,
-        style: TextStyle(color: colors.textSecondary, fontSize: 12.5),
-      );
-    }
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        for (final skill in skills)
-          HermesSwitchTile(
-            key: ValueKey('bot-create-skill-${skill.name}'),
-            contentPadding: EdgeInsets.zero,
-            dense: true,
-            title: skill.name,
-            value: skill.enabled,
-            onChanged: _busy
-                ? null
-                : (value) => _toggleSkill(skill.name, value),
-          ),
-        const SizedBox(height: 4),
-        Text(
-          copy.skillsFromSource(_catalogSource),
-          style: TextStyle(color: colors.textDisabled, fontSize: 11.5),
-        ),
-      ],
-    );
-  }
+  List<BotCapabilityEntry>? get _skillOptions => _skills == null
+      ? null
+      : [
+          for (final skill in _skills!)
+            BotCapabilityEntry(
+              name: skill.name,
+              label: skill.label,
+              description: skill.description,
+              group: skill.group,
+              enabled: skill.enabled,
+            ),
+        ];
 }

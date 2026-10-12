@@ -13,6 +13,7 @@ import 'package:hermes_android/core/theme/scroll_behavior.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'support/pump_until_loaded.dart';
 
 /// Issue #48: "The logs in the Kanban card won't scroll. They just bounce
 /// back to the top." Reproduces the user gesture: open the task sheet, open
@@ -118,7 +119,7 @@ void main() {
         ),
       ),
     );
-    await tester.pumpAndSettle();
+    await pumpUntilLoaded(tester);
   }
 
   Finder logSurface() => find.byKey(const ValueKey('kanban-log-surface'));
@@ -136,9 +137,9 @@ void main() {
 
   Future<void> openLog(WidgetTester tester) async {
     await tester.tap(find.text('Scroll me'));
-    await tester.pumpAndSettle();
+    await pumpUntilLoaded(tester);
     await tester.tap(find.byKey(const ValueKey('kanban-task-log')));
-    await tester.pumpAndSettle();
+    await pumpUntilLoaded(tester);
     expect(logSurface(), findsOneWidget);
     expect(find.textContaining('line 000'), findsOneWidget);
   }
@@ -177,7 +178,7 @@ void main() {
         await tester.pump(const Duration(milliseconds: 16));
       }
       await finger.up();
-      await tester.pumpAndSettle();
+      await pumpUntilLoaded(tester);
 
       final afterDrag = position.pixels;
       expect(
@@ -216,7 +217,7 @@ void main() {
       events.add(const KanbanEvent(id: 7, taskId: 'task-1', kind: 'updated'));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 600));
-      await tester.pumpAndSettle();
+      await pumpUntilLoaded(tester);
 
       expect(logSurface(), findsOneWidget);
       expect(logReads, 1, reason: 'a board refresh must not refetch the log');

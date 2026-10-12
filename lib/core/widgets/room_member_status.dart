@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../../l10n/app_localizations.dart';
 import '../../main.dart' show HermesAppState;
 import '../companion/render/companion_message_presence.dart';
-import 'hermes_spark_mascot.dart';
+import '../companion/models/companion_mood.dart';
 import 'bot_avatar_motion.dart';
 import '../models/agent_profile.dart';
 import '../models/hosted_groups.dart';
@@ -12,6 +12,7 @@ import '../theme/app_theme.dart';
 import 'mission_profile_avatar.dart';
 import 'hermes_premium_ui.dart';
 import 'room_team_row.dart';
+import '../design/modal.dart' show showHermesDialogRoute;
 
 String roomPresenceLabel(Strings s, RoomPresence presence) =>
     switch (presence) {
@@ -96,7 +97,7 @@ class BotStatusAvatar extends StatelessWidget {
                   pet: true,
                   child: CompanionMessagePresence(
                     companion: app.companion,
-                    mood: HermesSparkMood.thinking,
+                    mood: CompanionMood.thinking,
                     size: size * .45,
                   ),
                 ),
@@ -148,7 +149,7 @@ class RoomStatusAvatar extends StatelessWidget {
   Widget build(BuildContext context) => InkWell(
     onTap: !showDetailsOnTap
         ? null
-        : () => showDialog<void>(
+        : () => showHermesDialogRoute<void>(
             context: context,
             builder: (context) => AlertDialog(
               title: Text('@${member.handle}'),
@@ -195,7 +196,7 @@ class BotStatusLine extends StatelessWidget {
     return InkWell(
       onTap: !interactive
           ? null
-          : () => showDialog<void>(
+          : () => showHermesDialogRoute<void>(
               context: context,
               builder: (context) => AlertDialog(
                 content: SelectableText(label),

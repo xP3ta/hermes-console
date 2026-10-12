@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/services/notifications/notification_service.dart';
 import 'package:hermes_android/core/services/notifications/notification_strings.dart';
@@ -42,17 +44,28 @@ void main() {
     test('approval copy quotes the command in both languages', () {
       expect(
         en.approvalNeedsOk('`gh pr ready 51`', null),
-        'Needs your OK to run “gh pr ready 51”',
+        'Allow “gh pr ready 51”?',
       );
       expect(
         es.approvalNeedsOk('gh pr ready 51', null),
-        'Necesita tu OK para ejecutar “gh pr ready 51”',
+        '¿Permitir «gh pr ready 51»?',
       );
       expect(
         en.roundDone(['builder', 'review']),
         'Round done · builder and review replied',
       );
       expect(es.roundDone(['builder']), 'Ronda terminada · builder respondió');
+    });
+
+    test('blocked room copy never promises a retry Console cannot do', () {
+      // Retry is retired in Console; opening the room only offers Dismiss.
+      expect(en.roomBlocked.toLowerCase(), isNot(contains('retry')));
+      expect(es.roomBlocked.toLowerCase(), isNot(contains('reintentar')));
+      expect(en.roomBlocked, 'A reply failed in this room · open to see it');
+      expect(
+        es.roomBlocked,
+        'Falló una respuesta en la sala · ábrela para verla',
+      );
     });
   });
 
@@ -101,7 +114,9 @@ void main() {
       expect(args['channel'], 'approvals');
       expect(args['alert'], isTrue);
       expect(args['text'], contains('rm -rf build'));
-      expect(args['publicTitle'], 'lead needs you');
+      // Lock screen: who, and that it waits.
+      expect(args['publicTitle'], 'lead');
+      expect(args['publicText'], 'Needs you');
       expect(
         '${args['publicTitle']}${args['publicText']}',
         isNot(contains('rm -rf')),
@@ -212,7 +227,7 @@ void main() {
         round: 2,
         startedAtMs: 1000,
       );
-      expect(args['segments'], hasLength(2));
+      expect(args['rows'], hasLength(2));
       expect(args['text'], 'reviewer is working… · builder replied');
       expect(args['shortText'], 'reviewe');
       expect(args['subText'], 'Round 2 · 1 of 2 working');
@@ -247,10 +262,10 @@ void main() {
       expect(inferred['text'], 'Radar está pensando… · Atlas en espera');
       expect(inferred['shortText'], 'Radar');
       expect(inferred['subText'], '0 de 2 respondieron');
-      expect(inferred['segments'], [
-        {'state': 'working'},
-        {'state': 'pending'},
-      ]);
+      expect(
+        [for (final r in inferred['rows']! as List) (r as Map)['state']],
+        ['working', 'pending'],
+      );
     });
 
     group('room live update polish (1.2.14)', () {
@@ -312,8 +327,8 @@ void main() {
       });
 
       test('promoted text carries the other members after the speaker', () {
-        // ProgressStyle cannot host rows: the 2-line expanded text is the
-        // per-member summary, the working Bot first.
+        // The collapsed text is the per-member summary, the working Bot
+        // first.
         expect(
           build(es)['text'],
           'Radar está trabajando… · Atlas respondió · 00:41 · Nova en espera',
@@ -444,7 +459,7 @@ void main() {
           ActionOutcome.done,
         );
         expect(ops.calls, ['roomApprove:once']);
-        expect(sink.confirms.single, 'Approved');
+        expect(sink.confirms.single, 'Allowed');
         // Double tap (two engines, or user) is idempotent.
         expect(
           await router.handle(tap('approve', roomApproval(), uid: 'u2')),
@@ -526,6 +541,86 @@ void main() {
       );
       expect(ops.calls, ['roomApprove:once']);
       expect(sink.confirms, isEmpty);
+    });
+  });
+
+  group('C8 live update: state as text, never a progress bar', () {
+    Map<String, Object?> build(
+      List<({String name, String state})> members, {
+      String? workingName,
+    }) => const RichNotificationBuilder(es).liveUpdate(
+      tag: 't',
+      conversationId: 'c',
+      title: 'Console Devs',
+      members: members,
+      workingName: workingName,
+      open: open,
+      stopAction: null,
+      round: 2,
+    );
+
+    test('no segments and no x/y chip in any state', () {
+      for (final members in [
+        const <({String name, String state})>[],
+        const [(name: 'Atlas', state: 'working')],
+        const [
+          (name: 'Atlas', state: 'done'),
+          (name: 'Radar', state: 'working'),
+          (name: 'Nova', state: 'pending'),
+          (name: 'Lead', state: 'needs_you'),
+        ],
+      ]) {
+        final args = build(members, workingName: 'Radar');
+        expect(args.containsKey('segments'), isFalse);
+        expect('${args['shortText']}', isNot(matches(RegExp(r'^\d+/\d+$'))));
+      }
+      // Nobody named: no chip at all rather than "0/2".
+      final anon = build(const [
+        (name: 'Atlas', state: 'pending'),
+        (name: 'Radar', state: 'pending'),
+      ]);
+      expect(anon.containsKey('shortText'), isFalse);
+    });
+
+    test('someone needing you is the headline and the chip', () {
+      final args = build(const [
+        (name: 'Atlas', state: 'done'),
+        (name: 'Radar', state: 'working'),
+        (name: 'Lead', state: 'needs_you'),
+      ], workingName: 'Radar');
+      expect(args['text'] as String, startsWith('Lead te necesita · '));
+      expect(args['text'] as String, contains('Radar escribiendo'));
+      expect(args['shortText'], 'Lead');
+    });
+
+    test('a room row asks for no bar; the native bar needs progressMax', () {
+      final args = build(const [
+        (name: 'Atlas', state: 'done'),
+        (name: 'Radar', state: 'working'),
+      ], workingName: 'Radar');
+      expect(args.containsKey('progressMax'), isFalse);
+      expect(args.containsKey('progress'), isFalse);
+      expect(args.containsKey('segments'), isFalse);
+      final kt = File(
+        'android/app/src/main/kotlin/com/hermesagent/hermes_android/HermesRichNotifications.kt',
+      ).readAsStringSync();
+      final live = kt.substring(
+        kt.indexOf('fun postLiveUpdate('),
+        kt.indexOf('/** Replaces a card in place with a short confirmation'),
+      );
+      // Room state is not a measurable progress: the bar is drawn only for a
+      // caller that sends `progressMax` (the row of a chat turn).
+      expect(
+        live,
+        contains(
+          'if (progressMax != null) builder.setProgress(progressMax, progress, false)',
+        ),
+      );
+      expect(
+        live,
+        contains('if (progressMax != null && Build.VERSION.SDK_INT >= 36'),
+      );
+      expect(live, contains('setRequestPromotedOngoing(true)'));
     });
   });
 }

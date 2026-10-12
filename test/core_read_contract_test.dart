@@ -80,6 +80,153 @@ void main() {
     },
   );
 
+  test('a full page keeps paging when pins inside it made the server say '
+      'has_more=false', () async {
+    // Gateway `/api/sessions` computes has_more from the UNPINNED rows of
+    // the window, so two pinned chats among the 200 newest end the listing
+    // after page one: older rows (here the automation runs) were never
+    // read, and \"Vaciar automatizaciones\" missed them.
+    final offsets = <String>[];
+    final client = ApiClient(
+      baseUrl: 'http://127.0.0.1:8642',
+      apiKey: 'test-key',
+      connectionId: 'connection-a',
+      httpClient: MockClient((request) async {
+        final offset = request.url.queryParameters['offset'] ?? '0';
+        offsets.add(offset);
+        if (offset == '0') {
+          return http.Response(
+            jsonEncode({
+              'data': [
+                for (var index = 0; index < 200; index++)
+                  {..._sessionRow('session-$index'), 'pinned': index < 2},
+              ],
+              'limit': 200,
+              'offset': 0,
+              'has_more': false,
+            }),
+            200,
+          );
+        }
+        if (offset == '200') {
+          return http.Response(
+            jsonEncode({
+              'data': [
+                {..._sessionRow('cron_job_20260920_090000'), 'source': 'cron'},
+                // Pins are back-filled on every page.
+                {..._sessionRow('session-0'), 'pinned': true},
+              ],
+              'limit': 200,
+              'offset': 200,
+              'has_more': false,
+            }),
+            200,
+          );
+        }
+        fail('unexpected offset $offset');
+      }),
+    );
+    addTearDown(client.close);
+
+    final sessions = await client.getSessions(profile: 'research');
+
+    expect(offsets, ['0', '200']);
+    expect(sessions, hasLength(201));
+    expect(
+      sessions.where((row) => row.id == 'cron_job_20260920_090000'),
+      hasLength(1),
+    );
+  });
+
+  test('a short page with has_more=false still ends the listing', () async {
+    final offsets = <String>[];
+    final client = ApiClient(
+      baseUrl: 'http://127.0.0.1:8642',
+      apiKey: 'test-key',
+      connectionId: 'connection-a',
+      httpClient: MockClient((request) async {
+        offsets.add(request.url.queryParameters['offset'] ?? '0');
+        return http.Response(
+          jsonEncode({
+            'data': [
+              for (var index = 0; index < 199; index++)
+                _sessionRow('session-$index'),
+            ],
+            'limit': 200,
+            'offset': 0,
+            'has_more': false,
+          }),
+          200,
+        );
+      }),
+    );
+    addTearDown(client.close);
+
+    expect(await client.getSessions(profile: 'research'), hasLength(199));
+    expect(offsets, ['0']);
+  });
+
+  test('an inferred extra page holding only known pins ends cleanly', () async {
+    final offsets = <String>[];
+    final client = ApiClient(
+      baseUrl: 'http://127.0.0.1:8642',
+      apiKey: 'test-key',
+      connectionId: 'connection-a',
+      httpClient: MockClient((request) async {
+        final offset = request.url.queryParameters['offset'] ?? '0';
+        offsets.add(offset);
+        return http.Response(
+          jsonEncode({
+            'data': offset == '0'
+                ? [
+                    for (var index = 0; index < 200; index++)
+                      {..._sessionRow('session-$index'), 'pinned': index < 1},
+                  ]
+                : [
+                    {..._sessionRow('session-0'), 'pinned': true},
+                  ],
+            'limit': 200,
+            'offset': int.parse(offset),
+            'has_more': false,
+          }),
+          200,
+        );
+      }),
+    );
+    addTearDown(client.close);
+
+    expect(await client.getSessions(profile: 'research'), hasLength(200));
+    expect(offsets, ['0', '200']);
+  });
+
+  test('an inferred extra page repeating the first one ends cleanly', () async {
+    final offsets = <String>[];
+    final client = ApiClient(
+      baseUrl: 'http://127.0.0.1:8642',
+      apiKey: 'test-key',
+      connectionId: 'connection-a',
+      httpClient: MockClient((request) async {
+        offsets.add(request.url.queryParameters['offset'] ?? '0');
+        return http.Response(
+          jsonEncode({
+            'data': [
+              for (var index = 0; index < 200; index++)
+                {..._sessionRow('session-$index'), 'pinned': index < 1},
+            ],
+            'limit': 200,
+            'offset': 0,
+            'has_more': false,
+          }),
+          200,
+        );
+      }),
+    );
+    addTearDown(client.close);
+
+    expect(await client.getSessions(profile: 'research'), hasLength(200));
+    expect(offsets, ['0', '200']);
+  });
+
   test('Gateway session pagination fails typed on a repeated page', () async {
     var requests = 0;
     final client = ApiClient(

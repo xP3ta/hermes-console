@@ -81,11 +81,11 @@ final class MissionBotRoutineSheetCopy {
 
   static const es = MissionBotRoutineSheetCopy(
     title: 'Nueva rutina',
-    description: 'Programa algo para que este bot lo haga por ti.',
-    botLabel: 'Bot',
+    description: 'Programa algo para que este perfil lo haga por ti.',
+    botLabel: 'Perfil',
     whatLabel: 'Qué',
     whatHint: 'Describe qué debe hacer',
-    whatRequired: 'Escribe qué debe hacer el bot.',
+    whatRequired: 'Escribe qué debe hacer el perfil.',
     whenLabel: 'Cuándo',
     customScheduleLabel: 'Expresión cron',
     customScheduleHint: '0 9 * * *',
@@ -107,11 +107,11 @@ final class MissionBotRoutineSheetCopy {
 
   static const en = MissionBotRoutineSheetCopy(
     title: 'New routine',
-    description: 'Schedule something for this bot to do for you.',
-    botLabel: 'Bot',
+    description: 'Schedule something for this profile to do for you.',
+    botLabel: 'Profile',
     whatLabel: 'What',
     whatHint: 'Describe what it should do',
-    whatRequired: 'Describe what the bot should do.',
+    whatRequired: 'Describe what the profile should do.',
     whenLabel: 'When',
     customScheduleLabel: 'Cron expression',
     customScheduleHint: '0 9 * * *',
@@ -145,6 +145,7 @@ class MissionBotRoutineSheet extends StatefulWidget {
   final MissionProfileAvatarCache? avatarCache;
   final String? botShape;
   final String? botColorHex;
+  final bool botUsesShapeColor;
   final String? botImageKind;
 
   const MissionBotRoutineSheet({
@@ -157,6 +158,7 @@ class MissionBotRoutineSheet extends StatefulWidget {
     this.avatarCache,
     this.botShape,
     this.botColorHex,
+    this.botUsesShapeColor = false,
     this.botImageKind,
     super.key,
   });
@@ -321,7 +323,9 @@ class _MissionBotRoutineSheetState extends State<MissionBotRoutineSheet> {
                   hasAvatar: widget.botHasAvatar,
                   avatarCache: widget.avatarCache,
                   shape: widget.botShape,
-                  colorHex: widget.botColorHex,
+                  colorHex: widget.botUsesShapeColor
+                      ? widget.botColorHex
+                      : null,
                   imageKind: widget.botImageKind,
                 ),
                 const SizedBox(height: 20),

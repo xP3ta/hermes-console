@@ -2,72 +2,111 @@ export '../widgets/session_status_tone.dart'
     show readableActivityTone, resolveActivityTone;
 
 import 'dart:async';
+import '../services/app_lock_sensitive_read_fence.dart';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter/scheduler.dart';
+import 'package:http/http.dart' as http;
 
 import '../app_header_title.dart';
-import '../config/flavor.dart';
+import '../bots/state/attention.dart';
+import '../bots/state/mission_live_chats.dart';
+import '../bots/ui/room/room_launcher.dart';
+import '../bots/ui/room/room_prefs.dart';
+import '../home/home_now.dart';
+import '../home/board/home_board_data.dart';
+import '../home/board/home_board_kit.dart';
+import '../home/board/home_board_model.dart';
+import '../home/board/home_board_store.dart';
+import '../home/board/home_limits.dart' show homeWidgetLimits;
+import '../home/board/home_board_view.dart';
+import '../home/home_feed_cache.dart';
+import '../home/home_sources.dart';
+import '../models/account_usage_limits.dart';
+import '../models/agent_profile.dart';
+import '../models/cron_job.dart';
+import '../models/hosted_groups.dart';
+import '../models/kanban.dart';
+import '../models/mission_control.dart';
+import '../services/approval_policy.dart';
+import '../services/cron_repository.dart';
+import '../services/kanban_client.dart';
+import '../services/kanban_watch_board.dart';
+import '../services/launcher_widget_chats.dart';
+import '../services/launcher_widget_cron.dart';
+import '../services/launcher_widget_tasks.dart';
+import '../services/mission_snapshot_cache.dart';
+import 'cron_detail_page.dart' show cronParseTime;
+import 'cron_screen.dart';
+import '../config/feature_flags.dart';
+import '../models/core_read.dart';
 import '../models/desktop_active_session.dart';
 import '../models/home_widget_snapshot.dart';
-import '../models/session_activity.dart';
-import '../models/session_category.dart';
+import '../models/session_live_status.dart';
 import '../navigation/chat_route.dart';
-import '../services/agent_runtime/agent_runtime.dart';
-import '../services/agent_runtime/local_termux_agent_provider.dart';
-import '../services/bridge_update_service.dart';
+import '../navigation/enclosing_route.dart';
+import '../services/active_profile_scope.dart';
+import '../services/bot_roster_store.dart';
 import '../services/active_chat_service.dart';
+import '../services/app_lock.dart';
 import '../services/connection_manager.dart';
 import '../services/chat_draft_store.dart';
 import '../services/drawer_gesture_exclusion.dart';
 import '../services/global_activity_aggregate.dart';
 import '../services/home_widget_publisher.dart';
-import '../services/platform/android_apps.dart';
-import '../services/local_transcript_store.dart';
+import '../services/cold_start_store.dart';
 import '../services/session_archive.dart';
+import '../services/session_repository.dart';
 import '../services/session_deletion.dart';
-import '../services/turn_outbox_store.dart';
 import '../services/tui_gateway_client.dart';
 import '../services/shared_gateway_pool.dart';
+import '../services/mission_snapshot_prewarm.dart';
+import '../services/model_picker_prewarm.dart';
+import '../services/models_snapshot.dart';
 import '../theme/app_theme.dart';
 import '../utils/home_recent_sessions.dart';
-import '../utils/assistant_operational_artifacts.dart';
-import '../utils/relative_time.dart';
+import '../utils/session_title.dart';
+import '../widgets/onstage_gate.dart';
 import '../widgets/attachment_source_sheet.dart';
+import '../shell/gesture_dock.dart' show gestureDockFootprint;
+import '../shell/dock_activity_sheet.dart' show DockActivityFeed;
 import '../widgets/dock.dart';
 import '../widgets/dock_shortcuts.dart';
 import '../widgets/dock_style.dart' show dockShowsBack;
 import '../widgets/hermes_drawer.dart';
+import '../widgets/profile_scope.dart';
+import '../widgets/profile_switcher.dart';
+import '../widgets/profile_face.dart';
+import 'profiles_screen.dart';
 import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_premium_ui.dart';
-import '../widgets/home_prompt_composer.dart';
+import '../widgets/hermes_ui.dart' show HermesPrimaryButton;
 import '../../main.dart';
 import '../companion/models/companion_presence_level.dart';
-import '../companion/render/companion_home_mascot.dart';
-import '../companion/render/companion_roaming_overlay.dart';
-import 'companion/mascotas_screen.dart';
-import '../widgets/hermes_spark_mascot.dart';
+import '../companion/render/companion_view.dart';
+import '../bots/ui/roster/dots_home_model.dart' show isMainBot;
+import '../widgets/action_approval.dart';
 import '../widgets/read_only.dart';
-import '../widgets/hermes_ui.dart';
-import '../widgets/hermes_pill.dart';
-import '../widgets/session_deletion_dialogs.dart';
-import '../widgets/session_title_editor_route.dart';
-import '../widgets/session_row_stop_control.dart';
+import '../widgets/hermes_update_card.dart' show HermesUpdatePresentation;
 import 'chat_screen.dart';
 import 'gateway_manager_screen.dart';
-import 'local_instance_control_screen.dart';
 import 'mission_control_screen.dart';
-import 'onboarding/local_install_screen.dart';
-import 'onboarding/local_uninstall_screen.dart';
-import 'onboarding/welcome_mode_screen.dart';
+import 'onboarding_screen.dart';
 import 'session_list_screen.dart';
 import 'settings_screen.dart';
+import 'tasks_screen.dart';
 import '../widgets/hermes_app_bar.dart';
 import '../widgets/instance_status_panel.dart';
-import '../widgets/session_status_tone.dart';
 import '../../l10n/app_localizations.dart';
-import '../design/hermes_design.dart'
-    show HermesDialogAction, HermesDialogActionStyle, showHermesDialog;
+
+typedef HomeRoomApprove =
+    Future<void> Function(
+      SavedConnection connection, {
+      required String roomId,
+      required RoomApprovalAction action,
+      required String choice,
+    });
 
 /// App home: clean dashboard around the active gateway.
 ///
@@ -77,22 +116,106 @@ import '../design/hermes_design.dart'
 class HomeDashboardScreen extends StatefulWidget {
   final ConnectionManager connManager;
   final ApiClient Function(SavedConnection connection)? clientFactory;
-  final ValueChanged<double>? onInitialLoadProgress;
   final VoidCallback? onInitialLoadComplete;
   final ActiveChatService? activeChatsOverride;
   final GlobalActivityAggregate? globalActivityOverride;
   final Future<DesktopActiveSessionList> Function()? activeSessionListLoader;
   final Stream<TuiGatewayEvent>? eventStreamOverride;
 
+  /// Saved Dashboard login check (defaults to [checkSavedDashboardLogin]).
+  final DashboardAuthProbe? dashboardAuthProbe;
+
+  /// Bot Mode background first read (defaults to the shared one).
+  final MissionSnapshotPrewarm? missionPrewarm;
+  final ModelsSnapshotPrewarm? modelsPrewarm;
+  final ModelPickerPrewarm? pickerPrewarm;
+
+  /// Writer of hidden/title/read state (defaults to
+  /// [dashboardSessionStateWriter]).
+  final SessionStateWriter Function(SavedConnection connection)?
+  sessionStateWriterFactory;
+
+  /// App Lock (defaults to the app's).
+  final AppLockService? appLockOverride;
+
+  /// Home screen widget writer (defaults to the app's publisher).
+  final Future<void> Function(
+    HermesHomeWidgetSnapshot Function(HermesHomeWidgetSnapshot current),
+  )?
+  homeWidgetUpdateOverride;
+
+  /// Cron jobs for «Próximo» (defaults to the Dashboard's `cron/jobs` when
+  /// Home builds its own clients).
+  final Future<List<CronJob>> Function(
+    SavedConnection connection,
+    String profile,
+  )?
+  cronJobsLoader;
+
+  /// Kanban board for «Tareas» (defaults to the board Tasks opens on,
+  /// read from the Dashboard when Home builds its own clients).
+  final Future<KanbanBoard> Function(SavedConnection connection)? tasksLoader;
+
+  /// Last cron list and Kanban board, kept across rebuilds of Home
+  /// (defaults to the shared cache).
+  final HomeFeedCache? feedCacheOverride;
+
+  /// Bots snapshot shared with Bot Mode (defaults to the shared cache).
+  final MissionSnapshotCache? missionSnapshotCacheOverride;
+
+  /// Bots roster shared with every screen (defaults to the shared one).
+  final BotRosterRegistry? rosterRegistryOverride;
+
+  /// Hosted-room approval answer (defaults to [pooledRoomApprove]).
+  final HomeRoomApprove? roomApproveOverride;
+
+  /// Opens a Bot Chat or room in Bot Mode (defaults to pushing it).
+  final ValueChanged<MissionControlOpenTarget>? botsOpenOverride;
+
+  /// Wall clock of the Home cards.
+  final DateTime Function()? clockOverride;
+
+  /// Servidor widget: server version and update check (defaults to the
+  /// Dashboard's `status` and `update/check` when Home builds its clients).
+  final Future<({String? version, bool? update})> Function(
+    SavedConnection connection,
+  )?
+  serverInfoLoader;
+
+  /// Límites widget: plan limits (defaults to an attached chat's
+  /// `session.usage`).
+  final Future<AccountUsageLimits?> Function(SavedConnection connection)?
+  limitsLoader;
+
+  /// Opens the board in edit mode (renders and tests).
+  final bool initiallyEditingBoard;
+
   const HomeDashboardScreen({
     required this.connManager,
     this.clientFactory,
-    this.onInitialLoadProgress,
     this.onInitialLoadComplete,
     @visibleForTesting this.activeChatsOverride,
     @visibleForTesting this.globalActivityOverride,
     @visibleForTesting this.activeSessionListLoader,
     @visibleForTesting this.eventStreamOverride,
+    @visibleForTesting this.dashboardAuthProbe,
+    @visibleForTesting this.missionPrewarm,
+    @visibleForTesting this.modelsPrewarm,
+    @visibleForTesting this.pickerPrewarm,
+    @visibleForTesting this.sessionStateWriterFactory,
+    @visibleForTesting this.appLockOverride,
+    @visibleForTesting this.homeWidgetUpdateOverride,
+    @visibleForTesting this.cronJobsLoader,
+    @visibleForTesting this.tasksLoader,
+    @visibleForTesting this.feedCacheOverride,
+    @visibleForTesting this.missionSnapshotCacheOverride,
+    @visibleForTesting this.rosterRegistryOverride,
+    @visibleForTesting this.roomApproveOverride,
+    @visibleForTesting this.botsOpenOverride,
+    @visibleForTesting this.clockOverride,
+    @visibleForTesting this.serverInfoLoader,
+    @visibleForTesting this.limitsLoader,
+    @visibleForTesting this.initiallyEditingBoard = false,
     super.key,
   });
 
@@ -107,19 +230,43 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   List<SavedConnection> _connections = [];
   SavedConnection? _active;
   bool _healthOk = false;
+
+  /// Connection whose last status check proved it online.
+  String? _healthOkConnectionId;
+
+  /// What the status line shows: «checking» only while nothing is known
+  /// for the active connection (first check, after a failure, another
+  /// connection). A background re-check of a healthy connection stays
+  /// «online» until it fails (Desktop keeps its status too).
+  bool get _statusChecking =>
+      _checking &&
+      !(_healthOk && _active != null && _healthOkConnectionId == _active!.id);
   bool _checking = false;
+
+  /// Saved Dashboard login of a healthy remote instance; a rejected or
+  /// missing login keeps the header pill from claiming the agent is online.
+  DashboardAuthCheck _dashboardAuth = DashboardAuthCheck.unknown;
   List<Session> _recentSessions = [];
+
+  /// The last read of the active profile's list failed while the connection
+  /// answered: Home stays online and says so next to the list.
+  bool _recentListFailed = false;
   SessionArchive? _archive;
-  final Map<String, ({double activityAt, String? user, String? assistant})>
-  _turnPreviews = {};
-  int _previewHydrationEpoch = 0;
+  SessionListRead? _statusListRead;
   StreamSubscription<HistoryCleanupInvalidation>? _historyCleanupSubscription;
   PageRoute<dynamic>? _route;
+  bool _statusRefreshOwed = false;
+  bool _reloadOwed = false;
   bool _initialLoadComplete = false;
-  double _initialLoadProgress = 0;
   int _reloadEpoch = 0;
   int _refreshStatusEpoch = 0;
-  ActiveChatService? _listenedActiveChats;
+  ActiveProfileScope? _profileScope;
+  ProfileReadTicket? _statusTicket;
+  final OnstageGate _activeIdsGate = OnstageGate();
+
+  /// ss1215: an attached chat's live status changed (tool, waiting, done):
+  /// repaint the recents in the same frame instead of on the next poll.
+  final OnstageGate _liveStatusGate = OnstageGate();
   GlobalActivityAggregate? _listenedGlobalActivity;
   TuiGatewayClient? _ownedActivityClient;
   SharedGatewayLease? _activityLease;
@@ -135,47 +282,116 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   bool _foreground = true;
   bool _activityRebuildScheduled = false;
 
-  // Borrador del compositor de Inicio (chat nuevo sin sesión). Alcance:
-  // conexión + perfil activo, como el resto de borradores v3.
-  String? _homeDraftScope;
-  String? _homeDraftRestoredText;
-  String? _homeDraftPendingText;
-  ({String connectionId, String profile})? _homeDraftPendingTarget;
-  Timer? _homeDraftSaveTimer;
-  int _homeDraftEpoch = 0;
+  // Home board sources (all already held by Console; see [_boardDataFor]).
+  /// Bumped by every notification Home repaints for: the derived cards are
+  /// recomputed only when it (or another input identity) changes.
+  int _activityRevision = 0;
+  List<CronJob>? _cronJobs;
+  String? _cronScope;
+  DateTime? _cronReadAt;
+  int _cronEpoch = 0;
+
+  /// The last cron list read failed ([_cronJobs] keeps the read before).
+  bool _cronFailed = false;
+
+  /// «Tareas»: the Kanban board Tasks opens on, read only while the
+  /// widget is on the board.
+  KanbanBoard? _tasksBoard;
+  String? _tasksScope;
+  DateTime? _tasksReadAt;
+  int _tasksEpoch = 0;
+  bool _tasksFailed = false;
+  static const _feedMinInterval = Duration(minutes: 1);
+
+  /// The board on screen. While it is being edited its edit bar takes the
+  /// header's place ([_boardEditing]).
+  final GlobalKey<HomeBoardViewState> _boardViewKey = GlobalKey(
+    debugLabel: 'home-board-view',
+  );
+
+  bool get _boardEditing =>
+      _boardViewKey.currentState?.editing ?? widget.initiallyEditingBoard;
+  List<DesktopActiveSession> _activeRoster = const [];
+  DateTime? _activeRosterAt;
+  final OnstageGate _homeSourcesGate = OnstageGate();
+  Listenable? _homeSources;
+  BotRosterStore? _homeSourcesStore;
+  List<Object?>? _boardDataKey;
+  HomeBoardData? _boardData;
+
+  /// Widget board of the active connection + profile (on this device).
+  HomeBoardStore? _boardStore;
+  HomeBoardLayout? _boardLayout;
+  String? _boardScope;
+
+  /// [_boardLayout] is the user's own (stored), not a default.
+  bool _boardArranged = false;
+
+  /// Servidor widget: round trip of the last health check, and the server
+  /// version / update check read at most every [_serverInfoMaxAge].
+  int? _latencyMs;
+  ({String? version, bool? update})? _serverInfo;
+  DateTime? _serverInfoAt;
+  String? _serverInfoScope;
+  static const _serverInfoMaxAge = Duration(minutes: 10);
+
+  /// Límites widget: the last plan limits read through an attached chat.
+  AccountUsageLimits? _limits;
+  DateTime? _limitsAt;
+  String? _limitsScope;
+  static const _limitsMinInterval = Duration(minutes: 1);
+
+  /// Room approvals answered from Home: hidden until a newer Bots read
+  /// stops listing them (the cached snapshot does not see the answer).
+  final Set<String> _answeredRoomApprovals = {};
+
+  /// Room approvals older than this are not offered from Home: the cached
+  /// Bots read could list a request already answered elsewhere.
+  static const _roomApprovalMaxAge = Duration(minutes: 5);
 
   ActiveChatService? get _activeChats =>
       widget.activeChatsOverride ??
       context.findAncestorStateOfType<HermesAppState>()?.activeChats;
 
-  // Banner de operación local en curso (visible si el usuario salió durante install/uninstall).
-  bool _installInProgress = false;
-  bool _uninstallInProgress = false;
-
-  // Arranque del agente local desde el home (cuando está instalado pero apagado).
-  bool _localStarting = false;
-  Timer? _localStartPoll;
-  int _localStartTicks = 0;
+  AppLockService? get _appLock =>
+      widget.appLockOverride ??
+      context.findAncestorStateOfType<HermesAppState>()?.appLock;
 
   @override
   void dispose() {
-    _flushHomeDraft();
+    AppLockSensitiveReadFence.changes.removeListener(_onDraftDisclosureChanged);
+    DockActivityFeed.instance.clear(this);
+    _missionPrewarm.cancel();
+    _modelsPrewarm.cancel();
+    _pickerPrewarm.cancel();
     hermesRouteObserver.unsubscribe(this);
     unawaited(DrawerGestureExclusion.setEnabled(false));
     _refreshStatusEpoch++;
-    _previewHydrationEpoch++;
     _activityEventRefreshTimer?.cancel();
     _activityReconnectTimer?.cancel();
     _activityStableTimer?.cancel();
     _activityStaleExpiryTimer?.cancel();
     unawaited(_activityEventSubscription?.cancel());
     _releaseActivityClient();
+    FeatureFlags.instance.gestureDock.removeListener(_onGestureDockFlag);
     unawaited(_historyCleanupSubscription?.cancel());
     WidgetsBinding.instance.removeObserver(this);
     widget.connManager.activeConnectionId.removeListener(_onActiveConnChanged);
-    _listenedActiveChats?.activeIds.removeListener(_onActivityChanged);
+    _profileScope?.removeListener(_onActiveProfileChanged);
+    _activeIdsGate.removeListener(_onActivityChanged);
+    _activeIdsGate.dispose();
+    _liveStatusGate.removeListener(_onActivityChanged);
+    _liveStatusGate.dispose();
+    _homeSourcesGate.removeListener(_onActivityChanged);
+    _homeSourcesGate.dispose();
+    _cronEpoch++;
+    _tasksEpoch++;
     _listenedGlobalActivity?.removeListener(_onActivityChanged);
-    _localStartPoll?.cancel();
+    _archive?.removeListener(_onActivityChanged);
+    _archive?.removeListener(_dropDeletedRecents);
+    _detachStateWriter();
+    _statusListRead?.end();
+    _cancelColdStartUnlockRetry();
     super.dispose();
   }
 
@@ -183,11 +399,11 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   void didChangeDependencies() {
     super.didChangeDependencies();
     final activeChats = _activeChats;
-    if (!identical(_listenedActiveChats, activeChats)) {
-      _listenedActiveChats?.activeIds.removeListener(_onActivityChanged);
-      _listenedActiveChats = activeChats;
-      activeChats?.activeIds.addListener(_onActivityChanged);
-    }
+    // `activeIds` is force-notified on every subagent event of a run. While a
+    // chat covers Home, hold those notifications and deliver one on return.
+    _activeIdsGate.bind(context, activeChats?.activeIds);
+    _liveStatusGate.bind(context, activeChats?.liveStatusRevision);
+    _bindHomeSources();
     final aggregate =
         widget.globalActivityOverride ?? activeChats?.globalActivity;
     if (!identical(_listenedGlobalActivity, aggregate)) {
@@ -195,7 +411,13 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
       _listenedGlobalActivity = aggregate;
       aggregate?.addListener(_onActivityChanged);
     }
-    final route = ModalRoute.of(context);
+  }
+
+  /// The route arrives through [EnclosingRoute] instead of
+  /// `ModalRoute.of(context)` here: that call made all of Home depend on the
+  /// route status and rebuild in the first frame of every push over it and
+  /// every pop back to it (the dock transitions).
+  void _attachRoute(ModalRoute<Object?>? route) {
     if (route is PageRoute<dynamic> && !identical(route, _route)) {
       hermesRouteObserver.unsubscribe(this);
       _route = route;
@@ -212,6 +434,15 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   @override
   void didPopNext() {
     unawaited(DrawerGestureExclusion.setEnabled(true));
+    // cs1215: Home is on screen again; a cold start opens Home.
+    final connectionId = widget.connManager.activeConnectionId.value;
+    if (connectionId != null) {
+      unawaited(
+        _activeChats?.coldStartStore
+            ?.forgetRoute(connectionId)
+            .catchError((Object _) {}),
+      );
+    }
     // Volver de cualquier pantalla empujada (Conversaciones, un chat, Bots…)
     // no refrescaba los recientes de Inicio por sí solo — solo lo hacían los
     // sitios que encadenaban `.then(() => _refreshStatus())` a su propio
@@ -221,8 +452,40 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     // (reportado en dispositivo real). `RouteAware.didPopNext` es justo el
     // gancho para esto — se dispara siempre que esta pantalla vuelve a ser
     // visible, sin depender de qué call site abrió la pantalla anterior.
-    unawaited(_refreshStatus());
+    _refreshWhenUncovered();
     _scheduleActivityReconnect(immediate: true);
+  }
+
+  /// Refreshes Home once the screen above it has finished sliding away
+  /// (see [runWhenUncovered]): refreshing when the pop started rebuilt all
+  /// of Home inside the back transition, the stutter seen when returning
+  /// through the dock. The triggers of one return (`didPopNext` and the
+  /// `.then` of the push) are coalesced: one status refresh, or the full
+  /// reload a screen asked for.
+  void _refreshWhenUncovered({bool reload = false}) {
+    if (!mounted) return;
+    if (reload) {
+      _reloadOwed = true;
+    } else {
+      _statusRefreshOwed = true;
+    }
+    // Each trigger waits on its own; the first to run takes what is owed.
+    runWhenUncovered(context, _route, () {
+      if (mounted) _runOwedRefresh();
+    });
+  }
+
+  void _runOwedRefresh() {
+    final reload = _reloadOwed;
+    final refresh = _statusRefreshOwed;
+    _reloadOwed = false;
+    _statusRefreshOwed = false;
+    // `_reload` ends with its own status refresh.
+    if (reload) {
+      _reload();
+    } else if (refresh) {
+      unawaited(_refreshStatus());
+    }
   }
 
   @override
@@ -239,31 +502,276 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   @override
   void didPop() => unawaited(DrawerGestureExclusion.setEnabled(false));
 
+  void _onGestureDockFlag() {
+    if (mounted) setState(() {});
+  }
+
+  int _draftDisclosureEpoch = 0;
+  void _onDraftDisclosureChanged() {
+    ++_draftDisclosureEpoch;
+
+    if (!mounted) return;
+    if (!AppLockSensitiveReadFence.capture(
+      widget.connManager.prefs,
+    ).isCurrent) {
+      setState(() {
+        _recentSessions = _recentSessions
+            .where((s) => s.source != 'mobile-draft')
+            .toList();
+      });
+    } else {
+      // The lock route has not popped yet when its issuer revokes/notifies.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        runWhenUncovered(context, _route, () {
+          if (_activityRefreshAllowed) unawaited(_refreshDraftsAfterUnlock());
+        });
+      });
+      WidgetsBinding.instance.ensureVisualUpdate();
+    }
+  }
+
+  Future<void> _refreshDraftsAfterUnlock() async {
+    final epoch = _draftDisclosureEpoch;
+    final conn = _active;
+    if (conn == null) return;
+    final owner = ActiveProfileScope.of(widget.connManager, conn.id).capture();
+    final ticket = AppLockSensitiveReadFence.capture(widget.connManager.prefs);
+    try {
+      final entries = await ChatDraftStore(
+        widget.connManager.prefs,
+      ).listForConnection(conn.id);
+
+      if (!ticket.isCurrent ||
+          !owner.isCurrent ||
+          epoch != _draftDisclosureEpoch ||
+          !_activityRefreshAllowed ||
+          _active?.id != conn.id) {
+        return;
+      }
+      if (!mounted) return;
+      final merged = <String, Session>{
+        for (final session in _recentSessions.where(
+          (s) => s.source != 'mobile-draft',
+        ))
+          session.id: session,
+      };
+      for (final entry in entries.where(
+        (e) => Session.profileOwner(e.profile) == owner.owner,
+      )) {
+        final existing = merged[entry.sessionId];
+        merged[entry.sessionId] =
+            existing?.copyWith(hasLocalDraft: true) ??
+            entry.toSession(fallbackTitle: Strings.of(context).drawerNewChat);
+      }
+      setState(() {
+        _recentSessions = merged.values.toList()
+          ..sort((a, b) => b.lastActivityAt.compareTo(a.lastActivityAt));
+      });
+    } on SensitiveReadUnavailable {
+      // Retired disclosure: the next current unlock performs a fresh read.
+    } catch (error) {
+      debugPrint('[home-dashboard] draft recovery ${error.runtimeType}');
+    }
+  }
+
   @override
   void initState() {
     super.initState();
+    AppLockSensitiveReadFence.changes.addListener(_onDraftDisclosureChanged);
+    _activeIdsGate.addListener(_onActivityChanged);
+    _liveStatusGate.addListener(_onActivityChanged);
+    _homeSourcesGate.addListener(_onActivityChanged);
     WidgetsBinding.instance.addObserver(this);
     // Si se activa otra instancia desde cualquier pantalla (no solo el drawer
     // del home), recargamos al instante. Antes el home se quedaba con la
     // instancia anterior hasta salir y volver a entrar.
     widget.connManager.activeConnectionId.addListener(_onActiveConnChanged);
+    // The content's bottom clearance follows the dock this device uses.
+    FeatureFlags.instance.gestureDock.addListener(_onGestureDockFlag);
     _historyCleanupSubscription = historyCleanupInvalidations.events.listen(
       _onHistoryCleanupInvalidation,
     );
+    _primeFirstFrame();
     _reload();
   }
 
+  /// The first frame is the real Home: the saved connections (in memory)
+  /// and, when the lock is open, the recents snapshot bootstrap already
+  /// decrypted. [_reload] then refreshes everything in the background.
+  void _primeFirstFrame() {
+    final connections = widget.connManager.getConnections();
+    final lastId = widget.connManager.prefs.getString(_activeKey);
+    final active =
+        connections.where((c) => c.id == lastId).firstOrNull ??
+        connections.firstOrNull;
+    _connections = connections;
+    _active = active;
+    if (active == null) return;
+    // The status check starts right away; say «checking», not «offline».
+    _checking = true;
+    // Under App Lock nothing private is painted (the caches stay unread).
+    if (_appLock?.locked.value == true) return;
+    _primeFeeds(active);
+    final store = _activeChats?.coldStartStore;
+    if (store == null) return;
+    final owner = ActiveProfileScope.of(
+      widget.connManager,
+      active.id,
+    ).capture().owner;
+    final cached = store.peekRecents(connectionId: active.id, profile: owner);
+    if (cached == null) return;
+    final archive = SessionArchive.loadSync(
+      widget.connManager.prefs,
+      active.id,
+    );
+    final rows = cached
+        .where((s) => _isHomeRecentCandidate(s, archive))
+        .toList();
+    if (rows.isEmpty) return;
+    _recentSessions = rows;
+    _showingColdStartRecents = true;
+    _initialLoadComplete = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) widget.onInitialLoadComplete?.call();
+    });
+  }
+
   void _onActiveConnChanged() {
+    _missionPrewarm.cancel();
+    _modelsPrewarm.cancel();
+    _pickerPrewarm.cancel();
     if (mounted) _reload();
   }
 
+  /// Follows the active profile of [connection]. A switch re-scopes Home the
+  /// same way a connection change does: recents, draft and activity.
+  void _followProfileScope(SavedConnection? connection) {
+    final next = connection == null
+        ? null
+        : ActiveProfileScope.of(widget.connManager, connection.id);
+    if (identical(next, _profileScope)) return;
+    _profileScope?.removeListener(_onActiveProfileChanged);
+    _profileScope = next;
+    next?.addListener(_onActiveProfileChanged);
+  }
+
+  void _onActiveProfileChanged() {
+    _missionPrewarm.cancel();
+    _modelsPrewarm.cancel();
+    _pickerPrewarm.cancel();
+    if (!mounted) return;
+    // The previous profile's recents (and its list error) leave at once;
+    // the new ones follow.
+    setState(() {
+      _recentSessions = [];
+      _recentListFailed = false;
+      _cronJobs = null;
+      _cronScope = null;
+      _cronReadAt = null;
+      _cronFailed = false;
+      _tasksBoard = null;
+      _tasksScope = null;
+      _tasksReadAt = null;
+      _tasksFailed = false;
+      _answeredRoomApprovals.clear();
+      final conn = _active;
+      if (conn != null && !_locked) _primeFeeds(conn);
+    });
+    _reload();
+  }
+
+  HomeFeedCache get _feedCache =>
+      widget.feedCacheOverride ?? HomeFeedCache.shared;
+
+  String _feedScope(SavedConnection conn) => HomeFeedCache.scopeOf(
+    conn.id,
+    Session.profileOwner(widget.connManager.activeProfileFor(conn.id)),
+  );
+
+  /// Paints the cron list and the Kanban board this process read last for
+  /// [conn]'s active profile, before the read that refreshes them.
+  void _primeFeeds(SavedConnection conn) {
+    final scope = _feedScope(conn);
+    if (_cronJobs == null) {
+      final jobs = _feedCache.cron(scope);
+      if (jobs != null) {
+        _cronJobs = jobs;
+        _cronScope = scope;
+      }
+    }
+    if (_tasksBoard == null) {
+      final board = _feedCache.tasks(scope);
+      if (board != null) {
+        _tasksBoard = board;
+        _tasksScope = scope;
+      }
+    }
+  }
+
+  MissionSnapshotPrewarm get _missionPrewarm =>
+      widget.missionPrewarm ?? MissionSnapshotPrewarm.shared;
+
+  ModelsSnapshotPrewarm get _modelsPrewarm =>
+      widget.modelsPrewarm ?? ModelsSnapshotPrewarm.shared;
+
+  ModelPickerPrewarm get _pickerPrewarm =>
+      widget.pickerPrewarm ?? ModelPickerPrewarm.shared;
+
+  /// Same idle rule for the Models catalog, which the server can take
+  /// seconds to build: Desktop loads it at startup for its model menu.
+  void _scheduleModelsPrewarm(SavedConnection conn, String ownerProfile) {
+    _modelsPrewarm.schedule(
+      prefs: widget.connManager.prefs,
+      connection: conn,
+      profileOwner: ownerProfile,
+      stillIdle: () =>
+          _activityRefreshAllowed && _healthOk && _active?.id == conn.id,
+    );
+    // The chat model picker reads the same catalog over the socket Home
+    // already holds; its first open after a cold start then paints at once.
+    final chats = _activeChats;
+    if (chats != null) {
+      _pickerPrewarm.schedule(
+        chats: chats,
+        connection: conn,
+        profileOwner: ownerProfile,
+        stillIdle: () =>
+            _activityRefreshAllowed && _healthOk && _active?.id == conn.id,
+      );
+    }
+  }
+
+  /// Once Home is healthy and idle, read Bot Mode in the background if the
+  /// user has used it on this connection, so its first entry is instant.
+  void _scheduleMissionPrewarm(SavedConnection conn) {
+    _missionPrewarm.schedule(
+      prefs: widget.connManager.prefs,
+      connection: conn,
+      stillIdle: () =>
+          _activityRefreshAllowed && _healthOk && _active?.id == conn.id,
+    );
+  }
+
   void _onActivityChanged() {
+    _activityRevision++;
     if (!mounted || _activityRebuildScheduled) return;
+    // ss1215: outside a frame (a gateway event, a timer) repaint in the next
+    // frame directly; only a notification raised while building is deferred.
+    // The post-frame path used to wait for some unrelated frame, so Inicio
+    // could keep a finished chat «working» until the user touched the screen.
+    final phase = SchedulerBinding.instance.schedulerPhase;
+    if (phase == SchedulerPhase.idle ||
+        phase == SchedulerPhase.postFrameCallbacks) {
+      setState(() {});
+      return;
+    }
     _activityRebuildScheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _activityRebuildScheduled = false;
       if (mounted) setState(() {});
     });
+    WidgetsBinding.instance.ensureVisualUpdate();
   }
 
   bool get _activityRefreshAllowed =>
@@ -449,6 +957,15 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
         requestGeneration: generation,
         roster: roster,
       );
+      // The same read feeds the team faces (every live session of the
+      // gateway process, whichever profile).
+      if (!roster.hasMalformedRows && mounted) {
+        setState(() {
+          _activeRoster = roster.sessions;
+          _activeRosterAt = DateTime.now();
+          _activityRevision++;
+        });
+      }
       if (roster.hasMalformedRows) {
         _markActivityTransportStale(connection.id);
       } else {
@@ -467,24 +984,14 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     unawaited(_refreshStatus());
   }
 
-  void _reportInitialLoadProgress(double value) {
-    if (_initialLoadComplete || value <= _initialLoadProgress) return;
-    _initialLoadProgress = value;
-    widget.onInitialLoadProgress?.call(value);
-  }
-
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
     _foreground = state == AppLifecycleState.resumed;
-    if (state == AppLifecycleState.inactive ||
-        state == AppLifecycleState.paused ||
-        state == AppLifecycleState.hidden ||
-        state == AppLifecycleState.detached) {
-      // Android puede matar el proceso en segundo plano: vuelca ya.
-      _flushHomeDraft();
-    }
     if (!_foreground) {
+      _missionPrewarm.cancel();
+      _modelsPrewarm.cancel();
+      _pickerPrewarm.cancel();
       _activityEventRefreshTimer?.cancel();
       _activityEventRefreshTimer = null;
       _activityReconnectTimer?.cancel();
@@ -505,34 +1012,9 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   /// Re-resolve connections + active gateway from storage, then refresh
   /// health and recent sessions. Called on init and whenever a screen that
   /// can change the active gateway pops.
-  /// Sincroniza el token de la instancia local on-device con el token canónico
-  /// (el UUID con el que la app arranca el agente, persistido en SecureStorage).
-  /// Sin esto, una conexión local creada con el token fijo antiguo queda con un
-  /// apiKey que el dashboard real rechaza (401 en /api/sessions) → la instancia
-  /// aparece "offline" pese a responder /health, y el chat/modelo local falla.
-  Future<void> _syncLocalTokenIfNeeded() async {
-    final localConnections = widget.connManager
-        .getConnections()
-        .where((connection) => connection.onDeviceLoopback)
-        .toList(growable: false);
-    if (localConnections.isEmpty) return;
-
-    final canon = await AgentRuntimeConsts.getOrGenerateLocalToken();
-    for (final c in localConnections) {
-      if (c.apiKey != canon) {
-        await widget.connManager.updateApiKey(c.id, canon);
-      }
-    }
-  }
-
   Future<void> _reload() async {
     final epoch = ++_reloadEpoch;
-    _reportInitialLoadProgress(0.42);
     try {
-      await _syncLocalTokenIfNeeded();
-      if (!mounted || epoch != _reloadEpoch) return;
-      _reportInitialLoadProgress(0.50);
-
       final connections = widget.connManager.getConnections();
       final lastId = widget.connManager.prefs.getString(_activeKey);
       SavedConnection? active = connections
@@ -545,351 +1027,189 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
         await widget.connManager.setActiveConnection(active.id);
         if (!mounted || epoch != _reloadEpoch) return;
       }
-      var installInProgress =
-          widget.connManager.prefs.getBool('local_install_in_progress') == true;
-      if (installInProgress) {
-        // Auto-saneo: el flag puede quedar OBSOLETO (instalación fallida, matada o
-        // una desinstalación posterior) y dejar un «Retomar» fantasma para siempre.
-        // Sólo es real si el wrapper de instalación sigue vivo (sirve :8643). Si no,
-        // limpiamos el flag para que el banner desaparezca.
-        final live = await LocalTermuxAgentProvider(
-          apps: const AndroidApps(),
-        ).isInstallRunning();
-        if (!live) {
-          await widget.connManager.prefs.remove('local_install_in_progress');
-          installInProgress = false;
-        }
-        if (!mounted || epoch != _reloadEpoch) return;
-      }
-      final uninstallInProgress =
-          widget.connManager.prefs.getBool('local_uninstall_in_progress') ==
-          true;
-      if (!mounted || epoch != _reloadEpoch) return;
       setState(() {
         _connections = connections;
         _active = active;
-        _installInProgress = installInProgress;
-        _uninstallInProgress = uninstallInProgress;
       });
+      _followProfileScope(active);
       _configureActivitySource(active);
-      _reportInitialLoadProgress(0.64);
-      await _refreshStatus();
+      // cs1215: the last known recents paint while the network read runs;
+      // neither waits for the other.
+      final refresh = _refreshStatus();
+      await _paintColdStartRecents(active, epoch);
+      await refresh;
     } finally {
-      if (mounted && epoch == _reloadEpoch && !_initialLoadComplete) {
-        setState(() => _initialLoadComplete = true);
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (!mounted || epoch != _reloadEpoch) return;
-          widget.onInitialLoadProgress?.call(1);
-          widget.onInitialLoadComplete?.call();
-        });
-      }
+      if (epoch == _reloadEpoch) _completeInitialLoad();
     }
   }
 
-  /// Borra un chat directamente desde recientes. Para instancias locales limpia
-  /// el transcript guardado (el bridge no expone /api/sessions); para remotas
-  /// borra en el servidor y, si éste no la borra (sesión de canal activo), la
-  /// oculta para que no reaparezca aquí.
-  Future<void> _deleteRecent(Session session) async {
-    final conn = _active;
-    if (conn == null) return;
-    final ownerProfile = Session.profileOwner(session.profile);
-    if (conn.readOnly) {
-      showReadOnlyNotice(context);
-      return;
-    }
-    final s = Strings.of(context);
-    final title = _archive?.titleForSession(session) ?? session.displayTitle;
-    final isLocal =
-        conn.kind == InstanceKind.localhost || session.source == 'mobile-local';
-    var cronDeletion = LinkedCronDeletionMode.keepSchedule;
-    if (session.isJob && !isLocal) {
-      final choice = await showCronConversationDeleteDialog(context, session);
-      if (choice == null) return;
-      cronDeletion = choice;
-    } else {
-      final confirm = await showHermesDialog<bool>(
-        context: context,
-        title: s.homeDeleteChatTitle,
-        message: s.homeDeleteChatBody(title),
-        actions: [
-          HermesDialogAction(
-            label: s.commonCancel,
-            value: false,
-            style: HermesDialogActionStyle.cancel,
-          ),
-          HermesDialogAction(
-            label: s.commonDelete,
-            value: true,
-            style: HermesDialogActionStyle.destructive,
-          ),
-        ],
-      );
-      if (confirm != true) return;
+  /// Ends the initial loading state once (the recents placeholder goes).
+  void _completeInitialLoad() {
+    if (!mounted || _initialLoadComplete) return;
+    final epoch = _reloadEpoch;
+    setState(() => _initialLoadComplete = true);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || epoch != _reloadEpoch) return;
+      widget.onInitialLoadComplete?.call();
+    });
+  }
+
+  /// Rows on screen came from the cold-start snapshot, not a list read yet.
+  bool _showingColdStartRecents = false;
+
+  /// cs1215: a cold start paints the recents Home last showed for the
+  /// persisted connection and profile (encrypted on disk), so first paint
+  /// never waits for the network. The list read then replaces them.
+  Future<void> _paintColdStartRecents(
+    SavedConnection? connection,
+    int epoch,
+  ) async {
+    final store = _activeChats?.coldStartStore;
+    if (connection == null || store == null || _initialLoadComplete) return;
+    _cancelColdStartUnlockRetry();
+    final lock = _appLock;
+    // Under App Lock nothing private is decrypted before unlock, and a
+    // lock engaged during the reads discards what they returned (checked
+    // again after the last await, right before painting; nothing is
+    // published in between). Unlocking retries from the cache only; the
+    // network read already in flight is not repeated.
+    bool lockedOrStale(ProfileReadTicket ticket) {
+      if (!mounted ||
+          _initialLoadComplete ||
+          epoch != _reloadEpoch ||
+          _active?.id != connection.id ||
+          !ticket.isCurrent) {
+        return true;
+      }
+      if (lock?.locked.value != true) return false;
+      _retryColdStartRecentsOnUnlock(lock!, connection, epoch);
+      return true;
     }
 
-    var removed = false;
-    if (isLocal) {
-      await LocalTranscriptStore.clear(
-        conn.id,
-        session.id,
-        profile: ownerProfile,
-      );
-      removed = true;
-    } else {
-      final client = ApiClient(
-        baseUrl: conn.baseUrl,
-        apiKey: conn.apiKey,
-        connectionId: conn.id,
-      );
-      late final LinkedSessionDeleteResult result;
-      try {
-        result = await deleteSessionWithResolvedLineage(
-          session,
-          loadSessions: ({bool includeChildren = false}) => client.getSessions(
-            includeChildren: includeChildren,
-            profile: ownerProfile,
-          ),
-          deleteSession: (sessionId) =>
-              client.deleteSession(sessionId, profile: ownerProfile),
-          cronDeletion: cronDeletion,
-          deleteCronJob:
-              !session.isJob ||
-                  cronDeletion == LinkedCronDeletionMode.keepSchedule
-              ? null
-              : (jobId) => widget.connManager.deleteLinkedCronJob(
-                  conn,
-                  jobId,
-                  profile: ownerProfile,
-                ),
-        );
-      } finally {
-        client.close();
-      }
-      if (!mounted) return;
-      switch (result.status) {
-        case LinkedSessionDeleteStatus.deleted:
-          removed = true;
-          break;
-        case LinkedSessionDeleteStatus.cancelled:
-          break;
-        case LinkedSessionDeleteStatus.sessionRejected:
-          if (mounted) {
-            _offerHideRecent(
-              session,
-              message: result.cronDeleted ? s.cronStoppedChatKept : null,
-            );
-          }
-          return;
-        case LinkedSessionDeleteStatus.cronDeleteFailed:
-          if (mounted) {
-            HermesNotice.of(context).showSnackBar(
-              SnackBar(content: Text(sessionDeletionFailureMessage(s, result))),
-              kind: HermesNoticeKind.error,
-            );
-          }
-          return;
-        case LinkedSessionDeleteStatus.sessionDeleteFailed:
-          if (mounted) {
-            HermesNotice.of(context).showSnackBar(
-              SnackBar(content: Text(sessionDeletionFailureMessage(s, result))),
-              kind: HermesNoticeKind.error,
-            );
-          }
-          return;
-      }
-      if (!removed) return;
-    }
-    if (!mounted || !removed) return;
-    final aggregate = _activeChats?.globalActivity;
-    aggregate?.clearSession(conn.id, ownerProfile, session.id);
-    await aggregate?.flushJournal();
-    if (!mounted) return;
+    final ticket = ActiveProfileScope.of(
+      widget.connManager,
+      connection.id,
+    ).capture();
+    if (lockedOrStale(ticket)) return;
+    List<Session>? cached;
+    SessionArchive archive;
     try {
-      final prefs = await SharedPreferences.getInstance();
-      await ChatDraftStore(
-        prefs,
-      ).clear(conn.id, session.id, profile: ownerProfile);
-      await TurnOutboxStore().deleteForChat(
-        conn.id,
-        session.id,
-        profile: ownerProfile,
+      cached = await store.loadRecents(
+        connectionId: connection.id,
+        profile: ticket.owner,
+      );
+      archive = await SessionArchive.load(
+        widget.connManager.prefs,
+        connection.id,
       );
     } catch (error) {
-      debugPrint(
-        '[home-dashboard] recovery cleanup failed (${error.runtimeType})',
-      );
-    }
-    if (!mounted) return;
-    setState(() {
-      _recentSessions = _recentSessions
-          .where(
-            (x) =>
-                x.id != session.id ||
-                Session.profileOwner(x.profile) != ownerProfile,
-          )
-          .toList();
-    });
-    HermesNotice.of(context).showSnackBar(
-      SnackBar(
-        content: Text(s.homeChatDeleted, style: const TextStyle(fontSize: 13)),
-        duration: const Duration(seconds: 2),
-      ),
-      kind: HermesNoticeKind.success,
-    );
-  }
-
-  Future<void> _renameRecent(Session session) async {
-    final archive = _archive;
-    if (archive == null) return;
-    final currentTitle = archive.titleForSession(session);
-    final newTitle = await showSessionTitleEditorRoute(
-      context,
-      initialTitle: currentTitle,
-    );
-    if (!mounted || newTitle == null) return;
-    final trimmed = newTitle.trim();
-    if (trimmed.isEmpty) {
-      HermesNotice.of(context).showSnackBar(
-        SnackBar(content: Text(Strings.of(context).slRenameEmpty)),
-        kind: HermesNoticeKind.warning,
-      );
+      debugPrint('[home-dashboard] cold-start recents (${error.runtimeType})');
       return;
     }
-    await archive.setSessionTitle(session, trimmed);
-    if (!mounted) return;
-    setState(() {});
-    HermesNotice.of(context).showSnackBar(
-      SnackBar(content: Text(Strings.of(context).slRenamed)),
-      kind: HermesNoticeKind.success,
-    );
+    if (lockedOrStale(ticket)) return;
+    final rows = (cached ?? const <Session>[])
+        .where((s) => _isHomeRecentCandidate(s, archive))
+        .toList();
+    if (rows.isEmpty) return;
+    setState(() {
+      _recentSessions = rows;
+      _showingColdStartRecents = true;
+    });
+    _completeInitialLoad();
   }
 
-  Future<void> _showRecentActions(Session session) async {
-    final strings = Strings.of(context);
-    final colors = Theme.of(context).hermes;
-    final readOnly = _active?.readOnly == true;
-    final action = await showHermesFloatingSurface<_RecentAction>(
-      context: context,
-      surfaceKey: const ValueKey('home-recent-actions'),
-      maxWidth: 420,
-      maxHeightFactor: 0.72,
-      builder: (surfaceContext) => Padding(
-        padding: const EdgeInsets.fromLTRB(12, 18, 12, 10),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
-              child: Text(
-                _archive?.titleForSession(session) ?? session.displayTitle,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-            ),
-            ListTile(
-              key: const ValueKey('home-recent-action-rename'),
-              leading: const Icon(Icons.edit_outlined),
-              title: Text(strings.slMenuRename),
-              onTap: () => Navigator.pop(surfaceContext, _RecentAction.rename),
-            ),
-            if (!readOnly)
-              ListTile(
-                key: const ValueKey('home-recent-action-delete'),
-                leading: Icon(Icons.delete_outline, color: colors.error),
-                title: Text(
-                  strings.slMenuDelete,
-                  style: TextStyle(color: colors.error),
-                ),
-                onTap: () =>
-                    Navigator.pop(surfaceContext, _RecentAction.delete),
-              ),
-            Align(
-              alignment: Alignment.centerRight,
-              child: TextButton(
-                onPressed: () => Navigator.pop(surfaceContext),
-                child: Text(strings.commonCancel),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-    if (!mounted) return;
-    switch (action) {
-      case _RecentAction.rename:
-        await _renameRecent(session);
-        break;
-      case _RecentAction.delete:
-        await _deleteRecent(session);
-        break;
-      case null:
-        break;
+  ValueNotifier<bool>? _coldStartLockWatched;
+  VoidCallback? _coldStartUnlockRetry;
+
+  /// Tries the cold-start recents again once App Lock is lifted;
+  /// [_paintColdStartRecents] skips them if the first list landed or
+  /// [epoch] is over by then.
+  void _retryColdStartRecentsOnUnlock(
+    AppLockService lock,
+    SavedConnection connection,
+    int epoch,
+  ) {
+    _cancelColdStartUnlockRetry();
+    // Registered while locked, so the first change is the unlock.
+    void retry() {
+      _cancelColdStartUnlockRetry();
+      if (mounted) unawaited(_paintColdStartRecents(connection, epoch));
     }
+
+    _coldStartLockWatched = lock.locked..addListener(retry);
+    _coldStartUnlockRetry = retry;
   }
 
-  void _offerHideRecent(Session session, {String? message}) {
-    final messenger = HermesNotice.of(context);
-    final s = Strings.of(context);
-    messenger.showSnackBar(
-      SnackBar(
-        duration: const Duration(seconds: 6),
-        content: Text(message ?? s.slOfferHideContent),
-        action: SnackBarAction(
-          label: s.slHideAction,
-          onPressed: () async {
-            await _archive?.hide(session.id);
-            if (!mounted) return;
-            setState(() {
-              _recentSessions = _recentSessions
-                  .where((item) => item.id != session.id)
-                  .toList();
-            });
-          },
-        ),
-      ),
+  void _cancelColdStartUnlockRetry() {
+    final retry = _coldStartUnlockRetry;
+    if (retry != null) _coldStartLockWatched?.removeListener(retry);
+    _coldStartLockWatched = null;
+    _coldStartUnlockRetry = null;
+  }
+
+  /// Saves what Home just read from the server for the next cold start.
+  void _saveColdStartRecents(
+    SavedConnection connection,
+    String owner,
+    List<Session> listed,
+    List<Session> recents,
+    SessionArchive archive,
+  ) {
+    final store = _activeChats?.coldStartStore;
+    if (store == null) return;
+    final listedIds = {for (final s in listed) s.id};
+    final rows = recents
+        .where(
+          (s) => listedIds.contains(s.id) && _isHomeRecentCandidate(s, archive),
+        )
+        .take(ColdStartStore.maxRecentRows)
+        .toList(growable: false);
+    unawaited(
+      store
+          .saveRecents(
+            connectionId: connection.id,
+            profile: owner,
+            sessions: rows,
+          )
+          .catchError((Object error) {
+            debugPrint(
+              '[home-dashboard] recents not saved (${error.runtimeType})',
+            );
+          }),
     );
   }
 
-  /// Instancias locales cuyo bridge ya intentamos refrescar en esta sesión, para
-  /// no relanzar el redeploy en cada `_refreshStatus` (resume, foco, etc.).
-  final Set<String> _freshBridgeTried = {};
-
-  /// Asegura, en segundo plano, que el bridge local corre la versión esperada.
-  /// No bloquea la UI: si estaba desactualizado, lo redespliega y al terminar
-  /// refresca el estado. Idempotente y barato cuando ya está fresco.
-  void _ensureLocalBridgeFresh(SavedConnection conn) {
-    if (!_freshBridgeTried.add(conn.id)) return; // ya intentado esta sesión
-    LocalTermuxAgentProvider(apps: const AndroidApps())
-        .ensureFreshBridge(conn.derivedBridgeUrl)
-        .then<void>((fresh) {
-          if (fresh && mounted && _active?.id == conn.id) _refreshStatus();
-        })
-        .catchError((Object _) {
-          // Si falló, permite reintentar en el próximo refresh.
-          _freshBridgeTried.remove(conn.id);
-        });
-  }
-
+  /// A status refresh only paints while it is the newest one, for the same
+  /// connection AND the same active profile: a list read for the previous
+  /// profile must never land on the new one.
   bool _isCurrentStatusRefresh(int epoch, String? connectionId) =>
-      mounted && epoch == _refreshStatusEpoch && _active?.id == connectionId;
+      mounted &&
+      epoch == _refreshStatusEpoch &&
+      _active?.id == connectionId &&
+      (_statusTicket?.isCurrent ?? true);
 
   Future<void> _refreshStatus() async {
     final refreshEpoch = ++_refreshStatusEpoch;
     final conn = _active;
     final connectionId = conn?.id;
+    _statusTicket = conn == null
+        ? null
+        : ActiveProfileScope.of(widget.connManager, conn.id).capture();
     final app = context.findAncestorStateOfType<HermesAppState>();
+    final updateHomeWidget =
+        widget.homeWidgetUpdateOverride ?? app?.updateHomeWidget;
     if (conn == null) {
       if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
       setState(() {
         _healthOk = false;
+        _healthOkConnectionId = null;
+        _dashboardAuth = DashboardAuthCheck.unknown;
         _checking = false;
         _recentSessions = [];
+        _recentListFailed = false;
       });
       unawaited(
-        app?.updateHomeWidget(
+        updateHomeWidget?.call(
           (current) => _isCurrentStatusRefresh(refreshEpoch, connectionId)
               ? const HermesHomeWidgetSnapshot(
                   configured: false,
@@ -899,40 +1219,53 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
               : current,
         ),
       );
-      if (_isCurrentStatusRefresh(refreshEpoch, connectionId)) {
-        _reportInitialLoadProgress(0.92);
-      }
       return;
     }
 
     // Leer el estado del App Lock antes de los awaits de red evita conservar
     // BuildContext a través del hueco asíncrono.
-    final appLockEnabled = app?.appLock.enabled == true;
 
     if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
     setState(() => _checking = true);
-    unawaited(
-      app?.updateHomeWidget(
-        (current) => _isCurrentStatusRefresh(refreshEpoch, connectionId)
-            ? mergeHomeWidgetBaseSnapshot(
-                current: current,
-                configured: true,
-                instanceId: conn.id,
-                instanceLabel: conn.label,
-                connectionState: HomeWidgetConnectionState.connecting,
-                agentState: HomeWidgetAgentState.idle,
-                theme: current.theme,
-              )
-            : current,
-      ),
-    );
+    // The launcher widget follows the status line: a re-check of a
+    // connection already proven online keeps it online and writes nothing
+    // until the result lands, so the widget neither blinks nor redraws.
+    if (_statusChecking) {
+      unawaited(
+        updateHomeWidget?.call(
+          (current) => _isCurrentStatusRefresh(refreshEpoch, connectionId)
+              ? mergeHomeWidgetBaseSnapshot(
+                  current: current,
+                  configured: true,
+                  instanceId: conn.id,
+                  instanceLabel: conn.label,
+                  connectionState: HomeWidgetConnectionState.connecting,
+                  agentState: HomeWidgetAgentState.idle,
+                  theme: current.theme,
+                )
+              : current,
+        ),
+      );
+    }
     final archive = await SessionArchive.load(
       widget.connManager.prefs,
       conn.id,
     );
+    // Open until this refresh stores its rows, or a newer refresh or
+    // dispose drops them (see SessionArchive.beginListRead).
+    _statusListRead?.end();
+    final listRead = _statusListRead = archive.beginListRead();
     if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
     bool ok = false;
+    // /health answered but the paged list did not (timeout, 5xx, reset).
+    // The server is reachable: keep the last known list instead of flipping
+    // Home to offline on every slow refresh (#1215).
+    var listReadUnavailable = false;
+    Future<DashboardAuthCheck>? dashboardAuthFuture;
     List<Session> sessions = [];
+    final draftTicket = AppLockSensitiveReadFence.capture(
+      widget.connManager.prefs,
+    );
     List<ChatDraftEntry> drafts = [];
     // Los borradores viven en el Keystore. Un fallo puntual al desbloquearlo no
     // debe convertir un servidor sano en «offline»: son dos fuentes separadas.
@@ -946,48 +1279,70 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
     final client =
         widget.clientFactory?.call(conn) ??
-        ApiClient(baseUrl: conn.baseUrl, apiKey: conn.apiKey);
-    final ownerProfile = Session.profileOwner(
-      widget.connManager.activeProfileFor(conn.id),
-    );
+        ApiClient(
+          baseUrl: conn.baseUrl,
+          apiKey: conn.apiKey,
+          // A named profile's list comes from the Dashboard, as on Desktop.
+          profileDashboard: DashboardClient.lazy(conn),
+        );
+    final ownerProfile =
+        _statusTicket?.owner ??
+        Session.profileOwner(widget.connManager.activeProfileFor(conn.id));
     try {
-      if (conn.kind == InstanceKind.localhost) {
-        // El agente local sirve dashboard en :9119; su health es /api/status,
-        // no /health (gateway :8642, que en local no existe). healthCheck()
-        // daría 404 → falso «offline» aunque el agente esté vivo. Usamos el
-        // mismo sondeo que la pantalla de setup para que ambas coincidan.
-        ok = await LocalTermuxAgentProvider(
-          apps: const AndroidApps(),
-        ).isAgentRunning();
-        if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
-        if (ok) {
-          // Tras actualizar el APK, el bridge desplegado en el dispositivo puede
-          // ser uno VIEJO que sirve endpoints antiguos → modelos/skills/info del
-          // servidor salen vacíos. Si el agente está vivo, auto-actualizamos el
-          // bridge a la versión esperada (en segundo plano, una vez por sesión).
-          _ensureLocalBridgeFresh(conn);
-          // El bridge local no expone /api/sessions — usamos el transcript
-          // guardado en SharedPreferences por LocalTranscriptStore.
-          sessions = await LocalTranscriptStore.listForConnection(
-            conn.id,
+      // The paged session list below is an authenticated read, so it is
+      // the auth proof: a rejected key throws and leaves Home offline.
+      final watch = Stopwatch()..start();
+      ok = await client.healthReachable();
+      watch.stop();
+      if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
+      // Servidor widget: the round trip of this very check (no extra
+      // request).
+      _latencyMs = ok ? watch.elapsedMilliseconds : null;
+      if (ok) {
+        dashboardAuthFuture =
+            (widget.dashboardAuthProbe ??
+                    (c) => checkSavedDashboardLogin(widget.connManager, c))
+                .call(conn);
+        try {
+          // Home shows the newest chats only: one Desktop-sized page
+          // (`listSessions(limit = 40)`), plus a bounded follow-up when
+          // automation rows fill it. Deep links, notifications and Bot
+          // Mode resolve their session directly, never through this list.
+          final wanted = _homeRecentLimit();
+          sessions = await client.getSessions(
             profile: ownerProfile,
+            pageSize: homeSessionPageSize,
+            maxPages: homeSessionMaxPages,
+            enough: (rows) =>
+                rows
+                    .where((row) => _isHomeRecentCandidate(row, archive))
+                    .length >=
+                wanted,
           );
-          if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
-        }
-      } else {
-        ok = await client.healthCheck();
-        if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
-        if (ok) {
-          sessions = await client.getSessions(profile: ownerProfile);
-          if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
-          sessions.sort((a, b) => b.lastActivityAt.compareTo(a.lastActivityAt));
-          // La comprobación del bridge ya no depende de abrir Chat/Ajustes.
-          // Con App Lock activo no iniciamos una mutación automática que el
-          // usuario no acaba de autorizar; la acción manual permanece visible.
-          if (!appLockEnabled) {
-            unawaited(BridgeUpdateService.maintainIfEnabled(conn));
+        } on CoreReadException catch (error) {
+          // A rejected key is a real outage of this connection. A named
+          // profile's list has its own credentials (its Dashboard scope):
+          // its refusal leaves the connection online with a list error.
+          if ((error.kind == CoreReadErrorKind.auth ||
+                  error.kind == CoreReadErrorKind.forbidden) &&
+              ownerProfile == 'default') {
+            rethrow;
           }
+          listReadUnavailable = true;
+        } on TimeoutException {
+          listReadUnavailable = true;
+        } on http.ClientException {
+          listReadUnavailable = true;
+        } on SocketException {
+          listReadUnavailable = true;
+        } catch (_) {
+          // Any other refusal of a named profile's list (Dashboard login,
+          // malformed page) is that profile's, not the connection's.
+          if (ownerProfile == 'default') rethrow;
+          listReadUnavailable = true;
         }
+        if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
+        sessions.sort((a, b) => b.lastActivityAt.compareTo(a.lastActivityAt));
       }
     } catch (e) {
       debugPrint(
@@ -1009,6 +1364,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
       final captured = session.copyWith(profile: ownerProfile);
       merged[captured.id] = captured;
     }
+    if (!draftTicket.isCurrent) drafts = [];
     for (final draft in drafts.where(
       (draft) => Session.profileOwner(draft.profile) == ownerProfile,
     )) {
@@ -1031,25 +1387,72 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
         // pestaña "Chats" de Conversaciones (la que abre "Ver todas" por
         // defecto) — el "aparece en Inicio y luego no está" reportado en
         // dispositivo real. Mismo criterio que `SessionCategory.chats`.
-        .where(
-          (s) =>
-              !s.isJob &&
-              !archive.isHidden(s.id) &&
-              SessionCategory.chats.includesSource(s.source),
-        )
+        // Local archive/hidden state is applied when painting, from the
+        // shared store, so a change made on another screen shows here at once.
+        .where(_isHomeRecentKind)
         .toList();
-    final recentLimit = _homeRecentLimit();
     if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
+    // The login check can take seconds on a slow Dashboard: apply it when it
+    // lands instead of holding the whole status refresh.
+    if (ok && dashboardAuthFuture != null) {
+      unawaited(
+        dashboardAuthFuture.catchError((_) => DashboardAuthCheck.unknown).then((
+          auth,
+        ) {
+          if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
+          setState(() => _dashboardAuth = auth);
+        }),
+      );
+    }
     setState(() {
       _healthOk = ok;
+      _healthOkConnectionId = ok ? conn.id : null;
+      if (!ok) _dashboardAuth = DashboardAuthCheck.unknown;
       _checking = false;
-      _archive = archive;
-      _recentSessions = recentSessions;
+      _listenArchive(archive, conn);
+      // An unreachable server keeps the cold-start rows on screen instead
+      // of an empty Home; the next good read replaces them.
+      if (!listReadUnavailable && (ok || !_showingColdStartRecents)) {
+        _recentSessions = recentSessions
+            .where((s) => !archive.isSessionDeleted(s))
+            .toList();
+        _showingColdStartRecents = false;
+      }
+      _recentListFailed = ok && listReadUnavailable;
     });
+    listRead.end(rows: listReadUnavailable ? const [] : sessions);
+    if (ok && !listReadUnavailable) {
+      _saveColdStartRecents(
+        conn,
+        ownerProfile,
+        sessions,
+        recentSessions,
+        archive,
+      );
+      // The Chats launcher widget shows these same rows (no request of its
+      // own): opening the app at Home keeps it current, not only a visit to
+      // the Chats screen.
+      unawaited(
+        LauncherWidgetChatsPublisher.instance.offer(
+          connectionId: conn.id,
+          sessions: recentSessions.where((s) => !archive.isSessionDeleted(s)),
+        ),
+      );
+    }
+    // The recents are what the placeholder stands for; the live activity
+    // roster below decorates them when it lands.
+    _completeInitialLoad();
+    if (ok) {
+      _scheduleMissionPrewarm(conn);
+      _scheduleModelsPrewarm(conn, ownerProfile);
+      unawaited(_refreshCron(conn));
+      _layoutFor(conn);
+      _refreshBoardExtras(conn);
+    }
     await _refreshRemoteActivity(conn, ownerProfile);
     if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
     unawaited(
-      app?.updateHomeWidget(
+      updateHomeWidget?.call(
         (current) => _isCurrentStatusRefresh(refreshEpoch, connectionId)
             ? current.copyWith(
                 configured: true,
@@ -1068,77 +1471,77 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
             : current,
       ),
     );
-    if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
-    _reportInitialLoadProgress(0.92);
-    if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
-    unawaited(
-      _hydrateTurnPreviews(
-        conn,
-        recentSessions.take(recentLimit).toList(growable: false),
-      ),
-    );
+  }
+
+  bool _isHomeRecentCandidate(Session s, SessionArchive archive) =>
+      _isHomeRecentKind(s) &&
+      !archive.isSessionDeleted(s) &&
+      !archive.isSessionHidden(s) &&
+      !archive.isSessionArchived(s) &&
+      !archive.isHidden(s.id);
+
+  static bool _isHomeRecentKind(Session s) =>
+      !s.isAutomation && s.listsAsOwnRow;
+
+  /// Recents as painted: the retained page filtered by the shared local
+  /// archive store (archive, hidden).
+  List<Session> get _visibleRecentSessions {
+    final archive = _archive;
+    if (archive == null) return _recentSessions;
+    return _recentSessions
+        .where((s) => _isHomeRecentCandidate(s, archive))
+        .toList(growable: false);
+  }
+
+  SessionStateWriter? _stateWriter;
+
+  void _detachStateWriter() {
+    final writer = _stateWriter;
+    _stateWriter = null;
+    if (writer != null) _archive?.detachRemoteState(writer);
+  }
+
+  /// Follows the connection's shared [SessionArchive]: a rename, archive or
+  /// hide made on any screen repaints the recents without a network read.
+  ///
+  /// Also lends it a writer, so a hide, rename or read made from Home (or a
+  /// chat opened from it) reaches the server as Desktop's would.
+  void _listenArchive(SessionArchive archive, SavedConnection conn) {
+    if (identical(_archive, archive)) return;
+    _archive?.removeListener(_onActivityChanged);
+    _archive?.removeListener(_dropDeletedRecents);
+    _detachStateWriter();
+    if (!conn.readOnly) {
+      final writer = _stateWriter =
+          (widget.sessionStateWriterFactory ?? dashboardSessionStateWriter)(
+            conn,
+          );
+      archive.attachRemoteState(writer, httpStatusOf: dashboardHttpStatusOf);
+    }
+    _archive = archive;
+    archive.addListener(_dropDeletedRecents);
+    archive.addListener(_onActivityChanged);
+  }
+
+  /// A delete made on any screen leaves the retained page itself, not only
+  /// the painted recents, so it cannot return once its tombstone goes.
+  void _dropDeletedRecents() {
+    final archive = _archive;
+    if (archive == null || !_recentSessions.any(archive.isSessionDeleted)) {
+      return;
+    }
+    _recentSessions = _recentSessions
+        .where((s) => !archive.isSessionDeleted(s))
+        .toList();
   }
 
   int _homeRecentLimit() {
-    final media = MediaQuery.of(context);
-    final textScale = media.textScaler.scale(14) / 14;
+    final textScale = MediaQuery.textScalerOf(context).scale(14) / 14;
     return homeRecentSessionLimit(
-      viewportHeight: media.size.height,
+      viewportHeight: MediaQuery.sizeOf(context).height,
       textScale: textScale,
     );
   }
-
-  String _turnPreviewKey(SavedConnection connection, Session session) =>
-      '${connection.id}\u001f${session.id}';
-
-  Future<void> _hydrateTurnPreviews(
-    SavedConnection connection,
-    List<Session> sessions,
-  ) async {
-    final epoch = ++_previewHydrationEpoch;
-    final activeChats = _activeChats;
-    var changed = false;
-
-    for (final session in sessions) {
-      final key = _turnPreviewKey(connection, session);
-      final activityAt = session.lastActivityAt;
-      final inMemory = activeChats?.of(
-        connection.id,
-        session.id,
-        profile: session.profile,
-      );
-      final user = inMemory == null
-          ? session.lastUserPreview
-          : latestUserPreview(inMemory.messages, newestFirst: true) ??
-                session.lastUserPreview;
-      final assistant = inMemory == null
-          ? session.lastAssistantPreview
-          : latestAssistantPreview(inMemory.messages, newestFirst: true) ??
-                session.lastAssistantPreview;
-      final cached = _turnPreviews[key];
-      if (cached?.activityAt == activityAt &&
-          cached?.user == user &&
-          cached?.assistant == assistant) {
-        continue;
-      }
-      _turnPreviews[key] = (
-        activityAt: activityAt,
-        user: user,
-        assistant: assistant,
-      );
-      changed = true;
-    }
-
-    if (changed && mounted && epoch == _previewHydrationEpoch) {
-      setState(() {});
-    }
-  }
-
-  String _recentGroupLabel(HomeRecentDateGroup group) => switch (group) {
-    HomeRecentDateGroup.today => Strings.of(context).homeRecentToday,
-    HomeRecentDateGroup.yesterday => Strings.of(context).homeRecentYesterday,
-    HomeRecentDateGroup.earlier => Strings.of(context).homeRecentEarlier,
-  };
 
   GlobalActivity? _globalActivityFor(
     SavedConnection connection,
@@ -1153,175 +1556,6 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
       }
     }
     return null;
-  }
-
-  SessionActivityKind _globalActivityKind(GlobalActivity? activity) {
-    if (activity == null || !activity.active) return SessionActivityKind.idle;
-    return switch (activity.phase) {
-      GlobalActivityPhase.preparing => SessionActivityKind.preparing,
-      GlobalActivityPhase.usingTools => SessionActivityKind.usingTools,
-      GlobalActivityPhase.waitingForUser => SessionActivityKind.waitingForUser,
-      GlobalActivityPhase.compacting => SessionActivityKind.compacting,
-      GlobalActivityPhase.delegated => SessionActivityKind.delegated,
-      GlobalActivityPhase.backgroundWork =>
-        SessionActivityKind.backgroundProcess,
-      GlobalActivityPhase.generating ||
-      GlobalActivityPhase.completing ||
-      GlobalActivityPhase.unknown => SessionActivityKind.generating,
-      GlobalActivityPhase.completed ||
-      GlobalActivityPhase.interrupted ||
-      GlobalActivityPhase.failed => SessionActivityKind.idle,
-    };
-  }
-
-  List<Widget> _buildRecentRows(SavedConnection connection, int limit) {
-    final rows = <Widget>[];
-    final now = DateTime.now();
-    final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
-    final activeChats = _activeChats;
-    HomeRecentDateGroup? previousGroup;
-    final visible = _recentSessions.take(limit).toList(growable: false);
-
-    for (var index = 0; index < visible.length; index++) {
-      final session = visible[index];
-      final group = homeRecentDateGroup(session.lastActivityAt, now);
-      if (group != previousGroup) {
-        rows.add(
-          _RecentGroupHeader(
-            key: ValueKey('home-recent-group-${group.name}'),
-            label: _recentGroupLabel(group),
-            first: index == 0,
-          ),
-        );
-        previousGroup = group;
-      }
-
-      final title = _archive?.titleForSession(session) ?? session.displayTitle;
-      final cached = _turnPreviews[_turnPreviewKey(connection, session)];
-      final summary = homeRecentSummary(
-        title: title,
-        session: session,
-        userPreview: cached?.activityAt == session.lastActivityAt
-            ? cached?.user
-            : null,
-        assistantPreview: cached?.activityAt == session.lastActivityAt
-            ? cached?.assistant
-            : null,
-      );
-      final activeChat = activeChats?.of(
-        connection.id,
-        session.id,
-        profile: session.profile,
-      );
-      final rosterActivity = _globalActivityKind(
-        _globalActivityFor(connection, session),
-      );
-
-      Widget recentTile(
-        SessionActivityKind activity, {
-        int backgroundCount = 0,
-      }) {
-        final activityLabel = _activityLabel(
-          activity,
-          backgroundCount: backgroundCount,
-        );
-        return _RecentSessionTile(
-          session: session,
-          title: title,
-          summary: summary,
-          activityLabel: activityLabel,
-          activityTone: sessionStatusToneFor(activity),
-          relativeTime: relativeTime(
-            session.lastActivityAt,
-            languageCode: Localizations.localeOf(context).languageCode,
-          ),
-          onTap: () => _openChat(session),
-          onStop: activityLabel == null
-              ? null
-              : () => _stopSession(connection, session),
-          onManage: () => _showRecentActions(session),
-        );
-      }
-
-      rows.add(
-        FadeSlideIn(
-          delayMs: reduceMotion ? 0 : 30 + (index.clamp(0, 3)) * 20,
-          duration: reduceMotion
-              ? Duration.zero
-              : const Duration(milliseconds: 220),
-          child: activeChat == null
-              ? recentTile(rosterActivity)
-              : StreamBuilder<ActiveChatEvent>(
-                  stream: activeChat.changes,
-                  builder: (_, _) {
-                    final localActivity = activeChat.sessionActivity;
-                    return recentTile(
-                      localActivity.showsActivity
-                          ? localActivity.kind
-                          : rosterActivity,
-                      backgroundCount: localActivity.backgroundItemCount,
-                    );
-                  },
-                ),
-        ),
-      );
-    }
-    return rows;
-  }
-
-  String? _activityLabel(
-    SessionActivityKind activity, {
-    int backgroundCount = 0,
-  }) => switch (activity) {
-    SessionActivityKind.preparing ||
-    SessionActivityKind.generating => Strings.of(context).chaPipelineThinking,
-    SessionActivityKind.usingTools => Strings.of(context).chaPipelineExecuting,
-    SessionActivityKind.responding => Strings.of(context).chaPipelineStreaming,
-    SessionActivityKind.waitingForUser => Strings.of(
-      context,
-    ).homeActivityAwaitingApproval,
-    SessionActivityKind.compacting => Strings.of(context).slActivityCompacting,
-    SessionActivityKind.delegated => Strings.of(context).slActivityDelegated,
-    SessionActivityKind.backgroundProcess =>
-      backgroundCount > 0
-          ? Strings.of(context).chaBackgroundActivityCount(backgroundCount)
-          : Strings.of(context).slActivityBackground,
-    SessionActivityKind.idle => null,
-  };
-
-  Future<void> _stopSession(SavedConnection connection, Session session) async {
-    final activeChats = _activeChats;
-    if (activeChats == null) {
-      HermesNotice.of(context).showSnackBar(
-        SnackBar(content: Text(Strings.of(context).chaStopFailed)),
-        kind: HermesNoticeKind.error,
-      );
-      return;
-    }
-    try {
-      final result = await activeChats.stopSessionWork(
-        connection: connection,
-        session: session,
-      );
-      if (!result.allBackgroundWorkStopped && mounted) {
-        HermesNotice.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              Strings.of(
-                context,
-              ).chaBackgroundWorkRemaining(result.remainingBackgroundTasks),
-            ),
-          ),
-          kind: HermesNoticeKind.warning,
-        );
-      }
-    } catch (_) {
-      if (!mounted) return;
-      HermesNotice.of(context).showSnackBar(
-        SnackBar(content: Text(Strings.of(context).chaStopFailed)),
-        kind: HermesNoticeKind.error,
-      );
-    }
   }
 
   void _openChat(
@@ -1345,98 +1579,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
         initialDictation: initialDictation,
         initialVoiceMode: initialVoiceMode,
       ),
-    ).then((_) => _refreshStatus());
-  }
-
-  ({String connectionId, String profile})? _homeDraftTarget() {
-    final conn = _active;
-    if (conn == null) return null;
-    return (
-      connectionId: conn.id,
-      profile: Session.profileOwner(
-        widget.connManager.activeProfileFor(conn.id),
-      ),
-    );
-  }
-
-  /// Carga el borrador de Inicio cuando cambia conexión/perfil. Idempotente.
-  void _ensureHomeDraftLoaded() {
-    final target = _homeDraftTarget();
-    final scope = target == null
-        ? null
-        : '${target.connectionId}\u0000${target.profile}';
-    if (scope == _homeDraftScope) return;
-    _flushHomeDraft();
-    _homeDraftScope = scope;
-    _homeDraftRestoredText = null;
-    final epoch = ++_homeDraftEpoch;
-    if (target == null) return;
-    unawaited(() async {
-      try {
-        final draft = await ChatDraftStore(widget.connManager.prefs).load(
-          target.connectionId,
-          ChatDraftStore.newChatDraftSessionId,
-          profile: target.profile,
-        );
-        if (!mounted || epoch != _homeDraftEpoch) return;
-        if (draft.text.isEmpty) return;
-        setState(() => _homeDraftRestoredText = draft.text);
-      } catch (error) {
-        debugPrint(
-          '[home-dashboard] home draft load failed (${error.runtimeType})',
-        );
-      }
-    }());
-  }
-
-  void _onHomeDraftChanged(String text) {
-    final target = _homeDraftTarget();
-    if (_homeDraftScope == null || target == null) return;
-    // El destino se fija al escribir: un cambio de conexión/perfil posterior
-    // no puede volcar este texto en el borrador de otra autoridad.
-    _homeDraftPendingTarget = target;
-    _homeDraftPendingText = text;
-    _homeDraftSaveTimer?.cancel();
-    if (text.isEmpty) {
-      // Vaciar (o enviar) borra ya: no puede resucitar tras un kill.
-      _flushHomeDraft();
-      return;
-    }
-    _homeDraftSaveTimer = Timer(
-      const Duration(milliseconds: 400),
-      _flushHomeDraft,
-    );
-  }
-
-  void _flushHomeDraft() {
-    _homeDraftSaveTimer?.cancel();
-    _homeDraftSaveTimer = null;
-    final text = _homeDraftPendingText;
-    final target = _homeDraftPendingTarget;
-    if (text == null || target == null) return;
-    _homeDraftPendingText = null;
-    _homeDraftPendingTarget = null;
-    final store = ChatDraftStore(widget.connManager.prefs);
-    final Future<void> write = text.isEmpty
-        ? store.clear(
-            target.connectionId,
-            ChatDraftStore.newChatDraftSessionId,
-            profile: target.profile,
-          )
-        : store.save(
-            target.connectionId,
-            ChatDraftStore.newChatDraftSessionId,
-            text,
-            const [],
-            profile: target.profile,
-          );
-    unawaited(
-      write.catchError((Object error) {
-        debugPrint(
-          '[home-dashboard] home draft save failed (${error.runtimeType})',
-        );
-      }),
-    );
+    ).then((_) => _refreshWhenUncovered());
   }
 
   void _newChat({
@@ -1465,63 +1608,6 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     );
   }
 
-  void _selectHomeAttachment(AttachmentSourceChoice source) {
-    FocusManager.instance.primaryFocus?.unfocus();
-    _newChat(initialAttachmentSource: source);
-  }
-
-  void _openSessions() {
-    final conn = _active;
-    if (conn == null) return;
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => SessionListScreen(
-          connection: conn,
-          connManager: widget.connManager,
-        ),
-      ),
-    ).then((_) => _refreshStatus());
-  }
-
-  /// Envía el comando de arranque al agente local (Termux background) y sondea
-  /// hasta que responde. Cuando arranca, refresca el estado del home.
-  Future<void> _startLocalAgent() async {
-    setState(() {
-      _localStarting = true;
-      _localStartTicks = 0;
-    });
-    final termux = LocalTermuxAgentProvider(apps: const AndroidApps());
-    await termux.startAgent();
-    _localStartPoll?.cancel();
-    _localStartPoll = Timer.periodic(const Duration(seconds: 2), (_) async {
-      _localStartTicks++;
-      final running = await termux.isAgentRunning();
-      if (running || _localStartTicks >= 30) {
-        _localStartPoll?.cancel();
-        termux.dispose();
-        if (mounted) {
-          setState(() => _localStarting = false);
-          await _refreshStatus();
-        }
-      }
-    });
-  }
-
-  Future<void> _openLocalControl() async {
-    final conn = _active;
-    if (conn == null) return;
-    await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => LocalInstanceControlScreen(
-          connection: conn,
-          connManager: widget.connManager,
-        ),
-      ),
-    );
-    if (mounted) await _reload();
-  }
-
   /// Abre el gestor de instancias (editar/activar otra) desde la tarjeta de
   /// instancia remota caída (spec 028 A-025).
   Future<void> _openInstances() async {
@@ -1534,15 +1620,13 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   }
 
   void _showAddDialog() {
-    // Ofrece ambos modos: agente local en este móvil o cliente remoto.
-    var completed = false;
+    // Configure an existing server; Console never installs a local runtime.
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => WelcomeModeScreen(
+        builder: (_) => OnboardingScreen(
           connManager: widget.connManager,
           onDone: () {
-            completed = true;
             Navigator.of(context).popUntil((r) => r.isFirst);
           },
         ),
@@ -1550,152 +1634,1034 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     ).then((_) async {
       if (!mounted) return;
       await _reload();
-      // Alta completada (no cancelada con atrás): directo a un chat de la
-      // instancia recién emparejada —que _save dejó como ACTIVA—, en vez de
-      // devolver al usuario a las pantallas de instalación (spec 028 U-32).
-      if (completed && mounted && _active != null) _newChat();
     });
   }
 
-  Widget _buildPromptStage({required bool enabled, required bool dimmed}) {
-    _ensureHomeDraftLoaded();
-    final colors = Theme.of(context).hermes;
-    final app = context.findAncestorStateOfType<HermesAppState>();
-    final controller = app?.companion;
-    final presence = app?.companionPresence;
-    final connectionMood = _checking
-        ? HermesSparkMood.connecting
-        : _healthOk
-        ? HermesSparkMood.idle
-        : HermesSparkMood.offline;
-
-    final composer = Opacity(
-      opacity: dimmed ? 0.55 : 1,
-      child: HomePromptComposer(
-        key: ValueKey('home-prompt-composer-${_homeDraftScope ?? ''}'),
-        restoredText: _homeDraftRestoredText,
-        onTextChanged: _onHomeDraftChanged,
-        hintText: Strings.of(context).homeAskHermes,
-        attachmentTooltip: Strings.of(context).chaAttachTooltip,
-        dictationTooltip: Strings.of(context).chaVoiceDictationTooltip,
-        voiceTooltip: Strings.of(context).chaVoiceModeTooltip,
-        sendTooltip: Strings.of(context).chaSendTooltip,
-        enabled: enabled,
-        onAttachmentSelected: _selectHomeAttachment,
-        onDictationPressed: () => _newChat(initialDictation: true),
-        onVoicePressed: () => _newChat(initialVoiceMode: true),
-        onSubmitted: (prompt) => _newChat(initialPrompt: prompt),
-      ),
+  /// Active profile as the chip names it (Desktop `profileLabel`), for the
+  /// status line: the connection label would name the wrong profile.
+  String _activeProfileLabel(BuildContext context) {
+    final conn = _active;
+    if (conn == null) return '';
+    return activeProfileDisplayLabel(
+      Strings.of(context),
+      ActiveProfileScope.of(widget.connManager, conn.id).name,
+      BotRosterRegistry.shared.store(conn.id).profiles,
     );
+  }
 
-    if (controller == null) return composer;
-
+  /// Rebuilds [builder] when the active profile or its roster changes.
+  Widget _followsActiveProfile(WidgetBuilder builder) {
+    final conn = _active;
+    if (conn == null) return Builder(builder: builder);
     return ListenableBuilder(
-      listenable: controller,
-      builder: (context, _) {
-        final media = MediaQuery.of(context);
-        final reduceMotion = media.disableAnimations;
-        final view = View.maybeOf(context);
-        final rawKeyboardInset = view?.viewInsets.bottom ?? 0;
-        final keyboardVisible =
-            media.viewInsets.bottom > 0 || rawKeyboardInset > 0;
-        final showCompanion =
-            controller.isInitialized &&
-            controller.enabled &&
-            controller.showOnHome &&
-            controller.presenceLevel.isVisible &&
-            !keyboardVisible;
-        const basePetSize = 60.0;
-        final petExtent = basePetSize * controller.sizeMultiplier;
-        // El atlas conserva aire transparente bajo el sprite. Un solape óptico
-        // de 14 dp hace que parezca apoyado sin moverlo fuera de su pista.
-        final trackHeight = showCompanion ? petExtent - 14 : 0.0;
-        void openMascotas() {
-          Navigator.of(context).push(
-            MaterialPageRoute<void>(builder: (_) => const MascotasScreen()),
-          );
-        }
+      listenable: Listenable.merge([
+        ActiveProfileScope.of(widget.connManager, conn.id),
+        BotRosterRegistry.shared.store(conn.id),
+      ]),
+      builder: (context, _) => builder(context),
+    );
+  }
 
-        Widget stationaryMascot(HermesSparkMood mood) {
-          return CompanionHomeMascot(
-            controller: controller,
-            baseMood: mood,
-            size: basePetSize,
-            accent: colors.accent,
-            onOpenMascotas: openMascotas,
-            semanticLabel: Strings.of(context).homePetShortcut,
-          );
-        }
+  DateTime _clock() => (widget.clockOverride ?? DateTime.now)();
 
-        Widget fixedMascot = stationaryMascot(connectionMood);
-        if (presence != null) {
-          fixedMascot = ListenableBuilder(
-            listenable: presence,
-            builder: (context, _) {
-              final mood = presence.mood;
-              final reactive =
-                  controller.presenceLevel != CompanionPresenceLevel.off;
-              final busy =
-                  reactive &&
-                  (mood == HermesSparkMood.thinking ||
-                      mood == HermesSparkMood.success ||
-                      mood == HermesSparkMood.error ||
-                      mood == HermesSparkMood.waiting);
-              return stationaryMascot(busy ? mood : connectionMood);
-            },
-          );
-        }
+  MissionSnapshotCache get _missionCache =>
+      widget.missionSnapshotCacheOverride ?? MissionSnapshotCache.shared;
 
-        return CompanionRoamingOverlay(
-          controller: controller,
-          presence: presence,
-          baseMood: connectionMood,
-          accent: colors.accent,
-          size: basePetSize,
-          padding: const EdgeInsets.fromLTRB(8, 0, 8, 0),
-          onPetTap: () => showCompanionActionsSheet(
-            context: context,
-            controller: controller,
-            onOpenMascotas: openMascotas,
+  BotRosterRegistry get _rosterRegistry =>
+      widget.rosterRegistryOverride ?? BotRosterRegistry.shared;
+
+  /// Home repaints when Bot Mode publishes a read, a room is marked seen or
+  /// the shared roster changes; held while Home is covered.
+  void _bindHomeSources() {
+    final connectionId =
+        _active?.id ?? widget.connManager.activeConnectionId.value;
+    final store = connectionId == null
+        ? null
+        : _rosterRegistry.store(connectionId);
+    if (_homeSources == null || !identical(store, _homeSourcesStore)) {
+      _homeSourcesStore = store;
+      _homeSources = Listenable.merge([
+        _missionCache.revision,
+        RoomLocalPrefs.changes,
+        ?store,
+      ]);
+    }
+    _homeSourcesGate.bind(context, _homeSources);
+  }
+
+  /// One cron list read per minute at most, for «Cron». A read that fails
+  /// keeps the list before it and says so.
+  Future<void> _refreshCron(SavedConnection conn, {bool force = false}) async {
+    final loader =
+        widget.cronJobsLoader ??
+        (widget.clientFactory == null ? _defaultCronLoader : null);
+    if (loader == null) return;
+    final profile = widget.connManager.activeProfileFor(conn.id);
+    final scope = _feedScope(conn);
+    final now = DateTime.now();
+    final last = _cronReadAt;
+    if (!force &&
+        scope == _cronScope &&
+        last != null &&
+        now.difference(last) < _feedMinInterval) {
+      return;
+    }
+    _cronReadAt = now;
+    _cronScope = scope;
+    final epoch = ++_cronEpoch;
+    List<CronJob>? jobs;
+    try {
+      jobs = await loader(conn, profile);
+    } catch (error) {
+      debugPrint('[home-dashboard] cron list failed (${error.runtimeType})');
+      jobs = null;
+    }
+    if (!mounted || epoch != _cronEpoch || _active?.id != conn.id) return;
+    if (jobs != null) {
+      _feedCache.putCron(scope, jobs);
+      // The Cron launcher widget shows this same listing (no request of its
+      // own): this profile's jobs.
+      unawaited(
+        LauncherWidgetCronPublisher.instance.offer(
+          connectionId: conn.id,
+          jobs: jobs,
+          profile: profile,
+        ),
+      );
+    }
+    setState(() {
+      if (jobs != null) _cronJobs = jobs;
+      _cronFailed = jobs == null;
+      _activityRevision++;
+    });
+  }
+
+  /// The Kanban board for «Tareas», the one Tasks opens on: at most once a
+  /// minute, in the background, beside the cron list. A read that fails
+  /// keeps the board before it and says so.
+  Future<void> _refreshTasks(SavedConnection conn, {bool force = false}) async {
+    final loader =
+        widget.tasksLoader ??
+        (widget.clientFactory == null ? _defaultTasksLoader : null);
+    if (loader == null) return;
+    final scope = _feedScope(conn);
+    final now = DateTime.now();
+    final last = _tasksReadAt;
+    if (!force &&
+        scope == _tasksScope &&
+        last != null &&
+        now.difference(last) < _feedMinInterval) {
+      return;
+    }
+    _tasksReadAt = now;
+    _tasksScope = scope;
+    final epoch = ++_tasksEpoch;
+    KanbanBoard? board;
+    try {
+      board = await loader(conn);
+    } catch (error) {
+      debugPrint('[home-dashboard] kanban board failed (${error.runtimeType})');
+      board = null;
+    }
+    if (!mounted || epoch != _tasksEpoch || _active?.id != conn.id) return;
+    if (board != null) {
+      _feedCache.putTasks(scope, board);
+      // The Tareas launcher widget shows this same board (no request of its
+      // own).
+      unawaited(
+        LauncherWidgetTasksPublisher.instance.offer(
+          connectionId: conn.id,
+          tasks: [for (final column in board.columns) ...column.tasks],
+        ),
+      );
+    }
+    setState(() {
+      if (board != null) _tasksBoard = board;
+      _tasksFailed = board == null;
+      _activityRevision++;
+    });
+  }
+
+  Future<KanbanBoard> _defaultTasksLoader(SavedConnection conn) => KanbanClient(
+    conn,
+  ).getBoard(board: KanbanWatchBoard.read(widget.connManager.prefs, conn.id));
+
+  static Future<List<CronJob>> _defaultCronLoader(
+    SavedConnection conn,
+    String profile,
+  ) async {
+    final client = DashboardClient.lazy(conn);
+    try {
+      return await CronRepository(client, profile: profile).listJobs();
+    } finally {
+      client.close();
+    }
+  }
+
+  /// The board's data, recomputed only when one of its inputs changed
+  /// (notification revision, list identities, approvals, the minute): a
+  /// rebuild for anything else reuses it.
+  HomeBoardData _boardDataFor(SavedConnection conn) {
+    final service = _activeChats;
+    final now = _clock();
+    final readOnly = conn.readOnly;
+    final ownerProfile = Session.profileOwner(
+      widget.connManager.activeProfileFor(conn.id),
+    );
+    final snapshot = _missionCache.read(conn);
+    final store = _rosterRegistry.store(conn.id);
+    final recents = _recentSessions;
+    final chats = service == null
+        ? const <ActiveChat>[]
+        : missionActiveChats(service, conn.id, recents).toList();
+    final key = <Object?>[
+      _activityRevision,
+      conn.id,
+      ownerProfile,
+      readOnly,
+      recents,
+      _archive,
+      _cronJobs,
+      _cronFailed,
+      _tasksBoard,
+      _tasksFailed,
+      _initialLoadComplete,
+      _activeProfileLabel(context),
+      _activeRoster,
+      snapshot,
+      store.snapshot,
+      _answeredRoomApprovals.length,
+      service?.liveStatusRevision.value,
+      service?.activeIds.value,
+      RoomLocalPrefs.changes.value,
+      now.millisecondsSinceEpoch ~/ Duration.millisecondsPerMinute,
+      Localizations.localeOf(context),
+      _healthOk,
+      _statusChecking,
+      _latencyMs,
+      _serverInfo,
+      _limits,
+      for (final chat in chats) chat.pendingApproval,
+      for (final chat in chats) chat.pendingInteractivePrompt?.key,
+      for (final chat in chats) chat.queueParked,
+    ];
+    final cached = _boardData;
+    if (cached != null && _sameKey(key, _boardDataKey)) return cached;
+    final derived = _deriveBoardData(
+      conn,
+      service: service,
+      chats: chats,
+      snapshot: snapshot,
+      store: store,
+      now: now,
+      readOnly: readOnly,
+    );
+    _boardDataKey = key;
+    _boardData = derived;
+    // The dock's "Actividad" sheet shows this same summary on every screen.
+    DockActivityFeed.instance.publish(
+      this,
+      derived.glance,
+      _boardActions.openGlance,
+    );
+    return derived;
+  }
+
+  static bool _sameKey(List<Object?> a, List<Object?>? b) {
+    if (b == null || a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      final x = a[i];
+      final y = b[i];
+      if (x is List || x is Map || x is Set) {
+        if (!identical(x, y)) return false;
+      } else if (x != y) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  HomeBoardData _deriveBoardData(
+    SavedConnection conn, {
+    required ActiveChatService? service,
+    required List<ActiveChat> chats,
+    required MissionBackendSnapshot? snapshot,
+    required BotRosterStore store,
+    required DateTime now,
+    required bool readOnly,
+  }) {
+    final strings = Strings.of(context);
+    final archive = _archive;
+    final recents = _visibleRecentSessions;
+
+    // Chats: the Home recents with their live status (same derivation as
+    // the chat pill and Conversaciones) and the server's unread flag.
+    String? botName(String profile) {
+      final info = store.profile(profile);
+      final title = info?.botTitle?.trim();
+      if (title != null && title.isNotEmpty) return title;
+      return profile;
+    }
+
+    final mainOwner = Session.profileOwner(
+      widget.connManager.activeProfileFor(conn.id),
+    );
+    final chatItems = <HomeChatItem>[];
+    final keyById = <String, String>{};
+    for (final session in recents) {
+      keyById[session.id] = session.logicalId;
+      keyById[session.logicalId] = session.logicalId;
+      final activeChat = service?.of(
+        conn.id,
+        session.id,
+        profile: session.profile,
+      );
+      final status = resolveSessionLiveStatus(
+        chat: activeChat?.liveStatus,
+        chatAuthoritative:
+            activeChat != null &&
+            (activeChat.hasDesktopRuntime || activeChat.lastTerminalAt != null),
+        chatSettledAt: activeChat?.lastTerminalAt,
+        global: _globalActivityFor(conn, session),
+      );
+      // A stale roster entry (one missed read) keeps the row as it was
+      // until the next read settles, so a single absence never blinks
+      // the working state; the aggregate drops it on the second absence.
+      final live = status.turnLive;
+      final working = live && status.phase != SessionLivePhase.waitingForUser;
+      final waiting = live && status.phase == SessionLivePhase.waitingForUser;
+      DateTime? since;
+      if (working) {
+        // The roster's started_at is the session's age, never this turn's.
+        // Read the same origin as the chat; unknown means no clock.
+        since = status.stale
+            ? null
+            : activeChat?.turnClockOrigin ??
+                  activeChat?.provisionalTurnStartedAt;
+      }
+      final preview = sessionListPreview(session);
+      final owner = Session.profileOwner(session.profile);
+      final ownerProfile = store.profile(owner);
+      final isMainProfile =
+          owner == mainOwner ||
+          (ownerProfile != null && isMainBot(ownerProfile));
+      final paused = activeChat != null && activeChat.queueParked
+          ? activeChat.queuedEntries.length
+          : 0;
+      chatItems.add(
+        HomeChatItem(
+          key: session.logicalId,
+          title:
+              archive?.titleForSession(session, strings: strings) ??
+              localizedSessionTitle(strings, session),
+          preview: preview ?? '',
+          draft: session.hasLocalDraft,
+          at: DateTime.fromMillisecondsSinceEpoch(
+            (session.lastActivityAt * 1000).round(),
           ),
-          petSemanticLabel: Strings.of(context).homePetShortcut,
-          child: Stack(
-            clipBehavior: Clip.hardEdge,
-            children: [
-              AnimatedPadding(
-                duration: reduceMotion
-                    ? Duration.zero
-                    : const Duration(milliseconds: 160),
-                curve: Curves.easeOutCubic,
-                padding: EdgeInsets.only(top: trackHeight),
-                child: composer,
-              ),
-              if (showCompanion)
-                Positioned(top: 0, right: 10, child: fixedMascot),
-            ],
-          ),
-        );
+          unread:
+              !working &&
+              (archive?.isSessionUnread(session) ?? session.unread == true),
+          working: working,
+          workingSince: since,
+          step: working ? homeStepLabel(strings, status) : null,
+          waitingForUser: waiting,
+          queuedPaused: paused,
+          // A turn that ended in an error no later prompt replaced (the
+          // chat's own retry token); only attached chats know it.
+          failed: !working && activeChat?.currentFailedTurnToken != null,
+          profileName: owner,
+          agentName: isMainProfile ? null : botName(owner),
+          ref: session,
+        ),
+      );
+    }
+
+    // Approvals: attached chats (any profile of this connection), then the
+    // hosted rooms of the Bots read when it is recent enough. Answering one
+    // here goes through the chat's own path, so the chat's card clears too.
+    final approvals = <HomeApprovalItem>[
+      ...homeChatApprovals(
+        chats,
+        readOnly: readOnly,
+        chatKey: (chat) =>
+            keyById[chat.storedSessionId ?? chat.sessionId] ??
+            keyById[chat.sessionId],
+        whereOf: (chat) => _isBotChat(chat) ? '' : chat.sessionTitle,
+        actorOf: (chat) => _isBotChat(chat)
+            ? botName(Session.profileOwner(chat.sessionProfile))
+            : null,
+      ),
+    ];
+    final questions = homeChatQuestions(
+      chats,
+      readOnly: readOnly,
+      chatKey: (chat) =>
+          keyById[chat.storedSessionId ?? chat.sessionId] ??
+          keyById[chat.sessionId],
+      whereOf: (chat) => _isBotChat(chat) ? '' : chat.sessionTitle,
+      actorOf: (chat) => _isBotChat(chat)
+          ? botName(Session.profileOwner(chat.sessionProfile))
+          : null,
+    );
+    final groups = snapshot?.hostedGroups ?? HostedGroupsSnapshot.empty;
+    String roomTitle(HostedGroupRoom room) =>
+        snapshot?.roomIdentity(room)?.name ?? room.name;
+    final roomPrefs = SharedPreferencesRoomPrefs(widget.connManager.prefs);
+    // The same attention as the Bots needs-you dot (approvals, replies to
+    // the user, failed turns), with this device's acks applied.
+    final attention = AttentionSummary.fromSnapshot(
+      groups,
+      acks: roomPrefs.acksFor,
+    );
+    if (snapshot != null &&
+        now.difference(snapshot.loadedAt) <= _roomApprovalMaxAge) {
+      approvals.addAll(
+        homeRoomApprovals(
+          groups,
+          attention,
+          titleOf: roomTitle,
+          readOnly: readOnly,
+        ).where((item) => !_answeredRoomApprovals.contains(item.key)),
+      );
+    }
+
+    final profiles = store.isLive
+        ? store.profiles
+        : (snapshot?.profiles ?? const <AgentProfile>[]);
+    final todayRows = [
+      for (final s in recents)
+        (
+          lastActivityAt: s.lastActivityAt,
+          messages: s.messageCount,
+          tools: s.toolCallCount,
+        ),
+    ];
+    final serverInfo = _serverInfo;
+    final tasksBoard = _tasksBoard;
+    return HomeBoardData(
+      now: now,
+      profiles: profiles,
+      avatarCache: ProfileFace.cacheFor(conn, rosterTicket: store.ticket),
+      approvals: approvals,
+      questions: questions,
+      chats: chatItems,
+      chatsLoaded: _initialLoadComplete,
+      mainName: _activeProfileLabel(context),
+      bots: homeBoardBots(
+        profiles: profiles,
+        sessions: snapshot?.sessions ?? const [],
+        activeSessions: _activeRoster,
+        observedAt: _activeRosterAt,
+        turnStartedAtOf: (id, profile) =>
+            service?.of(conn.id, id, profile: profile)?.turnClockOrigin,
+        liveChats: service == null
+            ? const []
+            : missionLiveChats(service, conn.id, _recentSessions),
+        now: now,
+      ),
+      rooms: homeBoardRooms(
+        groups,
+        acksFor: roomPrefs.acksFor,
+        titleOf: roomTitle,
+        now: now,
+        attention: attention,
+      ),
+      botsLoaded: snapshot != null || store.isLive,
+      botsKnown:
+          store.isLive ||
+          snapshot?.profilesCapability == MissionCapabilityState.available,
+      automations: _cronJobs == null
+          ? null
+          : homeAutomations(_cronJobs!, parseTime: cronParseTime),
+      automationsFailed: _cronFailed,
+      tasks: tasksBoard == null ? null : homeTasks(tasksBoard),
+      tasksFailed: _tasksFailed,
+      limits: _limits,
+      server: HomeBoardServer(
+        label: conn.label,
+        online: _healthOk,
+        checking: _statusChecking,
+        latencyMs: _healthOk ? _latencyMs : null,
+        version: serverInfo?.version,
+        updateAvailable: serverInfo?.update,
+      ),
+      today: _initialLoadComplete
+          ? HomeBoardToday.fromSessions(todayRows, now: now)
+          : null,
+    ).withGlance();
+  }
+
+  static bool _isBotChat(ActiveChat chat) =>
+      chat.sessionId.startsWith('mob-bot-');
+
+  late final HomeBoardActions _boardActions = HomeBoardActions(
+    answer: _answerApproval,
+    answerQuestion: _answerQuestion,
+    viewApproval: _viewApproval,
+    viewQuestion: (question) {
+      if (question.ref case final HomeChatQuestionRef ref) {
+        _openAttachedChat(ref.chat);
+      }
+    },
+    openTasks: (task) => _openTasks(
+      taskId: switch (task?.ref) {
+        final KanbanTask t => t.id,
+        _ => null,
       },
+    ),
+    retry: () {
+      final conn = _active;
+      if (conn == null) return;
+      unawaited(_refreshCron(conn, force: true));
+      if (_boardLayout?.contains(HomeWidgetKind.tasks) ?? false) {
+        unawaited(_refreshTasks(conn, force: true));
+      }
+    },
+    openChat: (chat) {
+      if (chat.ref case final Session session) _openChat(session);
+    },
+    openRoom: (roomKey) => _openInBots(
+      MissionControlOpenTarget.room(sessionId: '', roomId: roomKey),
+    ),
+    openBot: (bot) => _openInBots(
+      MissionControlOpenTarget.bot(
+        sessionId: bot.profile?.canonicalBotChatSessionId ?? '',
+        profile: bot.profileName,
+      ),
+    ),
+    openAutomation: (automation) => _openAutomations(
+      job: switch (automation?.ref) {
+        final CronJob job => job,
+        _ => null,
+      },
+    ),
+    openServer: () {
+      final conn = _active;
+      if (conn != null) showInstanceStatusSheet(context, conn);
+    },
+    openSessions: () {
+      final conn = _active;
+      if (conn != null) openDockSessions(context, conn, widget.connManager);
+    },
+  );
+
+  /// Answers with the request's own existing path: the attached chat's
+  /// `resolveApproval`, or `groups.approve` for a room.
+  Future<void> _answerApproval(
+    HomeApprovalItem item, {
+    required bool allow,
+  }) async {
+    final conn = _active;
+    if (conn == null) return;
+    if (conn.readOnly) {
+      showReadOnlyNotice(context);
+      return;
+    }
+    final choice = allow ? ApprovalScope.once.wire : ApprovalScope.deny.wire;
+    // The chat's own rules: read-only mode blocks approving and approving
+    // asks App Lock first; denying never does.
+    final allowed = await approvalAnswerAllowed(
+      context,
+      choice: choice,
+      readOnlyInstance: conn.readOnly,
+      sessionId: switch (item.ref) {
+        final HomeChatApprovalRef ref =>
+          ref.chat.storedSessionId ?? ref.chat.sessionId,
+        _ => null,
+      },
+      reason: Strings.of(context).chaApproveOnce,
+      lock: _appLock,
+    );
+    if (!allowed || !mounted) return;
+    try {
+      switch (item.ref) {
+        case final HomeChatApprovalRef ref:
+          await ref.resolve(choice);
+        case final HomeRoomApprovalRef ref:
+          await (widget.roomApproveOverride ?? _pooledRoomApprove)(
+            conn,
+            roomId: ref.room.roomId,
+            action: ref.action,
+            choice: choice,
+          );
+          _answeredRoomApprovals.add(item.key);
+      }
+    } catch (error) {
+      debugPrint(
+        '[home-dashboard] approval answer failed (${error.runtimeType})',
+      );
+      if (mounted) {
+        HermesNotice.of(context).showSnackBar(
+          SnackBar(content: Text(Strings.of(context).inicioApprovalFailed)),
+          kind: HermesNoticeKind.error,
+        );
+      }
+    }
+    if (mounted) setState(() => _activityRevision++);
+  }
+
+  /// Sends one of a question's own choices through the chat that asked
+  /// (the chat's `clarify.respond`), only while it still waits on it.
+  Future<void> _answerQuestion(HomeQuestionItem item, String choice) async {
+    final conn = _active;
+    if (conn == null) return;
+    if (conn.readOnly) {
+      showReadOnlyNotice(context);
+      return;
+    }
+    try {
+      switch (item.ref) {
+        case final HomeChatQuestionRef ref:
+          await ref.answer(choice);
+      }
+    } catch (error) {
+      debugPrint(
+        '[home-dashboard] question answer failed (${error.runtimeType})',
+      );
+      if (mounted) {
+        HermesNotice.of(context).showSnackBar(
+          SnackBar(content: Text(Strings.of(context).inicioApprovalFailed)),
+          kind: HermesNoticeKind.error,
+        );
+      }
+    }
+    if (mounted) setState(() => _activityRevision++);
+  }
+
+  static Future<void> _pooledRoomApprove(
+    SavedConnection connection, {
+    required String roomId,
+    required RoomApprovalAction action,
+    required String choice,
+  }) => pooledRoomApprove(
+    connection,
+    roomId: roomId,
+    action: action,
+    choice: choice,
+  );
+
+  void _viewApproval(HomeApprovalItem item) {
+    switch (item.ref) {
+      case final HomeRoomApprovalRef ref:
+        _openInBots(
+          MissionControlOpenTarget.room(sessionId: '', roomId: ref.room.roomId),
+        );
+      case final HomeChatApprovalRef ref:
+        _openAttachedChat(ref.chat);
+    }
+  }
+
+  /// Opens the screen of an attached chat that asks something: its Bot
+  /// Chat in Bot Mode, or the conversation.
+  void _openAttachedChat(ActiveChat chat) {
+    final profile = Session.profileOwner(chat.sessionProfile);
+    if (_isBotChat(chat)) {
+      _openInBots(
+        MissionControlOpenTarget.bot(
+          sessionId: chat.storedSessionId ?? '',
+          profile: profile,
+        ),
+      );
+      return;
+    }
+    final id = chat.storedSessionId ?? chat.sessionId;
+    final session =
+        _recentSessions
+            .where((s) => s.id == id || s.logicalId == id)
+            .firstOrNull ??
+        Session(
+          id: id,
+          title: chat.sessionTitle,
+          model: 'hermes-agent',
+          source: 'mobile',
+          messageCount: 1,
+          isActive: true,
+          preview: '',
+          startedAt: 0,
+          profile: profile,
+        );
+    _openChat(session);
+  }
+
+  /// Bot Chats and rooms open through Bot Mode, as notifications do: the
+  /// canonical chat or the room (landing on its «new» divider) on top.
+  void _openInBots(MissionControlOpenTarget target) {
+    final conn = _active;
+    if (conn == null) return;
+    final override = widget.botsOpenOverride;
+    if (override != null) {
+      override(target);
+      return;
+    }
+    final navigator = Navigator.of(context);
+    if (MissionControlScreen.openInExisting(navigator, conn.id, target)) {
+      return;
+    }
+    navigator
+        .push(
+          MissionControlOwnerRoute<void>(
+            builder: (_) => MissionControlScreen(
+              connection: conn,
+              connManager: widget.connManager,
+              activeChats: _activeChats,
+              initialOpenTarget: target,
+            ),
+          ),
+        )
+        .then((_) => _refreshWhenUncovered());
+  }
+
+  void _openTasks({String? taskId}) {
+    final conn = _active;
+    if (conn == null) return;
+    Navigator.of(context)
+        .push(
+          MaterialPageRoute<void>(
+            builder: (_) => TasksScreen(
+              connection: conn,
+              connManager: widget.connManager,
+              initialTaskId: taskId,
+            ),
+          ),
+        )
+        .then((_) {
+          _tasksReadAt = null;
+          _refreshWhenUncovered();
+        });
+  }
+
+  void _openAutomations({CronJob? job}) {
+    final conn = _active;
+    if (conn == null) return;
+    Navigator.of(context)
+        .push(
+          MaterialPageRoute<void>(
+            builder: (_) => CronScreen(
+              connection: conn,
+              connManager: widget.connManager,
+              initialJobId: job?.id,
+              profileOverride: job?.sourceProfile,
+            ),
+          ),
+        )
+        .then((_) {
+          _cronReadAt = null;
+          _refreshWhenUncovered();
+        });
+  }
+
+  /// The board of the active connection + profile: the one the user
+  /// arranged on this device, else the default (with bots or rooms: Ahora,
+  /// Bots, Salas and Cron; one agent: Ahora, Chats, Cron and Tareas).
+  ///
+  /// Which default applies is remembered once a Bots read tells, so the
+  /// first frame of the next launch already shows the right board.
+  HomeBoardLayout _layoutFor(SavedConnection conn, {HomeBoardData? data}) {
+    final owner = Session.profileOwner(
+      widget.connManager.activeProfileFor(conn.id),
+    );
+    final scope = '${conn.id}\u0000$owner';
+    final store = _boardStore ??= HomeBoardStore(widget.connManager.prefs);
+    // With bots or rooms on screen it is the bots board; «one agent» only
+    // once the server's own list says there are none.
+    final bool? team = data == null
+        ? null
+        : data.bots.isNotEmpty || data.rooms.isNotEmpty
+        ? true
+        : data.botsKnown
+        ? false
+        : null;
+    if (team != null) {
+      if (store.team(conn.id, owner) != team) {
+        unawaited(
+          store.rememberTeam(conn.id, owner, team).catchError((Object error) {
+            debugPrint('[home-board] default kept (${error.runtimeType})');
+            return false;
+          }),
+        );
+        if (!_boardArranged) _boardLayout = null;
+      }
+    }
+    if (_boardLayout == null || _boardScope != scope) {
+      _boardScope = scope;
+      _boardArranged = store.read(conn.id, owner) != null;
+      _boardLayout = store.load(conn.id, owner, team: team);
+    }
+    return _boardLayout!;
+  }
+
+  void _saveLayout(SavedConnection conn, HomeBoardLayout layout) {
+    final owner = Session.profileOwner(
+      widget.connManager.activeProfileFor(conn.id),
+    );
+    setState(() {
+      _boardLayout = layout;
+      _boardArranged = true;
+      _boardScope = '${conn.id}\u0000$owner';
+    });
+    unawaited(
+      (_boardStore ??= HomeBoardStore(
+        widget.connManager.prefs,
+      )).save(conn.id, owner, layout).catchError((Object error) {
+        debugPrint('[home-board] save failed (${error.runtimeType})');
+      }),
+    );
+    // A widget added now may need data Home does not read for the others.
+    _refreshBoardExtras(conn);
+  }
+
+  bool get _locked => _appLock?.locked.value == true;
+
+  /// Reads only what a widget on the board needs and Home does not already
+  /// read: the server version/update (Servidor), the plan limits (Límites)
+  /// and the Kanban board (Tareas). Runs on Home's own refresh cadence,
+  /// never on a timer, and never while App Lock is locked.
+  void _refreshBoardExtras(SavedConnection conn) {
+    if (_locked || !_healthOk || _active?.id != conn.id) return;
+    final layout = _boardLayout;
+    if (layout == null) return;
+    if (layout.contains(HomeWidgetKind.server)) {
+      unawaited(_refreshServerInfo(conn));
+    }
+    if (layout.contains(HomeWidgetKind.planLimits)) {
+      unawaited(_refreshLimits(conn));
+    }
+    if (layout.contains(HomeWidgetKind.tasks)) {
+      unawaited(_refreshTasks(conn));
+    }
+  }
+
+  Future<void> _refreshServerInfo(SavedConnection conn) async {
+    final loader =
+        widget.serverInfoLoader ??
+        (widget.clientFactory == null ? _defaultServerInfo : null);
+    if (loader == null) return;
+    final now = DateTime.now();
+    final at = _serverInfoAt;
+    if (_serverInfoScope == conn.id &&
+        at != null &&
+        now.difference(at) < _serverInfoMaxAge) {
+      return;
+    }
+    _serverInfoAt = now;
+    _serverInfoScope = conn.id;
+    ({String? version, bool? update})? info;
+    try {
+      info = await loader(conn);
+    } catch (error) {
+      debugPrint('[home-board] server info (${error.runtimeType})');
+      info = null;
+    }
+    if (!mounted || _active?.id != conn.id || _locked || info == null) return;
+    setState(() => _serverInfo = info);
+  }
+
+  static Future<({String? version, bool? update})> _defaultServerInfo(
+    SavedConnection conn,
+  ) async {
+    final client = DashboardClient.lazy(conn);
+    try {
+      final status = await client.getServerStatus();
+      final version = status['version']?.toString().trim();
+      bool? update;
+      try {
+        final payload = await client.checkUpdate();
+        update = HermesUpdatePresentation.fromPayload(
+          payload,
+          fallbackVersion: version ?? '',
+        ).hasUpdate;
+      } catch (_) {
+        update = null;
+      }
+      return (
+        version: version == null || version.isEmpty ? null : version,
+        update: update,
+      );
+    } finally {
+      client.close();
+    }
+  }
+
+  /// Plan limits through an attached chat of this connection that already
+  /// has a runtime (`session.usage`, as the model sheet reads them); Home
+  /// never opens a runtime for it.
+  Future<void> _refreshLimits(SavedConnection conn) async {
+    final now = DateTime.now();
+    final at = _limitsAt;
+    if (_limitsScope == conn.id &&
+        at != null &&
+        now.difference(at) < _limitsMinInterval) {
+      return;
+    }
+    final override = widget.limitsLoader;
+    Future<AccountUsageLimits?> Function()? load;
+    if (override != null) {
+      load = () => override(conn);
+    } else {
+      final service = _activeChats;
+      if (service == null) return;
+      // The limits are those of the account behind the chat's model: the
+      // active profile's own chat first, then any other with a runtime.
+      final owner = Session.profileOwner(
+        widget.connManager.activeProfileFor(conn.id),
+      );
+      ActiveChat? chosen;
+      for (final chat in missionActiveChats(
+        service,
+        conn.id,
+        _recentSessions,
+      )) {
+        if (!chat.hasDesktopRuntime) continue;
+        chosen ??= chat;
+        if (Session.profileOwner(chat.sessionProfile) == owner) {
+          chosen = chat;
+          break;
+        }
+      }
+      load = chosen?.loadAccountUsage;
+    }
+    if (load == null) return;
+    _limitsAt = now;
+    _limitsScope = conn.id;
+    AccountUsageLimits? limits;
+    try {
+      limits = await load();
+    } catch (error) {
+      debugPrint('[home-board] plan limits (${error.runtimeType})');
+      limits = null;
+    }
+    if (!mounted || _active?.id != conn.id || _locked || limits == null) {
+      return;
+    }
+    setState(() => _limits = limits);
+    // The launcher widgets name the same subscription.
+    final published = homeWidgetLimits(
+      limits,
+      Strings.of(context),
+      languageCode: Localizations.localeOf(context).languageCode,
+    );
+    final app = context.findAncestorStateOfType<HermesAppState>();
+    final update = widget.homeWidgetUpdateOverride ?? app?.updateHomeWidget;
+    unawaited(
+      update?.call((current) => current.copyWith(limits: published)) ??
+          Future<void>.value(),
+    );
+  }
+
+  /// What the keyboard takes from the page: the inset the Scaffold below
+  /// shortens its body by. Looked up without depending on it, so Home is
+  /// not rebuilt for the keyboard.
+  double _keyboardInset() {
+    if (!mounted) return 0;
+    final query = context.getInheritedWidgetOfExactType<MediaQuery>();
+    return query?.data.viewInsets.bottom ?? 0;
+  }
+
+  Widget _buildBoard(
+    SavedConnection active, {
+    required List<Widget> banners,
+    required double bottomClearance,
+  }) {
+    final lock = _appLock?.locked;
+    Widget board() {
+      // App Lock: nothing private is derived or painted before unlock.
+      if (_locked) {
+        return ListView(
+          key: const ValueKey('home-board-locked'),
+          physics: const AlwaysScrollableScrollPhysics(),
+        );
+      }
+      final data = _boardDataFor(active);
+      final layout = _layoutFor(active, data: data);
+      return HomeBoardSteady(
+        keyboard: _keyboardInset,
+        child: HomeBoardView(
+          key: _boardViewKey,
+          layout: layout,
+          data: data,
+          actions: _boardActions,
+          newId: (_boardStore ??= HomeBoardStore(
+            widget.connManager.prefs,
+          )).newId,
+          clock: _clock,
+          onChanged: (next) => _saveLayout(active, next),
+          // What is still unknown on a cold start waits inside its own
+          // widget; the board keeps its rows.
+          leading: [
+            ...banners,
+            if (_healthOk &&
+                !active.readOnly &&
+                data.chatsLoaded &&
+                data.chats.isEmpty)
+              HermesPrimaryButton(
+                key: const ValueKey('home-first-chat'),
+                label: Strings.of(context).o2FirstChat,
+                icon: Icons.chat_bubble_outline,
+                onTap: _newChat,
+              ),
+          ],
+          bottomPadding: bottomClearance,
+          initiallyEditing: widget.initiallyEditingBoard,
+          onEditingChanged: (_) {
+            // The header gives way to the edit bar, and comes back.
+            if (mounted) setState(() {});
+          },
+        ),
+      );
+    }
+
+    if (lock == null) return board();
+    return ValueListenableBuilder<bool>(
+      valueListenable: lock,
+      builder: (context, _, _) => board(),
     );
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) =>
+      EnclosingRoute(onRoute: _attachRoute, child: _buildScreen(context));
+
+  Widget _buildScreen(BuildContext context) {
     final colors = Theme.of(context).hermes;
     final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
-    final recentLimit = _homeRecentLimit();
-    if (!_initialLoadComplete) {
-      return Scaffold(
-        backgroundColor: colors.background,
-        body: const Center(
-          child: TuiLoader(key: ValueKey('home-initial-loading')),
-        ),
-      );
-    }
-    return Scaffold(
+    final dashboardLoginIssue =
+        _healthOk &&
+        (_dashboardAuth == DashboardAuthCheck.invalidCredentials ||
+            _dashboardAuth == DashboardAuthCheck.loginRequired);
+    final page = Scaffold(
       appBar: HermesAppBar(
         centerTitle: false,
         titleSpacing: 0,
+        // Home's own header, as approved: a plain menu icon, the title block
+        // as text at the start and the profile's round button standing
+        // alone. Nothing scrolls under it, so nothing floats and no scrim.
+        floatingLeading: false,
+        titleInPill: false,
+        actionsInPill: false,
+        scrim: false,
+        // Active profile, one tap from Home (Desktop's profile rail). Its
+        // ring ends 16 dp from the screen edge, like the menu icon's side.
+        actions: [
+          if (_active != null)
+            Padding(
+              padding: const EdgeInsetsDirectional.only(start: 8, end: 14),
+              child: ProfileSwitcherButton(
+                connection: _active!,
+                connManager: widget.connManager,
+                compact: true,
+                rosterRegistry: _rosterRegistry,
+                onManage: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => ProfilesScreen(
+                      connection: _active!,
+                      connManager: widget.connManager,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
         // Todo el bloque de título abre la hoja de estado: la línea de 16dp
         // sola quedaba lejísimos del target mínimo de 48dp, y el gesto no
         // tenía rol de botón ni pista de qué abre (spec 028 A-110).
@@ -1720,11 +2686,12 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
                     valueListenable: headerTitleNotifier,
                     builder: (context, title, _) => Text(
                       title,
+                      key: const ValueKey('home-header-title'),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: 1.1,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: -0.2,
                         fontSize: 18,
                         color: colors.textPrimary,
                       ),
@@ -1744,54 +2711,62 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
                         height: 6,
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
-                          color: _checking
+                          color: _statusChecking || dashboardLoginIssue
                               ? colors.warning
                               : _healthOk
                               ? colors.success
                               : colors.textDisabled,
-                          boxShadow: _healthOk && !_checking
-                              ? [
-                                  BoxShadow(
-                                    color: colors.success.withValues(
-                                      alpha: 0.5,
-                                    ),
-                                    blurRadius: 6,
-                                  ),
-                                ]
-                              : null,
                         ),
                       ),
                       const SizedBox(width: 6),
-                      Text(
-                        _checking
-                            ? Strings.of(context).homeStatusChecking(
-                                _active?.label ??
-                                    Strings.of(context).homeStatusAgentConsole,
-                              )
-                            : _healthOk
-                            ? Strings.of(
-                                context,
-                              ).homeStatusOnline(_active?.label ?? '')
-                            : _active == null
-                            ? Strings.of(context).homeStatusAgentConsole
-                            : Strings.of(
-                                context,
-                              ).homeStatusOffline(_active!.label),
-                        style: TextStyle(
-                          // ≥11px: a 9.5px el estado era casi ilegible (A-110).
-                          fontSize: 11,
-                          letterSpacing: 0.6,
-                          color: colors.textSecondary,
+                      // Flexible: con el selector de perfil en la barra, la línea
+                      // de estado debe recortarse en vez de desbordar.
+                      Flexible(
+                        child: _followsActiveProfile(
+                          (context) => Text(
+                            _statusChecking
+                                ? Strings.of(context).homeStatusChecking(
+                                    _active?.label ??
+                                        Strings.of(
+                                          context,
+                                        ).homeStatusAgentConsole,
+                                  )
+                                : _healthOk &&
+                                      _dashboardAuth ==
+                                          DashboardAuthCheck.invalidCredentials
+                                ? Strings.of(
+                                    context,
+                                  ).m1215HomeDashboardWrongPassword(
+                                    _active?.label ?? '',
+                                  )
+                                : _healthOk &&
+                                      _dashboardAuth ==
+                                          DashboardAuthCheck.loginRequired
+                                ? Strings.of(
+                                    context,
+                                  ).m1215HomeDashboardLoginRequired(
+                                    _active?.label ?? '',
+                                  )
+                                : _healthOk
+                                ? Strings.of(context).homeStatusOnline(
+                                    _activeProfileLabel(context),
+                                  )
+                                : _active == null
+                                ? Strings.of(context).homeStatusAgentConsole
+                                : Strings.of(
+                                    context,
+                                  ).homeStatusOffline(_active!.label),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              // ≥11px: a 9.5px el estado era casi ilegible (A-110).
+                              fontSize: 11,
+                              letterSpacing: 0.6,
+                              color: colors.textSecondary,
+                            ),
+                          ),
                         ),
                       ),
-                      if (_active != null) ...[
-                        const SizedBox(width: 3),
-                        Icon(
-                          Icons.expand_more,
-                          size: 13,
-                          color: colors.textDisabled,
-                        ),
-                      ],
                     ],
                   ),
                 ],
@@ -1807,7 +2782,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
         connManager: widget.connManager,
         current: DrawerSection.home,
         connected: _healthOk,
-        checking: _checking,
+        checking: _statusChecking,
         onSectionReturn: _reload,
       ),
       body: Stack(
@@ -1819,19 +2794,8 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
               if (_connections.isEmpty || active == null) {
                 return _EmptyHomeState(onAdd: _showAddDialog);
               }
-              // Instancia local sin gateway en marcha: el chat no es usable, así que
-              // se oculta y solo se muestra el card de estado/arranque del agente.
-              final isLocalAndOffline =
-                  active.kind == InstanceKind.localhost &&
-                  !_healthOk &&
-                  !_checking;
-              // Instancia remota caída: la única señal era el punto del appbar; el
-              // cuerpo necesita un estado visible con reintento, equivalente a la
-              // tarjeta de la instancia local apagada (spec 028 A-025).
               final isRemoteAndOffline =
-                  active.kind != InstanceKind.localhost &&
-                  !_healthOk &&
-                  !_checking;
+                  _initialLoadComplete && !_healthOk && !_checking;
               // El dock flotante (`Dock`) se pinta como overlay
               // (Positioned) ENCIMA de esta lista, no reserva espacio por sí
               // mismo. Sin este margen extra, el último item de recientes
@@ -1840,47 +2804,22 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
               // separación del borde (12) + el lift máximo de la profundidad
               // "Flotante" (6) + el inset seguro inferior del sistema +
               // un margen de aire adicional para que no quede pegado.
+              // With the gesture dock (QA 9494 default) the clearance is
+              // its own footprint: inset + gap + bar + breathing room.
               final dockBottomClearance =
-                  48 + 12 + 6 + MediaQuery.paddingOf(context).bottom + 16;
-              final showChat = !kLocalAgentEnabled || !isLocalAndOffline;
+                  FeatureFlags.instance.gestureDock.value
+                  ? gestureDockFootprint(context)
+                  : 48 + 12 + 6 + MediaQuery.paddingOf(context).bottom + 16;
               final banners = <Widget>[
-                if (kLocalAgentEnabled &&
-                    (_installInProgress || _uninstallInProgress))
-                  _LocalOpBanner(
-                    colors: colors,
-                    isInstall: _installInProgress,
-                    connManager: widget.connManager,
-                    onDismiss: () => setState(() {
-                      _installInProgress = false;
-                      _uninstallInProgress = false;
-                    }),
-                    onResume: () async {
-                      if (_installInProgress) {
-                        await Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (_) => LocalInstallScreen(
-                              connManager: widget.connManager,
-                            ),
-                          ),
-                        );
-                      } else {
-                        await Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (_) => LocalUninstallScreen(
-                              connManager: widget.connManager,
-                            ),
-                          ),
-                        );
-                      }
-                      _reload();
-                    },
-                  ),
-                if (kLocalAgentEnabled && isLocalAndOffline)
-                  _LocalAgentOfflineCard(
-                    colors: colors,
-                    starting: _localStarting,
-                    onStart: _startLocalAgent,
-                    onManage: _openLocalControl,
+                // A failed refresh keeps the last good list, but still says
+                // so and offers the retry.
+                if (_recentListFailed && !isRemoteAndOffline)
+                  _ProfileListErrorCard(
+                    profile: ProfileScopeLabel.display(
+                      Strings.of(context),
+                      widget.connManager.activeProfileFor(active.id),
+                    ),
+                    onRetry: _refreshStatus,
                   ),
                 if (isRemoteAndOffline)
                   _RemoteInstanceOfflineCard(
@@ -1894,121 +2833,14 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
               // scrollea: solo la lista de conversaciones recientes se mueve
               // al hacer scroll, para que el compositor no "desaparezca" al
               // bajar por la lista (confirmado como bug real en dispositivo).
-              // Sin gateway que responda (instancia local apagada) no hay
-              // lista de conversaciones que mostrar: los avisos vuelven a
-              // vivir en un `ListView` normal para conservar el pull-to-
-              // refresh de esa pantalla.
-              if (!showChat) {
-                return RefreshIndicator(
-                  color: colors.accent,
-                  onRefresh: _refreshStatus,
-                  child: ListView(
-                    physics: const AlwaysScrollableScrollPhysics(),
-                    padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
-                    children: banners,
-                  ),
-                );
-              }
-              final content = Column(
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        ...banners,
-                        const SizedBox(height: 8),
-                        // La mascota vive únicamente sobre la pista del compositor.
-                        // Sin Companion o con teclado, el input recupera ese espacio.
-                        FadeSlideIn(
-                          delayMs: reduceMotion ? 0 : 30,
-                          duration: reduceMotion
-                              ? Duration.zero
-                              : const Duration(milliseconds: 220),
-                          child: _buildPromptStage(
-                            enabled: !isRemoteAndOffline,
-                            dimmed: isRemoteAndOffline,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Expanded(
-                    child: RefreshIndicator(
-                      color: colors.accent,
-                      onRefresh: _refreshStatus,
-                      child: ListView(
-                        physics: const AlwaysScrollableScrollPhysics(),
-                        padding: EdgeInsets.fromLTRB(
-                          20,
-                          14,
-                          20,
-                          dockBottomClearance,
-                        ),
-                        children: [
-                          if (_recentSessions.isNotEmpty) ...[
-                            Padding(
-                              padding: const EdgeInsets.only(
-                                left: 4,
-                                bottom: 2,
-                              ),
-                              child: Row(
-                                children: [
-                                  Expanded(
-                                    child: Text(
-                                      Strings.of(context).homeChatsSection,
-                                      style: TextStyle(
-                                        fontSize: 13,
-                                        fontWeight: FontWeight.w600,
-                                        color: colors.textSecondary,
-                                      ),
-                                    ),
-                                  ),
-                                  TextButton(
-                                    onPressed: _openSessions,
-                                    style: TextButton.styleFrom(
-                                      minimumSize: const Size(48, 44),
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 8,
-                                      ),
-                                      foregroundColor: colors.accentHover,
-                                    ),
-                                    child: Text(
-                                      Strings.of(context).homeSearch,
-                                      style: TextStyle(
-                                        fontSize: 13,
-                                        color: colors.accentHover,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            ..._buildRecentRows(active, recentLimit),
-                          ] else if (!isRemoteAndOffline) ...[
-                            const SizedBox(height: 10),
-                            HermesEmptyState(
-                              key: const ValueKey('home-empty-conversations'),
-                              compact: true,
-                              title: Strings.of(
-                                context,
-                              ).homeEmptyConversationsTitle,
-                              body: Strings.of(
-                                context,
-                              ).homeEmptyConversationsBody,
-                              padding: const EdgeInsets.fromLTRB(
-                                18,
-                                18,
-                                18,
-                                22,
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                  ),
-                ],
+              final content = RefreshIndicator(
+                color: colors.accent,
+                onRefresh: _refreshStatus,
+                child: _buildBoard(
+                  active,
+                  banners: banners,
+                  bottomClearance: dockBottomClearance,
+                ),
               );
               return content;
             }(),
@@ -2035,7 +2867,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
                             connManager: widget.connManager,
                           ),
                         ),
-                      ).then((_) => _refreshStatus()),
+                      ).then((_) => _refreshWhenUncovered()),
               ),
               DockItemId.settings: DockItemAction(
                 onTap: _active == null
@@ -2048,7 +2880,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
                             connManager: widget.connManager,
                           ),
                         ),
-                      ).then((_) => _reload()),
+                      ).then((_) => _refreshWhenUncovered(reload: true)),
               ),
               // Accesos directos opcionales (ocultos de fábrica en el
               // catálogo); mismas pantallas/criterios que ya usa HermesDrawer.
@@ -2081,250 +2913,44 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
         ],
       ),
     );
-  }
-}
-
-/// Banner compacto que aparece en el home cuando el usuario salió durante una
-/// instalación o desinstalación local. El script de Termux sigue corriendo;
-/// esto le avisa al usuario y le permite retomar el seguimiento.
-class _LocalOpBanner extends StatelessWidget {
-  final HermesThemeColors colors;
-  final bool isInstall;
-  final ConnectionManager connManager;
-  final VoidCallback onDismiss;
-  final VoidCallback onResume;
-
-  const _LocalOpBanner({
-    required this.colors,
-    required this.isInstall,
-    required this.connManager,
-    required this.onDismiss,
-    required this.onResume,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final s = Strings.of(context);
-    final label = isInstall
-        ? s.homeInstallInProgress
-        : s.homeUninstallInProgress;
-    final sub = isInstall ? s.homeInstallingSub : s.homeUninstallingSub;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 16),
-      child: Container(
-        decoration: BoxDecoration(
-          color: colors.warning.withValues(alpha: 0.10),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-            color: colors.warning.withValues(alpha: 0.28),
-            width: 0.75,
-          ),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              Icon(
-                Icons.hourglass_top_rounded,
-                size: 18,
-                color: colors.warning,
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      label,
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                        color: colors.warning,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      sub,
-                      style: TextStyle(
-                        fontSize: 11.5,
-                        color: colors.textSecondary,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 4),
-              TextButton(
-                onPressed: onResume,
-                style: TextButton.styleFrom(
-                  minimumSize: const Size(0, 36),
-                  padding: const EdgeInsets.symmetric(horizontal: 10),
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                ),
-                child: Text(
-                  s.homeResume,
-                  style: TextStyle(
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w600,
-                    color: colors.warning,
-                  ),
-                ),
-              ),
-              IconButton(
-                onPressed: onDismiss,
-                icon: Icon(Icons.close, size: 16, color: colors.textDisabled),
-                visualDensity: VisualDensity.compact,
-                padding: const EdgeInsets.all(6),
-                tooltip: s.homeHide,
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Tarjeta que aparece en el home cuando el agente local está instalado pero
-/// no está corriendo. Ofrece arrancarlo con un toque o abrir el panel de control.
-class _LocalAgentOfflineCard extends StatelessWidget {
-  final HermesThemeColors colors;
-  final bool starting;
-  final VoidCallback onStart;
-  final VoidCallback onManage;
-
-  const _LocalAgentOfflineCard({
-    required this.colors,
-    required this.starting,
-    required this.onStart,
-    required this.onManage,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final s = Strings.of(context);
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 16),
-      child: Container(
-        decoration: BoxDecoration(
-          color: colors.surfaceVariant.withValues(alpha: 0.18),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-            color: colors.divider.withValues(alpha: 0.28),
-            width: 0.75,
-          ),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(18, 16, 18, 14),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Icon(
-                        Icons.terminal_rounded,
-                        size: 18,
-                        color: colors.textSecondary,
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        Strings.of(context).lasConnectionLabel,
-                        style: TextStyle(
-                          fontSize: 13.5,
-                          fontWeight: FontWeight.w700,
-                          color: colors.textPrimary,
-                        ),
-                      ),
-                      const Spacer(),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 3,
-                        ),
-                        decoration: BoxDecoration(
-                          color: colors.textDisabled.withValues(alpha: 0.12),
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: Text(
-                          s.homeLocalAgentOff,
-                          style: TextStyle(
-                            fontSize: 10.5,
-                            color: colors.textDisabled,
-                            letterSpacing: 0.3,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    starting
-                        ? s.homeLocalAgentStarting
-                        : s.homeLocalAgentInstalledNotRunning,
-                    style: TextStyle(
-                      fontSize: 12.5,
-                      height: 1.4,
-                      color: colors.textSecondary,
-                    ),
-                  ),
-                  if (starting) ...[
-                    const SizedBox(height: 12),
-                    LinearProgressIndicator(
-                      color: colors.accent,
-                      backgroundColor: colors.accent.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                  ],
-                  if (!starting) ...[
-                    const SizedBox(height: 14),
-                    HermesPrimaryButton(
-                      label: s.homeStartAgent,
-                      icon: Icons.play_arrow_rounded,
-                      onTap: onStart,
-                    ),
-                  ],
-                ],
-              ),
-            ),
-            Divider(
-              height: 1,
-              thickness: 0.5,
-              color: colors.divider.withValues(alpha: 0.22),
-            ),
-            TextButton.icon(
-              onPressed: onManage,
-              icon: Icon(
-                Icons.settings_rounded,
-                size: 14,
-                color: colors.textSecondary,
-              ),
-              label: Text(
-                s.homeAgentControlPanel,
-                style: TextStyle(color: colors.textSecondary, fontSize: 12.5),
-              ),
-              style: TextButton.styleFrom(
-                minimumSize: const Size(double.infinity, 44),
-                padding: const EdgeInsets.symmetric(horizontal: 18),
-                shape: const RoundedRectangleBorder(
-                  borderRadius: BorderRadius.vertical(
-                    bottom: Radius.circular(16),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
+    // Editing the board: the same page without its header, whose place
+    // the board's edit bar takes.
+    if (!_boardEditing || _active == null || _locked) return page;
+    return Scaffold(
+      drawerEnableOpenDragGesture: page.drawerEnableOpenDragGesture,
+      drawerEdgeDragWidth: page.drawerEdgeDragWidth,
+      drawer: page.drawer,
+      body: page.body,
     );
   }
 }
 
 /// Estado editorial de la instancia remota. Diagnóstico y acciones permanecen
 /// visibles; la explicación secundaria se pliega para no dominar el Home.
+/// The active profile's list could not be read while the connection is up:
+/// says so where the list goes, without turning Home offline.
+class _ProfileListErrorCard extends StatelessWidget {
+  final String profile;
+  final VoidCallback onRetry;
+
+  const _ProfileListErrorCard({required this.profile, required this.onRetry});
+
+  @override
+  Widget build(BuildContext context) {
+    final s = Strings.of(context);
+    return HermesEmptyState(
+      key: const ValueKey('home-profile-list-error'),
+      compact: true,
+      title: s.homeProfileListErrorTitle(profile),
+      body: s.homeProfileListErrorBody,
+      primaryLabel: s.commonRetry,
+      primaryIcon: Icons.refresh_rounded,
+      onPrimary: onRetry,
+      padding: const EdgeInsets.fromLTRB(18, 18, 18, 22),
+    );
+  }
+}
+
 class _RemoteInstanceOfflineCard extends StatefulWidget {
   final HermesThemeColors colors;
   final String label;
@@ -2499,354 +3125,6 @@ class _RemoteInstanceOfflineCardState
   }
 }
 
-class _RecentGroupHeader extends StatelessWidget {
-  const _RecentGroupHeader({
-    required this.label,
-    required this.first,
-    super.key,
-  });
-
-  final String label;
-  final bool first;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
-    return Semantics(
-      header: true,
-      child: Padding(
-        padding: EdgeInsets.fromLTRB(6, first ? 2 : 14, 6, 5),
-        child: Text(
-          label.toUpperCase(),
-          style: TextStyle(
-            fontSize: 10.5,
-            fontWeight: FontWeight.w600,
-            letterSpacing: 0.9,
-            color: colors.textSecondary.withValues(alpha: 0.86),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-String _sentenceCase(String value) =>
-    value.isEmpty ? value : '${value[0].toUpperCase()}${value.substring(1)}';
-
-/// Línea de actividad en curso: píldora con tinte propio, punto de estado y
-/// texto en peso medio.
-///
-/// Antes era un `Text` del mismo tamaño y peso que la vista previa normal,
-/// pintado con `colors.secondary` a pelo: en la mayoría de temas se leía
-/// lavado y no se distinguía del título, así que no se sabía qué estaba
-/// haciendo la conversación. El tinte de fondo + el punto + el peso dan la
-/// diferencia sin depender de que el `secondary` del tema tenga contraste.
-class _ActivityLine extends StatelessWidget {
-  const _ActivityLine({
-    required this.label,
-    this.tone = SessionStatusTone.working,
-    super.key,
-  });
-
-  final String label;
-
-  /// Semantic state: the dot, tint and text share its colour.
-  final SessionStatusTone tone;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
-    final tone = sessionStatusColor(colors, this.tone);
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-        decoration: BoxDecoration(
-          color: tone.withValues(alpha: 0.13),
-          borderRadius: BorderRadius.circular(999),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 6,
-              height: 6,
-              decoration: BoxDecoration(color: tone, shape: BoxShape.circle),
-            ),
-            const SizedBox(width: 6),
-            Flexible(
-              child: Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 12,
-                  height: 1.2,
-                  fontWeight: FontWeight.w600,
-                  color: tone,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _RecentSessionTile extends StatelessWidget {
-  final Session session;
-  final String title;
-  final HomeRecentSummary summary;
-  final String? activityLabel;
-  final SessionStatusTone activityTone;
-  final String relativeTime;
-  final VoidCallback onTap;
-  final Future<void> Function()? onStop;
-  final VoidCallback? onManage;
-
-  const _RecentSessionTile({
-    required this.session,
-    required this.title,
-    required this.summary,
-    required this.activityLabel,
-    this.activityTone = SessionStatusTone.working,
-    required this.relativeTime,
-    required this.onTap,
-    this.onStop,
-    this.onManage,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
-    final strings = Strings.of(context);
-    final reduceMotion = MediaQuery.disableAnimationsOf(context);
-    final userPreview = humanReadableSessionPreview(summary.user);
-    final assistantPreview = humanReadableSessionPreview(summary.assistant);
-    final assistantText = assistantPreview == null
-        ? null
-        : projectAssistantOperationalArtifacts(
-            assistantPreview,
-            subagentLabel: strings.subagentActivityItem,
-            resultLabel: strings.commonResult,
-          ).visibleMarkdown;
-    final assistantOrActivity = activityLabel ?? assistantText;
-    // Borrador: texto descriptivo hilado en la línea de vista previa
-    // ("Borrador · Resume los cambios…"), como el mockup de Conversaciones, en
-    // vez de una píldora "BORRADOR" en mayúsculas junto al título — las
-    // "cajitas feas" que pedía quitar el mantenedor.
-    final basePreview = assistantText ?? userPreview;
-    final previewText = session.hasLocalDraft
-        ? <String>[
-            _sentenceCase(strings.slDraftBadge),
-            ?basePreview,
-          ].join(' · ')
-        : basePreview;
-    final visiblePreview = previewText ?? strings.sessionPreviewUnavailable;
-
-    // Fila ligera: jerarquía por texto y divisor, sin cards pesadas.
-    // Semantics compone una descripción legible para TalkBack (título, turno
-    // reciente y estado); ExcludeSemantics evita repeticiones.
-    final tile = Semantics(
-      button: true,
-      explicitChildNodes: onStop != null,
-      onLongPress: onManage,
-      label: [
-        strings.homeSemanticChat(title, session.messageCount),
-        ?userPreview,
-        ?assistantOrActivity,
-        if (userPreview == null && assistantOrActivity == null)
-          strings.sessionPreviewUnavailable,
-        if (session.hasLocalDraft) strings.slDraftBadge,
-      ].join(', '),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: onTap,
-        onLongPress: onManage,
-        child: Container(
-          decoration: BoxDecoration(
-            border: Border(
-              bottom: BorderSide(color: colors.divider.withValues(alpha: 0.55)),
-            ),
-          ),
-          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 13),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: ExcludeSemantics(
-                  child: AnimatedSize(
-                    duration: reduceMotion
-                        ? Duration.zero
-                        : const Duration(milliseconds: 180),
-                    curve: Curves.easeOutCubic,
-                    alignment: Alignment.topLeft,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontWeight: FontWeight.w500,
-                            fontSize: 15,
-                            color: colors.textPrimary,
-                          ),
-                        ),
-                        AnimatedSwitcher(
-                          duration: reduceMotion
-                              ? Duration.zero
-                              : const Duration(milliseconds: 160),
-                          switchInCurve: Curves.easeOut,
-                          switchOutCurve: Curves.easeIn,
-                          child: activityLabel != null
-                              ? Padding(
-                                  key: ValueKey('activity-$activityLabel'),
-                                  padding: const EdgeInsets.only(top: 4),
-                                  child: _ActivityLine(
-                                    key: ValueKey(
-                                      'home-activity-${session.id}',
-                                    ),
-                                    label: activityLabel!,
-                                    tone: activityTone,
-                                  ),
-                                )
-                              : Padding(
-                                  key: ValueKey('preview-$visiblePreview'),
-                                  padding: const EdgeInsets.only(top: 3),
-                                  child: Text(
-                                    visiblePreview,
-                                    key: session.hasLocalDraft
-                                        ? ValueKey('home-draft-${session.id}')
-                                        : null,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      fontSize: 12.5,
-                                      height: 1.2,
-                                      color: colors.textSecondary,
-                                    ),
-                                  ),
-                                ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-              if (onStop != null) ...[
-                const SizedBox(width: 8),
-                SessionRowStopControl(onStop: onStop!),
-              ],
-              const SizedBox(width: 12),
-              ExcludeSemantics(
-                child: Padding(
-                  padding: const EdgeInsets.only(top: 2),
-                  child: Text(
-                    relativeTime,
-                    // WCAG AA: el tiempo es información real → textSecondary (≥4.5:1).
-                    style: TextStyle(fontSize: 11, color: colors.textSecondary),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-    if (onManage == null) return tile;
-    return Dismissible(
-      key: ValueKey('home-recent-swipe-${session.id}'),
-      direction: DismissDirection.endToStart,
-      dismissThresholds: const {DismissDirection.endToStart: 0.32},
-      background: Container(
-        alignment: Alignment.centerRight,
-        padding: const EdgeInsets.only(right: 18),
-        decoration: BoxDecoration(
-          color: colors.background,
-          borderRadius: BorderRadius.circular(10),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              strings.slSwipeManage,
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                color: colors.textSecondary,
-              ),
-            ),
-            const SizedBox(width: 7),
-            Icon(Icons.tune_rounded, size: 20, color: colors.textSecondary),
-          ],
-        ),
-      ),
-      confirmDismiss: (_) async {
-        onManage?.call();
-        // El arrastre abre acciones; nunca modifica ni elimina por sí solo.
-        return false;
-      },
-      child: tile,
-    );
-  }
-}
-
-/// Envoltorio público de la fila de "recientes" para blindar con widget tests
-/// su presentación (borrador hilado, actividad legible) sin levantar el
-/// dashboard completo con su red, su companion y su compositor.
-@visibleForTesting
-class HomeRecentSessionTileForTesting extends StatelessWidget {
-  const HomeRecentSessionTileForTesting({
-    required this.sessionId,
-    required this.title,
-    this.userPreview,
-    this.assistantPreview,
-    this.activityLabel,
-    this.activityTone = SessionStatusTone.working,
-    this.hasLocalDraft = false,
-    this.relativeTime = '12:40',
-    this.onStop,
-    super.key,
-  });
-
-  final String sessionId;
-  final String title;
-  final String? userPreview;
-  final String? assistantPreview;
-  final String? activityLabel;
-  final SessionStatusTone activityTone;
-  final bool hasLocalDraft;
-  final String relativeTime;
-  final Future<void> Function()? onStop;
-
-  @override
-  Widget build(BuildContext context) => _RecentSessionTile(
-    session: Session(
-      id: sessionId,
-      title: title,
-      model: 'hermes-agent',
-      source: 'mobile',
-      messageCount: 2,
-      isActive: false,
-      preview: userPreview ?? '',
-      startedAt: 1,
-      hasLocalDraft: hasLocalDraft,
-    ),
-    title: title,
-    summary: HomeRecentSummary(user: userPreview, assistant: assistantPreview),
-    activityLabel: activityLabel,
-    activityTone: activityTone,
-    relativeTime: relativeTime,
-    onTap: () {},
-    onStop: onStop,
-  );
-}
-
-enum _RecentAction { rename, delete }
-
 /// Console-style welcome shown when no Gateway connections exist yet.
 class _EmptyHomeState extends StatelessWidget {
   final VoidCallback onAdd;
@@ -2888,34 +3166,32 @@ class _EmptyHomeState extends StatelessWidget {
                         !controller.presenceLevel.isVisible) {
                       return const SizedBox.shrink();
                     }
-                    return const Column(
+                    return Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        HermesSparkMascot(mood: HermesSparkMood.idle, size: 48),
-                        SizedBox(height: 14),
+                        CompanionProfileFace(
+                          controller: controller,
+                          size: 48,
+                          animate: false,
+                        ),
+                        const SizedBox(height: 14),
                       ],
                     );
                   },
                 );
               },
             ),
-            Text(
-              Strings.of(context).homeNoInstances,
-              style: TextStyle(
-                fontSize: 13,
-                color: colors.textSecondary,
-                letterSpacing: 0.5,
-              ),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              Strings.of(context).homePort8642,
-              style: TextStyle(
-                fontSize: 11,
-                // Hint informativo → textSecondary (WCAG AA 4.5:1); no hay
-                // nada deshabilitado aquí (spec 028 A-112).
-                color: colors.textSecondary,
-                letterSpacing: 0.3,
+            // One plain sentence and one button: no ports, no jargon.
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 32),
+              child: Text(
+                Strings.of(context).homeNoInstances,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 15,
+                  height: 1.4,
+                  color: colors.textSecondary,
+                ),
               ),
             ),
             const SizedBox(height: 14),

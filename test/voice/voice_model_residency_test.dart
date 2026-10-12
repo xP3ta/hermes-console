@@ -6,6 +6,7 @@ import 'package:hermes_android/core/services/voice/device_memory_profile.dart';
 import 'package:hermes_android/core/services/voice/stt_engine.dart';
 import 'package:hermes_android/core/services/voice/tts_engine.dart';
 import 'package:hermes_android/core/services/voice/voice_service.dart';
+import 'package:hermes_android/core/services/voice/voice_settings.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Spec 048 / US4 — residencia de modelos según memoria
@@ -41,6 +42,32 @@ class _SpyStt extends SttEngine {
   @override
   Future<void> dispose() async {
     disposeCalls++;
+  }
+}
+
+/// An on-device recogniser: it can stay loaded between captures.
+class _WarmSpyStt extends _SpyStt implements WarmSttEngine {
+  int parkCalls = 0;
+  int prewarmCalls = 0;
+
+  @override
+  Future<void> park() async {
+    parkCalls++;
+  }
+
+  @override
+  Future<void> prewarm() async {
+    prewarmCalls++;
+  }
+}
+
+class _TimedIdleScheduler extends _ManualIdleScheduler {
+  final List<Duration> delays = <Duration>[];
+
+  @override
+  VoiceIdleTimer create(Duration delay, void Function() callback) {
+    delays.add(delay);
+    return super.create(delay, callback);
   }
 }
 
@@ -94,7 +121,7 @@ class _ManualIdleTimer implements VoiceIdleTimer {
 class _ManualIdleScheduler {
   final List<_ManualIdleTimer> timers = <_ManualIdleTimer>[];
 
-  VoiceIdleTimer create(Duration _, void Function() callback) {
+  VoiceIdleTimer create(Duration delay, void Function() callback) {
     final timer = _ManualIdleTimer(callback);
     timers.add(timer);
     return timer;
@@ -394,4 +421,261 @@ void main() {
       expect(tts.disposeCalls, 1);
     },
   );
+
+  group('recogniser kept warm after voice', () {
+    Future<(VoiceService, _WarmSpyStt, _TimedIdleScheduler)> voiceSession(
+      DeviceMemoryProfile profile,
+    ) async {
+      final prefs = await SharedPreferences.getInstance();
+      final scheduler = _TimedIdleScheduler();
+      final voice = VoiceService(
+        prefs,
+        SecureStorage(),
+        idleTimerFactory: scheduler.create,
+      );
+      final stt = _WarmSpyStt();
+      voice.debugSttFactory = () => stt;
+      voice.debugMemoryProfile = profile;
+      voice.setVoiceConversationActive(true);
+      expect((await voice.checkStt()).ready, isTrue);
+      voice.startDictation();
+      return (voice, stt, scheduler);
+    }
+
+    Future<void> settle() async {
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+    }
+
+    test(
+      'leaving voice frees the microphone and keeps the recogniser',
+      () async {
+        final (voice, stt, scheduler) = await voiceSession(_bigDevice);
+
+        await voice.disposeSttForVoiceExit(keepRecognizerWarm: true);
+        voice.setVoiceConversationActive(false);
+
+        expect(
+          stt.parkCalls,
+          1,
+          reason: 'the capture ends, microphone released',
+        );
+        expect(
+          stt.stopCalls,
+          0,
+          reason: 'nothing is transcribed on the way out',
+        );
+        expect(stt.disposeCalls, 0);
+        // It waits its own, longer time: 3 minutes, not the 90 s of a dictation.
+        expect(scheduler.delays.last, const Duration(minutes: 3));
+
+        // Starting again finds it loaded: the same engine, no new one.
+        var created = 0;
+        voice.debugSttFactory = () {
+          created++;
+          return _WarmSpyStt();
+        };
+        voice.setVoiceConversationActive(true);
+        expect((await voice.checkStt()).ready, isTrue);
+        voice.startDictation();
+        expect(created, 0);
+        expect(stt.disposeCalls, 0);
+
+        // Used again, it is nobody's leftover: its timer does not fire on it.
+        scheduler.timers.last.fire();
+        await settle();
+        expect(stt.disposeCalls, 0);
+      },
+    );
+
+    test('it survives the whole way out of a conversation on this phone, and '
+        'the way back in', () async {
+      final prefs = await SharedPreferences.getInstance();
+      final scheduler = _TimedIdleScheduler();
+      final voice = VoiceService(
+        prefs,
+        SecureStorage(),
+        idleTimerFactory: scheduler.create,
+      );
+      final engines = <_WarmSpyStt>[];
+      final tts = _SpyTts();
+      voice.debugSttFactory = () {
+        final engine = _WarmSpyStt();
+        engines.add(engine);
+        return engine;
+      };
+      voice.debugTtsFactory = () => tts;
+      voice.debugMemoryProfile = _bigDevice;
+
+      // In, as the chat does it: the phone's route, then the conversation.
+      expect(voice.enableOnDeviceVoice(), isTrue);
+      voice.setVoiceConversationActive(true);
+      expect((await voice.checkStt()).ready, isTrue);
+      voice.startDictation();
+      await voice.enqueueSpeech('Hola.');
+      await voice.waitSpeechDone();
+
+      // Out, in the order the conversation does it: it stops being active,
+      // releases the recogniser's capture, the voice, and then the route.
+      voice.setVoiceConversationActive(false);
+      await voice.disposeSttForVoiceExit(keepRecognizerWarm: true);
+      await voice.disposeTtsForVoiceExit();
+      voice.disableNativeVoice();
+      await settle();
+
+      expect(tts.disposeCalls, 1);
+      expect(engines.single.parkCalls, 1);
+      expect(engines.single.disposeCalls, 0, reason: 'still loaded');
+      // With the voice gone it is alone, on its own three minutes.
+      expect(scheduler.delays.last, const Duration(minutes: 3));
+
+      // Back in before that: the same recogniser, nothing loaded again.
+      expect(voice.enableOnDeviceVoice(), isTrue);
+      voice.setVoiceConversationActive(true);
+      expect((await voice.checkStt()).ready, isTrue);
+      voice.startDictation();
+      expect(engines, hasLength(1));
+      expect(engines.single.disposeCalls, 0);
+
+      // Out again and left alone: released when the time is up.
+      voice.setVoiceConversationActive(false);
+      await voice.disposeSttForVoiceExit(keepRecognizerWarm: true);
+      await voice.disposeTtsForVoiceExit();
+      voice.disableNativeVoice();
+      scheduler.timers.last.fire();
+      await settle();
+      expect(engines.single.disposeCalls, 1);
+    });
+
+    test('the kept recogniser is released when its time is up', () async {
+      final (voice, stt, scheduler) = await voiceSession(_bigDevice);
+      await voice.disposeSttForVoiceExit(keepRecognizerWarm: true);
+      voice.setVoiceConversationActive(false);
+      expect(stt.disposeCalls, 0);
+
+      scheduler.timers.last.fire();
+      await settle();
+
+      expect(stt.disposeCalls, 1);
+      // And the next start builds a fresh one.
+      var created = 0;
+      voice.debugSttFactory = () {
+        created++;
+        return _WarmSpyStt();
+      };
+      await voice.checkStt();
+      expect(created, 1);
+    });
+
+    test('memory pressure releases it at once', () async {
+      final (voice, stt, _) = await voiceSession(_bigDevice);
+      await voice.disposeSttForVoiceExit(keepRecognizerWarm: true);
+      voice.setVoiceConversationActive(false);
+
+      await voice.onTrimMemory(10); // TRIM_MEMORY_RUNNING_LOW
+      await settle();
+
+      expect(stt.disposeCalls, 1);
+    });
+
+    test(
+      'leaving the app releases it, not a conversation that goes on',
+      () async {
+        final (voice, stt, _) = await voiceSession(_bigDevice);
+
+        // The conversation continues behind the lock screen: untouched.
+        await voice.onTrimMemory(20); // TRIM_MEMORY_UI_HIDDEN
+        await settle();
+        expect(stt.disposeCalls, 0);
+
+        // Paused by the user, still a conversation: its own timer decides.
+        await voice.disposeSttForVoiceExit(keepRecognizerWarm: true);
+        voice.setVoiceConversationAudioLeaseActive(false);
+        await voice.onTrimMemory(20);
+        await settle();
+        expect(stt.disposeCalls, 0);
+
+        // Ended, and only waiting for a next start nobody can make from here.
+        voice.setVoiceConversationActive(false);
+        await voice.onTrimMemory(20);
+        await settle();
+        expect(stt.disposeCalls, 1);
+      },
+    );
+
+    test('under memory pressure leaving voice releases as before', () async {
+      final (voice, stt, _) = await voiceSession(_bigDevice);
+      await voice.onTrimMemory(10); // deferred: the conversation holds audio
+
+      await voice.disposeSttForVoiceExit(keepRecognizerWarm: true);
+
+      expect(stt.parkCalls, 0);
+      expect(stt.disposeCalls, 1);
+    });
+
+    test('a suspension for privacy still releases everything', () async {
+      final (voice, stt, _) = await voiceSession(_bigDevice);
+
+      await voice.disposeSttForVoiceExit();
+
+      expect(stt.parkCalls, 0);
+      expect(stt.disposeCalls, 1);
+    });
+
+    test('a kept recogniser is not lent to a capture that wants another '
+        'engine', () async {
+      // The composer dictates with the system recogniser; voice on this
+      // phone talks to the on-device one.
+      SharedPreferences.setMockInitialValues({
+        'app_locale': 'es',
+        'voice_stt_engine': SttEngineKind.system.id,
+      });
+      final prefs = await SharedPreferences.getInstance();
+      final voice = VoiceService(prefs, SecureStorage());
+      final engines = <_WarmSpyStt>[];
+      voice.debugSttFactory = () {
+        final engine = _WarmSpyStt();
+        engines.add(engine);
+        return engine;
+      };
+      voice.debugMemoryProfile = _bigDevice;
+      voice.enableOnDeviceVoice();
+      voice.setVoiceConversationActive(true);
+      expect(voice.effectiveConversationSttEngine, SttEngineKind.sherpaLive);
+      expect((await voice.checkStt()).ready, isTrue);
+      voice.startDictation();
+      await voice.disposeSttForVoiceExit(keepRecognizerWarm: true);
+      voice.setVoiceConversationActive(false);
+      expect(engines.single.disposeCalls, 0);
+
+      // The composer's microphone: its own engine, not the leftover.
+      final check = await voice.checkStt(forComposerDictation: true);
+      expect(check.engine, SttEngineKind.system);
+      expect(engines, hasLength(2));
+      expect(engines.first.disposeCalls, 1);
+
+      await voice.disposeSttForVoiceExit();
+    });
+
+    test(
+      'the recogniser starts loading as soon as it is known to be used',
+      () async {
+        final (voice, stt, _) = await voiceSession(_bigDevice);
+        expect(stt.prewarmCalls, 1);
+
+        // Where two heavy models may not share memory, the load keeps its
+        // place in the listen/speak handoff.
+        final prefs = await SharedPreferences.getInstance();
+        final small = VoiceService(prefs, SecureStorage());
+        final smallStt = _WarmSpyStt();
+        small.debugSttFactory = () => smallStt;
+        small.debugMemoryProfile = _smallDevice;
+        expect(small.serializesHeavyLocalVoiceModels, isTrue);
+        expect((await small.checkStt()).ready, isTrue);
+        expect(smallStt.prewarmCalls, 0);
+        await small.disposeSttForVoiceExit();
+        await voice.disposeSttForVoiceExit();
+      },
+    );
+  });
 }

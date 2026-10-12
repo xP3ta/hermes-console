@@ -147,7 +147,7 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('mission-routine-submit')));
     await tester.pump();
-    expect(find.text('Escribe qué debe hacer el bot.'), findsOneWidget);
+    expect(find.text('Escribe qué debe hacer el perfil.'), findsOneWidget);
     expect(calls, 0);
   });
 

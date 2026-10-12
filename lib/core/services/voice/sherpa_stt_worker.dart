@@ -3,7 +3,7 @@ import 'dart:isolate';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
-import 'package:flutter/foundation.dart' show debugPrint;
+import 'package:flutter/foundation.dart' show debugPrint, visibleForTesting;
 import 'package:sherpa_onnx/sherpa_onnx.dart' as sherpa;
 
 class SherpaSttWorkerConfig {
@@ -43,8 +43,23 @@ class SherpaSttWorkerUpdate {
   final int generation;
   final double level;
   final bool speechDetected;
+
+  /// The utterance being heard has shown speech evidence ([SherpaSpeechGate]).
   final bool acousticSpeechEvidence;
+
+  /// Text of the segments that held speech. Segments without evidence are
+  /// never transcribed: they only count in [rejectedSegments].
   final List<String> segments;
+
+  /// Segments the VAD closed since the last update that held no speech, with
+  /// the longest of them and the loudest frame among them. Diagnostics only.
+  final int rejectedSegments;
+  final int rejectedMs;
+  final double rejectedPeak;
+
+  /// The gate's view of the room when this update was made.
+  final double noiseFloor;
+  final double trigger;
   final String? error;
 
   const SherpaSttWorkerUpdate({
@@ -53,58 +68,106 @@ class SherpaSttWorkerUpdate {
     required this.speechDetected,
     required this.acousticSpeechEvidence,
     required this.segments,
+    this.rejectedSegments = 0,
+    this.rejectedMs = 0,
+    this.rejectedPeak = 0,
+    this.noiseFloor = 0,
+    this.trigger = SherpaSpeechGate.minimumTrigger,
     this.error,
   });
 }
 
-/// Gate acustico previo al texto de Whisper. Usa las mismas ventanas de
-/// Hermes Desktop para que un pico aislado no convierta ruido en un turno:
-/// frames de 30 ms, 300 ms de ventana y mayoria minima del 80 %.
+/// Evidence that what the VAD cut out of the microphone is somebody speaking.
 ///
-/// Sherpa publica `RMS PCM normalizado * 4`; el nivel WebAudio `0.075` de
-/// Desktop equivale exactamente a `0.0984375` en esa escala.
-class SherpaDesktopSpeechGate {
+/// Whisper writes text for any audio it is handed, so a segment the VAD cut out
+/// of silence, a key press or a bump must not become a turn. Hermes Desktop
+/// decides "speech was heard" from an absolute meter level (`silenceLevel`
+/// 0.075 in `use-voice-conversation.ts`), and its talk-over monitor
+/// (`voice-barge-in.ts`) from a windowed majority above a trigger relative to
+/// the quiet floor. The absolute level belongs to Desktop's capture chain: the
+/// browser applies automatic gain. An Android phone records for recognition
+/// without gain control and several times quieter, so normal speech stayed
+/// under it and the recognised text was thrown away.
+///
+/// What holds on any microphone is how far the sound stands out of THIS
+/// session's quiet, for long enough:
+/// - each 30 ms frame is compared with a trigger of [floorMultiplier] times
+///   the noise floor: the median level of the frames the VAD called quiet,
+///   trusted after 300 ms and adapting from then on;
+/// - speech is a sustained run inside what the VAD calls speech,
+///   [sustainedRequired] of [sustainedWindow] consecutive frames above the
+///   trigger. A click or a key press is one frame.
+///
+/// The trigger never goes above Desktop's level, so nothing that passed
+/// before is refused now, nor below [minimumTrigger], so the residue of a
+/// noise suppressor never counts as sound.
+///
+/// Levels are Sherpa's `RMS x 4` of normalised PCM; Desktop's 0.075 is
+/// exactly [desktopLevel] on that scale.
+class SherpaSpeechGate {
   static const int sampleRate = 16000;
   static const int frameSamples = 480;
-  static const int majorityWindow = 10;
-  static const int majorityRequired = 8;
-  static const double levelThreshold = 0.0984375;
+  static const int sustainedWindow = 5;
+  static const int sustainedRequired = 4;
+  static const int calibrationFrames = 10;
+  static const int floorWindowFrames = 100;
+  static const double floorMultiplier = 2;
+  static const double minimumTrigger = 0.012;
+  static const double desktopLevel = 0.0984375;
 
   final List<bool> _window = <bool>[];
+  final List<double> _quiet = <double>[];
   Float32List _carry = Float32List(0);
   bool _hasEvidence = false;
+  double? _floor;
 
+  /// The current utterance has shown speech evidence.
   bool get hasEvidence => _hasEvidence;
 
-  void reset() {
+  /// Enough quiet has been heard to trust [noiseFloor].
+  bool get calibrated => _quiet.length >= calibrationFrames;
+
+  /// Median level of the recent quiet frames; 0 until [calibrated].
+  double get noiseFloor {
+    if (!calibrated) return 0;
+    final cached = _floor;
+    if (cached != null) return cached;
+    final sorted = [..._quiet]..sort();
+    return _floor = sorted[sorted.length >> 1];
+  }
+
+  /// Level a frame has to reach to count as sound standing out of the quiet.
+  double get trigger =>
+      (noiseFloor * floorMultiplier).clamp(minimumTrigger, desktopLevel);
+
+  /// A new utterance: its evidence starts over, the noise floor is kept.
+  void resetUtterance() {
     _window.clear();
     _carry = Float32List(0);
     _hasEvidence = false;
   }
 
+  /// A new session: nothing is known about the room any more.
+  void reset() {
+    resetUtterance();
+    _quiet.clear();
+    _floor = null;
+  }
+
+  /// Feeds live audio. Returns whether the utterance has speech evidence.
   bool accept(Float32List samples, {required bool speechDetected}) {
-    if (_hasEvidence) return true;
-    if (!speechDetected) {
-      // Un pico que Silero clasifica como no-voz no puede prearmar el texto
-      // que Whisper produzca mas tarde dentro del mismo ciclo de 12 segundos.
-      _window.clear();
-      _carry = Float32List(0);
-      return false;
-    }
-    if (samples.isEmpty) return false;
+    if (samples.isEmpty) return _hasEvidence;
     final merged = _carry.isEmpty
         ? samples
         : (Float32List(_carry.length + samples.length)
             ..setRange(0, _carry.length, _carry)
             ..setRange(_carry.length, _carry.length + samples.length, samples));
     var offset = 0;
-    while (merged.length - offset >= frameSamples && !_hasEvidence) {
-      final frame = Float32List.sublistView(
-        merged,
-        offset,
-        offset + frameSamples,
+    while (merged.length - offset >= frameSamples) {
+      acceptLevelFrame(
+        sherpaFrameLevel(merged, offset, offset + frameSamples),
+        speechDetected: speechDetected,
       );
-      acceptLevelFrame(_rms(frame));
       offset += frameSamples;
     }
     _carry = offset >= merged.length
@@ -113,17 +176,63 @@ class SherpaDesktopSpeechGate {
     return _hasEvidence;
   }
 
-  bool acceptLevelFrame(double level) {
+  /// One 30 ms frame of live audio at [level].
+  bool acceptLevelFrame(double level, {required bool speechDetected}) {
+    if (!speechDetected) {
+      // Quiet is what the floor is made of. A burst the VAD does not call
+      // speech cannot prepare the ground for text Whisper writes later.
+      _quiet.add(level);
+      if (_quiet.length > floorWindowFrames) _quiet.removeAt(0);
+      _floor = null;
+      _window.clear();
+      return _hasEvidence;
+    }
     if (_hasEvidence) return true;
-    final above = level >= levelThreshold;
+    final above = level >= trigger;
     _window.add(above);
-    if (_window.length > majorityWindow) _window.removeAt(0);
-    _hasEvidence =
-        _window.length == majorityWindow &&
-        above &&
-        _window.where((value) => value).length >= majorityRequired;
+    if (_window.length > sustainedWindow) _window.removeAt(0);
+    _hasEvidence = _sustained(_window, above);
     return _hasEvidence;
   }
+
+  /// Whether a segment the VAD closed holds a sustained run above the
+  /// trigger: the text Whisper writes for it is only kept if it does.
+  bool segmentHasSpeech(Float32List samples) => levelsHaveSpeech([
+    for (
+      var offset = 0;
+      samples.length - offset >= frameSamples;
+      offset += frameSamples
+    )
+      sherpaFrameLevel(samples, offset, offset + frameSamples),
+  ]);
+
+  /// [segmentHasSpeech] for a segment given as its 30 ms frame levels.
+  bool levelsHaveSpeech(Iterable<double> frameLevels) {
+    final threshold = trigger;
+    final window = <bool>[];
+    for (final level in frameLevels) {
+      final above = level >= threshold;
+      window.add(above);
+      if (window.length > sustainedWindow) window.removeAt(0);
+      if (_sustained(window, above)) return true;
+    }
+    return false;
+  }
+
+  static bool _sustained(List<bool> window, bool lastAbove) =>
+      window.length == sustainedWindow &&
+      lastAbove &&
+      window.where((value) => value).length >= sustainedRequired;
+}
+
+/// Sherpa's level of the samples in `[start, end)`: `RMS x 4`, at most 1.
+double sherpaFrameLevel(Float32List samples, int start, int end) {
+  if (end <= start) return 0;
+  var sum = 0.0;
+  for (var index = start; index < end; index++) {
+    sum += samples[index] * samples[index];
+  }
+  return (math.sqrt(sum / (end - start)) * 4).clamp(0.0, 1.0);
 }
 
 abstract interface class SherpaSttWorker {
@@ -141,6 +250,34 @@ abstract interface class SherpaSttWorker {
 typedef SherpaSttWorkerFactory =
     Future<SherpaSttWorker> Function(SherpaSttWorkerConfig config);
 
+/// Where the one load of a recogniser went, in milliseconds: starting its
+/// isolate, binding the native library, opening the recognition model and
+/// opening the voice detector. Numbers only.
+class SherpaSttLoadTiming {
+  final int spawnMs;
+  final int bindingsMs;
+  final int recognizerMs;
+  final int vadMs;
+
+  const SherpaSttLoadTiming({
+    required this.spawnMs,
+    required this.bindingsMs,
+    required this.recognizerMs,
+    required this.vadMs,
+  });
+
+  @override
+  String toString() =>
+      'spawn_ms=$spawnMs bindings_ms=$bindingsMs '
+      'recognizer_ms=$recognizerMs vad_ms=$vadMs';
+}
+
+/// A worker that can say where its load went.
+abstract interface class SherpaSttLoadTimed {
+  /// Null until the recogniser has been loaded.
+  SherpaSttLoadTiming? get loadTiming;
+}
+
 class SherpaSttWorkerException implements Exception {
   final String message;
 
@@ -156,7 +293,7 @@ class SherpaSttWorkerException implements Exception {
 /// ejecutarlos aquí, el isolate de Flutter puede pintar el estado de escucha,
 /// responder a gestos y hacer scroll aunque el primer arranque tarde unos
 /// segundos. Los paquetes PCM viajan como [TransferableTypedData].
-class IsolateSherpaSttWorker implements SherpaSttWorker {
+class IsolateSherpaSttWorker implements SherpaSttWorker, SherpaSttLoadTimed {
   final Isolate _isolate;
   final SendPort _commands;
   final ReceivePort _responses;
@@ -164,6 +301,12 @@ class IsolateSherpaSttWorker implements SherpaSttWorker {
   final StreamController<SherpaSttWorkerUpdate> _updates;
   final Map<int, Completer<Map<Object?, Object?>>> _pending;
   final Completer<void> _workerStopped;
+  final int _spawnMs;
+
+  SherpaSttLoadTiming? _loadTiming;
+
+  @override
+  SherpaSttLoadTiming? get loadTiming => _loadTiming;
 
   int _nextRequest = 0;
   bool _disposed = false;
@@ -177,9 +320,20 @@ class IsolateSherpaSttWorker implements SherpaSttWorker {
     this._updates,
     this._pending,
     this._workerStopped,
+    this._spawnMs,
   );
 
-  static Future<SherpaSttWorker> start(SherpaSttWorkerConfig config) async {
+  static Future<SherpaSttWorker> start(SherpaSttWorkerConfig config) =>
+      startWith(config, _sherpaSttWorkerMain);
+
+  /// [start] with the isolate's entry point given, so its protocol can be
+  /// exercised without the native library.
+  @visibleForTesting
+  static Future<SherpaSttWorker> startWith(
+    SherpaSttWorkerConfig config,
+    void Function(Map<String, Object?> bootstrap) entryPoint,
+  ) async {
+    final spawning = Stopwatch()..start();
     final responses = ReceivePort('hermes_sherpa_stt_responses');
     final ready = Completer<SendPort>();
     final updates = StreamController<SherpaSttWorkerUpdate>.broadcast();
@@ -208,6 +362,14 @@ class IsolateSherpaSttWorker implements SherpaSttWorker {
             speechDetected: message['speechDetected'] == true,
             acousticSpeechEvidence: message['acousticSpeechEvidence'] == true,
             segments: _stringList(message['segments']),
+            rejectedSegments:
+                (message['rejectedSegments'] as num?)?.toInt() ?? 0,
+            rejectedMs: (message['rejectedMs'] as num?)?.toInt() ?? 0,
+            rejectedPeak: (message['rejectedPeak'] as num?)?.toDouble() ?? 0,
+            noiseFloor: (message['noiseFloor'] as num?)?.toDouble() ?? 0,
+            trigger:
+                (message['trigger'] as num?)?.toDouble() ??
+                SherpaSpeechGate.minimumTrigger,
             error: message['error']?.toString(),
           ),
         );
@@ -226,7 +388,7 @@ class IsolateSherpaSttWorker implements SherpaSttWorker {
     });
 
     final isolate = await Isolate.spawn<Map<String, Object?>>(
-      _sherpaSttWorkerMain,
+      entryPoint,
       {'replyTo': responses.sendPort, ...config.toMessage()},
       debugName: 'hermes-sherpa-stt',
       errorsAreFatal: true,
@@ -241,6 +403,7 @@ class IsolateSherpaSttWorker implements SherpaSttWorker {
         updates,
         pending,
         workerStopped,
+        spawning.elapsedMilliseconds,
       );
     } catch (_) {
       isolate.kill(priority: Isolate.immediate);
@@ -272,7 +435,17 @@ class IsolateSherpaSttWorker implements SherpaSttWorker {
 
   @override
   Future<void> prepare() async {
-    await _request('prepare');
+    final result = await _request('prepare');
+    final load = result['load'];
+    if (load is Map) {
+      int ms(String phase) => (load[phase] as num?)?.toInt() ?? 0;
+      _loadTiming = SherpaSttLoadTiming(
+        spawnMs: _spawnMs,
+        bindingsMs: ms('bindings'),
+        recognizerMs: ms('recognizer'),
+        vadMs: ms('vad'),
+      );
+    }
   }
 
   @override
@@ -299,14 +472,21 @@ class IsolateSherpaSttWorker implements SherpaSttWorker {
     return _disposeFuture = _dispose();
   }
 
+  /// How long a worker that was released inside the native library is given
+  /// to come back and free its model before it is killed anyway.
+  static const Duration _busyReleaseLimit = Duration(seconds: 60);
+
   Future<void> _dispose() async {
     _commands.send(const {'type': 'dispose'});
+    // Asked and not answered yet: the worker is inside the native library,
+    // opening the model or transcribing.
+    final busy = _pending.isNotEmpty;
+    var stopped = true;
     try {
       await _workerStopped.future.timeout(const Duration(milliseconds: 700));
     } on TimeoutException {
-      debugPrint('[hermes-stt-worker] dispose timeout; killing worker');
+      stopped = false;
     }
-    _isolate.kill(priority: Isolate.immediate);
     for (final completer in _pending.values) {
       if (!completer.isCompleted) {
         completer.completeError(
@@ -315,6 +495,32 @@ class IsolateSherpaSttWorker implements SherpaSttWorker {
       }
     }
     _pending.clear();
+    if (stopped || !busy) {
+      if (!stopped) {
+        debugPrint('[hermes-stt-worker] dispose timeout; killing worker');
+      }
+      await _closeIsolate();
+      return;
+    }
+    // Killing it now would leave whatever that native call returns, a whole
+    // model, in memory with nobody left to free it. The caller goes on; the
+    // worker frees its model when the call comes back, and only one that
+    // never does is killed.
+    debugPrint('[hermes-stt-worker] dispose deferred: worker busy');
+    unawaited(
+      _workerStopped.future
+          .timeout(
+            _busyReleaseLimit,
+            onTimeout: () => debugPrint(
+              '[hermes-stt-worker] busy worker never came back; killing it',
+            ),
+          )
+          .whenComplete(_closeIsolate),
+    );
+  }
+
+  Future<void> _closeIsolate() async {
+    _isolate.kill(priority: Isolate.immediate);
     await _subscription.cancel();
     await _updates.close();
     _responses.close();
@@ -335,8 +541,13 @@ void _sherpaSttWorkerMain(Map<String, Object?> bootstrap) {
 
   sherpa.OfflineRecognizer? recognizer;
   sherpa.VoiceActivityDetector? vad;
-  final acousticSpeechGate = SherpaDesktopSpeechGate();
+  final speechGate = SherpaSpeechGate();
+  var rejectedSegments = 0;
+  var rejectedMs = 0;
+  var rejectedPeak = 0.0;
   var bindingsReady = false;
+  // Where the load went, handed once to whoever asked for it.
+  Map<String, int>? loadReport;
   int? activeGeneration;
 
   String safeError(Object error) {
@@ -345,10 +556,12 @@ void _sherpaSttWorkerMain(Map<String, Object?> bootstrap) {
 
   void ensureEngine() {
     if (recognizer != null && vad != null) return;
+    final clock = Stopwatch()..start();
     if (!bindingsReady) {
       sherpa.initBindings();
       bindingsReady = true;
     }
+    final bindingsMs = clock.elapsedMilliseconds;
     final transducer = bootstrap['transducer'] == true;
     final modelConfig = transducer
         ? sherpa.OfflineModelConfig(
@@ -375,6 +588,7 @@ void _sherpaSttWorkerMain(Map<String, Object?> bootstrap) {
     recognizer = sherpa.OfflineRecognizer(
       sherpa.OfflineRecognizerConfig(model: modelConfig),
     );
+    final recognizerMs = clock.elapsedMilliseconds - bindingsMs;
     vad = sherpa.VoiceActivityDetector(
       config: sherpa.VadModelConfig(
         sileroVad: sherpa.SileroVadModelConfig(
@@ -389,6 +603,11 @@ void _sherpaSttWorkerMain(Map<String, Object?> bootstrap) {
       ),
       bufferSizeInSeconds: 30,
     );
+    loadReport = {
+      'bindings': bindingsMs,
+      'recognizer': recognizerMs,
+      'vad': clock.elapsedMilliseconds - bindingsMs - recognizerMs,
+    };
   }
 
   String decode(Float32List samples) {
@@ -408,10 +627,47 @@ void _sherpaSttWorkerMain(Map<String, Object?> bootstrap) {
     while (!(vad?.isEmpty() ?? true)) {
       final segment = vad!.front();
       vad!.pop();
-      final text = decode(segment.samples);
+      final samples = segment.samples;
+      if (!speechGate.segmentHasSpeech(samples)) {
+        // Not transcribed at all: no text can come out of what was not said.
+        rejectedSegments++;
+        rejectedMs = math.max(rejectedMs, samples.length * 1000 ~/ 16000);
+        for (
+          var offset = 0;
+          samples.length - offset >= SherpaSpeechGate.frameSamples;
+          offset += SherpaSpeechGate.frameSamples
+        ) {
+          rejectedPeak = math.max(
+            rejectedPeak,
+            sherpaFrameLevel(
+              samples,
+              offset,
+              offset + SherpaSpeechGate.frameSamples,
+            ),
+          );
+        }
+        continue;
+      }
+      final text = decode(samples);
       if (text.isNotEmpty) segments.add(text);
     }
     return segments;
+  }
+
+  /// The gate's diagnostics for the next update; what was rejected is
+  /// reported once.
+  Map<String, Object?> takeGateReport() {
+    final report = <String, Object?>{
+      'rejectedSegments': rejectedSegments,
+      'rejectedMs': rejectedMs,
+      'rejectedPeak': rejectedPeak,
+      'noiseFloor': speechGate.noiseFloor,
+      'trigger': speechGate.trigger,
+    };
+    rejectedSegments = 0;
+    rejectedMs = 0;
+    rejectedPeak = 0;
+    return report;
   }
 
   commands.listen((message) {
@@ -445,9 +701,12 @@ void _sherpaSttWorkerMain(Map<String, Object?> bootstrap) {
       try {
         ensureEngine();
         vad!.reset();
-        acousticSpeechGate.reset();
+        // The room does not change between two turns of one session: only
+        // the utterance's own evidence starts over.
+        speechGate.resetUtterance();
         activeGeneration = null;
-        replyTo.send({'type': 'result', 'id': id});
+        replyTo.send({'type': 'result', 'id': id, 'load': ?loadReport});
+        loadReport = null;
       } catch (error) {
         replyTo.send({'type': 'result', 'id': id, 'error': safeError(error)});
       }
@@ -461,24 +720,26 @@ void _sherpaSttWorkerMain(Map<String, Object?> bootstrap) {
       try {
         ensureEngine();
         if (activeGeneration != generation) {
-          acousticSpeechGate.reset();
+          speechGate.resetUtterance();
           activeGeneration = generation;
         }
         final bytes = transfer.materialize().asUint8List();
         final samples = _pcm16ToFloat(bytes);
         vad!.acceptWaveform(samples);
         final speechDetected = vad!.isDetected();
-        final acousticSpeechEvidence = acousticSpeechGate.accept(
+        final acousticSpeechEvidence = speechGate.accept(
           samples,
           speechDetected: speechDetected,
         );
+        final segments = drainSegments();
         replyTo.send({
           'type': 'update',
           'generation': generation,
-          'level': _rms(samples),
+          'level': sherpaFrameLevel(samples, 0, samples.length),
           'speechDetected': speechDetected,
           'acousticSpeechEvidence': acousticSpeechEvidence,
-          'segments': drainSegments(),
+          'segments': segments,
+          ...takeGateReport(),
         });
       } catch (error) {
         replyTo.send({
@@ -507,11 +768,25 @@ void _sherpaSttWorkerMain(Map<String, Object?> bootstrap) {
       try {
         ensureEngine();
         vad!.flush();
+        final segments = drainSegments();
+        if (rejectedSegments > 0) {
+          // The engine logs what the gate refused; the result only carries
+          // the text that was kept.
+          replyTo.send({
+            'type': 'update',
+            'generation': generation,
+            'level': 0.0,
+            'speechDetected': false,
+            'acousticSpeechEvidence': speechGate.hasEvidence,
+            'segments': const <String>[],
+            ...takeGateReport(),
+          });
+        }
         replyTo.send({
           'type': 'result',
           'id': id,
           'generation': generation,
-          'segments': drainSegments(),
+          'segments': segments,
         });
       } catch (error) {
         replyTo.send({'type': 'result', 'id': id, 'error': safeError(error)});
@@ -528,13 +803,4 @@ Float32List _pcm16ToFloat(Uint8List bytes) {
     samples[index] = data.getInt16(index * 2, Endian.little) / 32768.0;
   }
   return samples;
-}
-
-double _rms(Float32List samples) {
-  if (samples.isEmpty) return 0;
-  var sum = 0.0;
-  for (final sample in samples) {
-    sum += sample * sample;
-  }
-  return (math.sqrt(sum / samples.length) * 4).clamp(0.0, 1.0);
 }

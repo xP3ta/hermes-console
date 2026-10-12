@@ -9,6 +9,7 @@ import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/theme_profile_fixtures.dart';
+import 'support/quiet_feedback.dart';
 
 Future<ThemeProfileStore> _store() async {
   SharedPreferences.setMockInitialValues({});
@@ -27,7 +28,7 @@ Widget _scaledApp(Widget home, {double scale = 2}) => MaterialApp(
   locale: const Locale('es'),
   localizationsDelegates: Strings.localizationsDelegates,
   supportedLocales: Strings.supportedLocales,
-  theme: AppTheme.fromId('phosphor'),
+  theme: AppTheme.fromId('cyberpunk'),
   builder: (context, child) => MediaQuery(
     data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(scale)),
     child: child!,
@@ -99,7 +100,7 @@ void main() {
     expect(snapshot.customProfiles.single.name, 'Tema guardado');
     expect(snapshot.customProfiles.single.draft, isTrue);
     expect(changed, 1);
-    expect(find.text('Borrador guardado.'), findsOneWidget);
+    expectRoutineFeedback(tester, 'Borrador guardado.');
   });
 
   testWidgets('save and activate keeps the single Android component style', (
@@ -227,9 +228,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Contraste listo para activar.'), findsOneWidget);
-    expect(
-      find.text('Contraste reparado. Revisa la vista previa antes de guardar.'),
-      findsOneWidget,
+    expectRoutineFeedback(
+      tester,
+      'Contraste reparado. Revisa la vista previa antes de guardar.',
     );
     activate = tester.widget<FilledButton>(
       find.byKey(const Key('theme_studio_save_activate')),

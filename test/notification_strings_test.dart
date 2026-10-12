@@ -11,14 +11,14 @@ void main() {
       const en = NotifL10n(false);
       expect(es.approvalTitle, 'Hermes necesita tu atención');
       expect(en.approvalTitle, 'Hermes needs your attention');
-      expect(es.runCompleted, 'Ejecución completada');
-      expect(en.runCompleted, 'Run completed');
-      expect(es.cronCompleted, 'Tarea programada completada');
+      expect(es.runCompleted, 'Terminó');
+      expect(en.runCompleted, 'Finished');
+      expect(es.cronCompleted, 'Tarea programada terminada');
       expect(en.cronFailed, 'Scheduled task failed');
       expect(es.actOpen, 'Abrir');
       expect(en.actOpen, 'Open');
       expect(es.privateTitle, 'Nueva actividad en Hermes');
-      expect(en.privateBody, 'Open the app to view the details.');
+      expect(en.privateBody, 'Tap to see it');
       expect(es.voiceCardListening, 'Escuchando');
       expect(en.voiceCardListening, 'Listening');
       expect(es.voiceCardPaused, 'En pausa');

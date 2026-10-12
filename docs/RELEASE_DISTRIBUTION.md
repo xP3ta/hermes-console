@@ -11,7 +11,7 @@ A flavor name is a security boundary, not a rename operation.
 
 The reviewed executable policy is `tool/release/release_contract.json`. The
 source lock is `pubspec.lock` with SHA-256
-`f366fdfc011b65c1b3f44e777fc876be21d3492ec3b0b0cf014536c0ac3490c3`.
+`e3f8811963c2c1ab5eb7f62fd8ea86c5a3661bc98214017a720680019d6042c8`.
 Changing a lock, signer, authorized source actor or inspection-tool digest
 requires a normal source review; release scripts never rewrite those values.
 The reviewed contract anchors both channel signer certificates, all public and
@@ -36,6 +36,13 @@ and an owner-controlled local/private filesystem. No helper in this repository
 uploads or publishes anything. A separate publication operation is permitted
 only after explicit owner approval for the exact channel and exact bytes.
 
+`.github/workflows/e2e-real-gateway.yml` is verification only as well: it
+builds a throwaway Hermes from the public commit in `tool/e2e/hermes_pin`,
+runs it against Hermes' own scripted loopback model in a temporary home and
+runs `test/e2e_real_gateway` (`tool/e2e/run_local.sh`). It reads no secret,
+builds no APK and uploads no artifact; it only prints budget lines to the job
+summary.
+
 ## Reviewed source and signer continuity
 
 The source identity gate requires GitHub verification and binds both the forge
@@ -53,6 +60,30 @@ than to caller input alone:
 The direct inspector requires the supplied expectation to equal that reviewed
 record and then independently measures every candidate with `apksigner`.
 Changing both a key and a runtime argument cannot bypass the baseline.
+
+## Manifest policy
+
+`tool/release/full_release_policy.json` is the exact set of permissions (with
+`maxSdkVersion`), foreground services (with types) and `<queries><package>`
+entries that a release may contain, plus the permissions it must never contain.
+The `play` and `full` flavors share one source manifest, so it describes both.
+Since 1.2.15 it forbids `com.termux.permission.RUN_COMMAND`,
+`REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` and `QUERY_ALL_PACKAGES` and allows no
+package query at all. It is enforced in three places:
+
+- `tool/release/inspect_public_apk.py` measures every signed APK with `aapt`,
+  `apkanalyzer` and `apksigner` and requires the manifest to equal the policy.
+  Split APKs carry Flutter's per-ABI version code (`abi offset * 1000 + build
+  number`: 1000 armeabi-v7a, 2000 arm64-v8a, 4000 x86_64). `apkanalyzer` prints
+  foreground-service types of a compiled manifest as a hex mask, which the
+  inspector decodes with the framework's flag values.
+- `tool/release/check_manifest_policy.py` applies the same comparison to any
+  manifest text: a Gradle merged manifest, `bundletool dump manifest` of the AAB,
+  or `apkanalyzer manifest print` of an APK. `tool/qa/release_rehearsal.sh
+  manifest` runs it on both merged flavors before anything is signed.
+- `test/release_policy_truth_test.py` ties the policy to the source manifest, to
+  the dependencies that contribute the rest, to `docs/PLAY_PERMISSIONS.md` and to
+  the pinned build commands.
 
 ## Private local double build
 

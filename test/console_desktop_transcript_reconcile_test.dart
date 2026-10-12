@@ -29,7 +29,6 @@ import 'package:hermes_android/core/screens/chat_screen.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/app_lock.dart';
 import 'package:hermes_android/core/services/approval_policy.dart';
-import 'package:hermes_android/core/services/bridge_manager.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/desktop_gateway_capabilities.dart';
 import 'package:hermes_android/core/services/font_size_service.dart';
@@ -61,10 +60,12 @@ class _ReconcileGateway
   String runtimeId = 'runtime-reconcile';
   bool connected = true;
   DesktopActiveSessionList activeSessionList = const DesktopActiveSessionList();
+
   /// When set, `resumeExisting`/`activateSession` return this stored id
   /// instead of echoing back the requested one — the real
   /// provisional-mob-*-to-durable promotion `session.resume` performs.
   String? promotedStoredSessionId;
+
   /// The ActiveChat's `logicalSessionId`, needed so a genuine promotion's
   /// snapshot can advertise a matching `lineageRootId` (see `resumeExisting`).
   String logicalRootId = '';
@@ -205,7 +206,11 @@ const _session = Session(
 );
 
 class _Fixture {
-  const _Fixture({required this.gateway, required this.chat, required this.activeChats});
+  const _Fixture({
+    required this.gateway,
+    required this.chat,
+    required this.activeChats,
+  });
 
   final _ReconcileGateway gateway;
   final ActiveChat chat;
@@ -222,9 +227,10 @@ Future<_Fixture> _mountChat(
   final prefs = await SharedPreferences.getInstance();
   final manager = await ConnectionManager.create(prefs);
   final secure = SecureStorage();
-  final gateway = _ReconcileGateway(changeEventsAvailable: changeEventsAvailable)
-    ..promotedStoredSessionId = promotedStoredSessionId
-    ..logicalRootId = _session.id;
+  final gateway =
+      _ReconcileGateway(changeEventsAvailable: changeEventsAvailable)
+        ..promotedStoredSessionId = promotedStoredSessionId
+        ..logicalRootId = _session.id;
   final activeChats = ActiveChatService(
     attachDesktopRuntimeOnLoad: false,
     compressionRestoreStore: testCompressionRestoreStore(),
@@ -268,7 +274,7 @@ Future<_Fixture> _mountChat(
       appLock: AppLockService(prefs),
       approvalPolicy: ApprovalPolicyService(prefs),
       fontSize: FontSizeService(prefs),
-      bridgeManager: BridgeManager(secure, manager),
+
       sshManager: SshManager(secure, manager),
       sftpTransfers: SftpTransferService(
         SshManager(secure, manager),
@@ -391,7 +397,8 @@ void main() {
       expect(
         find.text('Reply sent from Desktop'),
         findsOneWidget,
-        reason: 'the message from the other surface must reach the visible transcript',
+        reason:
+            'the message from the other surface must reach the visible transcript',
       );
 
       await _disposeFixture(tester, fixture);
@@ -484,7 +491,8 @@ void main() {
       expect(
         attempt,
         greaterThan(attemptsAfterFirstTick),
-        reason: 'a transient read failure must not permanently drop the '
+        reason:
+            'a transient read failure must not permanently drop the '
             'pending reconciliation',
       );
       expect(find.text('Reply survives the blip'), findsOneWidget);
@@ -513,10 +521,7 @@ void main() {
           loads += 1;
           requestedIds.add(sessionId);
           return const [
-            {
-              'role': 'assistant',
-              'content': 'Reply against the durable id',
-            },
+            {'role': 'assistant', 'content': 'Reply against the durable id'},
           ];
         },
       );
@@ -531,7 +536,8 @@ void main() {
       expect(
         requestedIds,
         isNot(contains('mob-provisional')),
-        reason: 'the reconciliation read must target the durable id, never '
+        reason:
+            'the reconciliation read must target the durable id, never '
             'the stale provisional one, once promotion has happened',
       );
       expect(find.text('Reply against the durable id'), findsOneWidget);

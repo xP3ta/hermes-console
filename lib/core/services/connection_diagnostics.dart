@@ -10,6 +10,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'origin_bound_http_client.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../utils/transport_privacy.dart';
@@ -101,13 +102,34 @@ class ProbeResult {
   final int? latencyMs;
   final String detail;
 
+  /// The server may simply not offer this through this surface (plugins on
+  /// the Gateway: Hermes serves them from the Dashboard).
+  final bool optional;
+
   const ProbeResult({
     required this.name,
     required this.status,
     this.httpCode,
     this.latencyMs,
     this.detail = '',
+    this.optional = false,
   });
+
+  /// An optional capability this surface does not offer: it says what the
+  /// server can do, never that the connection needs attention.
+  bool get absentOptional =>
+      optional &&
+      (status == ProbeStatus.notFound ||
+          status == ProbeStatus.methodNotAllowed);
+
+  ProbeResult asOptional() => ProbeResult(
+    name: name,
+    status: status,
+    httpCode: httpCode,
+    latencyMs: latencyMs,
+    detail: detail,
+    optional: true,
+  );
 
   String localizedName(Strings s) => switch (name) {
     'health' || 'status' => s.ieProbeOnline,
@@ -224,7 +246,6 @@ class ServerCapabilities {
 class DiagnosticsReport {
   final List<ProbeResult> gateway;
   final List<ProbeResult> dashboard;
-  final List<ProbeResult> bridge;
   final CapabilityMatrix matrix;
   final List<String> suggestions;
   final ServerCapabilities? serverCapabilities;
@@ -233,7 +254,6 @@ class DiagnosticsReport {
   const DiagnosticsReport({
     required this.gateway,
     required this.dashboard,
-    this.bridge = const [],
     required this.matrix,
     required this.suggestions,
     this.serverCapabilities,
@@ -262,15 +282,6 @@ class DiagnosticsReport {
         '${r.localizedDetail(s).isNotEmpty ? ' — ${r.localizedDetail(s)}' : ''}',
       );
     }
-    b.writeln('\n[bridge]');
-    for (final r in bridge) {
-      b.writeln(
-        '  ${r.localizedName(s)}: ${r.status.localizedLabel(s)}'
-        '${r.httpCode != null ? ' (HTTP ${r.httpCode})' : ''}'
-        '${r.latencyMs != null ? ' ${r.latencyMs}ms' : ''}'
-        '${r.localizedDetail(s).isNotEmpty ? ' — ${r.localizedDetail(s)}' : ''}',
-      );
-    }
     final caps = serverCapabilities;
     if (caps != null) {
       b.writeln('\n[/v1/capabilities]');
@@ -286,12 +297,19 @@ class DiagnosticsReport {
   }
 }
 
+/// The two surfaces a full check visits, in order.
+enum DiagnosticsStage { gateway, dashboard }
+
+/// Called as each surface's probes finish, with exactly what they found.
+typedef DiagnosticsStageCallback =
+    void Function(DiagnosticsStage stage, List<ProbeResult> results);
+
 class ConnectionDiagnostics {
   final http.Client _http;
   static const _kTimeout = Duration(seconds: 8);
 
   ConnectionDiagnostics({http.Client? httpClient})
-    : _http = httpClient ?? http.Client();
+    : _http = OriginBoundHttpClient(httpClient);
 
   void close() => _http.close();
 
@@ -467,7 +485,14 @@ class ConnectionDiagnostics {
         ? serverCaps!.safeGetEndpoint('plugins', baseUri)
         : baseUri.resolve('/v1/plugins');
     if (pluginsUri != null) {
-      results.add(await _probe('plugins', 'GET', pluginsUri, headers: auth));
+      results.add(
+        (await _probe(
+          'plugins',
+          'GET',
+          pluginsUri,
+          headers: auth,
+        )).asOptional(),
+      );
     }
 
     return (results, version, serverCaps);
@@ -546,67 +571,22 @@ class ConnectionDiagnostics {
     Strings s,
     SavedConnection conn,
     DashboardSecrets secrets, {
-    String? bridgeUrl,
-    String? bridgeToken,
+    DiagnosticsStageCallback? onStage,
   }) async {
     final (gw, version, serverCaps) = await probeGateway(conn);
+    onStage?.call(DiagnosticsStage.gateway, gw);
     final dash = await probeDashboard(conn, secrets);
-    final bridge = await probeBridge(
-      conn,
-      bridgeUrl: bridgeUrl,
-      bridgeToken: bridgeToken,
-    );
+    onStage?.call(DiagnosticsStage.dashboard, dash);
+    // Only the two configured official surfaces are observed.
     final matrix = buildMatrix(gw, dash, version, serverCaps: serverCaps);
     return DiagnosticsReport(
       gateway: gw,
       dashboard: dash,
-      bridge: bridge,
       matrix: matrix,
       suggestions: buildSuggestions(s, conn, gw, dash),
       serverCapabilities: serverCaps,
       ranAt: DateTime.now(),
     );
-  }
-
-  // ── Mobile Bridge (9131) ──────────────────────────────────────────────
-
-  /// Sondea el Mobile Bridge derivado del host (:9131) sin mutar su estado.
-  /// /bridge/health es público; si ya existe un token del Bridge, comprueba
-  /// directamente sus capacidades. El aprovisionamiento pertenece al flujo de
-  /// edición, no al diagnóstico.
-  Future<List<ProbeResult>> probeBridge(
-    SavedConnection conn, {
-    String? bridgeUrl,
-    String? bridgeToken,
-  }) async {
-    final configuredUrl = bridgeUrl?.trim() ?? '';
-    final base = TransportPrivacy.requireAllowed(
-      configuredUrl.isEmpty ? conn.derivedBridgeUrl : configuredUrl,
-    );
-    final results = <ProbeResult>[];
-
-    final health = await _probe(
-      'health',
-      'GET',
-      Uri.parse('$base/bridge/health'),
-    );
-    results.add(health);
-    // Sin un 200 en /bridge/health el bridge no está ahí (puerto cerrado u
-    // otro servicio): no tiene sentido comprobar sus capacidades.
-    if (health.status != ProbeStatus.ok) return results;
-
-    final storedToken = bridgeToken?.trim() ?? '';
-    if (storedToken.isNotEmpty) {
-      results.add(
-        await _probe(
-          'auth',
-          'GET',
-          Uri.parse('$base/bridge/capabilities'),
-          headers: {'Authorization': 'Bearer $storedToken'},
-        ),
-      );
-    }
-    return results;
   }
 
   /// Deriva la matriz desde los resultados. /v1/capabilities tiene prioridad
@@ -731,8 +711,8 @@ class ConnectionDiagnostics {
         CapState.unknown,
         serverCaps?.feature('skills_toggle'),
       ),
-      // Installation is a separate Mobile Bridge capability. The Gateway
-      // skills_toggle declaration says nothing about install support.
+      // The Gateway's skills_toggle declaration says nothing about install
+      // support, and no probe here proves it.
       skillsInstall: CapState.unknown,
       toolsetsRead: srvEndpoint(
         'toolsetsRead',

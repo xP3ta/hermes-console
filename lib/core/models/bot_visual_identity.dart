@@ -95,6 +95,7 @@ sealed class BotVisualIdentity {
       return ProceduralFaceIdentity(
         shapeWire: blob.wire,
         dormantColorHex: profile.botColorHex,
+        useShapeColor: profile.botUsesShapeColor,
       );
     }
     final color = profile.botColorHex;
@@ -147,15 +148,20 @@ final class ProfileImageIdentity extends BotVisualIdentity {
 final class ProceduralFaceIdentity extends BotVisualIdentity {
   final String shapeWire;
   final String? dormantColorHex;
+  final bool useShapeColor;
 
-  ProceduralFaceIdentity({required String shapeWire, String? dormantColorHex})
-    : shapeWire = BlobatarShapeWire.parse(shapeWire).wire,
-      dormantColorHex = _optionalClassicColor(dormantColorHex);
+  ProceduralFaceIdentity({
+    required String shapeWire,
+    String? dormantColorHex,
+    this.useShapeColor = false,
+  }) : shapeWire = BlobatarShapeWire.parse(shapeWire).wire,
+       dormantColorHex = _optionalClassicColor(dormantColorHex);
 
   @override
   Map<String, dynamic> toBotModeMetadata() => {
     'shape': shapeWire,
     if (dormantColorHex != null) 'color': dormantColorHex,
+    if (useShapeColor && dormantColorHex != null) 'useShapeColor': true,
     'imageKind': 'shape',
     'custom': true,
   };
@@ -164,10 +170,11 @@ final class ProceduralFaceIdentity extends BotVisualIdentity {
   bool operator ==(Object other) =>
       other is ProceduralFaceIdentity &&
       other.shapeWire == shapeWire &&
-      other.dormantColorHex == dormantColorHex;
+      other.dormantColorHex == dormantColorHex &&
+      other.useShapeColor == useShapeColor;
 
   @override
-  int get hashCode => Object.hash(shapeWire, dormantColorHex);
+  int get hashCode => Object.hash(shapeWire, dormantColorHex, useShapeColor);
 }
 
 final class ClassicFaceIdentity extends BotVisualIdentity {
@@ -280,6 +287,7 @@ final class BotVisualIdentityState {
         identity: ProceduralFaceIdentity(
           shapeWire: blob.wire,
           dormantColorHex: color,
+          useShapeColor: botMeta['useShapeColor'] == true,
         ),
         dormantColorHex: color,
       );
@@ -307,6 +315,7 @@ final class BotVisualIdentityState {
     final merged = Map<String, dynamic>.from(fresh)
       ..remove('image')
       ..remove('pet')
+      ..remove('useShapeColor')
       ..addAll(identity.toBotModeMetadata());
     return Map<String, dynamic>.unmodifiable(merged);
   }

@@ -4,9 +4,16 @@ import 'package:flutter/foundation.dart' show setEquals;
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
+import '../config/feature_flags.dart';
 import '../models/dock_config.dart';
+import '../services/connection_manager.dart';
+import '../shell/dock_screen.dart';
+import '../shell/gesture_dock.dart' show DockShortcut;
+import '../shell/gesture_dock_host.dart';
+import '../shell/gesture_dock_state.dart' show GestureDockTab;
 import '../services/dock_preferences_store.dart';
 import '../theme/app_theme.dart';
+import '../utils/responsive.dart';
 import 'chat_surface_coordinator.dart';
 import 'dock_style.dart';
 
@@ -74,6 +81,29 @@ class DockCreateOrbit {
   });
 }
 
+/// Height from the bottom edge the default [Dock] covers: safe inset, the
+/// 12dp gap, the style's lift, the 48dp bar and a small breathing gap.
+/// Content that must not hide behind the dock reserves this much.
+double dockFootprint(BuildContext context) {
+  final colors = Theme.of(context).hermes;
+  final style = DockPreferencesController.instance.value.general.style;
+  return MediaQuery.paddingOf(context).bottom +
+      12 +
+      resolveDockVisual(colors, style).lift +
+      _dockBarHeight +
+      8;
+}
+
+const double _dockBarHeight = 48;
+
+/// Gap between the screen edge and the navigation rail (tablets).
+const double dockRailMargin = 12;
+
+/// Width from the leading edge the rail form of the [Dock] covers on
+/// medium and expanded windows: safe inset, margin, the rail and a gap.
+double dockRailFootprint(BuildContext context) =>
+    MediaQuery.paddingOf(context).left + dockRailMargin + DockBar.railWidth + 8;
+
 /// EL dock flotante de la app. Uno solo, para todos los perfiles y todas las
 /// pantallas.
 ///
@@ -131,6 +161,22 @@ class Dock extends StatefulWidget {
   /// ciclo de vida con el resto de la superficie que aloja el dock.
   final ChatSurfaceCoordinator? coordinator;
 
+  /// True when the host lays its body out beside a side rail on tablets
+  /// (`GeneralDockShell`). Hosts that only reserve bottom space keep the
+  /// bottom bar at every width.
+  final bool adaptive;
+
+  /// The item this screen is, when [actions] cannot tell (Proyectos has no
+  /// catalog entry). Otherwise it is the entry [actions] marks as selected.
+  final GestureDockTab? gestureTab;
+
+  /// The server the dock's places open on, and what "Nuevo chat" does.
+  /// Home passes none of them and the dock reads the app's active
+  /// connection instead.
+  final SavedConnection? connection;
+  final ConnectionManager? connManager;
+  final VoidCallback? onNewChat;
+
   const Dock({
     required this.profileId,
     required this.actions,
@@ -139,6 +185,11 @@ class Dock extends StatefulWidget {
     this.bottomInset,
     this.createOrbits = const [],
     this.coordinator,
+    this.adaptive = false,
+    this.gestureTab,
+    this.connection,
+    this.connManager,
+    this.onNewChat,
     super.key,
   });
 
@@ -178,6 +229,7 @@ class _DockState extends State<Dock>
     _controller = AnimationController(vsync: this, duration: Duration.zero);
     if (_hasOrbits) _attachOrbitMachinery();
     unawaited(DockPreferencesController.instance.ensureLoaded());
+    unawaited(FeatureFlags.instance.ensureLoaded());
   }
 
   /// Observador de ciclo de vida + coordinador: solo hacen falta con órbitas
@@ -226,7 +278,8 @@ class _DockState extends State<Dock>
     // detectaba con un `selectedIndex` propio del dock de Bots; ahora la
     // señal genérica equivalente es "qué elementos dice el contexto que
     // están seleccionados", que vale para cualquier perfil.
-    if (_hasOrbits && !setEquals(_selectedIds(oldWidget), _selectedIds(widget))) {
+    if (_hasOrbits &&
+        !setEquals(_selectedIds(oldWidget), _selectedIds(widget))) {
       unawaited(_close(returnFocus: false));
     }
   }
@@ -331,19 +384,76 @@ class _DockState extends State<Dock>
   }
 
   @override
-  Widget build(BuildContext context) => ListenableBuilder(
-    listenable: DockPreferencesController.instance.listenable,
-    builder: (context, _) {
-      final prefs = DockPreferencesController.instance.value;
-      // Interruptor global "Usar dock flotante" (Ajustes): con él apagado
-      // este widget no pinta NADA y no reserva hueco. Vive aquí, en el único
-      // dock que hay, así que ninguna pantalla puede saltárselo montando el
-      // dock por su cuenta (antes había que repetir esta guarda en los dos
-      // widgets de dock y además en `GeneralDockShell`).
-      if (!prefs.useDock) return const SizedBox.shrink();
-      return _buildWithProfile(context, prefs.profile(widget.profileId));
-    },
+  Widget build(BuildContext context) => DockScreen(
+    // Whoever mounts the dock is a screen the dock belongs to, whether it
+    // paints (below), is hidden by hand or is switched off.
+    child: ListenableBuilder(
+      listenable: Listenable.merge([
+        DockPreferencesController.instance.listenable,
+        FeatureFlags.instance.gestureDock,
+      ]),
+      builder: (context, _) {
+        final prefs = DockPreferencesController.instance.value;
+        // Interruptor global "Usar dock flotante" (Ajustes): con él apagado
+        // este widget no pinta NADA y no reserva hueco. Vive aquí, en el único
+        // dock que hay, así que ninguna pantalla puede saltárselo montando el
+        // dock por su cuenta (antes había que repetir esta guarda en los dos
+        // widgets de dock y además en `GeneralDockShell`).
+        if (!prefs.useDock) return const SizedBox.shrink();
+        if (_usesTheDock) return _buildGestureDock(context);
+        return _buildWithProfile(context, prefs.profile(widget.profileId));
+      },
+    ),
   );
+
+  /// Always true in the app: there is one dock, the same for General and
+  /// Bots, and nothing stored on the device chooses another. On
+  /// medium/expanded windows an adaptive dock shows the same items as a
+  /// side rail.
+  ///
+  /// False only in the suites written for the classic bar
+  /// ([_buildWithProfile] and the creation orbits), which is unreachable
+  /// in the app and stays until those suites are ported or removed.
+  bool get _usesTheDock => FeatureFlags.instance.gestureDock.value;
+
+  Widget _buildGestureDock(BuildContext context) {
+    final actions = widget.actions;
+    final current = widget.gestureTab ?? _selectedTab(actions);
+    return GestureDockHost(
+      current: current,
+      actions: actions,
+      connection: widget.connection,
+      connManager: widget.connManager,
+      onNewChat: widget.onNewChat,
+      rail: widget.adaptive && Responsive.usesRail(context),
+      // The Bots "+" tray's orbits become shortcuts of Nuevo; an orbit that
+      // is unavailable now (no permission or capability) is left out.
+      createShortcuts: [
+        for (final orbit in widget.createOrbits)
+          if (orbit.onTap case final onTap?)
+            DockShortcut(label: orbit.label, icon: orbit.icon, onTap: onTap),
+      ],
+    );
+  }
+
+  /// The dock item of the catalog entry a screen marks as its own.
+  static const Map<DockItemId, GestureDockTab> _tabOfItem = {
+    DockItemId.home: GestureDockTab.home,
+    DockItemId.bots: GestureDockTab.bots,
+    DockItemId.settings: GestureDockTab.settings,
+    DockItemId.sessions: GestureDockTab.search,
+    DockItemId.cron: GestureDockTab.cron,
+    DockItemId.tasks: GestureDockTab.tasks,
+    DockItemId.tools: GestureDockTab.tools,
+  };
+
+  /// The item this screen is: the one its action map marks as selected.
+  static GestureDockTab? _selectedTab(Map<DockItemId, DockItemAction> actions) {
+    for (final entry in _tabOfItem.entries) {
+      if (actions[entry.key]?.selected == true) return entry.value;
+    }
+    return null;
+  }
 
   Widget _buildWithProfile(BuildContext context, DockProfileConfig profile) {
     final colors = Theme.of(context).hermes;
@@ -374,10 +484,23 @@ class _DockState extends State<Dock>
       showBack: showBack,
     );
     final createIndex = slots.indexOf(DockItemId.create);
+    // One indicator slides between destinations; the accent "+" never takes
+    // it (it is an action, not a place).
+    final selectedSlot = slots.indexWhere(
+      (slot) =>
+          slot != null &&
+          !dockItemIsAccent(slot) &&
+          widget.actions[slot]?.selected == true,
+    );
 
+    // Medium/expanded windows: the same destinations as a side rail
+    // (Material 3 navigation rail) instead of a bar along the bottom.
+    final rail = widget.adaptive && Responsive.usesRail(context);
     final bar = DockBar(
-      key: ValueKey('$_prefix-floating-dock'),
+      key: ValueKey(rail ? '$_prefix-dock-rail' : '$_prefix-floating-dock'),
+      axis: rail ? Axis.vertical : Axis.horizontal,
       style: profile.style,
+      selectedIndex: selectedSlot == -1 ? null : selectedSlot,
       children: [
         for (final slot in slots)
           _tileForSlot(
@@ -418,6 +541,19 @@ class _DockState extends State<Dock>
           // nueva posición, y medirlo en ese instante revienta con "Cannot
           // get renderObject of inactive element". Desde fuera se mide el
           // árbol del frame anterior, que es justo lo que hace falta.
+          if (rail) {
+            final safe = MediaQuery.paddingOf(context);
+            return _resolvePlusCenter(
+              Offset(
+                safe.left + dockRailMargin + DockBar.railWidth / 2,
+                safe.top +
+                    dockRailMargin +
+                    4 +
+                    DockBar.railSlotHeight * (createIndex.clamp(0, 99) + 0.5),
+              ),
+              useTileY: true,
+            );
+          }
           return _resolvePlusCenter(
             Offset(
               createIndex == -1
@@ -432,13 +568,30 @@ class _DockState extends State<Dock>
           key: _stackKey,
           fit: StackFit.expand,
           children: [
-            if (_actionsMounted) ..._orbitLayers(plusCenter()),
-            Positioned(
-              left: dockSideMargin,
-              right: dockSideMargin,
-              bottom: dockBottom,
-              child: bar,
-            ),
+            if (_actionsMounted) ..._orbitLayers(plusCenter(), rail: rail),
+            if (rail)
+              Positioned(
+                left: MediaQuery.paddingOf(context).left + dockRailMargin,
+                top: MediaQuery.paddingOf(context).top + dockRailMargin,
+                bottom: MediaQuery.paddingOf(context).bottom + dockRailMargin,
+                width: DockBar.railWidth,
+                child: Align(
+                  alignment: Alignment.topCenter,
+                  // A short landscape window can hold fewer slots than the
+                  // profile shows: the rail scrolls instead of overflowing.
+                  child: SingleChildScrollView(
+                    child: RepaintBoundary(child: bar),
+                  ),
+                ),
+              )
+            else
+              Positioned(
+                left: dockSideMargin,
+                right: dockSideMargin,
+                bottom: dockBottom,
+                // Press and indicator animations repaint only the bar.
+                child: RepaintBoundary(child: bar),
+              ),
           ],
         );
       },
@@ -472,6 +625,8 @@ class _DockState extends State<Dock>
     // Scaffold-local override and sees the real keyboard height regardless
     // of where in the tree the dock is mounted (confirmed live: the
     // `MediaQuery`-based check never fired on Inicio).
+    // A side rail never meets the keyboard: it stays put.
+    if (rail) return dock;
     final keyboardOpen = View.of(context).viewInsets.bottom > 0;
     return IgnorePointer(
       ignoring: keyboardOpen,
@@ -490,7 +645,7 @@ class _DockState extends State<Dock>
 
   /// Scrim + órbitas. Solo se montan mientras la bandeja está abierta o
   /// cerrándose; un dock sin órbitas nunca llega aquí.
-  List<Widget> _orbitLayers(Offset plusCenter) => [
+  List<Widget> _orbitLayers(Offset plusCenter, {bool rail = false}) => [
     Positioned.fill(
       child: GestureDetector(
         key: ValueKey('$_prefix-create-outside'),
@@ -512,6 +667,23 @@ class _DockState extends State<Dock>
                   final progress = Curves.easeOutCubic.transform(
                     _staggered(_controller.value, index * 38 / 220),
                   );
+                  if (rail) {
+                    // Rail: the orbits leave the "+" sideways and stack
+                    // downwards, into the content area beside the rail.
+                    return Positioned(
+                      left: plusCenter.dx + 44 * progress,
+                      top: plusCenter.dy - 28 + 64 * index * progress,
+                      child: _CreateOrb(
+                        controlKey: orbits[index].controlKey,
+                        label: orbits[index].label,
+                        icon: orbits[index].icon,
+                        enabled: orbits[index].onTap != null,
+                        focusNode: index == 0 ? _firstOrbitFocus : null,
+                        progress: progress,
+                        onTap: () => _run(orbits[index].onTap),
+                      ),
+                    );
+                  }
                   return _positionedOrb(
                     plusCenter: plusCenter,
                     // La órbita de arriba del todo es la primera de la
@@ -575,6 +747,7 @@ class _DockState extends State<Dock>
       toggled: ownsCreateTray ? _expanded : null,
       innerRadius: innerRadius,
       compact: compact,
+      selectionBackground: false,
       focusNode: ownsCreateTray ? _createFocus : null,
       onTap: ownsCreateTray
           ? _toggleCreate
@@ -590,7 +763,7 @@ class _DockState extends State<Dock>
   /// mientras el tile todavía no se ha pintado ninguna vez, lo que en la
   /// práctica nunca ocurre cuando esto se usa: las órbitas solo aparecen
   /// tras un toque, y para tocar el "+" ya tuvo que pintarse antes.
-  Offset _resolvePlusCenter(Offset fallback) {
+  Offset _resolvePlusCenter(Offset fallback, {bool useTileY = false}) {
     final tileBox =
         _createTileKey.currentContext?.findRenderObject() as RenderBox?;
     final stackBox = _stackKey.currentContext?.findRenderObject() as RenderBox?;
@@ -601,7 +774,10 @@ class _DockState extends State<Dock>
       return fallback;
     }
     final topLeft = tileBox.localToGlobal(Offset.zero, ancestor: stackBox);
-    return Offset(topLeft.dx + tileBox.size.width / 2, fallback.dy);
+    return Offset(
+      topLeft.dx + tileBox.size.width / 2,
+      useTileY ? topLeft.dy + tileBox.size.height / 2 : fallback.dy,
+    );
   }
 
   Widget _positionedOrb({

@@ -172,7 +172,7 @@ void main() {
   ) async {
     tester.view.physicalSize = const Size(390, 844);
     await _pump(tester);
-    await tester.tap(find.byType(FloatingActionButton));
+    await tester.tap(find.byKey(const ValueKey('cron-create')));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('cron-editor')), findsOneWidget);
     expect(find.text('Every day at 9:00'), findsOneWidget);
@@ -212,7 +212,7 @@ void main() {
         expect(run.height, greaterThanOrEqualTo(48));
         await tester.pageBack();
         await tester.pumpAndSettle();
-        await tester.tap(find.byType(FloatingActionButton));
+        await tester.tap(find.byKey(const ValueKey('cron-create')));
         await tester.pumpAndSettle();
         expect(tester.takeException(), isNull);
       });

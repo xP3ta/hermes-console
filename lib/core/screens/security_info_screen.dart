@@ -8,12 +8,17 @@ import '../services/connection_manager.dart';
 import '../services/notifications/notification_service.dart';
 import '../services/screen_security.dart';
 import '../theme/app_theme.dart';
-import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_ui.dart';
 import 'lock_screen.dart';
 import '../widgets/hermes_app_bar.dart';
 import '../design/hermes_design.dart'
-    show HermesDialogAction, HermesDialogActionStyle, showHermesDialog;
+    show
+        HermesDialogAction,
+        HermesDialogActionStyle,
+        HermesOption,
+        HermesSelectField,
+        showHermesDialog;
+import '../feedback/feedback_policy.dart';
 
 /// Centro de seguridad: bloqueo local accionable (PIN/biometría), gestión de
 /// credenciales y el modelo de seguridad de la app. Las afirmaciones
@@ -106,10 +111,9 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
     if (pin == null) return;
     await lock.setPin(pin);
     if (!mounted) return;
-    HermesNotice.of(context).showSnackBar(
-      SnackBar(content: Text(Strings.of(context).secPinUpdated)),
-      kind: HermesNoticeKind.success,
-    );
+    AppFeedback.of(
+      context,
+    ).notify(FeedbackKind.critical, Strings.of(context).secPinUpdated);
   }
 
   Future<void> _toggleBiometric(bool value) async {
@@ -159,11 +163,16 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
     );
     if (confirm != true || !mounted) return;
     await widget.connManager.wipeAllApiKeys();
+    // cs1215: no cached chat content survives a credential wipe.
     if (!mounted) return;
-    HermesNotice.of(context).showSnackBar(
-      SnackBar(content: Text(Strings.of(context).secKeysWiped)),
-      kind: HermesNoticeKind.success,
-    );
+    await context
+        .findAncestorStateOfType<HermesAppState>()
+        ?.activeChats
+        .forgetAllColdStart();
+    if (!mounted) return;
+    AppFeedback.of(
+      context,
+    ).notify(FeedbackKind.critical, Strings.of(context).secKeysWiped);
   }
 
   SavedConnection? _activeConnection() {
@@ -237,6 +246,7 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
         ),
       ),
       body: ListView(
+        clipBehavior: hermesUnderHeader,
         padding: const EdgeInsets.all(16),
         children: [
           _SectionLabel(s.secSectionLock),
@@ -284,31 +294,19 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
                       color: colors.textSecondary,
                     ),
                     title: Text(s.secLockTimeout),
-                    trailing: DropdownButton<int>(
+                    trailing: HermesSelectField<int>(
                       value: lock.timeoutSeconds,
-                      style: Theme.of(context).dropdownMenuTheme.textStyle,
-                      underline: const SizedBox.shrink(),
-                      items: [
-                        DropdownMenuItem(
-                          value: 0,
-                          child: Text(s.secTimeoutInstant),
-                        ),
-                        DropdownMenuItem(
-                          value: 60,
-                          child: Text(s.secTimeout1min),
-                        ),
-                        DropdownMenuItem(
-                          value: 300,
-                          child: Text(s.secTimeout5min),
-                        ),
-                        DropdownMenuItem(
-                          value: 900,
-                          child: Text(s.secTimeout15min),
-                        ),
+                      inline: true,
+                      title: s.secLockTimeout,
+                      options: [
+                        HermesOption(value: 0, label: s.secTimeoutInstant),
+                        HermesOption(value: 60, label: s.secTimeout1min),
+                        HermesOption(value: 300, label: s.secTimeout5min),
+                        HermesOption(value: 900, label: s.secTimeout15min),
                       ],
                       onChanged: (v) async {
-                        if (v == null) return;
                         await lock.setTimeoutSeconds(v);
+                        if (!mounted) return;
                         setState(() {});
                       },
                     ),
@@ -614,6 +612,7 @@ class _PinSetupScreenState extends State<_PinSetupScreen> {
       ),
       body: SafeArea(
         child: ListView(
+          clipBehavior: hermesUnderHeader,
           padding: const EdgeInsets.all(20),
           children: [
             Text(

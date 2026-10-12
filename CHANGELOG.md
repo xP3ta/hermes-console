@@ -3,6 +3,180 @@
 All notable public changes are documented here. Internal QA/profile artifacts
 are not releases.
 
+## 1.2.15 (9540) — 2026-10-12
+
+Console no longer needs the Mobile Bridge: it talks to Hermes' own Gateway and
+Dashboard, and a new first run is "scan a code and you are on Home". The rest
+of the release makes Console read like Hermes Desktop and feel calmer: the
+assistant's work is told inside the chat, voice lives in the composer, Home is
+a board of sized widgets, the dock is a plain tap bar, every profile has one
+identity everywhere, and notifications say what is happening in plain words.
+It also keeps the work of the earlier 1.2.15 builds: Bot Mode opens instantly,
+chats open right away and can be searched, and dictation no longer loses what
+you said.
+
+Needs Hermes' Gateway and Dashboard reachable from the phone. The current
+setup helper (one line per system, see the README) needs Console 1.2.15 or
+newer.
+
+### New
+
+**First run and connection**
+- *Scan and done.* The first launch opens with the Console mark drawing itself,
+  then one action, **Scan code**. The code is confirmed in plain words before
+  anything is saved, then checked with a ring that completes only as the real
+  checks do (the address, the chat key, the Dashboard sign-in). One sentence and
+  one action for each thing that can go wrong: a code that is not Console's, a
+  Hermes already saved, an address the phone cannot reach, a rejected key, a
+  read-only connection. The camera is asked for only on the scan screen, and
+  pasting the code is the way out when it is denied. The opening plays once per
+  process and a touch ends it; reduced motion and battery saver show the end
+  states.
+- *The setup helper's commands, in the app.* "I don't have a code" shows the numbered recipe
+  with the helper's line for the system you pick, ready to copy or send to the
+  computer. The app only shows the commands; it never runs anything there.
+- *A pairing link can carry the Dashboard sign-in*, so a single scan connects
+  both services.
+- *The connection screen in plain words.* One question per block (where is your
+  Hermes, access, options), advanced settings folded, one "Test connection" that
+  answers in a sentence with the technical detail behind "Details", and Save
+  below a list that fades out above it. Your Hermes is a list of connections,
+  with use, default, test and remove in each row's menu.
+- *Upgrading from a bridge-era install.* On the first launch after updating, the
+  app checks each connection's Dashboard once, deletes the bridge secrets it
+  kept, and tells you, once, if a connection still needs its Dashboard sign-in
+  and how to remove the bridge from the computer (one line). The migration saves
+  each step before the next, so an app killed halfway repeats at most one step.
+
+**Chat**
+- *The turn tells itself in the conversation, like Hermes Desktop.* While Hermes works you see one status line with a timer, its current thought, the tool in hand and the task list with its progress, at a readable size. When the turn ends it folds into one or two quiet lines ("Thought for 9s · 3 commands", "Tasks 4 of 5") that open on a tap. Older turns read the same way.
+- *Plain words for tools.* "Running command", "Edited file", "Searched web" instead of internal tool names, in every place that names a step. Every tool Hermes ships has a phrase in both languages.
+- *The island.* The top of a chat, a bot chat and a room is a small island with the profile's, bot's or room's name and a status dot, and the mascot standing still on top of it. It grows to one line with one action only when something needs saying (it needs you, a turn failed, the connection dropped, something happened in another chat) and shrinks back. A notice with a title, an action and a dismiss takes a second line instead of cutting its words. In-app notices appear there, so nothing sits over the composer any more.
+- *What a conversation has alive outside its turn* shares one card, and the island says how many things are alive and grows into it.
+- *In-conversation search* (magnifier icon, or `/find` and `/buscar`) that ignores case and accents, steps through matches and can look through older messages.
+- *Scrolling.* The jump-to-bottom button shows how many new messages there are, and when you come back to a chat a "New since you left" line marks where you stopped.
+- A reply is signed with the name the island shows, in its own colour, lifted to a readable contrast when that colour is nearly as dark as the page.
+- *Attachments and generated files:* images and files you sent show up again when you reopen a chat (they used to appear as text). Files created by tools (audio, images, documents) appear in the reply and in Artifacts.
+
+**Voice**
+- *The conversation happens inside the chat.* A thin status line above the composer says what is going on (listening, working, speaking, paused) with one action, and Pause, the contextual button and End live in the composer. You can keep typing. The dots of the End pill are a live meter of the microphone, as in Hermes Desktop.
+- *Settings cut down to what Hermes Desktop has.* The conversation mode (Normal or GPT-Live) follows the server's `voice.voice_chat_mode`. GPT-Live is always listed, with the reason when it is not available, a place to add its key, and a "Try" button. The reply voice is two clear choices (Hermes server or this phone), with pickers instead of fields to type model or voice names.
+- An OpenAI key for voice can be added from the app; it is stored on the server like any other key.
+- GPT-Live can keep going with the screen off when "Continue while the screen is locked" is on (issue #103).
+- *The on-device recogniser is ready when you tap.* If you talk to this phone, a chat on screen loads the recogniser ahead of time (only when the device has memory to spare, battery saver is off and the conversation runs on the phone), so the first start no longer waits seconds. While it loads, the line shows that it hears you, and what you say is kept for the recogniser.
+- *Warm-up:* with server voice on, Console lets Hermes get the voice ready in advance so the first spoken reply starts without dead air.
+
+**Home**
+- *A board of sized widgets that never scrolls.* Now, Chats, Bots, Rooms, Cron and Tasks, each in three sizes; a bigger size shows more of the same thing (a small Cron is the next run, a large one is every job in order, with failures visible). "Now" replaces "Up next": what needs you first, then what is running, else calm.
+- *Plan limits say whose they are.* Each usage block names the provider it belongs to, with its logo and the plan only when the provider reports one; the account in use comes first.
+- Edit mode shows how full the board is; when nothing more fits you shrink or remove a widget.
+- The profile switcher is a round button with the profile's face, and the title reads "CONSOLE" by default.
+
+**Profiles, bots and pets**
+- *One identity per profile, everywhere.* A profile's face is its pet, else its image, else its configured face, in Home, Bots, profile cards, the switcher, the island, rooms, widgets and notifications. A silhouette keeps the colour its owner chose.
+- *The app pet.* The floating pet is the app's own, separate from any profile's: choosing it changes nothing on the server. It floats on the screens the dock belongs to (not in chats, settings or forms), stands on the dock's edge or wherever you drop it, and is remembered per device. "Back to dock" is a free fall, like Hermes Desktop's pet. It also tells what waits elsewhere (approvals, questions, notices of other profiles) behind a badge. "Presence" in Pets is Off, Only in the chat, or Everywhere in the app.
+- Skills, Tools and MCP servers are one row each, in creating and editing a profile, and open one list with a switch per item, grouped as the server groups them, with search past twelve entries.
+- A bot's mascot can be picked from the Petdex catalogue, with search.
+
+**Models**
+- The fallback chain is edited like Desktop (add, change or remove one entry at a time) and is saved to the server.
+- *"Remove provider" really removes it:* its keys (all of them), its account, or, for a provider that is connected through another program on the server, it is taken out of the model lists in Console and Desktop. Removed providers can be brought back from "Unconfigured providers".
+
+**Notifications**
+- *A running turn has its own live row* (a Live Update with a status-bar chip on Android 16), with the current step in plain words, the task progress, a timer and Stop. On the lock screen it never names a chat or a tool.
+- Approvals and questions in ordinary chats can be answered from the notification (after unlocking), as bot chats already could.
+- A reply shows its first line and can be answered or marked as read; a failed turn alerts.
+- Scheduled jobs, tasks and goals arrive as plain rows that Android folds together, silent unless something failed, with "Mute" on the row.
+- The connection notification is one calm line ("Connected to Hermes") that keeps its Stop action.
+- Notification permission is asked for once there is a Hermes to hear from, never at launch and never while a connection screen is open.
+
+**Home-screen widgets**
+- A new family of launcher widgets: Now (with Allow / Deny), Quick chat, Cron, Bots, Rooms, Tasks and Chats. Each one resizes to show more of the same thing, up to eight rows. Widgets you had already placed turn into the new ones. Old data says since when instead of looking alive.
+
+### Changed
+
+- *Dock: a plain tap bar.* A tap goes where it says, in General and in Bot Mode (Home always opens Home). The dock can still be hidden by hand, and a visible handle above the system bar brings it back with one tap. The selected item is a filled icon in the accent colour, and a light glides behind the icons to the place you pick. It starts with Home, New chat, Chats, Bots and Tools; a dock you customised is kept. Creating something (a cron job, a task, a profile) is a "+" in the top bar, not a large button at the bottom.
+- *A floating, translucent look.* Every page has floating header pieces like the chat, in one tone for everything that floats, across all themes. The title is one line, the page's name, as tall as its buttons; lists scroll under the header and dissolve before the dock. Menus, dialogs, selects and the three-dots button use the app's one floating surface. The Tasks board scrolls under the header, each column a list of its own.
+- A bot chat runs its profile's model, from every way into it, and a plan being checked locks nothing. A profile's and a bot's model is chosen from a picker, never typed.
+- No face next to each reply in one-to-one chats; rooms keep the speaker's face.
+- The Profiles list is tidier, with "New profile" in the top bar.
+- The connection check no longer questions a healthy connection when the Gateway does not serve a plugin: Hermes serves plugins from the Dashboard, so an optional capability that is absent no longer counts in the verdict.
+- Voice settings no longer offer your own voice services (Kokoro, an OpenAI-compatible endpoint, ElevenLabs directly, a custom voice API, your own dictation server). Existing setups are moved to the matching server or phone voice so nothing stops working.
+- Task lists end with their turn: a finished list lingers a moment and leaves; an unfinished one no longer comes back on the next turn, after reopening the chat, or on Home.
+- Faster opening: Bot Mode opens instantly with what you last saw and refreshes in the background; a recent chat shows its conversation immediately while it refreshes.
+- Swiping a sheet or a notice closed is one motion that follows the finger; a short pull eases back instead of snapping.
+
+### Fixed
+
+**Chat**
+- A chat reopened under the id Hermes gave it (from a notification, a list or the pet) could refuse to send: the text came back into the composer with nothing on screen and nothing in the log. It sends what you typed now.
+- A send that does not go says so: Console records why a send was refused (a code, never text or ids) and tells you what to do.
+- A message could stay in the composer as a draft, never sent, after the same chat had been opened a second time. It is sent now.
+- A turn the gateway refuses after you left the screen settles instead of staying "working", and a turn the Dashboard refuses says so, with the sign-in that fixes it.
+- Sending a message and leaving right away no longer leaves a duplicate draft behind.
+- A queued message that was never confirmed can be retired with "Stop waiting", without resending it and without blocking the rest of the queue. Already-accepted messages no longer offer actions that do nothing, and Send now and Delete tell you when they fail.
+- New content no longer drags you to the end while you read further up, and the edge bounce is smooth.
+- `/skills` opens the Capabilities hub and `/model <name>` now always responds.
+- A reply dissolves behind the composer and its status pill, in chats and in rooms, instead of colliding with them.
+
+**Voice**
+- *More reliable dictation:* text is no longer dropped with engines that record first and transcribe after; speech said to the phone is no longer thrown away; backgrounding the app or leaving the chat keeps what you dictated; a double tap on the mic no longer starts two recordings. The dictation bars now follow your voice, also when you speak to a phone.
+- The recogniser stays loaded between starts and says when it is not ready; one released while it loads frees its model; a speaker without echo cancellation is no longer reported as an error.
+- *Automatic language (issue #65):* choosing "Automatic" for server dictation no longer causes errors with some providers, and settings saved by the previous version are repaired when you open dictation settings and save. Thanks to the user who reported it.
+- *Read aloud:* keeps working after choosing the Hermes server voice, with no need to restart the app.
+- *Real server errors:* when the server rejects a voice request you now see its reason instead of a generic message, and the voice card no longer says "ready" after a failed test.
+
+**Bot Mode and rooms**
+- Rooms load in parallel and only fetch what is new. Each room's status strip shows who is replying (with a timer) and who is next. In the conversation, the turn's status line appears right where the answer will land.
+- "Needs you" only shows while something actually still needs you: opening a room clears mentions and failures you have already seen. Approvals keep asking until you answer them.
+- Failure cards can always be dismissed, and Retry only appears when it can really be done.
+- Reading older messages no longer moves the conversation; an "N new" button takes you back to the bottom.
+- Sending in a long room is much faster, and an action in one room no longer wipes the state of the others.
+- Each bot's notifications wear its own colour, the live card shows the state as clear text, and muting a room withdraws its live card.
+- Approval buttons work again after answering, and read-only connections can change a room's notification level.
+- Changing a bot's model no longer freezes its card.
+
+**Launcher widgets**
+- An update replaces what the launcher already shows instead of adding to it; a narrow card's answers always fit; a board's one sentence wraps and can say what to do; the Chats, Cron and Tasks widgets stay current with the lists Home already reads.
+- The one widget that can carry an answer stays off the lock screen.
+
+**Connection and stability**
+- A turn recovered after a dropout no longer stays on "reconnecting" and "working" forever: it settles on its own, without duplicate bubbles, and the chat reconnects.
+- Status no longer says "connected" or "agent online" when the Dashboard password or API key is rejected; it now says so in amber.
+- The chat side menu reflects whether you are really connected.
+- Restarting the gateway only confirms the restart once it is actually back.
+- Switching instance takes you back to the start, so every tool points at the new one.
+- Removing SSH access also closes any open terminal session.
+- Tapping a notification while the app is open takes you to its content: chat approvals and results open their conversation, and room or bot notifications open once, without stacking a second copy of the screen.
+- A hidden dock that could not be recovered on phones with gesture navigation is fixed.
+
+**Everything else**
+- Many texts that were stuck in Spanish or English now follow the app language: session titles, instance states, SSH and SFTP errors, gateway diagnostics, activity logs and voice notices.
+- Screens under the floating dock no longer hide their last rows.
+- Chats archived or hidden on the device also disappear from Home and the side menu.
+- Cron explains the "All profiles" view instead of calling the instance read-only.
+- The SOUL screen no longer claims it cannot be edited when it can.
+- The status panel hides the repair button after a successful repair.
+- In rooms, @mentions are only links when they lead somewhere, and bot names are consistent across the room.
+- "Edit models" opens with every provider closed and hides individual models only.
+
+### Removed
+
+- *The Mobile Bridge, for new installs.* Console no longer installs, updates or talks to it; nothing is sent to `/bridge/*`. Everything it carried (skills, SOUL, memory, cron, Dashboard access) goes through the Gateway and Dashboard of Hermes itself. Existing bridge installs keep running on the computer until you remove them with the helper's one-line cleanup.
+- The copies of the setup scripts in the app's repository (`scripts/hermes-*`): the setup helper has its own repository and the app only shows its commands.
+- Support for running Hermes on the phone itself: its setup flow, its extra permission and its notices. Console connects to a Hermes that runs on a computer or server.
+- The gesture dock with its coach, the swipe gestures and the automatic hiding, and the first-run welcome and four-page intro that came with them.
+- Hiding a whole provider as a separate step (removing it is enough).
+- The pet of Home, its walk, the "show on Home" and "moving pet" switches, and the old Mascot settings page.
+
+### Known limits
+
+- With the app closed, launcher widgets and the live notification show less detail and say since when their data is; background refresh needs "Listen in background" on.
+- A question from Hermes can be answered from its notification, but a launcher widget only opens it.
+- Pausing a GPT-Live session while Hermes works is not in this release.
+- Attachments whose files no longer exist on the server show as "Not available"; files attached by a relative path are listed but not downloaded.
+- Search inside a chat covers the loaded conversation and can page older messages; it does not search other chats.
+
 ## 1.2.14 (9420) — 2026-09-27
 
 Reconnection and reliability fixes, a redesigned Bot Mode, one shared design

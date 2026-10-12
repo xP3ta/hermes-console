@@ -1,5 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/bots/state/bot_presence.dart';
 import 'package:hermes_android/core/bots/ui/room/room_models.dart';
+import 'package:hermes_android/core/models/hosted_groups.dart';
 
 import 'room_fixtures.dart';
 
@@ -88,27 +90,81 @@ void main() {
       expect(round.round, 2);
     });
 
-    test('later discussions in a thread fold into a reply summary', () {
+    test('my own sends are not new: the divider starts at the first reply', () {
       final seq = EventSeq();
-      final root = seq.user('root');
-      final disc = root['event_id'] as String;
-      final reply = seq.member('m-builder', 'builder', 'answer', disc);
-      final followUp = seq.user('follow up', thread: 'thread-1');
-      final followDisc = followUp['event_id'] as String;
+      final old = seq.user('seen before', atSeconds: 1790000100.0);
+      final oldDisc = old['event_id'] as String;
+      final oldReply = seq.member('m-builder', 'builder', 'old reply', oldDisc);
+      final mine = seq.user('sent from this phone', thread: 'thread-2');
+      final disc = mine['event_id'] as String;
+      final fresh = seq.member(
+        'm-lead',
+        'lead',
+        'fresh reply',
+        disc,
+        thread: 'thread-2',
+      );
+      final events = buildLog([old, oldReply, mine, fresh]).events;
+      final seen = events[1].sequence;
+      final entries = buildRoomTranscript(
+        events: events,
+        members: buildRoom().members,
+        lastSeenSeq: seen,
+      );
+      final divider = entries.indexWhere((e) => e is RoomNewSinceDivider);
+      expect(divider, isNonNegative);
+      final next = entries
+          .skip(divider + 1)
+          .whereType<RoomMessageEntry>()
+          .first;
+      expect(next.event.publicText, 'fresh reply');
+    });
+
+    test('no divider when only my own sends are after the marker', () {
+      final seq = EventSeq();
+      final old = seq.user('seen before', atSeconds: 1790000100.0);
       final events = buildLog([
-        root,
-        reply,
-        followUp,
-        seq.member('m-lead', 'lead', 'in thread', followDisc),
+        old,
+        seq.user('just sent', thread: 'thread-2'),
       ]).events;
       final entries = buildRoomTranscript(
         events: events,
         members: buildRoom().members,
+        lastSeenSeq: events.first.sequence,
+      );
+      expect(entries.whereType<RoomNewSinceDivider>(), isEmpty);
+    });
+
+    test('a reply in an existing thread and its answers stay in the '
+        'timeline, in log order', () {
+      final seq = EventSeq();
+      final root = seq.user('root');
+      final disc = root['event_id'] as String;
+      final reply = seq.member('m-builder', 'builder', 'answer', disc);
+      final followUp = seq.user('@builder follow up', thread: 'thread-1');
+      final followDisc = followUp['event_id'] as String;
+      final answer = seq.member(
+        'm-builder',
+        'builder',
+        'in thread',
+        followDisc,
+      );
+      final events = buildLog([root, reply, followUp, answer]).events;
+      final entries = buildRoomTranscript(
+        events: events,
+        members: buildRoom().members,
       ).whereType<RoomMessageEntry>().toList();
-      expect(entries, hasLength(2));
-      final summary = entries.last.thread!;
-      expect(summary.replies, 2);
-      expect(summary.lastActor?.id, 'm-lead');
+      expect(entries.map((e) => e.event.eventId), [
+        root['event_id'],
+        reply['event_id'],
+        followUp['event_id'],
+        answer['event_id'],
+      ]);
+      expect(entries.every((e) => e.thread == null), isTrue);
+      // The answer says what it answers: the owner's follow-up.
+      expect(entries.last.quote?.eventId, followDisc);
+      expect(entries.last.quote?.speaker, isNull);
+      expect(entries.last.quote?.preview, '@builder follow up');
     });
 
     test('passes collapse into one line per discussion (no inline passes)', () {
@@ -170,6 +226,45 @@ void main() {
       );
     });
 
+    test('without driver status a turn is working only while its latest '
+        'activity is within the roster worker freshness', () {
+      final seq = EventSeq();
+      final u = seq.user('@builder go');
+      final disc = u['event_id'] as String;
+      final started = seq.started('m-builder', disc);
+      final startedAt = started['created_at'] as double;
+      final events = buildLog([u, started]).events;
+      final members = buildRoom().members;
+      DateTime at(double seconds) =>
+          DateTime.fromMillisecondsSinceEpoch((seconds * 1000).round());
+      RoomTurnState stateAt(List<HostedGroupEvent> events, DateTime now) =>
+          deriveRoomRound(
+            events: events,
+            members: members,
+            now: now,
+          )!.rows.single.state;
+      final window = BotPresence.workerFreshness.inSeconds;
+
+      expect(stateAt(events, at(startedAt + window)), RoomTurnState.working);
+      expect(
+        stateAt(events, at(startedAt + window + 1)),
+        RoomTurnState.noReply,
+      );
+      // Freshness counts from the latest activity of that member's turn.
+      final later = seq.member(
+        'm-builder',
+        'builder',
+        'partial',
+        disc,
+        atSeconds: startedAt + window,
+      );
+      final withActivity = buildLog([u, started, later]).events;
+      expect(
+        stateAt(withActivity, at(startedAt + window + 60)),
+        RoomTurnState.working,
+      );
+    });
+
     test('failed turn offers retry only when the server lists the task', () {
       final seq = EventSeq();
       final u = seq.user('@radar check');
@@ -197,6 +292,105 @@ void main() {
         ),
       )!;
       expect(withRetry.rows.single.retryOffered, isTrue);
+    });
+  });
+
+  group('rp1215 reply quote from the server round trigger', () {
+    List<RoomMessageEntry> entriesOf(List<Map<String, dynamic>> raw) =>
+        buildRoomTranscript(
+          events: buildLog(raw).events,
+          members: buildRoom().members,
+        ).whereType<RoomMessageEntry>().toList();
+
+    test('a member reply quotes the message.user named by '
+        'discussion_event_id, as one plain line', () {
+      final seq = EventSeq();
+      final u = seq.user('**Mira** por ejemplo\nlas fotos de ayer');
+      final disc = u['event_id'] as String;
+      final reply = seq.member('m-builder', 'builder', 'Vistas.', disc);
+      final entries = entriesOf([u, reply]);
+      final quote = entries[1].quote;
+      expect(quote, isNotNull);
+      expect(quote!.eventId, disc);
+      expect(quote.preview, 'Mira por ejemplo las fotos de ayer');
+      expect(entries[0].quote, isNull, reason: 'the owner bubble quotes none');
+    });
+
+    test('replies to an earlier message quote it, not the newest one', () {
+      final seq = EventSeq();
+      final first = seq.user('Mira las fotos', thread: 't1');
+      final second = seq.user('Y el vídeo', thread: 't2');
+      final firstDisc = first['event_id'] as String;
+      final secondDisc = second['event_id'] as String;
+      final late = seq.member(
+        'm-builder',
+        'builder',
+        'Fotos vistas',
+        firstDisc,
+        thread: 't1',
+      );
+      final other = seq.member(
+        'm-review',
+        'review',
+        'Vídeo visto',
+        secondDisc,
+        thread: 't2',
+      );
+      final entries = entriesOf([first, second, late, other]);
+      expect(entries[2].quote?.eventId, firstDisc);
+      expect(entries[2].quote?.preview, 'Mira las fotos');
+      expect(entries[3].quote?.eventId, secondDisc);
+    });
+
+    test('every reply of the round quotes the same trigger, once per run', () {
+      final seq = EventSeq();
+      final u = seq.user('Revisad esto');
+      final disc = u['event_id'] as String;
+      final a = seq.member('m-builder', 'builder', 'uno', disc);
+      final b = seq.member('m-builder', 'builder', 'dos', disc);
+      final c = seq.member('m-review', 'review', 'tres', disc);
+      final d = seq.member('m-review', 'review', 'cuatro', disc, round: 1);
+      final entries = entriesOf([u, a, b, c, d]);
+      expect(entries.map((e) => e.quote?.eventId), [
+        null,
+        disc,
+        null, // same speaker, same discussion: the run already says it
+        disc,
+        disc, // a new round divider starts a new run
+      ]);
+    });
+
+    test('no quote when the trigger is not in the log or unknown', () {
+      final seq = EventSeq();
+      final reply = seq.member('m-builder', 'builder', 'hola', 'user:gone');
+      expect(entriesOf([reply]).single.quote, isNull);
+    });
+
+    test('never falls back to another owner message of the log', () {
+      final seq = EventSeq();
+      final u = seq.user('hola');
+      final reply = seq.member(
+        'm-builder',
+        'builder',
+        'Buenas.',
+        'user:gone',
+        thread: 't-gone',
+      );
+      final entries = entriesOf([u, reply]);
+      expect(entries, hasLength(2), reason: 'precondition: both rows');
+      expect(entries.map((e) => e.quote), [null, null]);
+    });
+
+    test('an attachment-only message quotes its file names', () {
+      final seq = EventSeq();
+      final u = seq.user(
+        appendRoomAttachmentSuffix('', const [
+          RoomAttachmentRef(name: 'shot.png', path: '/home/h/uploads/1.png'),
+        ]),
+      );
+      final disc = u['event_id'] as String;
+      final reply = seq.member('m-builder', 'builder', 'ok', disc);
+      expect(entriesOf([u, reply])[1].quote?.preview, 'shot.png');
     });
   });
 }

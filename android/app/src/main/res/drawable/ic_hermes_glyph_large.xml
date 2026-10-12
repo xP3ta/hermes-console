@@ -1,16 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Neutral Hermes avatar for notifications without a Bot owner (cron,
-     kanban, summaries): the monochrome ">_" glyph on a dark disc, instead of
-     the launcher portrait. -->
+<!-- Neutral Console avatar for notifications without a Bot owner (cron,
+     kanban, summaries): the terracotta Console mark on a graphite disc,
+     matching the launcher icon. -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
     <item>
         <shape android:shape="oval">
-            <solid android:color="#FF1A191D" />
+            <solid android:color="#FF26262A" />
         </shape>
     </item>
     <item
         android:bottom="14dp"
-        android:drawable="@drawable/ic_stat_hermes"
+        android:drawable="@drawable/ic_console_mark"
         android:left="14dp"
         android:right="14dp"
         android:top="14dp" />

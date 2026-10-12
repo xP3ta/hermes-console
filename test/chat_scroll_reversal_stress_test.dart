@@ -9,12 +9,12 @@ import 'package:http/testing.dart';
 import 'package:markdown/markdown.dart' as md;
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:hermes_android/core/widgets/chat/chat_notch.dart';
 import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
 import 'package:hermes_android/core/screens/chat_screen.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/app_lock.dart';
 import 'package:hermes_android/core/services/approval_policy.dart';
-import 'package:hermes_android/core/services/bridge_manager.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/font_size_service.dart';
 import 'package:hermes_android/core/services/notifications/notification_service.dart';
@@ -191,6 +191,47 @@ List<Map<String, dynamic>> _heavyHistory() {
   return messages;
 }
 
+/// One answer shaped like the QA chat where the scroll stopped following the
+/// finger: numbered blocks of prose, a code block, a table, lists and a quote
+/// (synthetic text).
+List<Map<String, dynamic>> _mixedAnswerHistory() {
+  final blocks = <String>[];
+  for (var i = 1; i <= 10; i++) {
+    blocks.add(
+      '**Bloque $i.** Un párrafo de prueba con texto suficiente para ocupar '
+      'varias líneas en un teléfono y comprobar que el desplazamiento sigue al '
+      'dedo en todo momento, también al cruzar contenido de altura variable.',
+    );
+    if (i == 3) {
+      blocks.add(
+        '- Anclar al final\n- Subir manualmente\n- Botón para bajar\n'
+        '- Sin saltos al terminar\n- Posición conservada',
+      );
+    }
+    if (i == 4) {
+      blocks.add(
+        '```python\ndef fib(n):\n    a, b = 0, 1\n    for _ in range(n):\n'
+        '        yield a\n        a, b = b, a + b\n\nprint(list(fib(20)))\n```',
+      );
+    }
+    if (i == 5) {
+      blocks.add(
+        '| Caso | Esperado |\n|---|---|\n'
+        '| Al final | Sigue el final |\n| Tras subir | No se mueve |\n'
+        '| Mensaje nuevo | Baja al final |\n| Redimensionar | Mantiene |',
+      );
+    }
+    if (i == 8) blocks.add('> Medir primero, optimizar después.');
+    if (i == 9) {
+      blocks.add('1. Abre un chat\n2. Envía\n3. Sube\n4. Comprueba\n5. Baja');
+    }
+  }
+  return [
+    {'role': 'assistant', 'content': blocks.join('\n\n')},
+    {'role': 'user', 'content': 'Vamos a probar el scroll, di algo largo.'},
+  ];
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   final secureStore = <String, String>{};
@@ -263,7 +304,7 @@ void main() {
         appLock: AppLockService(prefs),
         approvalPolicy: ApprovalPolicyService(prefs),
         fontSize: FontSizeService(prefs),
-        bridgeManager: BridgeManager(secureStorage, connectionManager),
+
         sshManager: SshManager(secureStorage, connectionManager),
         sftpTransfers: SftpTransferService(
           SshManager(secureStorage, connectionManager),
@@ -395,21 +436,28 @@ void main() {
       reason: 'el scroll nativo no alcanzó la cabecera virtualizada',
     );
     expect(find.byIcon(Icons.keyboard_arrow_down), findsOneWidget);
+    // QA 9493: the single jump sits at the row's end, clear of the centred
+    // notch (it used to be centred).
     expect(
       tester.getCenter(find.byIcon(Icons.keyboard_arrow_down)).dx,
-      closeTo(tester.getRect(guardedList).center.dx, 1),
-      reason: 'el único salto debe quedar centrado como en Desktop',
+      greaterThan(tester.getRect(guardedList).center.dx + 60),
+      reason: 'el único salto queda al final de la fila, libre de la muesca',
     );
     final jumpRect = tester.getRect(find.byIcon(Icons.keyboard_arrow_down));
-    final viewportRect = tester.getRect(guardedList);
+    // The transcript runs under the floating bottom group: the composer's
+    // top edge is the group's top.
+    final composerEdge = tester
+        .getRect(find.byKey(const ValueKey('chat-bottom-bars')))
+        .top;
     expect(
       jumpRect.bottom,
-      lessThanOrEqualTo(viewportRect.bottom),
+      lessThanOrEqualTo(composerEdge),
       reason: 'el salto debe fundirse dentro del borde inferior del chat',
     );
+    // The notch tab on the composer's edge sits under the jump.
     expect(
       jumpRect.top,
-      greaterThan(viewportRect.bottom - 56),
+      greaterThan(composerEdge - 56 - kChatNotchHeight),
       reason: 'el salto no debe abrir una franja separada sobre el compositor',
     );
     for (var burst = 0; burst < 12; burst++) {
@@ -500,10 +548,19 @@ void main() {
       closeTo(positionBeforeFreeze.minScrollExtent, 0.01),
     );
 
+    final extentBeforeHeldDelta = positionBeforeFreeze.maxScrollExtent;
     gateway.emit('message.delta', {
       'text': 'El primer delta después del contacto no debe reenganchar. ',
     });
     await tester.pump(const Duration(milliseconds: 20));
+    // The answer must really grow under the resting finger: this is what
+    // moves the held viewport off the bottom. Without it the release below
+    // would be checked against an unchanged list.
+    expect(
+      positionBeforeFreeze.maxScrollExtent,
+      greaterThan(extentBeforeHeldDelta),
+      reason: 'la respuesta debe crecer bajo el dedo antes de soltar',
+    );
     expect(
       find.byKey(const ValueKey('scroll-to-bottom-hidden')),
       findsOneWidget,
@@ -561,6 +618,20 @@ void main() {
       contentAfterReversals.length,
       greaterThan(contentBeforeReversals.length),
     );
+    // A history paragraph fully on screen: the reader's place.
+    final viewport = tester.getRect(find.byType(ChatScrollInteractionGuard));
+    final readerLine = find
+        .textContaining('histórica', findRichText: true)
+        .evaluate()
+        .firstWhere((element) {
+          final rect = tester.getRect(
+            find.byElementPredicate((e) => e == element),
+          );
+          return rect.top > viewport.top && rect.bottom < viewport.bottom;
+        });
+    final readerFinder = find.byElementPredicate((e) => e == readerLine);
+    final readerTopAfterReversals = tester.getTopLeft(readerFinder).dy;
+    final extentAfterReversals = position.maxScrollExtent;
 
     for (var delta = 0; delta < 5; delta++) {
       gateway.emit('message.delta', {
@@ -573,10 +644,19 @@ void main() {
       chat.assistantContent.length,
       greaterThan(contentAfterReversals.length),
     );
+    // The answer really grew below the reader; in this reversed list the
+    // offset grows with it to keep the history still, so the reader's place
+    // is checked on screen, not by the raw offset.
+    expect(position.maxScrollExtent, greaterThan(extentAfterReversals));
     expect(
       position.pixels,
-      closeTo(offsetAfterReversals, 1),
+      greaterThanOrEqualTo(offsetAfterReversals - 1),
       reason: 'los deltas posteriores movieron el historial al fondo',
+    );
+    expect(
+      tester.getTopLeft(readerFinder).dy,
+      closeTo(readerTopAfterReversals, 1),
+      reason: 'los deltas posteriores movieron el texto bajo el lector',
     );
     expect(find.byIcon(Icons.keyboard_arrow_down), findsOneWidget);
     expect(tester.takeException(), isNull);
@@ -588,6 +668,231 @@ void main() {
       await tester.pump(const Duration(milliseconds: 16));
     }
     expect(chat.isStreaming, isFalse);
+    await gateway.close();
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(milliseconds: 20));
+  });
+
+  testWidgets('soltar en el fondo sin moverse reengancha aunque la respuesta '
+      'haya crecido bajo el dedo; tocar leyendo el historial no baja', (
+    tester,
+  ) async {
+    final gateway = _StreamingGateway();
+    final chat = await pumpChat(tester, gateway);
+    final scrollableFinder = find.descendant(
+      of: find.byType(ChatScrollInteractionGuard),
+      matching: find.byType(Scrollable),
+    );
+    await chat.send(
+      fullText: 'Genera una respuesta larga.',
+      model: 'hermes-agent',
+      history: chat.buildHistory(),
+    );
+    gateway.emit('message.start');
+    gateway.emit('message.delta', {'text': 'Comienzo. '});
+    await tester.pump(const Duration(milliseconds: 20));
+    final position = _primaryVerticalScrollPosition(tester, scrollableFinder);
+    final center = tester
+        .getRect(find.byType(ChatScrollInteractionGuard))
+        .center;
+
+    // At the bottom: the finger rests while a long chunk arrives.
+    expect(position.pixels, closeTo(position.minScrollExtent, 0.01));
+    final rest = await tester.startGesture(center);
+    await tester.pump();
+    final extentBefore = position.maxScrollExtent;
+    gateway.emit('message.delta', {
+      'text': 'Un fragmento largo que llega con el dedo apoyado. ' * 12,
+    });
+    await tester.pump(const Duration(milliseconds: 20));
+    expect(position.maxScrollExtent, greaterThan(extentBefore));
+    await rest.up();
+    await tester.pump();
+    gateway.emit('message.delta', {'text': 'y el seguimiento continúa. '});
+    await tester.pump(const Duration(milliseconds: 160));
+    expect(
+      position.pixels,
+      closeTo(position.minScrollExtent, 1),
+      reason: 'un toque quieto en el fondo no es leer el historial',
+    );
+    expect(find.byKey(const ValueKey('scroll-to-bottom-hidden')), findsOne);
+
+    // Reading history: a still tap must leave the reader where they are.
+    position.jumpTo(240);
+    await tester.pump(const Duration(milliseconds: 16));
+    final tap = await tester.startGesture(center);
+    await tester.pump();
+    gateway.emit('message.delta', {'text': 'más texto mientras se lee. '});
+    await tester.pump(const Duration(milliseconds: 20));
+    await tap.up();
+    await tester.pump(const Duration(milliseconds: 40));
+    final readerOffset = position.pixels;
+    expect(readerOffset, greaterThan(200));
+    gateway.emit('message.delta', {'text': 'y otro fragmento. '});
+    await tester.pump(const Duration(milliseconds: 160));
+    expect(
+      position.pixels,
+      greaterThanOrEqualTo(readerOffset - 1),
+      reason: 'tocar mientras se lee no devuelve al fondo',
+    );
+    expect(find.byIcon(Icons.keyboard_arrow_down), findsOneWidget);
+
+    gateway.emit('message.complete', {'text': chat.assistantContent});
+    for (var frame = 0; frame < 200 && chat.isStreaming; frame++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    await gateway.close();
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(milliseconds: 20));
+  });
+  // Guard (passes before the fix too): with one long answer mixing prose, a
+  // table and a code block, every swipe that does not hit an edge moves the
+  // transcript in the swipe's direction by most of its length. The QA report
+  // that inspired it (swipes not following the finger) is reproduced by the
+  // earlier-page test below, not by this one.
+  testWidgets('cada deslizamiento mueve el chat en su sentido', (tester) async {
+    tester.view.physicalSize = const Size(960, 2142);
+    tester.view.devicePixelRatio = 2.625;
+    addTearDown(tester.view.reset);
+    final gateway = _StreamingGateway();
+    await pumpChat(tester, gateway, history: _mixedAnswerHistory());
+    for (var i = 0; i < 30; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    final guardedList = find.descendant(
+      of: find.byType(ChatScrollInteractionGuard),
+      matching: find.byType(ListView),
+    );
+    final position = _primaryVerticalScrollPosition(
+      tester,
+      find.descendant(of: guardedList, matching: find.byType(Scrollable)),
+    );
+    expect(position.maxScrollExtent, greaterThan(800));
+    final report = <String>[];
+    Future<void> swipe(double dy) async {
+      final before = position.pixels;
+      await tester.drag(guardedList, Offset(0, dy));
+      for (var i = 0; i < 40; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      final moved = position.pixels - before;
+      report.add('${dy > 0 ? 'older' : 'newer'} ${moved.round()}');
+      final atEdge =
+          (dy > 0 && position.pixels >= position.maxScrollExtent - 1) ||
+          (dy < 0 && position.pixels <= position.minScrollExtent + 1);
+      if (atEdge) return;
+      // reverse:true: dragging the finger down shows older rows (pixels up).
+      expect(
+        moved.sign,
+        dy.sign,
+        reason: 'el chat se movió al revés del dedo: $report',
+      );
+      expect(
+        moved.abs(),
+        greaterThan(dy.abs() * 0.6),
+        reason: 'el chat no siguió al dedo: $report',
+      );
+    }
+
+    for (var i = 0; i < 6; i++) {
+      await swipe(170);
+    }
+    for (var i = 0; i < 8; i++) {
+      await swipe(-170);
+    }
+    // ignore: avoid_print
+    print('swipes: $report');
+    expect(tester.takeException(), isNull);
+    await gateway.close();
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(milliseconds: 20));
+  });
+  // QA (Pixel, real chat, scroll trace): near the oldest loaded row a swipe
+  // asks for the earlier page, and when that load ended the screen "restored"
+  // the offset with a jump. The jump cancelled the finger's drag (and any
+  // fling), so the chat stopped following mid-swipe.
+  testWidgets('cargar mensajes anteriores no corta el dedo ni el impulso', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(960, 2142);
+    tester.view.devicePixelRatio = 2.625;
+    addTearDown(tester.view.reset);
+    final gateway = _StreamingGateway();
+    final chat = await pumpChat(
+      tester,
+      gateway,
+      history: _mixedAnswerHistory(),
+    );
+    chat.earlierMessagesAvailableForTesting = true;
+    for (var i = 0; i < 30; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    final guardedList = find.descendant(
+      of: find.byType(ChatScrollInteractionGuard),
+      matching: find.byType(ListView),
+    );
+    final position = _primaryVerticalScrollPosition(
+      tester,
+      find.descendant(of: guardedList, matching: find.byType(Scrollable)),
+    );
+    expect(position.maxScrollExtent, greaterThan(1200));
+    position.jumpTo(position.maxScrollExtent - 40);
+    for (var i = 0; i < 10; i++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+
+    // Drag: towards older rows and past the oldest one (this asks for the
+    // earlier page), then back towards newer ones while the finger stays
+    // down. On the Pixel the page landed while the finger pulled past the
+    // edge, and the "restore" jump cancelled the drag.
+    final center = tester.getCenter(guardedList);
+    final gesture = await tester.startGesture(center);
+    for (var i = 0; i < 4; i++) {
+      await gesture.moveBy(const Offset(0, 40));
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    // The finger keeps moving on every frame while that page lands.
+    final beforeNewer = position.pixels;
+    for (var i = 0; i < 12; i++) {
+      await gesture.moveBy(const Offset(0, -30));
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    final dragged = beforeNewer - position.pixels;
+    await gesture.up();
+    for (var i = 0; i < 60; i++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    expect(
+      dragged,
+      greaterThan(250),
+      reason: 'el chat dejó de seguir al dedo tras pedir los anteriores',
+    );
+
+    // Fling towards older rows from the same zone: the load it triggers must
+    // not stop the momentum.
+    chat.earlierMessagesAvailableForTesting = true;
+    position.jumpTo(position.maxScrollExtent - 1200);
+    for (var i = 0; i < 10; i++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    final beforeFling = position.pixels;
+    await tester.fling(guardedList, const Offset(0, 120), 1500);
+    for (var i = 0; i < 4; i++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    final early = position.pixels - beforeFling;
+    for (var i = 0; i < 40; i++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    final late = position.pixels - beforeFling;
+    // ignore: avoid_print
+    print('earlier-load drag=$dragged fling early=$early late=$late');
+    expect(
+      late,
+      greaterThan(early + 100),
+      reason: 'el impulso se cortó al cargar los mensajes anteriores',
+    );
+    expect(tester.takeException(), isNull);
     await gateway.close();
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump(const Duration(milliseconds: 20));

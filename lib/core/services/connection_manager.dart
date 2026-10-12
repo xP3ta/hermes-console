@@ -1,4 +1,5 @@
 import 'bot_mention_roster.dart';
+import 'bot_roster_store.dart';
 // ignore_for_file: prefer_initializing_formals
 
 import 'dart:async';
@@ -9,12 +10,15 @@ import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'origin_bound_http_client.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
+import 'mobile_oauth.dart';
 import '../models/agent_profile.dart';
 import '../models/capability_matrix.dart';
 import '../models/connection.dart';
+import '../models/cron_job.dart';
 import '../models/core_read.dart';
 import '../services/sse_frame_buffer.dart';
 import '../utils/transport_privacy.dart';
@@ -25,10 +29,10 @@ import '../models/model_provider.dart';
 import '../models/moa_config.dart';
 import '../models/session.dart';
 import 'chat_draft_store.dart';
-import 'bridge_client.dart';
 import 'local_transcript_store.dart';
 import 'mission_bot_chat_store.dart';
 import 'secure_storage.dart';
+import 'server_restart_signal.dart';
 import 'turn_outbox_store.dart';
 import '../utils/byte_bounded_lru_cache.dart';
 
@@ -41,10 +45,6 @@ export '../models/model_info.dart';
 export '../models/model_provider.dart';
 export '../models/session.dart';
 
-typedef BridgeClientFactory =
-    BridgeClient Function({required String baseUrl, required String token});
-typedef BridgeProvisioner =
-    Future<String?> Function(String baseUrl, String gatewayKey);
 typedef DashboardClientFactory =
     DashboardClient Function(SavedConnection connection);
 typedef ClearCancelledTurnsForConnection = Future<int> Function(String id);
@@ -104,8 +104,6 @@ class ConnectionManager {
 
   final SharedPreferences prefs;
   final SecureStorage _secure;
-  final BridgeClientFactory _bridgeClientFactory;
-  final BridgeProvisioner _bridgeProvisioner;
   final DashboardClientFactory _dashboardClientFactory;
   final ClearCancelledTurnsForConnection? _clearCancelledTurns;
   // In-memory cache populated by [_loadApiKeys]. Keeps getConnections() sync.
@@ -158,16 +156,9 @@ class ConnectionManager {
   ConnectionManager._(
     this.prefs,
     this._secure, {
-    BridgeClientFactory? bridgeClientFactory,
-    BridgeProvisioner? bridgeProvisioner,
     DashboardClientFactory? dashboardClientFactory,
     ClearCancelledTurnsForConnection? clearCancelledTurns,
-  }) : _bridgeClientFactory =
-           bridgeClientFactory ??
-           (({required baseUrl, required token}) =>
-               BridgeClient(baseUrl: baseUrl, token: token)),
-       _bridgeProvisioner = bridgeProvisioner ?? BridgeClient.provision,
-       _dashboardClientFactory = dashboardClientFactory ?? DashboardClient.lazy,
+  }) : _dashboardClientFactory = dashboardClientFactory ?? DashboardClient.lazy,
        _clearCancelledTurns = clearCancelledTurns;
 
   static String _activeProfileKey(String connId) => 'active_profile_$connId';
@@ -292,140 +283,23 @@ class ConnectionManager {
     activeProfile.value = normalized.isEmpty ? null : normalized;
   }
 
-  /// Detiene una tarea programada usando primero el Mobile Bridge (comando
-  /// oficial de Hermes) y conservando el Dashboard como fallback para
-  /// servidores antiguos. Nunca rota ni reconfigura credenciales.
+  /// Deletes the cron job linked to a session through the Dashboard
+  /// (`DELETE /api/cron/jobs/{id}?profile=`), the same route Desktop uses
+  /// (`apps/desktop/src/api/cron.ts`). The Mobile Bridge is no longer
+  /// consulted. Never rotates or reconfigures credentials.
   Future<void> deleteLinkedCronJob(
     SavedConnection connection,
     String jobId, {
     String? profile,
   }) async {
-    // Debe ocurrir antes de leer secretos, provisionar o construir clientes.
+    // Validate before building any client.
     final id = validateCronJobId(jobId);
     final scopedProfile = validateCronProfile(profile);
-    Future<void> deleteWithDashboard() async {
-      final dashboard = _dashboardClientFactory(connection);
-      try {
-        await dashboard.deleteCronJob(id, profile: scopedProfile);
-      } finally {
-        dashboard.close();
-      }
-    }
-
-    Object? bridgeError;
-    Object? dashboardFirstError;
-    BridgeClient? bridge;
-    var bridgeUrl = connection.derivedBridgeUrl;
-    String? bridgeToken;
+    final dashboard = _dashboardClientFactory(connection);
     try {
-      final storedBridgeUrl = await _secure.readBridge(connection.id, 'url');
-      if (storedBridgeUrl != null && storedBridgeUrl.trim().isNotEmpty) {
-        bridgeUrl = storedBridgeUrl.trim();
-      }
-      bridgeToken = await _secure.readBridge(connection.id, 'token');
-    } catch (error) {
-      bridgeError = error;
-    }
-
-    final hadStoredBridgeToken = bridgeToken?.isNotEmpty == true;
-    if (!hadStoredBridgeToken) {
-      // Sin una instalación Bridge ya autenticada, el Dashboard es la ruta
-      // normal y disponible en todas las instancias. Probarlo primero evita
-      // esperar el timeout de provisión contra hosts (p. ej. workers.dev) que
-      // nunca pueden publicar el puerto 9131.
-      try {
-        await deleteWithDashboard();
-        return;
-      } on ArgumentError {
-        rethrow;
-      } on CronDeleteRejectedException {
-        rethrow;
-      } catch (error) {
-        dashboardFirstError = error;
-      }
-
-      if (connection.apiKey.trim().isNotEmpty) {
-        try {
-          bridgeToken = await _bridgeProvisioner(
-            bridgeUrl,
-            connection.apiKey.trim(),
-          );
-          if (bridgeToken != null && bridgeToken.isNotEmpty) {
-            await _secure.writeBridge(connection.id, 'token', bridgeToken);
-          }
-        } on ArgumentError {
-          rethrow;
-        } catch (error) {
-          bridgeError = error;
-        }
-      }
-    }
-
-    try {
-      if (bridgeToken != null && bridgeToken.isNotEmpty) {
-        bridge = _bridgeClientFactory(baseUrl: bridgeUrl, token: bridgeToken);
-        final capabilities = await bridge.detect();
-        if (capabilities.cronDelete) {
-          await bridge.deleteCronJob(id, profile: scopedProfile);
-          return;
-        }
-      }
-    } on ArgumentError {
-      rethrow;
-    } on BridgeException catch (error) {
-      bridgeError = error;
-      // Un token GUARDADO puede haber cambiado tras reinstalar el servicio.
-      // Si acabamos de provisionarlo en esta misma llamada no lo repetimos.
-      if (hadStoredBridgeToken &&
-          error.kind == BridgeErrorKind.auth &&
-          connection.apiKey.trim().isNotEmpty) {
-        try {
-          bridge?.close();
-          bridge = null;
-          final freshToken = await _bridgeProvisioner(
-            bridgeUrl,
-            connection.apiKey.trim(),
-          );
-          if (freshToken != null && freshToken.isNotEmpty) {
-            await _secure.writeBridge(connection.id, 'token', freshToken);
-            bridge = _bridgeClientFactory(
-              baseUrl: bridgeUrl,
-              token: freshToken,
-            );
-            final capabilities = await bridge.detect();
-            if (capabilities.cronDelete) {
-              await bridge.deleteCronJob(id, profile: scopedProfile);
-              return;
-            }
-          }
-        } on ArgumentError {
-          rethrow;
-        } catch (retryError) {
-          bridgeError = retryError;
-        }
-      }
-    } catch (error) {
-      bridgeError = error;
+      await dashboard.deleteCronJob(id, profile: scopedProfile);
     } finally {
-      bridge?.close();
-    }
-
-    if (dashboardFirstError != null) {
-      if (bridgeError == null) throw dashboardFirstError;
-      throw Exception(
-        'Dashboard: $dashboardFirstError; Mobile Bridge: $bridgeError',
-      );
-    }
-
-    try {
-      await deleteWithDashboard();
-    } on CronDeleteRejectedException {
-      rethrow;
-    } catch (dashboardError) {
-      if (bridgeError == null) rethrow;
-      throw Exception(
-        'Mobile Bridge: $bridgeError; Dashboard: $dashboardError',
-      );
+      dashboard.close();
     }
   }
 
@@ -482,20 +356,19 @@ class ConnectionManager {
   /// still present in SharedPreferences into Android Keystore.
   static Future<ConnectionManager> create(
     SharedPreferences prefs, {
-    BridgeClientFactory? bridgeClientFactory,
-    BridgeProvisioner? bridgeProvisioner,
     DashboardClientFactory? dashboardClientFactory,
     ClearCancelledTurnsForConnection? clearCancelledTurns,
   }) async {
     final manager = ConnectionManager._(
       prefs,
       SecureStorage(),
-      bridgeClientFactory: bridgeClientFactory,
-      bridgeProvisioner: bridgeProvisioner,
       dashboardClientFactory: dashboardClientFactory,
       clearCancelledTurns: clearCancelledTurns,
     );
     await manager._loadApiKeys();
+    // Cold start: every screen sees the last known bot roster until its
+    // first live read lands.
+    BotRosterRegistry.shared.attachPersistence(prefs, manager.getConnections());
     // Poda silenciosa de datos huérfanos de instancias borradas (no toca nada
     // de las conexiones vivas ni ajustes globales). Falla suave.
     try {
@@ -510,6 +383,7 @@ class ConnectionManager {
     final jsonList = prefs.getStringList(_key) ?? [];
     var needsResave = false;
     final validConnections = <SavedConnection>[];
+    final keystoreLoads = <Future<void>>[];
 
     for (final j in jsonList) {
       final Map<String, dynamic> map;
@@ -536,20 +410,27 @@ class ConnectionManager {
         needsResave = true;
         continue;
       }
-      // Storage failures are not corrupt metadata. Abort initialization before
-      // rewriting prefs or pruning anything: migration must not remove the
-      // only remaining copy of a key when the Keystore write failed.
       final plainKey = (map['api_key'] as String?) ?? '';
-      if (plainKey.isNotEmpty) {
-        await _secure.writeApiKey(conn.id, plainKey);
-        _apiKeyCache[conn.id] = plainKey;
-        needsResave = true;
-      } else {
-        final stored = await _secure.readApiKey(conn.id);
-        if (stored != null && stored.isNotEmpty) _apiKeyCache[conn.id] = stored;
-      }
+      if (plainKey.isNotEmpty) needsResave = true;
       validConnections.add(conn);
+      keystoreLoads.add(() async {
+        if (plainKey.isNotEmpty) {
+          await _secure.writeApiKey(conn.id, plainKey);
+          _apiKeyCache[conn.id] = plainKey;
+        } else {
+          final stored = await _secure.readApiKey(conn.id);
+          if (stored != null && stored.isNotEmpty) {
+            _apiKeyCache[conn.id] = stored;
+          }
+        }
+      }());
     }
+    // Keystore round trips run concurrently; every one settles before the
+    // first failure is rethrown. Storage failures are not corrupt metadata:
+    // abort initialization before rewriting prefs or pruning anything, so a
+    // migration never removes the only remaining copy of a key when the
+    // Keystore write failed.
+    await Future.wait(keystoreLoads);
     if (needsResave) await _saveAll(validConnections);
   }
 
@@ -800,40 +681,6 @@ class ConnectionManager {
     return saving;
   }
 
-  // ── Mobile Bridge (Keystore) ──────────────────────────────────────────
-
-  /// Configuración privada del Mobile Bridge asociada a una instancia.
-  ///
-  /// La URL vacía significa "usar la derivada del host del Gateway". El token
-  /// nunca se incorpora al modelo serializable ni a SharedPreferences.
-  Future<({String url, String token})> getBridgeConfig(String connId) async {
-    return (
-      url: (await _secure.readBridge(connId, 'url') ?? '').trim(),
-      token: (await _secure.readBridge(connId, 'token') ?? '').trim(),
-    );
-  }
-
-  /// Guarda cambios del Bridge sin borrar secretos accidentalmente.
-  ///
-  /// - [url] no nula reemplaza el override; vacía vuelve a la autodetección.
-  /// - [token] solo reemplaza el secreto si contiene un valor. Así, al editar
-  ///   una instancia, dejar el campo secreto vacío conserva el token anterior.
-  Future<void> setBridgeConfig(
-    String connId, {
-    String? url,
-    String? token,
-  }) async {
-    if (url != null) {
-      await _secure.writeBridge(connId, 'url', url.trim());
-    }
-    final normalizedToken = token?.trim() ?? '';
-    if (normalizedToken.isNotEmpty) {
-      await _secure.writeBridge(connId, 'token', normalizedToken);
-    }
-  }
-
-  Future<void> clearBridgeConfig(String connId) => _secure.deleteBridge(connId);
-
   // ── Matriz de capacidades (prefs, JSON por instancia) ─────────────────
 
   static String _capsKey(String connId) => 'capabilities_$connId';
@@ -974,6 +821,8 @@ class ConnectionManager {
   // huérfanas de borrados antiguos al arrancar (evita basura tras updates del
   // APK, que conservan los datos a propósito).
   static const List<String> _connScopedPrefixes = [
+    // HermesUpdateSession.prefsPrefix (a running server update).
+    'hermes_update_session_v1.',
     'capabilities_',
     'active_profile_',
     'runs_',
@@ -981,6 +830,10 @@ class ConnectionManager {
     'approval_rules_',
     'archived_sessions_',
     'hidden_sessions_',
+    'hidden_rows_',
+    'deleted_sessions_',
+    'session_auto_titles_',
+    'pr_scanned_ids_',
     'mission_control.organizations.v1.',
     'mission_control.rooms.v1.',
     'mission_control.bot_chat_pins.v1.',
@@ -993,6 +846,7 @@ class ConnectionManager {
   // sin puntos) es el segmento tras el prefijo y antes del primer punto.
   static const List<String> _connScopedDottedPrefixes = [
     'companion.selected_slug.',
+    'companion.identity.',
     'companion.enabled.',
     'companion.scale.',
     'companion.size_multiplier.',
@@ -1033,15 +887,14 @@ class ConnectionManager {
   /// las conexiones vivas y todos los ajustes globales. Devuelve cuántas quitó.
   Future<int> pruneOrphanData() async {
     final valid = getConnections().map((c) => c.id).toSet();
-    var removed = 0;
-    for (final k in prefs.getKeys().toList()) {
+    final orphans = prefs.getKeys().where((k) {
       final id = _connIdOfKey(k);
-      if (id != null && id.isNotEmpty && !valid.contains(id)) {
-        await prefs.remove(k);
-        removed++;
-      }
-    }
-    return removed;
+      return id != null && id.isNotEmpty && !valid.contains(id);
+    }).toList();
+    // Independent keys: issue the removals together instead of one platform
+    // round trip per key on the startup path.
+    await Future.wait(orphans.map(prefs.remove));
+    return orphans.length;
   }
 
   Future<void> deleteConnection(String id) async {
@@ -1328,6 +1181,14 @@ List<Map<String, dynamic>> _strictTranscriptMessages(Object? rawMessages) {
   return List.unmodifiable(messages);
 }
 
+/// A transcript read passed its character cap ([ApiClient.getMessages]).
+final class SessionTranscriptTooLargeException implements Exception {
+  const SessionTranscriptTooLargeException();
+
+  @override
+  String toString() => 'SessionTranscriptTooLargeException';
+}
+
 class ApiClient {
   static const Duration _requestTimeout = Duration(seconds: 15);
   final http.Client _http;
@@ -1335,20 +1196,26 @@ class ApiClient {
   final String _apiKey;
   final String? _connectionId;
 
+  /// Dashboard that serves a named profile's session list (see
+  /// [getSessions]). Owned: [close] closes it.
+  final DashboardClient? _profileDashboard;
+
   // Keep the public parameter name `apiKey` while storing it privately.
   ApiClient({
     required String baseUrl,
     required String apiKey,
     String? connectionId,
     http.Client? httpClient,
+    DashboardClient? profileDashboard,
   }) : _apiKey = apiKey,
        _connectionId = connectionId,
+       _profileDashboard = profileDashboard,
        baseUrl = TransportPrivacy.requireAllowed(
          baseUrl.endsWith('/')
              ? baseUrl.substring(0, baseUrl.length - 1)
              : baseUrl,
        ),
-       _http = httpClient ?? http.Client();
+       _http = OriginBoundHttpClient(httpClient);
 
   Map<String, String> get _headers => {
     'Authorization': 'Bearer $_apiKey',
@@ -1370,12 +1237,29 @@ class ApiClient {
   /// quedan ocultas y no se pueden borrar desde la app. [includeChildren] pide
   /// `?include_children=true` para ver TODAS (necesario para limpiar de verdad).
   /// `limit=200` evita el tope por defecto de 50 del servidor.
+  ///
+  /// [pageSize] and [enough] bound the walk for surfaces that only show the
+  /// newest rows (Home, drawer): the read stops after the first page for
+  /// which `enough(sessionsSoFar)` is true, or after [maxPages] pages. Without
+  /// them every page is read, as cleanup and lineage resolution require.
+  ///
+  /// A named profile is read from the Dashboard when this client has one
+  /// ([profileDashboard]), as Desktop does: `listSessions()` sends
+  /// `/api/sessions?profile=<name>` to the Dashboard. The API server's
+  /// `/p/<name>/` mirror only accepts that profile's own `API_SERVER_KEY`
+  /// and answers 401 when it has none, so the connection's key cannot read it.
   Future<List<Session>> getSessions({
     bool includeChildren = false,
     String? profile,
+    int pageSize = 200,
+    bool Function(List<Session> sessions)? enough,
+    int? maxPages,
   }) async {
-    const pageLimit = 200;
+    var pagesRead = 0;
     final owner = validateCronProfile(profile);
+    final dashboard = owner == null ? null : _profileDashboard;
+    // The Dashboard caps `limit` at 100 (422 above it).
+    final pageLimit = pageSize.clamp(1, dashboard == null ? 200 : 100);
     final endpoint = profileEndpoint('api/sessions', profile: owner);
     final sessions = <Session>[];
     final observed = <String>{};
@@ -1385,29 +1269,49 @@ class ApiClient {
     var offset = 0;
 
     while (true) {
-      final query = <String, String>{
-        'limit': '$pageLimit',
-        'offset': '$offset',
-        if (includeChildren) 'include_children': 'true',
-      };
-      final uri = Uri.parse(
-        '$baseUrl/$endpoint',
-      ).replace(queryParameters: query);
-      final res = await _http
-          .get(uri, headers: _headers)
-          .timeout(_requestTimeout);
-      if (res.statusCode != 200) {
-        throw CoreReadException(switch (res.statusCode) {
-          401 => CoreReadErrorKind.auth,
-          403 => CoreReadErrorKind.forbidden,
-          404 when owner != null => CoreReadErrorKind.profileUnavailable,
-          404 => CoreReadErrorKind.notFound,
-          503 => CoreReadErrorKind.temporarilyUnavailable,
-          _ => CoreReadErrorKind.malformed,
-        }, statusCode: res.statusCode);
+      CoreReadException readFailure(int status) =>
+          CoreReadException(switch (status) {
+            401 => CoreReadErrorKind.auth,
+            403 => CoreReadErrorKind.forbidden,
+            404 when owner != null => CoreReadErrorKind.profileUnavailable,
+            404 => CoreReadErrorKind.notFound,
+            503 => CoreReadErrorKind.temporarilyUnavailable,
+            _ => CoreReadErrorKind.malformed,
+          }, statusCode: status);
+      final Map<String, dynamic> data;
+      if (dashboard != null) {
+        // Desktop `listSessions(limit)`: one recent-first page per call.
+        final query = Uri(
+          queryParameters: {
+            'limit': '$pageLimit',
+            'offset': '$offset',
+            'min_messages': '0',
+            'archived': 'exclude',
+            'order': 'recent',
+            'profile': owner!,
+          },
+        ).query;
+        try {
+          data = await dashboard.apiGet('sessions?$query');
+        } on DashboardHttpException catch (error) {
+          throw readFailure(error.statusCode);
+        }
+      } else {
+        final query = <String, String>{
+          'limit': '$pageLimit',
+          'offset': '$offset',
+          if (includeChildren) 'include_children': 'true',
+        };
+        final uri = Uri.parse(
+          '$baseUrl/$endpoint',
+        ).replace(queryParameters: query);
+        final res = await _http
+            .get(uri, headers: _headers)
+            .timeout(_requestTimeout);
+        if (res.statusCode != 200) throw readFailure(res.statusCode);
+        data = jsonDecode(res.body) as Map<String, dynamic>;
       }
-      final data = jsonDecode(res.body) as Map<String, dynamic>;
-      final rawRows = data['data'];
+      final rawRows = dashboard != null ? data['sessions'] : data['data'];
       if (rawRows is! List) {
         throw const FormatException('Invalid Gateway session page');
       }
@@ -1416,13 +1320,24 @@ class ApiClient {
           positivePageInt(data['limit']) ??
           (pagination is Map ? positivePageInt(pagination['limit']) : null) ??
           pageLimit;
+      final total = data['total'];
+      final serverSaysMore = dashboard != null
+          ? (total is int
+                ? offset + rawRows.length < total
+                : rawRows.length >= pageLimitPublished)
+          : data['has_more'] == true ||
+                (pagination is Map && pagination['has_more'] == true);
+      // The Gateway derives `has_more` from the UNPINNED rows of the window
+      // only, so pinned chats among the newest rows report `false` on a full
+      // page and every older row (automation runs first) went unread. A full
+      // page always asks for the next one; that page ends the listing.
       final hasMore =
-          data['has_more'] == true ||
-          (pagination is Map && pagination['has_more'] == true);
+          serverSaysMore ||
+          (dashboard == null && rawRows.length >= pageLimitPublished);
       final signature = rawRows
           .map((row) => row is Map ? row['id']?.toString() ?? '' : '')
           .join('\u001f');
-      if (hasMore && !pageSignatures.add(signature)) {
+      if (serverSaysMore && !pageSignatures.add(signature)) {
         throw const CoreReadException(CoreReadErrorKind.paginationStalled);
       }
 
@@ -1452,6 +1367,12 @@ class ApiClient {
         }
       }
       if (!hasMore) return sessions;
+      pagesRead += 1;
+      if (enough != null && enough(sessions)) return sessions;
+      if (maxPages != null && pagesRead >= maxPages) return sessions;
+      // An inferred extra page that brings nothing new (back-filled pins, a
+      // repeated page) is the end of the listing, not a stalled server.
+      if (added == 0 && !serverSaysMore) return sessions;
       if (added == 0 || pageLimitPublished <= 0) {
         throw const CoreReadException(CoreReadErrorKind.paginationStalled);
       }
@@ -1461,23 +1382,42 @@ class ApiClient {
 
   // ── Messages ─────────────────────────────────────────────────────────
 
+  /// The whole transcript, oldest first. [maxJsonChars] bounds what is read:
+  /// once the messages read so far encode to more characters than that, it
+  /// stops with [SessionTranscriptTooLargeException] instead of paging on.
   Future<List<Map<String, dynamic>>> getMessages(
     String sessionId, {
     String? profile,
+    int? maxJsonChars,
   }) async {
     const limit = 500;
     var offset = 0;
+    var jsonChars = 0;
     final pagesNewestFirst = <List<Map<String, dynamic>>>[];
     final signatures = <String>{};
     while (true) {
-      final page = await getMessagesPage(
-        sessionId,
-        profile: profile,
-        limit: limit,
-        offset: offset,
-      );
+      final page = maxJsonChars == null
+          ? await getMessagesPage(
+              sessionId,
+              profile: profile,
+              limit: limit,
+              offset: offset,
+            )
+          : await _readMessagesPage(
+              sessionId,
+              profile: profile,
+              limit: limit,
+              offset: offset,
+              maxBodyBytes: (maxJsonChars - jsonChars + 1) * _utf8BytesPerChar,
+            );
       if (!page.messagesFullyParsed || !page.paginationFullyParsed) {
         throw const CoreReadException(CoreReadErrorKind.malformed);
+      }
+      if (maxJsonChars != null) {
+        jsonChars += jsonEncode(page.messages).length;
+        if (jsonChars > maxJsonChars) {
+          throw const SessionTranscriptTooLargeException();
+        }
       }
       pagesNewestFirst.add(page.messages);
       if (!page.paginationProvided) break;
@@ -1502,6 +1442,32 @@ class ApiClient {
     ]);
   }
 
+  /// UTF-8 needs at most this many bytes per character, so a body under
+  /// `chars * _utf8BytesPerChar` bytes can still be under the character cap.
+  static const int _utf8BytesPerChar = 4;
+
+  /// GET that gives up as soon as the body passes [maxBytes], by the declared
+  /// length or by what has arrived, without buffering the rest.
+  Future<http.Response> _getBounded(Uri uri, int maxBytes) async {
+    final request = http.Request('GET', uri)..headers.addAll(_headers);
+    final streamed = await _http.send(request).timeout(_requestTimeout);
+    if (streamed.statusCode != 200) {
+      return http.Response('', streamed.statusCode);
+    }
+    final declared = streamed.contentLength;
+    if (declared != null && declared > maxBytes) {
+      throw const SessionTranscriptTooLargeException();
+    }
+    final bytes = <int>[];
+    await for (final chunk in streamed.stream.timeout(_requestTimeout)) {
+      bytes.addAll(chunk);
+      if (bytes.length > maxBytes) {
+        throw const SessionTranscriptTooLargeException();
+      }
+    }
+    return http.Response.bytes(bytes, 200, headers: streamed.headers);
+  }
+
   /// Una página del transcript con la semántica `order=latest` de Hermes
   /// Agent 0.20: [offset] se mide hacia atrás desde el mensaje MÁS reciente y
   /// la página llega en orden cronológico. Servidores antiguos ignoran los
@@ -1513,22 +1479,33 @@ class ApiClient {
     String? profile,
     int limit = 120,
     int offset = 0,
+  }) => _readMessagesPage(
+    sessionId,
+    profile: profile,
+    limit: limit,
+    offset: offset,
+  );
+
+  Future<SessionMessagesPage> _readMessagesPage(
+    String sessionId, {
+    String? profile,
+    required int limit,
+    required int offset,
+    int? maxBodyBytes,
   }) async {
     if (offset < 0) {
       throw const CoreReadException(CoreReadErrorKind.malformed);
     }
     final owner = validateCronProfile(profile);
     final boundedLimit = limit.clamp(1, 500);
-    final res = await _http
-        .get(
-          Uri.parse(
-            '$baseUrl/${profileEndpoint('api/sessions/${Uri.encodeComponent(sessionId)}/messages', profile: owner)}'
-            '?limit=$boundedLimit&order=latest&offset=$offset'
-            '&include_compacted=true',
-          ),
-          headers: _headers,
-        )
-        .timeout(_requestTimeout);
+    final uri = Uri.parse(
+      '$baseUrl/${profileEndpoint('api/sessions/${Uri.encodeComponent(sessionId)}/messages', profile: owner)}'
+      '?limit=$boundedLimit&order=latest&offset=$offset'
+      '&include_compacted=true',
+    );
+    final res = maxBodyBytes == null
+        ? await _http.get(uri, headers: _headers).timeout(_requestTimeout)
+        : await _getBounded(uri, maxBodyBytes);
     if (res.statusCode != 200) {
       throw CoreReadException(switch (res.statusCode) {
         400 => CoreReadErrorKind.malformed,
@@ -1639,6 +1616,22 @@ class ApiClient {
 
   // ── Health check ─────────────────────────────────────────────────────
 
+  /// `/health` alone, for callers whose next request is itself an
+  /// authenticated read (Home's paged session list): that read is the auth
+  /// proof, so [healthCheck]'s extra `/api/sessions` fetch would only repeat
+  /// it in series.
+  Future<bool> healthReachable() async {
+    try {
+      final health = await _http
+          .get(Uri.parse('$baseUrl/health'), headers: _headers)
+          .timeout(const Duration(seconds: 10));
+      return health.statusCode == 200;
+    } catch (e) {
+      debugPrint('[connection] excepción silenciada (se asume false): $e');
+      return false;
+    }
+  }
+
   Future<bool> healthCheck() async {
     try {
       final health = await _http
@@ -1646,14 +1639,26 @@ class ApiClient {
           .timeout(const Duration(seconds: 10));
       if (health.statusCode == 401 || health.statusCode == 403) return false;
       if (health.statusCode != 200) return false;
-
-      // /health may be intentionally public on some deployments. Confirm that
-      // the saved API key can also reach an authenticated endpoint before the
-      // add/update connection dialogs accept it as valid.
+    } catch (e) {
+      debugPrint('[connection] excepción silenciada (se asume false): $e');
+      return false;
+    }
+    // /health may be intentionally public on some deployments. Confirm that
+    // the saved API key can also reach an authenticated endpoint. Only an
+    // answer refutes it: a timeout, reset or 408/429/5xx from a server that
+    // just answered /health is load, not an outage (#1215).
+    try {
       final sessions = await _http
           .get(Uri.parse('$baseUrl/api/sessions'), headers: _headers)
           .timeout(const Duration(seconds: 10));
-      return sessions.statusCode == 200;
+      final status = sessions.statusCode;
+      return status == 200 || status == 408 || status == 429 || status >= 500;
+    } on TimeoutException {
+      return true;
+    } on http.ClientException {
+      return true;
+    } on SocketException {
+      return true;
     } catch (e) {
       debugPrint('[connection] excepción silenciada (se asume false): $e');
       return false;
@@ -2054,7 +2059,10 @@ class ApiClient {
     body: {'scope': scope, 'provider': provider, 'model': model},
   );
 
-  void close() => _http.close();
+  void close() {
+    _http.close();
+    _profileDashboard?.close();
+  }
 }
 
 typedef ToolProgressCallback = void Function(Map<String, dynamic> progress);
@@ -2355,6 +2363,16 @@ class DashboardHttpException implements Exception {
   String toString() => 'HTTP $statusCode';
 }
 
+/// A guarded Dashboard write whose authority (connection, write access or
+/// profile owner) was retired before the request could be (re)sent. Nothing
+/// was written by the attempt that raised it.
+class DashboardWriteRevoked implements Exception {
+  const DashboardWriteRevoked();
+
+  @override
+  String toString() => 'write_revoked';
+}
+
 class DashboardDownloadCancelled implements Exception {
   const DashboardDownloadCancelled();
 
@@ -2369,6 +2387,16 @@ class CronDeleteRejectedException implements Exception {
 
   @override
   String toString() => 'cron_delete_rejected';
+}
+
+/// The Dashboard answered 404 for a cron job in [profile]: nothing was
+/// changed there. Never a success.
+class CronJobNotFoundException implements Exception {
+  final String profile;
+  const CronJobNotFoundException(this.profile);
+
+  @override
+  String toString() => 'cron_job_not_found';
 }
 
 /// Client for the Hermes Dashboard REST API (port 9119).
@@ -2391,15 +2419,21 @@ class DashboardUpdateApplyResult {
   /// El servidor ya tenía una actualización en curso y devolvió esa.
   final bool alreadyRunning;
 
+  /// Server clock when it answered (`Date` header), so the run's receipt is
+  /// matched against the server's own time rather than the phone's.
+  final DateTime? serverDate;
+
   const DashboardUpdateApplyResult.confirmed({
     this.actionId,
     this.alreadyRunning = false,
+    this.serverDate,
   }) : responseConfirmed = true;
 
   const DashboardUpdateApplyResult.transportUncertain()
     : responseConfirmed = false,
       actionId = null,
-      alreadyRunning = false;
+      alreadyRunning = false,
+      serverDate = null;
 }
 
 /// Hermes rechazó la actualización (instalación gestionada externamente,
@@ -2432,12 +2466,39 @@ class _DashboardSharedPasswordSession {
 }
 
 class DashboardClient {
+  static final _writeGuardKey = Object();
+
+  /// Runs [write] so that every Dashboard write it issues re-checks
+  /// [authorized] right before each send, including the automatic resend
+  /// after a 401 re-authentication. A revoked guard raises
+  /// [DashboardWriteRevoked] instead of sending.
+  static Future<T> guardedWrite<T>(
+    bool Function() authorized,
+    Future<T> Function() write,
+  ) => runZoned(write, zoneValues: {_writeGuardKey: authorized});
+
+  static void _requireWriteAuthority() {
+    final guard = Zone.current[_writeGuardKey];
+    if (guard is bool Function() && !guard()) {
+      throw const DashboardWriteRevoked();
+    }
+  }
+
+  String _nativeOwner = '';
+  MobileOAuthSession? get _nativeSession =>
+      MobileOAuthSession.decode(_manualToken, _nativeOwner, _baseUrl);
   static final Map<String, _DashboardSharedPasswordSession>
   _sharedPasswordSessions = {};
+
+  /// Page tokens scraped from `GET /`, shared by every client of the same
+  /// Dashboard and Basic credentials. Without it each short-lived client
+  /// downloaded the whole SPA index before its first API call.
+  static final Map<String, String> _sharedPageTokens = {};
 
   @visibleForTesting
   static void resetSharedPasswordSessionsForTesting() {
     _sharedPasswordSessions.clear();
+    _sharedPageTokens.clear();
   }
 
   final http.Client _http;
@@ -2447,6 +2508,11 @@ class DashboardClient {
   String? _basicUser;
   String? _basicPass;
   String? _token;
+
+  /// True when [_token] was adopted from [_sharedPageTokens] rather than
+  /// scraped by this client. A legacy `?token=` WebSocket upgrade has no 401
+  /// retry path, so it never trusts a token it did not scrape itself.
+  bool _tokenFromSharedCache = false;
   bool _closed = false;
 
   /// Cookies de sesión de un Dashboard con login propio (`hermes_session_at`,
@@ -2506,7 +2572,7 @@ class DashboardClient {
        _manualToken = manualToken,
        _basicUser = basicUser,
        _basicPass = basicPass,
-       _http = httpClientOverride ?? http.Client(),
+       _http = OriginBoundHttpClient(httpClientOverride),
        _now = nowOverride ?? DateTime.now;
 
   /// Cliente que respeta el modo de auth de la instancia, leyendo los
@@ -2522,6 +2588,7 @@ class DashboardClient {
       useHttps: conn.dashboardUseHttps,
       httpClientOverride: httpClientOverride,
     );
+    client._nativeOwner = conn.id;
     if (conn.dashboardAuthMode == AuthMode.sessionToken ||
         conn.dashboardAuthMode == AuthMode.basicAuth ||
         conn.dashboardAuthMode == AuthMode.cookieSession) {
@@ -2584,7 +2651,7 @@ class DashboardClient {
           ? secrets?.password
           : null,
       httpClientOverride: httpClientOverride,
-    );
+    ).._nativeOwner = conn.id;
   }
 
   String? get _basicAuthHeader {
@@ -2609,11 +2676,22 @@ class DashboardClient {
     _passwordLoginFuture = null;
   }
 
-  Future<String> _getToken() async {
+  Future<String> _getToken({bool allowShared = true}) async {
     await _ensureSecrets();
     final manual = _manualToken;
+    if (manual?.startsWith(MobileOAuthSession.prefix) == true) {
+      throw const MobileOAuthException(); // never use native envelope as page authority
+    }
     if (manual != null && manual.isNotEmpty) return manual;
-    if (_token != null) return _token!;
+    if (_token != null && (allowShared || !_tokenFromSharedCache)) {
+      return _token!;
+    }
+    final tokenKey = _pageTokenKey;
+    final shared = allowShared ? _sharedPageTokens[tokenKey] : null;
+    if (shared != null) {
+      _tokenFromSharedCache = true;
+      return _token = shared;
+    }
     final basic = _basicAuthHeader;
     final res = await _http
         .get(
@@ -2667,8 +2745,14 @@ class DashboardClient {
       );
     }
     _token = match.group(1)!;
+    _tokenFromSharedCache = false;
+    _sharedPageTokens[tokenKey] = _token!;
     return _token!;
   }
+
+  String get _pageTokenKey => sha256
+      .convert(utf8.encode('$_baseUrl\u0000${_basicAuthHeader ?? ''}'))
+      .toString();
 
   /// ¿Tenemos usuario+contraseña para el login por formulario del Dashboard?
   bool get _hasPasswordCreds =>
@@ -2900,6 +2984,16 @@ class DashboardClient {
     _requireOpen();
     await _ensureSecrets();
     _requireOpen();
+    final native = _nativeSession;
+    if (native != null) {
+      if (native.expiresAt <= _now().millisecondsSinceEpoch ~/ 1000) {
+        throw const MobileOAuthException();
+      }
+      return {
+        'Authorization': 'Bearer ${native.accessToken}',
+        'Content-Type': 'application/json',
+      };
+    }
     // Dashboard con login propio: autenticamos por COOKIE de sesión (POST
     // /auth/password-login con usuario+contraseña). Es lo que desbloquea la
     // lista completa de modelos/proveedores y el resto de la API nativa.
@@ -2931,7 +3025,14 @@ class DashboardClient {
   /// Invalida solo la sesión que produjo el 401. Una respuesta tardía no puede
   /// borrar cookies que otro request ya renovó o volvió a autenticar.
   void _resetSession({String? sentCookie}) {
+    final rejectedToken = _token;
     _token = null;
+    // Evict the shared token only if it is the one that was just rejected; a
+    // newer token another client already scraped stays usable.
+    if (rejectedToken != null &&
+        _sharedPageTokens[_pageTokenKey] == rejectedToken) {
+      _sharedPageTokens.remove(_pageTokenKey);
+    }
     if (!_hasPasswordCreds) {
       _cookies.clear();
       _passwordLoginFuture = null;
@@ -2965,6 +3066,23 @@ class DashboardClient {
     }
     _resetSession(sentCookie: sentCookie);
     return true;
+  }
+
+  /// Explicit login never turns an absent password route into token scraping.
+  /// [fresh] verifies the supplied password even when a shared session still
+  /// works: a valid cookie is not proof that the current password is correct.
+  Future<void> authenticateExistingPassword({bool fresh = false}) async {
+    _requireOpen();
+    await _ensureSecrets();
+    _requireOpen();
+    if (fresh) {
+      if (!_hasPasswordCreds) {
+        throw DashboardAuthException(DashboardAuthFailureCode.loginRequired);
+      }
+      await _passwordLogin();
+    } else {
+      await _ensurePasswordLogin();
+    }
   }
 
   /// Resuelve los headers de auth sin hacer ninguna llamada de datos.
@@ -3050,9 +3168,14 @@ class DashboardClient {
           headers: headers,
         );
       }
+      if (_nativeSession != null) {
+        throw const DashboardWebSocketAuthException(
+          DashboardWebSocketAuthFailureCode.unavailable,
+        );
+      }
       return DashboardWebSocketAuth(
         queryName: 'token',
-        credential: await _getToken(),
+        credential: await _getToken(allowShared: false),
         headers: headers,
       );
     } on DashboardWebSocketAuthException {
@@ -3135,6 +3258,7 @@ class DashboardClient {
     Duration timeout = _kTimeout,
   }) async {
     final headers = await _authHeaders();
+    _requireWriteAuthority();
     final res = await _http
         .post(
           Uri.parse('$_baseUrl/api/$endpoint'),
@@ -3462,6 +3586,7 @@ class DashboardClient {
     bool retried = false,
   }) async {
     final headers = await _authHeaders();
+    _requireWriteAuthority();
     final res = await _http
         .delete(
           Uri.parse('$_baseUrl/api/$endpoint'),
@@ -3492,6 +3617,7 @@ class DashboardClient {
     bool retried = false,
   }) async {
     final headers = await _authHeaders();
+    _requireWriteAuthority();
     final res = await _http
         .put(
           Uri.parse('$_baseUrl/api/$endpoint'),
@@ -3521,6 +3647,7 @@ class DashboardClient {
     bool retried = false,
   }) async {
     final headers = await _authHeaders();
+    _requireWriteAuthority();
     final res = await _http
         .patch(
           Uri.parse('$_baseUrl/api/$endpoint'),
@@ -3612,14 +3739,24 @@ class DashboardClient {
   Future<List<ModelProvider>> getModelOptions({
     String? profile,
     bool explicitOnly = false,
+    bool refresh = false,
   }) async {
     final params = <String>[
       if (explicitOnly) 'explicit_only=1',
+      // Busts the server's per-provider model cache, like Desktop's
+      // "Refresh Models" (`/api/model/options?refresh=1`).
+      if (refresh) 'refresh=1',
       if (profile != null && profile.isNotEmpty && profile != 'default')
         'profile=${Uri.encodeQueryComponent(profile)}',
     ];
     final suffix = params.isEmpty ? '' : '?${params.join('&')}';
-    final data = await apiGet('model/options$suffix');
+    final Map<String, dynamic> data;
+    try {
+      data = await apiGet('model/options$suffix');
+    } on DashboardHttpException catch (error) {
+      _noteRestartRequired(error);
+      rethrow;
+    }
     final rawProviders = data['providers'];
     final providers = rawProviders is Map
         ? rawProviders.entries.map((entry) {
@@ -3635,12 +3772,54 @@ class DashboardClient {
         : (rawProviders as List? ?? const []).whereType<Map>().map(
             (provider) => provider.cast<String, dynamic>(),
           );
-    return providers.map(ModelProvider.fromJson).toList();
+    final result = providers.map(ModelProvider.fromJson).toList();
+    // Only a catalog the server actually sent counts as it being well again:
+    // a map, or a list in which every entry is a provider. An absent member,
+    // another type or a list with a bad entry is not a validated catalog.
+    final wellFormed =
+        rawProviders is Map ||
+        (rawProviders is List && rawProviders.every((entry) => entry is Map));
+    if (wellFormed) _noteRestartRecovered();
+    return result;
   }
 
   /// GET /api/model/auxiliary — asignaciones por función + principal.
   Future<Map<String, dynamic>> getAuxiliaryModels({String? profile}) =>
       apiGet('model/auxiliary${_profileQuery(profile)}');
+
+  /// POST /api/model/set with the server's whole answer. Besides `ok` it may
+  /// carry `confirm_required` + `confirm_message` (a model that needs an
+  /// explicit acknowledgement: resend with [confirmExpensiveModel]) and, for
+  /// the main slot, the `provider`/`model` it actually stored.
+  Future<Map<String, dynamic>> assignModel({
+    required String providerSlug,
+    required String modelId,
+    String scope = 'main',
+    String task = '',
+    String baseUrl = '',
+    String? profile,
+    bool confirmExpensiveModel = false,
+  }) async {
+    final Map<String, dynamic> res;
+    try {
+      res = await apiPost(
+        'model/set${_profileQuery(profile)}',
+        body: {
+          'provider': providerSlug,
+          'model': modelId,
+          'scope': scope,
+          if (task.isNotEmpty) 'task': task,
+          if (baseUrl.isNotEmpty) 'base_url': baseUrl,
+          if (confirmExpensiveModel) 'confirm_expensive_model': true,
+        },
+      );
+    } on DashboardHttpException catch (error) {
+      _noteRestartRequired(error);
+      rethrow;
+    }
+    if (res['ok'] == true) _noteRestartRecovered();
+    return res;
+  }
 
   /// POST /api/model/set — requiere auth Dashboard. Escalable por perfil.
   Future<bool> setActiveModel({
@@ -3651,20 +3830,44 @@ class DashboardClient {
     String baseUrl = '',
     String apiKey = '',
     String? profile,
+    bool updateReasoningEffort = false,
+    String? reasoningEffort,
   }) async {
-    final res = await apiPost(
-      'model/set${_profileQuery(profile)}',
-      body: {
-        'provider': providerSlug,
-        'model': modelId,
-        'scope': scope,
-        if (task.isNotEmpty) 'task': task,
-        if (baseUrl.isNotEmpty) 'base_url': baseUrl,
-        if (apiKey.isNotEmpty) 'api_key': apiKey,
-      },
-    );
-    return (res['ok'] as bool?) ?? false;
+    final Map<String, dynamic> res;
+    try {
+      res = await apiPost(
+        'model/set${_profileQuery(profile)}',
+        body: {
+          'provider': providerSlug,
+          'model': modelId,
+          'scope': scope,
+          if (task.isNotEmpty) 'task': task,
+          if (baseUrl.isNotEmpty) 'base_url': baseUrl,
+          if (apiKey.isNotEmpty) 'api_key': apiKey,
+          if (updateReasoningEffort) 'reasoning_effort': reasoningEffort,
+        },
+      );
+    } on DashboardHttpException catch (error) {
+      _noteRestartRequired(error);
+      rethrow;
+    }
+    final accepted = (res['ok'] as bool?) ?? false;
+    if (accepted) _noteRestartRecovered();
+    return accepted;
   }
+
+  /// Passive: a good model call clears the note a 503 left (no request).
+  void _noteRestartRecovered() =>
+      ServerRestartSignals.noteHealthy(Uri.parse(_baseUrl).host);
+
+  /// Passive: remembers a 503 `Restart required:` the model calls report so
+  /// Diagnostics can say it. Never makes a request of its own.
+  void _noteRestartRequired(DashboardHttpException error) =>
+      ServerRestartSignals.noteHttp(
+        Uri.parse(_baseUrl).host,
+        error.statusCode,
+        error.body,
+      );
 
   /// Prueba un endpoint OpenAI-compatible desde el servidor Hermes.
   ///
@@ -3677,6 +3880,19 @@ class DashboardClient {
   }) => apiPost(
     'providers/validate',
     body: {'key': 'OPENAI_BASE_URL', 'value': baseUrl, 'api_key': apiKey},
+  );
+
+  /// POST /api/providers/validate — the server's own check of a provider key
+  /// before it is stored. `{ok, reachable, message}`: `ok` false with
+  /// `reachable` true is a key the provider rejected; `reachable` false means
+  /// no verdict (no check for that provider, or the provider did not answer).
+  Future<Map<String, dynamic>> validateProviderKey(
+    String key,
+    String value, {
+    String? profile,
+  }) => apiPost(
+    'providers/validate${_profileQuery(profile?.trim())}',
+    body: {'key': key, 'value': value},
   );
 
   /// Intenta eliminar un custom_provider del servidor vía DELETE /api/model/provider.
@@ -3703,7 +3919,7 @@ class DashboardClient {
   }
 
   // ── OAuth nativo del dashboard (device_code) ─────────────────────────────
-  // Más limpio que `hermes auth add` por Termux: JSON directo con url+código.
+  // Más limpio que `hermes auth add` por terminal: JSON directo con url+código.
   // `provider` debe ser el id del CLI (p.ej. nous, openai-codex, xai-oauth).
 
   /// `GET /api/providers/oauth` → lista de providers OAuth con su `flow`
@@ -3848,9 +4064,19 @@ class DashboardClient {
       );
     }
     final rawId = (body['action_id'] ?? '').toString().trim();
+    DateTime? serverDate;
+    try {
+      final date = res.headers['date'];
+      if (date != null) serverDate = HttpDate.parse(date);
+    } on FormatException {
+      serverDate = null;
+    } on HttpException {
+      serverDate = null;
+    }
     return DashboardUpdateApplyResult.confirmed(
       actionId: RegExp(r'^[0-9a-f]{32}$').hasMatch(rawId) ? rawId : null,
       alreadyRunning: body['already_running'] == true,
+      serverDate: serverDate,
     );
   }
 
@@ -3891,6 +4117,24 @@ class DashboardClient {
     return _strictTranscriptMessages(raw);
   }
 
+  /// GET /api/sessions/{id}?profile= — the persisted session row of any
+  /// profile, read the way Hermes Desktop does. The API server's
+  /// `/p/<profile>/` route would demand that profile's own key.
+  Future<Session> getSessionDetail(
+    String sessionId, {
+    String profile = '',
+  }) async {
+    final normalizedProfile = profile.trim();
+    final query = normalizedProfile.isEmpty
+        ? ''
+        : '?${Uri(queryParameters: {'profile': normalizedProfile}).query}';
+    final data = await apiGet(
+      'sessions/${Uri.encodeComponent(sessionId)}$query',
+    );
+    final row = data['session'];
+    return Session.fromJson(row is Map<String, dynamic> ? row : data);
+  }
+
   /// Variante paginada (`order=latest`, offset hacia atrás desde el mensaje
   /// más reciente) del transcript Dashboard, igual que
   /// [ApiClient.getMessagesPage]. Dashboards antiguos responden sin metadata
@@ -3902,22 +4146,34 @@ class DashboardClient {
     int offset = 0,
   }) async {
     final normalizedProfile = profile.trim();
+    final boundedLimit = limit.clamp(1, 500);
     final query = Uri(
       queryParameters: {
-        'limit': '$limit',
+        'limit': '$boundedLimit',
         'order': 'latest',
         'offset': '$offset',
+        'include_compacted': 'true',
         if (normalizedProfile.isNotEmpty) 'profile': normalizedProfile,
       },
     ).query;
     final data = await apiGet(
       'sessions/${Uri.encodeComponent(sessionId)}/messages?$query',
     );
-    final raw = data['messages'] ?? data['data'];
+    final raw = data.containsKey('messages') ? data['messages'] : data['data'];
+    final resolved = data['session_id'];
     return SessionMessagesPage.fromRaw(
       rawMessages: raw,
       pagination: data['pagination'],
       paginationProvided: data.containsKey('pagination'),
+      requestedLimit: boundedLimit,
+      requestedOffset: offset,
+      resolvedTipId: resolved is String && resolved.trim().isNotEmpty
+          ? resolved.trim()
+          : null,
+      coverage: const {
+        CoreReadCoverage.tipOnly,
+        CoreReadCoverage.metadataPartial,
+      },
     );
   }
 
@@ -3964,6 +4220,7 @@ class DashboardClient {
   }) async {
     final headers = await _authHeaders();
     _requireOpen();
+    _requireWriteAuthority();
     final res = await _http
         .put(
           Uri.parse('$_baseUrl/api/config${_profileQuery(profile)}'),
@@ -3982,7 +4239,7 @@ class DashboardClient {
       }
     }
     if (res.statusCode < 200 || res.statusCode >= 300) {
-      throw DashboardHttpException(res.statusCode);
+      throw DashboardHttpException(res.statusCode, body: res.body);
     }
     return _decodeMapResponse(res);
   }
@@ -4013,6 +4270,22 @@ class DashboardClient {
     body: {'data_url': dataUrl, 'mime_type': mimeType},
     timeout: timeout ?? audioTranscribeRequestTimeout(dataUrl),
   );
+
+  /// POST /api/audio/tts-lease — señal de precalentamiento/liberación del
+  /// motor TTS, igual que los interruptores de voz de Desktop. Hermes informa
+  /// de un fallo de precarga en el cuerpo, nunca como error HTTP.
+  Future<Map<String, dynamic>> setTtsLease(
+    String lease, {
+    required bool active,
+    String? profile,
+  }) => apiPost(
+    'audio/tts-lease${_profileQuery(profile)}',
+    body: {'lease': lease, 'active': active},
+    timeout: audioTtsLeaseRequestTimeout,
+  );
+
+  /// Adquirir puede cargar un modelo local en el servidor; Desktop usa 180 s.
+  static const Duration audioTtsLeaseRequestTimeout = Duration(seconds: 180);
 
   /// Sonda sin efectos de una ruta de audio (spec 048/US5), por el MISMO
   /// camino autenticado que el resto del Dashboard. Es un `POST` con cuerpo
@@ -4123,28 +4396,85 @@ class DashboardClient {
   Future<Map<String, dynamic>> getActionStatus(String name) =>
       apiGet('actions/${Uri.encodeComponent(name)}/status');
 
+  /// GET /api/env — credenciales conocidas del perfil, configuradas o no
+  /// (Desktop `getEnvVars(profile)`). Solo se usan metadatos y `is_set`; los
+  /// valores redactados nunca se guardan ni se registran.
+  Future<Map<String, dynamic>> getEnvVars({String? profile}) =>
+      apiGet('env${_profileQuery(profile?.trim())}');
+
   /// PUT /api/env — fija una variable de entorno (p.ej. la API key de un
   /// proveedor). El servidor rechaza nombres peligrosos (denylist).
-  Future<bool> setEnvVar(String key, String value) async {
-    final res = await apiPut('env', body: {'key': key, 'value': value});
+  Future<bool> setEnvVar(String key, String value, {String? profile}) async {
+    final target = profile?.trim() ?? '';
+    final res = await apiPut(
+      'env',
+      body: {
+        'key': key,
+        'value': value,
+        if (target.isNotEmpty && target != 'default') 'profile': target,
+      },
+    );
     return (res['ok'] as bool?) ?? false;
   }
 
   /// DELETE /api/env — borra una variable de entorno (p.ej. la API key de un
-  /// proveedor) para desconfigurarlo.
-  Future<void> deleteEnvVar(String key) => apiDelete('env', body: {'key': key});
+  /// proveedor) para desconfigurarlo. Sin [profile] el servidor actúa sobre el
+  /// perfil por defecto, así que la pantalla debe pasar siempre el suyo
+  /// (Desktop `deleteEnvVar(key, profile)`).
+  Future<void> deleteEnvVar(String key, {String? profile}) {
+    final target = profile?.trim() ?? '';
+    return apiDelete(
+      'env${_profileQuery(target)}',
+      body: {
+        'key': key,
+        if (target.isNotEmpty && target != 'default') 'profile': target,
+      },
+    );
+  }
 
-  /// DELETE /api/providers/oauth/{id} — desconecta un proveedor OAuth.
-  Future<void> disconnectOAuth(String providerId) =>
-      apiDelete('providers/oauth/$providerId');
+  /// DELETE /api/providers/oauth/{id} — desconecta un proveedor OAuth del
+  /// perfil indicado (Desktop `disconnectOAuthProvider(id, profile)`).
+  Future<void> disconnectOAuth(String providerId, {String? profile}) =>
+      apiDelete(
+        'providers/oauth/${Uri.encodeComponent(providerId)}'
+        '${_profileQuery(profile?.trim())}',
+      );
 
   /// POST /api/providers/oauth/{id}/start — inicia el login OAuth (device_code).
-  Future<Map<String, dynamic>> startOAuth(String providerId) =>
-      apiPost('providers/oauth/$providerId/start');
+  /// [profile] renueva la credencial de ese perfil del gateway, no la del
+  /// perfil principal (Desktop `startManualProviderOAuth(provider, profile)`).
+  Future<Map<String, dynamic>> startOAuth(
+    String providerId, {
+    String? profile,
+  }) => apiPost(
+    'providers/oauth/${Uri.encodeComponent(providerId)}/start'
+    '${_profileQuery(profile)}',
+  );
 
   /// GET /api/providers/oauth/{id}/poll/{session} — estado del login OAuth.
-  Future<Map<String, dynamic>> pollOAuth(String providerId, String sessionId) =>
-      apiGet('providers/oauth/$providerId/poll/$sessionId');
+  Future<Map<String, dynamic>> pollOAuth(
+    String providerId,
+    String sessionId, {
+    String? profile,
+  }) => apiGet(
+    'providers/oauth/${Uri.encodeComponent(providerId)}/poll/'
+    '${Uri.encodeComponent(sessionId)}${_profileQuery(profile)}',
+  );
+
+  /// GET /api/providers/oauth — the Accounts catalog of [profile]: one row per
+  /// provider with `id`, `name`, `flow` (device_code / external),
+  /// `cli_command` and `status.logged_in`.
+  Future<List<Map<String, dynamic>>> getOAuthProviders({
+    String? profile,
+  }) async {
+    final res = await apiGet('providers/oauth${_profileQuery(profile)}');
+    final list = res['providers'];
+    if (list is! List) return const [];
+    return [
+      for (final row in list)
+        if (row is Map) Map<String, dynamic>.from(row),
+    ];
+  }
 
   Future<List<Map<String, dynamic>>> getSkills({String? profile}) async {
     final data = await apiGetList('skills${_profileQuery(profile)}');
@@ -4184,6 +4514,7 @@ class DashboardClient {
     final endpoint = 'cron/jobs/${Uri.encodeComponent(id)}';
     final deleted = await _deleteCronEndpoint(
       '$endpoint${_profileQuery(scopedProfile)}',
+      profile: scopedProfile ?? 'default',
     );
     if (!deleted) {
       throw const CronDeleteRejectedException();
@@ -4192,6 +4523,7 @@ class DashboardClient {
 
   Future<bool> _deleteCronEndpoint(
     String endpoint, {
+    required String profile,
     bool retried = false,
   }) async {
     final headers = await _authHeaders();
@@ -4205,10 +4537,16 @@ class DashboardClient {
         retried: retried,
       );
       if (nextRetried != null) {
-        return _deleteCronEndpoint(endpoint, retried: nextRetried);
+        return _deleteCronEndpoint(
+          endpoint,
+          profile: profile,
+          retried: nextRetried,
+        );
       }
     }
-    if (res.statusCode == 404) return true;
+    // 404: the job is not in that profile, so nothing was removed. Reporting
+    // it as deleted hid a delete sent to the wrong profile.
+    if (res.statusCode == 404) throw CronJobNotFoundException(profile);
     if (res.statusCode < 200 || res.statusCode >= 300) {
       throw Exception('HTTP ${res.statusCode}');
     }

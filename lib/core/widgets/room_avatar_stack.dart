@@ -277,7 +277,7 @@ class RoomAvatarStack extends StatelessWidget {
         cache: avatarCache,
         size: 30,
         shape: profile.botShape,
-        colorHex: profile.botColorHex,
+        colorHex: profile.botFaceColorHex,
         imageKind: profile.botImageKind,
         privacySafeElementKeys: true,
       );

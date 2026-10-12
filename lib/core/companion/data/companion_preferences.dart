@@ -15,15 +15,74 @@ import '../models/companion_scale.dart';
 /// la conexión). Las keys globales originales se conservan una versión como
 /// último fallback legado; [migrateLegacyToScope] copia su valor al scope del
 /// perfil activo una sola vez. Los ajustes de presentación de la app
-/// (velocidad por slug, nivel de presencia, paseo, visibilidad en Inicio)
-/// siguen siendo globales.
+/// (velocidad por slug, nivel de presencia) siguen siendo globales.
 class CompanionPreferences {
+  static const appMigrationKey = 'companion.app.migrated.v1';
+  static const appSlugKey = 'companion.app.selected_slug';
+  static const appEnabledKey = 'companion.app.enabled';
+  static const appSizeKey = 'companion.app.size_multiplier';
+  static const appPresenceKey = 'companion.app.presence';
+  static const appSourceConnectionKey = 'companion.app.source_connection';
+  static const appSourceProfileKey = 'companion.app.source_profile';
+  static const appSourceRevisionKey = 'companion.app.source_revision';
+
+  bool get appMigrated => _prefs.getBool(appMigrationKey) == true;
+  String? get appSlug => _prefs.getString(appSlugKey);
+  bool get appEnabled => _prefs.getBool(appEnabledKey) ?? true;
+  double get appSize => CompanionDisplaySettings.clampSizeMultiplier(
+    _prefs.getDouble(appSizeKey) ??
+        CompanionDisplaySettings.defaultSizeMultiplier,
+  );
+  String? get appSourceConnection => _prefs.getString(appSourceConnectionKey);
+  String? get appSourceProfile => _prefs.getString(appSourceProfileKey);
+  String? get appSourceRevision => _prefs.getString(appSourceRevisionKey);
+  CompanionPresenceLevel get appPresence => companionPresenceLevelFromId(
+    _prefs.getString(appPresenceKey) ?? _prefs.getString(presenceLevelKey),
+  );
+  Future<void> setAppPresence(CompanionPresenceLevel value) =>
+      _prefs.setString(appPresenceKey, value.id);
+
+  Future<void> setAppSlug(String? value) =>
+      _prefs.setString(appSlugKey, value ?? '');
+  Future<void> setAppEnabled(bool value) =>
+      _prefs.setBool(appEnabledKey, value);
+  Future<void> setAppSize(double value) => _prefs.setDouble(appSizeKey, value);
+
+  /// Copy, then mark complete. No old key or profile/server value is changed.
+  Future<void> migrateAppPet({
+    required String? slug,
+    required bool enabled,
+    required double size,
+    required CompanionPresenceLevel presence,
+    String? connection,
+    String? profile,
+    String? revision,
+  }) async {
+    if (appMigrated) return;
+    await setAppSlug(slug);
+    await setAppEnabled(enabled);
+    await setAppSize(size);
+    await setAppPresence(presence);
+    if (connection != null) {
+      await _prefs.setString(appSourceConnectionKey, connection);
+    }
+    if (profile != null) await _prefs.setString(appSourceProfileKey, profile);
+    if (revision != null) {
+      await _prefs.setString(appSourceRevisionKey, revision);
+    }
+    await _prefs.setBool(appMigrationKey, true);
+  }
+
   static const String slugKey = 'companion.selected_slug';
   static const String enabledKey = 'companion.enabled';
   static const String scaleKey = 'companion.scale';
   static const String sizeMultiplierKey = 'companion.size_multiplier';
   static const String animationSpeedKeyPrefix = 'companion.animation_speed.';
   static const String presenceLevelKey = 'companion.presence_level';
+
+  /// Written until 1.2.15 by two switches that no longer exist (the walk
+  /// on Inicio and "Mostrar en Inicio"). Not read; kept so a backup made by
+  /// an older version restores cleanly.
   static const String roamingEnabledKey = 'companion.roaming_enabled';
   static const String showOnHomeKey = 'companion.show_on_home';
 
@@ -55,7 +114,7 @@ class CompanionPreferences {
     return scale.multiplier;
   }
 
-  /// Velocidad propia de una mascota. El Spark por defecto y slugs vacíos usan
+  /// Velocidad propia de una mascota. La opción por defecto (cara del perfil) y slugs vacíos usan
   /// 1× porque no tienen un spritesheet configurable.
   double animationSpeedFor(String? slug) {
     if (slug == null || slug.trim().isEmpty) {
@@ -68,17 +127,14 @@ class CompanionPreferences {
     return CompanionDisplaySettings.clampAnimationSpeed(stored);
   }
 
-  /// Nivel de presencia (006). Por defecto `minimal`.
+  /// Where the pet shows. Default (nothing stored): everywhere.
   CompanionPresenceLevel get presenceLevel =>
       companionPresenceLevelFromId(_prefs.getString(presenceLevelKey));
 
-  /// Paseo decorativo por Inicio. Opt-in para conservar el comportamiento
-  /// estable y no introducir movimiento en instalaciones existentes.
-  bool get roamingEnabled => _prefs.getBool(roamingEnabledKey) ?? false;
-
-  /// Si la mascota aparece sobre el compositor de Inicio. Es independiente de
-  /// la presencia global: ocultarla aquí no afecta Chat, Runs ni modo voz.
-  bool get showOnHome => _prefs.getBool(showOnHomeKey) ?? true;
+  /// The stored value is the old "Completa" (see
+  /// [companionPresenceIsLegacyFull]).
+  bool get presenceIsLegacyFull =>
+      companionPresenceIsLegacyFull(_prefs.getString(presenceLevelKey));
 
   Future<void> setSelectedSlug(String? slug) async {
     if (slug == null) {
@@ -121,14 +177,6 @@ class CompanionPreferences {
     await _prefs.setString(presenceLevelKey, value.id);
   }
 
-  Future<void> setRoamingEnabled(bool value) async {
-    await _prefs.setBool(roamingEnabledKey, value);
-  }
-
-  Future<void> setShowOnHome(bool value) async {
-    await _prefs.setBool(showOnHomeKey, value);
-  }
-
   // ── Variantes con scope por (conexión, perfil) ────────────────────────
   //
   // La mascota existe y se gestiona SOLO por perfil. Lectura: scoped →
@@ -137,6 +185,23 @@ class CompanionPreferences {
   /// Key scoped del slug seleccionado: `companion.selected_slug.<connId>.<profileId>`.
   static String scopedSlugKey(String connId, String profileId) =>
       '$slugKey.${_scopeSegment(connId)}.${_scopeSegment(profileId)}';
+
+  /// What a profile's own stores last said its pet is, kept to paint the
+  /// profile before the server answers: `companion.identity.<conn>.<profile>`.
+  /// Not the device selection Mascotas used to write ([scopedSlugKey]).
+  static String identityKey(String connId, String profileId) =>
+      'companion.identity.${_scopeSegment(connId)}.${_scopeSegment(profileId)}';
+
+  /// The last pet slug the profile's stores gave: null when never read,
+  /// empty when the profile has none.
+  String? identitySlugFor(String connId, String profileId) =>
+      _prefs.getString(identityKey(connId, profileId));
+
+  Future<void> setIdentitySlugFor(
+    String connId,
+    String profileId,
+    String? slug,
+  ) => _prefs.setString(identityKey(connId, profileId), slug ?? '');
 
   static String _scopedEnabledKey(String connId, String profileId) =>
       '$enabledKey.${_scopeSegment(connId)}.${_scopeSegment(profileId)}';

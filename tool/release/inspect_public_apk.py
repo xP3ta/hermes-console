@@ -19,15 +19,37 @@ from typing import Any
 ANDROID = "{http://schemas.android.com/apk/res/android}"
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 SUPPORTED_ABIS = {"arm64-v8a", "armeabi-v7a", "x86_64"}
+# Flutter's --split-per-abi stamps each APK with abiOffset * 1000 + build number
+# (flutter_tools gradle plugin: armeabi-v7a 1, arm64-v8a 2, x86_64 4).
+ABI_VERSION_CODE_OFFSETS = {"armeabi-v7a": 1000, "arm64-v8a": 2000, "x86_64": 4000}
+# aapt and apkanalyzer add this pair on their own when a manifest asks for
+# WRITE_EXTERNAL_STORAGE up to API 28 ("uses-implied-permission"). It is not in
+# the manifest, so the manifest view stays authoritative and the tool views are
+# compared after removing exactly this one pair.
+LEGACY_WRITE = {"name": "android.permission.WRITE_EXTERNAL_STORAGE", "maxSdkVersion": 28}
+IMPLIED_READ = {"name": "android.permission.READ_EXTERNAL_STORAGE", "maxSdkVersion": 28}
+# android:foregroundServiceType is a flags attribute. Source and merged
+# manifests spell it as names; a compiled manifest read by apkanalyzer prints
+# the bit mask in hex. These are the framework's attr flag values (API 36).
+FOREGROUND_SERVICE_TYPE_FLAGS = {
+    "dataSync": 0x1, "mediaPlayback": 0x2, "phoneCall": 0x4, "location": 0x8,
+    "connectedDevice": 0x10, "mediaProjection": 0x20, "camera": 0x40,
+    "microphone": 0x80, "health": 0x100, "remoteMessaging": 0x200,
+    "systemExempted": 0x400, "shortService": 0x800, "mediaProcessing": 0x2000,
+    "specialUse": 0x40000000,
+}
 EXPECTED_KEYS = {
     "schema", "flavor", "package", "versionName", "versionCode",
     "abiVersionCodes", "minSdk", "targetSdk", "label", "permissions",
-    "forbiddenPermissions", "foregroundServices", "requiredPackageQueries",
+    "forbiddenPermissions", "foregroundServices", "packageQueries",
+}
+POLICY_KEYS = {
+    "schema", "permissions", "forbiddenPermissions", "foregroundServices", "packageQueries",
 }
 FACT_KEYS = {
     "schema", "artifact", "flavor", "abi", "package", "versionName",
     "versionCode", "minSdk", "targetSdk", "label", "permissions",
-    "foregroundServices", "requiredPackageQueries", "signerCertificateSha256",
+    "foregroundServices", "packageQueries", "signerCertificateSha256",
     "tools",
 }
 MAX_OUTPUT = 2 * 1024 * 1024
@@ -101,6 +123,22 @@ def normalize_services(value: Any) -> list[dict[str, Any]]:
     return sorted(result, key=lambda entry: entry["name"])
 
 
+def expected_policy(path: Path) -> dict[str, Any]:
+    """Load and normalise tool/release/full_release_policy.json."""
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise InspectionError from error
+    if not isinstance(value, dict) or set(value) != POLICY_KEYS or value["schema"] != 1:
+        raise InspectionError
+    return {
+        "permissions": normalize_permissions(value["permissions"]),
+        "forbiddenPermissions": normalize_strings(value["forbiddenPermissions"]),
+        "foregroundServices": normalize_services(value["foregroundServices"]),
+        "packageQueries": normalize_strings(value["packageQueries"], nonempty=False),
+    }
+
+
 def expected_facts(path: Path) -> dict[str, Any]:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
@@ -115,7 +153,10 @@ def expected_facts(path: Path) -> dict[str, Any]:
     if not isinstance(abi_codes, dict) or set(abi_codes) != SUPPORTED_ABIS:
         raise InspectionError
     normalized_codes = {abi: strict_int(abi_codes[abi]) for abi in sorted(abi_codes)}
-    if any(code != version_code for code in normalized_codes.values()):
+    if any(
+        normalized_codes[abi] != ABI_VERSION_CODE_OFFSETS[abi] + version_code
+        for abi in normalized_codes
+    ):
         raise InspectionError
     return {
         "schema": 1,
@@ -130,7 +171,7 @@ def expected_facts(path: Path) -> dict[str, Any]:
         "permissions": normalize_permissions(value["permissions"]),
         "forbiddenPermissions": normalize_strings(value["forbiddenPermissions"], nonempty=False),
         "foregroundServices": normalize_services(value["foregroundServices"]),
-        "requiredPackageQueries": normalize_strings(value["requiredPackageQueries"], nonempty=False),
+        "packageQueries": normalize_strings(value["packageQueries"], nonempty=False),
     }
 
 
@@ -183,17 +224,28 @@ def one(pattern: str, value: str) -> str:
 
 def parse_aapt(value: str) -> dict[str, Any]:
     package = re.findall(
-        r"^package:\s+name='([^']+)'\s+versionCode='([0-9]+)'\s+versionName='([^']+)'(?:\s.*)?$",
+        r"^package:\s+name='([^']+)'\s+versionCode='([0-9]+)'\s+versionName='([^']+)'(?:[ \t].*)?$",
         value,
         re.MULTILINE,
     )
     if len(package) != 1:
         raise InspectionError
     name, code, version = package[0]
-    permissions = sorted(re.findall(r"^uses-permission:\s+name='([^']+)'(?:\s.*)?$", value, re.MULTILINE))
+    permissions = []
+    for permission_name, maximum in re.findall(
+        r"^uses-permission:\s+name='([^']+)'(?:[ \t]+maxSdkVersion='([0-9]+)')?(?:[ \t].*)?$",
+        value,
+        re.MULTILINE,
+    ):
+        entry: dict[str, Any] = {"name": permission_name}
+        if maximum:
+            entry["maxSdkVersion"] = int(maximum)
+        permissions.append(entry)
+    permissions.sort(key=lambda entry: entry["name"])
     native = re.findall(r"^native-code:\s+((?:'[^']+'\s*)+)$", value, re.MULTILINE)
     abis = re.findall(r"'([^']+)'", native[0]) if len(native) == 1 else []
-    if not permissions or len(permissions) != len(set(permissions)) or len(abis) != 1:
+    names = [entry["name"] for entry in permissions]
+    if not permissions or len(names) != len(set(names)) or len(abis) != 1:
         raise InspectionError
     return {
         "package": name,
@@ -206,11 +258,45 @@ def parse_aapt(value: str) -> dict[str, Any]:
     }
 
 
+def parse_analyzer_permissions(value: str) -> list[dict[str, Any]]:
+    """`apkanalyzer manifest permissions` prints `name` or `name' maxSdkVersion='N`."""
+    result = []
+    for line in value.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        match = re.fullmatch(r"([^'\s]+)(?:' maxSdkVersion='([0-9]+))?", line)
+        if match is None:
+            raise InspectionError
+        entry: dict[str, Any] = {"name": match.group(1)}
+        if match.group(2):
+            entry["maxSdkVersion"] = int(match.group(2))
+        result.append(entry)
+    names = [entry["name"] for entry in result]
+    if not result or len(names) != len(set(names)):
+        raise InspectionError
+    return sorted(result, key=lambda entry: entry["name"])
+
+
 def tool_value(value: str) -> str:
     lines = [line.strip() for line in value.splitlines() if line.strip()]
     if len(lines) != 1:
         raise InspectionError
     return strict_string(lines[0])
+
+
+def foreground_service_types(raw: str) -> list[str]:
+    """Names of the foreground-service types, from names or from a hex mask."""
+    if re.fullmatch(r"0x[0-9a-fA-F]+", raw) is None:
+        return raw.split("|")
+    mask = int(raw, 16)
+    names = [name for name, flag in FOREGROUND_SERVICE_TYPE_FLAGS.items() if mask & flag]
+    covered = 0
+    for name in names:
+        covered |= FOREGROUND_SERVICE_TYPE_FLAGS[name]
+    if not names or covered != mask:
+        raise InspectionError
+    return names
 
 
 def parse_manifest(value: str) -> dict[str, Any]:
@@ -251,7 +337,7 @@ def parse_manifest(value: str) -> dict[str, Any]:
             continue
         raw_types = child.get(f"{ANDROID}foregroundServiceType")
         if raw_types:
-            services.append({"name": strict_string(child.get(f"{ANDROID}name")), "types": raw_types.split("|")})
+            services.append({"name": strict_string(child.get(f"{ANDROID}name")), "types": foreground_service_types(raw_types)})
     return {
         "package": strict_string(root.get("package")),
         "versionName": strict_string(root.get(f"{ANDROID}versionName")),
@@ -315,8 +401,13 @@ def inspect(artifact: Path, expected: dict[str, Any], artifact_name: str, abi: s
             ("targetSdk", "target-sdk"),
         )
     }
-    analyzer_permissions = normalize_strings(run_tool(apkanalyzer, ["manifest", "permissions", str(artifact)], environment).splitlines())
+    analyzer_permissions = parse_analyzer_permissions(run_tool(apkanalyzer, ["manifest", "permissions", str(artifact)], environment))
     manifest = parse_manifest(run_tool(apkanalyzer, ["manifest", "print", str(artifact)], environment))
+    implied = [IMPLIED_READ] if LEGACY_WRITE in manifest["permissions"] else []
+    aapt_view = [entry for entry in aapt_facts["permissions"] if entry not in implied]
+    analyzer_view = [entry for entry in analyzer_permissions if entry not in implied]
+    declared = {entry["name"] for entry in manifest["permissions"]}
+    observed = declared | {entry["name"] for entry in aapt_view} | {entry["name"] for entry in analyzer_view}
     measured_signer = signer_digest(run_tool(apksigner, ["verify", "--verbose", "--print-certs", str(artifact)], environment))
     expected_code = expected["abiVersionCodes"].get(abi)
     for key in ("package", "versionName", "minSdk", "targetSdk"):
@@ -325,12 +416,12 @@ def inspect(artifact: Path, expected: dict[str, Any], artifact_name: str, abi: s
     if (
         aapt_facts["versionCode"] != expected_code or manifest["versionCode"] != expected_code
         or analyzer["versionCode"] != str(expected_code) or aapt_facts["abi"] != abi
-        or aapt_facts["permissions"] != analyzer_permissions
-        or [entry["name"] for entry in manifest["permissions"]] != analyzer_permissions
+        or aapt_view != analyzer_view
+        or manifest["permissions"] != analyzer_view
         or manifest["permissions"] != expected["permissions"]
         or manifest["foregroundServices"] != expected["foregroundServices"]
-        or not set(expected["requiredPackageQueries"]).issubset(manifest["packageQueries"])
-        or set(expected["forbiddenPermissions"]).intersection(analyzer_permissions)
+        or manifest["packageQueries"] != expected["packageQueries"]
+        or set(expected["forbiddenPermissions"]).intersection(observed)
         or measured_signer != signer
     ):
         raise InspectionError
@@ -342,7 +433,7 @@ def inspect(artifact: Path, expected: dict[str, Any], artifact_name: str, abi: s
         "minSdk": expected["minSdk"], "targetSdk": expected["targetSdk"],
         "label": expected["label"], "permissions": manifest["permissions"],
         "foregroundServices": manifest["foregroundServices"],
-        "requiredPackageQueries": expected["requiredPackageQueries"],
+        "packageQueries": expected["packageQueries"],
         "signerCertificateSha256": measured_signer,
         "tools": {name: {"path": str(path), "sha256": sha256_file(path)} for name, path in sorted({"aapt": aapt, "apkanalyzer": apkanalyzer, "apksigner": apksigner}.items())},
     }

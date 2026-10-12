@@ -217,10 +217,10 @@ void main() {
     });
 
     testWidgets(
-      'con la opción por defecto (Spark) el probador no ofrece acciones',
+      'con la opción por defecto (cara del perfil) el probador no ofrece acciones',
       (tester) async {
         final c = await _controller([_pet('nimbus', 'Nimbus')]);
-        // selectedSlug == null → Spark; ninguna mascota con estados declarados.
+        // selectedSlug == null → cara del perfil; ninguna mascota con estados declarados.
         await _pumpScreen(tester, c);
         expect(c.selectedSlug, isNull);
         expect(

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../design/list.dart';
 import '../theme/app_theme.dart';
 
 /// Tarjeta redondeada que agrupa las filas de "Personalizar" en las
@@ -100,50 +101,14 @@ class _BotSettingsRowState extends State<BotSettingsRow> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        InkWell(
+        HermesListRow(
           key: widget.rowKey,
+          title: widget.label,
+          value: _expanded ? null : widget.summary,
           onTap: _toggle,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-            child: Row(
-              children: [
-                Flexible(
-                  child: Text(
-                    widget.label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: colors.textPrimary,
-                      fontWeight: FontWeight.w700,
-                      fontSize: 15,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                if (widget.summary != null && !_expanded)
-                  Expanded(
-                    child: Text(
-                      widget.summary!,
-                      textAlign: TextAlign.right,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: colors.textSecondary,
-                        fontSize: 13.5,
-                      ),
-                    ),
-                  )
-                else
-                  const Spacer(),
-                const SizedBox(width: 6),
-                Icon(
-                  _expanded ? Icons.expand_less : Icons.chevron_right_rounded,
-                  size: 20,
-                  color: colors.textSecondary,
-                ),
-              ],
-            ),
-          ),
+          trailing: _expanded
+              ? Icon(Icons.expand_less, size: 18, color: colors.textSecondary)
+              : null,
         ),
         if (_expanded)
           Padding(

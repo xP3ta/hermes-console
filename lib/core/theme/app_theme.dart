@@ -1,7 +1,11 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
+import '../design/tokens.dart' show HermesChrome;
 import 'component_profile.dart';
 import 'motion.dart';
+import 'theme_contrast.dart';
 import 'theme_profile.dart';
 
 enum AppThemeMode {
@@ -41,12 +45,15 @@ class HermesThemeColors extends ThemeExtension<HermesThemeColors> {
     this.secondary = const Color(0xFFE8821C),
     this.uppercaseTitles = false,
     Color? accentText,
+    Color? textTertiary,
     // El parámetro público se llama `accentText` (el token que consumirán
     // las pantallas); `this._accentText` rompería ese nombre de cara al
     // llamador, así que se asigna a mano en el initializer.
   })
     // ignore: prefer_initializing_formals
-    : _accentText = accentText;
+    : _accentText = accentText,
+       // ignore: prefer_initializing_formals
+       _textTertiary = textTertiary;
 
   final Color background;
   final Color surface;
@@ -84,6 +91,39 @@ class HermesThemeColors extends ThemeExtension<HermesThemeColors> {
   /// que sí lo cumple. Auditoría 2026-07-02, hallazgo C5c.
   Color get accentText => _accentText ?? accent;
 
+  /// Explicit tertiary ink (set by the presets); `null` derives it.
+  final Color? _textTertiary;
+
+  static final Expando<Color> _derivedTertiary = Expando<Color>('textTertiary');
+
+  /// rt1215: ink for read-only tertiary text (timestamps, metadata,
+  /// captions, counters, hints). [textDisabled] stays reserved for controls
+  /// that cannot be used right now, which WCAG exempts; tertiary text is
+  /// read, so it is [textDisabled] lifted towards black or white (same hue,
+  /// smallest step) until it reaches AA 4.5:1 on the background, the surface
+  /// and the surface variant. Every palette gets it, presets and custom
+  /// profiles alike.
+  Color get textTertiary =>
+      _textTertiary ??
+      (_derivedTertiary[this] ??= readableTertiary(
+        textDisabled,
+        background: background,
+        surface: surface,
+        surfaceVariant: surfaceVariant,
+      ));
+
+  /// Smallest lift of [disabled] that reads at AA on all three surfaces.
+  static Color readableTertiary(
+    Color disabled, {
+    required Color background,
+    required Color surface,
+    required Color surfaceVariant,
+  }) => ThemeContrast.adjustForContrast(disabled, [
+    background,
+    surface,
+    surfaceVariant,
+  ], minimum: 4.5);
+
   @override
   HermesThemeColors copyWith({
     Color? background,
@@ -102,7 +142,15 @@ class HermesThemeColors extends ThemeExtension<HermesThemeColors> {
     Color? secondary,
     bool? uppercaseTitles,
     Color? accentText,
+    Color? textTertiary,
   }) {
+    // A new page or disabled ink invalidates an explicit tertiary: let the
+    // copy derive its own.
+    final keepTertiary =
+        background == null &&
+        surface == null &&
+        surfaceVariant == null &&
+        textDisabled == null;
     return HermesThemeColors(
       background: background ?? this.background,
       surface: surface ?? this.surface,
@@ -120,6 +168,7 @@ class HermesThemeColors extends ThemeExtension<HermesThemeColors> {
       secondary: secondary ?? this.secondary,
       uppercaseTitles: uppercaseTitles ?? this.uppercaseTitles,
       accentText: accentText ?? _accentText,
+      textTertiary: textTertiary ?? (keepTertiary ? _textTertiary : null),
     );
   }
 
@@ -143,6 +192,7 @@ class HermesThemeColors extends ThemeExtension<HermesThemeColors> {
       secondary: Color.lerp(secondary, other.secondary, t)!,
       uppercaseTitles: t < 0.5 ? uppercaseTitles : other.uppercaseTitles,
       accentText: Color.lerp(accentText, other.accentText, t)!,
+      textTertiary: Color.lerp(textTertiary, other.textTertiary, t)!,
     );
   }
 }
@@ -194,6 +244,7 @@ class HermesThemePreset {
     this.uppercaseTitles = false,
     this.desktopOfficial = false,
     this.desktopFamily,
+    this.family,
   });
 
   final String id;
@@ -225,6 +276,12 @@ class HermesThemePreset {
   /// variante clara y otra oscura sin duplicarse como si fueran temas
   /// independientes en el selector.
   final String? desktopFamily;
+
+  /// Family of a Console theme (its light and dark variant share it).
+  final String? family;
+
+  /// One card per family in the Themes screen, with a Light/Dark selector.
+  String get familyId => family ?? desktopFamily ?? id;
 
   bool get isDark => brightness == Brightness.dark;
 }
@@ -336,420 +393,659 @@ class AppTheme {
     accentText: Color(0xFF9A5300),
   );
 
-  // Claude: inspirado en la app de Claude. Carbón cálido (no negro puro),
-  // acento coral/arcilla, texto marfil. Sensación papel + calma, muy minimal.
-  static const _claudeColors = HermesThemeColors(
+  // ── Soft palettes (1.2.15) ───────────────────────────────────────────
+  // Owner direction: every theme feels like Claude's — graphite pages that
+  // are never pure black or white, surfaces layered in small lightness
+  // steps, a calm accent, quiet status colours and subtle hairlines. The
+  // bands are measured on the Claude presets and checked for every preset
+  // in theme_claude_bands_test; each family keeps its own hue.
+  //
+  // Console (the default) is Claude's structure in the icon's colours: the
+  // graphite #26262A page and the terracotta #D97757 mark.
+  //
+  // Desktop families keep their names, modes and hues but are softened to
+  // the same bands (owner priority over byte parity); the per-family
+  // deviation from Desktop is documented in the design README. Every text
+  // token reaches AA as declared, so [_withReadableInk] is a no-op on these.
+  static const _consolePalette = HermesThemeColors(
+    background: Color(0xFF26262A),
+    surface: Color(0xFF2F2F34),
+    surfaceVariant: Color(0xFF39393F),
+    accent: Color(0xFFC86443),
+    accentHover: Color(0xFFD97757),
+    onAccent: Color(0xFF20120E),
+    accentText: Color(0xFFEE8A69),
+    textPrimary: Color(0xFFF2F2F5),
+    textSecondary: Color(0xFFB5B5BD),
+    textDisabled: Color(0xFF7B7B83),
+    divider: Color(0xFF39393F),
+    error: Color(0xFFE0695C),
+    warning: Color(0xFFD9A066),
+    success: Color(0xFF7FA37F),
+  );
+  static const _consoleLightPalette = HermesThemeColors(
+    background: Color(0xFFF8F8FB),
+    surface: Color(0xFFFFFFFF),
+    surfaceVariant: Color(0xFFECECF2),
+    accent: Color(0xFFB05233),
+    accentHover: Color(0xFF9C4A2E),
+    onAccent: Color(0xFFFFFFFF),
+    accentText: Color(0xFF9C4A2E),
+    textPrimary: Color(0xFF353539),
+    textSecondary: Color(0xFF62626A),
+    textDisabled: Color(0xFFA4A4AC),
+    divider: Color(0xFFE2E2E9),
+    error: Color(0xFFB23A30),
+    warning: Color(0xFF8F6420),
+    success: Color(0xFF4A7550),
+  );
+  static const _amberPalette = HermesThemeColors(
+    background: Color(0xFF202020),
+    surface: Color(0xFF292929),
+    surfaceVariant: Color(0xFF313131),
+    accent: Color(0xFFE39960),
+    accentHover: Color(0xFFE5B173),
+    onAccent: Color(0xFF25170C),
+    accentText: Color(0xFFE39960),
+    textPrimary: Color(0xFFE8E8E8),
+    textSecondary: Color(0xFFA7A7A7),
+    textDisabled: Color(0xFF707070),
+    divider: Color(0xFF3A3A3A),
+    error: Color(0xFFDD8179),
+    warning: Color(0xFFEBB265),
+    success: Color(0xFF7ABE7D),
+  );
+  static const _amberLightPalette = HermesThemeColors(
+    background: Color(0xFFF7F7F5),
+    surface: Color(0xFFFCFCFC),
+    surfaceVariant: Color(0xFFECECE7),
+    accent: Color(0xFFA5642C),
+    accentHover: Color(0xFF935419),
+    onAccent: Color(0xFFFFFFFF),
+    accentText: Color(0xFF98581E),
+    textPrimary: Color(0xFF303030),
+    textSecondary: Color(0xFF595959),
+    textDisabled: Color(0xFF808080),
+    divider: Color(0xFFE1E1DA),
+    error: Color(0xFF9E4238),
+    warning: Color(0xFF885E27),
+    success: Color(0xFF307639),
+  );
+  static const _claudePalette = HermesThemeColors(
     background: Color(0xFF262624),
     surface: Color(0xFF30302E),
     surfaceVariant: Color(0xFF3B3A37),
     accent: Color(0xFFC96442),
     accentHover: Color(0xFFD97757),
-    onAccent: Color(0xFFFCF7F4),
+    onAccent: Color(0xFF1F120D),
+    accentText: Color(0xFFD9927A),
     textPrimary: Color(0xFFF5F3EC),
-    textSecondary: Color(0xFFABA899),
-    // WCAG AA: dim subido de #6E6B61 (2.8:1) a ≥3:1 para iconos atenuados.
+    textSecondary: Color(0xFFAEAC9D),
     textDisabled: Color(0xFF7E7B70),
-    // WCAG AA: el rojo previo (#BF4D43, 3.15:1) fallaba como texto de error
-    // normal; #E0695C alcanza 4.58:1 sobre el carbón cálido sin perder el tono.
-    error: Color(0xFFE0695C),
-    success: Color(0xFF7FA37F),
-    warning: Color(0xFFD9A066),
     divider: Color(0xFF3B3A37),
+    error: Color(0xFFE0695C),
+    warning: Color(0xFFD9A066),
+    success: Color(0xFF7FA37F),
   );
-
-  // Claude Light: el papel cálido de Claude — crema, coral profundo, texto
-  // tinta cálida. El claro más sereno del catálogo.
-  static const _claudeLightColors = HermesThemeColors(
+  static const _claudeLightPalette = HermesThemeColors(
     background: Color(0xFFFAF9F5),
     surface: Color(0xFFFFFFFF),
     surfaceVariant: Color(0xFFF0EEE6),
-    accent: Color(0xFFC15F3C),
-    accentHover: Color(0xFFA94E30),
+    accent: Color(0xFFB0532F),
+    accentHover: Color(0xFF9C4A2C),
     onAccent: Color(0xFFFFFFFF),
-    textPrimary: Color(0xFF3D3D3A),
-    textSecondary: Color(0xFF73716A),
-    textDisabled: Color(0xFFAAA89E),
-    error: Color(0xFFB23A30),
-    success: Color(0xFF5F8A63),
-    warning: Color(0xFFB5803A),
-    divider: Color(0xFFE7E4DA),
-    // WCAG AA: el coral de marca (#C15F3C) da ~4.0:1 sobre este fondo, por
-    // debajo de 4.5:1; #9C4A2C (misma familia, oscurecido) da ~5.8:1.
     accentText: Color(0xFF9C4A2C),
+    textPrimary: Color(0xFF3D3D3A),
+    textSecondary: Color(0xFF67655F),
+    textDisabled: Color(0xFFAAA89E),
+    divider: Color(0xFFE7E4DA),
+    error: Color(0xFFB23A30),
+    warning: Color(0xFF8F6420),
+    success: Color(0xFF4A7550),
   );
-
-  // ── Paletas premium adicionales ──────────────────────────────────────
-  // Cada una tinta el texto y las superficies a su familia de color para
-  // dar cohesión (lo que hace que se sienta "otra app", no un recolor).
-
-  // Verde fósforo: terminal CRT, negro puro con verde brillante.
-  static const _phosphorColors = HermesThemeColors(
-    background: Color(0xFF000000),
-    surface: Color(0xFF06120A),
-    surfaceVariant: Color(0xFF0C1E12),
-    accent: Color(0xFF36F58A),
-    accentHover: Color(0xFF74FFB0),
-    onAccent: Color(0xFF00140A),
-    textPrimary: Color(0xFFCFEFD8),
-    textSecondary: Color(0xFF5FA877),
-    textDisabled: Color(0xFF2E5A3E),
-    error: Color(0xFFFF6B6B),
-    success: Color(0xFF36F58A),
-    warning: Color(0xFFE2C84A),
-    divider: Color(0xFF143523),
-  );
-
-  // Gruvbox: el clásico retro de vim — pardos cálidos y naranja tostado.
-  // Retirado en U-10 y devuelto al catálogo en jul-2026 a petición del autor.
-  static const _gruvboxColors = HermesThemeColors(
-    background: Color(0xFF1D2021),
-    surface: Color(0xFF282828),
-    surfaceVariant: Color(0xFF3C3836),
-    accent: Color(0xFFFE8019),
-    accentHover: Color(0xFFFFA94D),
-    onAccent: Color(0xFF1D2021),
-    textPrimary: Color(0xFFEBDBB2),
-    textSecondary: Color(0xFFA89984),
-    textDisabled: Color(0xFF665C54),
-    error: Color(0xFFFB4934),
-    success: Color(0xFFB8BB26),
-    warning: Color(0xFFFABD2F),
-    divider: Color(0xFF32302F),
-  );
-
-  // Sage Garden: verde salvia apagado sobre un oscuro con tinte vegetal —
-  // la calma de un invernadero de noche.
-  static const _sageGardenColors = HermesThemeColors(
-    background: Color(0xFF11150F),
-    surface: Color(0xFF1A2018),
-    surfaceVariant: Color(0xFF242D21),
-    accent: Color(0xFFA9C29B),
-    accentHover: Color(0xFFC4D8B8),
-    onAccent: Color(0xFF131810),
-    textPrimary: Color(0xFFE2E8DC),
-    textSecondary: Color(0xFF93A38A),
-    textDisabled: Color(0xFF4F5C48),
-    error: Color(0xFFE08070),
-    success: Color(0xFF9BCB84),
-    warning: Color(0xFFD9C077),
-    divider: Color(0xFF222B1F),
-  );
-
-  // Hermes Console: los colores del logo — negro azulado profundo, plata
-  // metálica y azul eléctrico del glow.
-  static const _hermesConsoleColors = HermesThemeColors(
-    background: Color(0xFF060B14),
-    surface: Color(0xFF0E1626),
-    surfaceVariant: Color(0xFF16213A),
-    accent: Color(0xFF36A6FF),
-    accentHover: Color(0xFF74C3FF),
-    onAccent: Color(0xFF04101F),
-    textPrimary: Color(0xFFD6DEE9),
-    textSecondary: Color(0xFF8694AB),
-    textDisabled: Color(0xFF4A576E),
-    error: Color(0xFFFF6B7D),
-    success: Color(0xFF3FD6A8),
-    warning: Color(0xFFF5C45A),
-    divider: Color(0xFF1B2740),
-  );
-
-  // Catppuccin Mocha: el pastel oscuro más querido, acento malva.
-  static const _mochaColors = HermesThemeColors(
-    background: Color(0xFF1E1E2E),
-    surface: Color(0xFF313244),
-    surfaceVariant: Color(0xFF45475A),
-    accent: Color(0xFFCBA6F7),
-    accentHover: Color(0xFFDDBDFD),
-    onAccent: Color(0xFF1E1E2E),
-    textPrimary: Color(0xFFD5C4F7),
-    textSecondary: Color(0xFFA6ADC8),
-    textDisabled: Color(0xFF6C7086),
-    error: Color(0xFFF38BA8),
-    success: Color(0xFFA6E3A1),
-    warning: Color(0xFFF9E2AF),
-    divider: Color(0xFF45475A),
-  );
-
-  // Dracula: cian sobre slate oscuro — el clásico cyberpunk.
-  static const _draculaColors = HermesThemeColors(
-    background: Color(0xFF21222C),
-    surface: Color(0xFF282A36),
-    surfaceVariant: Color(0xFF383A4A),
-    accent: Color(0xFF8BE9FD),
-    accentHover: Color(0xFFB0F5FF),
-    onAccent: Color(0xFF03202B),
-    textPrimary: Color(0xFFF8F8F2),
-    textSecondary: Color(0xFFA0C8D8),
-    textDisabled: Color(0xFF6272A4),
-    error: Color(0xFFFF5555),
-    success: Color(0xFF50FA7B),
-    warning: Color(0xFFF1FA8C),
-    divider: Color(0xFF383A4A),
-  );
-
-  // Crimson: rojo apagado y elegante sobre charcoal con tinte cálido. El
-  // acento es un rojo profundo (no agresivo); el texto en botones va claro
-  // porque el acento es oscuro. Toda la paleta se tiñe a la familia roja.
-  static const _crimsonColors = HermesThemeColors(
-    background: Color(0xFF120D0D),
-    surface: Color(0xFF1C1413),
-    surfaceVariant: Color(0xFF261A19),
-    accent: Color(0xFFC0392B),
-    accentHover: Color(0xFFD8584A),
-    onAccent: Color(0xFFFCEEEC),
-    textPrimary: Color(0xFFECE0DF),
-    textSecondary: Color(0xFFA98C89),
-    textDisabled: Color(0xFF5C4744),
-    error: Color(0xFFFF6B6B),
-    success: Color(0xFF5CC98A),
-    warning: Color(0xFFE0A33A),
-    divider: Color(0xFF2D1F1D),
-  );
-
-  // Steel: acero frío — casi-negro azulado con acento azul acero desaturado.
-  // Elegante y silencioso (nada de neón): el contrapunto frío al ámbar de
-  // marca. Curación U-10 (spec 028). Contrastes WCAG calculados sobre esta
-  // paleta: textPrimary/background 15.96:1, textPrimary/surface 14.86:1,
-  // textPrimary/surfaceVariant 13.41:1, accent/background 8.99:1 (vale como
-  // texto, ≥4.5), onAccent/accent 8.81:1, textSecondary/background 7.44:1,
-  // secondary/background 9.04:1, textDisabled/background 3.45:1.
-  static const _steelColors = HermesThemeColors(
-    background: Color(0xFF0A0D11),
-    surface: Color(0xFF12161D),
-    surfaceVariant: Color(0xFF1A202A),
-    accent: Color(0xFF8FB4D9),
-    accentHover: Color(0xFFAECBE8),
-    onAccent: Color(0xFF0B1017),
+  static const _steelPalette = HermesThemeColors(
+    background: Color(0xFF1F2123),
+    surface: Color(0xFF27292C),
+    surfaceVariant: Color(0xFF2F3235),
+    accent: Color(0xFFA3C0DD),
+    accentHover: Color(0xFFB9CFE6),
+    onAccent: Color(0xFF151B22),
+    accentText: Color(0xFFA3C0DD),
     textPrimary: Color(0xFFE4E9F0),
-    textSecondary: Color(0xFF94A1B5),
-    textDisabled: Color(0xFF5C687C),
-    error: Color(0xFFFF6B7D),
-    success: Color(0xFF4ED0A0),
-    warning: Color(0xFFF5C45A),
-    divider: Color(0xFF202836),
+    textSecondary: Color(0xFF9DA9BB),
+    textDisabled: Color(0xFF667182),
+    divider: Color(0xFF383B3E),
+    error: Color(0xFFE2848B),
+    warning: Color(0xFFDBB973),
+    success: Color(0xFF76C9A6),
   );
-
-  // Bordeaux: burdeos y cobre — negro-vino profundo con acento cobre suave
-  // (desaturado, no el ámbar de marca) y contrapunto salvia. Cálido y de
-  // terciopelo, entre Amber y Crimson. Curación U-10 (spec 028). Contrastes
-  // WCAG calculados: textPrimary/background 15.67:1, textPrimary/surface
-  // 14.73:1, textPrimary/surfaceVariant 13.56:1, accent/background 7.43:1
-  // (vale como texto, ≥4.5), onAccent/accent 7.22:1, textSecondary/background
-  // 6.56:1, secondary/background 9.23:1, textDisabled/background 3.11:1.
-  static const _bordeauxColors = HermesThemeColors(
-    background: Color(0xFF140A0F),
-    surface: Color(0xFF1E1118),
-    surfaceVariant: Color(0xFF291822),
-    accent: Color(0xFFD98E68),
-    accentHover: Color(0xFFE8AA8A),
-    onAccent: Color(0xFF1C0D07),
+  static const _steelLightPalette = HermesThemeColors(
+    background: Color(0xFFF5F7F9),
+    surface: Color(0xFFFCFCFD),
+    surfaceVariant: Color(0xFFE9ECF1),
+    accent: Color(0xFF486A8D),
+    accentHover: Color(0xFF395A7C),
+    onAccent: Color(0xFFFFFFFF),
+    accentText: Color(0xFF486A8D),
+    textPrimary: Color(0xFF2A313A),
+    textSecondary: Color(0xFF4C5868),
+    textDisabled: Color(0xFF778190),
+    divider: Color(0xFFDCE1E7),
+    error: Color(0xFF9F4248),
+    warning: Color(0xFF835D26),
+    success: Color(0xFF2E7254),
+  );
+  static const _bordeauxPalette = HermesThemeColors(
+    background: Color(0xFF251E21),
+    surface: Color(0xFF2E272A),
+    surfaceVariant: Color(0xFF372F33),
+    accent: Color(0xFFDBA082),
+    accentHover: Color(0xFFE4B39A),
+    onAccent: Color(0xFF251710),
+    accentText: Color(0xFFDBA082),
     textPrimary: Color(0xFFF0E4E4),
-    textSecondary: Color(0xFFAD8E96),
-    textDisabled: Color(0xFF745964),
-    error: Color(0xFFFF6B7D),
-    success: Color(0xFF5CC98A),
-    warning: Color(0xFFE8B45A),
-    divider: Color(0xFF301C26),
+    textSecondary: Color(0xFFBAA1A7),
+    textDisabled: Color(0xFF7F6A72),
+    divider: Color(0xFF40383C),
+    error: Color(0xFFE2848B),
+    warning: Color(0xFFDDB77B),
+    success: Color(0xFF7AC295),
   );
-
-  // Graphite: monocromo puro — grises sobre casi-negro, acento plata. Sin
-  // tinte de color (el contrapunto premium a todo el catálogo de acentos);
-  // solo error/success/warning llevan color por necesidad semántica.
-  static const _graphiteColors = HermesThemeColors(
-    background: Color(0xFF08090A),
-    surface: Color(0xFF141517),
-    surfaceVariant: Color(0xFF1E1F22),
-    accent: Color(0xFFEDEDEF),
-    accentHover: Color(0xFFFFFFFF),
-    onAccent: Color(0xFF0A0A0B),
-    textPrimary: Color(0xFFF4F4F5),
-    textSecondary: Color(0xFF9A9AA2),
-    textDisabled: Color(0xFF55555C),
-    error: Color(0xFFF87171),
-    success: Color(0xFF4ADE80),
-    warning: Color(0xFFFBBF24),
-    divider: Color(0xFF26272B),
+  static const _bordeauxLightPalette = HermesThemeColors(
+    background: Color(0xFFF9F6F5),
+    surface: Color(0xFFFDFCFC),
+    surfaceVariant: Color(0xFFF1EAE8),
+    accent: Color(0xFF9A5B46),
+    accentHover: Color(0xFF894B37),
+    onAccent: Color(0xFFFFFFFF),
+    accentText: Color(0xFF965742),
+    textPrimary: Color(0xFF392C30),
+    textSecondary: Color(0xFF66525A),
+    textDisabled: Color(0xFF8F7982),
+    divider: Color(0xFFE7DEDC),
+    error: Color(0xFFA04247),
+    warning: Color(0xFF835B26),
+    success: Color(0xFF3B7254),
   );
-
-  // ── Temas oficiales de Hermes Desktop ────────────────────────────────
-  // Fuente canónica: apps/desktop/src/themes/presets.ts. Solo se adapta la
-  // semántica de tokens (card→surface, muted→surfaceVariant, ring→accent);
-  // los colores de identidad permanecen idénticos.
-  static const _desktopNousColors = HermesThemeColors(
-    background: Color(0xFFF8FAFF),
-    surface: Color(0xFFFFFFFF),
-    surfaceVariant: Color(0xFFF2F6FF),
-    accent: Color(0xFF0053FD),
-    accentHover: Color(0xFF1540B1),
-    onAccent: Color(0xFFFCFCFC),
-    textPrimary: Color(0xFF17171A),
-    textSecondary: Color(0xFF666678),
+  static const _draculaPalette = HermesThemeColors(
+    background: Color(0xFF222228),
+    surface: Color(0xFF2A2B31),
+    surfaceVariant: Color(0xFF33343A),
+    accent: Color(0xFF92D8E7),
+    accentHover: Color(0xFFB5E9F0),
+    onAccent: Color(0xFF0D1D21),
+    accentText: Color(0xFF92D8E7),
+    textPrimary: Color(0xFFEFEFE9),
+    textSecondary: Color(0xFFADC5CF),
+    textDisabled: Color(0xFF6D7487),
+    divider: Color(0xFF3C3D44),
+    error: Color(0xFFDD817B),
+    warning: Color(0xFFBEC57B),
+    success: Color(0xFF89D293),
+  );
+  static const _draculaLightPalette = HermesThemeColors(
+    background: Color(0xFFFAF7EC),
+    surface: Color(0xFFFEFCF7),
+    surfaceVariant: Color(0xFFF0ECDC),
+    accent: Color(0xFF2A698C),
+    accentHover: Color(0xFF17597B),
+    onAccent: Color(0xFFFFFFFF),
+    accentText: Color(0xFF2A698C),
+    textPrimary: Color(0xFF303030),
+    textSecondary: Color(0xFF5B5643),
+    textDisabled: Color(0xFF86806C),
+    divider: Color(0xFFE5E1CE),
+    error: Color(0xFFAE5043),
+    warning: Color(0xFF7D6C2F),
+    success: Color(0xFF2D6E27),
+  );
+  static const _gruvboxPalette = HermesThemeColors(
+    background: Color(0xFF1F2121),
+    surface: Color(0xFF27292A),
+    surfaceVariant: Color(0xFF303233),
+    accent: Color(0xFFEF9F6E),
+    accentHover: Color(0xFFF2B77E),
+    onAccent: Color(0xFF26170D),
+    accentText: Color(0xFFEF9F6E),
+    textPrimary: Color(0xFFE7E1D1),
+    textSecondary: Color(0xFFB5A997),
+    textDisabled: Color(0xFF796F67),
+    divider: Color(0xFF393B3C),
+    error: Color(0xFFDD8273),
+    warning: Color(0xFFE2B762),
+    success: Color(0xFFB6B960),
+  );
+  static const _gruvboxLightPalette = HermesThemeColors(
+    background: Color(0xFFF5F1DF),
+    surface: Color(0xFFF8F6ED),
+    surfaceVariant: Color(0xFFEBE6D1),
+    accent: Color(0xFF9D4C31),
+    accentHover: Color(0xFF8B3C21),
+    onAccent: Color(0xFFFFFFFF),
+    accentText: Color(0xFF9D4C31),
+    textPrimary: Color(0xFF3C3836),
+    textSecondary: Color(0xFF5A524C),
+    textDisabled: Color(0xFF887E76),
+    divider: Color(0xFFDFDAC4),
+    error: Color(0xFF8A3028),
+    warning: Color(0xFF835D2B),
+    success: Color(0xFF5E5C24),
+  );
+  static const _sageGardenPalette = HermesThemeColors(
+    background: Color(0xFF1F211E),
+    surface: Color(0xFF272A26),
+    surfaceVariant: Color(0xFF30332E),
+    accent: Color(0xFFB9CDAE),
+    accentHover: Color(0xFFCCDCC3),
+    onAccent: Color(0xFF181C15),
+    accentText: Color(0xFFB9CDAE),
+    textPrimary: Color(0xFFE2E8DC),
+    textSecondary: Color(0xFFA0AC99),
+    textDisabled: Color(0xFF687462),
+    divider: Color(0xFF393C37),
+    error: Color(0xFFCF8A7E),
+    warning: Color(0xFFCEBD8A),
+    success: Color(0xFFA4C794),
+  );
+  static const _sageGardenLightPalette = HermesThemeColors(
+    background: Color(0xFFF5F7F3),
+    surface: Color(0xFFFCFCFB),
+    surfaceVariant: Color(0xFFEAECE5),
+    accent: Color(0xFF53694A),
+    accentHover: Color(0xFF44593B),
+    onAccent: Color(0xFFFFFFFF),
+    accentText: Color(0xFF53694A),
+    textPrimary: Color(0xFF2C3329),
+    textSecondary: Color(0xFF4F5A4A),
+    textDisabled: Color(0xFF798473),
+    divider: Color(0xFFDEE1D8),
+    error: Color(0xFF9D4B3C),
+    warning: Color(0xFF785F29),
+    success: Color(0xFF406D38),
+  );
+  static const _nousPalette = HermesThemeColors(
+    background: Color(0xFFF7F7F7),
+    surface: Color(0xFFFCFCFC),
+    surfaceVariant: Color(0xFFEDECE9),
+    accent: Color(0xFF4769AD),
+    accentHover: Color(0xFF38599B),
+    onAccent: Color(0xFFFFFFFF),
+    accentText: Color(0xFF4567AB),
+    textPrimary: Color(0xFF2D3136),
+    textSecondary: Color(0xFF586068),
+    textDisabled: Color(0xFF93999F),
+    divider: Color(0xFFE2E0DC),
+    error: Color(0xFFAE504B),
+    warning: Color(0xFF8E6527),
+    success: Color(0xFF357B43),
+  );
+  static const _nousDarkPalette = HermesThemeColors(
+    background: Color(0xFF1E2125),
+    surface: Color(0xFF26292D),
+    surfaceVariant: Color(0xFF2F3236),
+    accent: Color(0xFF789DE6),
+    accentHover: Color(0xFF90B1F1),
+    onAccent: Color(0xFF131B29),
+    accentText: Color(0xFF789DE6),
+    textPrimary: Color(0xFFE6EDF3),
+    textSecondary: Color(0xFFA0A9B3),
+    textDisabled: Color(0xFF6A717B),
+    divider: Color(0xFF383B3F),
+    error: Color(0xFFDD8177),
+    warning: Color(0xFFC69D57),
+    success: Color(0xFF6EB172),
+  );
+  static const _githubPalette = HermesThemeColors(
+    background: Color(0xFFF7F7F7),
+    surface: Color(0xFFFCFCFC),
+    surfaceVariant: Color(0xFFEDECE9),
+    accent: Color(0xFF2E6A3B),
+    accentHover: Color(0xFF1D5A2C),
+    onAccent: Color(0xFFFFFFFF),
+    accentText: Color(0xFF2E6A3B),
+    textPrimary: Color(0xFF2D3136),
+    textSecondary: Color(0xFF586068),
+    textDisabled: Color(0xFF93999F),
+    divider: Color(0xFFE2E0DC),
+    error: Color(0xFFAE504B),
+    warning: Color(0xFF8E6527),
+    success: Color(0xFF357B43),
+  );
+  static const _githubDarkPalette = HermesThemeColors(
+    background: Color(0xFF1E2125),
+    surface: Color(0xFF26292D),
+    surfaceVariant: Color(0xFF2F3236),
+    accent: Color(0xFF74AF7D),
+    accentHover: Color(0xFF8CC094),
+    onAccent: Color(0xFF111E13),
+    accentText: Color(0xFF74AF7D),
+    textPrimary: Color(0xFFE6EDF3),
+    textSecondary: Color(0xFFA0A9B3),
+    textDisabled: Color(0xFF6A717B),
+    divider: Color(0xFF383B3F),
+    error: Color(0xFFDD8177),
+    warning: Color(0xFFC69D57),
+    success: Color(0xFF6EB172),
+  );
+  static const _catppuccinPalette = HermesThemeColors(
+    background: Color(0xFFF0F1F4),
+    surface: Color(0xFFF6F7F8),
+    surfaceVariant: Color(0xFFE3E6EC),
+    accent: Color(0xFF644B93),
+    accentHover: Color(0xFF553B82),
+    onAccent: Color(0xFFFFFFFF),
+    accentText: Color(0xFF644B93),
+    textPrimary: Color(0xFF3B3C48),
+    textSecondary: Color(0xFF585A6B),
+    textDisabled: Color(0xFF9597A7),
+    divider: Color(0xFFD7DBE2),
+    error: Color(0xFFAB4B50),
+    warning: Color(0xFF915E19),
+    success: Color(0xFF39772D),
+  );
+  static const _catppuccinDarkPalette = HermesThemeColors(
+    background: Color(0xFF1F1F29),
+    surface: Color(0xFF282832),
+    surfaceVariant: Color(0xFF30303B),
+    accent: Color(0xFFD4B8F7),
+    accentHover: Color(0xFFE3CAFF),
+    onAccent: Color(0xFF1E1726),
+    accentText: Color(0xFFD4B8F7),
+    textPrimary: Color(0xFFDCE1F0),
+    textSecondary: Color(0xFFA3A8BD),
+    textDisabled: Color(0xFF7B7F93),
+    divider: Color(0xFF393944),
+    error: Color(0xFFE297AA),
+    warning: Color(0xFFD3BB8A),
+    success: Color(0xFFA1C89F),
+  );
+  static const _everforestPalette = HermesThemeColors(
+    background: Color(0xFFFBF6E9),
+    surface: Color(0xFFFFFCF6),
+    surfaceVariant: Color(0xFFF2EBD8),
+    accent: Color(0xFF5A6A40),
+    accentHover: Color(0xFF4B5A31),
+    onAccent: Color(0xFFFFFFFF),
+    accentText: Color(0xFF5A6A40),
+    textPrimary: Color(0xFF333F46),
+    textSecondary: Color(0xFF586058),
+    textDisabled: Color(0xFF959B8D),
+    divider: Color(0xFFE7DFCA),
+    error: Color(0xFF7F4443),
+    warning: Color(0xFF6A521F),
+    success: Color(0xFF50591F),
+  );
+  static const _everforestDarkPalette = HermesThemeColors(
+    background: Color(0xFF262B2E),
+    surface: Color(0xFF2F3437),
+    surfaceVariant: Color(0xFF373D40),
+    accent: Color(0xFFB7CB99),
+    accentHover: Color(0xFFC9DAB0),
+    onAccent: Color(0xFF181D11),
+    accentText: Color(0xFFB7CB99),
+    textPrimary: Color(0xFFE8E1D1),
+    textSecondary: Color(0xFFAFB8B1),
+    textDisabled: Color(0xFF737E7A),
+    divider: Color(0xFF41464A),
+    error: Color(0xFFDA837F),
+    warning: Color(0xFFD3BB8A),
+    success: Color(0xFFB4C694),
+  );
+  static const _solarizedPalette = HermesThemeColors(
+    background: Color(0xFFFBF6E9),
+    surface: Color(0xFFFFFCF6),
+    surfaceVariant: Color(0xFFF2EBD8),
+    accent: Color(0xFF655E3E),
+    accentHover: Color(0xFF564F2F),
+    onAccent: Color(0xFFFFFFFF),
+    accentText: Color(0xFF655E3E),
+    textPrimary: Color(0xFF303030),
+    textSecondary: Color(0xFF4C5151),
+    textDisabled: Color(0xFF969993),
+    divider: Color(0xFFE7DFCA),
+    error: Color(0xFFAE4E56),
+    warning: Color(0xFF846927),
+    success: Color(0xFF667326),
+  );
+  static const _solarizedDarkPalette = HermesThemeColors(
+    background: Color(0xFF152930),
+    surface: Color(0xFF1D3238),
+    surfaceVariant: Color(0xFF263B42),
+    accent: Color(0xFF85ACC8),
+    accentHover: Color(0xFF9ABBD3),
+    onAccent: Color(0xFF131C22),
+    accentText: Color(0xFF85ACC8),
+    textPrimary: Color(0xFFD4E5E7),
+    textSecondary: Color(0xFFA2B3B8),
+    textDisabled: Color(0xFF647A83),
+    divider: Color(0xFF2F444B),
+    error: Color(0xFFDD9C9A),
+    warning: Color(0xFFC0A966),
+    success: Color(0xFFA5B165),
+  );
+  static const _nousAltPalette = HermesThemeColors(
+    background: Color(0xFFF5F7FA),
+    surface: Color(0xFFFCFCFE),
+    surfaceVariant: Color(0xFFE9ECF3),
+    accent: Color(0xFF4769AD),
+    accentHover: Color(0xFF38599B),
+    onAccent: Color(0xFFFFFFFF),
+    accentText: Color(0xFF4567AA),
+    textPrimary: Color(0xFF303033),
+    textSecondary: Color(0xFF5D5D6F),
     textDisabled: Color(0xFF8A8A98),
-    error: Color(0xFFC72E4D),
-    success: Color(0xFF18864B),
-    warning: Color(0xFFA65C00),
-    divider: Color(0xFFC7D9FF),
-    accentText: Color(0xFF0053FD),
+    divider: Color(0xFFDDE0E9),
+    error: Color(0xFFAE4F5A),
+    warning: Color(0xFF996029),
+    success: Color(0xFF307B4D),
   );
-
-  static const _desktopNousDarkColors = HermesThemeColors(
-    background: Color(0xFF0D2F86),
-    surface: Color(0xFF12378F),
-    surfaceVariant: Color(0xFF183F9A),
-    accent: Color(0xFFFFE6CB),
-    accentHover: Color(0xFFFFFFFF),
-    onAccent: Color(0xFF0D2F86),
-    textPrimary: Color(0xFFFFE6CB),
-    textSecondary: Color(0xFFB5C7F3),
-    textDisabled: Color(0xFF8098D0),
-    error: Color(0xFFC0473A),
-    success: Color(0xFF77D79B),
-    warning: Color(0xFFFFC66D),
-    divider: Color(0xFF3158AD),
+  static const _nousAltDarkPalette = HermesThemeColors(
+    background: Color(0xFF232A39),
+    surface: Color(0xFF2B3342),
+    surfaceVariant: Color(0xFF343C4B),
+    accent: Color(0xFFDAC7B3),
+    accentHover: Color(0xFFDEDEDE),
+    onAccent: Color(0xFF1E1A15),
+    accentText: Color(0xFFDAC7B3),
+    textPrimary: Color(0xFFF5E8DB),
+    textSecondary: Color(0xFFBFC7DC),
+    textDisabled: Color(0xFF9199AC),
+    divider: Color(0xFF3D4555),
+    error: Color(0xFFEDA498),
+    warning: Color(0xFFDFB77B),
+    success: Color(0xFF8ECFA4),
   );
-
-  static const _desktopMidnightColors = HermesThemeColors(
-    background: Color(0xFF08081C),
-    surface: Color(0xFF0D0D28),
-    surfaceVariant: Color(0xFF13133A),
-    accent: Color(0xFF8B80E8),
-    accentHover: Color(0xFFDDD6FF),
-    onAccent: Color(0xFF08081C),
-    textPrimary: Color(0xFFDDD6FF),
-    textSecondary: Color(0xFF7C7AB0),
-    textDisabled: Color(0xFF55537D),
-    error: Color(0xFFB03060),
-    success: Color(0xFF4ADE80),
-    warning: Color(0xFFFBBF24),
-    divider: Color(0xFF1E1E52),
+  static const _classicPalette = HermesThemeColors(
+    background: Color(0xFFF5F5F5),
+    surface: Color(0xFFFBFBFB),
+    surfaceVariant: Color(0xFFEBEAE7),
+    accent: Color(0xFF7C5F27),
+    accentHover: Color(0xFF6C4F15),
+    onAccent: Color(0xFFFFFFFF),
+    accentText: Color(0xFF7C5F27),
+    textPrimary: Color(0xFF353025),
+    textSecondary: Color(0xFF665D4B),
+    textDisabled: Color(0xFFA09884),
+    divider: Color(0xFFE0DEDA),
+    error: Color(0xFFAB4D45),
+    warning: Color(0xFF985F28),
+    success: Color(0xFF2E7A4C),
   );
-
-  static const _desktopEmberColors = HermesThemeColors(
-    background: Color(0xFF160800),
-    surface: Color(0xFF1E0E04),
-    surfaceVariant: Color(0xFF2A1408),
-    accent: Color(0xFFD97316),
-    accentHover: Color(0xFFFFD8B0),
-    onAccent: Color(0xFF160800),
-    textPrimary: Color(0xFFFFD8B0),
-    textSecondary: Color(0xFFAA7A56),
-    textDisabled: Color(0xFF735139),
-    error: Color(0xFFC43010),
-    success: Color(0xFF69B86B),
-    warning: Color(0xFFE9A33A),
-    divider: Color(0xFF3A1C08),
+  static const _classicDarkPalette = HermesThemeColors(
+    background: Color(0xFF1F1F2B),
+    surface: Color(0xFF272834),
+    surfaceVariant: Color(0xFF30303E),
+    accent: Color(0xFFEEC46E),
+    accentHover: Color(0xFFF6D78C),
+    onAccent: Color(0xFF211909),
+    accentText: Color(0xFFEEC46E),
+    textPrimary: Color(0xFFF3EFDE),
+    textSecondary: Color(0xFFB1A793),
+    textDisabled: Color(0xFF796F5D),
+    divider: Color(0xFF383947),
+    error: Color(0xFFDD817A),
+    warning: Color(0xFFE0B861),
+    success: Color(0xFF83D399),
   );
-
-  static const _desktopMonoColors = HermesThemeColors(
-    background: Color(0xFF0E0E0E),
-    surface: Color(0xFF141414),
-    surfaceVariant: Color(0xFF1E1E1E),
-    accent: Color(0xFF9A9A9A),
-    accentHover: Color(0xFFEAEAEA),
-    onAccent: Color(0xFF0E0E0E),
+  static const _midnightLightPalette = HermesThemeColors(
+    background: Color(0xFFF7F7F7),
+    surface: Color(0xFFFCFCFC),
+    surfaceVariant: Color(0xFFEDECE9),
+    accent: Color(0xFF6F6AAC),
+    accentHover: Color(0xFF605A9B),
+    onAccent: Color(0xFFFFFFFF),
+    accentText: Color(0xFF6560A1),
+    textPrimary: Color(0xFF303030),
+    textSecondary: Color(0xFF5F5D71),
+    textDisabled: Color(0xFF8A899B),
+    divider: Color(0xFFE2E0DC),
+    error: Color(0xFFAB5345),
+    warning: Color(0xFF9A602A),
+    success: Color(0xFF307B4D),
+  );
+  static const _midnightPalette = HermesThemeColors(
+    background: Color(0xFF1E1F2C),
+    surface: Color(0xFF262835),
+    surfaceVariant: Color(0xFF2F303F),
+    accent: Color(0xFF9993E3),
+    accentHover: Color(0xFFDDD7F7),
+    onAccent: Color(0xFF191828),
+    accentText: Color(0xFF9993E3),
+    textPrimary: Color(0xFFE1DFEF),
+    textSecondary: Color(0xFFA6A6BB),
+    textDisabled: Color(0xFF6F6E82),
+    divider: Color(0xFF373948),
+    error: Color(0xFFD97F98),
+    warning: Color(0xFFE0B861),
+    success: Color(0xFF7FCF95),
+  );
+  static const _emberLightPalette = HermesThemeColors(
+    background: Color(0xFFF7F7F7),
+    surface: Color(0xFFFCFCFC),
+    surfaceVariant: Color(0xFFEDECE9),
+    accent: Color(0xFFA46332),
+    accentHover: Color(0xFF925320),
+    onAccent: Color(0xFFFFFFFF),
+    accentText: Color(0xFF995827),
+    textPrimary: Color(0xFF303030),
+    textSecondary: Color(0xFF6C5B52),
+    textDisabled: Color(0xFF928886),
+    divider: Color(0xFFE2E0DC),
+    error: Color(0xFFAB5345),
+    warning: Color(0xFF9A602A),
+    success: Color(0xFF307B4D),
+  );
+  static const _emberPalette = HermesThemeColors(
+    background: Color(0xFF281E16),
+    surface: Color(0xFF31271E),
+    surfaceVariant: Color(0xFF3A2F26),
+    accent: Color(0xFFD58A55),
+    accentHover: Color(0xFFF6D8B9),
+    onAccent: Color(0xFF25170D),
+    accentText: Color(0xFFD58A55),
+    textPrimary: Color(0xFFECDFD2),
+    textSecondary: Color(0xFFB7A496),
+    textDisabled: Color(0xFF7E6C60),
+    divider: Color(0xFF43382F),
+    error: Color(0xFFDC836F),
+    warning: Color(0xFFDBA967),
+    success: Color(0xFF7CB27C),
+  );
+  static const _monoLightPalette = HermesThemeColors(
+    background: Color(0xFFF7F7F7),
+    surface: Color(0xFFFCFCFC),
+    surfaceVariant: Color(0xFFEDECE9),
+    accent: Color(0xFF737373),
+    accentHover: Color(0xFF636363),
+    onAccent: Color(0xFFFFFFFF),
+    accentText: Color(0xFF686868),
+    textPrimary: Color(0xFF303030),
+    textSecondary: Color(0xFF5E5E62),
+    textDisabled: Color(0xFF8C8C93),
+    divider: Color(0xFFE2E0DC),
+    error: Color(0xFFAB5345),
+    warning: Color(0xFF9A602A),
+    success: Color(0xFF307B4D),
+  );
+  static const _monoPalette = HermesThemeColors(
+    background: Color(0xFF202020),
+    surface: Color(0xFF292929),
+    surfaceVariant: Color(0xFF313131),
+    accent: Color(0xFFA6A6A6),
+    accentHover: Color(0xFFDEDEDE),
+    onAccent: Color(0xFF1B1B1B),
+    accentText: Color(0xFFA6A6A6),
     textPrimary: Color(0xFFEAEAEA),
-    textSecondary: Color(0xFF808080),
-    textDisabled: Color(0xFF5D5D5D),
-    error: Color(0xFFA84040),
-    success: Color(0xFF75A875),
-    warning: Color(0xFFC5A15A),
-    divider: Color(0xFF2A2A2A),
+    textSecondary: Color(0xFFA7A7A7),
+    textDisabled: Color(0xFF707070),
+    divider: Color(0xFF3A3A3A),
+    error: Color(0xFFD58581),
+    warning: Color(0xFFBDA373),
+    success: Color(0xFF84AA83),
   );
-
-  static const _desktopCyberpunkColors = HermesThemeColors(
-    background: Color(0xFF000A00),
-    surface: Color(0xFF001200),
-    surfaceVariant: Color(0xFF001A00),
-    accent: Color(0xFF00FF41),
-    accentHover: Color(0xFF7AFF9C),
-    onAccent: Color(0xFF000A00),
-    textPrimary: Color(0xFF00FF41),
-    textSecondary: Color(0xFF1A8A30),
-    textDisabled: Color(0xFF176326),
-    error: Color(0xFFFF003C),
-    success: Color(0xFF00FF41),
-    warning: Color(0xFFFFE600),
-    divider: Color(0xFF003000),
+  static const _slateLightPalette = HermesThemeColors(
+    background: Color(0xFFF7F7F7),
+    surface: Color(0xFFFCFCFC),
+    surfaceVariant: Color(0xFFEDECE9),
+    accent: Color(0xFF4A74A6),
+    accentHover: Color(0xFF3A6495),
+    onAccent: Color(0xFFFFFFFF),
+    accentText: Color(0xFF406A9B),
+    textPrimary: Color(0xFF303030),
+    textSecondary: Color(0xFF555F70),
+    textDisabled: Color(0xFF858D9D),
+    divider: Color(0xFFE2E0DC),
+    error: Color(0xFFAB5345),
+    warning: Color(0xFF9A602A),
+    success: Color(0xFF307B4D),
   );
-
-  static const _desktopSlateColors = HermesThemeColors(
-    background: Color(0xFF0D1117),
-    surface: Color(0xFF161B22),
-    surfaceVariant: Color(0xFF21262D),
-    accent: Color(0xFF58A6FF),
-    accentHover: Color(0xFFC9D1D9),
-    onAccent: Color(0xFF0D1117),
-    textPrimary: Color(0xFFC9D1D9),
-    textSecondary: Color(0xFF8B949E),
-    textDisabled: Color(0xFF5E6670),
-    error: Color(0xFFCF4848),
-    success: Color(0xFF3FB950),
-    warning: Color(0xFFD29922),
-    divider: Color(0xFF30363D),
+  static const _slatePalette = HermesThemeColors(
+    background: Color(0xFF1E2125),
+    surface: Color(0xFF26292D),
+    surfaceVariant: Color(0xFF2F3236),
+    accent: Color(0xFF7AB3F7),
+    accentHover: Color(0xFFCBD1D7),
+    onAccent: Color(0xFF101B28),
+    accentText: Color(0xFF7AB3F7),
+    textPrimary: Color(0xFFDAE2EA),
+    textSecondary: Color(0xFFA0A9B2),
+    textDisabled: Color(0xFF69717B),
+    divider: Color(0xFF383B3F),
+    error: Color(0xFFDD817B),
+    warning: Color(0xFFC69D57),
+    success: Color(0xFF6EB172),
   );
-
-  /// Equivalente Android de `synthLightColors` en Hermes Desktop. Desktop
-  /// separa skin y modo: cuando una skin no publica `darkColors`, conserva la
-  /// paleta oscura como semilla y genera esta variante clara con su `ring`.
-  static HermesThemeColors _desktopLightFrom(HermesThemeColors seed) {
-    final sourceAccent = seed.accent;
-    // CSS colors in Desktop are ultimately stored as 8-bit channels. Quantize
-    // Flutter's floating-point interpolation as well so a generated preset is
-    // byte-stable when Theme Studio persists and restores it.
-    Color mix(Color from, Color to, double amount) =>
-        Color(Color.lerp(from, to, amount)!.toARGB32());
-
-    // Some Desktop rings are intentionally luminous on the dark skin (Mono,
-    // Cyberpunk and Slate). On white they stop being legible as links/icons,
-    // so preserve their hue while lowering only the light-mode tone to AA.
-    var accent = sourceAccent;
-    for (var step = 1; step <= 20; step++) {
-      final luminance = accent.computeLuminance();
-      final contrastOnWhite = 1.05 / (luminance + 0.05);
-      if (contrastOnWhite >= 4.5) break;
-      accent = mix(sourceAccent, Colors.black, step / 20);
-    }
-    final accentLuminance = accent.computeLuminance();
-    final blackContrast = (accentLuminance + 0.05) / 0.05;
-    final whiteContrast = 1.05 / (accentLuminance + 0.05);
-    final onAccent = blackContrast >= whiteContrast
-        ? const Color(0xFF161616)
-        : Colors.white;
-    final soft = mix(Colors.white, sourceAccent, 0.10);
-    final softer = mix(Colors.white, sourceAccent, 0.06);
-    final border = mix(const Color(0xFFECECEF), sourceAccent, 0.14);
-    final mutedText = mix(const Color(0xFF6B6B70), sourceAccent, 0.16);
-    return HermesThemeColors(
-      background: Colors.white,
-      surface: Colors.white,
-      surfaceVariant: softer,
-      accent: accent,
-      accentHover: mix(accent, Colors.black, 0.10),
-      onAccent: onAccent,
-      textPrimary: const Color(0xFF161616),
-      textSecondary: mutedText,
-      textDisabled: mix(const Color(0xFF8A8A92), sourceAccent, 0.10),
-      error: const Color(0xFFB94A3A),
-      success: const Color(0xFF18864B),
-      warning: const Color(0xFFA65C00),
-      divider: border,
-      secondary: soft,
-      accentText: accent,
-    );
-  }
-
-  static final _desktopMidnightLightColors = _desktopLightFrom(
-    _desktopMidnightColors,
+  static const _cyberpunkLightPalette = HermesThemeColors(
+    background: Color(0xFFF7F7F7),
+    surface: Color(0xFFFCFCFC),
+    surfaceVariant: Color(0xFFEDECE9),
+    accent: Color(0xFF387A3D),
+    accentHover: Color(0xFF276A2D),
+    onAccent: Color(0xFFFFFFFF),
+    accentText: Color(0xFF337538),
+    textPrimary: Color(0xFF303030),
+    textSecondary: Color(0xFF526357),
+    textDisabled: Color(0xFF7F958B),
+    divider: Color(0xFFE2E0DC),
+    error: Color(0xFFAB5345),
+    warning: Color(0xFF9A602A),
+    success: Color(0xFF307B4D),
   );
-  static final _desktopEmberLightColors = _desktopLightFrom(
-    _desktopEmberColors,
-  );
-  static final _desktopMonoLightColors = _desktopLightFrom(_desktopMonoColors);
-  static final _desktopCyberpunkLightColors = _desktopLightFrom(
-    _desktopCyberpunkColors,
-  );
-  static final _desktopSlateLightColors = _desktopLightFrom(
-    _desktopSlateColors,
+  static const _cyberpunkPalette = HermesThemeColors(
+    background: Color(0xFF192418),
+    surface: Color(0xFF222C21),
+    surfaceVariant: Color(0xFF2A3529),
+    accent: Color(0xFF9BDF9B),
+    accentHover: Color(0xFFAEF1BB),
+    onAccent: Color(0xFF121E12),
+    accentText: Color(0xFF9BDF9B),
+    textPrimary: Color(0xFFD9E5D8),
+    textSecondary: Color(0xFF9CAD9D),
+    textDisabled: Color(0xFF657566),
+    divider: Color(0xFF333E31),
+    error: Color(0xFFDD807E),
+    warning: Color(0xFFCDC064),
+    success: Color(0xFF8CCF8D),
   );
 
   /// Catálogo de temas, en orden de presentación. El primero es el default.
@@ -764,204 +1060,422 @@ class AppTheme {
   /// Jul-2026: Gruvbox vuelve al catálogo a petición del autor (y sale de la
   /// migración legacy), se añade Sage Garden y se incorporan los seis presets
   /// oficiales de Hermes Desktop. Ember vuelve con su paleta canónica Desktop.
-  static final List<HermesThemePreset> presets = List.unmodifiable([
-    // ── Oscuros ──
-    // Amber es el tema por defecto (la firma de Hermes) y va primero.
+  /// Oct-2026: el catálogo Desktop sigue a BUILTIN_THEMES de Hermes Desktop
+  /// (12 familias, mismo orden). `nous` pasa a ser el Nous sobre GitHub como
+  /// en Desktop y la paleta anterior vive como `nous-alt`; `everforest` y
+  /// `solarized-dark` vuelven a ser temas reales y salen de la migración.
+  /// 1.2.15: one card per family, every family in light and dark. The
+  /// Console duplicates (amber-oled, crimson, hermes-console, mocha,
+  /// phosphor, graphite) migrate in [retiredThemeIds]; amber, steel,
+  /// bordeaux, dracula, gruvbox and sage-garden gain a light variant and
+  /// Claude becomes one family (claude + claude-light). Console (the app's
+  /// icon colours on Claude's structure) is the default for new installs;
+  /// a saved choice, Amber included, is never moved.
+  ///
+  /// rt1215: every preset passes through [_withReadableInk], so secondary
+  /// text and links reach AA on all of its surfaces.
+  static final List<HermesThemePreset> presets = List.unmodifiable(
+    _curatedPresets.map(_withReadableInk),
+  );
+
+  static final List<HermesThemePreset> _curatedPresets = List.unmodifiable([
+    // ── Console: the default, in the icon's graphite and terracotta ──
+    HermesThemePreset(
+      id: 'console',
+      name: 'Console',
+      tagline: 'graphite · terracotta',
+      brightness: Brightness.dark,
+      colors: _consolePalette,
+      fontFamily: 'Inter',
+      radius: 16.0,
+      secondary: Color(0xFF88A9C0),
+      titleWeight: FontWeight.w600,
+      titleSpacing: 0.0,
+      family: 'console',
+    ),
+    HermesThemePreset(
+      id: 'console-light',
+      name: 'Console',
+      tagline: 'porcelain · terracotta',
+      brightness: Brightness.light,
+      colors: _consoleLightPalette,
+      fontFamily: 'Inter',
+      radius: 16.0,
+      secondary: Color(0xFF4C6D85),
+      titleWeight: FontWeight.w600,
+      titleSpacing: 0.0,
+      family: 'console',
+    ),
+    // ── Console families: dark, then light ──
     HermesThemePreset(
       id: 'amber',
       name: 'Amber',
-      tagline: 'deep charcoal · the signature',
+      tagline: 'soft graphite · the signature',
       brightness: Brightness.dark,
-      colors: _darkColors,
+      colors: _amberPalette,
       fontFamily: 'Inter',
       radius: 10.0,
-      secondary: Color(0xFF4FB8C9), // teal frío que contrasta el ámbar
+      secondary: Color(0xFF69B5C2),
       titleWeight: FontWeight.w700,
       titleSpacing: 0.5,
+      family: 'amber',
+    ),
+    HermesThemePreset(
+      id: 'amber-light',
+      name: 'Amber',
+      tagline: 'warm paper · the signature',
+      brightness: Brightness.light,
+      colors: _amberLightPalette,
+      fontFamily: 'Inter',
+      radius: 10.0,
+      secondary: Color(0xFF326973),
+      titleWeight: FontWeight.w700,
+      titleSpacing: 0.5,
+      family: 'amber',
     ),
     HermesThemePreset(
       id: 'claude',
       name: 'Claude',
       tagline: 'warm charcoal · coral clay',
       brightness: Brightness.dark,
-      colors: _claudeColors,
+      colors: _claudePalette,
       fontFamily: 'Inter',
       radius: 16.0,
-      secondary: Color(0xFF7C9CB3), // azul pizarra suave, contraste sereno
+      secondary: Color(0xFF7C9CB3),
       titleWeight: FontWeight.w600,
       titleSpacing: 0.0,
+      family: 'claude',
     ),
     HermesThemePreset(
-      id: 'amber-oled',
-      name: 'Amber OLED',
-      tagline: 'pure black · saves battery',
-      brightness: Brightness.dark,
-      colors: _oledColors,
+      id: 'claude-light',
+      name: 'Claude',
+      tagline: 'warm paper · deep coral',
+      brightness: Brightness.light,
+      colors: _claudeLightPalette,
       fontFamily: 'Inter',
-      radius: 10.0,
-      secondary: Color(0xFF4FB8C9),
-      titleWeight: FontWeight.w700,
-      titleSpacing: 0.5,
-    ),
-    HermesThemePreset(
-      id: 'crimson',
-      name: 'Crimson',
-      tagline: 'muted red · elegant',
-      brightness: Brightness.dark,
-      colors: _crimsonColors,
-      fontFamily: 'Inter',
-      radius: 8.0,
-      secondary: Color(
-        0xFF4FB3A0,
-      ), // jade complementario al rojo (no el oro cliché)
+      radius: 16.0,
+      secondary: Color(0xFF4F7088),
       titleWeight: FontWeight.w600,
-      titleSpacing: 1.5, // tracking amplio = elegante
+      titleSpacing: 0.0,
+      family: 'claude',
     ),
     HermesThemePreset(
       id: 'steel',
       name: 'Steel',
       tagline: 'cold steel blue · precision',
       brightness: Brightness.dark,
-      colors: _steelColors,
+      colors: _steelPalette,
       fontFamily: 'Inter',
       radius: 8.0,
-      secondary: Color(0xFFD9A868), // latón cálido: eco del ámbar de marca
+      secondary: Color(0xFFD1AB7A),
       titleWeight: FontWeight.w600,
       titleSpacing: 1.0,
+      family: 'steel',
+    ),
+    HermesThemePreset(
+      id: 'steel-light',
+      name: 'Steel',
+      tagline: 'cool paper · steel blue',
+      brightness: Brightness.light,
+      colors: _steelLightPalette,
+      fontFamily: 'Inter',
+      radius: 8.0,
+      secondary: Color(0xFF79572C),
+      titleWeight: FontWeight.w600,
+      titleSpacing: 1.0,
+      family: 'steel',
     ),
     HermesThemePreset(
       id: 'bordeaux',
       name: 'Bordeaux',
       tagline: 'burgundy velvet · copper',
       brightness: Brightness.dark,
-      colors: _bordeauxColors,
+      colors: _bordeauxPalette,
       fontFamily: 'Montserrat',
       radius: 10.0,
-      secondary: Color(0xFF86BFA0), // salvia: contrapunto frío al cobre
+      secondary: Color(0xFF90BCA4),
       titleWeight: FontWeight.w600,
       titleSpacing: 1.2,
+      family: 'bordeaux',
     ),
     HermesThemePreset(
-      id: 'hermes-console',
-      name: 'Hermes Console',
-      tagline: 'logo colors · electric blue',
-      brightness: Brightness.dark,
-      colors: _hermesConsoleColors,
-      fontFamily: 'JetBrainsMono',
-      radius: 4.0,
-      secondary: Color(0xFFF4B250), // ámbar HUD: cálido que contrasta el azul
-      titleWeight: FontWeight.w700,
-      titleSpacing: 2.0,
-      uppercaseTitles: true,
-    ),
-    HermesThemePreset(
-      id: 'mocha',
-      name: 'Catppuccin Mocha',
-      tagline: 'pastel mauve · the favorite',
-      brightness: Brightness.dark,
-      colors: _mochaColors,
-      fontFamily: 'Inter',
-      radius: 16.0,
-      secondary: Color(0xFFFAB387), // durazno pastel
-      titleWeight: FontWeight.w800,
-      titleSpacing: 0.0,
+      id: 'bordeaux-light',
+      name: 'Bordeaux',
+      tagline: 'blush paper · copper',
+      brightness: Brightness.light,
+      colors: _bordeauxLightPalette,
+      fontFamily: 'Montserrat',
+      radius: 10.0,
+      secondary: Color(0xFF416D53),
+      titleWeight: FontWeight.w600,
+      titleSpacing: 1.2,
+      family: 'bordeaux',
     ),
     HermesThemePreset(
       id: 'dracula',
       name: 'Dracula',
-      tagline: 'cyberpunk cyan · dark slate',
+      tagline: 'soft cyan · dusk slate',
       brightness: Brightness.dark,
-      colors: _draculaColors,
+      colors: _draculaPalette,
       fontFamily: 'JetBrainsMono',
       radius: 4.0,
-      secondary: Color(0xFFFF79C6), // rosa neón
+      secondary: Color(0xFFD89ABA),
       titleWeight: FontWeight.w700,
       titleSpacing: 2.0,
       uppercaseTitles: true,
+      family: 'dracula',
     ),
     HermesThemePreset(
-      id: 'phosphor',
-      name: 'Phosphor',
-      tagline: 'green CRT terminal',
-      brightness: Brightness.dark,
-      colors: _phosphorColors,
+      id: 'dracula-light',
+      name: 'Dracula',
+      tagline: 'Alucard · official light',
+      brightness: Brightness.light,
+      colors: _draculaLightPalette,
       fontFamily: 'JetBrainsMono',
-      radius: 2.0,
-      secondary: Color(0xFFE2C84A), // ámbar CRT
+      radius: 4.0,
+      secondary: Color(0xFF824554),
       titleWeight: FontWeight.w700,
-      titleSpacing: 3.0,
+      titleSpacing: 2.0,
       uppercaseTitles: true,
+      family: 'dracula',
     ),
     HermesThemePreset(
       id: 'gruvbox',
       name: 'Gruvbox',
       tagline: 'retro warm · vim classic',
       brightness: Brightness.dark,
-      colors: _gruvboxColors,
+      colors: _gruvboxPalette,
       fontFamily: 'JetBrainsMono',
       radius: 6.0,
-      secondary: Color(0xFF8EC07C), // aqua gruvbox: frío que templa el naranja
+      secondary: Color(0xFF96BD88),
       titleWeight: FontWeight.w700,
       titleSpacing: 1.0,
+      family: 'gruvbox',
     ),
     HermesThemePreset(
-      id: 'graphite',
-      name: 'Graphite',
-      tagline: 'monochrome · pure dark',
-      brightness: Brightness.dark,
-      colors: _graphiteColors,
-      fontFamily: 'Inter',
-      radius: 12.0,
-      secondary: Color(0xFF8A8A90), // gris neutro: mono de verdad, sin color
-      titleWeight: FontWeight.w600,
-      titleSpacing: 0.5,
+      id: 'gruvbox-light',
+      name: 'Gruvbox',
+      tagline: 'retro warm · light',
+      brightness: Brightness.light,
+      colors: _gruvboxLightPalette,
+      fontFamily: 'JetBrainsMono',
+      radius: 6.0,
+      secondary: Color(0xFF497158),
+      titleWeight: FontWeight.w700,
+      titleSpacing: 1.0,
+      family: 'gruvbox',
     ),
     HermesThemePreset(
       id: 'sage-garden',
       name: 'Sage Garden',
       tagline: 'muted sage · quiet greenhouse',
       brightness: Brightness.dark,
-      colors: _sageGardenColors,
+      colors: _sageGardenPalette,
       fontFamily: 'Inter',
       radius: 16.0,
-      secondary: Color(0xFFC9A98A), // arena cálida: la tierra del jardín
+      secondary: Color(0xFFC4AB93),
       titleWeight: FontWeight.w700,
       titleSpacing: 0.0,
+      family: 'sage-garden',
+    ),
+    HermesThemePreset(
+      id: 'sage-garden-light',
+      name: 'Sage Garden',
+      tagline: 'pale sage · greenhouse by day',
+      brightness: Brightness.light,
+      colors: _sageGardenLightPalette,
+      fontFamily: 'Inter',
+      radius: 16.0,
+      secondary: Color(0xFF755C44),
+      titleWeight: FontWeight.w700,
+      titleSpacing: 0.0,
+      family: 'sage-garden',
     ),
     // ── Catálogo oficial de Hermes Desktop ──
+    // Mismo orden que BUILTIN_THEMES en apps/desktop/src/themes/presets.ts.
     HermesThemePreset(
       id: 'nous',
       name: 'Nous',
-      tagline: 'glass neutrals · Nous blue',
+      tagline: 'GitHub chrome · Nous blue',
       brightness: Brightness.light,
-      colors: _desktopNousColors,
+      colors: _nousPalette,
       fontFamily: 'Inter',
       radius: 12,
-      secondary: Color(0xFF1540B1),
+      secondary: Color(0xFF786AA1),
       desktopOfficial: true,
       desktopFamily: 'nous',
     ),
     HermesThemePreset(
       id: 'nous-dark',
       name: 'Nous',
-      tagline: 'deep Nous blue · psyche cream',
+      tagline: 'GitHub dark · Nous blue',
       brightness: Brightness.dark,
-      colors: _desktopNousDarkColors,
+      colors: _nousDarkPalette,
       fontFamily: 'Inter',
       radius: 12,
-      secondary: Color(0xFFB5C7F3),
+      secondary: Color(0xFFB29CD6),
       desktopOfficial: true,
       desktopFamily: 'nous',
+    ),
+    HermesThemePreset(
+      id: 'github',
+      name: 'GitHub',
+      tagline: 'GitHub Light Default',
+      brightness: Brightness.light,
+      colors: _githubPalette,
+      fontFamily: 'Inter',
+      radius: 12,
+      secondary: Color(0xFF786AA1),
+      desktopOfficial: true,
+      desktopFamily: 'github',
+    ),
+    HermesThemePreset(
+      id: 'github-dark',
+      name: 'GitHub',
+      tagline: 'GitHub Dark Default',
+      brightness: Brightness.dark,
+      colors: _githubDarkPalette,
+      fontFamily: 'Inter',
+      radius: 12,
+      secondary: Color(0xFFB29CD6),
+      desktopOfficial: true,
+      desktopFamily: 'github',
+    ),
+    HermesThemePreset(
+      id: 'catppuccin',
+      name: 'Catppuccin',
+      tagline: 'soothing pastels · Latte',
+      brightness: Brightness.light,
+      colors: _catppuccinPalette,
+      fontFamily: 'Inter',
+      radius: 12,
+      secondary: Color(0xFF5974A6),
+      desktopOfficial: true,
+      desktopFamily: 'catppuccin',
+    ),
+    HermesThemePreset(
+      id: 'catppuccin-dark',
+      name: 'Catppuccin',
+      tagline: 'soothing pastels · Mocha',
+      brightness: Brightness.dark,
+      colors: _catppuccinDarkPalette,
+      fontFamily: 'Inter',
+      radius: 12,
+      secondary: Color(0xFFA1DCD1),
+      desktopOfficial: true,
+      desktopFamily: 'catppuccin',
+    ),
+    HermesThemePreset(
+      id: 'everforest',
+      name: 'Everforest',
+      tagline: 'warm, low-contrast forest greens',
+      brightness: Brightness.light,
+      colors: _everforestPalette,
+      fontFamily: 'Inter',
+      radius: 12,
+      // Everforest blue (#3A94C5) deepened 40% toward black: the light skin's
+      // body text is only 5.2:1, so a tone lifted just to AA would land on
+      // the text colour and activity labels would read as titles.
+      secondary: Color(0xFF30586F),
+      desktopOfficial: true,
+      desktopFamily: 'everforest',
+    ),
+    HermesThemePreset(
+      id: 'everforest-dark',
+      name: 'Everforest',
+      tagline: 'warm, low-contrast forest greens',
+      brightness: Brightness.dark,
+      colors: _everforestDarkPalette,
+      fontFamily: 'Inter',
+      radius: 12,
+      secondary: Color(0xFF8BB8B2),
+      desktopOfficial: true,
+      desktopFamily: 'everforest',
+    ),
+    HermesThemePreset(
+      id: 'solarized',
+      name: 'Solarized',
+      tagline: 'fixed-contrast light',
+      brightness: Brightness.light,
+      colors: _solarizedPalette,
+      fontFamily: 'Inter',
+      radius: 12,
+      secondary: Color(0xFF4779A3),
+      desktopOfficial: true,
+      desktopFamily: 'solarized',
+    ),
+    HermesThemePreset(
+      id: 'solarized-dark',
+      name: 'Solarized',
+      tagline: 'fixed-contrast dark',
+      brightness: Brightness.dark,
+      colors: _solarizedDarkPalette,
+      fontFamily: 'Inter',
+      radius: 12,
+      // Solarized cyan (#2AA198) lifted 40% toward white: body text on the
+      // dark skin sits near the plain cyan, so activity labels need the
+      // lighter tone to stay distinct from titles.
+      secondary: Color(0xFF8EC4BF),
+      desktopOfficial: true,
+      desktopFamily: 'solarized',
+    ),
+    HermesThemePreset(
+      id: 'nous-alt',
+      name: 'Nous Alt',
+      tagline: 'glass neutrals · Nous blue',
+      brightness: Brightness.light,
+      colors: _nousAltPalette,
+      fontFamily: 'Inter',
+      radius: 12,
+      secondary: Color(0xFF364D7C),
+      desktopOfficial: true,
+      desktopFamily: 'nous-alt',
+    ),
+    HermesThemePreset(
+      id: 'nous-alt-dark',
+      name: 'Nous Alt',
+      tagline: 'deep Nous blue · psyche cream',
+      brightness: Brightness.dark,
+      colors: _nousAltDarkPalette,
+      fontFamily: 'Inter',
+      radius: 12,
+      secondary: Color(0xFFB9C7EA),
+      desktopOfficial: true,
+      desktopFamily: 'nous-alt',
+    ),
+    HermesThemePreset(
+      id: 'classic',
+      name: 'Classic Hermes',
+      tagline: 'gold on navy · the original CLI look',
+      brightness: Brightness.light,
+      colors: _classicPalette,
+      fontFamily: 'Inter',
+      radius: 10,
+      secondary: Color(0xFF4A4B5E),
+      desktopOfficial: true,
+      desktopFamily: 'classic',
+    ),
+    HermesThemePreset(
+      id: 'classic-dark',
+      name: 'Classic Hermes',
+      tagline: 'gold on navy · the original CLI look',
+      brightness: Brightness.dark,
+      colors: _classicDarkPalette,
+      fontFamily: 'Inter',
+      radius: 10,
+      secondary: Color(0xFFC59267),
+      desktopOfficial: true,
+      desktopFamily: 'classic',
     ),
     HermesThemePreset(
       id: 'midnight-light',
       name: 'Midnight',
       tagline: 'cool violet · clear surface',
       brightness: Brightness.light,
-      colors: _desktopMidnightLightColors,
+      colors: _midnightLightPalette,
       fontFamily: 'JetBrainsMono',
       radius: 10,
-      secondary: Color(0xFF8B80E8),
+      secondary: Color(0xFF706DA4),
       desktopOfficial: true,
       desktopFamily: 'midnight',
     ),
@@ -970,10 +1484,10 @@ class AppTheme {
       name: 'Midnight',
       tagline: 'deep blue-violet · cool accents',
       brightness: Brightness.dark,
-      colors: _desktopMidnightColors,
+      colors: _midnightPalette,
       fontFamily: 'JetBrainsMono',
       radius: 10,
-      secondary: Color(0xFFDDD6FF),
+      secondary: Color(0xFFCEC9E9),
       desktopOfficial: true,
       desktopFamily: 'midnight',
     ),
@@ -982,10 +1496,10 @@ class AppTheme {
       name: 'Ember',
       tagline: 'warm bronze · clear surface',
       brightness: Brightness.light,
-      colors: _desktopEmberLightColors,
+      colors: _emberLightPalette,
       fontFamily: 'JetBrainsMono',
       radius: 8,
-      secondary: Color(0xFFD97316),
+      secondary: Color(0xFF9B6742),
       desktopOfficial: true,
       desktopFamily: 'ember',
     ),
@@ -994,10 +1508,10 @@ class AppTheme {
       name: 'Ember',
       tagline: 'warm crimson · bronze forge',
       brightness: Brightness.dark,
-      colors: _desktopEmberColors,
+      colors: _emberPalette,
       fontFamily: 'JetBrainsMono',
       radius: 8,
-      secondary: Color(0xFFFFD8B0),
+      secondary: Color(0xFFE6C8A9),
       desktopOfficial: true,
       desktopFamily: 'ember',
     ),
@@ -1006,7 +1520,7 @@ class AppTheme {
       name: 'Mono',
       tagline: 'clean grayscale · clear surface',
       brightness: Brightness.light,
-      colors: _desktopMonoLightColors,
+      colors: _monoLightPalette,
       fontFamily: 'JetBrainsMono',
       radius: 8,
       secondary: Color(0xFF606060),
@@ -1018,50 +1532,22 @@ class AppTheme {
       name: 'Mono',
       tagline: 'clean grayscale · minimal focus',
       brightness: Brightness.dark,
-      colors: _desktopMonoColors,
+      colors: _monoPalette,
       fontFamily: 'JetBrainsMono',
       radius: 8,
-      secondary: Color(0xFFEAEAEA),
+      secondary: Color(0xFFCECECE),
       desktopOfficial: true,
       desktopFamily: 'mono',
-    ),
-    HermesThemePreset(
-      id: 'cyberpunk-light',
-      name: 'Cyberpunk',
-      tagline: 'neon green · clear surface',
-      brightness: Brightness.light,
-      colors: _desktopCyberpunkLightColors,
-      fontFamily: 'JetBrainsMono',
-      radius: 3,
-      secondary: Color(0xFF087A24),
-      titleSpacing: 2,
-      uppercaseTitles: true,
-      desktopOfficial: true,
-      desktopFamily: 'cyberpunk',
-    ),
-    HermesThemePreset(
-      id: 'cyberpunk',
-      name: 'Cyberpunk',
-      tagline: 'neon green · matrix terminal',
-      brightness: Brightness.dark,
-      colors: _desktopCyberpunkColors,
-      fontFamily: 'JetBrainsMono',
-      radius: 3,
-      secondary: Color(0xFFFFE600),
-      titleSpacing: 2,
-      uppercaseTitles: true,
-      desktopOfficial: true,
-      desktopFamily: 'cyberpunk',
     ),
     HermesThemePreset(
       id: 'slate-light',
       name: 'Slate',
       tagline: 'cool slate · clear surface',
       brightness: Brightness.light,
-      colors: _desktopSlateLightColors,
+      colors: _slateLightPalette,
       fontFamily: 'JetBrainsMono',
       radius: 8,
-      secondary: Color(0xFF376C9F),
+      secondary: Color(0xFF436C94),
       desktopOfficial: true,
       desktopFamily: 'slate',
     ),
@@ -1070,63 +1556,166 @@ class AppTheme {
       name: 'Slate',
       tagline: 'cool slate blue · developer focus',
       brightness: Brightness.dark,
-      colors: _desktopSlateColors,
+      colors: _slatePalette,
       fontFamily: 'JetBrainsMono',
       radius: 8,
-      secondary: Color(0xFFC9D1D9),
+      secondary: Color(0xFFC8CFD5),
       desktopOfficial: true,
       desktopFamily: 'slate',
     ),
-    // ── Claros ──
     HermesThemePreset(
-      id: 'claude-light',
-      name: 'Claude Light',
-      tagline: 'warm paper · deep coral',
+      id: 'cyberpunk-light',
+      name: 'Cyberpunk',
+      tagline: 'muted green · clear surface',
       brightness: Brightness.light,
-      colors: _claudeLightColors,
-      fontFamily: 'Inter',
-      radius: 16.0,
-      secondary: Color(0xFF4F7088), // azul pizarra para enlaces/datos
-      titleWeight: FontWeight.w600,
-      titleSpacing: 0.0,
+      colors: _cyberpunkLightPalette,
+      fontFamily: 'JetBrainsMono',
+      radius: 3,
+      secondary: Color(0xFF437246),
+      titleSpacing: 2,
+      uppercaseTitles: true,
+      desktopOfficial: true,
+      desktopFamily: 'cyberpunk',
+    ),
+    HermesThemePreset(
+      id: 'cyberpunk',
+      name: 'Cyberpunk',
+      tagline: 'muted green · terminal',
+      brightness: Brightness.dark,
+      colors: _cyberpunkPalette,
+      fontFamily: 'JetBrainsMono',
+      radius: 3,
+      secondary: Color(0xFFD9D08F),
+      titleSpacing: 2,
+      uppercaseTitles: true,
+      desktopOfficial: true,
+      desktopFamily: 'cyberpunk',
     ),
   ]);
 
-  static const String defaultThemeId = 'amber';
+  /// rt1215: secondary text (`onSurfaceVariant`), tertiary text and links
+  /// are read; nudge them, only when needed, to WCAG AA 4.5:1 on the
+  /// background, the surface and the surface variant. Tertiary is the
+  /// disabled ink lifted to AA; secondary then keeps a visible step above it
+  /// ([_hierarchyStep]), never past the theme's own primary text. Identity
+  /// colours (background, surfaces, primary text, accent) stay as designed.
+  static HermesThemePreset _withReadableInk(HermesThemePreset p) {
+    final c = p.colors;
+    final surfaces = [c.background, c.surface, c.surfaceVariant];
+    double worst(Color ink) =>
+        surfaces.map((bg) => ThemeContrast.ratio(ink, bg)).reduce(math.min);
+    final tertiary = HermesThemeColors.readableTertiary(
+      c.textDisabled,
+      background: c.background,
+      surface: c.surface,
+      surfaceVariant: c.surfaceVariant,
+    );
+    final secondary = ThemeContrast.adjustForContrast(
+      c.textSecondary,
+      surfaces,
+      minimum: math.max(
+        4.5,
+        math.min(worst(tertiary) * _hierarchyStep, worst(c.textPrimary)),
+      ),
+    );
+    final link = ThemeContrast.adjustForContrast(
+      c.accentText,
+      surfaces,
+      minimum: 4.5,
+    );
+    return HermesThemePreset(
+      id: p.id,
+      name: p.name,
+      tagline: p.tagline,
+      brightness: p.brightness,
+      colors: c.copyWith(
+        textSecondary: secondary,
+        accentText: link == c.accentText ? null : link,
+        textTertiary: tertiary,
+      ),
+      fontFamily: p.fontFamily,
+      radius: p.radius,
+      secondary: p.secondary,
+      titleWeight: p.titleWeight,
+      titleSpacing: p.titleSpacing,
+      uppercaseTitles: p.uppercaseTitles,
+      desktopOfficial: p.desktopOfficial,
+      desktopFamily: p.desktopFamily,
+      family: p.family,
+    );
+  }
+
+  /// Secondary text reads at least this much stronger than tertiary.
+  static const double _hierarchyStep = 1.1;
+
+  static const String defaultThemeId = 'console';
 
   static HermesThemePreset presetById(String? id) {
     return presets.firstWhere((p) => p.id == id, orElse: () => presets.first);
   }
+
+  /// The member of [id]'s family in [brightness] ("Auto" picks the variant
+  /// the system shows). Ids outside the catalogue are returned unchanged.
+  static String variantFor(String id, Brightness brightness) {
+    final family = presets.where((p) => p.id == id).firstOrNull?.familyId;
+    if (family == null) return id;
+    return presets
+            .where((p) => p.familyId == family && p.brightness == brightness)
+            .firstOrNull
+            ?.id ??
+        id;
+  }
+
+  /// Number of theme families (one card each, with a Light/Dark selector).
+  static int get familyCount =>
+      presets.map((preset) => preset.familyId).toSet().length;
+
+  /// Saved ids that no longer exist → the closest survivor, in the mode the
+  /// user had. Single source for the store, the first frame and the home
+  /// widget. Never remove an entry: an install that has not been opened
+  /// since that id was retired still carries it.
+  static const Map<String, String> retiredThemeIds = {
+    // Removed in 1.2.15 (Console duplicates of a Desktop family or of
+    // another Console theme).
+    'amber-oled': 'amber', // same palette except the pure black page
+    'crimson': 'bordeaux', // same wine register; red accent read as error
+    'hermes-console': 'slate', // electric blue on navy ≈ Slate
+    'mocha': 'catppuccin-dark', // Catppuccin Mocha is Desktop's Catppuccin
+    'phosphor': 'cyberpunk', // same green CRT terminal concept
+    'graphite': 'mono', // same monochrome on near-black
+    // Claves de AppThemeMode (pre-catálogo).
+    'oled': 'amber',
+    'teal': 'dracula',
+    'light': 'amber-light', // literally the amber light palette
+    'dark': 'amber',
+    // Ids retirados en la curación U-10 (spec 028) → el más parecido.
+    'nous-aqua': 'slate', // azul eléctrico sobre navy
+    'tokyo': 'steel', // azul frío sobre oscuro
+    'onedark': 'steel', // azul editor sobre slate
+    'cobalt2': 'slate', // azul profundo saturado
+    'aguamarina': 'steel', // sereno y frío
+    'synthwave': 'dracula', // neón cyberpunk
+    'ayu-mirage': 'amber', // melocotón cálido
+    'latte': 'catppuccin', // Latte is Catppuccin light
+    'solarized-light': 'solarized',
+    'manga': 'claude-light',
+    // `gruvbox-light` is a real theme again since 1.2.15: no entry.
+  };
+
+  /// A saved id with retired ids replaced by their survivor. Anything else
+  /// (a valid preset, a custom profile id, garbage) is returned unchanged so
+  /// the caller decides how to treat it.
+  static String migrateStoredThemeId(String id) => retiredThemeIds[id] ?? id;
 
   /// Mapea las claves antiguas (`AppThemeMode`) y los ids de temas RETIRADOS
   /// a ids del catálogo actual. Es el punto único de migración de la pref
   /// `theme_mode`: un usuario con un tema retirado guardado cae al
   /// superviviente más parecido (nunca crashea ni resetea otras prefs).
   static String themeIdFromLegacy(String? legacy) {
-    return switch (legacy) {
-      // Claves de AppThemeMode (pre-catálogo).
-      'oled' => 'amber-oled',
-      'teal' => 'dracula',
-      'light' => 'claude-light',
-      'dark' => 'amber',
-      // Ids retirados en la curación U-10 (spec 028) → el más parecido.
-      'nous-aqua' => 'hermes-console', // azul eléctrico sobre navy
-      'tokyo' => 'steel', // azul frío sobre oscuro
-      'onedark' => 'steel', // azul editor sobre slate
-      'cobalt2' => 'hermes-console', // azul profundo saturado
-      'aguamarina' => 'steel', // sereno y frío
-      'solarized-dark' => 'dracula', // acento cian
-      'synthwave' => 'dracula', // neón cyberpunk
-      'everforest' => 'phosphor', // familia verde
-      'ayu-mirage' => 'amber', // melocotón cálido
-      'latte' => 'claude-light',
-      'solarized-light' => 'claude-light',
-      'gruvbox-light' => 'claude-light',
-      'manga' => 'claude-light',
-      // Si ya es un id válido del catálogo, respétalo; si no, default.
-      final v? => presets.any((p) => p.id == v) ? v : defaultThemeId,
-      _ => defaultThemeId,
-    };
+    if (legacy == null) return defaultThemeId;
+    final id = migrateStoredThemeId(legacy);
+    // Si ya es un id válido del catálogo, respétalo; si no, default.
+    return presets.any((p) => p.id == id) ? id : defaultThemeId;
   }
 
   /// Construye el [ThemeData] de un tema por id (mecanismo principal).
@@ -1371,9 +1960,10 @@ class AppTheme {
     final sec = secondary ?? colors.accentHover;
     // Color de texto/iconos LEGIBLE sobre `sec` (el color de "seleccionado").
     // En varios temas `sec` es un amarillo/ámbar muy claro: si el label se queda
-    // en textPrimary (claro) NO se lee. Lo elegimos por luminancia (negro sobre
-    // claro, blanco sobre oscuro) → contraste garantizado en todas las paletas.
-    final onSec = sec.computeLuminance() > 0.45
+    // en textPrimary (claro) NO se lee. Black or white, whichever reads
+    // better: the old luminance > 0.45 cut painted white on mid-tone
+    // teal/brass/sage at 2.1–2.9:1.
+    final onSec = ThemeContrast.bestBlackOrWhite(sec) == Colors.black
         ? const Color(0xFF0A0A0A)
         : Colors.white;
     final c = colors.copyWith(secondary: sec, uppercaseTitles: uppercaseTitles);
@@ -1412,6 +2002,7 @@ class AppTheme {
       letterSpacing: 0,
     );
 
+    final chrome = HermesChrome.of(c);
     return base.copyWith(
       appBarTheme: AppBarTheme(
         backgroundColor: c.background,
@@ -1444,17 +2035,23 @@ class AppTheme {
         ),
       ),
       bottomSheetTheme: BottomSheetThemeData(
-        backgroundColor: colors.surface,
+        backgroundColor: chrome.opaque,
         surfaceTintColor: Colors.transparent,
         shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
         ),
         showDragHandle: false,
       ),
+      // Dialogs and menus are floating surfaces: the chrome's opaque
+      // tone, its hairline, and the dialog scrim.
       dialogTheme: DialogThemeData(
-        backgroundColor: colors.surface,
+        backgroundColor: chrome.opaque,
         surfaceTintColor: Colors.transparent,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+        barrierColor: Colors.black.withValues(alpha: HermesChrome.scrimDialog),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(22),
+          side: BorderSide(color: chrome.line),
+        ),
       ),
       drawerTheme: DrawerThemeData(
         backgroundColor: colors.background,
@@ -1535,10 +2132,13 @@ class AppTheme {
         contentPadding: const EdgeInsets.symmetric(horizontal: 16),
       ),
       popupMenuTheme: PopupMenuThemeData(
-        color: colors.surface,
+        color: chrome.opaque,
         surfaceTintColor: Colors.transparent,
         elevation: 6,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: chrome.line),
+        ),
         textStyle: controlTextStyle,
         labelTextStyle: WidgetStateProperty.resolveWith(
           (states) => controlTextStyle.copyWith(
@@ -1552,7 +2152,7 @@ class AppTheme {
         textStyle: controlTextStyle,
         disabledColor: c.textDisabled,
         menuStyle: MenuStyle(
-          backgroundColor: WidgetStatePropertyAll(c.surface),
+          backgroundColor: WidgetStatePropertyAll(chrome.opaque),
           elevation: const WidgetStatePropertyAll(6.0),
           shape: WidgetStatePropertyAll(
             RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -1761,6 +2361,8 @@ class AppTheme {
     final cardSide = profile.border.outlinesRestingControls
         ? BorderSide(color: colors.divider, width: profile.border.width)
         : BorderSide.none;
+    // Floating surfaces always keep the chrome's hairline.
+    final floatingSide = BorderSide(color: HermesChrome.of(colors).line);
 
     return base.copyWith(
       extensions: extensions,
@@ -1815,7 +2417,7 @@ class AppTheme {
         elevation: profile.elevation.modal,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(profile.shape.groupRadius),
-          side: cardSide,
+          side: floatingSide,
         ),
       ),
       bottomSheetTheme: base.bottomSheetTheme.copyWith(
@@ -1830,7 +2432,7 @@ class AppTheme {
         elevation: profile.elevation.modal,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(profile.shape.groupRadius),
-          side: cardSide,
+          side: floatingSide,
         ),
       ),
     );

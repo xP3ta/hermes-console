@@ -38,7 +38,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/models/desktop_active_session.dart';
 import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
-import 'package:hermes_android/core/services/bridge_client.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/desktop_gateway_capabilities.dart';
 import 'package:hermes_android/core/services/local_transcript_store.dart';
@@ -56,8 +55,9 @@ SavedConnection _remoteConn() => SavedConnection(
   apiKey: 'test-key',
 );
 
-/// Instancia LOCAL (127.0.0.1 → InstanceKind.localhost): el chat va por el
-/// Mobile Bridge y el transcript se persiste localmente cifrado.
+/// Instancia LOCAL (127.0.0.1 → InstanceKind.localhost). Con el cableado por
+/// defecto usa el gateway oficial como cualquier otra; el transcript cifrado
+/// local solo es el historial de un chat sin ese gateway.
 SavedConnection _localConn() => SavedConnection(
   id: 'conn-local',
   label: 'Local',
@@ -66,6 +66,20 @@ SavedConnection _localConn() => SavedConnection(
   apiKey: 'test-key',
   onDeviceLoopback: true,
 );
+
+/// REST client of a localhost chat that has no official lifecycle gateway:
+/// the only wiring in which the encrypted local transcript, and not the
+/// server, is the history a chat reopens. [requests] proves no network was
+/// read.
+ApiClient _restOnlyLocalApi(SavedConnection connection, List<Uri> requests) =>
+    ApiClient(
+      baseUrl: connection.baseUrl,
+      apiKey: connection.apiKey,
+      httpClient: MockClient((request) async {
+        requests.add(request.url);
+        return http.Response('unused', 500);
+      }),
+    );
 
 String _sse(List<Map<String, dynamic>> frames) =>
     frames.map((f) => 'data: ${jsonEncode(f)}\n\n').join();
@@ -1159,32 +1173,12 @@ void main() {
   });
 
   // ── Escenario 2 ─────────────────────────────────────────────────────────
-  group('E2E 2 — persistencia y carga (instancia local / bridge)', () {
+  group('local encrypted transcript storage (not transport acceptance)', () {
     test(
-      'respuesta del bridge → persistida → reconstruida al reabrir el chat',
+      'stored local transcript is reconstructed when reopening the chat',
       () async {
         final conn = _localConn();
         expect(conn.kind, InstanceKind.localhost);
-
-        // (1-2) El turno se ejecuta vía el Mobile Bridge. Ejercitamos el contrato
-        // real de /bridge/chat con un MockClient: devuelve {ok, response}.
-        final bridge = BridgeClient(
-          baseUrl: conn.derivedBridgeUrl,
-          token: 'bridge-token',
-          httpClient: MockClient((request) async {
-            if (request.method == 'POST' &&
-                request.url.path == '/bridge/chat') {
-              return http.Response(
-                jsonEncode({'ok': true, 'response': 'Bien'}),
-                200,
-              );
-            }
-            return http.Response('not found', 404);
-          }),
-        );
-        final response = await bridge.chat('¿qué tal?', history: const []);
-        expect(response, 'Bien');
-        bridge.close();
 
         // Como hace _sendViaBridge tras recibir la respuesta: persiste el turno
         // (lista viva del chat, index 0 = más nuevo = el asistente).
@@ -1200,17 +1194,21 @@ void main() {
           {'role': 'assistant', 'content': 'Bien'},
         ]);
 
-        // (4-5) Un ActiveChat NUEVO para la misma conexión+sesión reconstruye el
-        // chat desde el almacén local (el bridge no expone /api/sessions/.../messages).
+        // (4-5) Un ActiveChat NUEVO para la misma conexión+sesión, sin
+        // gateway oficial, reconstruye el chat desde el almacén local sin
+        // leer la red.
+        final requests = <Uri>[];
         final reopened = ActiveChat(
           connection: conn,
           sessionId: 'sess-local',
           sessionTitle: 'Chat local',
           notifications: null,
           onTerminal: () {},
+          api: _restOnlyLocalApi(conn, requests),
         );
         await reopened.loadMessages();
 
+        expect(requests, isEmpty);
         expect(reopened.messagesLoaded, isTrue);
         // index 0 = más nuevo en la lista viva (el asistente).
         expect(reopened.messages.first['role'], 'assistant');
@@ -1236,15 +1234,18 @@ void main() {
           ],
         );
 
+        final requests = <Uri>[];
         final reopened = ActiveChat(
           connection: conn,
           sessionId: 'sess-truncated',
           sessionTitle: 'Chat local acotado',
           notifications: null,
           onTerminal: () {},
+          api: _restOnlyLocalApi(conn, requests),
         );
         await reopened.loadMessages();
 
+        expect(requests, isEmpty);
         expect(reopened.localTranscriptOlderHistoryTruncated, isTrue);
         expect(reopened.messages, hasLength(1000));
         expect(reopened.messages.first['content'], 'mensaje 1001');
@@ -1274,30 +1275,47 @@ void main() {
           profile: 'manager',
         );
 
+        final requests = <Uri>[];
         final reopened = ActiveChat(
           connection: conn,
           sessionId: 'sess-profiled',
           sessionTitle: 'Chat local manager',
           notifications: null,
           onTerminal: () {},
+          api: _restOnlyLocalApi(conn, requests),
         );
         await reopened.loadMessages(profile: 'manager');
 
+        expect(requests, isEmpty);
         expect(reopened.messages, hasLength(1));
         expect(reopened.messages.single['content'], 'manager');
         reopened.dispose();
       },
     );
 
-    test('ActiveChat persiste y refresca transcript con el perfil sellado', () {
+    test('ActiveChat lee el transcript local con el perfil sellado y no lo '
+        'escribe', () {
       final source = File(
         'lib/core/services/active_chat_service.dart',
       ).readAsStringSync();
-      final persistence = source.substring(
-        source.indexOf('Future<void> _persistLocalTranscript('),
-        source.indexOf('bool get _hasUnanchoredCancelledUser'),
+      // The chat stopped persisting transcripts when it moved to the official
+      // gateway (the server's history is the authority); only the privacy
+      // checkpoint is still written.
+      expect(source, isNot(contains('_persistLocalTranscript(')));
+      expect(
+        source,
+        isNot(contains('LocalTranscriptStore.saveFromNewestFirst(')),
       );
-      expect(persistence, contains('profile: _storedSessionProfile'));
+      expect(
+        source,
+        contains(
+          'LocalTranscriptStore.loadSnapshot(\n'
+          '          connection.id,\n'
+          '          serverSessionId,\n'
+          '          profile: privacyOwner,\n'
+          '        )',
+        ),
+      );
       expect(
         source,
         contains(
@@ -1934,6 +1952,15 @@ void main() {
           ),
           hasLength(1),
         );
+        // La proyección recuerda su turno: solo el eco durable de ese turno la
+        // retira, no una corrección idéntica de un turno posterior.
+        expect(chat.steerProjections, const [
+          (
+            anchorUserOrdinal: 0,
+            content: 'corrige la fecha',
+            anchorUserContent: 'prepara el informe',
+          ),
+        ]);
         service.dispose();
       },
     );
@@ -2246,10 +2273,21 @@ void main() {
         final refs = _generatedImageRefs(assistant);
         expect(refs, hasLength(1));
         expect(refs.single['kind'], 'serverCache');
-        expect(refs.single['source'], 'peacock.png');
+        // The producer's exact host path is the reference's identity: the
+        // authenticated read checks it against the profile root. The
+        // basename is presentation only.
+        expect(
+          refs.single['source'],
+          '/home/hermes/.hermes/cache/images/peacock.png',
+        );
         expect(refs.single['basename'], 'peacock.png');
         expect(refs.single['tool_call_id'], 'call-image-1');
-        expect(assistant.toString(), isNot(contains('/home/hermes')));
+        // That structured reference is the only place the host path lives;
+        // the sandbox-only path is kept nowhere.
+        final outsideReference = Map<String, dynamic>.of(assistant)
+          ..remove('_generatedImages');
+        expect(outsideReference.toString(), isNot(contains('/home/hermes')));
+        expect(outsideReference.toString(), isNot(contains('peacock.png')));
         expect(assistant.toString(), isNot(contains('/sandbox/cache')));
         expect(assistant['content'], 'Aquí tienes la imagen.');
         expect(
@@ -2320,6 +2358,56 @@ void main() {
           assistant['content'],
           'Preparando el medio generado. Terminado.',
         );
+      },
+    );
+
+    test(
+      'tool.complete de texto con MEDIA adjunta el archivo en vivo',
+      () async {
+        final desktop = _FakeDesktopGateway();
+        final service = ActiveChatService();
+        addTearDown(service.dispose);
+        final chat = service.attach(
+          connection: _remoteConn(),
+          sessionId: 'sess-tool-media-live',
+          sessionTitle: 'Audio de herramienta',
+          api: ApiClient(
+            baseUrl: _remoteConn().baseUrl,
+            apiKey: 'k',
+            httpClient: _gateway(events: '', finalMessages: const []),
+          ),
+          desktopGateway: desktop,
+        );
+
+        unawaited(
+          chat.send(
+            fullText: 'Léelo en voz alta',
+            model: 'hermes-agent',
+            history: const [],
+          ),
+        );
+        await _waitUntil(() => desktop.prompts.isNotEmpty);
+        desktop.emit('message.start');
+        desktop.emit('message.interim', const {'text': 'Generando audio.'});
+        desktop.emit('tool.complete', const {
+          'name': 'text_to_speech',
+          'tool_id': 'call-tts-live',
+          'result':
+              '{"success": true, "media_tag": '
+              '"[[audio_as_voice]]\\nMEDIA:/home/hermes/voice/tts_1.ogg"}',
+        });
+        desktop.emit('message.complete', {'text': 'Generando audio. Listo.'});
+        await _waitUntil(() => chat.state == ChatPipelineState.idle);
+
+        final assistant = chat.messages.firstWhere(
+          (message) => message['role'] == 'assistant',
+        );
+        final refs = _generatedImageRefs(assistant);
+        expect(refs, hasLength(1));
+        expect(refs.single['media_kind'], 'tool_media');
+        expect(refs.single['source'], '/home/hermes/voice/tts_1.ogg');
+        expect(refs.single['tool_call_id'], 'call-tts-live');
+        expect(assistant['content'], 'Generando audio. Listo.');
       },
     );
 

@@ -10,10 +10,9 @@ import '../design/hermes_design.dart';
 import '../models/connection.dart';
 import '../services/command_risk.dart';
 import '../services/connection_manager.dart' show DashboardClient;
-import '../services/tui_gateway_client.dart';
+import '../services/shared_gateway_pool.dart';
 import '../theme/app_theme.dart';
 import '../widgets/action_approval.dart';
-import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_premium_ui.dart'
     show HermesSegment, HermesSegmentedControl;
 import 'capabilities_adapters.dart';
@@ -21,6 +20,10 @@ import 'capabilities_repository.dart';
 import 'capability_detail_screen.dart';
 import 'capability_models.dart';
 import 'capability_ui.dart';
+import 'connector_detail_screen.dart';
+import 'mcp_runtime_status.dart';
+import '../widgets/console_loader.dart';
+import '../feedback/feedback_policy.dart';
 
 enum CapabilitiesSegment { catalog, installed, connectors }
 
@@ -31,22 +34,41 @@ final class CapabilitiesSnapshot {
   final List<CapabilityItem> catalog;
   final List<CapabilityItem> installed;
   final List<CapabilityItem> mcpServers;
+
+  /// Live MCP state by server name; empty when the server lacks it.
+  final Map<String, McpRuntimeRow> mcpRuntime;
   final HostedConnectorsSnapshot? connectors;
+
+  /// `connectors.policy.get` answered: hosted rows may open their detail.
+  final bool connectorPolicyReadable;
   final bool connectorsFailed;
   final bool partial;
   final bool skillsUpdatable;
+
+  /// `false` for the early skills-only snapshot: plugins, MCP and connectors
+  /// are still loading, so their absence is not an empty answer.
+  final bool complete;
 
   const CapabilitiesSnapshot({
     this.catalog = const [],
     this.installed = const [],
     this.mcpServers = const [],
+    this.mcpRuntime = const {},
     this.connectors,
+    this.connectorPolicyReadable = false,
     this.connectorsFailed = false,
     this.partial = false,
     this.skillsUpdatable = false,
+    this.complete = true,
   });
 
-  static Future<CapabilitiesSnapshot> load(CapabilitiesRepository repo) async {
+  /// Loads every source. [onSkills] receives an early, incomplete snapshot
+  /// as soon as both skill sources answered, so skills never wait for the
+  /// plugin, MCP and connector reads (Desktop queries skills on their own).
+  static Future<CapabilitiesSnapshot> load(
+    CapabilitiesRepository repo, {
+    void Function(CapabilitiesSnapshot skillsOnly)? onSkills,
+  }) async {
     final failures = <Object>[];
     var attempted = 0;
     Future<List<CapabilityItem>> guard(
@@ -61,18 +83,105 @@ final class CapabilitiesSnapshot {
       }
     }
 
-    final lists = await Future.wait([
-      guard(repo.installedSkills),
-      guard(repo.officialSkills),
+    // Each skill source paints on its own (Desktop queries installed skills
+    // independently of the official catalog). Until the installed list has
+    // answered successfully, catalog rows carry an unknown installed state,
+    // never "not installed", so no action relies on it.
+    List<CapabilityItem>? installedAnswer;
+    List<CapabilityItem>? officialAnswer;
+    var installedKnown = false;
+    void paintSkills() {
+      if (onSkills == null) return;
+      final official = officialAnswer;
+      final installed = installedKnown ? installedAnswer : null;
+      final List<CapabilityItem> skills;
+      if (official == null) {
+        skills = installed ?? const [];
+      } else if (installed == null) {
+        skills = [
+          for (final entry in official)
+            entry.copyWith(
+              installed: false,
+              stateUnknown: true,
+              enabled: false,
+              updateAvailable: false,
+            ),
+        ];
+      } else {
+        skills = mergeSkills(installed: installed, official: official);
+      }
+      if (skills.isEmpty) return;
+      onSkills(
+        CapabilitiesSnapshot(
+          catalog: [...skills.where((item) => item.installId.isNotEmpty)],
+          installed: [...skills.where((item) => item.installed)],
+          skillsUpdatable:
+              installed != null &&
+              repo.supports(CapabilityFeature.skillsUpdate) != false &&
+              skills.any((s) => s.installed && s.provenance == 'hub'),
+          complete: false,
+        ),
+      );
+    }
+
+    var installedOk = false;
+    final installedSkills = guard(() async {
+      final value = await repo.installedSkills();
+      installedOk = true;
+      return value;
+    });
+    final officialSkills = guard(repo.officialSkills);
+    final rest = [
       guard(repo.pluginCatalog),
       guard(repo.installedPlugins),
       guard(repo.mcpCatalog),
       guard(repo.mcpServers),
-    ]);
+    ];
+    unawaited(
+      installedSkills.then((value) {
+        installedAnswer = value;
+        installedKnown = installedOk;
+        paintSkills();
+      }),
+    );
+    unawaited(
+      officialSkills.then((value) {
+        officialAnswer = value;
+        paintSkills();
+      }),
+    );
+    final lists = await Future.wait([installedSkills, officialSkills, ...rest]);
+    // Per-profile installed state (Desktop rule); a server without
+    // `plugins.manage` keeps the REST flags.
+    List<InstalledPluginRow>? pluginRows;
+    try {
+      pluginRows = await repo.installedPluginsRpc();
+    } catch (_) {
+      pluginRows = null;
+    }
+    // On a named profile the REST flags describe the launch profile, so a
+    // missing list means the installed state is unknown, not "as REST says".
+    final pluginStateUnknown = pluginRows == null && !repo.usesDefaultProfile;
+    // Optional enrichment, asked once per load: any failure keeps the
+    // static rows and is not counted as a failed source.
+    var mcpRuntime = const <String, McpRuntimeRow>{};
+    if (lists[5].isNotEmpty) {
+      try {
+        mcpRuntime = await repo.mcpRuntimeStatus();
+      } catch (_) {}
+    }
     HostedConnectorsSnapshot? connectors;
     var connectorsFailed = false;
+    var connectorPolicyReadable = false;
     try {
       connectors = await repo.hostedConnectors();
+      if (connectors.availability == ConnectorAvailability.available &&
+          connectors.connectors.isNotEmpty) {
+        try {
+          await repo.connectorPolicy();
+          connectorPolicyReadable = true;
+        } catch (_) {}
+      }
     } catch (_) {
       connectorsFailed = true;
     }
@@ -88,8 +197,25 @@ final class CapabilitiesSnapshot {
       throw real.isNotEmpty ? real.first : failures.first;
     }
 
-    final skills = mergeSkills(installed: lists[0], official: lists[1]);
-    final plugins = _mergePlugins(catalog: lists[2], installed: lists[3]);
+    // A failed installed list leaves the catalog's installed state unknown,
+    // as while it was pending: never "not installed".
+    final skills = installedOk
+        ? mergeSkills(installed: lists[0], official: lists[1])
+        : [
+            for (final entry in lists[1])
+              entry.copyWith(
+                installed: false,
+                stateUnknown: true,
+                enabled: false,
+                updateAvailable: false,
+              ),
+          ];
+    final plugins = _mergePlugins(
+      catalog: lists[2],
+      installed: lists[3],
+      rows: pluginRows,
+      stateUnknown: pluginStateUnknown,
+    );
     final catalog = [
       ...skills.where((item) => item.installId.isNotEmpty),
       ...plugins.where((item) => item.installId.isNotEmpty),
@@ -103,9 +229,11 @@ final class CapabilitiesSnapshot {
       catalog: catalog,
       installed: installed,
       mcpServers: lists[5],
+      mcpRuntime: mcpRuntime,
       connectors: connectors,
+      connectorPolicyReadable: connectorPolicyReadable,
       connectorsFailed: connectorsFailed,
-      partial: real.isNotEmpty,
+      partial: real.isNotEmpty || pluginStateUnknown,
       skillsUpdatable:
           repo.supports(CapabilityFeature.skillsUpdate) != false &&
           skills.any((s) => s.installed && s.provenance == 'hub'),
@@ -115,11 +243,53 @@ final class CapabilitiesSnapshot {
   static List<CapabilityItem> _mergePlugins({
     required List<CapabilityItem> catalog,
     required List<CapabilityItem> installed,
+    List<InstalledPluginRow>? rows,
+    bool stateUnknown = false,
   }) {
     final byName = {for (final p in installed) p.installedName: p};
     final used = <String>{};
     final out = <CapabilityItem>[];
     for (final entry in catalog) {
+      if (stateUnknown) {
+        out.add(
+          entry.copyWith(
+            installed: false,
+            stateUnknown: true,
+            enabled: false,
+            updateAvailable: false,
+          ),
+        );
+        continue;
+      }
+      if (rows != null) {
+        final row = rows.match(
+          catalogName: entry.installId,
+          name: entry.installedName,
+        );
+        if (row == null) {
+          out.add(
+            entry.copyWith(
+              installed: false,
+              enabled: false,
+              updateAvailable: false,
+            ),
+          );
+          continue;
+        }
+        final local = byName[row.name];
+        used.add(row.name);
+        out.add(
+          entry.copyWith(
+            installed: true,
+            enabled: row.enabled,
+            updateAvailable: row.updateAvailable,
+            installedName: row.name,
+            installedKey: row.key,
+            canRemove: local?.canRemove ?? true,
+          ),
+        );
+        continue;
+      }
       final local = byName[entry.installedName];
       if (local != null) {
         used.add(local.installedName);
@@ -128,6 +298,7 @@ final class CapabilitiesSnapshot {
             installed: true,
             enabled: local.enabled,
             canRemove: local.canRemove,
+            installedKey: local.installedKey,
           ),
         );
       } else {
@@ -142,44 +313,72 @@ final class CapabilitiesSnapshot {
 }
 
 /// Route entry point: builds the transports for [connection] and owns them.
-class CapabilitiesHub extends StatefulWidget {
+class CapabilitiesHub extends StatelessWidget {
   final SavedConnection connection;
   final String profile;
   final WidgetBuilder? advancedBuilder;
-  final WidgetBuilder? classicSkillsBuilder;
 
   const CapabilitiesHub({
     super.key,
     required this.connection,
     this.profile = '',
     this.advancedBuilder,
-    this.classicSkillsBuilder,
+  });
+
+  // Transports, repository and loaded state belong to one (connection,
+  // access, profile) owner: when any of them changes the hub is rebuilt from
+  // scratch instead of showing or mutating the previous owner's data.
+  @override
+  Widget build(BuildContext context) => _CapabilitiesHubBody(
+    key: ValueKey((
+      connection.id,
+      connection.readOnly,
+      profile.trim().isEmpty ? 'default' : profile.trim(),
+    )),
+    connection: connection,
+    profile: profile,
+    advancedBuilder: advancedBuilder,
+  );
+}
+
+class _CapabilitiesHubBody extends StatefulWidget {
+  final SavedConnection connection;
+  final String profile;
+  final WidgetBuilder? advancedBuilder;
+
+  const _CapabilitiesHubBody({
+    super.key,
+    required this.connection,
+    required this.profile,
+    this.advancedBuilder,
   });
 
   @override
-  State<CapabilitiesHub> createState() => _CapabilitiesHubState();
+  State<_CapabilitiesHubBody> createState() => _CapabilitiesHubState();
 }
 
-class _CapabilitiesHubState extends State<CapabilitiesHub> {
+class _CapabilitiesHubState extends State<_CapabilitiesHubBody> {
   late final DashboardClient _dashboard = DashboardClient.lazy(
     widget.connection,
   );
-  late final TuiGatewayClient _gateway = TuiGatewayClient(
-    widget.connection,
-    dashboard: _dashboard,
-  );
+  // The connection's shared gateway (Desktop keeps one gateway per backend):
+  // reopening the hub reuses a warm socket instead of paying a new WebSocket
+  // handshake per visit. The pool keys by connection, endpoint, credential
+  // and read-only state, so a changed connection never inherits this socket.
+  late final SharedGatewayLease _gatewayLease = SharedGatewayPool.instance
+      .acquire(widget.connection);
   late final CapabilitiesRepository _repository = CapabilitiesRepository(
     rest: DashboardCapabilitiesRest(
       _dashboard,
       readOnly: widget.connection.readOnly,
     ),
-    rpc: gatewayCapabilitiesRpc(_gateway),
+    rpc: gatewayCapabilitiesRpc(_gatewayLease.client),
     profile: widget.profile,
   );
 
   @override
   void dispose() {
-    unawaited(_gateway.close());
+    _gatewayLease.release();
     _dashboard.close();
     super.dispose();
   }
@@ -187,29 +386,78 @@ class _CapabilitiesHubState extends State<CapabilitiesHub> {
   @override
   Widget build(BuildContext context) => CapabilitiesScreen(
     repository: _repository,
+    snapshotCache: CapabilitiesSnapshotCache.shared,
+    snapshotKey: CapabilitiesSnapshotCache.keyOf(
+      widget.connection,
+      widget.profile,
+    ),
     readOnly: widget.connection.readOnly,
     instanceId: widget.connection.id,
+    destinationLabel:
+        '${widget.connection.label} · ${widget.profile.trim().isEmpty ? 'default' : widget.profile.trim()}',
     advancedBuilder: widget.advancedBuilder,
-    classicSkillsBuilder: widget.classicSkillsBuilder,
   );
+}
+
+/// The last complete hub read per connection and profile, in memory only.
+///
+/// Like Desktop's query cache, reopening Capabilities paints what it showed
+/// last and refreshes behind (a thin progress line says so). Every change
+/// made from the hub drops the entry before it reloads, so a later open never
+/// paints the pre-change state as current. Nothing is written to disk.
+final class CapabilitiesSnapshotCache {
+  CapabilitiesSnapshotCache({this.capacity = 8});
+
+  static final shared = CapabilitiesSnapshotCache();
+
+  final int capacity;
+  final Map<String, CapabilitiesSnapshot> _entries = {};
+
+  /// Another server, access level or profile is another key.
+  static String keyOf(SavedConnection connection, String profile) {
+    final owner = profile.trim().isEmpty ? 'default' : profile.trim();
+    return '${connection.id}|${connection.baseUrl}|'
+        '${connection.effectiveDashboardUrl}|${connection.readOnly}|$owner';
+  }
+
+  CapabilitiesSnapshot? read(String key) => _entries[key];
+
+  void write(String key, CapabilitiesSnapshot snapshot) {
+    if (!snapshot.complete || snapshot.partial) return;
+    _entries.remove(key);
+    _entries[key] = snapshot;
+    while (_entries.length > capacity) {
+      _entries.remove(_entries.keys.first);
+    }
+  }
+
+  void remove(String key) => _entries.remove(key);
 }
 
 class CapabilitiesScreen extends StatefulWidget {
   final CapabilitiesRepository repository;
+
+  /// Optional last-read cache; [snapshotKey] names this screen's entry.
+  final CapabilitiesSnapshotCache? snapshotCache;
+  final String snapshotKey;
   final bool readOnly;
   final String instanceId;
+
+  /// `<server label> · <profile>` shown in install confirmations.
+  final String destinationLabel;
   final WidgetBuilder? advancedBuilder;
-  final WidgetBuilder? classicSkillsBuilder;
   final CapabilitiesSegment initialSegment;
   final Duration searchDebounce;
 
   const CapabilitiesScreen({
     super.key,
     required this.repository,
+    this.snapshotCache,
+    this.snapshotKey = '',
     this.readOnly = false,
     this.instanceId = '',
+    this.destinationLabel = '',
     this.advancedBuilder,
-    this.classicSkillsBuilder,
     this.initialSegment = CapabilitiesSegment.catalog,
     this.searchDebounce = const Duration(milliseconds: 450),
   });
@@ -218,7 +466,7 @@ class CapabilitiesScreen extends StatefulWidget {
   State<CapabilitiesScreen> createState() => _CapabilitiesScreenState();
 }
 
-enum _MenuAction { updateSkills, advanced, classicSkills }
+enum _MenuAction { updateSkills, advanced }
 
 /// Facet values offered by the filter surface.
 sealed class _Facet {
@@ -266,11 +514,28 @@ class _CapabilitiesScreenState extends State<CapabilitiesScreen> {
   int _hubGeneration = 0;
   bool _busy = false;
 
+  /// A cached snapshot is on screen while the server answers again.
+  bool _revalidating = false;
+
   CapabilitiesRepository get _repo => widget.repository;
+
+  /// A change was made: the cached read no longer describes the server.
+  void _dropCached() => widget.snapshotCache?.remove(widget.snapshotKey);
+
+  void _reloadAfterChange() {
+    _dropCached();
+    unawaited(_load());
+  }
 
   @override
   void initState() {
     super.initState();
+    final cached = widget.snapshotCache?.read(widget.snapshotKey);
+    if (cached != null) {
+      _snapshot = cached;
+      _loading = false;
+      _revalidating = true;
+    }
     unawaited(_load());
   }
 
@@ -281,22 +546,54 @@ class _CapabilitiesScreenState extends State<CapabilitiesScreen> {
     super.dispose();
   }
 
+  int _loadGeneration = 0;
+
   Future<void> _load() async {
+    final generation = ++_loadGeneration;
+    bool current() => mounted && generation == _loadGeneration;
+    var settled = false;
     setState(() {
       _loading = _snapshot == null;
       _error = null;
     });
     try {
-      final snapshot = await CapabilitiesSnapshot.load(_repo);
-      if (!mounted) return;
+      final snapshot = await CapabilitiesSnapshot.load(
+        _repo,
+        onSkills: (early) {
+          // Early paints only while nothing complete is shown: a refresh
+          // keeps its complete snapshot, and a late early answer never
+          // replaces the final one.
+          if (!current() || settled || _snapshot?.complete == true) return;
+          setState(() {
+            _snapshot = early;
+            _loading = false;
+          });
+        },
+      );
+      settled = true;
+      if (!current()) return;
       setState(() {
         _snapshot = snapshot;
         _loading = false;
+        _revalidating = false;
       });
+      widget.snapshotCache?.write(widget.snapshotKey, snapshot);
     } catch (error) {
-      if (!mounted) return;
+      settled = true;
+      if (!current()) return;
       setState(() {
-        _error = error;
+        _revalidating = false;
+        // An early skills paint stays; the failure of the rest is partial.
+        if (_snapshot?.complete == false) {
+          _snapshot = CapabilitiesSnapshot(
+            catalog: _snapshot!.catalog,
+            installed: _snapshot!.installed,
+            skillsUpdatable: _snapshot!.skillsUpdatable,
+            partial: true,
+          );
+        } else {
+          _error = error;
+        }
         _loading = false;
       });
     }
@@ -421,13 +718,6 @@ class _CapabilitiesScreenState extends State<CapabilitiesScreen> {
             label: s.cphMenuAdvanced,
             icon: Icons.tune_rounded,
           ),
-        if (widget.classicSkillsBuilder != null)
-          HermesAction(
-            key: const ValueKey('cph-menu-classic'),
-            value: _MenuAction.classicSkills,
-            label: s.cphMenuClassicSkills,
-            icon: Icons.auto_awesome_outlined,
-          ),
       ],
     );
     if (!mounted || chosen == null) return;
@@ -438,12 +728,7 @@ class _CapabilitiesScreenState extends State<CapabilitiesScreen> {
         await Navigator.of(
           context,
         ).push(MaterialPageRoute<void>(builder: widget.advancedBuilder!));
-        if (mounted) unawaited(_load());
-      case _MenuAction.classicSkills:
-        await Navigator.of(
-          context,
-        ).push(MaterialPageRoute<void>(builder: widget.classicSkillsBuilder!));
-        if (mounted) unawaited(_load());
+        if (mounted) _reloadAfterChange();
     }
   }
 
@@ -458,7 +743,7 @@ class _CapabilitiesScreenState extends State<CapabilitiesScreen> {
       title: s.cphConfirmUpdateSkills,
     );
     if (!ok || !mounted) return;
-    final notices = HermesNotice.of(context);
+    final notices = AppFeedback.of(context);
     setState(() => _busy = true);
     try {
       await runCapabilityProgress(
@@ -469,17 +754,11 @@ class _CapabilitiesScreenState extends State<CapabilitiesScreen> {
         ),
       );
       if (!mounted) return;
-      notices.show(
-        message: s.cphDoneSkillsUpdated,
-        kind: HermesNoticeKind.success,
-      );
-      unawaited(_load());
+      notices.notify(FeedbackKind.routine, s.cphDoneSkillsUpdated);
+      _reloadAfterChange();
     } catch (error) {
       if (!mounted) return;
-      notices.show(
-        message: capabilityFailureMessage(s, error),
-        kind: HermesNoticeKind.error,
-      );
+      notices.notify(FeedbackKind.error, capabilityFailureMessage(s, error));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -494,11 +773,33 @@ class _CapabilitiesScreenState extends State<CapabilitiesScreen> {
           repository: _repo,
           readOnly: widget.readOnly,
           instanceId: widget.instanceId,
-          onChanged: () => changed = true,
+          destinationLabel: widget.destinationLabel,
+          onChanged: () {
+            changed = true;
+            _dropCached();
+          },
         ),
       ),
     );
-    if (changed && mounted) unawaited(_load());
+    if (changed && mounted) _reloadAfterChange();
+  }
+
+  Future<void> _openConnector(HostedConnector connector) async {
+    var changed = false;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => ConnectorDetailScreen(
+          connector: connector,
+          repository: _repo,
+          readOnly: widget.readOnly,
+          onChanged: () {
+            changed = true;
+            _dropCached();
+          },
+        ),
+      ),
+    );
+    if (changed && mounted) _reloadAfterChange();
   }
 
   // ── Building ────────────────────────────────────────────────────────────
@@ -588,7 +889,15 @@ class _CapabilitiesScreenState extends State<CapabilitiesScreen> {
         HermesSectionHeader(s.cphHubResults),
         HermesListGroup(children: [for (final item in hub) _row(item)]),
       ],
-      if (items.isEmpty && hub.isEmpty)
+      // Sources still answering: never claim that nothing matches.
+      if (items.isEmpty && hub.isEmpty && !snapshot.complete)
+        const Padding(
+          padding: EdgeInsets.only(top: 64),
+          child: Center(
+            child: ConsoleLoader.large(key: ValueKey('cph-loading-catalog')),
+          ),
+        )
+      else if (items.isEmpty && hub.isEmpty)
         HermesEmptyStateView(
           key: const ValueKey('cph-empty-catalog'),
           icon: Icons.search_off_rounded,
@@ -601,6 +910,17 @@ class _CapabilitiesScreenState extends State<CapabilitiesScreen> {
   List<Widget> _installed(CapabilitiesSnapshot snapshot) {
     final s = Strings.of(context);
     final items = filterCapabilities(snapshot.installed, _filter);
+    if (items.isEmpty && snapshot.installed.isEmpty && !snapshot.complete) {
+      // The installed list has not answered yet: never claim it is empty.
+      return const [
+        Padding(
+          padding: EdgeInsets.only(top: 64),
+          child: Center(
+            child: ConsoleLoader.large(key: ValueKey('cph-loading-installed')),
+          ),
+        ),
+      ];
+    }
     if (items.isEmpty) {
       final none = snapshot.installed.isEmpty;
       return [
@@ -663,42 +983,24 @@ class _CapabilitiesScreenState extends State<CapabilitiesScreen> {
         HermesListGroup(
           children: [
             for (final server in servers)
-              HermesListRow(
-                key: ValueKey('cph-row-${server.id}'),
-                icon: capabilityKindIcon(server.kind),
-                title: server.name,
-                subtitle: server.url.isNotEmpty
-                    ? server.url
-                    : server.command.isNotEmpty
-                    ? server.command
-                    : null,
-                onTap: () => _openDetail(server),
-                trailing: Padding(
-                  padding: const EdgeInsets.only(left: 10),
-                  child: HermesStatusText(
-                    label: server.enabled == false
-                        ? s.cphStatusDisabled
-                        : s.cphStatusEnabled,
-                    tone: server.enabled == false
-                        ? HermesStatusTone.neutral
-                        : HermesStatusTone.ok,
-                    maxLines: 1,
-                  ),
-                ),
-              ),
+              _mcpRow(server, snapshot.mcpRuntime[server.name]),
           ],
         ),
       HermesSectionHeader(s.cphConnectorsAccounts),
       if (accounts.isNotEmpty)
         HermesListGroup(
           children: [
-            // Read-only rows: connecting accounts is not wired in Console
-            // yet, so the rows carry state but no tap affordance.
+            // Rows open the policy detail only when the server answers
+            // `connectors.policy.get`; connecting accounts is not wired in
+            // Console yet, so otherwise they carry state without a tap.
             for (final connector in accounts)
               HermesListRow(
                 key: ValueKey('cph-account-${connector.slug}'),
                 icon: Icons.account_circle_outlined,
                 title: connector.name,
+                onTap: snapshot.connectorPolicyReadable
+                    ? () => _openConnector(connector)
+                    : null,
                 subtitle: connector.statusReason.isNotEmpty
                     ? connector.statusReason
                     : connector.description,
@@ -725,6 +1027,48 @@ class _CapabilitiesScreenState extends State<CapabilitiesScreen> {
         ),
       ),
     ];
+  }
+
+  Widget _mcpRow(CapabilityItem server, McpRuntimeRow? runtime) {
+    final s = Strings.of(context);
+    final target = server.url.isNotEmpty
+        ? server.url
+        : server.command.isNotEmpty
+        ? server.command
+        : null;
+    final live = runtime == null
+        ? null
+        : mcpRuntimeStatusLabel(s, runtime.status);
+    final tools = runtime == null || runtime.tools == 0
+        ? null
+        : s.cphMcpToolCount(runtime.tools);
+    final status =
+        live ??
+        (
+          label: server.enabled == false
+              ? s.cphStatusDisabled
+              : s.cphStatusEnabled,
+          tone: server.enabled == false
+              ? HermesStatusTone.neutral
+              : HermesStatusTone.ok,
+        );
+    return HermesListRow(
+      key: ValueKey('cph-row-${server.id}'),
+      icon: capabilityKindIcon(server.kind),
+      title: server.name,
+      subtitle: [?target, ?tools].isEmpty
+          ? null
+          : [?target, ?tools].join(' · '),
+      onTap: () => _openDetail(server),
+      trailing: Padding(
+        padding: const EdgeInsets.only(left: 10),
+        child: HermesStatusText(
+          label: status.label,
+          tone: status.tone,
+          maxLines: 1,
+        ),
+      ),
+    );
   }
 
   String _errorBody(Strings s, Object error) =>
@@ -811,6 +1155,20 @@ class _CapabilitiesScreenState extends State<CapabilitiesScreen> {
           message: s.cphReadOnly,
         ),
       ],
+      // The slot stays once content shows, so the list never jumps when the
+      // last source answers and the line goes away.
+      if (snapshot != null) ...[
+        const SizedBox(height: HermesSpace.x3),
+        SizedBox(
+          height: 2,
+          child: !snapshot.complete || _revalidating
+              ? const LinearProgressIndicator(
+                  key: ValueKey('cph-loading-more'),
+                  minHeight: 2,
+                )
+              : null,
+        ),
+      ],
       if (snapshot?.partial ?? false) ...[
         const SizedBox(height: HermesSpace.x3),
         HermesInlineNotice(
@@ -830,7 +1188,7 @@ class _CapabilitiesScreenState extends State<CapabilitiesScreen> {
         Padding(
           padding: EdgeInsets.only(top: 64),
           child: Center(
-            child: CircularProgressIndicator(key: ValueKey('cph-loading')),
+            child: ConsoleLoader.large(key: ValueKey('cph-loading')),
           ),
         ),
       ];
@@ -855,13 +1213,20 @@ class _CapabilitiesScreenState extends State<CapabilitiesScreen> {
       body = switch (_segment) {
         CapabilitiesSegment.catalog => _catalog(snapshot),
         CapabilitiesSegment.installed => _installed(snapshot),
+        CapabilitiesSegment.connectors when !snapshot.complete => const [
+          Padding(
+            padding: EdgeInsets.only(top: 64),
+            child: Center(
+              child: ConsoleLoader.large(key: ValueKey('cph-loading')),
+            ),
+          ),
+        ],
         CapabilitiesSegment.connectors => _connectorsSection(snapshot),
       };
     }
 
     final hasMenu =
         widget.advancedBuilder != null ||
-        widget.classicSkillsBuilder != null ||
         (!widget.readOnly && (snapshot?.skillsUpdatable ?? false));
 
     return HermesPage(

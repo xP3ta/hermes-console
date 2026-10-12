@@ -53,6 +53,9 @@ class _SessionListApiClient extends ApiClient {
   Future<List<Session>> getSessions({
     bool includeChildren = false,
     String? profile,
+    int pageSize = 200,
+    bool Function(List<Session> sessions)? enough,
+    int? maxPages,
   }) async {
     sessionReads++;
     if (!healthy) throw StateError('offline');
@@ -115,6 +118,132 @@ void main() {
 
     expect(merged.map((session) => session.id), ['remote-id', 'draft-id']);
   });
+
+  test(
+    'search keeps server hits first and appends loaded matches the '
+    'server did not return, once per lineage (Desktop mergeSearchResults)',
+    () {
+      final hit = _session(
+        id: 'tip-a',
+        title: 'Server hit',
+        source: 'mobile',
+        updatedAt: 10,
+      );
+      final sameLineage = Session(
+        id: 'old-a',
+        title: 'QA 9485 old segment',
+        model: 'm',
+        source: 'mobile',
+        messageCount: 2,
+        isActive: false,
+        preview: '',
+        startedAt: 1,
+        lineageRootId: 'tip-a',
+      );
+      final loaded = _session(
+        id: 'b',
+        title: 'QA 9485',
+        source: 'mobile',
+        updatedAt: 20,
+      );
+      final other = _session(
+        id: 'c',
+        title: 'Unrelated',
+        source: 'mobile',
+        updatedAt: 30,
+      );
+
+      bool matches(Session s) =>
+          sessionMatchesSearchText(s, '9485', title: s.title);
+      expect(matches(loaded), isTrue);
+      expect(matches(other), isFalse);
+      expect(
+        appendLoadedSearchMatches([
+          hit,
+        ], [sameLineage, loaded, other].where(matches)).map((s) => s.id),
+        ['tip-a', 'b'],
+      );
+    },
+  );
+
+  test('loaded matches of one lineage collapse to its newest tip when the '
+      'server returns no hit', () {
+    final oldSegment = Session(
+      id: 'root-a',
+      title: 'QA 9485',
+      model: 'm',
+      source: 'mobile',
+      messageCount: 2,
+      isActive: false,
+      preview: '',
+      startedAt: 1,
+      updatedAt: 5,
+    );
+    final tip = Session(
+      id: 'tip-a',
+      title: 'QA 9485',
+      model: 'm',
+      source: 'mobile',
+      messageCount: 4,
+      isActive: true,
+      preview: '',
+      startedAt: 6,
+      updatedAt: 20,
+      lineageRootId: 'root-a',
+      lineageIds: const ['root-a', 'tip-a'],
+    );
+
+    bool matches(Session s) =>
+        sessionMatchesSearchText(s, '9485', title: s.title);
+    expect(matches(oldSegment) && matches(tip), isTrue);
+    expect(
+      appendLoadedSearchMatches(
+        const [],
+        [oldSegment, tip].where(matches),
+      ).map((s) => s.id),
+      ['tip-a'],
+    );
+  });
+
+  test(
+    'equal timestamps still collapse a lineage to its tip, in any order',
+    () {
+      final root = Session(
+        id: 'root-a',
+        title: 'QA 9485',
+        model: 'm',
+        source: 'mobile',
+        messageCount: 2,
+        isActive: false,
+        preview: '',
+        startedAt: 1,
+        updatedAt: 20,
+      );
+      final tip = Session(
+        id: 'tip-a',
+        title: 'QA 9485',
+        model: 'm',
+        source: 'mobile',
+        messageCount: 4,
+        isActive: false,
+        preview: '',
+        startedAt: 1,
+        updatedAt: 20,
+        lineageRootId: 'root-a',
+        lineageIds: const ['root-a', 'tip-a'],
+      );
+      expect(root.lastActivityAt, tip.lastActivityAt);
+
+      for (final order in [
+        [root, tip],
+        [tip, root],
+      ]) {
+        expect(appendLoadedSearchMatches(const [], order).map((s) => s.id), [
+          'tip-a',
+        ], reason: order.map((s) => s.id).join(' → '));
+      }
+    },
+  );
 
   test('a new draft is included when no remote session has its id', () {
     final freshDraft = _session(
@@ -405,4 +534,77 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  testWidgets('local search still updates the memoized session view', (
+    tester,
+  ) async {
+    final values = <String, String>{};
+    const channel = MethodChannel(
+      'plugins.it_nomads.com/flutter_secure_storage',
+    );
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, (
+      call,
+    ) async {
+      final args = call.arguments as Map?;
+      switch (call.method) {
+        case 'readAll':
+          return Map<String, String>.of(values);
+        case 'read':
+          return values[args!['key']];
+        case 'write':
+          values[args!['key'] as String] = args['value'] as String;
+        case 'delete':
+          values.remove(args!['key']);
+      }
+      return null;
+    });
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        channel,
+        null,
+      ),
+    );
+    SharedPreferences.setMockInitialValues({});
+    final prefs = await SharedPreferences.getInstance();
+    final manager = await ConnectionManager.create(prefs);
+    final client = _SessionListApiClient([
+      _session(
+        id: 'alpha',
+        title: 'Alpha plan',
+        source: 'mobile',
+        updatedAt: 2,
+      ),
+      _session(id: 'beta', title: 'Beta notes', source: 'mobile', updatedAt: 1),
+    ]);
+    final connection = SavedConnection(
+      id: 'conn-merge',
+      label: 'QA',
+      host: 'hermes.test',
+      port: 443,
+      apiKey: 'test-key',
+      useHttps: true,
+      kind: InstanceKind.vps,
+    );
+    await tester.pumpWidget(
+      _host(
+        SessionListScreen(
+          connection: connection,
+          connManager: manager,
+          clientOverride: client,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Alpha plan'), findsWidgets);
+    expect(find.text('Beta notes'), findsWidgets);
+
+    await tester.enterText(find.byType(TextField), 'beta');
+    await tester.pump();
+    expect(find.text('Alpha plan'), findsNothing);
+    expect(find.text('Beta notes'), findsWidgets);
+
+    await tester.enterText(find.byType(TextField), '');
+    await tester.pump();
+    expect(find.text('Alpha plan'), findsWidgets);
+  });
 }

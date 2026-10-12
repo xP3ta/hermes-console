@@ -71,19 +71,114 @@ internal object HermesRichNotifications {
                 onDrainFinished?.invoke()
                 result.success(true)
             } else {
-                handle(app, call, result)
+                handle(app, call, result, channel)
             }
         }
         channels.add(channel)
+        cancelOrphanedLiveRows(app)
+        dropAutomationShortcuts(app)
+    }
+
+    private var automationShortcutsDropped = false
+
+    /**
+     * Earlier builds pushed one long-lived conversation shortcut per
+     * scheduled job, board task and goal. Automation results are plain rows
+     * now: those shortcuts are withdrawn, once per process.
+     */
+    private fun dropAutomationShortcuts(context: Context) {
+        if (automationShortcutsDropped) return
+        automationShortcutsDropped = true
+        try {
+            val stale =
+                ShortcutManagerCompat.getShortcuts(
+                    context,
+                    ShortcutManagerCompat.FLAG_MATCH_DYNAMIC or ShortcutManagerCompat.FLAG_MATCH_CACHED,
+                ).map { it.id }.filter {
+                    it.startsWith("hermes-cron-") || it.startsWith("hermes-task-") || it.startsWith("hermes-goal-")
+                }
+            if (stale.isNotEmpty()) ShortcutManagerCompat.removeLongLivedShortcuts(context, stale)
+        } catch (_: Exception) {
+        }
     }
 
     fun detach(channel: MethodChannel) {
         channels.remove(channel)
         channel.setMethodCallHandler(null)
+        cancelLiveRowsOf(channel)
+    }
+
+    /**
+     * Live rows that describe work only their engine can see (a chat turn of
+     * the UI engine) are bound to it: when that engine goes away nobody can
+     * update or end them, so they leave with it instead of claiming work.
+     */
+    private val liveOwners = java.util.concurrent.ConcurrentHashMap<String, MethodChannel>()
+    private var liveContext: Context? = null
+
+    /** Rows a tap just acted on: (tag, id) -> elapsed time until which a re-post waits. */
+    private val liveHolds = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    private const val EXTRA_OWNER_BOUND = "hermes.ownerBound"
+    private const val LIVE_HOLD_MS = 20_000L
+
+    private fun liveKey(tag: String?, id: Int): String = "${tag ?: ""}\u0000$id"
+
+    /** A button of the row at tag + id was tapped: its confirmation stays. */
+    fun holdLive(tag: String?, id: Int) {
+        liveHolds[liveKey(tag, id)] = android.os.SystemClock.elapsedRealtime() + LIVE_HOLD_MS
+    }
+
+    private fun liveHeld(tag: String?, id: Int): Boolean {
+        val key = liveKey(tag, id)
+        val until = liveHolds[key] ?: return false
+        if (android.os.SystemClock.elapsedRealtime() < until) return true
+        liveHolds.remove(key)
+        return false
+    }
+
+    private fun cancelLiveRowsOf(channel: MethodChannel) {
+        val context = liveContext ?: return
+        val manager = NotificationManagerCompat.from(context)
+        for ((key, owner) in liveOwners.entries.toList()) {
+            if (owner !== channel) continue
+            liveOwners.remove(key)
+            val split = key.lastIndexOf('\u0000')
+            val tag = key.substring(0, split).ifEmpty { null }
+            val id = key.substring(split + 1).toIntOrNull() ?: continue
+            try {
+                manager.cancel(tag, id)
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    /** Engine-bound rows left by a process that died: nobody owns them now. */
+    private fun cancelOrphanedLiveRows(context: Context) {
+        liveContext = context
+        try {
+            val active =
+                context.getSystemService(NotificationManager::class.java)?.activeNotifications ?: return
+            val manager = NotificationManagerCompat.from(context)
+            for (sbn in active) {
+                if (!sbn.notification.extras.getBoolean(EXTRA_OWNER_BOUND)) continue
+                if (liveOwners.containsKey(liveKey(sbn.tag, sbn.id))) continue
+                manager.cancel(sbn.tag, sbn.id)
+            }
+        } catch (_: Exception) {
+        }
     }
 
     /** True while some Flutter engine (UI, listener or headless drain) can execute taps. */
     fun hasExecutor(): Boolean = channels.isNotEmpty()
+
+    /** Takes the card at tag + id down (its "Mark read" was tapped). */
+    fun dismiss(context: Context, tag: String?, id: Int) {
+        try {
+            NotificationManagerCompat.from(context).cancel(tag, id)
+        } catch (_: Exception) {
+        }
+        syncGroupSummary(context, tag)
+    }
 
     /** Wakes every attached engine; the inbox guarantees one executor. */
     fun notifyActionsAvailable() {
@@ -97,7 +192,12 @@ internal object HermesRichNotifications {
         }
     }
 
-    private fun handle(context: Context, call: MethodCall, result: MethodChannel.Result) {
+    private fun handle(
+        context: Context,
+        call: MethodCall,
+        result: MethodChannel.Result,
+        channel: MethodChannel? = null,
+    ) {
         try {
             when (call.method) {
                 "capabilities" -> result.success(capabilities(context))
@@ -105,7 +205,7 @@ internal object HermesRichNotifications {
                     postConversation(context, call.arguments.asMap())
                     result.success(true)
                 }
-                "postLiveUpdate" -> result.success(postLiveUpdate(context, call.arguments.asMap()))
+                "postLiveUpdate" -> result.success(postLiveUpdate(context, call.arguments.asMap(), channel))
                 "decorateServiceNotification" -> result.success(decorateServiceNotification(context))
                 "confirm" -> {
                     confirm(context, call.arguments.asMap())
@@ -113,9 +213,11 @@ internal object HermesRichNotifications {
                 }
                 "cancel" -> {
                     val args = call.arguments.asMap()
+                    liveOwners.remove(liveKey(args.str("tag"), args.int("id") ?: 0))
                     NotificationManagerCompat.from(context)
                         .cancel(args.str("tag"), args.int("id") ?: 0)
                     syncGroupSummary(context, args.str("tag"))
+                    syncAutomationGroup(context)
                     result.success(true)
                 }
                 "takePendingActions" -> {
@@ -123,6 +225,19 @@ internal object HermesRichNotifications {
                         .mapNotNull { it as? String }
                         .toSet()
                     result.success(HermesNotificationActionInbox.take(context, routes))
+                }
+                "checkpointPendingAction" -> {
+                    result.success(HermesNotificationActionInbox.checkpoint(context,
+                        call.argument<String>("uid") ?: "", call.argument<String>("claimToken") ?: "",
+                        call.argument<String>("expected") ?: "", call.argument<String>("phase") ?: ""))
+                }
+                "deferClaimedAction" -> {
+                    result.success(HermesNotificationActionInbox.deferClaim(context,
+                        call.argument<String>("uid") ?: "", call.argument<String>("claimToken") ?: ""))
+                }
+                "ackClaimedAction" -> {
+                    result.success(HermesNotificationActionInbox.ackClaim(context,
+                        call.argument<String>("uid") ?: "", call.argument<String>("claimToken") ?: ""))
                 }
                 "ackPendingActions" -> {
                     val uids = (call.argument<List<Any?>>("uids") ?: emptyList())
@@ -133,6 +248,8 @@ internal object HermesRichNotifications {
                 }
                 "drainFinished" -> result.success(true)
                 "openPromotionSettings" -> result.success(openPromotionSettings(context))
+                "openChannelSettings" ->
+                    result.success(openChannelSettings(context, call.argument<String>("channel")))
                 "removeConversationShortcut" -> {
                     val id = call.argument<String>("conversationId")
                     if (id != null) {
@@ -167,6 +284,47 @@ internal object HermesRichNotifications {
             "notificationsEnabled" to manager.areNotificationsEnabled(),
             "conversations" to (Build.VERSION.SDK_INT >= 30),
         )
+    }
+
+    /**
+     * Opens Android's own screen of one notification category of this app
+     * (where the fixed connection card can be minimised or silenced). An
+     * unknown category, or a system without per-category screens, opens the
+     * app's notification settings instead.
+     */
+    private fun openChannelSettings(context: Context, channelId: String?): Boolean {
+        val intents =
+            buildList {
+                if (Build.VERSION.SDK_INT >= 26) {
+                    val known =
+                        channelId != null &&
+                            context.getSystemService(NotificationManager::class.java)
+                                ?.getNotificationChannel(channelId) != null
+                    if (known) {
+                        add(
+                            Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
+                                .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                                .putExtra(Settings.EXTRA_CHANNEL_ID, channelId),
+                        )
+                    }
+                    add(
+                        Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                            .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName),
+                    )
+                }
+                add(
+                    Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                        .setData(Uri.fromParts("package", context.packageName, null)),
+                )
+            }
+        for (intent in intents) {
+            try {
+                context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                return true
+            } catch (_: Exception) {
+            }
+        }
+        return false
     }
 
     private fun openPromotionSettings(context: Context): Boolean {
@@ -492,6 +650,10 @@ internal object HermesRichNotifications {
 
     fun postConversation(context: Context, args: Map<String, Any?>) {
         ensureChannels(context)
+        if (args.str("style") == "row") {
+            postRow(context, args)
+            return
+        }
         val id = args.int("id") ?: return
         val tag = args.str("tag")
         val channel = channelFor(args.str("channel"))
@@ -581,46 +743,7 @@ internal object HermesRichNotifications {
         args.str("subText")?.let { builder.setSubText(it) }
         args.long("timeoutMs")?.let { if (it > 0) builder.setTimeoutAfter(it) }
         openIntent(context, id, tag, args.str("openPayload"))?.let { builder.setContentIntent(it) }
-        for (raw in args.list("actions").take(3)) {
-            val action = raw.asMap()
-            val actionId = action.str("id") ?: continue
-            val label = action.str("label") ?: continue
-            if (actionId == "open") {
-                val open = openIntent(context, id, tag, args.str("openPayload")) ?: continue
-                builder.addAction(
-                    NotificationCompat.Action.Builder(R.drawable.ic_stat_hermes, label, open)
-                        .setShowsUserInterface(true)
-                        .build(),
-                )
-                continue
-            }
-            val remote = action["remoteInput"] == true
-            val intent = actionPendingIntent(context, actionId, payload, id, tag, mutable = remote)
-            val semantic =
-                when (actionId) {
-                    "approve" -> NotificationCompat.Action.SEMANTIC_ACTION_NONE
-                    "deny" -> NotificationCompat.Action.SEMANTIC_ACTION_DELETE
-                    "reply" -> NotificationCompat.Action.SEMANTIC_ACTION_REPLY
-                    "stop" -> NotificationCompat.Action.SEMANTIC_ACTION_MUTE
-                    else -> NotificationCompat.Action.SEMANTIC_ACTION_NONE
-                }
-            val actionBuilder =
-                NotificationCompat.Action.Builder(R.drawable.ic_stat_hermes, label, intent)
-                    .setSemanticAction(semantic)
-                    .setShowsUserInterface(false)
-                    .setAllowGeneratedReplies(remote && action["smartReplies"] == true)
-            if (Build.VERSION.SDK_INT >= 31 && action["requiresUnlock"] != false) {
-                actionBuilder.setAuthenticationRequired(true)
-            }
-            if (remote) {
-                actionBuilder.addRemoteInput(
-                    RemoteInput.Builder(REMOTE_INPUT_KEY)
-                        .setLabel(action.str("hint") ?: label)
-                        .build(),
-                )
-            }
-            builder.addAction(actionBuilder.build())
-        }
+        addCardActions(context, builder, args, id, tag, payload)
         val publicTitle = args.str("publicTitle")
         if (publicTitle != null) {
             // Lock screen: still a conversation (the Bot's state face as the
@@ -671,6 +794,189 @@ internal object HermesRichNotifications {
             }
         }
         syncGroupSummary(context, tag)
+    }
+
+    /** The buttons of a card: "open" brings the app up, the rest go to the action inbox. */
+    private fun addCardActions(
+        context: Context,
+        builder: NotificationCompat.Builder,
+        args: Map<String, Any?>,
+        id: Int,
+        tag: String?,
+        payload: String,
+    ) {
+        for (raw in args.list("actions").take(3)) {
+            val action = raw.asMap()
+            val actionId = action.str("id") ?: continue
+            val label = action.str("label") ?: continue
+            if (actionId == "open") {
+                val open = openIntent(context, id, tag, args.str("openPayload")) ?: continue
+                builder.addAction(
+                    NotificationCompat.Action.Builder(R.drawable.ic_stat_hermes, label, open)
+                        .setShowsUserInterface(true)
+                        .build(),
+                )
+                continue
+            }
+            val remote = action["remoteInput"] == true
+            val intent = actionPendingIntent(context, actionId, payload, id, tag, mutable = remote)
+            val semantic =
+                when (actionId) {
+                    "approve" -> NotificationCompat.Action.SEMANTIC_ACTION_NONE
+                    "deny" -> NotificationCompat.Action.SEMANTIC_ACTION_DELETE
+                    "reply", "answer" -> NotificationCompat.Action.SEMANTIC_ACTION_REPLY
+                    "stop", "mute" -> NotificationCompat.Action.SEMANTIC_ACTION_MUTE
+                    else -> NotificationCompat.Action.SEMANTIC_ACTION_NONE
+                }
+            val actionBuilder =
+                NotificationCompat.Action.Builder(R.drawable.ic_stat_hermes, label, intent)
+                    .setSemanticAction(semantic)
+                    .setShowsUserInterface(false)
+                    .setAllowGeneratedReplies(remote && action["smartReplies"] == true)
+            if (Build.VERSION.SDK_INT >= 31 && action["requiresUnlock"] != false) {
+                actionBuilder.setAuthenticationRequired(true)
+            }
+            if (remote) {
+                val input = RemoteInput.Builder(REMOTE_INPUT_KEY).setLabel(action.str("hint") ?: label)
+                // Answers the request itself offers: one-tap choices.
+                val choices = action.list("choices").mapNotNull { (it as? String)?.takeIf { c -> c.isNotBlank() } }
+                if (choices.isNotEmpty()) input.setChoices(choices.toTypedArray<CharSequence>())
+                actionBuilder.addRemoteInput(input.build())
+            }
+            builder.addAction(actionBuilder.build())
+        }
+    }
+
+    private const val AUTO_GROUP = "hermes.auto"
+
+    /** Tag of the summary the automation rows fold under. */
+    const val AUTO_TAG = "hermes.auto"
+    private const val EXTRA_AUTO_ROW = "hermes.autoRow"
+    private const val EXTRA_AUTO_LINE = "hermes.autoLine"
+
+    /**
+     * An automation result (a scheduled job, a board task, a goal) as a plain
+     * row: its name, the state and the first line of the result. It is not a
+     * conversation and pushes no shortcut; several fold under one summary
+     * ([syncAutomationGroup]). Silent unless [args] say it alerts (a failure).
+     */
+    private fun postRow(context: Context, args: Map<String, Any?>) {
+        val id = args.int("id") ?: return
+        val tag = args.str("tag")
+        val channel = channelFor(args.str("channel"))
+        val title = args.str("title") ?: context.getString(R.string.rich_brand)
+        val text = args.str("text") ?: ""
+        val alert = args["alert"] == true
+        val accent = args.int("accent") ?: ACCENT
+        val builder =
+            NotificationCompat.Builder(context, channel)
+                .setSmallIcon(R.drawable.ic_stat_hermes)
+                .setColor(accent)
+                .setContentTitle(title)
+                .setContentText(text)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+                .setCategory(if (alert) NotificationCompat.CATEGORY_ERROR else NotificationCompat.CATEGORY_STATUS)
+                .setAutoCancel(true)
+                .setOnlyAlertOnce(true)
+                .setSilent(!alert)
+                .setPriority(if (alert) NotificationCompat.PRIORITY_HIGH else NotificationCompat.PRIORITY_LOW)
+                .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+        if (automationRows(context).any { !(it.tag == tag && it.id == id) }) builder.setGroup(AUTO_GROUP)
+        args.str("subText")?.let { builder.setSubText(it) }
+        // Only a Bot's face: a neutral row needs no picture beside the app's.
+        loadBitmap(args.str("largeIconPath"))?.let { builder.setLargeIcon(it) }
+        openIntent(context, id, tag, args.str("openPayload"))?.let { builder.setContentIntent(it) }
+        addCardActions(context, builder, args, id, tag, args.str("actionPayload") ?: "{}")
+        args.str("publicTitle")?.let { publicTitle ->
+            // Lock screen: where it comes from and the state, never its name.
+            builder.setPublicVersion(
+                NotificationCompat.Builder(context, channel)
+                    .setSmallIcon(R.drawable.ic_stat_hermes)
+                    .setColor(accent)
+                    .setContentTitle(publicTitle)
+                    .setContentText(args.str("publicText") ?: "")
+                    .setCategory(NotificationCompat.CATEGORY_STATUS)
+                    .build(),
+            )
+        }
+        rememberTitle(context, tag, id, title, channel, args.str("openPayload"), iconPath = args.str("largeIconPath"))
+        val line = args.str("summaryLine")
+        notify(context, tag, id, builder) { notification ->
+            notification.extras.putBoolean(EXTRA_AUTO_ROW, true)
+            line?.let { notification.extras.putString(EXTRA_AUTO_LINE, it) }
+        }
+        syncAutomationGroup(context)
+    }
+
+    private fun automationRows(context: Context): List<android.service.notification.StatusBarNotification> =
+        try {
+            context.getSystemService(NotificationManager::class.java)
+                ?.activeNotifications
+                ?.filter {
+                    it.tag != AUTO_TAG &&
+                        (it.notification.flags and android.app.Notification.FLAG_GROUP_SUMMARY) == 0 &&
+                        it.notification.extras.getBoolean(EXTRA_AUTO_ROW)
+                }
+                ?.sortedByDescending { it.postTime }
+                ?: emptyList()
+        } catch (_: Exception) {
+            emptyList()
+        }
+
+    /**
+     * Keeps the automation rows folded: with two or more they share one group
+     * under a silent summary ("3 automations"), whose lines are lock-safe. A
+     * lone row stays ungrouped, and leaves the group before the summary is
+     * cancelled (cancelling a summary takes its children with it).
+     */
+    fun syncAutomationGroup(context: Context) {
+        val manager = NotificationManagerCompat.from(context)
+        val rows = automationRows(context)
+        fun regroup(sbn: android.service.notification.StatusBarNotification, group: String?) {
+            try {
+                manager.notify(
+                    sbn.tag, sbn.id,
+                    android.app.Notification.Builder.recoverBuilder(context, sbn.notification)
+                        .setGroup(group).setOnlyAlertOnce(true).build(),
+                )
+            } catch (_: Exception) {
+            }
+        }
+        if (rows.size < 2) {
+            rows.filter { it.notification.group == AUTO_GROUP }.forEach { regroup(it, null) }
+            manager.cancel(AUTO_TAG, SUMMARY_ID)
+            return
+        }
+        rows.filter { it.notification.group != AUTO_GROUP }.forEach { regroup(it, AUTO_GROUP) }
+        val lines = rows.mapNotNull { it.notification.extras.getString(EXTRA_AUTO_LINE) }
+        val title = context.resources.getQuantityString(R.plurals.rich_auto_summary, rows.size, rows.size)
+        val inbox = NotificationCompat.InboxStyle().setBigContentTitle(title)
+        lines.take(5).forEach { inbox.addLine(it) }
+        fun summary(): NotificationCompat.Builder =
+            NotificationCompat.Builder(context, CH_CONVERSATIONS)
+                .setSmallIcon(R.drawable.ic_stat_hermes)
+                .setColor(ACCENT)
+                .setContentTitle(title)
+                .setContentText(lines.take(3).joinToString(" · "))
+                .setStyle(inbox)
+                .setGroup(AUTO_GROUP)
+                .setGroupSummary(true)
+                .setGroupAlertBehavior(NotificationCompat.GROUP_ALERT_CHILDREN)
+                .setSilent(true)
+                .setAutoCancel(true)
+                .setCategory(NotificationCompat.CATEGORY_STATUS)
+        val builder = summary()
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setPublicVersion(summary().build())
+        builder.setContentIntent(
+            PendingIntent.getActivity(
+                context,
+                requestCode(AUTO_TAG, SUMMARY_ID, "open"),
+                NewSessionLaunchContract.openAppIntent(context),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            ),
+        )
+        notify(context, AUTO_TAG, SUMMARY_ID, builder)
     }
 
     private const val EXTRA_ALERT_KEY = "hermes.alertKey"
@@ -870,21 +1176,41 @@ internal object HermesRichNotifications {
     }
 
     /**
-     * Android 16 Live Update: ProgressStyle, ongoing, requested promotion, no
-     * custom views, not colorized, not a group summary. Older releases get an
-     * ongoing notification with a determinate/indeterminate progress bar.
+     * Android 16 Live Update: BigTextStyle (one line per member), ongoing,
+     * requested promotion, no custom views, not colorized, not a group
+     * summary. No progress bar on any release: room state is not a
+     * measurable progress ("2 of 4 replied" is not 50 %), so it is text.
      */
-    fun postLiveUpdate(context: Context, args: Map<String, Any?>): Map<String, Any?> {
+    fun postLiveUpdate(
+        context: Context,
+        args: Map<String, Any?>,
+        owner: MethodChannel? = null,
+    ): Map<String, Any?> {
         ensureChannels(context)
         val id = args.int("id") ?: return mapOf("posted" to false)
         val tag = args.str("tag")
+        val rowKey = liveKey(tag, id)
+        // A tap on one of its buttons already changed the row.
+        if (args["yieldToActions"] == true && liveHeld(tag, id)) return mapOf("posted" to false)
+        // Another engine shows more about this work than this caller knows.
+        if (args["yieldToOwner"] == true) {
+            val current = liveOwners[rowKey]
+            if (current != null && current !== owner && isActive(context, tag, id)) {
+                return mapOf("posted" to false)
+            }
+        }
+        val ownerBound = args["ownerBound"] == true && owner != null
+        if (ownerBound && owner != null) {
+            liveOwners[rowKey] = owner
+        } else {
+            liveOwners.remove(rowKey)
+        }
+        liveContext = context.applicationContext
         val title = args.str("title") ?: context.getString(R.string.rich_brand)
         // Never empty: the system rejects promotion for a blank Live Update.
         val text = args.str("text")?.takeIf { it.isNotBlank() }
             ?: context.getString(R.string.rich_thinking)
         val payload = args.str("actionPayload") ?: "{}"
-        val segments = args.list("segments").map { it.asMap() }
-        val done = segments.count { it.str("state") == "done" }
         val startedAt = args.long("startedAtMs")
         val builder =
             NotificationCompat.Builder(context, CH_LIVE)
@@ -916,12 +1242,20 @@ internal object HermesRichNotifications {
             if (startedAt != null && startedAt > 0) {
                 publicBuilder.setWhen(startedAt).setShowWhen(true).setUsesChronometer(true)
             }
+            args.int("progressMax")?.takeIf { it > 0 }?.let { max ->
+                publicBuilder.setProgress(max, (args.int("progress") ?: 0).coerceIn(0, max), false)
+            }
             builder.setPublicVersion(publicBuilder.build())
         }
         args.str("subText")?.let { builder.setSubText(it) }
         if (startedAt != null && startedAt > 0) {
             builder.setWhen(startedAt).setShowWhen(true).setUsesChronometer(true)
         }
+        if (ownerBound) builder.addExtras(android.os.Bundle().apply { putBoolean(EXTRA_OWNER_BOUND, true) })
+        // The rail of a chat turn: a plain bar here, segments on Android 16.
+        val progressMax = args.int("progressMax")?.takeIf { it > 0 }
+        val progress = (args.int("progress") ?: 0).coerceIn(0, progressMax ?: 0)
+        if (progressMax != null) builder.setProgress(progressMax, progress, false)
         args.str("conversationId")?.let {
             builder.setShortcutId(it)
             builder.setLocusId(LocusIdCompat(it))
@@ -950,9 +1284,8 @@ internal object HermesRichNotifications {
                 )
             }
         }
-        // Expanded member rows. ProgressStyle (the promoted Live Update) has
-        // no room for rows: its 2-line expanded text already lists every
-        // member after the speaker. Non-promoted cards get one line each.
+        // Expanded member rows: one line per member ("builder · replied").
+        // BigTextStyle is a promotable Live Update style on Android 16.
         val rowsText = args.str("bigText") ?: text
         // The multi-room summary is an ordinary ongoing card: only real
         // rooms become Live Updates (max two, decided in Dart).
@@ -961,46 +1294,26 @@ internal object HermesRichNotifications {
             builder.setStyle(NotificationCompat.BigTextStyle().bigText(text))
             // Neutral Hermes glyph (not the app portrait) for the summary.
             builder.setLargeIcon(glyphBitmap(context))
-        } else if (promotedRequested) {
-            val style = NotificationCompat.ProgressStyle().setStyledByProgress(true)
-            if (segments.isEmpty()) {
-                style.setProgressIndeterminate(true)
-            } else {
-                for (segment in segments.take(12)) {
-                    style.addProgressSegment(
-                        NotificationCompat.ProgressStyle.Segment(100)
-                            .setColor(segmentColor(segment.str("state"))),
-                    )
-                }
-                // The tracker (working face) sits in the middle of the working
-                // member's segment, not at 0 over an empty bar.
-                val working = segments.count { it.str("state") == "working" }
-                val progress = done * 100 + if (working > 0) 50 else 0
-                style.setProgress(progress.coerceAtMost(segments.size * 100))
-            }
-            iconFor(args.str("trackerIconPath"))?.let { style.setProgressTrackerIcon(it) }
-            builder.setStyle(style)
-            builder.setRequestPromotedOngoing(true)
-            // Room tile / working face instead of the app icon (glyph if
-            // neither rendered in time: never the launcher portrait).
-            (loadBitmap(args.str("largeIconPath")) ?: loadBitmap(args.str("trackerIconPath")) ?: glyphBitmap(context))
-                ?.let { builder.setLargeIcon(it) }
-            args.str("shortText")?.let { builder.setShortCriticalText(it.take(7)) }
         } else {
-            if (segments.isEmpty()) {
-                builder.setProgress(0, 0, true)
-            } else {
-                builder.setProgress(segments.size, done, false)
-            }
             builder.setStyle(NotificationCompat.BigTextStyle().bigText(rowsText))
             (loadBitmap(args.str("largeIconPath")) ?: loadBitmap(args.str("trackerIconPath")) ?: glyphBitmap(context))
                 ?.let { builder.setLargeIcon(it) }
+            if (promotedRequested) {
+                builder.setRequestPromotedOngoing(true)
+                args.str("shortText")?.let { builder.setShortCriticalText(it.take(7)) }
+            }
         }
         rememberTitle(
             context, tag, id, title, CH_LIVE, args.str("openPayload"),
             iconPath = args.str("largeIconPath") ?: args.str("trackerIconPath"),
         )
-        notify(context, tag, id, builder)
+        val styled =
+            if (progressMax != null && Build.VERSION.SDK_INT >= 36 && args["promote"] != false) {
+                progressStyled(context, builder.build(), args, progressMax, progress)
+            } else {
+                null
+            }
+        if (styled != null) notifyBuilt(context, tag, id, styled) else notify(context, tag, id, builder)
         var promotable = false
         if (Build.VERSION.SDK_INT >= 36) {
             try {
@@ -1012,13 +1325,42 @@ internal object HermesRichNotifications {
         return mapOf("posted" to true, "promoted" to promotable)
     }
 
-    private fun segmentColor(state: String?): Int =
-        when (state) {
-            "done" -> DONE
-            "working" -> WORKING
-            "needs_you" -> NEEDS_YOU
-            "failed" -> FAILED
-            else -> Color.parseColor("#6E675C")
+    /**
+     * Android 16: the same row with `Notification.ProgressStyle` (still a
+     * promotable Live Update). With `segments` the bar has one segment per
+     * unit of work; without it, one continuous rail. Null when the platform
+     * refuses it: the caller then posts the plain progress bar.
+     */
+    @androidx.annotation.RequiresApi(36)
+    private fun progressStyled(
+        context: Context,
+        base: android.app.Notification,
+        args: Map<String, Any?>,
+        max: Int,
+        progress: Int,
+    ): android.app.Notification? =
+        try {
+            val accent = args.int("accent") ?: WORKING
+            val segments = (args.int("segments") ?: 1).coerceIn(1, 24)
+            val length = max / segments
+            val style = android.app.Notification.ProgressStyle().setStyledByProgress(true)
+            if (segments > 1 && length > 0 && length * segments == max) {
+                style.setProgressSegments(
+                    List(segments) { android.app.Notification.ProgressStyle.Segment(length).setColor(accent) },
+                )
+            } else {
+                style.setProgressSegments(
+                    listOf(android.app.Notification.ProgressStyle.Segment(max).setColor(accent)),
+                )
+            }
+            style.setProgress(progress)
+            loadBitmap(args.str("trackerIconPath"))?.let {
+                style.setProgressTrackerIcon(android.graphics.drawable.Icon.createWithBitmap(it))
+            }
+            android.app.Notification.Builder.recoverBuilder(context, base).setStyle(style).build()
+        } catch (error: Exception) {
+            Log.w(TAG, "progress style failed: ${error.javaClass.simpleName}")
+            null
         }
 
     /** Replaces a card in place with a short confirmation that dismisses itself. */
@@ -1099,6 +1441,7 @@ internal object HermesRichNotifications {
             conversationIcon?.let { notification.extras.putParcelable(EXTRA_CONVERSATION_ICON, it) }
         }
         syncGroupSummary(context, tag)
+        syncAutomationGroup(context)
     }
 
     private fun isActive(context: Context, tag: String?, id: Int): Boolean =
@@ -1128,6 +1471,20 @@ internal object HermesRichNotifications {
         }
         try {
             manager.notify(tag, id, builder.build().also(decorate))
+        } catch (error: SecurityException) {
+            Log.w(TAG, "notify refused: ${error.javaClass.simpleName}")
+        }
+    }
+
+    private fun notifyBuilt(context: Context, tag: String?, id: Int, notification: android.app.Notification) {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            return
+        }
+        try {
+            NotificationManagerCompat.from(context).notify(tag, id, notification)
         } catch (error: SecurityException) {
             Log.w(TAG, "notify refused: ${error.javaClass.simpleName}")
         }
@@ -1167,6 +1524,98 @@ internal object HermesNotificationActionInbox {
     private const val KEY_ALIAS = "hermes_action_inbox_v1"
     private val lock = Any()
 
+    // The same encrypted inbox, with a process-shared transaction boundary.
+    // SharedPreferences handles cache reads and cannot arbitrate engine/process
+    // custody. Migrate v2 once under the file lock; no plaintext second store.
+    private inline fun <T> transaction(context: Context, block: () -> T): T =
+        synchronized(lock) {
+            val file = java.io.File(context.filesDir, "notification_action_inbox.lock")
+            java.io.RandomAccessFile(file, "rw").use { owner ->
+                owner.channel.lock().use { block() }
+            }
+        }
+
+    private fun actionFile(context: Context) = android.util.AtomicFile(
+        java.io.File(context.filesDir, "notification_action_inbox_v2.json"))
+
+    private fun readActions(context: Context): JSONArray {
+        val file = actionFile(context)
+        if (file.baseFile.exists() || java.io.File(file.baseFile.path + ".bak").exists()) {
+            return file.openRead().bufferedReader().use { JSONArray(it.readText()) }
+        }
+        val legacy = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_ACTIONS, null)
+        return if (legacy == null) JSONArray() else JSONArray(legacy)
+    }
+
+    private fun writeActions(context: Context, entries: JSONArray) {
+        val file = actionFile(context)
+        val stream = file.startWrite()
+        try {
+            stream.write(entries.toString().toByteArray(Charsets.UTF_8))
+            file.finishWrite(stream)
+        } catch (error: Throwable) {
+            file.failWrite(stream)
+            throw error
+        }
+        // Verification failure must retain the committed file, never failWrite it.
+        check(file.openRead().bufferedReader().use { it.readText() } == entries.toString())
+        check(context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove(KEY_ACTIONS).commit())
+    }
+
+    private fun validClaim(entry: JSONObject, token: String): Boolean =
+        token.isNotEmpty() && entry.optString("claimToken") == token &&
+            System.currentTimeMillis() - entry.optLong("claimedAt") in 0 until CLAIM_LEASE_MS
+
+    /** CAS on the exact live claim. An expired/predecessor engine has no authority. */
+    fun checkpoint(context: Context, uid: String, token: String, expected: String, phase: String): Boolean =
+        transaction(context) {
+            val current = readActions(context)
+            for (index in 0 until current.length()) {
+                val entry = current.optJSONObject(index) ?: continue
+                if (entry.optString("uid") != uid || !validClaim(entry, token)) continue
+                val actual = entry.optString("phase", "prepared")
+                if (actual != expected) return@transaction false
+                val allowed = when (actual) {
+                    "prepared" -> phase == "executing" || phase == "rescue_pending" || phase == "confirmed"
+                    "executing" -> phase in setOf("confirmed", "rescue_pending", "uncertain")
+                    "rescue_pending" -> phase == "rescued"
+                    else -> false
+                }
+                if (!allowed) return@transaction false
+                entry.put("phase", phase)
+                writeActions(context, current)
+                return@transaction true
+            }
+            false
+        }
+
+    fun deferClaim(context: Context, uid: String, token: String): Boolean = transaction(context) {
+        val current = readActions(context)
+        for (index in 0 until current.length()) {
+            val entry = current.optJSONObject(index) ?: continue
+            if (entry.optString("uid") == uid && validClaim(entry, token) && entry.optString("phase") == "rescue_pending") {
+                entry.put("claimedAt", 0L).put("claimToken", "")
+                writeActions(context, current)
+                return@transaction true
+            }
+        }
+        false
+    }
+
+    fun ackClaim(context: Context, uid: String, token: String): Boolean = transaction(context) {
+        val current = readActions(context)
+        val kept = JSONArray()
+        var removed = false
+        for (index in 0 until current.length()) {
+            val entry = current.optJSONObject(index) ?: continue
+            if (entry.optString("uid") == uid && validClaim(entry, token) &&
+                entry.optString("phase") in setOf("confirmed", "rescued")) removed = true
+            else kept.put(entry)
+        }
+        if (removed) writeActions(context, kept)
+        removed
+    }
+
     data class Posted(
         val title: String,
         val channel: String,
@@ -1185,16 +1634,16 @@ internal object HermesNotificationActionInbox {
         source: String,
     ): String {
         val uid = UUID.randomUUID().toString()
-        synchronized(lock) {
+        transaction(context) {
             val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             // v1 kept reply text in clear: drop it on first write.
             if (prefs.contains(KEY_ACTIONS_V1)) prefs.edit().remove(KEY_ACTIONS_V1).commit()
-            val current = parse(prefs.getString(KEY_ACTIONS, null))
+            val current = readActions(context)
             val now = System.currentTimeMillis()
             val kept = JSONArray()
             for (index in 0 until current.length()) {
                 val entry = current.optJSONObject(index) ?: continue
-                if (now - entry.optLong("at") <= HARD_TTL_MS) kept.put(entry)
+                kept.put(entry)
             }
             val route = try {
                 JSONObject(payload).optString("route", "")
@@ -1214,33 +1663,41 @@ internal object HermesNotificationActionInbox {
                     .put("claimedAt", 0L)
             if (!text.isNullOrEmpty()) entry.put("enc", encrypt(text) ?: return uid)
             kept.put(entry)
-            while (kept.length() > MAX_ACTIONS) kept.remove(0)
-            prefs.edit().putString(KEY_ACTIONS, kept.toString()).commit()
+            // Never evict unacknowledged custody, including rescue/uncertainty.
+            writeActions(context, kept)
         }
         return uid
     }
 
     fun take(context: Context, routes: Set<String>): List<Map<String, Any?>> {
-        synchronized(lock) {
+        transaction(context) {
             val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            val current = parse(prefs.getString(KEY_ACTIONS, null))
+            val current = readActions(context)
             val now = System.currentTimeMillis()
             val taken = ArrayList<Map<String, Any?>>()
             val kept = JSONArray()
             for (index in 0 until current.length()) {
                 val entry = current.optJSONObject(index) ?: continue
                 val at = entry.optLong("at")
-                if (now - at > HARD_TTL_MS) continue
+                // TTL is execution admission, never permission to erase custody.
                 kept.put(entry)
                 val route = entry.optString("route", "")
                 if (routes.isNotEmpty() && route !in routes) continue
                 val claimedAt = entry.optLong("claimedAt")
-                if (claimedAt > 0 && now - claimedAt < CLAIM_LEASE_MS) continue
+                if (claimedAt > 0 && now - claimedAt in 0 until CLAIM_LEASE_MS) continue
+                var phase = entry.optString("phase", "prepared")
+                if (claimedAt > 0 && phase in setOf("prepared", "executing")) phase = "uncertain"
+                if (phase == "prepared" && (entry.optBoolean("expired") || now - at > TTL_MS)) phase = "rescue_pending"
+                entry.put("phase", phase)
+                val claimToken = UUID.randomUUID().toString()
+                entry.put("claimToken", claimToken)
                 entry.put("claimedAt", now)
                 val text = entry.optString("enc", "").takeIf { it.isNotEmpty() }?.let(::decrypt)
                 taken.add(
                     mapOf(
                         "uid" to entry.optString("uid"),
+                        "claimToken" to claimToken,
+                        "phase" to phase,
                         "action" to entry.optString("action"),
                         "payload" to entry.optString("payload"),
                         "text" to text,
@@ -1254,7 +1711,7 @@ internal object HermesNotificationActionInbox {
                 )
             }
             if (taken.isNotEmpty()) {
-                prefs.edit().putString(KEY_ACTIONS, kept.toString()).commit()
+                writeActions(context, kept)
             }
             return taken
         }
@@ -1262,17 +1719,7 @@ internal object HermesNotificationActionInbox {
 
     /** Removes executed (or terminally failed) taps. */
     fun ack(context: Context, uids: Set<String>) {
-        if (uids.isEmpty()) return
-        synchronized(lock) {
-            val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            val current = parse(prefs.getString(KEY_ACTIONS, null))
-            val kept = JSONArray()
-            for (index in 0 until current.length()) {
-                val entry = current.optJSONObject(index) ?: continue
-                if (entry.optString("uid") !in uids) kept.put(entry)
-            }
-            prefs.edit().putString(KEY_ACTIONS, kept.toString()).commit()
-        }
+        // Legacy uid-only ACKs cannot prove claim ownership; intentionally denied.
     }
 
     /**
@@ -1283,20 +1730,21 @@ internal object HermesNotificationActionInbox {
      */
     fun expireUnexecuted(context: Context, all: Boolean) {
         val failed = ArrayList<Triple<Int, String?, String>>()
-        synchronized(lock) {
+        transaction(context) {
             val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            val current = parse(prefs.getString(KEY_ACTIONS, null))
+            val current = readActions(context)
             val now = System.currentTimeMillis()
             var changed = false
             for (index in 0 until current.length()) {
                 val entry = current.optJSONObject(index) ?: continue
-                if (entry.optBoolean("expired")) continue
+                if (entry.optBoolean("expired") || entry.optString("phase") in setOf("confirmed", "rescued", "uncertain", "rescue_pending")) continue;
                 val claimedAt = entry.optLong("claimedAt")
-                if (claimedAt > 0 && now - claimedAt < CLAIM_LEASE_MS) continue
+                if (claimedAt > 0 && now - claimedAt in 0 until CLAIM_LEASE_MS) continue
                 if (!all && now - entry.optLong("at") <= TTL_MS) continue
                 entry.put("expired", true)
                 changed = true
-                if (entry.optString("source") == "notification") {
+                // A "read" tap already took its card down: nothing to replace.
+                if (entry.optString("source") == "notification" && entry.optString("action") != "read") {
                     failed.add(
                         Triple(
                             entry.optInt("notificationId"),
@@ -1306,7 +1754,7 @@ internal object HermesNotificationActionInbox {
                     )
                 }
             }
-            if (changed) prefs.edit().putString(KEY_ACTIONS, current.toString()).commit()
+            if (changed) writeActions(context, current)
         }
         for ((id, tag, action) in failed) {
             val remembered = posted(context, tag, id)
@@ -1327,14 +1775,8 @@ internal object HermesNotificationActionInbox {
         }
     }
 
-    fun hasPending(context: Context): Boolean {
-        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        val current = parse(prefs.getString(KEY_ACTIONS, null))
-        for (index in 0 until current.length()) {
-            val entry = current.optJSONObject(index) ?: continue
-            if (!entry.optBoolean("expired")) return true
-        }
-        return false
+    fun hasPending(context: Context): Boolean = transaction(context) {
+        readActions(context).length() > 0
     }
 
     fun rememberPosted(
@@ -1347,7 +1789,7 @@ internal object HermesNotificationActionInbox {
         iconPath: String? = null,
         conversationId: String? = null,
     ) {
-        synchronized(lock) {
+        transaction(context) {
             val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             val current = parse(prefs.getString(KEY_POSTED, null))
             val key = "${tag ?: ""}#$id"
@@ -1462,7 +1904,8 @@ class HermesNotificationActionReceiver : BroadcastReceiver() {
         const val EXTRA_NOTIFICATION_ID = "rich_notification_id"
         const val EXTRA_NOTIFICATION_TAG = "rich_notification_tag"
         const val EXTRA_SOURCE = "rich_source"
-        private val allowed = setOf("approve", "deny", "stop", "reply", "retry", "always", "session")
+        private val allowed =
+            setOf("approve", "deny", "stop", "reply", "answer", "retry", "always", "session", "read", "mute")
     }
 
     override fun onReceive(context: Context, intent: Intent) {
@@ -1480,7 +1923,7 @@ class HermesNotificationActionReceiver : BroadcastReceiver() {
                 ?.toString()
                 ?.trim()
                 ?.take(4_000)
-        if (actionId == "reply" && text.isNullOrEmpty()) return
+        if ((actionId == "reply" || actionId == "answer") && text.isNullOrEmpty()) return
         // Widget buttons have no setAuthenticationRequired: they are refused
         // on every API level while the keyguard is showing (lock-screen and
         // communal-hub hosts). The widget itself hides them there too.
@@ -1490,7 +1933,24 @@ class HermesNotificationActionReceiver : BroadcastReceiver() {
         val appLock =
             context.getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
                 .getBoolean("flutter.app_lock_enabled", false)
-        if (appLock || (Build.VERSION.SDK_INT < 31 && keyguard?.isDeviceLocked == true)) {
+        val locked = appLock || (Build.VERSION.SDK_INT < 31 && keyguard?.isDeviceLocked == true)
+        if (actionId == "read") {
+            // "Mark read": the card goes at once and nothing is confirmed on
+            // it. The chat's read mark on the server follows in the
+            // background; behind a lock only the card goes (opening the chat
+            // marks it read).
+            if (source == "notification") HermesRichNotifications.dismiss(context, tag, id)
+            if (locked) return
+            HermesNotificationActionInbox.enqueue(context, actionId, payload, null, id, tag, source)
+            HermesActionDrainScheduler.scheduleExpirySweep(context)
+            if (HermesRichNotifications.hasExecutor()) {
+                HermesRichNotifications.notifyActionsAvailable()
+            } else {
+                HermesActionDrainScheduler.drainNow(context)
+            }
+            return
+        }
+        if (locked) {
             if (source == "notification") {
                 HermesRichNotifications.confirmWith(
                     context,
@@ -1508,6 +1968,7 @@ class HermesNotificationActionReceiver : BroadcastReceiver() {
             return
         }
         HermesNotificationActionInbox.enqueue(context, actionId, payload, text, id, tag, source)
+        if (source == "notification" && actionId == "stop") HermesRichNotifications.holdLive(tag, id)
         if (source == "notification") {
             HermesRichNotifications.confirmWith(
                 context,

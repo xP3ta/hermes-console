@@ -1,20 +1,17 @@
 # Privacy Policy — Hermes Console
 
-**Last updated:** 2026-09-03
+**Last updated:** 2026-10-12
 
-**Release scope:** `1.2.10 (4965)`. This file is the canonical policy for the
-candidate source. Before distribution, the deployed Spanish and English pages
-must match this revision and identify the same date. Deployment verification,
-the final signed AAB review and emulator permission-flow QA are still pending;
-a responding URL alone is not release evidence.
+**Release scope:** `1.2.15 (9540)`. This file is the canonical policy for the
+current source. The deployed Spanish and English pages must match this revision
+and identify the same date; a responding URL alone is not release evidence.
 
-Hermes Console is a client app that connects to a Hermes Agent server that **you
-host and control**. This policy explains exactly what the app accesses and why.
+Hermes Console (the app is called Console on your device) is a client app that
+connects to a Hermes Agent server that **you host and control**. This policy
+explains exactly what the app accesses and why.
 Public pages are hosted in
 [Spanish](https://hermes.xpetalab.dev/privacy) and
-[English](https://hermes.xpetalab.dev/en/privacy). Until the pending deployment
-is verified, those pages must not be treated as release-current merely because
-their URLs respond.
+[English](https://hermes.xpetalab.dev/en/privacy).
 
 ## The short version
 
@@ -56,8 +53,15 @@ service under that provider's terms:
   tool or search providers configured by that server's operator. Hermes Console
   cannot select or inspect those server-side providers. Review the privacy
   terms and configuration of your instance before connecting.
-- Cloud text-to-speech (ElevenLabs or an OpenAI-compatible endpoint): the text
-  to be spoken, using the API key and provider you configure.
+- Voice served by your Hermes: when you choose the Hermes server for speech, the
+  text to be spoken or the audio to be transcribed goes to your server, which
+  uses the speech providers configured there. Console no longer sends speech
+  to speech services of its own.
+- GPT-Live voice (off by default, available only when your server enables it):
+  the phone starts a real-time audio session with the voice provider your server
+  uses, through a session your Hermes server creates, and audio then flows
+  between the phone and that provider under the provider's terms. The provider
+  key stays on your server.
 - Android system speech recognition: microphone audio; depending on your device,
   Android may process it through its configured online speech provider.
 - skills.sh search: the search phrase, proxied through your configured Hermes

@@ -29,6 +29,12 @@ APKS = {
     "app-armeabi-v7a-full-release.apk": "armeabi-v7a",
     "app-x86_64-full-release.apk": "x86_64",
 }
+# Flutter's --split-per-abi stamps abiOffset * 1000 + build number (build 42 here).
+ABI_VERSION_CODES = {
+    "arm64-v8a": 2042,
+    "armeabi-v7a": 1042,
+    "x86_64": 4042,
+}
 EVIDENCE_FILES = {
     "rebuild-comparison.json",
     *{
@@ -675,15 +681,16 @@ class Slice4ArtifactReinspectionTest(unittest.TestCase):
 
     def write_inspection_toolchain(self, root: Path):
         _, manifest, paths = Slice2TrustedToolchainTest().write_toolchain(root, "trusted")
-        xml = '''<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="dev.example.console" android:versionName="9.8.7" android:versionCode="42"><uses-sdk android:minSdkVersion="24" android:targetSdkVersion="36"/><uses-permission android:name="android.permission.INTERNET"/><application android:label="Example Console"><service android:name=".SyncService" android:foregroundServiceType="dataSync"/></application><queries><package android:name="com.termux"/></queries></manifest>'''
+        xml = '''<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="dev.example.console" android:versionName="9.8.7" android:versionCode="@CODE@"><uses-sdk android:minSdkVersion="24" android:targetSdkVersion="36"/><uses-permission android:name="android.permission.INTERNET"/><application android:label="Example Console"><service android:name=".SyncService" android:foregroundServiceType="0x1"/></application><queries><intent><action android:name="android.intent.action.TTS_SERVICE"/></intent></queries></manifest>'''
         paths["aapt"].write_text(
             "#!/usr/bin/env python3\n"
             "import os,sys\n"
             f"abis={dict(APKS)!r}\n"
+            f"codes={ {name: ABI_VERSION_CODES[abi] for name, abi in APKS.items()}!r}\n"
             "name=os.path.basename(sys.argv[-1])\n"
             "log=os.environ.get('INSPECTION_LOG')\n"
             "open(log,'a').write(name+'\\n') if log else None\n"
-            "print(\"package: name='dev.example.console' versionCode='42' versionName='9.8.7'\")\n"
+            "print(\"package: name='dev.example.console' versionCode='%d' versionName='9.8.7'\" % codes[name])\n"
             "print(\"sdkVersion:'24'\")\n"
             "print(\"targetSdkVersion:'36'\")\n"
             "print(\"uses-permission: name='android.permission.INTERNET'\")\n"
@@ -692,9 +699,11 @@ class Slice4ArtifactReinspectionTest(unittest.TestCase):
         )
         paths["apkanalyzer"].write_text(
             "#!/usr/bin/env python3\n"
-            "import sys\n"
+            "import os,sys\n"
             f"xml={xml!r}\n"
-            "values={'application-id':'dev.example.console','version-name':'9.8.7','version-code':'42','min-sdk':'24','target-sdk':'36','permissions':'android.permission.INTERNET','print':xml}\n"
+            f"codes={ {name: ABI_VERSION_CODES[abi] for name, abi in APKS.items()}!r}\n"
+            "code=codes[os.path.basename(sys.argv[-1])]\n"
+            "values={'application-id':'dev.example.console','version-name':'9.8.7','version-code':str(code),'min-sdk':'24','target-sdk':'36','permissions':'android.permission.INTERNET','print':xml.replace('@CODE@',str(code))}\n"
             "print(values[sys.argv[2]])\n",
             encoding="utf-8",
         )
@@ -727,14 +736,14 @@ class Slice4ArtifactReinspectionTest(unittest.TestCase):
             "package": "dev.example.console",
             "versionName": "9.8.7",
             "versionCode": 42,
-            "abiVersionCodes": {abi: 42 for abi in APKS.values()},
+            "abiVersionCodes": dict(ABI_VERSION_CODES),
             "minSdk": 24,
             "targetSdk": 36,
             "label": "Example Console",
             "permissions": ["android.permission.INTERNET"],
             "forbiddenPermissions": ["android.permission.READ_PHONE_STATE"],
             "foregroundServices": [{"name": ".SyncService", "types": ["dataSync"]}],
-            "requiredPackageQueries": ["com.termux"],
+            "packageQueries": [],
         }
         path.write_bytes(canonical(value))
         return path
@@ -2198,7 +2207,7 @@ class WorkflowContractTest(unittest.TestCase):
         self.assertIn("v1.2.9", policy)
         self.assertIn("86edaa150fabd33d8184f5b958400cabadacb49632f7ec50ecbe49608058d159", policy)
         self.assertIn(
-            "f366fdfc011b65c1b3f44e777fc876be21d3492ec3b0b0cf014536c0ac3490c3",
+            "e3f8811963c2c1ab5eb7f62fd8ea86c5a3661bc98214017a720680019d6042c8",
             policy,
         )
 
@@ -2222,7 +2231,7 @@ class WorkflowContractTest(unittest.TestCase):
         self.assertIn("./tool/sbom/generate.sh", workflow)
         self.assertIn("git diff --exit-code -- sbom", workflow)
         self.assertIn(
-            "f366fdfc011b65c1b3f44e777fc876be21d3492ec3b0b0cf014536c0ac3490c3",
+            "e3f8811963c2c1ab5eb7f62fd8ea86c5a3661bc98214017a720680019d6042c8",
             workflow,
         )
 
@@ -2611,7 +2620,7 @@ class ReleaseContractAndDoubleBuildTest(unittest.TestCase):
         )
         self.assertEqual(
             policy["source"]["authoritativeLockSha256"],
-            "f366fdfc011b65c1b3f44e777fc876be21d3492ec3b0b0cf014536c0ac3490c3",
+            "e3f8811963c2c1ab5eb7f62fd8ea86c5a3661bc98214017a720680019d6042c8",
         )
         self.assertEqual(policy["android"]["packageId"], "dev.xpetalab.hermesconsole")
         self.assertEqual(set(policy["channels"]), {"direct-public", "play-private"})
@@ -2708,7 +2717,7 @@ class ReleaseContractAndDoubleBuildTest(unittest.TestCase):
         self.assertIn("git clone --no-local", source)
         self.assertIn("PUB_CACHE", source)
         self.assertIn("GRADLE_USER_HOME", source)
-        self.assertIn("f366fdfc011b65c1b3f44e777fc876be21d3492ec3b0b0cf014536c0ac3490c3", source)
+        self.assertIn("e3f8811963c2c1ab5eb7f62fd8ea86c5a3661bc98214017a720680019d6042c8", source)
         self.assertIn("compare_rebuilds.py", source)
         self.assertIn("ANDROID_HOME", source)
         self.assertIn("ANDROID_SDK_ROOT", source)

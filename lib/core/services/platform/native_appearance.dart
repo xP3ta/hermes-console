@@ -10,6 +10,20 @@ final class NativeAppearance {
 
   const NativeAppearance._();
 
+  /// `@color/splash_background` (values / values-night): the colour Android
+  /// paints under the native splash. The first Flutter frame starts from
+  /// the same colour so the hand-off shows no flash. A test keeps these in
+  /// step with colors.xml (a brand change there must update them).
+  static const Color splashBackgroundLight = Color(0xFF26262A);
+  static const Color splashBackgroundDark = Color(0xFF26262A);
+
+  /// The native splash background Android picks for [brightness] once
+  /// [sync] has set the app's night mode.
+  static Color splashBackground(Brightness brightness) =>
+      brightness == Brightness.light
+      ? splashBackgroundLight
+      : splashBackgroundDark;
+
   static Future<void> sync(Brightness brightness) async {
     if (!Platform.isAndroid) return;
     try {

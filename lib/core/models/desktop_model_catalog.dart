@@ -74,9 +74,21 @@ final class DesktopModelCatalog {
     );
   }
 
+  /// Row for [slug]. Exact slug first; then, like Desktop's
+  /// `catalogProviderMatches`, the display name or a published alias, because
+  /// `session.info` reports user-defined endpoints as `custom:<key>` while
+  /// the row's slug is the bare key (Hermes #87035).
   DesktopModelProvider? providerFor(String slug) {
     for (final provider in providers) {
       if (provider.slug == slug) return provider;
+    }
+    final wanted = slug.trim().toLowerCase();
+    if (wanted.isEmpty) return null;
+    for (final provider in providers) {
+      if (provider.name.toLowerCase() == wanted ||
+          provider.aliases.contains(wanted)) {
+        return provider;
+      }
     }
     return null;
   }
@@ -99,6 +111,15 @@ final class DesktopModelProvider {
   final String? warning;
   final bool isUserDefined;
 
+  /// Hermes does not know this account's plan yet (`free_tier_pending`):
+  /// it lists every model as unavailable until a refresh settles it, so
+  /// that list says nothing about what the profile can use.
+  final bool entitlementPending;
+
+  /// Lower-cased identities Hermes accepts for this endpoint (`aliases`).
+  /// Used only to recognise the current provider, never sent back.
+  final Set<String> aliases;
+
   /// `null` fuera de proveedores/catálogos que anuncian el tier.
   final bool? freeTier;
   final List<DesktopModelOption> options;
@@ -116,9 +137,12 @@ final class DesktopModelProvider {
     required this.keyEnv,
     required this.warning,
     required this.isUserDefined,
+    required this.entitlementPending,
     required this.freeTier,
     required List<DesktopModelOption> options,
-  }) : options = List<DesktopModelOption>.unmodifiable(options),
+    Set<String> aliases = const {},
+  }) : aliases = Set<String>.unmodifiable(aliases),
+       options = List<DesktopModelOption>.unmodifiable(options),
        models = List<String>.unmodifiable(options.map((item) => item.id)),
        unavailableModels = List<String>.unmodifiable(
          options.where((item) => item.unavailable).map((item) => item.id),
@@ -239,10 +263,12 @@ final class _ProviderRow {
   final String? keyEnv;
   final String? warning;
   final bool isUserDefined;
+  final bool entitlementPending;
   final bool? freeTier;
   final List<_OptionCandidate> options;
   final int authenticationRank;
   final int richness;
+  final Set<String> aliases;
 
   const _ProviderRow({
     required this.slug,
@@ -253,10 +279,12 @@ final class _ProviderRow {
     required this.keyEnv,
     required this.warning,
     required this.isUserDefined,
+    required this.entitlementPending,
     required this.freeTier,
     required this.options,
     required this.authenticationRank,
     required this.richness,
+    this.aliases = const {},
   });
 
   static _ProviderRow? tryParse(Object? value) {
@@ -281,6 +309,7 @@ final class _ProviderRow {
     final warning = _boundedText(json['warning'], _maxWarningLength);
     final isCurrent = json['is_current'] == true;
     final isUserDefined = json['is_user_defined'] == true;
+    final entitlementPending = json['free_tier_pending'] == true;
     final freeTier = json['free_tier'] is bool
         ? json['free_tier'] as bool
         : null;
@@ -346,10 +375,12 @@ final class _ProviderRow {
       keyEnv: keyEnv,
       warning: warning,
       isUserDefined: isUserDefined,
+      entitlementPending: entitlementPending,
       freeTier: freeTier,
       options: List<_OptionCandidate>.unmodifiable(options),
       authenticationRank: authenticationRank,
       richness: richness,
+      aliases: _aliases(json['aliases']),
     );
   }
 }
@@ -361,6 +392,7 @@ final class _ProviderAccumulator {
       _authenticationRank = first.authenticationRank,
       _isCurrent = first.isCurrent,
       _isUserDefined = first.isUserDefined,
+      _entitlementPending = first.entitlementPending,
       _freeTier = first.freeTier,
       _freeTierRank = first.freeTier == null ? -1 : first.authenticationRank,
       _freeTierRichness = first.freeTier == null ? -1 : first.richness,
@@ -372,21 +404,25 @@ final class _ProviderAccumulator {
   int _authenticationRank;
   bool _isCurrent;
   bool _isUserDefined;
+  bool _entitlementPending;
   bool? _freeTier;
   int _freeTierRank;
   int _freeTierRichness;
   String? _warning;
   int _warningRank;
   final Map<String, _OptionCandidate> _options = {};
+  final Set<String> _aliases = {};
 
   int get modelCount => _options.length;
 
   bool containsModel(String id) => _options.containsKey(id);
 
   void mergeMetadata(_ProviderRow row) {
+    _aliases.addAll(row.aliases);
     if (row.richness > _primary.richness) _primary = row;
     _isCurrent = _isCurrent || row.isCurrent;
     _isUserDefined = _isUserDefined || row.isUserDefined;
+    _entitlementPending = _entitlementPending || row.entitlementPending;
     if (row.authenticationRank > _authenticationRank) {
       _authenticated = row.authenticated;
       _authenticationRank = row.authenticationRank;
@@ -428,7 +464,9 @@ final class _ProviderAccumulator {
       keyEnv: _primary.keyEnv,
       warning: warning,
       isUserDefined: _isUserDefined,
+      entitlementPending: _entitlementPending,
       freeTier: _freeTier,
+      aliases: {..._primary.aliases, ..._aliases},
       options: [
         for (final option in _options.values)
           DesktopModelOption(
@@ -496,6 +534,24 @@ final class _OptionCandidate {
 }
 
 Map<Object?, Object?>? _map(Object? value) => value is Map ? value : null;
+
+const _maxAliases = 32;
+
+Set<String> _aliases(Object? value) {
+  if (value is! List) return const {};
+  final aliases = <String>{};
+  for (final raw in value.take(_maxAliases)) {
+    if (raw is! String) continue;
+    final alias = raw.trim().toLowerCase();
+    if (alias.isEmpty ||
+        alias.length > _maxIdentifierLength ||
+        _identifierControl.hasMatch(alias)) {
+      continue;
+    }
+    aliases.add(alias);
+  }
+  return aliases;
+}
 
 String? _opaqueIdentifier(Object? value) {
   if (value is! String ||

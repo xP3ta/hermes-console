@@ -179,7 +179,7 @@ class _MiniFace extends StatelessWidget {
         cache: avatarCache,
         size: size,
         shape: profile.botFaceShape,
-        colorHex: profile.botColorHex,
+        colorHex: profile.botFaceColorHex,
         imageKind: profile.botImageKind,
         privacySafeElementKeys: true,
       );

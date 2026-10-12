@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Picker preview of Chats. GENERATED from lw_strip.xml by
+     tool/qa/widget_shots.py previews (the same layout, sample content): edit
+     lw_strip.xml and regenerate, never this file. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@android:id/background"
+    style="@style/LW.Card"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:baselineAligned="false"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:paddingStart="@dimen/lw_strip_pad"
+    android:paddingEnd="@dimen/lw_strip_pad">
+
+    <FrameLayout
+        android:id="@+id/lw_lead"
+        android:layout_width="@dimen/lw_lead"
+        android:layout_height="@dimen/lw_lead">
+
+        <ImageView
+            android:id="@+id/lw_lead_glyph"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@drawable/lw_icb"
+            android:importantForAccessibility="no"
+            android:padding="8dp"
+            android:src="@drawable/lw_ic_history"
+            android:tint="@color/lw_muted" />
+
+        <ImageView
+            android:id="@+id/lw_lead_face"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:importantForAccessibility="no"
+            android:visibility="gone" />
+    </FrameLayout>
+
+    <LinearLayout
+        android:id="@+id/lw_texts"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="@dimen/lw_gap"
+        android:layout_weight="1"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/lw_title"
+            style="@style/LW.Text.Medium.Title"
+            android:layout_width="match_parent"
+            android:text="@string/lw_sample_chat" />
+
+        <LinearLayout
+            android:id="@+id/lw_sub_row"
+            android:layout_width="wrap_content"
+            android:layout_height="@dimen/lw_line_sub"
+            android:baselineAligned="false"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/lw_sub"
+                style="@style/LW.Text.Sub"
+                android:layout_weight="1"
+                android:text="@string/lw_sample_chat_line" />
+
+            <Chronometer
+                android:id="@+id/lw_sub_timer"
+                style="@style/LW.Text.Medium.Timer"
+                android:layout_height="@dimen/lw_line_sub"
+                android:visibility="gone" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/lw_sub2"
+            style="@style/LW.Text.Sub"
+            android:layout_width="match_parent"
+            android:visibility="gone" />
+    </LinearLayout>
+
+    <Chronometer
+        android:id="@+id/lw_end_timer"
+        style="@style/LW.Text.Medium.Timer"
+        android:layout_marginStart="@dimen/lw_gap"
+        android:visibility="gone" />
+
+    <TextView
+        android:id="@+id/lw_end_time"
+        style="@style/LW.Text.Time"
+        android:layout_marginStart="@dimen/lw_gap"
+        android:visibility="gone" />
+</LinearLayout>

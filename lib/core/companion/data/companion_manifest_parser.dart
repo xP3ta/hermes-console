@@ -16,7 +16,7 @@ class CompanionManifestException implements Exception {
 ///
 /// Contrato: docs/PETDEX_CONTRACT.md.
 /// Lanza [CompanionManifestException] ante cualquier inconsistencia; quien
-/// llama (el repositorio) hace fallback a `HermesSparkMascot` (FR-012).
+/// llama (el repositorio) hace fallback a la cara del perfil (FR-012).
 class CompanionManifestParser {
   static final RegExp _slugPattern = RegExp(r'^[a-z0-9-]+$');
 

@@ -318,6 +318,9 @@ final class PendingSessionConfigChange {
   final SessionConfigValue? authoritativeValue;
   final Set<SessionConfigValue> supersededRequestedValues;
 
+  /// The gateway queued the change for the next turn instead of applying it.
+  final bool deferred;
+
   PendingSessionConfigChange._({
     required this.scope,
     required this.key,
@@ -330,6 +333,7 @@ final class PendingSessionConfigChange {
     this.confirmMessage,
     this.authoritativeValue,
     Set<SessionConfigValue> supersededRequestedValues = const {},
+    this.deferred = false,
   }) : supersededRequestedValues = Set.unmodifiable(supersededRequestedValues);
 
   SessionConfigValue? get displayValue => switch (status) {
@@ -354,6 +358,7 @@ final class PendingSessionConfigChange {
     String? warning,
     String? confirmMessage,
     SessionConfigValue? authoritativeValue,
+    bool? deferred,
   }) => PendingSessionConfigChange._(
     scope: scope,
     key: key,
@@ -366,6 +371,7 @@ final class PendingSessionConfigChange {
     confirmMessage: confirmMessage,
     authoritativeValue: authoritativeValue,
     supersededRequestedValues: supersededRequestedValues,
+    deferred: deferred ?? this.deferred,
   );
 
   @override
@@ -671,8 +677,7 @@ abstract final class SessionConfigReducer {
 
     final warning = _optionalInfoValue(event.result.warning, 512);
     final confirmMessage = _optionalInfoValue(event.result.confirmMessage, 512);
-    if (_optionalInfoValue(event.result.value, 512) == null ||
-        (event.result.confirmRequired && confirmMessage == null)) {
+    if (_optionalInfoValue(event.result.value, 512) == null) {
       return _replaceChange(
         state,
         event.scope,
@@ -692,6 +697,7 @@ abstract final class SessionConfigReducer {
         : current._transition(
             status: SessionConfigChangeStatus.accepted,
             warning: warning,
+            deferred: event.result.deferred,
           );
     return _replaceChange(state, event.scope, next);
   }

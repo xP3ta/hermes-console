@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../../l10n/app_localizations.dart';
 import '../../../theme/app_theme.dart';
 import '../../../widgets/mission_profile_avatar.dart';
+import 'dots_home_model.dart' show isMainBot;
 import 'living_bot_face.dart';
 import 'roster_model.dart';
 
@@ -113,7 +114,9 @@ class RosterBotActionsSheet extends StatelessWidget {
               Icons.folder_outlined,
               s.rosterMoveToSection,
             ),
-          if (canMutate)
+          // The main bot never leaves its own home (the layout always shows
+          // it), so hiding it would be an action that visibly does nothing.
+          if (canMutate && !isMainBot(profile))
             item(
               RosterBotAction.toggleHidden,
               profile.botHidden

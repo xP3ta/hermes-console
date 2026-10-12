@@ -8,6 +8,7 @@ import 'dart:async';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../active_chat_service.dart';
+import '../app_lock_sensitive_read_fence.dart';
 import '../approval_policy.dart';
 import '../connection_manager.dart';
 import 'notification_action_drain.dart';
@@ -33,6 +34,8 @@ class UiNotificationActionHandler {
       resolveConnection: (id) =>
           connManager.getConnections().where((c) => c.id == id).firstOrNull,
       chatApproval: _chatApproval,
+      chatStop: _chatStop,
+      chatAnswer: _chatAnswer,
     ),
     sink: _platform,
     t: NotifL10n.of(prefs),
@@ -46,7 +49,16 @@ class UiNotificationActionHandler {
     rescue: DraftReplyRescue(prefs),
   );
 
+  void _onDisclosureChanged() {
+    if (AppLockSensitiveReadFence.capture(prefs).isCurrent) unawaited(drain());
+  }
+
+  void dispose() {
+    AppLockSensitiveReadFence.changes.removeListener(_onDisclosureChanged);
+  }
+
   void start() {
+    AppLockSensitiveReadFence.changes.addListener(_onDisclosureChanged);
     _platform.listen(() => unawaited(drain()));
     unawaited(drain());
   }
@@ -54,6 +66,30 @@ class UiNotificationActionHandler {
   Future<void> drain() async {
     _router.t = NotifL10n.of(prefs);
     await _drainer.drain();
+  }
+
+  /// True when the attached chat answered its own open question (the same
+  /// call as its card); false = this isolate does not hold that chat.
+  Future<bool> _chatAnswer(NotificationActionPayload p, String answer) async {
+    final chat = activeChats.of(p.connId, p.sessionId!, profile: p.profile);
+    if (chat == null) return false;
+    final pending = chat.pendingInteractivePrompt;
+    if (pending == null || pending.key.requestId != p.requestId) {
+      throw StateError('question no longer pending');
+    }
+    final response = await chat.respondToClarify(pending.key, answer);
+    if (response.isExpired) throw StateError('question no longer pending');
+    return true;
+  }
+
+  /// True when the attached chat stopped its own turn (the same Stop as the
+  /// composer's); false = this isolate does not hold that chat.
+  Future<bool> _chatStop(NotificationActionPayload p) async {
+    final chat = activeChats.of(p.connId, p.sessionId!, profile: p.profile);
+    if (chat == null) return false;
+    if (!chat.isStreaming) throw StateError('turn already finished');
+    await chat.cancel();
+    return true;
   }
 
   /// True when the attached chat resolved it; false = not attached here.

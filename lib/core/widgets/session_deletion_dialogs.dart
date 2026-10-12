@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../models/session.dart';
+import '../utils/session_title.dart';
 import '../services/session_deletion.dart';
 import '../theme/app_theme.dart';
+import '../design/modal.dart' show showHermesDialogRoute;
 
 /// Único presentador de fallos para las superficies de borrado. Mantiene el
 /// mensaje localizado y accionable sin filtrar excepciones técnicas del
@@ -33,7 +35,7 @@ Future<LinkedCronDeletionMode?> showCronConversationDeleteDialog(
   BuildContext context,
   Session session,
 ) async {
-  return showDialog<LinkedCronDeletionMode>(
+  return showHermesDialogRoute<LinkedCronDeletionMode>(
     context: context,
     builder: (dialogContext) {
       final strings = Strings.of(dialogContext);
@@ -44,7 +46,11 @@ Future<LinkedCronDeletionMode?> showCronConversationDeleteDialog(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text(strings.cronDeleteChoiceBody(session.displayTitle)),
+            Text(
+              strings.cronDeleteChoiceBody(
+                localizedSessionTitle(strings, session),
+              ),
+            ),
             const SizedBox(height: 16),
             _CronDeletionChoice(
               key: const ValueKey('cron_delete_conversation_only'),

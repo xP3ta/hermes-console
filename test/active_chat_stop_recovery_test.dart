@@ -326,11 +326,39 @@ void main() {
     expect(chat.stopConfirmationState, StopConfirmationState.failed);
     expect(chat.queueParked, isTrue);
 
-    chat.resumeParkedQueue();
+    expect(chat.resumeParkedQueue(), isTrue);
 
     expect(chat.queueParked, isFalse);
     expect(chat.queueDrainSuspendedForTesting, isFalse);
     expect(chat.queuedMessages, ['uno', 'dos']);
+  });
+
+  test('reanudar mientras el Stop sigue en vuelo lo dice', () async {
+    final gateway = _StopGateway();
+    final chat = _chat(gateway, id: 'conn-stop-resume-in-flight');
+    addTearDown(chat.dispose);
+
+    expect(
+      await chat.send(
+        fullText: 'turno vivo',
+        model: 'hermes-agent',
+        history: const [],
+      ),
+      isTrue,
+    );
+    expect(chat.enqueue('uno'), isTrue);
+    final gate = Completer<void>();
+    gateway.interruptGate = gate;
+    final stop = chat.cancel();
+    await Future<void>.delayed(Duration.zero);
+    expect(chat.queueParked, isTrue);
+
+    // Still parked: the caller must learn the gesture did nothing.
+    expect(chat.resumeParkedQueue(), isFalse);
+    expect(chat.queueParked, isTrue);
+
+    gate.complete();
+    await stop.catchError((_) {});
   });
 
   test('terminal autoritativo limpia un Stop fallido obsoleto', () async {

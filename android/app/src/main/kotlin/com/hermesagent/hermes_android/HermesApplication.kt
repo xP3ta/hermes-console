@@ -15,6 +15,8 @@ import io.flutter.plugin.common.MethodChannel
 class HermesApplication : Application() {
     override fun onCreate() {
         super.onCreate()
+        // Ahora follows the Bot Mode snapshot the listener publishes.
+        LauncherWidgetRefresh.watch(this)
         FlutterForegroundTaskPlugin.addTaskLifecycleListener(
             object : FlutterForegroundTaskLifecycleListener {
                 private var channel: MethodChannel? = null

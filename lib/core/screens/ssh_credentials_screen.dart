@@ -10,11 +10,12 @@ import '../../l10n/app_localizations.dart';
 import '../../main.dart';
 import '../services/connection_manager.dart';
 import '../services/ssh_manager.dart';
+import '../utils/ssh_error.dart';
 import '../theme/app_theme.dart';
 import '../widgets/hermes_app_bar.dart';
-import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_ui.dart';
 import '../widgets/ssh_host_key_dialog.dart';
+import '../feedback/feedback_policy.dart';
 
 class SshCredentialsScreen extends StatefulWidget {
   final SavedConnection connection;
@@ -91,10 +92,8 @@ class _SshCredentialsScreenState extends State<SshCredentialsScreen> {
     }
   }
 
-  void _snack(String m) {
-    if (mounted) {
-      HermesNotice.of(context).showSnackBar(SnackBar(content: Text(m)));
-    }
+  void _snack(String m, [FeedbackKind kind = FeedbackKind.error]) {
+    if (mounted) AppFeedback.notify(context, kind, m);
   }
 
   /// Valida el formulario y devuelve el mensaje de error, o null si OK.
@@ -118,7 +117,7 @@ class _SshCredentialsScreenState extends State<SshCredentialsScreen> {
       if (!hasNewKey && !_hadConfig) return Strings.of(context).sshcPasteKey;
       if (hasNewKey) {
         final err = SshManager.validateKey(_keyCtrl.text, _passphraseCtrl.text);
-        if (err != null) return err;
+        if (err != null) return localizedSshFailure(Strings.of(context), err);
       }
     }
     return null;
@@ -160,7 +159,7 @@ class _SshCredentialsScreenState extends State<SshCredentialsScreen> {
     if (!mounted) return;
     setState(() => _saving = false);
     if (ok) {
-      _snack(Strings.of(context).sshcSaved);
+      _snack(Strings.of(context).sshcSaved, FeedbackKind.routine);
       Navigator.pop(context, true);
     }
   }
@@ -192,7 +191,7 @@ class _SshCredentialsScreenState extends State<SshCredentialsScreen> {
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _testError = SshManager.describeError(e);
+        _testError = localizedSshError(Strings.of(context), e);
         _testing = false;
       });
     }
@@ -206,6 +205,7 @@ class _SshCredentialsScreenState extends State<SshCredentialsScreen> {
       backgroundColor: colors.background,
       appBar: HermesAppBar(title: Text(Strings.of(context).sshSetupTitle)),
       body: ListView(
+        clipBehavior: hermesUnderHeader,
         padding: const EdgeInsets.fromLTRB(16, 14, 16, 32),
         children: [
           Text(
@@ -362,7 +362,7 @@ class _SshCredentialsScreenState extends State<SshCredentialsScreen> {
           hintText: _hadConfig
               ? '•••• clave guardada — pega una nueva para reemplazar'
               : '-----BEGIN OPENSSH PRIVATE KEY-----',
-          hintStyle: TextStyle(fontSize: 11.5, color: colors.textDisabled),
+          hintStyle: TextStyle(fontSize: 11.5, color: colors.textTertiary),
           filled: true,
           fillColor: colors.surfaceVariant.withValues(alpha: 0.4),
           border: OutlineInputBorder(
@@ -398,6 +398,9 @@ class _SshCredentialsScreenState extends State<SshCredentialsScreen> {
           size: 18,
           color: colors.textSecondary,
         ),
+        tooltip: _obscurePass
+            ? Strings.of(context).a11yShowSecret
+            : Strings.of(context).a11yHideSecret,
         onPressed: () => setState(() => _obscurePass = !_obscurePass),
       ),
     );

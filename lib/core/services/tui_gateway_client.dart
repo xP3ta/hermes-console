@@ -20,6 +20,7 @@ import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../models/command_descriptor.dart';
+import '../models/composer_reference.dart';
 import '../models/agent_profile.dart';
 import '../models/admin_integrations.dart';
 import '../models/bot_visual_identity.dart';
@@ -30,18 +31,29 @@ import '../models/desktop_control_center.dart';
 import '../models/desktop_context_breakdown.dart';
 import '../models/desktop_model_catalog.dart';
 import '../models/desktop_session_config.dart';
+import '../models/free_tier_status.dart';
 import '../models/desktop_session_snapshot.dart';
+import '../models/session_workspace_move.dart';
 import '../models/interactive_prompt.dart';
 import '../models/hosted_groups.dart';
 import '../models/profile_pet.dart';
+import '../models/project_files.dart';
 import 'capability_payload_sanitizer.dart';
 import 'connection_manager.dart';
+import 'connection_request_gateway.dart';
+import 'delegation_control.dart';
 import 'desktop_control_gateway.dart';
+import '../models/foreign_session.dart';
+import '../models/message_reaction.dart';
+import 'session_pull_requests.dart';
 import 'desktop_gateway_capabilities.dart';
 import 'json_rpc_wire.dart';
+import 'prompt_client_surface.dart';
 import 'recovery_proof.dart';
 import 'replay_batch_proof.dart';
 import 'replay_coordinator.dart';
+import 'server_restart_signal.dart';
+import 'subagent_live_watch.dart';
 import '../utils/transport_privacy.dart';
 
 class TuiGatewayRpcError implements Exception {
@@ -169,14 +181,17 @@ abstract final class TuiGatewayCloseCodes {
 /// Reconnect backoff shared by every Desktop gateway socket owner.
 ///
 /// Exponential (base 1 s, ×2) with jitter spread above the base so no attempt
-/// ever follows a failure sooner than [baseDelay]; the ceiling is 30 s in the
-/// foreground and 60 s while the app (or the background listener isolate) is
-/// in the background. [markHealthy] is for owners that observed
-/// [stableInterval] of continuous health, never for a single good read.
+/// ever follows a failure sooner than [baseDelay]; the ceiling is 15 s in the
+/// foreground (Desktop `apps/shared/src/reconnect-backoff.ts`) and 60 s while
+/// the app (or the background listener isolate) is in the background. The
+/// first attempt is jittered too (within half a base), so the sockets of several
+/// open chats that drop together do not all redial at the same instant.
+/// [markHealthy] is for owners that observed [stableInterval] of continuous
+/// health, never for a single good read.
 class GatewayReconnectBackoff {
   static const stableInterval = Duration(seconds: 30);
   static const baseDelay = Duration(seconds: 1);
-  static const foregroundCap = Duration(seconds: 30);
+  static const foregroundCap = Duration(seconds: 15);
   static const backgroundCap = Duration(seconds: 60);
 
   /// Test hook: scales every new backoff's base (real-socket suites that
@@ -200,7 +215,7 @@ class GatewayReconnectBackoff {
 
   Duration get _cap {
     final cap = backgroundCadence ? backgroundCap : foregroundCap;
-    // Keep the 1:30 base:cap ratio for scaled test bases.
+    // Keep the base:cap ratio for scaled test bases.
     return _base == baseDelay ? cap : _base * (cap.inSeconds);
   }
 
@@ -208,7 +223,12 @@ class GatewayReconnectBackoff {
     final exponent = _attempt.clamp(0, 7);
     _attempt += 1;
     final baseUs = _base.inMicroseconds;
-    final ceilingUs = min(baseUs * (1 << exponent), _cap.inMicroseconds);
+    // Attempt 0 spreads over [base, 1.5·base] instead of exactly base, which
+    // stays below attempt 1's [base, 2·base] for the same random sample.
+    final ceilingUs = min(
+      exponent == 0 ? baseUs * 3 ~/ 2 : baseUs * (1 << exponent),
+      _cap.inMicroseconds,
+    );
     final spread = ceilingUs - baseUs;
     final jitter = (_random().clamp(0.0, 1.0) * spread).floor();
     return Duration(microseconds: baseUs + jitter);
@@ -265,6 +285,9 @@ class DesktopSessionBinding extends DesktopSessionSnapshot {
     super.pendingClarifyProvided,
     super.pendingApproval,
     super.pendingApprovalProvided,
+    super.pendingConnection,
+    super.pendingConnectionProvided,
+    super.openRequests,
     super.todoState,
     super.running,
     super.status,
@@ -294,6 +317,9 @@ class DesktopSessionBinding extends DesktopSessionSnapshot {
       pendingClarifyProvided: snapshot.pendingClarifyProvided,
       pendingApproval: snapshot.pendingApproval,
       pendingApprovalProvided: snapshot.pendingApprovalProvided,
+      pendingConnection: snapshot.pendingConnection,
+      pendingConnectionProvided: snapshot.pendingConnectionProvided,
+      openRequests: snapshot.openRequests,
       todoState: snapshot.todoState,
       running: snapshot.running,
       status: snapshot.status,
@@ -303,6 +329,15 @@ class DesktopSessionBinding extends DesktopSessionSnapshot {
       raw: snapshot.raw,
     );
   }
+}
+
+/// Reads the server→client requests still open on a live runtime without
+/// replaying its events (`session.events.since` past the newest sequence, as
+/// Desktop's room prompts do). Separate so legacy fakes stay valid.
+abstract class HermesDesktopOpenRequestsGateway {
+  Future<List<Map<String, dynamic>>> openServerRequests(
+    String runtimeSessionId,
+  );
 }
 
 /// Interfaz pequeña para poder probar [ActiveChat] sin abrir sockets reales.
@@ -347,7 +382,15 @@ abstract class HermesDesktopSessionHistoryGateway {
 final class DesktopApprovalResult {
   final int resolved;
 
-  const DesktopApprovalResult({required this.resolved});
+  /// False when the choice went out as a bare response frame to an approval
+  /// server request: nothing acknowledges it, so a transport loss right after
+  /// the write leaves its delivery unknown.
+  final bool deliveryAcknowledged;
+
+  const DesktopApprovalResult({
+    required this.resolved,
+    this.deliveryAcknowledged = true,
+  });
 
   factory DesktopApprovalResult.fromJson(Map<String, dynamic> json) {
     final resolved = json['resolved'];
@@ -397,6 +440,45 @@ enum DesktopRedirectDisposition { redirected, queued, rejected }
 /// permanece intacto.
 abstract class HermesDesktopInterruptedPromptGateway {
   Future<void> submitInterruptedPrompt(String runtimeSessionId, String text);
+}
+
+/// Submit with surface metadata (`surface` / `voice_context`).
+///
+/// Optional, separate capability: a gateway without it receives the turn as
+/// before and the metadata is dropped. Typed sends never use it, so the server
+/// clears the surface on every ordinary submit.
+abstract class HermesDesktopClientSurfacePromptGateway {
+  Future<void> submitPromptWithSurface(
+    String runtimeSessionId,
+    String text,
+    PromptClientSurface surface,
+  );
+
+  Future<DesktopTurnAck> submitPromptIdempotentWithSurface(
+    String runtimeSessionId,
+    String text,
+    String clientTurnId,
+    PromptClientSurface surface,
+  );
+
+  Future<void> submitInterruptedPromptWithSurface(
+    String runtimeSessionId,
+    String text,
+    PromptClientSurface surface,
+  );
+
+  Future<void> submitQueuedPromptWithSurface(
+    String runtimeSessionId,
+    String text,
+    PromptClientSurface surface,
+  );
+
+  Future<DesktopTurnAck> submitQueuedPromptIdempotentWithSurface(
+    String runtimeSessionId,
+    String text,
+    String clientTurnId,
+    PromptClientSurface surface,
+  );
 }
 
 /// Lifecycle moderno y explícito de sesión.
@@ -520,7 +602,15 @@ enum DesktopPromptResponseStatus { ok, expired }
 final class DesktopPromptResponse {
   final DesktopPromptResponseStatus status;
 
-  const DesktopPromptResponse._(this.status);
+  /// False when the answer went out as a bare response frame to a server
+  /// request: nothing acknowledges it, so a transport loss right after the
+  /// write leaves its delivery unknown.
+  final bool deliveryAcknowledged;
+
+  const DesktopPromptResponse._(
+    this.status, {
+    this.deliveryAcknowledged = true,
+  });
 
   bool get isExpired => status == DesktopPromptResponseStatus.expired;
 
@@ -614,10 +704,35 @@ abstract class HermesDesktopSessionActivityGateway {
 
 /// Authenticated provider/model catalog scoped to an existing live runtime.
 abstract class HermesDesktopModelCatalogGateway {
+  /// [connectedOnly] fails closed instead of (re)opening the socket, for
+  /// passive reads such as the AppBar badge.
   Future<DesktopModelCatalog> modelOptions(
     String runtimeSessionId, {
     bool refresh = false,
+    bool connectedOnly = false,
   });
+}
+
+/// Profile-scoped catalog read without a live runtime, as Desktop's
+/// `requestModelOptions` does over its already-open gateway (mk1215). Kept
+/// separate so legacy fakes stay valid.
+abstract class HermesDesktopGlobalModelCatalogGateway {
+  /// [connectedOnly] fails closed instead of (re)opening the socket.
+  /// The default bounds preparation to 6 s, then gives model.options the
+  /// Desktop catalog RPC budget of 30 s. An explicit [timeout] preserves the
+  /// original single deadline shared by preparation and response.
+  Future<DesktopModelCatalog> globalModelOptions({
+    String profile = '',
+    bool refresh = false,
+    Duration? timeout,
+    bool connectedOnly = false,
+  });
+}
+
+abstract class HermesDesktopFreeTierGateway {
+  Future<FreeTierStatus> freeTierStatus({String profile = ''});
+
+  Future<FreeTierAckNotice> ackFreeTierNotice({String profile = ''});
 }
 
 /// Desglose opcional de la ventana de contexto del runtime vivo.
@@ -626,6 +741,15 @@ abstract class HermesDesktopModelCatalogGateway {
 /// servidores y fakes anteriores a Desktop 0.19.
 abstract class HermesDesktopContextUsageGateway {
   Future<DesktopContextBreakdown> contextBreakdown(String runtimeSessionId);
+}
+
+/// Plan limits as Hermes Desktop reads them: `session.usage` (its
+/// `account_lines` / `credits_lines`) and the `usage.bars` dollar view.
+/// Both answers are passed through raw; the model parses them.
+abstract class HermesDesktopAccountUsageGateway {
+  Future<Map<String, dynamic>> sessionUsage(String runtimeSessionId);
+
+  Future<Map<String, dynamic>> usageBars();
 }
 
 /// Lectura y escritura opcional de la identidad visual server-side de un
@@ -668,8 +792,25 @@ abstract class HermesDesktopProfileAssetsGateway {
 final class DesktopProfileSkill {
   final String name;
   final bool enabled;
+  final String? label;
+  final String? description;
+  final String? group;
 
-  const DesktopProfileSkill({required this.name, required this.enabled});
+  const DesktopProfileSkill({
+    required this.name,
+    required this.enabled,
+    this.label,
+    this.description,
+    this.group,
+  });
+
+  DesktopProfileSkill withEnabled(bool value) => DesktopProfileSkill(
+    name: name,
+    enabled: value,
+    label: label,
+    description: description,
+    group: group,
+  );
 }
 
 /// Creación de bots con paridad Bot Mode de Hermes Desktop
@@ -774,6 +915,26 @@ abstract class HermesDesktopCommandGateway {
   });
 }
 
+/// Composer completions bound to the chat's runtime, as Desktop sends them
+/// (`use-slash-completions.ts`): `session_id` scopes skill lookups to that
+/// session's profile and workspace (project-local skills); a new-chat draft
+/// with no session names its `profile` instead (`CompleteSlashParams`).
+/// Optional so older doubles of [HermesDesktopCommandGateway] stay valid.
+abstract class HermesDesktopComposerCompletionGateway {
+  Future<SlashCompletionBatch> completeSlashInSession(
+    String text, {
+    String? runtimeSessionId,
+    String? profile,
+  });
+
+  /// `complete.path {word, session_id}`: `@` references listed against the
+  /// session's own cwd (Desktop `use-at-completions.ts`).
+  Future<PathCompletionBatch> completePath(
+    String word, {
+    required String runtimeSessionId,
+  });
+}
+
 /// Read-only replay ring of one runtime (`session.events.since`,
 /// `last_seen: 0`). Lets a relaunched client learn whether a compression that
 /// runtime ran is still pinned, without resuming or stealing it.
@@ -817,14 +978,17 @@ final class DesktopSubagentInterruptResult {
 }
 
 final class DesktopSubagentSnapshot {
-  static const _liveStatuses = <String>{
-    'requested',
-    'queued',
-    'running',
-    'active',
-    'thinking',
-    'tool',
-    'using_tool',
+  /// `SubagentStatus` values the contract marks terminal. `subagent.list`
+  /// reads only the live registry, so these are defensive: a finished row
+  /// must not resurrect a card.
+  static const _terminalStatuses = <String>{
+    'completed',
+    'complete',
+    'failed',
+    'error',
+    'timeout',
+    'interrupted',
+    'cancelled',
   };
 
   final String subagentId;
@@ -860,10 +1024,15 @@ final class DesktopSubagentSnapshot {
       if (entry.key is String) json[entry.key as String] = entry.value;
     }
     final subagentId = _subagentOpaqueId(json['subagent_id']);
+    if (subagentId == null) return null;
+    // `status` is `SubagentStatus | null`. A live record without one, or with
+    // a status newer than this build, is still a running child.
     final statusValue = json['status'];
-    if (subagentId == null || statusValue is! String) return null;
-    final status = statusValue.trim().toLowerCase();
-    if (!_liveStatuses.contains(status)) return null;
+    final reported = statusValue is String
+        ? statusValue.trim().toLowerCase()
+        : '';
+    if (_terminalStatuses.contains(reported)) return null;
+    final status = reported.isEmpty ? 'running' : reported;
     final toolCount = json['tool_count'];
     final acceptingSteer = json['accepting_steer'];
     final startedAt = _subagentTimestamp(json['started_at']);
@@ -898,8 +1067,9 @@ final class DesktopSubagentTailResult {
   });
 
   factory DesktopSubagentTailResult.fromJson(Map<String, dynamic> json) {
-    final available = json['available'];
-    final serverTruncated = json['truncated'];
+    // SubagentTailResult defaults: available=false, text="", truncated=false.
+    final available = json['available'] ?? false;
+    final serverTruncated = json['truncated'] ?? false;
     if (available is! bool || serverTruncated is! bool) {
       throw const FormatException('invalid subagent tail result');
     }
@@ -910,7 +1080,7 @@ final class DesktopSubagentTailResult {
         truncated: false,
       );
     }
-    final rawContent = json['text'] ?? json['content'];
+    final rawContent = json['text'] ?? json['content'] ?? '';
     if (rawContent is! String) {
       throw const FormatException('invalid subagent tail content');
     }
@@ -1301,19 +1471,24 @@ final class _SessionRosterSocketLease {
 
 class TuiGatewayClient
     implements
+        HermesConnectionRequestGateway,
+        HermesDelegationGateway,
         HermesDesktopGateway,
+        HermesDesktopOpenRequestsGateway,
         HermesDesktopCompressionStatusGateway,
+        HermesDisplayToggleGateway,
         BotMentionRosterGateway,
         BotRoomLinkGateway,
         BotProfileGateway,
         BotModelGateway,
         BotChatTitleLookup,
-        BotAvatarGenerationGateway,
         HermesDesktopRedirectGateway,
         HermesDesktopInterruptedPromptGateway,
+        HermesDesktopClientSurfacePromptGateway,
         HermesDesktopSessionLifecycleGateway,
         HermesDesktopSessionHistoryGateway,
         HermesDesktopSessionCloseGateway,
+        SubagentWatchGateway,
         HermesDesktopRecoverySessionLifecycleGateway,
         HermesDesktopRosterBoundRecoveryGateway,
         HermesDesktopTypedRecoveryGateway,
@@ -1330,17 +1505,29 @@ class TuiGatewayClient
         HermesDesktopSessionConfigGateway,
         HermesDesktopSessionActivityGateway,
         HermesDesktopModelCatalogGateway,
+        HermesDesktopGlobalModelCatalogGateway,
+        HermesDesktopFreeTierGateway,
         HermesDesktopContextUsageGateway,
+        HermesDesktopAccountUsageGateway,
         HermesDesktopProfileAssetsGateway,
         HermesDesktopBotCreationGateway,
         HermesDesktopPetGateway,
         HermesDesktopCommandGateway,
+        HermesDesktopComposerCompletionGateway,
         HermesDesktopCompressionGateway,
         HermesDesktopApprovalResultGateway,
         HermesDesktopSubagentGateway,
         HermesDesktopProcessStopGateway,
         HermesDesktopControlGateway,
+        HermesDesktopTurnSideGateway,
         HermesDesktopSessionControlGateway,
+        HermesProjectManagementGateway,
+        HermesPullRequestGateway,
+        HermesForeignSessionGateway,
+        HermesMessageReactionGateway,
+        HermesProjectCreationGateway,
+        HermesProjectFilesGateway,
+        HermesProjectFileWritesGateway,
         HermesExtensionManagementGateway,
         HermesMcpProvisioningGateway,
         HermesWebhookManagementGateway,
@@ -1348,10 +1535,12 @@ class TuiGatewayClient
         HermesDesktopExclusiveSubmitCapabilityGateway {
   static const _transportTeardownBudget = Duration(seconds: 1);
 
-  /// Silence tolerated before a socket is declared half-open. Below the
-  /// server's uvicorn ping (20 s + 20 s pong) and TCP keepalive (≤60 s), so
-  /// Console detects a dead path before the server tears it down.
-  static const defaultHeartbeatDeadline = Duration(seconds: 35);
+  /// Silence tolerated before a socket is declared half-open. Same 45 s as
+  /// Desktop (`apps/shared/src/json-rpc-channel.ts`), which the server sizes
+  /// its 30 s send deadline against (`tui_gateway/ws.py`). A shorter value
+  /// killed healthy sockets while Hermes was busy serialising a long model
+  /// call and answered the ping late.
+  static const defaultHeartbeatDeadline = Duration(seconds: 45);
 
   /// How long a teardown keeps reading after sending the close frame so the
   /// peer's close (and any reply already in flight) is consumed before the
@@ -1411,6 +1600,12 @@ class TuiGatewayClient
   final Map<String, _OpenServerRequest> _openServerRequests = {};
   // Approval queue `request_id` → JSON-RPC server request id (`srq-…`).
   final Map<String, String> _approvalServerRequestIds = {};
+  // Server request id → approval `request_id` of approvals this socket
+  // answered by a bare response frame. Hermes may still withdraw one it had
+  // settled first; its `request.cancel` must name the approval, not the frame.
+  // That race is immediate, so only the latest answers are kept.
+  final Map<String, String> _answeredApprovalServerRequestIds = {};
+  static const _answeredApprovalServerRequestLimit = 32;
   int _nextId = 1;
   bool _connected = false;
   bool _closed = false;
@@ -1431,12 +1626,103 @@ class TuiGatewayClient
   /// waits for it (see [_quiesceInFlight]).
   bool _heartbeatAwaitingReply = false;
   Timer? _heartbeatTimer;
-  String? _watchdogRuntimeId;
-  bool _watchdogRuntimeBusy = false;
-  DateTime? _lastWatchdogActivityAt;
-  int _watchdogRuntimeRevision = 0;
+  final Map<String, _WatchdogRuntime> _watchdogs = <String, _WatchdogRuntime>{};
   bool _fanoutWatchdogInFlight = false;
   Future<void>? _connecting;
+
+  /// Several chats ride this socket (Desktop's single `JsonRpcGatewayClient`
+  /// model): every chat filters events by its own runtime `session_id`, the
+  /// watchdog follows every attached runtime, and a released chat only drops
+  /// its runtime's bookkeeping. Set by [SharedGatewayPool] for pooled sockets.
+  bool _multiplexed = false;
+
+  bool get multiplexesSessions => _multiplexed;
+
+  /// Opts this socket into many-session use. Idempotent.
+  void enableSessionMultiplexing() => _multiplexed = true;
+
+  /// The connected server announced a `replay_epoch`: each session can be
+  /// re-attached from its own watermark after a drop. False while not
+  /// connected: nothing is proven yet.
+  bool get knownPerSessionReplayTransport =>
+      _connected && _connectionReplayCapable;
+
+  /// Runtimes released by every chat on this multiplexed socket, with the
+  /// socket generation they were released on. Hermes has no per-session
+  /// detach, so it keeps streaming them on that socket (as to Desktop's single
+  /// socket) until it closes; nobody reads them, so their frames are dropped
+  /// before replay bookkeeping until a chat retains the runtime again.
+  ///
+  /// Membership is exact, never evicted: a capped set forgot its oldest
+  /// entry, whose late frames then rebuilt a watermark nobody read and made
+  /// its revive dirty. It is bounded instead by what Hermes streams here: a
+  /// later socket only carries runtimes some chat resumed on it, so entries
+  /// of an older generation are stale and pruned on the next release.
+  final Map<String, int> _releasedRuntimes = <String, int>{};
+
+  /// Chats currently reading each runtime on this multiplexed socket.
+  final Map<String, int> _runtimeReaders = <String, int>{};
+
+  /// A chat bound [runtimeSessionId] on this multiplexed socket.
+  @override
+  void retainSessionRuntime(String runtimeSessionId) {
+    final runtime = runtimeSessionId.trim();
+    if (runtime.isEmpty || _closed || !_multiplexed) return;
+    final readers = _runtimeReaders[runtime] ?? 0;
+    _runtimeReaders[runtime] = readers + 1;
+    if (readers == 0) _reviveReleasedRuntime(runtime);
+  }
+
+  /// A released runtime is bound again (resume/activate/create answered it):
+  /// its frames flow again from this response on. Frames were dropped while
+  /// nobody read it, so it starts from a clean replay slate, exactly as a
+  /// freshly dialled per-chat socket would.
+  void _reviveReleasedRuntime(String runtime) {
+    final releasedOn = _releasedRuntimes.remove(runtime);
+    if (releasedOn == _socketGeneration) _replayCoordinator.forget(runtime);
+  }
+
+  /// The last chat reading [runtimeSessionId] on this multiplexed socket let
+  /// it go (released or moved to another runtime): forget its watermark and
+  /// watchdog so a long-lived shared socket never accumulates runtimes (the
+  /// replay coordinator poisons every runtime past its bound). After a
+  /// reconnect nobody resumes it, so Hermes detaches and reaps it exactly as
+  /// when a per-chat socket closed.
+  @override
+  void releaseSessionRuntime(String runtimeSessionId) {
+    final runtime = runtimeSessionId.trim();
+    if (runtime.isEmpty || _closed || !_multiplexed) return;
+    final readers = (_runtimeReaders[runtime] ?? 0) - 1;
+    if (readers > 0) {
+      _runtimeReaders[runtime] = readers;
+      return;
+    }
+    _runtimeReaders.remove(runtime);
+    _retireWatchdogRuntime(runtime);
+    _replayCoordinator.forget(runtime);
+    final generation = _socketGeneration;
+    _releasedRuntimes
+      ..removeWhere((_, releasedOn) => releasedOn != generation)
+      ..[runtime] = generation;
+  }
+
+  @visibleForTesting
+  Set<String> get releasedRuntimesForTesting =>
+      Set.unmodifiable(_releasedRuntimes.keys);
+
+  @visibleForTesting
+  Set<String> get watchedRuntimesForTesting =>
+      Set.unmodifiable(_watchdogs.keys);
+
+  /// The single runtime a legacy gateway's unscoped events are attributed to,
+  /// and whether binding a second one made that attribution ambiguous.
+  @visibleForTesting
+  ({String? runtime, bool ambiguous}) get legacyEventRuntimeForTesting =>
+      (runtime: _legacyEventRuntimeId, ambiguous: _legacyEventRuntimeAmbiguous);
+
+  @visibleForTesting
+  Map<String, int> get replayWatermarksForTesting =>
+      _replayCoordinator.watermarks;
 
   /// Single reconnect owner for this client (P0-2): every loss of the socket
   /// (failed connect, error, peer close, malformed frame) arms a backoff;
@@ -1524,6 +1810,17 @@ class TuiGatewayClient
   /// True while the owner is waiting out a reconnect backoff.
   bool get isBackingOff => reconnectBackoffRemaining > Duration.zero;
 
+  /// The platform reported a new default network (rl1215). The backoff ladder
+  /// measured the old path (a Wi-Fi/cellular switch kills every socket and
+  /// can push it to its ceiling); keeping it would make lazy RPCs fail fast
+  /// and the next dial wait up to 15 s on a network that already works.
+  /// It never closes or redials a socket; a half-open one is the probe's job.
+  void resetReconnectBackoffForNetworkChange() {
+    if (_closed) return;
+    _reconnectBackoff.markHealthy();
+    _backoffUntil = null;
+  }
+
   /// Explicit connect, used by owners that run their own reattach schedule
   /// (ActiveChat recovery, the Home/Library event subscriptions). Lazy RPC
   /// dials go through [_connectForRequest], which honours the backoff.
@@ -1540,6 +1837,18 @@ class TuiGatewayClient
     return future.whenComplete(() {
       if (identical(_connecting, future)) _connecting = null;
     });
+  }
+
+  /// Fail-closed guard for passive reads: throws `connectionLost` when the
+  /// socket is not connected right now, and never dials or arms a timer.
+  void _requireConnectedWithoutDialing(String method) {
+    if (_closed || !_connected || _channel == null) {
+      throw TuiGatewayRpcError(
+        method,
+        'Hermes Desktop WebSocket is not connected',
+        failureKind: TuiGatewayRpcFailureKind.connectionLost,
+      );
+    }
   }
 
   /// Connect on behalf of an RPC: fails fast with `connectionLost` while the
@@ -1808,7 +2117,10 @@ class TuiGatewayClient
             (epoch is! String || epoch.isEmpty || epoch != epoch.trim())) {
           throw const JsonRpcWireFormatException('invalid replay epoch');
         }
-        if (payload.containsKey('heartbeat') && payload['heartbeat'] is! bool) {
+        // `heartbeat` is `bool | null` in GatewayReadyPayload: null means the
+        // capability is not offered, exactly like an absent key.
+        final heartbeat = payload['heartbeat'];
+        if (heartbeat != null && heartbeat is! bool) {
           throw const JsonRpcWireFormatException(
             'invalid heartbeat capability',
           );
@@ -1847,6 +2159,7 @@ class TuiGatewayClient
         return;
       }
       final sessionEvent = parsedEvent as SessionGatewayEvent;
+      if (_releasedRuntimes[sessionEvent.sessionId] == generation) return;
       final event = TuiGatewayEvent(
         type: sessionEvent.type,
         sessionId: sessionEvent.sessionId,
@@ -1869,6 +2182,8 @@ class TuiGatewayClient
       if (disposition == ReplayLiveDisposition.dispatch) {
         _observeWatchdogEvent(sessionEvent, _now());
         if (!_events.isClosed) _events.add(_translateRequestCancel(event));
+      } else if (disposition != ReplayLiveDisposition.ignored) {
+        _rehydrateOnWithheldTurnEnd(sessionEvent);
       }
     } catch (_) {
       _handleMalformedFrame(generation, channel);
@@ -1887,6 +2202,36 @@ class TuiGatewayClient
     'vault.save_login': 'vault.save_login.request',
     'vault.code': 'vault.code.request',
   };
+
+  /// The legacy `*.request` event an open server request (`open_requests`
+  /// entry of a resume/activate/events.since snapshot) stands for, or null for
+  /// a kind Console does not render. Lets a chat re-hydrate a question it
+  /// missed while it had no runtime attached; answering still goes through
+  /// the response-frame path the transport registered for the same id.
+  static TuiGatewayEvent? openServerRequestEvent(Map<String, dynamic> entry) {
+    final id = entry['id'];
+    final method = entry['method'];
+    final params = entry['params'];
+    if (id is! String || id.isEmpty || method is! String || params is! Map) {
+      return null;
+    }
+    if (method == 'approval') return null;
+    final legacyType = _serverRequestLegacyEvents[method];
+    final rawSession = params['session_id'];
+    final sessionId = rawSession is String ? rawSession.trim() : '';
+    if (legacyType == null || sessionId.isEmpty) return null;
+    final payload = <String, dynamic>{
+      for (final item in params.entries)
+        if (item.key is String && item.key != 'session_id')
+          item.key as String: item.value,
+    };
+    payload['request_id'] = id;
+    return TuiGatewayEvent(
+      type: legacyType,
+      sessionId: sessionId,
+      payload: Map<String, dynamic>.unmodifiable(payload),
+    );
+  }
 
   void _deliverServerRequest(
     JsonRpcServerRequestFrame frame,
@@ -1986,6 +2331,7 @@ class TuiGatewayClient
     if (method is! String) return event;
     var requestId = id;
     if (method == 'approval') {
+      requestId = _answeredApprovalServerRequestIds.remove(id) ?? id;
       for (final entry in _approvalServerRequestIds.entries) {
         if (entry.value == id) {
           requestId = entry.key;
@@ -2020,6 +2366,15 @@ class TuiGatewayClient
         'reason': event.payload['reason'],
       }),
     );
+  }
+
+  void _rememberAnsweredApproval(String serverRequestId, String requestId) {
+    final answered = _answeredApprovalServerRequestIds
+      ..remove(serverRequestId)
+      ..[serverRequestId] = requestId;
+    while (answered.length > _answeredApprovalServerRequestLimit) {
+      answered.remove(answered.keys.first);
+    }
   }
 
   /// Answers an open server request over the socket it arrived on. False when
@@ -2106,6 +2461,7 @@ class TuiGatewayClient
     _pending.clear();
     _openServerRequests.clear();
     _approvalServerRequestIds.clear();
+    _answeredApprovalServerRequestIds.clear();
     if (wasConnected && !_events.isClosed) {
       _events.addError(
         TuiGatewayRpcError(
@@ -2493,30 +2849,61 @@ class TuiGatewayClient
     DateTime now,
   ) async {
     final epoch = _replayEpoch;
-    final runtime = _watchdogRuntimeId;
     if (_fanoutWatchdogInFlight ||
         epoch == null ||
         !_connectionReplayCapable ||
-        runtime == null ||
-        !_watchdogRuntimeBusy ||
         generation != _socketGeneration ||
         !identical(_channel, channel) ||
         !_connected) {
       return;
     }
-    final lastActivity = _lastWatchdogActivityAt;
-    if (lastActivity != null &&
-        now.difference(lastActivity) < _fanoutInactivityDeadline) {
-      return;
-    }
-
+    final due = <MapEntry<String, _WatchdogRuntime>>[
+      for (final entry in _watchdogs.entries)
+        if (entry.value.busy &&
+            (entry.value.lastActivityAt == null ||
+                now.difference(entry.value.lastActivityAt!) >=
+                    _fanoutInactivityDeadline))
+          entry,
+    ];
+    if (due.isEmpty) return;
     _fanoutWatchdogInFlight = true;
-    final registration = _watchdogRuntimeRevision;
+    try {
+      for (final entry in due) {
+        if (generation != _socketGeneration ||
+            !identical(_channel, channel) ||
+            _replayEpoch != epoch ||
+            !_connected) {
+          return;
+        }
+        await _probeSilentRuntime(
+          generation,
+          channel,
+          epoch,
+          entry.key,
+          entry.value,
+          now,
+        );
+      }
+    } finally {
+      _fanoutWatchdogInFlight = false;
+    }
+  }
+
+  Future<void> _probeSilentRuntime(
+    int generation,
+    WebSocketChannel channel,
+    String epoch,
+    String runtime,
+    _WatchdogRuntime watched,
+    DateTime now,
+  ) async {
+    if (!identical(_watchdogs[runtime], watched) || !watched.busy) return;
+    final registration = watched.revision;
     final lastSeen = _replayCoordinator.watermarks[runtime] ?? 0;
     // A completed no-gap probe also bounds traffic to one request per busy
     // inactivity window. Heartbeat responses deliberately do not update this
     // runtime-specific clock: a fanout-detached peer still answers ping.
-    _lastWatchdogActivityAt = now;
+    watched.lastActivityAt = now;
     try {
       final result = await _requestConnected(
         'session.events.since',
@@ -2526,9 +2913,9 @@ class TuiGatewayClient
       if (generation != _socketGeneration ||
           !identical(_channel, channel) ||
           _replayEpoch != epoch ||
-          _watchdogRuntimeId != runtime ||
-          !_watchdogRuntimeBusy ||
-          _watchdogRuntimeRevision != registration ||
+          !identical(_watchdogs[runtime], watched) ||
+          !watched.busy ||
+          watched.revision != registration ||
           !_connected) {
         return;
       }
@@ -2549,23 +2936,45 @@ class TuiGatewayClient
       // full snapshot-to-tail cut. Quarantine before notifying ActiveChat so it
       // rehydrates authoritative REST/roster state instead of publishing the
       // replay payload directly.
-      _replayCoordinator.quarantine(runtime);
-      _retireWatchdogRuntime(runtime);
-      if (!_events.isClosed) {
-        _events.addError(
-          const TuiGatewayRpcError(
-            'session.events.since',
-            'Hermes Desktop live subscription requires rehydration',
-            failureKind: TuiGatewayRpcFailureKind.connectionLost,
-          ),
-        );
-      }
+      _requestRuntimeRehydration(runtime);
     } catch (_) {
       // A failed diagnostic read is not itself proof that the healthy socket or
       // fanout lease is lost. Retry only after another bounded idle window.
-    } finally {
-      _fanoutWatchdogInFlight = false;
     }
+  }
+
+  /// Quarantines [runtime] and asks its owner chat to rehydrate from
+  /// authoritative REST/roster state. Retiring the watchdog bounds it to one
+  /// request per bind: the next resume/activate arms the runtime again.
+  void _requestRuntimeRehydration(String runtime) {
+    _replayCoordinator.quarantine(runtime);
+    _retireWatchdogRuntime(runtime);
+    if (!_events.isClosed) {
+      _events.addError(
+        TuiGatewayRpcError(
+          'session.events.since',
+          'Hermes Desktop live subscription requires rehydration',
+          failureKind: TuiGatewayRpcFailureKind.connectionLost,
+          // A shared socket carries many chats: name the runtime so only
+          // its owner rehydrates (the socket itself is healthy).
+          data: {'session_id': runtime},
+        ),
+      );
+    }
+  }
+
+  /// lt1215: after a reconnect a runtime's live frames are withheld (held or
+  /// quarantined, never projected) because current Hermes cannot prove a
+  /// snapshot/replay cut, so a chat that rebound a running turn sees nothing
+  /// until the fanout watchdog's next busy idle window (15-30 s with the
+  /// Desktop heartbeat). A withheld frame that ends the turn is Hermes saying
+  /// the answer is final now: rehydrate at once, exactly like a probed gap.
+  /// Nothing of the frame is projected, and frames that do not end the turn
+  /// send nothing, so a long turn costs no extra traffic.
+  void _rehydrateOnWithheldTurnEnd(SessionGatewayEvent event) {
+    final watched = _watchdogs[event.sessionId];
+    if (watched == null || !watched.busy || !_eventEndsTurn(event)) return;
+    _requestRuntimeRehydration(event.sessionId);
   }
 
   @visibleForTesting
@@ -2573,6 +2982,18 @@ class TuiGatewayClient
     final channel = _channel;
     if (channel == null) return;
     await _probeSilentFanout(_socketGeneration, channel, _now());
+  }
+
+  /// Runtime the watchdog follows next. A single-chat socket follows one
+  /// runtime at a time (the newest bind replaces the old); a multiplexed
+  /// socket follows every runtime a chat attached until it is released.
+  _WatchdogRuntime _watchRuntime(String runtime) {
+    if (!_multiplexed) {
+      _watchdogs.removeWhere((key, _) => key != runtime);
+    }
+    final watched = _watchdogs.putIfAbsent(runtime, _WatchdogRuntime.new);
+    watched.revision += 1;
+    return watched;
   }
 
   void _adoptWatchdogSnapshot(DesktopSessionSnapshot snapshot) {
@@ -2588,10 +3009,9 @@ class TuiGatewayClient
           'compacting',
           'waiting',
         }.contains(status);
-    _watchdogRuntimeId = snapshot.runtimeSessionId;
-    _watchdogRuntimeBusy = busy;
-    _lastWatchdogActivityAt = _now();
-    _watchdogRuntimeRevision += 1;
+    final watched = _watchRuntime(snapshot.runtimeSessionId);
+    watched.busy = busy;
+    watched.lastActivityAt = _now();
   }
 
   void _markWatchdogRuntimeBusy(Object? runtimeSessionId) {
@@ -2600,48 +3020,33 @@ class TuiGatewayClient
         runtimeSessionId != runtimeSessionId.trim()) {
       return;
     }
-    _watchdogRuntimeId = runtimeSessionId;
-    _watchdogRuntimeBusy = true;
-    _lastWatchdogActivityAt = _now();
-    _watchdogRuntimeRevision += 1;
+    final watched = _watchRuntime(runtimeSessionId);
+    watched.busy = true;
+    watched.lastActivityAt = _now();
   }
 
   void _retireWatchdogRuntime([String? runtimeSessionId]) {
-    if (runtimeSessionId != null && _watchdogRuntimeId != runtimeSessionId) {
+    if (runtimeSessionId == null) {
+      _watchdogs.clear();
       return;
     }
-    _watchdogRuntimeId = null;
-    _watchdogRuntimeBusy = false;
-    _lastWatchdogActivityAt = null;
-    _watchdogRuntimeRevision += 1;
+    _watchdogs.remove(runtimeSessionId);
   }
 
   void _observeWatchdogEvent(SessionGatewayEvent event, DateTime observedAt) {
-    if (event.sessionId != _watchdogRuntimeId) return;
-    _lastWatchdogActivityAt = observedAt;
-    _watchdogRuntimeRevision += 1;
+    final watched = _watchdogs[event.sessionId];
+    if (watched == null) return;
+    watched.lastActivityAt = observedAt;
+    watched.revision += 1;
 
+    if (_eventEndsTurn(event)) {
+      watched.busy = false;
+      return;
+    }
     final status = event.payload['status']?.toString().trim().toLowerCase();
     final info = event.payload['info'];
     final running =
         event.payload['running'] ?? (info is Map ? info['running'] : null);
-    if (event.type == 'message.complete' ||
-        event.type == 'error' ||
-        event.type == 'session.closed' ||
-        running == false ||
-        const <String>{
-          'idle',
-          'complete',
-          'completed',
-          'terminal',
-          'failed',
-          'cancelled',
-          'canceled',
-          'stopped',
-        }.contains(status)) {
-      _watchdogRuntimeBusy = false;
-      return;
-    }
     if (running == true ||
         const <String>{
           'running',
@@ -2654,8 +3059,29 @@ class TuiGatewayClient
         event.type == 'message.delta' ||
         event.type == 'message.interim' ||
         event.type == 'tool.start') {
-      _watchdogRuntimeBusy = true;
+      watched.busy = true;
     }
+  }
+
+  static bool _eventEndsTurn(SessionGatewayEvent event) {
+    final status = event.payload['status']?.toString().trim().toLowerCase();
+    final info = event.payload['info'];
+    final running =
+        event.payload['running'] ?? (info is Map ? info['running'] : null);
+    return event.type == 'message.complete' ||
+        event.type == 'error' ||
+        event.type == 'session.closed' ||
+        running == false ||
+        const <String>{
+          'idle',
+          'complete',
+          'completed',
+          'terminal',
+          'failed',
+          'cancelled',
+          'canceled',
+          'stopped',
+        }.contains(status);
   }
 
   void _stopHeartbeat() {
@@ -2694,6 +3120,7 @@ class TuiGatewayClient
     _pending.clear();
     _openServerRequests.clear();
     _approvalServerRequestIds.clear();
+    _answeredApprovalServerRequestIds.clear();
   }
 
   Future<Map<String, dynamic>> _request(
@@ -2851,8 +3278,9 @@ class TuiGatewayClient
   Future<Map<String, dynamic>> _requestOptionalCapability(
     DesktopGatewayCapability capability,
     String method,
-    Map<String, dynamic> params,
-  ) async {
+    Map<String, dynamic> params, {
+    bool connectedOnly = false,
+  }) async {
     if (!_capabilityCache.canAttempt(capability)) {
       throw TuiGatewayRpcError(
         method,
@@ -2861,7 +3289,15 @@ class TuiGatewayClient
       );
     }
     try {
-      final result = await _request(method, params);
+      final Map<String, dynamic> result;
+      if (connectedOnly) {
+        // Checked and sent in the same synchronous step: a socket that
+        // dropped after the caller's own check is never redialled.
+        _requireConnectedWithoutDialing(method);
+        result = await _requestConnected(method, params);
+      } else {
+        result = await _request(method, params);
+      }
       _capabilityCache.mark(
         capability,
         DesktopGatewayCapabilityState.supported,
@@ -3858,7 +4294,10 @@ class TuiGatewayClient
     if (hidden != null) botMeta['hidden'] = hidden;
     if (pinned != null) botMeta['pinned'] = pinned;
     if (createdAtMs != null) botMeta['created'] = createdAtMs;
-    if (identity != null) botMeta.addAll(identity.toBotModeMetadata());
+    if (identity != null) {
+      remove.add('useShapeColor');
+      botMeta.addAll(identity.toBotModeMetadata());
+    }
     try {
       await patchBotMetadata(owner, botMeta, remove: remove);
     } on TuiGatewayRpcError {
@@ -3890,6 +4329,55 @@ class TuiGatewayClient
     return _request(method, params);
   }
 
+  /// Hosted room member prompts (`room_member_prompts.dart`): read the
+  /// member session's open server→client requests and answer them with the
+  /// same RPCs Desktop's room uses. A read-only connection may only read.
+  Future<Map<String, dynamic>> roomPromptRequest(
+    String method,
+    Map<String, dynamic> params,
+  ) async {
+    const reads = {
+      'session.active_list',
+      'session.list',
+      'session.events.since',
+    };
+    const writes = {
+      'request.answer',
+      'clarify.lock',
+      'approval.respond',
+      'session.interrupt',
+      'session.compress',
+    };
+    if (!(reads.contains(method) ||
+        (writes.contains(method) && !_connection.readOnly) ||
+        (method == 'session.resume' &&
+            !_connection.readOnly &&
+            _isRoomMemberResume(params)))) {
+      throw TuiGatewayRpcError(method, 'Room prompt request unavailable');
+    }
+    await _connectForRequest('gateway.connect');
+    return _request(method, params, timeout: roomPromptTimeoutFor(method));
+  }
+
+  @visibleForTesting
+  static Duration roomPromptTimeoutFor(String method) =>
+      method == 'session.compress'
+      ? const Duration(seconds: 660)
+      : const Duration(seconds: 15);
+
+  /// `session.resume` passes only in the hosted room driver's own shape
+  /// (`hosted_room_server_rpc.py::resume`): a stalled member's durable room
+  /// session, `source: bot_room` (a live record with another source would
+  /// fail every hosted `prompt.submit` with 4120) and no transcript.
+  static bool _isRoomMemberResume(Map<String, dynamic> params) {
+    bool text(Object? v) => v is String && v.trim().isNotEmpty;
+    return params.length == 4 &&
+        text(params['session_id']) &&
+        text(params['profile']) &&
+        params['source'] == 'bot_room' &&
+        params['omit_messages'] == true;
+  }
+
   /// Hosted connector RPCs for the Capabilities hub. Only `connectors.*`
   /// (the Nous account connector family) and `connection.respond` pass; a
   /// read-only connection may list and poll but never connect, wake,
@@ -3898,7 +4386,11 @@ class TuiGatewayClient
     String method,
     Map<String, dynamic> params,
   ) async {
-    if (!capabilitiesRpcAllowed(method, readOnly: _connection.readOnly)) {
+    if (!capabilitiesRpcAllowed(
+      method,
+      action: params['action'] is String ? params['action'] as String : null,
+      readOnly: _connection.readOnly,
+    )) {
       throw TuiGatewayRpcError(method, 'Capability request unavailable');
     }
     await _connectForRequest('gateway.connect');
@@ -3910,6 +4402,9 @@ class TuiGatewayClient
     'connectors.catalog',
     'connectors.accounts',
     'connectors.operation.status',
+    'mcp.servers.status',
+    'connectors.tools',
+    'connectors.policy.get',
   };
 
   static const Set<String> _capabilityWrites = {
@@ -3917,11 +4412,39 @@ class TuiGatewayClient
     'connectors.operation.wake',
     'connectors.accounts.remove',
     'connection.respond',
+    'connectors.policy.set',
   };
 
-  static bool capabilitiesRpcAllowed(String method, {required bool readOnly}) =>
-      _capabilityReads.contains(method) ||
-      (!readOnly && _capabilityWrites.contains(method));
+  /// Passive: a good `model.options` clears the note a 5098 left (no request).
+  void _noteRestartRecovered() =>
+      ServerRestartSignals.noteHealthy(_connection.host);
+
+  /// Passive: remembers RPC 5098 (`model.options` on a process older than its
+  /// checkout) so Diagnostics can say it. Never makes a request of its own.
+  void _noteRestartRequired(TuiGatewayRpcError error) =>
+      ServerRestartSignals.noteRpc(_connection.host, error.code, error.message);
+
+  /// `plugins.manage` is admitted per action: `list` reads, the lifecycle
+  /// actions write, anything else (`settings`, `onboarding`) stays closed.
+  static const Set<String> _pluginsManageWrites = {
+    'install',
+    'toggle',
+    'update',
+    'remove',
+  };
+
+  static bool capabilitiesRpcAllowed(
+    String method, {
+    required bool readOnly,
+    String? action,
+  }) {
+    if (method == 'plugins.manage') {
+      if (action == 'list') return true;
+      return !readOnly && _pluginsManageWrites.contains(action);
+    }
+    return _capabilityReads.contains(method) ||
+        (!readOnly && _capabilityWrites.contains(method));
+  }
 
   late final BotProfileClient _botProfiles = BotProfileClient((
     method,
@@ -3967,13 +4490,6 @@ class TuiGatewayClient
   @override
   Future<void> setBotReasoning(String profile, String effort) =>
       _botProfiles.setBotReasoning(profile, effort);
-
-  @override
-  Future<bool> canGenerateBotAvatar() => _botProfiles.canGenerateBotAvatar();
-
-  @override
-  Future<AgentProfileAvatar> generateBotAvatar(String prompt) =>
-      _botProfiles.generateBotAvatar(prompt);
 
   @override
   Future<String> duplicateBotProfile(String profile) =>
@@ -4076,7 +4592,15 @@ class TuiGatewayClient
       }
       if (skills.length >= 512) break;
       skills.add(
-        DesktopProfileSkill(name: name, enabled: entry['enabled'] != false),
+        DesktopProfileSkill(
+          name: name,
+          enabled: entry['enabled'] != false,
+          label: entry['label'] is String ? entry['label'] as String : null,
+          description: entry['description'] is String
+              ? entry['description'] as String
+              : null,
+          group: entry['group'] is String ? entry['group'] as String : null,
+        ),
       );
     }
     return List<DesktopProfileSkill>.unmodifiable(skills);
@@ -4452,6 +4976,29 @@ class TuiGatewayClient
   }
 
   @override
+  Future<DesktopSessionSnapshot> resumeWatchSession(
+    String childSessionId, {
+    required String profile,
+  }) async {
+    // A watch must not become the socket's legacy event runtime nor replace
+    // the chat's watchdog anchor: it is read-only and owned by the page.
+    final result = await _requestExclusiveSessionMutation('session.resume', {
+      'session_id': childSessionId,
+      'source': 'desktop',
+      'cols': 96,
+      'lazy': true,
+      if (profile.trim().isNotEmpty) 'profile': profile.trim(),
+    }, preserveCapabilityFailure: true);
+    return _parseSessionSnapshot(
+      result,
+      requestedStoredSessionId: childSessionId,
+      created: false,
+      method: 'session.resume',
+      rememberLegacyRuntime: false,
+    );
+  }
+
+  @override
   Future<DesktopSessionSnapshot> resumeExistingForRecovery(
     String storedSessionId, {
     String profile = '',
@@ -4760,11 +5307,23 @@ class TuiGatewayClient
             !requestedTitle.codeUnits.any((unit) => unit < 0x20 || unit == 0x7f)
         ? requestedTitle
         : null;
-    final result = await _requestExclusiveSessionMutation('session.create', {
+    final workspace = config.workspace?.trim() ?? '';
+    final safeWorkspace =
+        workspace.isNotEmpty &&
+            workspace.length <= 4096 &&
+            !workspace.codeUnits.any((unit) => unit < 0x20 || unit == 0x7f)
+        ? workspace
+        : null;
+    Map<String, dynamic> params({required bool followProfile}) => {
       'source': 'desktop',
       if (profile.trim().isNotEmpty) 'profile': profile.trim(),
       'title': ?safeTitle,
+      if (safeWorkspace != null) ...{
+        'cwd': safeWorkspace,
+        'cwd_explicit': true,
+      },
       if (config.hidden) 'hidden': true,
+      if (followProfile) 'follow_profile_config': true,
       if (selection != null) ...{
         'model': selection.modelId,
         'provider': selection.providerSlug,
@@ -4774,7 +5333,23 @@ class TuiGatewayClient
       if (config.fastMode case final mode?) 'fast': mode.enabled,
       'close_on_disconnect': false,
       if (seedMessages.isNotEmpty) 'messages': seedMessages,
-    });
+    };
+
+    Map<String, dynamic> result;
+    try {
+      result = await _requestExclusiveSessionMutation(
+        'session.create',
+        params(followProfile: config.followProfileConfig),
+      );
+    } on TuiGatewayRpcError catch (error) {
+      // A Gateway from before `follow_profile_config` refuses a parameter it
+      // does not know: the session is created as it was before the flag.
+      if (!config.followProfileConfig || error.code != -32602) rethrow;
+      result = await _requestExclusiveSessionMutation(
+        'session.create',
+        params(followProfile: false),
+      );
+    }
     return _parseSessionBinding(
       result,
       requestedStoredSessionId: '',
@@ -4813,6 +5388,7 @@ class TuiGatewayClient
         created: created,
         method: method,
       );
+      _reviveReleasedRuntime(snapshot.runtimeSessionId);
       if (rememberLegacyRuntime) {
         _rememberLegacyEventRuntime(snapshot.runtimeSessionId);
         _adoptWatchdogSnapshot(snapshot);
@@ -4861,6 +5437,7 @@ class TuiGatewayClient
           snapshot.storedSessionId != stored) {
         throw const FormatException('session.activate identity mismatch');
       }
+      _reviveReleasedRuntime(snapshot.runtimeSessionId);
       _rememberLegacyEventRuntime(snapshot.runtimeSessionId);
       _adoptWatchdogSnapshot(snapshot);
       return snapshot;
@@ -4922,19 +5499,27 @@ class TuiGatewayClient
   Future<DesktopModelCatalog> modelOptions(
     String runtimeSessionId, {
     bool refresh = false,
+    bool connectedOnly = false,
   }) async {
     const method = 'model.options';
     final runtime = _validatedRuntimeId(method, runtimeSessionId);
-    final result = await _requestOptionalCapability(
-      DesktopGatewayCapability.modelOptions,
-      method,
-      {
-        'session_id': runtime,
-        'explicit_only': true,
-        'include_unconfigured': false,
-        'refresh': refresh,
-      },
-    );
+    final Map<String, dynamic> result;
+    try {
+      result = await _requestOptionalCapability(
+        DesktopGatewayCapability.modelOptions,
+        method,
+        {
+          'session_id': runtime,
+          'explicit_only': true,
+          'include_unconfigured': false,
+          'refresh': refresh,
+        },
+        connectedOnly: connectedOnly,
+      );
+    } on TuiGatewayRpcError catch (error) {
+      _noteRestartRequired(error);
+      rethrow;
+    }
     if (result['providers'] is! List) {
       _capabilityCache.mark(
         DesktopGatewayCapability.modelOptions,
@@ -4945,7 +5530,141 @@ class TuiGatewayClient
         'Hermes returned an invalid model catalog',
       );
     }
-    return DesktopModelCatalog.fromJson(result);
+    final catalog = DesktopModelCatalog.fromJson(result);
+    // Every entry has to be a provider for this to count as the server being
+    // well again; a list with a bad entry is not a validated catalog.
+    if ((result['providers'] as List).every((entry) => entry is Map)) {
+      _noteRestartRecovered();
+    }
+    return catalog;
+  }
+
+  /// mk1215: `model.options` without `session_id`; the server resolves the
+  /// catalog from the profile's config (`_profile_scoped`, no live agent).
+  @override
+  Future<DesktopModelCatalog> globalModelOptions({
+    String profile = '',
+    bool refresh = false,
+    Duration? timeout,
+    bool connectedOnly = false,
+  }) async {
+    const method = 'model.options';
+    final owner = profile.trim();
+    if (!_capabilityCache.canAttempt(DesktopGatewayCapability.modelOptions)) {
+      throw const TuiGatewayRpcError(
+        method,
+        'Hermes Desktop capability is unavailable',
+        code: -32601,
+      );
+    }
+    final Map<String, dynamic> result;
+    // Desktop's requestModelOptions uses the 30 s gateway RPC budget. Do not
+    // charge catalogue enumeration to the short transport-readiness budget.
+    // Explicit callers retain their original combined deadline.
+    const readinessTimeout = Duration(seconds: 6);
+    const catalogRequestTimeout = Duration(seconds: 30);
+    final deadline = timeout == null ? null : _now().add(timeout);
+    final connectTimeout = timeout != null && timeout < readinessTimeout
+        ? timeout
+        : readinessTimeout;
+    try {
+      if (connectedOnly) {
+        _requireConnectedWithoutDialing(method);
+      } else {
+        await _connectForRequest(method).timeout(connectTimeout);
+      }
+      final remaining = deadline?.difference(_now()) ?? catalogRequestTimeout;
+      if (remaining <= Duration.zero) {
+        throw const TuiGatewayRpcError(
+          method,
+          'Timeout waiting for JSON-RPC response',
+          failureKind: TuiGatewayRpcFailureKind.timeout,
+        );
+      }
+      result = await _requestConnected(method, {
+        if (owner.isNotEmpty && owner != 'default')
+          ..._petParams(owner, method: method),
+        'explicit_only': true,
+        'include_unconfigured': false,
+        'refresh': refresh,
+      }, timeout: remaining);
+    } on TuiGatewayRpcError catch (error) {
+      _noteRestartRequired(error);
+      if (error.code == -32601) {
+        _capabilityCache.mark(
+          DesktopGatewayCapability.modelOptions,
+          DesktopGatewayCapabilityState.unsupported,
+        );
+      }
+      rethrow;
+    }
+    if (result['providers'] is! List) {
+      throw const TuiGatewayRpcError(
+        method,
+        'Hermes returned an invalid model catalog',
+      );
+    }
+    _capabilityCache.mark(
+      DesktopGatewayCapability.modelOptions,
+      DesktopGatewayCapabilityState.supported,
+    );
+    final catalog = DesktopModelCatalog.fromJson(result);
+    // Every entry has to be a provider for this to count as the server being
+    // well again; a list with a bad entry is not a validated catalog.
+    if ((result['providers'] as List).every((entry) => entry is Map)) {
+      _noteRestartRecovered();
+    }
+    return catalog;
+  }
+
+  Map<String, dynamic> _freeTierParams(String profile) => {
+    'profile': profile.trim().isEmpty || profile.trim() == 'default'
+        ? null
+        : profile.trim(),
+  };
+
+  @override
+  Future<FreeTierStatus> freeTierStatus({String profile = ''}) async {
+    const method = 'free_tier.status';
+    final result = await _requestOptionalCapability(
+      DesktopGatewayCapability.freeTier,
+      method,
+      _freeTierParams(profile),
+    );
+    try {
+      return FreeTierStatus.fromJson(result);
+    } on FormatException {
+      _capabilityCache.mark(
+        DesktopGatewayCapability.freeTier,
+        DesktopGatewayCapabilityState.invalid,
+      );
+      throw const TuiGatewayRpcError(
+        method,
+        'Hermes returned an invalid free-tier status',
+      );
+    }
+  }
+
+  @override
+  Future<FreeTierAckNotice> ackFreeTierNotice({String profile = ''}) async {
+    const method = 'free_tier.ack_notice';
+    final result = await _requestOptionalCapability(
+      DesktopGatewayCapability.freeTier,
+      method,
+      _freeTierParams(profile),
+    );
+    try {
+      return FreeTierAckNotice.fromJson(result);
+    } on FormatException {
+      _capabilityCache.mark(
+        DesktopGatewayCapability.freeTier,
+        DesktopGatewayCapabilityState.invalid,
+      );
+      throw const TuiGatewayRpcError(
+        method,
+        'Hermes returned an invalid free-tier notice acknowledgement',
+      );
+    }
   }
 
   @override
@@ -4973,6 +5692,26 @@ class TuiGatewayClient
     }
   }
 
+  /// Hermes answers both from the provider's / portal's usage APIs (it
+  /// lists them as long handlers), so they get their own bounded wait.
+  static const _accountUsageTimeout = Duration(seconds: 45);
+
+  @override
+  Future<Map<String, dynamic>> sessionUsage(String runtimeSessionId) {
+    const method = 'session.usage';
+    final runtime = _validatedRuntimeId(method, runtimeSessionId);
+    return _request(method, {
+      'session_id': runtime,
+    }, timeout: _accountUsageTimeout);
+  }
+
+  @override
+  Future<Map<String, dynamic>> usageBars() => _request(
+    'usage.bars',
+    const <String, dynamic>{},
+    timeout: _accountUsageTimeout,
+  );
+
   @override
   Future<DesktopCommandCatalog> commandsCatalog() async {
     const method = 'commands.catalog';
@@ -4985,17 +5724,53 @@ class TuiGatewayClient
   }
 
   @override
-  Future<SlashCompletionBatch> completeSlash(String text) async {
+  Future<SlashCompletionBatch> completeSlash(String text) =>
+      completeSlashInSession(text);
+
+  @override
+  Future<SlashCompletionBatch> completeSlashInSession(
+    String text, {
+    String? runtimeSessionId,
+    String? profile,
+  }) async {
     const method = 'complete.slash';
     final input = text;
     if (input.length > 4096 ||
         input.contains(RegExp(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]'))) {
       throw const TuiGatewayRpcError(method, 'Invalid slash completion input');
     }
+    final hasRuntime = runtimeSessionId != null && runtimeSessionId.isNotEmpty;
     final result = await _request(method, {
       'text': input,
+      if (hasRuntime)
+        'session_id': _validatedRuntimeId(method, runtimeSessionId)
+      else
+        ..._petParams(profile ?? '', method: method),
     }, timeout: const Duration(seconds: 20));
     return SlashCompletionBatch.fromJson(result, input: input);
+  }
+
+  @override
+  Future<PathCompletionBatch> completePath(
+    String word, {
+    required String runtimeSessionId,
+  }) async {
+    const method = 'complete.path';
+    if (word.isEmpty ||
+        word.length > 1024 ||
+        word.contains(RegExp(r'[\x00-\x1F\x7F]'))) {
+      throw const TuiGatewayRpcError(method, 'Invalid path completion input');
+    }
+    final result = await _requestOptionalCapability(
+      DesktopGatewayCapability.composerPathCompletion,
+      method,
+      {
+        'word': word,
+        'session_id': _validatedRuntimeId(method, runtimeSessionId),
+      },
+      connectedOnly: true,
+    );
+    return PathCompletionBatch.fromJson(result);
   }
 
   @override
@@ -5154,6 +5929,69 @@ class TuiGatewayClient
         'Hermes returned an invalid subagent interrupt result',
       );
     }
+  }
+
+  @override
+  Future<void> respondToConnection(
+    String runtimeSessionId,
+    String opId,
+    Map<String, dynamic> result,
+  ) async {
+    const method = 'connection.respond';
+    await _request(method, {
+      'op_id': opId,
+      'owner': {
+        'type': 'session',
+        'session_id': _validatedRuntimeId(method, runtimeSessionId),
+      },
+      'result': result,
+    });
+  }
+
+  @override
+  Future<void> wakeConnectionOperation(
+    String runtimeSessionId,
+    String opId,
+  ) async {
+    const method = 'connectors.operation.wake';
+    await _request(method, {
+      'op_id': opId,
+      'owner': {
+        'type': 'session',
+        'session_id': _validatedRuntimeId(method, runtimeSessionId),
+      },
+    });
+  }
+
+  @override
+  Future<bool> delegationPaused() =>
+      _delegationCall('delegation.status', const <String, dynamic>{});
+
+  @override
+  Future<bool> setDelegationPaused(bool paused) =>
+      _delegationCall('delegation.pause', {'paused': paused});
+
+  Future<bool> _delegationCall(
+    String method,
+    Map<String, dynamic> params,
+  ) async {
+    final result = await _requestOptionalCapability(
+      DesktopGatewayCapability.delegationControl,
+      method,
+      params,
+    );
+    final paused = result['paused'];
+    if (paused is! bool) {
+      _capabilityCache.mark(
+        DesktopGatewayCapability.delegationControl,
+        DesktopGatewayCapabilityState.invalid,
+      );
+      throw TuiGatewayRpcError(
+        method,
+        'Hermes returned an invalid delegation state',
+      );
+    }
+    return paused;
   }
 
   String _validatedControlValue(String value, {required int maxLength}) {
@@ -5819,6 +6657,141 @@ class TuiGatewayClient
   }
 
   @override
+  bool get turnSideKnownUnsupported =>
+      !_capabilityCache.canAttempt(DesktopGatewayCapability.turnSide);
+
+  @override
+  bool get turnBranchKnownUnsupported =>
+      !_capabilityCache.canAttempt(DesktopGatewayCapability.turnBranch);
+
+  Future<String> _sideAgentRequest(
+    String method,
+    String runtimeSessionId,
+    String text,
+  ) async {
+    _requireWritableControlConnection();
+    final result = await _controlRequest(
+      method,
+      {
+        'session_id': _validatedControlValue(runtimeSessionId, maxLength: 512),
+        'text': _validatedControlValue(text, maxLength: 2000),
+      },
+      timeout: const Duration(seconds: 30),
+      capability: DesktopGatewayCapability.turnSide,
+    );
+    final taskId = parseSideAgentTaskId(result);
+    if (taskId == null) {
+      return _invalidControlResponse(DesktopGatewayCapability.turnSide);
+    }
+    return taskId;
+  }
+
+  /// The `task_id` of a `prompt.btw` / `prompt.background` result, or null
+  /// when the result does not carry a usable one.
+  static String? parseSideAgentTaskId(Map<String, dynamic> result) {
+    final taskId = result['task_id'];
+    if (taskId is! String || taskId.trim().isEmpty || taskId.length > 512) {
+      return null;
+    }
+    return taskId;
+  }
+
+  @override
+  Future<String> askSideQuestion(String runtimeSessionId, String text) =>
+      _sideAgentRequest('prompt.btw', runtimeSessionId, text);
+
+  @override
+  Future<String> startBackgroundPrompt(String runtimeSessionId, String text) =>
+      _sideAgentRequest('prompt.background', runtimeSessionId, text);
+
+  @override
+  Future<DesktopBranchResult> branchSession(
+    String runtimeSessionId, {
+    int? count,
+    String? name,
+    required String idempotencyKey,
+  }) => _branchRequest(
+    'session.branch',
+    runtimeSessionId,
+    count: count,
+    name: name,
+    idempotencyKey: idempotencyKey,
+    capability: DesktopGatewayCapability.turnBranch,
+  );
+
+  @override
+  Future<DesktopBranchResult> branchWholeSession(
+    String runtimeSessionId, {
+    String? name,
+    required String idempotencyKey,
+  }) => _branchRequest(
+    'session.branch_whole',
+    runtimeSessionId,
+    name: name,
+    idempotencyKey: idempotencyKey,
+    // A missing `branch_whole` is answered by `session.branch` without
+    // `count`, so it must not switch the whole feature off.
+    capability: null,
+  );
+
+  Future<DesktopBranchResult> _branchRequest(
+    String method,
+    String runtimeSessionId, {
+    int? count,
+    String? name,
+    required String idempotencyKey,
+    required DesktopGatewayCapability? capability,
+  }) async {
+    _requireWritableControlConnection();
+    if (count != null && count < 1) {
+      throw const DesktopControlFailure(DesktopControlFailureKind.rejected);
+    }
+    final cleanName = name?.trim();
+    final result = await _controlRequest(
+      method,
+      {
+        'session_id': _validatedControlValue(runtimeSessionId, maxLength: 512),
+        'count': ?count,
+        if (cleanName != null && cleanName.isNotEmpty)
+          'name': _validatedControlValue(cleanName, maxLength: 200),
+        'idempotency_key': _validatedControlValue(
+          idempotencyKey,
+          maxLength: 128,
+        ),
+      },
+      timeout: const Duration(seconds: 60),
+      capability: capability,
+    );
+    return parseBranchResult(result) ?? _invalidControlResponse(capability);
+  }
+
+  /// A `session.branch` / `session.branch_whole` result, or null when the
+  /// child ids are unusable. `messages`, `info` and `messages_omitted` are
+  /// optional and never read: the child chat loads its own transcript.
+  static DesktopBranchResult? parseBranchResult(Map<String, dynamic> result) {
+    final runtimeId = result['session_id'];
+    final storedId = result['stored_session_id'];
+    final title = result['title'];
+    final messageCount = result['message_count'];
+    if (runtimeId is! String ||
+        runtimeId.trim().isEmpty ||
+        storedId is! String ||
+        storedId.trim().isEmpty ||
+        storedId != storedId.trim() ||
+        storedId.length > 512) {
+      return null;
+    }
+    return DesktopBranchResult(
+      runtimeSessionId: runtimeId,
+      storedSessionId: storedId,
+      title: title is String ? title : '',
+      messageCount: messageCount is int && messageCount >= 0
+          ? messageCount
+          : 0,
+    );
+  }
+
+  @override
   Future<void> killBackgroundProcess(
     String runtimeSessionId,
     String processId,
@@ -5886,6 +6859,797 @@ class TuiGatewayClient
     }
   }
 
+  // ── Project management (same RPCs / REST routes as Hermes Desktop) ──────
+
+  @override
+  bool get projectWritesAllowed => !_connection.readOnly;
+
+  /// Project ids are `p_<hex>` for saved projects; a path never reaches the
+  /// write RPCs (auto projects are adopted through `projects.create`).
+  String _savedProjectId(String id) {
+    final value = _validatedControlValue(id, maxLength: 128);
+    if (!RegExp(r'^p_[A-Za-z0-9_-]+$').hasMatch(value)) {
+      throw const DesktopControlFailure(DesktopControlFailureKind.rejected);
+    }
+    return value;
+  }
+
+  static final RegExp _projectColorPattern = RegExp(
+    r'^(#[0-9A-Fa-f]{3,8}|hsl\(\d{1,3} \d{1,3}% \d{1,3}%\))$',
+  );
+  static final RegExp _projectIconPattern = RegExp(r'^[a-z][a-z0-9-]{0,40}$');
+
+  String _projectAppearanceValue(String value, RegExp pattern) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) return '';
+    if (!pattern.hasMatch(trimmed)) {
+      throw const DesktopControlFailure(DesktopControlFailureKind.rejected);
+    }
+    return trimmed;
+  }
+
+  String _projectName(String name) =>
+      _validatedControlValue(name, maxLength: 120);
+
+  @override
+  Future<void> updateProject(
+    String id, {
+    String? name,
+    String? color,
+    String? icon,
+  }) async {
+    _requireWritableControlConnection();
+    final result = await _controlRequest('projects.update', {
+      'id': _savedProjectId(id),
+      if (name != null) 'name': _projectName(name),
+      if (color != null)
+        'color': _projectAppearanceValue(color, _projectColorPattern),
+      if (icon != null)
+        'icon': _projectAppearanceValue(icon, _projectIconPattern),
+    }, capability: DesktopGatewayCapability.projectManagement);
+    if (result['project'] is! Map) {
+      _invalidControlResponse(DesktopGatewayCapability.projectManagement);
+    }
+  }
+
+  @override
+  Future<void> createProject({
+    required String name,
+    required String primaryPath,
+    String? color,
+    String? icon,
+  }) async {
+    _requireWritableControlConnection();
+    final path = _validatedControlValue(primaryPath, maxLength: 4096);
+    final safeColor = color == null
+        ? ''
+        : _projectAppearanceValue(color, _projectColorPattern);
+    final safeIcon = icon == null
+        ? ''
+        : _projectAppearanceValue(icon, _projectIconPattern);
+    final result = await _controlRequest('projects.create', {
+      'name': _projectName(name),
+      'folders': [path],
+      'primary_path': path,
+      if (safeColor.isNotEmpty) 'color': safeColor,
+      if (safeIcon.isNotEmpty) 'icon': safeIcon,
+      'use': false,
+    }, capability: DesktopGatewayCapability.projectManagement);
+    if (result['project'] is! Map) {
+      _invalidControlResponse(DesktopGatewayCapability.projectManagement);
+    }
+  }
+
+  @override
+  Future<void> deleteProject(String id) async {
+    _requireWritableControlConnection();
+    final result = await _controlRequest('projects.delete', {
+      'id': _savedProjectId(id),
+    }, capability: DesktopGatewayCapability.projectManagement);
+    if (result['projects'] is! List) {
+      _invalidControlResponse(DesktopGatewayCapability.projectManagement);
+    }
+  }
+
+  @override
+  Future<void> setActiveProject(String id) async {
+    _requireWritableControlConnection();
+    await _controlRequest('projects.set_active', {
+      'id': _savedProjectId(id),
+    }, capability: DesktopGatewayCapability.projectManagement);
+  }
+
+  // ── Project creation (Desktop project dialog / "Open folder…") ─────────
+
+  @override
+  bool get projectCreationKnownUnsupported =>
+      !_capabilityCache.canAttempt(DesktopGatewayCapability.projectManagement);
+
+  @override
+  Future<ProjectCreated> createProjectFromFolders({
+    required String name,
+    required List<String> folders,
+    String? primaryPath,
+    bool use = true,
+  }) async {
+    _requireWritableControlConnection();
+    final paths = [
+      for (final folder in folders) _validatedProjectFolder(folder),
+    ];
+    if (paths.isEmpty) {
+      throw const DesktopControlFailure(DesktopControlFailureKind.rejected);
+    }
+    final primary = primaryPath == null
+        ? null
+        : _validatedProjectFolder(primaryPath);
+    final result = await _controlRequest('projects.create', {
+      'name': _projectName(name),
+      'folders': paths,
+      'primary_path': ?primary,
+      'use': use,
+    }, capability: DesktopGatewayCapability.projectManagement);
+    final project = result['project'];
+    if (project is! Map || project['id'] is! String) {
+      _invalidControlResponse(DesktopGatewayCapability.projectManagement);
+    }
+    String folderOf(Object? raw) =>
+        raw is Map && raw['path'] is String ? (raw['path'] as String) : '';
+    final rawFolders = project['folders'];
+    final stored = project['primary_path'];
+    return ProjectCreated(
+      id: project['id'] as String,
+      primaryPath: stored is String && stored.trim().isNotEmpty
+          ? stored.trim()
+          : rawFolders is List && rawFolders.isNotEmpty
+          ? folderOf(rawFolders.first)
+          : primary ?? paths.first,
+    );
+  }
+
+  /// A server folder for `projects.create` / `projects.add_folder`: trimmed,
+  /// non-blank, at most 4096 chars and free of every control character
+  /// (newlines and tabs included, which the generic check lets through).
+  String _validatedProjectFolder(String folder) {
+    final value = _validatedControlValue(folder, maxLength: 4096);
+    if (value.contains(RegExp(r'[\x00-\x1F\x7F]'))) {
+      throw const DesktopControlFailure(DesktopControlFailureKind.rejected);
+    }
+    return value;
+  }
+
+  @override
+  Future<void> addProjectFolder(String id, String path) async {
+    _requireWritableControlConnection();
+    final result = await _controlRequest('projects.add_folder', {
+      'id': _savedProjectId(id),
+      'path': _validatedProjectFolder(path),
+      'is_primary': false,
+    }, capability: DesktopGatewayCapability.projectManagement);
+    if (result['project'] is! Map) {
+      _invalidControlResponse(DesktopGatewayCapability.projectManagement);
+    }
+  }
+
+  @override
+  Future<String?> projectDefaultFolder() async {
+    try {
+      final result = await _dashboardExtensionRequest(
+        () => _dashboard.apiGet('fs/default-cwd'),
+      );
+      final cwd = result['cwd'];
+      return cwd is String && cwd.trim().startsWith('/') ? cwd.trim() : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  @override
+  Future<void> scanProjectRepos() async {
+    try {
+      // The scan rewrites host state, so a read-only connection skips it.
+      _requireWritableControlConnection();
+      await _controlRequest('projects.discover_repos', {'scan': true});
+    } catch (_) {
+      // Best effort, like Desktop: the last known tree stays on screen.
+    }
+  }
+
+  /// Re-homes a STORED session's workspace (`session.workspace.move`): the
+  /// git branch and root are replaced and a live agent follows. [sessionKey]
+  /// is the stored id, never the runtime one. It is a long handler on the
+  /// server (git probes on an arbitrary mount), so it waits generously, and a
+  /// dropped socket fails it without a retry. Failures are sanitized:
+  /// 4007 unavailable, -32601 unsupported, 4016/4017/5007 rejected.
+  Future<SessionWorkspaceMoveResult> moveSessionWorkspace({
+    required String sessionKey,
+    required String cwd,
+    String? profile,
+  }) async {
+    _requireWritableControlConnection();
+    final key = _validatedControlValue(sessionKey, maxLength: 512);
+    final folder = _validatedControlValue(cwd, maxLength: 4096);
+    final owner = profile?.trim() ?? '';
+    final result = await _controlRequest('session.workspace.move', {
+      'session_key': key,
+      'cwd': folder,
+      if (owner.isNotEmpty) 'profile': owner,
+    }, timeout: const Duration(minutes: 3));
+    return SessionWorkspaceMoveResult.tryParse(result) ??
+        _invalidControlResponse();
+  }
+
+  Future<T> _projectGitRequest<T>(
+    Future<T> Function() request, {
+    DesktopGatewayCapability capability =
+        DesktopGatewayCapability.projectWorktrees,
+  }) async {
+    if (!_capabilityCache.canAttempt(capability)) {
+      throw const DesktopControlFailure(
+        DesktopControlFailureKind.unsupported,
+        code: 404,
+      );
+    }
+    try {
+      final value = await _dashboardExtensionRequest(request);
+      _capabilityCache.mark(
+        capability,
+        DesktopGatewayCapabilityState.supported,
+      );
+      return value;
+    } on DesktopControlFailure catch (failure) {
+      if (failure.kind == DesktopControlFailureKind.unsupported) {
+        _capabilityCache.mark(
+          capability,
+          DesktopGatewayCapabilityState.unsupported,
+        );
+      }
+      rethrow;
+    }
+  }
+
+  /// True only once the server has answered a `session.foreign.*` call on
+  /// this connection (see [confirmForeignSessions]); an unconfirmed server, a
+  /// -32601 one and a read-only connection all keep the import entry hidden.
+  bool get foreignSessionsAvailable =>
+      !_connection.readOnly &&
+      _capabilityCache.state(DesktopGatewayCapability.foreignSessions) ==
+          DesktopGatewayCapabilityState.supported;
+
+  /// Asks for the first page of foreign sessions once, to learn whether the
+  /// server has the methods. Nothing is imported and errors are swallowed.
+  Future<bool> confirmForeignSessions() async {
+    if (_connection.readOnly) return false;
+    if (_capabilityCache.state(DesktopGatewayCapability.foreignSessions) ==
+        DesktopGatewayCapabilityState.unknown) {
+      try {
+        await foreignList();
+      } catch (_) {}
+    }
+    return foreignSessionsAvailable;
+  }
+
+  static const Duration _foreignTimeout = Duration(seconds: 60);
+
+  Map<String, dynamic> _foreignParams(
+    String? profile,
+    Map<String, Object?> rest,
+  ) {
+    final owner = profile?.trim() ?? '';
+    return {
+      if (owner.isNotEmpty) 'profile': owner,
+      for (final entry in rest.entries)
+        if (entry.value != null) entry.key: entry.value,
+    };
+  }
+
+  /// Foreign ids are opaque handles: sent exactly as received.
+  String _foreignHandle(String id) {
+    if (id.isEmpty || id.length > 1024) {
+      throw const DesktopControlFailure(DesktopControlFailureKind.rejected);
+    }
+    return id;
+  }
+
+  /// False once `message.react` answered -32601 on this connection (or for a
+  /// read-only one): reactions are then not offered.
+  /// True only once the server has answered `message.react` (a reaction, or
+  /// the probe's invalid-params refusal); unknown stays hidden.
+  @override
+  bool get messageReactionsAvailable =>
+      !_connection.readOnly &&
+      _capabilityCache.state(DesktopGatewayCapability.messageReactions) ==
+          DesktopGatewayCapabilityState.supported;
+
+  Future<bool>? _reactionProbe;
+
+  /// One probe per connection: chats that ask while it is in flight share its
+  /// answer instead of sending the same request again.
+  @override
+  Future<bool> confirmMessageReactions(String runtimeSessionId) {
+    if (_connection.readOnly) return Future.value(false);
+    if (_capabilityCache.state(DesktopGatewayCapability.messageReactions) !=
+        DesktopGatewayCapabilityState.unknown) {
+      return Future.value(messageReactionsAvailable);
+    }
+    return _reactionProbe ??= _probeMessageReactions(runtimeSessionId)
+        .whenComplete(() => _reactionProbe = null);
+  }
+
+  Future<bool> _probeMessageReactions(String runtimeSessionId) async {
+    try {
+      await _request('message.react', {
+        'session_id': _validatedControlValue(runtimeSessionId, maxLength: 512),
+      });
+      _capabilityCache.mark(
+        DesktopGatewayCapability.messageReactions,
+        DesktopGatewayCapabilityState.supported,
+      );
+    } on TuiGatewayRpcError catch (error) {
+      if (error.code == -32601) {
+        _capabilityCache.mark(
+          DesktopGatewayCapability.messageReactions,
+          DesktopGatewayCapabilityState.unsupported,
+        );
+      } else if (error.code == -32602 || error.code == 4023) {
+        // -32602: invalid params; 4023: the agent's own refusal when neither
+        // row_id nor newest_role is given. Either means the method answered.
+        _capabilityCache.mark(
+          DesktopGatewayCapability.messageReactions,
+          DesktopGatewayCapabilityState.supported,
+        );
+      }
+    } catch (_) {
+      // Nothing learned.
+    }
+    return messageReactionsAvailable;
+  }
+
+  /// `config.set {key, value}` for a renderer switch the agent must see
+  /// (`display.message_reactions`). Profile-scoped like Desktop's mirror.
+  @override
+  Future<void> setDisplayToggle(
+    String key,
+    bool value, {
+    String? profile,
+  }) async {
+    if (key != kMessageReactionsDisplayKey) {
+      throw ArgumentError('unsupported display toggle');
+    }
+    _requireWritableControlConnection();
+    final owner = profile?.trim() ?? '';
+    await _request('config.set', {
+      'key': key,
+      'value': value ? 'true' : 'false',
+      if (owner.isNotEmpty) 'profile': owner,
+    });
+  }
+
+  @override
+  Future<({int rowId, List<MessageReaction> reactions})> reactToMessage(
+    String runtimeSessionId, {
+    int? rowId,
+    String? newestRole,
+    String? emoji,
+    String? profile,
+  }) async {
+    if (rowId == null && (newestRole == null || newestRole.isEmpty)) {
+      throw ArgumentError('a reaction needs a row id or newest_role');
+    }
+    _requireWritableControlConnection();
+    final owner = profile?.trim() ?? '';
+    final result = await _controlRequest('message.react', {
+      'session_id': _validatedControlValue(runtimeSessionId, maxLength: 512),
+      if (owner.isNotEmpty) 'profile': owner,
+      if (rowId != null) 'row_id': rowId else 'newest_role': newestRole,
+      'emoji': ?emoji,
+      'author': 'user',
+    }, capability: DesktopGatewayCapability.messageReactions);
+    final id = result['row_id'];
+    final list = result['reactions'];
+    if (id is! int || list is! List) {
+      _invalidControlResponse(DesktopGatewayCapability.messageReactions);
+    }
+    return (rowId: id, reactions: parseReactions(list));
+  }
+
+  @override
+  Future<ForeignSessionPage> foreignList({
+    String? profile,
+    ForeignSource? source,
+    int? offset,
+  }) async {
+    final result = await _controlRequest(
+      'session.foreign.list',
+      _foreignParams(profile, {'source': source?.wire, 'offset': offset}),
+      timeout: _foreignTimeout,
+      capability: DesktopGatewayCapability.foreignSessions,
+    );
+    return ForeignSessionPage.fromJson(result);
+  }
+
+  @override
+  Future<ForeignPreview> foreignPreview(String id, {String? profile}) async {
+    final result = await _controlRequest(
+      'session.foreign.preview',
+      _foreignParams(profile, {'id': _foreignHandle(id)}),
+      timeout: _foreignTimeout,
+      capability: DesktopGatewayCapability.foreignSessions,
+    );
+    return ForeignPreview.fromJson(result);
+  }
+
+  @override
+  Future<ForeignImportResult> foreignImport(
+    String id, {
+    String? profile,
+  }) async {
+    _requireWritableControlConnection();
+    final result = await _controlRequest(
+      'session.foreign.import',
+      _foreignParams(profile, {'id': _foreignHandle(id)}),
+      timeout: _foreignTimeout,
+      capability: DesktopGatewayCapability.foreignSessions,
+    );
+    final parsed = ForeignImportResult.tryParse(result);
+    if (parsed == null) {
+      _invalidControlResponse(DesktopGatewayCapability.foreignSessions);
+    }
+    return parsed;
+  }
+
+  @override
+  Future<PullRequestList> prList(
+    String repoPath, {
+    List<String> branches = const [],
+    List<int> numbers = const [],
+  }) {
+    final body = {
+      'path': _validatedControlValue(repoPath, maxLength: 4096),
+      'branches': [
+        for (final b in branches) _validatedControlValue(b, maxLength: 512),
+      ],
+      'numbers': numbers,
+    };
+    return _projectGitRequest(
+      () async => PullRequestList.fromJson(
+        await _dashboard.apiPost('git/review/pr-list', body: body),
+      ),
+      capability: DesktopGatewayCapability.projectPullRequests,
+    );
+  }
+
+  @override
+  Future<PullRequestScan> scanSessionPullRequests(List<String> ids) {
+    final body = {
+      'ids': [
+        for (final id in ids) _validatedControlValue(id, maxLength: 1024),
+      ],
+    };
+    return _projectGitRequest(
+      () async => PullRequestScan.fromJson(
+        await _dashboard.apiPost('profiles/sessions/pull-requests', body: body),
+      ),
+      capability: DesktopGatewayCapability.sessionPullRequestScan,
+    );
+  }
+
+  String _gitQuery(String route, String repoPath) {
+    final path = _validatedControlValue(repoPath, maxLength: 4096);
+    return 'git/$route?path=${Uri.encodeQueryComponent(path)}';
+  }
+
+  @override
+  Future<List<ProjectGitBaseBranch>> listBaseBranches(String repoPath) {
+    final endpoint = _gitQuery('base-branches', repoPath);
+    return _projectGitRequest(() async {
+      final result = await _dashboard.apiGet(endpoint);
+      return _extensionRows(result['branches'])
+          .map(ProjectGitBaseBranch.tryParse)
+          .whereType<ProjectGitBaseBranch>()
+          .toList(growable: false);
+    });
+  }
+
+  @override
+  Future<List<ProjectGitBranch>> listBranches(String repoPath) {
+    final endpoint = _gitQuery('branches', repoPath);
+    return _projectGitRequest(() async {
+      final result = await _dashboard.apiGet(endpoint);
+      return _extensionRows(result['branches'])
+          .map(ProjectGitBranch.tryParse)
+          .whereType<ProjectGitBranch>()
+          .toList(growable: false);
+    });
+  }
+
+  @override
+  Future<ProjectWorktreeResult> addWorktree(
+    String repoPath, {
+    String? branch,
+    String? base,
+    String? existingBranch,
+  }) {
+    _requireWritableControlConnection();
+    final path = _validatedControlValue(repoPath, maxLength: 4096);
+    String? ref(String? value) {
+      final trimmed = value?.trim() ?? '';
+      if (trimmed.isEmpty) return null;
+      return _validatedControlValue(trimmed, maxLength: 255);
+    }
+
+    final newBranch = ref(branch);
+    final body = <String, dynamic>{
+      'path': path,
+      if (newBranch != null) ...{'name': newBranch, 'branch': newBranch},
+      'base': ?ref(base),
+      'existingBranch': ?ref(existingBranch),
+    };
+    if (newBranch == null && body['existingBranch'] == null) {
+      throw const DesktopControlFailure(DesktopControlFailureKind.rejected);
+    }
+    return _projectGitRequest(() async {
+      final result = await _dashboard.apiPost(
+        'git/worktree/add',
+        body: body,
+        timeout: const Duration(minutes: 2),
+      );
+      final created = result['path'];
+      if (created is! String || created.trim().isEmpty) {
+        throw const DesktopControlFailure(
+          DesktopControlFailureKind.invalidResponse,
+        );
+      }
+      final createdBranch = result['branch'];
+      return ProjectWorktreeResult(
+        path: created.trim(),
+        branch: createdBranch is String ? createdBranch : (newBranch ?? ''),
+      );
+    });
+  }
+
+  @override
+  Future<void> switchBranch(String repoPath, String branch) {
+    _requireWritableControlConnection();
+    final body = {
+      'path': _validatedControlValue(repoPath, maxLength: 4096),
+      'branch': _validatedControlValue(branch, maxLength: 255),
+    };
+    return _projectGitRequest(() async {
+      await _dashboard.apiPost('git/branch/switch', body: body);
+    });
+  }
+
+  String _fsQuery(String route, String path) {
+    final value = _validatedControlValue(path, maxLength: 4096);
+    return 'fs/$route?path=${Uri.encodeQueryComponent(value)}';
+  }
+
+  @override
+  bool get projectFilesKnownUnsupported =>
+      !_capabilityCache.canAttempt(DesktopGatewayCapability.projectFiles);
+
+  @override
+  Future<ProjectDirectoryListing> listProjectDirectory(String path) async {
+    final endpoint = _fsQuery('list', path);
+    if (projectFilesKnownUnsupported) {
+      throw const DesktopControlFailure(
+        DesktopControlFailureKind.unsupported,
+        code: 404,
+      );
+    }
+    try {
+      final listing = await _dashboardExtensionRequest(() async {
+        final result = await _dashboard.apiGet(endpoint);
+        final raw = result['entries'];
+        if (raw is! List) {
+          throw const DesktopControlFailure(
+            DesktopControlFailureKind.invalidResponse,
+          );
+        }
+        final error = result['error'];
+        return ProjectDirectoryListing(
+          entries: raw
+              .take(projectFsListingLimit)
+              .map(ProjectFsEntry.tryParse)
+              .whereType<ProjectFsEntry>()
+              .toList(growable: false),
+          error: error is String && error.trim().isNotEmpty ? error : null,
+        );
+      });
+      _capabilityCache.mark(
+        DesktopGatewayCapability.projectFiles,
+        DesktopGatewayCapabilityState.supported,
+      );
+      return listing;
+    } on DesktopControlFailure catch (failure) {
+      if (failure.kind == DesktopControlFailureKind.unsupported) {
+        _capabilityCache.mark(
+          DesktopGatewayCapability.projectFiles,
+          DesktopGatewayCapabilityState.unsupported,
+        );
+      }
+      rethrow;
+    }
+  }
+
+  /// File reads never gate the capability: on these routes a 404 means the
+  /// file vanished, not that the server lacks them.
+  Future<T> _projectFileRead<T>(Future<T> Function() request) async {
+    try {
+      return await _dashboardExtensionRequest(request);
+    } on DesktopControlFailure catch (failure) {
+      if (failure.kind == DesktopControlFailureKind.unsupported) {
+        throw DesktopControlFailure(
+          DesktopControlFailureKind.unavailable,
+          code: failure.code,
+        );
+      }
+      rethrow;
+    }
+  }
+
+  @override
+  Future<ProjectFilePreview> readProjectFileText(String path) async {
+    final endpoint = _fsQuery('read-text', path);
+    return _projectFileRead(() async {
+      final result = await _dashboard.apiGet(endpoint);
+      final text = result['text'];
+      if (text is! String) {
+        throw const DesktopControlFailure(
+          DesktopControlFailureKind.invalidResponse,
+        );
+      }
+      final size = result['byteSize'];
+      final mime = result['mimeType'];
+      final served = result['path'];
+      return ProjectFilePreview(
+        path: served is String && served.isNotEmpty ? served : path,
+        text: text,
+        binary: result['binary'] == true,
+        truncated: result['truncated'] == true,
+        byteSize: size is num ? size.toInt() : text.length,
+        mimeType: mime is String ? mime : 'text/plain',
+      );
+    });
+  }
+
+  @override
+  Future<Uint8List> readProjectFileBytes(String path) async {
+    final endpoint = _fsQuery('read-data-url', path);
+    return _projectFileRead(() async {
+      final result = await _dashboard.apiGet(endpoint);
+      final dataUrl = result['dataUrl'];
+      final comma = dataUrl is String ? dataUrl.indexOf(',') : -1;
+      if (dataUrl is! String ||
+          !dataUrl.startsWith('data:') ||
+          comma < 0 ||
+          !dataUrl.substring(0, comma).endsWith(';base64')) {
+        throw const DesktopControlFailure(
+          DesktopControlFailureKind.invalidResponse,
+        );
+      }
+      return base64Decode(dataUrl.substring(comma + 1));
+    });
+  }
+
+  // ── Project file writes (Desktop remote mode / Dashboard Files routes) ──
+
+  static DesktopGatewayCapability _fileWriteCapability(
+    ProjectFileWriteAction action,
+  ) => switch (action) {
+    ProjectFileWriteAction.createFolder =>
+      DesktopGatewayCapability.projectFileMkdir,
+    ProjectFileWriteAction.writeText =>
+      DesktopGatewayCapability.projectFileWriteText,
+    ProjectFileWriteAction.upload => DesktopGatewayCapability.projectFileUpload,
+    ProjectFileWriteAction.delete => DesktopGatewayCapability.projectFileDelete,
+  };
+
+  @override
+  bool get projectFileWritesAllowed => !_connection.readOnly;
+
+  @override
+  bool projectFileWriteKnownUnsupported(ProjectFileWriteAction action) =>
+      !_capabilityCache.canAttempt(_fileWriteCapability(action));
+
+  /// Runs one write route. A read-only connection never reaches the wire.
+  /// 404/405 gate only that route; on `DELETE /api/files` a 404 means the
+  /// entry vanished, so only 405 gates it there.
+  Future<T> _projectFileWrite<T>(
+    ProjectFileWriteAction action,
+    Future<T> Function() request,
+  ) async {
+    _requireWritableControlConnection();
+    final capability = _fileWriteCapability(action);
+    if (!_capabilityCache.canAttempt(capability)) {
+      throw const DesktopControlFailure(
+        DesktopControlFailureKind.unsupported,
+        code: 404,
+      );
+    }
+    try {
+      final value = await _dashboardExtensionRequest(request);
+      _capabilityCache.mark(
+        capability,
+        DesktopGatewayCapabilityState.supported,
+      );
+      return value;
+    } on DesktopControlFailure catch (failure) {
+      if (failure.kind == DesktopControlFailureKind.unsupported) {
+        if (action == ProjectFileWriteAction.delete && failure.code == 404) {
+          throw const DesktopControlFailure(
+            DesktopControlFailureKind.unavailable,
+            code: 404,
+          );
+        }
+        _capabilityCache.mark(
+          capability,
+          DesktopGatewayCapabilityState.unsupported,
+        );
+      }
+      rethrow;
+    }
+  }
+
+  @override
+  Future<String> createProjectFolder(String path) async {
+    final value = _validatedControlValue(path, maxLength: 4096);
+    return _projectFileWrite(ProjectFileWriteAction.createFolder, () async {
+      final result = await _dashboard.apiPost(
+        'files/mkdir',
+        body: {'path': value},
+      );
+      final created = result['path'];
+      return created is String && created.trim().isNotEmpty
+          ? created.trim()
+          : value;
+    });
+  }
+
+  @override
+  Future<void> writeProjectFileText(String path, String content) async {
+    final value = _validatedControlValue(path, maxLength: 4096);
+    return _projectFileWrite(ProjectFileWriteAction.writeText, () async {
+      await _dashboard.apiPost(
+        'fs/write-text',
+        body: {'path': value, 'content': content},
+      );
+    });
+  }
+
+  @override
+  Future<String> uploadProjectFile(
+    String path, {
+    required String localPath,
+    required String filename,
+  }) async {
+    final value = _validatedControlValue(path, maxLength: 4096);
+    return _projectFileWrite(ProjectFileWriteAction.upload, () async {
+      final result = await _dashboard.apiPostMultipartFile(
+        'files/upload-stream',
+        fieldName: 'file',
+        filePath: localPath,
+        filename: filename,
+        fields: {'path': value, 'overwrite': 'false'},
+      );
+      final stored = result['path'];
+      return stored is String && stored.trim().isNotEmpty
+          ? stored.trim()
+          : value;
+    });
+  }
+
+  @override
+  Future<void> deleteProjectEntry(String path) async {
+    final value = _validatedControlValue(path, maxLength: 4096);
+    return _projectFileWrite(ProjectFileWriteAction.delete, () async {
+      await _dashboard.apiDelete(
+        'files',
+        body: {'path': value, 'recursive': false},
+      );
+    });
+  }
+
   static const Set<String> _validSessionControlActions = {
     'goal.pause',
     'goal.resume',
@@ -5951,28 +7715,72 @@ class TuiGatewayClient
   }
 
   @override
-  Future<void> submitQueuedPrompt(String runtimeSessionId, String text) async {
-    await _requestPromptSubmit({
-      'session_id': runtimeSessionId,
-      'text': text,
-      'queued': true,
-    });
+  Future<void> submitPromptWithSurface(
+    String runtimeSessionId,
+    String text,
+    PromptClientSurface surface,
+  ) async {
+    await _requestPromptSubmit(
+      mergePromptSubmitParams({
+        'session_id': runtimeSessionId,
+        'text': text,
+      }, surface.toParams()),
+    );
     _markWatchdogRuntimeBusy(runtimeSessionId);
   }
 
   @override
-  Future<void> submitInterruptedPrompt(
+  Future<void> submitQueuedPrompt(String runtimeSessionId, String text) =>
+      _submitQueued(runtimeSessionId, text, const {});
+
+  @override
+  Future<void> submitQueuedPromptWithSurface(
     String runtimeSessionId,
     String text,
+    PromptClientSurface surface,
+  ) => _submitQueued(runtimeSessionId, text, surface.toParams());
+
+  Future<void> _submitQueued(
+    String runtimeSessionId,
+    String text,
+    Map<String, dynamic> extraParams,
+  ) async {
+    await _requestPromptSubmit(
+      mergePromptSubmitParams({
+        'session_id': runtimeSessionId,
+        'text': text,
+        'queued': true,
+      }, extraParams),
+    );
+    _markWatchdogRuntimeBusy(runtimeSessionId);
+  }
+
+  @override
+  Future<void> submitInterruptedPrompt(String runtimeSessionId, String text) =>
+      _submitInterrupted(runtimeSessionId, text, const {});
+
+  @override
+  Future<void> submitInterruptedPromptWithSurface(
+    String runtimeSessionId,
+    String text,
+    PromptClientSurface surface,
+  ) => _submitInterrupted(runtimeSessionId, text, surface.toParams());
+
+  Future<void> _submitInterrupted(
+    String runtimeSessionId,
+    String text,
+    Map<String, dynamic> extraParams,
   ) async {
     final deadline = DateTime.now().add(const Duration(seconds: 6));
     while (true) {
       try {
-        await _requestPromptSubmit({
-          'session_id': runtimeSessionId,
-          'text': text,
-          'interrupted': true,
-        });
+        await _requestPromptSubmit(
+          mergePromptSubmitParams({
+            'session_id': runtimeSessionId,
+            'text': text,
+            'interrupted': true,
+          }, extraParams),
+        );
         _markWatchdogRuntimeBusy(runtimeSessionId);
         return;
       } on TuiGatewayRpcError catch (error) {
@@ -5989,12 +7797,36 @@ class TuiGatewayClient
     String runtimeSessionId,
     String text,
     String clientTurnId,
-  ) async {
-    final result = await _requestPromptSubmit({
-      'session_id': runtimeSessionId,
-      'text': text,
-      'client_turn_id': clientTurnId,
-    });
+  ) => _submitIdempotent(runtimeSessionId, text, clientTurnId, const {});
+
+  @override
+  Future<DesktopTurnAck> submitPromptIdempotentWithSurface(
+    String runtimeSessionId,
+    String text,
+    String clientTurnId,
+    PromptClientSurface surface,
+  ) => _submitIdempotent(
+    runtimeSessionId,
+    text,
+    clientTurnId,
+    surface.toParams(),
+  );
+
+  Future<DesktopTurnAck> _submitIdempotent(
+    String runtimeSessionId,
+    String text,
+    String clientTurnId,
+    Map<String, dynamic> extraParams, {
+    bool queued = false,
+  }) async {
+    final result = await _requestPromptSubmit(
+      mergePromptSubmitParams({
+        'session_id': runtimeSessionId,
+        'text': text,
+        'client_turn_id': clientTurnId,
+        if (queued) 'queued': true,
+      }, extraParams),
+    );
     final ack = DesktopTurnAck.fromJson(
       result,
       expectedClientTurnId: clientTurnId,
@@ -6008,20 +7840,27 @@ class TuiGatewayClient
     String runtimeSessionId,
     String text,
     String clientTurnId,
-  ) async {
-    final result = await _requestPromptSubmit({
-      'session_id': runtimeSessionId,
-      'text': text,
-      'client_turn_id': clientTurnId,
-      'queued': true,
-    });
-    final ack = DesktopTurnAck.fromJson(
-      result,
-      expectedClientTurnId: clientTurnId,
-    );
-    _markWatchdogRuntimeBusy(runtimeSessionId);
-    return ack;
-  }
+  ) => _submitIdempotent(
+    runtimeSessionId,
+    text,
+    clientTurnId,
+    const {},
+    queued: true,
+  );
+
+  @override
+  Future<DesktopTurnAck> submitQueuedPromptIdempotentWithSurface(
+    String runtimeSessionId,
+    String text,
+    String clientTurnId,
+    PromptClientSurface surface,
+  ) => _submitIdempotent(
+    runtimeSessionId,
+    text,
+    clientTurnId,
+    surface.toParams(),
+    queued: true,
+  );
 
   @override
   Future<DesktopTurnStatus> getTurnStatus(
@@ -6245,6 +8084,30 @@ class TuiGatewayClient
   }
 
   @override
+  Future<List<Map<String, dynamic>>> openServerRequests(
+    String runtimeSessionId,
+  ) async {
+    const method = 'session.events.since';
+    final runtime = _validatedRuntimeId(method, runtimeSessionId);
+    await _connectForRequest(method);
+    // `last_seen` above any sequence: no event is replayed, only the open
+    // requests, which the response handler also registers on this socket so
+    // the answer goes back as a response frame.
+    final result = await _requestConnected(method, <String, dynamic>{
+      'session_id': runtime,
+      'last_seen': _openRequestsProbeLastSeen,
+    }, timeout: const Duration(seconds: 10));
+    final open = result['open_requests'];
+    if (open is! List) return const [];
+    return [
+      for (final entry in open)
+        if (entry is Map<String, dynamic>) entry,
+    ];
+  }
+
+  static const int _openRequestsProbeLastSeen = 9007199254740991;
+
+  @override
   Future<Map<String, dynamic>> compressionEventReplay(String runtimeSessionId) {
     const method = 'session.events.since';
     final runtime = _validatedRuntimeId(method, runtimeSessionId);
@@ -6381,7 +8244,44 @@ class TuiGatewayClient
           'Hermes Desktop WebSocket was replaced',
         );
       }
-      return const DesktopPromptResponse._(DesktopPromptResponseStatus.ok);
+      return const DesktopPromptResponse._(
+        DesktopPromptResponseStatus.ok,
+        deliveryAcknowledged: false,
+      );
+    }
+    if (requestId.startsWith(_serverRequestIdPrefix)) {
+      // A v7 server request that is not open on this socket: it reached
+      // another socket, or this one was replaced after the card was drawn.
+      // Hermes has no `clarify.respond` any more; `clarify.lock` and the
+      // `request.answer` proxy settle the request from any connection.
+      try {
+        if (questionId != null) {
+          const lockMethod = 'clarify.lock';
+          final result = await _request(lockMethod, {
+            'request_id': requestId,
+            'question_id': questionId,
+            'answer': answer,
+          });
+          return DesktopPromptResponse.fromJson(
+            result,
+            method: lockMethod,
+            allowExpired: true,
+          );
+        }
+        const answerMethod = 'request.answer';
+        final result = await _request(answerMethod, {
+          'id': requestId,
+          'result': {'answer': answer},
+        });
+        return DesktopPromptResponse.fromJson(
+          result,
+          method: answerMethod,
+          allowExpired: true,
+        );
+      } on TuiGatewayRpcError catch (error) {
+        // Older v7 builds without the proxy keep the legacy RPC below.
+        if (error.code != -32601) rethrow;
+      }
     }
     final params = <String, Object?>{
       'request_id': _interactiveRequestId(method, requestId),
@@ -6395,6 +8295,10 @@ class TuiGatewayClient
       allowExpired: true,
     );
   }
+
+  /// Hermes mints every server→client request id as `srq-<hex>`
+  /// (`tui_gateway/server_requests.py`); legacy prompt ids never use it.
+  static const _serverRequestIdPrefix = 'srq-';
 
   @override
   Future<DesktopPromptResponse> respondToSudo(
@@ -6425,7 +8329,7 @@ class TuiGatewayClient
     required EphemeralSensitiveValue value,
   }) async {
     try {
-      late final Future<Map<String, dynamic>> pendingResponse;
+      late final Future<DesktopPromptResponse> pendingResponse;
       try {
         final opaqueRequestId = _interactiveRequestId(method, requestId);
         await _connectForRequest('gateway.connect');
@@ -6440,12 +8344,7 @@ class TuiGatewayClient
         // before awaiting a remote response.
         value.dispose();
       }
-      final result = await pendingResponse;
-      return DesktopPromptResponse.fromJson(
-        result,
-        method: method,
-        allowExpired: true,
-      );
+      return await pendingResponse;
     } catch (error) {
       if (SanitizedRpcFailureFactory.isCertified(error)) {
         rethrow;
@@ -6456,7 +8355,7 @@ class TuiGatewayClient
     }
   }
 
-  Future<Map<String, dynamic>> _sendSensitiveResponseConnected({
+  Future<DesktopPromptResponse> _sendSensitiveResponseConnected({
     required String method,
     required String requestId,
     required String valueKey,
@@ -6466,16 +8365,29 @@ class TuiGatewayClient
     if (_openServerRequests.containsKey(requestId)) {
       // v7 server requests answer every one-string prompt under `value`.
       if (!_respondServerRequest(requestId, {'value': ephemeralValue})) {
-        return Future<Map<String, dynamic>>.error(
+        return Future<DesktopPromptResponse>.error(
           TuiGatewayRpcError(method, 'Hermes Desktop WebSocket was replaced'),
         );
       }
-      return Future<Map<String, dynamic>>.value({'status': 'ok'});
+      // A bare response frame: nothing acknowledges it. The value is not
+      // kept; if it died with the socket the user enters it again.
+      return Future<DesktopPromptResponse>.value(
+        const DesktopPromptResponse._(
+          DesktopPromptResponseStatus.ok,
+          deliveryAcknowledged: false,
+        ),
+      );
     }
     return _requestConnected(method, {
       'request_id': requestId,
       valueKey: ephemeralValue,
-    }, redactRemoteError: true);
+    }, redactRemoteError: true).then(
+      (result) => DesktopPromptResponse.fromJson(
+        result,
+        method: method,
+        allowExpired: true,
+      ),
+    );
   }
 
   @override
@@ -6490,7 +8402,12 @@ class TuiGatewayClient
           'Hermes Desktop WebSocket was replaced',
         );
       }
-      return const DesktopPromptResponse._(DesktopPromptResponseStatus.ok);
+      // A bare response frame, like clarify/sudo/secret: nothing
+      // acknowledges it.
+      return const DesktopPromptResponse._(
+        DesktopPromptResponseStatus.ok,
+        deliveryAcknowledged: false,
+      );
     }
     final result = await _request(method, {
       'request_id': _interactiveRequestId(method, requestId),
@@ -6514,6 +8431,7 @@ class TuiGatewayClient
             if (resolveAll) 'all': true,
           })) {
         _approvalServerRequestIds.remove(requestId);
+        _rememberAnsweredApproval(serverRequestId, requestId);
         return;
       }
     } else if (resolveAll) {
@@ -6562,7 +8480,11 @@ class TuiGatewayClient
       // The response frame is the first-wins answer by construction: it can
       // only settle the request it was minted for.
       _approvalServerRequestIds.remove(request);
-      return const DesktopApprovalResult(resolved: 1);
+      _rememberAnsweredApproval(serverRequestId, request);
+      return const DesktopApprovalResult(
+        resolved: 1,
+        deliveryAcknowledged: false,
+      );
     }
     final result = await _request(method, {
       'session_id': _validatedRuntimeId(method, runtimeSessionId),
@@ -6757,6 +8679,13 @@ final class _OpenServerRequest {
     required this.generation,
     required this.channel,
   });
+}
+
+/// Busy/idle bookkeeping of one runtime the silent-fanout watchdog follows.
+final class _WatchdogRuntime {
+  bool busy = false;
+  DateTime? lastActivityAt;
+  int revision = 0;
 }
 
 class _PendingRpc {

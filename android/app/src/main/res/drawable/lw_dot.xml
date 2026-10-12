@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A 6 dp gold dot centred in the 13 dp mark box of a row. -->
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:inset="3.5dp">
+    <shape android:shape="oval">
+        <solid android:color="@color/lw_gold" />
+    </shape>
+</inset>

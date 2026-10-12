@@ -162,7 +162,15 @@ final class VoiceRoomDictation extends RoomDictation {
     _transcribing = true;
     _notify();
     _fallback?.cancel();
-    _fallback = Timer(const Duration(seconds: 4), _finish);
+    // Engines that record then transcribe (Hermes server, local Whisper) only
+    // start transcribing on stop and bound that work themselves; a fixed 4 s
+    // fallback dropped every dictation the server took longer to transcribe.
+    _fallback = Timer(
+      voice.sttRecordsThenTranscribes
+          ? const Duration(minutes: 3)
+          : const Duration(seconds: 4),
+      _finish,
+    );
     await voice.stopDictation();
   }
 

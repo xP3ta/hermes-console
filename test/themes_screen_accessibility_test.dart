@@ -20,7 +20,7 @@ void main() {
     home: const ThemesScreen(),
   );
 
-  testWidgets('muestra los seis temas oficiales de Hermes Desktop', (
+  testWidgets('muestra los doce temas oficiales de Hermes Desktop', (
     tester,
   ) async {
     await tester.binding.setSurfaceSize(const Size(360, 800));
@@ -32,18 +32,18 @@ void main() {
     expect(list, findsOneWidget);
     for (
       var i = 0;
-      i < 5 && find.text('Hermes Desktop · 6').evaluate().isEmpty;
+      i < 5 && find.text('Hermes Desktop · 12').evaluate().isEmpty;
       i++
     ) {
       await tester.drag(list, const Offset(0, -300));
       await tester.pump();
     }
-    expect(find.text('Hermes Desktop · 6'), findsOneWidget);
-    for (var i = 0; i < 8 && find.text('Slate').evaluate().isEmpty; i++) {
+    expect(find.text('Hermes Desktop · 12'), findsOneWidget);
+    for (var i = 0; i < 12 && find.text('Cyberpunk').evaluate().isEmpty; i++) {
       await tester.drag(list, const Offset(0, -300));
       await tester.pump();
     }
-    expect(find.text('Slate'), findsOneWidget);
+    expect(find.text('Cyberpunk'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -88,5 +88,59 @@ void main() {
     )) {
       expect(container.duration, Duration.zero);
     }
+  });
+
+  testWidgets('one card per family, each with a Light/Dark selector', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(360, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(themesApp());
+    await tester.pump();
+
+    final families = <String, List<HermesThemePreset>>{};
+    for (final preset in AppTheme.presets) {
+      families.putIfAbsent(preset.familyId, () => []).add(preset);
+    }
+    expect(families, hasLength(20));
+    final scrollable = find.byType(Scrollable).first;
+    for (final entry in families.entries) {
+      final section = entry.value.first.desktopOfficial ? 'desktop' : 'console';
+      final dark = find.byKey(ValueKey('$section-theme-${entry.key}-dark'));
+      await tester.scrollUntilVisible(
+        dark,
+        200,
+        scrollable: scrollable,
+        maxScrolls: 60,
+      );
+      expect(dark, findsOneWidget, reason: entry.key);
+      expect(
+        find.byKey(ValueKey('$section-theme-${entry.key}-light')),
+        findsOneWidget,
+        reason: entry.key,
+      );
+    }
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('Claude shows as a single card with both modes', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(360, 2400));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(themesApp());
+    await tester.pump();
+
+    expect(find.text('Claude'), findsOneWidget);
+    expect(find.text('Claude Light'), findsNothing);
+    expect(
+      find.byKey(const ValueKey('console-theme-claude-light')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('console-theme-claude-dark')),
+      findsOneWidget,
+    );
+    expect(find.text('Hermes Console · 8'), findsOneWidget);
+    // Quiet UI: no "N themes · tap to apply" hint under the header.
+    expect(find.text('20 temas incluidos · toca para aplicar'), findsNothing);
   });
 }

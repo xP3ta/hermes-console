@@ -1,4 +1,6 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../capabilities/capabilities_screen.dart';
 import '../screens/activity_screen.dart';
@@ -18,18 +20,26 @@ import '../screens/session_list_screen.dart';
 import '../screens/settings_screen.dart';
 import '../screens/voice_settings_screen.dart';
 import '../screens/companion/mascotas_screen.dart';
-import '../screens/skills_screen.dart';
 import '../screens/task_center_screen.dart';
 import '../screens/tasks_screen.dart';
 import '../screens/tools_hub_screen.dart';
+import '../services/active_profile_scope.dart';
 import '../services/connection_manager.dart';
+import '../services/session_archive.dart';
 import '../services/tui_gateway_client.dart';
 import '../navigation/chat_route.dart';
 import '../navigation/instance_route_guard.dart';
 import '../theme/app_theme.dart';
+import '../utils/home_recent_sessions.dart';
 import '../utils/session_timestamp.dart';
+import '../utils/session_title.dart';
 import '../../l10n/app_localizations.dart';
-import 'hermes_notice.dart';
+import 'instance_kind_picker.dart';
+import 'menu_back_guard.dart';
+import 'mission_profile_avatar.dart';
+import 'owned_resource_host.dart';
+import 'profile_switcher.dart';
+import '../feedback/feedback_policy.dart';
 
 /// Top-level app sections reachable from [HermesDrawer].
 enum DrawerSection {
@@ -57,6 +67,36 @@ enum DrawerSection {
   taskCenter,
   activity,
   settings,
+}
+
+/// Capabilities hub for [connection], shared by the tools catalog and the
+/// chat `/skills` command so both open the same screen with the same options.
+CapabilitiesHub buildCapabilitiesHub({
+  required SavedConnection connection,
+  required ConnectionManager connManager,
+  // Unused since the bridge-only classic skills screen was retired; kept so
+  // the call sites do not change in this cleanup.
+  required CapabilityMatrix capabilities,
+  String? profileOverride,
+}) {
+  final fixedProfile = profileOverride?.trim();
+  final scoped = fixedProfile != null && fixedProfile.isNotEmpty;
+  return CapabilitiesHub(
+    connection: connection,
+    profile: scoped
+        ? fixedProfile
+        : connManager.activeProfileFor(connection.id),
+    advancedBuilder: scoped
+        ? null
+        : (_) => OwnedResourceHost<TuiGatewayClient>(
+            create: () => TuiGatewayClient(connection),
+            release: (gateway) => gateway.close(),
+            builder: (_, gateway) => ExtensionsCenterScreen(
+              gateway: gateway,
+              readOnly: connection.readOnly,
+            ),
+          ),
+  );
 }
 
 /// Shared navigation drawer. Used by the top-level screens (home dashboard,
@@ -151,20 +191,10 @@ List<HermesToolDestination> buildHermesToolDestinations({
       label: strings.cphTitle,
       enabled: enabled(),
       disabledReason: disabledReason(),
-      builder: (_) => CapabilitiesHub(
+      builder: (_) => buildCapabilitiesHub(
         connection: conn!,
-        profile: connManager.activeProfileFor(conn.id),
-        advancedBuilder: (_) {
-          final gateway = TuiGatewayClient(conn);
-          return ExtensionsCenterScreen(
-            gateway: gateway,
-            readOnly: conn.readOnly,
-            disposeGateway: gateway.close,
-          );
-        },
-        classicSkillsBuilder: capabilities.skillsRead.isNo
-            ? null
-            : (_) => SkillsScreen(connection: conn),
+        connManager: connManager,
+        capabilities: capabilities,
       ),
     ),
     HermesToolDestination(
@@ -240,7 +270,18 @@ class HermesDrawer extends StatelessWidget {
   /// that the section may have changed).
   final VoidCallback? onSectionReturn;
 
+  /// Builds the gateway client owned by a drawer section screen.
+  final TuiGatewayClient Function(SavedConnection connection) gatewayFactory;
+
+  /// Reads a profile's custom avatar for the profile faces (tests).
+  final MissionAvatarLoader? profileAvatarLoader;
+
+  /// App Lock state for the profile faces (tests); defaults to the app's.
+  final ValueListenable<bool>? profileFacesLocked;
+
   const HermesDrawer({
+    this.profileAvatarLoader,
+    this.profileFacesLocked,
     required this.connection,
     required this.connManager,
     required this.current,
@@ -248,6 +289,7 @@ class HermesDrawer extends StatelessWidget {
     this.checking = false,
     this.onSectionReturn,
     this.recentSessionsClientFactory,
+    this.gatewayFactory = TuiGatewayClient.new,
     super.key,
   });
 
@@ -309,15 +351,16 @@ class HermesDrawer extends StatelessWidget {
     );
   }
 
-  Widget _projectsCenter(SavedConnection active) {
-    final gateway = TuiGatewayClient(active);
-    return ProjectsCenterScreen(
-      connection: active,
-      connectionManager: connManager,
-      gateway: gateway,
-      disposeGateway: gateway.close,
-    );
-  }
+  Widget _projectsCenter(SavedConnection active) =>
+      OwnedResourceHost<TuiGatewayClient>(
+        create: () => gatewayFactory(active),
+        release: (gateway) => gateway.close(),
+        builder: (_, gateway) => ProjectsCenterScreen(
+          connection: active,
+          connectionManager: connManager,
+          gateway: gateway,
+        ),
+      );
 
   List<HermesToolDestination> _toolDestinations(
     BuildContext context,
@@ -359,29 +402,21 @@ class HermesDrawer extends StatelessWidget {
 
   void _showNeedsGateway(BuildContext context) {
     Navigator.pop(context);
-    HermesNotice.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          Strings.of(context).drawerNeedInstance,
-          style: const TextStyle(fontSize: 13),
-        ),
-        duration: const Duration(seconds: 2),
-      ),
-      kind: HermesNoticeKind.warning,
+    AppFeedback.of(context).notify(
+      FeedbackKind.error,
+      Strings.of(context).drawerNeedInstance,
+      warning: true,
+      duration: const Duration(seconds: 2),
     );
   }
 
   void _showUnsupported(BuildContext context) {
     Navigator.pop(context);
-    HermesNotice.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          Strings.of(context).drawerUnsupported,
-          style: const TextStyle(fontSize: 13),
-        ),
-        duration: const Duration(seconds: 3),
-      ),
-      kind: HermesNoticeKind.warning,
+    AppFeedback.of(context).notify(
+      FeedbackKind.error,
+      Strings.of(context).drawerUnsupported,
+      warning: true,
+      duration: const Duration(seconds: 3),
     );
   }
 
@@ -426,6 +461,25 @@ class HermesDrawer extends StatelessWidget {
                         connManager.activeConnectionId.value ?? conn?.id,
                     onSelected: (id) => _selectInstance(context, id),
                   ),
+                  // Active profile, one tap from the drawer (Desktop rail).
+                  if (conn != null)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 6),
+                      child: ProfileSwitcherButton(
+                        connection: conn,
+                        connManager: connManager,
+                        avatarLoader: profileAvatarLoader,
+                        facesLocked: profileFacesLocked,
+                        onManage: () => _go(
+                          context,
+                          DrawerSection.profiles,
+                          () => ProfilesScreen(
+                            connection: conn,
+                            connManager: connManager,
+                          ),
+                        ),
+                      ),
+                    ),
                   Padding(
                     padding: const EdgeInsets.fromLTRB(18, 4, 18, 8),
                     child: Divider(
@@ -568,22 +622,31 @@ class HermesDrawer extends StatelessWidget {
                     onTap: () => _openTools(context, capabilities),
                   ),
                   if (conn != null && supports(capabilities.sessionsRead))
-                    _DrawerRecentSessions(
-                      connection: conn,
-                      profile: connManager.activeProfileFor(conn.id),
-                      clientFactory: recentSessionsClientFactory,
-                      onOpen: (session) {
-                        Navigator.pop(context);
-                        openChatWithParent<void>(
-                          context,
-                          parentBuilder: (_) => SessionListScreen(
-                            connection: conn,
-                            connManager: connManager,
-                          ),
-                          builder: (_) =>
-                              ChatScreen(connection: conn, session: session),
-                        );
-                      },
+                    // Recents follow the active profile, even when it is
+                    // switched while the drawer is open.
+                    ListenableBuilder(
+                      listenable: ActiveProfileScope.of(connManager, conn.id),
+                      builder: (context, _) => _DrawerRecentSessions(
+                        connection: conn,
+                        prefs: connManager.prefs,
+                        profile: ActiveProfileScope.of(
+                          connManager,
+                          conn.id,
+                        ).name,
+                        clientFactory: recentSessionsClientFactory,
+                        onOpen: (session) {
+                          Navigator.pop(context);
+                          openChatWithParent<void>(
+                            context,
+                            parentBuilder: (_) => SessionListScreen(
+                              connection: conn,
+                              connManager: connManager,
+                            ),
+                            builder: (_) =>
+                                ChatScreen(connection: conn, session: session),
+                          );
+                        },
+                      ),
                     ),
                 ],
               ),
@@ -650,12 +713,14 @@ class HermesDrawer extends StatelessWidget {
 class _DrawerRecentSessions extends StatefulWidget {
   const _DrawerRecentSessions({
     required this.connection,
+    required this.prefs,
     required this.profile,
     required this.onOpen,
     this.clientFactory,
   });
 
   final SavedConnection connection;
+  final SharedPreferences prefs;
   final String profile;
   final ValueChanged<Session> onOpen;
   final ApiClient Function(SavedConnection connection)? clientFactory;
@@ -685,31 +750,57 @@ class _DrawerRecentSessionsState extends State<_DrawerRecentSessions> {
 
   Future<void> _load() async {
     final requestedConnectionId = widget.connection.id;
+    final requestedProfile = widget.profile;
     final client =
         widget.clientFactory?.call(widget.connection) ??
         ApiClient(
           baseUrl: widget.connection.baseUrl,
           apiKey: widget.connection.apiKey,
+          // A named profile's list comes from the Dashboard, as on Desktop.
+          profileDashboard: DashboardClient.lazy(widget.connection),
         );
+    SessionListRead? listRead;
+    List<Session> read = const [];
     try {
-      final sessions = await client.getSessions(profile: widget.profile);
+      // Local-only archives (servers without a writable archived flag) must
+      // leave the drawer too, as they leave Conversations.
+      final archive = await SessionArchive.load(
+        widget.prefs,
+        requestedConnectionId,
+      );
+      // A delete recorded while this page is in flight keeps its tombstone
+      // until the page has been filtered and stored.
+      listRead = archive.beginListRead();
+      bool shown(Session session) =>
+          !archive.isSessionArchived(session) &&
+          !archive.isSessionDeleted(session) &&
+          !archive.isSessionHidden(session) &&
+          !archive.isHidden(session.id) &&
+          !session.isAutomation &&
+          session.listsAsOwnRow;
+      // Four rows need one Desktop-sized page, not the whole history.
+      final sessions = await client.getSessions(
+        profile: widget.profile,
+        pageSize: homeSessionPageSize,
+        maxPages: homeSessionMaxPages,
+        enough: (rows) => rows.where(shown).length >= 4,
+      );
+      read = sessions;
       sessions.sort((a, b) => b.lastActivityAt.compareTo(a.lastActivityAt));
-      final visible = sessions
-          .where(
-            (session) =>
-                !session.archived &&
-                !session.isJob &&
-                !session.isKanbanJob &&
-                session.parentSessionId == null,
-          )
-          .take(4)
-          .toList(growable: false);
-      if (!mounted || widget.connection.id != requestedConnectionId) return;
+      final visible = sessions.where(shown).take(4).toList(growable: false);
+      // Only a read for the current connection and profile paints: a list
+      // of the previous profile must never land after a switch.
+      if (!mounted ||
+          widget.connection.id != requestedConnectionId ||
+          widget.profile != requestedProfile) {
+        return;
+      }
       setState(() => _sessions = visible);
     } catch (_) {
       // El drawer sigue siendo navegación local si el servidor está offline o
       // no publica listado de sesiones (p. ej. un runtime local legacy).
     } finally {
+      listRead?.end(rows: read);
       client.close();
     }
   }
@@ -727,7 +818,7 @@ class _DrawerRecentSessionsState extends State<_DrawerRecentSessions> {
         for (final session in _sessions)
           Semantics(
             button: true,
-            label: session.displayTitle,
+            label: localizedSessionTitle(strings, session),
             child: InkWell(
               key: ValueKey('drawer-recent-${session.id}'),
               onTap: () => widget.onOpen(session),
@@ -754,7 +845,7 @@ class _DrawerRecentSessionsState extends State<_DrawerRecentSessions> {
                       const SizedBox(width: 9),
                       Expanded(
                         child: Text(
-                          session.displayTitle,
+                          localizedSessionTitle(strings, session),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
@@ -771,7 +862,7 @@ class _DrawerRecentSessionsState extends State<_DrawerRecentSessions> {
                           strings,
                         ),
                         style: TextStyle(
-                          color: colors.textDisabled,
+                          color: colors.textTertiary,
                           fontSize: 12,
                           fontWeight: FontWeight.w500,
                           fontFeatures: const [FontFeature.tabularFigures()],
@@ -816,150 +907,156 @@ class _DrawerHeader extends StatelessWidget {
     final statusWord = checking
         ? Strings.of(context).statusChecking
         : connected
-        ? 'online'
-        : 'offline';
+        ? Strings.of(context).i18n1215StatusOnline
+        : Strings.of(context).statusOffline;
     final canSwitch = connections.isNotEmpty;
     final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
 
-    return MenuAnchor(
-      key: const ValueKey('drawer-instance-menu'),
-      animated: !reduceMotion,
-      crossAxisUnconstrained: false,
-      alignmentOffset: const Offset(-10, 0),
-      style: MenuStyle(
-        backgroundColor: WidgetStatePropertyAll(colors.surface),
-        surfaceTintColor: const WidgetStatePropertyAll(Colors.transparent),
-        elevation: const WidgetStatePropertyAll(10),
-        minimumSize: const WidgetStatePropertyAll(Size(240, 0)),
-        maximumSize: const WidgetStatePropertyAll(Size(280, double.infinity)),
-        shape: WidgetStatePropertyAll(
-          RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-            side: BorderSide(color: colors.divider.withValues(alpha: 0.72)),
+    // Back closes the open instance menu only, not the drawer.
+    return MenuBackGuard(
+      builder: (context, menuController, onOpen, onClose) => MenuAnchor(
+        key: const ValueKey('drawer-instance-menu'),
+        controller: menuController,
+        onOpen: onOpen,
+        onClose: onClose,
+        animated: !reduceMotion,
+        crossAxisUnconstrained: false,
+        alignmentOffset: const Offset(-10, 0),
+        style: MenuStyle(
+          backgroundColor: WidgetStatePropertyAll(colors.surface),
+          surfaceTintColor: const WidgetStatePropertyAll(Colors.transparent),
+          elevation: const WidgetStatePropertyAll(10),
+          minimumSize: const WidgetStatePropertyAll(Size(240, 0)),
+          maximumSize: const WidgetStatePropertyAll(Size(280, double.infinity)),
+          shape: WidgetStatePropertyAll(
+            RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+              side: BorderSide(color: colors.divider.withValues(alpha: 0.72)),
+            ),
+          ),
+          padding: const WidgetStatePropertyAll(
+            EdgeInsets.symmetric(vertical: 6),
           ),
         ),
-        padding: const WidgetStatePropertyAll(
-          EdgeInsets.symmetric(vertical: 6),
-        ),
-      ),
-      menuChildren: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 6),
-          child: Text(
-            Strings.of(context).drawerSwitchInstance,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: Theme.of(
-              context,
-            ).textTheme.labelLarge?.copyWith(color: colors.textSecondary),
-          ),
-        ),
-        for (final saved in connections)
-          MenuItemButton(
-            key: ValueKey('drawer-instance-option-${saved.id}'),
-            leadingIcon: Icon(
-              Icons.dns_outlined,
-              size: 20,
-              color: saved.id == activeConnectionId
-                  ? colors.accent
-                  : colors.textSecondary,
-            ),
-            trailingIcon: saved.id == activeConnectionId
-                ? Icon(
-                    Icons.check_rounded,
-                    size: 20,
-                    color: colors.accent,
-                    semanticLabel: Strings.of(context).drawerActiveInstance,
-                  )
-                : const SizedBox(width: 20),
-            style: const ButtonStyle(
-              minimumSize: WidgetStatePropertyAll(Size(0, 48)),
-              padding: WidgetStatePropertyAll(
-                EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              ),
-            ),
-            onPressed: () => onSelected(saved.id),
+        menuChildren: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 6),
             child: Text(
-              saved.label,
+              Strings.of(context).drawerSwitchInstance,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: colors.textPrimary,
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-              ),
+              style: Theme.of(
+                context,
+              ).textTheme.labelLarge?.copyWith(color: colors.textSecondary),
             ),
           ),
-      ],
-      builder: (context, controller, child) => Semantics(
-        header: true,
-        button: canSwitch,
-        hint: canSwitch ? Strings.of(context).drawerSwitchInstance : null,
-        child: Material(
-          color: Colors.transparent,
-          child: InkWell(
-            key: const ValueKey('drawer-instance-selector'),
-            onTap: !canSwitch
-                ? null
-                : () {
-                    if (controller.isOpen) {
-                      controller.close();
-                    } else {
-                      controller.open();
-                    }
-                  },
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(20, 20, 14, 13),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    'Hermes Console',
-                    style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: -0.3,
-                      color: colors.textPrimary,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Container(
-                        width: 6,
-                        height: 6,
-                        decoration: BoxDecoration(
-                          color: dotColor,
-                          shape: BoxShape.circle,
-                        ),
+          for (final saved in connections)
+            MenuItemButton(
+              key: ValueKey('drawer-instance-option-${saved.id}'),
+              leadingIcon: Icon(
+                instanceKindIcon(saved.kind),
+                size: 20,
+                color: saved.id == activeConnectionId
+                    ? colors.accent
+                    : colors.textSecondary,
+              ),
+              trailingIcon: saved.id == activeConnectionId
+                  ? Icon(
+                      Icons.check_rounded,
+                      size: 20,
+                      color: colors.accent,
+                      semanticLabel: Strings.of(context).drawerActiveInstance,
+                    )
+                  : const SizedBox(width: 20),
+              style: const ButtonStyle(
+                minimumSize: WidgetStatePropertyAll(Size(0, 48)),
+                padding: WidgetStatePropertyAll(
+                  EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                ),
+              ),
+              onPressed: () => onSelected(saved.id),
+              child: Text(
+                saved.label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: colors.textPrimary,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+        ],
+        builder: (context, controller, child) => Semantics(
+          header: true,
+          button: canSwitch,
+          hint: canSwitch ? Strings.of(context).drawerSwitchInstance : null,
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              key: const ValueKey('drawer-instance-selector'),
+              onTap: !canSwitch
+                  ? null
+                  : () {
+                      if (controller.isOpen) {
+                        controller.close();
+                      } else {
+                        controller.open();
+                      }
+                    },
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 20, 14, 13),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'Console',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: -0.3,
+                        color: colors.textPrimary,
                       ),
-                      const SizedBox(width: 7),
-                      Expanded(
-                        child: Text(
-                          connectionLabel == null
-                              ? Strings.of(context).drawerNoActiveInstance
-                              : '$connectionLabel · $statusWord',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 12.5,
-                            height: 1.2,
-                            color: colors.textSecondary,
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Container(
+                          width: 6,
+                          height: 6,
+                          decoration: BoxDecoration(
+                            color: dotColor,
+                            shape: BoxShape.circle,
                           ),
                         ),
-                      ),
-                      if (canSwitch) ...[
-                        const SizedBox(width: 4),
-                        Icon(
-                          Icons.expand_more_rounded,
-                          size: 18,
-                          color: colors.textSecondary,
+                        const SizedBox(width: 7),
+                        Expanded(
+                          child: Text(
+                            connectionLabel == null
+                                ? Strings.of(context).drawerNoActiveInstance
+                                : '$connectionLabel · $statusWord',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 12.5,
+                              height: 1.2,
+                              color: colors.textSecondary,
+                            ),
+                          ),
                         ),
+                        if (canSwitch) ...[
+                          const SizedBox(width: 4),
+                          Icon(
+                            Icons.expand_more_rounded,
+                            size: 18,
+                            color: colors.textSecondary,
+                          ),
+                        ],
                       ],
-                    ],
-                  ),
-                ],
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
@@ -1138,7 +1235,7 @@ class _DrawerSectionLabel extends StatelessWidget {
         child: Text(
           label.toUpperCase(),
           style: TextStyle(
-            color: colors.textDisabled,
+            color: colors.textTertiary,
             fontSize: 11.5,
             fontWeight: FontWeight.w600,
             letterSpacing: 0.5,

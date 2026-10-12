@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- One row of a board: a 34 dp lead, a name and one line under it (with a
+     small mark: a dot while it runs, a tick once done), and at the end a
+     timer or a time. Rows share the body's height in equal parts and each
+     one is its own tap target. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/lw_row"
+    android:layout_width="match_parent"
+    android:layout_height="0dp"
+    android:layout_weight="1"
+    android:baselineAligned="false"
+    android:gravity="center_vertical"
+    android:orientation="horizontal">
+
+    <FrameLayout
+        android:id="@+id/lw_row_lead"
+        android:layout_width="@dimen/lw_lead"
+        android:layout_height="@dimen/lw_lead"
+        android:layout_marginEnd="@dimen/lw_gap">
+
+        <ImageView
+            android:id="@+id/lw_row_glyph"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@drawable/lw_okc_chip"
+            android:importantForAccessibility="no"
+            android:padding="9dp"
+            android:src="@drawable/ic_console_mark" />
+
+        <ImageView
+            android:id="@+id/lw_row_face"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:importantForAccessibility="no"
+            android:visibility="gone" />
+    </FrameLayout>
+
+    <LinearLayout
+        android:id="@+id/lw_row_texts"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/lw_row_title"
+            style="@style/LW.Text.Medium.Title"
+            android:layout_width="match_parent" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/lw_line_sub"
+            android:baselineAligned="false"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <ImageView
+                android:id="@+id/lw_row_mark"
+                android:layout_width="13dp"
+                android:layout_height="13dp"
+                android:layout_marginEnd="5dp"
+                android:importantForAccessibility="no"
+                android:src="@drawable/lw_dot"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/lw_row_sub"
+                style="@style/LW.Text.Sub"
+                android:layout_width="0dp"
+                android:layout_weight="1" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <Chronometer
+        android:id="@+id/lw_row_timer"
+        style="@style/LW.Text.Medium.Timer"
+        android:layout_marginStart="@dimen/lw_gap"
+        android:visibility="gone" />
+
+    <TextView
+        android:id="@+id/lw_row_time"
+        style="@style/LW.Text.Time"
+        android:layout_marginStart="@dimen/lw_gap"
+        android:visibility="gone" />
+</LinearLayout>

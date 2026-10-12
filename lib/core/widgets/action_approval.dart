@@ -3,10 +3,12 @@ import 'package:flutter/material.dart';
 import '../../l10n/app_localizations.dart';
 import '../../main.dart';
 import '../screens/lock_screen.dart';
+import '../services/app_lock.dart';
 import '../services/approval_policy.dart';
 import '../services/command_risk.dart';
 import '../theme/app_theme.dart';
 import 'read_only.dart';
+import '../design/modal.dart' show showHermesDialogRoute;
 
 /// Decisión de la política SIN mostrar diálogo, para pantallas que ya tienen su
 /// propia confirmación rica (p.ej. el diff de memoria/SOUL o el diálogo de
@@ -23,7 +25,9 @@ ActionGate approvalGate(
   required CommandRisk risk,
   String? patternKey,
 }) {
-  final policy = context.findAncestorStateOfType<HermesAppState>()?.approvalPolicy;
+  final policy = context
+      .findAncestorStateOfType<HermesAppState>()
+      ?.approvalPolicy;
   if (policy == null) {
     return readOnlyInstance ? ActionGate.blocked : ActionGate.ask;
   }
@@ -32,13 +36,52 @@ ActionGate approvalGate(
     risk: risk,
     readOnlyInstance: readOnlyInstance,
     hasSavedAlways:
-        patternKey != null && policy.hasSavedAlways(instanceId, patternKey: patternKey),
+        patternKey != null &&
+        policy.hasSavedAlways(instanceId, patternKey: patternKey),
   );
   return switch (decision.kind) {
     ApprovalDecisionKind.blocked => ActionGate.blocked,
     ApprovalDecisionKind.autoApprove => ActionGate.proceed,
     ApprovalDecisionKind.ask => ActionGate.ask,
   };
+}
+
+/// The one rule set for answering an agent's approval request, shared by
+/// the chat card and Home's «Lo siguiente» / «Te necesita»:
+///   - read-only (instance or approval mode) blocks approving, with the
+///     read-only notice; denying is always allowed;
+///   - approving asks App Lock first when the policy requires it (the
+///     default without a policy) and the lock is on; denying never does.
+/// Returns whether the answer may be sent. [lock] overrides the app's lock
+/// (screens that receive it injected).
+Future<bool> approvalAnswerAllowed(
+  BuildContext context, {
+  required String choice,
+  required bool readOnlyInstance,
+  required String reason,
+  String? sessionId,
+  AppLockService? lock,
+}) async {
+  final app = context.findAncestorStateOfType<HermesAppState>();
+  final policy = app?.approvalPolicy;
+  final mode = policy?.effectiveMode(sessionId);
+  final deny = choice == ApprovalScope.deny.wire;
+  if (!deny && (readOnlyInstance || mode == ApprovalMode.readOnly)) {
+    showReadOnlyNotice(context);
+    return false;
+  }
+  if (!deny && (policy?.requireLock ?? true)) {
+    final appLock = lock ?? app?.appLock;
+    if (appLock != null && appLock.enabled) {
+      final verified = await LockScreen.verify(
+        context,
+        appLock,
+        reason: reason,
+      );
+      if (!verified) return false;
+    }
+  }
+  return context.mounted;
 }
 
 /// Punto ÚNICO de aprobación para acciones que la app inicia y que MUTAN una
@@ -119,7 +162,7 @@ Future<bool> _confirmDialog(
     CommandRisk.medium => colors.warning,
     CommandRisk.low => colors.textSecondary,
   };
-  final ok = await showDialog<bool>(
+  final ok = await showHermesDialogRoute<bool>(
     context: context,
     builder: (_) => AlertDialog(
       title: Text(title),
@@ -128,15 +171,19 @@ Future<bool> _confirmDialog(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (detail.isNotEmpty)
-            Text(detail,
-                style: TextStyle(fontSize: 13, color: colors.textSecondary)),
+            Text(
+              detail,
+              style: TextStyle(fontSize: 13, color: colors.textSecondary),
+            ),
           const SizedBox(height: 12),
           Row(
             children: [
               Icon(Icons.shield_outlined, size: 14, color: riskColor),
               const SizedBox(width: 6),
-              Text(risk.label,
-                  style: TextStyle(fontSize: 12, color: riskColor)),
+              Text(
+                risk.label,
+                style: TextStyle(fontSize: 12, color: riskColor),
+              ),
             ],
           ),
           if (extraConfirm) ...[
@@ -157,7 +204,9 @@ Future<bool> _confirmDialog(
           onPressed: () => Navigator.pop(context, true),
           child: Text(
             Strings.of(context).approvalAllow,
-            style: TextStyle(color: extraConfirm ? colors.error : colors.accent),
+            style: TextStyle(
+              color: extraConfirm ? colors.error : colors.accent,
+            ),
           ),
         ),
       ],

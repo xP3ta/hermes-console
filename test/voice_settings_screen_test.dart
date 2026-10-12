@@ -1,13 +1,18 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/design/hermes_design.dart'
+    show HermesStatusText;
 import 'package:hermes_android/core/screens/voice_settings_screen.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/secure_storage.dart';
 import 'package:hermes_android/core/services/voice/hermes_speech_stream.dart';
+import 'package:hermes_android/core/services/voice/read_aloud_session.dart';
 import 'package:hermes_android/core/services/voice/server_voice_config.dart';
 import 'package:hermes_android/core/services/voice/stt_sherpa.dart';
 import 'package:hermes_android/core/services/voice/tts_engine.dart';
@@ -16,11 +21,11 @@ import 'package:hermes_android/core/services/voice/voice_service.dart';
 import 'package:hermes_android/core/services/voice/voice_settings.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/hermes_notice.dart';
-import 'package:hermes_android/core/widgets/hermes_ui.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'support/quiet_feedback.dart';
 
 class _HangingPreviewEngine implements TtsEngine {
   final Completer<void> _speaking = Completer<void>();
@@ -89,11 +94,34 @@ class _TrackingHttpClient extends http.BaseClient {
   }
 }
 
+/// Plays nothing and reports completion at once: enough for read-aloud tests.
+class _InstantPlayback implements TtsAudioPlayback {
+  final _completed = StreamController<void>.broadcast();
+
+  @override
+  Stream<void> get onComplete => _completed.stream;
+
+  @override
+  Future<void> playBytes(Uint8List bytes, {required String mimeType}) async {
+    scheduleMicrotask(() => _completed.add(null));
+  }
+
+  @override
+  Future<void> playFile(String path) async {}
+
+  @override
+  Future<void> stop() async {}
+
+  @override
+  Future<void> dispose() async {
+    await _completed.close();
+  }
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   Widget host({
-    KokoroDiscoveryCallback? kokoroDiscover,
     Locale locale = const Locale('es'),
     VoiceService? voiceService,
     SavedConnection? connection,
@@ -109,7 +137,6 @@ void main() {
     theme: AppTheme.fromId('dark'),
     home: VoiceSettingsScreen(
       key: screenKey,
-      kokoroDiscover: kokoroDiscover,
       voiceService: voiceService,
       connection: connection,
       dashboardClientFactory: dashboardClientFactory,
@@ -119,113 +146,99 @@ void main() {
     ),
   );
 
-  Future<Finder> scrollToText(WidgetTester tester, String text) async {
-    final finder = find.text(text, skipOffstage: false);
-    for (
-      var attempt = 0;
-      attempt < 12 && finder.evaluate().isEmpty;
-      attempt++
-    ) {
-      await tester.drag(find.byType(ListView), const Offset(0, -350));
-      await tester.pump();
+  // The main screen is a short list; everything else lives one tap deeper.
+  // `page` is the main row to tap: dictation, reply_voice or advanced.
+  const pageRoots = {
+    'dictation': 'voice_page_dictation',
+    'reply_voice': 'voice_page_speech',
+    'advanced': 'voice_page_advanced',
+  };
+
+  Future<void> backToMain(WidgetTester tester) async {
+    if (find.byKey(const ValueKey('voice_main_list')).evaluate().isNotEmpty) {
+      return;
     }
-    expect(finder, findsOneWidget);
-    await tester.ensureVisible(finder);
-    await tester.pump();
-    return finder;
+    Navigator.of(tester.element(find.byType(Scaffold).last)).pop();
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('voice_main_list')), findsOneWidget);
   }
 
-  Future<void> invokeSecondaryButton(WidgetTester tester, Finder finder) async {
-    final callback = tester.widget<HermesSecondaryButton>(finder).onTap!;
-    final result = Function.apply(callback, const []);
-    if (result is Future) await result;
+  Future<void> openPage(WidgetTester tester, String page) async {
+    final root = find.byKey(ValueKey(pageRoots[page]!));
+    if (root.evaluate().isNotEmpty) return;
+    await backToMain(tester);
+    final row = find.byKey(ValueKey('voice_main_$page'));
+    await tester.ensureVisible(row);
     await tester.pump();
+    await tester.tap(row);
+    await tester.pumpAndSettle();
+    expect(root, findsOneWidget);
+  }
+
+  Future<Finder> revealBlock(WidgetTester tester, String key) async {
+    await openPage(tester, switch (key) {
+      'voice_listening_section' => 'dictation',
+      'voice_reading_section' => 'reply_voice',
+      _ => 'advanced',
+    });
+    final section = find.byKey(ValueKey(key));
+    expect(section, findsOneWidget);
+    await Scrollable.ensureVisible(
+      tester.element(section),
+      alignment: 0.05,
+      duration: Duration.zero,
+    );
+    await tester.pump();
+    return section;
   }
 
   Future<void> openListeningStep(WidgetTester tester) async {
-    final section = find.byKey(const ValueKey('voice_reading_section'));
-    for (
-      var attempt = 0;
-      attempt < 20 && section.evaluate().isEmpty;
-      attempt++
-    ) {
-      await tester.drag(find.byType(ListView), const Offset(0, -350));
-      await tester.pump();
-    }
-    expect(section, findsOneWidget);
-    await Scrollable.ensureVisible(
-      tester.element(section),
-      alignment: 0.05,
-      duration: Duration.zero,
+    await revealBlock(tester, 'voice_reading_section');
+    expect(
+      find.byKey(const ValueKey('voice_setup_test_action')),
+      findsOneWidget,
     );
-    await tester.pump();
-    if (find
-        .byKey(const ValueKey('voice_setup_test_action'))
-        .evaluate()
-        .isEmpty) {
-      await tester.tap(section);
-      await tester.pumpAndSettle();
+  }
+
+  Future<void> openDictationSection(WidgetTester tester) =>
+      revealBlock(tester, 'voice_listening_section');
+
+  Future<void> openConversationSection(WidgetTester tester) =>
+      revealBlock(tester, 'voice_conversation_section');
+
+  bool isSelected(WidgetTester tester, String key) => tester
+      .widget<Semantics>(
+        find
+            .ancestor(
+              of: find.byKey(ValueKey(key)),
+              matching: find.byType(Semantics),
+            )
+            .first,
+      )
+      .properties
+      .selected!;
+
+  /// Every string the screen has built, including the ones still folded
+  /// behind an "Advanced" tile.
+  Iterable<String> screenCopy(WidgetTester tester) sync* {
+    for (final widget in tester.widgetList<Text>(
+      find.byType(Text, skipOffstage: false),
+    )) {
+      yield widget.data ?? widget.textSpan!.toPlainText();
+    }
+    for (final widget in tester.widgetList<SelectableText>(
+      find.byType(SelectableText, skipOffstage: false),
+    )) {
+      yield widget.data ?? widget.textSpan!.toPlainText();
     }
   }
 
-  Future<void> openDictationSection(WidgetTester tester) async {
-    final section = find.byKey(const ValueKey('voice_listening_section'));
-    expect(section, findsOneWidget);
-    await Scrollable.ensureVisible(
-      tester.element(section),
-      alignment: 0.05,
-      duration: Duration.zero,
+  void expectNoJargon(WidgetTester tester) {
+    final jargon = RegExp(
+      r'\bSTT\b|\bTTS\b|endpoint|encadenad|chained',
+      caseSensitive: false,
     );
-    await tester.pump();
-    if (find.byKey(const ValueKey('voice_stt_advanced')).evaluate().isEmpty) {
-      await tester.tap(section);
-      await tester.pumpAndSettle();
-    }
-  }
-
-  Future<void> openConversationSection(WidgetTester tester) async {
-    final section = find.byKey(const ValueKey('voice_conversation_section'));
-    expect(section, findsOneWidget);
-    await Scrollable.ensureVisible(
-      tester.element(section),
-      alignment: 0.05,
-      duration: Duration.zero,
-    );
-    await tester.pump();
-  }
-
-  Future<void> openSttLocation(WidgetTester tester) async {
-    await openDictationSection(tester);
-    final advanced = find.byKey(
-      const ValueKey('voice_stt_advanced'),
-      skipOffstage: false,
-    );
-    final location = find.byKey(const ValueKey('voice_stt_location'));
-    if (location.evaluate().isEmpty) {
-      await tester.ensureVisible(advanced);
-      await tester.pump();
-      await tester.tap(advanced);
-      await tester.pumpAndSettle();
-    }
-    await tester.ensureVisible(location);
-    await tester.pump();
-  }
-
-  Future<void> openAdvancedTts(WidgetTester tester) async {
-    final advanced = find.byKey(const ValueKey('voice_reading_advanced'));
-    for (
-      var attempt = 0;
-      attempt < 20 && advanced.evaluate().isEmpty;
-      attempt++
-    ) {
-      await tester.drag(find.byType(ListView), const Offset(0, -350));
-      await tester.pump();
-    }
-    expect(advanced, findsOneWidget);
-    await tester.ensureVisible(advanced);
-    await tester.pump();
-    await tester.tap(advanced);
-    await tester.pumpAndSettle();
+    expect(screenCopy(tester).where(jargon.hasMatch), isEmpty);
   }
 
   test('deriva el perfil activo de la instancia y normaliza default', () async {
@@ -268,66 +281,64 @@ void main() {
     );
   });
 
-  testWidgets('separa el modo móvil sin mostrar configuración del servidor', (
+  // What the short list may show, row by row, when GPT-Live is not on offer.
+  List<String> mainListCopy(WidgetTester tester) => [
+    for (final text in tester.widgetList<Text>(
+      find.descendant(
+        of: find.byKey(const ValueKey('voice_main_list')),
+        matching: find.byType(Text),
+      ),
+    ))
+      text.data ?? text.textSpan!.toPlainText(),
+  ];
+
+  testWidgets('the main screen is a short list of label and value', (
     tester,
   ) async {
     await tester.pumpWidget(host());
     await tester.pump();
 
-    expect(find.text('Modo de voz'), findsOneWidget);
+    final copy = mainListCopy(tester);
+    expect(copy, hasLength(7));
+    expect(copy.sublist(0, 2), ['Dictado', 'En este teléfono']);
+    expect(copy[2], 'Voz de las respuestas');
+    expect(copy[3], startsWith('En este teléfono · '));
+    expect(copy.sublist(4), [
+      'Leer respuestas en voz alta',
+      'Seguir con la pantalla bloqueada',
+      'Avanzado',
+    ]);
+    // Nothing else: no status while things work, no engine row without
+    // GPT-Live, and none of the controls that moved one tap deeper.
+    expect(find.byType(HermesStatusText), findsNothing);
+    for (final key in const [
+      'voice_conversation_chained',
+      'voice_gpt_live_enabled',
+      'voice_gpt_live_retry',
+      'voice_mode_phone_option',
+      'voice_mode_server_option',
+      'voice_dictation_phone_option',
+      'voice_setup_test_action',
+      'voice_stt_location',
+      'voice_barge_in_enabled',
+      'voice_server_summary_card',
+      'voice_conversation_enabled',
+    ]) {
+      expect(find.byKey(ValueKey(key)), findsNothing, reason: key);
+    }
+    expect(find.byKey(const ValueKey('voice_auto_speak')), findsOneWidget);
     expect(
-      find.byKey(const ValueKey('voice_mode_phone_option')),
+      find.byKey(const ValueKey('voice_continue_when_locked')),
       findsOneWidget,
     );
-    expect(find.text('Servidor Hermes'), findsNWidgets(2));
-    expect(find.text('Aplicado ahora'), findsOneWidget);
-    expect(
-      find.byKey(const ValueKey('voice_applied_mode_value')),
-      findsOneWidget,
+    final banned = RegExp(
+      r'\bSTT\b|\bTTS\b|endpoint|encadenad|chained|full-duplex|instancia|'
+      r'instance|proveedor|provider',
+      caseSensitive: false,
     );
-    expect(
-      find.text('En este móvil · Whisper base', skipOffstage: false),
-      findsOneWidget,
-    );
-    expect(find.text('Dictado del chat'), findsNWidgets(2));
-    expect(
-      find.byKey(const ValueKey('voice_reading_section'), skipOffstage: false),
-      findsOneWidget,
-    );
-    expect(
-      find.byKey(const ValueKey('voice_server_summary_card')),
-      findsNothing,
-    );
-    expect(
-      find.byKey(
-        const ValueKey('voice_conversation_enabled'),
-        skipOffstage: false,
-      ),
-      findsNothing,
-    );
+    expect(copy.where(banned.hasMatch), isEmpty);
+    expect(find.text('Modo de voz'), findsNothing);
     expect(find.text('3. Probar'), findsNothing);
-    expect(
-      find.textContaining('Dictado en directo ·', skipOffstage: false),
-      findsOneWidget,
-    );
-    expect(find.text('Falta descargar el modelo seleccionado'), findsWidgets);
-    expect(
-      find.textContaining('Voz sin conexión ·', skipOffstage: false),
-      findsOneWidget,
-    );
-    expect(find.text('Dictado rápido'), findsNothing);
-    await openDictationSection(tester);
-    expect(find.text('Dictado rápido'), findsOneWidget);
-    expect(find.text('Transcribir al terminar'), findsOneWidget);
-    await openListeningStep(tester);
-    expect(find.text('Voz sin conexión'), findsOneWidget);
-    expect(find.text('Probar voz'), findsOneWidget);
-    expect(find.text('Leer respuestas automáticamente'), findsOneWidget);
-    expect(find.text('Dónde se transcribe'), findsNothing);
-
-    await openSttLocation(tester);
-    expect(find.text('Dónde se transcribe'), findsOneWidget);
-    expect(find.text('Modelo del dictado en directo'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -347,6 +358,7 @@ void main() {
 
     await tester.pumpWidget(host(connection: connection, preferences: prefs));
     await tester.pump();
+    await openListeningStep(tester);
 
     expect(tester.takeException(), isNull);
     expect(
@@ -359,26 +371,48 @@ void main() {
     expect(serverOption.onTap, isNull);
   });
 
-  testWidgets('la nueva jerarquía está localizada en inglés', (tester) async {
+  testWidgets('la lista principal y sus pantallas están en inglés', (
+    tester,
+  ) async {
     await tester.pumpWidget(host(locale: const Locale('en')));
     await tester.pump();
 
-    expect(find.text('Voice mode'), findsNWidgets(2));
-    expect(find.text('On this phone'), findsNWidgets(2));
-    expect(find.text('Hermes server'), findsNWidgets(2));
-    expect(find.text('Chat dictation'), findsNWidgets(2));
-    expect(find.text('Chat reading', skipOffstage: false), findsOneWidget);
-    expect(
-      find.byKey(const ValueKey('voice_reading_section'), skipOffstage: false),
-      findsOneWidget,
-    );
-    expect(find.byKey(const ValueKey('voice_settings_intro')), findsNothing);
-    expect(find.text('Advanced listening settings'), findsNothing);
+    final copy = mainListCopy(tester);
+    expect(copy.sublist(0, 3), ['Dictation', 'On this phone', 'Reply voice']);
+    expect(copy[3], startsWith('On this phone · '));
+    expect(copy.sublist(4), [
+      'Read responses aloud',
+      'Continue while the screen is locked',
+      'Advanced',
+    ]);
+    expect(find.text('Voice mode'), findsNothing);
+
+    // Dictation and reply voice ask the same thing, with the same words.
     await openDictationSection(tester);
-    expect(find.text('Advanced listening settings'), findsOneWidget);
-    expect(find.text('Where transcription happens'), findsNothing);
+    expect(find.text('Hermes server'), findsOneWidget);
+    expect(find.text('On this phone'), findsOneWidget);
+    expect(find.text('Model'), findsOneWidget);
+    expect(find.text('Whisper base'), findsNWidgets(2));
+    expect(find.text('Where dictation is transcribed'), findsNothing);
+    expect(find.text('When audio is processed'), findsNothing);
+
+    await openListeningStep(tester);
+    expect(find.text('Hermes server'), findsOneWidget);
+    expect(find.text('On this phone'), findsOneWidget);
+    expect(find.text('Voice'), findsOneWidget);
+    expect(find.text('Test'), findsOneWidget);
+
+    await openPage(tester, 'advanced');
+    for (final title in const ['VOICE CONVERSATION', 'SPEECH TO TEXT']) {
+      expect(find.text(title), findsOneWidget);
+    }
+    expect(find.text('TEXT TO SPEECH'), findsNothing);
+    expect(find.text('Where voice is processed'), findsNothing);
+    expect(find.text('All dictation engines'), findsNothing);
+    expect(find.text('My transcription server'), findsNothing);
     expect(find.text('3. Test'), findsNothing);
     expect(find.textContaining('Three independent controls'), findsNothing);
+    expectNoJargon(tester);
   });
 
   testWidgets('muestra la voz Edge real de Server con solo configurar y probar', (
@@ -497,44 +531,83 @@ void main() {
       isTrue,
     );
 
+    // The main row names the voice in two words: provider and voice, no
+    // model and nothing cut short.
+    final copy = mainListCopy(tester);
+    expect(copy.sublist(0, 4), [
+      'Dictado',
+      'En este teléfono',
+      'Voz de las respuestas',
+      'Edge · Elvira',
+    ]);
+    expect(find.textContaining('Endpoints'), findsNothing);
     expect(
-      find.byKey(const ValueKey('voice_server_summary_card')),
-      findsOneWidget,
-    );
-    expect(
-      tester
-          .widget<Text>(find.byKey(const ValueKey('voice_applied_mode_value')))
-          .data,
-      'Servidor Hermes',
-    );
-    expect(
-      find.descendant(
-        of: find.byKey(const ValueKey('voice_applied_routes')),
-        matching: find.text('En este móvil · Parakeet v3'),
+      find.text(
+        'El servidor escucha en Inglés; la app está en Español. '
+        'Toca Voz de las respuestas.',
       ),
       findsOneWidget,
     );
-    expect(find.text('Whisper · whisper-small · en'), findsNothing);
-    expect(find.text('Edge · Elvira · es-ES'), findsNothing);
-    expect(find.text('No disponible · audio por frases'), findsNothing);
+
+    // Reply voice: two options, each with its voice; only the chosen one
+    // shows how to change and test it.
+    final reading = await revealBlock(tester, 'voice_reading_section');
+    final serverVoice = find.byKey(const ValueKey('voice_server_summary_card'));
+    final serverOption = find.byKey(const ValueKey('voice_mode_server_option'));
+    final phoneOption = find.byKey(const ValueKey('voice_mode_phone_option'));
+    expect(isSelected(tester, 'voice_mode_server_option'), isTrue);
+    expect(isSelected(tester, 'voice_mode_phone_option'), isFalse);
     expect(
-      find.text('Endpoints y configuración detectados · se valida al hablar'),
+      find.descendant(of: serverOption, matching: find.text('Edge · Elvira')),
+      findsOneWidget,
+    );
+    expect(find.descendant(of: reading, matching: serverVoice), findsOneWidget);
+    // Desktop's fields for this provider are rows under the option.
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('voice_field_tts.provider')),
+        matching: find.text('Edge'),
+      ),
       findsOneWidget,
     );
     expect(
-      find.byKey(const ValueKey('voice_server_language_mismatch')),
+      find.descendant(
+        of: find.byKey(const ValueKey('voice_field_tts.edge.voice')),
+        matching: find.text('Elvira · es-ES'),
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('Cambiar voz'), findsNothing);
+    expect(find.text('Probar'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('voice_phone_voice_picker')),
+      findsNothing,
+    );
+    expect(find.text('Voz de Android'), findsNothing);
+    expect(find.text('Voz para leer respuestas en el chat'), findsNothing);
+    expect(
+      tester.getTopLeft(phoneOption).dy,
+      greaterThan(tester.getBottomLeft(serverVoice).dy),
+    );
+    // One line says what else the server does in a conversation.
+    expect(
+      find.text('En la conversación de voz, el servidor también te escucha.'),
       findsOneWidget,
     );
     expect(
-      find.text('El servidor escucha en Inglés; la app está en Español.'),
-      findsWidgets,
+      find.descendant(
+        of: reading,
+        matching: find.byKey(const ValueKey('voice_server_language_mismatch')),
+      ),
+      findsOneWidget,
     );
     expect(
       find.byKey(const ValueKey('voice_fix_server_language')),
       findsOneWidget,
     );
+    expect(find.text('No disponible · audio por frases'), findsNothing);
     final details = find.byKey(const ValueKey('voice_server_details_toggle'));
-    expect(details, findsOneWidget);
+    expect(find.descendant(of: serverVoice, matching: details), findsOneWidget);
     await Scrollable.ensureVisible(
       tester.element(details),
       alignment: 0.5,
@@ -543,43 +616,37 @@ void main() {
     await tester.pump();
     await tester.tap(details);
     await tester.pump();
-    expect(find.text('Whisper · whisper-small · en'), findsOneWidget);
-    expect(find.text('Edge · Elvira · es-ES'), findsOneWidget);
     expect(find.text('No disponible · audio por frases'), findsOneWidget);
-    expect(
-      find.byKey(const ValueKey('voice_listening_section')),
-      findsOneWidget,
-    );
-    expect(find.byKey(const ValueKey('voice_reading_section')), findsOneWidget);
+    expectNoJargon(tester);
 
-    await openConversationSection(tester);
-    final configure = find.byKey(const ValueKey('voice_manage_server_voice'));
+    // Dictation keeps its own engine; the selected shortcut needs no value.
+    await openDictationSection(tester);
+    expect(isSelected(tester, 'voice_dictation_phone_option'), isTrue);
+    expect(
+      find.byKey(const ValueKey('voice_applied_dictation_value')),
+      findsNothing,
+    );
+
+    await revealBlock(tester, 'voice_reading_section');
+    // Changing the voice no longer opens a separate manager.
+    expect(
+      find.byKey(const ValueKey('voice_manage_server_voice')),
+      findsNothing,
+    );
+    // The wrong transcription language is fixed with a language picker.
+    final fixLanguage = find.byKey(const ValueKey('voice_fix_server_language'));
     await Scrollable.ensureVisible(
-      tester.element(configure),
+      tester.element(fixLanguage),
       alignment: 0.5,
       duration: Duration.zero,
     );
     await tester.pump();
-    expect(
-      find.byKey(const ValueKey('voice_server_provider_catalog')),
-      findsNothing,
-    );
-    expect(
-      find.byKey(const ValueKey('voice_change_server_edge_voice')),
-      findsNothing,
-    );
-    await tester.tap(configure);
+    await tester.tap(fixLanguage);
     await tester.pumpAndSettle();
-    expect(
-      find.byKey(const ValueKey('server-voice-control-surface')),
-      findsOneWidget,
-    );
-    expect(find.text('Lo que te escucha'), findsOneWidget);
-    expect(find.text('La voz que oyes'), findsOneWidget);
+    expect(find.byKey(const ValueKey('voice_field_options')), findsOneWidget);
+    expect(find.text('Automático'), findsOneWidget);
     Navigator.of(
-      tester.element(
-        find.byKey(const ValueKey('server-voice-control-surface')),
-      ),
+      tester.element(find.byKey(const ValueKey('voice_field_options'))),
     ).pop();
     await tester.pumpAndSettle();
 
@@ -595,7 +662,7 @@ void main() {
     expect(find.text('Probar voz del servidor'), findsNothing);
     await tester.tap(testServerVoice);
     await tester.pumpAndSettle();
-    expect(find.text('La prueba de voz se reprodujo.'), findsOneWidget);
+    expectRoutineFeedback(tester, 'La prueba de voz se reprodujo.');
     expect(
       requests.where((request) {
         if (request.url.path != '/api/audio/speak' || request.body.isEmpty) {
@@ -616,9 +683,14 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('solo lectura permite inspeccionar el gestor sin mutar', (
-    tester,
-  ) async {
+  // Pumps the screen on the Hermes server route with an OpenAI server voice
+  // whose synthesis answers [detail] until [failing] is switched off.
+  Future<void> pumpServerRoute(
+    WidgetTester tester, {
+    required String detail,
+    required bool Function() failing,
+    Locale locale = const Locale('es'),
+  }) async {
     SharedPreferences.setMockInitialValues({
       'native_voice_consent::http://hermes-demo.local:9119': 'accepted',
       'native_voice_mode_v1::http://hermes-demo.local:9119': 'server',
@@ -631,72 +703,423 @@ void main() {
       host: 'hermes-demo.local',
       manualToken: 'test-token',
       httpClientOverride: MockClient((request) async {
-        if (request.url.path == '/api/config/schema') {
-          return http.Response(
-            jsonEncode({
-              'fields': {
-                'tts.provider': {
-                  'options': ['edge'],
-                },
-              },
-            }),
-            200,
-          );
-        }
-        if (request.url.path == '/api/config') {
+        if (request.method == 'GET' && request.url.path == '/api/config') {
           return http.Response(
             jsonEncode({
               'tts': {
-                'provider': 'edge',
-                'edge': {'voice': 'es-ES-ElviraNeural'},
+                'provider': 'openai',
+                'openai': {'voice': 'marin'},
               },
             }),
             200,
           );
         }
+        if (request.url.path == '/api/config/schema') {
+          return http.Response('{}', 200);
+        }
+        if (request.method == 'POST' &&
+            request.url.path == '/api/audio/speak') {
+          if (request.body.isEmpty || request.body == '{}') {
+            return http.Response('{}', 422);
+          }
+          return failing()
+              ? http.Response(jsonEncode({'detail': detail}), 400)
+              : http.Response(jsonEncode({'ok': true}), 200);
+        }
         if (request.method == 'POST' &&
             request.url.path.startsWith('/api/audio/')) {
-          return http.Response('{}', 400);
+          return http.Response('{}', 422);
         }
         return http.Response('{}', 404);
       }),
     );
     addTearDown(dashboard.close);
-    final connection = SavedConnection(
-      id: 'demo-node',
-      label: 'Server',
-      host: 'hermes-demo.local',
-      port: 8642,
-      apiKey: '',
-      dashboardUrl: 'http://hermes-demo.local:9119',
-      readOnly: true,
-    );
-
     await tester.pumpWidget(
       host(
+        locale: locale,
         voiceService: voice,
-        connection: connection,
+        connection: SavedConnection(
+          id: 'demo-node',
+          label: 'Server',
+          host: 'hermes-demo.local',
+          port: 8642,
+          apiKey: 'test-key',
+          dashboardUrl: 'http://hermes-demo.local:9119',
+        ),
         preferences: prefs,
         dashboardClientFactory: (_) => dashboard,
+        serverPreviewEngineFactory: _ServerPreviewEngine.new,
       ),
     );
     await tester.pumpAndSettle();
-    final manage = find.byKey(const ValueKey('voice_manage_server_voice'));
-    await tester.ensureVisible(manage);
-    await tester.pump();
-    expect(tester.widget<OutlinedButton>(manage).onPressed, isNotNull);
-    await tester.tap(manage);
-    await tester.pumpAndSettle();
+  }
 
-    expect(find.byKey(const ValueKey('server-voice-manager')), findsOneWidget);
-    expect(
-      find.textContaining(
-        RegExp('solo lectura', caseSensitive: false),
-        findRichText: true,
-      ),
-      findsWidgets,
+  Future<void> tapInView(WidgetTester tester, String key) async {
+    final target = find.byKey(ValueKey(key));
+    await Scrollable.ensureVisible(
+      tester.element(target),
+      alignment: 0.5,
+      duration: Duration.zero,
     );
-    expect(tester.takeException(), isNull);
+    await tester.pump();
+    await tester.tap(target);
+    await tester.pumpAndSettle();
+  }
+
+  Future<void> tapServerVoiceTest(WidgetTester tester) async {
+    await tapInView(tester, 'voice_test_server_voice');
+    // A failure is announced as a floating notice; clear it so it cannot sit
+    // over the next tap target.
+    HermesNotice.of(
+      tester.element(find.byType(Scaffold).last),
+    ).clearSnackBars();
+    await tester.pumpAndSettle();
+  }
+
+  Future<void> toggleServerDetails(WidgetTester tester) =>
+      tapInView(tester, 'voice_server_details_toggle');
+
+  testWidgets(
+    'a failed server test shows one plain line and keeps the server text '
+    'behind details',
+    (tester) async {
+      const detail =
+          'TTS configuration error (openai): tts is configured to use nous '
+          'but it is not available';
+      var speakFails = true;
+      await pumpServerRoute(tester, detail: detail, failing: () => speakFails);
+      const mainProblem = 'La prueba falló. Toca Voz de las respuestas.';
+
+      // The main row says what really speaks in the conversation.
+      expect(mainListCopy(tester).sublist(2, 4), [
+        'Voz de las respuestas',
+        'OpenAI · marin',
+      ]);
+      expect(find.text(mainProblem), findsNothing);
+
+      final reading = await revealBlock(tester, 'voice_reading_section');
+      final failed = find.descendant(
+        of: reading,
+        matching: find.text('La prueba falló'),
+      );
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('voice_mode_server_option')),
+          matching: find.text('OpenAI · marin'),
+        ),
+        findsOneWidget,
+      );
+      // No key is asked for while nothing says one is missing.
+      expect(find.byKey(const ValueKey('voice_server_add_key')), findsNothing);
+      // A healthy server voice announces nothing.
+      expect(failed, findsNothing);
+      expect(find.text('Servidor disponible'), findsNothing);
+
+      await tapServerVoiceTest(tester);
+
+      // An unrecognised reason gets the generic line, never the raw text.
+      expect(failed, findsOneWidget);
+      expect(find.textContaining('TTS configuration error'), findsNothing);
+      expect(
+        find.textContaining('El servidor de Hermes respondió'),
+        findsNothing,
+      );
+
+      await toggleServerDetails(tester);
+      final serverText = tester.widget<SelectableText>(
+        find.byKey(const ValueKey('voice_server_test_error_detail')),
+      );
+      expect(serverText.data, detail);
+      expect(find.text('Respuesta del servidor'), findsOneWidget);
+
+      // The main screen names the problem and the row that fixes it.
+      await backToMain(tester);
+      expect(find.text(mainProblem), findsOneWidget);
+      expect(find.textContaining('TTS configuration error'), findsNothing);
+
+      // The user can retry from the same place once the provider is fixed.
+      speakFails = false;
+      await revealBlock(tester, 'voice_reading_section');
+      await tapServerVoiceTest(tester);
+      expect(failed, findsNothing);
+      expect(
+        find.byKey(const ValueKey('voice_server_test_error_detail')),
+        findsNothing,
+      );
+      await backToMain(tester);
+      expect(find.text(mainProblem), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  for (final locale in const [Locale('es'), Locale('en')]) {
+    testWidgets('a server test without the provider key names the missing key '
+        '(${locale.languageCode})', (tester) async {
+      // The real Hermes text for an OpenAI voice without its key: longer
+      // than any status line could hold.
+      const detail =
+          'TTS chunk 1 failed (openai): TTS configuration error (openai): '
+          'tts is configured to use openai (set via hermes tools), but '
+          'neither tts.openai.api_key in config nor '
+          'VOICE_TOOLS_OPENAI_KEY/OPENAI_API_KEY is set. '
+          "Run 'hermes tools' to change it.";
+      expect(detail.length, greaterThan(200));
+      await pumpServerRoute(
+        tester,
+        detail: detail,
+        failing: () => true,
+        locale: locale,
+      );
+      await revealBlock(tester, 'voice_reading_section');
+      await tapServerVoiceTest(tester);
+
+      final es = locale.languageCode == 'es';
+      final summary = es
+          ? 'Falta la clave de OpenAI en el servidor'
+          : 'The OpenAI key is missing on the server';
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('voice_reading_section')),
+          matching: find.text(summary),
+        ),
+        findsOneWidget,
+      );
+      // Nothing of the server's English is on screen until asked for.
+      for (final raw in const ['OPENAI_API_KEY', 'TTS chunk', 'hermes tools']) {
+        expect(find.textContaining(raw), findsNothing, reason: raw);
+      }
+      // The sentence comes with the one action that fixes it.
+      expect(
+        find.byKey(const ValueKey('voice_server_add_key')),
+        findsOneWidget,
+      );
+      expect(find.text(es ? 'Añadir clave' : 'Add key'), findsOneWidget);
+
+      await toggleServerDetails(tester);
+      final serverText = tester.widget<SelectableText>(
+        find.byKey(const ValueKey('voice_server_test_error_detail')),
+      );
+      // Whole, selectable, and never cut in the middle of a word.
+      expect(serverText.data, detail);
+      expect(serverText.data, isNot(contains('…')));
+
+      await backToMain(tester);
+      expect(
+        find.text(
+          es
+              ? '$summary. Toca Voz de las respuestas.'
+              : '$summary. Tap Reply voice.',
+        ),
+        findsOneWidget,
+      );
+      expect(find.textContaining('OPENAI_API_KEY'), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  group('adding the missing server voice key', () {
+    const missingKey =
+        'TTS configuration error (openai): tts is configured to use openai '
+        '(set via hermes tools), but neither tts.openai.api_key in config nor '
+        'VOICE_TOOLS_OPENAI_KEY/OPENAI_API_KEY is set.';
+    const secret = 'sk-test-0123456789abcdef';
+
+    // Pumps a server route whose voice fails for lack of a key, with a
+    // Dashboard that records every write of an environment variable.
+    Future<List<http.Request>> pumpMissingKey(
+      WidgetTester tester, {
+      required bool Function() writeFails,
+      String? profile,
+      bool readOnly = false,
+    }) async {
+      final suffix = profile == null ? '' : '::profile=$profile';
+      SharedPreferences.setMockInitialValues({
+        'native_voice_consent::http://hermes-demo.local:9119$suffix':
+            'accepted',
+        'native_voice_mode_v1::http://hermes-demo.local:9119$suffix': 'server',
+      });
+      FlutterSecureStorage.setMockInitialValues({});
+      final prefs = await SharedPreferences.getInstance();
+      final voice = VoiceService(prefs, SecureStorage());
+      addTearDown(voice.dispose);
+      final writes = <http.Request>[];
+      var keyStored = false;
+      final dashboard = DashboardClient(
+        host: 'hermes-demo.local',
+        manualToken: 'test-token',
+        httpClientOverride: MockClient((request) async {
+          final path = request.url.path;
+          if (request.method == 'PUT' && path == '/api/env') {
+            writes.add(request);
+            if (writeFails()) return http.Response('{}', 500);
+            keyStored = true;
+            return http.Response(jsonEncode({'ok': true}), 200);
+          }
+          if (request.method == 'GET' && path == '/api/config') {
+            return http.Response(
+              jsonEncode({
+                'tts': {
+                  'provider': 'openai',
+                  'openai': {'voice': 'marin'},
+                },
+              }),
+              200,
+            );
+          }
+          if (path == '/api/config/schema') return http.Response('{}', 200);
+          if (request.method == 'POST' && path == '/api/audio/speak') {
+            if (request.body.isEmpty || request.body == '{}') {
+              return http.Response('{}', 422);
+            }
+            return keyStored
+                ? http.Response(jsonEncode({'ok': true}), 200)
+                : http.Response(jsonEncode({'detail': missingKey}), 400);
+          }
+          if (request.method == 'POST' && path.startsWith('/api/audio/')) {
+            return http.Response('{}', 422);
+          }
+          return http.Response('{}', 404);
+        }),
+      );
+      addTearDown(dashboard.close);
+      await tester.pumpWidget(
+        host(
+          voiceService: voice,
+          connection: SavedConnection(
+            id: 'demo-node',
+            label: 'Server',
+            host: 'hermes-demo.local',
+            port: 8642,
+            apiKey: 'test-key',
+            dashboardUrl: 'http://hermes-demo.local:9119',
+            readOnly: readOnly,
+          ),
+          preferences: prefs,
+          dashboardClientFactory: (_) => dashboard,
+          profile: profile,
+          serverPreviewEngineFactory: _ServerPreviewEngine.new,
+        ),
+      );
+      await tester.pumpAndSettle();
+      await revealBlock(tester, 'voice_reading_section');
+      await tapServerVoiceTest(tester);
+      return writes;
+    }
+
+    Future<void> typeKeyAndSave(WidgetTester tester) async {
+      await tapInView(tester, 'voice_server_add_key');
+      expect(
+        find.byKey(const ValueKey('voice_server_key_dialog')),
+        findsOneWidget,
+      );
+      final field = find.byKey(const ValueKey('voice_server_key_field'));
+      // One field, and what is typed is never readable.
+      expect(find.byType(TextField), findsOneWidget);
+      expect(tester.widget<TextField>(field).obscureText, isTrue);
+      await tester.enterText(field, '  $secret ');
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('voice_server_key_save')));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('writes the provider variable for the active profile and '
+        'never echoes the value', (tester) async {
+      final writes = await pumpMissingKey(
+        tester,
+        writeFails: () => false,
+        profile: 'work',
+      );
+      const sentence = 'Falta la clave de OpenAI en el servidor';
+      expect(find.text(sentence), findsOneWidget);
+
+      await typeKeyAndSave(tester);
+
+      expect(writes, hasLength(1));
+      expect(jsonDecode(writes.single.body), {
+        'key': 'VOICE_TOOLS_OPENAI_KEY',
+        'value': secret,
+        'profile': 'work',
+      });
+      // The dialog is gone and the key is nowhere: not on screen, not in the
+      // phone's preferences.
+      expect(
+        find.byKey(const ValueKey('voice_server_key_dialog')),
+        findsNothing,
+      );
+      expect(find.textContaining(secret), findsNothing);
+      expect(
+        screenCopy(tester).where((text) => text.contains(secret)),
+        isEmpty,
+      );
+      final prefs = await SharedPreferences.getInstance();
+      expect(
+        prefs
+            .getKeys()
+            .map(prefs.get)
+            .where((value) => '$value'.contains(secret)),
+        isEmpty,
+      );
+      // The server check ran again: the failure and its button are gone.
+      expect(find.text(sentence), findsNothing);
+      expect(find.byKey(const ValueKey('voice_server_add_key')), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a failed write says so in one sentence and keeps the '
+        'problem', (tester) async {
+      final writes = await pumpMissingKey(tester, writeFails: () => true);
+      await typeKeyAndSave(tester);
+
+      expect(writes, hasLength(1));
+      expect(jsonDecode(writes.single.body), {
+        'key': 'VOICE_TOOLS_OPENAI_KEY',
+        'value': secret,
+      });
+      expect(
+        find.text('No se pudo guardar la clave en el servidor.'),
+        findsOneWidget,
+      );
+      expect(find.textContaining(secret), findsNothing);
+      expect(
+        find.text('Falta la clave de OpenAI en el servidor'),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('voice_server_add_key')),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('an empty key cannot be saved', (tester) async {
+      final writes = await pumpMissingKey(tester, writeFails: () => false);
+      await tapInView(tester, 'voice_server_add_key');
+      await tester.tap(
+        find.byKey(const ValueKey('voice_server_key_save')),
+        warnIfMissed: false,
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('voice_server_key_dialog')),
+        findsOneWidget,
+      );
+      expect(writes, isEmpty);
+    });
+
+    testWidgets('a read-only connection is not offered the key', (
+      tester,
+    ) async {
+      final writes = await pumpMissingKey(
+        tester,
+        writeFails: () => false,
+        readOnly: true,
+      );
+      expect(
+        find.text('Falta la clave de OpenAI en el servidor'),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('voice_server_add_key')), findsNothing);
+      expect(writes, isEmpty);
+    });
   });
 
   testWidgets('distingue autenticación del Dashboard de servidor caído', (
@@ -734,10 +1157,15 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    // The main screen says what is wrong and where to fix it, in one line.
     expect(
-      find.textContaining('El Dashboard requiere iniciar sesión'),
+      find.text(
+        'Falta iniciar sesión en el servidor. Toca Voz de las respuestas.',
+      ),
       findsOneWidget,
     );
+    await revealBlock(tester, 'voice_reading_section');
+    expect(find.text('Falta iniciar sesión en el servidor'), findsOneWidget);
     final auth = find.byKey(const ValueKey('voice_server_auth_action'));
     expect(auth, findsOneWidget);
     expect(find.text('Configurar acceso al Dashboard'), findsOneWidget);
@@ -786,6 +1214,12 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    expect(
+      find.text('El servidor no ofrece voz ahora. Toca Voz de las respuestas.'),
+      findsOneWidget,
+    );
+    await revealBlock(tester, 'voice_reading_section');
+    expect(find.text('El servidor no ofrece voz ahora'), findsOneWidget);
     final update = find.byKey(const ValueKey('voice_server_update_action'));
     expect(update, findsOneWidget);
     expect(find.text('Cómo activar voz en Hermes'), findsOneWidget);
@@ -793,9 +1227,10 @@ void main() {
     await tester.pump();
 
     expect(
-      find.textContaining('Los endpoints de voz forman parte'),
+      find.textContaining('La voz del servidor forma parte'),
       findsOneWidget,
     );
+    expect(find.textContaining('endpoints'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -912,6 +1347,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
+      await revealBlock(tester, 'voice_reading_section');
       final details = find.byKey(const ValueKey('voice_server_details_toggle'));
       await Scrollable.ensureVisible(
         tester.element(details),
@@ -939,6 +1375,9 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
+      // The sub-screen that was open left with the screen that owned it.
+      expect(find.byKey(const ValueKey('voice_main_list')), findsOneWidget);
+      await revealBlock(tester, 'voice_reading_section');
       final updatedDetails = find.byKey(
         const ValueKey('voice_server_details_toggle'),
       );
@@ -956,6 +1395,149 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  // Auditoría de voz 29/09: elegir «Servidor Hermes» instalaba la voz sobre
+  // el cliente del Dashboard de esta pantalla, que se cierra al salir. Desde
+  // ese momento «Leer en voz alta» fallaba en silencio hasta reiniciar.
+  testWidgets('leer en voz alta sigue funcionando tras salir de Ajustes', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    FlutterSecureStorage.setMockInitialValues({});
+    final prefs = await SharedPreferences.getInstance();
+    // Ajustes consulta modelos locales al montar; sin disco en tests.
+    final support = Directory.systemTemp.createTempSync('voice-settings-');
+    addTearDown(() => support.deleteSync(recursive: true));
+    final messenger = TestWidgetsFlutterBinding.instance.defaultBinaryMessenger;
+    const pathProvider = MethodChannel('plugins.flutter.io/path_provider');
+    messenger.setMockMethodCallHandler(
+      pathProvider,
+      (call) async => support.path,
+    );
+    addTearDown(() => messenger.setMockMethodCallHandler(pathProvider, null));
+    final voice = VoiceService(prefs, SecureStorage())
+      ..debugNativePlaybackFactory = _InstantPlayback.new;
+    addTearDown(voice.dispose);
+    var speakRequests = 0;
+    final clients = <DashboardClient>[];
+    final transports = <_TrackingHttpClient>[];
+    final leaseStates = <bool>[];
+    DashboardClient makeDashboard(SavedConnection _) {
+      final transport = _TrackingHttpClient(
+        MockClient((request) async {
+          if (request.url.path == '/api/audio/tts-lease') {
+            leaseStates.add(jsonDecode(request.body)['active'] as bool);
+            return http.Response(jsonEncode({'ok': true}), 200);
+          }
+          if (request.method == 'GET' && request.url.path == '/api/config') {
+            return http.Response(
+              jsonEncode({
+                'stt': {'provider': 'local'},
+                'tts': {'provider': 'edge'},
+              }),
+              200,
+            );
+          }
+          if (request.method == 'GET' &&
+              request.url.path == '/api/config/schema') {
+            return http.Response(jsonEncode({'properties': {}}), 200);
+          }
+          if (request.method == 'POST' &&
+              request.url.path == '/api/audio/speak') {
+            if (request.body.trim() == '{}' || request.body.isEmpty) {
+              return http.Response('{}', 400);
+            }
+            speakRequests++;
+            return http.Response(
+              jsonEncode({
+                'ok': true,
+                'data_url': 'data:audio/mpeg;base64,AAAA',
+              }),
+              200,
+            );
+          }
+          if (request.method == 'POST' &&
+              request.url.path == '/api/audio/transcribe') {
+            return http.Response('{}', 400);
+          }
+          return http.Response('{}', 404);
+        }),
+      );
+      transports.add(transport);
+      final client = DashboardClient(
+        host: 'hermes-demo.local',
+        manualToken: 'test-token',
+        httpClientOverride: transport,
+      );
+      clients.add(client);
+      return client;
+    }
+
+    addTearDown(() {
+      for (final client in clients) {
+        client.close();
+      }
+    });
+    final connection = SavedConnection(
+      id: 'demo-node',
+      label: 'Server',
+      host: 'hermes-demo.local',
+      port: 8642,
+      apiKey: 'test-key',
+      dashboardUrl: 'http://hermes-demo.local:9119',
+    );
+    final screenKey = GlobalKey();
+    await tester.pumpWidget(
+      host(
+        voiceService: voice,
+        connection: connection,
+        dashboardClientFactory: makeDashboard,
+        preferences: prefs,
+        screenKey: screenKey,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await openListeningStep(tester);
+    await tester.tap(find.byKey(const ValueKey('voice_mode_server_option')));
+    await tester.pumpAndSettle();
+    expect(voice.nativeVoiceActive, isTrue);
+
+    // Salir de Ajustes desmonta la pantalla y cierra su propio cliente (el
+    // primero que creó); la fábrica inyectada no es de su propiedad, así que
+    // el test reproduce ese cierre explícitamente.
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    clients.first.close();
+
+    await voice.toggleReadAloud(
+      messageKey: 'chat:msg-1',
+      revision: 'r1',
+      markdown: 'Hola mundo.',
+    );
+    for (var i = 0; i < 50 && voice.readAloud.value.isActive; i++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 20)),
+      );
+    }
+    expect(voice.readAloud.value.phase, isNot(ReadAloudPhase.failed));
+    expect(speakRequests, greaterThanOrEqualTo(1));
+
+    // La voz es dueña de su cliente: al desactivarla lo cierra ella.
+    expect(transports, hasLength(2));
+    expect(transports.last.closed, isFalse);
+    voice.disableNativeVoice();
+    // El cierre espera al release del lease TTS enviado por ese cliente.
+    await tester.runAsync(pumpEventQueue);
+    expect(transports.last.closed, isTrue);
+    expect(leaseStates, [
+      true,
+      false,
+    ], reason: 'the voice client warms TTS and releases it before closing');
+    // Deja vencer el temporizador de descarga de modelos que arma el fin de
+    // la lectura; el tearDown libera el servicio.
+    await tester.pump(const Duration(minutes: 10));
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets('alterna servidor y móvil sin mezclar sus configuraciones', (
     tester,
@@ -1015,81 +1597,49 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    const consentKey = 'native_voice_consent::http://hermes-demo.local:9119';
+    const modeKey = 'native_voice_mode_v1::http://hermes-demo.local:9119';
+    final serverVoice = find.byKey(const ValueKey('voice_server_summary_card'));
+    expect(mainListCopy(tester)[1], 'En este teléfono');
+
+    // Where the voice comes from is chosen in Reply voice.
+    await openListeningStep(tester);
+    await tapInView(tester, 'voice_mode_server_option');
+    expect(prefs.getString(consentKey), 'accepted');
+    expect(prefs.getString(modeKey), 'server');
+
+    // Its voice, with the manager and the test, shows under that option;
+    // the phone voices fold away.
+    expect(serverVoice, findsOneWidget);
     expect(
-      find.byKey(const ValueKey('voice_listening_section')),
-      findsOneWidget,
-    );
-    expect(find.byKey(const ValueKey('voice_reading_section')), findsOneWidget);
-    expect(
-      find.byKey(const ValueKey('voice_server_summary_card')),
+      find.byKey(const ValueKey('voice_phone_voice_picker')),
       findsNothing,
     );
-
-    await tester.tap(find.byKey(const ValueKey('voice_mode_server_option')));
-    await tester.pumpAndSettle();
     expect(
-      prefs.getString('native_voice_consent::http://hermes-demo.local:9119'),
-      'accepted',
-    );
-    expect(
-      prefs.getString('native_voice_mode_v1::http://hermes-demo.local:9119'),
-      'server',
-    );
-    expect(
-      find.byKey(const ValueKey('voice_server_summary_card')),
-      findsOneWidget,
-    );
-    expect(
-      find.byKey(const ValueKey('voice_listening_section')),
-      findsOneWidget,
-    );
-    expect(find.byKey(const ValueKey('voice_reading_section')), findsOneWidget);
-    expect(
-      find.byKey(const ValueKey('voice_manage_server_voice')),
+      find.byKey(const ValueKey('voice_field_tts.provider')),
       findsOneWidget,
     );
     expect(
       find.byKey(const ValueKey('voice_test_server_voice')),
       findsOneWidget,
     );
-    expect(
-      find.byKey(const ValueKey('voice_server_catalog_help')),
-      findsNothing,
-    );
 
-    final hermesDictation = find.byKey(
-      const ValueKey('voice_dictation_server_option'),
-    );
-    await Scrollable.ensureVisible(
-      tester.element(hermesDictation),
-      alignment: 0.3,
-      duration: Duration.zero,
-    );
-    await tester.pump();
-    await tester.tap(hermesDictation);
-    await tester.pumpAndSettle();
+    await openDictationSection(tester);
+    await tapInView(tester, 'voice_dictation_server_option');
     expect(voice.settings.sttEngine, SttEngineKind.hermesServer);
     expect(
-      prefs.getString('native_voice_mode_v1::http://hermes-demo.local:9119'),
+      prefs.getString(modeKey),
       'server',
       reason: 'cambiar Dictado no modifica Modo Voz',
     );
+    await backToMain(tester);
+    expect(mainListCopy(tester)[1], 'Servidor Hermes');
 
-    final phoneMode = find.byKey(const ValueKey('voice_mode_phone_option'));
-    await Scrollable.ensureVisible(
-      tester.element(phoneMode),
-      alignment: 0.35,
-      duration: Duration.zero,
-    );
-    await tester.pump();
-    await tester.tap(phoneMode);
-    await tester.pumpAndSettle();
+    await revealBlock(tester, 'voice_reading_section');
+    await tapInView(tester, 'voice_mode_phone_option');
+    expect(prefs.getString(modeKey), 'phone');
     expect(
-      prefs.getString('native_voice_mode_v1::http://hermes-demo.local:9119'),
-      'phone',
-    );
-    expect(
-      prefs.getString('native_voice_consent::http://hermes-demo.local:9119'),
+      prefs.getString(consentKey),
       'accepted',
       reason: 'cambiar de motor no reescribe el consentimiento histórico',
     );
@@ -1099,70 +1649,17 @@ void main() {
       reason: 'cambiar Modo Voz no modifica Dictado',
     );
 
-    final localDictation = find.byKey(
-      const ValueKey('voice_dictation_phone_option'),
-    );
-    await Scrollable.ensureVisible(
-      tester.element(localDictation),
-      alignment: 0.3,
-      duration: Duration.zero,
-    );
-    await tester.pump();
-    await tester.tap(localDictation);
-    await tester.pumpAndSettle();
+    await openDictationSection(tester);
+    await tapInView(tester, 'voice_dictation_phone_option');
+    // Back on the phone with the model it had: nothing was swapped for it.
     expect(voice.settings.sttEngine, SttEngineKind.sherpaLive);
-    expect(voice.settings.sherpaModel, SherpaModelKind.parakeetV3);
-    expect(
-      prefs.getString('native_voice_mode_v1::http://hermes-demo.local:9119'),
-      'phone',
-    );
-    expect(
-      find.byKey(const ValueKey('voice_server_summary_card')),
-      findsNothing,
-    );
-    expect(
-      find.byKey(const ValueKey('voice_listening_section')),
-      findsOneWidget,
-    );
-    expect(find.byKey(const ValueKey('voice_reading_section')), findsOneWidget);
-    expect(tester.takeException(), isNull);
-  });
+    expect(voice.settings.sherpaModel, SherpaModelKind.whisperBase);
+    expect(prefs.getString(modeKey), 'phone');
 
-  testWidgets('expone dos opciones inequívocas y persiste reiniciar', (
-    tester,
-  ) async {
-    SharedPreferences.setMockInitialValues({});
-    FlutterSecureStorage.setMockInitialValues({});
-    final prefs = await SharedPreferences.getInstance();
-    final voice = VoiceService(prefs, SecureStorage());
-    addTearDown(voice.dispose);
-
-    await tester.pumpWidget(host(voiceService: voice));
-    await tester.pump();
     await openListeningStep(tester);
-    await openAdvancedTts(tester);
-
-    final restart = await scrollToText(tester, 'Detener y reiniciar');
-    expect(
-      find.text('Pausar y continuar', skipOffstage: false),
-      findsOneWidget,
-    );
-    expect(
-      voice.settings.readAloudStopBehavior,
-      ReadAloudStopBehavior.pauseAndResume,
-    );
-
-    await tester.tap(restart);
-    await tester.pumpAndSettle();
-
-    expect(
-      voice.settings.readAloudStopBehavior,
-      ReadAloudStopBehavior.stopAndRestart,
-    );
-    expect(
-      prefs.getString('voice_read_aloud_stop_behavior'),
-      'stop_and_restart',
-    );
+    expect(serverVoice, findsNothing);
+    await backToMain(tester);
+    expect(mainListCopy(tester)[1], 'En este teléfono');
     expect(tester.takeException(), isNull);
   });
 
@@ -1170,7 +1667,7 @@ void main() {
     tester,
   ) async {
     SharedPreferences.setMockInitialValues({
-      'voice_stt_engine': SttEngineKind.server.id,
+      'voice_stt_engine': SttEngineKind.sherpaLive.id,
       'voice_tts_engine': TtsEngineKind.device.id,
       'voice_auto_speak': true,
     });
@@ -1188,7 +1685,7 @@ void main() {
       ),
       findsNothing,
     );
-    expect(voice.settings.sttEngine, SttEngineKind.server);
+    expect(voice.settings.sttEngine, SttEngineKind.sherpaLive);
     expect(voice.settings.ttsEngine, TtsEngineKind.device);
     expect(voice.settings.autoSpeak, isTrue);
     expect(
@@ -1197,34 +1694,6 @@ void main() {
         skipOffstage: false,
       ),
       findsOneWidget,
-    );
-  });
-
-  testWidgets('la ruta aplicada no se recorta en ancho Pixel', (tester) async {
-    await tester.binding.setSurfaceSize(const Size(411, 915));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
-
-    await tester.pumpWidget(host());
-    await tester.pump();
-
-    final appliedRoutes = find.byKey(const ValueKey('voice_applied_routes'));
-    final dictationLabel = find.descendant(
-      of: appliedRoutes,
-      matching: find.text('Dictado del chat'),
-    );
-    final dictationValue = find.byKey(
-      const ValueKey('voice_applied_dictation_value'),
-    );
-
-    expect(dictationLabel, findsOneWidget);
-    expect(dictationValue, findsOneWidget);
-    expect(
-      tester.widget<Text>(dictationValue).data,
-      'En este móvil · Whisper base',
-    );
-    expect(
-      tester.getTopLeft(dictationValue).dy,
-      greaterThan(tester.getBottomLeft(dictationLabel).dy),
     );
   });
 
@@ -1239,6 +1708,7 @@ void main() {
 
     await tester.pumpWidget(host(voiceService: voice));
     await tester.pump();
+    await openConversationSection(tester);
 
     final toggle = find.byKey(const ValueKey('voice_barge_in_enabled'));
     expect(toggle, findsOneWidget);
@@ -1254,63 +1724,6 @@ void main() {
     expect(prefs.getBool('voice_barge_in_enabled_v2'), isTrue);
     expect(tester.takeException(), isNull);
   });
-
-  testWidgets(
-    'separa cuándo transcribe de dónde y oculta la ubicación al terminar',
-    (tester) async {
-      SharedPreferences.setMockInitialValues({
-        'voice_stt_engine': SttEngineKind.server.id,
-        'voice_server_stt_url': 'ws://192.168.1.40:9123',
-      });
-      FlutterSecureStorage.setMockInitialValues({});
-      final prefs = await SharedPreferences.getInstance();
-      final voice = VoiceService(prefs, SecureStorage());
-      addTearDown(voice.dispose);
-
-      await tester.pumpWidget(host(voiceService: voice));
-      await tester.pump();
-
-      await openDictationSection(tester);
-      expect(find.text('Dictado rápido'), findsOneWidget);
-      expect(find.text('Transcribir al terminar'), findsOneWidget);
-      expect(find.text('Dónde se transcribe'), findsNothing);
-      expect(
-        find.text('Activo: Mi servidor STT · toca para configurar'),
-        findsOneWidget,
-      );
-      await openSttLocation(tester);
-      expect(find.text('Dónde se transcribe'), findsOneWidget);
-
-      final afterSpeaking = find.text('Transcribir al terminar');
-      await tester.ensureVisible(afterSpeaking);
-      await tester.pump();
-      await tester.tap(afterSpeaking);
-      await tester.pumpAndSettle();
-      expect(voice.settings.sttEngine, SttEngineKind.whisper);
-      expect(find.text('Dónde se transcribe'), findsNothing);
-      expect(find.text('Modelo para transcribir al terminar'), findsOneWidget);
-      expect(find.text('Mi servidor STT'), findsNothing);
-      expect(find.text('Reconocedor de Android'), findsNothing);
-
-      final live = find.text('Dictado rápido');
-      await tester.ensureVisible(live);
-      await tester.pump();
-      await tester.tap(live);
-      await tester.pumpAndSettle();
-      expect(voice.settings.sttEngine, SttEngineKind.server);
-      expect(find.text('Dónde se transcribe'), findsOneWidget);
-      expect(
-        find.text('Activo: Mi servidor STT · toca para configurar'),
-        findsOneWidget,
-      );
-
-      await openSttLocation(tester);
-      expect(find.text('En este móvil'), findsNWidgets(3));
-      expect(find.text('Mi servidor STT'), findsNWidgets(2));
-      expect(find.text('Reconocedor de Android'), findsOneWidget);
-      expect(tester.takeException(), isNull);
-    },
-  );
 
   testWidgets('la selección legacy del servidor migra a la voz descargada', (
     tester,
@@ -1329,7 +1742,13 @@ void main() {
     await openListeningStep(tester);
     expect(voice.settings.ttsEngine, TtsEngineKind.onnx);
     expect(prefs.getString('voice_tts_engine'), TtsEngineKind.onnx.id);
-    expect(find.text('Voz sin conexión'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('voice_phone_voice')),
+        matching: find.text(neuralVoiceById('es_ES-carlfm-x_low')!.displayName),
+      ),
+      findsOneWidget,
+    );
     expect(find.text('Voz de mi servidor Hermes'), findsNothing);
     expect(find.text('Cambiar motor del servidor'), findsNothing);
     expect(tester.takeException(), isNull);
@@ -1349,6 +1768,7 @@ void main() {
 
     await tester.pumpWidget(host());
     await tester.pumpAndSettle();
+    await openListeningStep(tester);
     expect(tester.takeException(), isNull);
     final phoneOption = tester.getRect(
       find.byKey(const ValueKey('voice_mode_phone_option')),
@@ -1356,11 +1776,17 @@ void main() {
     final serverOption = tester.getRect(
       find.byKey(const ValueKey('voice_mode_server_option')),
     );
-    expect(serverOption.top, greaterThanOrEqualTo(phoneOption.bottom));
+    // Radio rows, one under the other, with the server first.
+    expect(phoneOption.top, greaterThanOrEqualTo(serverOption.bottom));
+    expect(phoneOption.left, serverOption.left);
 
-    await openListeningStep(tester);
+    await openDictationSection(tester);
     expect(tester.takeException(), isNull);
-    await scrollToText(tester, 'Probar voz');
+    await openListeningStep(tester);
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('voice_setup_test_action')),
+    );
+    await tester.pump();
     expect(tester.takeException(), isNull);
   });
 
@@ -1379,7 +1805,9 @@ void main() {
       await tester.pumpWidget(host(voiceService: voice));
       await tester.pump();
       await openListeningStep(tester);
-      final button = await scrollToText(tester, 'Probar voz');
+      final button = find.byKey(const ValueKey('voice_setup_test_action'));
+      await tester.ensureVisible(button);
+      await tester.pump();
       await tester.tap(button);
       await tester.pump();
 
@@ -1388,7 +1816,10 @@ void main() {
       await tester.pump();
 
       expect(find.text('Preparando voz…'), findsNothing);
-      expect(find.text('Probar voz'), findsOneWidget);
+      expect(
+        find.descendant(of: button, matching: find.text('Probar')),
+        findsOneWidget,
+      );
       expect(
         find.text(
           'No se pudo reproducir: La voz no produjo audio a tiempo. Comprueba '
@@ -1400,526 +1831,91 @@ void main() {
     },
   );
 
-  testWidgets(
-    'el recorrido normal es simple y las integraciones son opcionales',
-    (tester) async {
-      await tester.pumpWidget(host());
-      await tester.pump();
+  testWidgets('a saved voice or dictation service of the user\'s own is moved '
+      'without a word when the screen opens', (tester) async {
+    SharedPreferences.setMockInitialValues({
+      'voice_tts_engine': TtsEngineKind.elevenlabs.id,
+      'voice_eleven_voice_id': 'voice-123',
+      'voice_stt_engine': SttEngineKind.server.id,
+      'voice_server_stt_url': 'ws://192.168.1.40:9123',
+    });
+    FlutterSecureStorage.setMockInitialValues({});
+    final prefs = await SharedPreferences.getInstance();
+    // Nothing is downloaded on this phone.
+    final support = Directory.systemTemp.createTempSync('voice-removed-');
+    addTearDown(() => support.deleteSync(recursive: true));
+    final messenger = TestWidgetsFlutterBinding.instance.defaultBinaryMessenger;
+    const pathProvider = MethodChannel('plugins.flutter.io/path_provider');
+    messenger.setMockMethodCallHandler(
+      pathProvider,
+      (call) async => support.path,
+    );
+    addTearDown(() => messenger.setMockMethodCallHandler(pathProvider, null));
+    final voice = VoiceService(prefs, SecureStorage());
+    addTearDown(voice.dispose);
+    await voice.setElevenKey('eleven-secret');
 
-      expect(find.text('Guía paso a paso'), findsNothing);
-
-      for (final label in const ['Dictado rápido', 'Transcribir al terminar']) {
-        expect(find.text(label, skipOffstage: false), findsOneWidget);
-      }
-      expect(find.text('Opciones avanzadas'), findsNothing);
-      expect(find.text('Dónde se transcribe'), findsNothing);
-      expect(find.text('Mi servidor STT'), findsNothing);
-      expect(find.text('Reconocedor de Android'), findsNothing);
-      await openSttLocation(tester);
-      expect(find.text('En este móvil'), findsNWidgets(3));
-      expect(find.text('Mi servidor STT'), findsOneWidget);
-      expect(find.text('Reconocedor de Android'), findsOneWidget);
-
-      await openListeningStep(tester);
-      for (final label in const ['Voz de Android', 'Voz sin conexión']) {
-        expect(find.text(label), findsOneWidget);
-      }
-      expect(find.text('Voz de mi servidor Hermes'), findsNothing);
-      expect(find.text('Cambiar motor del servidor'), findsNothing);
-      expect(find.text('Servicios externos (avanzado)'), findsNothing);
-      for (final label in const [
-        'Kokoro local · configuración guiada',
-        'Otra API compatible con OpenAI',
-        'ElevenLabs',
-        'API TTS personalizada',
-      ]) {
-        expect(find.text(label), findsNothing);
-      }
-
-      await openAdvancedTts(tester);
-      for (final label in const [
-        'Kokoro local · configuración guiada',
-        'Otra API compatible con OpenAI',
-        'ElevenLabs',
-        'API TTS personalizada',
-      ]) {
-        expect(find.text(label), findsOneWidget);
-      }
-      expect(tester.takeException(), isNull);
-    },
-  );
-
-  testWidgets(
-    'la lista de lectura completa también está localizada en inglés',
-    (tester) async {
-      await tester.pumpWidget(host(locale: const Locale('en')));
-      await tester.pump();
-      await openListeningStep(tester);
-
-      for (final label in const ['Android voice', 'Offline voice']) {
-        expect(find.text(label), findsOneWidget);
-      }
-      expect(find.text('Voice from my Hermes server'), findsNothing);
-      expect(find.text('Change server engine'), findsNothing);
-      expect(find.text('External services (advanced)'), findsNothing);
-
-      await openAdvancedTts(tester);
-      for (final label in const [
-        'Local Kokoro · guided setup',
-        'Another OpenAI-compatible API',
-        'ElevenLabs',
-        'Custom TTS API',
-      ]) {
-        expect(find.text(label, skipOffstage: false), findsOneWidget);
-      }
-      expect(tester.takeException(), isNull);
-    },
-  );
-
-  testWidgets(
-    'abrir ajustes conserva device y cada opción selecciona su propio motor',
-    (tester) async {
-      SharedPreferences.setMockInitialValues({
-        'voice_tts_engine': TtsEngineKind.device.id,
-      });
-      FlutterSecureStorage.setMockInitialValues({});
-      final prefs = await SharedPreferences.getInstance();
-      final voice = VoiceService(prefs, SecureStorage());
-      addTearDown(voice.dispose);
-
-      await tester.pumpWidget(
-        MaterialApp(
-          locale: const Locale('es'),
-          localizationsDelegates: Strings.localizationsDelegates,
-          supportedLocales: Strings.supportedLocales,
-          theme: AppTheme.fromId('dark'),
-          home: VoiceSettingsScreen(voiceService: voice),
-        ),
+    await tester.pumpWidget(host(voiceService: voice, preferences: prefs));
+    // The move looks at what is downloaded: real file reads, whose answers
+    // only continue when the test pumps.
+    for (
+      var attempt = 0;
+      attempt < 200 &&
+          (voice.settings.ttsEngine != TtsEngineKind.device ||
+              voice.settings.sttEngine != SttEngineKind.system);
+      attempt++
+    ) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 10)),
       );
-      await tester.pump();
-      await openListeningStep(tester);
-
-      expect(voice.settings.ttsEngine, TtsEngineKind.device);
-      expect(prefs.getString('voice_tts_engine'), TtsEngineKind.device.id);
-
-      await tester.tap(await scrollToText(tester, 'Voz sin conexión'));
-      await tester.pumpAndSettle();
-      expect(voice.settings.ttsEngine, TtsEngineKind.onnx);
-      expect(prefs.getString('voice_tts_engine'), TtsEngineKind.onnx.id);
-
-      await tester.tap(await scrollToText(tester, 'Voz de Android'));
-      await tester.pumpAndSettle();
-      expect(voice.settings.ttsEngine, TtsEngineKind.device);
-      expect(prefs.getString('voice_tts_engine'), TtsEngineKind.device.id);
-      expect(tester.takeException(), isNull);
-    },
-  );
-
-  testWidgets(
-    'la API personalizada muestra el editor guiado al seleccionarla',
-    (tester) async {
-      await tester.pumpWidget(host());
-      await tester.pump();
-      await openListeningStep(tester);
-      await openAdvancedTts(tester);
-
-      final custom = await scrollToText(tester, 'API TTS personalizada');
-      await tester.tap(custom);
-      await tester.pump();
-
-      expect(find.text('URL donde se genera la voz'), findsOneWidget);
-      expect(find.text('¿Tu servicio pide una clave?'), findsOneWidget);
-      expect(find.text('Mi proveedor usa un formato especial'), findsOneWidget);
-      expect(
-        find.text('Plantilla de petición (solo según documentación)'),
-        findsNothing,
-      );
-      expect(find.text('Devuelve un archivo de audio'), findsNothing);
-      expect(find.text('Devuelve datos JSON'), findsNothing);
-
-      await tester.tap(
-        await scrollToText(tester, 'Mi proveedor usa un formato especial'),
-      );
-      await tester.pumpAndSettle();
-
-      expect(
-        find.text('Plantilla de petición (solo según documentación)'),
-        findsOneWidget,
-      );
-      expect(
-        find.text(
-          'La respuesta se detecta automáticamente: audio directo o los '
-          'formatos habituales del proveedor.',
-        ),
-        findsOneWidget,
-      );
-      expect(find.text('Devuelve un archivo de audio'), findsNothing);
-      expect(find.text('Devuelve datos JSON'), findsNothing);
-      expect(find.text('URL DONDE SE GENERA LA VOZ'), findsNothing);
-      expect(tester.takeException(), isNull);
-    },
-  );
-
-  testWidgets('Kokoro y OpenAI muestran recorridos distintos', (tester) async {
-    await tester.pumpWidget(host());
-    await tester.pump();
-    await openListeningStep(tester);
-    await openAdvancedTts(tester);
-
-    final kokoro = await scrollToText(
-      tester,
-      'Kokoro local · configuración guiada',
-    );
-    await tester.tap(kokoro);
-    await tester.pump();
-
-    expect(find.text('Dirección del servidor'), findsOneWidget);
-    expect(find.text('Puerto'), findsOneWidget);
-    expect(find.text('Token (opcional; normalmente vacío)'), findsOneWidget);
-    expect(find.text('Detectar y configurar Kokoro'), findsOneWidget);
-    expect(find.text('modelo'), findsNothing);
-    expect(find.text('URL base (/v1)'), findsNothing);
-
-    final openAi = await scrollToText(tester, 'Otra API compatible con OpenAI');
-    await tester.tap(openAi);
-    await tester.pump();
-
-    expect(find.text('URL base (/v1)'), findsOneWidget);
-    expect(find.text('Voz'), findsWidgets);
-    expect(find.text('modelo'), findsOneWidget);
-    expect(find.text('Token API (opcional)'), findsOneWidget);
-    expect(find.text('Dirección del servidor'), findsNothing);
-    expect(find.text('Detectar y configurar Kokoro'), findsNothing);
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('Kokoro -> OpenAI -> Kokoro mantiene valores independientes', (
-    tester,
-  ) async {
-    await tester.pumpWidget(
-      host(
-        kokoroDiscover:
-            ({
-              required String address,
-              required String port,
-              required String apiKey,
-            }) async => const KokoroTtsDiscovery(
-              baseUrl: 'http://192.168.1.20:8880/v1',
-              voices: ['ef_dora'],
-            ),
-      ),
-    );
-    await tester.pump();
-    await openListeningStep(tester);
-    await openAdvancedTts(tester);
-
-    final kokoro = await scrollToText(
-      tester,
-      'Kokoro local · configuración guiada',
-    );
-    await tester.tap(kokoro);
-    await tester.pump();
-    final detect = await scrollToText(tester, 'Detectar y configurar Kokoro');
-    await tester.tap(detect);
-    await tester.pumpAndSettle();
-    expect(
-      tester
-          .widget<TextField>(find.byKey(const ValueKey('stream_tts_url')))
-          .controller
-          ?.text,
-      'http://192.168.1.20:8880/v1',
-    );
-    expect(find.text('ef_dora'), findsWidgets);
-    // El aviso de Kokoro flota arriba y puede quedar sobre el destino del
-    // siguiente toque: se retira antes (un toque o deslizar en el dispositivo).
-    HermesNotice.of(
-      tester.element(find.byType(Scaffold).last),
-    ).clearSnackBars();
-    await tester.pumpAndSettle();
-
-    final openAi = await scrollToText(tester, 'Otra API compatible con OpenAI');
-    await tester.tap(openAi);
-    await tester.pump();
-    expect(
-      tester
-          .widget<TextField>(find.byKey(const ValueKey('stream_tts_url')))
-          .controller
-          ?.text,
-      isEmpty,
-    );
-    expect(
-      tester
-          .widget<TextField>(find.byKey(const ValueKey('stream_tts_voice')))
-          .controller
-          ?.text,
-      'alloy',
-    );
-    expect(
-      tester
-          .widget<TextField>(find.byKey(const ValueKey('stream_tts_model')))
-          .controller
-          ?.text,
-      'tts-1',
-    );
-    await tester.enterText(
-      find.byKey(const ValueKey('stream_tts_url')),
-      'https://voice.example.com/v1',
-    );
-    await tester.enterText(
-      find.byKey(const ValueKey('stream_tts_voice')),
-      'nova',
-    );
-    await tester.enterText(
-      find.byKey(const ValueKey('stream_tts_model')),
-      'gpt-4o-mini-tts',
-    );
-    final save = find.byKey(const ValueKey('stream_tts_save'));
-    await tester.ensureVisible(save);
-    await tester.pump();
-    await invokeSecondaryButton(tester, save);
-
-    await tester.tap(
-      await scrollToText(tester, 'Kokoro local · configuración guiada'),
-    );
-    await tester.pump();
-    expect(
-      tester
-          .widget<TextField>(find.byKey(const ValueKey('stream_tts_url')))
-          .controller
-          ?.text,
-      'http://192.168.1.20:8880/v1',
-    );
-    expect(find.text('ef_dora'), findsWidgets);
-
-    await tester.tap(
-      await scrollToText(tester, 'Otra API compatible con OpenAI'),
-    );
-    await tester.pump();
-    expect(
-      tester
-          .widget<TextField>(find.byKey(const ValueKey('stream_tts_url')))
-          .controller
-          ?.text,
-      'https://voice.example.com/v1',
-    );
-    expect(
-      tester
-          .widget<TextField>(find.byKey(const ValueKey('stream_tts_voice')))
-          .controller
-          ?.text,
-      'nova',
-    );
-    expect(
-      tester
-          .widget<TextField>(find.byKey(const ValueKey('stream_tts_model')))
-          .controller
-          ?.text,
-      'gpt-4o-mini-tts',
-    );
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('OpenAI no guarda una URL vacía o inválida', (tester) async {
-    await tester.pumpWidget(host());
-    await tester.pump();
-    await openListeningStep(tester);
-    await openAdvancedTts(tester);
-    await tester.tap(
-      await scrollToText(tester, 'Otra API compatible con OpenAI'),
-    );
-    await tester.pump();
-
-    await scrollToText(tester, 'Guardar configuración');
-    final save = find.byKey(const ValueKey('stream_tts_save'));
-    await tester.ensureVisible(save);
-    await tester.pump();
-    await invokeSecondaryButton(tester, save);
-    expect(
-      find.text('Configura la URL del servidor de voz primero'),
-      findsOneWidget,
-    );
-    expect(find.text('Voz por streaming guardada'), findsNothing);
-    HermesNotice.of(
-      tester.element(find.byType(Scaffold).last),
-    ).hideCurrentSnackBar();
-    await tester.pumpAndSettle();
-
-    await tester.enterText(
-      find.byKey(const ValueKey('stream_tts_url')),
-      'esto no es una URL',
-    );
-    await tester.ensureVisible(save);
-    await tester.pump();
-    await invokeSecondaryButton(tester, save);
-    expect(
-      find.text(
-        'Introduce una URL HTTP o HTTPS válida para el servidor de voz',
-      ),
-      findsOneWidget,
-    );
-    expect(find.text('Voz por streaming guardada'), findsNothing);
-    HermesNotice.of(
-      tester.element(find.byType(Scaffold).last),
-    ).hideCurrentSnackBar();
-    await tester.pumpAndSettle();
-
-    await tester.enterText(
-      find.byKey(const ValueKey('stream_tts_url')),
-      'http://api.openai.com/v1',
-    );
-    await tester.ensureVisible(save);
-    await tester.pump();
-    await invokeSecondaryButton(tester, save);
-    expect(
-      find.text(
-        'Para un servidor público usa HTTPS. HTTP solo se permite en tu red '
-        'local o Tailscale.',
-      ),
-      findsOneWidget,
-    );
-    expect(find.text('Voz por streaming guardada'), findsNothing);
-    HermesNotice.of(
-      tester.element(find.byType(Scaffold).last),
-    ).hideCurrentSnackBar();
-    await tester.pumpAndSettle();
-
-    await tester.enterText(
-      find.byKey(const ValueKey('stream_tts_url')),
-      'https://voice.example.com/v1',
-    );
-    await tester.enterText(find.byKey(const ValueKey('stream_tts_voice')), '');
-    await tester.enterText(find.byKey(const ValueKey('stream_tts_model')), '');
-    await tester.ensureVisible(save);
-    await tester.pump();
-    await invokeSecondaryButton(tester, save);
-    expect(
-      tester
-          .widget<TextField>(find.byKey(const ValueKey('stream_tts_voice')))
-          .controller
-          ?.text,
-      'alloy',
-    );
-    expect(
-      tester
-          .widget<TextField>(find.byKey(const ValueKey('stream_tts_model')))
-          .controller
-          ?.text,
-      'tts-1',
-    );
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('salir durante detección Kokoro no usa controllers liberados', (
-    tester,
-  ) async {
-    final discovery = Completer<KokoroTtsDiscovery>();
-    await tester.pumpWidget(
-      MaterialApp(
-        locale: const Locale('es'),
-        localizationsDelegates: Strings.localizationsDelegates,
-        supportedLocales: Strings.supportedLocales,
-        theme: AppTheme.fromId('dark'),
-        home: Builder(
-          builder: (context) => Scaffold(
-            body: TextButton(
-              onPressed: () => Navigator.of(context).push<void>(
-                MaterialPageRoute(
-                  builder: (_) => VoiceSettingsScreen(
-                    kokoroDiscover:
-                        ({
-                          required String address,
-                          required String port,
-                          required String apiKey,
-                        }) => discovery.future,
-                  ),
-                ),
-              ),
-              child: const Text('Abrir voz'),
-            ),
-          ),
-        ),
-      ),
-    );
-    await tester.tap(find.text('Abrir voz'));
-    await tester.pumpAndSettle();
-    await openListeningStep(tester);
-    await openAdvancedTts(tester);
-    final kokoro = await scrollToText(
-      tester,
-      'Kokoro local · configuración guiada',
-    );
-    await tester.tap(kokoro);
-    await tester.pump();
-    final detect = await scrollToText(tester, 'Detectar y configurar Kokoro');
-    await tester.tap(detect);
-    await tester.pump();
-
-    tester.state<NavigatorState>(find.byType(Navigator)).pop();
-    await tester.pumpAndSettle();
-    discovery.complete(
-      const KokoroTtsDiscovery(
-        baseUrl: 'http://192.168.1.20:8880/v1',
-        voices: ['ef_dora'],
-      ),
-    );
-    await tester.pump();
-
-    expect(find.text('Abrir voz'), findsOneWidget);
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('no guarda una plantilla REST inválida ni anuncia éxito', (
-    tester,
-  ) async {
-    await tester.pumpWidget(host());
-    await tester.pump();
-    await openListeningStep(tester);
-    await openAdvancedTts(tester);
-    final custom = await scrollToText(tester, 'API TTS personalizada');
-    await tester.tap(custom);
-    await tester.pump();
-    await tester.enterText(
-      find.byKey(const ValueKey('custom_tts_url')),
-      'https://tts.example.com/speech',
-    );
-    tester.testTextInput.hide();
-    await tester.pumpAndSettle();
-    await tester.tap(
-      await scrollToText(tester, 'Mi proveedor usa un formato especial'),
-    );
-    await tester.pumpAndSettle();
-    await tester.enterText(
-      find.byKey(const ValueKey('custom_tts_body')),
-      '{json inválido',
-    );
-    final save = await scrollToText(tester, 'Guardar configuración');
-    // Deja el botón dentro del viewport: el formulario avanzado es largo y
-    // ensureVisible puede alinearlo justo por debajo del borde inferior.
-    // Se arrastra hasta que el botón es realmente pulsable, en vez de fiarse
-    // de un desplazamiento fijo (que se rompe al añadir cualquier fila).
-    for (var attempt = 0; attempt < 15; attempt++) {
-      final box = tester.getRect(save);
-      final viewport = tester.getRect(find.byType(ListView).first);
-      if (box.bottom <= viewport.bottom - 8 && box.top >= viewport.top + 8) {
-        break;
-      }
-      // Arrastra hacia el lado que corresponda: si el botón quedó por debajo
-      // del viewport hay que subir el contenido, y si quedó por encima, bajarlo.
-      final dy = box.bottom > viewport.bottom - 8 ? -80.0 : 80.0;
-      await tester.drag(find.byType(ListView), Offset(0, dy));
       await tester.pump();
     }
-    await tester.tap(save);
-    await tester.pump();
+    await tester.pumpAndSettle();
 
+    expect(voice.settings.ttsEngine, TtsEngineKind.device);
+    expect(voice.settings.sttEngine, SttEngineKind.system);
+    expect(prefs.getString('voice_tts_engine'), TtsEngineKind.device.id);
+    expect(prefs.getString('voice_stt_engine'), SttEngineKind.system.id);
+    // What the user had typed is still stored.
+    expect(prefs.getString('voice_eleven_voice_id'), 'voice-123');
+    expect(prefs.getString('voice_server_stt_url'), 'ws://192.168.1.40:9123');
+    expect(await voice.elevenKey(), 'eleven-secret');
+    // The list shows what is in use now and says nothing about the change.
+    expect(mainListCopy(tester).sublist(0, 4), [
+      'Dictado',
+      'Reconocedor de Android',
+      'Voz de las respuestas',
+      'Voz de Android',
+    ]);
+    expect(find.byType(HermesStatusText), findsNothing);
+    expect(find.byType(SnackBar), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('reading replies aloud is a switch on the main list', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    FlutterSecureStorage.setMockInitialValues({});
+    final prefs = await SharedPreferences.getInstance();
+    final voice = VoiceService(prefs, SecureStorage());
+    addTearDown(voice.dispose);
+
+    await tester.pumpWidget(host(voiceService: voice));
+    await tester.pump();
+    final autoSpeak = find.byKey(const ValueKey('voice_auto_speak'));
     expect(
-      find.text(
-        'Revisa la URL y el formato avanzado antes de guardar. La petición '
-        'debe ser JSON válido y el nombre de cabecera debe ser correcto.',
+      find.descendant(
+        of: find.byKey(const ValueKey('voice_main_list')),
+        matching: autoSpeak,
       ),
       findsOneWidget,
     );
-    expect(find.text('Configuración TTS personalizada guardada'), findsNothing);
+    expect(voice.settings.autoSpeak, isFalse);
+    await tester.tap(autoSpeak);
+    await tester.pumpAndSettle();
+    expect(voice.settings.autoSpeak, isTrue);
+    expect(prefs.getBool('voice_auto_speak'), isTrue);
     expect(tester.takeException(), isNull);
   });
 }

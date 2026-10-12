@@ -21,17 +21,38 @@ void main() {
     await tester.pump();
 
     expect(find.text('Guía paso a paso'), findsNothing);
-    expect(find.text('Modo de voz'), findsOneWidget);
-    expect(
-      find.byKey(const ValueKey('voice_mode_phone_option')),
-      findsOneWidget,
-    );
-    expect(find.text('Servidor Hermes'), findsNWidgets(2));
-    expect(find.text('Dictado del chat'), findsNWidgets(2));
-    expect(
-      find.byKey(const ValueKey('voice_reading_section'), skipOffstage: false),
-      findsOneWidget,
-    );
+    expect(find.text('Modo de voz'), findsNothing);
+    // The main screen is a short list; routing and engines are one tap away.
+    for (final key in const [
+      'voice_main_dictation',
+      'voice_main_reply_voice',
+      'voice_auto_speak',
+      'voice_continue_when_locked',
+      'voice_main_advanced',
+    ]) {
+      expect(find.byKey(ValueKey(key)), findsOneWidget, reason: key);
+    }
+    for (final key in const [
+      'voice_mode_phone_option',
+      'voice_mode_server_option',
+      'voice_dictation_phone_option',
+      'voice_dictation_server_option',
+    ]) {
+      expect(find.byKey(ValueKey(key)), findsNothing, reason: key);
+    }
+    await tester.tap(find.byKey(const ValueKey('voice_main_reply_voice')));
+    await tester.pumpAndSettle();
+    final conversation = find.byKey(const ValueKey('voice_reading_section'));
+    for (final key in const [
+      'voice_mode_server_option',
+      'voice_mode_phone_option',
+    ]) {
+      expect(
+        find.descendant(of: conversation, matching: find.byKey(ValueKey(key))),
+        findsOneWidget,
+        reason: key,
+      );
+    }
     expect(find.textContaining('JSON'), findsNothing);
   });
 

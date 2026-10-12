@@ -1,5 +1,6 @@
 import '../../../models/hosted_groups.dart';
 import '../../../services/chat_draft_store.dart';
+import '../../../services/app_lock_sensitive_read_fence.dart';
 import '../../../services/connection_manager.dart';
 import '../../../services/shared_gateway_pool.dart';
 import 'room_gateway.dart';
@@ -108,6 +109,22 @@ Future<void> pooledRoomApprove(
   }
 }
 
+/// One member-prompt RPC (`room_member_prompts.dart`) on the pooled Desktop
+/// socket for [connection].
+Future<Map<String, dynamic>> pooledRoomPromptRequest(
+  SavedConnection connection,
+  String method,
+  Map<String, dynamic> params, {
+  SharedGatewayPool? pool,
+}) async {
+  final lease = (pool ?? SharedGatewayPool.instance).acquire(connection);
+  try {
+    return await lease.client.roomPromptRequest(method, params);
+  } finally {
+    lease.release();
+  }
+}
+
 /// Room drafts in the encrypted `ChatDraftStore`, same key as before
 /// (`mob-room-<base64(authority, room)>`) so existing drafts survive.
 final class ChatDraftRoomStore implements RoomDraftStore {
@@ -124,22 +141,37 @@ final class ChatDraftRoomStore implements RoomDraftStore {
   });
 
   @override
-  Future<({String text, String? threadId})> load() async {
+  Future<RoomDraft> load() async {
+    final ticket = store.captureDisclosure();
     final draft = await store.load(connectionId, sessionId, profile: profile);
-    return (text: draft.text, threadId: draft.replyThreadId);
+    ticket.ensureCurrent();
+    return (
+      text: draft.text,
+      threadId: draft.replyThreadId,
+      preparedId: draft.preparedTurnClientTurnId,
+      preparedText: draft.preparedTurnText,
+    );
   }
 
   @override
-  Future<void> save(String text, {String? threadId, String? preparedId}) =>
-      store.save(
-        connectionId,
-        sessionId,
-        text,
-        const [],
-        profile: profile,
-        replyThreadId: threadId,
-        preparedTurnClientTurnId: preparedId,
-      );
+  Future<void> save(
+    String text, {
+    String? threadId,
+    String? preparedId,
+    String? preparedText,
+  }) async {
+    final saved = await store.save(
+      connectionId,
+      sessionId,
+      text,
+      const [],
+      profile: profile,
+      replyThreadId: threadId,
+      preparedTurnClientTurnId: preparedId,
+      preparedTurnText: preparedText,
+    );
+    if (!saved) throw const SensitiveReadUnavailable();
+  }
 
   @override
   Future<void> clear({required String preparedId}) => store.clear(

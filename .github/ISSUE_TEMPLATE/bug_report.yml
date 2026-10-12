@@ -1,0 +1,59 @@
+name: Bug report
+description: Something in Console does not work as it should.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time. **Do not paste keys, passwords, setup codes,
+        `hermes://pair` links, server addresses you want private, or real
+        conversations.** Black them out. Vulnerabilities go to the private process
+        in [SECURITY.md](https://github.com/xP3ta/hermes-console/blob/main/SECURITY.md).
+  - type: input
+    id: version
+    attributes:
+      label: Console version
+      description: Settings, About. For example 1.2.15 (9540).
+    validations:
+      required: true
+  - type: dropdown
+    id: channel
+    attributes:
+      label: Where did you install it from?
+      options:
+        - Google Play
+        - GitHub Releases (APK)
+        - Obtainium
+        - Built from source
+    validations:
+      required: true
+  - type: input
+    id: android
+    attributes:
+      label: Android version and phone
+      placeholder: Android 15, Pixel 8
+    validations:
+      required: true
+  - type: input
+    id: hermes
+    attributes:
+      label: Hermes Agent version, and how you connect
+      description: For example "0.21.1, over Tailscale", "LAN", "HTTPS behind a reverse proxy". No addresses needed.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open ...
+        2. Tap ...
+  - type: textarea
+    id: extra
+    attributes:
+      label: Screenshots or logs
+      description: Read any log or screenshot first and remove anything private before attaching it.

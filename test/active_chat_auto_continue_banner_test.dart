@@ -180,4 +180,26 @@ void main() {
     await newTurn.loadMessages();
     expect(newTurn.offerStaleResumedSessionStop, isTrue);
   });
+
+  test('dismissed stale Stop notices are remembered for a bounded number '
+      'of turns, keeping the most recent ones', () async {
+    ActiveChat.debugResetDismissedStaleTurns();
+    addTearDown(ActiveChat.debugResetDismissedStaleTurns);
+    final base = DateTime.now().toUtc().subtract(const Duration(hours: 2));
+    const cap = ActiveChat.dismissedStaleTurnLimit;
+    for (var i = 0; i <= cap; i++) {
+      final chat = openChat(base.add(Duration(seconds: i)));
+      await chat.loadMessages();
+      expect(chat.offerStaleResumedSessionStop, isTrue);
+      chat.dismissStaleResumedSessionStopOffer();
+    }
+
+    expect(ActiveChat.debugDismissedStaleTurnCount, cap);
+    final newest = openChat(base.add(const Duration(seconds: cap)));
+    await newest.loadMessages();
+    expect(newest.offerStaleResumedSessionStop, isFalse);
+    final oldest = openChat(base);
+    await oldest.loadMessages();
+    expect(oldest.offerStaleResumedSessionStop, isTrue);
+  });
 }

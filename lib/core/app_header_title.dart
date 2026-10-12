@@ -7,15 +7,21 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// así que al cambiarlo en Ajustes el Home (que quedaba detrás) no se enteraba
 /// hasta un rebuild posterior ("tuve que hacerlo 2 veces"). Con un notifier
 /// global, cambiarlo se refleja al instante en Home/Sesiones/Chat.
-final ValueNotifier<String> headerTitleNotifier =
-    ValueNotifier<String>(kDefaultHeaderTitle);
+final ValueNotifier<String> headerTitleNotifier = ValueNotifier<String>(
+  kDefaultHeaderTitle,
+);
 
-const String kDefaultHeaderTitle = 'HERMES CONSOLE';
+const String kDefaultHeaderTitle = 'CONSOLE';
 const String kHeaderTitlePrefKey = 'header_title';
+
+/// The default before [kDefaultHeaderTitle]. Saving an empty field stored it,
+/// so a stored value equal to it was never the user's own title: it reads as
+/// today's default.
+const String _formerDefaultHeaderTitle = 'HERMES CONSOLE';
 
 String _normalize(String? raw) {
   final t = (raw ?? '').trim();
-  return t.isEmpty ? kDefaultHeaderTitle : t;
+  return t.isEmpty || t == _formerDefaultHeaderTitle ? kDefaultHeaderTitle : t;
 }
 
 /// Carga el valor persistido al arrancar la app.

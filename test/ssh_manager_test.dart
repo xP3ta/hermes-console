@@ -58,22 +58,24 @@ void main() {
     });
   });
 
-  group('describeError', () {
+  group('classifyError', () {
     test('config exception se propaga tal cual', () {
       expect(
-        SshManager.describeError(const SshConfigException('falta host')),
-        'falta host',
+        SshManager.classifyError(
+          const SshConfigException(SshFailure.missingHost),
+        ),
+        SshFailure.missingHost,
       );
     });
 
     test('mensajes de red reconocibles', () {
       expect(
-        SshManager.describeError(Exception('Connection refused')),
-        contains('rechazada'),
+        SshManager.classifyError(Exception('Connection refused')),
+        SshFailure.refused,
       );
       expect(
-        SshManager.describeError(Exception('Connection timed out')),
-        contains('espera'),
+        SshManager.classifyError(Exception('Connection timed out')),
+        SshFailure.timeout,
       );
     });
   });

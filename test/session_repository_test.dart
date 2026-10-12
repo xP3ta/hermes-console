@@ -758,6 +758,38 @@ void main() {
     },
   );
 
+  test('a search hit keeps its FTS snippet apart from a marker-free '
+      'preview (Desktop stripFtsMarkers)', () async {
+    final dashboardHttp = MockClient((request) async {
+      return http.Response(
+        jsonEncode({
+          'results': [
+            {'session_id': 'hit', 'snippet': 'QA >>>9484<<< ping'},
+            {'session_id': 'id-hit', 'snippet': 'Session ID: id-hit'},
+          ],
+        }),
+        200,
+      );
+    });
+    final gatewayHttp = MockClient((_) async => http.Response('{}', 500));
+    final dashboard = _dashboard(dashboardHttp);
+    final gateway = _gateway(gatewayHttp);
+    final repository = SessionRepository(dashboard, gateway);
+    addTearDown(() {
+      repository.close();
+      dashboard.close();
+      gateway.close();
+    });
+
+    final result = await repository.search('9484');
+    final hit = result.sessions.singleWhere((s) => s.id == 'hit');
+    expect(hit.preview, 'QA 9484 ping');
+    expect(hit.searchSnippet, 'QA >>>9484<<< ping');
+    final idHit = result.sessions.singleWhere((s) => s.id == 'id-hit');
+    expect(idHit.preview, 'Session ID: id-hit');
+    expect(idHit.searchSnippet, isNull);
+  });
+
   test(
     'búsqueda conserva sources/exclude_sources y descarta scope tardío',
     () async {
@@ -887,6 +919,55 @@ void main() {
     );
   });
 
+  test('only the gateway fallback hands over its complete listing', () async {
+    var dashboardUp = false;
+    final dashboardHttp = MockClient((_) async {
+      if (!dashboardUp) return http.Response('{}', 404);
+      return http.Response(
+        jsonEncode({
+          'sessions': [_row(0)],
+          'total': 1,
+        }),
+        200,
+      );
+    });
+    final gatewayHttp = MockClient(
+      (_) async => http.Response(
+        jsonEncode({
+          'data': [_row(0), _row(1, source: 'cron')],
+        }),
+        200,
+      ),
+    );
+    final dashboard = _dashboard(dashboardHttp);
+    final gateway = _gateway(gatewayHttp);
+    final repository = SessionRepository(dashboard, gateway);
+    addTearDown(() {
+      repository.close();
+      dashboard.close();
+      gateway.close();
+    });
+
+    // Filtered for the screen, but the raw default listing travels apart:
+    // every row the server listed, what a delete tombstone is checked
+    // against.
+    final fallback = await repository.refresh(
+      const SessionLibraryQuery(sources: ['mobile']),
+    );
+    expect(fallback.source, SessionLibrarySource.gateway);
+    expect(fallback.sessions.map((s) => s.id), ['session-0']);
+    expect(fallback.completeGatewayListing?.map((s) => s.id), [
+      'session-0',
+      'session-1',
+    ]);
+
+    // A Dashboard page is never presented as complete.
+    dashboardUp = true;
+    final page = await repository.refresh(const SessionLibraryQuery());
+    expect(page.source, SessionLibrarySource.dashboard);
+    expect(page.completeGatewayListing, isNull);
+  });
+
   test('Gateway legacy vuelve a cargar al cambiar de categoría', () async {
     final dashboardHttp = MockClient((_) async => http.Response('{}', 404));
     var gatewayRequests = 0;
@@ -984,6 +1065,51 @@ void main() {
     expect(pinRequest?.method, 'PATCH');
     expect(pinRequest?.url.toString(), contains('/api/sessions/root%2Fbranch'));
     expect(jsonDecode(pinRequest!.body), {'pinned': true, 'profile': 'coding'});
+  });
+
+  test('session state PATCH carries the profile and reports the server '
+      'refusal status', () async {
+    final requests = <http.Request>[];
+    final dashboardHttp = MockClient((request) async {
+      requests.add(request);
+      if (requests.length == 2) return http.Response('{"detail":"x"}', 400);
+      return http.Response(
+        jsonEncode({'ok': true, 'title': 'T', 'hidden': true}),
+        200,
+      );
+    });
+    final gatewayHttp = MockClient((_) async => http.Response('{}', 500));
+    final dashboard = _dashboard(dashboardHttp);
+    final gateway = _gateway(gatewayHttp);
+    final repository = SessionRepository(dashboard, gateway);
+    addTearDown(() {
+      repository.close();
+      dashboard.close();
+      gateway.close();
+    });
+
+    final answer = await repository.patchSessionState('tip/branch', {
+      'hidden': true,
+    }, 'coding');
+    expect(answer['hidden'], isTrue);
+    expect(requests.single.method, 'PATCH');
+    expect(
+      requests.single.url.toString(),
+      contains('/api/sessions/tip%2Fbranch'),
+    );
+    expect(jsonDecode(requests.single.body), {
+      'hidden': true,
+      'profile': 'coding',
+    });
+
+    Object? failure;
+    try {
+      await repository.patchSessionState('s', {'unread': true}, null);
+    } catch (error) {
+      failure = error;
+    }
+    expect(dashboardHttpStatusOf(failure!), 400);
+    expect(jsonDecode(requests.last.body), {'unread': true});
   });
 
   test(

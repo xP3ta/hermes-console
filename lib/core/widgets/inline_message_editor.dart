@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
+import '../models/composer_reference.dart';
 import '../theme/app_theme.dart';
 
 class InlineMessageEditor extends StatefulWidget {
@@ -12,10 +13,17 @@ class InlineMessageEditor extends StatefulWidget {
     required this.onSave,
     this.attachments,
     this.saving = false,
+    this.draftText,
     super.key,
   });
 
+  /// The message as it stands; Save stays off until the text differs.
   final String initialText;
+
+  /// Text to show instead of [initialText], such as an edit whose save
+  /// failed. It is compared against [initialText], not against itself, so the
+  /// user can retry the same rewrite.
+  final String? draftText;
   final VoidCallback onCancel;
   final ValueChanged<String> onSave;
   final Widget? attachments;
@@ -43,8 +51,9 @@ class _InlineMessageEditorState extends State<InlineMessageEditor>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _controller = TextEditingController(text: widget.initialText)
-      ..selection = TextSelection.collapsed(offset: widget.initialText.length)
+    final text = widget.draftText ?? widget.initialText;
+    _controller = _ReferenceAccentController(text: text)
+      ..selection = TextSelection.collapsed(offset: text.length)
       ..addListener(_onTextChanged);
     _focusNode = FocusNode();
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -56,6 +65,26 @@ class _InlineMessageEditorState extends State<InlineMessageEditor>
       // el teclado cambia los insets; animar los dos deja un doble salto.
       _ensureVisible(animate: false);
     });
+  }
+
+  @override
+  void didUpdateWidget(InlineMessageEditor oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // A save that ended without closing the editor failed: let the user try
+    // again or cancel.
+    if (oldWidget.saving && !widget.saving) _submitted = false;
+    final draft = widget.draftText;
+    // A returned draft also means the save ended without closing the editor,
+    // even when the parent never painted a frame with `saving` on.
+    if (draft != oldWidget.draftText && !widget.saving) _submitted = false;
+    if (draft != null && draft != oldWidget.draftText) {
+      if (_controller.text != draft) {
+        _controller.value = TextEditingValue(
+          text: draft,
+          selection: TextSelection.collapsed(offset: draft.length),
+        );
+      }
+    }
   }
 
   @override
@@ -206,5 +235,51 @@ class _InlineMessageEditorState extends State<InlineMessageEditor>
         ],
       ),
     );
+  }
+}
+
+/// Edit composer text with complete `@file:`/`@folder:`/`@url:` references
+/// in the accent colour, like the main composer. The text itself stays the
+/// raw directive so saving sends exactly what Hermes reads.
+class _ReferenceAccentController extends TextEditingController {
+  _ReferenceAccentController({super.text});
+
+  @override
+  TextSpan buildTextSpan({
+    required BuildContext context,
+    TextStyle? style,
+    required bool withComposing,
+  }) {
+    final ranges = composerReferenceRanges(text).toList();
+    final composingActive =
+        withComposing &&
+        value.isComposingRangeValid &&
+        !value.composing.isCollapsed;
+    if (ranges.isEmpty || composingActive) {
+      return super.buildTextSpan(
+        context: context,
+        style: style,
+        withComposing: withComposing,
+      );
+    }
+    final accent = Theme.of(context).hermes.accent;
+    final children = <InlineSpan>[];
+    var cursor = 0;
+    for (final range in ranges) {
+      if (range.start > cursor) {
+        children.add(TextSpan(text: text.substring(cursor, range.start)));
+      }
+      children.add(
+        TextSpan(
+          text: range.textInside(text),
+          style: TextStyle(color: accent),
+        ),
+      );
+      cursor = range.end;
+    }
+    if (cursor < text.length) {
+      children.add(TextSpan(text: text.substring(cursor)));
+    }
+    return TextSpan(style: style, children: children);
   }
 }

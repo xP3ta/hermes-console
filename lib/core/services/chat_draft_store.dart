@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/attachment_draft.dart';
 import '../models/session.dart';
 import 'attachment_uploader.dart';
+import 'app_lock_sensitive_read_fence.dart';
 import 'session_deletion.dart';
 import 'turn_outbox_store.dart';
 
@@ -15,13 +16,24 @@ class ChatDraft {
   final String text;
   final List<AttachmentDraft> attachments;
   final String? preparedTurnClientTurnId;
+
+  /// Leading part of [text] that is the bound send's own text; the rest was
+  /// typed after it and is never part of that send. Null: all of [text].
+  final String? preparedTurnText;
   final String? replyThreadId;
+
+  /// Turno ya persistido en la outbox cuyo lote es exactamente este borrador.
+  /// Solo vive en el store: la pantalla nunca lo adopta como autoridad del
+  /// composer, y cualquier edición posterior lo retira al reescribir la clave.
+  final String? submittedTurnClientTurnId;
 
   const ChatDraft({
     required this.text,
     required this.attachments,
     this.preparedTurnClientTurnId,
+    this.preparedTurnText,
     this.replyThreadId,
+    this.submittedTurnClientTurnId,
   });
 }
 
@@ -112,6 +124,39 @@ class ChatDraftStore {
        _deletePrivateCopy =
            deletePrivateCopy ?? AttachmentUploader.deletePrivateDraftCopy;
 
+  Future<String?> _read({required String key}) async {
+    final ticket = AppLockSensitiveReadFence.current;
+    ticket.ensureCurrent();
+    await _prefs.reload();
+    ticket.ensureCurrent();
+    final result = await _secure.read(key: key);
+    ticket.ensureCurrent();
+    return result;
+  }
+
+  Future<Map<String, String>> _readAll() async {
+    final ticket = AppLockSensitiveReadFence.current;
+    ticket.ensureCurrent();
+    await _prefs.reload();
+    ticket.ensureCurrent();
+    final result = await _secure.readAll();
+    ticket.ensureCurrent();
+    return result;
+  }
+
+  Future<void> _delete({required String key}) {
+    AppLockSensitiveReadFence.current.ensureCurrent();
+    return _secure.delete(key: key);
+  }
+
+  Future<void> _write({required String key, required String value}) {
+    AppLockSensitiveReadFence.current.ensureCurrent();
+    return _secure.write(key: key, value: value);
+  }
+
+  SensitiveReadTicket captureDisclosure() =>
+      AppLockSensitiveReadFence.capture(_prefs);
+
   static String _scope(String value) =>
       base64Url.encode(utf8.encode(value)).replaceAll('=', '');
 
@@ -178,6 +223,7 @@ class ChatDraftStore {
   static const Duration maxAge = Duration(days: 30);
 
   ChatDraftEntry? _decodeEntry(String sessionId, String profile, String raw) {
+    AppLockSensitiveReadFence.current.ensureCurrent();
     try {
       final data = jsonDecode(raw) as Map<String, dynamic>;
       final savedAt = DateTime.fromMillisecondsSinceEpoch(
@@ -209,6 +255,12 @@ class ChatDraftStore {
         preparedTurnClientTurnId: _safeOpaqueIdentity(
           data['preparedTurnClientTurnId'],
         ),
+        preparedTurnText: data['preparedTurnText'] is String
+            ? data['preparedTurnText'] as String
+            : null,
+        submittedTurnClientTurnId: _safeOpaqueIdentity(
+          data['submittedTurnClientTurnId'],
+        ),
       );
       if (draft.text.isEmpty && draft.attachments.isEmpty) return null;
       return ChatDraftEntry(
@@ -228,6 +280,22 @@ class ChatDraftStore {
     String profile = 'default',
     // Conservado para compatibilidad; V1/V2 no tienen ownership demostrable.
     bool claimUnscopedLegacy = false,
+  }) => AppLockSensitiveReadFence.run(
+    _prefs,
+    () => _privacyLoad(
+      connectionId,
+      sessionId,
+      profile: profile,
+      claimUnscopedLegacy: claimUnscopedLegacy,
+    ),
+  );
+
+  Future<ChatDraft> _privacyLoad(
+    String connectionId,
+    String sessionId, {
+    String profile = 'default',
+    // Conservado para compatibilidad; V1/V2 no tienen ownership demostrable.
+    bool claimUnscopedLegacy = false,
   }) async {
     await LocalConversationCleanupFence.waitForSessionClears(
       connectionId: connectionId,
@@ -239,7 +307,7 @@ class ChatDraftStore {
     if (admittedSave != null) await admittedSave;
     final pendingMutation = _mutationTails[_mutationScope(key)];
     if (pendingMutation != null) await pendingMutation;
-    final raw = await _secure.read(key: key);
+    final raw = await _read(key: key);
     // V1/V2 concatenaban connectionId y sessionId con `_` sin escape. Incluso
     // un lookup aparentemente exacto puede pertenecer a otra pareja de IDs,
     // por lo que nunca se reclama ni migra automáticamente.
@@ -256,10 +324,18 @@ class ChatDraftStore {
 
   /// Lista borradores vivos de una conexión para que Inicio/Conversaciones
   /// puedan reabrir chats aún no materializados en Hermes.
-  Future<List<ChatDraftEntry>> listForConnection(String connectionId) async {
+  Future<List<ChatDraftEntry>> listForConnection(String connectionId) =>
+      AppLockSensitiveReadFence.run(
+        _prefs,
+        () => _privacyListForConnection(connectionId),
+      );
+
+  Future<List<ChatDraftEntry>> _privacyListForConnection(
+    String connectionId,
+  ) async {
     final prefix = 'chat_draft_v3.${_scope(connectionId)}.';
     final entries = <ChatDraftEntry>[];
-    final secureEntries = await _secure.readAll();
+    final secureEntries = await _readAll();
     for (final item in secureEntries.entries) {
       if (!item.key.startsWith(prefix)) continue;
       final suffix = item.key.substring(prefix.length).split('.');
@@ -308,7 +384,41 @@ class ChatDraftStore {
     List<AttachmentDraft> attachments, {
     String profile = 'default',
     String? preparedTurnClientTurnId,
+    String? preparedTurnText,
     String? replyThreadId,
+    String? submittedTurnClientTurnId,
+    String? rescueActionUid,
+    LocalConversationLifecycle? lifecycle,
+    Future<bool>? afterSave,
+  }) => AppLockSensitiveReadFence.run(
+    _prefs,
+    () => _privacySave(
+      connectionId,
+      sessionId,
+      text,
+      attachments,
+      profile: profile,
+      preparedTurnClientTurnId: preparedTurnClientTurnId,
+      preparedTurnText: preparedTurnText,
+      replyThreadId: replyThreadId,
+      submittedTurnClientTurnId: submittedTurnClientTurnId,
+      rescueActionUid: rescueActionUid,
+      lifecycle: lifecycle,
+      afterSave: afterSave,
+    ),
+  );
+
+  Future<bool> _privacySave(
+    String connectionId,
+    String sessionId,
+    String text,
+    List<AttachmentDraft> attachments, {
+    String profile = 'default',
+    String? preparedTurnClientTurnId,
+    String? preparedTurnText,
+    String? replyThreadId,
+    String? submittedTurnClientTurnId,
+    String? rescueActionUid,
     LocalConversationLifecycle? lifecycle,
     Future<bool>? afterSave,
   }) {
@@ -322,7 +432,10 @@ class ChatDraftStore {
       attachments,
       profile: owner,
       preparedTurnClientTurnId: preparedTurnClientTurnId,
+      preparedTurnText: preparedTurnText,
       replyThreadId: replyThreadId,
+      submittedTurnClientTurnId: submittedTurnClientTurnId,
+      rescueActionUid: rescueActionUid,
       lifecycle: lifecycle,
       afterSave: afterSave,
     );
@@ -348,7 +461,10 @@ class ChatDraftStore {
     List<AttachmentDraft> attachments, {
     String profile = 'default',
     String? preparedTurnClientTurnId,
+    String? preparedTurnText,
     String? replyThreadId,
+    String? submittedTurnClientTurnId,
+    String? rescueActionUid,
     LocalConversationLifecycle? lifecycle,
     // Admit before waiting on a screen's two-key move. Cleanup must see this
     // request even while an earlier snapshot is still using storage.
@@ -402,67 +518,125 @@ class ChatDraftStore {
         admittedOperation: journalOperation,
         operation: () => _serializeMutation(
           mutationScope,
-          () => AttachmentOwnershipCoordinator.serialize(() async {
-            LocalConversationCleanupFence.ensureOperationAllowed(
-              journalOperation,
-            );
-            if (_currentMutationGeneration(mutationScope) !=
-                admittedGeneration) {
-              return;
-            }
-            if (text.isEmpty && normalizedAttachments.isEmpty) {
-              didCommit = await _clearUnlocked(
-                connectionId,
-                sessionId,
-                owner: owner,
-                operation: journalOperation,
-                resource: resource,
+          () => AttachmentOwnershipCoordinator.serialize(
+            () => _recoverAdmittedSnapshot(() async {
+              AppLockSensitiveReadFence.current.ensureCurrent();
+              LocalConversationCleanupFence.ensureOperationAllowed(
+                journalOperation,
               );
-              return;
-            }
-            final safePreparedTurnId = _safeOpaqueIdentity(
-              preparedTurnClientTurnId,
-            );
-            if (safePreparedTurnId != null &&
-                await TurnOutboxStore(
-                  secureStorage: _secure,
-                ).isFailedBeforeAcceptanceDiscarded(
-                  connectionId: connectionId,
-                  profile: owner,
-                  sessionId: sessionId,
-                  clientTurnId: safePreparedTurnId,
-                )) {
-              return;
-            }
-            final previous = await _secure.read(key: key);
-            LocalConversationCleanupFence.ensureOperationAllowed(
-              journalOperation,
-            );
-            final encoded = jsonEncode({
-              'savedAt': DateTime.now().millisecondsSinceEpoch,
-              'text': text,
-              'replyThreadId': ?_safeOpaqueIdentity(replyThreadId),
-              'preparedTurnClientTurnId': ?safePreparedTurnId,
-              'attachments': normalizedAttachments
-                  .map((item) => item.toJson())
-                  .toList(),
-            });
-            final committed = await LocalConversationCleanupFence.commitEffect(
-              operation: journalOperation,
-              resource: resource,
-              mutation: () => _secure.write(key: key, value: encoded),
-            );
-            if (!committed) return;
-            didCommit = true;
-            _changes.add((
-              connectionId: connectionId,
-              profile: owner,
-              sessionId: sessionId,
-            ));
-            await _cleanupUnowned([
-              if (previous != null) ..._attachmentsFromRaw(previous),
-            ]);
-          }),
+              if (_currentMutationGeneration(mutationScope) !=
+                  admittedGeneration) {
+                return;
+              }
+              if (text.isEmpty && normalizedAttachments.isEmpty) {
+                didCommit = await _clearUnlocked(
+                  connectionId,
+                  sessionId,
+                  owner: owner,
+                  operation: journalOperation,
+                  resource: resource,
+                );
+                return;
+              }
+              final safePreparedTurnId = _safeOpaqueIdentity(
+                preparedTurnClientTurnId,
+              );
+              if (safePreparedTurnId != null &&
+                  await TurnOutboxStore(
+                    secureStorage: _secure,
+                  ).isFailedBeforeAcceptanceDiscarded(
+                    connectionId: connectionId,
+                    profile: owner,
+                    sessionId: sessionId,
+                    clientTurnId: safePreparedTurnId,
+                  )) {
+                return;
+              }
+              final previous = await _read(key: key);
+              final removedAttachments = previous == null
+                  ? <AttachmentDraft>[]
+                  : _attachmentsFromRaw(previous);
+              LocalConversationCleanupFence.ensureOperationAllowed(
+                journalOperation,
+              );
+              // Receipt and appended text share one encrypted value/commit.
+              // The key binds connection + profile + session; never dedupe by
+              // text, nor by an install-global UID. Legacy v3 has no receipts.
+              final previousData = previous == null
+                  ? <String, dynamic>{}
+                  : Map<String, dynamic>.from(jsonDecode(previous) as Map);
+              final rawReceipts = previousData['rescuedActions'];
+              if (rawReceipts != null && rawReceipts is! Map) {
+                throw StateError('invalid rescue receipts');
+              }
+              final receipts = rawReceipts == null
+                  ? <String, dynamic>{}
+                  : Map<String, dynamic>.from(rawReceipts as Map);
+              var savedText = text;
+              var savedAttachments = normalizedAttachments;
+              var savedPreparedId = safePreparedTurnId;
+              var savedPreparedText = preparedTurnText;
+              var savedSubmittedId = _safeOpaqueIdentity(
+                submittedTurnClientTurnId,
+              );
+              var savedThreadId = _safeOpaqueIdentity(replyThreadId);
+              if (rescueActionUid != null) {
+                if (_safeOpaqueIdentity(rescueActionUid) != rescueActionUid ||
+                    text.trim().isEmpty) {
+                  throw StateError('invalid rescue identity');
+                }
+                if (receipts.containsKey(rescueActionUid)) {
+                  if (receipts[rescueActionUid] != text) {
+                    throw StateError('rescue identity payload conflict');
+                  }
+                  didCommit =
+                      true; // Exact durable receipt, not suffix evidence.
+                  return;
+                }
+                final stored = previous == null
+                    ? null
+                    : _decodeEntry(sessionId, owner, previous)?.draft;
+                if (previous != null && stored == null) {
+                  throw StateError('rescue draft unavailable');
+                }
+                final currentText = stored?.text ?? '';
+                savedText = currentText.isEmpty ? text : '$currentText\n$text';
+                savedAttachments = stored?.attachments ?? const [];
+                savedPreparedId = stored?.preparedTurnClientTurnId;
+                savedPreparedText = stored?.preparedTurnText;
+                savedSubmittedId = stored?.submittedTurnClientTurnId;
+                savedThreadId = stored?.replyThreadId ?? savedThreadId;
+                receipts[rescueActionUid] = text;
+              }
+              final encoded = jsonEncode({
+                'savedAt': DateTime.now().millisecondsSinceEpoch,
+                'text': savedText,
+                if (receipts.isNotEmpty) 'rescuedActions': receipts,
+                'replyThreadId': ?savedThreadId,
+                'preparedTurnClientTurnId': ?savedPreparedId,
+                if (savedPreparedId != null)
+                  'preparedTurnText': ?savedPreparedText,
+                'submittedTurnClientTurnId': ?savedSubmittedId,
+                'attachments': savedAttachments
+                    .map((item) => item.toJson())
+                    .toList(),
+              });
+              final committed =
+                  await LocalConversationCleanupFence.commitEffect(
+                    operation: journalOperation,
+                    resource: resource,
+                    mutation: () => _write(key: key, value: encoded),
+                  );
+              if (!committed) return;
+              didCommit = true;
+              _changes.add((
+                connectionId: connectionId,
+                profile: owner,
+                sessionId: sessionId,
+              ));
+              await _cleanupUnowned(removedAttachments);
+            }),
+          ),
         ),
       );
     } finally {
@@ -472,6 +646,24 @@ class ChatDraftStore {
       );
     }
     return didCommit;
+  }
+
+  Future<T> _recoverAdmittedSnapshot<T>(Future<T> Function() attempt) async {
+    final retired = AppLockSensitiveReadFence.current;
+    try {
+      return await attempt();
+    } on SensitiveReadUnavailable {
+      // A disabled-lock app replacement may recover an already admitted UI
+      // snapshot in its original journal lane. Never renew an enabled-lock
+      // ticket, a same-issuer ABA, or a locked successor. Cleanup and mutation
+      // generations remain authoritative; this is not transport recovery.
+      if (_prefs.getBool('app_lock_enabled') == true ||
+          retired.issuerIsCurrent ||
+          !AppLockSensitiveReadFence.capture(_prefs).isCurrent) {
+        rethrow;
+      }
+      return AppLockSensitiveReadFence.recover(attempt);
+    }
   }
 
   static String? _safeOpaqueIdentity(Object? value) {
@@ -491,11 +683,41 @@ class ChatDraftStore {
     // Conservado para compatibilidad; nunca autoriza V1/V2 ambiguos.
     bool includeUnscoped = false,
     String? onlyPreparedTurnClientTurnId,
+    // Retira solo el borrador que sigue siendo el lote exacto de ese turno ya
+    // persistido. No depende de ninguna pantalla viva y nunca invalida una
+    // escritura concurrente con contenido nuevo.
+    String? onlySubmittedTurnClientTurnId,
+  }) => AppLockSensitiveReadFence.run(
+    _prefs,
+    () => _privacyClear(
+      connectionId,
+      sessionId,
+      profile: profile,
+      includeUnscoped: includeUnscoped,
+      onlyPreparedTurnClientTurnId: onlyPreparedTurnClientTurnId,
+      onlySubmittedTurnClientTurnId: onlySubmittedTurnClientTurnId,
+    ),
+  );
+
+  Future<void> _privacyClear(
+    String connectionId,
+    String sessionId, {
+    String profile = 'default',
+    // Conservado para compatibilidad; nunca autoriza V1/V2 ambiguos.
+    bool includeUnscoped = false,
+    String? onlyPreparedTurnClientTurnId,
+    // Retira solo el borrador que sigue siendo el lote exacto de ese turno ya
+    // persistido. No depende de ninguna pantalla viva y nunca invalida una
+    // escritura concurrente con contenido nuevo.
+    String? onlySubmittedTurnClientTurnId,
   }) {
     final owner = profile.trim().isEmpty ? 'default' : profile.trim();
     final key = _key(connectionId, sessionId, owner);
     final mutationScope = _mutationScope(key);
-    if (onlyPreparedTurnClientTurnId == null) {
+    final conditional =
+        onlyPreparedTurnClientTurnId != null ||
+        onlySubmittedTurnClientTurnId != null;
+    if (!conditional) {
       _advanceMutationGeneration(mutationScope);
     }
     final admittedSaves = _admittedSaveTails[mutationScope];
@@ -518,16 +740,51 @@ class ChatDraftStore {
       return Future<void>.error(error, stackTrace);
     }
     Future<void> clearMatching() => _serializeMutation(mutationScope, () async {
-      if (onlyPreparedTurnClientTurnId != null) {
-        final raw = await _secure.read(key: key);
-        if (raw == null ||
-            _decodeEntry(
-                  sessionId,
-                  owner,
-                  raw,
-                )?.draft.preparedTurnClientTurnId !=
-                onlyPreparedTurnClientTurnId) {
+      if (conditional) {
+        final raw = await _read(key: key);
+        final stored = raw == null
+            ? null
+            : _decodeEntry(sessionId, owner, raw)?.draft;
+        if (stored == null ||
+            (onlyPreparedTurnClientTurnId != null &&
+                stored.preparedTurnClientTurnId !=
+                    onlyPreparedTurnClientTurnId) ||
+            (onlySubmittedTurnClientTurnId != null &&
+                stored.submittedTurnClientTurnId !=
+                    onlySubmittedTurnClientTurnId)) {
           return;
+        }
+        // Text typed after the bound send is not part of it: retire only
+        // the send's own text and keep the rest as an ordinary draft.
+        final sendText = stored.preparedTurnText;
+        if (onlyPreparedTurnClientTurnId != null &&
+            sendText != null &&
+            stored.text.length > sendText.length &&
+            stored.text.startsWith(sendText)) {
+          final rest = stored.text.substring(sendText.length);
+          final kept = rest.startsWith('\n') ? rest.substring(1) : rest;
+          if (kept.trim().isNotEmpty) {
+            final encoded = jsonEncode({
+              'savedAt': DateTime.now().millisecondsSinceEpoch,
+              'text': kept,
+              'attachments': stored.attachments
+                  .map((item) => item.toJson())
+                  .toList(),
+            });
+            final committed = await LocalConversationCleanupFence.commitEffect(
+              operation: journalOperation,
+              resource: resource,
+              mutation: () => _write(key: key, value: encoded),
+            );
+            if (committed) {
+              _changes.add((
+                connectionId: connectionId,
+                profile: owner,
+                sessionId: sessionId,
+              ));
+            }
+            return;
+          }
         }
       }
       await _clearUnlocked(
@@ -539,7 +796,7 @@ class ChatDraftStore {
       );
     });
     // An acknowledged room send clears only its own captured draft.
-    if (onlyPreparedTurnClientTurnId != null && admittedSaves != null) {
+    if (conditional && admittedSaves != null) {
       return admittedSaves.then((_) => clearMatching());
     }
     return clearMatching();
@@ -553,16 +810,19 @@ class ChatDraftStore {
     LocalConversationResourceKey? resource,
   }) async {
     final key = _key(connectionId, sessionId, owner);
-    final raw = await _secure.read(key: key);
+    final raw = await _read(key: key);
+    final removedAttachments = raw == null
+        ? <AttachmentDraft>[]
+        : _attachmentsFromRaw(raw);
     if (operation != null && resource != null) {
       final committed = await LocalConversationCleanupFence.commitEffect(
         operation: operation,
         resource: resource,
-        mutation: () => _secure.delete(key: key),
+        mutation: () => _delete(key: key),
       );
       if (!committed) return false;
     } else {
-      await _secure.delete(key: key);
+      await _delete(key: key);
     }
     if (raw != null) {
       _changes.add((
@@ -571,7 +831,7 @@ class ChatDraftStore {
         sessionId: sessionId,
       ));
     }
-    await _cleanupUnowned([if (raw != null) ..._attachmentsFromRaw(raw)]);
+    await _cleanupUnowned(removedAttachments);
     return true;
   }
 
@@ -582,7 +842,16 @@ class ChatDraftStore {
   /// limpieza a `default` permite que otro owner reaparezca después de que el
   /// servidor ya confirmó el borrado. La coincidencia sigue siendo exacta por
   /// conexión y sesión, sin tocar borradores vecinos.
-  Future<void> clearForSession(String connectionId, String sessionId) async {
+  Future<void> clearForSession(String connectionId, String sessionId) =>
+      AppLockSensitiveReadFence.run(
+        _prefs,
+        () => _privacyClearForSession(connectionId, sessionId),
+      );
+
+  Future<void> _privacyClearForSession(
+    String connectionId,
+    String sessionId,
+  ) async {
     final clearOperation = LocalConversationCleanupFence.admitSessionClear(
       connectionId: connectionId,
       sessionId: sessionId,
@@ -601,7 +870,7 @@ class ChatDraftStore {
       }
       final securePrefix = 'chat_draft_v3.${_scope(connectionId)}.';
       final secureSuffix = '.${_scope(sessionId)}';
-      final secureEntries = await _secure.readAll();
+      final secureEntries = await _readAll();
       final matchingKeys = <String>{
         ...secureEntries.keys.where(
           (key) => key.startsWith(securePrefix) && key.endsWith(secureSuffix),
@@ -641,14 +910,17 @@ class ChatDraftStore {
           )) {
             return;
           }
-          final raw = await _secure.read(key: key);
+          final raw = await _read(key: key);
+          final candidates = raw == null
+              ? <AttachmentDraft>[]
+              : _attachmentsFromRaw(raw);
           final committed = await LocalConversationCleanupFence.commitEffect(
             operation: clearOperation,
             resource: resource,
-            mutation: () => _secure.delete(key: key),
+            mutation: () => _delete(key: key),
           );
           if (committed && raw != null) {
-            removedAttachments.addAll(_attachmentsFromRaw(raw));
+            removedAttachments.addAll(candidates);
           }
         });
       }
@@ -660,7 +932,13 @@ class ChatDraftStore {
 
   /// Elimina únicamente los borradores V3 del perfil indicado.
   /// V1/V2 no codifican fronteras ni owner de forma no ambigua y se conservan.
-  Future<int> deleteForProfile(String connectionId, String profile) {
+  Future<int> deleteForProfile(String connectionId, String profile) =>
+      AppLockSensitiveReadFence.run(
+        _prefs,
+        () => _privacyDeleteForProfile(connectionId, profile),
+      );
+
+  Future<int> _privacyDeleteForProfile(String connectionId, String profile) {
     final owner = profile.trim().isEmpty ? 'default' : profile.trim();
     return LocalConversationCleanupFence.cleanupProfile(
       connectionId: connectionId,
@@ -670,7 +948,7 @@ class ChatDraftStore {
             'chat_draft_v3.${_scope(connectionId)}.${_scope(owner)}.';
         var removed = 0;
         final removedAttachments = <AttachmentDraft>[];
-        final secureEntries = await _secure.readAll();
+        final secureEntries = await _readAll();
         bool shouldRemoveSecure(String key) {
           if (key.startsWith(securePrefix)) {
             try {
@@ -691,7 +969,7 @@ class ChatDraftStore {
           removedAttachments.addAll(
             _attachmentsFromRaw(secureEntries[key] ?? ''),
           );
-          await _secure.delete(key: key);
+          await _delete(key: key);
           removed++;
         }
         await _cleanupUnowned(removedAttachments);
@@ -704,20 +982,26 @@ class ChatDraftStore {
   /// `readAll` nunca se copia a prefs/logs y las demás entradas del Keystore se
   /// conservan intactas.
   Future<int> deleteForConnection(String connectionId) =>
+      AppLockSensitiveReadFence.run(
+        _prefs,
+        () => _privacyDeleteForConnection(connectionId),
+      );
+
+  Future<int> _privacyDeleteForConnection(String connectionId) =>
       LocalConversationCleanupFence.cleanupConnection(
         connectionId: connectionId,
         operation: () async {
           final securePrefix = 'chat_draft_v3.${_scope(connectionId)}.';
           var removed = 0;
           final removedAttachments = <AttachmentDraft>[];
-          final secureEntries = await _secure.readAll();
+          final secureEntries = await _readAll();
           for (final key in secureEntries.keys.where(
             (key) => key.startsWith(securePrefix),
           )) {
             removedAttachments.addAll(
               _attachmentsFromRaw(secureEntries[key] ?? ''),
             );
-            await _secure.delete(key: key);
+            await _delete(key: key);
             removed++;
           }
           await _cleanupUnowned(removedAttachments);
@@ -726,11 +1010,18 @@ class ChatDraftStore {
       );
 
   Future<void> _deleteSecureDraft(String key, String raw) async {
-    await _secure.delete(key: key);
-    await _cleanupUnowned(_attachmentsFromRaw(raw));
+    final candidates = _attachmentsFromRaw(raw);
+    await _delete(key: key);
+    await _cleanupUnowned(candidates);
   }
 
   Future<void> retireAttachments(List<AttachmentDraft> attachments) =>
+      AppLockSensitiveReadFence.run(
+        _prefs,
+        () => _privacyRetireAttachments(attachments),
+      );
+
+  Future<void> _privacyRetireAttachments(List<AttachmentDraft> attachments) =>
       _cleanupUnowned(List<AttachmentDraft>.of(attachments));
 
   Future<void> _cleanupUnowned(List<AttachmentDraft> candidates) =>
@@ -740,11 +1031,27 @@ class ChatDraftStore {
 
   Future<void> _cleanupUnownedLocked(List<AttachmentDraft> candidates) async {
     if (candidates.isEmpty) return;
+    final ticket = AppLockSensitiveReadFence.current;
     final decoded = await AttachmentOwnershipCoordinator.loadDurableReferences(
       _secure,
       preferences: _prefs,
     );
-    if (decoded == null) return;
+    if (decoded == null || !ticket.isCurrent) {
+      void retry() {
+        if (!AppLockSensitiveReadFence.capture().isCurrent) return;
+        AppLockSensitiveReadFence.changes.removeListener(retry);
+        unawaited(
+          AppLockSensitiveReadFence.recover(
+            () => AttachmentOwnershipCoordinator.serialize(
+              () => _cleanupUnownedLocked(candidates),
+            ),
+          ),
+        );
+      }
+
+      AppLockSensitiveReadFence.changes.addListener(retry);
+      return;
+    }
     final visitedPaths = <String>{};
     for (final candidate in candidates) {
       if (candidate.localPath.isEmpty ||
@@ -766,12 +1073,17 @@ class ChatDraftStore {
       )) {
         continue;
       }
+      if (!ticket.isCurrent) {
+        await _cleanupUnownedLocked(candidates);
+        return;
+      }
       await _deletePrivateCopy(candidate);
     }
   }
 }
 
 List<AttachmentDraft> _attachmentsFromRaw(String raw) {
+  AppLockSensitiveReadFence.current.ensureCurrent();
   try {
     final decoded = jsonDecode(raw);
     final result = <AttachmentDraft>[];

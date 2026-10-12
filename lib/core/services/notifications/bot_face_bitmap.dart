@@ -496,10 +496,15 @@ class BotFaceBitmapCache {
 
   /// Procedural face for [profile]: the Desktop shape wire when valid, else
   /// the name-derived Blobatar.
-  static HermesBotFaceVisual? visualFor(String profile, String? shape) =>
+  static HermesBotFaceVisual? visualFor(
+    String profile,
+    String? shape, {
+    String? colorHex,
+  }) =>
       HermesBlobatarFaceVisual.tryParse(
         shapeWire: shape ?? 'blobatar',
         profileName: profile,
+        colorHex: colorHex,
       ) ??
       HermesBlobatarFaceVisual.tryParse(
         shapeWire: 'blobatar',

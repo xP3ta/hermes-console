@@ -15,14 +15,152 @@ const chatConnectionIdleGrace = Duration(minutes: 5);
 @visibleForTesting
 const chatConnectionHealthyHysteresis = Duration(seconds: 2);
 
+/// Activity headline for the live turn. [transportLossVisible] must come from
+/// [ChatTransportVisibility] so the pill only says "reconnecting" once the
+/// recovery row would, never on a socket blip shorter than the grace.
 String chatActivityHeadlineForTransport({
-  required ChatTransportStatus status,
+  required bool transportLossVisible,
   required bool authRequired,
   required String activityHeadline,
   required String reconnectingHeadline,
-}) => !authRequired && !status.isConnected
+}) => !authRequired && transportLossVisible
     ? reconnectingHeadline
     : activityHeadline;
+
+/// Single debounced view of the chat transport shared by the recovery row,
+/// the activity pill headline and the companion mood.
+///
+/// A loss becomes visible only after it outlasts the grace (3 s with an active
+/// turn, 5 min idle, measured from the original loss), and once visible it
+/// clears only after the transport stayed connected for [healthyHysteresis].
+/// Feeding identical inputs again never re-arms a timer, so frequent screen
+/// rebuilds cannot postpone either edge.
+class ChatTransportVisibility extends ChangeNotifier {
+  ChatTransportVisibility({
+    this.activeGrace = chatConnectionActiveGrace,
+    this.idleGrace = chatConnectionIdleGrace,
+    this.healthyHysteresis = chatConnectionHealthyHysteresis,
+    DateTime Function()? clock,
+  }) : _clock = clock ?? DateTime.now;
+
+  final Duration activeGrace;
+  final Duration idleGrace;
+  final Duration healthyHysteresis;
+  final DateTime Function() _clock;
+
+  Timer? _enterTimer;
+  Timer? _leaveTimer;
+  bool _visible = false;
+  bool _disposed = false;
+  int _recoveries = 0;
+  ChatTransportState _displayState = ChatTransportState.offline;
+  ({ChatTransportStatus status, bool activeTurn, bool auth, bool foreground})?
+  _inputs;
+
+  /// Whether a transport loss is currently shown to the user.
+  bool get visible => _visible;
+
+  /// Last disconnected state, for the row's offline/reconnecting label.
+  ChatTransportState get displayState => _displayState;
+
+  /// Incremented each time a shown loss clears because the transport
+  /// recovered (not for auth or background). Drives the "Reconnected" notice.
+  int get recoveries => _recoveries;
+
+  void update({
+    required ChatTransportStatus status,
+    required bool activeTurn,
+    required bool authRequired,
+    required bool appForeground,
+  }) {
+    if (_disposed) return;
+    final previous = _inputs;
+    if (previous != null &&
+        previous.status.state == status.state &&
+        previous.status.disconnectedSince == status.disconnectedSince &&
+        previous.activeTurn == activeTurn &&
+        previous.auth == authRequired &&
+        previous.foreground == appForeground) {
+      return;
+    }
+    _inputs = (
+      status: status,
+      activeTurn: activeTurn,
+      auth: authRequired,
+      foreground: appForeground,
+    );
+    _sync();
+  }
+
+  void _sync() {
+    final inputs = _inputs;
+    if (inputs == null) return;
+    _enterTimer?.cancel();
+    _enterTimer = null;
+    _leaveTimer?.cancel();
+    _leaveTimer = null;
+
+    if (inputs.auth) {
+      _setVisible(false);
+      return;
+    }
+    if (!inputs.status.isConnected) {
+      final stateChanged = _displayState != inputs.status.state;
+      _displayState = inputs.status.state;
+      if (_visible) {
+        if (stateChanged) notifyListeners();
+        return;
+      }
+      if (!inputs.foreground) return;
+      final grace = inputs.activeTurn ? activeGrace : idleGrace;
+      final since = inputs.status.disconnectedSince ?? _clock();
+      final remaining = grace - _clock().difference(since);
+      if (remaining <= Duration.zero) {
+        _setVisible(true);
+      } else {
+        _enterTimer = Timer(remaining, () {
+          final current = _inputs;
+          if (_disposed ||
+              current == null ||
+              current.auth ||
+              !current.foreground ||
+              current.status.isConnected) {
+            return;
+          }
+          _setVisible(true);
+        });
+      }
+      return;
+    }
+    if (!_visible || !inputs.foreground) return;
+    _leaveTimer = Timer(healthyHysteresis, () {
+      final current = _inputs;
+      if (_disposed ||
+          current == null ||
+          current.auth ||
+          !current.foreground ||
+          !current.status.isConnected) {
+        return;
+      }
+      _recoveries += 1;
+      _setVisible(false);
+    });
+  }
+
+  void _setVisible(bool value) {
+    if (_visible == value || _disposed) return;
+    _visible = value;
+    notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    _enterTimer?.cancel();
+    _leaveTimer?.cancel();
+    super.dispose();
+  }
+}
 
 class ChatConnectionRecoveryRow extends StatefulWidget {
   const ChatConnectionRecoveryRow({
@@ -33,6 +171,7 @@ class ChatConnectionRecoveryRow extends StatefulWidget {
     required this.offlineLabel,
     required this.reconnectingLabel,
     required this.recoveredLabel,
+    this.visibility,
     this.activeGrace = chatConnectionActiveGrace,
     this.idleGrace = chatConnectionIdleGrace,
     this.healthyHysteresis = chatConnectionHealthyHysteresis,
@@ -47,6 +186,10 @@ class ChatConnectionRecoveryRow extends StatefulWidget {
   final String offlineLabel;
   final String reconnectingLabel;
   final String recoveredLabel;
+
+  /// Shared debounced state. When omitted the row owns a private one built
+  /// from the grace/hysteresis parameters below.
+  final ChatTransportVisibility? visibility;
   final Duration activeGrace;
   final Duration idleGrace;
   final Duration healthyHysteresis;
@@ -58,94 +201,82 @@ class ChatConnectionRecoveryRow extends StatefulWidget {
 }
 
 class _ChatConnectionRecoveryRowState extends State<ChatConnectionRecoveryRow> {
-  Timer? _enterTimer;
-  Timer? _leaveTimer;
-  bool _visible = false;
-  ChatTransportState _displayState = ChatTransportState.offline;
-
-  DateTime get _now => (widget.clock ?? DateTime.now)();
+  ChatTransportVisibility? _owned;
+  late ChatTransportVisibility _visibility;
+  late int _seenRecoveries;
 
   @override
   void initState() {
     super.initState();
-    _syncVisibility();
+    _attach(listen: false);
+    _feed();
+    _visibility.addListener(_onVisibility);
   }
 
   @override
   void didUpdateWidget(ChatConnectionRecoveryRow oldWidget) {
     super.didUpdateWidget(oldWidget);
-    _syncVisibility();
+    if (!identical(oldWidget.visibility, widget.visibility)) {
+      _visibility.removeListener(_onVisibility);
+      _owned?.dispose();
+      _owned = null;
+      _attach();
+    }
+    _feed();
   }
 
-  @override
-  void dispose() {
-    _enterTimer?.cancel();
-    _leaveTimer?.cancel();
-    super.dispose();
+  void _attach({bool listen = true}) {
+    _visibility =
+        widget.visibility ??
+        (_owned = ChatTransportVisibility(
+          activeGrace: widget.activeGrace,
+          idleGrace: widget.idleGrace,
+          healthyHysteresis: widget.healthyHysteresis,
+          clock: widget.clock,
+        ));
+    _seenRecoveries = _visibility.recoveries;
+    if (listen) _visibility.addListener(_onVisibility);
   }
 
-  void _syncVisibility() {
-    _enterTimer?.cancel();
-    _enterTimer = null;
-    _leaveTimer?.cancel();
-    _leaveTimer = null;
+  // A shared controller is fed by its owner outside build; feeding it here
+  // could notify other listeners in the middle of a frame.
+  void _feed() => _owned?.update(
+    status: widget.status,
+    activeTurn: widget.activeTurn,
+    authRequired: widget.authRequired,
+    appForeground: widget.appForeground,
+  );
 
-    if (widget.authRequired) {
-      if (_visible) _setVisible(false);
-      return;
-    }
-    if (!widget.status.isConnected) {
-      _displayState = widget.status.state;
-      if (_visible || !widget.appForeground) return;
-      final grace = widget.activeTurn ? widget.activeGrace : widget.idleGrace;
-      final since = widget.status.disconnectedSince ?? _now;
-      final remaining = grace - _now.difference(since);
-      if (remaining <= Duration.zero) {
-        _setVisible(true);
-      } else {
-        _enterTimer = Timer(remaining, () {
-          if (!mounted ||
-              widget.authRequired ||
-              !widget.appForeground ||
-              widget.status.isConnected) {
-            return;
-          }
-          _setVisible(true);
-        });
-      }
-      return;
-    }
-    if (!_visible || !widget.appForeground) return;
-    _leaveTimer = Timer(widget.healthyHysteresis, () {
-      if (!mounted ||
-          widget.authRequired ||
-          !widget.appForeground ||
-          !widget.status.isConnected) {
-        return;
-      }
-      _setVisible(false);
+  void _onVisibility() {
+    if (!mounted) return;
+    setState(() {});
+    if (_visibility.recoveries != _seenRecoveries) {
+      _seenRecoveries = _visibility.recoveries;
       HermesNotice.of(context).show(
         message: widget.recoveredLabel,
         kind: HermesNoticeKind.success,
         id: 'chat-transport-reconnected',
       );
-    });
+    }
   }
 
-  void _setVisible(bool value) {
-    if (_visible == value || !mounted) return;
-    setState(() => _visible = value);
+  @override
+  void dispose() {
+    _visibility.removeListener(_onVisibility);
+    _owned?.dispose();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    if (!_visible || widget.authRequired) {
+    if (!_visibility.visible || widget.authRequired) {
       return const SizedBox.shrink(
         key: ValueKey('chat-connection-recovery-hidden'),
       );
     }
     final colors = Theme.of(context).hermes;
-    final reconnecting = _displayState == ChatTransportState.reconnecting;
+    final reconnecting =
+        _visibility.displayState == ChatTransportState.reconnecting;
     final label = reconnecting ? widget.reconnectingLabel : widget.offlineLabel;
 
     return Padding(

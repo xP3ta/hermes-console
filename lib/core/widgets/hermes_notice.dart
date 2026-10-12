@@ -2,10 +2,10 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import '../../l10n/app_localizations.dart';
 import '../theme/app_theme.dart';
 import '../theme/motion.dart';
 import '../theme/theme_contrast.dart';
+import 'island.dart';
 
 /// Severidad de un aviso. El color sale siempre de los tokens del tema
 /// (`accent`, `success`, `warning`, `error`), asi funciona en los 26 temas.
@@ -46,6 +46,10 @@ abstract final class HermesNoticeDurations {
 
   /// Tiempo minimo de lectura de un aviso cuando otros esperan su turno.
   static const Duration minWhenQueued = Duration(milliseconds: 2500);
+
+  /// Minimum time a notice with an action (Undo...) stays when others are
+  /// waiting: long enough to read it and reach the button.
+  static const Duration actionMinWhenQueued = Duration(seconds: 6);
 }
 
 /// Asa de un aviso ya mostrado: permite retirarlo antes de tiempo.
@@ -64,12 +68,17 @@ class HermesNoticeHandle {
 
 /// API unica de avisos transitorios de la app.
 ///
-/// Sustituye a `ScaffoldMessenger...showSnackBar`. Los avisos flotan ARRIBA,
-/// bajo la barra de estado (nunca abajo, donde viven el composer, el teclado,
-/// el dock y las pastillas de actividad), en un carril unico: como mucho uno
-/// visible, duplicados fusionados (mismo `id`), una cola FIFO corta para los
-/// avisos distintos y un aviso importante que nunca queda tapado por feedback. Se apoyan en el `Overlay` raiz, asi que funcionan en cualquier
-/// pantalla y por encima de hojas y dialogos ya abiertos.
+/// Sustituye a `ScaffoldMessenger...showSnackBar`. Un carril unico: como
+/// mucho un aviso visible, duplicados fusionados (mismo `id`), una cola corta
+/// para los avisos distintos (los errores pasan delante de la informacion) y
+/// un aviso importante que nunca queda tapado por feedback.
+///
+/// Donde se pintan: en una pantalla con ISLA (los chats y las salas) el aviso
+/// sale en la isla, que crece para decirlo en una linea con como mucho una
+/// accion; nada flota sobre el chat ni sobre el compositor. En el resto de
+/// pantallas flotan ARRIBA, bajo la barra de estado, con la misma forma. Se
+/// apoyan en el `Overlay` raiz, asi que funcionan en cualquier pantalla y por
+/// encima de hojas y dialogos ya abiertos.
 ///
 /// ```dart
 /// HermesNotice.show(context, message: s.copied, kind: HermesNoticeKind.success);
@@ -99,6 +108,14 @@ abstract final class HermesNotice {
   /// Atajo para el Navigator raiz de la app.
   static HermesNoticeController? ofNavigator(NavigatorState? navigator) =>
       ofOverlay(navigator?.overlay);
+
+  /// The notices of [context]'s app as an island sees them: what to show
+  /// now and how many wait. Null when there is no `Overlay` to carry them.
+  /// The lane keeps owning the queue, the priorities and the timers.
+  static IslandNoticeFeed? feedOf(BuildContext context) {
+    final overlay = _rootOverlay(context);
+    return overlay == null ? null : _NoticeSlot.of(overlay).feed;
+  }
 
   /// Muestra un aviso. Ver [HermesNoticeController.show].
   static HermesNoticeHandle? show(
@@ -138,15 +155,21 @@ class HermesNoticeController {
   final OverlayState? _overlay;
   final ScaffoldMessengerState? _fallback;
 
-  /// Muestra un aviso en el carril superior.
+  /// Muestra un aviso: en la isla de la pantalla a la vista, o en el carril
+  /// superior si esa pantalla no tiene isla.
   ///
-  /// - [message] es el texto; con [title] pasa a segunda linea (<= 2 lineas).
+  /// - [message] es el texto; con [title] va detras de el, en la misma linea.
+  ///   Lo que no cabe se lee tocando el aviso.
   /// - [kind] fija icono y color (tokens del tema); [icon]/[tint] lo sustituyen
   ///   para avisos con identidad propia (aprobacion, run...).
-  /// - [action] es el unico boton; [onTap] es el gesto de toda la tarjeta (por
-  ///   defecto cierra el aviso).
+  /// - [action] es el unico boton; [onTap] es el gesto de todo el aviso (por
+  ///   defecto lo cierra).
   /// - [duration] null = por defecto segun severidad/accion; [sticky] = no se
-  ///   cierra solo (se retira deslizando, con la X o al abrirlo).
+  ///   cierra solo (se retira deslizando o al actuar).
+  /// - [showDismiss] en un aviso [sticky] dibuja ademas su propia salida
+  ///   (una ✕ que dice [dismissLabel]). Con titulo, accion y ✕ el aviso pasa
+  ///   a dos lineas cuando no caben enteros en una: nunca se corta el titulo
+  ///   ni la accion.
   /// - [id] fusiona duplicados: mismo id visible = se refresca sin reanimar.
   HermesNoticeHandle? show({
     required String message,
@@ -207,7 +230,10 @@ class HermesNoticeController {
   /// [SnackBar] de texto simple (con accion y duracion opcionales) al aviso.
   /// [kind] fija la severidad (por defecto informativo); el fondo del SnackBar
   /// original se ignora: el color sale de los tokens del tema.
-  HermesNoticeHandle? showSnackBar(SnackBar snackBar, {HermesNoticeKind? kind}) {
+  HermesNoticeHandle? showSnackBar(
+    SnackBar snackBar, {
+    HermesNoticeKind? kind,
+  }) {
     final content = snackBar.content;
     final text = content is Text
         ? (content.data ?? content.textSpan?.toPlainText())
@@ -299,6 +325,28 @@ class _Notice {
   bool closing = false;
   bool closed = false;
 
+  /// The reader opened it: it does not expire while it is being read.
+  bool held = false;
+
+  /// Who goes first in the queue: what failed, then what warns, then the
+  /// rest (confirmations and information).
+  int get rank => switch (kind) {
+    HermesNoticeKind.error => 2,
+    HermesNoticeKind.warning => 1,
+    HermesNoticeKind.success || HermesNoticeKind.info => 0,
+  };
+
+  /// How the island frames it. A notice that waits for a decision (an
+  /// approval somewhere else) needs you; the rest follow their severity.
+  IslandTone get tone => priority == HermesNoticePriority.high && sticky
+      ? IslandTone.needsYou
+      : switch (kind) {
+          HermesNoticeKind.error => IslandTone.error,
+          HermesNoticeKind.warning => IslandTone.warning,
+          HermesNoticeKind.success => IslandTone.success,
+          HermesNoticeKind.info => IslandTone.info,
+        };
+
   void refreshFrom(_Notice other) {
     kind = other.kind;
     icon = other.icon;
@@ -341,6 +389,9 @@ class _NoticeSlot extends ChangeNotifier {
   static _NoticeSlot of(OverlayState overlay) =>
       _slots[overlay] ??= _NoticeSlot(overlay);
 
+  /// This lane as an island reads it.
+  late final _NoticeFeed feed = _NoticeFeed(this);
+
   _Notice? current;
   final List<_Notice> _pending = <_Notice>[];
 
@@ -354,6 +405,9 @@ class _NoticeSlot extends ChangeNotifier {
   int _attachedGeneration = -1;
 
   bool get hasPending => _pending.isNotEmpty;
+
+  /// Notices behind the one shown: the queue and a parked important one.
+  int get waiting => _pending.length + (_parked == null ? 0 : 1);
 
   HermesNoticeHandle? present(_Notice incoming) {
     if (!overlay.mounted) return null;
@@ -390,11 +444,19 @@ class _NoticeSlot extends ChangeNotifier {
       _parked = live;
       return _show(incoming);
     }
-    // Sobre otro normal: cola FIFO corta (como los SnackBar), sin perder el
-    // orden de lo que una misma accion quiso decir.
-    _pending.add(incoming);
+    // Sobre otro normal: cola corta. What failed goes before what merely
+    // informs; among equals, the order in which they were said.
+    var at = _pending.length;
+    while (at > 0 && _pending[at - 1].rank < incoming.rank) {
+      at--;
+    }
+    _pending.insert(at, incoming);
     while (_pending.length > maxPending) {
-      _pending.removeAt(0).fireClosed();
+      // The oldest of the least important ones gives way.
+      final least = _pending.last.rank;
+      _pending
+          .removeAt(_pending.indexWhere((n) => n.rank == least))
+          .fireClosed();
     }
     notifyListeners();
     return HermesNoticeHandle._(this, incoming);
@@ -418,17 +480,27 @@ class _NoticeSlot extends ChangeNotifier {
     if (notice.closed) return;
     if (_pending.remove(notice)) {
       notice.fireClosed();
+      notifyListeners();
       return;
     }
     if (identical(_parked, notice)) {
       _parked = null;
       notice.fireClosed();
+      notifyListeners();
       return;
     }
     if (!identical(current, notice) || notice.closing) return;
     notice.closing = true;
     notifyListeners();
     if (!_laneAttached) finishClose(notice);
+  }
+
+  /// The reader opened [notice] in the island (or closed it again): its
+  /// timer waits meanwhile.
+  void hold(_Notice notice, bool held) {
+    if (notice.held == held || notice.closed) return;
+    notice.held = held;
+    notifyListeners();
   }
 
   /// Retira el aviso normal visible (nunca uno de prioridad alta). Con
@@ -478,11 +550,97 @@ class _NoticeSlot extends ChangeNotifier {
       entry.dispose();
     }
   }
+
+  /// [notice] as an island event, with its action and its tap wired to this
+  /// lane. The same event feeds the island and the top lane.
+  IslandEvent eventOf(_Notice notice) {
+    final action = notice.action;
+    final title = notice.title?.trim() ?? '';
+    final message = notice.message.trim();
+    final titled = title.isNotEmpty;
+    return IslandEvent(
+      id: notice.id,
+      line: titled ? title : notice.message,
+      detail: titled && message.isNotEmpty ? notice.message : null,
+      tone: notice.tone,
+      icon: notice.icon,
+      tint: notice.tint,
+      sticky: notice.sticky,
+      speaksTone: true,
+      // What expires by itself needs no button to leave.
+      showDismiss: notice.showDismiss && notice.sticky,
+      dismissLabel: notice.dismissLabel,
+      onTap: notice.onTap,
+      action: action == null
+          ? null
+          : IslandAction(
+              label: action.label,
+              // The lane closes it (or leaves it to its owner).
+              closes: false,
+              onPressed: () {
+                action.onPressed();
+                if (action.closesNotice) close(notice);
+              },
+            ),
+    );
+  }
 }
 
-/// Entrada del `Overlay`: coloca el aviso actual arriba, bajo la barra de
-/// estado, con entrada/salida cortas y temporizador propio (se cancela al
-/// desmontar el arbol, sin dejar timers colgando).
+/// A lane's notices for the island of the screen in view.
+class _NoticeFeed implements IslandNoticeFeed {
+  _NoticeFeed(this._slot);
+
+  final _NoticeSlot _slot;
+
+  _Notice? get _shown {
+    final notice = _slot.current;
+    return notice == null || notice.closing ? null : notice;
+  }
+
+  @override
+  IslandEvent? get current {
+    final notice = _shown;
+    return notice == null ? null : _slot.eventOf(notice);
+  }
+
+  @override
+  int get waiting => _slot.waiting;
+
+  @override
+  Widget present(BuildContext context, IslandEvent event, Widget tile) {
+    final notice = _shown;
+    return HermesNoticeCard.inIsland(
+      noticeKey:
+          notice?.noticeKey ?? ValueKey('hermes-notice-${notice?.id ?? ''}'),
+      kind: notice?.kind ?? HermesNoticeKind.info,
+      event: event,
+      child: tile,
+    );
+  }
+
+  @override
+  void dismiss(IslandEvent event) {
+    final notice = _shown;
+    if (notice != null && notice.id == event.id) _slot.close(notice);
+  }
+
+  @override
+  void hold(IslandEvent event, bool held) {
+    final notice = _slot.current;
+    if (notice != null && notice.id == event.id) _slot.hold(notice, held);
+  }
+
+  @override
+  void addListener(VoidCallback listener) => _slot.addListener(listener);
+
+  @override
+  void removeListener(VoidCallback listener) => _slot.removeListener(listener);
+}
+
+/// Entrada del `Overlay`: lleva los temporizadores del aviso actual y, cuando
+/// ninguna isla lo esta mostrando, lo coloca arriba, bajo la barra de estado,
+/// con la forma de la isla y entrada/salida cortas. Los temporizadores se
+/// cancelan al desmontar el arbol.
 class _NoticeLane extends StatefulWidget {
   const _NoticeLane({required this.slot, required this.generation});
 
@@ -501,6 +659,7 @@ class _NoticeLaneState extends State<_NoticeLane>
   bool _dwellDone = false;
   _Notice? _shown;
   int _shownRevision = -1;
+  bool _shownHeld = false;
   bool _presented = false;
   bool _exiting = false;
   bool _reduceMotion = false;
@@ -512,6 +671,17 @@ class _NoticeLaneState extends State<_NoticeLane>
     super.initState();
     widget.slot._attachedGeneration = widget.generation;
     widget.slot.addListener(_onSlotChanged);
+    IslandPresenters.revision.addListener(_onPresentersChanged);
+  }
+
+  /// An island came into view or left it: the notice moves into it, or
+  /// back up here. Whoever was reading it there (or here) is gone with the
+  /// place it was drawn in, so its clock runs again.
+  void _onPresentersChanged() {
+    if (!mounted) return;
+    final notice = _shown;
+    if (notice != null && notice.held) widget.slot.hold(notice, false);
+    setState(() {});
   }
 
   @override
@@ -529,6 +699,7 @@ class _NoticeLaneState extends State<_NoticeLane>
   @override
   void dispose() {
     widget.slot.removeListener(_onSlotChanged);
+    IslandPresenters.revision.removeListener(_onPresentersChanged);
     if (widget.slot._attachedGeneration == widget.generation) {
       widget.slot._attachedGeneration = -1;
     }
@@ -549,6 +720,7 @@ class _NoticeLaneState extends State<_NoticeLane>
     if (!identical(notice, _shown)) {
       _shown = notice;
       _shownRevision = notice.revision;
+      _shownHeld = notice.held;
       _exiting = false;
       _armTimer(notice);
       if (!_presented) {
@@ -567,6 +739,11 @@ class _NoticeLaneState extends State<_NoticeLane>
       _exiting = false;
       _visibility.value = 1;
       _armTimer(notice);
+    }
+    if (notice.held != _shownHeld) {
+      _shownHeld = notice.held;
+      // Being read: no timer. Closed again: a fresh one.
+      if (!notice.closing) _armTimer(notice);
     }
     if (notice.closing && !_exiting) {
       _exiting = true;
@@ -591,6 +768,7 @@ class _NoticeLaneState extends State<_NoticeLane>
     if (_dwellDone &&
         !notice.closing &&
         !notice.sticky &&
+        !notice.held &&
         notice.priority == HermesNoticePriority.normal &&
         widget.slot.hasPending) {
       widget.slot.close(notice);
@@ -602,10 +780,16 @@ class _NoticeLaneState extends State<_NoticeLane>
     _dwell?.cancel();
     _timer = null;
     _dwellDone = false;
-    _dwell = Timer(HermesNoticeDurations.minWhenQueued, () {
-      _dwellDone = true;
-      _yieldToQueue(notice);
-    });
+    if (notice.held) return;
+    _dwell = Timer(
+      notice.action != null
+          ? HermesNoticeDurations.actionMinWhenQueued
+          : HermesNoticeDurations.minWhenQueued,
+      () {
+        _dwellDone = true;
+        _yieldToQueue(notice);
+      },
+    );
     if (notice.sticky) return;
     final duration = notice.duration ?? _defaultDuration(notice);
     // Con navegacion accesible una accion no debe caducar antes de poder usarla.
@@ -631,38 +815,33 @@ class _NoticeLaneState extends State<_NoticeLane>
   Widget build(BuildContext context) {
     final notice = _shown;
     if (notice == null) return const SizedBox.shrink();
+    // The island of the screen in view says it: nothing floats up here.
+    // This entry stays for the timers.
+    if (IslandPresenters.any) {
+      return const SizedBox.shrink(key: ValueKey('hermes-notice-in-island'));
+    }
     final padding = MediaQuery.paddingOf(context);
-    final strings = Localizations.of<Strings>(context, Strings);
-    final card = HermesNoticeCard(
+    final slot = widget.slot;
+    final card = HermesNoticeCard.island(
       noticeKey: notice.noticeKey ?? ValueKey('hermes-notice-${notice.id}'),
       kind: notice.kind,
-      icon: notice.icon,
-      tint: notice.tint,
-      title: notice.title,
-      message: notice.message,
-      action: notice.action == null
-          ? null
-          : HermesNoticeAction(
-              label: notice.action!.label,
-              onPressed: () {
-                notice.action!.onPressed();
-                if (notice.action!.closesNotice) widget.slot.close(notice);
-              },
-            ),
-      onTap: notice.onTap ?? () => widget.slot.close(notice),
-      onDismissed: () => widget.slot.close(notice),
-      showDismiss: notice.showDismiss,
-      dismissLabel: notice.dismissLabel ?? strings?.inAppDismiss ?? 'Dismiss',
-      kindLabel: switch (notice.kind) {
-        HermesNoticeKind.success => strings?.noticeKindSuccess ?? 'Success',
-        HermesNoticeKind.warning => strings?.noticeKindWarning ?? 'Warning',
-        HermesNoticeKind.error => strings?.noticeKindError ?? 'Error',
-        HermesNoticeKind.info => null,
+      event: slot.eventOf(notice),
+      waiting: slot.waiting,
+      onDismissed: () => slot.close(notice),
+      // Swiped off sideways it is already gone: no exit animation, which
+      // would only show the card sliding back in while it fades. An exit
+      // already under way is left to finish: cutting it short would also
+      // cancel the callback that frees the lane.
+      onSwipedAway: () {
+        if (!notice.closing) _visibility.value = 0;
+        slot.close(notice);
       },
+      onHold: (held) => slot.hold(notice, held),
     );
-    // Arriba, bajo la barra de estado: nunca sobre el composer, el teclado, el
-    // dock ni las pastillas de actividad, que viven abajo.
+    // Arriba, bajo la barra de estado: nunca sobre el composer, el teclado ni
+    // el dock, que viven abajo.
     return Positioned(
+      key: const ValueKey('hermes-notice-lane'),
       top: 0,
       left: 0,
       right: 0,
@@ -676,7 +855,7 @@ class _NoticeLaneState extends State<_NoticeLane>
         child: Align(
           alignment: Alignment.topCenter,
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 520),
+            constraints: const BoxConstraints(maxWidth: IslandMetrics.maxWidth),
             child: AnimatedBuilder(
               animation: _visibility,
               child: card,
@@ -700,7 +879,15 @@ class _NoticeLaneState extends State<_NoticeLane>
 
 // ── Tarjeta ──────────────────────────────────────────────────────────────────
 
-/// Tarjeta visual de un aviso: insignia circular tintada + texto + una accion.
+/// Un aviso, dibujado. Tres formas:
+///
+/// * la tarjeta ([HermesNoticeCard.new]) para un aviso que vive DENTRO de una
+///   pantalla (copias de seguridad, modelos): insignia circular tintada +
+///   texto + una accion, en varias lineas;
+/// * la isla ([HermesNoticeCard.island]) para el carril superior: la misma
+///   forma que la isla de los chats, una linea y como mucho una accion;
+/// * dentro de la isla de un chat ([HermesNoticeCard.inIsland]): solo el
+///   contenido, la isla pone la superficie.
 ///
 /// Superficie neutra del tema con filete y sombra suave; el estado lo llevan
 /// solo el glifo y su circulo (nunca una barra lateral ni un relleno de color).
@@ -711,6 +898,7 @@ class HermesNoticeCard extends StatelessWidget {
     required this.noticeKey,
     required this.message,
     required this.onDismissed,
+    this.onSwipedAway,
     this.kind = HermesNoticeKind.info,
     this.icon,
     this.tint,
@@ -721,7 +909,57 @@ class HermesNoticeCard extends StatelessWidget {
     this.dismissLabel = 'Dismiss',
     this.kindLabel,
     super.key,
-  });
+  }) : event = null,
+       waiting = 0,
+       onHold = null,
+       _inIsland = null;
+
+  /// The notice as an island event with its own floating surface: what the
+  /// top lane shows on a screen without an island.
+  HermesNoticeCard.island({
+    required this.noticeKey,
+    required IslandEvent this.event,
+    required this.onDismissed,
+    this.onSwipedAway,
+    this.kind = HermesNoticeKind.info,
+    this.waiting = 0,
+    this.onHold,
+    super.key,
+  }) : message = event.detail ?? event.line,
+       title = event.detail == null ? null : event.line,
+       icon = event.icon,
+       tint = event.tint,
+       action = null,
+       onTap = event.onTap,
+       showDismiss = false,
+       dismissLabel = event.dismissLabel ?? 'Dismiss',
+       kindLabel = null,
+       _inIsland = null;
+
+  /// The notice inside a chat's island, which already drew [child] and
+  /// gives it its surface.
+  HermesNoticeCard.inIsland({
+    required this.noticeKey,
+    required IslandEvent this.event,
+    required Widget child,
+    this.kind = HermesNoticeKind.info,
+    super.key,
+  }) : message = event.detail ?? event.line,
+       title = event.detail == null ? null : event.line,
+       icon = event.icon,
+       tint = event.tint,
+       action = null,
+       onTap = event.onTap,
+       onDismissed = _nothing,
+       onSwipedAway = null,
+       showDismiss = false,
+       dismissLabel = event.dismissLabel ?? 'Dismiss',
+       kindLabel = null,
+       waiting = 0,
+       onHold = null,
+       _inIsland = child;
+
+  static void _nothing() {}
 
   /// Clave del `Dismissible` (los tests deslizan sobre ella).
   final Key noticeKey;
@@ -733,11 +971,27 @@ class HermesNoticeCard extends StatelessWidget {
   final HermesNoticeAction? action;
   final VoidCallback? onTap;
   final VoidCallback onDismissed;
+
+  /// Called instead of [onDismissed] when the card was swiped off sideways.
+  /// It is already out of view then, and it slides back to its place once
+  /// the swipe is answered: an owner that animates its removal must skip
+  /// that animation here, or the card is seen coming back while it leaves.
+  final VoidCallback? onSwipedAway;
   final bool showDismiss;
   final String dismissLabel;
 
   /// Prefijo solo para lectores de pantalla ("Error", "Aviso"...).
   final String? kindLabel;
+
+  /// Set for the two island shapes: what the notice says there.
+  final IslandEvent? event;
+
+  /// Island shape: notices waiting behind this one.
+  final int waiting;
+
+  /// Island shape: the reader opened it (true) or closed it again.
+  final ValueChanged<bool>? onHold;
+  final Widget? _inIsland;
 
   static IconData iconFor(HermesNoticeKind kind) => switch (kind) {
     HermesNoticeKind.info => Icons.info_outline_rounded,
@@ -756,8 +1010,51 @@ class HermesNoticeCard extends StatelessWidget {
     };
   }
 
+  Widget _buildIsland(BuildContext context, IslandEvent event) {
+    final inIsland = _inIsland;
+    if (inIsland != null) {
+      return KeyedSubtree(key: noticeKey, child: inIsland);
+    }
+    final reduced = Motion.reduced(context);
+    return Dismissible(
+      key: noticeKey,
+      // Horizontal solo hacia el borde final: no compite con el gesto Android
+      // de volver, que nace en el borde inicial de la pantalla.
+      direction: DismissDirection.endToStart,
+      resizeDuration: reduced
+          ? Duration.zero
+          : const Duration(milliseconds: 140),
+      movementDuration: reduced
+          ? Duration.zero
+          : const Duration(milliseconds: 180),
+      confirmDismiss: (_) async {
+        // El propietario retira el aviso de inmediato. Devolver false evita
+        // que Dismissible intente reconstruirse ya marcado como borrado en el
+        // mismo frame en que desaparece el overlay.
+        (onSwipedAway ?? onDismissed)();
+        return false;
+      },
+      child: IslandShell(
+        contentKey: ValueKey(event.id),
+        tone: event.tone,
+        raised: true,
+        waiting: waiting,
+        child: IslandEventTile(
+          event: event,
+          waiting: waiting,
+          onDismiss: onDismissed,
+          // Como siempre: tocar un aviso sin destino lo retira.
+          onPlainTap: onDismissed,
+          onHold: onHold,
+          actionKey: const ValueKey('hermes-notice-action'),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    if (event case final event?) return _buildIsland(context, event);
     final theme = Theme.of(context);
     final colors = theme.hermes;
     final profile = theme.hermesComponents.profile;
@@ -832,11 +1129,7 @@ class HermesNoticeCard extends StatelessWidget {
       ],
     );
 
-    final label = [
-      ?kindLabel,
-      primary,
-      ?secondary,
-    ].join('. ');
+    final label = [?kindLabel, primary, ?secondary].join('. ');
 
     // Texto + insignia: un unico nodo semantico anunciado como region viva.
     final content = Semantics(
@@ -881,7 +1174,12 @@ class HermesNoticeCard extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Padding(
-            padding: EdgeInsets.fromLTRB(12, 10, dismissButton == null ? 12 : 0, 0),
+            padding: EdgeInsets.fromLTRB(
+              12,
+              10,
+              dismissButton == null ? 12 : 0,
+              0,
+            ),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -965,7 +1263,7 @@ class HermesNoticeCard extends StatelessWidget {
           // El propietario retira el aviso de inmediato. Devolver false evita
           // que Dismissible intente reconstruirse ya marcado como borrado en el
           // mismo frame en que desaparece el overlay.
-          onDismissed();
+          (onSwipedAway ?? onDismissed)();
           return false;
         },
         child: card,
@@ -1003,7 +1301,10 @@ class _NoticeActionButton extends StatelessWidget {
                 borderRadius: BorderRadius.circular(16),
               ),
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 6,
+                ),
                 child: Text(
                   action.label,
                   maxLines: 1,

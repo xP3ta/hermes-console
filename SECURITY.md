@@ -19,7 +19,7 @@ available maintainer time justify it.
 
 ## Scope
 
-Reports about Hermes Console are in scope. Vulnerabilities in Hermes Agent,
+Reports about Console are in scope. Vulnerabilities in Hermes Agent,
 Flutter, Android, or another dependency should also be reported to that
 project's security contact; a private heads-up here is welcome when Console is
 directly affected.

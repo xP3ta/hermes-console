@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Chat rápido, two cells wide: "+ Nuevo" and the microphone.
+     Alignment: both controls are the same height and centred on the same
+     line; the pill has the same padding on both sides and its icon + label
+     group is centred in it (never pushed from one side); the label has no
+     font padding, so its letters, not its line box, sit on the icon's axis.
+     The same file is the picker preview, so the preview is the widget. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@android:id/background"
+    style="@style/LW.Card"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:baselineAligned="false"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:paddingStart="@dimen/lw_quick_pad"
+    android:paddingEnd="@dimen/lw_quick_pad">
+
+    <LinearLayout
+        android:id="@+id/lw_quick_new"
+        android:layout_width="0dp"
+        android:layout_height="@dimen/lw_touch"
+        android:layout_weight="1"
+        android:background="@drawable/lw_pill"
+        android:baselineAligned="false"
+        android:contentDescription="@string/lw_new_description"
+        android:gravity="center"
+        android:orientation="horizontal"
+        android:paddingStart="@dimen/lw_quick_pill_pad"
+        android:paddingEnd="@dimen/lw_quick_pill_pad">
+
+        <ImageView
+            android:layout_width="@dimen/lw_quick_icon"
+            android:layout_height="@dimen/lw_quick_icon"
+            android:importantForAccessibility="no"
+            android:src="@drawable/lw_ic_plus"
+            android:tint="@color/lw_ink" />
+
+        <TextView
+            android:id="@+id/lw_quick_new_label"
+            style="@style/LW.Text.Medium"
+            android:layout_marginStart="@dimen/lw_quick_icon_gap"
+            android:text="@string/lw_new"
+            android:textColor="@color/lw_muted" />
+    </LinearLayout>
+
+    <FrameLayout
+        android:id="@+id/lw_quick_voice"
+        android:layout_width="@dimen/lw_touch"
+        android:layout_height="@dimen/lw_touch"
+        android:layout_marginStart="@dimen/lw_quick_gap"
+        android:background="@drawable/lw_circle_wave"
+        android:contentDescription="@string/lw_voice_description">
+
+        <ImageView
+            android:layout_width="@dimen/lw_quick_glyph"
+            android:layout_height="@dimen/lw_quick_glyph"
+            android:layout_gravity="center"
+            android:importantForAccessibility="no"
+            android:src="@drawable/lw_ic_mic"
+            android:tint="@color/lw_gold_ink" />
+    </FrameLayout>
+</LinearLayout>

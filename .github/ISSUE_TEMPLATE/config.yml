@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/xP3ta/hermes-console/blob/main/SECURITY.md
+    about: Please do not open a public issue for vulnerabilities, keys or pairing codes. Follow the private process in SECURITY.md.
+  - name: Setup help and guides
+    url: https://hermes.xpetalab.dev
+    about: How to connect Console to your Hermes, step by step.

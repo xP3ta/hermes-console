@@ -5,18 +5,18 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/capabilities/capabilities_screen.dart';
 import 'package:hermes_android/core/models/attachment_draft.dart';
 import 'package:hermes_android/core/models/command_descriptor.dart';
+import 'package:hermes_android/core/models/composer_reference.dart';
 import 'package:hermes_android/core/models/desktop_context_breakdown.dart';
 import 'package:hermes_android/core/models/desktop_model_catalog.dart';
 import 'package:hermes_android/core/models/desktop_session_config.dart';
 import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
 import 'package:hermes_android/core/screens/chat_screen.dart';
-import 'package:hermes_android/core/screens/skills_screen.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/app_lock.dart';
 import 'package:hermes_android/core/services/approval_policy.dart';
-import 'package:hermes_android/core/services/bridge_manager.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/compression_restore_store.dart';
 import 'package:hermes_android/core/services/font_size_service.dart';
@@ -35,7 +35,6 @@ import 'package:hermes_android/main.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-
 
 class _SlashGateway
     implements
@@ -61,6 +60,13 @@ class _SlashGateway
   final List<String> submissions = [];
   final List<String> slashCalls = [];
   Completer<SlashCompletionBatch>? slashCompletion;
+  SlashCompletionBatch Function(String text)? slashResponder;
+  // Per-query gates: answers can be released in any order (stale replies).
+  final Map<String, Completer<SlashCompletionBatch>> slashGates = {};
+  final List<Map<String, String>> dispatchCalls = [];
+  // Like Hermes: command.dispatch refuses anything that is not a quick,
+  // plugin, bundle or skill command.
+  DesktopCommandRpcResult? dispatchResult;
   Completer<DesktopCommandRpcResult>? slashGate;
   int slashCompletionCalls = 0;
   Object? slashError;
@@ -165,6 +171,8 @@ class _SlashGateway
   @override
   Future<SlashCompletionBatch> completeSlash(String text) async {
     slashCompletionCalls++;
+    if (slashGates[text] case final gate?) return gate.future;
+    if (slashResponder case final respond?) return respond(text);
     return slashCompletion?.future ??
         SlashCompletionBatch.fromJson(const {'items': <Object>[]}, input: text);
   }
@@ -185,14 +193,21 @@ class _SlashGateway
     required String name,
     String arg = '',
   }) async {
+    dispatchCalls.add({'name': name, 'arg': arg});
     if (dispatchError case final error?) throw error;
-    return _acceptedResult;
+    if (dispatchResult case final result?) return result;
+    throw TuiGatewayRpcError(
+      'command.dispatch',
+      'not a quick/plugin/bundle/skill command: $name',
+      code: 4018,
+    );
   }
 
   @override
   Future<DesktopModelCatalog> modelOptions(
     String runtimeSessionId, {
     bool refresh = false,
+    bool connectedOnly = false,
   }) async => modelCatalog;
 
   @override
@@ -235,6 +250,59 @@ class _SlashGateway
   @override
   Future<void> close() async {
     if (!_events.isClosed) await _events.close();
+  }
+}
+
+class _ReferenceGateway extends _SlashGateway
+    implements HermesDesktopComposerCompletionGateway {
+  final List<Map<String, String>> pathCalls = [];
+  final Map<String, Completer<PathCompletionBatch>> pathGates = {};
+  // Per-runtime trees: each runtime answers with its own cwd.
+  PathCompletionBatch Function(String word, String runtime)? pathResponder;
+  // Scope each complete.slash carried: runtime or new-chat profile.
+  final List<Map<String, String?>> slashScopes = [];
+
+  @override
+  Future<SlashCompletionBatch> completeSlashInSession(
+    String text, {
+    String? runtimeSessionId,
+    String? profile,
+  }) {
+    slashScopes.add({
+      'text': text,
+      'session_id': runtimeSessionId,
+      'profile': profile,
+    });
+    return completeSlash(text);
+  }
+
+  @override
+  Future<PathCompletionBatch> completePath(
+    String word, {
+    required String runtimeSessionId,
+  }) async {
+    pathCalls.add({'word': word, 'session_id': runtimeSessionId});
+    if (pathGates[word] case final gate?) return gate.future;
+    if (pathResponder case final respond?) {
+      return respond(word, runtimeSessionId);
+    }
+    if (word == '@') {
+      return PathCompletionBatch.fromJson({
+        'items': [
+          {'text': '@diff', 'meta': 'git diff'},
+          {'text': '@file:', 'meta': 'attach file'},
+          {'text': '@folder:', 'meta': 'attach folder'},
+          {'text': '@url:', 'meta': 'fetch url'},
+          {'text': '@alice', 'meta': 'agent profile'},
+        ],
+      });
+    }
+    return PathCompletionBatch.fromJson({
+      'items': [
+        {'text': '@folder:lib/core/', 'display': 'core/', 'meta': 'dir'},
+        {'text': '@file:lib/main.dart', 'display': 'main.dart', 'meta': 'lib'},
+      ],
+    });
   }
 }
 
@@ -346,6 +414,13 @@ ApiClient _safeApi() => ApiClient(
   httpClient: MockClient((_) async => http.Response('not found', 404)),
 );
 
+/// The user is typing, so the IME is up; a sheet opened from the composer
+/// then hands focus back to it on close.
+void _showKeyboard(WidgetTester tester) {
+  tester.view.viewInsets = const FakeViewPadding(bottom: 600);
+  addTearDown(tester.view.resetViewInsets);
+}
+
 Future<ActiveChat> _pumpSlashChat(
   WidgetTester tester,
   _SlashGateway gateway, {
@@ -353,7 +428,12 @@ Future<ActiveChat> _pumpSlashChat(
   bool readOnly = false,
   bool bindInitialStoredSession = true,
   CompressionRestoreStore? compressionRestoreStore,
+  String? sessionProfile,
+  bool? attachDesktopRuntimeOnLoad,
 }) async {
+  final session = sessionProfile == null
+      ? _session
+      : _session.copyWith(profile: sessionProfile);
   tester.platformDispatcher.localesTestValue = [const Locale('es')];
   addTearDown(tester.platformDispatcher.clearLocalesTestValue);
   final prefs = await SharedPreferences.getInstance();
@@ -367,9 +447,11 @@ Future<ActiveChat> _pumpSlashChat(
     connection: connection,
     sessionId: _session.id,
     sessionTitle: _session.title,
+    sessionProfile: sessionProfile,
     initialStoredSessionId: bindInitialStoredSession ? _session.id : null,
     api: _safeApi(),
     desktopGateway: gateway,
+    attachDesktopRuntimeOnLoad: attachDesktopRuntimeOnLoad,
     disableForegroundKeepAlive: true,
   );
   chat
@@ -382,7 +464,7 @@ Future<ActiveChat> _pumpSlashChat(
       appLock: AppLockService(prefs),
       approvalPolicy: ApprovalPolicyService(prefs),
       fontSize: FontSizeService(prefs),
-      bridgeManager: BridgeManager(secure, manager),
+
       sshManager: SshManager(secure, manager),
       sftpTransfers: SftpTransferService(
         SshManager(secure, manager),
@@ -410,7 +492,7 @@ Future<ActiveChat> _pumpSlashChat(
   final navigatorContext = tester.element(find.byType(Navigator).first);
   Navigator.of(navigatorContext).push(
     MaterialPageRoute<void>(
-      builder: (_) => ChatScreen(connection: connection, session: _session),
+      builder: (_) => ChatScreen(connection: connection, session: session),
     ),
   );
   await tester.pump();
@@ -595,6 +677,301 @@ void main() {
     );
   });
 
+  group('Chat @ references', () {
+    testWidgets('@ lists Desktop starters and inserts the Desktop wire form', (
+      tester,
+    ) async {
+      final gateway = _ReferenceGateway();
+      final chat = await _pumpSlashChat(tester, gateway);
+      expect(chat.desktopRuntimeSessionId, isNotNull);
+      final composer = find.byType(TextField).last;
+      await tester.tap(composer);
+      await tester.pump(const Duration(milliseconds: 250));
+
+      await tester.enterText(composer, 'mira @');
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(gateway.pathCalls.single, {
+        'word': '@',
+        'session_id': chat.desktopRuntimeSessionId!,
+      });
+      expect(
+        find.byKey(const ValueKey('chat-reference-palette')),
+        findsOneWidget,
+      );
+      // Profiles belong to the mention palette; @diff is not offered.
+      expect(find.byKey(const ValueKey('chat-reference-@diff:')), findsNothing);
+      expect(find.text('@alice'), findsNothing);
+
+      await tester.tap(find.byKey(const ValueKey('chat-reference-@file:')));
+      await tester.pump();
+      final field = tester.widget<TextField>(composer);
+      expect(field.controller!.text, 'mira @file:');
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(gateway.pathCalls.last['word'], '@file:');
+
+      await tester.tap(
+        find.byKey(const ValueKey('chat-reference-@file:lib/main.dart')),
+      );
+      await tester.pump();
+      expect(field.controller!.text, 'mira @file:`lib/main.dart` ');
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(
+        find.byKey(const ValueKey('chat-reference-palette')),
+        findsNothing,
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a folder opens in place and a fast burst sends one lookup', (
+      tester,
+    ) async {
+      final gateway = _ReferenceGateway();
+      await _pumpSlashChat(tester, gateway);
+      final composer = find.byType(TextField).last;
+      await tester.tap(composer);
+      await tester.pump(const Duration(milliseconds: 250));
+
+      const typed = '@lib/mainx';
+      for (var index = 1; index <= typed.length; index++) {
+        await tester.enterText(composer, typed.substring(0, index));
+        await tester.pump(const Duration(milliseconds: 30));
+      }
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(gateway.pathCalls, hasLength(1));
+      expect(gateway.pathCalls.single['word'], typed);
+
+      await tester.tap(
+        find.byKey(const ValueKey('chat-reference-open-@folder:lib/core/')),
+      );
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(tester.widget<TextField>(composer).controller!.text, '@lib/core/');
+      expect(gateway.pathCalls.last['word'], '@lib/core/');
+
+      // Closing the palette (blur) cancels the pending lookup.
+      final calls = gateway.pathCalls.length;
+      await tester.enterText(composer, '@lib/core/x');
+      FocusManager.instance.primaryFocus?.unfocus();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(gateway.pathCalls, hasLength(calls));
+      expect(
+        find.byKey(const ValueKey('chat-reference-palette')),
+        findsNothing,
+      );
+    });
+
+    testWidgets('a late @ answer never overwrites a newer query', (
+      tester,
+    ) async {
+      final gateway = _ReferenceGateway();
+      final older = gateway.pathGates['@lib/a'] =
+          Completer<PathCompletionBatch>();
+      final newer = gateway.pathGates['@lib/ab'] =
+          Completer<PathCompletionBatch>();
+      await _pumpSlashChat(tester, gateway);
+      final composer = find.byType(TextField).last;
+      await tester.tap(composer);
+      await tester.pump(const Duration(milliseconds: 250));
+
+      await tester.enterText(composer, '@lib/a');
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.enterText(composer, '@lib/ab');
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(gateway.pathCalls.map((call) => call['word']), [
+        '@lib/a',
+        '@lib/ab',
+      ]);
+
+      newer.complete(
+        PathCompletionBatch.fromJson(const {
+          'items': [
+            {'text': '@file:lib/ab.dart', 'display': 'ab.dart'},
+          ],
+        }),
+      );
+      await tester.pump();
+      older.complete(
+        PathCompletionBatch.fromJson(const {
+          'items': [
+            {'text': '@file:lib/a_stale.dart', 'display': 'a_stale.dart'},
+          ],
+        }),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(
+        find.byKey(const ValueKey('chat-reference-@file:lib/ab.dart')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('chat-reference-@file:lib/a_stale.dart')),
+        findsNothing,
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    PathCompletionBatch treeOf(String word, String runtime) =>
+        PathCompletionBatch.fromJson({
+          'items': [
+            {
+              'text': '@file:lib/$runtime.dart',
+              'display': '$runtime.dart',
+              'meta': 'lib',
+            },
+          ],
+        });
+
+    testWidgets('a rotation before the debounce never caches B under A', (
+      tester,
+    ) async {
+      final gateway = _ReferenceGateway()..pathResponder = treeOf;
+      final chat = await _pumpSlashChat(tester, gateway);
+      final runtimeA = chat.desktopRuntimeSessionId!;
+      final runtimeB = '$runtimeA-b';
+      final composer = find.byType(TextField).last;
+      await tester.tap(composer);
+      await tester.pump(const Duration(milliseconds: 250));
+
+      await tester.enterText(composer, '@lib/');
+      await tester.pump(const Duration(milliseconds: 50));
+      chat.adoptDesktopRuntimeForTesting(runtimeB);
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(
+        find.byKey(ValueKey('chat-reference-@file:lib/$runtimeA.dart')),
+        findsNothing,
+      );
+      // The retired key asks nobody; B is asked once, under its own key.
+      expect(gateway.pathCalls, [
+        {'word': '@lib/', 'session_id': runtimeB},
+      ]);
+
+      // Back on A, the same query asks A again instead of serving B's tree.
+      chat.adoptDesktopRuntimeForTesting(runtimeA);
+      await tester.enterText(composer, '@lib/x');
+      await tester.pump();
+      await tester.enterText(composer, '@lib/');
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(
+        find.byKey(ValueKey('chat-reference-@file:lib/$runtimeB.dart')),
+        findsNothing,
+      );
+      expect(gateway.pathCalls.last, {'word': '@lib/', 'session_id': runtimeA});
+      expect(
+        find.byKey(ValueKey('chat-reference-@file:lib/$runtimeA.dart')),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('an in-flight @ answer from a retired runtime is dropped', (
+      tester,
+    ) async {
+      final gateway = _ReferenceGateway()..pathResponder = treeOf;
+      final late = gateway.pathGates['@lib/'] =
+          Completer<PathCompletionBatch>();
+      final chat = await _pumpSlashChat(tester, gateway);
+      final runtimeA = chat.desktopRuntimeSessionId!;
+      final runtimeB = '$runtimeA-b';
+      final composer = find.byType(TextField).last;
+      await tester.tap(composer);
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.enterText(composer, '@lib/');
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(gateway.pathCalls.single['session_id'], runtimeA);
+
+      gateway.pathGates.remove('@lib/');
+      chat.adoptDesktopRuntimeForTesting(runtimeB);
+      late.complete(treeOf('@lib/', runtimeA));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(
+        find.byKey(ValueKey('chat-reference-@file:lib/$runtimeA.dart')),
+        findsNothing,
+      );
+      expect(gateway.pathCalls.last, {'word': '@lib/', 'session_id': runtimeB});
+      expect(
+        find.byKey(ValueKey('chat-reference-@file:lib/$runtimeB.dart')),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('complete.path answered after a rotation is not returned', (
+      tester,
+    ) async {
+      final gateway = _ReferenceGateway()..pathResponder = treeOf;
+      final late = gateway.pathGates['@lib/'] =
+          Completer<PathCompletionBatch>();
+      final chat = await _pumpSlashChat(tester, gateway);
+      final runtimeA = chat.desktopRuntimeSessionId!;
+
+      final answer = chat.completeDesktopPath(
+        '@lib/',
+        runtimeSessionId: runtimeA,
+      );
+      chat.adoptDesktopRuntimeForTesting('$runtimeA-b');
+      late.complete(treeOf('@lib/', runtimeA));
+      expect(await answer, isNull);
+      // Nor is a runtime that is no longer this chat's ever asked.
+      expect(
+        await chat.completeDesktopPath('@lib/', runtimeSessionId: runtimeA),
+        isNull,
+      );
+      expect(gateway.pathCalls, hasLength(1));
+    });
+
+    testWidgets('a cached @ listing expires like Desktop (15 s)', (
+      tester,
+    ) async {
+      final gateway = _ReferenceGateway()..pathResponder = treeOf;
+      await _pumpSlashChat(tester, gateway);
+      final composer = find.byType(TextField).last;
+      await tester.tap(composer);
+      await tester.pump(const Duration(milliseconds: 250));
+
+      Future<void> retype() async {
+        await tester.enterText(composer, '@lib/x');
+        await tester.pump();
+        await tester.enterText(composer, '@lib/');
+        await tester.pump(const Duration(milliseconds: 300));
+      }
+
+      await tester.enterText(composer, '@lib/');
+      await tester.pump(const Duration(milliseconds: 300));
+      final first = gateway.pathCalls.where((c) => c['word'] == '@lib/');
+      expect(first, hasLength(1));
+      await retype();
+      expect(
+        gateway.pathCalls.where((c) => c['word'] == '@lib/'),
+        hasLength(1),
+      );
+
+      // The tree may have changed since: past the TTL it is listed again.
+      await tester.pump(const Duration(seconds: 16));
+      await retype();
+      expect(
+        gateway.pathCalls.where((c) => c['word'] == '@lib/'),
+        hasLength(2),
+      );
+    });
+
+    testWidgets('a gateway without complete.path shows no @ palette', (
+      tester,
+    ) async {
+      final gateway = _SlashGateway();
+      await _pumpSlashChat(tester, gateway);
+      final composer = find.byType(TextField).last;
+      await tester.tap(composer);
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.enterText(composer, '@lib/');
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(
+        find.byKey(const ValueKey('chat-reference-palette')),
+        findsNothing,
+      );
+    });
+  });
+
   group('Chat slash palette', () {
     testWidgets(
       '/compress floats above the composer and selection preserves draft focus',
@@ -647,6 +1024,389 @@ void main() {
       },
     );
 
+    testWidgets('server skills appear grouped with their descriptions', (
+      tester,
+    ) async {
+      final gateway = _SlashGateway()
+        ..slashResponder = (text) => SlashCompletionBatch.fromJson({
+          'replace_from': 1,
+          'items': [
+            {'text': '/goal', 'meta': 'Run a goal', 'kind': 'command'},
+            {'text': '/review-pr', 'meta': 'Review a PR', 'kind': 'skill'},
+          ],
+        }, input: text);
+      await _pumpSlashChat(tester, gateway);
+      final composer = find.byType(TextField).last;
+
+      await tester.tap(composer);
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.enterText(composer, '/');
+      await tester.pump(const Duration(milliseconds: 250));
+
+      expect(gateway.slashCompletionCalls, 1);
+      final skill = find.byKey(const ValueKey('chat-slash-command-review-pr'));
+      await tester.scrollUntilVisible(
+        skill,
+        80,
+        scrollable: find.descendant(
+          of: find.byKey(const ValueKey('chat-slash-palette')),
+          matching: find.byType(Scrollable),
+        ),
+      );
+      expect(skill, findsOneWidget);
+      expect(find.text('Review a PR'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('chat-slash-skills-header')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('chat-slash-command-goal')),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a fast keystroke burst sends one completion; blur cancels', (
+      tester,
+    ) async {
+      final gateway = _SlashGateway();
+      await _pumpSlashChat(tester, gateway);
+      final composer = find.byType(TextField).last;
+      await tester.tap(composer);
+      await tester.pump(const Duration(milliseconds: 250));
+      final before = gateway.slashCompletionCalls;
+
+      const typed = '/abcdefghi';
+      for (var index = 1; index <= typed.length; index++) {
+        await tester.enterText(composer, typed.substring(0, index));
+        await tester.pump(const Duration(milliseconds: 40));
+      }
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(gateway.slashCompletionCalls - before, 1);
+
+      final afterBurst = gateway.slashCompletionCalls;
+      await tester.enterText(composer, '/zz');
+      FocusManager.instance.primaryFocus?.unfocus();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(gateway.slashCompletionCalls, afterBurst);
+      expect(find.byKey(const ValueKey('chat-slash-palette')), findsNothing);
+    });
+
+    testWidgets('a new chat scopes / to its profile, not the default one', (
+      tester,
+    ) async {
+      final gateway = _ReferenceGateway();
+      final chat = await _pumpSlashChat(
+        tester,
+        gateway,
+        bindInitialStoredSession: false,
+        attachDesktopRuntimeOnLoad: false,
+        sessionProfile: 'work',
+      );
+      expect(chat.desktopRuntimeSessionId, isNull);
+      final composer = find.byType(TextField).last;
+      await tester.tap(composer);
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.enterText(composer, '/rev');
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(gateway.slashScopes, [
+        {'text': '/rev', 'session_id': null, 'profile': 'work'},
+      ]);
+    });
+
+    testWidgets('a cached slash answer never crosses a runtime rotation', (
+      tester,
+    ) async {
+      final gateway = _ReferenceGateway()
+        ..slashResponder = (text) => SlashCompletionBatch.fromJson({
+          'replace_from': 1,
+          'items': [
+            {'text': '/review-a', 'meta': 'Runtime A only', 'kind': 'skill'},
+          ],
+        }, input: text);
+      final chat = await _pumpSlashChat(tester, gateway);
+      final runtimeA = chat.desktopRuntimeSessionId!;
+      final composer = find.byType(TextField).last;
+      await tester.tap(composer);
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.enterText(composer, '/rev');
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(
+        find.byKey(const ValueKey('chat-slash-command-review-a')),
+        findsOneWidget,
+      );
+
+      // The runtime rotates while the same query is typed again: B is asked
+      // and A's memoised answer is never repainted.
+      final runtimeB = '$runtimeA-rotated';
+      gateway.slashResponder = (text) => SlashCompletionBatch.fromJson({
+        'replace_from': 1,
+        'items': [
+          {'text': '/review-b', 'meta': 'Runtime B', 'kind': 'skill'},
+        ],
+      }, input: text);
+      chat.adoptDesktopRuntimeForTesting(runtimeB);
+      await tester.enterText(composer, '/re');
+      await tester.pump();
+      await tester.enterText(composer, '/rev');
+      await tester.pump();
+      expect(
+        find.byKey(const ValueKey('chat-slash-command-review-a')),
+        findsNothing,
+      );
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(gateway.slashScopes.last, {
+        'text': '/rev',
+        'session_id': runtimeB,
+        'profile': null,
+      });
+      expect(
+        find.byKey(const ValueKey('chat-slash-command-review-b')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('chat-slash-command-review-a')),
+        findsNothing,
+      );
+    });
+
+    testWidgets('an in-flight slash answer from a retired runtime is dropped', (
+      tester,
+    ) async {
+      final gateway = _ReferenceGateway();
+      final late = gateway.slashGates['/rev'] =
+          Completer<SlashCompletionBatch>();
+      final chat = await _pumpSlashChat(tester, gateway);
+      final composer = find.byType(TextField).last;
+      await tester.tap(composer);
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.enterText(composer, '/rev');
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(gateway.slashScopes, hasLength(1));
+
+      chat.adoptDesktopRuntimeForTesting(
+        '${chat.desktopRuntimeSessionId}-rotated',
+      );
+      late.complete(
+        SlashCompletionBatch.fromJson(const {
+          'replace_from': 1,
+          'items': [
+            {'text': '/stale-a', 'meta': 'Runtime A', 'kind': 'skill'},
+          ],
+        }, input: '/rev'),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(
+        find.byKey(const ValueKey('chat-slash-command-stale-a')),
+        findsNothing,
+      );
+    });
+
+    testWidgets('a late slash answer never overwrites a newer query', (
+      tester,
+    ) async {
+      final gateway = _SlashGateway();
+      final older = gateway.slashGates['/re'] =
+          Completer<SlashCompletionBatch>();
+      final newer = gateway.slashGates['/rev'] =
+          Completer<SlashCompletionBatch>();
+      await _pumpSlashChat(tester, gateway);
+      final composer = find.byType(TextField).last;
+      await tester.tap(composer);
+      await tester.pump(const Duration(milliseconds: 250));
+
+      await tester.enterText(composer, '/re');
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.enterText(composer, '/rev');
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(gateway.slashCompletionCalls, 2);
+
+      newer.complete(
+        SlashCompletionBatch.fromJson(const {
+          'replace_from': 1,
+          'items': [
+            {'text': '/review-pr', 'meta': 'Review a PR', 'kind': 'skill'},
+          ],
+        }, input: '/rev'),
+      );
+      await tester.pump();
+      older.complete(
+        SlashCompletionBatch.fromJson(const {
+          'replace_from': 1,
+          'items': [
+            {'text': '/reset-stale', 'meta': 'stale', 'kind': 'command'},
+          ],
+        }, input: '/re'),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(
+        find.byKey(const ValueKey('chat-slash-command-review-pr')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('chat-slash-command-reset-stale')),
+        findsNothing,
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a skill falls back to command.dispatch and sends its body', (
+      tester,
+    ) async {
+      final gateway = _SlashGateway()
+        ..slashResponder = ((text) => SlashCompletionBatch.fromJson(const {
+          'replace_from': 1,
+          'items': [
+            {'text': '/review-pr', 'meta': 'Review a PR', 'kind': 'skill'},
+          ],
+        }, input: text))
+        ..slashError = const TuiGatewayRpcError(
+          'slash.exec',
+          'skill command: use command.dispatch for /review-pr',
+          code: 4018,
+        )
+        ..dispatchResult = DesktopCommandRpcResult.fromJson(const {
+          'type': 'skill',
+          'name': 'review-pr',
+          'message': 'Skill body for PR 12',
+        });
+      await _pumpSlashChat(tester, gateway);
+      final composer = find.byType(TextField).last;
+      await tester.tap(composer);
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.enterText(composer, '/rev');
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.enterText(composer, '/review-pr 12');
+      await tester.pump(const Duration(milliseconds: 300));
+      await _submitSlash(tester);
+
+      // Desktop slash.ts: slash.exec first, command.dispatch {name, arg}
+      // on its error, then the skill body goes out as the next turn.
+      expect(gateway.slashCalls, ['review-pr 12']);
+      expect(gateway.dispatchCalls, [
+        {'name': 'review-pr', 'arg': '12'},
+      ]);
+      expect(gateway.submissions, ['Skill body for PR 12']);
+      expect(tester.widget<TextField>(composer).controller?.text, isEmpty);
+      gateway.emit('message.complete', {'text': 'ok'});
+      await tester.pump(const Duration(milliseconds: 350));
+    });
+
+    testWidgets('a skill refused for a missing dispatcher keeps its error', (
+      tester,
+    ) async {
+      final gateway = _SlashGateway()
+        ..slashError = const TuiGatewayRpcError(
+          'slash.exec',
+          'skill command: use command.dispatch for /goal',
+          code: 4018,
+        );
+      await _pumpSlashChat(tester, gateway);
+      final composer = find.byType(TextField).last;
+      await tester.tap(composer);
+      await tester.enterText(composer, '/goal algo');
+      await tester.pump(const Duration(milliseconds: 250));
+      await _submitSlash(tester);
+
+      expect(gateway.dispatchCalls, [
+        {'name': 'goal', 'arg': 'algo'},
+      ]);
+      expect(gateway.submissions, isEmpty);
+      expect(tester.widget<TextField>(composer).controller?.text, '/goal algo');
+    });
+
+    // slash.exec may have run the command before this error: a worker
+    // failure, a lost reply or a failed bundle. Retrying through
+    // command.dispatch could run it twice, so only the gateway's own
+    // "use command.dispatch" refusal reroutes.
+    for (final error in const [
+      TuiGatewayRpcError('slash.exec', 'worker timeout', code: 5030),
+      // A worker exception's text is not the gateway's refusal.
+      TuiGatewayRpcError(
+        'slash.exec',
+        'worker died: use command.dispatch for /goal',
+        code: 5031,
+      ),
+      TuiGatewayRpcError(
+        'slash.exec',
+        'bundle dispatch failed: boom',
+        code: 4018,
+      ),
+      TuiGatewayRpcError(
+        'slash.exec',
+        'Hermes did not answer in time',
+        failureKind: TuiGatewayRpcFailureKind.timeout,
+      ),
+      TuiGatewayRpcError(
+        'slash.exec',
+        'Connection lost',
+        failureKind: TuiGatewayRpcFailureKind.connectionLost,
+      ),
+    ]) {
+      testWidgets('an ambiguous slash.exec failure is not retried: '
+          '${error.code ?? error.failureKind?.name}', (tester) async {
+        final gateway = _SlashGateway()..slashError = error;
+        await _pumpSlashChat(tester, gateway);
+        final composer = find.byType(TextField).last;
+        await tester.tap(composer);
+        await tester.enterText(composer, '/goal algo');
+        await tester.pump(const Duration(milliseconds: 250));
+        await _submitSlash(tester);
+
+        expect(gateway.slashCalls, ['goal algo']);
+        expect(gateway.dispatchCalls, isEmpty);
+        expect(gateway.submissions, isEmpty);
+        expect(
+          tester.widget<TextField>(composer).controller?.text,
+          '/goal algo',
+        );
+      });
+    }
+
+    testWidgets('a skill named by one runtime is not run on the next', (
+      tester,
+    ) async {
+      final gateway = _ReferenceGateway()
+        ..slashResponder = ((text) => SlashCompletionBatch.fromJson(const {
+          'replace_from': 1,
+          'items': [
+            {'text': '/review-a', 'meta': 'Runtime A', 'kind': 'skill'},
+          ],
+        }, input: text));
+      final chat = await _pumpSlashChat(tester, gateway);
+      final composer = find.byType(TextField).last;
+      await tester.tap(composer);
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.enterText(composer, '/rev');
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(
+        find.byKey(const ValueKey('chat-slash-command-review-a')),
+        findsOneWidget,
+      );
+
+      gateway.slashResponder = (text) => SlashCompletionBatch.fromJson(const {
+        'items': <Object>[],
+      }, input: text);
+      chat.adoptDesktopRuntimeForTesting('${chat.desktopRuntimeSessionId}-b');
+      await tester.enterText(composer, '/review-a 12');
+      await tester.pump(const Duration(milliseconds: 300));
+      await _submitSlash(tester);
+
+      // Runtime B never named it: it is not a command there.
+      expect(find.text(s.chaCommandUnknown('review-a')), findsOneWidget);
+      expect(gateway.slashCalls, isEmpty);
+      expect(gateway.dispatchCalls, isEmpty);
+      expect(gateway.submissions, isEmpty);
+      expect(
+        tester.widget<TextField>(composer).controller?.text,
+        '/review-a 12',
+      );
+    });
+
     testWidgets('a no-argument slash executes immediately exactly once', (
       tester,
     ) async {
@@ -657,6 +1417,7 @@ void main() {
       final composer = find.byType(TextField).last;
 
       await tester.enterText(composer, '/he');
+      _showKeyboard(tester);
       await tester.pump(const Duration(milliseconds: 250));
       expect(gateway.slashCompletionCalls, 1);
       final help = find.byKey(const ValueKey('chat-slash-command-help'));
@@ -702,10 +1463,61 @@ void main() {
       await tester.pump(const Duration(milliseconds: 250));
       await tester.tap(find.byKey(const ValueKey('chat-slash-command-skills')));
       await tester.pumpAndSettle();
-      expect(find.byType(SkillsScreen), findsOneWidget);
+      expect(find.byType(CapabilitiesHub), findsOneWidget);
       expect(controller.text, isEmpty);
       expect(gateway.submissions, isEmpty);
       expect(gateway.slashCalls, isEmpty);
+    });
+
+    testWidgets('typed /skills opens the capabilities hub without sending', (
+      tester,
+    ) async {
+      final gateway = _SlashGateway();
+      await _pumpSlashChat(tester, gateway);
+      final composer = find.byType(TextField).last;
+      final controller = tester.widget<TextField>(composer).controller!;
+      await tester.enterText(composer, '/Skills  ');
+      await tester.pump(const Duration(milliseconds: 250));
+      await _submitSlash(tester);
+      await tester.pumpAndSettle();
+
+      expect(find.byType(CapabilitiesHub), findsOneWidget);
+      final hub = tester.widget<CapabilitiesHub>(find.byType(CapabilitiesHub));
+      expect(hub.connection.id, _connection().id);
+      expect(hub.advancedBuilder, isNotNull);
+      expect(controller.text, isEmpty);
+      expect(gateway.submissions, isEmpty);
+      expect(gateway.slashCalls, isEmpty);
+
+      // Exactly one route was pushed: closing the hub returns to the chat.
+      Navigator.of(tester.element(find.byType(CapabilitiesHub))).pop();
+      await tester.pumpAndSettle();
+      final chatRoute = ModalRoute.of(tester.element(find.byType(ChatScreen)));
+      expect(chatRoute?.isCurrent, isTrue);
+    });
+
+    testWidgets('the /skills hub menu offers no bridge-only skills screen', (
+      tester,
+    ) async {
+      final gateway = _SlashGateway();
+      await _pumpSlashChat(tester, gateway);
+      final composer = find.byType(TextField).last;
+      await tester.enterText(composer, '/skills');
+      await tester.pump(const Duration(milliseconds: 250));
+      await _submitSlash(tester);
+      await tester.pumpAndSettle();
+
+      final more = find.descendant(
+        of: find.byType(CapabilitiesHub),
+        matching: find.byIcon(Icons.more_vert_rounded),
+      );
+      expect(more, findsOneWidget);
+      await tester.tap(more);
+      await tester.pumpAndSettle();
+      // Install, uninstall, toggle and hub search (skills.sh included) live
+      // in the hub itself; the menu keeps only the extensions center.
+      expect(find.byKey(const ValueKey('cph-menu-advanced')), findsOneWidget);
+      expect(find.byKey(const ValueKey('cph-menu-classic')), findsNothing);
     });
     testWidgets(
       '/model clears composer and restores focus after selector closes',
@@ -716,6 +1528,7 @@ void main() {
 
         await tester.tap(composer);
         await tester.enterText(composer, '/model ');
+        _showKeyboard(tester);
         await tester.pump(const Duration(milliseconds: 250));
         final fieldBeforeSubmit = tester.widget<TextField>(composer);
         expect(fieldBeforeSubmit.controller?.text, '/model ');
@@ -761,6 +1574,7 @@ void main() {
 
         await tester.tap(composer);
         await tester.enterText(composer, '/model definitely-not-a-model');
+        _showKeyboard(tester);
         await tester.pump(const Duration(milliseconds: 250));
         final field = tester.widget<TextField>(composer);
         final sendAction = find.descendant(
@@ -883,6 +1697,43 @@ void main() {
         await tester.pump();
       },
     );
+
+    testWidgets('/model with an argument gives feedback without a runtime', (
+      tester,
+    ) async {
+      final gateway = _SlashGateway()..resumeExistingError = _syntheticRpcError;
+      final chat = await _pumpSlashChat(tester, gateway);
+      // The stored session is gone, so no runtime can be acquired:
+      // ensureDesktopRuntime answers false instead of throwing.
+      chat.markStoredSessionGone();
+      expect(
+        await chat.ensureDesktopRuntime(acquireForExplicitAction: true),
+        isFalse,
+      );
+      final composer = find.byType(TextField).last;
+
+      await tester.tap(composer);
+      await tester.enterText(composer, '/model bad-model');
+      await tester.pump(const Duration(milliseconds: 250));
+      final field = tester.widget<TextField>(composer);
+
+      await _submitSlash(tester);
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pump(const Duration(milliseconds: 240));
+
+      final sheetOpened = find
+          .byKey(const ValueKey('chat-model-dialog'))
+          .evaluate()
+          .isNotEmpty;
+      final noticeShown = find.byType(SnackBar).evaluate().isNotEmpty;
+      expect(
+        sheetOpened || noticeShown,
+        isTrue,
+        reason: 'the command must not be silently dropped',
+      );
+      expect(gateway.submissions, isEmpty);
+      expect(field.controller?.text, isNot('/model bad-model'));
+    });
 
     testWidgets('/model preserves rejection and accepted retry clears once', (
       tester,
@@ -1177,10 +2028,11 @@ void main() {
         recoveredId,
       );
 
-      final discard = find.byKey(
-        const ValueKey('hermes-notice-action'),
-        skipOffstage: false,
-      );
+      // The recovered turn is said by the chat's island («Mensaje sin
+      // confirmar»); «Descartar» is its second action, behind a tap.
+      await tester.tap(find.byKey(const ValueKey('island-event-line')).last);
+      await tester.pump(const Duration(milliseconds: 400));
+      final discard = find.byKey(const ValueKey('recovered-turn-discard'));
       await tester.tap(discard.last);
       await tester.pump(const Duration(milliseconds: 400));
       expect(restored.controller?.text, 'directed turn');

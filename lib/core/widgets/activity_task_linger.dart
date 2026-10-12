@@ -3,26 +3,27 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../models/activity_snapshot.dart';
-import 'activity_panel.dart';
+import 'activity_pill.dart';
 
 class ActivityTaskLingerHost extends StatefulWidget {
   const ActivityTaskLingerHost({
     required this.snapshot,
-    this.actions = ActivityPanelActions.none,
     this.clock,
     this.revealAfter = const Duration(seconds: 2),
     this.suspended = false,
-    @visibleForTesting
-    this.lingerAfterFinished = const Duration(seconds: 4),
+    this.headerBuilder,
+    @visibleForTesting this.lingerAfterFinished = const Duration(seconds: 4),
     super.key,
   });
 
   final ActivitySnapshot snapshot;
-  final ActivityPanelActions actions;
   final DateTime Function()? clock;
   final Duration revealAfter;
   final bool suspended;
   final Duration lingerAfterFinished;
+
+  /// fh1215: see [ActivityPillHost.headerBuilder].
+  final ActivityHeaderPillBuilder? headerBuilder;
 
   @override
   State<ActivityTaskLingerHost> createState() => _ActivityTaskLingerHostState();
@@ -74,10 +75,10 @@ class _ActivityTaskLingerHostState extends State<ActivityTaskLingerHost> {
         : widget.snapshot;
     return ActivityPillHost(
       snapshot: snapshot,
-      actions: widget.actions,
       clock: widget.clock,
       revealAfter: widget.revealAfter,
       suspended: widget.suspended,
+      headerBuilder: widget.headerBuilder,
     );
   }
 }

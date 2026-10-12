@@ -15,6 +15,7 @@ import '../../models/agent_profile.dart';
 import '../../models/bot_mode_widget_snapshot.dart';
 import '../../models/desktop_active_session.dart';
 import '../../models/hosted_groups.dart';
+import '../bot_roster_cache.dart';
 import '../connection_manager.dart';
 import '../shared_gateway_pool.dart';
 import '../tui_gateway_client.dart';
@@ -368,7 +369,11 @@ String? _publicRole(AgentProfile p) {
 int? _identityColor(AgentProfile p) {
   final hex = p.botColorHex;
   if (hex != null) return 0xFF000000 | int.parse(hex.substring(1), radix: 16);
-  final visual = BotFaceBitmapCache.visualFor(p.name, p.botFaceShape);
+  final visual = BotFaceBitmapCache.visualFor(
+    p.name,
+    p.botFaceShape,
+    colorHex: p.botFaceColorHex,
+  );
   if (visual is HermesBlobatarFaceVisual) return visual.headColor.toARGB32();
   return null;
 }
@@ -659,7 +664,7 @@ class BotModeBackgroundMonitor {
         (await lease.client.profileAvatar(profile))?.bytes;
     {
       final gateway = _gatewayFor(lease.client);
-      await _refreshProfiles(gateway);
+      await _refreshProfiles(gateway, prefs, connection);
       final ok = await watcher.tick(gateway);
       final at = _now();
       if (ok) {
@@ -700,12 +705,25 @@ class BotModeBackgroundMonitor {
     await _presenter?.cancelAllLive();
   }
 
-  Future<void> _refreshProfiles(BotModeGateway gateway) async {
+  Future<void> _refreshProfiles(
+    BotModeGateway gateway,
+    SharedPreferences prefs,
+    SavedConnection connection,
+  ) async {
     final at = _profilesAt;
     if (at != null && _now().difference(at) < _profilesTtl) return;
     try {
+      final startedAt = _now();
       _profiles = await gateway.listProfiles();
       _profilesAt = _now();
+      // This isolate has its own memory: the persisted cache is how the app
+      // shows this roster on its next cold start. Ordered by when the read
+      // started, so it never replaces a newer roster the app wrote.
+      unawaited(
+        BotRosterCache(prefs)
+            .write(connection, _profiles, observedAt: startedAt, reload: true)
+            .catchError((Object _) {}),
+      );
       // Avatars may have changed with the roster.
       _avatars.clear();
     } catch (_) {}

@@ -135,7 +135,7 @@ class ChatMentionPalette extends StatelessWidget {
               cache: null,
               size: 24,
               shape: bot.avatarProfile?.botShape,
-              colorHex: bot.avatarProfile?.botColorHex,
+              colorHex: bot.avatarProfile?.botFaceColorHex,
             ),
             const SizedBox(width: 8),
             ConstrainedBox(

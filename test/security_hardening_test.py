@@ -1,9 +1,6 @@
 import importlib.util
 import json
-import os
-import sys
 import tempfile
-import types
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -17,74 +14,6 @@ def load_module(name, path):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
-
-
-def load_bridge(home):
-    web = types.SimpleNamespace(json_response=lambda data, status=200, **_: data)
-    aiohttp = types.ModuleType("aiohttp")
-    aiohttp.web = web
-    sys.modules["aiohttp"] = aiohttp
-    os.environ["BRIDGE_HERMES_HOME"] = str(home)
-    os.environ["BRIDGE_TOKEN"] = "security-test-token"
-    return load_module(
-        "bridge_security_test_module",
-        ROOT / "assets/bridge/hermes_bridge.py",
-    )
-
-
-class BridgeUrlSecurityTest(unittest.TestCase):
-    def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(prefix="bridge-url-test-")
-        self.bridge = load_bridge(Path(self.temp.name))
-
-    def tearDown(self):
-        self.temp.cleanup()
-
-    def test_configurable_base_url_allows_only_http_and_https(self):
-        self.assertEqual(
-            self.bridge._normalize_base_url("https://models.example/api"),
-            "https://models.example/api/v1",
-        )
-        self.assertEqual(
-            self.bridge._normalize_base_url("http://192.0.2.10:8000/v1"),
-            "http://192.0.2.10:8000/v1",
-        )
-        for rejected in (
-            "file:///etc/passwd",
-            "ftp://models.example/v1",
-            "https://user:secret@models.example/v1",
-            "https://models.example/v1?token=secret",
-            "https://models.example/v1#fragment",
-            "http:///missing-host",
-        ):
-            with self.subTest(rejected=rejected), self.assertRaises(ValueError):
-                self.bridge._normalize_base_url(rejected)
-
-    def test_urlopen_rejects_non_http_before_dispatch(self):
-        with mock.patch.object(self.bridge.urllib.request, "build_opener") as build:
-            with self.assertRaises(ValueError):
-                self.bridge._urlopen_http("file:///etc/passwd", timeout=1)
-            build.assert_not_called()
-
-    def test_loopback_probe_rejects_non_loopback_target(self):
-        with mock.patch.object(self.bridge.urllib.request, "build_opener") as build:
-            with self.assertRaises(ValueError):
-                self.bridge._urlopen_http(
-                    "http://example.com/api/tags",
-                    timeout=1,
-                    loopback_only=True,
-                )
-            build.assert_not_called()
-
-    def test_redirects_keep_the_same_scheme_and_loopback_policy(self):
-        handler = self.bridge._ValidatedRedirectHandler(loopback_only=True)
-        for rejected in (
-            "ftp://127.0.0.1/model",
-            "http://example.com/model",
-            "file:///etc/passwd",
-        ):
-            with self.subTest(rejected=rejected), self.assertRaises(ValueError):
-                handler.redirect_request(None, None, 302, "", {}, rejected)
 
 
 class SbomXmlSecurityTest(unittest.TestCase):

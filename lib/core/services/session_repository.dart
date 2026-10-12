@@ -1,7 +1,9 @@
 import 'dart:async';
 
+import '../utils/fts_snippet.dart';
 import '../utils/session_timestamp.dart';
 import 'connection_manager.dart';
+import 'session_archive.dart';
 
 enum SessionArchiveMode {
   exclude('exclude'),
@@ -123,6 +125,12 @@ final class SessionLibrarySnapshot {
   final int epoch;
   final int? total;
 
+  /// Set only when this refresh fell back to the gateway: its complete
+  /// default listing of the query's profile (every page, no filter), as the
+  /// server returned it. What a deletion tombstone may be confirmed against
+  /// (SessionListRead.end).
+  final List<Session>? completeGatewayListing;
+
   const SessionLibrarySnapshot({
     this.sessions = const [],
     this.source = SessionLibrarySource.local,
@@ -130,6 +138,7 @@ final class SessionLibrarySnapshot {
     this.stale = false,
     this.epoch = 0,
     this.total,
+    this.completeGatewayListing,
   });
 }
 
@@ -275,7 +284,11 @@ final class SessionRepository {
       _total = null;
       _exhausted = false;
       _deletionTombstones.removeAll(deletionTombstones);
-      return _snapshot();
+      return _snapshot(
+        completeGatewayListing: query.includeChildren
+            ? null
+            : List<Session>.unmodifiable(rawFallback),
+      );
     }
   }
 
@@ -414,17 +427,52 @@ final class SessionRepository {
     ]);
   }
 
+  /// PATCH /api/sessions/{id} with per-session state (`hidden`, `title`,
+  /// `unread`), as Desktop; see [SessionArchive.attachRemoteState]. Returns
+  /// the handler's answer and updates the retained rows it confirms.
+  Future<Map<String, Object?>> patchSessionState(
+    String sessionId,
+    Map<String, Object> fields,
+    String? profile,
+  ) async {
+    final response = await patchDashboardSessionState(
+      _dashboard,
+      sessionId,
+      fields,
+      profile,
+    );
+    final title = response['title'];
+    final hidden = response['hidden'];
+    final unread = response['unread'];
+    _sessions = List<Session>.unmodifiable([
+      for (final row in _sessions)
+        if (row.id == sessionId || row.logicalId == sessionId)
+          row.copyWith(
+            title: fields.containsKey('title') && title is String
+                ? title
+                : null,
+            hidden: hidden is bool ? hidden : null,
+            unread: unread is bool ? unread : null,
+          )
+        else
+          row,
+    ]);
+    return response;
+  }
+
   bool _isCurrent(int epoch, String fingerprint) =>
       epoch == _queryEpoch && _query?.fingerprint == fingerprint;
 
-  SessionLibrarySnapshot _snapshot() => SessionLibrarySnapshot(
-    sessions: List<Session>.unmodifiable(_sessions),
-    source: _source,
-    exhaustive: _source == SessionLibrarySource.dashboard && _exhausted,
-    stale: false,
-    epoch: _queryEpoch,
-    total: _total,
-  );
+  SessionLibrarySnapshot _snapshot({List<Session>? completeGatewayListing}) =>
+      SessionLibrarySnapshot(
+        sessions: List<Session>.unmodifiable(_sessions),
+        source: _source,
+        exhaustive: _source == SessionLibrarySource.dashboard && _exhausted,
+        stale: false,
+        epoch: _queryEpoch,
+        total: _total,
+        completeGatewayListing: completeGatewayListing,
+      );
 
   Future<_SessionPage> _loadDashboardPage(
     SessionLibraryQuery query,
@@ -488,8 +536,8 @@ final class SessionRepository {
   }
 
   static Set<String> _sessionIdentityAliases(Session session) => {
-    session.id,
     session.logicalId,
+    ...session.identityIds,
   };
 
   static bool _matchesAliases(Session session, Set<String> aliases) =>
@@ -559,9 +607,7 @@ final class SessionRepository {
     final requestedOwner = Session.profileOwner(query.profile);
     for (final row in rows) {
       if (row.messageCount < query.boundedMinMessages) continue;
-      if (!query.includeChildren && row.parentSessionId?.isNotEmpty == true) {
-        continue;
-      }
+      if (!query.includeChildren && !row.listsAsOwnRow) continue;
       if (query.archived == SessionArchiveMode.exclude && row.archived) {
         continue;
       }
@@ -591,6 +637,7 @@ final class SessionRepository {
     if (value is! Map) return null;
     final id = _boundedString(value['session_id'], 1024)?.trim();
     if (id == null || id.isEmpty) return null;
+    final snippet = _boundedString(value['snippet'], 1024);
     return Session(
       id: id,
       lineageRootId: _boundedString(value['lineage_root'], 1024)?.trim(),
@@ -599,10 +646,12 @@ final class SessionRepository {
       source: _boundedString(value['source'], 128) ?? '',
       messageCount: _nonNegativeInt(value['message_count']) ?? 1,
       isActive: value['is_active'] == true,
-      preview:
-          _boundedString(value['snippet'], 1024) ??
-          _boundedString(value['preview'], 1024) ??
-          '',
+      // Desktop strips the FTS delimiters from the preview; the raw snippet
+      // rides along so the row can paint the matches highlighted.
+      preview: snippet != null
+          ? stripFtsMarkers(snippet)
+          : _boundedString(value['preview'], 1024) ?? '',
+      searchSnippet: snippet != null && hasFtsMarkers(snippet) ? snippet : null,
       startedAt:
           normalizeEpochTimestamp(value['started_at']) ??
           normalizeEpochTimestamp(value['session_started']) ??
@@ -706,3 +755,41 @@ String _canonicalSourceFingerprint(Iterable<String> values) {
   final canonical = values.toList(growable: false)..sort();
   return canonical.join(',');
 }
+
+/// PATCH /api/sessions/{id} on the Dashboard with [fields] (Desktop's
+/// per-session flags); the owning profile rides in the body, as Desktop.
+Future<Map<String, Object?>> patchDashboardSessionState(
+  DashboardClient dashboard,
+  String sessionId,
+  Map<String, Object> fields,
+  String? profile,
+) => dashboard.apiPatch(
+  'sessions/${Uri.encodeComponent(sessionId)}',
+  body: {
+    ...fields,
+    if (profile?.trim().isNotEmpty == true) 'profile': profile!.trim(),
+  },
+);
+
+/// The HTTP status of a Dashboard failure, for
+/// [SessionArchive.attachRemoteState].
+int? dashboardHttpStatusOf(Object error) =>
+    error is DashboardHttpException ? error.statusCode : null;
+
+/// A [SessionStateWriter] for surfaces with no repository of their own
+/// (Home): each write opens and closes its own Dashboard client, so it
+/// outlives no screen.
+SessionStateWriter dashboardSessionStateWriter(SavedConnection connection) =>
+    (sessionId, fields, profile) async {
+      final dashboard = DashboardClient.lazy(connection);
+      try {
+        return await patchDashboardSessionState(
+          dashboard,
+          sessionId,
+          fields,
+          profile,
+        );
+      } finally {
+        dashboard.close();
+      }
+    };

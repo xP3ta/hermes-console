@@ -17,7 +17,13 @@ import '../../l10n/app_localizations.dart';
 import '../models/attachment_draft.dart';
 import '../services/connection_manager.dart';
 import '../services/generated_media_service.dart';
+import '../services/media_dimensions.dart';
+import '../services/media_prefetcher.dart';
 import '../theme/app_theme.dart';
+import '../design/modal.dart' show releaseTextFocusIfKeyboardHidden;
+import '../theme/motion.dart';
+import 'generated_image_card.dart';
+import 'hermes_app_bar.dart';
 import 'hermes_notice.dart';
 
 /// Tipo visual de adjunto, derivado del mime/extensión. Gobierna el badge de
@@ -31,6 +37,7 @@ enum AttachmentKind {
   text,
   archive,
   audio,
+  video,
   other,
 }
 
@@ -81,6 +88,10 @@ AttachmentKind attachmentKindFor(String name, String mimeType) {
       const {'mp3', 'wav', 'ogg', 'm4a'}.contains(ext)) {
     return AttachmentKind.audio;
   }
+  if (m.startsWith('video/') ||
+      const {'mp4', 'm4v', 'mov', 'webm', 'mkv', '3gp', 'avi'}.contains(ext)) {
+    return AttachmentKind.video;
+  }
   return AttachmentKind.other;
 }
 
@@ -95,6 +106,7 @@ String _badgeLabel(AttachmentKind kind, String name) {
     AttachmentKind.text => ext.isNotEmpty ? ext : 'TXT',
     AttachmentKind.archive => ext.isNotEmpty ? ext : 'ZIP',
     AttachmentKind.audio => ext.isNotEmpty ? ext : 'AUDIO',
+    AttachmentKind.video => ext.isNotEmpty ? ext : 'VIDEO',
     AttachmentKind.image => 'IMG',
     AttachmentKind.other => ext.isNotEmpty ? ext : 'FILE',
   };
@@ -109,6 +121,7 @@ Color _badgeColor(AttachmentKind kind) {
     AttachmentKind.text => const Color(0xFF8A8F98),
     AttachmentKind.archive => const Color(0xFFC79328),
     AttachmentKind.audio => const Color(0xFFD06BB3),
+    AttachmentKind.video => const Color(0xFF6E6AE8),
     AttachmentKind.image => const Color(0xFF2E9E5B),
     AttachmentKind.other => const Color(0xFF8A8F98),
   };
@@ -135,6 +148,51 @@ class AttachmentCard extends StatelessWidget {
   final VoidCallback? onRetry;
   final VoidCallback? onTap;
 
+  /// Composer tray variant: every attachment is a [compactThumbSize] rounded
+  /// square (image thumb, or a kind icon plus a short name) with a small ×
+  /// inside its corner. Chat bubbles keep the default 120 dp thumb.
+  final bool compact;
+
+  /// Side of every tile in the [compact] variant.
+  static const double compactThumbSize = 60;
+
+  /// The 48 dp × / retry targets of a [compact] tile overhang it by this
+  /// much above and to the side, so the tile's centre stays free for the
+  /// preview tap.
+  static const double compactTargetTop = 16;
+  static const double compactTargetSide = 20;
+
+  /// QA 9493: the small badge of a [compact] tile sits INSIDE its corner,
+  /// its centre this far from the tile's top and side edges.
+  static const double compactBadgeInset = 12;
+
+  /// Places [badge] inside its overhanging 48 dp target so that its centre
+  /// lands [compactBadgeInset] in from the tile's corner: the top end
+  /// corner for the × ([end]), the top start corner for retry.
+  static Widget _compactBadge(Widget badge, {required bool end}) {
+    const reach = compactTargetSide + compactBadgeInset;
+    return Align(
+      alignment: Alignment.topLeft,
+      child: Transform.translate(
+        offset: Offset(
+          end ? 48 - reach : reach,
+          compactTargetTop + compactBadgeInset,
+        ),
+        child: FractionalTranslation(
+          translation: const Offset(-0.5, -0.5),
+          child: badge,
+        ),
+      ),
+    );
+  }
+
+  /// The badge centred in its target, or in the tile's corner when
+  /// [compact].
+  Widget _badgeSlot(Widget badge, {required bool end}) =>
+      compact ? _compactBadge(badge, end: end) : Center(child: badge);
+
+  double get _radius => compact ? 14 : 12;
+
   const AttachmentCard({
     super.key,
     required this.name,
@@ -147,13 +205,18 @@ class AttachmentCard extends StatelessWidget {
     this.onRemove,
     this.onRetry,
     this.onTap,
+    this.compact = false,
   });
+
+  double get _thumbSize => compact ? compactThumbSize : 120;
 
   @override
   Widget build(BuildContext context) {
     final kind = attachmentKindFor(name, mimeType);
     final card = kind == AttachmentKind.image && _hasThumb
         ? _imageThumb(context, kind)
+        : compact
+        ? _fileTile(context, kind)
         : _fileCard(context, kind);
     return Stack(
       clipBehavior: Clip.none,
@@ -178,9 +241,13 @@ class AttachmentCard extends StatelessWidget {
   bool get _hasThumb =>
       thumbnailFile != null || (thumbnailUrl?.isNotEmpty ?? false);
 
+  // The compact composer thumb is too narrow for the text pill ("Error al…"):
+  // there the state is carried by the spinner, the retry button and the
+  // semantics label of the strip instead.
   bool get _showsImageStateBadge =>
-      uploadState == AttachmentUploadState.uploading ||
-      uploadState == AttachmentUploadState.error;
+      !compact &&
+      (uploadState == AttachmentUploadState.uploading ||
+          uploadState == AttachmentUploadState.error);
 
   /// Decode bound for the 120 dp thumb (3x). Only ONE side is fixed: giving
   /// the decoder both `cacheWidth` and `cacheHeight` resizes the bitmap to
@@ -205,15 +272,16 @@ class AttachmentCard extends StatelessWidget {
             fit: BoxFit.cover,
             gaplessPlayback: true,
             cacheWidth: _thumbDecodeWidth,
-            errorBuilder: (_, _, _) => _fileCard(context, kind),
+            errorBuilder: (_, _, _) =>
+                compact ? _fileTile(context, kind) : _fileCard(context, kind),
           );
     return GestureDetector(
       onTap: onTap,
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(_radius),
         child: Container(
-          width: 120,
-          height: 120,
+          width: _thumbSize,
+          height: _thumbSize,
           color: colors.surfaceVariant,
           child: img,
         ),
@@ -274,9 +342,75 @@ class AttachmentCard extends StatelessWidget {
     );
   }
 
+  /// Tray tile for a non-image attachment: the kind icon and a short name
+  /// inside the same rounded square as an image thumb.
+  Widget _fileTile(BuildContext context, AttachmentKind kind) {
+    final colors = Theme.of(context).hermes;
+    final failed = uploadState == AttachmentUploadState.error;
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: compactThumbSize,
+        height: compactThumbSize,
+        padding: const EdgeInsets.fromLTRB(5, 8, 5, 6),
+        decoration: BoxDecoration(
+          color: colors.surfaceVariant,
+          borderRadius: BorderRadius.circular(_radius),
+          border: Border.all(
+            color: failed
+                ? colors.error
+                : colors.divider.withValues(alpha: 0.5),
+          ),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              _tileIcon(kind),
+              size: 22,
+              color: failed ? colors.error : _badgeColor(kind),
+            ),
+            const SizedBox(height: 4),
+            // Fixed tile: the name may grow a little with the text scale but
+            // never past the tile; the full name stays in semantics.
+            MediaQuery.withClampedTextScaling(
+              maxScaleFactor: 1.3,
+              child: Text(
+                name,
+                key: const ValueKey('attachment-tile-name'),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: colors.textSecondary,
+                  fontSize: 10,
+                  height: 1.1,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  static IconData _tileIcon(AttachmentKind kind) => switch (kind) {
+    AttachmentKind.image => Icons.image_outlined,
+    AttachmentKind.video => Icons.movie_outlined,
+    AttachmentKind.audio => Icons.audiotrack_outlined,
+    AttachmentKind.archive => Icons.folder_zip_outlined,
+    AttachmentKind.other => Icons.insert_drive_file_outlined,
+    AttachmentKind.pdf ||
+    AttachmentKind.doc ||
+    AttachmentKind.sheet ||
+    AttachmentKind.code ||
+    AttachmentKind.text => Icons.description_outlined,
+  };
+
   String _fileSubtitle(BuildContext context, AttachmentKind kind) {
     if (!showUploadState) {
-      return '${_badgeLabel(kind, name)} · $sizeLabel';
+      final badge = _badgeLabel(kind, name);
+      return sizeLabel.isEmpty ? badge : '$badge · $sizeLabel';
     }
     final state = _uploadStateLabel(context);
     return sizeLabel.isEmpty ? state : '$state · $sizeLabel';
@@ -349,7 +483,7 @@ class AttachmentCard extends StatelessWidget {
 
   Widget _overlay(BuildContext context, {bool spinner = false}) {
     return ClipRRect(
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(_radius),
       child: Container(
         color: Colors.black.withValues(alpha: 0.45),
         alignment: Alignment.center,
@@ -367,8 +501,8 @@ class AttachmentCard extends StatelessWidget {
   Widget _removeButton(BuildContext context) {
     final colors = Theme.of(context).hermes;
     return Positioned(
-      top: -12,
-      right: -12,
+      top: compact ? -compactTargetTop : -12,
+      right: compact ? -compactTargetSide : -12,
       child: Semantics(
         button: true,
         label: Strings.of(context).chaRemoveAttachment,
@@ -381,9 +515,10 @@ class AttachmentCard extends StatelessWidget {
             child: SizedBox(
               width: 48,
               height: 48,
-              child: Center(
-                child: Container(
-                  padding: const EdgeInsets.all(3),
+              child: _badgeSlot(
+                end: true,
+                Container(
+                  padding: EdgeInsets.all(compact ? 2 : 3),
                   decoration: BoxDecoration(
                     color: colors.surface,
                     shape: BoxShape.circle,
@@ -406,8 +541,8 @@ class AttachmentCard extends StatelessWidget {
   Widget _retryButton(BuildContext context) {
     final colors = Theme.of(context).hermes;
     return Positioned(
-      top: -12,
-      left: -12,
+      top: compact ? -compactTargetTop : -12,
+      left: compact ? -compactTargetSide : -12,
       child: Semantics(
         button: true,
         label: Strings.of(context).chaRetryAttachment,
@@ -420,9 +555,10 @@ class AttachmentCard extends StatelessWidget {
             child: SizedBox(
               width: 48,
               height: 48,
-              child: Center(
-                child: Container(
-                  padding: const EdgeInsets.all(4),
+              child: _badgeSlot(
+                end: false,
+                Container(
+                  padding: EdgeInsets.all(compact ? 2 : 4),
                   decoration: BoxDecoration(
                     color: colors.surface,
                     shape: BoxShape.circle,
@@ -430,7 +566,7 @@ class AttachmentCard extends StatelessWidget {
                   ),
                   child: Icon(
                     Icons.refresh_rounded,
-                    size: 15,
+                    size: compact ? 14 : 15,
                     color: colors.textSecondary,
                   ),
                 ),
@@ -655,6 +791,13 @@ class GeneratedMediaAttachmentCard extends StatefulWidget {
   final GeneratedAudioPlayback? audioPlayback;
   final String Function(BuildContext context, Object error)? errorLabelBuilder;
 
+  /// Identity of this file within its connection and profile. When set, a
+  /// verified ready file is remembered so that a card the lazy transcript
+  /// disposed while scrolling comes back ready on its first frame, instead of
+  /// replaying consent → download → ready (a second load and two height jumps
+  /// every time it re-enters the viewport). Null disables the memo.
+  final String? readyMemoKey;
+
   const GeneratedMediaAttachmentCard({
     super.key,
     required this.reference,
@@ -664,7 +807,35 @@ class GeneratedMediaAttachmentCard extends StatefulWidget {
     this.onOpen,
     this.audioPlayback,
     this.errorLabelBuilder,
+    this.readyMemoKey,
   });
+
+  static const int _readyMemoCapacity = 128;
+
+  /// Insertion-ordered, so the first entry is the least recently used.
+  static final Map<String, ({File file, int length})> _readyMemo = {};
+
+  @visibleForTesting
+  static void clearReadyMemoForTesting() => _readyMemo.clear();
+
+  static ({File file, int length})? _recallReady(String key) {
+    final entry = _readyMemo.remove(key);
+    if (entry == null) return null;
+    // The cache may have been evicted or replaced on disk since.
+    if (!entry.file.existsSync() || entry.file.lengthSync() != entry.length) {
+      return null;
+    }
+    _readyMemo[key] = entry;
+    return entry;
+  }
+
+  static void _rememberReady(String key, File file, int length) {
+    _readyMemo.remove(key);
+    _readyMemo[key] = (file: file, length: length);
+    while (_readyMemo.length > _readyMemoCapacity) {
+      _readyMemo.remove(_readyMemo.keys.first);
+    }
+  }
 
   @override
   State<GeneratedMediaAttachmentCard> createState() =>
@@ -705,7 +876,56 @@ class _GeneratedMediaAttachmentCardState
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _totalBytes = widget.reference.sizeBytes;
+    _restoreRemembered();
     _scheduleVisibilityCheck();
+  }
+
+  String? get _memoKey {
+    final scope = widget.readyMemoKey;
+    if (scope == null) return null;
+    return GeneratedMediaService.readyKey(scope, widget.reference);
+  }
+
+  /// Images (and other inline media) are painted in a reserved box instead
+  /// of a file card while their bytes are on their way.
+  bool get _presizedImage =>
+      widget.reference.kind == GeneratedMediaKind.image &&
+      !widget.reference.htmlPreview;
+
+  /// Synchronous so the very first frame is already the ready card: the
+  /// in-process memo, then a finished prefetch, then the private disk cache
+  /// (reopen / app restart), none of which touch the network.
+  void _restoreRemembered() {
+    final key = _memoKey;
+    if (key == null) return;
+    var remembered = GeneratedMediaAttachmentCard._recallReady(key);
+    if (remembered == null &&
+        widget.reference.kind != GeneratedMediaKind.file) {
+      // Files (text/PDF) keep the async inline-safety check of a real load.
+      final cached =
+          MediaPrefetcher.instance.readyFile(key) ??
+          GeneratedMediaService.cachedFileSync(
+            widget.readyMemoKey!,
+            widget.reference,
+          );
+      if (cached != null) {
+        try {
+          final length = cached.lengthSync();
+          if (length > 0 && length <= _autoLimit) {
+            GeneratedMediaAttachmentCard._rememberReady(key, cached, length);
+            remembered = (file: cached, length: length);
+          }
+        } catch (_) {
+          // Evicted meanwhile: load normally.
+        }
+      }
+    }
+    if (remembered == null) return;
+    _file = remembered.file;
+    _text = _readTextPreview(remembered.file, remembered.length);
+    _receivedBytes = remembered.length;
+    _totalBytes = remembered.length;
+    _status = GeneratedFileStatus.ready;
   }
 
   @override
@@ -735,6 +955,7 @@ class _GeneratedMediaAttachmentCardState
       _totalBytes = widget.reference.sizeBytes;
       _errorLabel = null;
       _status = GeneratedFileStatus.consent;
+      _restoreRemembered();
       _scheduleVisibilityCheck();
     }
   }
@@ -884,8 +1105,8 @@ class _GeneratedMediaAttachmentCardState
         }
       }
 
-      final file = automatic
-          ? await GeneratedMediaService.runAutoLoad(
+      Future<File> slottedLoad() => automatic
+          ? GeneratedMediaService.runAutoLoad(
               performLoadWithRetry,
               cancellation: cancellation,
               isCancelled: () =>
@@ -894,7 +1115,16 @@ class _GeneratedMediaAttachmentCardState
                   !_visible ||
                   generation != _generation,
             )
-          : await performLoadWithRetry();
+          : performLoadWithRetry();
+      // A background prefetch of this very file is running: join it rather
+      // than taking a second slot or issuing a second request.
+      final memoKey = _memoKey;
+      final prefetching = memoKey == null
+          ? null
+          : MediaPrefetcher.instance.pending(memoKey);
+      final file = prefetching != null
+          ? (await prefetching) ?? await slottedLoad()
+          : await slottedLoad();
       if (!mounted || generation != _generation || _cancelled) return;
       final length = file.lengthSync();
       if (!mounted || generation != _generation || _cancelled) return;
@@ -920,6 +1150,9 @@ class _GeneratedMediaAttachmentCardState
       }
       final text = _readTextPreview(file, length);
       if (!mounted || generation != _generation || _cancelled) return;
+      if (memoKey != null) {
+        GeneratedMediaAttachmentCard._rememberReady(memoKey, file, length);
+      }
       setState(() {
         _file = file;
         _text = text;
@@ -1033,7 +1266,7 @@ class _GeneratedMediaAttachmentCardState
     if (file == null) return;
     try {
       await FilePicker.platform.saveFile(
-        dialogTitle: 'Hermes Console',
+        dialogTitle: 'Console',
         fileName: widget.reference.displayName,
         bytes: await file.readAsBytes(),
       );
@@ -1045,7 +1278,9 @@ class _GeneratedMediaAttachmentCardState
   Future<void> _open() async {
     final file = _file;
     if (file == null) return;
-    if (_text != null) {
+    // A host-provided opener (the chat's in-app artifact viewer) takes text
+    // too, so Markdown/HTML/code render natively instead of as raw source.
+    if (_text != null && widget.onOpen == null) {
       await Navigator.of(context).push<void>(
         MaterialPageRoute(
           builder: (_) => GeneratedTextViewerScreen(
@@ -1084,6 +1319,57 @@ class _GeneratedMediaAttachmentCardState
     );
   }
 
+  /// Skeleton or thumbnail of an image in one size-animated frame. Known
+  /// dimensions make the skeleton exactly as tall as the thumbnail, so the
+  /// row never moves; unknown ones reserve 16:9 and animate once. Null when
+  /// the regular file card applies (over the cap, error, offline).
+  Widget? _buildPresizedImage(BuildContext context, File? file) {
+    Widget? child;
+    if (_status == GeneratedFileStatus.ready && file != null) {
+      child = widget.readyBuilder?.call(
+        context,
+        file,
+        _receivedBytes,
+        _openExternal,
+        _share,
+        _save,
+      );
+    } else {
+      final knownSize = widget.reference.sizeBytes;
+      final waitsForAutoLoad =
+          _mayAutoLoad &&
+          !_autoLimitExceeded &&
+          (knownSize == null || knownSize <= _autoLimit) &&
+          (_totalBytes == null || _totalBytes! <= _autoLimit);
+      if (waitsForAutoLoad &&
+          (_status == GeneratedFileStatus.consent ||
+              _status == GeneratedFileStatus.downloading)) {
+        final memoKey = _memoKey;
+        final total = _totalBytes;
+        child = KeyedSubtree(
+          key: ValueKey<String>('generated-${widget.reference.kind.name}-card'),
+          child: GeneratedImageSkeleton(
+            intrinsicSize: memoKey == null
+                ? null
+                : MediaDimensionsCache.lookup(memoKey),
+            loading: _status == GeneratedFileStatus.downloading,
+            progress: total != null && total > 0 && _receivedBytes > 0
+                ? (_receivedBytes / total).clamp(0.0, 1.0)
+                : null,
+          ),
+        );
+      }
+    }
+    if (child == null) return null;
+    if (MediaQuery.maybeDisableAnimationsOf(context) ?? false) return child;
+    return AnimatedSize(
+      duration: const Duration(milliseconds: 200),
+      curve: Curves.easeOut,
+      alignment: Alignment.topLeft,
+      child: child,
+    );
+  }
+
   void _showActionError() {
     HermesNotice.of(context).showSnackBar(
       SnackBar(content: Text(Strings.of(context).genMediaError)),
@@ -1112,6 +1398,10 @@ class _GeneratedMediaAttachmentCardState
           file,
           mimeType: widget.reference.mimeType,
         );
+    if (_presizedImage) {
+      final image = _buildPresizedImage(context, file);
+      if (image != null) return image;
+    }
     if (_status == GeneratedFileStatus.ready && file != null) {
       if (_text != null) {
         return GeneratedTextPreviewCard(
@@ -1294,17 +1584,8 @@ class GeneratedTextViewerScreen extends StatelessWidget {
     final strings = Strings.of(context);
     final colors = Theme.of(context).hermes;
     return Scaffold(
-      appBar: AppBar(
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(name, maxLines: 1, overflow: TextOverflow.ellipsis),
-            Text(
-              _formatFileBytes(sizeBytes),
-              style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w400),
-            ),
-          ],
-        ),
+      appBar: HermesAppBar(
+        title: Text(name),
         actions: [
           IconButton(
             key: const ValueKey<String>('generated-text-copy'),
@@ -1702,10 +1983,21 @@ class _GeneratedAudioPlayerCardState extends State<GeneratedAudioPlayerCard> {
             width: 300,
             child: Row(
               children: [
-                IconButton(
-                  onPressed: _toggle,
-                  icon: Icon(
-                    _playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                Semantics(
+                  label: _playing
+                      ? Strings.of(context).a11yPauseAudio
+                      : Strings.of(context).a11yPlayAudio,
+                  button: true,
+                  onTap: _toggle,
+                  excludeSemantics: true,
+                  child: IconButton(
+                    onPressed: _toggle,
+                    tooltip: _playing
+                        ? Strings.of(context).a11yPauseAudio
+                        : Strings.of(context).a11yPlayAudio,
+                    icon: Icon(
+                      _playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                    ),
                   ),
                 ),
                 Expanded(
@@ -1770,7 +2062,7 @@ class GeneratedAudioViewerScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final strings = Strings.of(context);
     return Scaffold(
-      appBar: AppBar(
+      appBar: HermesAppBar(
         title: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis),
         actions: [
           IconButton(
@@ -1829,7 +2121,7 @@ class GeneratedFileViewerScreen extends StatelessWidget {
     final colors = Theme.of(context).hermes;
     final kind = attachmentKindFor(name, mimeType);
     return Scaffold(
-      appBar: AppBar(
+      appBar: HermesAppBar(
         title: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis),
         actions: [
           IconButton(
@@ -1928,53 +2220,66 @@ String _formatAudioDuration(Duration value) {
 
 /// Abre la imagen [file] a pantalla completa con zoom (pinch/double-tap),
 /// fondo negro y cierre por toque/atrás. Visor ligero, sin dependencias extra.
-Future<void> showImageViewer(BuildContext context, File file) {
+Future<void> showImageViewer(BuildContext context, File file) =>
+    showImageGallery(context, [file]);
+
+/// Full-screen viewer over [files] (one or more images of the same reply),
+/// starting at [initialIndex]. Swipe pages between them; pinch or double
+/// tap zooms the one on screen, and paging pauses while it is zoomed.
+Future<void> showImageGallery(
+  BuildContext context,
+  List<File> files, {
+  int initialIndex = 0,
+}) {
+  assert(files.isNotEmpty);
+  releaseTextFocusIfKeyboardHidden(context);
   return Navigator.of(context).push(
     PageRouteBuilder<void>(
       opaque: false,
       barrierColor: Colors.black,
       barrierDismissible: true,
       transitionDuration: const Duration(milliseconds: 180),
-      pageBuilder: (_, anim, _) => FadeTransition(
-        opacity: anim,
-        child: _GeneratedImageViewer(file: file),
+      pageBuilder: (_, anim, _) => CoveredRouteMediaQueryFreeze(
+        child: FadeTransition(
+          opacity: anim,
+          child: _GeneratedImageViewer(
+            files: files,
+            initialIndex: initialIndex.clamp(0, files.length - 1),
+          ),
+        ),
       ),
     ),
   );
 }
 
 class _GeneratedImageViewer extends StatefulWidget {
-  final File file;
+  final List<File> files;
+  final int initialIndex;
 
-  const _GeneratedImageViewer({required this.file});
+  const _GeneratedImageViewer({required this.files, this.initialIndex = 0});
 
   @override
   State<_GeneratedImageViewer> createState() => _GeneratedImageViewerState();
 }
 
 class _GeneratedImageViewerState extends State<_GeneratedImageViewer> {
-  final TransformationController _transformation = TransformationController();
-  TapDownDetails? _doubleTapDetails;
+  late final PageController _pages = PageController(
+    initialPage: widget.initialIndex,
+  );
+  late int _index = widget.initialIndex;
+  bool _zoomed = false;
 
   @override
   void dispose() {
-    _transformation.dispose();
+    _pages.dispose();
     super.dispose();
   }
 
-  void _toggleZoom() {
-    if (_transformation.value != Matrix4.identity()) {
-      _transformation.value = Matrix4.identity();
-      return;
-    }
-    final point = _doubleTapDetails?.localPosition ?? Offset.zero;
-    _transformation.value = Matrix4.identity()
-      ..translateByDouble(-point.dx * 2, -point.dy * 2, 0, 1)
-      ..scaleByDouble(3, 3, 1, 1);
-  }
+  File get _file => widget.files[_index];
 
   @override
   Widget build(BuildContext context) {
+    final count = widget.files.length;
     return Scaffold(
       backgroundColor: Colors.black,
       body: SafeArea(
@@ -1982,24 +2287,23 @@ class _GeneratedImageViewerState extends State<_GeneratedImageViewer> {
           key: const ValueKey<String>('generated-image-viewer-safe-area'),
           children: [
             Positioned.fill(
-              child: GestureDetector(
-                onDoubleTapDown: (details) => _doubleTapDetails = details,
-                onDoubleTap: _toggleZoom,
-                child: InteractiveViewer(
-                  transformationController: _transformation,
-                  minScale: 1,
-                  maxScale: 5,
-                  child: Center(
-                    child: Image.file(
-                      widget.file,
-                      fit: BoxFit.contain,
-                      errorBuilder: (_, _, _) => const Icon(
-                        Icons.broken_image_outlined,
-                        color: Colors.white54,
-                        size: 64,
-                      ),
-                    ),
-                  ),
+              child: PageView.builder(
+                key: const ValueKey<String>('image-gallery-pages'),
+                controller: _pages,
+                physics: _zoomed || count < 2
+                    ? const NeverScrollableScrollPhysics()
+                    : const PageScrollPhysics(),
+                itemCount: count,
+                onPageChanged: (i) => setState(() {
+                  _index = i;
+                  _zoomed = false;
+                }),
+                itemBuilder: (_, i) => _ZoomableImagePage(
+                  key: ValueKey<String>('image-gallery-page-$i'),
+                  file: widget.files[i],
+                  onZoomChanged: (zoomed) {
+                    if (zoomed != _zoomed) setState(() => _zoomed = zoomed);
+                  },
                 ),
               ),
             ),
@@ -2015,13 +2319,26 @@ class _GeneratedImageViewerState extends State<_GeneratedImageViewer> {
                       color: Colors.white,
                     ),
                     tooltip: Strings.of(context).imgSaveToGallery,
-                    onPressed: () => saveMediaToGallery(context, widget.file),
+                    onPressed: () => saveMediaToGallery(context, _file),
                   ),
                   IconButton(
                     icon: const Icon(Icons.share_outlined, color: Colors.white),
                     tooltip: Strings.of(context).commonShare,
-                    onPressed: () => shareMediaFile(widget.file),
+                    onPressed: () => shareMediaFile(_file),
                   ),
+                  const Spacer(),
+                  if (count > 1)
+                    Text(
+                      Strings.of(
+                        context,
+                      ).fh1215GalleryPosition(_index + 1, count),
+                      key: const ValueKey<String>('image-gallery-position'),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
                   const Spacer(),
                   IconButton(
                     icon: const Icon(Icons.close, color: Colors.white),
@@ -2032,6 +2349,71 @@ class _GeneratedImageViewerState extends State<_GeneratedImageViewer> {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ZoomableImagePage extends StatefulWidget {
+  final File file;
+  final ValueChanged<bool> onZoomChanged;
+
+  const _ZoomableImagePage({
+    required this.file,
+    required this.onZoomChanged,
+    super.key,
+  });
+
+  @override
+  State<_ZoomableImagePage> createState() => _ZoomableImagePageState();
+}
+
+class _ZoomableImagePageState extends State<_ZoomableImagePage> {
+  final TransformationController _transformation = TransformationController();
+  TapDownDetails? _doubleTapDetails;
+
+  @override
+  void dispose() {
+    _transformation.dispose();
+    super.dispose();
+  }
+
+  void _toggleZoom() {
+    if (_transformation.value != Matrix4.identity()) {
+      _transformation.value = Matrix4.identity();
+      widget.onZoomChanged(false);
+      return;
+    }
+    final point = _doubleTapDetails?.localPosition ?? Offset.zero;
+    _transformation.value = Matrix4.identity()
+      ..translateByDouble(-point.dx * 2, -point.dy * 2, 0, 1)
+      ..scaleByDouble(3, 3, 1, 1);
+    widget.onZoomChanged(true);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onDoubleTapDown: (details) => _doubleTapDetails = details,
+      onDoubleTap: _toggleZoom,
+      child: InteractiveViewer(
+        transformationController: _transformation,
+        minScale: 1,
+        maxScale: 5,
+        onInteractionEnd: (_) => widget.onZoomChanged(
+          _transformation.value.getMaxScaleOnAxis() > 1.01,
+        ),
+        child: Center(
+          child: Image.file(
+            widget.file,
+            fit: BoxFit.contain,
+            errorBuilder: (_, _, _) => const Icon(
+              Icons.broken_image_outlined,
+              color: Colors.white54,
+              size: 64,
+            ),
+          ),
         ),
       ),
     );

@@ -1,0 +1,13 @@
+Google Play badge artwork
+
+The "Get it on Google Play" badge images in docs/badges/ (google-play-en.png,
+google-play-es.png) are the official, unmodified artwork published by Google LLC
+at https://play.google.com/intl/en_us/badges/ . They are used only to link to
+the app's Google Play listing, under the Google Play badge guidelines
+(https://play.google.com/intl/en_us/badges/), which require the artwork to stay
+unmodified and the notice "Google Play and the Google Play logo are trademarks
+of Google LLC." to appear where it is used.
+
+Copyright Google LLC. This is not a license to reuse the artwork for any other
+purpose; follow the guidelines above for any other use. The project's own
+GPL-3.0-only license does not apply to these two files.

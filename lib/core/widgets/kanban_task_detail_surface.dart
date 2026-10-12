@@ -12,6 +12,13 @@ typedef KanbanAttachmentAction =
 typedef KanbanRunAction = Future<void> Function(KanbanRun run);
 typedef KanbanLinkedTaskAction = Future<void> Function(String taskId);
 
+/// Physics for the selectable texts of the detail page. A [SelectableText]
+/// hosts its own Scrollable; when that inner Scrollable accepts a drag it
+/// wins the gesture and moves only the text while the page stays pinned
+/// (issue #62, the app-wide behaviour up to 1.2.13). The texts never need
+/// to scroll themselves, so they never take the drag: the page owns it.
+const ScrollPhysics _pageOwnsDrag = NeverScrollableScrollPhysics();
+
 /// Contenido del detalle Kanban 0.20 como página action-first (spec 080): una
 /// sola columna desplazable, estado en línea, acciones primero y grupos
 /// editoriales en lugar de tarjetas con borde. Las listas secundarias
@@ -523,6 +530,7 @@ class _KanbanTaskDetailSurfaceState extends State<KanbanTaskDetailSurface> {
                   const SizedBox(height: 2),
                   SelectableText(
                     comment.body,
+                    scrollPhysics: _pageOwnsDrag,
                     style: HermesType.text.copyWith(
                       color: colors.textSecondary,
                     ),
@@ -720,6 +728,7 @@ class _KanbanTaskDetailSurfaceState extends State<KanbanTaskDetailSurface> {
                 Expanded(
                   child: SelectableText(
                     _eventText(event),
+                    scrollPhysics: _pageOwnsDrag,
                     style: HermesType.support.copyWith(
                       color: colors.textSecondary,
                     ),
@@ -950,6 +959,7 @@ class _DiagnosticTile extends StatelessWidget {
             padding: const EdgeInsets.only(left: 12),
             child: SelectableText(
               diagnostic.detail,
+              scrollPhysics: _pageOwnsDrag,
               style: HermesType.support.copyWith(color: colors.textSecondary),
             ),
           ),

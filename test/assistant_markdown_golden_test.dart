@@ -90,7 +90,7 @@ ls -la /tmp
       await tester.pumpWidget(host(md));
       // La cabecera del code block muestra el lenguaje y el botón copiar.
       expect(find.text('bash'), findsOneWidget);
-      expect(find.text('copiar'), findsOneWidget);
+      expect(find.byTooltip('Copiar código'), findsOneWidget);
       await expectLater(
         find.byType(AssistantMarkdownView),
         matchesGoldenFile('goldens/assistant_code_bash.png'),
@@ -110,7 +110,7 @@ lib/
 
       expect(find.byType(HermesFileTree), findsOneWidget);
       expect(find.text('app.dart'), findsOneWidget);
-      expect(find.text('copiar'), findsNothing);
+      expect(find.byTooltip('Copiar código'), findsNothing);
     });
 
     testWidgets('tabla + blockquote', (tester) async {
@@ -273,7 +273,7 @@ Sin incidencias importantes hoy
 ''';
       await tester.pumpWidget(host(md));
       // No debe tener la cabecera de code block (botón copiar).
-      expect(find.text('copiar'), findsNothing);
+      expect(find.byTooltip('Copiar código'), findsNothing);
       expect(find.textContaining('Sin incidencias'), findsOneWidget);
       await expectLater(
         find.byType(AssistantMarkdownView),
@@ -291,7 +291,7 @@ export API_KEY=abc; run --now
 ''';
         await tester.pumpWidget(host(md));
         // Tiene `;`/`=` → se trata como código (con cabecera y copiar).
-        expect(find.text('copiar'), findsOneWidget);
+        expect(find.byTooltip('Copiar código'), findsOneWidget);
       },
     );
 

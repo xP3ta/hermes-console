@@ -3,22 +3,33 @@
 // Shows the active memory provider, all available providers, and
 // the size of the built-in memory files (memory.md, user.md).
 //
-// NOTE on write API: /api/memory is GET-only. The dashboard exposes no
-// POST/PUT endpoint for writing memory files. A "backup" action serialises
-// the API response JSON and saves it to getApplicationDocumentsDirectory()
-// via path_provider.
+// Writes: POST /api/memory/reset (`{target: memory|user}`, always with an
+// explicit `?profile=`), offered per built-in file behind a confirmation, and
+// per-entry edits through /api/learning/node (MemoryEntriesScreen). A
+// "backup" action serialises the API response JSON and saves it to
+// getApplicationDocumentsDirectory() via path_provider.
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../../main.dart';
+import '../services/active_profile_scope.dart';
 import '../services/connection_manager.dart';
 import '../services/memory_draft_store.dart';
+import '../services/memory_entries_repository.dart';
 import '../design/hermes_design.dart' as d show HermesListRow;
+import '../design/hermes_design.dart'
+    show
+        HermesAction,
+        HermesDialogAction,
+        HermesDialogActionStyle,
+        showHermesDialog,
+        showHermesMenu;
 import '../design/hermes_design.dart'
     show
         HermesActionButton,
@@ -31,19 +42,34 @@ import '../design/hermes_design.dart'
         HermesStatusTone;
 import '../theme/app_theme.dart';
 import '../utils/api_error.dart';
-import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_pill.dart';
 import 'memory_draft_screen.dart';
+import 'memory_entries_screen.dart';
 import '../widgets/hermes_app_bar.dart';
+import '../widgets/profile_scope.dart';
 import '../widgets/feature_dependency_notice.dart';
 import 'instance_edit_screen.dart';
+import '../feedback/feedback_policy.dart';
+import '../feedback/screen_help.dart';
 
 class MemoryScreen extends StatefulWidget {
   final SavedConnection connection;
+
+  /// Fixed profile (a bot card). Null follows the active profile.
   final String? profileOverride;
+
+  /// Active profile source; defaults to the app's for [connection].
+  final ActiveProfileScope? profileScope;
+  final DashboardClient? dashboardClientForTesting;
+
+  /// App-lock state for the entry editor; the app's own lock when null.
+  final ValueListenable<bool>? appLockedForTesting;
   const MemoryScreen({
     required this.connection,
     this.profileOverride,
+    this.profileScope,
+    @visibleForTesting this.dashboardClientForTesting,
+    @visibleForTesting this.appLockedForTesting,
     super.key,
   });
 
@@ -51,7 +77,8 @@ class MemoryScreen extends StatefulWidget {
   State<MemoryScreen> createState() => _MemoryScreenState();
 }
 
-class _MemoryScreenState extends State<MemoryScreen> {
+class _MemoryScreenState extends State<MemoryScreen>
+    with ActiveProfileFollower<MemoryScreen> {
   late DashboardClient _client;
   MemoryInfo? _info;
   bool _loading = true;
@@ -61,6 +88,11 @@ class _MemoryScreenState extends State<MemoryScreen> {
   bool _backingUp = false;
   MemoryDraftStore? _drafts;
 
+  /// Cleared when the server answers 404/405 to a reset: the action is then
+  /// hidden for the rest of this screen's life.
+  bool _resetSupported = true;
+  bool _resetting = false;
+
   // Local filter applied over providers + builtin files
   final TextEditingController _filterController = TextEditingController();
   String _filter = '';
@@ -68,17 +100,28 @@ class _MemoryScreenState extends State<MemoryScreen> {
   @override
   void initState() {
     super.initState();
-    _client = DashboardClient.lazy(widget.connection);
+    _client =
+        widget.dashboardClientForTesting ??
+        DashboardClient.lazy(widget.connection);
     _filterController.addListener(() {
       setState(() => _filter = _filterController.text);
     });
+    final override = widget.profileOverride?.trim() ?? '';
+    followActiveProfile(
+      widget.profileScope ??
+          appActiveProfileScope(context, widget.connection.id),
+      fixedProfile: override.isEmpty ? null : override,
+    );
     _load();
     SharedPreferences.getInstance().then((prefs) {
       if (mounted) setState(() => _drafts = MemoryDraftStore(prefs));
     });
   }
 
-  String get _profile => widget.profileOverride?.trim() ?? '';
+  @override
+  void onActiveProfileChanged() => _load();
+
+  String get _profile => scopedProfileName;
 
   bool _hasDraft(String name) =>
       _drafts?.exists(widget.connection.id, name, profile: _profile) ?? false;
@@ -97,6 +140,26 @@ class _MemoryScreenState extends State<MemoryScreen> {
     if (mounted) setState(() {}); // refresca el indicador de borrador
   }
 
+  Future<void> _openEntries(MemoryFileKind file) async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => MemoryEntriesScreen(
+          repository: MemoryEntriesRepository(
+            DashboardMemoryEntriesRest(_client),
+            profile: _profile,
+          ),
+          file: file,
+          instanceId: widget.connection.id,
+          readOnly: widget.connection.readOnly,
+          appLockedForTesting: widget.appLockedForTesting,
+        ),
+      ),
+    );
+    // Entry edits change the file sizes shown here.
+    if (mounted) await _load();
+  }
+
   @override
   void dispose() {
     _client.close();
@@ -110,20 +173,92 @@ class _MemoryScreenState extends State<MemoryScreen> {
       _error = null;
       _dependencyFailure = DashboardDependencyFailure.other;
     });
+    final ticket = profileReadTicket();
     try {
-      final info = await _client.getMemoryInfo(profile: _profile);
-      if (!mounted) return;
+      final info = await _client.getMemoryInfo(profile: ticket.name);
+      // A read for the previous profile never lands on the new one.
+      if (!mounted || !ticket.isCurrent) return;
       setState(() {
         _info = info;
         _loading = false;
       });
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || !ticket.isCurrent) return;
       setState(() {
         _error = localizedApiError(Strings.of(context), e);
         _dependencyFailure = classifyDashboardDependencyFailure(e);
         _loading = false;
       });
+    }
+  }
+
+  bool get _canReset =>
+      _resetSupported && !_resetting && !widget.connection.readOnly;
+
+  Future<void> _resetFile(String key, GlobalKey anchor) async {
+    final s = Strings.of(context);
+    final target = key == 'user' ? 'user' : 'memory';
+    final file = '${target.toUpperCase()}.md';
+    final chosen = await showHermesMenu<bool>(
+      context: context,
+      anchorKey: anchor,
+      actions: [
+        HermesAction(
+          key: const ValueKey('mem-file-reset'),
+          value: true,
+          label: s.memResetFile,
+          icon: Icons.delete_outline_rounded,
+          destructive: true,
+        ),
+      ],
+    );
+    if (chosen != true || !mounted) return;
+    final confirmed = await showHermesDialog<bool>(
+      context: context,
+      title: s.memResetConfirmTitle(file),
+      message: s.memResetConfirmBody,
+      actions: [
+        HermesDialogAction(
+          key: const ValueKey('mem-reset-cancel'),
+          label: s.commonCancel,
+          value: false,
+          style: HermesDialogActionStyle.cancel,
+        ),
+        HermesDialogAction(
+          key: const ValueKey('mem-reset-confirm'),
+          label: s.memResetFile,
+          value: true,
+          style: HermesDialogActionStyle.destructive,
+        ),
+      ],
+    );
+    if (confirmed != true || !mounted) return;
+    final notices = AppFeedback.of(context);
+    // The server rejects an omitted profile once it hosts several, so the
+    // default profile is named explicitly.
+    final profile = _profile.isEmpty ? 'default' : _profile;
+    setState(() => _resetting = true);
+    try {
+      final result = await _client.apiPost(
+        'memory/reset?profile=${Uri.encodeQueryComponent(profile)}',
+        body: {'target': target},
+      );
+      if (!mounted) return;
+      final deleted = (result['deleted'] as List? ?? const [])
+          .whereType<String>()
+          .join(', ');
+      notices.notify(
+        FeedbackKind.routine,
+        s.memResetDone(deleted.isEmpty ? file : deleted),
+      );
+      await _load();
+    } catch (e) {
+      if (!mounted) return;
+      final status = e is DashboardHttpException ? e.statusCode : 0;
+      if (status == 404 || status == 405) _resetSupported = false;
+      notices.notify(FeedbackKind.error, s.memResetFailed);
+    } finally {
+      if (mounted) setState(() => _resetting = false);
     }
   }
 
@@ -175,26 +310,16 @@ class _MemoryScreenState extends State<MemoryScreen> {
       );
 
       if (!mounted) return;
-      HermesNotice.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            Strings.of(context).memoryBackupSaved(file.path),
-            style: const TextStyle(fontSize: 11),
-          ),
-          duration: const Duration(seconds: 4),
-        ),
-        kind: HermesNoticeKind.success,
+      AppFeedback.of(context).notify(
+        FeedbackKind.critical,
+        Strings.of(context).memoryBackupSaved(file.path),
+        duration: const Duration(seconds: 4),
       );
     } catch (e) {
       if (!mounted) return;
-      HermesNotice.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            Strings.of(context).memBackupSaveError(e.toString()),
-            style: const TextStyle(fontSize: 11),
-          ),
-        ),
-        kind: HermesNoticeKind.error,
+      AppFeedback.of(context).notify(
+        FeedbackKind.error,
+        Strings.of(context).memBackupSaveError(e.toString()),
       );
     } finally {
       if (mounted) setState(() => _backingUp = false);
@@ -227,26 +352,17 @@ class _MemoryScreenState extends State<MemoryScreen> {
     final colors = Theme.of(context).hermes;
     return Scaffold(
       appBar: HermesAppBar(
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(Strings.of(context).memTitle),
-            if (_profile.isNotEmpty)
-              Text(
-                '@$_profile',
-                style: TextStyle(fontSize: 11, color: colors.accent),
-              )
-            else if (_info != null)
-              Text(
-                Strings.of(context).memoryConfiguredCount(
-                  _info!.configuredCount,
-                  _info!.providers.length,
-                ),
-                style: TextStyle(fontSize: 11, color: colors.textSecondary),
-              ),
-          ],
+        title: Text(Strings.of(context).memTitle),
+        // Whose memory this is, when it is not the default profile's.
+        titleBadge: ProfileScopeLabel.badgeFor(
+          profile: _profile,
+          connectionId: widget.connection.id,
         ),
         actions: [
+          ScreenHelpButton(
+            title: Strings.of(context).memTitle,
+            paragraphs: [Strings.of(context).memReadOnlyNote],
+          ),
           if (_info != null)
             IconButton(
               icon: _backingUp
@@ -262,9 +378,17 @@ class _MemoryScreenState extends State<MemoryScreen> {
               tooltip: Strings.of(context).memBackupJson,
               onPressed: _backingUp ? null : _backup,
             ),
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: _loading ? null : _load,
+          Semantics(
+            label: Strings.of(context).commonRefresh,
+            button: true,
+            enabled: !_loading,
+            onTap: _loading ? null : _load,
+            excludeSemantics: true,
+            child: IconButton(
+              icon: const Icon(Icons.refresh),
+              tooltip: Strings.of(context).commonRefresh,
+              onPressed: _loading ? null : _load,
+            ),
           ),
         ],
       ),
@@ -326,13 +450,16 @@ class _MemoryScreenState extends State<MemoryScreen> {
         return a.name.compareTo(b.name);
       });
 
+    // One list: the filter field is its first row and leaves with the rest,
+    // which pass under the floating header.
     return RefreshIndicator(
       onRefresh: _load,
-      child: Column(
+      child: ListView(
+        clipBehavior: hermesUnderHeader,
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
         children: [
-          // Search/filter bar
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+            padding: const EdgeInsets.only(bottom: 20),
             child: TextField(
               controller: _filterController,
               style: TextStyle(fontSize: 13, color: colors.textPrimary),
@@ -344,13 +471,20 @@ class _MemoryScreenState extends State<MemoryScreen> {
                   color: colors.textSecondary,
                 ),
                 suffixIcon: _filter.isNotEmpty
-                    ? IconButton(
-                        icon: Icon(
-                          Icons.clear,
-                          size: 16,
-                          color: colors.textSecondary,
+                    ? Semantics(
+                        label: Strings.of(context).slClearSearch,
+                        button: true,
+                        onTap: _filterController.clear,
+                        excludeSemantics: true,
+                        child: IconButton(
+                          tooltip: Strings.of(context).slClearSearch,
+                          icon: Icon(
+                            Icons.clear,
+                            size: 16,
+                            color: colors.textSecondary,
+                          ),
+                          onPressed: _filterController.clear,
                         ),
-                        onPressed: () => _filterController.clear(),
                       )
                     : null,
                 isDense: true,
@@ -361,37 +495,28 @@ class _MemoryScreenState extends State<MemoryScreen> {
               ),
             ),
           ),
-          Expanded(
-            child: ListView(
-              padding: const EdgeInsets.all(16),
-              children: [
-                // Only show active section when not filtering (it's always visible)
-                if (_filter.isEmpty) ...[
-                  _buildActiveSection(info, colors),
-                  const SizedBox(height: 16),
-                ],
-                if (filteredFiles.isNotEmpty) ...[
-                  _buildBuiltinFilesSection(filteredFiles, colors),
-                  const SizedBox(height: 16),
-                ],
-                if (sorted.isNotEmpty)
-                  _buildProvidersSection(sorted, info.active, colors)
-                else if (_filter.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 32),
-                    child: Center(
-                      child: Text(
-                        Strings.of(context).memoryNoMatches(_filter),
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: colors.textDisabled,
-                        ),
-                      ),
-                    ),
-                  ),
-              ],
+
+          // Only show active section when not filtering (it's always visible)
+          if (_filter.isEmpty) ...[
+            _buildActiveSection(info, colors),
+            const SizedBox(height: 16),
+          ],
+          if (filteredFiles.isNotEmpty) ...[
+            _buildBuiltinFilesSection(filteredFiles, colors),
+            const SizedBox(height: 16),
+          ],
+          if (sorted.isNotEmpty)
+            _buildProvidersSection(sorted, info.active, colors)
+          else if (_filter.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 32),
+              child: Center(
+                child: Text(
+                  Strings.of(context).memoryNoMatches(_filter),
+                  style: TextStyle(fontSize: 13, color: colors.textTertiary),
+                ),
+              ),
             ),
-          ),
         ],
       ),
     );
@@ -453,37 +578,6 @@ class _MemoryScreenState extends State<MemoryScreen> {
                 style: TextStyle(fontSize: 13, color: colors.textSecondary),
               ),
             ],
-            const SizedBox(height: 12),
-            // Honest note about write API
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: colors.surfaceVariant,
-                borderRadius: BorderRadius.circular(6),
-                border: Border.all(
-                  color: colors.divider.withValues(alpha: 0.55),
-                ),
-              ),
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.info_outline,
-                    size: 13,
-                    color: colors.textDisabled,
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      Strings.of(context).memReadOnlyNote,
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: colors.textDisabled,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
           ],
         ),
       ),
@@ -568,6 +662,12 @@ class _MemoryScreenState extends State<MemoryScreen> {
                               size: 14,
                               color: colors.textDisabled,
                             ),
+                            if (_canReset &&
+                                (e.key == 'memory' || e.key == 'user'))
+                              _FileMoreButton(
+                                fileKey: e.key,
+                                onPressed: _resetFile,
+                              ),
                           ],
                         ),
                       ],
@@ -583,12 +683,19 @@ class _MemoryScreenState extends State<MemoryScreen> {
   }
 
   void _showFileDetail(String name, int bytes, HermesThemeColors colors) {
+    final file = MemoryFileKind.fromKey(name);
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (pageCtx) => MemoryFileDetailPage(
           name: name,
           bytes: bytes,
           hasDraft: _hasDraft(name),
+          onEditEntries: file == null
+              ? null
+              : () {
+                  Navigator.pop(pageCtx);
+                  _openEntries(file);
+                },
           onOpenDraft: () {
             Navigator.pop(pageCtx);
             _openDraft(name);
@@ -622,6 +729,20 @@ class _MemoryScreenState extends State<MemoryScreen> {
         ),
       ],
     );
+  }
+
+  /// The server's own status when it sends one; otherwise today's
+  /// «not configured» wording for providers that are not configured.
+  String? _statusLabel(MemoryProvider provider) {
+    final s = Strings.of(context);
+    return switch (provider.status) {
+      MemoryProviderStatus.ready => s.memStatusReady,
+      MemoryProviderStatus.needsConfig => s.memStatusNeedsConfig,
+      MemoryProviderStatus.unavailable => s.memStatusUnavailable,
+      MemoryProviderStatus.missing => s.memStatusMissing,
+      MemoryProviderStatus.unknown =>
+        provider.configured ? null : s.memoryProviderNotConfigured,
+    };
   }
 
   Widget _buildProviderTile(
@@ -696,12 +817,12 @@ class _MemoryScreenState extends State<MemoryScreen> {
                             ),
                           ),
                         )
-                      else if (!provider.configured)
+                      else if (_statusLabel(provider) != null)
                         Text(
-                          Strings.of(context).memoryProviderNotConfigured,
+                          _statusLabel(provider)!,
                           style: TextStyle(
                             fontSize: 10,
-                            color: colors.textDisabled,
+                            color: colors.textTertiary,
                           ),
                         ),
                     ],
@@ -728,12 +849,45 @@ class _MemoryScreenState extends State<MemoryScreen> {
   }
 }
 
+/// Overflow button of one built-in file row.
+class _FileMoreButton extends StatefulWidget {
+  final String fileKey;
+  final void Function(String key, GlobalKey anchor) onPressed;
+
+  _FileMoreButton({required this.fileKey, required this.onPressed})
+    : super(key: ValueKey('mem-file-more-$fileKey'));
+
+  @override
+  State<_FileMoreButton> createState() => _FileMoreButtonState();
+}
+
+class _FileMoreButtonState extends State<_FileMoreButton> {
+  final GlobalKey _anchor = GlobalKey();
+
+  @override
+  Widget build(BuildContext context) => IconButton(
+    key: _anchor,
+    tooltip: Strings.of(context).cphMore,
+    visualDensity: VisualDensity.compact,
+    iconSize: 18,
+    icon: const Icon(Icons.more_vert_rounded),
+    onPressed: () => widget.onPressed(widget.fileKey, _anchor),
+  );
+}
+
 /// Memory file detail (spec 080): one page scroll, one primary action.
+///
+/// The primary action edits the file's entries on the server. A local draft
+/// left by earlier versions stays reachable (copy/export/discard) as the
+/// secondary action, only while one exists.
 class MemoryFileDetailPage extends StatelessWidget {
   final String name;
   final int bytes;
   final bool hasDraft;
   final VoidCallback onOpenDraft;
+
+  /// Null for a file the server cannot edit by entries.
+  final VoidCallback? onEditEntries;
 
   const MemoryFileDetailPage({
     super.key = const ValueKey('memory-file-detail-page'),
@@ -741,6 +895,7 @@ class MemoryFileDetailPage extends StatelessWidget {
     required this.bytes,
     required this.hasDraft,
     required this.onOpenDraft,
+    this.onEditEntries,
   });
 
   @override
@@ -756,13 +911,23 @@ class MemoryFileDetailPage extends StatelessWidget {
               tone: HermesStatusTone.active,
             )
           : null,
-      primaryAction: HermesActionButton(
-        key: const ValueKey('memory-file-open-draft'),
-        primary: true,
-        icon: Icons.edit_note_outlined,
-        label: hasDraft ? s.memOpenDraft : s.memCreateDraft,
-        onPressed: onOpenDraft,
-      ),
+      primaryAction: onEditEntries == null
+          ? null
+          : HermesActionButton(
+              key: const ValueKey('memory-file-edit-entries'),
+              primary: true,
+              icon: Icons.edit_note_outlined,
+              label: s.memEditEntries,
+              onPressed: onEditEntries,
+            ),
+      secondaryAction: hasDraft
+          ? HermesActionButton(
+              key: const ValueKey('memory-file-open-draft'),
+              icon: Icons.drafts_outlined,
+              label: s.memOpenDraft,
+              onPressed: onOpenDraft,
+            )
+          : null,
       sections: [
         HermesSectionHeader(s.designDetails),
         HermesListGroup(

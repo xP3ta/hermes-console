@@ -1,0 +1,5 @@
+# Hermes revision the real-gateway E2E lane runs against. Bump deliberately:
+# a new Hermes may change the wire, and the lane must say so in its own PR.
+repo=https://github.com/NousResearch/hermes-agent.git
+commit=c8173e038727967108a998815c02406d38743da7
+python=3.14

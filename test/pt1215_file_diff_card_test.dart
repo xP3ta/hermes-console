@@ -1,0 +1,346 @@
+// pt1215: file-edit diff tool cards (Desktop `tool/fallback.tsx`
+// FileDiffPanel + `countDiffLineStats`). Wire shapes copy Hermes
+// `tui_gateway/tool_progress.py` (`inline_diff` = CLI-rendered diff with the
+// `┊ review diff` header and ANSI colour) and `tools/file_operations.py`
+// (`patch` result carries its own `diff`).
+import 'dart:convert';
+
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/models/tool_output.dart';
+import 'package:hermes_android/core/theme/app_theme.dart';
+import 'package:hermes_android/core/utils/unified_diff.dart';
+import 'package:hermes_android/core/widgets/chat/tool_output_cards.dart';
+import 'package:hermes_android/core/widgets/chat_event_cards.dart';
+import 'package:hermes_android/l10n/app_localizations.dart';
+
+const _e = '\x1B';
+const _inlineDiff =
+    '┊ review diff\n'
+    '$_e[38;2;180;180;255ma/lib/foo.dart → b/lib/foo.dart$_e[0m\n'
+    '$_e[38;2;120;120;120m@@ -1,3 +1,4 @@$_e[0m\n'
+    '$_e[2m keep$_e[0m\n'
+    '$_e[38;2;255;255;255;48;2;120;20;20m-old line$_e[0m\n'
+    '$_e[38;2;255;255;255;48;2;20;90;20m+new line$_e[0m\n'
+    '$_e[38;2;255;255;255;48;2;20;90;20m+another$_e[0m';
+
+Map<String, dynamic> _complete({
+  String id = 'call-1',
+  String name = 'patch',
+  String? inlineDiff = _inlineDiff,
+  Object? result = const {'success': true},
+}) => {
+  'tool_id': id,
+  'name': name,
+  'args': {'path': 'lib/foo.dart'},
+  'inline_diff': ?inlineDiff,
+  'result': result,
+};
+
+Widget _host(Widget child) => MaterialApp(
+  locale: const Locale('en'),
+  localizationsDelegates: Strings.localizationsDelegates,
+  supportedLocales: Strings.supportedLocales,
+  theme: AppTheme.hermesRedDark,
+  home: MediaQuery(
+    data: const MediaQueryData(disableAnimations: true),
+    child: Scaffold(body: child),
+  ),
+);
+
+void main() {
+  group('inline diff model', () {
+    test('cleans the CLI rendering and counts +/- like Desktop', () {
+      final record = ToolOutputRecord.fromCompletePayload(_complete())!;
+      expect(record.files, hasLength(1));
+      final file = record.files.single;
+      expect(file.path, 'lib/foo.dart');
+      expect(file.name, 'foo.dart');
+      expect(file.stats.added, 2);
+      expect(file.stats.removed, 1);
+      expect(file.diff, isNot(contains(_e)));
+      expect(file.diff, isNot(contains('review diff')));
+      final lines = parseDiffLines(file.diff);
+      expect(lines.first.kind, DiffLineKind.hunk);
+      expect(lines.where((l) => l.kind == DiffLineKind.add), hasLength(2));
+    });
+
+    test('splits a multi-file patch into one section per file', () {
+      const diff =
+          '--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-x\n+y\n'
+          '--- a/dir/b.txt\n+++ b/dir/b.txt\n@@ -0,0 +1,2 @@\n+1\n+2\n';
+      final files = splitFileDiffs(diff);
+      expect(files.map((f) => f.path), ['a.txt', 'dir/b.txt']);
+      expect(files.last.stats.added, 2);
+      expect(files.last.stats.removed, 0);
+    });
+
+    test('durable patch rows reuse the result diff; failures show none', () {
+      final row = {
+        'role': 'tool',
+        'tool_name': 'patch',
+        'tool_call_id': 'call-9',
+        'content': jsonEncode({
+          'success': true,
+          'diff': '--- a/x.py\n+++ b/x.py\n@@ -1 +1 @@\n-a\n+b\n',
+        }),
+      };
+      final index = indexDurableToolOutputs([
+        {
+          'role': 'assistant',
+          '_activity_tool_results': [row],
+        },
+      ], toolResultsKey: '_activity_tool_results');
+      expect(index['call-9']!.files.single.path, 'x.py');
+
+      final failed = ToolOutputRecord.fromCompletePayload(
+        _complete(result: {'success': false, 'error': 'no match'}),
+      );
+      expect(failed, isNull);
+      // No diff on the wire → nothing (no dead card).
+      expect(
+        ToolOutputRecord.fromCompletePayload(_complete(inlineDiff: null)),
+        isNull,
+      );
+    });
+
+    test('the review header is chrome in every Hermes locale', () {
+      // Hermes localizes `display.diff.review_header` (locales/*.yaml).
+      for (final header in [
+        '  ┊ review diff',
+        '  ┊ revisar diff',
+        '  ┊ Review-Diff',
+        '  ┊ レビュー diff',
+      ]) {
+        final record = ToolOutputRecord.fromCompletePayload(
+          _complete(
+            inlineDiff: _inlineDiff.replaceFirst('┊ review diff', header),
+          ),
+        )!;
+        expect(record.files, hasLength(1), reason: header);
+        expect(record.files.single.path, 'lib/foo.dart');
+        expect(record.files.single.diff, isNot(contains('┊')));
+      }
+    });
+
+    test('a localized header before bare hunks stays out of the diff', () {
+      final record = ToolOutputRecord.fromCompletePayload(
+        _complete(inlineDiff: '  ┊ revisar diff\n@@ -1 +1 @@\n-a\n+b'),
+      )!;
+      expect(record.files.single.path, 'lib/foo.dart');
+      expect(record.files.single.diff, isNot(contains('┊')));
+    });
+
+    test('a ┊ inside the diff body is source, not the review header', () {
+      const body =
+          '@@ -1,3 +1,3 @@\n'
+          ' ┊ status rail\n'
+          '-┊ removed\n'
+          '+┊ added';
+      for (final raw in [
+        body,
+        ' ┊ status rail\n-┊ removed\n+┊ added',
+        '  ┊ revisar diff\na/lib/foo.dart → b/lib/foo.dart\n$body',
+        '┊ review diff\n$body',
+      ]) {
+        final cleaned = cleanInlineDiff(raw);
+        expect(cleaned, isNot(contains('revisar')), reason: raw);
+        expect(cleaned, isNot(contains('review diff')), reason: raw);
+        for (final line in [' ┊ status rail', '-┊ removed', '+┊ added']) {
+          expect(cleaned.split('\n'), contains(line), reason: raw);
+        }
+      }
+    });
+
+    test('only the exact emitted review header is chrome', () {
+      // Every `display.diff.review_header` in Hermes locales/*.yaml.
+      for (final header in [
+        '  ┊ hersien diff',
+        '  ┊ مراجعة الفرق (diff)',
+        '  ┊ Review-Diff',
+        '  ┊ review diff',
+        '  ┊ revisar diff',
+        '  ┊ diff de revue',
+        '  ┊ diff athbhreithnithe',
+        '  ┊ diff áttekintése',
+        '  ┊ diff della revisione',
+        '  ┊ レビュー diff',
+        '  ┊ 리뷰 변경 사항',
+        '  ┊ diff de revisão',
+        '  ┊ проверить diff',
+        '  ┊ inceleme farkı',
+        '  ┊ diff перевірки',
+        '  ┊ 檢閱差異',
+        '  ┊ 审查 diff',
+      ]) {
+        expect(cleanInlineDiff('$header  \n-a\n+b'), '-a\n+b', reason: header);
+      }
+      // A context line (one diff space) whose source starts with a space,
+      // with no hunk header before it: body, not chrome.
+      for (final first in ['  ┊ indented source', ' ┊ status rail']) {
+        expect(
+          cleanInlineDiff('$first\n-a\n+b').split('\n').first,
+          first,
+          reason: first,
+        );
+        expect(
+          cleanInlineDiff('  ┊ review diff\n$first\n-a').split('\n').first,
+          first,
+          reason: first,
+        );
+      }
+    });
+
+    test('a section without any change or hunk is no diff card', () {
+      final record = ToolOutputRecord.fromCompletePayload(
+        _complete(inlineDiff: 'stray preamble\n$_inlineDiff'),
+      )!;
+      expect(record.files, hasLength(1));
+      expect(record.files.single.stats.isEmpty, isFalse);
+      // Nothing but chrome: no record at all.
+      expect(
+        ToolOutputRecord.fromCompletePayload(
+          _complete(inlineDiff: '  ┊ revisar diff\n'),
+        ),
+        isNull,
+      );
+    });
+
+    test('the ledger keys by tool id and stays bounded', () {
+      final ledger = ToolOutputLedger(capacity: 2);
+      for (final id in ['a', 'b', 'c']) {
+        ledger.recordComplete(_complete(id: id));
+      }
+      expect(ledger['a'], isNull);
+      expect(ledger['c'], isNotNull);
+      ledger.recordComplete({'tool_id': 'd', 'name': 'read_file'});
+      expect(ledger['d'], isNull);
+    });
+  });
+
+  testWidgets('a diff card folds to «+02 −01 · foo.dart»; tap unfolds it', (
+    tester,
+  ) async {
+    final file = ToolOutputRecord.fromCompletePayload(
+      _complete(),
+    )!.files.single;
+    await tester.pumpWidget(_host(FileDiffCard(file: file)));
+    expect(find.text('+02 −01 · foo.dart'), findsOneWidget);
+    expect(
+      diffSummaryText(const DiffStats(12, 3), 'x.dart'),
+      '+12 −03 · x.dart',
+    );
+    expect(
+      diffSummaryText(const DiffStats(1200, 0), 'x.dart'),
+      '+1200 −00 · x.dart',
+    );
+    expect(find.byType(FileDiffBody), findsNothing);
+    // Counts keep the theme's add/remove colours.
+    final colors = AppTheme.hermesRedDark.hermes;
+    final spans = <String, Color?>{};
+    for (final rich in tester.widgetList<RichText>(
+      find.descendant(
+        of: find.byType(FileDiffCard),
+        matching: find.byType(RichText),
+      ),
+    )) {
+      rich.text.visitChildren((span) {
+        if (span is TextSpan && span.text != null) {
+          spans[span.text!] = span.style?.color;
+        }
+        return true;
+      });
+    }
+    expect(spans['+02'], colors.success);
+    expect(spans['−01'], colors.error);
+
+    await tester.tap(find.byType(FileDiffCard));
+    await tester.pump();
+    expect(find.byType(FileDiffBody), findsOneWidget);
+    expect(find.text('+new line'), findsOneWidget);
+    expect(find.text('-old line'), findsOneWidget);
+    expect(find.text(' keep'), findsOneWidget);
+  });
+
+  testWidgets('long diffs cap their lines behind «show more»', (tester) async {
+    final body = StringBuffer('@@ -1,0 +1,200 @@\n');
+    for (var i = 0; i < 200; i++) {
+      body.writeln('+line $i');
+    }
+    final file = FileDiff('big.txt', body.toString().trim());
+    await tester.pumpWidget(
+      _host(SingleChildScrollView(child: FileDiffCard(file: file))),
+    );
+    await tester.tap(find.byType(FileDiffCard));
+    await tester.pump();
+    expect(find.text('+line ${fileDiffPageLines - 2}'), findsOneWidget);
+    expect(find.text('+line 150'), findsNothing);
+    final remaining = 201 - fileDiffPageLines;
+    expect(find.text('Show $remaining more lines'), findsOneWidget);
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('file-diff-show-more')),
+    );
+    await tester.tap(find.byKey(const ValueKey('file-diff-show-more')));
+    await tester.pump();
+    expect(find.text('+line 150'), findsOneWidget);
+    expect(find.byKey(const ValueKey('file-diff-show-more')), findsNothing);
+  });
+
+  testWidgets('scroll guard: 50 diff cards build no diff body until opened', (
+    tester,
+  ) async {
+    final record = ToolOutputRecord.fromCompletePayload(_complete())!;
+    await tester.pumpWidget(
+      _host(
+        ListView.builder(
+          itemCount: 50,
+          itemBuilder: (context, index) => FileDiffCard(
+            key: ValueKey(index),
+            file: FileDiff('f$index.dart', record.files.single.diff),
+          ),
+        ),
+      ),
+    );
+    expect(find.byType(FileDiffCard), findsWidgets);
+    expect(find.byType(FileDiffBody), findsNothing);
+    await tester.drag(find.byType(ListView), const Offset(0, -2000));
+    await tester.pump();
+    expect(find.byType(FileDiffBody), findsNothing);
+    await tester.tap(find.byType(FileDiffCard).hitTestable().first);
+    await tester.pump();
+    expect(find.byType(FileDiffBody), findsOneWidget);
+  });
+
+  testWidgets('the unfolded trace shows the diff under its step only', (
+    tester,
+  ) async {
+    final record = ToolOutputRecord.fromCompletePayload(_complete())!;
+    await tester.pumpWidget(
+      _host(
+        SingleChildScrollView(
+          child: ThinkingTraceCard(
+            events: [
+              ChatTraceEvent(
+                id: 'call-1',
+                label: 'patch',
+                status: 'completed',
+                output: record,
+              ),
+              ChatTraceEvent(
+                id: 'call-2',
+                label: 'read_file',
+                status: 'completed',
+              ),
+            ],
+            active: false,
+          ),
+        ),
+      ),
+    );
+    expect(find.byType(FileDiffCard), findsNothing);
+    await tester.tap(find.byType(InkWell).first);
+    await tester.pumpAndSettle();
+    expect(find.byType(FileDiffCard), findsOneWidget);
+    expect(find.byType(FileDiffBody), findsNothing);
+  });
+}

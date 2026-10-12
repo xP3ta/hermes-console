@@ -109,7 +109,9 @@ class _FenceVoice extends VoiceService {
   Future<void> releaseTtsForListening() async {}
 
   @override
-  Future<void> disposeSttForVoiceExit() async {}
+  Future<void> disposeSttForVoiceExit({
+    bool keepRecognizerWarm = false,
+  }) async {}
 
   @override
   Future<void> disposeTtsForVoiceExit() async {}

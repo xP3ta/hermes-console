@@ -161,44 +161,50 @@ void main() {
     });
     tearDown(() => gateway.server.close(force: true));
 
-    test('{status: streaming} is success, no client_turn_id, one turn', () async {
-      final sink = _Sink();
-      final router = NotificationActionRouter(
-        ops: gateway.ops(),
-        sink: sink,
-        t: en,
-      );
-      expect(await router.handle(reply(botChat)), ActionOutcome.done);
-      expect(sink.confirms, ['Sent']);
-      final submits = gateway.calls('prompt.submit');
-      expect(submits, hasLength(1));
-      final params = submits.single['params'] as Map;
-      expect(params['text'], 'thanks');
-      expect(params.containsKey('client_turn_id'), isFalse);
-      expect(params['session_id'], 'runtime-bot');
+    test(
+      '{status: streaming} is success, no client_turn_id, one turn',
+      () async {
+        final sink = _Sink();
+        final router = NotificationActionRouter(
+          ops: gateway.ops(),
+          sink: sink,
+          t: en,
+        );
+        expect(await router.handle(reply(botChat)), ActionOutcome.done);
+        expect(sink.confirms, ['Sent']);
+        final submits = gateway.calls('prompt.submit');
+        expect(submits, hasLength(1));
+        final params = submits.single['params'] as Map;
+        expect(params['text'], 'thanks');
+        expect(params.containsKey('client_turn_id'), isFalse);
+        expect(params['session_id'], 'runtime-bot');
 
-      // The same tap re-delivered after a crash is never submitted again.
-      expect(
-        await router.handle(reply(botChat, reclaimed: true)),
-        ActionOutcome.ignored,
-      );
-      expect(gateway.calls('prompt.submit'), hasLength(1));
-    });
+        // The same tap re-delivered after a crash is never submitted again.
+        expect(
+          await router.handle(reply(botChat, reclaimed: true)),
+          ActionOutcome.ignored,
+        );
+        expect(gateway.calls('prompt.submit'), hasLength(1));
+      },
+    );
 
-    test('a reclaimed Bot Chat reply of a dead executor is not resent', () async {
-      final sink = _Sink();
-      final router = NotificationActionRouter(
-        ops: gateway.ops(),
-        sink: sink,
-        t: en,
-      );
-      expect(
-        await router.handle(reply(botChat, uid: 'z', reclaimed: true)),
-        ActionOutcome.maybeDone,
-      );
-      expect(gateway.calls('prompt.submit'), isEmpty);
-      expect(sink.confirms, ['Sent · open Hermes to check']);
-    });
+    test(
+      'a reclaimed Bot Chat reply of a dead executor is not resent',
+      () async {
+        final sink = _Sink();
+        final router = NotificationActionRouter(
+          ops: gateway.ops(),
+          sink: sink,
+          t: en,
+        );
+        expect(
+          await router.handle(reply(botChat, uid: 'z', reclaimed: true)),
+          ActionOutcome.maybeDone,
+        );
+        expect(gateway.calls('prompt.submit'), isEmpty);
+        expect(sink.confirms, ['Sent · open Hermes to check']);
+      },
+    );
 
     test('ambiguous transport after send is not a retryable failure', () async {
       final ops = _Ops()..error = const AmbiguousDeliveryError('timeout');
@@ -231,34 +237,38 @@ void main() {
       );
     });
 
-    test('chat approval without an attached chat answers by durable id', () async {
-      final sink = _Sink();
-      final router = NotificationActionRouter(
-        ops: gateway.ops(),
-        sink: sink,
-        t: en,
-      );
-      final outcome = await router.handle(
-        const PendingNotificationAction(
-          uid: 'a1',
-          action: 'approve',
-          payload: NotificationActionPayload(
-            route: NotificationActionRoute.chat,
-            connId: 'c-official',
-            profile: 'builder',
-            sessionId: 'stored-bot-chat',
-            requestId: 'req-9',
+    test(
+      'chat approval without an attached chat answers by durable id',
+      () async {
+        final sink = _Sink();
+        final router = NotificationActionRouter(
+          ops: gateway.ops(),
+          sink: sink,
+          t: en,
+        );
+        final outcome = await router.handle(
+          const PendingNotificationAction(
+            uid: 'a1',
+            action: 'approve',
+            payload: NotificationActionPayload(
+              route: NotificationActionRoute.chat,
+              connId: 'c-official',
+              profile: 'builder',
+              sessionId: 'stored-bot-chat',
+              requestId: 'req-9',
+            ),
+            notificationId: 3,
           ),
-          notificationId: 3,
-        ),
-      );
-      expect(outcome, ActionOutcome.done);
-      final respond = gateway.calls('approval.respond').single['params'] as Map;
-      expect(respond['session_id'], 'stored-bot-chat');
-      expect(respond['request_id'], 'req-9');
-      expect(respond['choice'], 'once');
-      expect(sink.confirms, ['Approved']);
-    });
+        );
+        expect(outcome, ActionOutcome.done);
+        final respond =
+            gateway.calls('approval.respond').single['params'] as Map;
+        expect(respond['session_id'], 'stored-bot-chat');
+        expect(respond['request_id'], 'req-9');
+        expect(respond['choice'], 'once');
+        expect(sink.confirms, ['Allowed']);
+      },
+    );
 
     test('resolved 0 means answered elsewhere, not a failure', () async {
       gateway.approvalResult = {'resolved': 0};
@@ -292,23 +302,26 @@ void main() {
       prefs = await SharedPreferences.getInstance();
     });
 
-    test('failed reply moves to the composer, card says open to retry', () async {
-      final inbox = _Inbox([reply(botChat, text: 'ship it')]);
-      final ops = _Ops()..error = StateError('connection unavailable');
-      final sink = _Sink();
-      final rescue = _Rescue();
-      final drainer = NotificationActionDrainer(
-        inbox: inbox,
-        routes: allNotificationActionRoutes,
-        rescue: rescue,
-        router: NotificationActionRouter(ops: ops, sink: sink, t: en),
-      );
-      await drainer.drain();
-      expect(rescue.kept, ['builder:ship it']);
-      expect(sink.confirms, ['Couldn’t send · open to retry']);
-      expect(sink.timeouts.single, 0, reason: 'persistent until acted on');
-      expect(inbox.acked, ['u1']);
-    });
+    test(
+      'failed reply moves to the composer, card says open to retry',
+      () async {
+        final inbox = _Inbox([reply(botChat, text: 'ship it')]);
+        final ops = _Ops()..error = StateError('connection unavailable');
+        final sink = _Sink();
+        final rescue = _Rescue();
+        final drainer = NotificationActionDrainer(
+          inbox: inbox,
+          routes: allNotificationActionRoutes,
+          rescue: rescue,
+          router: NotificationActionRouter(ops: ops, sink: sink, t: en),
+        );
+        await drainer.drain();
+        expect(rescue.kept, ['builder:ship it']);
+        expect(sink.confirms, ['Couldn’t send · open to retry']);
+        expect(sink.timeouts.single, 0, reason: 'persistent until acted on');
+        expect(inbox.acked, ['u1']);
+      },
+    );
 
     test('an expired tap is never executed and its text is kept', () async {
       final inbox = _Inbox([reply(botChat, text: 'late', expired: true)]);
@@ -395,16 +408,19 @@ void main() {
       FlutterSecureStorage.setMockInitialValues({});
       final store = ChatDraftStore(prefs);
       final rescue = DraftReplyRescue(prefs, store: store);
-      await rescue.keep(botChat, 'ship it');
-      await rescue.keep(botChat, 'ship it');
+      await rescue.keep(botChat, 'ship it', actionUid: 'reply-a');
+      await rescue.keep(botChat, 'ship it', actionUid: 'reply-a');
       final draft = await store.load(
         'c-official',
         'mob-bot-builder',
         profile: 'builder',
       );
       expect(draft.text, 'ship it');
-      expect(prefs.getKeys().any((k) => prefs.get(k).toString().contains('ship it')),
-          isFalse, reason: 'never in clear prefs');
+      expect(
+        prefs.getKeys().any((k) => prefs.get(k).toString().contains('ship it')),
+        isFalse,
+        reason: 'never in clear prefs',
+      );
     });
 
     test('room reply rescue uses the Room screen draft key', () {
@@ -479,7 +495,7 @@ void main() {
       expect(encoded, isNot(contains('gh pr ready')));
       expect(encoded, isNot(contains('secret plan')));
       expect(encoded, isNot(contains('rotate prod keys')));
-      expect(snapshot.approvals.single.text, 'Needs your OK');
+      expect(snapshot.approvals.single.text, 'Asks permission');
     });
 
     test('read-only connection: no Approve/Deny and no Stop', () {
@@ -525,31 +541,43 @@ void main() {
       expect(snapshot.bots.single.openPayload, isNot(contains('recent')));
     });
 
-    test('actionable widgets are home-screen only; receiver refuses on keyguard', () {
-      String xml(String name) =>
-          File('android/app/src/main/res/xml/$name.xml').readAsStringSync();
-      for (final name in [
-        'botw_needs_you_info',
-        'botw_room_info',
-        'botw_bots_info',
-      ]) {
-        expect(xml(name), contains('widgetCategory="home_screen"'), reason: name);
-      }
-      final receiver = File(
-        'android/app/src/main/kotlin/com/hermesagent/hermes_android/HermesRichNotifications.kt',
-      ).readAsStringSync();
-      expect(
-        receiver,
-        contains(
-          'if (source == "widget" && (keyguard == null || keyguard.isKeyguardLocked)) return',
-        ),
-      );
-      final widgets = File(
-        'android/app/src/main/kotlin/com/hermesagent/hermes_android/HermesBotModeWidgets.kt',
-      ).readAsStringSync();
-      expect(widgets, contains('redactedForKeyguard()'));
-      expect(widgets, contains('WIDGET_CATEGORY_HOME_SCREEN'));
-    });
+    test(
+      'actionable widgets are home-screen only; receiver refuses on keyguard',
+      () {
+        String xml(String name) =>
+            File('android/app/src/main/res/xml/$name.xml').readAsStringSync();
+        // The launcher widgets that can carry an answer or open a bot or a
+        // room: Ahora (the provider that was the session panel), Salas, Bots.
+        for (final name in [
+          'new_session_widget_info',
+          'hermes_widget_rooms_info',
+          'hermes_widget_bots_info',
+        ]) {
+          expect(
+            xml(name),
+            contains('widgetCategory="home_screen"'),
+            reason: name,
+          );
+        }
+        final receiver = File(
+          'android/app/src/main/kotlin/com/hermesagent/hermes_android/HermesRichNotifications.kt',
+        ).readAsStringSync();
+        expect(
+          receiver,
+          contains(
+            'if (source == "widget" && (keyguard == null || keyguard.isKeyguardLocked)) return',
+          ),
+        );
+        String kotlin(String name) => File(
+          'android/app/src/main/kotlin/com/hermesagent/hermes_android/$name.kt',
+        ).readAsStringSync();
+        expect(kotlin('BotModeWidgetState'), contains('redactedForKeyguard()'));
+        expect(
+          kotlin('LauncherWidgets'),
+          contains('WIDGET_CATEGORY_HOME_SCREEN'),
+        );
+      },
+    );
   });
 
   group('P1-4/5 Live Update', () {
@@ -569,8 +597,10 @@ void main() {
       );
       expect(args['timeoutMs'], 90000);
       expect(args['publicTitle'], 'Working…');
-      expect('${args['publicTitle']}${args['publicText']}',
-          isNot(contains('Secret Room')));
+      expect(
+        '${args['publicTitle']}${args['publicText']}',
+        isNot(contains('Secret Room')),
+      );
       final readOnly = const RichNotificationBuilder(en).liveUpdate(
         tag: 't',
         conversationId: 'c',
@@ -589,9 +619,14 @@ void main() {
       ).readAsStringSync();
       final live = kt.substring(
         kt.indexOf('fun postLiveUpdate('),
-        kt.indexOf('private fun segmentColor('),
+        kt.indexOf('/** Replaces a card in place with a short confirmation'),
       );
-      expect(live, contains('if (Build.VERSION.SDK_INT >= 31) stop.setAuthenticationRequired(true)'));
+      expect(
+        live,
+        contains(
+          'if (Build.VERSION.SDK_INT >= 31) stop.setAuthenticationRequired(true)',
+        ),
+      );
       expect(live, contains('builder.setTimeoutAfter('));
       expect(live, contains('setPublicVersion('));
       expect(live, isNot(contains('VISIBILITY_PUBLIC')));
@@ -607,7 +642,14 @@ void main() {
       });
       tearDown(() => dir.delete(recursive: true));
 
-      Future<(BotModeBackgroundMonitor, _Sink, _RoomsGateway, void Function(Duration))>
+      Future<
+        (
+          BotModeBackgroundMonitor,
+          _Sink,
+          _RoomsGateway,
+          void Function(Duration),
+        )
+      >
       setUpMonitor() async {
         var now = DateTime(2026, 9, 26, 12);
         final sink = _Sink();
@@ -673,7 +715,10 @@ void main() {
         gateway.rooms = false;
         advance(const Duration(seconds: 30));
         await tick(monitor, targets);
-        expect(sink.cancelled, contains(RichNotificationIds.roomTag('a', roomId)));
+        expect(
+          sink.cancelled,
+          contains(RichNotificationIds.roomTag('a', roomId)),
+        );
       });
     });
   });
@@ -760,7 +805,10 @@ void main() {
         working: false,
         pendingApprovals: false,
       );
-      expect(policy.shouldConnect(now.add(const Duration(seconds: 5))), isFalse);
+      expect(
+        policy.shouldConnect(now.add(const Duration(seconds: 5))),
+        isFalse,
+      );
       // ...but a send from this device reads rooms at once, at 30 s.
       policy.kick();
       expect(policy.shouldConnect(now.add(const Duration(seconds: 5))), isTrue);
@@ -836,11 +884,29 @@ void main() {
     test('30 s only while working or waiting for an approval', () async {
       final policy = BotModeTickPolicy();
       final now = DateTime(2026);
-      policy.record(now: now, ok: true, rooms: 2, working: false, pendingApprovals: false);
+      policy.record(
+        now: now,
+        ok: true,
+        rooms: 2,
+        working: false,
+        pendingApprovals: false,
+      );
       expect(policy.cadence, BotModeCadence.idle);
-      policy.record(now: now, ok: true, rooms: 2, working: false, pendingApprovals: true);
+      policy.record(
+        now: now,
+        ok: true,
+        rooms: 2,
+        working: false,
+        pendingApprovals: true,
+      );
       expect(policy.cadence, BotModeCadence.active);
-      policy.record(now: now, ok: false, rooms: 0, working: true, pendingApprovals: true);
+      policy.record(
+        now: now,
+        ok: false,
+        rooms: 0,
+        working: true,
+        pendingApprovals: true,
+      );
       expect(policy.cadence, BotModeCadence.idle);
     });
 
@@ -962,8 +1028,11 @@ final class _Ops implements NotificationActionOps {
   Future<void> chatApprove(NotificationActionPayload p, String choice) =>
       _record('chatApprove:$choice');
   @override
-  Future<void> botChatReply(NotificationActionPayload p, String text, String id) =>
-      _record('botChatReply:$text:$id');
+  Future<void> botChatReply(
+    NotificationActionPayload p,
+    String text,
+    String id,
+  ) => _record('botChatReply:$text:$id');
   @override
   Future<void> cronTrigger(NotificationActionPayload p) =>
       _record('cronTrigger:${p.taskId}');
@@ -998,6 +1067,7 @@ final class _Sink implements RichNotificationSink {
     conversations.add(args);
     return true;
   }
+
   @override
   Future<void> postLiveUpdate(Map<String, Object?> args) async =>
       liveTags.add(args['tag']! as String);
@@ -1039,12 +1109,16 @@ final class _Presenter implements RoomNoticePresenter {
       out.addAll(n);
 }
 
-GroupsCapabilities _caps() => GroupsCapabilities.tryParse({
-  'protocol_version': 1,
-  'driver': true,
-  'max_log_limit': 500,
-  'methods': [for (final m in GroupMethod.values) m.wire],
-}, connectionId: 'c1', generation: 1)!;
+GroupsCapabilities _caps() => GroupsCapabilities.tryParse(
+  {
+    'protocol_version': 1,
+    'driver': true,
+    'max_log_limit': 500,
+    'methods': [for (final m in GroupMethod.values) m.wire],
+  },
+  connectionId: 'c1',
+  generation: 1,
+)!;
 
 final class _RoomsGateway implements BotModeGateway {
   bool fail = false;
@@ -1142,8 +1216,9 @@ final class _PagedGateway implements BotModeGateway {
   @override
   Future<GroupsCapabilities> groupCapabilities() async => _caps();
   @override
-  Future<List<HostedGroupRoom>> listGroups({required int generation}) async =>
-      [buildRoom(latestSeq: latest)];
+  Future<List<HostedGroupRoom>> listGroups({required int generation}) async => [
+    buildRoom(latestSeq: latest),
+  ];
   @override
   Future<({HostedGroupRoom room, RoomDriverStatus? driverStatus})> groupState(
     String roomId, {

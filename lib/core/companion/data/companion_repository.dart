@@ -295,7 +295,7 @@ class CompanionRepository {
   }
 
   /// Carga una mascota por slug. Devuelve `null` si falta o es inválida, para
-  /// permitir el fallback a `HermesSparkMascot` (FR-012) sin crashear.
+  /// permitir el fallback a la cara del perfil (FR-012) sin crashear.
   Future<Companion?> load(String slug) async {
     final dir = '$_root/$slug';
     try {

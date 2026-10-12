@@ -7,13 +7,16 @@ import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/models/agent_profile.dart';
+import 'package:hermes_android/core/design/list.dart' as design_list;
 import 'package:hermes_android/core/services/bot_profile_client.dart';
+import 'package:hermes_android/core/services/bot_roster_store.dart';
 import 'package:hermes_android/core/widgets/remote_bot_roster.dart';
 import 'package:hermes_android/core/models/bot_visual_identity.dart';
 import 'package:hermes_android/core/models/kanban.dart';
 import 'package:hermes_android/core/models/mission_control.dart';
 import 'package:hermes_android/core/models/profile_pet.dart';
 import 'package:hermes_android/core/screens/mission_control_screen.dart';
+import 'package:hermes_android/core/screens/profiles_screen.dart';
 import 'package:hermes_android/core/screens/tasks_screen.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
@@ -24,6 +27,7 @@ import 'package:hermes_android/core/services/mission_organization_store.dart';
 import 'package:hermes_android/core/services/notifications/notification_service.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
+import 'package:hermes_android/core/capabilities/capabilities_screen.dart';
 import 'package:hermes_android/core/widgets/hermes_ui.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -276,6 +280,7 @@ Widget _host({
   HermesDesktopProfileAssetsGateway? profileAssetsGateway,
   BotChatTitleLookup? botChatTitleLookup,
   BotProfileGateway? botProfileGateway,
+  Future<void> Function(String name)? profileDeleteOverride,
 }) => MaterialApp(
   locale: const Locale('es'),
   localizationsDelegates: Strings.localizationsDelegates,
@@ -308,6 +313,7 @@ Widget _host({
     botChatTitleLookup: botChatTitleLookup ?? FakeBotChatTitleLookup(),
     botProfileGateway: botProfileGateway,
     modelOptionsLoader: botCreateGateway == null ? null : (_) async => const [],
+    profileDeleteOverride: profileDeleteOverride,
   ),
 );
 
@@ -320,6 +326,49 @@ final class _UiMetaGateway implements BotProfileGateway {
     Map<String, dynamic> patch, {
     Set<String> remove = const {},
   }) async => patches.add((profile, patch, remove));
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+/// A server that keeps what the screen writes: [patchBotMetadata] changes the
+/// roster [load] returns next, like `profiles.configure` + `profiles.list`.
+final class _StatefulRoster
+    implements BotProfileGateway, MissionControlDataSource {
+  _StatefulRoster(this.names);
+  final List<String> names;
+  final hidden = <String>{};
+  var failWrites = false;
+
+  @override
+  Future<void> patchBotMetadata(
+    String profile,
+    Map<String, dynamic> patch, {
+    Set<String> remove = const {},
+  }) async {
+    if (failWrites) throw StateError('offline');
+    if (patch['hidden'] == true) hidden.add(profile);
+    if (patch['hidden'] == false) hidden.remove(profile);
+  }
+
+  @override
+  Future<MissionBackendSnapshot> load() async => _snapshot(
+    profiles: [
+      for (final name in names)
+        AgentProfile(
+          name: name,
+          isDefault: name == 'default',
+          botModeUiMeta: {if (hidden.contains(name)) 'hidden': true},
+        ),
+    ],
+    board: const KanbanBoard(columns: []),
+  );
+
+  @override
+  Stream<KanbanEvent>? watchKanban({required int since}) => null;
+
+  @override
+  void close() {}
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
@@ -449,6 +498,12 @@ Future<void> _openCreateBot(WidgetTester tester) async {
   await _pumpCreateUi(tester);
 }
 
+/// The profile named in the header's pill, beside the page's name.
+Finder _scopeBadge(String profile) => find.descendant(
+  of: find.byKey(const ValueKey('hermes-app-bar-title-badge')),
+  matching: find.text(profile),
+);
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   final secureStore = <String, String>{};
@@ -457,6 +512,8 @@ void main() {
   var secureDeletes = 0;
 
   setUp(() {
+    // Confirmed roster writes are replayed from the shared registry.
+    BotRosterRegistry.shared.clear();
     secureStore.clear();
     failSecureReads = false;
     secureWrites = 0;
@@ -562,7 +619,10 @@ void main() {
     );
     expect(find.byKey(const ValueKey('mission-goto-work')), findsNothing);
     expect(find.byKey(const ValueKey('mission-work-feed')), findsNothing);
-    expect(find.byKey(const ValueKey('mission-workspace-button')), findsNothing);
+    expect(
+      find.byKey(const ValueKey('mission-workspace-button')),
+      findsNothing,
+    );
     expect(find.text('Resumen'), findsNothing);
   });
 
@@ -627,7 +687,7 @@ void main() {
     expect(opened?.profile, 'infra');
   });
 
-  testWidgets('working bot row prioritizes its task over chat preview', (
+  testWidgets('a running Kanban task alone does not light the Bot Chat row', (
     tester,
   ) async {
     final manager = await _manager();
@@ -658,13 +718,18 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    // The avatar opens the Bot Chat, so the row speaks for that chat only:
+    // the task shows in Tasks and the bot profile, not as the row's aura.
     final row = find.byKey(const ValueKey('mission-bot-infra'));
     expect(
       find.descendant(of: row, matching: find.textContaining('Desplegar')),
-      findsOneWidget,
+      findsNothing,
     );
     expect(
-      find.descendant(of: row, matching: find.text('Recent work')),
+      find.descendant(
+        of: row,
+        matching: find.byKey(const ValueKey('living-face-ring-working')),
+      ),
       findsNothing,
     );
   });
@@ -732,9 +797,7 @@ void main() {
     );
   });
 
-  testWidgets('bot profile groups every action around the bot', (
-    tester,
-  ) async {
+  testWidgets('bot profile groups every action around the bot', (tester) async {
     final manager = await _manager();
     Session? opened;
     await tester.pumpWidget(
@@ -771,6 +834,17 @@ void main() {
       await tester.scrollUntilVisible(find.byKey(ValueKey(key)), 200);
       expect(find.byKey(ValueKey(key)), findsOneWidget);
     }
+    final skills = find.byKey(const ValueKey('bot-profile-skills'));
+    await tester.ensureVisible(skills);
+    await tester.pumpAndSettle();
+    tester.widget<design_list.HermesListRow>(skills).onTap!();
+    await tester.pump(const Duration(milliseconds: 500));
+    final hubFinder = find.byType(CapabilitiesHub, skipOffstage: false);
+    final hub = tester.widget<CapabilitiesHub>(hubFinder);
+    expect(hub.profile, 'infra');
+    expect(hub.advancedBuilder, isNull);
+    Navigator.of(tester.element(hubFinder)).pop();
+    await tester.pumpAndSettle();
     await tester.scrollUntilVisible(
       find.byKey(const ValueKey('bot-profile-chat')),
       -200,
@@ -835,12 +909,13 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('roster-action-togglePin')));
     await tester.pumpAndSettle();
     await _openRosterActions(tester, 'infra');
-    await tester.tap(find.byKey(const ValueKey('roster-action-toggleHidden')));
-    await tester.pumpAndSettle();
-    await _openRosterActions(tester, 'infra');
     await tester.tap(find.byKey(const ValueKey('roster-action-section')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Ops').last);
+    await tester.pumpAndSettle();
+    // Hiding takes the bot off the roster, so it goes last.
+    await _openRosterActions(tester, 'infra');
+    await tester.tap(find.byKey(const ValueKey('roster-action-toggleHidden')));
     await tester.pumpAndSettle();
 
     // Desktop-compatible keys in ui_meta['hermes-bots']; every write drops
@@ -848,10 +923,127 @@ void main() {
     expect(gateway.patches.map((p) => p.$1), ['infra', 'infra', 'infra']);
     expect(gateway.patches.map((p) => p.$2).toList(), [
       {'pinned': true},
-      {'hidden': true},
       {'sectionId': 'ops', 'sectionName': 'Ops'},
+      {'hidden': true},
     ]);
     expect(gateway.patches.every((p) => p.$3.contains('chat')), isTrue);
+  });
+
+  testWidgets('hiding a bot removes it from the roster, survives a restart '
+      'and can be undone from "show hidden"', (tester) async {
+    final manager = await _manager();
+    final server = _StatefulRoster(['default', 'infra', 'qa']);
+    Widget app() => _host(
+      manager: manager,
+      botProfileGateway: server,
+      dataSource: server,
+      snapshot: _snapshot(),
+    );
+    final infra = find.byKey(const ValueKey('mission-bot-row-infra'));
+    await tester.pumpWidget(app());
+    await tester.pumpAndSettle();
+    expect(infra, findsOneWidget);
+
+    await _openRosterActions(tester, 'infra');
+    await tester.tap(find.byKey(const ValueKey('roster-action-toggleHidden')));
+    await tester.pumpAndSettle();
+    expect(server.hidden, {'infra'});
+    expect(infra, findsNothing);
+    expect(find.byKey(const ValueKey('mission-bot-row-qa')), findsOneWidget);
+
+    // Restart: a fresh screen and a fresh shared roster read the server.
+    await tester.pumpWidget(const SizedBox());
+    BotRosterRegistry.shared.clear();
+    await tester.pumpWidget(app());
+    await tester.pumpAndSettle();
+    expect(infra, findsNothing);
+
+    // Hidden bots are one tap away, and the same menu restores them.
+    await tester.tap(find.byKey(const ValueKey('mission-show-hidden')));
+    await tester.pumpAndSettle();
+    expect(infra, findsOneWidget);
+    await _openRosterActions(tester, 'infra');
+    expect(find.text('Mostrar'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('roster-action-toggleHidden')));
+    await tester.pumpAndSettle();
+    expect(server.hidden, isEmpty);
+    expect(infra, findsOneWidget);
+    expect(find.byKey(const ValueKey('mission-show-hidden')), findsNothing);
+  });
+
+  testWidgets('a confirmed hide shows at once even when the reload is stale', (
+    tester,
+  ) async {
+    final manager = await _manager();
+    final gateway = _UiMetaGateway();
+    await tester.pumpWidget(
+      _host(
+        manager: manager,
+        botProfileGateway: gateway,
+        snapshot: _snapshot(
+          profiles: const [
+            AgentProfile(name: 'infra'),
+            AgentProfile(name: 'qa'),
+          ],
+          board: const KanbanBoard(columns: []),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await _openRosterActions(tester, 'infra');
+    await tester.tap(find.byKey(const ValueKey('roster-action-toggleHidden')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('mission-bot-row-infra')), findsNothing);
+    expect(find.byKey(const ValueKey('mission-show-hidden')), findsOneWidget);
+  });
+
+  testWidgets('a failed hide says so and keeps the bot', (tester) async {
+    final manager = await _manager();
+    final server = _StatefulRoster(['default', 'infra'])..failWrites = true;
+    await tester.pumpWidget(
+      _host(
+        manager: manager,
+        botProfileGateway: server,
+        dataSource: server,
+        snapshot: _snapshot(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await _openRosterActions(tester, 'infra');
+    await tester.tap(find.byKey(const ValueKey('roster-action-toggleHidden')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Hermes no pudo actualizar este perfil.'), findsOneWidget);
+    expect(find.byKey(const ValueKey('mission-bot-row-infra')), findsOneWidget);
+  });
+
+  testWidgets('the main bot cannot be hidden, so the action is not offered', (
+    tester,
+  ) async {
+    final manager = await _manager();
+    final server = _StatefulRoster(['default', 'infra']);
+    await tester.pumpWidget(
+      _host(
+        manager: manager,
+        botProfileGateway: server,
+        dataSource: server,
+        snapshot: _snapshot(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await _openRosterActions(tester, 'default');
+    expect(
+      find.byKey(const ValueKey('roster-action-togglePin')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('roster-action-toggleHidden')),
+      findsNothing,
+    );
   });
 
   testWidgets('header offers New bot / New room without a floating button', (
@@ -874,9 +1066,22 @@ void main() {
     );
     await tester.tap(newButton);
     await tester.pumpAndSettle();
+    final chooserBot = find.byKey(const ValueKey('mission-create-chooser-bot'));
+    expect(chooserBot, findsOneWidget);
+    // "New profile" wears the profile icon, as Profiles and the switcher do.
     expect(
-      find.byKey(const ValueKey('mission-create-chooser-bot')),
+      find.descendant(
+        of: chooserBot,
+        matching: find.byIcon(Icons.account_circle_outlined),
+      ),
       findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: chooserBot,
+        matching: find.byIcon(Icons.smart_toy_outlined),
+      ),
+      findsNothing,
     );
   });
 
@@ -968,8 +1173,11 @@ void main() {
     final manager = await _manager();
     // Preview/time come from profiles.list canonical_session (spec 070 T206),
     // never from the legacy ui_meta pin nor a local session list.
+    // QA 9493: no hero line any more; the main bot is a team tile whose
+    // line is the canonical chat's time (the long preview line is gone).
     final official = AgentProfile.fromJson({
-      'name': 'infra',
+      'name': 'default',
+      'is_default': true,
       'ui_meta': {
         'hermes-bots': {'chat': 'legacy-ignored'},
       },
@@ -997,7 +1205,7 @@ void main() {
               preview: 'Última respuesta del bot',
               startedAt: 100,
               updatedAt: 120,
-              profile: 'infra',
+              profile: 'default',
             ),
           ],
           board: const KanbanBoard(columns: []),
@@ -1006,7 +1214,11 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Última respuesta del bot'), findsOneWidget);
+    final line = tester.widget<Text>(
+      find.byKey(const ValueKey('roster-line-default')),
+    );
+    expect(line.data, isNot(anyOf(' ', 'Libre')), reason: 'shows its time');
+    expect(find.textContaining('Última respuesta del bot'), findsNothing);
     expect(find.text('Inactivo · Última respuesta del bot'), findsNothing);
     expect(find.text('Bot Chat'), findsNothing);
   });
@@ -1027,7 +1239,10 @@ void main() {
 
     final bots = find.byKey(const ValueKey('mission-destination-bots'));
     expect(
-      tester.getSemantics(bots).getSemanticsData().hasAction(SemanticsAction.tap),
+      tester
+          .getSemantics(bots)
+          .getSemanticsData()
+          .hasAction(SemanticsAction.tap),
       isTrue,
       reason: 'Bots debe publicar la acción tap en Android',
     );
@@ -1068,7 +1283,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Bots'), findsWidgets);
-    expect(find.text('default'), findsWidgets);
+    // The main bot reads "Hermes", never the raw `default` slug.
+    expect(find.text('Hermes'), findsWidgets);
+    expect(find.text('default'), findsNothing);
     // Spec 070 S1: no Activo/Inactivo labels; idle rows show the preview.
     expect(find.text('Inactivo'), findsNothing);
     expect(tester.takeException(), isNull);
@@ -1135,7 +1352,7 @@ void main() {
     expect(
       find.descendant(
         of: find.byKey(const ValueKey('mission-workspace-sheet')),
-        matching: find.text('1 agente'),
+        matching: find.text('1 perfil'),
       ),
       findsOneWidget,
     );
@@ -1682,7 +1899,8 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Te necesitan'), findsOneWidget);
+    // Dots home: no "Needs you" section; the approval row sits under the
+    // summary line.
     expect(find.byKey(const ValueKey('mission-attention')), findsOneWidget);
     expect(find.text('Restart Proxmox node'), findsNothing);
     expect(find.textContaining('approval-1'), findsNothing);
@@ -1807,7 +2025,10 @@ void main() {
     expect(find.text('2 aprobaciones · 0 bloqueados'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('mission-attention')));
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('mission-attention-sheet')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('mission-attention-sheet')),
+      findsOneWidget,
+    );
     expect(find.byKey(const ValueKey('mission-work-feed')), findsNothing);
     expect(find.text('Aprobación pendiente'), findsNWidgets(2));
     expect(find.text('Restart node'), findsNothing);
@@ -1838,7 +2059,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(
-      find.text('Esta instalación de Hermes no publica profiles.'),
+      find.text('Esta instalación de Hermes no publica perfiles.'),
       findsOneWidget,
     );
     expect(find.byKey(const ValueKey('mission-create-agent')), findsOneWidget);
@@ -1981,7 +2202,7 @@ void main() {
 
     expect(find.text('infra'), findsWidgets);
     expect(
-      find.text('Algunos datos del equipo pueden estar desactualizados.'),
+      find.text('Algunos datos de los perfiles pueden estar desactualizados.'),
       findsOneWidget,
     );
   });
@@ -2035,12 +2256,12 @@ void main() {
 
     expect(
       find.text(
-        'Hermes no está disponible. Los datos existentes del equipo siguen visibles.',
+        'Hermes no está disponible. Los datos de los perfiles que ya tienes siguen visibles.',
       ),
       findsNothing,
     );
     expect(
-      find.text('Esta instalación de Hermes no publica profiles.'),
+      find.text('Esta instalación de Hermes no publica perfiles.'),
       findsOneWidget,
     );
     expect(find.text('Old cached task'), findsNothing);
@@ -2146,6 +2367,45 @@ void main() {
     expect(source.watchCount, 2);
   });
 
+  testWidgets('roster refresh sleeps in background and restarts on resume', (
+    tester,
+  ) async {
+    final manager = await _manager();
+    final source = _WatchSource(
+      _snapshot(
+        profiles: const [AgentProfile(name: 'infra')],
+        board: const KanbanBoard(columns: [], latestEventId: 10),
+      ),
+    );
+    addTearDown(source.events.close);
+    await tester.pumpWidget(
+      _host(manager: manager, snapshot: source.snapshot, dataSource: source),
+    );
+    await tester.pumpAndSettle();
+    expect(source.loadCount, 1);
+
+    await tester.pump(const Duration(seconds: 10));
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await tester.pump(const Duration(seconds: 25));
+    expect(source.loadCount, 1);
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump();
+    await tester.pump();
+    expect(source.loadCount, 2);
+
+    // The stale background tick (t=60 s) must not reload 25 s after resume.
+    await tester.pump(const Duration(seconds: 28));
+    expect(source.loadCount, 2);
+    await tester.pump(const Duration(seconds: 3));
+    await tester.pump();
+    expect(source.loadCount, 3);
+  });
+
   testWidgets('newer refresh wins when loads complete out of order', (
     tester,
   ) async {
@@ -2207,9 +2467,11 @@ void main() {
     tester,
   ) async {
     final manager = await _manager();
+    // The Dots grid holds four per row: 32 bots overflow the first screen.
     final profiles = List.generate(
-      8,
-      (index) => AgentProfile(name: 'agent_$index'),
+      32,
+      (index) =>
+          AgentProfile(name: 'agent_${index.toString().padLeft(2, '0')}'),
     );
     await tester.pumpWidget(
       _host(
@@ -2222,9 +2484,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('agent_0'), findsOneWidget);
-    expect(find.text('agent_1'), findsOneWidget);
-    expect(find.text('agent_7'), findsNothing);
+    expect(find.text('agent_00'), findsOneWidget);
+    expect(find.text('agent_01'), findsOneWidget);
+    expect(find.text('agent_31'), findsNothing);
     final rosterScroll = find
         .descendant(
           of: find.byKey(const ValueKey('mission-bots')),
@@ -2232,11 +2494,11 @@ void main() {
         )
         .first;
     await tester.scrollUntilVisible(
-      find.text('agent_7'),
+      find.text('agent_31'),
       180,
       scrollable: rosterScroll,
     );
-    expect(find.text('agent_7'), findsOneWidget);
+    expect(find.text('agent_31'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -2355,10 +2617,13 @@ void main() {
     final zetaY = tester.getTopLeft(
       find.byKey(const ValueKey('mission-bot-row-zeta')),
     );
-    // El sello `created` de ui_meta encabeza la lista (Desktop: activityOf);
-    // después manda la sesión más reciente, no la prioridad de estado.
-    expect(newbornY.dy, lessThan(alphaY.dy));
-    expect(alphaY.dy, lessThan(zetaY.dy));
+    // El sello `created` de ui_meta encabeza la rejilla (Desktop: activityOf);
+    // después manda la sesión más reciente, no la prioridad de estado. La
+    // rejilla se lee por filas: arriba-abajo y, en la misma fila, de izquierda
+    // a derecha.
+    double order(Offset o) => o.dy * 10000 + o.dx;
+    expect(order(newbornY), lessThan(order(alphaY)));
+    expect(order(alphaY), lessThan(order(zetaY)));
   });
 
   testWidgets('bot waiting on the user carries the needs-you badge', (
@@ -2389,7 +2654,11 @@ void main() {
         activeChats: chats,
         snapshot: _snapshot(
           profiles: const [
-            AgentProfile(name: 'infra'),
+            // The approval waits in infra's canonical Bot Chat.
+            AgentProfile(
+              name: 'infra',
+              canonicalSession: AgentProfileSessionSummary(id: 's-approval'),
+            ),
             AgentProfile(name: 'qa'),
           ],
           sessions: [session, _session('s-qa', 'qa')],
@@ -2400,7 +2669,7 @@ void main() {
     await tester.pumpAndSettle();
 
     // Spec 070 S1: one state signal on the face (attention ring) and the
-    // bot listed under "Needs you" — no extra badge or dot on the row.
+    // bot first in the team grid — no extra badge on the row.
     expect(
       find.descendant(
         of: find.byKey(const ValueKey('mission-bot-row-infra')),
@@ -2415,16 +2684,14 @@ void main() {
       ),
       findsNothing,
     );
-    expect(
-      tester
-          .getTopLeft(find.byKey(const ValueKey('mission-bot-row-infra')))
-          .dy,
-      lessThan(
-        tester
-            .getTopLeft(find.byKey(const ValueKey('roster-section-recent')))
-            .dy,
-      ),
+    // Dots home: the waiting bot leads the team grid.
+    final infra = tester.getTopLeft(
+      find.byKey(const ValueKey('mission-bot-row-infra')),
     );
+    final qa = tester.getTopLeft(
+      find.byKey(const ValueKey('mission-bot-row-qa')),
+    );
+    expect(infra.dy * 10000 + infra.dx, lessThan(qa.dy * 10000 + qa.dx));
   });
 
   testWidgets(
@@ -2457,8 +2724,8 @@ void main() {
       // Empty state con CTA siempre visible, además del botón de cabecera.
       expect(
         find.text(
-          'Un bot es un compañero con nombre propio, memoria, skills y chat '
-          'propios. Crea el primero para empezar.',
+          'Un perfil tiene nombre, memoria, skills y chat propios. Crea el '
+          'primero para empezar.',
         ),
         findsOneWidget,
       );
@@ -2522,7 +2789,7 @@ void main() {
     await _openCreateBot(tester);
     await _enterCreateName(tester, 'Infra');
 
-    expect(find.text('Ya existe un agente con este nombre.'), findsOneWidget);
+    expect(find.text('Ya existe un perfil con este nombre.'), findsOneWidget);
     await _scrollCreateFormTo(tester, 'bot-create-submit');
     final submit = tester.widget<HermesPrimaryButton>(
       find.byKey(const ValueKey('bot-create-submit')),
@@ -2578,19 +2845,27 @@ void main() {
       await tester.pumpAndSettle();
 
       await _openCreateBot(tester);
-      // Skills es su propia fila colapsable en "Personalizar" (mockup de
-      // Editar/Crear bot); ya no depende de expandir "Avanzado".
+      // Skills opens the shared floating switch editor from Personalizar.
       await _scrollCreateFormTo(tester, 'bot-create-skills-row');
       await tester.tap(find.byKey(const ValueKey('bot-create-skills-row')));
       await _pumpCreateUi(tester);
 
       expect(gateway.calls, ['describe:default']);
-      await _scrollCreateFormTo(tester, 'bot-create-skill-web');
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('bot-create-skill-web')),
+      );
       expect(
         find.byKey(const ValueKey('bot-create-skill-web')),
         findsOneWidget,
       );
       await tester.tap(find.byKey(const ValueKey('bot-create-skill-web')));
+      await _pumpCreateUi(tester);
+      await tester.tap(
+        find.descendant(
+          of: find.byKey(const ValueKey('bot-create-skill-picker')),
+          matching: find.byTooltip('Cerrar'),
+        ),
+      );
       await _pumpCreateUi(tester);
 
       await _scrollCreateFormTo(tester, 'bot-create-name', up: true);
@@ -2618,13 +2893,9 @@ void main() {
       await _scrollCreateFormTo(tester, 'bot-create-skills-row');
       await tester.tap(find.byKey(const ValueKey('bot-create-skills-row')));
       await _pumpCreateUi(tester);
-      // La nota de degradación vive dentro de la fila "Skills".
-      await _scrollCreateFormTo(tester, 'bot-create-skills-row');
+      // A failed/missing catalog is distinct from an empty catalog.
       expect(
-        find.text(
-          'El catálogo de skills necesita un gateway más reciente '
-          '(actualiza Hermes y reinícialo).',
-        ),
+        find.text('El catálogo de skills no está disponible.'),
         findsOneWidget,
       );
       await tester.binding.handlePopRoute();
@@ -2665,7 +2936,22 @@ void main() {
       find.byKey(const ValueKey('bot-mode-create-actions')),
       findsOneWidget,
     );
-    expect(find.byKey(const ValueKey('bot-mode-create-bot')), findsOneWidget);
+    final orbitBot = find.byKey(const ValueKey('bot-mode-create-bot'));
+    expect(orbitBot, findsOneWidget);
+    expect(
+      find.descendant(
+        of: orbitBot,
+        matching: find.byIcon(Icons.account_circle_outlined),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: orbitBot,
+        matching: find.byIcon(Icons.smart_toy_outlined),
+      ),
+      findsNothing,
+    );
     expect(find.byKey(const ValueKey('bot-mode-create-room')), findsOneWidget);
     expect(find.byType(BottomSheet), findsNothing);
 
@@ -2892,4 +3178,114 @@ void main() {
       );
     },
   );
+
+  testWidgets('a7: SOUL on a bot card opens that bot\'s SOUL, not the active '
+      'profile\'s', (tester) async {
+    tester.view.physicalSize = const Size(800, 1800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final manager = await _manager();
+    // The user is working in another profile. A read-only connection has no
+    // advanced editor, so the card opens the SOUL screen directly.
+    await manager.setActiveProfile(_connection.id, 'ana');
+    await tester.pumpWidget(
+      _host(
+        manager: manager,
+        connection: _connection.copyWith(readOnly: true),
+        snapshot: _snapshot(profiles: const [AgentProfile(name: 'infra')]),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await _openAgentDetail(tester, 'infra');
+    final soul = find.byKey(const ValueKey('bot-profile-soul'));
+    await tester.ensureVisible(soul);
+    await tester.tap(soul);
+    await tester.pumpAndSettle();
+    expect(_scopeBadge('infra'), findsOneWidget);
+    expect(_scopeBadge('ana'), findsNothing);
+  });
+
+  testWidgets('deleting a bot deletes its profile in place, with the same '
+      'confirmation as Profiles', (tester) async {
+    tester.view.physicalSize = const Size(800, 1800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final manager = await _manager();
+    await manager.setActiveProfile(_connection.id, 'infra');
+    final deleted = <String>[];
+    await tester.pumpWidget(
+      _host(
+        manager: manager,
+        snapshot: _snapshot(profiles: const [AgentProfile(name: 'infra')]),
+        profileDeleteOverride: (name) async => deleted.add(name),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await _openAgentDetail(tester, 'infra');
+    await tester.tap(find.byKey(const ValueKey('bot-profile-more')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('bot-profile-delete')));
+    await tester.pumpAndSettle();
+    // No jump to another screen: the confirmation opens over the card.
+    expect(find.byType(ProfilesScreen), findsNothing);
+    expect(
+      find.byKey(const ValueKey('profile-delete-confirm')),
+      findsOneWidget,
+    );
+    await tester.tap(find.byKey(const ValueKey('profile-delete-confirm-yes')));
+    await tester.pumpAndSettle();
+    expect(deleted, ['infra']);
+    expect(find.byKey(const ValueKey('bot-profile')), findsNothing);
+    // It was the active profile: the app is back on the default one.
+    expect(manager.activeProfileFor(_connection.id), '');
+  });
+
+  testWidgets('after deleting a bot, a screen pushed over Mission Control '
+      'and popped back does not rebuild it', (tester) async {
+    tester.view.physicalSize = const Size(800, 1800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final manager = await _manager();
+    // A bot no earlier test deleted: the roster registry is shared.
+    await tester.pumpWidget(
+      _host(
+        manager: manager,
+        snapshot: _snapshot(profiles: const [AgentProfile(name: 'scout')]),
+        profileDeleteOverride: (_) async {},
+      ),
+    );
+    await tester.pumpAndSettle();
+    await _openAgentDetail(tester, 'scout');
+    await tester.tap(find.byKey(const ValueKey('bot-profile-more')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('bot-profile-delete')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('profile-delete-confirm-yes')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('bot-profile')), findsNothing);
+
+    // The delete flow needs Mission Control's own route; reading it must not
+    // subscribe the whole screen to the route status.
+    var rebuilds = 0;
+    debugOnRebuildDirtyWidget = (element, _) {
+      if (element.widget is MissionControlScreen) rebuilds++;
+    };
+    addTearDown(() => debugOnRebuildDirtyWidget = null);
+    final navigator = Navigator.of(
+      tester.element(find.byType(MissionControlScreen)),
+    );
+    unawaited(
+      navigator.push(
+        MaterialPageRoute<void>(
+          builder: (_) => const Scaffold(body: Text('destination')),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    navigator.pop();
+    await tester.pumpAndSettle();
+    debugOnRebuildDirtyWidget = null;
+
+    expect(rebuilds, 0);
+  });
 }

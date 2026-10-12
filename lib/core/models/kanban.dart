@@ -81,6 +81,10 @@ class KanbanTask {
   final String? reasoningEffort;
   final String? idempotencyKey;
 
+  /// The server's failure streak (`consecutive_failures`): each crashed or
+  /// timed-out worker run raises it, so a change means new failure events.
+  final int consecutiveFailures;
+
   const KanbanTask({
     required this.id,
     required this.title,
@@ -104,6 +108,7 @@ class KanbanTask {
     this.providerOverride,
     this.reasoningEffort,
     this.idempotencyKey,
+    this.consecutiveFailures = 0,
   });
 
   bool get isBlocked =>
@@ -142,6 +147,7 @@ class KanbanTask {
       providerOverride: _asNullableString(json['provider_override']),
       reasoningEffort: _asNullableString(json['reasoning_effort']),
       idempotencyKey: _asNullableString(json['idempotency_key']),
+      consecutiveFailures: _asInt(json['consecutive_failures']),
     );
   }
 
@@ -168,6 +174,7 @@ class KanbanTask {
     providerOverride: providerOverride,
     reasoningEffort: reasoningEffort,
     idempotencyKey: idempotencyKey,
+    consecutiveFailures: consecutiveFailures,
   );
 }
 
@@ -891,12 +898,23 @@ class KanbanEvent {
   final String? taskId;
   final String kind;
 
-  const KanbanEvent({required this.id, this.taskId, this.kind = ''});
+  /// Event payload (`reason`, `summary`, `error`…), when the server sends it.
+  final Map<String, dynamic>? payload;
+
+  const KanbanEvent({
+    required this.id,
+    this.taskId,
+    this.kind = '',
+    this.payload,
+  });
 
   factory KanbanEvent.fromJson(Map<String, dynamic> json) => KanbanEvent(
     id: _asInt(json['id']),
     taskId: _asNullableString(json['task_id']),
     kind: (json['kind'] ?? '').toString(),
+    payload: json['payload'] is Map
+        ? Map<String, dynamic>.from(json['payload'] as Map)
+        : null,
   );
 }
 

@@ -1,3 +1,4 @@
+import 'connection_request.dart';
 import '../utils/assistant_content.dart';
 import 'agent_task_list.dart';
 import 'transcript_privacy_state.dart';
@@ -38,6 +39,19 @@ class DesktopSessionSnapshot {
   final Map<String, dynamic>? pendingApproval;
   final bool pendingApprovalProvided;
 
+  /// `pending_connection`: the connector prompt still waiting on this
+  /// session, so a client that missed `connection.request` restores the card
+  /// with the server's deadline. Null when absent, null or unusable.
+  final ConnectionRequest? pendingConnection;
+  final bool pendingConnectionProvided;
+
+  /// `open_requests`: server→client requests (clarify, approval, sudo, …)
+  /// still waiting on this session. Hermes only sends each request frame once,
+  /// so a client that was offline or not yet attached when it was written
+  /// learns about it here (`tui_gateway/server_requests.py::open_requests`).
+  /// Each entry is the request frame `{id, method, params}`.
+  final List<Map<String, dynamic>> openRequests;
+
   /// `todo_state` del gateway: la lista de tareas del agente para esta sesión
   /// (también la reconstruye desde el historial durable cuando no hay agente
   /// vivo). `null` si no la trae o no es utilizable.
@@ -69,6 +83,9 @@ class DesktopSessionSnapshot {
     this.pendingClarifyProvided = false,
     this.pendingApproval,
     this.pendingApprovalProvided = false,
+    this.pendingConnection,
+    this.pendingConnectionProvided = false,
+    this.openRequests = const [],
     this.todoState,
   });
 
@@ -95,6 +112,9 @@ class DesktopSessionSnapshot {
     pendingClarifyProvided: pendingClarifyProvided,
     pendingApproval: pendingApproval,
     pendingApprovalProvided: pendingApprovalProvided,
+    pendingConnection: pendingConnection,
+    pendingConnectionProvided: pendingConnectionProvided,
+    openRequests: openRequests,
     todoState: todoState,
     raw: raw,
   );
@@ -245,6 +265,9 @@ class DesktopSessionSnapshot {
       pendingClarifyProvided: json.containsKey('pending_clarify'),
       pendingApproval: _stringKeyedMap(json['pending_approval']),
       pendingApprovalProvided: json.containsKey('pending_approval'),
+      pendingConnection: normalizeConnectionRequest(json['pending_connection']),
+      pendingConnectionProvided: json.containsKey('pending_connection'),
+      openRequests: _openServerRequests(json['open_requests']),
       todoState: AgentTaskList.tryParse(json['todo_state']),
       // Keep only unknown, non-payload extension fields. The 0.19 snapshot can
       // contain the whole transcript and a many-KiB system prompt; duplicating
@@ -412,6 +435,10 @@ class DesktopInflightTurn {
   final String? error;
   final String? status;
   final bool? recoverable;
+
+  /// Structured failure descriptor of a retained failed turn
+  /// (agent/error_surface.py): only its short scalar fields are kept.
+  final Map<String, Object> errorSurface;
   final List<DesktopInflightCorrection> corrections;
   final List<int?> correctionOffsets;
   final DateTime? startedAt;
@@ -425,6 +452,7 @@ class DesktopInflightTurn {
     this.error,
     this.status,
     this.recoverable,
+    this.errorSurface = const {},
     List<DesktopInflightCorrection> corrections = const [],
     List<int?> correctionOffsets = const [],
     this.startedAt,
@@ -477,6 +505,7 @@ class DesktopInflightTurn {
       error: error,
       status: status,
       recoverable: recoverable,
+      errorSurface: _errorSurfaceScalars(json['error_surface']),
       corrections: corrections,
       correctionOffsets: correctionOffsets,
       startedAt: _epochSeconds(json['started_at']),
@@ -891,6 +920,28 @@ DateTime? _epochSeconds(Object? value) {
   }
 }
 
+List<Map<String, dynamic>> _openServerRequests(Object? value) {
+  if (value is! List) return const [];
+  final requests = <Map<String, dynamic>>[];
+  for (final entry in value) {
+    final frame = _stringKeyedMap(entry);
+    if (frame == null) continue;
+    final id = frame['id'];
+    final method = frame['method'];
+    final params = _stringKeyedMap(frame['params']);
+    if (id is! String || id.trim().isEmpty || id != id.trim()) continue;
+    if (method is! String || method.trim().isEmpty || params == null) continue;
+    requests.add(
+      Map<String, dynamic>.unmodifiable({
+        'id': id,
+        'method': method,
+        'params': Map<String, dynamic>.unmodifiable(params),
+      }),
+    );
+  }
+  return List.unmodifiable(requests);
+}
+
 Map<String, dynamic>? _stringKeyedMap(Object? value) {
   if (value is! Map) return null;
   final result = <String, dynamic>{};
@@ -979,6 +1030,38 @@ int _deepJsonHash(Object? value) {
   return value.hashCode;
 }
 
+/// The identity/recovery scalars of an `error_surface`; never free text
+/// beyond a short label and the gateway's bounded `message`.
+Map<String, Object> _errorSurfaceScalars(Object? value) {
+  if (value is! Map) return const {};
+  final out = <String, Object>{};
+  for (final key in const [
+    'layer',
+    'code',
+    'provider',
+    'provider_label',
+    'auth_kind',
+    'model',
+  ]) {
+    final item = value[key];
+    if (item is String && item.isNotEmpty && item.length <= 128) {
+      out[key] = item;
+    }
+  }
+  final retryable = value['retryable'];
+  if (retryable is bool) out['retryable'] = retryable;
+  final resetsAt = value['resets_at'];
+  if (resetsAt is num && resetsAt.isFinite && resetsAt > 0) {
+    out['resets_at'] = resetsAt;
+  }
+  final message = value['message'];
+  if (message is String && message.trim().isNotEmpty) {
+    final text = message.trim();
+    out['message'] = text.length <= 500 ? text : text.substring(0, 500);
+  }
+  return Map.unmodifiable(out);
+}
+
 Map<String, dynamic> _freezeExtras(
   Map<String, dynamic> value,
   Set<String> parsedKeys,
@@ -1034,6 +1117,8 @@ const _snapshotParsedKeys = <String>{
   'info',
   'pending_clarify',
   'pending_approval',
+  'pending_connection',
+  'open_requests',
   'todo_state',
 };
 
@@ -1077,6 +1162,7 @@ const _inflightParsedKeys = <String>{
   'assistant',
   'corrections',
   'error',
+  'error_surface',
   'recoverable',
   'status',
   'streaming',

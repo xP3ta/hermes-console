@@ -4,14 +4,15 @@ import 'package:flutter/material.dart';
 
 import '../../../../l10n/app_localizations.dart';
 import '../../../models/agent_profile.dart';
-import '../../../models/desktop_model_catalog.dart';
 import '../../../services/bot_profile_client.dart';
 import '../../../design/hermes_design.dart';
 import '../../../theme/app_theme.dart';
+import '../../../widgets/console_loader.dart';
 import '../../../widgets/hermes_app_bar.dart';
-import '../../../widgets/hermes_notice.dart';
 import '../../../widgets/mission_profile_avatar.dart';
 import '../roster/living_bot_face.dart';
+import 'profile_model_picker.dart';
+import '../../../feedback/feedback_policy.dart';
 
 /// One line of the profile's **Now** block.
 final class BotNowItem {
@@ -78,6 +79,11 @@ class BotProfileScreen extends StatefulWidget {
   final MissionProfileAvatarCache? avatarCache;
   final BotModelGateway? modelGateway;
   final BotProfileGateway? profileGateway;
+
+  /// Whose model catalog this bot's is kept under: the connection id.
+  final String catalogScope;
+  @visibleForTesting
+  final ProfileModelCatalogs? modelCatalogs;
   final bool readOnly;
   final String machineLabel;
   final VoidCallback onChat;
@@ -106,6 +112,8 @@ class BotProfileScreen extends StatefulWidget {
     this.avatarCache,
     this.modelGateway,
     this.profileGateway,
+    this.catalogScope = '',
+    this.modelCatalogs,
     this.readOnly = false,
     this.onRooms,
     this.onTasks,
@@ -121,8 +129,6 @@ class BotProfileScreen extends StatefulWidget {
 class _BotProfileScreenState extends State<BotProfileScreen> {
   String? _reasoning;
   bool _reasoningLoaded = false;
-  String? _modelOverride;
-  String? _providerOverride;
   bool _busy = false;
   final Set<int> _stopping = {};
   final ScrollController _scroll = ScrollController();
@@ -206,109 +212,11 @@ class _BotProfileScreenState extends State<BotProfileScreen> {
 
   void _notice(String text, {bool error = false}) {
     if (!mounted) return;
-    HermesNotice.of(context).showSnackBar(
-      SnackBar(content: Text(text)),
-      kind: error ? HermesNoticeKind.error : HermesNoticeKind.success,
+    AppFeedback.notify(
+      context,
+      error ? FeedbackKind.error : FeedbackKind.routine,
+      text,
     );
-  }
-
-  Future<void> _pickModel(AgentProfile profile) async {
-    final gateway = widget.modelGateway;
-    final writer = widget.profileGateway;
-    final s = Strings.of(context);
-    if (gateway == null || writer == null || widget.readOnly || _busy) return;
-    DesktopModelCatalog catalog;
-    setState(() => _busy = true);
-    try {
-      catalog = await gateway.botModelOptions(profile.name);
-    } catch (_) {
-      if (mounted) setState(() => _busy = false);
-      _notice(s.botProfileModelUnavailable, error: true);
-      return;
-    }
-    if (!mounted) return;
-    setState(() => _busy = false);
-    final current = _modelOverride ?? profile.model;
-    final groups = [
-      for (final p in catalog.providers)
-        if (p.authenticated != false && p.models.isNotEmpty)
-          HermesModelGroup(slug: p.slug, name: p.name, models: p.models),
-    ];
-    if (groups.isEmpty) {
-      _notice(s.botProfileModelUnavailable, error: true);
-      return;
-    }
-    final choice = await showHermesModelPicker(
-      context: context,
-      groups: groups,
-      current: HermesModelChoice(
-        _providerOverride ?? profile.provider,
-        current,
-      ),
-      surfaceKey: const ValueKey('bot-profile-model-picker'),
-      keyPrefix: 'bot-profile-model',
-    );
-    if (choice == null || choice.isDefault || !mounted) return;
-    final picked = (choice.provider, choice.model);
-    await _applyModel(profile, picked.$1, picked.$2);
-  }
-
-  Future<void> _applyModel(
-    AgentProfile profile,
-    String provider,
-    String model, {
-    bool confirmed = false,
-  }) async {
-    final writer = widget.profileGateway!;
-    final s = Strings.of(context);
-    setState(() => _busy = true);
-    try {
-      final result = await writer.configureBotProfile(profile.name, {
-        'model': model,
-        'provider': provider,
-        if (confirmed) 'confirm_expensive_model': true,
-      });
-      if (!mounted) return;
-      if (result['confirm_required'] == true && !confirmed) {
-        setState(() => _busy = false);
-        final yes = await showHermesDialog<bool>(
-          context: context,
-          surfaceKey: const ValueKey('bot-profile-model-confirm'),
-          title: s.botProfileModel,
-          message: (result['confirm_message'] as String?) ?? s.botProfileModel,
-          actions: [
-            HermesDialogAction(
-              label: s.botCancel,
-              value: false,
-              style: HermesDialogActionStyle.cancel,
-            ),
-            HermesDialogAction(
-              key: const ValueKey('bot-profile-model-confirm-save'),
-              label: s.botSave,
-              value: true,
-            ),
-          ],
-        );
-        if (yes == true && mounted) {
-          await _applyModel(profile, provider, model, confirmed: true);
-        }
-        return;
-      }
-      final applied = result['applied'];
-      if (applied is! Map || applied['model'] != true) {
-        throw StateError('model not applied');
-      }
-      setState(() {
-        _modelOverride = model;
-        _providerOverride = provider;
-      });
-      _notice(s.botProfileModelSaved);
-      widget.onChanged?.call();
-    } catch (_) {
-      _notice(s.botProfileFailed, error: true);
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
   }
 
   Future<void> _pickReasoning(AgentProfile profile) async {
@@ -385,8 +293,6 @@ class _BotProfileScreenState extends State<BotProfileScreen> {
     final data = widget.data();
     final profile = data.profile;
     final title = profile.botTitle ?? profile.name;
-    final model = _modelOverride ?? profile.model;
-    final provider = _providerOverride ?? profile.provider;
     final canEditModel =
         !widget.readOnly &&
         widget.modelGateway != null &&
@@ -548,15 +454,33 @@ class _BotProfileScreenState extends State<BotProfileScreen> {
                 HermesSectionHeader(s.botProfileModelSection),
                 HermesListGroup(
                   children: [
-                    HermesListRow(
-                      key: const ValueKey('bot-profile-model'),
-                      icon: Icons.memory_rounded,
-                      title: s.botProfileModel,
-                      value: [
-                        if (provider.isNotEmpty) provider,
-                        if (model.isNotEmpty) model,
-                      ].join(' · '),
-                      onTap: canEditModel ? () => _pickModel(profile) : null,
+                    ProfileModelPicker(
+                      profile: profile.name,
+                      scope: widget.catalogScope,
+                      provider: profile.provider,
+                      model: profile.model,
+                      catalogGateway: widget.modelGateway,
+                      writer: widget.profileGateway,
+                      readOnly: widget.readOnly,
+                      keyPrefix: 'bot-profile-model',
+                      catalogs: widget.modelCatalogs,
+                      onChanged: widget.onChanged,
+                      builder: (context, row) => HermesListRow(
+                        key: const ValueKey('bot-profile-model'),
+                        icon: Icons.memory_rounded,
+                        title: s.botProfileModel,
+                        value: [
+                          if (row.provider.isNotEmpty) row.provider,
+                          if (row.model.isNotEmpty) row.model,
+                        ].join(' · '),
+                        trailing: row.busy
+                            ? const Padding(
+                                padding: EdgeInsetsDirectional.only(start: 8),
+                                child: ConsoleLoader.small(),
+                              )
+                            : null,
+                        onTap: row.onTap,
+                      ),
                     ),
                     HermesListRow(
                       key: const ValueKey('bot-profile-reasoning'),

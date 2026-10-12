@@ -80,8 +80,19 @@ final class DesktopSessionCreateConfig {
   final DesktopFastMode? fastMode;
   final String? title;
   final bool hidden;
+
+  /// The session runs its profile's model, whatever that becomes: Hermes
+  /// rebuilds it from the profile's config and lets a later profile edit
+  /// supersede a pick made in the chat (`follow_profile_config`, what
+  /// Desktop sends for a bot's canonical chat).
+  final bool followProfileConfig;
   final bool createIfMissing;
   final bool allowTransportFallback;
+
+  /// Server-side working directory for a new chat started from a project or
+  /// worktree. Sent as `cwd` + `cwd_explicit: true` on `session.create`, the
+  /// same pair Hermes Desktop sends for a workspace-anchored new session.
+  final String? workspace;
 
   const DesktopSessionCreateConfig({
     this.model,
@@ -89,8 +100,10 @@ final class DesktopSessionCreateConfig {
     this.fastMode,
     this.title,
     this.hidden = false,
+    this.followProfileConfig = false,
     this.createIfMissing = true,
     this.allowTransportFallback = true,
+    this.workspace,
   });
 
   bool get isEmpty =>
@@ -99,8 +112,10 @@ final class DesktopSessionCreateConfig {
       fastMode == null &&
       title == null &&
       !hidden &&
+      !followProfileConfig &&
       createIfMissing &&
-      allowTransportFallback;
+      allowTransportFallback &&
+      workspace == null;
 
   @override
   bool operator ==(Object other) =>
@@ -111,8 +126,10 @@ final class DesktopSessionCreateConfig {
           fastMode == other.fastMode &&
           title == other.title &&
           hidden == other.hidden &&
+          followProfileConfig == other.followProfileConfig &&
           createIfMissing == other.createIfMissing &&
-          allowTransportFallback == other.allowTransportFallback;
+          allowTransportFallback == other.allowTransportFallback &&
+          workspace == other.workspace;
 
   @override
   int get hashCode => Object.hash(
@@ -121,8 +138,10 @@ final class DesktopSessionCreateConfig {
     fastMode,
     title,
     hidden,
+    followProfileConfig,
     createIfMissing,
     allowTransportFallback,
+    workspace,
   );
 }
 
@@ -137,12 +156,17 @@ final class DesktopConfigSetResult {
   final bool confirmRequired;
   final String? confirmMessage;
 
+  /// `config.set model` during a running turn: Hermes queues the pick and
+  /// applies it when the next turn starts (`pending_model_switch`).
+  final bool deferred;
+
   const DesktopConfigSetResult({
     required this.key,
     required this.value,
     this.warning,
     this.confirmRequired = false,
     this.confirmMessage,
+    this.deferred = false,
   });
 
   factory DesktopConfigSetResult.fromJson(
@@ -166,19 +190,18 @@ final class DesktopConfigSetResult {
     }
     final confirmRequired = rawConfirm == true;
     final warning = _boundedOptionalText(json['warning'], 'warning');
-    final confirmMessage = _boundedOptionalText(
-      json['confirm_message'],
-      'confirmation message',
-    );
-    if (confirmRequired && confirmMessage == null) {
-      throw const FormatException('Missing session config confirmation text');
-    }
+    // `confirm_message` is `str | null`; the guard still holds without it
+    // (Desktop asks anyway), so fall back to the legacy `warning` text.
+    final confirmMessage =
+        _boundedOptionalText(json['confirm_message'], 'confirmation message') ??
+        (confirmRequired ? warning : null);
     return DesktopConfigSetResult(
       key: expectedKey,
       value: value,
       warning: warning,
       confirmRequired: confirmRequired,
       confirmMessage: confirmMessage,
+      deferred: json['deferred'] == true,
     );
   }
 }

@@ -69,7 +69,11 @@ void main() {
       );
       addTearDown(client.close);
       final repository = CronRepository(client, profile: 'default');
-      final legacy = CronJob.fromJson({'id': 'legacy-off', 'enabled': false});
+      final legacy = CronJob.fromJson({
+        'id': 'legacy-off',
+        'enabled': false,
+        'profile': 'default',
+      });
 
       await repository.pauseOrResume(legacy);
 
@@ -204,7 +208,7 @@ void main() {
   );
 
   test(
-    'all profile scope is read-only query state, not mutation state',
+    'all profile scope is read-only query state; actions target the owner',
     () async {
       final requests = <Uri>[];
       final client = DashboardClient(
@@ -248,8 +252,10 @@ void main() {
       expect(listing.jobs.single.profile, 'research');
       expect(requests.single.queryParameters['profile'], 'all');
 
+      // The job lives in `research`; the repository's own profile is only
+      // the screen's and must not receive the action.
       await repository.pauseOrResume(listing.jobs.single);
-      expect(requests.last.queryParameters['profile'], 'work profile');
+      expect(requests.last.queryParameters['profile'], 'research');
       expect(requests.last.queryParameters['profile'], isNot('all'));
     },
   );

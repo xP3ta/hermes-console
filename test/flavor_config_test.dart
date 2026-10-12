@@ -8,24 +8,7 @@ void main() {
         'HERMES_FLAVOR',
         defaultValue: 'full',
       );
-      const localRequested = bool.fromEnvironment(
-        'HERMES_LOCAL_AGENT',
-        defaultValue: false,
-      );
-
       expect(kHermesFlavor, requestedFlavor);
-      expect(kLocalAgentEnabled, localRequested && requestedFlavor != 'play');
-    });
-
-    test('kLocalAgentEnabled exige opt-in y nunca se activa en play', () {
-      // Contrato U-13: bool.fromEnvironment('HERMES_LOCAL_AGENT',
-      // default false) && flavor != 'play'. Sin el define, es false en
-      // TODOS los flavors; con el define, play sigue siendo false.
-      const optIn = bool.fromEnvironment(
-        'HERMES_LOCAL_AGENT',
-        defaultValue: false,
-      );
-      expect(kLocalAgentEnabled, optIn && kHermesFlavor != 'play');
     });
 
     test('modo voz activo por defecto con rollback explícito', () {

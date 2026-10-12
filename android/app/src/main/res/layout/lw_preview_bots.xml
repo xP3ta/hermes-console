@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Picker preview of Bots. GENERATED from lw_faces.xml by
+     tool/qa/widget_shots.py previews (the same layout, sample content): edit
+     lw_faces.xml and regenerate, never this file. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@android:id/background"
+    style="@style/LW.Card"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:gravity="center_vertical"
+    android:orientation="vertical"
+    android:paddingStart="@dimen/lw_pad_h"
+    android:paddingEnd="@dimen/lw_pad_h">
+
+    <LinearLayout
+        android:id="@+id/lw_faces"
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/lw_face"
+        android:baselineAligned="false"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <ImageView
+            android:layout_width="@dimen/lw_face"
+            android:layout_height="@dimen/lw_face"
+            android:layout_marginEnd="@dimen/lw_face_gap"
+            android:importantForAccessibility="no"
+            android:src="@drawable/lw_sample_face_builder" />
+
+        <ImageView
+            android:layout_width="@dimen/lw_face"
+            android:layout_height="@dimen/lw_face"
+            android:layout_marginEnd="@dimen/lw_face_gap"
+            android:importantForAccessibility="no"
+            android:src="@drawable/lw_sample_face_review" />
+
+        <ImageView
+            android:layout_width="@dimen/lw_face"
+            android:layout_height="@dimen/lw_face"
+            android:layout_marginEnd="@dimen/lw_face_gap"
+            android:importantForAccessibility="no"
+            android:src="@drawable/lw_sample_face_scout" />
+
+        <ImageView
+            android:layout_width="@dimen/lw_face"
+            android:layout_height="@dimen/lw_face"
+            android:layout_marginEnd="@dimen/lw_face_gap"
+            android:importantForAccessibility="no"
+            android:src="@drawable/lw_sample_face_lead" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/lw_faces_title"
+        style="@style/LW.Text.Medium.Title"
+        android:layout_width="match_parent"
+        android:layout_marginTop="5dp"
+        android:text="@string/lw_bots_calm" />
+</LinearLayout>

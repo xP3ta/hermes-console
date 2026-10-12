@@ -7,7 +7,9 @@ import '../models/admin_integrations.dart';
 import '../screens/admin_integrations_copy.dart';
 import '../services/desktop_control_gateway.dart';
 import '../theme/app_theme.dart';
+import 'form_page.dart';
 import 'hermes_premium_ui.dart';
+import '../design/hermes_design.dart' show HermesOption, HermesSelectField;
 
 typedef McpExternalUriLauncher = Future<bool> Function(Uri uri);
 
@@ -337,6 +339,36 @@ class _McpServerDraftSurfaceState extends State<McpServerDraftSurface> {
   String? _formError;
 
   @override
+  void initState() {
+    super.initState();
+    for (final controller in [_name, _command, _url]) {
+      controller.addListener(_changed);
+    }
+  }
+
+  void _changed() {
+    if (mounted) setState(() {});
+  }
+
+  /// The required fields of the chosen transport are filled; the rest is
+  /// checked by the field validators on submit.
+  bool get _canSubmit =>
+      _name.text.trim().isNotEmpty &&
+      (_transport == McpTransport.stdio
+          ? _command.text.trim().isNotEmpty
+          : _url.text.trim().isNotEmpty);
+
+  bool get _dirty =>
+      _name.text.trim().isNotEmpty ||
+      _command.text.trim().isNotEmpty ||
+      _arguments.text.trim().isNotEmpty ||
+      _url.text.trim().isNotEmpty ||
+      _bearer.text.isNotEmpty ||
+      _environment.any(
+        (row) => row.key.text.isNotEmpty || row.value.text.isNotEmpty,
+      );
+
+  @override
   void dispose() {
     _name.dispose();
     _command.dispose();
@@ -427,219 +459,164 @@ class _McpServerDraftSurfaceState extends State<McpServerDraftSurface> {
   Widget build(BuildContext context) {
     final copy = AdminIntegrationsCopy.of(context);
     final colors = Theme.of(context).hermes;
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Flexible(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(20, 18, 20, 8),
-            child: Form(
-              key: _formKey,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          copy.mcpFormTitle,
-                          style: Theme.of(context).textTheme.titleLarge,
-                        ),
-                      ),
-                      IconButton(
-                        tooltip: copy.close,
-                        onPressed: () => Navigator.pop(context),
-                        icon: const Icon(Icons.close_rounded),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 14),
-                  Text(
-                    copy.transport,
-                    style: Theme.of(context).textTheme.labelLarge,
-                  ),
-                  const SizedBox(height: 7),
-                  HermesSegmentedControl<McpTransport>(
-                    value: _transport,
-                    semanticLabel: copy.transport,
-                    onChanged: _setTransport,
-                    segments: [
-                      HermesSegment(
-                        key: const ValueKey('mcp-transport-stdio'),
-                        value: McpTransport.stdio,
-                        label: copy.stdio,
-                      ),
-                      HermesSegment(
-                        key: const ValueKey('mcp-transport-http'),
-                        value: McpTransport.http,
-                        label: copy.http,
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 14),
-                  TextFormField(
-                    key: const ValueKey('mcp-draft-name'),
-                    controller: _name,
-                    autofocus: true,
-                    autocorrect: false,
-                    enableSuggestions: false,
-                    textInputAction: TextInputAction.next,
-                    validator: _required,
-                    decoration: InputDecoration(
-                      labelText: copy.name,
-                      hintText: copy.nameHint,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  if (_transport == McpTransport.stdio) ...[
-                    TextFormField(
-                      key: const ValueKey('mcp-draft-command'),
-                      controller: _command,
-                      autocorrect: false,
-                      enableSuggestions: false,
-                      textInputAction: TextInputAction.next,
-                      validator: _required,
-                      decoration: InputDecoration(
-                        labelText: copy.command,
-                        hintText: copy.commandHint,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    TextFormField(
-                      key: const ValueKey('mcp-draft-arguments'),
-                      controller: _arguments,
-                      autocorrect: false,
-                      enableSuggestions: false,
-                      keyboardType: TextInputType.multiline,
-                      minLines: 2,
-                      maxLines: 5,
-                      decoration: InputDecoration(
-                        labelText: copy.arguments,
-                        helperText: copy.argumentsHint,
-                        alignLabelWithHint: true,
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    Text(
-                      copy.environment,
-                      style: Theme.of(context).textTheme.titleSmall,
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      copy.environmentHint,
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: colors.textSecondary,
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    for (
-                      var index = 0;
-                      index < _environment.length;
-                      index++
-                    ) ...[
-                      _EnvironmentRow(
-                        index: index,
-                        controllers: _environment[index],
-                        copy: copy,
-                        onRemove: () => _removeEnvironmentRow(index),
-                      ),
-                      const SizedBox(height: 8),
-                    ],
-                    Align(
-                      alignment: AlignmentDirectional.centerStart,
-                      child: TextButton.icon(
-                        key: const ValueKey('mcp-add-environment'),
-                        onPressed: _environment.length >= 40
-                            ? null
-                            : _addEnvironmentRow,
-                        icon: const Icon(Icons.add_rounded),
-                        label: Text(copy.addVariable),
-                      ),
-                    ),
-                  ] else ...[
-                    TextFormField(
-                      key: const ValueKey('mcp-draft-url'),
-                      controller: _url,
-                      autocorrect: false,
-                      enableSuggestions: false,
-                      keyboardType: TextInputType.url,
-                      textInputAction: TextInputAction.next,
-                      validator: _required,
-                      decoration: InputDecoration(
-                        labelText: copy.endpointUrl,
-                        hintText: 'https://mcp.example/mcp',
-                        helperText: copy.endpointHint,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    DropdownButtonFormField<McpAuthMode>(
-                      key: ValueKey('mcp-auth-${_auth.name}'),
-                      initialValue: _auth,
-                      isExpanded: true,
-                      style: Theme.of(context).dropdownMenuTheme.textStyle,
-                      decoration: InputDecoration(
-                        labelText: copy.authentication,
-                      ),
-                      items: [
-                        DropdownMenuItem(
-                          value: McpAuthMode.none,
-                          child: Text(copy.authNone),
-                        ),
-                        DropdownMenuItem(
-                          value: McpAuthMode.header,
-                          child: Text(copy.authHeader),
-                        ),
-                        DropdownMenuItem(
-                          value: McpAuthMode.oauth,
-                          child: Text(copy.authOauth),
-                        ),
-                      ],
-                      onChanged: (value) {
-                        if (value != null) setState(() => _auth = value);
-                      },
-                    ),
-                    if (_auth == McpAuthMode.header) ...[
-                      const SizedBox(height: 12),
-                      TextFormField(
-                        key: const ValueKey('mcp-draft-bearer'),
-                        controller: _bearer,
-                        obscureText: true,
-                        autocorrect: false,
-                        enableSuggestions: false,
-                        validator: _required,
-                        decoration: InputDecoration(
-                          labelText: copy.bearerToken,
-                          helperText: copy.bearerHint,
-                        ),
-                      ),
-                    ],
-                  ],
-                  if (_formError != null) ...[
-                    const SizedBox(height: 12),
-                    Semantics(
-                      liveRegion: true,
-                      child: Text(
-                        _formError!,
-                        style: TextStyle(color: colors.error),
-                      ),
-                    ),
-                  ],
-                ],
+    return Form(
+      key: _formKey,
+      child: HermesFormPage(
+        bodyKey: const ValueKey('mcp-manual-create-surface'),
+        title: copy.mcpFormTitle,
+        submitLabel: copy.createMcp,
+        submitKey: const ValueKey('mcp-draft-submit'),
+        onSubmit: _canSubmit ? _submit : null,
+        dirty: _dirty,
+        children: [
+          const SizedBox(height: 4),
+          Text(copy.transport, style: Theme.of(context).textTheme.labelLarge),
+          const SizedBox(height: 7),
+          HermesSegmentedControl<McpTransport>(
+            value: _transport,
+            semanticLabel: copy.transport,
+            onChanged: _setTransport,
+            segments: [
+              HermesSegment(
+                key: const ValueKey('mcp-transport-stdio'),
+                value: McpTransport.stdio,
+                label: copy.stdio,
               ),
+              HermesSegment(
+                key: const ValueKey('mcp-transport-http'),
+                value: McpTransport.http,
+                label: copy.http,
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          TextFormField(
+            key: const ValueKey('mcp-draft-name'),
+            controller: _name,
+            autofocus: true,
+            autocorrect: false,
+            enableSuggestions: false,
+            textInputAction: TextInputAction.next,
+            validator: _required,
+            decoration: InputDecoration(
+              labelText: copy.name,
+              hintText: copy.nameHint,
             ),
           ),
-        ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
-          child: FilledButton.icon(
-            key: const ValueKey('mcp-draft-submit'),
-            onPressed: _submit,
-            icon: const Icon(Icons.add_rounded),
-            label: Text(copy.createMcp),
-          ),
-        ),
-      ],
+          const SizedBox(height: 12),
+          if (_transport == McpTransport.stdio) ...[
+            TextFormField(
+              key: const ValueKey('mcp-draft-command'),
+              controller: _command,
+              autocorrect: false,
+              enableSuggestions: false,
+              textInputAction: TextInputAction.next,
+              validator: _required,
+              decoration: InputDecoration(
+                labelText: copy.command,
+                hintText: copy.commandHint,
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              key: const ValueKey('mcp-draft-arguments'),
+              controller: _arguments,
+              autocorrect: false,
+              enableSuggestions: false,
+              keyboardType: TextInputType.multiline,
+              minLines: 3,
+              maxLines: null,
+              decoration: InputDecoration(
+                labelText: copy.arguments,
+                helperText: copy.argumentsHint,
+                alignLabelWithHint: true,
+              ),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              copy.environment,
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              copy.environmentHint,
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: colors.textSecondary),
+            ),
+            const SizedBox(height: 10),
+            for (var index = 0; index < _environment.length; index++) ...[
+              _EnvironmentRow(
+                index: index,
+                controllers: _environment[index],
+                copy: copy,
+                onRemove: () => _removeEnvironmentRow(index),
+              ),
+              const SizedBox(height: 8),
+            ],
+            Align(
+              alignment: AlignmentDirectional.centerStart,
+              child: TextButton.icon(
+                key: const ValueKey('mcp-add-environment'),
+                onPressed: _environment.length >= 40
+                    ? null
+                    : _addEnvironmentRow,
+                icon: const Icon(Icons.add_rounded),
+                label: Text(copy.addVariable),
+              ),
+            ),
+          ] else ...[
+            TextFormField(
+              key: const ValueKey('mcp-draft-url'),
+              controller: _url,
+              autocorrect: false,
+              enableSuggestions: false,
+              keyboardType: TextInputType.url,
+              textInputAction: TextInputAction.next,
+              validator: _required,
+              decoration: InputDecoration(
+                labelText: copy.endpointUrl,
+                hintText: 'https://mcp.example/mcp',
+                helperText: copy.endpointHint,
+              ),
+            ),
+            const SizedBox(height: 12),
+            HermesSelectField<McpAuthMode>(
+              key: ValueKey('mcp-auth-${_auth.name}'),
+              value: _auth,
+              decoration: InputDecoration(labelText: copy.authentication),
+              options: [
+                HermesOption(value: McpAuthMode.none, label: copy.authNone),
+                HermesOption(value: McpAuthMode.header, label: copy.authHeader),
+                HermesOption(value: McpAuthMode.oauth, label: copy.authOauth),
+              ],
+              onChanged: (value) => setState(() => _auth = value),
+            ),
+            if (_auth == McpAuthMode.header) ...[
+              const SizedBox(height: 12),
+              TextFormField(
+                key: const ValueKey('mcp-draft-bearer'),
+                controller: _bearer,
+                obscureText: true,
+                autocorrect: false,
+                enableSuggestions: false,
+                validator: _required,
+                decoration: InputDecoration(
+                  labelText: copy.bearerToken,
+                  helperText: copy.bearerHint,
+                ),
+              ),
+            ],
+          ],
+          if (_formError != null) ...[
+            const SizedBox(height: 12),
+            Semantics(
+              liveRegion: true,
+              child: Text(_formError!, style: TextStyle(color: colors.error)),
+            ),
+          ],
+        ],
+      ),
     );
   }
 }

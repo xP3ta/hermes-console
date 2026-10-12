@@ -64,7 +64,7 @@ print("hola")
     final colors = AppTheme.hermesRedDark.hermes;
 
     expect(_leafStyle(tester, 'Título')?.fontSize, 16.5);
-    expect(_leafStyle(tester, 'inline')?.fontFamily, 'monospace');
+    expect(_leafStyle(tester, 'inline')?.fontFamily, 'JetBrainsMono');
     expect(_leafStyle(tester, 'enlace')?.color, colors.secondary);
     expect(find.text('•'), findsNWidgets(2));
     expect(find.text('python'), findsOneWidget);
@@ -105,5 +105,20 @@ print("hola")
   testWidgets('ChatMarkdownBody vacío no ocupa espacio', (tester) async {
     await tester.pumpWidget(_host(const ChatMarkdownBody(data: '   ')));
     expect(find.byType(ChatMarkdownBlock), findsNothing);
+  });
+
+  testWidgets('ChatMarkdownBody keeps TeX source out of emphasis parsing', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _host(
+        const ChatMarkdownBody(
+          data: r'Sea $a_1 * b_2$ y cuesta $5 and $10.',
+          selectable: false,
+        ),
+      ),
+    );
+    expect(_leafStyle(tester, 'a_1 * b_2')?.fontFamily, 'JetBrainsMono');
+    expect(find.textContaining(r'$5 and $10'), findsOneWidget);
   });
 }

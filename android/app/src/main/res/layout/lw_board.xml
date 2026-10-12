@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Widget of two rows or more: a head (icon chip, the subject's name and,
+     at the end, a short count) and a body the provider fills with a fixed
+     number of rows. Nothing scrolls. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@android:id/background"
+    style="@style/LW.Card"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:paddingStart="@dimen/lw_pad_h"
+    android:paddingTop="@dimen/lw_pad_top"
+    android:paddingEnd="@dimen/lw_pad_h"
+    android:paddingBottom="@dimen/lw_pad_bottom">
+
+    <LinearLayout
+        android:id="@+id/lw_head"
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/lw_head_height"
+        android:baselineAligned="false"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <ImageView
+            android:id="@+id/lw_head_chip"
+            android:layout_width="@dimen/lw_head_chip"
+            android:layout_height="@dimen/lw_head_chip"
+            android:background="@drawable/lw_chip"
+            android:importantForAccessibility="no"
+            android:padding="4dp"
+            android:src="@drawable/lw_ic_bolt"
+            android:tint="@color/lw_muted" />
+
+        <TextView
+            android:id="@+id/lw_head_label"
+            style="@style/LW.Text.Medium.Head"
+            android:layout_width="0dp"
+            android:layout_marginStart="8dp"
+            android:layout_weight="1" />
+
+        <ImageView
+            android:id="@+id/lw_head_right_icon"
+            android:layout_width="14dp"
+            android:layout_height="14dp"
+            android:layout_marginEnd="5dp"
+            android:importantForAccessibility="no"
+            android:src="@drawable/lw_ic_cloud_off"
+            android:tint="@color/lw_amber"
+            android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/lw_head_right"
+            style="@style/LW.Text.HeadRight"
+            android:layout_marginStart="8dp" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/lw_body"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_marginTop="@dimen/lw_head_gap"
+        android:layout_weight="1"
+        android:orientation="vertical" />
+</LinearLayout>

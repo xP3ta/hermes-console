@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Bots in one row: the faces of the team, and under them who waits for
+     you (or that all is calm). The provider adds one lw_face per bot. Faces
+     and line start at the same left edge and are centred together. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@android:id/background"
+    style="@style/LW.Card"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:gravity="center_vertical"
+    android:orientation="vertical"
+    android:paddingStart="@dimen/lw_pad_h"
+    android:paddingEnd="@dimen/lw_pad_h">
+
+    <LinearLayout
+        android:id="@+id/lw_faces"
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/lw_face"
+        android:baselineAligned="false"
+        android:gravity="center_vertical"
+        android:orientation="horizontal" />
+
+    <TextView
+        android:id="@+id/lw_faces_title"
+        style="@style/LW.Text.Medium.Title"
+        android:layout_width="match_parent"
+        android:layout_marginTop="5dp" />
+</LinearLayout>

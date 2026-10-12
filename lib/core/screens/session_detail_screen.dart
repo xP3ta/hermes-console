@@ -11,6 +11,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -24,12 +25,16 @@ import '../services/session_deletion.dart';
 import '../services/session_repository.dart';
 import '../theme/app_theme.dart';
 import '../utils/relative_time.dart';
-import '../widgets/hermes_notice.dart';
 import '../widgets/read_only.dart';
 import '../widgets/session_deletion_dialogs.dart';
 import '../widgets/session_context_usage.dart';
 import 'chat_screen.dart';
 import 'cron_screen.dart';
+import '../services/session_pull_requests.dart';
+import '../services/shared_gateway_pool.dart';
+import '../widgets/session_pull_request_row.dart';
+import 'session_branches_screen.dart';
+import '../feedback/feedback_policy.dart';
 
 class SessionDetailScreen extends StatefulWidget {
   final SavedConnection connection;
@@ -38,9 +43,17 @@ class SessionDetailScreen extends StatefulWidget {
   final bool skipInitialSessionRefresh;
   final int? observedFirstTokenLatencyMs;
 
+  /// Rows the caller already holds; the branch family is built from them.
+  final List<Session> knownSessions;
+
+  @visibleForTesting
+  final HermesPullRequestGateway? pullRequestGateway;
+
   const SessionDetailScreen({
     required this.connection,
     required this.session,
+    this.knownSessions = const [],
+    @visibleForTesting this.pullRequestGateway,
     @visibleForTesting this.client,
     @visibleForTesting this.observedFirstTokenLatencyMs,
     this.skipInitialSessionRefresh = false,
@@ -58,6 +71,9 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
   late Session _session;
   bool _refreshing = false;
   bool _technicalOpen = false;
+
+  PullRequestTagService? _pullRequests;
+  SharedGatewayLease? _pullRequestLease;
 
   SessionArchive? _archive;
   bool _archivePending = false;
@@ -97,8 +113,32 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                 ),
       );
 
+  /// PR read for this session, opened on demand and only for sessions that
+  /// belong to a git repo. The gateway lease is held while the page lives.
+  Future<PullRequestInfo?> _loadPullRequest() async {
+    if (_session.gitRepoRoot?.trim().isNotEmpty != true) return null;
+    var service = _pullRequests;
+    if (service == null) {
+      var gateway = widget.pullRequestGateway;
+      if (gateway == null) {
+        final lease = SharedGatewayPool.instance.acquire(widget.connection);
+        _pullRequestLease = lease;
+        gateway = lease.client;
+      }
+      final prefs = await SharedPreferences.getInstance();
+      service = _pullRequests ??= PullRequestTagService(
+        gateway: gateway,
+        connectionId: widget.connection.id,
+        prefs: prefs,
+      );
+    }
+    return service.tagFor(_session);
+  }
+
   @override
   void dispose() {
+    _pullRequestLease?.release();
+    _archive?.removeListener(_onArchiveChanged);
     _repository.close();
     _client.close();
     super.dispose();
@@ -107,7 +147,25 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
   Future<void> _loadArchive() async {
     final prefs = await SharedPreferences.getInstance();
     final archive = await SessionArchive.load(prefs, widget.connection.id);
-    if (mounted) setState(() => _archive = archive);
+    if (!mounted) return;
+    setState(() {
+      _archive?.removeListener(_onArchiveChanged);
+      _archive = archive;
+      archive.addListener(_onArchiveChanged);
+    });
+  }
+
+  void _onArchiveChanged() {
+    if (!mounted) return;
+    final phase = SchedulerBinding.instance.schedulerPhase;
+    if (phase == SchedulerPhase.idle ||
+        phase == SchedulerPhase.postFrameCallbacks) {
+      setState(() {});
+    } else {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() {});
+      });
+    }
   }
 
   Future<void> _refresh({bool refreshSession = true}) async {
@@ -145,6 +203,26 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     });
   }
 
+  void _openBranches() {
+    Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => SessionBranchesScreen(
+          sessions: widget.knownSessions,
+          currentId: _session.id,
+          titleOf: (row) => row.title.trim().isNotEmpty ? row.title : row.id,
+          onOpen: (row) {
+            Navigator.of(context).pop();
+            openChatFromHome<void>(
+              context,
+              builder: (_) =>
+                  ChatScreen(connection: widget.connection, session: row),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
   void _openLinkedCron() {
     Navigator.of(context).push<void>(
       MaterialPageRoute(
@@ -178,14 +256,11 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
         _archiveOptimistic = null;
         _archivePending = false;
       });
-      HermesNotice.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            archived
-                ? Strings.of(context).slArchived
-                : Strings.of(context).slRestored,
-          ),
-        ),
+      AppFeedback.of(context).notify(
+        FeedbackKind.routine,
+        archived
+            ? Strings.of(context).slArchived
+            : Strings.of(context).slRestored,
       );
     } on DashboardHttpException catch (error) {
       if (error.statusCode == 404 || error.statusCode == 405) {
@@ -202,14 +277,12 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
           _archiveOptimistic = null;
           _archivePending = false;
         });
-        HermesNotice.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              archived
-                  ? Strings.of(context).slArchivedLocalOnly
-                  : Strings.of(context).slRestoredLocalOnly,
-            ),
-          ),
+        AppFeedback.of(context).notify(
+          FeedbackKind.error,
+          archived
+              ? Strings.of(context).slArchivedLocalOnly
+              : Strings.of(context).slRestoredLocalOnly,
+          warning: true,
         );
         return;
       }
@@ -225,10 +298,9 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
       _archiveOptimistic = null;
       _archivePending = false;
     });
-    HermesNotice.of(context).showSnackBar(
-      SnackBar(content: Text(Strings.of(context).slArchiveSyncFailed)),
-      kind: HermesNoticeKind.error,
-    );
+    AppFeedback.of(
+      context,
+    ).notify(FeedbackKind.error, Strings.of(context).slArchiveSyncFailed);
   }
 
   Future<void> _fork() async {
@@ -262,9 +334,9 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
         profile: _session.profile,
       );
       if (!mounted) return;
-      HermesNotice.of(context).showSnackBar(
-        SnackBar(content: Text(Strings.of(context).sesDuplicated(fork.title))),
-        kind: HermesNoticeKind.success,
+      AppFeedback.of(context).notify(
+        FeedbackKind.routine,
+        Strings.of(context).sesDuplicated(fork.title),
       );
       Navigator.pushReplacement(
         context,
@@ -275,11 +347,9 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
       );
     } catch (e) {
       if (!mounted) return;
-      HermesNotice.of(context).showSnackBar(
-        SnackBar(
-          content: Text(Strings.of(context).sesDuplicateFailed(e.toString())),
-        ),
-        kind: HermesNoticeKind.error,
+      AppFeedback.of(context).notify(
+        FeedbackKind.error,
+        Strings.of(context).sesDuplicateFailed(e.toString()),
       );
     }
   }
@@ -349,38 +419,41 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
       if (!mounted) return;
       switch (result.status) {
         case LinkedSessionDeleteStatus.deleted:
+          // Shared store first: every screen drops the row in this frame.
+          unawaited(_archive?.markSessionDeleted(_session));
           app?.activeChats.globalActivity.clearSession(
             widget.connection.id,
             ownerProfile,
             _session.id,
           );
           await app?.activeChats.globalActivity.flushJournal();
+          await app?.activeChats.forgetColdStartSession(
+            connectionId: widget.connection.id,
+            profile: ownerProfile,
+            sessionId: _session.id,
+          );
           if (!mounted) return;
           Navigator.pop(context, true);
           break;
         case LinkedSessionDeleteStatus.cancelled:
           break;
         case LinkedSessionDeleteStatus.sessionRejected:
-          HermesNotice.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                result.cronDeleted
-                    ? s.cronStoppedChatKept
-                    : s.slOfferHideContent,
-              ),
-            ),
+          AppFeedback.of(context).notify(
+            FeedbackKind.critical,
+            result.cronDeleted ? s.cronStoppedChatKept : s.slOfferHideContent,
+            warning: true,
           );
           break;
         case LinkedSessionDeleteStatus.cronDeleteFailed:
-          HermesNotice.of(context).showSnackBar(
-            SnackBar(content: Text(sessionDeletionFailureMessage(s, result))),
-            kind: HermesNoticeKind.error,
+          AppFeedback.of(context).notify(
+            FeedbackKind.error,
+            sessionDeletionFailureMessage(s, result),
           );
           break;
         case LinkedSessionDeleteStatus.sessionDeleteFailed:
-          HermesNotice.of(context).showSnackBar(
-            SnackBar(content: Text(sessionDeletionFailureMessage(s, result))),
-            kind: HermesNoticeKind.error,
+          AppFeedback.of(context).notify(
+            FeedbackKind.error,
+            sessionDeletionFailureMessage(s, result),
           );
           break;
       }
@@ -408,10 +481,9 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
       'ID: ${s.id}',
     ];
     Clipboard.setData(ClipboardData(text: lines.join('\n')));
-    HermesNotice.of(context).showSnackBar(
-      SnackBar(content: Text(Strings.of(context).sesCopiedSummary)),
-      kind: HermesNoticeKind.success,
-    );
+    AppFeedback.of(
+      context,
+    ).notify(FeedbackKind.routine, Strings.of(context).sesCopiedSummary);
   }
 
   static String _formatDuration(Duration d) {
@@ -423,8 +495,14 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
 
   // ── Presentación ───────────────────────────────────────────────────────
 
-  String _titleText(Strings s) =>
-      _session.title.trim().isNotEmpty ? _session.title.trim() : s.sesNoTitle;
+  // A local rename lives in the shared archive, like Home and Conversations.
+  String _titleText(Strings s) {
+    final local = _archive?.titleFor(_session.logicalId, '').trim() ?? '';
+    if (local.isNotEmpty) return local;
+    return _session.title.trim().isNotEmpty
+        ? _session.title.trim()
+        : s.sesNoTitle;
+  }
 
   String _statusLabel(Strings s) => switch (_state) {
     SessionState.active => s.sesUiStatusActive,
@@ -563,6 +641,26 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                 icon: Icons.schedule_rounded,
                 title: s.sesUiOpenRoutine,
                 onTap: _openLinkedCron,
+              ),
+            if (_session.gitRepoRoot?.trim().isNotEmpty == true)
+              SessionPullRequestRow(
+                key: const ValueKey('session-detail-pr'),
+                load: _loadPullRequest,
+                builder: (context, label, onTap) => HermesListRow(
+                  icon: Icons.merge_type_rounded,
+                  title: label,
+                  onTap: onTap,
+                ),
+              ),
+            if (SessionBranchesScreen.isAvailable(
+              widget.knownSessions,
+              _session.id,
+            ))
+              HermesListRow(
+                key: const ValueKey('session-detail-branches'),
+                icon: Icons.account_tree_outlined,
+                title: s.sesBranchesTitle,
+                onTap: _openBranches,
               ),
             if (!readOnly)
               HermesListRow(
@@ -754,11 +852,7 @@ class _SessionContextPage extends StatelessWidget {
       onTap: () async {
         await Clipboard.setData(ClipboardData(text: row.$2));
         if (!context.mounted) return;
-        HermesNotice.show(
-          context,
-          message: s.designCopied,
-          kind: HermesNoticeKind.success,
-        );
+        AppFeedback.of(context).notify(FeedbackKind.routine, s.designCopied);
       },
     );
     Widget valueRow((String, String) row) => row.$2.length > 22

@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:flutter/foundation.dart' show listEquals;
+import 'package:flutter/foundation.dart' show listEquals, visibleForTesting;
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -9,17 +9,23 @@ import '../../l10n/app_localizations.dart';
 import '../../main.dart';
 import '../models/agent_profile.dart';
 import '../models/room_mirror.dart';
+import '../widgets/form_page.dart';
 import '../widgets/hermes_notice.dart';
+import '../widgets/instance_kind_picker.dart';
 import '../widgets/room_mirror_avatar.dart';
 import '../models/hosted_groups.dart';
 import '../models/room_member_status.dart';
 import '../models/kanban.dart';
 import '../models/mission_control.dart';
 import '../navigation/chat_route.dart';
+import '../navigation/enclosing_route.dart';
 import '../services/active_chat_service.dart';
+import '../services/active_profile_scope.dart';
+import '../services/cold_start_store.dart';
 import '../services/chat_draft_store.dart';
 import '../services/connection_manager.dart';
-import '../bots/data/desktop_projection_rooms.dart';
+import '../bots/data/room_member_live.dart';
+import '../bots/data/room_member_prompts.dart';
 import '../bots/state/attention.dart';
 import '../bots/ui/room/room_dictation.dart';
 import '../bots/ui/room/room_gateway.dart';
@@ -28,17 +34,20 @@ import '../bots/ui/room/room_prefs.dart';
 import '../bots/ui/room/room_screen.dart';
 import '../bots/ui/room/room_sheets.dart' show showRoomMembersSheet;
 import '../bots/state/bot_presence.dart';
+import '../bots/state/mission_live_chats.dart';
 import '../bots/state/bot_roster_meta.dart';
 import '../bots/ui/profile/bot_profile_screen.dart';
-import '../bots/ui/roster/bots_roster_view.dart';
-import '../bots/ui/roster/projection_room_sheet.dart';
+import '../bots/ui/roster/dots_home_view.dart';
 import '../bots/ui/roster/roster_actions.dart';
 import '../bots/ui/roster/roster_model.dart';
 import '../bots/state/bot_chat_target.dart';
 import '../services/shared_gateway_pool.dart';
 import '../services/mission_control_repository.dart';
+import '../services/mission_snapshot_cache.dart';
+import '../services/mission_snapshot_prewarm.dart';
 import '../services/mission_bot_chat_store.dart';
 import '../services/mission_organization_store.dart';
+import '../services/open_hosted_room_reads.dart';
 import '../services/notifications/background_listener.dart';
 import '../services/tui_gateway_client.dart';
 import '../theme/app_theme.dart';
@@ -46,15 +55,19 @@ import '../widgets/hermes_app_bar.dart';
 import '../widgets/hermes_drawer.dart';
 import '../widgets/hermes_premium_ui.dart';
 import '../widgets/dock.dart';
+import '../config/feature_flags.dart';
+import '../shell/dock_mode.dart';
+import '../shell/dock_screen.dart';
+import '../shell/gesture_dock.dart' show gestureDockFootprint;
 import '../widgets/dock_style.dart' show dockShowsBack;
 import '../widgets/chat_surface_coordinator.dart';
 import '../widgets/dock_shortcuts.dart';
 import '../widgets/mission_profile_avatar.dart';
 import '../widgets/remote_bot_roster.dart';
-import 'bot_create_screen.dart';
 import 'bot_profile_settings_screen.dart';
 import 'bot_sections_editor.dart';
 import '../services/bot_profile_client.dart';
+import '../services/bot_roster_store.dart';
 import '../services/bot_section_service.dart';
 import '../services/bot_room_link.dart';
 import 'chat_screen.dart';
@@ -62,12 +75,22 @@ import 'cron_screen.dart';
 import 'memory_screen.dart';
 import 'mission_control_copy.dart';
 import 'profile_editor_screen.dart';
-import 'profiles_screen.dart';
-import 'skills_screen.dart';
+import 'profile_flows.dart';
 import 'soul_screen.dart';
 import 'tasks_screen.dart';
+import '../widgets/console_loader.dart';
+import '../design/modal.dart' show showHermesDialogRoute;
 import '../design/hermes_design.dart'
-    show HermesDialogAction, HermesDialogActionStyle, showHermesDialog;
+    show
+        HermesAction,
+        HermesBottomFade,
+        HermesDialogAction,
+        HermesDialogActionStyle,
+        HermesMenuButton,
+        HermesOpenTopClip,
+        HermesOption,
+        HermesSelectField,
+        showHermesDialog;
 
 /// Mobile composition surface over Hermes profiles, sessions and native Kanban.
 ///
@@ -133,7 +156,59 @@ final class MissionControlOpenTarget {
   }) : surface = MissionControlOwnedSurface.room;
 }
 
+/// Mission Control route for app-level entries (notifications, widgets) that
+/// already know their destination: it appears without its own slide so the
+/// destination pushed on top is the only visible transition. Back still
+/// animates normally.
+class MissionControlOwnerRoute<T> extends MaterialPageRoute<T> {
+  MissionControlOwnerRoute({required super.builder, super.settings});
+
+  @override
+  Duration get transitionDuration => Duration.zero;
+
+  @override
+  Duration get reverseTransitionDuration => const Duration(milliseconds: 300);
+}
+
 class MissionControlScreen extends StatefulWidget {
+  /// Opens [target] in a Mission Control of [connectionId] that is already
+  /// in [navigator]'s stack. Returns false when none is alive (the caller
+  /// then pushes a new one). If the target is already the visible route
+  /// nothing is pushed, so a repeated tap never stacks a second copy.
+  static bool openInExisting(
+    NavigatorState navigator,
+    String connectionId,
+    MissionControlOpenTarget target,
+  ) {
+    for (final state in _MissionControlScreenState._live.reversed) {
+      if (!state.mounted || state.widget.connection.id != connectionId) {
+        continue;
+      }
+      final route = state._ownRoute;
+      if (route == null ||
+          !route.isActive ||
+          !identical(route.navigator, navigator)) {
+        continue;
+      }
+      final shown = state._targetRoute;
+      if (shown != null &&
+          shown.isCurrent &&
+          state._targetKey == _targetKeyOf(target)) {
+        return true;
+      }
+      navigator.popUntil((candidate) => identical(candidate, route));
+      state._requestTarget(target);
+      return true;
+    }
+    return false;
+  }
+
+  static String _targetKeyOf(MissionControlOpenTarget target) =>
+      switch (target.surface) {
+        MissionControlOwnedSurface.bot => 'bot:${target.profile ?? ''}',
+        MissionControlOwnedSurface.room => 'room:${target.roomId ?? ''}',
+      };
+
   final SavedConnection connection;
   final ConnectionManager connManager;
   final MissionControlDataSource? dataSource;
@@ -146,6 +221,10 @@ class MissionControlScreen extends StatefulWidget {
   @visibleForTesting
   @visibleForTesting
   final ActiveChatService? activeChats;
+
+  /// Roster shared with every other screen; [BotRosterRegistry.shared] by
+  /// default.
+  final BotRosterRegistry? rosterRegistry;
   final MissionControlOpenTarget? initialOpenTarget;
   @visibleForTesting
   final ValueChanged<Session>? botChatOpenObserver;
@@ -153,9 +232,22 @@ class MissionControlScreen extends StatefulWidget {
   final RemoteBotLoader? remoteBotLoader;
   @visibleForTesting
   final HermesDesktopBotCreationGateway? botCreateGateway;
+
+  /// Stands in for the Dashboard profile delete in tests.
+  final Future<void> Function(String name)? profileDeleteOverride;
   @visibleForTesting
   final HermesDesktopProfileAssetsGateway? profileAssetsGateway;
   final BotProfileGateway? botProfileGateway;
+
+  /// Last-snapshot cache; defaults to the shared one for the real repository
+  /// (injected data sources opt in explicitly).
+  @visibleForTesting
+  final MissionSnapshotCache? snapshotCache;
+
+  /// Background first read to reuse; defaults to the shared one for the real
+  /// repository (injected data sources opt in explicitly).
+  @visibleForTesting
+  final MissionSnapshotPrewarm? prewarm;
 
   /// Per-bot model catalog/reasoning (tests); defaults to the gateway.
   final BotModelGateway? botModelGateway;
@@ -171,14 +263,18 @@ class MissionControlScreen extends StatefulWidget {
     this.botChatStore,
     this.botChatTitleLookup,
     this.activeChats,
+    this.rosterRegistry,
     this.initialOpenTarget,
     this.botChatOpenObserver,
     this.remoteBotLoader,
     this.botCreateGateway,
+    @visibleForTesting this.profileDeleteOverride,
     this.profileAssetsGateway,
     this.botProfileGateway,
     this.botModelGateway,
     this.modelOptionsLoader,
+    this.snapshotCache,
+    this.prewarm,
     super.key,
   });
 
@@ -189,17 +285,23 @@ class MissionControlScreen extends StatefulWidget {
 class _MissionControlScreenState extends State<MissionControlScreen>
     with WidgetsBindingObserver {
   late final MissionControlDataSource _dataSource;
+  MissionSnapshotCache? _snapshotCache;
   late final MissionProfileAvatarCache? _profileAvatarCache;
   late final MissionOrganizationStoreContract _organizationStore;
   late final MissionBotChatStore _botChatStore;
   SharedGatewayLease? _profileAssetsLease;
   late final HermesDesktopProfileAssetsGateway _profileAssetsGateway;
   MissionBackendSnapshot? _snapshot;
+  late final BotRosterRegistry _roster;
+  late final BotRosterStore _rosterStore;
   List<MissionOrganization> _organizations = const [];
   String? _selectedOrganizationId;
   Object? _loadFailure;
   bool _loading = true;
   bool _refreshing = false;
+
+  /// The running refresh is a quiet revalidation (see [_load]).
+  bool _quietRefresh = false;
   ActiveChatService? _activeChats;
   final Map<ActiveChat, StreamSubscription<ActiveChatEvent>>
   _liveSubscriptions = {};
@@ -210,9 +312,22 @@ class _MissionControlScreenState extends State<MissionControlScreen>
   Duration _kanbanReconnectDelay = const Duration(seconds: 3);
   int _kanbanEventCursor = 0;
   int _loadGeneration = 0;
+
+  /// The connection's one active-profile source (no copy is kept here). A
+  /// switch starts a new read, whose generation voids any read still on the
+  /// wire for the previous profile, so a late answer never paints.
+  late final ActiveProfileScope _profileScope;
   bool _lifecyclePaused = false;
   bool _disposed = false;
-  bool _initialOpenDispatched = false;
+  MissionControlOpenTarget? _pendingTarget;
+
+  /// Every mounted Mission Control, so app-level entries reuse one.
+  static final List<_MissionControlScreenState> _live = [];
+  ModalRoute<dynamic>? _ownRoute;
+
+  /// Route this screen pushed for the last opened room/Bot Chat target.
+  Route<dynamic>? _targetRoute;
+  String? _targetKey;
   late final ChatSurfaceCoordinator _surfaceCoordinator;
 
   MissionOrganization? get _selectedOrganization {
@@ -227,6 +342,8 @@ class _MissionControlScreenState extends State<MissionControlScreen>
   @override
   void initState() {
     super.initState();
+    _live.add(this);
+    _pendingTarget = widget.initialOpenTarget;
     _surfaceCoordinator = ChatSurfaceCoordinator(routeOwner: widget);
     _dataSource =
         widget.dataSource ??
@@ -253,14 +370,63 @@ class _MissionControlScreenState extends State<MissionControlScreen>
       _profileAssetsGateway = lease.client;
     }
     _organizations = _organizationStore.load(widget.connection.id);
+    _profileScope = ActiveProfileScope.of(
+      widget.connManager,
+      widget.connection.id,
+    )..addListener(_onActiveProfileChanged);
     WidgetsBinding.instance.addObserver(this);
     _scheduleRosterRefresh();
-    unawaited(_load());
+    _watchLiveChanges();
+    final roster = _roster = widget.rosterRegistry ?? BotRosterRegistry.shared;
+    roster.hydrate(widget.connection);
+    _rosterStore = roster.store(widget.connection.id)
+      ..addListener(_onSharedRoster);
+    _snapshotCache =
+        widget.snapshotCache ??
+        (widget.dataSource == null ? MissionSnapshotCache.shared : null);
+    final cached = _snapshotCache?.read(widget.connection);
+    if (cached != null) {
+      // Paint what the user saw last time; the read below refreshes it.
+      _snapshot = _withSharedRoster(cached);
+      _loading = false;
+      final source = _dataSource;
+      if (source is MissionControlRepository) {
+        source.seedHostedLogs(cached.hostedGroups);
+      }
+      // Open the target from the cached snapshot on the first frame instead
+      // of showing Mission Control while the refresh is in flight.
+      _scheduleInitialOpen(cached);
+    }
+    unawaited(
+      MissionSnapshotPrewarm.markOpened(
+        widget.connManager.prefs,
+        widget.connection.id,
+      ),
+    );
+    final prewarm =
+        widget.prewarm ??
+        (widget.dataSource == null ? MissionSnapshotPrewarm.shared : null);
+    // A background read started from Home is still in flight: wait for it
+    // instead of asking the server twice. It is a fresh read, so no extra
+    // refresh follows.
+    final inFlight = prewarm?.claim(widget.connection);
+    // A warm open revalidates quietly, like Desktop: the snapshot is the
+    // first frame and no header spinner announces the background read.
+    unawaited(
+      _load(
+        refresh: cached != null,
+        quiet: cached != null,
+        reuse: cached == null ? inFlight : null,
+      ),
+    );
   }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    // `_ownRoute` arrives through [EnclosingRoute] (see `build`):
+    // `ModalRoute.of(context)` here made the whole screen rebuild in the
+    // first frame of every push over it and every pop back to it.
     final service =
         widget.activeChats ??
         context.findAncestorStateOfType<HermesAppState>()?.activeChats;
@@ -271,12 +437,61 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     _activeChats = service;
     _activeChats?.activeIds.addListener(_onActiveIdsChanged);
     _syncLiveSubscriptions();
+    if (_pendingTarget == null) {
+      _rememberColdStartRoute(ColdStartRouteKind.missionControl);
+    }
+  }
+
+  /// The bot roster shown is the connection's shared one: a bot created,
+  /// renamed or deleted on another screen shows here at once, and a load
+  /// that started before that change cannot bring the old roster back.
+  /// Until a live read lands, the edits confirmed so far are replayed on
+  /// the roster this screen already shows (its cached snapshot).
+  MissionBackendSnapshot _withSharedRoster(MissionBackendSnapshot snapshot) {
+    final store = _rosterStore;
+    final profiles = store.isLive
+        ? store.profiles
+        : _roster.withPendingMutations(widget.connection.id, snapshot.profiles);
+    if (identical(profiles, snapshot.profiles)) return snapshot;
+    return MissionBackendSnapshot(
+      profiles: profiles,
+      sessions: snapshot.sessions,
+      board: snapshot.board,
+      profilesCapability: snapshot.profilesCapability,
+      sessionsCapability: snapshot.sessionsCapability,
+      kanbanCapability: snapshot.kanbanCapability,
+      hostedGroups: snapshot.hostedGroups,
+      hostedGroupsCapability: snapshot.hostedGroupsCapability,
+      failures: snapshot.failures,
+      loadedAt: snapshot.loadedAt,
+      activeSessions: snapshot.activeSessions,
+      activeSessionsObservedAt: snapshot.activeSessionsObservedAt,
+      activeSessionsAuthoritative: snapshot.activeSessionsAuthoritative,
+    );
+  }
+
+  void _onSharedRoster() {
+    final current = _snapshot;
+    if (_disposed || !mounted || current == null) return;
+    final next = _withSharedRoster(current);
+    if (!identical(next, current)) setState(() => _snapshot = next);
+  }
+
+  void _onActiveProfileChanged() {
+    if (_disposed || !mounted) return;
+    unawaited(_load(refresh: _snapshot != null, quiet: true));
   }
 
   @override
   void dispose() {
+    _profileScope.removeListener(_onActiveProfileChanged);
+    _rosterStore.removeListener(_onSharedRoster);
     _disposed = true;
+    _live.remove(this);
     _rosterTimer?.cancel();
+    _eventRefreshTimer?.cancel();
+    unawaited(_liveChangeSubscription?.cancel());
+    _liveChangeSubscription = null;
     _rosterSearchOpen.dispose();
     _statusRevision.dispose();
     WidgetsBinding.instance.removeObserver(this);
@@ -286,6 +501,8 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     _kanbanReconnectTimer?.cancel();
     unawaited(_kanbanSubscription?.cancel());
     _kanbanSubscription = null;
+    final last = _snapshot;
+    if (last != null) _snapshotCache?.write(widget.connection, last);
     _profileAvatarCache?.clear();
     _profileAssetsLease?.release();
     if (widget.dataSource == null) _dataSource.close();
@@ -298,6 +515,9 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     _surfaceCoordinator.handleLifecycle(state);
     switch (state) {
       case AppLifecycleState.resumed:
+        // The roster tick sleeps in background; the resume load below is the
+        // refresh, so the next tick comes a full interval later.
+        if (_rosterTimer == null) _scheduleRosterRefresh();
         if (!_lifecyclePaused) return;
         _lifecyclePaused = false;
         _kanbanReconnectDelay = const Duration(seconds: 3);
@@ -306,6 +526,10 @@ class _MissionControlScreenState extends State<MissionControlScreen>
       case AppLifecycleState.paused:
       case AppLifecycleState.hidden:
       case AppLifecycleState.detached:
+        if (state != AppLifecycleState.inactive) {
+          _rosterTimer?.cancel();
+          _rosterTimer = null;
+        }
         _lifecyclePaused = true;
         _kanbanRefreshDebounce?.cancel();
         _kanbanReconnectTimer?.cancel();
@@ -320,21 +544,276 @@ class _MissionControlScreenState extends State<MissionControlScreen>
   final _rosterSearchOpen = ValueNotifier<bool>(false);
 
   /// Roster refresh while visible (spec 070 plan: roster every 30 s).
+  ///
+  /// Without healthy live change events every tick is a full reload, as
+  /// before. With them (see [MissionLiveRefreshDataSource]) a tick only
+  /// refreshes the roster and the rooms that moved while something is shown
+  /// as active, and a full reload runs every [liveBackstopInterval].
   static const rosterRefreshInterval = Duration(seconds: 30);
+
+  /// Full reload backstop while change events are healthy.
+  static const liveBackstopInterval = Duration(seconds: 120);
+
+  /// Minimum gap between event-driven partial refreshes: `sessions.changed`
+  /// fires every 2 s during a turn, and a refresh per event would cost more
+  /// than the old 30 s reload. The first event after a quiet gap refreshes
+  /// at once; later ones coalesce into one trailing refresh.
+  static const liveEventRefreshGap = Duration(seconds: 30);
   Timer? _rosterTimer;
+
+  StreamSubscription<TuiGatewayEvent>? _liveChangeSubscription;
+
+  /// The live channel delivered no error since the last full reload. A
+  /// dropped socket loses events, so the screen polls until a full reload
+  /// (which reconnects) proves the stream again.
+  bool _liveChangesOk = false;
+  bool _partialInFlight = false;
+
+  /// A change event arrived while the screen was covered, paused or within
+  /// [liveEventRefreshGap] of the last partial refresh.
+  bool _liveChangeDirty = false;
+
+  /// The last applied snapshot showed activity ([_showsActivity]).
+  bool _activityPainted = false;
+
+  /// Roster ticks since the last full reload (the backstop counts these).
+  int _ticksSinceFullLoad = 0;
+
+  /// A change event arrived while a full read was in flight.
+  bool _changeDuringLoad = false;
+
+  /// Running for [liveEventRefreshGap] after each partial refresh.
+  Timer? _eventRefreshTimer;
+
+  MissionLiveRefreshDataSource? get _liveSource {
+    final source = _dataSource;
+    return source is MissionLiveRefreshDataSource
+        ? source as MissionLiveRefreshDataSource
+        : null;
+  }
+
+  /// Kanban has its own stream; while it is reconnecting the board (and a
+  /// "running" task) is only refreshed by the full reload.
+  bool get _liveChangesHealthy =>
+      _liveChangesOk &&
+      _liveChangeSubscription != null &&
+      !(_kanbanReconnectTimer?.isActive ?? false) &&
+      (_liveSource?.liveChangesHealthy ?? false);
+
+  bool get _refreshAllowed =>
+      !_disposed &&
+      mounted &&
+      !_lifecyclePaused &&
+      _ownRoute?.isCurrent != false;
 
   void _scheduleRosterRefresh() {
     _rosterTimer?.cancel();
     _rosterTimer = Timer.periodic(rosterRefreshInterval, (_) {
-      if (_disposed || !mounted || _lifecyclePaused) return;
-      if (ModalRoute.of(context)?.isCurrent == false) return;
-      if (_loading || _refreshing) return;
-      unawaited(_load(refresh: true));
+      if (!_refreshAllowed) return;
+      if (_loading || _refreshing || _partialInFlight) return;
+      if (!_liveChangesHealthy) {
+        unawaited(_load(refresh: true));
+        return;
+      }
+      _ticksSinceFullLoad++;
+      if (_ticksSinceFullLoad * rosterRefreshInterval.inSeconds >=
+          liveBackstopInterval.inSeconds) {
+        unawaited(_load(refresh: true));
+        return;
+      }
+      // Also once more after activity was last painted: a worker that
+      // just went stale must repaint as idle, never stay "working".
+      if (_liveChangeDirty || _activityPainted || _showsActivity()) {
+        unawaited(_refreshPartial());
+      }
     });
   }
 
-  Future<void> _load({bool refresh = false}) async {
+  void _watchLiveChanges() {
+    final source = _liveSource;
+    if (source == null) return;
+    final Stream<TuiGatewayEvent>? events;
+    try {
+      events = source.watchLiveChanges();
+    } catch (_) {
+      return;
+    }
+    if (events == null) return;
+    _liveChangeSubscription = events.listen(
+      _onLiveChange,
+      onError: (Object _) {
+        _liveChangesOk = false;
+        _eventRefreshTimer?.cancel();
+        _eventRefreshTimer = null;
+      },
+    );
+  }
+
+  void _onLiveChange(TuiGatewayEvent event) {
+    if (event.type != 'sessions.changed') return;
+    if (_loading || _refreshing) {
+      // The full read on the wire may predate this change: read the roster
+      // again once it lands instead of waiting for the backstop.
+      _changeDuringLoad = true;
+      return;
+    }
+    if (!_liveChangesOk) {
+      // First event after a dropped socket: the stream is back but events
+      // were lost meanwhile, so reload everything now. Without
+      // `change_events` the 30 s tick stays in charge (no reload storm).
+      if (_refreshAllowed &&
+          !_loading &&
+          !_refreshing &&
+          (_liveSource?.liveChangesHealthy ?? false)) {
+        unawaited(_load(refresh: true));
+      }
+      return;
+    }
+    if (!_refreshAllowed ||
+        _eventRefreshTimer != null ||
+        _partialInFlight ||
+        _loading ||
+        _refreshing) {
+      // Read once the gap closes (or by the next tick / resume).
+      _liveChangeDirty = true;
+      return;
+    }
+    unawaited(_refreshPartial());
+  }
+
+  void _armEventRefreshGap() {
+    _eventRefreshTimer?.cancel();
+    _eventRefreshTimer = Timer(liveEventRefreshGap, () {
+      _eventRefreshTimer = null;
+      if (_refreshAllowed && _liveChangeDirty && _liveChangesHealthy) {
+        unawaited(_refreshPartial());
+      }
+    });
+  }
+
+  /// Anything on screen that a later server read could turn idle: such a
+  /// state must keep refreshing so it never stays stale.
+  bool _showsActivity() {
+    final snapshot = _snapshot;
+    if (snapshot == null) return false;
+    for (final status in snapshot.hostedGroups.driverStatuses.values) {
+      if (status.running || status.working || status.blocked) return true;
+      if (status.needsUser) return true;
+    }
+    final now = DateTime.now();
+    for (final profile in snapshot.profiles) {
+      if (BotPresence.workerIsFresh(profile.workerSession, now)) return true;
+    }
+    return false;
+  }
+
+  /// Roster (`profiles.list` + sessions) and only the rooms that moved,
+  /// merged into the shown snapshot. Kanban keeps its own event stream.
+  Future<void> _refreshPartial() async {
+    final source = _liveSource;
+    final previous = _snapshot;
+    if (source == null || previous == null || _partialInFlight) return;
+    if (_loading || _refreshing) return;
+    _partialInFlight = true;
+    _liveChangeDirty = false;
+    _armEventRefreshGap();
     final generation = ++_loadGeneration;
+    final refreshRooms =
+        previous.hostedGroupsCapability == MissionCapabilityState.available &&
+        previous.hostedGroups.capabilities != null;
+    try {
+      final roomsFuture = refreshRooms
+          ? source.refreshHostedGroups(previous.hostedGroups)
+          : Future.value(previous.hostedGroups);
+      // Settle both before awaiting either, so a failed room read never
+      // surfaces as an unhandled error while the roster is pending.
+      final roomsResult = roomsFuture.then<Object>(
+        (value) => value,
+        onError: (Object error) => _PartialRoomsFailure(error),
+      );
+      final roster = await source.loadRoster();
+      final rooms = await roomsResult;
+      if (!mounted || generation != _loadGeneration) return;
+      if (rooms is _PartialRoomsFailure) {
+        // Capability generation, authority or coherence moved: only a full
+        // reload may decide what the rooms show now.
+        _partialInFlight = false;
+        unawaited(_load(refresh: true));
+        return;
+      }
+      final failures = {...previous.failures}
+        ..remove('profiles')
+        ..remove('sessions');
+      if (roster.profilesError case final error?) failures['profiles'] = error;
+      if (roster.sessionsError case final error?) failures['sessions'] = error;
+      final snapshot = _withSharedRoster(
+        _retainLastGoodSources(
+          MissionBackendSnapshot(
+            profiles: roster.profiles,
+            sessions: roster.sessions,
+            board: previous.board,
+            profilesCapability: roster.profilesCapability,
+            sessionsCapability: roster.sessionsCapability,
+            kanbanCapability: previous.kanbanCapability,
+            hostedGroups: rooms as HostedGroupsSnapshot,
+            hostedGroupsCapability: previous.hostedGroupsCapability,
+            failures: failures,
+            loadedAt: DateTime.now(),
+            activeSessions: roster.activeSessions,
+            activeSessionsObservedAt: roster.activeSessionsObservedAt,
+            activeSessionsAuthoritative: roster.activeSessionsAuthoritative,
+          ),
+        ),
+      );
+      setState(() => _snapshot = snapshot);
+      _activityPainted = _showsActivity();
+      _snapshotCache?.write(widget.connection, snapshot);
+      _statusRevision.value++;
+      _syncLiveSubscriptions();
+    } catch (_) {
+      // A failed partial read keeps what is shown; the next tick (or the
+      // backstop) retries with a full reload if the stream is unhealthy.
+    } finally {
+      _partialInFlight = false;
+    }
+  }
+
+  /// The full read on the wire, if any (see [_pullRefresh]).
+  Future<void>? _inFlightLoad;
+
+  /// Pull-to-refresh joins a full read already on the wire instead of
+  /// starting a second one whose answer could land in either order. The
+  /// pull ends when that read lands; a change seen meanwhile is still read
+  /// once afterwards through [_changeDuringLoad].
+  Future<void> _pullRefresh() {
+    final inFlight = _inFlightLoad;
+    if (inFlight == null) return _load(refresh: true);
+    if (_quietRefresh && mounted) setState(() => _quietRefresh = false);
+    return inFlight;
+  }
+
+  /// [quiet] keeps the header spinner off for a background revalidation of
+  /// what is already on screen; [_refreshing] still blocks overlapping reads.
+  Future<void> _load({
+    bool refresh = false,
+    bool quiet = false,
+    Future<MissionBackendSnapshot>? reuse,
+  }) {
+    final run = _runLoad(refresh: refresh, quiet: quiet, reuse: reuse);
+    _inFlightLoad = run;
+    return run.whenComplete(() {
+      if (identical(_inFlightLoad, run)) _inFlightLoad = null;
+    });
+  }
+
+  Future<void> _runLoad({
+    required bool refresh,
+    required bool quiet,
+    Future<MissionBackendSnapshot>? reuse,
+  }) async {
+    final generation = ++_loadGeneration;
+    _quietRefresh = quiet && refresh && _snapshot != null;
+    _changeDuringLoad = false;
     if (mounted) {
       setState(() {
         if (refresh && _snapshot != null) {
@@ -346,21 +825,53 @@ class _MissionControlScreenState extends State<MissionControlScreen>
       });
     }
     try {
-      final incoming = await _dataSource.load();
+      final incoming = reuse == null
+          ? await _dataSource.load()
+          : await reuse.catchError((Object _) => _dataSource.load());
       if (!mounted || generation != _loadGeneration) return;
-      final snapshot = _retainLastGoodSources(incoming);
+      final source = _dataSource;
+      if (reuse != null && source is MissionControlRepository) {
+        // The prewarm read used its own repository: resume room logs here.
+        source.seedHostedLogs(incoming.hostedGroups);
+      }
+      final snapshot = _withSharedRoster(_retainLastGoodSources(incoming));
       setState(() {
         _snapshot = snapshot;
         _loading = false;
         _refreshing = false;
       });
+      _ticksSinceFullLoad = 0;
+      _liveChangeDirty = false;
+      _activityPainted = _showsActivity();
+      // A reload over a healthy live socket makes the event stream whole
+      // again; over a dropped one the screen keeps polling.
+      _liveChangesOk =
+          _liveChangeSubscription != null &&
+          (_liveSource?.liveChangesHealthy ?? false);
+      _snapshotCache?.write(widget.connection, snapshot);
       _statusRevision.value++;
       _kanbanEventCursor = incoming.board?.latestEventId ?? _kanbanEventCursor;
       _syncLiveSubscriptions();
       _subscribeKanban(incoming);
       _scheduleInitialOpen(snapshot);
+      if (_changeDuringLoad) {
+        _changeDuringLoad = false;
+        if (_liveChangesHealthy &&
+            _refreshAllowed &&
+            _eventRefreshTimer == null) {
+          unawaited(_refreshPartial());
+        } else {
+          _liveChangeDirty = true;
+        }
+      }
     } catch (error) {
       if (!mounted || generation != _loadGeneration) return;
+      // The failed read reflects nothing: a change seen meanwhile is still
+      // owed to the roster, by the next tick or gap.
+      if (_changeDuringLoad) {
+        _changeDuringLoad = false;
+        _liveChangeDirty = true;
+      }
       setState(() {
         _loadFailure = error;
         _loading = false;
@@ -370,13 +881,75 @@ class _MissionControlScreenState extends State<MissionControlScreen>
   }
 
   void _scheduleInitialOpen(MissionBackendSnapshot snapshot) {
-    final target = widget.initialOpenTarget;
-    if (target == null || _initialOpenDispatched) return;
-    _initialOpenDispatched = true;
+    final target = _pendingTarget;
+    if (target == null) return;
+    _pendingTarget = null;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       unawaited(_openInitialTarget(target, snapshot));
     });
+  }
+
+  /// A later app-level entry for this live screen (see
+  /// [MissionControlScreen.openInExisting]).
+  void _requestTarget(MissionControlOpenTarget target) {
+    _pendingTarget = target;
+    final snapshot = _snapshot;
+    if (snapshot != null) _scheduleInitialOpen(snapshot);
+  }
+
+  Future<void> _pushTarget(
+    MissionControlOpenTarget target,
+    Route<void> route,
+  ) async {
+    _targetRoute = route;
+    _targetKey = MissionControlScreen._targetKeyOf(target);
+    final roomId = target.roomId;
+    if (target.surface == MissionControlOwnedSurface.room &&
+        roomId != null &&
+        roomId.isNotEmpty) {
+      _rememberColdStartRoute(
+        ColdStartRouteKind.room,
+        roomId: roomId,
+        profile: target.profile,
+      );
+    }
+    try {
+      await Navigator.of(context).push(route);
+    } finally {
+      if (identical(_targetRoute, route)) {
+        _targetRoute = null;
+        _targetKey = null;
+      }
+      // Back on Bot Mode itself.
+      if (!_disposed) {
+        _rememberColdStartRoute(ColdStartRouteKind.missionControl);
+      }
+    }
+  }
+
+  /// cs1215: Bot Mode (or the room opened in it) is the connection's last
+  /// foreground route; a cold start reopens it. Identifiers only.
+  void _rememberColdStartRoute(
+    ColdStartRouteKind kind, {
+    String? roomId,
+    String? profile,
+  }) {
+    final store = _activeChats?.coldStartStore;
+    if (store == null) return;
+    unawaited(
+      store
+          .rememberRoute(
+            ColdStartRoute(
+              kind: kind,
+              connectionId: widget.connection.id,
+              profile: profile ?? '',
+              sessionId: '',
+              roomId: roomId,
+            ),
+          )
+          .catchError((Object _) {}),
+    );
   }
 
   Future<void> _openInitialTarget(
@@ -394,7 +967,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
             break;
           }
         }
-        if (agent != null) await _openChat(agent);
+        if (agent != null) await _openChat(agent, openTarget: target);
         return;
       case MissionControlOwnedSurface.room:
         final roomId = target.roomId;
@@ -405,7 +978,8 @@ class _MissionControlScreenState extends State<MissionControlScreen>
         final capabilities = snapshot.hostedGroups.capabilities;
         final enabled = !widget.connection.readOnly;
         if (!mounted) return;
-        await Navigator.of(context).push(
+        await _pushTarget(
+          target,
           MaterialPageRoute<void>(
             builder: (_) => _HostedRoomWorkspace(
               draftScope: (
@@ -423,11 +997,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
               onRead:
                   _dataSource is MissionHostedGroupsReadDataSource &&
                       capabilities != null
-                  ? (room) => (_dataSource as MissionHostedGroupsReadDataSource)
-                        .readHostedGroup(
-                          room,
-                          generation: capabilities.generation,
-                        )
+                  ? _roomReads.read
                   : null,
               log: index < snapshot.hostedGroups.logs.length
                   ? snapshot.hostedGroups.logs[index]
@@ -438,6 +1008,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
                 for (final profile in snapshot.profiles) profile.name: profile,
               },
               onOpenMember: _openRoomMember,
+              onOpenMemberSession: _openRoomMemberSession,
               canSend:
                   enabled &&
                   (capabilities?.supports(GroupMethod.send) ?? false),
@@ -500,6 +1071,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     final kanbanFailed =
         incoming.failures.containsKey('kanban') &&
         incoming.kanbanCapability == MissionCapabilityState.unavailable;
+    final activeFailed = !incoming.activeSessionsAuthoritative;
     final hostedGroupsFailed =
         incoming.failures.containsKey('hostedGroups') &&
         incoming.hostedGroupsCapability == MissionCapabilityState.unavailable;
@@ -516,6 +1088,17 @@ class _MissionControlScreenState extends State<MissionControlScreen>
       hostedGroupsCapability: incoming.hostedGroupsCapability,
       failures: incoming.failures,
       loadedAt: incoming.loadedAt,
+      // An answer without a row is authoritative about its absence and
+      // replaces the rows. A failed read proves nothing: keep the last ones.
+      activeSessions: activeFailed
+          ? previous.activeSessions
+          : incoming.activeSessions,
+      activeSessionsObservedAt: activeFailed
+          ? previous.activeSessionsObservedAt
+          : incoming.activeSessionsObservedAt,
+      activeSessionsAuthoritative: activeFailed
+          ? previous.activeSessionsAuthoritative
+          : incoming.activeSessionsAuthoritative,
     );
   }
 
@@ -604,6 +1187,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
         chat.sessionId,
         chat.storedSessionId,
         chat.sessionProfile,
+        chat.safeActiveSubagentCount,
       ],
     ];
   }
@@ -626,89 +1210,24 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     _liveSubscriptions.clear();
   }
 
-  Iterable<ActiveChat> _resolveActiveChats(ActiveChatService service) sync* {
-    final seen = <ActiveChat>{};
-    for (final rawId in service.activeIds.value) {
-      try {
-        final decoded = jsonDecode(rawId);
-        if (decoded is! List || decoded.length != 3) continue;
-        final connectionId = decoded[0];
-        final profile = decoded[1];
-        final sessionId = decoded[2];
-        if (connectionId != widget.connection.id ||
-            profile is! String ||
-            sessionId is! String) {
-          continue;
-        }
-        final chat = service.of(
-          widget.connection.id,
-          sessionId,
-          profile: profile,
-        );
-        if (chat != null && seen.add(chat)) yield chat;
-      } catch (_) {
-        // Active ids are internal opaque identities. Ignore a malformed value
-        // instead of letting observability take down the existing chat path.
-      }
-    }
-    for (final session in _snapshot?.sessions ?? const <Session>[]) {
-      final owner = session.profile?.trim();
-      if (owner == null || owner.isEmpty) continue;
-      final chat = service.of(widget.connection.id, session.id, profile: owner);
-      if (chat != null && seen.add(chat)) yield chat;
-    }
-  }
+  Iterable<ActiveChat> _resolveActiveChats(ActiveChatService service) =>
+      missionActiveChats(
+        service,
+        widget.connection.id,
+        _snapshot?.sessions ?? const <Session>[],
+      );
 
   List<MissionLiveChat> _liveChats() {
     final service = _activeChats;
     if (service == null) return const [];
-    final sessions = _snapshot?.sessions ?? const <Session>[];
-    final sessionByIdentity = <String, Session>{};
-    final sessionsById = <String, List<Session>>{};
-    for (final session in sessions) {
-      final owner = session.profile?.trim();
-      if (owner != null && owner.isNotEmpty) {
-        sessionByIdentity['$owner\u0000${session.id}'] = session;
-        sessionByIdentity['$owner\u0000${session.logicalId}'] = session;
-      }
-      sessionsById.putIfAbsent(session.id, () => []).add(session);
-      sessionsById.putIfAbsent(session.logicalId, () => []).add(session);
-    }
-    return _resolveActiveChats(service)
-        .map((chat) {
-          final profile = Session.profileOwner(chat.sessionProfile);
-          final storedId = chat.storedSessionId;
-          final lookupId = storedId ?? chat.sessionId;
-          final idMatches = sessionsById[lookupId] ?? const <Session>[];
-          final session =
-              sessionByIdentity['$profile\u0000$lookupId'] ??
-              sessionByIdentity['$profile\u0000${chat.sessionId}'] ??
-              (idMatches.length == 1 ? idMatches.single : null);
-          return MissionLiveChat(
-            profileName: profile,
-            sessionId: storedId ?? chat.sessionId,
-            title: chat.sessionTitle,
-            phase: _missionPhase(chat),
-            approval: chat.pendingApproval,
-            model: session?.model,
-          );
-        })
-        .toList(growable: false);
+    return missionLiveChats(
+      service,
+      widget.connection.id,
+      _snapshot?.sessions ?? const <Session>[],
+    );
   }
 
-  MissionLivePhase _missionPhase(ActiveChat chat) {
-    if (chat.pendingApproval != null) {
-      return MissionLivePhase.approvalRequired;
-    }
-    if (chat.state == ChatPipelineState.failed) return MissionLivePhase.error;
-    return switch (chat.activityKind) {
-      ChatActivityKind.thinking => MissionLivePhase.thinking,
-      ChatActivityKind.usingTools => MissionLivePhase.working,
-      ChatActivityKind.responding => MissionLivePhase.responding,
-      ChatActivityKind.awaitingApproval => MissionLivePhase.approvalRequired,
-      null => MissionLivePhase.idle,
-    };
-  }
+  MissionLivePhase _missionPhase(ActiveChat chat) => missionPhaseOf(chat);
 
   MissionProjection _projection(MissionBackendSnapshot snapshot) =>
       MissionProjector.build(
@@ -745,6 +1264,12 @@ class _MissionControlScreenState extends State<MissionControlScreen>
           pinned: pinned,
         );
       }
+      // Confirmed by the server: every screen shows it now, and a read that
+      // was already on the wire cannot bring the old flag back.
+      _roster.profileMetaChanged(widget.connection.id, agent.profile.name, {
+        'hidden': ?hidden,
+        'pinned': ?pinned,
+      });
       if (!mounted) return;
       await _load(refresh: true);
     } catch (error) {
@@ -760,12 +1285,18 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     }
   }
 
-  BotProfileGateway? get _botProfileGateway => widget.botProfileGateway ??
-      (_profileAssetsGateway is BotProfileGateway ? _profileAssetsGateway as BotProfileGateway : null);
+  BotProfileGateway? get _botProfileGateway =>
+      widget.botProfileGateway ??
+      (_profileAssetsGateway is BotProfileGateway
+          ? _profileAssetsGateway as BotProfileGateway
+          : null);
   bool _sectionBusy = false;
 
-  Future<void> _applySections(Map<String, BotSectionChange> changes,
-      {bool deletion = false, Map<String, BotSectionChange>? undo}) async {
+  Future<void> _applySections(
+    Map<String, BotSectionChange> changes, {
+    bool deletion = false,
+    Map<String, BotSectionChange>? undo,
+  }) async {
     final gateway = _botProfileGateway;
     if (gateway == null || widget.connection.readOnly || _sectionBusy) return;
     setState(() => _sectionBusy = true);
@@ -775,7 +1306,11 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     final failed = <String, BotSectionChange>{};
     for (final entry in changes.entries) {
       try {
-        await writer.setSection(entry.key, id: entry.value.id, name: entry.value.name);
+        await writer.setSection(
+          entry.key,
+          id: entry.value.id,
+          name: entry.value.name,
+        );
       } catch (_) {
         failed[entry.key] = entry.value;
       }
@@ -815,7 +1350,11 @@ class _MissionControlScreenState extends State<MissionControlScreen>
   }
 
   Future<void> _moveBotToSection([AgentProfile? profile]) async {
-    if (_sectionBusy || _botProfileGateway == null || widget.connection.readOnly) return;
+    if (_sectionBusy ||
+        _botProfileGateway == null ||
+        widget.connection.readOnly) {
+      return;
+    }
     final profiles = _snapshot?.profiles ?? const <AgentProfile>[];
     if (profile != null && !profiles.any((p) => identical(p, profile))) return;
     final changes = await chooseBotSection(context, profiles, bot: profile);
@@ -824,31 +1363,57 @@ class _MissionControlScreenState extends State<MissionControlScreen>
 
   Future<void> _sectionMenu(String sectionId, String sectionName) async {
     if (_sectionBusy || widget.connection.readOnly) return;
-    final action = await showHermesFloatingSurface<String>(context: context,
+    final action = await showHermesFloatingSurface<String>(
+      context: context,
       builder: (context) {
         final s = Strings.of(context);
-        return Column(mainAxisSize: MainAxisSize.min, children: [
-          ListTile(title: Text(s.botSectionRename), leading: const Icon(Icons.edit_outlined),
-            onTap: () => Navigator.pop(context, 'rename')),
-          ListTile(title: Text(s.botSectionDelete), leading: const Icon(Icons.delete_outline),
-            onTap: () => Navigator.pop(context, 'delete')),
-        ]);
-      });
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              title: Text(s.botSectionRename),
+              leading: const Icon(Icons.edit_outlined),
+              onTap: () => Navigator.pop(context, 'rename'),
+            ),
+            ListTile(
+              title: Text(s.botSectionDelete),
+              leading: const Icon(Icons.delete_outline),
+              onTap: () => Navigator.pop(context, 'delete'),
+            ),
+          ],
+        );
+      },
+    );
     if (action == null || !mounted) return;
     final profiles = _snapshot?.profiles ?? const <AgentProfile>[];
     if (action == 'rename') {
       final name = await botSectionNameDialog(context, initial: sectionName);
       if (name == null || !mounted) return;
-      await _applySections(BotSectionService.members(profiles, sectionId,
-        BotSectionChange(sectionId, name)));
+      await _applySections(
+        BotSectionService.members(
+          profiles,
+          sectionId,
+          BotSectionChange(sectionId, name),
+        ),
+      );
     } else {
       final undo = <String, BotSectionChange>{
         for (final profile in profiles)
           if (profile.botSectionId == sectionId)
-            profile.name: BotSectionChange(sectionId, profile.botSectionName ?? sectionName),
+            profile.name: BotSectionChange(
+              sectionId,
+              profile.botSectionName ?? sectionName,
+            ),
       };
-      await _applySections(BotSectionService.members(profiles, sectionId,
-        const BotSectionChange(null, null)), deletion: true, undo: undo);
+      await _applySections(
+        BotSectionService.members(
+          profiles,
+          sectionId,
+          const BotSectionChange(null, null),
+        ),
+        deletion: true,
+        undo: undo,
+      );
     }
   }
 
@@ -860,12 +1425,14 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     try {
       final loader = widget.remoteBotLoader;
       if (loader != null) {
-        profile = (await loader(connection))
-            .singleWhere((candidate) => candidate.name == profile.name);
+        profile = (await loader(
+          connection,
+        )).singleWhere((candidate) => candidate.name == profile.name);
       } else {
         lease = SharedGatewayPool.instance.acquire(connection);
-        profile = (await lease.client.listProfiles(includeSessions: true))
-            .singleWhere((candidate) => candidate.name == profile.name);
+        profile = (await lease.client.listProfiles(
+          includeSessions: true,
+        )).singleWhere((candidate) => candidate.name == profile.name);
       }
     } catch (_) {
       if (mounted) {
@@ -914,22 +1481,47 @@ class _MissionControlScreenState extends State<MissionControlScreen>
   }
 
   void _remoteBotDetails(SavedConnection connection, AgentProfile profile) {
-    Navigator.of(context).push(MaterialPageRoute(builder: (_) => MissionControlScreen(
-      connection: connection, connManager: widget.connManager)));
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => MissionControlScreen(
+          connection: connection,
+          connManager: widget.connManager,
+        ),
+      ),
+    );
   }
 
   Future<void> _openRecentSession(MissionAgent agent) async {
     final recent = agent.profile.lastSession;
-    if (recent == null) { await _openChat(agent); return; }
-    final session = Session(id: recent.id, title: recent.title,
-      profile: agent.profile.name, isDefaultProfile: agent.profile.isDefault,
-      model: agent.profile.model, source: 'desktop',
-      messageCount: recent.messageCount, isActive: true, preview: recent.preview,
-      startedAt: recent.startedAt ?? 0);
+    if (recent == null) {
+      await _openChat(agent);
+      return;
+    }
+    final session = Session(
+      id: recent.id,
+      title: recent.title,
+      profile: agent.profile.name,
+      isDefaultProfile: agent.profile.isDefault,
+      model: agent.profile.model,
+      source: 'desktop',
+      messageCount: recent.messageCount,
+      isActive: true,
+      preview: recent.preview,
+      startedAt: recent.startedAt ?? 0,
+    );
     final observer = widget.botChatOpenObserver;
-    if (observer != null) { observer(session); return; }
-    await openChatFromSection<void>(context, builder: (_) => ChatScreen(
-      connection: widget.connection, session: session, initialStoredSessionId: recent.id));
+    if (observer != null) {
+      observer(session);
+      return;
+    }
+    await openChatFromSection<void>(
+      context,
+      builder: (_) => ChatScreen(
+        connection: widget.connection,
+        session: session,
+        initialStoredSessionId: recent.id,
+      ),
+    );
   }
 
   Future<void> _duplicateBot(MissionAgent agent) async {
@@ -965,7 +1557,10 @@ class _MissionControlScreenState extends State<MissionControlScreen>
         );
       }
     } finally {
-      if (mounted) { setState(() => _sectionBusy = false); await _load(refresh: true); }
+      if (mounted) {
+        setState(() => _sectionBusy = false);
+        await _load(refresh: true);
+      }
     }
   }
 
@@ -1029,7 +1624,10 @@ class _MissionControlScreenState extends State<MissionControlScreen>
   }
 
   /// Opens the agent's canonical Bot Chat, writable like any other chat.
-  Future<void> _openChat(MissionAgent agent) async {
+  Future<void> _openChat(
+    MissionAgent agent, {
+    MissionControlOpenTarget? openTarget,
+  }) async {
     // Console-local pins are a retired compatibility tier: retire them
     // best-effort so no later build can resurrect a stale pointer.
     if (!widget.connection.readOnly) {
@@ -1089,14 +1687,20 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     if (observer != null) {
       observer(session);
     } else {
-      await openChatFromSection<void>(
-        context,
-        builder: (_) => buildBotChatDestination(
-          connection: widget.connection,
-          session: session,
-          initialStoredSessionId: pinnedId,
-          profile: agent.profile,
-          avatarCache: _profileAvatarCache,
+      await _pushTarget(
+        openTarget ??
+            MissionControlOpenTarget.bot(
+              sessionId: pinnedId ?? '',
+              profile: agent.profile.name,
+            ),
+        MaterialPageRoute<void>(
+          builder: (_) => buildBotChatDestination(
+            connection: widget.connection,
+            session: session,
+            initialStoredSessionId: pinnedId,
+            profile: agent.profile,
+            avatarCache: _profileAvatarCache,
+          ),
         ),
       );
     }
@@ -1142,7 +1746,9 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     if (worker != null &&
         BotPresence.workerIsFresh(worker, now) &&
         worker.title.trim().isNotEmpty) {
-      items.add(BotNowItem(label: strings.botProfileWorkingOn(worker.title.trim())));
+      items.add(
+        BotNowItem(label: strings.botProfileWorkingOn(worker.title.trim())),
+      );
     }
     final service = _activeChats;
     if (service != null) {
@@ -1171,7 +1777,10 @@ class _MissionControlScreenState extends State<MissionControlScreen>
         );
       }
     }
-    final attention = AttentionSummary.fromSnapshot(groups);
+    final attention = AttentionSummary.fromSnapshot(
+      groups,
+      acks: SharedPreferencesRoomPrefs(widget.connManager.prefs).acksFor,
+    );
     final canStop =
         !widget.connection.readOnly &&
         (groups.capabilities?.supports(GroupMethod.stop) ?? false);
@@ -1186,11 +1795,13 @@ class _MissionControlScreenState extends State<MissionControlScreen>
       };
       if (seats.isEmpty) continue;
       roomCount++;
-      final needs = (attention.room(room.roomId)?.items ?? const [])
-          .any((item) => seats.contains(item.memberId));
-      final seatWorking = BotRoomSeat.forProfile(profile.name, groups).any(
-        (seat) => seat.roomId == room.roomId && seat.running,
+      final needs = (attention.room(room.roomId)?.items ?? const []).any(
+        (item) => seats.contains(item.memberId),
       );
+      final seatWorking = BotRoomSeat.forProfile(
+        profile.name,
+        groups,
+      ).any((seat) => seat.roomId == room.roomId && seat.running);
       if (needs) {
         items.add(
           BotNowItem(
@@ -1251,20 +1862,23 @@ class _MissionControlScreenState extends State<MissionControlScreen>
           avatarCache: _profileAvatarCache,
           modelGateway: _botModelGateway,
           profileGateway: gateway,
+          catalogScope: widget.connection.id,
           readOnly: readOnly,
           machineLabel: widget.connection.label,
           onChat: () => unawaited(_openChat(_currentAgent(agent))),
           onRooms: () => unawaited(_manageBotRooms(_currentAgent(agent))),
           onRoutines: () => _openRoutines(profile: name),
+          // a7: without the advanced editor, still this bot's SOUL.
           onSoul: gateway == null || readOnly
-              ? _openSoul
+              ? () => _openSoul(profile: name)
               : () => _openAdvancedSettings(name),
           onSkills: () => _openSkills(profile: name),
           onMemory: () => _openMemory(profile: name),
           onTasks: () => unawaited(_openTasks(assignee: name)),
           onEditIdentity: readOnly
               ? null
-              : () => unawaited(_openProfileEditor(_currentAgent(agent).profile)),
+              : () =>
+                    unawaited(_openProfileEditor(_currentAgent(agent).profile)),
           onChanged: () => unawaited(_load(refresh: true)),
           moreActions: [
             BotProfileAction(
@@ -1318,18 +1932,23 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     );
   }
 
+  /// Deleting a bot deletes its profile (Desktop: "Delete bot and
+  /// profile?"), with the same confirmation as Profiles and in place.
   Future<void> _deleteBot(String profile) async {
     if (widget.connection.readOnly || profile == 'default') return;
-    await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => ProfilesScreen(
-          connection: widget.connection,
-          connManager: widget.connManager,
-          initialDeleteProfile: profile,
-        ),
-      ),
+    final missionRoute = _ownRoute;
+    final deleted = await deleteProfileFlow(
+      context,
+      connection: widget.connection,
+      connManager: widget.connManager,
+      profile: profile,
+      rosterRegistry: _roster,
+      deleteRemote: widget.profileDeleteOverride,
     );
-    if (mounted) await _load(refresh: true);
+    if (!deleted || !mounted) return;
+    // Leave the deleted bot's card.
+    Navigator.of(context).popUntil((route) => route == missionRoute);
+    await _load(refresh: true);
   }
 
   /// Long-press actions on a roster row (spec 070 T402): pin, section,
@@ -1371,47 +1990,83 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     final snapshot = _snapshot;
     if (snapshot == null) return;
     final roomId = entry.hostedRoomId;
-    if (roomId != null) {
-      await _openInitialTarget(
-        MissionControlOpenTarget.room(sessionId: '', roomId: roomId),
-        snapshot,
-      );
-      return;
-    }
-    final projection = entry.projection;
-    if (projection == null) return;
-    await showHermesFloatingSurface<void>(
-      context: context,
-      surfaceKey: ValueKey('roster-projection-${entry.publicKey}'),
-      maxWidth: 560,
-      maxHeightFactor: 0.86,
-      builder: (_) => ProjectionRoomSheet(room: projection),
+    if (roomId == null) return;
+    await _openInitialTarget(
+      MissionControlOpenTarget.room(sessionId: '', roomId: roomId),
+      snapshot,
     );
   }
 
   Future<void> _manageBotRooms([MissionAgent? agent]) async {
     final snapshot = _snapshot;
     if (snapshot == null) return;
-    final rooms = snapshot.hostedGroups.rooms.where((r) => !r.disbanded && (agent == null || r.members.any((m) =>
-      m.owner.connectionId == r.authorityGatewayId && m.owner.profile == agent.profile.name))).toList();
-    final selected = await showHermesFloatingSurface<String>(context: context,
-      builder: (context) => ListView(shrinkWrap: true, children: [
-        for (final room in rooms) ListTile(title: Text(room.name), leading: const Icon(Icons.forum_outlined),
-          trailing: !widget.connection.readOnly && _profileAssetsGateway is BotRoomLinkGateway && room.members.any((m) => m.owner.connectionId != room.authorityGatewayId)
-            ? IconButton(icon: const Icon(Icons.link), tooltip: Strings.of(context).botReconnectRoom,
-                onPressed: () => Navigator.pop(context, 'link:${room.roomId}')) : null,
-          onTap: () => Navigator.pop(context, room.roomId)),
-        if (_canCreateHostedRoom) ListTile(title: Text(MissionControlCopy.of(context).createSharedRoom),
-          leading: const Icon(Icons.add), onTap: () => Navigator.pop(context, 'new')),
-        Padding(padding: const EdgeInsets.all(20), child: Text(Strings.of(context).botRoomMembersUnavailable)),
-      ]));
+    final rooms = snapshot.hostedGroups.rooms
+        .where(
+          (r) =>
+              !r.disbanded &&
+              (agent == null ||
+                  r.members.any(
+                    (m) =>
+                        m.owner.connectionId == r.authorityGatewayId &&
+                        m.owner.profile == agent.profile.name,
+                  )),
+        )
+        .toList();
+    final selected = await showHermesFloatingSurface<String>(
+      context: context,
+      builder: (context) => ListView(
+        shrinkWrap: true,
+        children: [
+          for (final room in rooms)
+            ListTile(
+              title: Text(room.name),
+              leading: const Icon(Icons.forum_outlined),
+              trailing:
+                  !widget.connection.readOnly &&
+                      _profileAssetsGateway is BotRoomLinkGateway &&
+                      room.members.any(
+                        (m) => m.owner.connectionId != room.authorityGatewayId,
+                      )
+                  ? IconButton(
+                      icon: const Icon(Icons.link),
+                      tooltip: Strings.of(context).botReconnectRoom,
+                      onPressed: () =>
+                          Navigator.pop(context, 'link:${room.roomId}'),
+                    )
+                  : null,
+              onTap: () => Navigator.pop(context, room.roomId),
+            ),
+          if (_canCreateHostedRoom)
+            ListTile(
+              title: Text(MissionControlCopy.of(context).createSharedRoom),
+              leading: const Icon(Icons.add),
+              onTap: () => Navigator.pop(context, 'new'),
+            ),
+          Padding(
+            padding: const EdgeInsets.all(20),
+            child: Text(Strings.of(context).botRoomMembersUnavailable),
+          ),
+        ],
+      ),
+    );
     if (!mounted || selected == null) return;
-    if (selected == 'new') { await _createHostedRoom(initialProfile: agent?.profile.name); }
-    else if (selected.startsWith('link:')) {
+    if (selected == 'new') {
+      await _createHostedRoom(initialProfile: agent?.profile.name);
+    } else if (selected.startsWith('link:')) {
       try {
         final peers = await _loadRoomPeers();
-        final room = _snapshot!.hostedGroups.rooms.singleWhere((r) => r.roomId == selected.substring(5) && !r.disbanded);
-        final matches = peers.where((p) => room.members.any((m) => m.owner.connectionId == p.catalog['installation_id'] && m.owner.profile == p.profile.name)).toList();
+        final room = _snapshot!.hostedGroups.rooms.singleWhere(
+          (r) => r.roomId == selected.substring(5) && !r.disbanded,
+        );
+        final matches = peers
+            .where(
+              (p) => room.members.any(
+                (m) =>
+                    m.owner.connectionId == p.catalog['installation_id'] &&
+                    m.owner.profile == p.profile.name,
+              ),
+            )
+            .toList();
         if (matches.isEmpty) throw StateError('No reachable room peers');
         await _attachRoomPeers(room, matches);
       } catch (_) {
@@ -1422,10 +2077,49 @@ class _MissionControlScreenState extends State<MissionControlScreen>
           );
         }
       }
+    } else if (_snapshot case final current?) {
+      await _openInitialTarget(
+        MissionControlOpenTarget.room(sessionId: '', roomId: selected),
+        current,
+      );
     }
-    else if (_snapshot case final current?) {
-      await _openInitialTarget(MissionControlOpenTarget.room(sessionId: '', roomId: selected), current);
+  }
+
+  /// Opens a hosted room member's own room session (`Group: <room_id>`)
+  /// as a chat, where Console renders its pending question or approval.
+  Future<void> _openRoomMemberSession(
+    String profileName,
+    String storedSessionId,
+  ) async {
+    final snapshot = _snapshot;
+    final profile = snapshot?.profiles
+        .where((p) => p.name == profileName)
+        .firstOrNull;
+    final session = Session(
+      id: storedSessionId,
+      title: profileName,
+      profile: profileName,
+      isDefaultProfile: profile?.isDefault ?? false,
+      model: profile?.model ?? '',
+      source: 'bot_room',
+      messageCount: 1,
+      isActive: true,
+      preview: '',
+      startedAt: 0,
+    );
+    final observer = widget.botChatOpenObserver;
+    if (observer != null) {
+      observer(session);
+      return;
     }
+    await openChatFromSection<void>(
+      context,
+      builder: (_) => ChatScreen(
+        connection: widget.connection,
+        session: session,
+        initialStoredSessionId: storedSessionId,
+      ),
+    );
   }
 
   void _openRoomMember(String profileName) {
@@ -1467,8 +2161,11 @@ class _MissionControlScreenState extends State<MissionControlScreen>
 
   void _openRoutines({String? profile}) => Navigator.of(context).push(
     MaterialPageRoute<void>(
-      builder: (_) =>
-          CronScreen(connection: widget.connection, profileOverride: profile, botRoutines: profile != null),
+      builder: (_) => CronScreen(
+        connection: widget.connection,
+        profileOverride: profile,
+        botRoutines: profile != null,
+      ),
     ),
   );
 
@@ -1481,14 +2178,19 @@ class _MissionControlScreenState extends State<MissionControlScreen>
 
   void _openSkills({String? profile}) => Navigator.of(context).push(
     MaterialPageRoute<void>(
-      builder: (_) =>
-          SkillsScreen(connection: widget.connection, profileOverride: profile),
+      builder: (_) => buildCapabilitiesHub(
+        connection: widget.connection,
+        connManager: widget.connManager,
+        capabilities: widget.connManager.loadCapabilities(widget.connection.id),
+        profileOverride: profile,
+      ),
     ),
   );
 
-  void _openSoul() => Navigator.of(context).push(
+  void _openSoul({required String profile}) => Navigator.of(context).push(
     MaterialPageRoute<void>(
-      builder: (_) => SoulScreen(connection: widget.connection),
+      builder: (_) =>
+          SoulScreen(connection: widget.connection, profileOverride: profile),
     ),
   );
 
@@ -1503,6 +2205,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
           connection: widget.connection,
           profile: profile,
           onOpenSkills: () => _openSkills(profile: profile.name),
+          onChanged: () => unawaited(_load(refresh: true)),
         ),
       ),
     );
@@ -1518,15 +2221,26 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     final snapshot = _snapshot;
     if (snapshot == null) return;
     var target = widget.connection;
-    final connections = widget.connManager.getConnections().where((c) => !c.readOnly).toList();
+    final connections = widget.connManager
+        .getConnections()
+        .where((c) => !c.readOnly)
+        .toList();
     if (connections.length > 1) {
-      final selected = await showHermesFloatingSurface<SavedConnection>(context: context,
-        builder: (context) => ListView(shrinkWrap: true, children: [
-          ListTile(title: Text(Strings.of(context).botCreateOn)),
-          for (final connection in connections) ListTile(
-            title: Text(connection.label), leading: const Icon(Icons.dns_outlined),
-            onTap: () => Navigator.pop(context, connection)),
-        ]));
+      final selected = await showHermesFloatingSurface<SavedConnection>(
+        context: context,
+        builder: (context) => ListView(
+          shrinkWrap: true,
+          children: [
+            ListTile(title: Text(Strings.of(context).botCreateOn)),
+            for (final connection in connections)
+              ListTile(
+                title: Text(connection.label),
+                leading: Icon(instanceKindIcon(connection.kind)),
+                onTap: () => Navigator.pop(context, connection),
+              ),
+          ],
+        ),
+      );
       if (selected == null || !mounted) return;
       target = selected;
     }
@@ -1540,23 +2254,45 @@ class _MissionControlScreenState extends State<MissionControlScreen>
         profiles = await remote.listProfiles();
       }
       if (!mounted) return;
-      final created = await Navigator.of(context).push<String>(MaterialPageRoute(
-        fullscreenDialog: true,
-        builder: (_) => BotCreateScreen(connection: target,
-          existing: profiles.map((profile) => profile.name).toSet(),
-          gateway: target.id == widget.connection.id ? widget.botCreateGateway : null,
-          modelOptionsLoader: target.id == widget.connection.id ? widget.modelOptionsLoader : null),
-      ));
+      // Same create flow as Profiles: a bot is a profile.
+      final created = await openCreateProfile(
+        context,
+        connection: target,
+        existing: profiles.map((profile) => profile.name).toSet(),
+        gateway: target.id == widget.connection.id
+            ? widget.botCreateGateway
+            : null,
+        modelOptionsLoader: target.id == widget.connection.id
+            ? widget.modelOptionsLoader
+            : null,
+      );
       if (!mounted || created == null) return;
       if (remote != null) {
-        final profile = (await remote.listProfiles()).where((p) => p.name == created).single;
+        final profile = (await remote.listProfiles())
+            .where((p) => p.name == created)
+            .single;
         if (!mounted) return;
-        final session = Session(id: 'mob-bot-$created', title: 'Bot Chat',
-          model: profile.model, source: 'mobile-bot', messageCount: 0,
-          isActive: true, preview: '', startedAt: DateTime.now().millisecondsSinceEpoch / 1000,
-          profile: created, isDefaultProfile: false);
-        await openChatFromSection<void>(context, builder: (_) => buildBotChatDestination(
-          connection: target, session: session, initialStoredSessionId: null, profile: profile));
+        final session = Session(
+          id: 'mob-bot-$created',
+          title: 'Bot Chat',
+          model: profile.model,
+          source: 'mobile-bot',
+          messageCount: 0,
+          isActive: true,
+          preview: '',
+          startedAt: DateTime.now().millisecondsSinceEpoch / 1000,
+          profile: created,
+          isDefaultProfile: false,
+        );
+        await openChatFromSection<void>(
+          context,
+          builder: (_) => buildBotChatDestination(
+            connection: target,
+            session: session,
+            initialStoredSessionId: null,
+            profile: profile,
+          ),
+        );
         return;
       }
       await _load(refresh: true);
@@ -1570,7 +2306,10 @@ class _MissionControlScreenState extends State<MissionControlScreen>
       final freshSnapshot = _snapshot;
       if (freshSnapshot == null) return;
       for (final agent in _projection(freshSnapshot).agents) {
-        if (agent.profile.name == created) { await _openChat(agent); return; }
+        if (agent.profile.name == created) {
+          await _openChat(agent);
+          return;
+        }
       }
     } catch (_) {
       if (mounted) {
@@ -1579,7 +2318,9 @@ class _MissionControlScreenState extends State<MissionControlScreen>
           kind: HermesNoticeKind.error,
         );
       }
-    } finally { remoteLease?.release(); }
+    } finally {
+      remoteLease?.release();
+    }
   }
 
   Future<void> _showWorkspaceSelector() async {
@@ -1674,10 +2415,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
   Future<void> _openRoomActions(RoomRosterEntry entry) async {
     final snapshot = _snapshot;
     final roomId = entry.hostedRoomId;
-    if (snapshot == null || roomId == null) {
-      await _openRosterRoom(entry);
-      return;
-    }
+    if (snapshot == null || roomId == null) return;
     final room = snapshot.hostedGroups.rooms
         .where((r) => r.roomId == roomId && !r.disbanded)
         .firstOrNull;
@@ -1699,24 +2437,25 @@ class _MissionControlScreenState extends State<MissionControlScreen>
           maxWidth: 420,
           maxHeightFactor: 0.6,
           builder: (sheetContext) {
-            Widget item(String value, IconData icon, String label,
-                    {bool destructive = false}) =>
-                ListTile(
-                  key: ValueKey('roster-room-action-$value'),
-                  leading: Icon(
-                    icon,
-                    color: destructive
-                        ? Theme.of(sheetContext).hermes.error
-                        : null,
-                  ),
-                  title: Text(
-                    label,
-                    style: destructive
-                        ? TextStyle(color: Theme.of(sheetContext).hermes.error)
-                        : null,
-                  ),
-                  onTap: () => Navigator.pop(sheetContext, value),
-                );
+            Widget item(
+              String value,
+              IconData icon,
+              String label, {
+              bool destructive = false,
+            }) => ListTile(
+              key: ValueKey('roster-room-action-$value'),
+              leading: Icon(
+                icon,
+                color: destructive ? Theme.of(sheetContext).hermes.error : null,
+              ),
+              title: Text(
+                label,
+                style: destructive
+                    ? TextStyle(color: Theme.of(sheetContext).hermes.error)
+                    : null,
+              ),
+              onTap: () => Navigator.pop(sheetContext, value),
+            );
             return SafeArea(
               top: false,
               child: ListView(
@@ -1737,7 +2476,11 @@ class _MissionControlScreenState extends State<MissionControlScreen>
                     ),
                   ),
                   item('open', Icons.forum_outlined, strings.missionOpenRoom),
-                  item('members', Icons.group_outlined, strings.roomMenuMembers),
+                  item(
+                    'members',
+                    Icons.group_outlined,
+                    strings.roomMenuMembers,
+                  ),
                   if (can(GroupMethod.rename))
                     item('rename', Icons.edit_outlined, copy.renameSharedRoom),
                   if (can(GroupMethod.stop))
@@ -1797,8 +2540,11 @@ class _MissionControlScreenState extends State<MissionControlScreen>
         final name = await _promptRoomName(room.name);
         if (name == null || !mounted) return;
         await mutate(
-          (source, room, generation) =>
-              source.renameHostedGroup(room, name: name, generation: generation),
+          (source, room, generation) => source.renameHostedGroup(
+            room,
+            name: name,
+            generation: generation,
+          ),
         );
       case 'stop':
         if (!await _confirmRoomAction(copy.stopSharedRoom)) return;
@@ -1818,7 +2564,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
   Future<String?> _promptRoomName(String initial) async {
     final copy = MissionControlCopy.of(context);
     var value = initial;
-    return showDialog<String>(
+    return showHermesDialogRoute<String>(
       context: context,
       builder: (dialogContext) => AlertDialog(
         key: const ValueKey('roster-room-rename-dialog'),
@@ -1869,13 +2615,70 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     return mounted && confirmed == true;
   }
 
-
-
   MissionHostedGroupsDataSource? get _hostedGroupsDataSource {
     final source = _dataSource;
     return source is MissionHostedGroupsDataSource
         ? source as MissionHostedGroupsDataSource
         : null;
+  }
+
+  /// Reads of the open room, each under the generation live at that read:
+  /// a reconnect never leaves the room bound to the closed socket.
+  late final OpenHostedRoomReads _roomReads = OpenHostedRoomReads(
+    capabilities: _liveHostedCapabilities,
+    readUnder: (room, generation) =>
+        (_dataSource as MissionHostedGroupsReadDataSource).readHostedGroup(
+          room,
+          generation: generation,
+        ),
+    onProven: _adoptHostedCapabilities,
+  );
+
+  Future<GroupsCapabilities> _liveHostedCapabilities() async {
+    final source = _dataSource;
+    if (source is MissionHostedGroupsCapabilitySource) {
+      return (source as MissionHostedGroupsCapabilitySource)
+          .hostedGroupCapabilities();
+    }
+    final known = _snapshot?.hostedGroups.capabilities;
+    if (known == null) throw StateError('hosted group capability unavailable');
+    return known;
+  }
+
+  /// A room read proved [proven] live on the current socket: actions from
+  /// the open room (send, rename, stop, disband) use that generation from
+  /// now on instead of the closed socket's. Rooms keep their own authority
+  /// and are re-checked on every result.
+  void _adoptHostedCapabilities(GroupsCapabilities proven) {
+    final snapshot = _snapshot;
+    final current = snapshot?.hostedGroups.capabilities;
+    if (!mounted ||
+        snapshot == null ||
+        current == null ||
+        current.generation == proven.generation ||
+        current.connectionId != proven.connectionId) {
+      return;
+    }
+    final hosted = snapshot.hostedGroups;
+    setState(() {
+      _snapshot = MissionBackendSnapshot(
+        profiles: snapshot.profiles,
+        sessions: snapshot.sessions,
+        board: snapshot.board,
+        profilesCapability: snapshot.profilesCapability,
+        sessionsCapability: snapshot.sessionsCapability,
+        kanbanCapability: snapshot.kanbanCapability,
+        hostedGroups: HostedGroupsSnapshot(
+          capabilities: proven,
+          rooms: hosted.rooms,
+          logs: hosted.logs,
+          driverStatuses: hosted.driverStatuses,
+        ),
+        hostedGroupsCapability: snapshot.hostedGroupsCapability,
+        failures: snapshot.failures,
+        loadedAt: snapshot.loadedAt,
+      );
+    });
   }
 
   bool get _canCreateHostedRoom {
@@ -1890,31 +2693,60 @@ class _MissionControlScreenState extends State<MissionControlScreen>
   Future<List<_RoomPeerCandidate>> _loadRoomPeers() async {
     final home = _profileAssetsGateway;
     if (home is! BotRoomLinkGateway || widget.connection.readOnly) return [];
-    final capabilities = await (home as BotRoomLinkGateway).roomLinkRequest('groups.capabilities', {});
-    if (capabilities['driver'] != true || capabilities['methods'] is! List ||
-        !(capabilities['methods'] as List).contains('groups.peer.register')) { return []; }
-    final result = <_RoomPeerCandidate>[];
-    for (final connection in widget.connManager.getConnections()) {
-      if (connection.id == widget.connection.id || connection.readOnly) continue;
-      final lease = SharedGatewayPool.instance.acquire(connection);
-      final client = lease.client;
-      try {
-        for (final profile in await client.listProfiles(includeSessions: false)) {
-          final caps = await client.roomLinkRequest('groups.capabilities', {'profile': profile.name});
-          final catalog = BotRoomLink.catalog(caps, profile.name);
-          if (catalog != null && catalog['installation_id'] != capabilities['authority_gateway_id'] &&
-              caps['methods'] is List && (caps['methods'] as List).contains('groups.peer.invite')) {
-            final candidate = _RoomPeerCandidate(connection, profile, catalog);
-            if (!result.any((p) => p.key == candidate.key)) result.add(candidate);
-          }
-        }
-      } catch (_) { /* Unavailable connections never become selectable peers. */ }
-      finally { lease.release(); }
+    final capabilities = await (home as BotRoomLinkGateway).roomLinkRequest(
+      'groups.capabilities',
+      {},
+    );
+    if (capabilities['driver'] != true ||
+        capabilities['methods'] is! List ||
+        !(capabilities['methods'] as List).contains('groups.peer.register')) {
+      return [];
     }
-    return result;
+    final connections = widget.connManager.getConnections().where(
+      (c) => c.id != widget.connection.id && !c.readOnly,
+    );
+    return gatherRoomPeerCandidates<SavedConnection, _RoomPeerCandidate>(
+      connections: connections,
+      probeConnection: (connection) async {
+        final lease = SharedGatewayPool.instance.acquire(connection);
+        final client = lease.client;
+        try {
+          final profiles = await client.listProfiles(includeSessions: false);
+          // One socket per connection: its per-profile probes share it.
+          final probes = await Future.wait(
+            profiles.map((profile) async {
+              try {
+                final caps = await client.roomLinkRequest(
+                  'groups.capabilities',
+                  {'profile': profile.name},
+                );
+                final catalog = BotRoomLink.catalog(caps, profile.name);
+                if (catalog != null &&
+                    catalog['installation_id'] !=
+                        capabilities['authority_gateway_id'] &&
+                    caps['methods'] is List &&
+                    (caps['methods'] as List).contains('groups.peer.invite')) {
+                  return _RoomPeerCandidate(connection, profile, catalog);
+                }
+              } catch (_) {
+                /* That profile never becomes a selectable peer. */
+              }
+              return null;
+            }),
+          );
+          return probes.whereType<_RoomPeerCandidate>().toList();
+        } finally {
+          lease.release();
+        }
+      },
+      keyOf: (candidate) => candidate.key,
+    );
   }
 
-  Future<void> _attachRoomPeers(HostedGroupRoom room, List<_RoomPeerCandidate> peers) async {
+  Future<void> _attachRoomPeers(
+    HostedGroupRoom room,
+    List<_RoomPeerCandidate> peers,
+  ) async {
     final home = _profileAssetsGateway;
     if (home is! BotRoomLinkGateway || widget.connection.readOnly) return;
     final failed = <_RoomPeerCandidate>[];
@@ -1922,17 +2754,32 @@ class _MissionControlScreenState extends State<MissionControlScreen>
       final lease = SharedGatewayPool.instance.acquire(peer.connection);
       final client = lease.client;
       try {
-        if (!widget.connManager.getConnections().any((c) => c.id == peer.connection.id &&
-            !c.readOnly && c.gatewayUrl == peer.connection.gatewayUrl && c.apiKey == peer.connection.apiKey)) {
+        if (!widget.connManager.getConnections().any(
+          (c) =>
+              c.id == peer.connection.id &&
+              !c.readOnly &&
+              c.gatewayUrl == peer.connection.gatewayUrl &&
+              c.apiKey == peer.connection.apiKey,
+        )) {
           throw StateError('Room connection changed');
         }
-        final member = room.members.singleWhere((m) =>
-          m.owner.connectionId == peer.catalog['installation_id'] && m.owner.profile == peer.profile.name);
+        final member = room.members.singleWhere(
+          (m) =>
+              m.owner.connectionId == peer.catalog['installation_id'] &&
+              m.owner.profile == peer.profile.name,
+        );
         await BotRoomLink((home as BotRoomLinkGateway).roomLinkRequest).attach(
-          room: room, memberId: member.memberId, profile: peer.profile.name,
-          target: client.roomLinkRequest, expectedCatalog: peer.catalog);
-      } catch (_) { failed.add(peer); }
-      finally { lease.release(); }
+          room: room,
+          memberId: member.memberId,
+          profile: peer.profile.name,
+          target: client.roomLinkRequest,
+          expectedCatalog: peer.catalog,
+        );
+      } catch (_) {
+        failed.add(peer);
+      } finally {
+        lease.release();
+      }
     }
     if (mounted && failed.isNotEmpty) {
       final s = Strings.of(context);
@@ -1966,17 +2813,21 @@ class _MissionControlScreenState extends State<MissionControlScreen>
         !mounted) {
       return;
     }
-    final draft = await showHermesFloatingSurface<_HostedGroupDraft>(
-      context: context,
-      surfaceKey: const ValueKey('mission-hosted-create-dialog'),
-      maxWidth: 480,
-      maxHeightFactor: 0.84,
+    final draft = await pushHermesFormPage<_HostedGroupDraft>(
+      context,
+      name: 'mission-hosted-create',
       builder: (dialogContext) => _HostedGroupCreateDialog(
         copy: MissionControlCopy.of(dialogContext),
         connectionId: widget.connection.id,
         profiles: snapshot.profiles,
         initialProfile: initialProfile,
-        loadPeers: _profileAssetsGateway is BotRoomLinkGateway && widget.connManager.getConnections().any((c) => c.id != widget.connection.id && !c.readOnly) ? _loadRoomPeers : null,
+        loadPeers:
+            _profileAssetsGateway is BotRoomLinkGateway &&
+                widget.connManager.getConnections().any(
+                  (c) => c.id != widget.connection.id && !c.readOnly,
+                )
+            ? _loadRoomPeers
+            : null,
         avatarCache: _profileAvatarCache,
       ),
     );
@@ -2043,7 +2894,10 @@ class _MissionControlScreenState extends State<MissionControlScreen>
         source == null ||
         capabilities == null ||
         index < 0 ||
-        index >= snapshot.hostedGroups.rooms.length) {
+        index >= snapshot.hostedGroups.rooms.length ||
+        // A room read already started on a newer socket: this generation
+        // belongs to a closed one and nothing is sent under it.
+        _roomReads.supersedes(capabilities.generation)) {
       throw StateError('hosted room authority unavailable');
     }
     try {
@@ -2063,13 +2917,21 @@ class _MissionControlScreenState extends State<MissionControlScreen>
       }
       final rooms = [...snapshot.hostedGroups.rooms];
       final logs = [...snapshot.hostedGroups.logs];
+      // Only the mutated room's driver evidence may change: every other
+      // room keeps its approvals and working state until the next load.
+      final driverStatuses = {...snapshot.hostedGroups.driverStatuses};
+      final roomId = result.room.roomId;
       if (result.room.disbanded) {
         rooms.removeAt(index);
         if (index < logs.length) logs.removeAt(index);
+        driverStatuses.remove(roomId);
       } else {
         rooms[index] = result.room;
         if (result.log != null && index < logs.length) {
           logs[index] = result.log!;
+        }
+        if (result.driverStatus case final status?) {
+          driverStatuses[roomId] = status;
         }
       }
       setState(() {
@@ -2084,16 +2946,21 @@ class _MissionControlScreenState extends State<MissionControlScreen>
             capabilities: capabilities,
             rooms: List.unmodifiable(rooms),
             logs: List.unmodifiable(logs),
+            driverStatuses: Map.unmodifiable(driverStatuses),
           ),
           hostedGroupsCapability: snapshot.hostedGroupsCapability,
           failures: snapshot.failures,
           loadedAt: snapshot.loadedAt,
+          activeSessions: snapshot.activeSessions,
+          activeSessionsObservedAt: snapshot.activeSessionsObservedAt,
+          activeSessionsAuthoritative: snapshot.activeSessionsAuthoritative,
         );
       });
       return HostedGroupWorkspaceReadback(
         room: result.room,
         log: result.log,
         capabilityGeneration: result.capabilityGeneration,
+        driverStatus: result.driverStatus,
       );
     } catch (error) {
       debugPrint(
@@ -2112,7 +2979,14 @@ class _MissionControlScreenState extends State<MissionControlScreen>
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => EnclosingRoute(
+    onRoute: (route) => _ownRoute = route,
+    // This route is the Bots home: the dock's Bots item leads back here
+    // from any screen opened above it.
+    child: BotsHomeAnchor(child: _buildScreen(context)),
+  );
+
+  Widget _buildScreen(BuildContext context) {
     _renderedLiveFingerprint = _liveFingerprint();
     final copy = MissionControlCopy.of(context);
     final snapshot = _snapshot;
@@ -2133,81 +3007,103 @@ class _MissionControlScreenState extends State<MissionControlScreen>
       ),
       appBar: HermesAppBar(
         titleSpacing: 0,
-        title: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-          child: Column(
-            key: const ValueKey('mission-title'),
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                copy.title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: -0.3,
-                ),
-              ),
-              if (_selectedOrganization case final organization?)
-                Text(
-                  organization.name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: Theme.of(context).hermes.textSecondary,
-                    fontSize: 10.5,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-            ],
+        title: Text(
+          copy.title,
+          key: const ValueKey('mission-title'),
+          style: const TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.w700,
+            letterSpacing: -0.3,
           ),
         ),
+        // The organisation the list is limited to, when there is one.
+        titleBadge: switch (_selectedOrganization) {
+          final organization? => HermesTitleBadge(
+            organization.name,
+            key: const ValueKey('mission-title-organization'),
+          ),
+          null => null,
+        },
         actions: _headerActions(copy),
       ),
-      body: LayoutBuilder(
-        builder: (context, constraints) {
-          final media = MediaQuery.of(context);
-          _surfaceCoordinator.updateViewport(
-            postLayoutSize: constraints.biggest,
-            safePadding: media.padding,
-            viewInsets: media.viewInsets,
-            textScale: media.textScaler.scale(1),
-            reducedMotion: media.disableAnimations,
-          );
-          return Stack(
-            fit: StackFit.expand,
-            children: [
-              Padding(
-                padding: EdgeInsets.only(
-                  bottom: _surfaceCoordinator.scrollReservation,
+      // The Bots home carries the dock even while the bar is not mounted
+      // (the route covered, the app in the background).
+      body: DockScreen(
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            // Aspect reads only: a full MediaQuery.of would rebuild the whole
+            // Bots body on any MediaQuery change.
+            _surfaceCoordinator.updateViewport(
+              postLayoutSize: constraints.biggest,
+              safePadding: MediaQuery.paddingOf(context),
+              viewInsets: MediaQuery.viewInsetsOf(context),
+              textScale: MediaQuery.textScalerOf(context).scale(1),
+              reducedMotion: MediaQuery.disableAnimationsOf(context),
+            );
+            final body = _buildBody(copy);
+            return Stack(
+              fit: StackFit.expand,
+              children: [
+                // With the gesture dock flag on, the body keeps the unified
+                // dock's footprint instead of the Bots bar's reservation.
+                ValueListenableBuilder<bool>(
+                  valueListenable: FeatureFlags.instance.gestureDock,
+                  builder: (context, gestureDock, child) => Padding(
+                    padding: EdgeInsets.only(
+                      bottom: gestureDock
+                          ? gestureDockFootprint(context)
+                          : _surfaceCoordinator.scrollReservation,
+                    ),
+                    child: child,
+                  ),
+                  // Nothing passes behind the dock: the roster dissolves into
+                  // the page just before it, and stays open upwards so it
+                  // scrolls under the floating header.
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      HermesOpenTopClip(child: body),
+                      const Positioned(
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        child: HermesBottomFade(
+                          key: ValueKey('dock-body-fade'),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-                child: _buildBody(copy),
-              ),
-              AnimatedBuilder(
-                animation: _surfaceCoordinator,
-                builder: (context, _) => _surfaceCoordinator.dockVisible
-                    ? Dock(
-                        profileId: DockProfileId.bots,
-                        coordinator: _surfaceCoordinator,
-                        // Mismo inset que reserva el cuerpo de esta pantalla
-                        // (`scrollReservation`), para que dock y contenido no
-                        // discrepen.
-                        bottomInset: _surfaceCoordinator.bottomInset,
-                        showBackContext: dockShowsBack(context),
-                        onBack: () => Navigator.of(context).maybePop(),
-                        // El "+" de Bots no ejecuta una acción única: abre la
-                        // bandeja con estas dos órbitas de creación (capa
-                        // opcional del dock; el perfil General no la usa).
-                        createOrbits: _botDockCreateOrbits(copy),
-                        actions: _botDockActions(),
-                      )
-                    : const SizedBox.shrink(),
-              ),
-            ],
-          );
-        },
+                AnimatedBuilder(
+                  animation: _surfaceCoordinator,
+                  builder: (context, _) => _surfaceCoordinator.dockVisible
+                      ? Dock(
+                          profileId: DockProfileId.bots,
+                          // This is the Bots home: Bots is the item it is
+                          // (`_botDockActions` marks it selected), Inicio
+                          // leaves for the General Home, and Nuevo opens a
+                          // chat with the active profile.
+                          connection: widget.connection,
+                          connManager: widget.connManager,
+                          coordinator: _surfaceCoordinator,
+                          // Mismo inset que reserva el cuerpo de esta pantalla
+                          // (`scrollReservation`), para que dock y contenido no
+                          // discrepen.
+                          bottomInset: _surfaceCoordinator.bottomInset,
+                          showBackContext: dockShowsBack(context),
+                          onBack: () => Navigator.of(context).maybePop(),
+                          // El "+" de Bots no ejecuta una acción única: abre la
+                          // bandeja con estas dos órbitas de creación (capa
+                          // opcional del dock; el perfil General no la usa).
+                          createOrbits: _botDockCreateOrbits(copy),
+                          actions: _botDockActions(),
+                        )
+                      : const SizedBox.shrink(),
+                ),
+              ],
+            );
+          },
+        ),
       ),
     );
   }
@@ -2216,15 +3112,9 @@ class _MissionControlScreenState extends State<MissionControlScreen>
   /// (New bot / New room / task board + roster management) — no floating
   /// action button, so nothing competes with the dock.
   List<Widget> _headerActions(MissionControlCopy copy) {
-    final colors = Theme.of(context).hermes;
     final strings = Strings.of(context);
-    final round = IconButton.styleFrom(
-      backgroundColor: colors.surfaceVariant.withValues(alpha: 0.44),
-      minimumSize: const Size.square(48),
-      shape: const CircleBorder(),
-    );
     return [
-      if (_refreshing)
+      if (_refreshing && !_quietRefresh)
         const Padding(
           padding: EdgeInsets.all(14),
           child: SizedBox.square(
@@ -2232,31 +3122,22 @@ class _MissionControlScreenState extends State<MissionControlScreen>
             child: CircularProgressIndicator(strokeWidth: 2),
           ),
         ),
-      ValueListenableBuilder<bool>(
+      // Plain icon buttons: the header puts them together in its pill.
+      IconButton(
+        key: const ValueKey('roster-search'),
+        tooltip: strings.rosterSearch,
+        icon: ValueListenableBuilder<bool>(
           valueListenable: _rosterSearchOpen,
-          builder: (context, open, _) => Padding(
-            padding: const EdgeInsetsDirectional.only(end: 6),
-            child: IconButton(
-              key: const ValueKey('roster-search'),
-              tooltip: strings.rosterSearch,
-              style: round,
-              icon: Icon(
-                open ? Icons.close_rounded : Icons.search_rounded,
-                size: 21,
-              ),
-              onPressed: () => _rosterSearchOpen.value = !open,
-            ),
-          ),
+          builder: (context, open, _) =>
+              Icon(open ? Icons.close_rounded : Icons.search_rounded, size: 21),
         ),
-      Padding(
-        padding: const EdgeInsetsDirectional.only(end: 10),
-        child: IconButton(
-          key: const ValueKey('mission-create-agent'),
-          tooltip: strings.rosterNew,
-          style: round,
-          icon: const Icon(Icons.add_rounded, size: 22),
-          onPressed: _hasNewMenu ? () => unawaited(_showNewMenu()) : null,
-        ),
+        onPressed: () => _rosterSearchOpen.value = !_rosterSearchOpen.value,
+      ),
+      IconButton(
+        key: const ValueKey('mission-create-agent'),
+        tooltip: strings.rosterNew,
+        icon: const Icon(Icons.add_rounded, size: 22),
+        onPressed: _hasNewMenu ? () => unawaited(_showNewMenu()) : null,
       ),
     ];
   }
@@ -2269,7 +3150,9 @@ class _MissionControlScreenState extends State<MissionControlScreen>
       !widget.connection.readOnly && _botProfileGateway != null;
 
   bool get _hasNewMenu =>
-      _canCreateBot || _canCreateHostedRoom || _canManageSections ||
+      _canCreateBot ||
+      _canCreateHostedRoom ||
+      _canManageSections ||
       _snapshot != null;
 
   Future<void> _showNewMenu() async {
@@ -2292,7 +3175,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
           if (_canCreateBot)
             ListTile(
               key: const ValueKey('mission-create-chooser-bot'),
-              leading: const Icon(Icons.smart_toy_outlined),
+              leading: const Icon(Icons.account_circle_outlined),
               title: Text(strings.missionCreateBotLabel),
               onTap: () => Navigator.pop(sheetContext, 'bot'),
             ),
@@ -2421,7 +3304,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
       DockCreateOrbit(
         controlKey: const ValueKey('bot-mode-create-bot'),
         label: strings.missionCreateBotLabel,
-        icon: Icons.smart_toy_outlined,
+        icon: Icons.account_circle_outlined,
         onTap:
             widget.connection.readOnly ||
                 snapshot?.profilesCapability != MissionCapabilityState.available
@@ -2499,6 +3382,12 @@ class _MissionControlScreenState extends State<MissionControlScreen>
           ),
         Expanded(
           child: _BotsTab(
+            // With a notice above it the roster ends at its own edge.
+            underHeader:
+                _loadFailure == null &&
+                unavailableSources.isEmpty &&
+                projection.missingProfileCount == 0 &&
+                projection.unattributedSessionCount == 0,
             prefs: widget.connManager.prefs,
             connectionId: widget.connection.id,
             snapshot: snapshot,
@@ -2517,10 +3406,8 @@ class _MissionControlScreenState extends State<MissionControlScreen>
             remoteBotLoader: widget.remoteBotLoader,
             onRemoteOpen: _openRemoteBot,
             onRemoteDetails: _remoteBotDetails,
-            onSectionMenu: _canManageSections ? _sectionMenu : null,
             onAttention:
-                projection.approvals.isNotEmpty ||
-                    projection.blockedCount > 0
+                projection.approvals.isNotEmpty || projection.blockedCount > 0
                 ? () => unawaited(_openAttention())
                 : null,
             attentionSummary: copy.attentionSummary(
@@ -2528,12 +3415,38 @@ class _MissionControlScreenState extends State<MissionControlScreen>
               projection.blockedCount,
             ),
             onCreateAgent: _canCreateBot ? _createAgentFromMission : null,
-            onRefresh: () => _load(refresh: true),
+            onRefresh: _pullRefresh,
           ),
         ),
       ],
     );
   }
+}
+
+/// Probes every connection at once and returns their candidates in
+/// connection order, first key wins. A connection whose probe throws
+/// contributes nothing: unavailable connections never become peers.
+@visibleForTesting
+Future<List<R>> gatherRoomPeerCandidates<C, R>({
+  required Iterable<C> connections,
+  required Future<List<R>> Function(C connection) probeConnection,
+  required String Function(R candidate) keyOf,
+}) async {
+  final perConnection = await Future.wait(
+    connections.map((connection) async {
+      try {
+        return await probeConnection(connection);
+      } catch (_) {
+        return <R>[];
+      }
+    }),
+  );
+  final seen = <String>{};
+  return [
+    for (final candidates in perConnection)
+      for (final candidate in candidates)
+        if (seen.add(keyOf(candidate))) candidate,
+  ];
 }
 
 final class _RoomPeerCandidate {
@@ -2549,7 +3462,11 @@ final class _HostedGroupDraft {
   final List<HostedGroupCreateMember> members;
 
   final List<_RoomPeerCandidate> peers;
-  const _HostedGroupDraft({required this.name, required this.members, this.peers = const []});
+  const _HostedGroupDraft({
+    required this.name,
+    required this.members,
+    this.peers = const [],
+  });
 }
 
 class _HostedGroupCreateDialog extends StatefulWidget {
@@ -2585,15 +3502,24 @@ class _HostedGroupCreateDialogState extends State<_HostedGroupCreateDialog> {
     setState(() => _peersLoading = true);
     try {
       final peers = await widget.loadPeers!();
-      if (mounted) setState(() { _peers = peers; _selectedPeers.retainAll(peers.map((p) => p.key)); });
-    } catch (_) { if (mounted) setState(() => _peers = []); }
-    finally { if (mounted) setState(() => _peersLoading = false); }
+      if (mounted) {
+        setState(() {
+          _peers = peers;
+          _selectedPeers.retainAll(peers.map((p) => p.key));
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() => _peers = []);
+    } finally {
+      if (mounted) setState(() => _peersLoading = false);
+    }
   }
 
   @override
   void initState() {
     super.initState();
-    if (widget.initialProfile != null && widget.profiles.any((p) => p.name == widget.initialProfile)) {
+    if (widget.initialProfile != null &&
+        widget.profiles.any((p) => p.name == widget.initialProfile)) {
       _selected.add(widget.initialProfile!);
     }
   }
@@ -2632,20 +3558,41 @@ class _HostedGroupCreateDialogState extends State<_HostedGroupCreateDialog> {
     if (name.isEmpty || (_selected.isEmpty && _selectedPeers.isEmpty)) return;
     final members = <HostedGroupCreateMember>[
       for (final profile in widget.profiles)
-        if (_selected.contains(profile.name)) HostedGroupCreateMember.localProfile(profile: profile.name, handle: profile.name),
+        if (_selected.contains(profile.name))
+          HostedGroupCreateMember.localProfile(
+            profile: profile.name,
+            handle: profile.name,
+          ),
     ];
-    final peers = [for (final peer in _peers ?? <_RoomPeerCandidate>[]) if (_selectedPeers.contains(peer.key)) peer];
+    final peers = [
+      for (final peer in _peers ?? <_RoomPeerCandidate>[])
+        if (_selectedPeers.contains(peer.key)) peer,
+    ];
     final handles = members.map((m) => m.handle).toSet();
     for (final peer in peers) {
       var suffix = 1;
       var handle = peer.profile.name;
-      while (!handles.add(handle)) { handle = '${peer.profile.name}-${suffix++}'; }
-      members.add(HostedGroupCreateMember.peer(profile: peer.profile.name, handle: handle,
-        peerId: peer.catalog['installation_id'] as String,
-        installationId: peer.catalog['installation_id'] as String,
-        capabilityDigest: peer.catalog['catalog_digest'] as String));
+      while (!handles.add(handle)) {
+        handle = '${peer.profile.name}-${suffix++}';
+      }
+      members.add(
+        HostedGroupCreateMember.peer(
+          profile: peer.profile.name,
+          handle: handle,
+          peerId: peer.catalog['installation_id'] as String,
+          installationId: peer.catalog['installation_id'] as String,
+          capabilityDigest: peer.catalog['catalog_digest'] as String,
+        ),
+      );
     }
-    Navigator.pop(context, _HostedGroupDraft(name: name, members: List.unmodifiable(members), peers: peers));
+    Navigator.pop(
+      context,
+      _HostedGroupDraft(
+        name: name,
+        members: List.unmodifiable(members),
+        peers: peers,
+      ),
+    );
   }
 
   void _toggle(String profileName) => setState(() {
@@ -2661,196 +3608,153 @@ class _HostedGroupCreateDialogState extends State<_HostedGroupCreateDialog> {
     final colors = Theme.of(context).hermes;
     final extra = _RoomsAreaCopy.of(context);
     final visibleProfiles = _visibleProfiles;
-    final canSubmit = _name.text.trim().isNotEmpty && (_selected.isNotEmpty || _selectedPeers.isNotEmpty);
-    // El inset del teclado NO se vuelve a sumar aquí. La superficie flotante
-    // (`_HermesFloatingSurfaceFrame`, `hermes_premium_ui.dart`) ya lo aplica
-    // dos veces por su cuenta: desplaza el diálogo con
-    // `padding.bottom = viewInsets.bottom` Y le recorta esa misma cantidad al
-    // `maxHeight`. Un `20 + viewInsets.bottom` interno contaba el teclado por
-    // tercera vez DENTRO de una caja ya encogida: con un teclado real de
-    // ~280-320 px la altura utilizable caía a unos pocos píxeles, así que
-    // título, campo y lista quedaban aplastados/invisibles y los botones
-    // fuera de la superficie. Eso es el diálogo "trabado" reportado en
-    // dispositivo real DESPUÉS de arreglar el desbordamiento de la lista (el
-    // parche anterior movió todo a un único scroll, pero el inset doble
-    // seguía dejando ese scroll con 0 px de alto útil, y con `autofocus` el
-    // teclado se abre solo al entrar, así que el diálogo nacía ya trabado).
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          // Todo el bloque de arriba (título, nombre, lista de miembros) va
-          // en un único scroll: antes la lista tenía su propio tope fijo de
-          // 320px vía `Flexible`+`ConstrainedBox` sin que nada por encima
-          // pudiera ceder espacio, así que en cuanto el teclado se abría (el
-          // `maxHeight` del surface flotante ya descuenta `viewInsets.bottom`,
-          // ver `_HermesFloatingSurfaceFrame`) el contenido fijo ya no cabía
-          // y desbordaba (barra de overflow amarilla/negra, confirmado en
-          // dispositivo real). Los botones quedan fuera del scroll para que
-          // sigan siempre visibles.
-          Flexible(
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Text(
-                    widget.copy.createSharedRoom,
-                    style: Theme.of(context).textTheme.titleLarge,
-                  ),
-                  const SizedBox(height: 18),
-                  TextField(
-                    key: const ValueKey('mission-hosted-create-name'),
-                    controller: _name,
-                    // El `autofocus` abría el teclado nada más entrar, y con
-                    // el diálogo ya sin margen vertical (ver el comentario de
-                    // `build()` sobre el inset del surface flotante) eso
-                    // dejaba la lista de bots reducida a una rendija de
-                    // media fila — "se ve todo cortito" / "cuando se abre el
-                    // teclado es terrible", confirmado en dispositivo real.
-                    // Sin autofocus el diálogo nace con el teclado cerrado y
-                    // la lista entera visible; el teclado solo aparece si el
-                    // usuario toca el campo a propósito.
-                    maxLength: 200,
-                    textInputAction: TextInputAction.done,
-                    onSubmitted: (_) => FocusScope.of(context).unfocus(),
-                    decoration: InputDecoration(
-                      labelText: widget.copy.sharedRoomName,
-                    ),
-                    onChanged: (_) => setState(() {}),
-                  ),
-                  const SizedBox(height: 18),
-                  // Cabecera de la selección: instrucción + cuántos van
-                  // elegidos ahora mismo. Sin este recuento la única señal de
-                  // que la lista es multi-selección era el propio estado de
-                  // las filas, y no se leía como algo que haya que completar
-                  // antes de poder guardar.
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          widget.copy.chooseSharedMembers,
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                            color: colors.textSecondary,
-                          ),
-                        ),
-                      ),
-                      if (_selected.isNotEmpty || _selectedPeers.isNotEmpty)
-                        Text(
-                          widget.copy.roomMemberCount(_selected.length + _selectedPeers.length),
-                          key: const ValueKey(
-                            'mission-hosted-create-selected-count',
-                          ),
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                            color: colors.accentText,
-                          ),
-                        ),
-                    ],
-                  ),
-                  // Los elegidos suben arriba como pills quitables. Es la
-                  // respuesta directa al "todos aparecen apilados en un
-                  // montón": lo que llevas hecho deja de estar escondido
-                  // dentro de N filas casi idénticas y se ve como una lista
-                  // corta, propia y editable.
-                  const SizedBox(height: 10),
-                  _HostedGroupChosenStrip(
-                    profiles: widget.profiles,
-                    selected: _selected,
-                    avatarCache: widget.avatarCache,
-                    extra: extra,
-                    onRemove: _toggle,
-                  ),
-                  if (_canFilter) ...[
-                    const SizedBox(height: 12),
-                    TextField(
-                      key: const ValueKey('mission-hosted-create-filter'),
-                      controller: _filter,
-                      textInputAction: TextInputAction.search,
-                      decoration: InputDecoration(
-                        isDense: true,
-                        prefixIcon: const Icon(Icons.search_rounded, size: 19),
-                        hintText: widget.copy.searchAgents,
-                        suffixIcon: _filter.text.isEmpty
-                            ? null
-                            : IconButton(
-                                key: const ValueKey(
-                                  'mission-hosted-create-filter-clear',
-                                ),
-                                tooltip: widget.copy.clearSearch,
-                                onPressed: () =>
-                                    setState(() => _filter.clear()),
-                                icon: const Icon(Icons.close_rounded, size: 18),
-                              ),
-                      ),
-                      onChanged: (_) => setState(() {}),
-                    ),
-                  ],
-                  const SizedBox(height: 10),
-                  if (visibleProfiles.isEmpty)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 10),
-                      child: Text(
-                        widget.copy.noMatchingAgents,
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: colors.textSecondary,
-                        ),
-                      ),
-                    )
-                  else
-                    for (final profile in visibleProfiles)
-                      _HostedGroupMemberOption(
-                        key: ValueKey(
-                          'mission-hosted-create-member-${profile.name}',
-                        ),
-                        profile: profile,
-                        avatarCache: widget.avatarCache,
-                        selected: _selected.contains(profile.name),
-                        onTap: () => _toggle(profile.name),
-                      ),
-                  if (widget.loadPeers != null) ...[
-                    TextButton.icon(onPressed: _peersLoading ? null : _readPeers,
-                      icon: const Icon(Icons.public), label: Text(Strings.of(context).botOtherConnections)),
-                    if (_peersLoading) const LinearProgressIndicator(),
-                    if (_peers != null && _peers!.isEmpty) Text(Strings.of(context).botRoomLinkUnavailable),
-                    for (final peer in _peers ?? <_RoomPeerCandidate>[])
-                      CheckboxListTile(contentPadding: EdgeInsets.zero,
-                        title: Text(peer.profile.botTitle ?? peer.profile.name),
-                        subtitle: Text(peer.connection.label),
-                        value: _selectedPeers.contains(peer.key),
-                        onChanged: (v) => setState(() { if (v == true) { _selectedPeers.add(peer.key); } else { _selectedPeers.remove(peer.key); } })),
-                  ],
-                ],
+    final canSubmit =
+        _name.text.trim().isNotEmpty &&
+        (_selected.isNotEmpty || _selectedPeers.isNotEmpty);
+    // A full-screen page (owner: create windows were tiny with a mini
+    // scroll). The Scaffold takes the keyboard inset once and the member
+    // list shares the single page scroll, so nothing is squashed when the
+    // keyboard opens; Save stays in the top bar.
+    return HermesFormPage(
+      bodyKey: const ValueKey('mission-hosted-create-dialog'),
+      title: widget.copy.createSharedRoom,
+      submitLabel: widget.copy.save,
+      submitKey: const ValueKey('mission-hosted-create-confirm'),
+      onSubmit: canSubmit ? _submit : null,
+      dirty:
+          _name.text.trim().isNotEmpty ||
+          _selected.isNotEmpty ||
+          _selectedPeers.isNotEmpty,
+      children: [
+        const SizedBox(height: 4),
+        TextField(
+          key: const ValueKey('mission-hosted-create-name'),
+          controller: _name,
+          // El `autofocus` abría el teclado nada más entrar, y con
+          // el diálogo ya sin margen vertical (ver el comentario de
+          // `build()` sobre el inset del surface flotante) eso
+          // dejaba la lista de bots reducida a una rendija de
+          // media fila — "se ve todo cortito" / "cuando se abre el
+          // teclado es terrible", confirmado en dispositivo real.
+          // Sin autofocus el diálogo nace con el teclado cerrado y
+          // la lista entera visible; el teclado solo aparece si el
+          // usuario toca el campo a propósito.
+          maxLength: 200,
+          textInputAction: TextInputAction.done,
+          onSubmitted: (_) => FocusScope.of(context).unfocus(),
+          decoration: InputDecoration(labelText: widget.copy.sharedRoomName),
+          onChanged: (_) => setState(() {}),
+        ),
+        const SizedBox(height: 18),
+        // Cabecera de la selección: instrucción + cuántos van
+        // elegidos ahora mismo. Sin este recuento la única señal de
+        // que la lista es multi-selección era el propio estado de
+        // las filas, y no se leía como algo que haya que completar
+        // antes de poder guardar.
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                widget.copy.chooseSharedMembers,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: colors.textSecondary,
+                ),
               ),
             ),
-          ),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              Expanded(
-                child: TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: Text(widget.copy.cancel),
+            if (_selected.isNotEmpty || _selectedPeers.isNotEmpty)
+              Text(
+                widget.copy.roomMemberCount(
+                  _selected.length + _selectedPeers.length,
+                ),
+                key: const ValueKey('mission-hosted-create-selected-count'),
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: colors.accentText,
                 ),
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: FilledButton(
-                  key: const ValueKey('mission-hosted-create-confirm'),
-                  onPressed: canSubmit ? _submit : null,
-                  child: Text(widget.copy.save),
-                ),
-              ),
-            ],
+          ],
+        ),
+        // Los elegidos suben arriba como pills quitables. Es la
+        // respuesta directa al "todos aparecen apilados en un
+        // montón": lo que llevas hecho deja de estar escondido
+        // dentro de N filas casi idénticas y se ve como una lista
+        // corta, propia y editable.
+        const SizedBox(height: 10),
+        _HostedGroupChosenStrip(
+          profiles: widget.profiles,
+          selected: _selected,
+          avatarCache: widget.avatarCache,
+          extra: extra,
+          onRemove: _toggle,
+        ),
+        if (_canFilter) ...[
+          const SizedBox(height: 12),
+          TextField(
+            key: const ValueKey('mission-hosted-create-filter'),
+            controller: _filter,
+            textInputAction: TextInputAction.search,
+            decoration: InputDecoration(
+              isDense: true,
+              prefixIcon: const Icon(Icons.search_rounded, size: 19),
+              hintText: widget.copy.searchAgents,
+              suffixIcon: _filter.text.isEmpty
+                  ? null
+                  : IconButton(
+                      key: const ValueKey('mission-hosted-create-filter-clear'),
+                      tooltip: widget.copy.clearSearch,
+                      onPressed: () => setState(() => _filter.clear()),
+                      icon: const Icon(Icons.close_rounded, size: 18),
+                    ),
+            ),
+            onChanged: (_) => setState(() {}),
           ),
         ],
-      ),
+        const SizedBox(height: 10),
+        if (visibleProfiles.isEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 10),
+            child: Text(
+              widget.copy.noMatchingAgents,
+              style: TextStyle(fontSize: 13, color: colors.textSecondary),
+            ),
+          )
+        else
+          for (final profile in visibleProfiles)
+            _HostedGroupMemberOption(
+              key: ValueKey('mission-hosted-create-member-${profile.name}'),
+              profile: profile,
+              avatarCache: widget.avatarCache,
+              selected: _selected.contains(profile.name),
+              onTap: () => _toggle(profile.name),
+            ),
+        if (widget.loadPeers != null) ...[
+          TextButton.icon(
+            onPressed: _peersLoading ? null : _readPeers,
+            icon: const Icon(Icons.public),
+            label: Text(Strings.of(context).botOtherConnections),
+          ),
+          if (_peersLoading) const LinearProgressIndicator(),
+          if (_peers != null && _peers!.isEmpty)
+            Text(Strings.of(context).botRoomLinkUnavailable),
+          for (final peer in _peers ?? <_RoomPeerCandidate>[])
+            CheckboxListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text(peer.profile.botTitle ?? peer.profile.name),
+              subtitle: Text(peer.connection.label),
+              value: _selectedPeers.contains(peer.key),
+              onChanged: (v) => setState(() {
+                if (v == true) {
+                  _selectedPeers.add(peer.key);
+                } else {
+                  _selectedPeers.remove(peer.key);
+                }
+              }),
+            ),
+        ],
+      ],
     );
   }
 }
@@ -2888,7 +3792,7 @@ class _HostedGroupChosenStrip extends StatelessWidget {
       return Text(
         extra.noMembersChosen,
         key: const ValueKey('mission-hosted-create-chosen-empty'),
-        style: TextStyle(fontSize: 12.5, color: colors.textDisabled),
+        style: TextStyle(fontSize: 12.5, color: colors.textTertiary),
       );
     }
     return Wrap(
@@ -2919,7 +3823,7 @@ class _HostedGroupChosenStrip extends StatelessWidget {
                         cache: avatarCache,
                         size: 22,
                         shape: profile.botShape,
-                        colorHex: profile.botColorHex,
+                        colorHex: profile.botFaceColorHex,
                         imageKind: profile.botImageKind,
                       ),
                       const SizedBox(width: 7),
@@ -3008,7 +3912,7 @@ class _HostedGroupMemberOption extends StatelessWidget {
                     cache: avatarCache,
                     size: 38,
                     shape: profile.botShape,
-                    colorHex: profile.botColorHex,
+                    colorHex: profile.botFaceColorHex,
                     imageKind: profile.botImageKind,
                   ),
                   const SizedBox(width: 12),
@@ -3171,7 +4075,7 @@ class _WorkspaceSheet extends StatelessWidget {
                         if (organization.id == selectedId)
                           Icon(Icons.check_rounded, color: colors.accentText),
                         if (!readOnly)
-                          PopupMenuButton<_WorkspaceActionKind>(
+                          HermesMenuButton<_WorkspaceActionKind>(
                             key: ValueKey(
                               'mission-workspace-menu-${organization.id}',
                             ),
@@ -3180,17 +4084,15 @@ class _WorkspaceSheet extends StatelessWidget {
                               context,
                               _WorkspaceAction(kind, organization),
                             ),
-                            itemBuilder: (_) => [
-                              PopupMenuItem(
+                            actions: (_) => [
+                              HermesAction(
                                 value: _WorkspaceActionKind.edit,
-                                child: Text(copy.editOrganization),
+                                label: copy.editOrganization,
                               ),
-                              PopupMenuItem(
+                              HermesAction(
                                 value: _WorkspaceActionKind.delete,
-                                child: Text(
-                                  copy.delete,
-                                  style: TextStyle(color: colors.error),
-                                ),
+                                label: copy.delete,
+                                destructive: true,
                               ),
                             ],
                           ),
@@ -3229,10 +4131,14 @@ class _WorkspaceSheet extends StatelessWidget {
   }
 }
 
-/// Bots roster (spec 070 S1) over [BotsRosterView]: server-sourced rows for
-/// bots (presence, canonical preview/time, `ui_meta` pins/sections/hidden)
-/// and rooms (hosted `groups.*` plus read-only Desktop projection).
+/// Bots home (Dots style, owner variant C) over [DotsHomeView]: the main
+/// bot on top, the team grid and the room cards, all derived from this
+/// screen's one snapshot (presence from each canonical Bot Chat, canonical
+/// preview/time, `ui_meta` pins/hidden) plus the hosted `groups.*` rooms.
 class _BotsTab extends StatefulWidget {
+  /// The roster is the first thing in the page: it may scroll under the
+  /// floating header.
+  final bool underHeader;
   final SharedPreferences prefs;
   final String connectionId;
   final MissionBackendSnapshot snapshot;
@@ -3248,13 +4154,13 @@ class _BotsTab extends StatefulWidget {
   final RemoteBotLoader? remoteBotLoader;
   final void Function(SavedConnection, AgentProfile) onRemoteOpen;
   final void Function(SavedConnection, AgentProfile) onRemoteDetails;
-  final void Function(String sectionId, String name)? onSectionMenu;
   final VoidCallback? onAttention;
   final String? attentionSummary;
   final VoidCallback? onCreateAgent;
   final Future<void> Function() onRefresh;
 
   const _BotsTab({
+    this.underHeader = false,
     required this.prefs,
     required this.connectionId,
     required this.snapshot,
@@ -3271,7 +4177,6 @@ class _BotsTab extends StatefulWidget {
     required this.onRemoteDetails,
     required this.onRefresh,
     this.remoteBotLoader,
-    this.onSectionMenu,
     this.onAttention,
     this.attentionSummary,
     this.onCreateAgent,
@@ -3282,14 +4187,38 @@ class _BotsTab extends StatefulWidget {
 }
 
 class _BotsTabState extends State<_BotsTab> {
-  (HostedGroupsSnapshot, AttentionSummary)? _attentionCache;
+  (HostedGroupsSnapshot, int, AttentionSummary)? _attentionCache;
+
+  @override
+  void initState() {
+    super.initState();
+    RoomLocalPrefs.changes.addListener(_onAcksChanged);
+  }
+
+  @override
+  void dispose() {
+    RoomLocalPrefs.changes.removeListener(_onAcksChanged);
+    super.dispose();
+  }
+
+  // Opening a room or dismissing a card there acknowledges it: the amber
+  // "needs you" on its row and on its bots goes out right away.
+  void _onAcksChanged() {
+    if (mounted) setState(() {});
+  }
 
   AttentionSummary get _attention {
     final groups = widget.snapshot.hostedGroups;
+    final revision = RoomLocalPrefs.changes.value;
     final cached = _attentionCache;
-    if (cached != null && identical(cached.$1, groups)) return cached.$2;
-    final summary = AttentionSummary.fromSnapshot(groups);
-    _attentionCache = (groups, summary);
+    if (cached != null &&
+        identical(cached.$1, groups) &&
+        cached.$2 == revision) {
+      return cached.$3;
+    }
+    final prefs = SharedPreferencesRoomPrefs(widget.prefs);
+    final summary = AttentionSummary.fromSnapshot(groups, acks: prefs.acksFor);
+    _attentionCache = (groups, revision, summary);
     return summary;
   }
 
@@ -3313,18 +4242,9 @@ class _BotsTabState extends State<_BotsTab> {
   List<RoomRosterEntry> _rooms() {
     final snapshot = widget.snapshot;
     final hosted = snapshot.hostedGroups;
-    final defaults = snapshot.profiles.where(
-      (p) => p.isDefault || p.name == 'default',
-    );
     return RoomRosterEntry.build(
       hosted: hosted,
       attention: _attention,
-      projection: defaults.isEmpty
-          ? DesktopProjectionRooms.empty
-          : DesktopProjectionRooms.parse(
-              defaults.first.groupsProjection,
-              hostedRoomIds: {for (final r in hosted.rooms) r.roomId},
-            ),
       localProfiles: {for (final p in snapshot.profiles) p.name: p},
       identityFor: snapshot.roomIdentity,
     );
@@ -3336,24 +4256,20 @@ class _BotsTabState extends State<_BotsTab> {
     final unsupported =
         widget.snapshot.profilesCapability ==
         MissionCapabilityState.unsupported;
-    return BotsRosterView(
+    return DotsHomeView(
       bots: unsupported ? const [] : _bots(),
       rooms: _rooms(),
       avatarCache: widget.avatarCache,
       searchOpen: widget.searchOpen,
-      prefs: widget.prefs,
-      connectionId: widget.connectionId,
       onOpenBot: (entry) => widget.onOpenChat(entry.agent),
       onBotActions: widget.onBotActions,
       onOpenRoom: widget.onOpenRoom,
       onRoomActions: widget.onRoomActions,
-      onSectionMenu: widget.onSectionMenu,
       onAttention: widget.onAttention,
       attentionSummary: widget.attentionSummary,
       onRefresh: widget.onRefresh,
-      header: [
-        if (unsupported) _MessageCard(text: copy.profilesUnavailable),
-      ],
+      clipBehavior: widget.underHeader ? hermesUnderHeader : Clip.hardEdge,
+      header: [if (unsupported) _MessageCard(text: copy.profilesUnavailable)],
       emptyState: _LoungeEmptyState(
         icon: Icons.smart_toy_outlined,
         message: copy.noBots,
@@ -3407,6 +4323,10 @@ class _HostedRoomWorkspace extends StatefulWidget {
 
   /// See `_RoomsTab.onOpenMember`.
   final ValueChanged<String> onOpenMember;
+
+  /// Opens a member's room session chat (profile, durable session id).
+  final Future<void> Function(String profile, String storedSessionId)?
+  onOpenMemberSession;
   final bool canSend;
   final bool canRename;
   final bool canStop;
@@ -3434,6 +4354,7 @@ class _HostedRoomWorkspace extends StatefulWidget {
     required this.avatarCache,
     required this.localProfiles,
     required this.onOpenMember,
+    this.onOpenMemberSession,
     required this.canSend,
     required this.canRename,
     required this.canStop,
@@ -3530,7 +4451,40 @@ class _HostedRoomWorkspaceState extends State<_HostedRoomWorkspace> {
         // `groups.retry` stays retired in Console until upstream binds it
         // to revision/log position (docs/hosted_identity_transition_matrix).
         canRetry: false,
+        canAnswerPrompts: writable && widget.canSend,
+        // No capability RPC declares `session.compress` yet, so the room
+        // Compress history row stays hidden until the server publishes one.
+        canCompressMembers: false,
       ),
+      // Member questions/approvals the room projection does not carry, read
+      // from each member's own session on the pooled socket.
+      memberPrompts: connection == null
+          ? null
+          : GatewayRoomMemberPrompts(
+              (method, params) =>
+                  pooledRoomPromptRequest(connection, method, params),
+            ),
+      memberCompressor: connection == null || connection.readOnly
+          ? null
+          : GatewayRoomMemberCompressor(
+              (method, params) =>
+                  pooledRoomPromptRequest(connection, method, params),
+            ),
+      // Live steps of working local members, read-only (replay ring tail).
+      memberLive: connection == null
+          ? null
+          : GatewayRoomMemberLive(
+              (method, params) =>
+                  pooledRoomPromptRequest(connection, method, params),
+            ),
+      onOpenMemberChat: switch (widget.onOpenMemberSession) {
+        final open? => (member, stored) {
+          if (_profileFor(member) != null) {
+            unawaited(open(member.owner.profile, stored));
+          }
+        },
+        null => null,
+      },
       profileFor: _profileFor,
       avatarCache: widget.avatarCache,
       prefs: _prefs ?? MemoryRoomPrefs(),
@@ -3577,8 +4531,8 @@ final class _RoomsAreaCopy {
 
   String get removeMember => _english ? 'Remove' : 'Quitar';
   String get noMembersChosen => _english
-      ? 'Tap a bot to add it to the room.'
-      : 'Toca un bot para añadirlo a la sala.';
+      ? 'Tap a profile to add it to the room.'
+      : 'Toca un perfil para añadirlo a la sala.';
 }
 
 class _LoungeEmptyState extends StatelessWidget {
@@ -3757,22 +4711,18 @@ class _OrganizationEditorState extends State<_OrganizationEditor> {
             ),
             if (_selected.isNotEmpty) ...[
               const SizedBox(height: 12),
-              DropdownButtonFormField<String>(
-                initialValue: _manager,
+              HermesSelectField<String>(
+                value: _manager ?? '',
                 decoration: InputDecoration(
                   labelText: widget.copy.managerLabel,
                 ),
-                items: [
-                  const DropdownMenuItem(value: '', child: Text('—')),
-                  ..._selected.map(
-                    (profile) =>
-                        DropdownMenuItem(value: profile, child: Text(profile)),
-                  ),
+                options: [
+                  const HermesOption(value: '', label: '—'),
+                  for (final profile in _selected)
+                    HermesOption(value: profile, label: profile),
                 ],
-                onChanged: (value) => setState(
-                  () =>
-                      _manager = value == null || value.isEmpty ? null : value,
-                ),
+                onChanged: (value) =>
+                    setState(() => _manager = value.isEmpty ? null : value),
               ),
             ],
             const SizedBox(height: 20),
@@ -3861,7 +4811,7 @@ class _CenteredState extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             if (loading)
-              const CircularProgressIndicator()
+              const ConsoleLoader.large(showLabel: false)
             else
               Icon(icon, size: 42, color: colors.textDisabled),
             const SizedBox(height: 14),
@@ -3883,4 +4833,10 @@ Future<T> _kickRoomWatchAfter<T>(Future<T> send) async {
   final result = await send;
   unawaited(BackgroundListener.kickRoomWatch());
   return result;
+}
+
+/// A partial room refresh that must fall back to a full reload.
+final class _PartialRoomsFailure {
+  final Object error;
+  const _PartialRoomsFailure(this.error);
 }

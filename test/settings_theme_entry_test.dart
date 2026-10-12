@@ -24,6 +24,6 @@ void main() {
     expect(presentation.name, 'Océano propio');
     expect(presentation.colors.accent, custom.palette.accent);
     expect(presentation.colors.background, custom.palette.background);
-    expect(presentation.total, AppTheme.presets.length + 1);
+    expect(presentation.total, AppTheme.familyCount + 1);
   });
 }

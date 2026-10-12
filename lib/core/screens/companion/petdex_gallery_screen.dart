@@ -6,9 +6,10 @@ import '../../companion/data/petdex_remote_service.dart';
 import '../../companion/state/companion_controller.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/hermes_app_bar.dart';
-import '../../widgets/hermes_notice.dart';
 import '../../widgets/hermes_premium_ui.dart';
 import '../../widgets/hermes_ui.dart';
+import '../../widgets/console_loader.dart';
+import '../../feedback/feedback_policy.dart';
 
 /// Galería remota de Petdex (Petdex remoto, contrato `petdex-v1.json`).
 ///
@@ -18,16 +19,26 @@ import '../../widgets/hermes_ui.dart';
 /// pipeline validado de importación local ([CompanionController.importFromZipBytes]),
 /// que infiere la geometría 192×208, valida y escribe de forma atómica.
 class PetdexGalleryScreen extends StatefulWidget {
-  final CompanionController controller;
+  /// Dónde se instala la mascota elegida; `null` al elegir ([picking]).
+  final CompanionController? controller;
 
   /// Inyectable en tests; en producción usa el cliente HTTP por defecto.
   final PetdexRemoteService? service;
 
+  /// Elegir en vez de instalar: la galería se cierra devolviendo la
+  /// [PetdexRemotePet] elegida y no guarda nada en este dispositivo. Es la
+  /// mascota de un bot, que Hermes instala en su perfil al guardarlo.
+  final bool picking;
+
   const PetdexGalleryScreen({
-    required this.controller,
+    required CompanionController this.controller,
     this.service,
     super.key,
-  });
+  }) : picking = false;
+
+  const PetdexGalleryScreen.picker({this.service, super.key})
+    : controller = null,
+      picking = true;
 
   @override
   State<PetdexGalleryScreen> createState() => _PetdexGalleryScreenState();
@@ -37,6 +48,9 @@ class _PetdexGalleryScreenState extends State<PetdexGalleryScreen> {
   late final PetdexRemoteService _service =
       widget.service ?? PetdexRemoteService();
   late Future<List<PetdexRemotePet>> _future;
+
+  /// El último fallo del catálogo fue por no llegar a Petdex.
+  bool _offline = false;
   String _query = '';
   final TextEditingController _searchCtrl = TextEditingController();
 
@@ -82,7 +96,7 @@ class _PetdexGalleryScreenState extends State<PetdexGalleryScreen> {
   @override
   void initState() {
     super.initState();
-    _future = _service.fetchManifest();
+    _future = _load();
   }
 
   @override
@@ -94,7 +108,18 @@ class _PetdexGalleryScreenState extends State<PetdexGalleryScreen> {
     super.dispose();
   }
 
-  void _reload() => setState(() => _future = _service.fetchManifest());
+  Future<List<PetdexRemotePet>> _load() async {
+    try {
+      return await _service.fetchManifest();
+    } catch (error) {
+      _offline = error is PetdexRemoteException && error.offline;
+      rethrow;
+    }
+  }
+
+  void _reload() => setState(() {
+    _future = _load();
+  });
 
   List<PetdexRemotePet> _filter(List<PetdexRemotePet> all) {
     final q = _query.trim().toLowerCase();
@@ -119,21 +144,21 @@ class _PetdexGalleryScreenState extends State<PetdexGalleryScreen> {
     // Guarda de reentrada: taps repetidos no lanzan descargas+importaciones
     // concurrentes del mismo ZIP (spec 028 A-030).
     if (_installing.contains(pet.slug)) return;
-    final messenger = HermesNotice.maybeOf(context);
+    final messenger = AppFeedback.of(context);
     final str = Strings.of(context);
     _installError.remove(pet.slug);
     setState(() => _installing.add(pet.slug));
     _installRev.value++;
     try {
       final bytes = await _service.downloadPetZip(pet);
-      final imported = await widget.controller.importFromZipBytes(
+      final imported = await widget.controller!.importFromZipBytes(
         bytes,
         authorOverride: pet.author,
       );
       if (!mounted) return;
-      messenger?.showSnackBar(
-        SnackBar(content: Text(str.petdexInstalled(imported.name))),
-        kind: HermesNoticeKind.success,
+      messenger.notify(
+        FeedbackKind.routine,
+        str.petdexInstalled(imported.name),
       );
       // Cerrar SOLO el sheet, y solo si sigue abierto y es la ruta superior:
       // un pop a ciegas tras el await podía sacar al usuario de la galería
@@ -144,25 +169,16 @@ class _PetdexGalleryScreenState extends State<PetdexGalleryScreen> {
       }
     } on CompanionImportException catch (e) {
       _installError[pet.slug] = str.petdexInstallFailed(e.message);
-      messenger?.showSnackBar(
-        SnackBar(content: Text(str.petdexInstallFailed(e.message))),
-        kind: HermesNoticeKind.error,
-      );
+      messenger.notify(FeedbackKind.error, str.petdexInstallFailed(e.message));
     } on PetdexRemoteException catch (e) {
       _installError[pet.slug] = str.petdexDownloadFailed(e.message);
-      messenger?.showSnackBar(
-        SnackBar(content: Text(str.petdexDownloadFailed(e.message))),
-        kind: HermesNoticeKind.error,
-      );
+      messenger.notify(FeedbackKind.error, str.petdexDownloadFailed(e.message));
     } catch (e) {
       debugPrint(
         '[petdex-gallery] excepción silenciada (se avisa al usuario y se sigue): $e',
       );
       _installError[pet.slug] = str.petdexInstallFailedGeneric;
-      messenger?.showSnackBar(
-        SnackBar(content: Text(str.petdexInstallFailedGeneric)),
-        kind: HermesNoticeKind.error,
-      );
+      messenger.notify(FeedbackKind.error, str.petdexInstallFailedGeneric);
     } finally {
       if (mounted) {
         setState(() => _installing.remove(pet.slug));
@@ -171,10 +187,10 @@ class _PetdexGalleryScreenState extends State<PetdexGalleryScreen> {
     }
   }
 
-  void _openDetail(PetdexRemotePet pet) {
+  Future<void> _openDetail(PetdexRemotePet pet) async {
     // Un fallo de una apertura anterior ya no es contexto vigente.
     if (!_installing.contains(pet.slug)) _installError.remove(pet.slug);
-    showHermesFloatingSurface<void>(
+    final picked = await showHermesFloatingSurface<bool>(
       context: context,
       surfaceKey: const ValueKey('petdex-detail-surface'),
       maxWidth: 560,
@@ -186,13 +202,18 @@ class _PetdexGalleryScreenState extends State<PetdexGalleryScreen> {
           valueListenable: _installRev,
           builder: (_, _, _) => _PetdexDetailSheet(
             pet: pet,
+            picking: widget.picking,
             installing: _installing.contains(pet.slug),
             error: _installError[pet.slug],
-            onInstall: () => _install(pet, sheetCtx),
+            onInstall: widget.picking
+                ? () => Navigator.of(sheetCtx).pop(true)
+                : () => _install(pet, sheetCtx),
           ),
         );
       },
     );
+    // Elegida: la galería se cierra con ella.
+    if (picked == true && mounted) Navigator.of(context).pop(pet);
   }
 
   @override
@@ -226,7 +247,7 @@ class _PetdexGalleryScreenState extends State<PetdexGalleryScreen> {
               decoration: InputDecoration(
                 hintText: Strings.of(context).petdexSearchHint,
                 hintStyle: TextStyle(
-                  color: colors.textDisabled,
+                  color: colors.textTertiary,
                   fontSize: 13.5,
                 ),
                 prefixIcon: Icon(
@@ -280,10 +301,14 @@ class _PetdexGalleryScreenState extends State<PetdexGalleryScreen> {
               future: _future,
               builder: (context, snap) {
                 if (snap.connectionState == ConnectionState.waiting) {
-                  return const Center(child: CircularProgressIndicator());
+                  return const Center(child: ConsoleLoader.large());
                 }
                 if (snap.hasError || !snap.hasData) {
-                  return _ErrorState(colors: colors, onRetry: _reload);
+                  return _ErrorState(
+                    colors: colors,
+                    offline: _offline,
+                    onRetry: _reload,
+                  );
                 }
                 final pets = _filter(snap.data!);
                 if (pets.isEmpty) {
@@ -368,7 +393,9 @@ class _PetdexGalleryScreenState extends State<PetdexGalleryScreen> {
                                     ),
                                   )
                                 : Icon(
-                                    Icons.download_rounded,
+                                    widget.picking
+                                        ? Icons.chevron_right_rounded
+                                        : Icons.download_rounded,
                                     color: colors.accent,
                                     size: 20,
                                   ),
@@ -434,8 +461,13 @@ class _PetdexThumb extends StatelessWidget {
 
 class _ErrorState extends StatelessWidget {
   final HermesThemeColors colors;
+  final bool offline;
   final VoidCallback onRetry;
-  const _ErrorState({required this.colors, required this.onRetry});
+  const _ErrorState({
+    required this.colors,
+    required this.offline,
+    required this.onRetry,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -446,11 +478,14 @@ class _ErrorState extends StatelessWidget {
           Icon(Icons.cloud_off, color: colors.textSecondary, size: 36),
           const SizedBox(height: 12),
           Text(
-            Strings.of(context).petdexLoadError,
+            offline
+                ? Strings.of(context).petdexOffline
+                : Strings.of(context).petdexLoadError,
             style: TextStyle(color: colors.textSecondary),
           ),
           const SizedBox(height: 12),
           OutlinedButton(
+            key: const ValueKey('petdex-retry'),
             onPressed: onRetry,
             child: Text(Strings.of(context).commonRetry),
           ),
@@ -462,6 +497,9 @@ class _ErrorState extends StatelessWidget {
 
 class _PetdexDetailSheet extends StatelessWidget {
   final PetdexRemotePet pet;
+
+  /// Elegir (para un bot) en vez de instalar en este dispositivo.
+  final bool picking;
   final bool installing;
 
   /// Causa del último fallo de instalación, visible dentro del sheet
@@ -471,6 +509,7 @@ class _PetdexDetailSheet extends StatelessWidget {
 
   const _PetdexDetailSheet({
     required this.pet,
+    required this.picking,
     required this.installing,
     required this.onInstall,
     this.error,
@@ -513,7 +552,7 @@ class _PetdexDetailSheet extends StatelessWidget {
                   if (progress == null) return child;
                   return const SizedBox(
                     height: 120,
-                    child: Center(child: CircularProgressIndicator()),
+                    child: Center(child: ConsoleLoader.medium()),
                   );
                 },
                 errorBuilder: (context, error, stack) => SizedBox(
@@ -530,6 +569,7 @@ class _PetdexDetailSheet extends StatelessWidget {
           ),
           const SizedBox(height: 20),
           FilledButton.icon(
+            key: const ValueKey('petdex-detail-action'),
             onPressed: installing ? null : onInstall,
             icon: installing
                 ? const SizedBox(
@@ -537,9 +577,11 @@ class _PetdexDetailSheet extends StatelessWidget {
                     height: 16,
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
-                : const Icon(Icons.download_rounded),
+                : Icon(picking ? Icons.check_rounded : Icons.download_rounded),
             label: Text(
-              installing
+              picking
+                  ? Strings.of(context).petdexUsePet
+                  : installing
                   ? Strings.of(context).petdexInstalling
                   : Strings.of(context).petdexInstallPet,
             ),
@@ -552,12 +594,14 @@ class _PetdexDetailSheet extends StatelessWidget {
               textAlign: TextAlign.center,
             ),
           ],
-          const SizedBox(height: 8),
-          Text(
-            Strings.of(context).petdexDetailNote(pet.author),
-            style: TextStyle(color: colors.textSecondary, fontSize: 12),
-            textAlign: TextAlign.center,
-          ),
+          if (!picking) ...[
+            const SizedBox(height: 8),
+            Text(
+              Strings.of(context).petdexDetailNote(pet.author),
+              style: TextStyle(color: colors.textSecondary, fontSize: 12),
+              textAlign: TextAlign.center,
+            ),
+          ],
         ],
       ),
     );

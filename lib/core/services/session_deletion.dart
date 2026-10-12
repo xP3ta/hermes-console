@@ -231,6 +231,76 @@ abstract final class LocalConversationCleanupFence {
     state.currentOwners[createdSessionId] = lifecycle;
   }
 
+  /// Extends a live lease to the other ids of its own conversation.
+  ///
+  /// A route begins its lease under the id it was opened with and only then
+  /// binds the chat that runs the conversation, which may answer to another
+  /// id of it: the provisional `mob-…` id it was written under, the durable
+  /// id Hermes gave it. Every producer of that chat admits its writes under
+  /// the chat's ids, so a lease that knows only the route's id refuses them
+  /// all. The lease takes those ids exactly as [beginLifecycle] would have,
+  /// had the route known them: the newest route of a conversation owns its
+  /// writes and an older one renews on return.
+  ///
+  /// Ownership is not permission: cleanup epochs, blocks and retirement still
+  /// refuse the writes themselves. A lease that is retired, behind a cleanup
+  /// epoch or no longer the owner of its own route gains nothing.
+  static bool coverConversation(
+    LocalConversationLifecycle lifecycle,
+    Iterable<String> sessionIds,
+  ) {
+    final state = _states[_scope(lifecycle.connectionId, lifecycle.profile)];
+    if (state == null ||
+        !lifecycle._acceptingWrites ||
+        state.epoch != lifecycle._epoch ||
+        !identical(state.currentOwners[lifecycle.sessionId], lifecycle)) {
+      return false;
+    }
+    for (final id in sessionIds) {
+      if (id.isEmpty) continue;
+      lifecycle._sessionAliases.add(id);
+      state.currentOwners[id] = lifecycle;
+    }
+    return true;
+  }
+
+  /// Renew only a still-mounted route displaced by a now-retired viewer.
+  /// Cleanup epochs and explicit retirement are irreversible; this is not
+  /// rehydration and cannot replace a live owner or revive an old operation.
+  static LocalConversationLifecycle? renewAfterRouteReturn(
+    LocalConversationLifecycle previous,
+  ) {
+    final state = _states[_scope(previous.connectionId, previous.profile)];
+    if (state == null ||
+        !previous._acceptingWrites ||
+        state.epoch != previous._epoch ||
+        state.blocked ||
+        state.pendingCleanups != 0 ||
+        _blockedConnections.contains(previous.connectionId) ||
+        _connectionIsCleaning(previous.connectionId)) {
+      return null;
+    }
+    final destinations = {previous.sessionId, ...previous._sessionAliases};
+    for (final destination in destinations) {
+      final owner = state.currentOwners[destination];
+      if (owner != null &&
+          !identical(owner, previous) &&
+          owner._acceptingWrites) {
+        return null;
+      }
+    }
+    if (identical(state.currentOwners[previous.sessionId], previous)) {
+      return previous;
+    }
+    endLifecycle(previous);
+    return beginLifecycle(
+      connectionId: previous.connectionId,
+      profile: previous.profile,
+      sessionId: previous.sessionId,
+      sessionAliases: previous._sessionAliases,
+    );
+  }
+
   static void endLifecycle(LocalConversationLifecycle lifecycle) {
     lifecycle._acceptingWrites = false;
   }
@@ -285,6 +355,41 @@ abstract final class LocalConversationCleanupFence {
     }
   }
 
+  /// Coarse reason [ensureWriteAllowed] would reject this write right now, or
+  /// null when it would be admitted. Carries no identifiers or content: it is
+  /// for logs only and must never drive a decision.
+  static String? writeRejectionReason({
+    required String connectionId,
+    required String profile,
+    required String sessionId,
+    required LocalConversationLifecycle lifecycle,
+  }) {
+    final owner = _owner(profile);
+    final state = _states[_scope(connectionId, owner)];
+    if (connectionId != lifecycle.connectionId || owner != lifecycle.profile) {
+      return 'scopeMismatch';
+    }
+    if (!lifecycle._authorizesSession(sessionId)) return 'sessionNotAuthorized';
+    if (!lifecycle._acceptingWrites) return 'retired';
+    if (state == null) return 'unknownScope';
+    if (state.pendingCleanups != 0) return 'cleanupPending';
+    if (_connectionIsCleaning(connectionId)) return 'connectionCleaning';
+    if (state.epoch != lifecycle._epoch) return 'epochAdvanced';
+    final current = state.currentOwners[sessionId];
+    if (!identical(current, lifecycle)) {
+      if (current == null) return 'noOwner';
+      return current._acceptingWrites
+          ? 'displacedByLiveOwner'
+          : 'displacedByRetiredOwner';
+    }
+    final rehydrated = state.rehydrated.contains(lifecycle);
+    if (state.blocked && !rehydrated) return 'scopeBlocked';
+    if (_blockedConnections.contains(connectionId) && !rehydrated) {
+      return 'connectionBlocked';
+    }
+    return null;
+  }
+
   static LocalConversationOperation admitOperation({
     required String connectionId,
     required String profile,
@@ -322,8 +427,48 @@ abstract final class LocalConversationCleanupFence {
       admittedEpoch: lifecycle?._epoch ?? state.epoch,
       resources: resources,
     );
+    _pruneOperationJournal();
     _operationJournal.add(operation);
     return operation;
+  }
+
+  /// Drops journal entries that can no longer influence any cleanup, so a
+  /// process kept alive for days does not retain every draft/outbox/transcript
+  /// write it ever admitted.
+  ///
+  /// An entry is kept while it has a delivered effect still in flight (a
+  /// clear must wait for it), while it is an unfinished session clear
+  /// (readers wait for it), while any unfinished session clear covers its
+  /// session (that clear may still ask for its resources), and while it can
+  /// still deliver an effect (a later clear must be able to supersede it).
+  static void _pruneOperationJournal() {
+    final clearingSessions = <(String, String)>{
+      for (final operation in _operationJournal)
+        if (operation.kind == LocalConversationOperationKind.clearSelector &&
+            !operation._settled.isCompleted)
+          (operation.connectionId, operation.sessionId),
+    };
+    _operationJournal.removeWhere((operation) {
+      if (clearingSessions.contains((
+        operation.connectionId,
+        operation.sessionId,
+      ))) {
+        return false;
+      }
+      for (final effect in operation._effects.values) {
+        if (effect.delivered && !effect.settled.isCompleted) return false;
+      }
+      if (operation.kind == LocalConversationOperationKind.clearSelector) {
+        // Unfinished clears were kept above through their own session.
+        return true;
+      }
+      if (operation._superseded) return true;
+      if (operation._lifecycle?._acceptingWrites == false) return true;
+      return operation._resources.isNotEmpty &&
+          operation._resources.every(
+            (resource) => operation._effects[resource]?.delivered == true,
+          );
+    });
   }
 
   static LocalConversationOperation admitSessionClear({
@@ -345,6 +490,7 @@ abstract final class LocalConversationCleanupFence {
       admittedEpoch: 0,
       resources: const [],
     );
+    _pruneOperationJournal();
     _operationJournal.add(clear);
     for (final operation in _operationJournal) {
       if (identical(operation, clear) ||
@@ -704,6 +850,8 @@ abstract final class LocalConversationCleanupFence {
       }
     });
   }
+
+  static int get operationJournalLengthForTesting => _operationJournal.length;
 
   static void resetForTesting() {
     _states.clear();
@@ -1084,6 +1232,10 @@ class LinkedSessionDeleteResult {
 /// un fallo de red como resultado (nunca como Future rechazado de un widget),
 /// ofrece una salida honesta para cron legacy y limpia la recuperación local
 /// únicamente después de que todos los DELETE remotos hayan sido confirmados.
+///
+/// [onRemoteDeleted] runs synchronously as soon as the server confirmed every
+/// DELETE, before the local cleanup, so a caller can tell the other screens
+/// in that same turn instead of after the cleanup's awaits.
 Future<LinkedSessionDeleteResult> deleteSessionWithResolvedLineage(
   Session selected, {
   required LoadSessionsForDeletion loadSessions,
@@ -1093,6 +1245,7 @@ Future<LinkedSessionDeleteResult> deleteSessionWithResolvedLineage(
   String? remoteSessionId,
   String? localRecoverySessionId,
   ClearLocalSessionRecovery? clearLocalRecovery,
+  void Function()? onRemoteDeleted,
 }) async {
   late final SessionDeletionContext context;
   try {
@@ -1118,6 +1271,9 @@ Future<LinkedSessionDeleteResult> deleteSessionWithResolvedLineage(
     remoteSessionId: context.remoteSessionId,
     cronDeletion: cronDeletion,
   );
+  if (result.status == LinkedSessionDeleteStatus.deleted) {
+    onRemoteDeleted?.call();
+  }
   if (result.status == LinkedSessionDeleteStatus.deleted &&
       clearLocalRecovery != null) {
     try {

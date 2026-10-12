@@ -4,6 +4,7 @@ import '../../l10n/app_localizations.dart';
 import '../models/agent_profile.dart';
 import '../services/bot_section_service.dart';
 import '../widgets/hermes_premium_ui.dart';
+import '../widgets/hermes_ui.dart';
 
 Future<String?> botSectionNameDialog(
   BuildContext context, {
@@ -27,10 +28,10 @@ Future<String?> botSectionNameDialog(
                 style: Theme.of(context).textTheme.titleLarge,
               ),
               const SizedBox(height: 16),
-              TextField(
+              HermesField(
+                label: s.botSectionName,
                 controller: controller,
                 maxLength: 40,
-                decoration: InputDecoration(labelText: s.botSectionName),
                 onSubmitted: (value) {
                   if (value.trim().isNotEmpty) {
                     Navigator.pop(context, value.trim());

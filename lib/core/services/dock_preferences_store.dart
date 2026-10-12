@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/dock_config.dart';
+import '../shell/gesture_dock_state.dart';
 
 /// Persistencia local no sensible de la configuración del dock (perfiles
 /// Bots/General: orden, visibilidad, destacado, estilo).
@@ -113,8 +114,13 @@ class DockPreferencesController {
   /// app. `GeneralDockShell` y el propio `Dock` reaccionan al
   /// instante vía `listenable`, igual que cualquier otro cambio de este
   /// controlador.
-  Future<void> setUseDock(bool enabled) =>
-      _updateProfile(useDock: enabled);
+  ///
+  /// Turning it back on always shows the dock: one hidden by hand before
+  /// (see [GestureDockController.setHidden]) does not come back as a handle.
+  Future<void> setUseDock(bool enabled) {
+    if (enabled) GestureDockController.instance.setHidden(false);
+    return _updateProfile(useDock: enabled);
+  }
 
   /// `persist: false` solo actualiza el `ValueNotifier` en memoria (los
   /// docks/la vista previa reaccionan al instante vía `ListenableBuilder`)

@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- One bot of the faces row: its face and, at its corner, a small mark
+     while it works (muted) or waits for you (gold). -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/lw_face"
+    android:layout_width="@dimen/lw_face"
+    android:layout_height="@dimen/lw_face"
+    android:layout_marginEnd="@dimen/lw_face_gap">
+
+    <ImageView
+        android:id="@+id/lw_face_glyph"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@drawable/lw_okc_chip"
+        android:importantForAccessibility="no"
+        android:padding="7.5dp"
+        android:src="@drawable/ic_console_mark" />
+
+    <ImageView
+        android:id="@+id/lw_face_image"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:importantForAccessibility="no"
+        android:visibility="gone" />
+
+    <ImageView
+        android:id="@+id/lw_face_mark"
+        android:layout_width="10dp"
+        android:layout_height="10dp"
+        android:layout_gravity="bottom|end"
+        android:importantForAccessibility="no"
+        android:src="@drawable/lw_mark_waits"
+        android:visibility="gone" />
+</FrameLayout>

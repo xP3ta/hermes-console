@@ -1,68 +1,76 @@
-# Arquitectura — Hermes Mobile Client
+# Architecture
 
-## Diagrama de alto nivel
+Console is a Flutter app for Android that connects to a self-hosted Hermes
+Agent. This page is a map of the repository, not a specification: Hermes' own
+Gateway and Dashboard are the protocol contract, and
+[`UPSTREAM_CONTRACT.md`](UPSTREAM_CONTRACT.md) lists exactly what the app
+depends on.
 
-```
-[Android App - Flutter]
-         |
-    [Tailscale / LAN / HTTPS]
-         |
-    [Hermes Gateway]  ← self-hosted
-         |
-    [Hermes Agent]
-    ├── Memory
-    ├── Cron
-    ├── Skills
-    └── MCP
-```
-
-## Capas de la app (objetivo)
+## Big picture
 
 ```
+[Console - Flutter app on Android]
+        |
+   HTTPS, or a private network (LAN / Tailscale)
+        |
+[Hermes Agent - your computer or server]
+   |- Gateway    :8642  OpenAI-compatible API, Bearer API_SERVER_KEY
+   '- Dashboard  :9119  admin API and the /api/ws JSON-RPC channel
+```
+
+There is no Console backend. The phone talks only to the Hermes servers the
+user adds (and to optional downloads such as pets and voice models, which carry
+no conversation data). Nothing else is required: no Google Play Services, no
+push service.
+
+## Repository layout
+
+```text
 lib/
-├── main.dart
-├── app/
-│   └── app.dart              # MaterialApp, router, theme
-├── features/
-│   ├── chat/                 # Feature principal
-│   │   ├── data/             # API calls a Gateway
-│   │   ├── domain/           # Modelos, entidades
-│   │   └── presentation/     # Screens, widgets
-│   ├── settings/             # URL Gateway, API key
-│   ├── auth/                 # Gestión API key
-│   └── attachments/          # Adjuntos (fase futura)
-├── core/
-│   ├── api/                  # Cliente HTTP base
-│   ├── storage/              # Secure storage wrapper
-│   ├── error/                # Tipos de error
-│   └── config/               # Constantes
-└── shared/
-    ├── widgets/              # Componentes reutilizables
-    └── theme/                # Temas claro/oscuro
+  main.dart            App start, routing, cold-start cache and prewarm
+  l10n/                English and Spanish strings (ARB)
+  core/
+    services/          Clients and engines: connection manager, the JSON-RPC
+                       client for /api/ws, chat, notifications, voice, SSH/SFTP,
+                       launcher-widget publishers, secure storage
+    models/            Typed models of Hermes' payloads (parsed defensively)
+    screens/           Full screens: chat, models, cron, tasks, settings, ...
+    home/              The Home board and its widgets
+    bots/              Bot Mode: profiles, rooms, state and UI
+    companion/         Pets: Petdex catalogue, rendering, the app pet
+    capabilities/      The Capabilities hub: skills, plugins, MCP, connectors
+    shell/             Dock, floating pet and route watching
+    design/ theme/     The shared design system and themes
+    widgets/           Reusable widgets (composer, chat blocks, ...)
+android/               Android integration: flavors, widgets, foreground
+                       services, notifications, manifest
+test/                  Unit, widget and contract suites
+tool/                  Release, SBOM, QA and contract tooling
+docs/                  This documentation
 ```
 
-## Conexión con Hermes Gateway
+## Flavors
 
-- Protocolo: HTTP/HTTPS + SSE para streaming
-- Autenticación: API key en header `Authorization: Bearer <key>`
-- Endpoints conocidos (pendiente de verificar en audit):
-  - `/chat` — chat principal
-  - `/health` — estado del servidor
-  - (completar tras audit de hermes-android)
+One reviewed source builds three flavors (see
+[`RELEASE_DISTRIBUTION.md`](RELEASE_DISTRIBUTION.md)): `play` (Google Play),
+`full` (GitHub Releases and Obtainium) and `qa` (emulator testing, a separate
+package). A flavor is a distribution lane, not a feature switch.
 
-## Almacenamiento seguro
+## Connections and secrets
 
-- API key: `flutter_secure_storage` → Android Keystore
-- URL del gateway: SharedPreferences (no es secreto)
-- Historial: local DB (SQLite / Isar, a decidir)
+- A saved connection is the Gateway address and key, plus the Dashboard address
+  and sign-in. Keys and sign-ins live in the Android Keystore through
+  `flutter_secure_storage`; addresses and labels are not secret.
+- Plain HTTP is allowed only toward loopback, private networks, Tailscale and
+  local names; HTTP to a public address is blocked before any request. See
+  [`SECURITY_POLICY.md`](SECURITY_POLICY.md).
+- Drafts and a cache of recent chats are kept on the device; the authoritative history is
+  the server's.
 
-## Conectividad
+## Principles
 
-- **Tailscale**: preferida, sin exposición pública de puertos
-- **LAN directa**: para homelab con red local
-- **HTTPS con cert propio**: requiere trust anchor en la app
-- **No requerido**: Google Play Services, FCM, ningún servicio cloud
-
-## Decisiones de diseño pendientes
-
-Ver `docs/DECISIONS.md`
+- **Fail soft.** A missing server capability shows an honest "not available";
+  it never crashes and never invents an endpoint.
+- **Fast first paint.** The app shows cached state at once and refreshes in the
+  background.
+- **No telemetry.** No analytics or advertising SDKs.

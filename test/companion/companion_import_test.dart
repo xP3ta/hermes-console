@@ -119,7 +119,7 @@ class _BaseAndImportedRepo extends CompanionRepository {
     : super(importedRootProvider: () async => root);
 
   @override
-  Future<List<String>> availableSlugs() async => const ['spark-base'];
+  Future<List<String>> availableSlugs() async => const ['core-base'];
 
   @override
   Future<Companion?> load(String slug) async => Companion(
@@ -277,14 +277,14 @@ void main() {
 
     test('nunca sobrescribe una mascota base (slug protegido)', () async {
       final zip = _zip({
-        'pet.json': utf8.encode(_validManifest(slug: 'spark-base')),
+        'pet.json': utf8.encode(_validManifest(slug: 'core-base')),
         'spritesheet.webp': _fakeWebp(),
       });
       expect(
         () => service.importFromZipBytes(
           zip,
           storageRoot: root,
-          protectedSlugs: const {'spark-base'},
+          protectedSlugs: const {'core-base'},
         ),
         throwsA(isA<CompanionImportException>()),
       );
@@ -427,7 +427,7 @@ void main() {
 
     test('la importada aparece en la galería y queda seleccionada', () async {
       final c = await controller();
-      expect(c.available.map((e) => e.slug), ['spark-base']);
+      expect(c.available.map((e) => e.slug), ['core-base']);
 
       final zip = _zip({
         'pet.json': utf8.encode(_validManifest()),
@@ -437,7 +437,7 @@ void main() {
 
       expect(
         c.available.map((e) => e.slug),
-        containsAll(['spark-base', 'kitty']),
+        containsAll(['core-base', 'kitty']),
       );
       expect(c.selectedSlug, 'kitty');
       expect(c.activeCompanion?.slug, 'kitty');
@@ -454,15 +454,15 @@ void main() {
 
       final removed = await c.delete('kitty');
       expect(removed, isTrue);
-      expect(c.available.map((e) => e.slug), ['spark-base']);
+      expect(c.available.map((e) => e.slug), ['core-base']);
       expect(Directory('${root.path}/kitty').existsSync(), isFalse);
     });
 
     test('una mascota base nunca se borra', () async {
       final c = await controller();
-      final removed = await c.delete('spark-base');
+      final removed = await c.delete('core-base');
       expect(removed, isFalse);
-      expect(c.available.map((e) => e.slug), ['spark-base']);
+      expect(c.available.map((e) => e.slug), ['core-base']);
     });
   });
 
@@ -548,11 +548,11 @@ class _NoStorageRepo extends CompanionRepository {
   @override
   Future<List<Companion>> loadAll() async => [
     Companion(
-      slug: 'spark-base',
+      slug: 'core-base',
       name: 'Base',
       author: 'Hermes',
       license: 'CC0-1.0',
-      spritesheetAsset: 'assets/companions/spark-base/spritesheet.webp',
+      spritesheetAsset: 'assets/companions/core-base/spritesheet.webp',
       frameWidth: 64,
       frameHeight: 64,
       cols: 4,

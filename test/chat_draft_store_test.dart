@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:hermes_android/core/bots/ui/room/room_launcher.dart';
 import 'package:hermes_android/core/models/attachment_draft.dart';
 import 'package:hermes_android/core/models/prepared_turn.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
@@ -15,6 +16,8 @@ import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/local_transcript_store.dart';
 import 'package:hermes_android/core/services/session_deletion.dart';
 import 'package:hermes_android/core/services/turn_outbox_store.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
 
@@ -44,6 +47,20 @@ String _transcriptKey(
 
 const _legacyTranscriptSession =
     'mob-1000-00000000-0000-0000-0000-000000000001';
+
+/// REST client of a localhost chat that has no official lifecycle gateway:
+/// the only wiring in which the encrypted local transcript, and not the
+/// server, is the history a chat reopens. Default wiring gives every
+/// topology the official gateway. [requests] proves no network was read.
+ApiClient _restOnlyLocalApi(SavedConnection connection, List<Uri> requests) =>
+    ApiClient(
+      baseUrl: connection.baseUrl,
+      apiKey: connection.apiKey,
+      httpClient: MockClient((request) async {
+        requests.add(request.url);
+        return http.Response('unused', 500);
+      }),
+    );
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -76,6 +93,53 @@ void main() {
             return null;
           },
         );
+  });
+
+  test('a room send acknowledged before its draft save lands leaves no '
+      'draft', () async {
+    final rooms = ChatDraftRoomStore(
+      store: ChatDraftStore(await SharedPreferences.getInstance()),
+      connectionId: 'conn-room',
+      profile: 'default',
+      sessionId: 'mob-room-ack-race',
+    );
+    // RoomScreen fires both without awaiting: the save of the in-flight
+    // text, then the clear of the acknowledgement.
+    final save = rooms.save('sent text', preparedId: 'attempt-1');
+    final clear = rooms.clear(preparedId: 'attempt-1');
+    await Future.wait([save, clear]);
+    final draft = await rooms.load();
+    expect(draft.text, isEmpty);
+    expect(draft.preparedId, isNull);
+
+    // Control: a newer unsent draft survives the stale acknowledgement.
+    await rooms.save('newer', preparedId: 'attempt-2');
+    await rooms.clear(preparedId: 'attempt-1');
+    expect((await rooms.load()).text, 'newer');
+  });
+
+  test('retiring a room send keeps the text typed after it', () async {
+    final rooms = ChatDraftRoomStore(
+      store: ChatDraftStore(await SharedPreferences.getInstance()),
+      connectionId: 'conn-room',
+      profile: 'default',
+      sessionId: 'mob-room-typed-after',
+    );
+    await rooms.save(
+      'sent text\ntyped later',
+      preparedId: 'attempt-1',
+      preparedText: 'sent text',
+    );
+    await rooms.clear(preparedId: 'attempt-1');
+    final draft = await rooms.load();
+    expect(draft.text, 'typed later');
+    expect(draft.preparedId, isNull);
+    expect(draft.preparedText, isNull);
+
+    // Control: a draft that is only the send is retired whole.
+    await rooms.save('only sent', preparedId: 'attempt-2');
+    await rooms.clear(preparedId: 'attempt-2');
+    expect((await rooms.load()).text, isEmpty);
   });
 
   test(
@@ -1963,25 +2027,29 @@ void main() {
     expect(reopened.messages.first['content'], 'mensaje 1');
     expect(reopened.messages.last['content'], 'mensaje 501');
 
+    final connection = SavedConnection(
+      id: 'conn-count',
+      label: 'Local',
+      host: '127.0.0.1',
+      port: 8642,
+      apiKey: 'test-key',
+      kind: InstanceKind.localhost,
+      onDeviceLoopback: true,
+    );
+    final requests = <Uri>[];
     final chat = ActiveChat(
       compressionRestoreStore: testCompressionRestoreStore(),
-      connection: SavedConnection(
-        id: 'conn-count',
-        label: 'Local',
-        host: '127.0.0.1',
-        port: 8642,
-        apiKey: 'test-key',
-        kind: InstanceKind.localhost,
-        onDeviceLoopback: true,
-      ),
+      connection: connection,
       sessionId: 'session-count',
       sessionTitle: 'Historial local largo',
       notifications: null,
       onTerminal: () {},
+      api: _restOnlyLocalApi(connection, requests),
     );
     addTearDown(chat.dispose);
     await chat.loadMessages();
 
+    expect(requests, isEmpty);
     expect(chat.messages, hasLength(501));
     expect(chat.messages.first['content'], 'mensaje 501');
     expect(chat.messages.last['content'], 'mensaje 1');
@@ -2050,26 +2118,30 @@ void main() {
           },
       ],
     );
+    final connection = SavedConnection(
+      id: 'conn-truncated',
+      label: 'Local',
+      host: '127.0.0.1',
+      port: 8642,
+      apiKey: 'test-key',
+      kind: InstanceKind.localhost,
+      onDeviceLoopback: true,
+    );
+    final requests = <Uri>[];
     final chat = ActiveChat(
       compressionRestoreStore: testCompressionRestoreStore(),
-      connection: SavedConnection(
-        id: 'conn-truncated',
-        label: 'Local',
-        host: '127.0.0.1',
-        port: 8642,
-        apiKey: 'test-key',
-        kind: InstanceKind.localhost,
-        onDeviceLoopback: true,
-      ),
+      connection: connection,
       sessionId: 'session-truncated',
       sessionTitle: 'Historial local',
       notifications: null,
       onTerminal: () {},
+      api: _restOnlyLocalApi(connection, requests),
     );
     addTearDown(chat.dispose);
 
     await chat.loadMessages();
 
+    expect(requests, isEmpty);
     expect(chat.messages, hasLength(_maxLocalTranscriptMessages));
     expect(chat.messages.first['content'], 'mensaje 1001');
     expect(chat.messages.last['content'], 'mensaje 2');
@@ -2590,5 +2662,36 @@ void main() {
       isNotNull,
     );
     expect(prefs.getString(historicalV2), '[]');
+  });
+
+  // fix/draft-orphan
+  test('onlySubmittedTurnClientTurnId retires only its exact batch', () async {
+    final store = ChatDraftStore(await SharedPreferences.getInstance());
+    await store.save(
+      'c',
+      's',
+      'lote enviado',
+      const [],
+      submittedTurnClientTurnId: 'turn-a',
+    );
+    expect((await store.load('c', 's')).submittedTurnClientTurnId, 'turn-a');
+
+    await store.clear('c', 's', onlySubmittedTurnClientTurnId: 'turn-b');
+    expect((await store.load('c', 's')).text, 'lote enviado');
+
+    // Una edición posterior reescribe la clave sin enlace: ya no es el lote.
+    await store.save('c', 's', 'texto nuevo', const []);
+    await store.clear('c', 's', onlySubmittedTurnClientTurnId: 'turn-a');
+    expect((await store.load('c', 's')).text, 'texto nuevo');
+
+    await store.save(
+      'c',
+      's',
+      'lote enviado',
+      const [],
+      submittedTurnClientTurnId: 'turn-a',
+    );
+    await store.clear('c', 's', onlySubmittedTurnClientTurnId: 'turn-a');
+    expect((await store.load('c', 's')).text, isEmpty);
   });
 }

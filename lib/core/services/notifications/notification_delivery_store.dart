@@ -323,7 +323,9 @@ class NotificationDeliveryStore {
     'approval': <String>{'pending'},
     'run': <String>{'terminal'},
     'cron': <String>{'terminal'},
-    'kanban': <String>{'done', 'blocked', 'triage'},
+    // `crashed` / `timed_out`: retry events Desktop notifies while the task
+    // stays in its column (plugins/kanban/completion-notify.ts).
+    'kanban': <String>{'done', 'blocked', 'triage', 'crashed', 'timed_out'},
     'chat_reply': <String>{'terminal'},
     'local_agent': <String>{'status'},
   };

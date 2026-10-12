@@ -1746,7 +1746,11 @@ void main() {
         'resume-corrections',
         gateway,
         initialSteerProjections: const [
-          (anchorUserOrdinal: 0, content: 'y documéntala'),
+          (
+            anchorUserOrdinal: 0,
+            content: 'y documéntala',
+            anchorUserContent: null,
+          ),
         ],
       );
       addTearDown(chat.dispose);
@@ -1792,7 +1796,11 @@ void main() {
         'resume-correction-offset-merge',
         gateway,
         initialSteerProjections: const [
-          (anchorUserOrdinal: 0, content: 'más rápido'),
+          (
+            anchorUserOrdinal: 0,
+            content: 'más rápido',
+            anchorUserContent: null,
+          ),
         ],
       );
       addTearDown(chat.dispose);
@@ -1842,8 +1850,8 @@ void main() {
         'resume-correction-scope',
         gateway,
         initialSteerProjections: const [
-          (anchorUserOrdinal: 0, content: 'igual'),
-          (anchorUserOrdinal: 1, content: 'igual'),
+          (anchorUserOrdinal: 0, content: 'igual', anchorUserContent: null),
+          (anchorUserOrdinal: 1, content: 'igual', anchorUserContent: null),
         ],
       );
       addTearDown(chat.dispose);
@@ -2139,7 +2147,7 @@ void main() {
           expect(request.method, 'GET');
           expect(request.url.path, '/api/sessions/stored-chat/messages');
           expect(request.url.queryParameters, {
-            'limit': '500',
+            'limit': '${ActiveChat.authoritativeTranscriptPageSize}',
             'order': 'latest',
             'offset': '0',
             'include_compacted': 'true',
@@ -2513,6 +2521,52 @@ void main() {
     expect(chat.messages[1]['content'], 'respuesta parcial');
     expect(chat.messages[1]['_cancelled'], isTrue);
   });
+
+  test(
+    'resume retenido fallido conserva el error_surface con su restablecimiento',
+    () async {
+      final gateway = _SnapshotGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-retained-surface',
+          'session_key': 'stored-chat',
+          'messages': <Object>[],
+          'running': false,
+          'status': 'idle',
+          'inflight': {
+            'user': 'haz la tarea',
+            'assistant': '',
+            'streaming': false,
+            'error': 'Rate limited by the provider',
+            'status': 'error',
+            'recoverable': true,
+            'error_surface': {
+              'layer': 'provider',
+              'code': 'rate_limit',
+              'retryable': true,
+              'resets_at': 1790000000.5,
+              'message': 'Try again later',
+            },
+          },
+        });
+      final chat = _chat(
+        'resume-retained-surface',
+        gateway,
+        client: MockClient((_) async => http.Response('{"data":[]}', 200)),
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages();
+
+      expect(chat.messages.first['role'], 'assistant_error');
+      expect(chat.messages.first['_errorSurface'], {
+        'layer': 'provider',
+        'code': 'rate_limit',
+        'retryable': true,
+        'message': 'Try again later',
+        'resets_at': 1790000000.5,
+      });
+    },
+  );
 
   test(
     'reanudación recupera un turno durable tras agotar la ventana offline',
@@ -3285,174 +3339,159 @@ void main() {
     },
   );
 
-  test(
-    'tarjeta de subagentes en vivo conserva los conteos durables',
-    () async {
-      SharedPreferences.setMockInitialValues({});
-      const marker =
-          '[ASYNC DELEGATION BATCH COMPLETE — deleg_0a1b2c3d]\n'
-          'A background fan-out unit you dispatched earlier has finished.';
-      const metadata = <String, dynamic>{
-        'display_text': 'Subagent finished',
-        'delegation_id': 'deleg_0a1b2c3d',
-        'task_count': 1,
-        'completed_count': 1,
-        'failed_count': 0,
-        'duration_seconds': 45.7,
-      };
-      var durable = <Map<String, dynamic>>[
+  test('tarjeta de subagentes en vivo conserva los conteos durables', () async {
+    SharedPreferences.setMockInitialValues({});
+    const marker =
+        '[ASYNC DELEGATION BATCH COMPLETE — deleg_0a1b2c3d]\n'
+        'A background fan-out unit you dispatched earlier has finished.';
+    const metadata = <String, dynamic>{
+      'display_text': 'Subagent finished',
+      'delegation_id': 'deleg_0a1b2c3d',
+      'task_count': 1,
+      'completed_count': 1,
+      'failed_count': 0,
+      'duration_seconds': 45.7,
+    };
+    var durable = <Map<String, dynamic>>[
+      {
+        'message_id': 'turn-1-user',
+        'role': 'user',
+        'content': 'delega y responde HECHO',
+        'timestamp': 100,
+      },
+      {
+        'message_id': 'turn-1-assistant',
+        'role': 'assistant',
+        'content': 'HECHO',
+        'timestamp': 101,
+      },
+    ];
+    // REST 8642 (`_message_response`, api_server.py:2784) omite
+    // display_metadata; `session.history` (almacén durable, como la
+    // hidratación de Desktop) sí la conserva.
+    List<Map<String, dynamic>> restRows() => [
+      for (final row in durable)
         {
-          'message_id': 'turn-1-user',
-          'role': 'user',
-          'content': 'delega y responde HECHO',
-          'timestamp': 100,
+          for (final entry in row.entries)
+            if (entry.key != 'display_metadata') entry.key: entry.value,
         },
-        {
-          'message_id': 'turn-1-assistant',
-          'role': 'assistant',
-          'content': 'HECHO',
-          'timestamp': 101,
-        },
-      ];
-      // REST 8642 (`_message_response`, api_server.py:2784) omite
-      // display_metadata; `session.history` (almacén durable, como la
-      // hidratación de Desktop) sí la conserva.
-      List<Map<String, dynamic>> restRows() => [
-        for (final row in durable)
-          {
-            for (final entry in row.entries)
-              if (entry.key != 'display_metadata') entry.key: entry.value,
-          },
-      ];
-      final producer = Object();
-      final gateway = _DurableHistorySnapshotGateway(() => durable)
-        ..snapshot = _snapshot({
-          'session_id': 'runtime-subagent-live',
-          'session_key': 'stored-chat',
-          'messages': durable,
-          'inflight': {'assistant': '', 'streaming': true},
-          'running': true,
-          'status': 'working',
-        });
-      final chat = _chat(
-        'resume-subagent-live',
-        gateway,
-        storedMessageLoader: (_, _) async => restRows(),
-      )..smoothStreaming = false;
-      addTearDown(chat.dispose);
-      await chat.loadMessages();
-      final turnOneDone = chat.changes.firstWhere(
-        (event) => event == ActiveChatEvent.done,
-      );
-      gateway.emit(
-        'message.complete',
-        const {'text': 'HECHO'},
-        40,
-        7,
-        producer,
-      );
-      await turnOneDone.timeout(const Duration(seconds: 1));
-      await Future<void>.delayed(const Duration(milliseconds: 20));
-
-      // El hijo termina: el gateway persiste la fila sintética y arranca el
-      // turno de notificación (message.start sin payload).
-      durable = <Map<String, dynamic>>[
-        ...durable,
-        {
-          'message_id': 'delegation-complete',
-          'role': 'user',
-          'content': marker,
-          'display_kind': 'async_delegation_complete',
-          'display_metadata': metadata,
-          'timestamp': 150,
-        },
-        {
-          'message_id': 'turn-2-assistant',
-          'role': 'assistant',
-          'content': 'HECHO',
-          'timestamp': 160,
-        },
-      ];
-      gateway.snapshot = _snapshot({
+    ];
+    final producer = Object();
+    final gateway = _DurableHistorySnapshotGateway(() => durable)
+      ..snapshot = _snapshot({
         'session_id': 'runtime-subagent-live',
         'session_key': 'stored-chat',
         'messages': durable,
-        'running': false,
-        'status': 'idle',
+        'inflight': {'assistant': '', 'streaming': true},
+        'running': true,
+        'status': 'working',
       });
-      gateway.emit('message.start', const {}, 41, 7, producer);
-      gateway.emit('message.delta', const {'text': 'HECHO'}, 42, 7, producer);
-      await Future<void>.delayed(Duration.zero);
-      final done = chat.changes.firstWhere(
-        (event) => event == ActiveChatEvent.done,
-      );
-      gateway.emit(
-        'message.complete',
-        const {'text': 'HECHO'},
-        43,
-        7,
-        producer,
-      );
-      await done.timeout(const Duration(seconds: 1));
-      await Future<void>.delayed(const Duration(milliseconds: 50));
+    final chat = _chat(
+      'resume-subagent-live',
+      gateway,
+      storedMessageLoader: (_, _) async => restRows(),
+    )..smoothStreaming = false;
+    addTearDown(chat.dispose);
+    await chat.loadMessages();
+    final turnOneDone = chat.changes.firstWhere(
+      (event) => event == ActiveChatEvent.done,
+    );
+    gateway.emit('message.complete', const {'text': 'HECHO'}, 40, 7, producer);
+    await turnOneDone.timeout(const Duration(seconds: 1));
+    await Future<void>.delayed(const Duration(milliseconds: 20));
 
-      List<SubagentCompletionCardData> cards() => chat.messages
-          .map(historicalSubagentCompletionOf)
-          .whereType<SubagentCompletionCardData>()
-          .toList(growable: false);
+    // El hijo termina: el gateway persiste la fila sintética y arranca el
+    // turno de notificación (message.start sin payload).
+    durable = <Map<String, dynamic>>[
+      ...durable,
+      {
+        'message_id': 'delegation-complete',
+        'role': 'user',
+        'content': marker,
+        'display_kind': 'async_delegation_complete',
+        'display_metadata': metadata,
+        'timestamp': 150,
+      },
+      {
+        'message_id': 'turn-2-assistant',
+        'role': 'assistant',
+        'content': 'HECHO',
+        'timestamp': 160,
+      },
+    ];
+    gateway.snapshot = _snapshot({
+      'session_id': 'runtime-subagent-live',
+      'session_key': 'stored-chat',
+      'messages': durable,
+      'running': false,
+      'status': 'idle',
+    });
+    gateway.emit('message.start', const {}, 41, 7, producer);
+    gateway.emit('message.delta', const {'text': 'HECHO'}, 42, 7, producer);
+    await Future<void>.delayed(Duration.zero);
+    final done = chat.changes.firstWhere(
+      (event) => event == ActiveChatEvent.done,
+    );
+    gateway.emit('message.complete', const {'text': 'HECHO'}, 43, 7, producer);
+    await done.timeout(const Duration(seconds: 1));
+    await Future<void>.delayed(const Duration(milliseconds: 50));
 
-      // En vivo, tras el terminal: exactamente una tarjeta con los conteos.
-      expect(cards(), hasLength(1), reason: 'live: la tarjeta no aparece');
-      expect(
-        gateway.historyCalls,
-        greaterThanOrEqualTo(1),
-        reason: 'la tarjeta live se hidrata desde session.history durable',
-      );
-      expect(cards().single.completedCount, 1);
-      expect(cards().single.failedCount, 0);
-      expect(cards().single.taskCount, 1);
+    List<SubagentCompletionCardData> cards() => chat.messages
+        .map(historicalSubagentCompletionOf)
+        .whereType<SubagentCompletionCardData>()
+        .toList(growable: false);
 
-      // Un refresco REST posterior (sin display_metadata) no degrada la
-      // tarjeta a "estado desconocido".
-      await chat.loadMessages(passiveOnly: true);
-      await chat.reconcileAfterResume();
-      expect(cards(), hasLength(1));
-      expect(cards().single.completedCount, 1);
-      expect(cards().single.failedCount, 0);
-      expect(cards().single.durationSeconds, 45.7);
+    // En vivo, tras el terminal: exactamente una tarjeta con los conteos.
+    expect(cards(), hasLength(1), reason: 'live: la tarjeta no aparece');
+    expect(
+      gateway.historyCalls,
+      greaterThanOrEqualTo(1),
+      reason: 'la tarjeta live se hidrata desde session.history durable',
+    );
+    expect(cards().single.completedCount, 1);
+    expect(cards().single.failedCount, 0);
+    expect(cards().single.taskCount, 1);
 
-      // Otro turno terminal (cola/refresco) leído desde REST sin metadata.
-      durable = <Map<String, dynamic>>[
-        ...durable,
-        {
-          'message_id': 'turn-3-user',
-          'role': 'user',
-          'content': 'otra',
-          'timestamp': 170,
-        },
-        {
-          'message_id': 'turn-3-assistant',
-          'role': 'assistant',
-          'content': 'OK',
-          'timestamp': 171,
-        },
-      ];
-      final turnThreeDone = chat.changes.firstWhere(
-        (event) => event == ActiveChatEvent.done,
-      );
-      gateway.emit('message.start', const {}, 44, 7, producer);
-      gateway.emit('message.delta', const {'text': 'OK'}, 45, 7, producer);
-      await Future<void>.delayed(Duration.zero);
-      gateway.emit('message.complete', const {'text': 'OK'}, 46, 7, producer);
-      await turnThreeDone.timeout(const Duration(seconds: 1));
-      await Future<void>.delayed(const Duration(milliseconds: 50));
-      // El terminal de un turno posterior adopta el transcript REST 8642 sin
-      // display_metadata: la tarjeta debe conservar los conteos durables.
-      expect(cards(), hasLength(1));
-      expect(cards().single.completedCount, 1, reason: 'estado desconocido');
-      expect(cards().single.failedCount, 0);
-    },
-  );
+    // Un refresco REST posterior (sin display_metadata) no degrada la
+    // tarjeta a "estado desconocido".
+    await chat.loadMessages(passiveOnly: true);
+    await chat.reconcileAfterResume();
+    expect(cards(), hasLength(1));
+    expect(cards().single.completedCount, 1);
+    expect(cards().single.failedCount, 0);
+    expect(cards().single.durationSeconds, 45.7);
+
+    // Otro turno terminal (cola/refresco) leído desde REST sin metadata.
+    durable = <Map<String, dynamic>>[
+      ...durable,
+      {
+        'message_id': 'turn-3-user',
+        'role': 'user',
+        'content': 'otra',
+        'timestamp': 170,
+      },
+      {
+        'message_id': 'turn-3-assistant',
+        'role': 'assistant',
+        'content': 'OK',
+        'timestamp': 171,
+      },
+    ];
+    final turnThreeDone = chat.changes.firstWhere(
+      (event) => event == ActiveChatEvent.done,
+    );
+    gateway.emit('message.start', const {}, 44, 7, producer);
+    gateway.emit('message.delta', const {'text': 'OK'}, 45, 7, producer);
+    await Future<void>.delayed(Duration.zero);
+    gateway.emit('message.complete', const {'text': 'OK'}, 46, 7, producer);
+    await turnThreeDone.timeout(const Duration(seconds: 1));
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    // El terminal de un turno posterior adopta el transcript REST 8642 sin
+    // display_metadata: la tarjeta debe conservar los conteos durables.
+    expect(cards(), hasLength(1));
+    expect(cards().single.completedCount, 1, reason: 'estado desconocido');
+    expect(cards().single.failedCount, 0);
+  });
 
   test(
     'tarjeta de subagente live con payloads reales (REST id / '
@@ -3880,105 +3919,101 @@ void main() {
     expect(reads, ['mob-rv-a5', 'mob-rv-a5']);
   });
 
-  test(
-    'fila editorial sin metadata en el almacén hidrata session.history '
-    'como mucho una vez por fila',
-    () async {
-      SharedPreferences.setMockInitialValues({});
-      const marker =
-          '[ASYNC DELEGATION BATCH COMPLETE — deleg_legacy]\n'
-          'A background fan-out unit you dispatched earlier has finished.';
-      final store = <Map<String, dynamic>>[
-        {'id': 10, 'role': 'user', 'content': 'hola', 'timestamp': 1.0},
-        {'id': 11, 'role': 'assistant', 'content': 'ok', 'timestamp': 2.0},
-        // Fila legada: el almacén tampoco tiene display_metadata.
+  test('fila editorial sin metadata en el almacén hidrata session.history '
+      'como mucho una vez por fila', () async {
+    SharedPreferences.setMockInitialValues({});
+    const marker =
+        '[ASYNC DELEGATION BATCH COMPLETE — deleg_legacy]\n'
+        'A background fan-out unit you dispatched earlier has finished.';
+    final store = <Map<String, dynamic>>[
+      {'id': 10, 'role': 'user', 'content': 'hola', 'timestamp': 1.0},
+      {'id': 11, 'role': 'assistant', 'content': 'ok', 'timestamp': 2.0},
+      // Fila legada: el almacén tampoco tiene display_metadata.
+      {
+        'id': 12,
+        'role': 'user',
+        'content': marker,
+        'display_kind': 'async_delegation_complete',
+        'timestamp': 3.0,
+      },
+      {'id': 13, 'role': 'assistant', 'content': 'HECHO', 'timestamp': 4.0},
+    ];
+    List<Map<String, dynamic>> historyRows() => [
+      for (final row in store)
         {
-          'id': 12,
-          'role': 'user',
-          'content': marker,
-          'display_kind': 'async_delegation_complete',
-          'timestamp': 3.0,
+          'role': row['role'],
+          'text': row['content'],
+          'row_id': row['id'],
+          if (row['display_kind'] != null) 'display_kind': row['display_kind'],
         },
-        {'id': 13, 'role': 'assistant', 'content': 'HECHO', 'timestamp': 4.0},
-      ];
-      List<Map<String, dynamic>> historyRows() => [
-        for (final row in store)
+    ];
+    final producer = Object();
+    final gateway = _DurableHistorySnapshotGateway(historyRows)
+      ..snapshot = _snapshot({
+        'session_id': 'runtime-legacy-editorial',
+        'session_key': 'stored-chat',
+        'messages': historyRows(),
+        'inflight': {'assistant': '', 'streaming': true},
+        'running': true,
+        'status': 'working',
+      });
+    final chat = _chat(
+      'resume-legacy-editorial',
+      gateway,
+      storedMessageLoader: (_, _) async => [
+        for (final row in store) Map<String, dynamic>.of(row),
+      ],
+    )..smoothStreaming = false;
+    addTearDown(chat.dispose);
+    await chat.loadMessages();
+    var seq = 40;
+    for (var turn = 0; turn < 3; turn++) {
+      final done = chat.changes.firstWhere(
+        (event) => event == ActiveChatEvent.done,
+      );
+      if (turn > 0) {
+        store.addAll([
           {
-            'role': row['role'],
-            'text': row['content'],
-            'row_id': row['id'],
-            if (row['display_kind'] != null)
-              'display_kind': row['display_kind'],
+            'id': 20 + turn * 2,
+            'role': 'user',
+            'content': 'turno $turn',
+            'timestamp': 10.0 + turn,
           },
-      ];
-      final producer = Object();
-      final gateway = _DurableHistorySnapshotGateway(historyRows)
-        ..snapshot = _snapshot({
-          'session_id': 'runtime-legacy-editorial',
-          'session_key': 'stored-chat',
-          'messages': historyRows(),
-          'inflight': {'assistant': '', 'streaming': true},
-          'running': true,
-          'status': 'working',
-        });
-      final chat = _chat(
-        'resume-legacy-editorial',
-        gateway,
-        storedMessageLoader: (_, _) async => [
-          for (final row in store) Map<String, dynamic>.of(row),
-        ],
-      )..smoothStreaming = false;
-      addTearDown(chat.dispose);
-      await chat.loadMessages();
-      var seq = 40;
-      for (var turn = 0; turn < 3; turn++) {
-        final done = chat.changes.firstWhere(
-          (event) => event == ActiveChatEvent.done,
-        );
-        if (turn > 0) {
-          store.addAll([
-            {
-              'id': 20 + turn * 2,
-              'role': 'user',
-              'content': 'turno $turn',
-              'timestamp': 10.0 + turn,
-            },
-            {
-              'id': 21 + turn * 2,
-              'role': 'assistant',
-              'content': 'R$turn',
-              'timestamp': 10.5 + turn,
-            },
-          ]);
-          gateway.emit('message.start', const {}, seq++, 7, producer);
-        }
-        gateway.emit(
-          'message.complete',
-          {'text': turn == 0 ? 'HECHO' : 'R$turn'},
-          seq++,
-          7,
-          producer,
-        );
-        await done.timeout(const Duration(seconds: 1));
-        await Future<void>.delayed(const Duration(milliseconds: 30));
-        await chat.loadMessages(passiveOnly: true);
-        await Future<void>.delayed(const Duration(milliseconds: 10));
+          {
+            'id': 21 + turn * 2,
+            'role': 'assistant',
+            'content': 'R$turn',
+            'timestamp': 10.5 + turn,
+          },
+        ]);
+        gateway.emit('message.start', const {}, seq++, 7, producer);
       }
-      expect(
-        chat.messages.where(
-          (m) => m['display_kind'] == 'async_delegation_complete',
-        ),
-        hasLength(1),
+      gateway.emit(
+        'message.complete',
+        {'text': turn == 0 ? 'HECHO' : 'R$turn'},
+        seq++,
+        7,
+        producer,
       );
-      expect(
-        gateway.historyCalls,
-        1,
-        reason:
-            'una fila sin metadata no puede releer session.history '
-            'en cada terminal/refresco',
-      );
-    },
-  );
+      await done.timeout(const Duration(seconds: 1));
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      await chat.loadMessages(passiveOnly: true);
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    expect(
+      chat.messages.where(
+        (m) => m['display_kind'] == 'async_delegation_complete',
+      ),
+      hasLength(1),
+    );
+    expect(
+      gateway.historyCalls,
+      1,
+      reason:
+          'una fila sin metadata no puede releer session.history '
+          'en cada terminal/refresco',
+    );
+  });
 
   test(
     'un fallo transitorio de session.history se reintenta en el '
@@ -4686,6 +4721,40 @@ void main() {
     expect(gateway.compressSessionCalls, 2);
     expect(storage.value, isNot(contains('second-attempt')));
   });
+
+  test(
+    'stop-parked gateway-accepted prompt can be deleted from the local queue',
+    () async {
+      final gateway = _SnapshotGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-parked-accepted',
+          'session_key': 'stored-chat',
+          'messages': <Object>[],
+          'inflight': {
+            'user': 'actual',
+            'assistant': 'parcial',
+            'streaming': true,
+          },
+          'queued': {'user': 'después'},
+          'running': true,
+          'status': 'working',
+        });
+      final chat = _chat('parked-accepted-delete', gateway);
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+      expect(chat.queuedEntries.single.kind, QueuedEntryKind.desktopAccepted);
+
+      await chat.cancel();
+
+      expect(chat.queueParked, isTrue);
+      final parked = chat.queuedEntries.single;
+      expect(parked.text, 'después');
+      expect(parked.kind, QueuedEntryKind.text);
+      expect(await chat.cancelQueuedByIdentity(parked.id), isTrue);
+      expect(chat.queuedEntries, isEmpty);
+      expect(chat.queuedMessages, isEmpty);
+    },
+  );
 
   group('fail-open compression restore (Hermes Desktop has no fence)', () {
     Map<String, dynamic> ring(String state, {String runtime = 'runtime-a'}) {
@@ -5708,9 +5777,24 @@ void main() {
       );
       final refs = _generatedImageRefs(finalAssistant);
       expect(refs, hasLength(1));
+      // The producer's exact host path is the reference's identity: the
+      // authenticated read checks it against the profile root. The basename
+      // is presentation only.
+      expect(refs.single['kind'], 'serverCache');
+      expect(
+        refs.single['source'],
+        '/home/hermes/.hermes/cache/images/peacock.png',
+      );
       expect(refs.single['basename'], 'peacock.png');
       expect(refs.single['tool_call_id'], 'call-image-1');
-      expect(chat.messages.toString(), isNot(contains('/home/hermes')));
+      // That structured reference is the only place the host path lives; the
+      // sandbox-only path is kept nowhere.
+      final outsideReferences = [
+        for (final message in chat.messages)
+          Map<String, dynamic>.of(message)..remove('_generatedImages'),
+      ];
+      expect(outsideReferences.toString(), isNot(contains('/home/hermes')));
+      expect(outsideReferences.toString(), isNot(contains('peacock.png')));
       expect(chat.messages.toString(), isNot(contains('/sandbox/cache')));
       expect(finalAssistant['content'], 'Aquí tienes la imagen.');
       expect(
@@ -5719,6 +5803,78 @@ void main() {
             .expand(_generatedImageRefs),
         isEmpty,
       );
+    },
+  );
+
+  test(
+    'REST lleva MEDIA de un tool result de texto al asistente final',
+    () async {
+      final gateway = _SnapshotGateway()
+        ..resumeExistingError = const TuiGatewayRpcError(
+          'session.resume',
+          'not found',
+          code: 4007,
+        );
+      final chat = _chat(
+        'resume-tool-media-rest',
+        gateway,
+        client: MockClient(
+          (_) async => http.Response(
+            jsonEncode({
+              'data': [
+                {'id': 1, 'role': 'user', 'content': 'haz el informe'},
+                {
+                  'id': 2,
+                  'role': 'assistant',
+                  'content': '',
+                  'tool_calls': [
+                    {
+                      'id': 'call-report-1',
+                      'type': 'function',
+                      'function': {
+                        'name': 'mcp_docs_render',
+                        'arguments': '{}',
+                      },
+                    },
+                  ],
+                },
+                {
+                  'id': 3,
+                  'role': 'tool',
+                  'tool_call_id': 'call-report-1',
+                  'tool_name': 'mcp_docs_render',
+                  'content':
+                      'Informe generado.\nMEDIA:/home/hermes/work/informe.pdf',
+                },
+                {'id': 4, 'role': 'assistant', 'content': 'Ya está listo.'},
+              ],
+            }),
+            200,
+          ),
+        ),
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages();
+
+      final finalAssistant = chat.messages.singleWhere(
+        (message) => message['id'] == 4,
+      );
+      final refs = _generatedImageRefs(finalAssistant);
+      expect(refs, hasLength(1));
+      expect(refs.single['source'], '/home/hermes/work/informe.pdf');
+      expect(refs.single['kind'], 'serverPath');
+      expect(refs.single['tool_call_id'], 'call-report-1');
+      expect(finalAssistant['content'], 'Ya está listo.');
+      expect(
+        chat.messages
+            .where((message) => message['id'] != 4)
+            .expand(_generatedImageRefs),
+        isEmpty,
+      );
+      final artifact = chat.resolveSessionArtifacts().single;
+      expect(artifact.displayName, 'informe.pdf');
+      expect(artifact.managedReference, '/home/hermes/work/informe.pdf');
     },
   );
 
@@ -6266,4 +6422,492 @@ void main() {
       expect(gateway.historyCalls, 1, reason: 'afterTurns=$callsAfterTurn');
     },
   );
+  group('tg1215 una corrección durable aparece una sola vez', () {
+    const steer = 'Lo quité ese modelo, puse otro';
+    const toolCall = {
+      'id': 'call-tg1215',
+      'type': 'function',
+      'function': {'name': 'terminal', 'arguments': '{}'},
+    };
+
+    List<String> visibleSteers(ActiveChat chat) => [
+      for (final message in chat.messages)
+        if (message['content'] == steer) message['content'] as String,
+    ];
+
+    /// Texto del bubble de usuario al que cuelga cada aparición de [steer].
+    List<String> steerOwners(ActiveChat chat) {
+      final messages = chat.messages;
+      final projection = ChatRenderProjection.build(messages);
+      return [
+        for (final unit in projection.units.reversed)
+          if (unit is ChatUserTurnUnitPlan)
+            for (final index in [
+              unit.primaryMessageIndex,
+              ...unit.supplementMessageIndexes,
+            ])
+              if (messages[index]['content'] == steer)
+                messages[unit.primaryMessageIndex]['content'] as String,
+      ];
+    }
+
+    for (final variant in const ['tras herramientas', 'ventana ampliada']) {
+      test(
+        'la proyección local no duplica la fila durable ($variant)',
+        () async {
+          final rows = <Map<String, dynamic>>[
+            if (variant == 'ventana ampliada') ...[
+              {'role': 'user', 'content': 'turno antiguo', 'row_id': 8},
+              {'role': 'assistant', 'content': 'antiguo listo', 'row_id': 9},
+            ],
+            {'role': 'user', 'content': 'cambia el modelo', 'row_id': 10},
+            {
+              'role': 'assistant',
+              'content': '',
+              'row_id': 11,
+              'tool_calls': [toolCall],
+            },
+            {
+              'role': 'tool',
+              'name': 'terminal',
+              'context': 'ls',
+              'tool_call_id': 'call-tg1215',
+            },
+            {
+              'role': 'user',
+              'content': steer,
+              'display_kind': 'steer',
+              'row_id': 12,
+            },
+            {'role': 'assistant', 'content': 'Hecho.', 'row_id': 13},
+            {'role': 'user', 'content': 'siguiente turno', 'row_id': 14},
+            {'role': 'assistant', 'content': 'ok', 'row_id': 15},
+          ];
+          final gateway = _SnapshotGateway()
+            ..snapshot = _snapshot({
+              'session_id': 'runtime-tg1215-steer',
+              'session_key': 'stored-chat',
+              'message_count': rows.length,
+              'messages': rows,
+            });
+          final chat = _chat(
+            'tg1215-steer-$variant',
+            gateway,
+            // Proyección local guardada al enviar la corrección: el ordinal 0
+            // era «cambia el modelo» en la ventana de entonces.
+            initialSteerProjections: const [
+              (anchorUserOrdinal: 0, content: steer, anchorUserContent: null),
+            ],
+          );
+          addTearDown(chat.dispose);
+
+          await chat.loadMessages();
+          await chat.loadMessages();
+
+          expect(visibleSteers(chat), [steer]);
+          expect(steerOwners(chat), isNot(contains('turno antiguo')));
+          expect(steerOwners(chat), isNot(contains('siguiente turno')));
+          // La fila durable ya es la autoridad: la proyección local se retira.
+          expect(chat.steerProjections, isEmpty);
+        },
+      );
+    }
+
+    test('dos correcciones idénticas reales se conservan las dos', () async {
+      final rows = <Map<String, dynamic>>[
+        {'role': 'user', 'content': 'primero', 'row_id': 20},
+        {
+          'role': 'user',
+          'content': steer,
+          'display_kind': 'steer',
+          'row_id': 21,
+        },
+        {'role': 'assistant', 'content': 'uno', 'row_id': 22},
+        {'role': 'user', 'content': 'segundo', 'row_id': 23},
+        {'role': 'assistant', 'content': 'dos', 'row_id': 24},
+      ];
+      final gateway = _SnapshotGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-tg1215-twins',
+          'session_key': 'stored-chat',
+          'message_count': rows.length,
+          'messages': rows,
+        });
+      final chat = _chat(
+        'tg1215-steer-twins',
+        gateway,
+        // La segunda corrección, idéntica, aún no se ha persistido.
+        initialSteerProjections: const [
+          (anchorUserOrdinal: 0, content: steer, anchorUserContent: null),
+          (anchorUserOrdinal: 1, content: steer, anchorUserContent: null),
+        ],
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages();
+
+      expect(visibleSteers(chat), [steer, steer]);
+      expect(steerOwners(chat), ['primero', 'segundo']);
+      expect(chat.steerProjections, [
+        (anchorUserOrdinal: 1, content: steer, anchorUserContent: null),
+      ]);
+    });
+
+    test('la corrección en vuelo ya persistida no se repite', () async {
+      final rows = <Map<String, dynamic>>[
+        {'role': 'user', 'content': 'turno cerrado', 'row_id': 30},
+        {'role': 'assistant', 'content': 'cerrado', 'row_id': 31},
+        {'role': 'user', 'content': 'cambia el modelo', 'row_id': 32},
+        {
+          'role': 'assistant',
+          'content': '',
+          'row_id': 33,
+          'tool_calls': [toolCall],
+        },
+        {
+          'role': 'tool',
+          'name': 'terminal',
+          'context': 'ls',
+          'tool_call_id': 'call-tg1215',
+        },
+        {
+          'role': 'user',
+          'content': steer,
+          'display_kind': 'steer',
+          'row_id': 34,
+        },
+      ];
+      final gateway = _SnapshotGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-tg1215-inflight',
+          'session_key': 'stored-chat',
+          'message_count': rows.length,
+          'messages': rows,
+          'inflight': {
+            'user': 'cambia el modelo',
+            'corrections': [steer],
+            'assistant': 'Sigo con ello',
+            'streaming': true,
+          },
+          'running': true,
+        });
+      final chat = _chat('tg1215-steer-inflight', gateway);
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages();
+      await chat.loadMessages();
+
+      expect(visibleSteers(chat), [steer]);
+      expect(
+        chat.messages.where((m) => m['content'] == 'cambia el modelo'),
+        hasLength(1),
+      );
+    });
+    test(
+      'una corrección en vuelo distinta de la durable sí se muestra',
+      () async {
+        final rows = <Map<String, dynamic>>[
+          {'role': 'user', 'content': 'turno cerrado', 'row_id': 40},
+          {'role': 'assistant', 'content': 'cerrado', 'row_id': 41},
+          {'role': 'user', 'content': 'cambia el modelo', 'row_id': 42},
+          {
+            'role': 'assistant',
+            'content': '',
+            'row_id': 43,
+            'tool_calls': [toolCall],
+          },
+          {
+            'role': 'tool',
+            'name': 'terminal',
+            'context': 'ls',
+            'tool_call_id': 'call-tg1215',
+          },
+          {
+            'role': 'user',
+            'content': steer,
+            'display_kind': 'steer',
+            'row_id': 44,
+          },
+        ];
+        final gateway = _SnapshotGateway()
+          ..snapshot = _snapshot({
+            'session_id': 'runtime-tg1215-other',
+            'session_key': 'stored-chat',
+            'message_count': rows.length,
+            'messages': rows,
+            'inflight': {
+              'user': 'cambia el modelo',
+              'corrections': [steer, 'y otra cosa nueva'],
+              'assistant': 'Sigo con ello',
+              'streaming': true,
+            },
+            'running': true,
+          });
+        final chat = _chat('tg1215-steer-other', gateway);
+        addTearDown(chat.dispose);
+
+        await chat.loadMessages();
+        await chat.loadMessages();
+
+        expect(visibleSteers(chat), [steer]);
+        expect(
+          chat.messages.where((m) => m['content'] == 'y otra cosa nueva'),
+          hasLength(1),
+        );
+        expect(
+          chat.messages.where((m) => m['content'] == 'cambia el modelo'),
+          hasLength(1),
+        );
+      },
+    );
+    Future<ActiveChat> openTurn(
+      String id, {
+      required List<String> corrections,
+      String inflightUser = 'cambia el modelo',
+      String? durableSteer = steer,
+    }) async {
+      final rows = <Map<String, dynamic>>[
+        {'role': 'user', 'content': 'turno cerrado', 'row_id': 50},
+        {'role': 'assistant', 'content': 'cerrado', 'row_id': 51},
+        {'role': 'user', 'content': 'cambia el modelo', 'row_id': 52},
+        {
+          'role': 'assistant',
+          'content': '',
+          'row_id': 53,
+          'tool_calls': [toolCall],
+        },
+        {
+          'role': 'tool',
+          'name': 'terminal',
+          'context': 'ls',
+          'tool_call_id': 'call-tg1215',
+        },
+        if (durableSteer != null)
+          {
+            'role': 'user',
+            'content': durableSteer,
+            'display_kind': 'steer',
+            'row_id': 54,
+          },
+      ];
+      final gateway = _SnapshotGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-$id',
+          'session_key': 'stored-chat',
+          'message_count': rows.length,
+          'messages': rows,
+          'inflight': {
+            'user': inflightUser,
+            'corrections': corrections,
+            'assistant': 'Sigo con ello',
+            'streaming': true,
+          },
+          'running': true,
+        });
+      final chat = _chat(id, gateway);
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+      await chat.loadMessages();
+      return chat;
+    }
+
+    test('una corrección viva con otro texto nunca se oculta', () async {
+      final chat = await openTurn(
+        'tg1215-steer-mismatch',
+        corrections: const ['otra corrección distinta'],
+      );
+      expect(visibleSteers(chat), [steer]);
+      expect(
+        chat.messages.where((m) => m['content'] == 'otra corrección distinta'),
+        hasLength(1),
+      );
+    });
+
+    test('un prompt vivo distinto del durable nunca se oculta', () async {
+      final chat = await openTurn(
+        'tg1215-prompt-mismatch',
+        corrections: const [],
+        inflightUser: 'otro prompt real',
+        durableSteer: null,
+      );
+      expect(
+        chat.messages.where((m) => m['content'] == 'otro prompt real'),
+        hasLength(1),
+      );
+    });
+
+    Future<ActiveChat> closedTurns(
+      String id,
+      List<SteerProjection> projections,
+    ) async {
+      final rows = <Map<String, dynamic>>[
+        {'role': 'user', 'content': 'primero', 'row_id': 60},
+        {
+          'role': 'user',
+          'content': steer,
+          'display_kind': 'steer',
+          'row_id': 61,
+        },
+        {'role': 'assistant', 'content': 'uno', 'row_id': 62},
+        {'role': 'user', 'content': 'segundo', 'row_id': 63},
+        {'role': 'assistant', 'content': 'dos', 'row_id': 64},
+      ];
+      final gateway = _SnapshotGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-$id',
+          'session_key': 'stored-chat',
+          'message_count': rows.length,
+          'messages': rows,
+        });
+      final chat = _chat(id, gateway, initialSteerProjections: projections);
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+      return chat;
+    }
+
+    test(
+      'una fila durable de un turno anterior no retira otra proyección',
+      () async {
+        final chat = await closedTurns('tg1215-steer-earlier', const [
+          (anchorUserOrdinal: 1, content: steer, anchorUserContent: null),
+        ]);
+        expect(visibleSteers(chat), [steer, steer]);
+        expect(steerOwners(chat), ['primero', 'segundo']);
+        expect(chat.steerProjections, [
+          (anchorUserOrdinal: 1, content: steer, anchorUserContent: null),
+        ]);
+      },
+    );
+
+    test('una fila durable solo retira una proyección idéntica', () async {
+      final chat = await closedTurns('tg1215-steer-one-claim', const [
+        (anchorUserOrdinal: 0, content: steer, anchorUserContent: null),
+        (anchorUserOrdinal: 0, content: steer, anchorUserContent: null),
+      ]);
+      expect(visibleSteers(chat), [steer, steer]);
+      expect(steerOwners(chat), ['primero', 'primero']);
+      expect(chat.steerProjections, [
+        (anchorUserOrdinal: 0, content: steer, anchorUserContent: null),
+      ]);
+    });
+
+    // Eco de A ausente: la corrección A del turno «primero» nunca llegó al
+    // transcript, y un turno posterior trae una corrección B real con el mismo
+    // texto. B pertenece a su turno; no puede reclamar la proyección A.
+    Future<ActiveChat> echoMissingThenLaterTwin(
+      String id,
+      List<SteerProjection> projections,
+    ) async {
+      final rows = <Map<String, dynamic>>[
+        {'role': 'user', 'content': 'primero', 'row_id': 70},
+        {'role': 'assistant', 'content': 'uno', 'row_id': 71},
+        {'role': 'user', 'content': 'segundo', 'row_id': 72},
+        {
+          'role': 'user',
+          'content': steer,
+          'display_kind': 'steer',
+          'row_id': 73,
+        },
+        {'role': 'assistant', 'content': 'dos', 'row_id': 74},
+      ];
+      final gateway = _SnapshotGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-$id',
+          'session_key': 'stored-chat',
+          'message_count': rows.length,
+          'messages': rows,
+        });
+      final chat = _chat(id, gateway, initialSteerProjections: projections);
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+      await chat.loadMessages();
+      return chat;
+    }
+
+    test(
+      'xr2 sin eco de A, una corrección idéntica posterior no la retira',
+      () async {
+        const projectionA = (
+          anchorUserOrdinal: 0,
+          content: steer,
+          anchorUserContent: 'primero',
+        );
+        final chat = await echoMissingThenLaterTwin('xr2-steer-a-only', const [
+          projectionA,
+        ]);
+        expect(visibleSteers(chat), [steer, steer]);
+        expect(steerOwners(chat), ['primero', 'segundo']);
+        expect(chat.steerProjections, [projectionA]);
+      },
+    );
+
+    test(
+      'xr2 sin eco de A, la fila de B retira solo la proyección de B',
+      () async {
+        const projectionA = (
+          anchorUserOrdinal: 0,
+          content: steer,
+          anchorUserContent: 'primero',
+        );
+        final chat = await echoMissingThenLaterTwin('xr2-steer-a-and-b', const [
+          projectionA,
+          (anchorUserOrdinal: 1, content: steer, anchorUserContent: 'segundo'),
+        ]);
+        expect(visibleSteers(chat), [steer, steer]);
+        expect(steerOwners(chat), ['primero', 'segundo']);
+        expect(chat.steerProjections, [projectionA]);
+      },
+    );
+
+    test(
+      'xr2 sin texto de ancla, la fila de B retira la proyección más cercana',
+      () async {
+        // Proyecciones anteriores a esta versión no recuerdan su turno: la
+        // fila de «segundo» retira la anclada en «segundo», no la de A.
+        final chat = await echoMissingThenLaterTwin('xr2-steer-legacy', const [
+          (anchorUserOrdinal: 0, content: steer, anchorUserContent: null),
+          (anchorUserOrdinal: 1, content: steer, anchorUserContent: null),
+        ]);
+        expect(visibleSteers(chat), [steer, steer]);
+        expect(steerOwners(chat), ['primero', 'segundo']);
+        expect(chat.steerProjections, const [
+          (anchorUserOrdinal: 0, content: steer, anchorUserContent: null),
+        ]);
+      },
+    );
+
+    test(
+      'xr2 un turno guardado con otro texto sigue retirando su eco',
+      () async {
+        // Si el prompt durable no coincide con el texto recordado, la
+        // proyección no se ancla a ningún turno visible y se retira por
+        // ordinal, como antes: nunca se pinta dos veces.
+        final chat =
+            await echoMissingThenLaterTwin('xr2-steer-rewritten', const [
+              (
+                anchorUserOrdinal: 1,
+                content: steer,
+                anchorUserContent: 'segundo con adjunto',
+              ),
+            ]);
+        expect(visibleSteers(chat), [steer]);
+        expect(steerOwners(chat), ['segundo']);
+        expect(chat.steerProjections, isEmpty);
+      },
+    );
+
+    test(
+      'xr2 la ventana ampliada sigue retirando el eco del propio turno',
+      () async {
+        // Al enviar, «segundo» era el ordinal 0 de la ventana; tras ampliar
+        // es el 1 y su eco durable sigue retirando la proyección.
+        final chat = await echoMissingThenLaterTwin('xr2-steer-shifted', const [
+          (anchorUserOrdinal: 0, content: steer, anchorUserContent: 'segundo'),
+        ]);
+        expect(visibleSteers(chat), [steer]);
+        expect(steerOwners(chat), ['segundo']);
+        expect(chat.steerProjections, isEmpty);
+      },
+    );
+  });
 }

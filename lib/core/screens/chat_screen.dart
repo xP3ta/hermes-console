@@ -8,11 +8,25 @@ export '../widgets/chat/chat_markdown_body.dart'
 export '../widgets/chat/chat_message_selection_area.dart';
 
 import '../models/bot_mention.dart';
+import '../services/app_lock_sensitive_read_fence.dart';
+import '../models/composer_reference.dart';
+import '../models/reference_directive.dart';
+import '../utils/large_paste.dart';
 import '../widgets/chat_mention_palette.dart';
+import '../widgets/chat/composer_reference_palette.dart';
+import '../widgets/chat/user_message_text.dart';
+import '../widgets/chat/pasted_text_editor.dart';
+import '../services/message_reaction_prefs.dart';
 import '../widgets/chat/chat_markdown_body.dart';
+import '../widgets/chat/message_reaction_bar.dart';
+import '../widgets/chat/quick_reaction_bar.dart';
+import '../models/message_reaction.dart' show MessageReactionAuthor;
 import '../widgets/chat/chat_message_frame.dart';
+import '../widgets/chat/chat_replying_indicator.dart';
+import '../widgets/chat/composer_pasted_image.dart';
 import '../widgets/chat/console_composer.dart';
 import '../widgets/chat/chat_message_selection_area.dart';
+
 // Chat screen with real-time streaming via REST API.
 // Uses REST endpoints: POST /api/sessions/{id}/chat and
 // GET /api/sessions/{id}/messages.
@@ -25,7 +39,7 @@ import 'dart:math' as math;
 import 'package:crypto/crypto.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart'
-    show ValueListenable, ValueNotifier, visibleForTesting;
+    show ValueListenable, ValueNotifier, mapEquals, visibleForTesting;
 import 'package:flutter/gestures.dart' show kTouchSlop;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart'
@@ -42,7 +56,8 @@ import 'package:flutter/rendering.dart'
         RenderSliverMultiBoxAdaptor,
         ScrollCacheExtent,
         ScrollDirection;
-import 'package:flutter/scheduler.dart' show SchedulerBinding;
+import 'package:flutter/scheduler.dart' show SchedulerBinding, SchedulerPhase;
+import 'package:flutter/semantics.dart' show OrdinalSortKey;
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:image_picker/image_picker.dart';
@@ -55,15 +70,16 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../main.dart';
-import '../app_header_title.dart';
-import '../companion/render/companion_message_presence.dart';
-import '../companion/render/companion_status_indicator.dart';
+import '../models/profile_identity.dart';
+import '../widgets/profile_pet_avatar.dart';
 import '../companion/models/companion_presence_level.dart';
 import '../config/flavor.dart';
 import '../models/activity_snapshot.dart';
 import '../models/attachment_draft.dart';
 import '../models/agent_profile.dart';
 import '../models/chat_preferences.dart';
+import '../models/cron_run_write_gate.dart';
+import '../models/account_usage_limits.dart';
 import '../models/compaction_progress.dart';
 import '../models/command_descriptor.dart';
 import '../models/desktop_compression_result.dart';
@@ -74,45 +90,63 @@ import '../models/desktop_session_snapshot.dart';
 import '../models/generated_artifact.dart';
 import '../models/interactive_prompt.dart';
 import '../models/prepared_turn.dart';
-import '../models/session_activity.dart';
+import '../models/session_live_status.dart';
 import '../models/session_artifact.dart';
 import '../models/subagent_activity.dart';
+import '../models/tool_output.dart';
 import '../navigation/chat_route.dart';
 import '../models/desktop_control_center.dart' show SessionGoalSnapshot;
 import '../services/hermes_update_monitor.dart';
+import '../services/account_limits_controller.dart';
 import '../services/active_chat_service.dart';
+import '../services/cold_start_store.dart';
 import '../services/approval_policy.dart';
+import 'chat_content_screen.dart';
+import 'image_viewer_screen.dart';
 import '../services/compaction_tracker.dart';
 import '../services/session_reconciler.dart';
 import '../services/artifact_export_service.dart';
 import '../services/attachment_uploader.dart';
+export '../services/attachment_uploader.dart'
+    show PendingAttachmentLimitViolation, pendingAttachmentLimitViolation;
 import '../services/command_risk.dart';
-import '../services/bridge_client.dart';
-import '../services/bridge_update_service.dart';
+import '../services/chat_content_extractor.dart';
 import '../services/chat_draft_store.dart';
 import '../services/chat_preference_store.dart';
 import '../services/desktop_gateway_capabilities.dart';
+import '../services/composer_completion_scheduler.dart';
 import '../services/mission_bot_chat_store.dart';
 import '../services/notifications/notification_service.dart';
 import '../services/recent_interrupt_guard.dart';
 import '../services/drawer_gesture_exclusion.dart';
 import '../services/turn_outbox_store.dart';
+import '../services/generated_image_fetch.dart';
 import '../services/generated_image_service.dart';
 import '../services/generated_media_service.dart';
+import '../services/media_prefetcher.dart';
 import '../services/generated_artifact_registry.dart';
+import '../services/active_profile_scope.dart';
 import '../services/connection_manager.dart';
+import '../services/dashboard_session_timeline.dart';
 import '../services/session_archive.dart';
 import '../services/session_artifact_download_service.dart';
 import '../services/session_config_reducer.dart';
 import '../services/session_deletion.dart';
+import '../services/model_picker_loader.dart';
+import '../services/model_presets_store.dart';
+import '../services/shared_gateway_pool.dart';
+import '../services/subagent_live_watch.dart';
 import '../services/subagent_transcript_projection.dart';
 import '../services/tui_gateway_client.dart'
     show TuiGatewayClient, TuiGatewayRpcError;
 import '../widgets/chat_connection_recovery_row.dart';
 import '../widgets/hermes_notice.dart';
 import '../widgets/inline_message_editor.dart';
-import '../widgets/stale_running_session_banner.dart';
+import '../widgets/island.dart';
+import '../widgets/island_card.dart';
+import '../widgets/user_server_attachment_card.dart';
 import 'foreground_conversation_reader.dart';
+import '../services/voice/conversation/chat_recognizer_prewarm.dart';
 import '../services/voice/conversation/native_voice.dart';
 import '../services/voice/conversation/native_voice_session_configurator.dart';
 import '../services/voice/conversation/local_voice_conversation_controller.dart';
@@ -122,75 +156,124 @@ import '../services/voice/voice_tool_phase.dart';
 import '../services/voice/voice_response_policy.dart';
 import '../services/voice/voice_phase.dart';
 import '../services/voice/session/voice_ui_surface.dart';
+import '../services/voice/read_aloud_voice_route.dart';
+import '../services/voice/removed_voice_engines.dart';
 import '../services/voice/voice_service.dart';
 import '../services/voice/voice_settings.dart';
 import 'voice_settings_screen.dart';
 import '../theme/app_theme.dart';
+import '../theme/motion.dart';
 import '../../l10n/app_localizations.dart';
 import '../utils/api_error.dart';
+import '../utils/session_title.dart';
+import '../utils/short_server_path.dart';
 import '../utils/voice_error.dart';
 import '../utils/chat_error.dart';
+import '../utils/turn_control.dart';
 import '../utils/byte_bounded_lru_cache.dart';
 import '../utils/chat_turn.dart';
+import '../utils/chat_read_marker.dart';
+import '../utils/unread_rules.dart';
 import '../utils/markdown_clipboard.dart';
 import '../utils/responsive.dart';
 import '../utils/slash_commands.dart';
 import '../utils/assistant_content.dart';
 import '../utils/assistant_operational_artifacts.dart';
 import '../utils/assistant_suggestions.dart';
+import '../utils/chat_ask_about.dart';
 import '../utils/generated_artifact_markdown_scanner.dart';
 import '../utils/streaming_normalizer.dart';
 import 'activity_screen.dart';
 import 'cron_screen.dart';
+import 'dashboard_sign_in.dart';
 import 'extensions_center_screen.dart';
 import 'memory_screen.dart';
 import 'models_screen.dart';
+import '../models/provider_auth_failure.dart';
+import '../widgets/provider_reauth.dart';
+import '../widgets/turn_error_copy.dart';
+import '../models/turn_error_surface.dart';
 import 'recovery_center_screen.dart';
-import 'skills_screen.dart';
 import 'soul_screen.dart';
 import 'tasks_screen.dart';
+import 'chat_prompt_index.dart';
+import '../services/pinned_prompt_prefs.dart';
+import '../widgets/chat/chat_pinned_prompt_header.dart';
 import 'chat_render_projection.dart';
 import '../widgets/action_approval.dart';
 import '../widgets/agent_task_widgets.dart';
 import '../widgets/attachment_card.dart';
+import '../widgets/chat_turn_activity.dart';
 import '../widgets/attachment_history_preview.dart';
+import '../widgets/artifact_viewer/artifact_viewer_screen.dart';
 import '../widgets/attachment_source_sheet.dart';
 import '../widgets/generated_image_card.dart';
 import '../widgets/generated_video_card.dart';
 import '../widgets/generated_artifact_viewer.dart';
 import '../widgets/callout_card.dart';
+import '../utils/unified_diff.dart';
+import '../widgets/chat_connection_card.dart';
 import '../widgets/chat_event_cards.dart';
+import '../widgets/chat/tool_output_cards.dart';
+import '../widgets/chat/turn_changes_sheet.dart';
 import '../widgets/chat_control_sheet.dart';
+import '../widgets/chat/chat_notch.dart';
+import '../widgets/owned_resource_host.dart';
+import 'projects_center_screen.dart';
+import 'session_list_screen.dart';
+import 'settings_screen.dart';
 import '../widgets/hermes_drawer.dart';
-import '../widgets/hermes_bot_face.dart';
+import '../widgets/profile_scope.dart' show appActiveProfileScope;
 import '../widgets/hermes_premium_ui.dart';
-import '../widgets/hermes_suggestions.dart';
-import '../widgets/message_avatar_header.dart';
+import '../widgets/console_loader.dart';
 import '../widgets/hermes_ui.dart';
-import '../widgets/hermes_spark_mascot.dart';
+import '../companion/models/companion_mood.dart';
 import '../widgets/interactive_prompt_card.dart';
 import '../widgets/markdown_table.dart';
 import '../widgets/mission_profile_avatar.dart';
 import '../bots/ui/bot_identity.dart';
+import '../bots/ui/profile/profile_model_picker.dart' show ProfileModelEdits;
 import '../bots/ui/roster/living_bot_face.dart';
+import '../services/bot_roster_store.dart';
+import '../bots/ui/room/room_widgets.dart' show RoomSeparator;
 import '../widgets/motion_entrance.dart';
 import '../widgets/subagent_activity_card.dart';
+import '../design/edges.dart' show HermesBottomScrim;
 import '../design/modal.dart'
-    show showHermesDialog, HermesDialogAction, HermesDialogActionStyle;
-import 'subagent_detail_screen.dart' show SubagentTranscriptPage;
-import '../widgets/activity_panel.dart';
+    show
+        releaseTextFocusIfKeyboardHidden,
+        hermesDialogRoute,
+        showHermesDialog,
+        showHermesDialogRoute,
+        showHermesMenu,
+        HermesAction,
+        HermesDialogAction,
+        HermesDialogActionStyle;
+import 'subagent_detail_screen.dart'
+    show SubagentTranscriptPage, subagentIsLive;
+import '../widgets/activity_pill.dart'
+    show ActivityGlyph, ActivityPillModel, formatTurnElapsed;
+import '../widgets/floating_chat_header.dart';
+import '../widgets/stacked_image_cards.dart';
 import '../widgets/activity_task_linger.dart';
-import '../widgets/compaction_dock.dart';
-import '../widgets/platform_setup_commands.dart';
 import '../widgets/read_only.dart';
+import '../widgets/running_work.dart';
 import '../widgets/read_aloud_button.dart';
 import '../widgets/session_deletion_dialogs.dart';
 import '../widgets/session_artifacts_sheet.dart';
+import '../widgets/chat_status_pill.dart';
 import '../widgets/session_context_usage.dart';
+import '../widgets/session_model_sheet.dart';
+import '../widgets/status_pill_sheet.dart';
+import '../widgets/pill_morph.dart' show pillMorphRectOf;
+import '../widgets/provider_logo.dart';
 import '../widgets/voice_disclosure_dialog.dart';
-import '../widgets/voice_stage.dart';
+import '../widgets/voice_strip.dart';
 import 'lock_screen.dart';
-import '../widgets/hermes_app_bar.dart';
+import '../widgets/chat_find_bar.dart';
+import '../widgets/chat_prompt_sheet.dart';
+import '../utils/transcript_search.dart';
+import '../utils/plain_preview.dart';
 
 /// El streaming sustituye mapas de mensaje completos. Esta caché usa identidad
 /// porque las anclas pertenecen al objeto renderizado, así que hay que retirar
@@ -268,6 +351,7 @@ int _assistantRenderPlanCacheBytes(
         _AssistantGeneratedImageChunk(:final basename) => basename.length,
         _AssistantGeneratedMediaChunk(:final reference) =>
           reference.source.length + reference.displayName.length,
+        _AssistantImageRunChunk(:final items) => items.length * 64,
       };
     }
   }
@@ -408,27 +492,6 @@ Future<List<XFile>> pickPendingGalleryImages(
     maxHeight: 2048,
     limit: remaining,
   );
-}
-
-enum PendingAttachmentLimitViolation { invalid, item, batch }
-
-/// Clasifica el motivo exacto por el que una selección no cabe en el composer.
-///
-/// Los límites son inclusivos: 8 MiB por elemento y 24 MiB por lote siguen
-/// siendo válidos. Mantener esta decisión pura evita mostrar el límite de un
-/// fichero cuando el problema real es la suma del lote.
-@visibleForTesting
-PendingAttachmentLimitViolation? pendingAttachmentLimitViolation({
-  required int sizeBytes,
-  required int itemLimit,
-  required int currentBatchBytes,
-}) {
-  if (sizeBytes <= 0) return PendingAttachmentLimitViolation.invalid;
-  if (sizeBytes > itemLimit) return PendingAttachmentLimitViolation.item;
-  if (currentBatchBytes + sizeBytes > AttachmentUploader.maxBatchBytes) {
-    return PendingAttachmentLimitViolation.batch;
-  }
-  return null;
 }
 
 String _attachmentLimitLabel(int bytes) => bytes >= 1024 * 1024
@@ -643,6 +706,47 @@ final class _AssistantGeneratedMediaChunk extends _AssistantBodyChunk {
   const _AssistantGeneratedMediaChunk(this.reference);
 }
 
+/// fh1215: two or more images in a row of a long reply stay in ONE row, so
+/// they render as one stack of cards.
+final class _AssistantImageRunChunk extends _AssistantBodyChunk {
+  final List<_AssistantBodyChunk> items;
+
+  const _AssistantImageRunChunk(this.items);
+}
+
+bool _isImageChunk(_AssistantBodyChunk chunk) => switch (chunk) {
+  _AssistantGeneratedImageChunk() => true,
+  _AssistantGeneratedMediaChunk(:final reference) =>
+    reference.kind == GeneratedMediaKind.image,
+  _ => false,
+};
+
+/// Joins every run of two or more consecutive image chunks into one
+/// [_AssistantImageRunChunk].
+List<_AssistantBodyChunk> _mergeImageRuns(List<_AssistantBodyChunk> chunks) {
+  final out = <_AssistantBodyChunk>[];
+  final run = <_AssistantBodyChunk>[];
+  void flush() {
+    if (run.length >= 2) {
+      out.add(_AssistantImageRunChunk(List.unmodifiable(run)));
+    } else {
+      out.addAll(run);
+    }
+    run.clear();
+  }
+
+  for (final chunk in chunks) {
+    if (_isImageChunk(chunk)) {
+      run.add(chunk);
+      continue;
+    }
+    flush();
+    out.add(chunk);
+  }
+  flush();
+  return out;
+}
+
 final class _StructuredGeneratedImage {
   final GeneratedImageSourceKind kind;
   final String source;
@@ -662,7 +766,7 @@ final class _StructuredGeneratedImage {
       _StructuredGeneratedImage(
         kind: GeneratedImageSourceKind.serverCache,
         source: basename,
-        basename: basename,
+        basename: basename.split('/').last,
         toolCallId: 'text',
         echoSources: const [],
       );
@@ -775,7 +879,10 @@ List<_StructuredGeneratedVideo> _structuredGeneratedVideos(
   final refs = <_StructuredGeneratedVideo>[];
   final seen = <String>{};
   for (final entry in raw.whereType<Map>()) {
-    if (entry['media_kind'] != GeneratedMediaKind.video.name) continue;
+    final mediaKind = entry['media_kind'];
+    // `tool_media`: any file a text tool result announced with `MEDIA:`.
+    final anyKind = mediaKind == 'tool_media';
+    if (!anyKind && mediaKind != GeneratedMediaKind.video.name) continue;
     final toolCallId = entry['tool_call_id'];
     final source = entry['source'];
     if (toolCallId is! String ||
@@ -784,7 +891,8 @@ List<_StructuredGeneratedVideo> _structuredGeneratedVideos(
       continue;
     }
     final reference = GeneratedMediaService.referenceFromSource(source);
-    if (reference == null || reference.kind != GeneratedMediaKind.video) {
+    if (reference == null ||
+        (!anyKind && reference.kind != GeneratedMediaKind.video)) {
       continue;
     }
     if (entry['kind'] != reference.sourceKind.name) continue;
@@ -879,6 +987,56 @@ final class _ProjectedAssistantImage extends _ProjectedAssistantBlock {
 final class _ProjectedAssistantMedia extends _ProjectedAssistantBlock {
   final GeneratedMediaReference reference;
   const _ProjectedAssistantMedia(this.reference);
+}
+
+String _imageChunkId(_AssistantBodyChunk chunk) => switch (chunk) {
+  _AssistantGeneratedImageChunk(:final basename) => 'image:$basename',
+  _AssistantGeneratedMediaChunk(:final reference) =>
+    'media:${reference.source}',
+  _ => '',
+};
+
+/// fh1215: inside one reply, two or more consecutive images (generated
+/// images or `MEDIA:` images, with only spacing between them) become one
+/// [StackedImageCards]. A single image is unchanged.
+List<Widget> _stackImageRuns(Iterable<Widget> blocks) {
+  bool isImage(Widget w) =>
+      w is _GeneratedImageSlot ||
+      (w is _GeneratedMediaSlot &&
+          w.reference.kind == GeneratedMediaKind.image);
+  bool isGap(Widget w) => w is SizedBox && w.child == null && w.width == null;
+  final out = <Widget>[];
+  final run = <Widget>[];
+  final gaps = <Widget>[];
+  void flush() {
+    if (run.length >= 2) {
+      out.add(
+        StackedImageCards(
+          key: ValueKey(('image-stack', run.first.key)),
+          children: List.of(run),
+        ),
+      );
+    } else {
+      out.addAll(run);
+    }
+    out.addAll(gaps);
+    run.clear();
+    gaps.clear();
+  }
+
+  for (final w in blocks) {
+    if (isImage(w)) {
+      gaps.clear();
+      run.add(w);
+    } else if (run.isNotEmpty && isGap(w)) {
+      gaps.add(w);
+    } else {
+      flush();
+      out.add(w);
+    }
+  }
+  flush();
+  return out;
 }
 
 ValueKey<String> _generatedMediaWidgetKey(
@@ -997,17 +1155,26 @@ int? messageIndexForArtifactSource(
 
 /// Fuente de lectura del catálogo. La selección siempre se aplica al runtime
 /// de esta sesión; ninguna de estas rutas autoriza una mutación global.
-enum _ModelSource { desktop, bridge, dashboard, gateway }
+enum _ModelSource { desktop, bridge, dashboard, officialGateway, gateway }
 
 enum _ChatControlAction {
+  find,
+  model,
+  previousChat,
+  nextChat,
   permissions,
   refresh,
+  prompts,
+  showPinnedPrompt,
+  content,
+  branch,
   artifacts,
   details,
   cron,
   recovery,
   extensions,
-  releaseDesktop,
+  skills,
+  memory,
   delete,
 }
 
@@ -1036,14 +1203,34 @@ String friendlyModelName(String id) {
       : id;
   final lower = raw.toLowerCase();
 
-  // Familia Claude: "claude-familia-major-minor[-fecha]" → "Familia major.minor".
-  final claude = RegExp(
-    r'^claude-(opus|sonnet|haiku)-(\d+)-(\d+)',
-  ).firstMatch(lower);
+  // Familia Claude: "claude-familia-major[-.]minor[-fecha][-variante]" →
+  // "Familia major.minor[ Variante]". The minor is one or two digits so a
+  // date pin (`claude-sonnet-4-20250514`) is never read as a version, and a
+  // dotted OpenRouter id (`anthropic/claude-sonnet-4.6`) is recognised too.
+  final claude =
+      RegExp(
+        r'^claude-(opus|sonnet|haiku)-(\d+)(?:[.-](\d{1,2})(?!\d))?',
+      ).firstMatch(lower) ??
+      RegExp(
+        r'^claude-(\d+)(?:[.-](\d))?-(opus|sonnet|haiku)',
+      ).firstMatch(lower);
   if (claude != null) {
-    final family = claude.group(1)!;
+    final legacy = RegExp(r'^\d').hasMatch(claude.group(1)!);
+    final family = legacy ? claude.group(3)! : claude.group(1)!;
+    final major = legacy ? claude.group(1)! : claude.group(2)!;
+    final minor = legacy ? claude.group(2) : claude.group(3);
     final capitalized = family[0].toUpperCase() + family.substring(1);
-    return '$capitalized ${claude.group(2)}.${claude.group(3)}';
+    final version = minor == null ? major : '$major.$minor';
+    final rest = lower
+        .substring(claude.end)
+        .replaceFirst(RegExp(r'-\d{8}'), '');
+    final variant = RegExp(
+      r'^-(fast|thinking|preview|latest|flash)\b',
+    ).firstMatch(rest)?.group(1);
+    final tag = variant == null
+        ? ''
+        : ' ${variant[0].toUpperCase()}${variant.substring(1)}';
+    return '$capitalized $version$tag';
   }
 
   // Familia GPT: mantiene "GPT-" en mayúsculas y conserva el resto del nombre.
@@ -1201,6 +1388,27 @@ class ChatScreen extends StatefulWidget {
   final bool requestComposerFocus;
   final String? initialStoredSessionId;
 
+  /// cs1215: reopened by the app on a cold start because it was the last
+  /// foreground route. A session that turned out deleted returns to Home.
+  final bool restoredFromColdStart;
+
+  /// Carpeta del servidor donde debe arrancar un chat NUEVO abierto desde un
+  /// proyecto o worktree. Viaja en `session.create` como `cwd` +
+  /// `cwd_explicit`, igual que Desktop; null para un chat sin carpeta.
+  final String? newChatWorkspace;
+
+  /// Dashboard client for the provider sign-in started from a credential
+  /// error; tests inject a fake Dashboard.
+  @visibleForTesting
+  final DashboardClient Function(SavedConnection connection)?
+  providerReauthClientFactory;
+
+  /// Dashboard client for the optional prompt index read by the Prompts list;
+  /// tests inject a fake Dashboard.
+  @visibleForTesting
+  final DashboardClient Function(SavedConnection connection)?
+  promptTimelineClientFactory;
+
   /// Caché de identidad que Mission Control ya mantiene para Bot Chat.
   final MissionProfileAvatarCache? missionAvatarCache;
 
@@ -1222,6 +1430,22 @@ class ChatScreen extends StatefulWidget {
   @visibleForTesting
   final ChatDraftStore? draftStoreOverride;
 
+  /// Replaces the Dashboard fetch of server-side user attachments
+  /// (`@image:`/`@file:` lines) in widget tests.
+  @visibleForTesting
+  final Future<void> Function(String path, File destination)?
+  userServerMediaFetcher;
+
+  /// Replaces the Dashboard fetch of `MEDIA:` server paths in widget tests.
+  @visibleForTesting
+  final Future<void> Function(String path, File destination)?
+  generatedMediaFetcher;
+
+  /// Replaces the HTTP fallbacks of the model picker (Mobile Bridge,
+  /// Dashboard, gateway model list) in widget tests.
+  @visibleForTesting
+  final Map<ModelPickerSource, ModelPickerFallback>? modelPickerFallbacks;
+
   const ChatScreen({
     required this.connection,
     required this.session,
@@ -1231,6 +1455,10 @@ class ChatScreen extends StatefulWidget {
     this.initialVoiceMode = false,
     this.requestComposerFocus = false,
     this.initialStoredSessionId,
+    this.restoredFromColdStart = false,
+    this.newChatWorkspace,
+    this.providerReauthClientFactory,
+    this.promptTimelineClientFactory,
     this.missionAvatarCache,
     this.missionBotProfile,
     this.performanceProbe,
@@ -1239,6 +1467,9 @@ class ChatScreen extends StatefulWidget {
     this.cancelStreamOverride,
     this.sendAttemptObserver,
     this.draftStoreOverride,
+    this.userServerMediaFetcher,
+    this.generatedMediaFetcher,
+    this.modelPickerFallbacks,
     super.key,
   });
 
@@ -1255,9 +1486,39 @@ class _ChatScreenState extends State<ChatScreen>
   late final ActiveChatService _chatService;
   late final ActiveChat _chat;
   StreamSubscription<ActiveChatEvent>? _chatSub;
+
+  /// Debounced transport loss shared by the recovery row, the activity pill
+  /// headline and the companion mood, so a socket blip shorter than the grace
+  /// never flashes "connection lost" on any of them.
+  final ChatTransportVisibility _transportVisibility =
+      ChatTransportVisibility();
   bool _chatBound = false;
   final ValueNotifier<SessionContextMetrics> _sessionContextMetrics =
       ValueNotifier(SessionContextMetrics.unknown);
+
+  /// The status-pill sheet this screen opened, removed with the screen so it
+  /// never outlives the state its callbacks use.
+  Route<void>? _statusSheetRoute;
+
+  void _trackStatusSheet(Route<void> route) => _statusSheetRoute = route;
+
+  /// pm1215: one notification per model picked; the bottom pill's model
+  /// chip glows once (instead of a toast).
+  final ValueNotifier<int> _modelPulse = ValueNotifier(0);
+  void _pulseModelChip() {
+    if (_disposed || !mounted) return;
+    _modelPulse.value++;
+  }
+
+  /// pm1215: the bottom status pill; its sheets grow out of it and shrink
+  /// back into it.
+  final GlobalKey _statusPillKey = GlobalKey(debugLabel: 'chat-status-pill');
+  Rect? _statusPillRect() => pillMorphRectOf(_statusPillKey);
+
+  /// The compaction the open context sheet shows; follows the pill.
+  final ValueNotifier<CompactionProgress?> _sheetCompaction = ValueNotifier(
+    null,
+  );
   late Session _sessionUsageSnapshot;
   DateTime? _sessionUsageRefreshedAt;
   Future<void>? _sessionUsageRefreshInFlight;
@@ -1267,7 +1528,9 @@ class _ChatScreenState extends State<ChatScreen>
   Completer<bool>? _sessionContextBootstrapRetryCompleter;
   bool _sessionContextAwaitingPostCompactionMetrics = false;
   int? _desktopRuntimePresentationFingerprint;
+  Object? _lastSessionConfigPresentation;
   (bool, int, int, int, int)? _activityPresentationFingerprint;
+  (bool, bool, bool) _lastAwaitsUnseenInput = (false, false, false);
   bool _lastDesktopCompacting = false;
   PendingSessionConfigChange? _pendingModelConfirmation;
   NavigatorState? _modelConfirmationNavigator;
@@ -1278,12 +1541,28 @@ class _ChatScreenState extends State<ChatScreen>
   // ese setState tardío reventaba con "_lifecycleState != defunct". Filtrar por
   // este flag además de `mounted` corta esos eventos diferidos.
   bool _disposed = false;
+
+  /// View-only verdict for a cron run that never closed and that the
+  /// scheduler no longer owns (Desktop `open-cron-run.ts`, #88443).
+  /// Re-evaluated from every authoritative session read and before each send.
+  late bool _cronRunReadOnly =
+      CronRunWriteGate.appliesTo(widget.session) &&
+      CronRunWriteGate.readOnlyFor(widget.session);
   late final LocalConversationLifecycle _localConversationLifecycle;
+  // The initial producer stays immutable for retained/background callbacks.
+  // Only a rebuilt foreground composer receives a renewed action lease.
+  LocalConversationLifecycle? _foregroundConversationLifecycle;
+  int _foregroundActionGeneration = 0;
+  VoidCallback? _foregroundComposerListener;
 
   bool _editingUserMessage = false;
   Map<String, dynamic>? _editingUserMessageTarget;
   double? _editingUserMessageWidth;
   String? _editingUserMessageText;
+
+  /// Text the user rewrote and tried to save. A failed save keeps it in the
+  /// open editor instead of throwing it away.
+  String? _editingUserMessageDraft;
   int? _editingUserMessageOrdinal;
   String? _editingQueuedEntryId;
   bool _editingRewriteSubmitted = false;
@@ -1294,10 +1573,44 @@ class _ChatScreenState extends State<ChatScreen>
   /// puede avanzar en segundo plano, pero su respuesta no aparece mientras se
   /// edita: Cancelar revela el progreso real y Guardar rebobina el turno.
   List<Map<String, dynamic>> get _messages {
+    final editing = _editingMessagesSnapshot;
+    if (editing != null) return editing;
+    final scheduler = SchedulerBinding.instance;
+    final inFramePipeline =
+        scheduler.schedulerPhase == SchedulerPhase.persistentCallbacks;
+    final cached = _frameMessagesSnapshot;
+    if (cached != null &&
+        inFramePipeline &&
+        identical(_frameMessagesChat, _chat)) {
+      return cached;
+    }
     final probe = widget.performanceProbe;
     if (probe != null) probe.publicTranscriptReads += 1;
-    return _editingMessagesSnapshot ?? _chat.messages;
+    final messages = _chat.messages;
+    // While a turn streams, every read is a full privacy/editorial projection
+    // of the whole transcript, and one build reads it once or more per row.
+    // Inside the build/layout/paint pipeline nothing can mutate the service
+    // (events arrive asynchronously, and the list entries already index into
+    // this same snapshot), so reuse it until the frame ends. Event handlers
+    // and post-frame callbacks run outside that phase and always read fresh.
+    if (inFramePipeline) {
+      _frameMessagesSnapshot = messages;
+      _frameMessagesChat = _chat;
+      if (!_frameMessagesClearScheduled) {
+        _frameMessagesClearScheduled = true;
+        scheduler.addPostFrameCallback((_) {
+          _frameMessagesClearScheduled = false;
+          _frameMessagesSnapshot = null;
+          _frameMessagesChat = null;
+        });
+      }
+    }
+    return messages;
   }
+
+  List<Map<String, dynamic>>? _frameMessagesSnapshot;
+  ActiveChat? _frameMessagesChat;
+  bool _frameMessagesClearScheduled = false;
 
   bool get _editingTranscriptChanged {
     final before = _editingMessagesSnapshot;
@@ -1318,6 +1631,7 @@ class _ChatScreenState extends State<ChatScreen>
     _editingUserMessageTarget = null;
     _editingUserMessageWidth = null;
     _editingUserMessageText = null;
+    _editingUserMessageDraft = null;
     _editingUserMessageOrdinal = null;
     _editingRewriteSubmitted = false;
     _editingMessagesSnapshot = null;
@@ -1330,7 +1644,17 @@ class _ChatScreenState extends State<ChatScreen>
   String get _lastPrompt => _chat.lastPrompt;
 
   String? _error;
-  bool _loadingEarlierMessages = false;
+  // Earlier history loads by itself near the top of the transcript. The
+  // progress row listens to this notifier, so a load never rebuilds rows.
+  final ValueNotifier<bool> _loadingEarlierMessages = ValueNotifier(false);
+
+  // One automatic load per gesture: a pointer down arms it, a load disarms
+  // it, so a single fling (or a reader resting near the top) loads once.
+  bool _earlierAutoArmed = true;
+
+  /// How close to the oldest loaded row (in viewport heights) the reader
+  /// has to be before the next page is fetched.
+  static const double _earlierAutoLoadScreens = 1.5;
   int _messageRefreshEpoch = 0;
   ({int epoch, bool passiveOnly, bool published})? _messageRefreshInFlight;
   int? get _messageRefreshInFlightEpoch => _messageRefreshInFlight?.epoch;
@@ -1349,9 +1673,30 @@ class _ChatScreenState extends State<ChatScreen>
       !_messageRefreshInFlight!.passiveOnly &&
       !_messageRefreshInFlight!.published;
   int? _messageRefreshAnchorEpoch;
+  int _hydrationAnchorSerial = 0;
   bool _messageRefreshReanchorScheduled = false;
   ForegroundConversationReader? _passiveConversationReader;
   bool _chatRouteVisible = false;
+
+  /// The chat was on top when the App Lock screen covered it: it is what the
+  /// user sees once they unlock.
+  bool _coveredByAppLock = false;
+
+  /// «Límites de tu plan» (model sheet) and the pill's amber hint: read on
+  /// sheet open and after each turn, cached per session, never while locked.
+  late final AccountLimitsController _accountLimits = AccountLimitsController(
+    cacheKey: '${widget.connection.id}|${widget.session.id}',
+    load: () => _chatBound
+        ? _chat.loadAccountUsage()
+        : Future<AccountUsageLimits?>.value(),
+    isLocked: () => _disposed || _appLocked || _coveredByAppLock,
+  );
+
+  /// The chat (connection|session) this stretch in front already asked to
+  /// clear. Covering it with the lock screen does not end the stretch: what
+  /// the user had seen is cleared after unlock, and the screen coming back
+  /// from under the lock does not clear again.
+  String? _ownNotificationsClearedFor;
   late bool _appInForeground;
   // Relative delays place the follow-up checks at +1.5s and +4s.
   static const _postControlRepairDelays = [
@@ -1506,10 +1851,13 @@ class _ChatScreenState extends State<ChatScreen>
   // Chat sending state — derived from pipeline state.
   late final TextEditingController _textController;
   final _textFocusNode = FocusNode();
+
+  /// The composer had the keyboard when the app went to the background.
+  /// See [_releaseKeyboardWhileAway].
+  bool _keyboardBeforeLeaving = false;
   bool get _sending => _chat.sending;
   bool _compressionCommandInFlight = false;
   bool? _lastDesktopCompressionPresentation;
-  bool _compressionDraftFocusRetained = false;
   bool get _compressingSession =>
       _compressionCommandInFlight ||
       (_chatBound && _chat.desktopManualCompressionInFlight);
@@ -1523,8 +1871,32 @@ class _ChatScreenState extends State<ChatScreen>
   // (slash palette, floating notices): they must hide while it is open.
   bool _navigationDrawerOpen = false;
   DesktopCommandCatalog? _desktopCommandCatalog;
-  Timer? _slashCompletionDebounce;
-  int _slashCompletionEpoch = 0;
+  // One debounced, cancellable lookup per keystroke burst while the slash
+  // palette is open; closing it (trigger gone, blur, dispose) cancels.
+  late final ComposerCompletionScheduler<_SlashLookup> _slashCompletions =
+      ComposerCompletionScheduler<_SlashLookup>(fetch: _fetchSlashLookup);
+  // Who answers composer completions (Desktop `scopeKey`): the bound runtime,
+  // or the profile a new-chat draft is routed to. Every slash key carries it.
+  String? _completionScope;
+  // `@` references (`complete.path`), same debounce/cancel contract. The key
+  // carries the runtime the listing is asked of and answered for, so another
+  // session's tree is never served; a listing expires like Desktop's (15 s).
+  late final ComposerCompletionScheduler<PathCompletionBatch>
+  _referenceCompletions = ComposerCompletionScheduler<PathCompletionBatch>(
+    fetch: _fetchReferences,
+    cacheTtl: const Duration(seconds: 15),
+  );
+  List<PathCompletionItem> _referenceItems = const [];
+  String? _referenceKey;
+  late final List<TextInputFormatter> _composerInputFormatters = [
+    LargePasteFormatter(
+      enabled: () => _largePasteAttachable,
+      onLargePaste: _onLargePaste,
+    ),
+    ComposerReferenceFormatter(
+      enabled: () => _chatBound && _chat.supportsDesktopPathCompletion,
+    ),
+  ];
   // Resolviendo una aprobación del agente (deshabilita los botones).
   bool _resolvingApproval = false;
   bool _resolvingInteractivePrompt = false;
@@ -1539,11 +1911,12 @@ class _ChatScreenState extends State<ChatScreen>
   VoiceService? _voiceService;
 
   // Modo voz manos libres: TODA la orquestación (bucle, fases, feed de TTS) vive
-  // en el controlador global. VoiceStage solo observa y proyecta ese estado.
+  // en el controlador global. VoiceStatusLine solo observa y proyecta ese estado.
   // Superficie estable del único controlador público, resuelta en
   // didChangeDependencies.
   VoiceUiSurface? _vc;
   StreamSubscription<SttCheck>? _vcUnavailableSub;
+  ChatRecognizerPrewarm? _recognizerPrewarm;
   NativeVoicePreparation? _nativeVoicePreparation;
 
   // Adjuntos seleccionados, pendientes de subir al filesystem gestionado del
@@ -1564,9 +1937,17 @@ class _ChatScreenState extends State<ChatScreen>
   Future<void>? _hiddenCanonicalBotFlight;
   TurnOutboxStore? _turnOutbox;
   PreparedTurn? _preparedTurn;
+  // Turno recuperado que se anuncia en el aviso en flujo sobre el composer.
+  // Solo se pinta mientras siga siendo el `_preparedTurn` vigente.
+  PreparedTurn? _recoveredTurnNotice;
   String? _composerPreparedTurnClientTurnId;
   String? _failedTurnDiscardInFlightId;
   final Completer<bool> _initialOutboxRead = Completer<bool>();
+  // Completed when that read stopped with no result and nobody is reading:
+  // the app lock closed the Keystore under it. The next attempt starts with
+  // a fresh one. A send waits for whichever comes first, so a read that is
+  // not going to finish refuses the send instead of holding it.
+  Completer<void> _initialOutboxReadParked = Completer<void>();
   ActiveTurnDelivery? _attachmentDelivery;
   late final ValueChanged<List<AttachmentDraft>> _attachmentListener;
   Timer? _draftTimer;
@@ -1590,12 +1971,16 @@ class _ChatScreenState extends State<ChatScreen>
   // sustituye `_sending`: después del ACK el composer vuelve a aceptar texto y
   // Hermes puede tratarlo como steering durante el run actual.
   bool _composerSubmissionInFlight = false;
+  // Identity of the submission holding [_composerSubmissionInFlight]. A
+  // `/compress` hands the slot back as soon as it is dispatched (its own
+  // fence takes over), so its late `finally` must not release a successor.
+  int _composerSubmissionClaim = 0;
   Timer? _stopConfirmationDismissTimer;
   bool _confirmedStopStatusDismissed = false;
   final RecentInterruptGuard _recentInterrupt = RecentInterruptGuard();
   bool _imagePickerOpen = false;
   bool _documentPickerOpen = false;
-  static const int _maxPendingImages = 10;
+  static const int _maxPendingImages = kComposerMaxPendingImages;
 
   // Developer diagnostics mode (ex verbose)
   bool _devDiagnostics = false;
@@ -1607,7 +1992,6 @@ class _ChatScreenState extends State<ChatScreen>
   // Nombre del agente para el marcador del mensaje y el chat vacío — refleja
   // VERBATIM el título del header configurable en Ajustes ('header_title').
   // Por defecto coincide con el del Home. Solo display.
-  String _agentName = 'HERMES CONSOLE';
 
   // Selected model from settings (falls back to hermes-agent)
   String _selectedModel = 'hermes-agent';
@@ -1620,7 +2004,9 @@ class _ChatScreenState extends State<ChatScreen>
   _ModelSource _modelSource = _ModelSource.dashboard;
 
   // Scroll management
-  final _scrollController = ScrollController();
+  late final _scrollController = _ChatTranscriptScrollController(
+    _streamingViewportLock,
+  );
   Timer? _keyboardScrollTimer;
   // La flecha "ir al final" se aísla en un notifier: mostrarla/ocultarla no
   // reconstruye la pantalla (crítico cuando se pausa el seguimiento con el
@@ -1630,6 +2016,712 @@ class _ChatScreenState extends State<ChatScreen>
     if (_scrollToBottomVisibility.value == value) return;
     _recordTranscriptOverlayExtentChange(value ? 48 : -48);
     _scrollToBottomVisibility.value = value;
+    if (value) {
+      _beginAwayFromBottom();
+    } else {
+      _endAwayFromBottom();
+    }
+  }
+
+  // Mensajes llegados mientras el lector está lejos del fondo. Se fija el
+  // último mensaje visible al apartarse y solo se recuenta cuando llega
+  // contenido (eventos estructurales o el primer token de una respuesta),
+  // nunca por frame ni por scroll.
+  final ValueNotifier<int> _newWhileAway = ValueNotifier(0);
+
+  // True only while the entry landing walks the lazy list up to the first
+  // unread row. Each walk step is a real scroll offset; painting them would
+  // show the transcript jumping upward screen by screen before it lands.
+  final ValueNotifier<bool> _transcriptConcealed = ValueNotifier(false);
+
+  // Sticky prompt: the prompt of the turn whose reply spans the viewport top.
+  // Recomputed at most once per frame (post-frame, scheduled from the scroll
+  // listener and from a new transcript snapshot), reading only the attached
+  // anchors plus the snapshot the last build used: never a transcript walk
+  // and never a screen setState.
+  final ValueNotifier<Map<String, dynamic>?> _stickyPrompt = ValueNotifier(
+    null,
+  );
+  List<Map<String, dynamic>> _stickySource = const [];
+  Map<Map<String, dynamic>, int>? _stickyIndex;
+
+  /// Laid-out slices of long replies that own no reader anchor, with the
+  /// message they belong to. Only the sticky prompt reads it.
+  final Map<RenderBox, Map<String, dynamic>> _stickySliceAnchors =
+      Map<RenderBox, Map<String, dynamic>>.identity();
+  bool _stickyUpdateScheduled = false;
+
+  void _scheduleStickyPromptUpdate() {
+    if (_stickyUpdateScheduled || _disposed) return;
+    _stickyUpdateScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _stickyUpdateScheduled = false;
+      if (_disposed || !mounted) return;
+      final next =
+          _findOpen ||
+              _transcriptConcealed.value ||
+              !_scrollController.hasClients ||
+              _stickySource.isEmpty
+          ? null
+          : _stickyPromptCandidate();
+      if (!identical(_stickyPrompt.value, next)) _stickyPrompt.value = next;
+    });
+  }
+
+  /// True for user rows painted as a system chip (kanban work, skill
+  /// invocation, compaction hand-off, job notices): they are not prompts.
+  bool _isSystemChipRow(Map<String, dynamic> message) =>
+      _jobChipLabel(message['content'] as String, Strings.of(context)) != null;
+
+  /// The prompt to pin, or null when the reply at the top has none loaded or
+  /// the prompt's own bubble is (partly) on screen.
+  Map<String, dynamic>? _stickyPromptCandidate() {
+    Map<String, dynamic>? topMessage;
+    var topOffset = double.infinity;
+    // fh1215: under a floating header the reader's top is its inset.
+    final readTop = _readTop;
+    void consider(RenderBox anchor, Map<String, dynamic> message) {
+      final top = _ChatStreamingViewportLock._visualOffsetInViewport(anchor);
+      final height = anchor is ChatAnswerAnchorRenderBox
+          ? anchor.laidOutHeight
+          : null;
+      if (top == null || height == null || top + height <= readTop) return;
+      if (top < topOffset) {
+        topOffset = top;
+        topMessage = message;
+      }
+    }
+
+    for (final entry in _messageAnchors.entries) {
+      consider(entry.value, entry.key);
+    }
+    for (final entry in _stickySliceAnchors.entries) {
+      consider(entry.key, entry.value);
+    }
+    if (topMessage == null || topOffset - readTop > chatPromptActiveSlack) {
+      return null;
+    }
+    final source = _stickySource;
+    var index = _stickyIndex;
+    if (index == null) {
+      index = Map<Map<String, dynamic>, int>.identity();
+      for (var i = 0; i < source.length; i++) {
+        index[source[i]] = i;
+      }
+      _stickyIndex = index;
+    }
+    final topIndex = index[topMessage];
+    if (topIndex == null) return null;
+    final promptIndex = stickyPromptIndex(
+      source,
+      topIndex,
+      isSystemRow: _isSystemChipRow,
+    );
+    if (promptIndex == null) return null;
+    final prompt = source[promptIndex];
+    final promptAnchor = _messageAnchors[prompt];
+    final promptTop = _ChatStreamingViewportLock._visualOffsetInViewport(
+      promptAnchor,
+    );
+    final promptHeight = promptAnchor is ChatAnswerAnchorRenderBox
+        ? promptAnchor.laidOutHeight
+        : null;
+    if (promptTop != null &&
+        promptHeight != null &&
+        promptTop + promptHeight > readTop) {
+      return null;
+    }
+    return prompt;
+  }
+
+  String get _pinnedPromptChatKey =>
+      '${widget.connection.id}.${widget.session.logicalId}';
+
+  /// The pinned prompt's ×: hides it for this chat and offers Undo. The
+  /// chat menu can show it again later, and so can the Settings toggle.
+  void _hidePinnedPrompt() {
+    final prefs = PinnedPromptPrefs.shared;
+    final chatKey = _pinnedPromptChatKey;
+    unawaited(prefs.hideFor(chatKey));
+    final str = Strings.of(context);
+    HermesNotice.show(
+      context,
+      message: str.q90PinnedPromptHidden,
+      action: HermesNoticeAction(
+        label: str.q90PinnedPromptUndo,
+        onPressed: () => unawaited(prefs.showFor(chatKey)),
+      ),
+    );
+  }
+
+  /// The slim one-line pinned prompt. It listens to the pinned prompt and
+  /// its preferences itself, so following the scroll never rebuilds the
+  /// screen or the transcript rows.
+  Widget _buildPinnedPromptHeader(Strings str) {
+    final prefs = PinnedPromptPrefs.shared;
+    return ListenableBuilder(
+      listenable: Listenable.merge([
+        _stickyPrompt,
+        _transcriptConcealed,
+        prefs,
+      ]),
+      builder: (context, _) {
+        final candidate = _stickyPrompt.value;
+        final prompt =
+            candidate == null ||
+                _findOpen ||
+                _transcriptConcealed.value ||
+                !prefs.enabled ||
+                prefs.isHiddenFor(_pinnedPromptChatKey)
+            ? null
+            : candidate;
+        final reduceMotion =
+            MediaQuery.maybeDisableAnimationsOf(context) ?? false;
+        Widget child = const SizedBox.shrink(
+          key: ValueKey('chat-pinned-prompt-none'),
+        );
+        if (prompt != null) {
+          final parsed = _parseUserContent(
+            (prompt['content'] ?? '').toString(),
+          );
+          var text = parsed.text.replaceAll(RegExp(r'\s+'), ' ').trim();
+          if (text.isEmpty && parsed.attachments.isNotEmpty) {
+            text = parsed.attachments.first.name;
+          }
+          // QA 9493: a floating chip centred under the header pill, not a
+          // full-width band. Behind it the header's scrim carries on and
+          // fades out just below the chip, so the text passing at its sides
+          // dims like under the header instead of fighting the chip.
+          final bg = Theme.of(context).hermes.background;
+          child = KeyedSubtree(
+            key: ValueKey(identityHashCode(prompt)),
+            child: Stack(
+              children: [
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: DecoratedBox(
+                      key: const ValueKey('chat-pinned-prompt-scrim'),
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            bg.withValues(alpha: 0.55),
+                            bg.withValues(alpha: 0.4),
+                            bg.withValues(alpha: 0),
+                          ],
+                          stops: const [0, 0.5, 1],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(56, 2, 56, 16),
+                  child: Center(
+                    child: ChatPinnedPromptHeader(
+                      key: const ValueKey('chat-sticky-prompt'),
+                      youLabel: str.cs1215PinnedPromptYou,
+                      text: text,
+                      attachmentCount: parsed.attachments.length,
+                      semanticLabel: str.pj1215StickyPromptLabel,
+                      hideLabel: str.cs1215PinnedPromptHide,
+                      onTap: () => unawaited(_revealStickyPrompt(prompt)),
+                      onHide: _hidePinnedPrompt,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          );
+        }
+        // pm1215 (QA 9494 «al hacer scroll se traba»): while the list moves
+        // the pinned prompt changes every few frames; a cross-fade then ran
+        // a fade (offscreen layer) and a rebuild on every frame of the
+        // fling. Mid-scroll it swaps in place; it only fades at rest.
+        final scrolling =
+            _scrollController.hasClients &&
+            _scrollController.position.isScrollingNotifier.value;
+        return AnimatedSwitcher(
+          duration: reduceMotion || scrolling
+              ? Duration.zero
+              : const Duration(milliseconds: 150),
+          layoutBuilder: (current, previous) => Stack(
+            alignment: Alignment.topCenter,
+            children: [...previous, ?current],
+          ),
+          transitionBuilder: (child, animation) => AnimatedBuilder(
+            animation: animation,
+            child: child,
+            builder: (context, child) {
+              final exiting = animation.status == AnimationStatus.reverse;
+              return IgnorePointer(
+                ignoring: exiting,
+                child: ExcludeSemantics(
+                  excluding: exiting,
+                  child: FadeTransition(
+                    opacity: animation,
+                    child: SlideTransition(
+                      position: Tween(
+                        begin: const Offset(0, -0.25),
+                        end: Offset.zero,
+                      ).animate(animation),
+                      child: child,
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+          child: child,
+        );
+      },
+    );
+  }
+
+  /// Small row under the pinned prompt: a progress line while an earlier
+  /// page loads, or a retry pill after a failed one. Nothing otherwise.
+  Widget _buildEarlierHistoryRow(Strings str) {
+    return ValueListenableBuilder<bool>(
+      valueListenable: _loadingEarlierMessages,
+      builder: (context, loading, _) {
+        final colors = Theme.of(context).hermes;
+        final retry =
+            !loading &&
+            _chatBound &&
+            _chat.hasEarlierMessages &&
+            _chat.earlierMessagesLoadFailed;
+        if (!loading && !retry) return const SizedBox.shrink();
+        final decoration = BoxDecoration(
+          color: colors.surfaceVariant,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: colors.divider.withValues(alpha: 0.55)),
+        );
+        final label = TextStyle(fontSize: 12, color: colors.textSecondary);
+        if (loading) {
+          return Center(
+            child: Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Semantics(
+                liveRegion: true,
+                label: str.cs1215LoadingEarlier,
+                child: ExcludeSemantics(
+                  child: Container(
+                    key: const ValueKey('chat-earlier-loading'),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 6,
+                    ),
+                    decoration: decoration,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        SizedBox.square(
+                          dimension: 14,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: colors.accent,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Flexible(
+                          child: Text(
+                            str.cs1215LoadingEarlier,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: label,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+        }
+        return Center(
+          child: Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Semantics(
+              button: true,
+              label: str.chaLoadEarlierMessages,
+              child: GestureDetector(
+                key: const ValueKey('chat-earlier-retry'),
+                behavior: HitTestBehavior.opaque,
+                onTap: () {
+                  _earlierAutoArmed = false;
+                  unawaited(_loadEarlierMessages());
+                },
+                child: ExcludeSemantics(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(minHeight: 48),
+                    child: Center(
+                      widthFactor: 1,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 6,
+                        ),
+                        decoration: decoration,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.refresh_rounded,
+                              size: 14,
+                              color: colors.accent,
+                            ),
+                            const SizedBox(width: 6),
+                            Flexible(
+                              child: Text(
+                                str.chaLoadEarlierMessages,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: label,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  /// Opens the prompt the pinned header shows. That prompt belongs to the
+  /// turn at the top edge, so it is always above: walk up from here. The
+  /// generic reveal starts at the bottom and has a frame budget, so in a
+  /// long chat (earlier pages loaded, tall replies) it never reached the
+  /// prompt and left the list wherever it ran out, up to the first message.
+  /// The prompt is looked up by its stable id on every frame, so a page
+  /// load or refresh that replaces the row objects cannot lose it; when it
+  /// cannot be built the reader stays where they were.
+  Future<void> _revealStickyPrompt(Map<String, dynamic> prompt) async {
+    if (_disposed || !mounted || !_scrollController.hasClients) return;
+    Map<String, dynamic> current() =>
+        chatRefreshFindAnchorMessage(prompt, _messages) ?? prompt;
+    _freezeStreamingFollow();
+    _streamingViewportLock.releaseLanding();
+    final start = _scrollController.position.pixels;
+    final reached = await _materializeTranscriptAnchor(
+      current(),
+      resolve: current,
+      fromBottom: false,
+      // The list keeps a 1000 px cache on both sides: a step of one
+      // viewport plus that cache still builds every row it passes.
+      stepExtent: (position) => position.viewportDimension + 1000,
+    );
+    if (_disposed || !mounted || !_scrollController.hasClients) return;
+    final anchor = _messageAnchors[current()];
+    if (reached != true || anchor == null || !anchor.attached) {
+      if (reached == false) _scrollController.position.jumpTo(start);
+      return;
+    }
+    await scrollChatAnswerToStart(
+      anchor,
+      _scrollController.position,
+      duration: _reduceMotion ? Duration.zero : chatNavigationDuration,
+      topInset: _readTop,
+    );
+  }
+
+  /// Walk budget of the entry landing: long enough to build a first unread
+  /// row several screens up, short enough (~330 ms) that a blank transcript
+  /// never reads as a broken screen.
+  static const int _entryLandingWalkFrames = 20;
+
+  /// Context kept above the "new since you left" divider when landing on
+  /// it: about one row of what was already read.
+  static const double _newSinceLandingContext = 48;
+
+  // "New since you left": device-local read marker per conversation (Hermes
+  // keeps none for sessions), mirroring the Room's `lastSeenSeq`.
+  SharedPreferences? _lastReadPrefs;
+  String? _lastReadKeyOnEntry;
+  bool _newSinceResolved = false;
+  Map<String, dynamic>? _newSinceFirstUnread;
+  String? _newSinceFirstUnreadKey;
+
+  String get _lastReadPrefsKey =>
+      'chat_last_read_v1.${widget.connection.id}.${widget.session.logicalId}';
+
+  /// Resolves the divider once, on the first transcript that contains the
+  /// stored marker, and lands on the first unread row if it is off screen.
+  void _resolveNewSinceYouLeft() {
+    if (_newSinceResolved || _disposed || !_chatBound) return;
+    // Never position (or decide) under the App Lock, another route or in
+    // the background: resolved again on the next read once on screen.
+    if (!_unreadPresence.present) return;
+    final markerKey = _lastReadKeyOnEntry;
+    if (markerKey == null) {
+      _newSinceResolved = true;
+      return;
+    }
+    final messages = _messages;
+    if (messages.isEmpty || !_chat.messagesLoaded) return;
+    final found = chatUnreadSinceStoredMarker(messages, markerKey);
+    if (found == null && _newSinceMarkerMayBeOlder()) {
+      unawaited(_pageBackForNewSinceMarker());
+      return;
+    }
+    _newSinceResolved = true;
+    final firstUnread = found?.oldestNew;
+    if (found == null || firstUnread == null) return;
+    _newSinceFirstUnread = firstUnread;
+    _newSinceFirstUnreadKey = chatReadMarkerKey(firstUnread);
+    final unread = found.count;
+    final newestRead = found.newestRead;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(_landOnNewSinceYouLeft(firstUnread, newestRead, unread));
+    });
+    setState(() {});
+  }
+
+  /// The opening page holds only the newest rows (Desktop parity), so the
+  /// stored marker can sit in an older page. Look for it as deep as the
+  /// former 500-row opening page read, never further: a marker that is
+  /// gone (rewound, compacted away) must not walk the whole history.
+  static const int _newSinceLookbackRows = 500;
+  bool _newSincePagingBack = false;
+
+  bool _newSinceMarkerMayBeOlder() =>
+      _chat.hasEarlierMessages &&
+      !_chat.earlierMessagesLoadFailed &&
+      _chat.messages.length < _newSinceLookbackRows;
+
+  /// Loads older pages through the same contiguous backfill as scrolling to
+  /// the top (rows are only ever prepended in order), then resolves again.
+  Future<void> _pageBackForNewSinceMarker() async {
+    if (_newSincePagingBack) return;
+    _newSincePagingBack = true;
+    try {
+      final before = _chat.messages.length;
+      await _chat.loadEarlierMessages(continuePastInvisible: true);
+      if (_disposed || !mounted) return;
+      if (_chat.messages.length == before) {
+        // No progress: stop looking instead of retrying in a loop.
+        _newSinceResolved = true;
+        return;
+      }
+    } finally {
+      _newSincePagingBack = false;
+    }
+    _resolveNewSinceYouLeft();
+  }
+
+  Future<void> _landOnNewSinceYouLeft(
+    Map<String, dynamic> firstUnread,
+    Map<String, dynamic> newestRead,
+    int unread,
+  ) async {
+    if (_disposed || !mounted || !_scrollController.hasClients) return;
+    var position = _scrollController.position;
+    var anchor = _messageAnchors[firstUnread];
+    double? target;
+    if (anchor != null && anchor.attached) {
+      target = chatAnswerStartOffset(anchor, position);
+      // Its top is already on screen: stay at the bottom.
+      if (target == null || target <= position.pixels) return;
+    } else {
+      // The reversed list is lazy: a first unread row far above the bottom
+      // has no render object yet. Walk up to it with the transcript hidden,
+      // so the reader sees one move (bottom, then the landing) instead of
+      // every intermediate screen of the walk. The concealment is released
+      // in the same frame as the final jump, or at the bottom if the walk
+      // fails or runs out of budget.
+      _freezeStreamingFollow();
+      _transcriptConcealed.value = true;
+      try {
+        final reached = await _materializeTranscriptAnchor(
+          firstUnread,
+          stillWanted: () => !_disposed,
+          maxFrames: _entryLandingWalkFrames,
+          // The list keeps a 1000 px cache on both sides: a step of one
+          // viewport plus that cache still builds every row it passes.
+          stepExtent: (position) => position.viewportDimension + 1000,
+        );
+        anchor = _messageAnchors[firstUnread];
+        position = _scrollController.hasClients
+            ? _scrollController.position
+            : position;
+        target = reached == true && anchor != null && anchor.attached
+            ? chatAnswerStartOffset(anchor, position)
+            : null;
+        if (target == null) {
+          if (_scrollController.hasClients) {
+            _scrollController.position.jumpTo(
+              _scrollController.position.minScrollExtent,
+            );
+          }
+          return;
+        }
+      } finally {
+        if (!_disposed) _transcriptConcealed.value = false;
+      }
+    }
+    // One jump, before the reader has seen the bottom settle: no animation
+    // that would read as a second movement after the route transition.
+    _freezeStreamingFollow();
+    // The jump button appears with the landing and pads the list bottom by
+    // its 48 dp. Show it while still at the bottom (no compensation is
+    // recorded there) and include its extent in the single jump, so the
+    // divider lands at the top in one frame instead of sliding 48 dp.
+    final buttonExtent = _scrollToBottomVisibility.value ? 0.0 : 48.0;
+    // The divider already shows the news from while away: the pill
+    // starts at zero here and counts only what arrives from now on
+    // (unread_rules.dart). Showing the arrow sets that baseline.
+    _showScrollToBottom = true;
+    position.jumpTo(
+      math.min(
+        target + buttonExtent + _newSinceLandingContext + _readTop,
+        position.maxScrollExtent + buttonExtent,
+      ),
+    );
+    // Anchor to the divider row, not to that pixel offset: rows that finish
+    // their layout later (previews, markdown, a live reply below) would
+    // otherwise slide the divider down or off the top.
+    if (!_disposed && _scrollController.hasClients) {
+      _streamingViewportLock.holdLanding(
+        _newSinceAnchor,
+        visualOffset: _newSinceLandingContext + _readTop,
+      );
+    }
+  }
+
+  /// The laid-out row carrying the "new since you left" divider.
+  RenderBox? _newSinceAnchor() {
+    for (final entry in _messageAnchors.entries) {
+      if (_isNewSinceFirstUnread(entry.key) && entry.value.attached) {
+        return entry.value;
+      }
+    }
+    return null;
+  }
+
+  bool _isNewSinceFirstUnread(Map<String, dynamic> message) {
+    final target = _newSinceFirstUnread;
+    if (target == null) return false;
+    if (identical(message, target)) return true;
+    final key = _newSinceFirstUnreadKey;
+    return key != null && chatReadMarkerKey(message) == key;
+  }
+
+  /// Unread rules shared with rooms (unread_rules.dart): whether this chat
+  /// is on screen, and the read marker when it stopped being.
+  final UnreadPresence _unreadPresence = UnreadPresence();
+  String? _hiddenReadMarker;
+
+  /// The chat stopped being visible (background, covered, App Lock).
+  void _unreadHide() {
+    if (_unreadPresence.present && _chatBound) {
+      _hiddenReadMarker = chatReadMarkerForLeaving(_messages);
+    }
+    _unreadPresence.hide();
+  }
+
+  /// The chat is visible again. After a long enough absence, news that
+  /// arrived meanwhile gets the divider and the landing (reader at the
+  /// bottom); in every case it is never counted by the pill.
+  void _unreadShow() {
+    if (_unreadPresence.present) return;
+    final left = _unreadPresence.show();
+    if (_scrollToBottomVisibility.value) {
+      _newWhileAwayCarry = _newWhileAway.value;
+      final marker = chatNewestCountableMessage(_messages);
+      _awayMarker = marker;
+      _awayMarkerKey = marker == null ? null : chatReadMarkerKey(marker);
+      _awayCountableBaseline = _countableMessages() - _newWhileAwayCarry;
+    } else if (left && _hiddenReadMarker != null) {
+      _lastReadKeyOnEntry = _hiddenReadMarker;
+      _newSinceResolved = false;
+      _newSinceFirstUnread = null;
+      _newSinceFirstUnreadKey = null;
+    }
+    _hiddenReadMarker = null;
+    _resolveNewSinceYouLeft();
+  }
+
+  /// Marks the newest loaded message as read for the next entry.
+  void _persistLastRead() {
+    final prefs = _lastReadPrefs;
+    if (prefs == null || !_chatBound) return;
+    final key = chatReadMarkerForLeaving(_messages);
+    if (key == null) return;
+    unawaited(prefs.setString(_lastReadPrefsKey, key));
+  }
+
+  Map<String, dynamic>? _awayMarker;
+  String? _awayMarkerKey;
+  int _awayCountableBaseline = 0;
+
+  /// Pill count reached before the chat was hidden; what arrives while
+  /// hidden is not counted (it is not "while you read").
+  int _newWhileAwayCarry = 0;
+
+  int _countableMessages() {
+    var total = 0;
+    for (final message in _messages) {
+      if (chatReadMarkerCountable(message)) total++;
+    }
+    return total;
+  }
+
+  void _beginAwayFromBottom() {
+    if (!_chatBound) return;
+    final marker = chatNewestCountableMessage(_messages);
+    _awayMarker = marker;
+    _awayMarkerKey = marker == null ? null : chatReadMarkerKey(marker);
+    _awayCountableBaseline = _countableMessages();
+    _newWhileAwayCarry = 0;
+    _newWhileAway.value = 0;
+  }
+
+  void _endAwayFromBottom() {
+    _awayMarker = null;
+    _awayMarkerKey = null;
+    _awayCountableBaseline = 0;
+    _newWhileAwayCarry = 0;
+    _newWhileAway.value = 0;
+  }
+
+  void _recountNewWhileAway({bool olderHistoryOnly = false}) {
+    if (_disposed || !_scrollToBottomVisibility.value) return;
+    // Hidden: arrivals are not "while you read"; the return rebases.
+    if (!_unreadPresence.present) return;
+    if (olderHistoryOnly) {
+      // Older rows extend the far end: they are never news for the reader,
+      // only the baseline of the fallback count moves with them.
+      final total = _countableMessages();
+      _awayCountableBaseline = total - _newWhileAway.value;
+      return;
+    }
+    final messages = _messages;
+    final found = chatMessagesNewerThanMarker(
+      messages,
+      marker: _awayMarker,
+      key: _awayMarkerKey,
+    );
+    final int count;
+    if (found != null) {
+      count = found.count + _newWhileAwayCarry;
+    } else {
+      // The marker row was replaced by a copy without a durable id (an
+      // optimistic prompt reconciled by the server). The number of countable
+      // rows added since leaving the bottom still holds.
+      var total = 0;
+      for (final message in messages) {
+        if (chatReadMarkerCountable(message)) total++;
+      }
+      count = math.max(total - _awayCountableBaseline, _newWhileAway.value);
+    }
+    _newWhileAway.value = math.max(count, 0);
   }
 
   // Alto medido del hueco de las pastillas de actividad. Notifier aparte por
@@ -1652,6 +2744,23 @@ class _ChatScreenState extends State<ChatScreen>
   /// Texto de `/compress …` que sigue en el composer mientras la compactación
   /// está en marcha; se consume al terminar bien y se conserva si falla.
   String? _compressionInvocation;
+  // Measured height of the floating bottom group (notices, strips and the
+  // composer). The transcript runs under it and reserves this much below
+  // its newest row.
+  final ValueNotifier<double> _bottomBarsExtent = ValueNotifier(0);
+
+  final GlobalKey _bottomBarsBoxKey = GlobalKey(debugLabel: 'chat-bottom-bars');
+
+  /// Height of the bottom group, read inside the transcript's layout
+  /// callback: the column has already laid the group out in this frame,
+  /// so the transcript reserves the new height without a frame of lag.
+  /// Like the old column layout (the viewport shrank under a taller
+  /// group), the newest rows move up with the group; no reading lock.
+  double _bottomBarsHeightNow() {
+    final box = _bottomBarsBoxKey.currentContext?.findRenderObject();
+    return box is RenderBox && box.hasSize ? box.size.height : 0;
+  }
+
   void _setActivityPillExtent(double value) {
     if (_disposed || _activityPillExtent.value == value) return;
     _recordTranscriptOverlayExtentChange(value - _activityPillExtent.value);
@@ -1666,9 +2775,29 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   bool _autoFollowStreaming = true;
+
+  // Búsqueda dentro del chat. Mientras la barra está abierta el seguimiento
+  // del fondo queda suspendido: saltar a un resultado no puede competir con
+  // el streaming ni con la hidratación. Cerrar la barra lo restaura.
+  bool _findOpen = false;
+  String _findInitialQuery = '';
+  String _findQuery = '';
+  int _findEpoch = 0;
+  final TranscriptSearchIndex _findIndex = TranscriptSearchIndex();
+  List<Map<String, dynamic>> _findMatchMessages = const [];
+  List<TranscriptMatch> _findMatches = const [];
+  final ValueNotifier<ChatFindStatus> _findStatus = ValueNotifier(
+    const ChatFindStatus(),
+  );
+  final ValueNotifier<Map<String, dynamic>?> _findActiveMessage = ValueNotifier(
+    null,
+  );
   int? _streamingScrollPointer;
   Offset? _streamingScrollOrigin;
   bool _streamingScrollGestureMoved = false;
+
+  /// The tracked pointer came down at the bottom and froze a live follow.
+  bool _streamingScrollFrozeFollow = false;
   final _streamingViewportLock = _ChatStreamingViewportLock();
   final Map<Map<String, dynamic>, RenderBox> _messageAnchors =
       Map<Map<String, dynamic>, RenderBox>.identity();
@@ -1778,10 +2907,11 @@ class _ChatScreenState extends State<ChatScreen>
         // de maxScrollExtent.
         _readerPreservedTurnInsertions.addAll(_messages.take(2));
       } else {
-        // Sin host retenido, la fila del placeholder es sustituida por el host
-        // vivo, que ya reporta su altura inicial completa: reportarla aquí
-        // también la contaría dos veces. Solo la petición del usuario es
-        // altura nueva neta en la inserción.
+        // Sin host retenido, la fila del placeholder se mide sola mientras
+        // es una fila normal (ct1215: [_recordLiveTurnRow]) y devuelve esa
+        // altura cuando el host vivo, que reporta la suya completa, la
+        // sustituye: reportarla aquí también la contaría dos veces. Solo la
+        // petición del usuario se mide en la inserción.
         if (_messages.length > 1) {
           _readerPreservedTurnInsertions.add(_messages[1]);
         }
@@ -1796,12 +2926,13 @@ class _ChatScreenState extends State<ChatScreen>
     _assistantEntranceSerial++;
     _surfaceTurnSerial = _assistantEntranceSerial;
     _surfaceTurnTerminal = false;
+    _releaseLiveTurnRow();
     _clearRetainedTerminalReferences();
     _streamingRevealTimer?.cancel();
     _revealedChars = 0;
     _liveAssistantMaterialized = false;
     _liveAssistantFrame.value = null;
-    _autoFollowStreaming = readerIsAtBottom;
+    _autoFollowStreaming = readerIsAtBottom && !_findOpen;
     _showScrollToBottom = !readerIsAtBottom;
   }
 
@@ -1933,7 +3064,12 @@ class _ChatScreenState extends State<ChatScreen>
   /// sueltas, y acelera con el tamaño de la ráfaga para no quedar rezagado.
   void _advanceStreamingReveal() {
     final content = _chat.assistantContent;
-    if (!_chat.isStreaming || !_autoFollowStreaming || _reduceMotion) {
+    // Sin UI visible (app en segundo plano) no hay nada que animar: el texto
+    // se revela entero y el timer de 30 Hz no despierta al isolate.
+    if (!_chat.isStreaming ||
+        !_autoFollowStreaming ||
+        _reduceMotion ||
+        !_appInForeground) {
       _streamingRevealTimer?.cancel();
       if (_revealedChars != content.length) {
         _revealedChars = content.length;
@@ -1982,7 +3118,11 @@ class _ChatScreenState extends State<ChatScreen>
     _attachmentListener = _applyAttachmentProjection;
     _sessionUsageSnapshot = widget.session;
     _compaction.addListener(_onCompactionChanged);
+    _transcriptConcealed.addListener(_scheduleStickyPromptUpdate);
+    _scrollToBottomVisibility.addListener(_onBotHeaderCompactChanged);
+    AppLockSensitiveReadFence.changes.addListener(_onDraftDisclosureChanged);
     WidgetsBinding.instance.addObserver(this);
+    unawaited(_loadSharedArchive());
     _loadPrefs();
     _loadActiveModel();
     _profileReady = _loadActiveProfile();
@@ -1995,24 +3135,111 @@ class _ChatScreenState extends State<ChatScreen>
     _scrollController.addListener(_onScroll);
     _textController.addListener(_onComposerChanged);
     _textFocusNode.addListener(_onComposerFocusChanged);
+    _textFocusNode.onKeyEvent = _onComposerKeyEvent;
     unawaited(_restoreDraftAndRunInitialAction());
   }
 
+  /// Physical keyboard: Arrow Up in an EMPTY composer brings back the last
+  /// message sent in this chat, caret at the end. With text, or while a
+  /// suggestion palette is open, the key keeps its normal behaviour. The
+  /// palette guards cover suggestions that arrive late, after a send already
+  /// cleared the text; an `@` mention always needs text, so the empty check
+  /// covers it.
+  KeyEventResult _onComposerKeyEvent(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent ||
+        event.logicalKey != LogicalKeyboardKey.arrowUp) {
+      return KeyEventResult.ignored;
+    }
+    final keyboard = HardwareKeyboard.instance;
+    if (keyboard.isShiftPressed ||
+        keyboard.isControlPressed ||
+        keyboard.isAltPressed ||
+        keyboard.isMetaPressed) {
+      return KeyEventResult.ignored;
+    }
+    if (_textController.text.isNotEmpty ||
+        _slashPaletteVisible ||
+        _referencePaletteVisible ||
+        _isRecording ||
+        _transcribing) {
+      return KeyEventResult.ignored;
+    }
+    final recalled = _lastSentUserText();
+    if (recalled == null) return KeyEventResult.ignored;
+    _textController.value = TextEditingValue(
+      text: recalled,
+      selection: TextSelection.collapsed(offset: recalled.length),
+    );
+    return KeyEventResult.handled;
+  }
+
+  /// Test hook: puts the composer in the states where Arrow Up must keep its
+  /// normal behaviour even with an empty text (late palette rows, dictation).
+  @visibleForTesting
+  void setComposerKeyGuardsForTesting({
+    List<SlashCommand>? slashSuggestions,
+    List<PathCompletionItem>? referenceItems,
+    bool? recording,
+    bool? transcribing,
+  }) {
+    setState(() {
+      if (slashSuggestions != null) _slashSuggestions = slashSuggestions;
+      if (referenceItems != null) _referenceItems = referenceItems;
+      if (recording != null) _isRecording = recording;
+      if (transcribing != null) _transcribing = transcribing;
+    });
+  }
+
+  /// Text of the newest real user turn (rows are stored newest first).
+  String? _lastSentUserText() {
+    for (final message in _chat.messages) {
+      if (!isRealUserTurn(message)) continue;
+      final text = _parseUserContent(
+        (message['content'] ?? '').toString(),
+      ).text.trim();
+      if (text.isNotEmpty) return text;
+    }
+    return null;
+  }
+
   void _onComposerFocusChanged() {
+    if (!_textFocusNode.hasFocus) {
+      _slashCompletions.cancel();
+      _closeReferencePalette();
+    }
+    // Only the slash/reference palettes read composer focus in build. With
+    // both empty a focus flip changes nothing on screen, and a screen-wide
+    // setState here rebuilds every cached transcript row on the very frame
+    // the keyboard starts opening or closing.
+    if (_slashSuggestions.isEmpty && _referenceItems.isEmpty) return;
     if (mounted && !_disposed) setState(() {});
   }
 
+  bool _initialDraftActionStarted = false;
   Future<void> _restoreDraftAndRunInitialAction() async {
+    if (_initialOutboxReadParked.isCompleted) {
+      _initialOutboxReadParked = Completer<void>();
+    }
     try {
       await _restoreDraft();
       if (!_initialOutboxRead.isCompleted) _initialOutboxRead.complete(true);
+    } on SensitiveReadUnavailable {
+      _draftLoaded = false;
+      // With another attempt already reading, that one answers instead.
+      if (!_draftRestoreRunning &&
+          !_initialOutboxRead.isCompleted &&
+          !_initialOutboxReadParked.isCompleted) {
+        _initialOutboxReadParked.complete();
+      }
+      return;
     } catch (error) {
       // La lectura segura forma parte del ownership del turno. Fallar abierto
       // permitiría crear otra entrada y duplicar una entrega todavía oculta.
       debugPrint('[turn-outbox] secure recovery failed (${error.runtimeType})');
       if (!_initialOutboxRead.isCompleted) _initialOutboxRead.complete(false);
     }
-    if (!mounted) return;
+    if (!mounted || _initialDraftActionStarted) return;
+    _initialDraftActionStarted = true;
 
     if (widget.initialVoiceMode || widget.initialDictation) {
       await WidgetsBinding.instance.endOfFrame;
@@ -2103,14 +3330,31 @@ class _ChatScreenState extends State<ChatScreen>
     return widget.session.id;
   }
 
-  void _authorizeDraftDestination(String sessionId) {
+  void _authorizeDraftDestination(
+    String sessionId, {
+    LocalConversationLifecycle? actionLifecycle,
+  }) {
     if (!_isBotChatSurface && sessionId != widget.session.id) {
       LocalConversationCleanupFence.authorizeCreatedSession(
-        _localConversationLifecycle,
+        actionLifecycle ?? _localConversationLifecycle,
         sessionId,
       );
       _normalCanonicalDraftId = sessionId;
     }
+  }
+
+  /// Makes [lifecycle] the write lease of the whole conversation [chat] runs:
+  /// the id the chat itself writes under and, for a normal chat, the durable
+  /// id its drafts are kept under. This route may have been opened with
+  /// either of them (see [LocalConversationCleanupFence.coverConversation]).
+  void _coverConversationOf(
+    ActiveChat chat,
+    LocalConversationLifecycle lifecycle,
+  ) {
+    LocalConversationCleanupFence.coverConversation(lifecycle, {
+      chat.sessionId,
+      if (!_isBotChatSurface) ?chat.storedSessionId,
+    });
   }
 
   String get _recoveryProfile => _localConversationLifecycle.profile;
@@ -2136,7 +3380,8 @@ class _ChatScreenState extends State<ChatScreen>
     return name.trim().isEmpty ? null : name.trim();
   }
 
-  String get _assistantName => _botDisplayName ?? _agentName;
+  /// Who signs a reply in the transcript: the same name the island shows.
+  String get _assistantName => _botDisplayName ?? _islandProfileName;
 
   Set<String> get _draftRecoveryAliases {
     if (!_isBotChatSurface) return <String>{};
@@ -2153,6 +3398,7 @@ class _ChatScreenState extends State<ChatScreen>
   Future<ChatDraft> _loadDraftWithRecoveryMigration(
     ChatDraftStore store,
   ) async {
+    final ticket = AppLockSensitiveReadFence.current;
     final recoveryId = _draftRecoverySessionId;
     final profile = _recoveryProfile;
     final draft = await store.load(
@@ -2160,11 +3406,13 @@ class _ChatScreenState extends State<ChatScreen>
       recoveryId,
       profile: profile,
     );
+    ticket.ensureCurrent();
     if (_hasDraftContent(draft)) {
       // The stable scope is authoritative once present. Aliases belong to an
       // older identity scheme; retaining a divergent one would resurrect an
       // already superseded operation after the stable draft reaches terminal.
       for (final alias in _draftRecoveryAliases) {
+        ticket.ensureCurrent();
         await store.clear(
           widget.connection.id,
           alias,
@@ -2172,6 +3420,7 @@ class _ChatScreenState extends State<ChatScreen>
           includeUnscoped: true,
         );
       }
+      ticket.ensureCurrent();
       return draft;
     }
 
@@ -2182,8 +3431,10 @@ class _ChatScreenState extends State<ChatScreen>
         profile: profile,
         claimUnscopedLegacy: true,
       );
+      ticket.ensureCurrent();
       if (!_hasDraftContent(legacy)) continue;
-      await store.save(
+      ticket.ensureCurrent();
+      final migrated = await store.save(
         widget.connection.id,
         recoveryId,
         legacy.text,
@@ -2192,6 +3443,8 @@ class _ChatScreenState extends State<ChatScreen>
         preparedTurnClientTurnId: legacy.preparedTurnClientTurnId,
         lifecycle: _localConversationLifecycle,
       );
+      ticket.ensureCurrent();
+      if (!migrated) throw const SensitiveReadUnavailable();
       await store.clear(
         widget.connection.id,
         alias,
@@ -2203,12 +3456,54 @@ class _ChatScreenState extends State<ChatScreen>
     return draft;
   }
 
+  String? _restoredDraftText;
+  List<AttachmentDraft> _restoredDraftAttachments = const [];
+  bool _draftRestoreRunning = false;
+  void _onDraftDisclosureChanged() {
+    if (!mounted || _disposed) return;
+    if (AppLockSensitiveReadFence.capture().isCurrent && !_draftLoaded) {
+      unawaited(_restoreDraftAndRunInitialAction());
+    } else if (!AppLockSensitiveReadFence.capture().isCurrent &&
+        _restoredDraftText != null &&
+        _textController.text == _restoredDraftText &&
+        _sameAttachmentDrafts(_pendingAttachments, _restoredDraftAttachments)) {
+      _restoringDraft = true;
+      setState(() {
+        _textController.clear();
+        _pendingAttachments.clear();
+        _draftLoaded = false;
+      });
+      _restoringDraft = false;
+    }
+  }
+
   Future<void> _restoreDraft() async {
+    if (_draftRestoreRunning) throw const SensitiveReadUnavailable();
+    _draftRestoreRunning = true;
+    final ticket = AppLockSensitiveReadFence.capture();
+    try {
+      await _restoreDraftCurrent(ticket);
+    } finally {
+      _draftRestoreRunning = false;
+      if (!ticket.isCurrent &&
+          AppLockSensitiveReadFence.capture().isCurrent &&
+          mounted &&
+          !_draftLoaded) {
+        unawaited(_restoreDraftAndRunInitialAction());
+      }
+    }
+  }
+
+  Future<void> _restoreDraftCurrent(SensitiveReadTicket ticket) async {
+    ticket.ensureCurrent();
     final prefs = await SharedPreferences.getInstance();
+    ticket.ensureCurrent();
     if (!mounted || _disposed) return;
     if (!LocalConversationCleanupFence.rehydrate(_localConversationLifecycle)) {
       return;
     }
+    final editorText = _textController.text;
+    final editorAttachments = List<AttachmentDraft>.of(_pendingAttachments);
     final store = widget.draftStoreOverride ?? ChatDraftStore(prefs);
     final outbox = TurnOutboxStore(lifecycle: _localConversationLifecycle);
     // El borrador pinta primero: la reconciliación adicional de outbox no debe
@@ -2216,9 +3511,40 @@ class _ChatScreenState extends State<ChatScreen>
     _draftStore = store;
     var draft = widget.connection.readOnly
         ? const ChatDraft(text: '', attachments: [])
-        : await _loadDraftWithRecoveryMigration(store);
+        : await AppLockSensitiveReadFence.run(
+            prefs,
+            () => _loadDraftWithRecoveryMigration(store),
+          );
+    ticket.ensureCurrent();
     if (!mounted) return;
     _turnOutbox = outbox;
+    final submittedLink = draft.submittedTurnClientTurnId;
+    if (submittedLink != null &&
+        (_chatBound ? _chat.activeTurnDelivery : null) == null) {
+      // La outbox se escribe siempre antes del enlace. Sin registro de ese
+      // turno, ya se resolvió (entregado y retirado): el lote no se ofrece de
+      // nuevo. Con registro, decide la reconciliación normal de abajo. Con una
+      // entrega viva no se lee storage: el servicio posee esa frontera.
+      ticket.ensureCurrent();
+      final pending = await outbox.loadAllForChat(
+        widget.connection.id,
+        widget.session.id,
+        profile: _recoveryProfile,
+      );
+      if (!mounted) return;
+      ticket.ensureCurrent();
+      if (!pending.any((turn) => turn.clientTurnId == submittedLink)) {
+        await store.clear(
+          widget.connection.id,
+          _draftRecoverySessionId,
+          profile: _recoveryProfile,
+          onlySubmittedTurnClientTurnId: submittedLink,
+        );
+        if (!mounted) return;
+        draft = const ChatDraft(text: '', attachments: []);
+      }
+    }
+    ticket.ensureCurrent();
     final linkedDiscard = draft.preparedTurnClientTurnId;
     if (linkedDiscard != null &&
         await outbox.isFailedBeforeAcceptanceDiscarded(
@@ -2237,6 +3563,7 @@ class _ChatScreenState extends State<ChatScreen>
       draft = const ChatDraft(text: '', attachments: []);
     }
     if (!mounted || _disposed) return;
+    ticket.ensureCurrent();
     _draftLoaded = true;
     final liveDeliveryAtRestore = _chatBound ? _chat.activeTurnDelivery : null;
     final liveOwnsRestoredDraft =
@@ -2246,12 +3573,17 @@ class _ChatScreenState extends State<ChatScreen>
           draft.attachments,
           liveDeliveryAtRestore.current.attachments,
         );
+    var adoptedDraft = false;
     _restoringDraft = true;
     setState(() {
-      _composerPreparedTurnClientTurnId = draft.preparedTurnClientTurnId;
+      if (_textController.text == editorText &&
+          _sameAttachmentDrafts(_pendingAttachments, editorAttachments)) {
+        _composerPreparedTurnClientTurnId = draft.preparedTurnClientTurnId;
+      }
       if (!liveOwnsRestoredDraft &&
           !_composerEmptiedByUser &&
           _textController.text.isEmpty) {
+        adoptedDraft = true;
         _textController.text = draft.text;
       }
       if (!liveOwnsRestoredDraft &&
@@ -2261,6 +3593,12 @@ class _ChatScreenState extends State<ChatScreen>
       }
     });
     _restoringDraft = false;
+    if (adoptedDraft &&
+        _hasDraftContent(draft) &&
+        _sameAttachmentDrafts(_pendingAttachments, draft.attachments)) {
+      _restoredDraftText = _textController.text;
+      _restoredDraftAttachments = List<AttachmentDraft>.of(_pendingAttachments);
+    }
     _syncProducerAttachmentRetention();
 
     // Si el servicio sigue vivo, él posee la frontera de transporte. Leer la
@@ -2272,11 +3610,13 @@ class _ChatScreenState extends State<ChatScreen>
     PreparedTurn? loaded = liveDelivery?.current;
     List<PreparedTurn> recoveredQueued = const [];
     if (liveDelivery == null) {
+      ticket.ensureCurrent();
       final recovered = await outbox.loadAllForChat(
         widget.connection.id,
         widget.session.id,
         profile: _recoveryProfile,
       );
+      ticket.ensureCurrent();
       recoveredQueued = recovered.where((turn) => turn.queued).toList();
       final nonQueued = recovered.where((turn) => !turn.queued).toList();
       loaded = nonQueued.isEmpty ? null : nonQueued.last;
@@ -2350,6 +3690,43 @@ class _ChatScreenState extends State<ChatScreen>
       draft.attachments,
     );
     if (!composerStillAtDraft || !attachmentsStillAtDraft) return;
+    // El borrador guardado puede ser trabajo NUEVO del usuario (escrito tras
+    // el fallo o mientras el turno seguía pendiente). Ese borrador manda: el
+    // turno recuperado se ofrece en el aviso y nunca sustituye al borrador.
+    final draftIsOtherWork =
+        _hasDraftContent(draft) &&
+        !prepared.matchesBatch(
+          text: draft.text.trim(),
+          attachments: draft.attachments,
+          model: prepared.model,
+          profile: prepared.profile,
+        );
+    if (draftIsOtherWork && recoverPrepared) {
+      // Un envío todavía en vuelo lo posee el servicio: sin aviso de descarte
+      // que pudiera retirar su outbox a mitad de vuelo. Si ya falló (ambiguo o
+      // rechazado), el aviso ofrece el turno sin tocar el borrador.
+      final stillInFlight =
+          liveDelivery != null &&
+          (prepared.state == PreparedTurnState.prepared ||
+              prepared.state == PreparedTurnState.submitting);
+      if (!stillInFlight) _showHiddenRecoveredTurn(prepared);
+      return;
+    }
+    if (draftIsOtherWork) {
+      // ACK ya persistido: solo se compacta el registro terminal; el borrador
+      // nuevo del usuario no se toca.
+      if (prepared.state == PreparedTurnState.terminal) {
+        try {
+          await outbox.delete(prepared);
+        } catch (error) {
+          debugPrint(
+            '[turn-outbox] reconciled cleanup failed (${error.runtimeType})',
+          );
+        }
+        if (identical(_preparedTurn, prepared)) _preparedTurn = null;
+      }
+      return;
+    }
     _restoringDraft = true;
     setState(() {
       if (recoverPrepared) {
@@ -2495,34 +3872,74 @@ class _ChatScreenState extends State<ChatScreen>
 
   void _showHiddenRecoveredTurn(PreparedTurn prepared) {
     if (!mounted || prepared.state == PreparedTurnState.terminal) return;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !identical(_preparedTurn, prepared)) return;
-      final ambiguous = prepared.state == PreparedTurnState.ambiguous;
-      final acknowledged =
-          prepared.state == PreparedTurnState.accepted ||
-          prepared.state == PreparedTurnState.running;
-      final english = Localizations.localeOf(context).languageCode == 'en';
-      HermesNotice.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            ambiguous
-                ? Strings.of(context).chaAmbiguousRestored
-                : acknowledged
-                ? english
-                      ? 'Hermes could not reattach a turn that may still be running. Send retries the check; discard only after verifying Hermes because this does not cancel the remote turn.'
-                      : 'Hermes no pudo reanexar un turno que aún podría seguir activo. Enviar repite la comprobación; descarta solo tras verificar Hermes porque esto no cancela el turno remoto.'
-                : english
-                ? 'A pending turn was recovered. Discard the recovery to continue.'
-                : 'Se recuperó un turno pendiente. Descarta la recuperación para continuar.',
-          ),
-          duration: const Duration(seconds: 8),
-          action: SnackBarAction(
-            label: Strings.of(context).chaDiscardRecovered,
-            onPressed: () => unawaited(_discardRecoveredTurn(prepared)),
-          ),
-        ),
+    // Aviso en flujo (encima del composer), no en el carril superior: allí
+    // tapaba el menú y el selector de modelo y truncaba el texto.
+    setState(() => _recoveredTurnNotice = prepared);
+  }
+
+  String _recoveredTurnMessage(PreparedTurn prepared) {
+    final ambiguous = prepared.state == PreparedTurnState.ambiguous;
+    final acknowledged =
+        prepared.state == PreparedTurnState.accepted ||
+        prepared.state == PreparedTurnState.running;
+    final english = Localizations.localeOf(context).languageCode == 'en';
+    return ambiguous
+        ? Strings.of(context).chaAmbiguousRestored
+        : acknowledged
+        ? english
+              ? 'Hermes could not reattach a turn that may still be running. Send retries the check; discard only after verifying Hermes because this does not cancel the remote turn.'
+              : 'Hermes no pudo reanexar un turno que aún podría seguir activo. Enviar repite la comprobación; descarta solo tras verificar Hermes porque esto no cancela el turno remoto.'
+        : english
+        ? 'A pending turn was recovered. Discard the recovery to continue.'
+        : 'Se recuperó un turno pendiente. Descarta la recuperación para continuar.';
+  }
+
+  /// True cuando el composer contiene trabajo del usuario distinto del lote
+  /// recuperado. Ese borrador manda: nunca se pisa con el turno recuperado.
+  bool _composerHoldsOtherDraft(PreparedTurn prepared) {
+    final text = _textController.text;
+    if (text.trim().isEmpty && _pendingAttachments.isEmpty) return false;
+    return !prepared.matchesBatch(
+      text: text.trim(),
+      attachments: List<AttachmentDraft>.of(_pendingAttachments),
+      model: prepared.model,
+      profile: prepared.profile,
+    );
+  }
+
+  /// Devuelve el turno recuperado al composer solo si está vacío: un borrador
+  /// distinto del usuario jamás se sustituye.
+  Future<void> _restoreRecoveredTurnIntoComposer(PreparedTurn prepared) async {
+    if (!mounted ||
+        !prepared.restoresComposer ||
+        _preparedTurn?.storageId != prepared.storageId ||
+        _textController.text.isNotEmpty ||
+        _pendingAttachments.isNotEmpty) {
+      return;
+    }
+    final link = prepared.state == PreparedTurnState.failedBeforeAcceptance
+        ? prepared.clientTurnId
+        : null;
+    _restoringDraft = true;
+    setState(() {
+      _composerPreparedTurnClientTurnId = link;
+      _textController.value = TextEditingValue(
+        text: prepared.text,
+        selection: TextSelection.collapsed(offset: prepared.text.length),
       );
+      _pendingAttachments
+        ..clear()
+        ..addAll(prepared.attachments);
     });
+    _restoringDraft = false;
+    _syncProducerAttachmentRetention();
+    _draftTimer?.cancel();
+    await _saveDraftSnapshot(
+      prepared.text,
+      prepared.attachments,
+      preparedTurnClientTurnId: link,
+      preparedTurnAuthorityCaptured: true,
+    );
   }
 
   Future<void> _discardRecoveredTurn(PreparedTurn prepared) async {
@@ -2543,6 +3960,9 @@ class _ChatScreenState extends State<ChatScreen>
     if (identical(_preparedTurn, prepared)) {
       _preparedTurn = null;
       _composerPreparedTurnClientTurnId = null;
+    }
+    if (mounted && _recoveredTurnNotice?.storageId == prepared.storageId) {
+      setState(() => _recoveredTurnNotice = null);
     }
     if (!mounted || !composerStillMatches) return;
     _restoringDraft = true;
@@ -2674,7 +4094,8 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
-  void _scheduleDraftSave() {
+  void _scheduleDraftSave({LocalConversationLifecycle? actionLifecycle}) {
+    final lifecycle = actionLifecycle ?? _localConversationLifecycle;
     _syncProducerAttachmentRetention();
     if (_restoringDraft) return;
     _draftTimer?.cancel();
@@ -2694,6 +4115,7 @@ class _ChatScreenState extends State<ChatScreen>
           attachments,
           preparedTurnClientTurnId: preparedTurnClientTurnId,
           preparedTurnAuthorityCaptured: true,
+          actionLifecycle: lifecycle,
         ),
       );
     });
@@ -2705,7 +4127,10 @@ class _ChatScreenState extends State<ChatScreen>
     String? preparedTurnClientTurnId,
     bool preparedTurnAuthorityCaptured = false,
     bool finalDisposeSnapshot = false,
+    String? submittedTurnClientTurnId,
+    LocalConversationLifecycle? actionLifecycle,
   }) async {
+    final lifecycle = actionLifecycle ?? _localConversationLifecycle;
     if (widget.connection.readOnly) return false;
     if (_disposed && !finalDisposeSnapshot) return false;
     // Leaving during secure restore must not replace unread content with empty UI.
@@ -2720,7 +4145,7 @@ class _ChatScreenState extends State<ChatScreen>
     _draftSnapshotTail = completed.future;
     try {
       final recoveryId = _draftRecoverySessionId;
-      _authorizeDraftDestination(recoveryId);
+      _authorizeDraftDestination(recoveryId, actionLifecycle: lifecycle);
       final retiredId = _isBotChatSurface
           ? null
           : recoveryId == widget.session.id
@@ -2739,7 +4164,8 @@ class _ChatScreenState extends State<ChatScreen>
         preparedTurnClientTurnId: preparedTurnAuthorityCaptured
             ? preparedTurnClientTurnId
             : preparedTurnClientTurnId ?? _composerPreparedTurnClientTurnId,
-        lifecycle: _localConversationLifecycle,
+        submittedTurnClientTurnId: submittedTurnClientTurnId,
+        lifecycle: lifecycle,
         afterSave: previous.then((_) => true),
       );
       final saves = <Future<bool>>[saved];
@@ -2753,7 +4179,7 @@ class _ChatScreenState extends State<ChatScreen>
             '',
             const [],
             profile: _recoveryProfile,
-            lifecycle: _localConversationLifecycle,
+            lifecycle: lifecycle,
             afterSave: saved,
           ),
         );
@@ -2772,11 +4198,13 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
-  Future<bool> _clearDraft() async {
+  Future<bool> _clearDraft({
+    LocalConversationLifecycle? actionLifecycle,
+  }) async {
     _draftTimer?.cancel();
     if (widget.connection.readOnly) return true;
     if (!_isBotChatSurface) {
-      return _saveDraftSnapshot('', const []);
+      return _saveDraftSnapshot('', const [], actionLifecycle: actionLifecycle);
     }
     try {
       final store =
@@ -2792,6 +4220,104 @@ class _ChatScreenState extends State<ChatScreen>
       debugPrint('[chat-draft] secure cleanup failed (${error.runtimeType})');
       return false;
     }
+  }
+
+  /// Clears the saved draft of a turn that was queued after this route was
+  /// disposed, but only while that draft is still exactly the queued batch:
+  /// newer content written for the same session is never touched.
+  Future<void> _clearQueuedDraftAfterLeaving(
+    String text,
+    List<AttachmentDraft> attachments,
+  ) async {
+    if (widget.connection.readOnly) return;
+    try {
+      final store =
+          _draftStore ??
+          widget.draftStoreOverride ??
+          ChatDraftStore(await SharedPreferences.getInstance());
+      final sessionId = _draftRecoverySessionId;
+      final profile = _recoveryProfile;
+      final ticket = store.captureDisclosure();
+      final stored = await store.load(
+        widget.connection.id,
+        sessionId,
+        profile: profile,
+      );
+      if (stored.text != text ||
+          !_sameAttachmentDrafts(stored.attachments, attachments)) {
+        return;
+      }
+      ticket.ensureCurrent();
+      await store.clear(widget.connection.id, sessionId, profile: profile);
+    } catch (error) {
+      debugPrint('[chat-draft] queued cleanup failed (${error.runtimeType})');
+    }
+  }
+
+  /// Retira el borrador que sigue siendo el lote exacto de un turno ya
+  /// aceptado. No depende de esta pantalla: tras salir antes del ACK el
+  /// lifecycle ya no admite escrituras y `_clearDraft` no puede actuar. El
+  /// store solo borra si el enlace coincide, así que nunca pisa texto nuevo, y
+  /// sigue respetando las vallas de borrado de sesión/conexión.
+  Future<void> _clearSubmittedTurnDraft(String clientTurnId) async {
+    if (widget.connection.readOnly) return;
+    try {
+      final store =
+          _draftStore ??
+          widget.draftStoreOverride ??
+          ChatDraftStore(await SharedPreferences.getInstance());
+      final ids = <String>{
+        widget.session.id,
+        ?_normalCanonicalDraftId,
+        if (_chatBound) ?_chat.createdDraftSessionId,
+      }..removeWhere((id) => id.isEmpty);
+      for (final id in ids) {
+        await store.clear(
+          widget.connection.id,
+          id,
+          profile: _recoveryProfile,
+          onlySubmittedTurnClientTurnId: clientTurnId,
+        );
+      }
+    } catch (error) {
+      debugPrint(
+        '[chat-draft] submitted-turn cleanup failed (${error.runtimeType})',
+      );
+    }
+  }
+
+  /// The connection's shared [SessionArchive], loaded when the chat opens so
+  /// a confirmed delete can be recorded without an await.
+  SessionArchive? _sharedArchive;
+
+  Future<void> _loadSharedArchive() async {
+    final prefs = await SharedPreferences.getInstance();
+    final archive = await SessionArchive.load(prefs, widget.connection.id);
+    if (!mounted) return;
+    _sharedArchive = archive;
+    // Opening a session marks it read on the server, from whichever surface
+    // opened it (Desktop `clearUnreadOnOpen`: every open, only when unread).
+    unawaited(archive.markSessionReadOnOpen(widget.session));
+  }
+
+  /// Records the server-confirmed delete in the store every list filters
+  /// with. Synchronous when the store is loaded (the normal case).
+  void _markDeletedInSharedStore() {
+    final deletedIds = [_chat.serverSessionId];
+    final archive = _sharedArchive;
+    if (archive != null) {
+      unawaited(
+        archive.markSessionDeleted(widget.session, sessionIds: deletedIds),
+      );
+      return;
+    }
+    final session = widget.session;
+    final connectionId = widget.connection.id;
+    unawaited(() async {
+      final prefs = await SharedPreferences.getInstance();
+      final loaded = await SessionArchive.load(prefs, connectionId);
+      await loaded.markSessionDeleted(session, sessionIds: deletedIds);
+    }());
   }
 
   /// El DELETE puede usar un ID persistido por Desktop distinto del ID móvil
@@ -2998,7 +4524,7 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
-  void _onComposerChanged() {
+  void _onComposerChanged({LocalConversationLifecycle? actionLifecycle}) {
     final text = _textController.text;
     if (_isRecording || _transcribing) {
       return;
@@ -3008,7 +4534,12 @@ class _ChatScreenState extends State<ChatScreen>
     // programáticos (restaurar, descartar, soltar el lote al enviar) ya se
     // envuelven en `_restoringDraft` y no la marcan.
     if (isEmpty && !_restoringDraft) _composerEmptiedByUser = true;
-    final suggestions = slashSuggestionsFor(text, Strings.of(context));
+    final suggestions = slashSuggestionsFor(
+      text,
+      Strings.of(context),
+      sideAgents: _chat.canRunSideAgents,
+      branch: _chat.canBranchChat,
+    );
     final changed =
         isEmpty != _composerEmpty ||
         suggestions.length != _slashSuggestions.length ||
@@ -3021,41 +4552,29 @@ class _ChatScreenState extends State<ChatScreen>
         _slashSuggestions = suggestions;
       });
     }
-    _slashCompletionDebounce?.cancel();
-    final completionEpoch = ++_slashCompletionEpoch;
-    if (text.startsWith('/') &&
-        !text.contains(RegExp(r'\s')) &&
-        text.length <= 65) {
-      _slashCompletionDebounce = Timer(
-        const Duration(milliseconds: 150),
-        () => unawaited(_refreshDesktopSlashSuggestions(text, completionEpoch)),
-      );
-    }
+    _syncComposerCompletionScope();
+    _refreshSlashCompletion(text);
+    _refreshReferenceQuery();
     _maybeDiscardFailedTurnFromExplicitEmptyComposer();
-    _scheduleDraftSave();
+    _scheduleDraftSave(actionLifecycle: actionLifecycle);
   }
 
-  Future<bool> _useAssistantSuggestion(
-    Map<String, dynamic> sourceMessage,
-    String suggestion,
-  ) async {
-    // Revalidamos al pulsar: el árbol puede seguir visible durante el frame en
-    // que empieza otro run o el usuario crea un draft. Una sugerencia nunca se
-    // convierte en steering ni se mezcla con texto/adjuntos existentes.
-    final allowed = canOfferAssistantSuggestions(
-      isLatestAssistant: _isLatestAssistant(sourceMessage),
-      isTerminal: sourceMessage['_cancelled'] != true,
-      chatBusy:
-          _interactiveMessageRefreshPending ||
-          _sending ||
-          _attachmentSubmitting ||
-          _compressingSession,
-      writable: !widget.connection.readOnly,
-      composerEmpty: _textController.text.trim().isEmpty,
-      attachmentsEmpty: _pendingAttachments.isEmpty,
+  /// "Ask about this": quotes the selected transcript text into the composer
+  /// after any draft and focuses it. Never sends.
+  void _askAboutSelection(String selected) {
+    if (!mounted ||
+        widget.connection.readOnly ||
+        _cronRunReadOnly ||
+        _editingUserMessage) {
+      return;
+    }
+    final quote = buildAskAboutQuote(selected);
+    if (quote.isEmpty) return;
+    _textController.value = insertQuoteIntoComposer(
+      _textController.value,
+      quote,
     );
-    if (!allowed) return false;
-    return _sendMessage(initialText: suggestion);
+    _textFocusNode.requestFocus();
   }
 
   Future<DesktopCommandCatalog?> _loadDesktopCommandCatalog() async {
@@ -3065,6 +4584,9 @@ class _ChatScreenState extends State<ChatScreen>
       final catalog = await _chat.loadDesktopCommandCatalog();
       if (!_disposed && mounted && catalog != null) {
         _desktopCommandCatalog = catalog;
+        _rememberRemoteSlashNames(
+          catalog.commands.map((entry) => entry.canonicalName),
+        );
       }
       return catalog;
     } catch (_) {
@@ -3072,66 +4594,207 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
-  Future<void> _refreshDesktopSlashSuggestions(
-    String input,
-    int completionEpoch,
-  ) async {
+  void _refreshReferenceQuery() {
+    final runtime = _chatBound ? _chat.desktopRuntimeSessionId : null;
+    final query =
+        _textFocusNode.hasFocus &&
+            runtime != null &&
+            runtime.isNotEmpty &&
+            _chat.supportsDesktopPathCompletion
+        ? composerReferenceQuery(_textController.value)
+        : null;
+    if (query == null) {
+      _closeReferencePalette();
+      return;
+    }
+    final key = '$runtime\n${query.word}';
+    if (key == _referenceKey) return;
+    _referenceKey = key;
+    _referenceCompletions.schedule(key, _applyReferences);
+  }
+
+  void _closeReferencePalette() {
+    _referenceCompletions.cancel();
+    _referenceKey = null;
+    if (_referenceItems.isNotEmpty && mounted && !_disposed) {
+      setState(() => _referenceItems = const []);
+    }
+  }
+
+  Future<PathCompletionBatch?> _fetchReferences(String key) {
+    final split = key.indexOf('\n');
+    return _chat.completeDesktopPath(
+      key.substring(split + 1),
+      runtimeSessionId: key.substring(0, split),
+    );
+  }
+
+  void _applyReferences(String key, PathCompletionBatch? batch) {
+    if (_disposed || !mounted) return;
+    // A rotation no chat event announced yet still retires this answer and
+    // asks the new runtime instead.
+    _syncComposerCompletionScope();
+    if (key != _referenceKey) return;
+    final items = batch?.items ?? const <PathCompletionItem>[];
+    if (items.isEmpty && _referenceItems.isEmpty) return;
+    setState(() => _referenceItems = items);
+  }
+
+  void _pickReference(PathCompletionItem item) {
+    final query = composerReferenceQuery(_textController.value);
+    if (query == null) return;
+    _textController.value = applyReferencePick(
+      _textController.value,
+      query,
+      item,
+    );
+  }
+
+  void _descendReference(PathCompletionItem item) {
+    final query = composerReferenceQuery(_textController.value);
+    if (query == null) return;
+    _textController.value = applyReferenceDescend(
+      _textController.value,
+      query,
+      item,
+    );
+  }
+
+  bool get _referencePaletteVisible =>
+      _referenceItems.isNotEmpty &&
+      _textFocusNode.hasFocus &&
+      !_isRecording &&
+      !_transcribing &&
+      !_navigationDrawerOpen;
+
+  String get _composerCompletionScope {
+    final runtime = _chatBound ? _chat.desktopRuntimeSessionId : null;
+    return runtime != null && runtime.isNotEmpty
+        ? 'runtime:$runtime'
+        : 'profile:$_effectiveSessionProfile';
+  }
+
+  /// A runtime bind/rotation or profile change retires every completion keyed
+  /// to the previous scope: pending lookups, memoised answers and rows.
+  void _syncComposerCompletionScope() {
+    final scope = _composerCompletionScope;
+    final previous = _completionScope;
+    _completionScope = scope;
+    if (previous == null || previous == scope) return;
+    _slashCompletions
+      ..cancel()
+      ..clearCache();
+    _forgetRuntimeSlashNames();
+    _referenceCompletions
+      ..cancel()
+      ..clearCache();
+    _referenceKey = null;
+    if (_disposed || !mounted) return;
+    if (_referenceItems.isNotEmpty) {
+      setState(() => _referenceItems = const []);
+    }
+    _refreshReferenceQuery();
+    final text = _textController.text;
+    final local = slashSuggestionsFor(
+      text,
+      Strings.of(context),
+      sideAgents: _chat.canRunSideAgents,
+      branch: _chat.canBranchChat,
+    );
+    setState(() => _slashSuggestions = local);
+    _refreshSlashCompletion(text);
+  }
+
+  void _refreshSlashCompletion(String text) {
+    if (_textFocusNode.hasFocus &&
+        text.startsWith('/') &&
+        !text.contains(RegExp(r'\s')) &&
+        text.length <= 65) {
+      _slashCompletions.schedule(
+        '$_composerCompletionScope\n$text',
+        _applySlashLookup,
+      );
+    } else {
+      _slashCompletions.cancel();
+    }
+  }
+
+  Future<_SlashLookup?> _fetchSlashLookup(String key) async {
+    final split = key.indexOf('\n');
+    final scope = key.substring(0, split);
+    final input = key.substring(split + 1);
+    if (scope != _composerCompletionScope) return null;
     final catalog = await _loadDesktopCommandCatalog();
     SlashCompletionBatch? completion;
     try {
-      completion = await _chat.completeDesktopSlash(input);
+      completion = await _chat.completeDesktopSlash(
+        input,
+        runtimeSessionId: scope.startsWith('runtime:')
+            ? scope.substring('runtime:'.length)
+            : null,
+        profile: scope.startsWith('profile:')
+            ? scope.substring('profile:'.length)
+            : '',
+      );
     } catch (_) {
       // El catálogo sigue siendo un fallback válido para Gateway modernos que
       // no publiquen complete.slash.
     }
+    if (catalog == null && completion == null) return null;
+    return _SlashLookup(catalog: catalog, completion: completion);
+  }
+
+  void _applySlashLookup(String key, _SlashLookup? lookup) {
+    final split = key.indexOf('\n');
+    final input = key.substring(split + 1);
     if (_disposed ||
         !mounted ||
-        completionEpoch != _slashCompletionEpoch ||
+        lookup == null ||
+        key.substring(0, split) != _composerCompletionScope ||
         _textController.text != input) {
       return;
     }
+    final merged = mergeSlashSuggestions(
+      input: input,
+      local: slashSuggestionsFor(
+        input,
+        Strings.of(context),
+        sideAgents: _chat.canRunSideAgents,
+        branch: _chat.canBranchChat,
+      ),
+      catalog: lookup.catalog,
+      completion: lookup.completion,
+    );
+    _rememberRemoteSlashNames(
+      merged
+          .where((command) => command.action == SlashAction.remote)
+          .map((command) => command.name),
+    );
+    setState(() => _slashSuggestions = merged);
+  }
 
-    final strings = Strings.of(context);
-    final local = slashSuggestionsFor(input, strings);
-    final byName = <String, SlashCommand>{
-      for (final item in local) item.name: item,
-    };
-    final prefix = input.substring(1).toLowerCase();
-    final catalogByName = <String, CommandCatalogEntry>{
-      for (final item in catalog?.commands ?? const <CommandCatalogEntry>[])
-        item.canonicalName: item,
-    };
+  /// Names complete.slash offered belong to the scope that answered: another
+  /// runtime or profile may not have that skill, so only the gateway-wide
+  /// catalog survives a scope change.
+  void _forgetRuntimeSlashNames() {
+    final controller = _textController;
+    if (controller is! _SlashAccentTextEditingController) return;
+    controller.remoteCommandNames = Set<String>.unmodifiable({
+      for (final entry
+          in _desktopCommandCatalog?.commands ?? const <CommandCatalogEntry>[])
+        entry.canonicalName,
+    });
+  }
 
-    final candidates = completion?.suggestions
-        .map((item) => item.replacement.trim().split(RegExp(r'\s+')).first)
-        .map(CommandDescriptor.tryNormalizeName)
-        .whereType<String>();
-    final names =
-        candidates ??
-        catalogByName.keys.where((name) => name.startsWith(prefix));
-    for (final name in names) {
-      if (isUnavailableSlashName(name) || byName.containsKey(name)) continue;
-      final entry = catalogByName[name];
-      // Una completion desconocida puede mostrarse, pero al enviar se vuelve a
-      // resolver contra el catálogo y no adquiere disponibilidad por aparecer.
-      String? meta;
-      for (final item
-          in completion?.suggestions ?? const <SlashCompletionSuggestion>[]) {
-        final suggestionName = CommandDescriptor.tryNormalizeName(
-          item.replacement.trim().split(RegExp(r'\s+')).first,
-        );
-        if (suggestionName == name) {
-          meta = item.meta;
-          break;
-        }
-      }
-      byName[name] = SlashCommand.remote(
-        name: name,
-        description: entry?.description ?? meta ?? '',
-      );
-      if (byName.length >= 20) break;
-    }
-    setState(() => _slashSuggestions = byName.values.toList(growable: false));
+  /// Lets the composer paint a server command or skill with the same accent as
+  /// a local one (owner preference), only once the server has named it.
+  void _rememberRemoteSlashNames(Iterable<String> names) {
+    final controller = _textController;
+    if (controller is! _SlashAccentTextEditingController) return;
+    final next = {...controller.remoteCommandNames, ...names};
+    if (next.length == controller.remoteCommandNames.length) return;
+    controller.remoteCommandNames = Set<String>.unmodifiable(next);
+    if (mounted && !_disposed) setState(() {});
   }
 
   /// No hay nada que enviar: ni texto ni adjunto en cola. Un adjunto solo (sin
@@ -3142,9 +4805,11 @@ class _ChatScreenState extends State<ChatScreen>
     final prefs = await SharedPreferences.getInstance();
     if (!mounted) return;
     final defaultProfile = _sessionPreferenceProfile == 'default';
-    final legacyModel = defaultProfile
+    final legacyModel = defaultProfile && !_profileSupersedesPick(prefs)
         ? prefs.getString(_legacyConnectionSessionModelKey)
         : null;
+    if (_profileSupersedesPick(prefs)) await _forgetSessionModel(prefs);
+    if (!mounted) return;
     final scopedModel = prefs.getString(_sessionModelKey);
     final model = scopedModel ?? legacyModel ?? 'hermes-agent';
     final provider =
@@ -3165,8 +4830,6 @@ class _ChatScreenState extends State<ChatScreen>
     }
     setState(() {
       _devDiagnostics = prefs.getBool('dev_diagnostics') ?? false;
-      final header = headerTitleNotifier.value.trim();
-      if (header.isNotEmpty) _agentName = header;
       _selectedModel = model;
       _selectedProvider = provider;
       _selectedReasoning = reasoning;
@@ -3204,6 +4867,146 @@ class _ChatScreenState extends State<ChatScreen>
       'selected_provider_$_sessionPreferenceScope';
   String get _sessionReasoningKey =>
       'selected_reasoning_$_sessionPreferenceScope';
+
+  /// The profile's model when this chat's pick was made (see
+  /// [_profileSupersedesPick]).
+  String get _sessionModelBasisKey =>
+      'selected_model_basis_$_sessionPreferenceScope';
+
+  /// A Bot Chat runs its profile's model. Desktop opens it with
+  /// `follow_profile_config` (plugins/hermes-bots/canonical-chat.ts) and the
+  /// Gateway rebuilds it from the profile's config.
+  bool get _followsProfileModel => const {
+    'mobile-bot',
+    'bot-mode-local',
+    'bot-mode',
+    'bot-mode-canonical',
+  }.contains(widget.session.source.trim().toLowerCase());
+
+  /// The model the profile is configured with, whatever opened the chat
+  /// (the roster, a notification, a link, a room, a Home tile, the launcher
+  /// widget): what its card saved in this app until the roster is read
+  /// again, else the shared roster once the server has answered in this run
+  /// (never its copy from disk, which may predate a change made elsewhere),
+  /// else what the opener passed.
+  ({String provider, String model})? get _profileModel {
+    final edited = ProfileModelEdits.shared.latest(
+      widget.connection.id,
+      _sessionPreferenceProfile,
+    );
+    if (edited != null) return edited;
+    final roster = BotRosterRegistry.shared.store(widget.connection.id);
+    final profile =
+        (roster.isLive ? roster.profile(_sessionPreferenceProfile) : null) ??
+        widget.missionBotProfile;
+    if (profile == null) return null;
+    final model = profile.model.trim();
+    final provider = profile.provider.trim();
+    if (model.isEmpty || provider.isEmpty) return null;
+    return (provider: provider, model: model);
+  }
+
+  static String _modelBasis(({String provider, String model}) value) =>
+      '${value.provider}\n${value.model}';
+
+  /// A pick made inside a Bot Chat stands only while the profile still has
+  /// the model it had then. The Gateway's rule for these chats
+  /// (tui_gateway/model_switch.py, `_sync_agent_model_with_config`): "a
+  /// later profile edit supersedes the canonical chat's explicit pick". A
+  /// pick stored before this was recorded has no such model and goes too.
+  bool _profileSupersedesPick(SharedPreferences prefs) {
+    if (!_followsProfileModel) return false;
+    final profile = _profileModel;
+    if (profile == null) return false;
+    final picked =
+        prefs.containsKey(_sessionModelKey) ||
+        (_sessionPreferenceProfile == 'default' &&
+            prefs.containsKey(_legacyConnectionSessionModelKey));
+    return picked &&
+        prefs.getString(_sessionModelBasisKey) != _modelBasis(profile);
+  }
+
+  Future<void> _forgetSessionModel(SharedPreferences prefs) => Future.wait([
+    prefs.remove(_sessionModelKey),
+    prefs.remove(_sessionProviderKey),
+    prefs.remove(_sessionModelBasisKey),
+    if (_sessionPreferenceProfile == 'default') ...[
+      prefs.remove(_legacyConnectionSessionModelKey),
+      prefs.remove(_legacyConnectionSessionProviderKey),
+    ],
+  ]);
+
+  /// What [_followProfileModel] last settled, so it asks once per model.
+  String? _profileModelFollowed;
+
+  /// The shared roster this Bot Chat listens to: when it is read (a cold
+  /// start reaches the chat before any roster) or says another model, the
+  /// chat follows.
+  BotRosterStore? _profileRoster;
+
+  void _watchProfileRoster() {
+    if (_profileRoster != null || !_followsProfileModel) return;
+    _profileRoster = BotRosterRegistry.shared.store(widget.connection.id)
+      ..addListener(_onProfileRoster);
+  }
+
+  void _onProfileRoster() {
+    if (!mounted || !_chatBound) return;
+    unawaited(_followProfileModel());
+    unawaited(_refreshSelectedModelFromPrefs());
+  }
+
+  /// A Bot Chat whose live session still runs another model than its
+  /// profile's, with no pick of its own: the session is moved to the
+  /// profile's model (`config.set`, this session only). The Gateway does it
+  /// itself at the next turn for a session nobody pinned; a session this app
+  /// pinned earlier would keep the old model for as long as it lives.
+  Future<void> _followProfileModel() async {
+    if (!_followsProfileModel || !_chatBound || !_chat.hasDesktopRuntime) {
+      return;
+    }
+    final profile = _profileModel;
+    if (profile == null) return;
+    final basis = _modelBasis(profile);
+    if (_profileModelFollowed == basis) return;
+    _profileModelFollowed = basis;
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted || !_chatBound || !_chat.hasDesktopRuntime) return;
+    // A pick made in this chat while the profile had this model stands.
+    if (prefs.containsKey(_sessionModelKey) &&
+        prefs.getString(_sessionModelBasisKey) == basis) {
+      return;
+    }
+    final info = _chat.desktopRuntimeInfo;
+    final effective = _chat.effectiveSessionConfig;
+    final model = effective.model ?? info.model;
+    final provider = effective.provider ?? info.provider ?? '';
+    if (model == null || model.isEmpty) {
+      // Nothing reported yet: look again when it is.
+      _profileModelFollowed = null;
+      return;
+    }
+    final sameProvider =
+        provider.isEmpty ||
+        provider == profile.provider ||
+        _desktopModelCatalog?.providerFor(provider)?.slug ==
+                _desktopModelCatalog?.providerFor(profile.provider)?.slug &&
+            _desktopModelCatalog?.providerFor(provider) != null;
+    if (model == profile.model && sameProvider) return;
+    try {
+      await _chat.setSessionModel(
+        DesktopModelSelection(
+          modelId: profile.model,
+          providerSlug: profile.provider,
+        ),
+        // The profile already has this model: it was accepted on its card.
+        confirmExpensiveModel: true,
+      );
+    } catch (_) {
+      // The session keeps its model, and the sheet says which.
+    }
+  }
+
   String get _sessionFastKey => 'selected_fast_$_sessionPreferenceScope';
 
   DesktopModelSelection? get _selectedModelPair {
@@ -3234,16 +5037,71 @@ class _ChatScreenState extends State<ChatScreen>
       fastMode: _selectedFastMode,
       title: createsBotChat ? 'Bot Chat' : null,
       hidden: createsBotChat,
+      // As Desktop's canonical chat: Hermes itself keeps it on the
+      // profile's model.
+      followProfileConfig: createsBotChat,
       createIfMissing: !resumesStoredBotChat,
       // Bot surfaces own a durable canonical pin. Their -32601 compatibility
       // fallback is handled by the pin hook itself; falling back to REST here
       // would submit without the verified pin after an RMW failure.
+      // A REST fallback cannot carry the workspace; failing is more honest
+      // than silently starting the project chat in another folder.
       allowTransportFallback:
           widget.connection.kind == InstanceKind.localhost &&
           widget.connection.onDeviceLoopback &&
           !resumesStoredBotChat &&
-          !createsBotChat,
+          !createsBotChat &&
+          _newChatWorkspace == null,
+      workspace: _newChatWorkspace,
     );
+  }
+
+  Future<ModelPresetsStore> _modelPresetsStore() async => ModelPresetsStore(
+    await SharedPreferences.getInstance(),
+    connectionId: widget.connection.id,
+  );
+
+  Future<void> _rememberCurrentModelPreset({
+    DesktopReasoningEffort? effort,
+    DesktopFastMode? fast,
+  }) async {
+    final selection = _selectedModelPair;
+    if (selection == null) return;
+    final store = await _modelPresetsStore();
+    await store.merge(
+      selection.providerSlug,
+      selection.modelId,
+      effort: effort,
+      fast: fast,
+    );
+  }
+
+  Future<void> _applySelectedModelPreset(String provider, String model) async {
+    final store = await _modelPresetsStore();
+    final preset = store.read(provider, model);
+    if (preset == null) return;
+    final capabilities = _desktopModelCatalog
+        ?.optionFor(provider, model)
+        ?.capabilities;
+    await applyModelPresetForCapabilities(
+      preset: preset,
+      capabilities: capabilities,
+      applyEffort: (effort) => _applySessionReasoning(
+        effort,
+        acquireRuntime: false,
+        rememberPreset: false,
+      ),
+      applyFast: (fast) => _applySessionFastMode(
+        fast,
+        acquireRuntime: false,
+        rememberPreset: false,
+      ),
+    );
+  }
+
+  String? get _newChatWorkspace {
+    final workspace = widget.newChatWorkspace?.trim() ?? '';
+    return workspace.isEmpty ? null : workspace;
   }
 
   // ── Configuración efectiva de esta sesión ─────────────────────────────────
@@ -3273,6 +5131,15 @@ class _ChatScreenState extends State<ChatScreen>
 
   Future<(ModelActiveInfo, List<ModelProvider>)>? _modelOptionsFuture;
   DesktopModelCatalog? _desktopModelCatalog;
+  int _modelPickerGeneration = 0;
+
+  /// mk1215: catalog painted from the picker cache while [_modelOptionsFuture]
+  /// revalidates it in the background (stale-while-revalidate).
+  (ModelActiveInfo, List<ModelProvider>)? _modelOptionsPainted;
+
+  ModelPickerCache get _modelPickerCache => _chatService.modelPickerCache;
+  String get _modelPickerKey =>
+      ModelPickerCache.key(widget.connection.id, _chat.sessionProfile);
 
   /// Modelo que debe pintar esta sesión mientras haya una elección del usuario
   /// registrada en el reducer de config.
@@ -3295,14 +5162,67 @@ class _ChatScreenState extends State<ChatScreen>
     return value is SessionModelConfigValue ? value : null;
   }
 
+  /// Identity of every pending session-config change, so a `config.set`
+  /// transition (sending → accepted/rejected) repaints the chrome even when
+  /// `session.info` itself did not change.
+  Object get _sessionConfigPresentation => Object.hashAll([
+    for (final key in DesktopSessionConfigKey.values)
+      if (_chat.pendingSessionConfigChange(key) case final change?)
+        (change.requestEpoch, change.status, change.deferred),
+  ]);
+
+  /// Model id whose `config.set` Hermes queued for the next turn (mid-turn
+  /// switch). Cleared when that turn starts.
+  String? _deferredModelId;
+
+  /// md1215: the header shows the picked model while `config.set` is in
+  /// flight, or while Hermes holds it for the next message.
+  bool get _modelChangePending {
+    if (!_chatBound) return false;
+    final change = _chat.pendingSessionConfigChange(
+      DesktopSessionConfigKey.model,
+    );
+    if (change?.status == SessionConfigChangeStatus.sending) return true;
+    final deferred = _deferredModelId;
+    return deferred != null &&
+        deferred == (_displayedSessionModel?.modelId ?? _activeModel?.model);
+  }
+
   /// Etiqueta corta del modelo activo para el AppBar (p.ej. "GPT-5.5"). Cae a un
   /// texto neutro mientras carga o si el Dashboard no está accesible.
   String get _activeModelLabel {
-    final model = _displayedSessionModel?.modelId ?? _activeModel?.model;
-    if (model == null || model.isEmpty || model == 'hermes-agent') {
-      return Strings.of(context).chaModelServer;
+    final model = _headerModelId;
+    if (model == null) {
+      return _modelCatalogAvailability == ModelPickerAvailability.stale
+          ? Strings.of(context).chaModelUnconfirmed
+          : Strings.of(context).chaModelServer;
     }
     return friendlyModelName(model);
+  }
+
+  /// Provider serving [_headerModelId], for its logo in the header pill.
+  String? get _headerProviderSlug =>
+      _displayedSessionModel?.providerSlug ??
+      _activeModel?.provider ??
+      _selectedProvider;
+
+  /// Model id the session chrome paints, or null for the server default.
+  String? get _headerModelId {
+    // md1215: a draft without a runtime sends `_selectedModel` with its first
+    // message; showing the server default instead read as "it did not change".
+    final staged =
+        _chatBound &&
+            !_chat.hasDesktopRuntime &&
+            _selectedModel.isNotEmpty &&
+            _selectedModel != 'hermes-agent'
+        ? _selectedModel
+        : null;
+    final model =
+        _displayedSessionModel?.modelId ?? staged ?? _activeModel?.model;
+    if (model == null || model.isEmpty || model == 'hermes-agent') {
+      return null;
+    }
+    return model;
   }
 
   void _syncDesktopSessionConfig() {
@@ -3404,6 +5324,7 @@ class _ChatScreenState extends State<ChatScreen>
       try {
         final snapshot = await _chat.loadPersistedSessionSnapshot();
         if (_disposed || !mounted || snapshot == null) return;
+        _applyCronRunVerdict(snapshot);
         _sessionUsageSnapshot = snapshot;
         _sessionUsageRefreshedAt = DateTime.now();
         _chatService.updateHomeWidgetSessionMetadata(_chat, session: snapshot);
@@ -3421,6 +5342,34 @@ class _ChatScreenState extends State<ChatScreen>
         _sessionUsageRefreshInFlight = null;
       }
     });
+  }
+
+  void _applyCronRunVerdict(Session row) {
+    if (!CronRunWriteGate.appliesTo(widget.session)) return;
+    final readOnly = CronRunWriteGate.readOnlyFor(row);
+    if (readOnly == _cronRunReadOnly) return;
+    if (mounted) {
+      setState(() => _cronRunReadOnly = readOnly);
+    } else {
+      _cronRunReadOnly = readOnly;
+    }
+  }
+
+  /// Desktop `refreshCronRunWriteGate`: re-reads the run's authoritative row
+  /// right before a send. A row that cannot be read refuses the send (fail
+  /// closed): a message into a possibly dead cron run is the misroute this
+  /// gate exists to prevent.
+  Future<bool> _cronRunAllowsSend() async {
+    if (!CronRunWriteGate.appliesTo(widget.session)) return true;
+    try {
+      final row = await _chat.loadPersistedSessionSnapshot();
+      if (_disposed || !mounted || row == null) return false;
+      _applyCronRunVerdict(row);
+      return !_cronRunReadOnly;
+    } catch (error) {
+      debugPrint('[chat] cron run row unavailable (${error.runtimeType})');
+      return false;
+    }
   }
 
   Future<DesktopContextBreakdown?> _loadSessionContextDetails() async {
@@ -3598,64 +5547,46 @@ class _ChatScreenState extends State<ChatScreen>
         info.installWarning,
       ]);
 
-  /// Lee el modelo activo para pintar el badge del AppBar. Intenta primero el
-  /// BRIDGE (un token, automático: no necesita login del Dashboard) — el mismo
-  /// camino que el selector de modelos — y solo si no hay bridge cae al
-  /// Dashboard. Así el modelo del servidor se muestra aunque el Dashboard no
-  /// esté configurado (antes solo miraba el Dashboard y salía vacío).
+  /// Lee el modelo activo para pintar el badge del AppBar. Con runtime vivo,
+  /// `session.info` es la fuente. Sin él (mk1215), el catálogo ya cacheado del
+  /// selector o `model.options` sin sesión por el socket del gateway, como
+  /// Desktop. Abrir, volver o reanudar el chat nunca llama al Mobile Bridge ni
+  /// al Dashboard: solo el selector abierto recurre a ellos.
   Future<void> _loadActiveModel() async {
-    if (_chatBound && _chat.hasDesktopRuntime) {
+    _watchProfileRoster();
+    if (!_chatBound) {
+      // initState: el chat se enlaza en didChangeDependencies, justo después.
+      await null;
+      if (!mounted || !_chatBound) return;
+    }
+    if (_chat.hasDesktopRuntime) {
       _syncDesktopSessionConfig();
+      unawaited(_followProfileModel());
       if (_activeModel?.model.isNotEmpty == true) return;
     }
-    // 1) Bridge: mismo camino "un token" que la pantalla de Modelos.
-    try {
-      final viaBridge = await _bridgeModelOptions();
-      if (viaBridge != null) {
-        final (info, providers) = viaBridge;
-        // Punto 2 (spec 028): no mostrar como activo el model.default del
-        // servidor (p.ej. claude-opus-4.6 de fábrica) si NINGÚN proveedor
-        // tiene credencial detrás — en un servidor virgen sin key el modelo
-        // no es usable; el badge cae a "servidor" en vez de fingir uno activo.
-        final usable = providers.any((p) => p.authenticated);
-        if (info.model.isNotEmpty && usable) {
-          if (mounted) {
-            setState(() => _activeModel = info);
-            if (_chatBound) {
-              _chatService.updateHomeWidgetSessionMetadata(
-                _chat,
-                model: info.model,
-                provider: info.provider,
-              );
-            }
-          }
-          return;
-        }
-        if (!usable) return; // hay default declarado pero sin key: no fingir.
+    final key = _modelPickerKey;
+    var catalog = _modelPickerCache.peek(key)?.result;
+    if (catalog == null &&
+        !_modelPickerCache.isCoolingDown(key, ModelPickerSource.socket)) {
+      catalog = await _socketModelPickerResult(connectedOnly: true);
+      if (catalog != null && catalog.hasModels) {
+        _modelPickerCache.write(key, catalog);
       }
-    } catch (_) {
-      // Sigue con el Dashboard.
     }
-    // 2) Fallback: Dashboard (si está configurado/accesible).
-    final client = DashboardClient.lazy(widget.connection);
-    try {
-      final info = await client.getModelInfo();
-      if (mounted) {
-        setState(() => _activeModel = info);
-        if (_chatBound) {
-          _chatService.updateHomeWidgetSessionMetadata(
-            _chat,
-            model: info.model,
-            provider: info.provider,
-          );
-        }
-      }
-    } catch (_) {
-      // El Dashboard puede no estar configurado/accesible: el badge cae al
-      // texto neutro. No es fatal para el chat.
-    } finally {
-      client.close();
+    if (catalog == null || !mounted || _chat.hasDesktopRuntime) return;
+    final info = catalog.info;
+    // Punto 2 (spec 028): no mostrar como activo el model.default del
+    // servidor si NINGÚN proveedor tiene credencial detrás.
+    if (info.model.isEmpty || !catalog.providers.any((p) => p.authenticated)) {
+      return;
     }
+    if (catalog.source == ModelPickerSource.gateway) return;
+    setState(() => _activeModel = info);
+    _chatService.updateHomeWidgetSessionMetadata(
+      _chat,
+      model: info.model,
+      provider: info.provider,
+    );
   }
 
   /// Carga modelo activo + proveedores configurados (autenticados y con modelos)
@@ -3677,9 +5608,13 @@ class _ChatScreenState extends State<ChatScreen>
     required bool updateEffectiveDisplay,
   }) async {
     final prefs = await SharedPreferences.getInstance();
+    final profile = _followsProfileModel ? _profileModel : null;
     await Future.wait([
       prefs.setString(_sessionModelKey, modelId),
       prefs.setString(_sessionProviderKey, providerSlug),
+      profile == null
+          ? prefs.remove(_sessionModelBasisKey)
+          : prefs.setString(_sessionModelBasisKey, _modelBasis(profile)),
     ]);
     if (!mounted) return;
     setState(() {
@@ -3695,6 +5630,9 @@ class _ChatScreenState extends State<ChatScreen>
       _modelOptionsFuture = null;
     });
     if (_chatBound) {
+      // The cached catalog marks the old model as current: repaint it at
+      // once on the next open but revalidate it.
+      _modelPickerCache.invalidate(_modelPickerKey);
       _chat.stageFirstSubmitConfig(_firstSubmitConfig);
       _chatService.updateHomeWidgetSessionMetadata(
         _chat,
@@ -3709,96 +5647,179 @@ class _ChatScreenState extends State<ChatScreen>
   // su ruta en texto; la burbuja del asistente (`_AssistantMessage`) las
   // detecta y pide su descarga a estos helpers vía el ancestro _ChatScreenState.
 
-  /// ¿El bridge de esta instancia sirve imágenes generadas (>= 1.12.0)? Se
-  /// resuelve una sola vez por pantalla y se cachea. Sin bridge/versión vieja
-  /// → false (la burbuja muestra la pista de degradación).
-  bool? _bridgeImagesSupported;
-  DateTime? _bridgeImagesSupportAt;
-  Future<bool>? _bridgeImagesSupportFuture;
-  Future<String>? _bridgeImageTokenFuture;
-  Future<bool> resolveGeneratedImageSupport() async {
-    final cached = _bridgeImagesSupported;
-    final checkedAt = _bridgeImagesSupportAt;
-    if (cached == true) return true;
-    if (cached == false &&
-        checkedAt != null &&
-        DateTime.now().difference(checkedAt) < const Duration(seconds: 15)) {
-      return false;
+  /// Loads a generated image the agent cited as
+  /// `~/.hermes/cache/images/<basename>` through the authenticated Dashboard.
+  /// Resolve the official profile root before consulting private scoped cache.
+  /// Waits while App Lock is locked; authentication failures propagate.
+  Future<File> downloadGeneratedImage(
+    String basename, {
+    bool Function()? isCurrent,
+  }) async {
+    final download = _generatedImageDownloader(
+      _effectiveSessionProfile,
+      isCurrent: isCurrent,
+    );
+    await _untilAppUnlocked();
+    return download(basename);
+  }
+
+  Future<void> _untilAppUnlocked() async {
+    final locked = context
+        .findAncestorStateOfType<HermesAppState>()
+        ?.appLock
+        .locked;
+    if (locked == null || !locked.value) return;
+    final unlocked = Completer<void>();
+    void listener() {
+      if (!locked.value && !unlocked.isCompleted) unlocked.complete();
     }
-    final inFlight = _bridgeImagesSupportFuture;
-    if (inFlight != null) return inFlight;
-    final future = _resolveGeneratedImageSupportOnce();
-    _bridgeImagesSupportFuture = future;
+
+    locked.addListener(listener);
     try {
-      return await future;
+      await unlocked.future;
     } finally {
-      if (identical(_bridgeImagesSupportFuture, future)) {
-        _bridgeImagesSupportFuture = null;
+      locked.removeListener(listener);
+    }
+  }
+
+  /// The generated-image download bound to one connection and profile,
+  /// shared by the bubble and the arrival prefetch.
+  Future<File> Function(String basename) _generatedImageDownloader(
+    String profile, {
+    bool Function()? isCurrent,
+  }) {
+    final connection = widget.connection;
+    final testFetcher = widget.generatedMediaFetcher;
+    final owner = jsonEncode([
+      connection.id,
+      connection.dashboardHost,
+      connection.dashboardPort,
+      connection.dashboardUseHttps,
+      profile,
+    ]);
+    return (basename) async {
+      if (testFetcher != null) {
+        return GeneratedImageService.ensureDownloaded(
+          jsonEncode([owner, basename]),
+          basename.split('/').last,
+          fetch: (_) =>
+              _fetchGeneratedImage(connection, profile, testFetcher, basename),
+          isCurrent: isCurrent,
+        );
+      }
+      final client = DashboardClient.lazy(connection);
+      try {
+        final target = await GeneratedImageFetch.resolvePath(
+          basename,
+          apiGet: client.apiGet,
+          profile: profile,
+        );
+        return await GeneratedImageService.ensureDownloaded(
+          jsonEncode([owner, target]),
+          basename.split('/').last,
+          fetch: (_) => GeneratedImageFetch.readPath(
+            target,
+            apiGet: client.apiGet,
+            profile: profile,
+            isCurrent: isCurrent,
+          ),
+          isCurrent: isCurrent,
+        );
+      } finally {
+        client.close();
+      }
+    };
+  }
+
+  static Future<Uint8List> _fetchGeneratedImage(
+    SavedConnection connection,
+    String profile,
+    Future<void> Function(String path, File destination)? testFetcher,
+    String basename,
+  ) async {
+    if (testFetcher != null) {
+      final path = basename.contains('/cache/generated/images/')
+          ? basename
+          : GeneratedImageFetch.serverPath(basename.split('/').last);
+      final dir = await Directory.systemTemp.createTemp('generated-image-');
+      try {
+        final file = File('${dir.path}/image');
+        await testFetcher(path, file);
+        return await file.readAsBytes();
+      } finally {
+        await dir.delete(recursive: true);
       }
     }
-  }
-
-  Future<bool> _resolveGeneratedImageSupportOnce() async {
-    bool ok;
+    final client = DashboardClient.lazy(connection);
     try {
-      final check = await BridgeUpdateService.check(widget.connection);
-      ok =
-          check.reachable &&
-          GeneratedImageService.bridgeSupportsImages(check.installed);
-    } catch (_) {
-      ok = false;
-    }
-    _bridgeImagesSupported = ok;
-    _bridgeImagesSupportAt = DateTime.now();
-    return ok;
-  }
-
-  Future<String> _bridgeImageToken() async {
-    final existing = _bridgeImageTokenFuture;
-    if (existing != null) return existing;
-    final future = () async {
-      final url = widget.connection.derivedBridgeUrl;
-      if (url.isEmpty) throw Exception('bridge no configurado');
-      final token = await BridgeClient.provision(
-        url,
-        widget.connection.apiKey.trim(),
+      return await GeneratedImageFetch.fetch(
+        basename,
+        apiGet: client.apiGet,
+        profile: profile,
       );
-      if (token == null || token.isEmpty) {
-        throw Exception('bridge no disponible');
-      }
-      return token;
-    }();
-    _bridgeImageTokenFuture = future;
-    try {
-      return await future;
-    } catch (_) {
-      if (identical(_bridgeImageTokenFuture, future)) {
-        _bridgeImageTokenFuture = null;
-      }
-      rethrow;
+    } finally {
+      client.close();
     }
   }
 
-  /// Descarga (o reutiliza de caché) el archivo local de una imagen generada
-  /// por [basename], vía `GET /bridge/image` con el token del bridge. Lanza si
-  /// no hay bridge o la descarga falla (la burbuja lo traduce a estado de error).
-  Future<File> downloadGeneratedImage(String basename) {
-    return GeneratedImageService.ensureDownloaded(
-      widget.connection.id,
-      basename,
-      fetch: (name) async {
-        final url = widget.connection.derivedBridgeUrl;
-        if (url.isEmpty) throw Exception('bridge no configurado');
-        final token = await _bridgeImageToken();
-        final client = BridgeClient(baseUrl: url, token: token);
+  String get generatedImageScope => jsonEncode([
+    widget.connection.id,
+    widget.connection.dashboardHost,
+    widget.connection.dashboardPort,
+    widget.connection.dashboardUseHttps,
+    _effectiveSessionProfile,
+  ]);
+
+  String get userServerMediaScope =>
+      '${widget.connection.id}\u0000$_effectiveSessionProfile';
+
+  /// Fetches a user attachment that Hermes persisted as an `@image:`/`@file:`
+  /// server path into the app-private media cache. Managed-files download is
+  /// tried first; images outside the managed root fall back to `/api/media`
+  /// (Hermes' images/screenshots/cache roots).
+  Future<File> downloadUserServerAttachment(GeneratedMediaReference reference) {
+    final profile = _effectiveSessionProfile;
+    final testFetcher = widget.userServerMediaFetcher;
+    final maxBytes = reference.kind == GeneratedMediaKind.image
+        ? GeneratedMediaService.maxImageBytes
+        : GeneratedMediaService.maxFileBytes;
+    return GeneratedMediaService.ensureDownloaded(
+      userServerMediaScope,
+      reference,
+      fetchServerPathToFile: (path, destination) async {
+        if (testFetcher != null) return testFetcher(path, destination);
+        final client = DashboardClient.lazy(widget.connection);
         try {
-          return await client.fetchGeneratedImage(name);
+          await client.apiDownloadToFile(
+            'files/download?path=${Uri.encodeQueryComponent(path)}',
+            destination,
+            maxBytes: maxBytes,
+            profile: profile,
+          );
+        } on DashboardHttpException catch (error) {
+          if (reference.kind != GeneratedMediaKind.image ||
+              (error.statusCode != 400 && error.statusCode != 403)) {
+            rethrow;
+          }
+          final media = await client.apiGet(
+            'media?path=${Uri.encodeQueryComponent(path)}',
+          );
+          final dataUrl = media['data_url'];
+          final data = dataUrl is String && dataUrl.startsWith('data:')
+              ? Uri.tryParse(dataUrl)?.data
+              : null;
+          if (data == null || !data.isBase64) rethrow;
+          await destination.writeAsBytes(data.contentAsBytes(), flush: true);
         } finally {
           client.close();
         }
       },
     );
   }
+
+  /// Same scope the generated-media disk cache is keyed by.
+  String get generatedMediaCacheScope =>
+      '${widget.connection.id}\u0000$_effectiveSessionProfile';
 
   /// Resolves canonical `MEDIA:` paths through the authenticated Dashboard
   /// managed-files endpoint, then stores them only in app-private cache. This
@@ -3808,9 +5829,45 @@ class _ChatScreenState extends State<ChatScreen>
     GeneratedMediaReference reference, {
     GeneratedMediaProgress? onProgress,
     bool Function()? isCancelled,
+  }) => _generatedMediaDownloader(_effectiveSessionProfile)(
+    reference,
+    onProgress: onProgress,
+    isCancelled: isCancelled,
+  );
+
+  /// The download bound to one connection and profile, so a background
+  /// prefetch keeps fetching into the scope its key was computed for even
+  /// after this screen closed or the profile changed.
+  Future<File> Function(
+    GeneratedMediaReference reference, {
+    GeneratedMediaProgress? onProgress,
+    bool Function()? isCancelled,
+  })
+  _generatedMediaDownloader(String profile) {
+    final connection = widget.connection;
+    final testFetcher = widget.generatedMediaFetcher;
+    final cacheScope = '${connection.id}\u0000$profile';
+    return (reference, {onProgress, isCancelled}) =>
+        _downloadGeneratedMediaInto(
+          connection,
+          profile,
+          cacheScope,
+          testFetcher,
+          reference,
+          onProgress: onProgress,
+          isCancelled: isCancelled,
+        );
+  }
+
+  static Future<File> _downloadGeneratedMediaInto(
+    SavedConnection connection,
+    String profile,
+    String cacheScope,
+    Future<void> Function(String path, File destination)? testFetcher,
+    GeneratedMediaReference reference, {
+    GeneratedMediaProgress? onProgress,
+    bool Function()? isCancelled,
   }) {
-    final profile = _effectiveSessionProfile;
-    final cacheScope = '${widget.connection.id}\u0000$profile';
     final maxBytes = switch (reference.kind) {
       GeneratedMediaKind.image => GeneratedMediaService.maxImageBytes,
       GeneratedMediaKind.video => GeneratedMediaService.maxVideoBytes,
@@ -3822,7 +5879,8 @@ class _ChatScreenState extends State<ChatScreen>
       reference,
       fetchServerPathToFileWithProgress:
           (path, destination, reportProgress, downloadCancelled) async {
-            final client = DashboardClient.lazy(widget.connection);
+            if (testFetcher != null) return testFetcher(path, destination);
+            final client = DashboardClient.lazy(connection);
             try {
               await client.apiDownloadToFile(
                 'files/download?path=${Uri.encodeQueryComponent(path)}',
@@ -3842,14 +5900,156 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
-  Future<(ModelActiveInfo, List<ModelProvider>)> _loadModelOptions() async {
-    final (info, providers) = await _loadModelOptionsRaw();
-    // Respeta lo que el usuario ocultó en la pantalla de Modelos (spec 028 U-05):
-    // esas mismas claves de SharedPreferences se aplican también aquí, para que
-    // el selector del chat no muestre proveedores/modelos que el usuario quitó
-    // de la vista. Proveedores = slugs; modelos = "slug/modelId".
+  /// `MEDIA:` keys already handed to the prefetcher by this screen.
+  final Set<String> _prefetchedMediaKeys = <String>{};
+
+  /// Most media one event may queue, newest first: a long transcript page
+  /// must not turn into dozens of background downloads.
+  static const int _maxMediaPrefetchPerEvent = 12;
+
+  /// Starts fetching the media of rows that just arrived (a finished reply)
+  /// or just loaded (a transcript page) before their rows are built, so the
+  /// rows paint from the private cache at their final size. Images and PDFs
+  /// always; videos only when they arrive live, never for a whole page.
+  void _prefetchArrivedMedia(ActiveChatEvent event) {
+    final page =
+        event == ActiveChatEvent.messagesHydrated ||
+        event == ActiveChatEvent.earlierMessagesLoaded;
+    if (!page && event != ActiveChatEvent.done) return;
+    final rows = _chat.messages;
+    final oldest = page ? 0 : math.max(0, rows.length - 4);
+    final profile = _effectiveSessionProfile;
+    final scope = '${widget.connection.id}\u0000$profile';
+    final download = _generatedMediaDownloader(profile);
+    final chatOwner = _chat;
+    final imageDownload = _generatedImageDownloader(
+      profile,
+      isCurrent: () =>
+          mounted &&
+          identical(_chat, chatOwner) &&
+          _effectiveSessionProfile == profile,
+    );
+    var queued = 0;
+    for (var i = rows.length - 1; i >= oldest; i--) {
+      queued += _prefetchServerCacheImages(
+        rows[i],
+        generatedImageScope,
+        imageDownload,
+      );
+      if (queued >= _maxMediaPrefetchPerEvent) return;
+      final content = rows[i]['content'];
+      if (content is! String ||
+          (!content.contains('MEDIA:') && !content.contains('::preview'))) {
+        continue;
+      }
+      for (final segment in GeneratedMediaService.parseSegments(
+        content,
+      ).whereType<GeneratedMediaFileSegment>()) {
+        final reference = segment.reference;
+        final eligible = switch (reference.kind) {
+          GeneratedMediaKind.image => true,
+          GeneratedMediaKind.video => !page,
+          GeneratedMediaKind.audio => false,
+          GeneratedMediaKind.file =>
+            !reference.htmlPreview &&
+                (reference.mimeType == 'application/pdf' ||
+                    reference.displayName.toLowerCase().endsWith('.pdf')),
+        };
+        if (!eligible) continue;
+        final key = GeneratedMediaService.readyKey(scope, reference);
+        if (!_prefetchedMediaKeys.add(key)) continue;
+        if (MediaPrefetcher.instance.prefetch(
+          key: key,
+          reference: reference,
+          load: () => download(reference),
+        )) {
+          queued++;
+        }
+        if (queued >= _maxMediaPrefetchPerEvent) return;
+      }
+    }
+  }
+
+  /// Queues the generated images a row cites as
+  /// `~/.hermes/cache/images/<basename>` (structured results or plain text)
+  /// on the shared prefetcher, which waits while App Lock is locked.
+  int _prefetchServerCacheImages(
+    Map<String, dynamic> row,
+    String scope,
+    Future<File> Function(String basename) download,
+  ) {
+    final names = <String>{
+      for (final ref in _structuredGeneratedImages(row))
+        if (ref.kind == GeneratedImageSourceKind.serverCache &&
+            ref.basename != null)
+          ref.source,
+    };
+    final content = row['content'];
+    if (content is String && content.contains('/.hermes/')) {
+      names.addAll(
+        GeneratedImageService.segments(
+          content,
+        ).whereType<ImageSegment>().map((segment) => segment.source),
+      );
+    }
+    var queued = 0;
+    for (final name in names) {
+      if (!GeneratedMediaService.isSafeGeneratedImageSource(name)) continue;
+      final lower = name.toLowerCase();
+      final reference = GeneratedMediaReference(
+        source: name.contains('/')
+            ? name
+            : GeneratedImageFetch.serverPath(name),
+        kind: GeneratedMediaKind.image,
+        sourceKind: GeneratedMediaSourceKind.serverPath,
+        displayName: name.split('/').last,
+        mimeType: lower.endsWith('.png')
+            ? 'image/png'
+            : lower.endsWith('.webp')
+            ? 'image/webp'
+            : 'image/jpeg',
+      );
+      final key = GeneratedMediaService.readyKey(scope, reference);
+      if (!_prefetchedMediaKeys.add(key)) continue;
+      if (MediaPrefetcher.instance.prefetch(
+        key: key,
+        reference: reference,
+        load: () => download(name),
+      )) {
+        queued++;
+      }
+    }
+    return queued;
+  }
+
+  Future<(ModelActiveInfo, List<ModelProvider>)> _loadModelOptions({
+    bool Function()? isCurrent,
+  }) async {
+    final result = await _loadModelPickerResult(isCurrent: isCurrent);
+    SharedPreferences? prefs;
     try {
-      final prefs = await SharedPreferences.getInstance();
+      prefs = await SharedPreferences.getInstance();
+    } catch (_) {
+      prefs = null;
+    }
+    if (isCurrent != null && !isCurrent()) {
+      throw StateError('Model catalog read superseded');
+    }
+    return _withoutHiddenModels(result, prefs);
+  }
+
+  /// Respeta lo que el usuario ocultó en la pantalla de Modelos (spec 028 U-05):
+  /// esas mismas claves de SharedPreferences se aplican también aquí, para que
+  /// el selector del chat no muestre proveedores/modelos que el usuario quitó
+  /// de la vista. Proveedores = slugs; modelos = "slug/modelId".
+  (ModelActiveInfo, List<ModelProvider>) _withoutHiddenModels(
+    ModelPickerResult result,
+    SharedPreferences? prefs,
+  ) {
+    final info = result.info;
+    final providers = result.providers;
+    if (prefs == null) return (info, providers);
+    try {
       final hiddenProviders =
           (prefs.getStringList('hidden_providers') ?? const []).toSet();
       final hiddenModels = (prefs.getStringList('hidden_models') ?? const [])
@@ -3873,25 +6073,86 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
-  Future<(ModelActiveInfo, List<ModelProvider>)> _loadModelOptionsRaw() async {
-    // 1) RPC oficial 0.19 para una sesión viva. Nunca crea runtimes solo para
-    // listar: los borradores degradan a las superficies de lectura existentes.
-    final desktop = await _desktopSessionModelOptions();
-    if (desktop != null) {
-      _modelSource = _ModelSource.desktop;
-      return desktop;
-    }
-    _desktopModelCatalog = null;
+  /// Fuente de la que vino el catálogo: decide por dónde se persiste la
+  /// selección y qué filas son elegibles.
+  ModelPickerAvailability _modelCatalogAvailability =
+      ModelPickerAvailability.available;
 
-    // 2) BRIDGE: un SOLO token (auto-provisionado desde la API key del
-    // gateway) lista TODOS los modelos configurados, sin el login del Dashboard.
-    // Es el camino que recupera la experiencia "un token, automático".
-    final bridge = await _bridgeModelOptions();
-    if (bridge != null) {
-      _modelSource = _ModelSource.bridge;
-      return bridge;
-    }
-    // 3) DASHBOARD (con su propio login si lo exige).
+  void _adoptModelPickerResult(ModelPickerResult result) {
+    _modelCatalogAvailability = result.catalogAvailability;
+    _modelSource = switch (result.source) {
+      ModelPickerSource.socket => _ModelSource.desktop,
+      ModelPickerSource.bridge => _ModelSource.bridge,
+      ModelPickerSource.dashboard => _ModelSource.dashboard,
+      ModelPickerSource.officialGateway => _ModelSource.officialGateway,
+      ModelPickerSource.gateway => _ModelSource.gateway,
+    };
+    _desktopModelCatalog = result.desktopCatalog;
+  }
+
+  /// mk1215: como Desktop, `model.options` por el socket del gateway primero
+  /// (con o sin runtime). REST oficial y Dashboard como respaldo, en paralelo y
+  /// con un plazo corto; la lista del gateway al final. Gane quien gane, el
+  /// catálogo queda cacheado por conexión y perfil, y una fuente que falla se
+  /// recuerda un rato para no reintentarla en cada apertura.
+  Future<ModelPickerResult> _loadModelPickerResult({
+    bool Function()? isCurrent,
+  }) async {
+    final chatOwner = _chat;
+    final connectionOwner = widget.connection;
+    final profileOwner = chatOwner.sessionProfile;
+    bool admitted() =>
+        mounted &&
+        identical(_chat, chatOwner) &&
+        identical(widget.connection, connectionOwner) &&
+        chatOwner.sessionProfile == profileOwner &&
+        (isCurrent == null || isCurrent());
+    ModelPickerSourceLoader fallback(
+      ModelPickerSource source,
+      Future<(ModelActiveInfo, List<ModelProvider>)?> Function() read,
+    ) => () async {
+      final result = await read();
+      if (result == null) return null;
+      return ModelPickerResult(
+        info: result.$1,
+        providers: result.$2,
+        source: source,
+      );
+    };
+
+    final result = await loadModelPickerCatalog(
+      cache: _modelPickerCache,
+      key: ModelPickerCache.key(connectionOwner.id, profileOwner),
+      isCurrent: admitted,
+      sources: {
+        ModelPickerSource.socket: () =>
+            _socketModelPickerResult(isCurrent: admitted),
+        ModelPickerSource.officialGateway: fallback(
+          ModelPickerSource.officialGateway,
+          _officialGatewayModelOptions,
+        ),
+        ModelPickerSource.dashboard: fallback(
+          ModelPickerSource.dashboard,
+          _dashboardModelOptions,
+        ),
+        ModelPickerSource.gateway: fallback(
+          ModelPickerSource.gateway,
+          _gatewayModelOptions,
+        ),
+      },
+    );
+    if (!admitted()) throw StateError('Model catalog read superseded');
+    _adoptModelPickerResult(result);
+    return result;
+  }
+
+  /// Catálogo del Dashboard (con su propio login si lo exige): solo los
+  /// proveedores autenticados con modelos. Una lista vacía no gana a otra
+  /// fuente, pero se muestra como «sin modelos» si nadie más responde.
+  Future<(ModelActiveInfo, List<ModelProvider>)?>
+  _dashboardModelOptions() async {
+    final fake = widget.modelPickerFallbacks?[ModelPickerSource.dashboard];
+    if (fake != null) return fake();
     final client = DashboardClient.lazy(widget.connection);
     try {
       final info = await client.getModelInfo();
@@ -3899,54 +6160,62 @@ class _ChatScreenState extends State<ChatScreen>
       final usable = providers
           .where((p) => p.authenticated && p.models.isNotEmpty)
           .toList();
-      if (usable.isNotEmpty) {
-        _modelSource = _ModelSource.dashboard;
-        return (info, usable);
-      }
-      // El Dashboard respondió pero sin proveedores usables: prueba el gateway.
-      final gw = await _gatewayModelOptions();
-      if (gw != null) {
-        _modelSource = _ModelSource.gateway;
-        return gw;
-      }
-      _modelSource = _ModelSource.dashboard;
       return (info, usable);
-    } catch (_) {
-      // 4) GATEWAY como último recurso: /v1/models (alias hermes-agent) + tags
-      // Ollama; enruta el modelo por petición con el mismo token.
-      final fb = await _gatewayModelOptions();
-      if (fb != null) {
-        _modelSource = _ModelSource.gateway;
-        return fb;
-      }
-      rethrow;
     } finally {
       client.close();
     }
   }
 
-  Future<(ModelActiveInfo, List<ModelProvider>)?>
-  _desktopSessionModelOptions() async {
+  Future<ModelPickerResult?> _socketModelPickerResult({
+    bool connectedOnly = false,
+    bool Function()? isCurrent,
+  }) async {
+    final catalog = await _desktopSessionModelOptions(
+      connectedOnly: connectedOnly,
+      isCurrent: isCurrent,
+    );
+    if (catalog == null) return null;
+    return ModelPickerResult(
+      info: catalog.$1,
+      providers: catalog.$2,
+      source: ModelPickerSource.socket,
+      desktopCatalog: catalog.$3,
+    );
+  }
+
+  Future<(ModelActiveInfo, List<ModelProvider>, DesktopModelCatalog)?>
+  _desktopSessionModelOptions({
+    bool connectedOnly = false,
+    bool Function()? isCurrent,
+  }) async {
+    if (isCurrent != null && !isCurrent()) return null;
+    // mk1215: without a runtime the catalog is read sessionless; an already
+    // connected shared socket saves the chat's own handshake.
+    final warm = SharedGatewayPool.instance.acquireIfConnected(
+      widget.connection,
+    );
     try {
-      final catalog = await _chat.loadDesktopModelCatalog();
-      if (catalog == null) return null;
-      final providers = <ModelProvider>[
-        for (final provider in catalog.providers)
-          if (provider.models.isNotEmpty)
-            ModelProvider(
-              slug: provider.slug,
-              name: provider.name,
-              isCurrent: provider.isCurrent,
-              authenticated: provider.authenticated == true,
-              authType: provider.authType ?? '',
-              oauthProviderId: '',
-              keyEnv: provider.keyEnv ?? '',
-              warning: provider.warning ?? '',
-              models: provider.models,
-            ),
-      ];
+      var catalog = await _chat.loadDesktopModelCatalog(
+        warmGateway: warm?.client,
+        connectedOnly: connectedOnly,
+        isCurrent: isCurrent,
+      );
+      if (catalog == null || (isCurrent != null && !isCurrent())) return null;
+      if (catalog.providers.any((p) => p.entitlementPending)) {
+        // Hermes answered before it knew a provider's plan (every model of
+        // it comes as unavailable): a refresh settles it, as Desktop's
+        // picker does on its next open.
+        final settled = await _chat.loadDesktopModelCatalog(
+          refresh: true,
+          warmGateway: warm?.client,
+          connectedOnly: connectedOnly,
+          isCurrent: isCurrent,
+        );
+        if (isCurrent != null && !isCurrent()) return null;
+        catalog = settled ?? catalog;
+      }
+      final providers = modelPickerProviders(catalog);
       if (providers.isEmpty) return null;
-      _desktopModelCatalog = catalog;
       return (
         ModelActiveInfo(
           model: catalog.currentModel ?? _selectedModel,
@@ -3954,67 +6223,66 @@ class _ChatScreenState extends State<ChatScreen>
           effectiveContextLength: 0,
         ),
         providers,
+        catalog,
       );
-    } catch (_) {
-      return null;
-    }
-  }
-
-  /// Catálogo de modelos vía Mobile Bridge. El token se auto-provisiona desde la
-  /// API key del gateway (`/bridge/provision`), así basta UNA credencial y no se
-  /// depende del login del Dashboard. Devuelve null si no hay bridge (el llamante
-  /// cae al Dashboard). El bridge devuelve la misma forma que `/api/model/options`.
-  Future<(ModelActiveInfo, List<ModelProvider>)?> _bridgeModelOptions() async {
-    final url = widget.connection.derivedBridgeUrl;
-    if (url.isEmpty) return null;
-    String? token;
-    try {
-      token = await BridgeClient.provision(
-        url,
-        widget.connection.apiKey.trim(),
-      );
-    } catch (_) {
-      return null;
-    }
-    if (token == null || token.isEmpty) return null;
-    final client = BridgeClient(baseUrl: url, token: token);
-    try {
-      final data = await client.modelOptions();
-      if (data['ok'] != true) return null;
-      final raw = data['providers'];
-      final maps = <Map<String, dynamic>>[];
-      if (raw is List) {
-        for (final e in raw) {
-          if (e is Map) maps.add(e.cast<String, dynamic>());
-        }
-      } else if (raw is Map) {
-        raw.forEach((k, v) {
-          if (v is Map) {
-            maps.add({'slug': k.toString(), ...v.cast<String, dynamic>()});
-          }
-        });
-      }
-      final providers = maps
-          .map(ModelProvider.fromJson)
-          .where((p) => p.models.isNotEmpty)
-          .toList();
-      if (providers.isEmpty) return null;
-      final info = ModelActiveInfo(
-        model: (data['model'] ?? '').toString(),
-        provider: (data['provider'] ?? '').toString(),
-        effectiveContextLength: 0,
-      );
-      return (info, providers);
     } catch (_) {
       return null;
     } finally {
-      client.close();
+      warm?.release();
+    }
+  }
+
+  /// Official provider inventory, scoped to the selected Gateway owner.
+  Future<(ModelActiveInfo, List<ModelProvider>)?>
+  _officialGatewayModelOptions() async {
+    final fake =
+        widget.modelPickerFallbacks?[ModelPickerSource.officialGateway];
+    if (fake != null) return fake();
+    final api = ApiClient(
+      baseUrl: widget.connection.gatewayUrl,
+      apiKey: widget.connection.apiKey,
+    );
+    try {
+      final data = await api.apiGet(
+        ApiClient.profileEndpoint(
+          'api/model/options',
+          profile: _chat.sessionProfile,
+        ),
+      );
+      final raw = data['providers'];
+      final maps = <Map<String, dynamic>>[];
+      if (raw is List) {
+        for (final row in raw) {
+          if (row is Map) maps.add(row.cast<String, dynamic>());
+        }
+      } else if (raw is Map) {
+        raw.forEach((slug, row) {
+          if (row is Map) {
+            maps.add({'slug': slug.toString(), ...row.cast<String, dynamic>()});
+          }
+        });
+      }
+      return (
+        ModelActiveInfo(
+          model: (data['model'] ?? '').toString(),
+          provider: (data['provider'] ?? '').toString(),
+          effectiveContextLength: 0,
+        ),
+        maps
+            .map(ModelProvider.fromJson)
+            .where((p) => p.models.isNotEmpty)
+            .toList(),
+      );
+    } finally {
+      api.close();
     }
   }
 
   /// Opciones de modelo a partir SOLO del gateway (con el token de la conexión).
   /// Devuelve null si el gateway tampoco da modelos.
   Future<(ModelActiveInfo, List<ModelProvider>)?> _gatewayModelOptions() async {
+    final fake = widget.modelPickerFallbacks?[ModelPickerSource.gateway];
+    if (fake != null) return fake().then((r) => r, onError: (Object _) => null);
     try {
       final api = ApiClient(
         baseUrl: widget.connection.gatewayUrl,
@@ -4057,6 +6325,10 @@ class _ChatScreenState extends State<ChatScreen>
     super.didChangeDependencies();
     final app = context.findAncestorStateOfType<HermesAppState>()!;
     _voiceService = app.voice;
+    if (!_removedVoiceEnginesChecked) {
+      _removedVoiceEnginesChecked = true;
+      unawaited(_migrateRemovedVoiceEngines(app.voice));
+    }
     // Engancha (una sola vez) el chat activo del servicio singleton. Si ya hay
     // un stream en curso para esta sesión (la dejamos corriendo al salir antes),
     // se reaprovecha y mostramos lo que llegó mientras estábamos fuera.
@@ -4064,10 +6336,24 @@ class _ChatScreenState extends State<ChatScreen>
       _chatBound = true;
       _chatService = app.activeChats;
       _botChatStore = MissionBotChatStore(app.connManager.prefs);
+      _lastReadPrefs = app.connManager.prefs;
+      _lastReadKeyOnEntry = app.connManager.prefs.getString(_lastReadPrefsKey);
       final resolvedSessionProfile = Session.profileOwner(
         widget.session.profile,
         fallback: app.connManager.activeProfileFor(widget.connection.id),
       );
+      // A chat started on this phone stays alive under its provisional id
+      // while every list offers it under the durable one. Before it adopts
+      // this route's lease (and hands it any turn still in flight), the
+      // lease has to cover the ids that chat writes under.
+      final retained = _chatService.of(
+        widget.connection.id,
+        widget.session.id,
+        profile: resolvedSessionProfile,
+      );
+      if (retained != null) {
+        _coverConversationOf(retained, _localConversationLifecycle);
+      }
       _chat = _chatService.attach(
         connection: widget.connection,
         sessionId: widget.session.id,
@@ -4105,7 +6391,18 @@ class _ChatScreenState extends State<ChatScreen>
       }
       _chat.stageFirstSubmitConfig(_firstSubmitConfig);
       _chatSub = _chat.changes.listen(_onChatEvent);
+      _chat.transportStatusListenable.addListener(_syncTransportVisibility);
+      _lastObservesRemoteTurnAfterReconnect =
+          _chat.observesRemoteTurnAfterReconnect;
+      _syncTransportVisibility();
+      _transportVisibility.addListener(_onTransportVisibilityChanged);
       _seenDurableSessionsChangeRevision = _chat.durableSessionsChangeRevision;
+      // The viewed mark only advances after a successful passive read (see
+      // _refreshPassiveTranscript): a screen that leaves before its read
+      // lands, or whose read fails, leaves the change unseen for the next.
+      final unseenDurableStoreChange =
+          _chat.durableSessionsChangeRevision !=
+          _chat.viewedDurableSessionsChangeRevision;
       _syncStopConfirmationVisibility();
       // Al entrar sobre un turno que ya venía corriendo (volver a la pantalla,
       // resume en frío) no llega ningún evento nuevo hasta el siguiente frame
@@ -4135,9 +6432,18 @@ class _ChatScreenState extends State<ChatScreen>
       // Pipeline v2 (spec 025) tras flag; el viejo sigue siendo el default.
       _attachVoiceSurface(app);
       // Si volvemos a una sesión con el modo voz ya activo (sobrevivió a la
-      // navegación), sincroniza VoiceStage con la fase actual.
+      // navegación), sincroniza VoiceStatusLine con la fase actual.
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _onVoiceState();
+        if (!mounted) return;
+        _onVoiceState();
+        // The chat's first frame is out: from here on, and only for somebody
+        // who talks to this phone, its recogniser may load ahead of the tap.
+        _recognizerPrewarm = ChatRecognizerPrewarm.attach(
+          voice: app.voice,
+          preferences: app.connManager.prefs,
+          connection: widget.connection,
+          profile: () => _profileReady.then((_) => _effectiveSessionProfile),
+        );
       });
       if (_chat.isStreaming || _chat.messagesLoaded) {
         // Reengancha a un chat ya vivo o ya cargado: no recargues (clobbearía
@@ -4157,6 +6463,19 @@ class _ChatScreenState extends State<ChatScreen>
           if (!mounted) return;
           _scrollToBottom(animate: false);
         });
+        _resolveNewSinceYouLeft();
+        if (unseenDurableStoreChange && !_chat.isStreaming) {
+          // re1215: `sessions.changed` reached this chat while no screen
+          // watched it (the end of a turn the user walked away from, or
+          // Desktop going on). Nothing consumed those ticks, so the rows
+          // stayed unread until a tap on «load earlier» re-read the tail.
+          // Re-entry delivers them now, through the same tail-probe gate.
+          _durableTranscriptReadPending = true;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (_disposed || !mounted) return;
+            _syncPassiveTranscriptRefresh(refreshNow: true);
+          });
+        }
       } else if (widget.session.isUnpersistedMobileDraft) {
         // Un chat recién creado todavía no existe en Hermes. Intentar
         // session.resume + REST aquí solo enseña un loader hasta recibir el
@@ -4168,9 +6487,6 @@ class _ChatScreenState extends State<ChatScreen>
         // runtime until it becomes the owning foreground route.
         _fetchMessages(passiveOnly: !_appInForeground);
       }
-      // Fase G: comprueba (una vez) si el bridge de esta instancia está
-      // desactualizado y, según el ajuste, lo auto-actualiza o avisa.
-      _maybeCheckBridgeUpdate();
     }
     // MediaQuery puede cambiar con la preferencia de accesibilidad del sistema.
     if (_chatBound) _chat.smoothStreaming = !_reduceMotion;
@@ -4195,7 +6511,7 @@ class _ChatScreenState extends State<ChatScreen>
   /// reconstruía la pantalla completa (transcript incluido) solo para
   /// reprogramar este temporizador.
   void _onKeyboardBottomInset(double bottomInset) {
-    if (_disposed || !mounted || bottomInset <= 0) return;
+    if (_disposed || !mounted || bottomInset <= 0 || _findOpen) return;
     // Si ya está al fondo, el resize del viewport mantiene visible el último
     // mensaje. No programes un scroll/setState durante la animación del IME.
     if (_isNearBottom) return;
@@ -4306,6 +6622,7 @@ class _ChatScreenState extends State<ChatScreen>
       _cancelSessionContextBootstrapRetry();
     }
     _chatRouteVisible = visible;
+    if (visible) _rememberColdStartRoute();
     if (changed && mounted && !_disposed) setState(() {});
     _syncPassiveTranscriptRefresh();
     _syncSubagentPolling();
@@ -4317,13 +6634,54 @@ class _ChatScreenState extends State<ChatScreen>
       final durableId = _chat.serverSessionId;
       notif.visibleSessionId = durableId;
       _markedNotificationSessionId = durableId;
+      _clearOwnChatNotifications();
     } else {
+      if (!_coveredByAppLock) _ownNotificationsClearedFor = null;
       final marked = _markedNotificationSessionId;
       if (marked != null && notif.visibleSessionId == marked) {
         notif.visibleSessionId = null;
       }
       _markedNotificationSessionId = null;
     }
+  }
+
+  /// The user sees this chat (on top, app in front): the reply
+  /// notifications it already has in the tray are read. A reply posted while
+  /// the app is in the background stays until the user comes back to it.
+  /// Under App Lock nothing is cleared until unlock, and only if this chat
+  /// is then in front (see [ChatNotificationReadSync]).
+  void _clearOwnChatNotifications({bool resumed = false}) {
+    if (!_chatBound || !_appInForeground) return;
+    if (!_chatRouteVisible && !_coveredByAppLock) return;
+    final notif = _chatService.notifications;
+    final chat = _chat;
+    final sessionId = chat.serverSessionId;
+    if (notif == null || sessionId.isEmpty) return;
+    final key = '${chat.connection.id}|$sessionId';
+    if (_ownNotificationsClearedFor == key && !resumed) return;
+    _ownNotificationsClearedFor = key;
+    unawaited(
+      notif.clearChatNotifications(
+        connId: chat.connection.id,
+        profile: chat.sessionProfile,
+        sessionId: sessionId,
+        // Notifications posted before a compression rotation carry an
+        // earlier id of this same chat.
+        aliases: {
+          ...widget.session.identityIds,
+          chat.sessionId,
+          ?chat.storedSessionId,
+          chat.desktopCompactionLineageId,
+        },
+        stillWanted: () =>
+            mounted &&
+            !_disposed &&
+            _chatBound &&
+            identical(_chat, chat) &&
+            _appInForeground &&
+            (ModalRoute.of(context)?.isCurrent ?? false),
+      ),
+    );
   }
 
   void _syncSubagentPolling() {
@@ -4648,6 +7006,9 @@ class _ChatScreenState extends State<ChatScreen>
     // without this bypass such a reply would sit unread until an unrelated
     // event happened to trigger a passive read.
     final durableChangeConfirmed = _durableTranscriptReadPending;
+    // Store changes up to this revision were broadcast before this read
+    // started, so a read that succeeds has reconciled them.
+    final durableRevisionAtStart = _chat.durableSessionsChangeRevision;
     final ownedLiveTurn = _chat.remoteSurfaceOwnsLiveTurn;
     await _chat.refreshPassiveRemoteActivity();
     if (!_canProbePassiveRemoteActivity) return true;
@@ -4668,13 +7029,39 @@ class _ChatScreenState extends State<ChatScreen>
         !durableChangeConfirmed) {
       return true;
     }
+    // A large chat's newest page is megabytes, and `sessions.changed` fires
+    // for any session every couple of seconds while an agent works. Read the
+    // newest durable row first; when it and the local projection match the
+    // last published page, the full page cannot add anything.
+    final probe = await _chat.probePassiveDurableTail();
+    if (!_canProbePassiveRemoteActivity) return true;
+    if (probe != null && probe.unchanged && !_chat.isStreaming) {
+      _durableTranscriptReadPending = false;
+      _markDurableRevisionViewed(durableRevisionAtStart);
+      return true;
+    }
     final fetched = await _fetchMessages(passiveOnly: true);
+    _chat.confirmPassiveDurableTail(fetched ? probe?.tail : null);
     // Only retire the pending flag on a successful read — a transient
     // failure (disconnect/network blip) must keep bypassing the runtime-
     // ownership gate on the reader's own retry, or the signal would be lost
     // the moment the first attempt fails.
-    if (fetched) _durableTranscriptReadPending = false;
+    if (fetched) {
+      _durableTranscriptReadPending = false;
+      _markDurableRevisionViewed(durableRevisionAtStart);
+    }
     return fetched;
+  }
+
+  /// re1215: record on the chat, which outlives this screen, that the
+  /// durable store has been reconciled up to [revision]. Only a successful
+  /// read calls this, so a change a screen never read stays pending for the
+  /// next screen that binds the chat.
+  void _markDurableRevisionViewed(int revision) {
+    if (_disposed || !_chatBound) return;
+    if (revision > _chat.viewedDurableSessionsChangeRevision) {
+      _chat.viewedDurableSessionsChangeRevision = revision;
+    }
   }
 
   void _invalidatePassiveMessageRefresh() {
@@ -4702,7 +7089,10 @@ class _ChatScreenState extends State<ChatScreen>
 
   @override
   void didPopNext() {
+    _coveredByAppLock = false;
+    _foregroundActionGeneration += 1;
     _markChatVisible(true); // volvió al frente (pop de la de encima)
+    if (_appInForeground) _unreadShow();
     unawaited(_ensureDesktopRuntimeAndBootstrapContext());
     _syncPassiveTranscriptRefresh(refreshNow: true);
     // Recarga el perfil activo: pudo cambiarse en Perfiles mientras estábamos
@@ -4719,6 +7109,10 @@ class _ChatScreenState extends State<ChatScreen>
   Future<void> _refreshSelectedModelFromPrefs() async {
     final prefs = await SharedPreferences.getInstance();
     if (!mounted) return;
+    if (_profileSupersedesPick(prefs)) {
+      await _forgetSessionModel(prefs);
+      if (!mounted) return;
+    }
     final defaultProfile = _sessionPreferenceProfile == 'default';
     final next =
         prefs.getString(_sessionModelKey) ??
@@ -4748,14 +7142,96 @@ class _ChatScreenState extends State<ChatScreen>
 
   @override
   void didPushNext() {
+    _foregroundActionGeneration += 1;
     _invalidateOwnedNativeVoicePreparation();
+    // The App Lock gate pushes its screen only once `locked` is set.
+    _coveredByAppLock =
+        context
+            .findAncestorStateOfType<HermesAppState>()
+            ?.appLock
+            .locked
+            .value ??
+        false;
     _markChatVisible(false); // la tapó otra pantalla
+    _unreadHide();
+  }
+
+  void _removeOwnedModelConfirmationRoute() {
+    final navigator = _modelConfirmationNavigator;
+    final route = _modelConfirmationRoute;
+    _modelConfirmationNavigator = null;
+    _modelConfirmationRoute = null;
+    if (navigator != null &&
+        navigator.mounted &&
+        route != null &&
+        route.isActive) {
+      navigator.removeRoute(route);
+    }
   }
 
   @override
   void didPop() {
     _invalidateOwnedNativeVoicePreparation();
     _markChatVisible(false); // esta pantalla se va
+    _forgetColdStartRoute();
+  }
+
+  /// cs1215: remembers this chat as the connection's last foreground route,
+  /// so a cold start reopens it (identifiers only, encrypted). A chat that
+  /// does not exist on the server yet is not remembered.
+  void _rememberColdStartRoute() {
+    if (!_chatBound || _disposed) return;
+    final store = _chatService.coldStartStore;
+    if (store == null) return;
+    final storedId = _chat.storedSessionId;
+    final durable = storedId != null && storedId.isNotEmpty
+        ? storedId
+        : widget.session.isUnpersistedMobileDraft
+        ? null
+        : _chat.serverSessionId;
+    if (!_isBotChatSurface && (durable == null || durable.isEmpty)) return;
+    unawaited(
+      store
+          .rememberRoute(
+            ColdStartRoute(
+              kind: _isBotChatSurface
+                  ? ColdStartRouteKind.bot
+                  : ColdStartRouteKind.chat,
+              connectionId: widget.connection.id,
+              profile: _chat.sessionProfile,
+              sessionId: durable ?? '',
+              source: widget.session.source,
+            ),
+          )
+          .catchError((Object error) {
+            debugPrint('[cold-start] route not saved (${error.runtimeType})');
+          }),
+    );
+  }
+
+  /// This chat left the stack: forget it as the remembered route, so the
+  /// surface below (Home, Bot Mode) is what a cold start shows.
+  void _forgetColdStartRoute() {
+    if (!_chatBound) return;
+    final store = _chatService.coldStartStore;
+    if (store == null) return;
+    final ids = <String>{
+      widget.session.id,
+      _chat.sessionId,
+      _chat.serverSessionId,
+      if (_chat.storedSessionId != null) _chat.storedSessionId!,
+    };
+    unawaited(
+      store
+          .forgetRoute(
+            widget.connection.id,
+            when: (route) =>
+                (route.kind == ColdStartRouteKind.chat ||
+                    route.kind == ColdStartRouteKind.bot) &&
+                ids.contains(route.sessionId),
+          )
+          .catchError((Object _) {}),
+    );
   }
 
   /// ¿El modo voz global está activo y atado a ESTA sesión? La orquestación de
@@ -4763,12 +7239,6 @@ class _ChatScreenState extends State<ChatScreen>
   /// necesita saberlo para no duplicar el auto-leer ni tapar el overlay ajeno.
   bool get _voiceForThisSession =>
       _vc?.active == true && (_vc?.ownsChat(_chat) ?? false);
-
-  /// La sesión puede apartar temporalmente la superficie para que la tarjeta
-  /// de aprobación real vuelva a ser táctil. El audio/runtime siguen ligados
-  /// al chat; solo cambia qué árbol visual ocupa el cuerpo.
-  bool get _voiceOverlayVisible =>
-      _voiceForThisSession && !(_vc?.overlayMinimized ?? false);
 
   /// El submit puede entrar también desde shortcuts, sugerencias o callbacks
   /// diferidos. Solo el composer visible y editable puede consumir un Stop
@@ -4784,8 +7254,7 @@ class _ChatScreenState extends State<ChatScreen>
       !_isRecording &&
       !_transcribing &&
       !_imagePickerOpen &&
-      !_documentPickerOpen &&
-      !_voiceOverlayVisible;
+      !_documentPickerOpen;
 
   /// Reacciona a un cambio del chat activo (token, herramienta, fin, error):
   /// re-renderiza desde el estado del servicio. La parte de voz la maneja el
@@ -4799,28 +7268,13 @@ class _ChatScreenState extends State<ChatScreen>
   /// actividad. El texto del turno ya no vive en la burbuja.
   bool get _turnLive => _chat.isStreaming;
 
-  Future<void> _runBackgroundAction(Future<void> Function() action) async {
-    try {
-      await action();
-    } catch (_) {
-      if (!mounted) return;
-      HermesNotice.of(context).showSnackBar(
-        SnackBar(content: Text(Strings.of(context).chaBackgroundActionFailed)),
-        kind: HermesNoticeKind.error,
-      );
-    }
-  }
-
   /// Pasos (herramientas/skills) del turno vivo, del mensaje-placeholder que el
   /// servicio va actualizando. Se memoiza por identidad de la lista para no
   /// renormalizar 256 pasos en cada token.
   Object? _activityStepsSource;
-  ({ActivityStep? current, List<ActivityStep> done}) _activitySteps = (
-    current: null,
-    done: const <ActivityStep>[],
-  );
+  ActivitySteps _activitySteps = ActivitySnapshot.noSteps;
 
-  ({ActivityStep? current, List<ActivityStep> done}) _liveActivitySteps() {
+  ActivitySteps _liveActivitySteps() {
     Map<String, dynamic>? live;
     for (final message in _messages) {
       if (message['role'] != 'assistant') continue;
@@ -4833,7 +7287,7 @@ class _ChatScreenState extends State<ChatScreen>
     final source = live?[assistantActivityTraceKey];
     if (live == null) {
       _activityStepsSource = null;
-      return (current: null, done: const <ActivityStep>[]);
+      return ActivitySnapshot.noSteps;
     }
     if (!identical(source, _activityStepsSource)) {
       _activityStepsSource = source;
@@ -4845,13 +7299,19 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   /// Un solo valor con todo lo que está vivo: turno, tareas, compactación,
-  /// segundo plano y subagentes. La pastilla y el panel se pintan desde aquí.
+  /// segundo plano y subagentes. La isla, el turno del transcript y «En
+  /// marcha» se pintan desde aquí.
   ActivitySnapshot _buildActivitySnapshot() {
+    // ss1215: until the first resume/activate answer, a session that is
+    // already running on the server shows its remembered state (roster plus
+    // the last visit), so opening it never paints an empty pill first.
+    final provisional = _chat.provisionalLiveStatus;
+    if (provisional != null && provisional.turnLive && !_turnLive) {
+      return _provisionalActivitySnapshot(provisional);
+    }
     final turnActive = _turnLive;
     final activity = _chat.sessionActivity;
-    final steps = turnActive
-        ? _liveActivitySteps()
-        : (current: null, done: const <ActivityStep>[]);
+    final steps = turnActive ? _liveActivitySteps() : ActivitySnapshot.noSteps;
     final passiveTotal = _chat.hasRecentPassiveRemoteActivity
         ? _chat.passiveActivityAggregate.total
         : 0;
@@ -4860,13 +7320,14 @@ class _ChatScreenState extends State<ChatScreen>
       turnActive: turnActive,
       tasksActive: turnActive || _chat.remoteSurfaceOwnsLiveTurn,
       turnStartedAt: turnActive
-          ? (_turnActivityStartedAt ?? _chat.desktopTurnStartedAt)
+          ? (_chat.turnClockOrigin ?? _turnActivityStartedAt)
           : null,
       headline: turnActive ? _traceHeadline() : null,
-      waitingForUser: turnActive && _turnWaitsForUser,
+      waitingForUser: turnActive && (_turnWaitsForUser || _chat.needsInput),
       noActivityHint: turnActive && _chat.noActivityHint,
       current: steps.current,
       done: steps.done,
+      liveReasoning: steps.liveReasoning,
       tasks: _chat.agentTasks,
       processes: activity.processes,
       schedules: activity.schedules,
@@ -4885,51 +7346,770 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
-  ActivityPanelActions? _activityActions;
-  (bool, bool, bool)? _activityActionCapabilities;
+  ActivitySnapshot _provisionalActivitySnapshot(SessionLiveStatus status) {
+    final s = Strings.of(context);
+    final tool = status.toolLabel;
+    return ActivitySnapshot(
+      turnActive: true,
+      tasksActive: true,
+      // ps1215: the remembered turn start keeps the timer counting from the
+      // real start on reopen instead of showing no timer (or 0:00).
+      turnStartedAt: _chat.provisionalTurnStartedAt,
+      headline: switch (status.phase) {
+        SessionLivePhase.responding => s.chaPipelineStreaming,
+        SessionLivePhase.thinking => s.chaPipelineThinking,
+        _ => s.ss1215StatusWorking,
+      },
+      waitingForUser: status.phase == SessionLivePhase.waitingForUser,
+      current: tool == null
+          ? null
+          : ActivityStep(
+              id: 'ss1215-provisional',
+              kind: status.toolIsSkill
+                  ? ActivityStepKind.skill
+                  : ActivityStepKind.tool,
+              label: tool,
+              status: ActivityStepStatus.running,
+              detail: status.toolDetail,
+            ),
+      tasks: status.tasks,
+    );
+  }
 
-  /// Las acciones por elemento del panel: los mismos controladores que tenían
-  /// las hojas de segundo plano y de subagentes.
-  ActivityPanelActions _buildActivityActions() {
-    final capabilities = (
-      _chat.canStopBackgroundProcesses,
-      _chat.canControlSessionActivity,
-      _chat.canControlGoal,
-    );
-    final cached = _activityActions;
-    if (cached != null && _activityActionCapabilities == capabilities) {
-      return cached;
+  /// What is alive outside the turn, for whoever shows «En marcha»: it is
+  /// read from another route, so it changes after the frame, never in one.
+  final ValueNotifier<ActivitySnapshot> _runningWork = ValueNotifier(
+    ActivitySnapshot.idle,
+  );
+  ActivitySnapshot? _runningWorkSeen;
+
+  /// The last thing that started, ended or failed in it, for the island.
+  ({RunningWorkChange change, int revision})? _runningWorkNote;
+
+  /// Follows what is alive outside the turn: publishes it for «En marcha»
+  /// and notes what changed. Called while building; the same snapshot
+  /// twice changes nothing.
+  void _trackRunningWork(ActivitySnapshot snapshot, Strings str) {
+    final change = RunningWorkChange.between(_runningWorkSeen, snapshot, str);
+    _runningWorkSeen = snapshot;
+    if (change != null) {
+      _runningWorkNote = (
+        change: change,
+        revision: (_runningWorkNote?.revision ?? 0) + 1,
+      );
     }
-    // Mantén estables los callbacks: el panel abierto compara esta identidad.
-    final actions = ActivityPanelActions(
-      canStopProcesses: capabilities.$1,
-      stopProcess: (id) =>
-          _runBackgroundAction(() => _chat.stopBackgroundProcess(id)),
-      canControlSchedules: capabilities.$2,
-      scheduleAction: (schedule, action) {
-        final isLoop = schedule.kind == SessionActivityScheduleKind.loop;
-        final name = switch (action) {
-          ActivityScheduleAction.pause =>
-            isLoop ? 'loop.pause' : 'heartbeat.pause',
-          ActivityScheduleAction.resume =>
-            isLoop ? 'loop.resume' : 'heartbeat.resume',
-          ActivityScheduleAction.stop =>
-            isLoop ? 'loop.stop' : 'heartbeat.clear',
-        };
-        return _runBackgroundAction(() => _chat.sendSessionControlAction(name));
-      },
-      canControlGoal: capabilities.$3,
-      goalAction: (action) =>
-          _runBackgroundAction(() => _chat.sendGoalAction(action)),
+    if (_runningWork.value == snapshot) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final seen = _runningWorkSeen;
+      if (!_disposed && seen != null) _runningWork.value = seen;
+    });
+  }
+
+  /// What a row of «En marcha» can do in this chat. [leave] runs before a
+  /// row takes the reader somewhere else.
+  RunningWorkActions _runningWorkActions(VoidCallback leave) {
+    final control = _chat.canControlSessionActivity;
+    return RunningWorkActions(
       goalDetails: () {
-        final snapshot = _chat.goal;
-        if (snapshot != null) unawaited(_showGoalSheet(snapshot));
+        leave();
+        final goal = _chat.goal;
+        if (goal != null) unawaited(_showGoalSheet(goal));
       },
-      openSubagent: _subagentController.open,
+      pauseGoal: control
+          ? () => unawaited(_sendGoalAction('goal.pause'))
+          : null,
+      resumeGoal: control
+          ? () => unawaited(_sendGoalAction('goal.resume'))
+          : null,
+      openSubagent: (activity) {
+        leave();
+        _subagentController.open(activity);
+      },
       dismissSubagents: _dismissSubagentPill,
+      stopProcess: _chat.canStopBackgroundProcesses
+          ? (process) => unawaited(_stopBackgroundProcess(process.id))
+          : null,
     );
-    _activityActionCapabilities = capabilities;
-    return _activityActions = actions;
+  }
+
+  Future<void> _stopBackgroundProcess(String processId) async {
+    try {
+      await _chat.stopBackgroundProcess(processId);
+    } catch (_) {
+      if (!mounted) return;
+      HermesNotice.of(context).showSnackBar(
+        SnackBar(content: Text(Strings.of(context).chaBackgroundActionFailed)),
+        kind: HermesNoticeKind.error,
+      );
+    }
+  }
+
+  /// The island of this chat, for what opens out of it.
+  final GlobalKey _islandKey = GlobalKey(debugLabel: 'chat-island');
+
+  /// The card is open: a second tap on the island must not open another.
+  bool _runningWorkOpen = false;
+
+  /// The island grows into the card of what is alive: its own line first
+  /// (which a notice takes while it has something to say), then one row
+  /// per thing. Nothing opens while there is nothing to show.
+  void _showRunningWork() {
+    if (_runningWorkOpen || !RunningWork.hasContent(_runningWork.value)) {
+      return;
+    }
+    _runningWorkOpen = true;
+    unawaited(
+      showRunningWorkCard(
+        context: context,
+        origin: () => ChatIsland.surfaceRectIn(_islandKey.currentContext),
+        dismissLabel: MaterialLocalizations.of(
+          context,
+        ).modalBarrierDismissLabel,
+        // The composer, its notch and what floats on it stay clear.
+        reserveBelow: () => _bottomBarsExtent.value + kChatNotchSlotHeight,
+        snapshot: _runningWork,
+        clock: _chat.wallNow,
+        actions: _runningWorkActions,
+        header: (cardContext, close) => ListenableBuilder(
+          listenable: Listenable.merge([
+            _runningWork,
+            _chat.transportStatusListenable,
+            _transportVisibility,
+          ]),
+          builder: (context, _) => ChatIsland(
+            key: const ValueKey('island-card-line'),
+            flat: true,
+            open: true,
+            name: _islandName,
+            status: _islandStatus(_runningWork.value),
+            mark: _runningWorkMark(Strings.of(context), _runningWork.value),
+            notices: HermesNotice.feedOf(context),
+            onTap: close,
+          ),
+        ),
+      ).whenComplete(() => _runningWorkOpen = false),
+    );
+  }
+
+  /// What the island says it has to open: how many things are alive («4
+  /// en marcha») or, once none is, how many subagents ended and are still
+  /// there to be seen («1 terminado»). Null: only the name.
+  String? _runningWorkMark(Strings str, ActivitySnapshot snapshot) {
+    final alive = RunningWork.aliveCount(snapshot);
+    if (alive > 0) return str.runCount(alive);
+    final ended = RunningWork.endedCount(snapshot);
+    return ended > 0 ? str.runEnded(ended) : null;
+  }
+
+  /// The name on this chat's island: the bot's in a Bot Chat, else the
+  /// profile's.
+  String get _islandName {
+    if (!_isBotChatSurface) return _islandProfileName;
+    final profile = widget.missionBotProfile;
+    return profile?.botTitle ??
+        (profile != null && profile.name.isNotEmpty
+            ? profile.name
+            : Session.profileOwner(widget.session.profile));
+  }
+
+  /// What the island's dot says: the connection and the turn, never what
+  /// is alive outside it (its count says that).
+  IslandStatus _islandStatus(ActivitySnapshot snapshot) {
+    final offline =
+        _chat.transportStatusListenable.value.state ==
+        ChatTransportState.offline;
+    final attention =
+        _chat.pendingApproval != null ||
+        _chat.pendingInteractivePrompt != null ||
+        _chat.awaitsUnseenInput;
+    final reconnecting =
+        _transportVisibility.visible &&
+        !_chat.dashboardAuthRequired &&
+        _transportVisibility.displayState == ChatTransportState.reconnecting;
+    final failed = _chatBound && _chat.state == ChatPipelineState.failed;
+    return offline
+        ? IslandStatus.offline
+        : attention
+        ? IslandStatus.needsYou
+        : reconnecting
+        ? IslandStatus.reconnecting
+        : failed
+        ? IslandStatus.error
+        : snapshot.turnActive || snapshot.showTasks
+        ? IslandStatus.working
+        : IslandStatus.idle;
+  }
+
+  /// dc1215: the Bot Chat header compacts while the reader is away from
+  /// the newest message. Never rebuilds inside a frame.
+  bool _botHeaderCompact = false;
+
+  /// fh1215: what the floating Bot Chat header covers at the top of the
+  /// transcript (0 under a normal app bar). The transcript reserves it above
+  /// its first row and landings keep their target below it.
+  double _floatingTopInset = 0;
+
+  /// fh1215: height of the notices floating under the header (find bar,
+  /// connection row…), measured on layout. Never rebuilds anything.
+  double _floatingNoticesExtent = 0;
+
+  /// Where the reader's view starts: below the header and its notices.
+  double get _readTop => _floatingTopInset + _floatingNoticesExtent;
+
+  /// The notices are measured during layout; the transcript reserves them
+  /// above its oldest row, so a change rebuilds once, after the frame. In a
+  /// reversed list that padding sits at the far (oldest) end: the rows the
+  /// reader is looking at never move.
+  void _setFloatingNoticesExtent(double value) {
+    if ((value - _floatingNoticesExtent).abs() < 0.5) return;
+    _floatingNoticesExtent = value;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_disposed || !mounted) return;
+      setState(() {});
+    });
+  }
+
+  /// The name on the island of a plain chat: the profile this conversation
+  /// belongs to («Hermes» for the default one). The configurable header
+  /// title names the app on Home, not who the reader is talking to.
+  String get _islandProfileName {
+    final profile = _activeProfile;
+    if (profile == null) return 'Hermes';
+    final title = BotRosterRegistry.shared
+        .peek(widget.connection.id)
+        ?.profile(profile)
+        ?.botTitle
+        ?.trim();
+    return title == null || title.isEmpty ? profile : title;
+  }
+
+  /// What the turn is doing right now in plain words, after «Trabajando»:
+  /// the tool or skill that runs and what it runs on, or the task in
+  /// progress while it only thinks. The step is named by the shared tool
+  /// labeller (`activityStepTitle`, through the pill's model), as in the
+  /// transcript.
+  static String? _islandStepWords(ActivityPillModel model) {
+    final detail = model.detail;
+    final tool =
+        model.glyph == ActivityGlyph.tool || model.glyph == ActivityGlyph.skill;
+    if (!tool) return detail == null || detail.isEmpty ? null : detail;
+    return detail == null || detail.isEmpty
+        ? model.action
+        : '${model.action} · $detail';
+  }
+
+  /// The newest failed turn of this chat that a plain retry can resend, as
+  /// (prompt, sent): [sent] is false when it never reached Hermes. Null
+  /// when the last turn did not fail, or its error asks for something else
+  /// first (signing in again, a billing limit): its bubble offers that.
+  ({String prompt, bool sent})? _retryableFailedTurn() {
+    if (!_chatBound || _chat.state != ChatPipelineState.failed) return null;
+    if (_chat.conflictReadOnly || widget.connection.readOnly) return null;
+    final messages = _messages;
+    for (var i = messages.length - 1; i >= 0; i--) {
+      final msg = messages[i];
+      if (msg['role'] != 'assistant_error') continue;
+      if (ProviderAuthFailure.fromJson(msg[providerAuthFailureKey]) != null ||
+          TurnBillingBlock.parse(msg[turnBillingBlockKey]) != null) {
+        return null;
+      }
+      final prompt = (msg['_prompt'] as String?) ?? _lastPrompt;
+      if (prompt.isEmpty) return null;
+      return (
+        prompt: prompt,
+        sent: _preparedTurn?.state != PreparedTurnState.failedBeforeAcceptance,
+      );
+    }
+    return null;
+  }
+
+  /// A recovered turn whose delivery is not confirmed, as an island event:
+  /// one line and «Restaurar» (or «Descartar» when it cannot go back to
+  /// the composer); the explanation and the other action open with a tap.
+  /// Swiped away it only hides: the turn stays in the outbox.
+  IslandEvent? _recoveredTurnEvent(Strings str) {
+    final notice = _recoveredTurnNotice;
+    final current = _preparedTurn;
+    if (notice == null ||
+        current == null ||
+        current.storageId != notice.storageId ||
+        current.state == PreparedTurnState.terminal) {
+      return null;
+    }
+    final restorable = current.restoresComposer;
+    final composerEmpty =
+        _textController.text.isEmpty && _pendingAttachments.isEmpty;
+    final discard = IslandAction(
+      key: const ValueKey('recovered-turn-discard'),
+      label: str.islandDiscard,
+      onPressed: () => unawaited(_discardRecoveredTurn(current)),
+    );
+    return IslandEvent(
+      id: 'recovered-turn',
+      revision: current.storageId.hashCode,
+      key: const ValueKey('recovered-turn-banner'),
+      tone: IslandTone.warning,
+      icon: Icons.help_outline_rounded,
+      sticky: true,
+      line: str.islandRecoveredTurn,
+      more: [
+        _recoveredTurnMessage(current),
+        if (restorable && _composerHoldsOtherDraft(current))
+          str.chaRecoveredKeepsDraft,
+      ].join(' '),
+      action: restorable
+          ? IslandAction(
+              key: const ValueKey('recovered-turn-restore'),
+              label: str.islandRestore,
+              // Another draft in the composer is the reader's: it stays.
+              onPressed: composerEmpty
+                  ? () => unawaited(_restoreRecoveredTurnIntoComposer(current))
+                  : null,
+            )
+          : discard,
+      secondary: restorable ? discard : null,
+      onDismissed: () => setState(() => _recoveredTurnNotice = null),
+    );
+  }
+
+  /// What this conversation has to say on its island right now, most
+  /// important first. An event stays in the list while it is true; the
+  /// island shows each one for as long as its words are worth.
+  List<IslandEvent> _islandEvents(
+    Strings str, {
+    required ActivitySnapshot snapshot,
+    required ActivityPillModel? model,
+    required Widget? timer,
+  }) {
+    final events = <IslandEvent>[];
+    final approval = _chat.pendingApproval;
+    final prompt = _chat.pendingInteractivePrompt;
+    if (approval != null || prompt != null) {
+      events.add(
+        IslandEvent(
+          id: 'needs-you',
+          revision: prompt != null
+              ? prompt.key.requestId.hashCode
+              : identityHashCode(approval),
+          key: const ValueKey('island-needs-you'),
+          tone: IslandTone.needsYou,
+          sticky: true,
+          line: str.roomStateNeedsYou,
+          action: IslandAction(
+            label: str.islandSee,
+            onPressed: () {
+              // The approval or the question is at the foot of the chat.
+              FocusManager.instance.primaryFocus?.unfocus();
+              _scrollToBottom();
+            },
+          ),
+        ),
+      );
+    }
+    if (_chat.awaitsUnseenInput) {
+      // Hermes waits for an answer to a question that was never drawn.
+      final failed = _chat.openRequestRecoveryFailed;
+      final busy = _chat.openRequestRecoveryInFlight;
+      events.add(
+        IslandEvent(
+          id: 'unseen-question',
+          revision: failed ? 1 : 0,
+          key: const ValueKey('chat-awaiting-unseen-input'),
+          tone: IslandTone.needsYou,
+          sticky: true,
+          busy: busy,
+          line: str.roomStateNeedsYou,
+          more: failed
+              ? str.cq1215QuestionNotRecovered
+              : str.cr1215AwaitingUnseenInput,
+          action: IslandAction(
+            key: const ValueKey('chat-awaiting-unseen-input-show'),
+            label: failed ? str.cq1215RetryQuestion : str.cr1215ShowQuestion,
+            closes: false,
+            onPressed: busy
+                ? null
+                : () => unawaited(_chat.rehydrateOpenRequests()),
+          ),
+          secondary: failed
+              ? IslandAction(
+                  key: const ValueKey('chat-awaiting-unseen-input-stop'),
+                  label: str.cq1215StopTurn,
+                  closes: false,
+                  onPressed: busy ? null : () => unawaited(_cancelStream()),
+                )
+              : null,
+        ),
+      );
+    }
+    // A recovered turn already speaks for the turn that failed: one event
+    // for it, not two.
+    final recovered = _recoveredTurnEvent(str);
+    final failedTurn = recovered == null ? _retryableFailedTurn() : null;
+    if (failedTurn != null) {
+      events.add(
+        IslandEvent(
+          id: 'turn-failed',
+          revision: identityHashCode(_chat.currentFailedTurnToken),
+          key: const ValueKey('island-turn-failed'),
+          tone: IslandTone.error,
+          sticky: true,
+          line: failedTurn.sent ? str.islandReplyFailed : str.islandNotSent,
+          action: IslandAction(
+            label: str.commonRetry,
+            onPressed: () => unawaited(_retryLastPrompt(failedTurn.prompt)),
+          ),
+        ),
+      );
+    }
+    if (_chat.dashboardAuthNoticeVisible) {
+      events.add(
+        IslandEvent(
+          id: 'dashboard-sign-in',
+          key: const ValueKey('chat-dashboard-auth-required'),
+          tone: IslandTone.warning,
+          icon: Icons.lock_outline_rounded,
+          sticky: true,
+          line: str.islandSignIn,
+          more: str.chaDesktopAuthRequiredBanner,
+          onDismissed: () => setState(_chat.dismissDashboardAuthNotice),
+        ),
+      );
+    }
+    if (recovered != null) events.add(recovered);
+    if (_transportVisibility.visible && !_chat.dashboardAuthRequired) {
+      final reconnecting =
+          _transportVisibility.displayState == ChatTransportState.reconnecting;
+      events.add(
+        IslandEvent(
+          id: 'connection',
+          // One per loss: dismissed, it stays away until the next one.
+          revision: _transportVisibility.recoveries,
+          key: const ValueKey('chat-connection-recovery-row'),
+          tone: reconnecting ? IslandTone.warning : IslandTone.error,
+          // Red, as a connection that is gone; but it waits its turn behind
+          // what the reader can act on (a recovered message, a sign-in).
+          weight: IslandTone.warning.rank,
+          icon: Icons.cloud_off_outlined,
+          busy: reconnecting,
+          sticky: true,
+          line: reconnecting ? str.islandReconnecting : str.fh1215Offline,
+        ),
+      );
+    }
+    if (_chat.offerStaleResumedSessionStop) {
+      events.add(
+        IslandEvent(
+          id: 'already-working',
+          key: const ValueKey('stale-running-session-stop-banner'),
+          tone: IslandTone.info,
+          sticky: true,
+          line: str.islandAlreadyWorking,
+          more: str.chaStaleRunningStopBody,
+          action: IslandAction(
+            key: const ValueKey('stale-running-session-stop'),
+            label: str.chaStopTooltip,
+            closes: false,
+            onPressed: _chat.gatewayConnected
+                ? () => unawaited(_cancelStream())
+                : null,
+          ),
+          secondary: IslandAction(
+            key: const ValueKey('stale-running-session-keep'),
+            label: str.chaStaleRunningKeepAction,
+            closes: false,
+            onPressed: _chat.dismissStaleResumedSessionStopOffer,
+          ),
+          onDismissed: _chat.dismissStaleResumedSessionStopOffer,
+        ),
+      );
+    }
+    if (_chat.localTranscriptTruncationNoticeVisible) {
+      events.add(
+        IslandEvent(
+          id: 'history-partial',
+          key: const ValueKey('local-transcript-truncation-notice'),
+          tone: IslandTone.warning,
+          icon: Icons.history_toggle_off_rounded,
+          sticky: true,
+          line: str.islandHistoryPartial,
+          more: str.chaLocalTranscriptTruncated,
+          onDismissed: () =>
+              setState(_chat.dismissLocalTranscriptTruncationNotice),
+        ),
+      );
+    }
+    if (_chat.earlierMessagesLoadFailed && !_coreReadCoverageNoticeDismissed) {
+      events.add(
+        IslandEvent(
+          id: 'earlier-failed',
+          key: const ValueKey('core-read-partial-coverage-notice'),
+          tone: IslandTone.warning,
+          icon: Icons.account_tree_outlined,
+          sticky: true,
+          line: str.islandEarlierFailed,
+          more: str.chaEarlierMessagesError,
+          onDismissed: () =>
+              setState(() => _coreReadCoverageNoticeDismissed = true),
+        ),
+      );
+    }
+    final note = _runningWorkNote;
+    if (note != null) {
+      // What is alive outside the turn says when it starts, ends or fails,
+      // once, and «Ver» opens its card. Then the island goes back to its
+      // count (or to the bare name when nothing is left).
+      final change = note.change;
+      final failed = change.event == RunningWorkEvent.failed;
+      events.add(
+        IslandEvent(
+          id: 'running-work',
+          revision: note.revision,
+          key: const ValueKey('island-running-work'),
+          tone: failed
+              ? IslandTone.error
+              : change.event == RunningWorkEvent.ended
+              ? IslandTone.success
+              : IslandTone.info,
+          icon: failed || change.event == RunningWorkEvent.ended
+              ? null
+              : Icons.bolt_rounded,
+          duration: const Duration(seconds: 6),
+          line: change.line(str),
+          detail: change.name,
+          action: RunningWork.hasContent(snapshot)
+              ? IslandAction(
+                  key: const ValueKey('island-running-work-see'),
+                  label: str.islandSee,
+                  onPressed: _showRunningWork,
+                )
+              : null,
+        ),
+      );
+    }
+    // The turn (and a plan that just finished) has a line of its own; work
+    // that is alive without a turn is what the event above tells.
+    if (model != null &&
+        (snapshot.turnActive || !RunningWork.hasContent(snapshot))) {
+      // What the turn is doing is said once: when it shows, when it enters
+      // a state of its own (waiting on the provider, compacting, still at
+      // it after a long silence) and when it is done. Then the dot and the
+      // timer carry it. A turn that only thinks for a moment says nothing
+      // ([buildActivityPillModel] holds it back), so a quick reply never
+      // makes the island flicker; neither does each new tool.
+      final routine =
+          snapshot.current != null ||
+          model.action == str.chaPipelineThinking ||
+          model.action == str.chatActivityThinking ||
+          model.action == str.chaPipelineStreaming ||
+          model.action == str.chaPipelineConnecting ||
+          model.action == str.ss1215StatusWorking;
+      final turn =
+          snapshot.turnActive &&
+          routine &&
+          !snapshot.noActivityHint &&
+          !snapshot.waitingForUser;
+      // A state of its own stays said for as long as it lasts: it is why
+      // nothing seems to move.
+      final lasting = model.live && snapshot.turnActive && !turn;
+      // What else is alive (a process in the background, subagents, a
+      // state that may be out of date) rides on the same line.
+      final words = [
+        ?(turn ? _islandStepWords(model) : model.detail),
+        ?model.extras,
+      ].join(' · ');
+      events.add(
+        IslandEvent(
+          id: model.live ? 'working' : 'done',
+          revision: turn
+              ? (snapshot.turnStartedAt?.millisecondsSinceEpoch ?? 0)
+              : model.action.hashCode,
+          key: const ValueKey('activity-pill'),
+          tone: model.live ? IslandTone.info : IslandTone.success,
+          icon: model.live ? Icons.bolt_rounded : null,
+          sticky: lasting,
+          duration: const Duration(seconds: 3),
+          line: turn ? str.roomStateWorking : model.action,
+          detail: words.isEmpty ? null : words,
+          trailing: timer,
+        ),
+      );
+    }
+    return events;
+  }
+
+  /// fh1215: the floating header of every chat. Left: the menu (or back);
+  /// right: + new chat where this chat can start one; centre: the ISLAND
+  /// with the still face standing on it. At rest the island is the name
+  /// (the profile, or the bot) after one state dot; when something happens
+  /// it grows to say it in one line with at most one action ([_islandEvents]
+  /// and the app's notices) and shrinks back. A tap on it at rest opens
+  /// nothing: the turn is told in the transcript. Only while something is
+  /// alive outside the turn (a background process, subagents, a loop, the
+  /// goal) the island adds how many («4 en marcha») and a tap grows it
+  /// into their card ([_showRunningWork]). Search and conversation
+  /// settings live in the notch on the composer, the model in the bottom
+  /// status pill (Bot Chat: in the notch sheet).
+  Widget _buildFloatingHeader(Strings str, ConnectionManager? connManager) {
+    final botSurface = _isBotChatSurface;
+    final navigator = Navigator.of(context);
+    final Widget? leading;
+    if (!botSurface && connManager != null) {
+      leading = Builder(
+        builder: (ctx) => FloatingHeaderButton(
+          key: const ValueKey('chat-menu-button'),
+          icon: Icons.menu_rounded,
+          tooltip: str.chaMenuTooltip,
+          onPressed: () => Scaffold.of(ctx).openDrawer(),
+        ),
+      );
+    } else if (navigator.canPop()) {
+      leading = FloatingHeaderButton(
+        key: const ValueKey('floating-header-back'),
+        icon: Icons.arrow_back_rounded,
+        tooltip: MaterialLocalizations.of(context).backButtonTooltip,
+        onPressed: () => navigator.maybePop(),
+      );
+    } else {
+      leading = null;
+    }
+    // A Bot Chat continues one conversation: no new chat there.
+    final trailing = botSurface
+        ? null
+        : FloatingHeaderButton(
+            key: const ValueKey('chat-new-session'),
+            icon: Icons.add_rounded,
+            tooltip: str.chaNewChatTooltip,
+            onPressed: _newChat,
+          );
+    final profile = botSurface ? widget.missionBotProfile : null;
+    final botName = profile != null && profile.name.isNotEmpty
+        ? profile.name
+        : Session.profileOwner(widget.session.profile);
+    final name = _islandName;
+    final snapshot = _buildActivitySnapshot();
+    _trackRunningWork(snapshot, str);
+    final headerMascot = HeaderMascotRequest(
+      identity: botSurface ? botName : (_activeProfile ?? 'hermes'),
+      originalFace: true,
+      // The face on the island never acts a state out: the dot says it.
+      state: HeaderMascotState.idle,
+      name: name,
+    );
+    final identity = _ChatPillIdentityGate(
+      child: _ChatHeaderFace(
+        connectionId: widget.connection.id,
+        botSurface: botSurface,
+        profile: profile,
+        profileName: botSurface ? botName : _activeProfile,
+        avatarCache: botSurface ? widget.missionAvatarCache : null,
+        hermes: headerMascot,
+      ),
+    );
+    final timerStyle = TextStyle(
+      fontSize: 12,
+      height: 1.2,
+      fontWeight: FontWeight.w600,
+      color: Theme.of(context).hermes.textSecondary,
+      fontFeatures: const [FontFeature.tabularFigures()],
+    );
+    return FloatingChatHeader(
+      key: ValueKey(botSurface ? 'bot-chat-header' : 'chat-header'),
+      leading: leading,
+      trailing: trailing,
+      // Seam for the mascot engine (review/1215-mascot). QA 9493: the face
+      // is always the chat's ORIGINAL one (custom avatar, the bot's face);
+      // only the default Hermes chat asks the engine, from inside
+      // [_ChatHeaderFace].
+      mascot: headerMascot,
+      faces: identity,
+      pill: ActivityTaskLingerHost(
+        key: const ValueKey('chat-activity-pill'),
+        snapshot: snapshot,
+        // ps1215: the same clock the chat measures the turn with.
+        clock: _chat.wallNow,
+        headerBuilder: (context, model, now) => ListenableBuilder(
+          listenable: Listenable.merge([
+            _chat.transportStatusListenable,
+            _transportVisibility,
+            // «Restaurar» follows the composer: it is offered only while
+            // the composer is empty.
+            if (_recoveredTurnNotice != null) _textController,
+          ]),
+          builder: (context, _) {
+            final status = _islandStatus(snapshot);
+            // What is alive outside the turn: its count is the invitation
+            // to open it.
+            final mark = _runningWorkMark(str, snapshot);
+            // The turn's timer ticks here and nowhere above: this builder
+            // is all the header's clock rebuilds.
+            final started = snapshot.turnActive && model != null && model.live
+                ? model.timerStart
+                : null;
+            final elapsed = started == null ? null : now.difference(started);
+            final timer = elapsed == null
+                ? null
+                : ExcludeSemantics(
+                    child: Text(
+                      formatTurnElapsed(
+                        elapsed.isNegative ? Duration.zero : elapsed,
+                      ),
+                      key: const ValueKey('activity-pill-elapsed'),
+                      maxLines: 1,
+                      style: timerStyle,
+                    ),
+                  );
+            return ChatIsland(
+              key: _islandKey,
+              name: name,
+              status: status,
+              // What is live, for whoever cannot glance at the transcript.
+              statusDetail: model?.semanticsLabel,
+              // The drawer slides over the island: while it is open the
+              // notices keep to the top lane, above it.
+              notices: _navigationDrawerOpen
+                  ? null
+                  : HermesNotice.feedOf(context),
+              events: _islandEvents(
+                str,
+                snapshot: snapshot,
+                model: model,
+                timer: timer,
+              ),
+              trailing: timer,
+              // While something is live the row at rest is the activity
+              // pill of old to whoever looks for it.
+              restKey: ValueKey(
+                model != null ? 'activity-pill' : 'chat-header-pill',
+              ),
+              // With something alive the island says how many and opens
+              // them; with nothing it is only the name and a tap does
+              // nothing.
+              mark: mark,
+              hint: mark != null ? str.islandSee : null,
+              onTap: mark != null ? _showRunningWork : null,
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  void _onBotHeaderCompactChanged() {
+    if (!_isBotChatSurface) return;
+    final compact = _scrollToBottomVisibility.value;
+    if (compact == _botHeaderCompact) return;
+    void apply() {
+      if (!mounted || _disposed) return;
+      final now = _scrollToBottomVisibility.value;
+      if (now == _botHeaderCompact) return;
+      setState(() => _botHeaderCompact = now);
+    }
+
+    if (SchedulerBinding.instance.schedulerPhase == SchedulerPhase.idle) {
+      apply();
+    } else {
+      WidgetsBinding.instance.addPostFrameCallback((_) => apply());
+    }
   }
 
   /// Sincroniza el seguimiento de compactación con el servicio. Barato e
@@ -5088,27 +8268,17 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
-  /// La cabecera del Bot Chat («@nombre · Pensando») y la pastilla de actividad
-  /// narraban el mismo estado a la vez (reportado en dispositivo real). Antes de
-  /// que la pastilla se revele —los 2 s del antiparpadeo— la cabecera sigue
-  /// siendo la única señal de un turno recién empezado; después se calla.
-  bool get _turnActivityPillRevealed {
-    final startedAt = _turnActivityStartedAt;
-    if (!_turnLive || startedAt == null) return false;
-    return DateTime.now().difference(startedAt) >= const Duration(seconds: 2);
-  }
-
   void _syncTurnActivityClock() {
     if (_chat.isStreaming) {
       // Un solo origen por turno: los tics posteriores no deben reiniciarlo o
       // el contador volvería a cero en cada herramienta.
       //
-      // Deliberadamente local y no `desktopTurnStartedAt`: ese campo pertenece
-      // al turno del runtime remoto y sobrevive a la reconciliación, así que
-      // usarlo podía pintar un contador ya en marcha (o directamente de otro
-      // turno). Tras un resume en frío esto se queda corto, lo que subestima la
-      // espera — nunca la exagera, que es el único error que alarmaría.
-      _turnActivityStartedAt ??= DateTime.now();
+      // ps1215: el origen vive en el ActiveChat, que sobrevive a salir del
+      // chat; esta pantalla solo lo lee. Antes era un campo de la pantalla y
+      // volver a entrar en un turno en marcha reiniciaba el contador a 0:00.
+      // El chat usa el inicio real del turno del gateway cuando lo conoce
+      // (snapshot de resume, `message.start`); al terminar el turno lo borra.
+      _turnActivityStartedAt = _chat.anchorTurnClock();
       return;
     }
     _turnActivityStartedAt = null;
@@ -5137,8 +8307,113 @@ class _ChatScreenState extends State<ChatScreen>
     });
   }
 
+  /// `toolProgress` arrives once per reasoning/thinking delta and per tool
+  /// progress tick: reasoning models stream hundreds per second. Each one used
+  /// to run the full handler (transcript projections, render invalidation and
+  /// a screen setState), so a burst cost several whole-transcript projections
+  /// per frame in a long chat. A burst is coalesced into one handler run per
+  /// frame. Any other event flushes the pending one first, so ordering is
+  /// kept and terminal/approval transitions still paint immediately; the
+  /// timer covers the case where no frame is produced (app in background).
+  ///
+  /// `subagentActivity` is coalesced too, but leading-edge: a busy child
+  /// relays several `subagent.tool`/`thinking` events per frame, yet the
+  /// first one of a frame (and the repair nudges sent as `subagentActivity`)
+  /// must still be handled synchronously so the card and the repair debounce
+  /// start from the event itself. The rest of that frame collapse into one
+  /// trailing pass. That pass is the `toolProgress` one minus the segment
+  /// boundary, so a pending `toolProgress` covers it and a pending
+  /// `subagentActivity` is upgraded when `toolProgress` joins the same frame.
+  ActiveChatEvent? _coalescedPending;
+  Timer? _toolProgressFlushTimer;
+  bool _subagentLeadingEdgeUsed = false;
+
   void _onChatEvent(ActiveChatEvent event) {
     if (_disposed || !mounted) return;
+    _prefetchArrivedMedia(event);
+    _syncComposerCompletionScope();
+    if (event == ActiveChatEvent.subagentActivity &&
+        !_subagentLeadingEdgeUsed &&
+        _coalescedPending == null) {
+      _subagentLeadingEdgeUsed = true;
+      SchedulerBinding.instance.scheduleFrameCallback(
+        (_) => _subagentLeadingEdgeUsed = false,
+      );
+    } else if (event == ActiveChatEvent.toolProgress ||
+        event == ActiveChatEvent.subagentActivity) {
+      final pending = _coalescedPending;
+      if (pending != null) {
+        if (event == ActiveChatEvent.toolProgress) _coalescedPending = event;
+        return;
+      }
+      _coalescedPending = event;
+      SchedulerBinding.instance.scheduleFrameCallback(
+        (_) => _flushPendingToolProgress(),
+      );
+      _toolProgressFlushTimer = Timer(
+        const Duration(milliseconds: 34),
+        _flushPendingToolProgress,
+      );
+      return;
+    }
+    _flushPendingToolProgress();
+    if (_disposed || !mounted) return;
+    _handleChatEvent(event);
+  }
+
+  void _flushPendingToolProgress() {
+    final pending = _coalescedPending;
+    if (pending == null) return;
+    _coalescedPending = null;
+    // No frame may follow (app in background): reopen the leading edge.
+    _subagentLeadingEdgeUsed = false;
+    _toolProgressFlushTimer?.cancel();
+    _toolProgressFlushTimer = null;
+    if (_disposed || !mounted) return;
+    _handleChatEvent(pending);
+  }
+
+  void _syncTransportVisibility() {
+    if (_disposed) return;
+    _transportVisibility.update(
+      status: _chat.transportStatus,
+      activeTurn: _chat.isStreaming,
+      authRequired: _chat.dashboardAuthRequired,
+      appForeground: _appInForeground,
+    );
+    // cq1215: the pill headline of a post-cut viewer follows the transport
+    // (connecting vs. watching a running turn). A reconnect inside the grace
+    // window changes no visibility edge, so repaint on this edge too.
+    final observing = _chat.observesRemoteTurnAfterReconnect;
+    if (observing != _lastObservesRemoteTurnAfterReconnect) {
+      _lastObservesRemoteTurnAfterReconnect = observing;
+      if (mounted) setState(() {});
+    }
+  }
+
+  bool _lastObservesRemoteTurnAfterReconnect = false;
+
+  /// Losses already answered with «Conexión restablecida».
+  int _seenTransportRecoveries = 0;
+
+  void _onTransportVisibilityChanged() {
+    if (_disposed || !mounted) return;
+    // A loss that had been shown ended: say so once (the island shows it).
+    final recoveries = _transportVisibility.recoveries;
+    if (recoveries != _seenTransportRecoveries) {
+      _seenTransportRecoveries = recoveries;
+      HermesNotice.of(context).show(
+        message: Strings.of(context).chaConnectionRecovered,
+        kind: HermesNoticeKind.success,
+        id: 'chat-transport-reconnected',
+      );
+    }
+    setState(() {});
+  }
+
+  void _handleChatEvent(ActiveChatEvent event) {
+    if (_findOpen && event != ActiveChatEvent.token) _scheduleFindRefresh();
+    _syncTransportVisibility();
     // An externally observed successor can become live without a local
     // `started` event. Retire the old terminal host before publishing its
     // successor's frame, or both rows would read the same live notifier.
@@ -5151,6 +8426,8 @@ class _ChatScreenState extends State<ChatScreen>
     if (event == ActiveChatEvent.started) {
       _lastNonEmptySubagentActivities = const <SubagentActivity>[];
       _subagentPillDismissed = false;
+      // A queued model switch is applied by Hermes at this turn's start.
+      _deferredModelId = null;
     }
     _syncTurnActivityClock();
     _syncCompaction();
@@ -5185,15 +8462,28 @@ class _ChatScreenState extends State<ChatScreen>
       _seenDurableSessionsChangeRevision = durableSessionsChangeRevision;
       _durableTranscriptReadPending = true;
     }
+    // re1215: the `sessionInfo` that only carries a `sessions.changed` tick
+    // goes through the reader's 10 s gap (see notifyDurableStoreChanged):
+    // another session writing every 2 s must not poll this chat every 2 s.
+    final storeChangeOnly =
+        sessionsChangedTick &&
+        event == ActiveChatEvent.sessionInfo &&
+        !passiveTerminalEvent &&
+        !passiveRuntimeEvent;
     _syncPassiveTranscriptRefresh(
       refreshNow:
-          sessionsChangedTick ||
-          passiveTerminalEvent ||
-          passiveRecoveryEvent ||
-          passiveRuntimeEvent,
-      recoveryConverging: passiveRecoveryEvent || sessionsChangedTick,
+          !storeChangeOnly &&
+          (sessionsChangedTick ||
+              passiveTerminalEvent ||
+              passiveRecoveryEvent ||
+              passiveRuntimeEvent),
+      recoveryConverging:
+          !storeChangeOnly && (passiveRecoveryEvent || sessionsChangedTick),
       terminal: passiveTerminalEvent,
     );
+    if (storeChangeOnly && _canProbePassiveRemoteActivity) {
+      _passiveConversationReader?.notifyDurableStoreChanged();
+    }
     if (_editingRewriteSubmitted &&
         ((event == ActiveChatEvent.started && _editingTranscriptChanged) ||
             event == ActiveChatEvent.done ||
@@ -5234,12 +8524,19 @@ class _ChatScreenState extends State<ChatScreen>
       // puede cerrar el overlay ni programar otro scroll por fuera de ese vuelo.
       if (_messageRefreshInFlightEpoch == null) {
         _error = null;
+        // Fuera de un turno `_autoFollowStreaming` sigue en true aunque el
+        // lector haya subido: decide por la posición medida ANTES del relayout.
+        final readerWasAtBottom = _isNearBottom;
+        _resolveNewSinceYouLeft();
+        _anchorReaderAcrossServiceHydration();
         WidgetsBinding.instance.addPostFrameCallback((_) {
           // La hidratación diferida del historial (0.20) o una compactación
           // pueden aterrizar a mitad de stream con el lector arriba. Solo
           // reengancha el fondo si el seguimiento sigue activo; si el usuario
           // pausó el seguimiento para leer, la hidratación no le roba la vista.
-          if (mounted && _autoFollowStreaming) _scrollToBottom(animate: false);
+          if (mounted && _autoFollowStreaming && readerWasAtBottom) {
+            _scrollToBottom(animate: false);
+          }
         });
       }
     }
@@ -5258,17 +8555,29 @@ class _ChatScreenState extends State<ChatScreen>
         passiveAggregate.completed,
         _chat.safeActiveSubagentCount,
       );
+      final awaitsUnseenInput = (
+        _chat.awaitsUnseenInput,
+        _chat.openRequestRecoveryFailed,
+        _chat.openRequestRecoveryInFlight,
+      );
       if (contextCompacting) {
         _sessionContextAwaitingPostCompactionMetrics = true;
       }
       final invalidateAfterCompaction =
           _sessionContextAwaitingPostCompactionMetrics && !contextCompacting;
+      // md1215: config.set publishes `sessionInfo` without touching
+      // `session.info`; the pending pick must still repaint the header now.
+      final configPresentation = _sessionConfigPresentation;
       contextOnlySessionInfo =
           _desktopRuntimePresentationFingerprint != null &&
           _desktopRuntimePresentationFingerprint == presentationFingerprint &&
           _lastDesktopCompacting == compacting &&
           _lastDesktopCompressionPresentation == compressionPresentation &&
-          _activityPresentationFingerprint == activityPresentation;
+          _activityPresentationFingerprint == activityPresentation &&
+          _lastSessionConfigPresentation == configPresentation &&
+          _lastAwaitsUnseenInput == awaitsUnseenInput;
+      _lastAwaitsUnseenInput = awaitsUnseenInput;
+      _lastSessionConfigPresentation = configPresentation;
       _lastDesktopCompressionPresentation = compressionPresentation;
       _activityPresentationFingerprint = activityPresentation;
       _desktopRuntimePresentationFingerprint = presentationFingerprint;
@@ -5280,6 +8589,7 @@ class _ChatScreenState extends State<ChatScreen>
         _sessionContextAwaitingPostCompactionMetrics = false;
       }
       _syncDesktopSessionConfig();
+      unawaited(_followProfileModel());
       unawaited(_reconcileChatPreferenceScope());
       if (ModalRoute.of(context)?.isCurrent ?? false) {
         _markChatVisible(true);
@@ -5307,6 +8617,7 @@ class _ChatScreenState extends State<ChatScreen>
           _currentLiveAssistantMessage() != null) {
         _liveAssistantMaterialized = true;
         materializeLiveAssistant = true;
+        _releaseLiveTurnRow(toLiveHost: true);
       }
       _advanceStreamingReveal();
       _publishLiveAssistantFrame();
@@ -5323,6 +8634,9 @@ class _ChatScreenState extends State<ChatScreen>
         event == ActiveChatEvent.error ||
         event == ActiveChatEvent.cancelled) {
       final previousFrame = _liveAssistantFrame.value;
+      final liveTurnRowExtent = _liveTurnRowExtent;
+      final liveTurnRowOlder = _liveTurnRowOlder;
+      _releaseLiveTurnRow();
       final hadLiveHost =
           _liveAssistantMaterialized &&
           previousFrame != null &&
@@ -5340,6 +8654,7 @@ class _ChatScreenState extends State<ChatScreen>
       _surfaceTurnTerminal = _surfaceTurnSerial == _assistantEntranceSerial;
       if (event == ActiveChatEvent.done) {
         unawaited(_refreshPublishedSessionUsage(force: true));
+        unawaited(_accountLimits.refresh(afterTurn: true));
       }
       // Si el lector se apartó del fondo, conserva el mismo RenderObject hasta
       // que él decida volver. Sustituir aquí el host vivo por los chunks
@@ -5368,7 +8683,11 @@ class _ChatScreenState extends State<ChatScreen>
         _expectReportedTerminalStructuralChange();
       }
       if (!_autoFollowStreaming && !canRetainTerminalHost) {
-        _expectTerminalStructuralChange();
+        if (liveTurnRowExtent > 0) {
+          _expectLiveTurnRowSettled(liveTurnRowExtent, liveTurnRowOlder);
+        } else if (!_liveTurnRowSettling) {
+          _expectTerminalStructuralChange();
+        }
       }
       _liveAssistantMaterialized = canRetainTerminalHost;
       if (canRetainTerminalHost) {
@@ -5382,6 +8701,12 @@ class _ChatScreenState extends State<ChatScreen>
     if ((event != ActiveChatEvent.token || materializeLiveAssistant) &&
         !contextOnlySessionInfo) {
       setState(() {});
+      if (event == ActiveChatEvent.earlierMessagesLoaded) {
+        _recountNewWhileAway(olderHistoryOnly: true);
+      } else if (event != ActiveChatEvent.sessionInfo &&
+          event != ActiveChatEvent.responseMetrics) {
+        _recountNewWhileAway();
+      }
     }
     switch (event) {
       case ActiveChatEvent.started:
@@ -5417,13 +8742,16 @@ class _ChatScreenState extends State<ChatScreen>
           final message = _assistantMessageForAnswer(rawAnswer);
           final voice = _voice;
           if (voice != null && answer.trim().isNotEmpty) {
-            unawaited(
-              voice.startAutoRead(
-                messageKey: _readAloudMessageKey(message, answer),
-                revision: _readAloudRevision(answer),
+            final messageKey = _readAloudMessageKey(message, answer);
+            final revision = _readAloudRevision(answer);
+            unawaited(() async {
+              await _alignReadAloudVoice(voice);
+              await voice.startAutoRead(
+                messageKey: messageKey,
+                revision: revision,
                 markdown: answer,
-              ),
-            );
+              );
+            }());
           }
         }
       case ActiveChatEvent.error:
@@ -5469,12 +8797,19 @@ class _ChatScreenState extends State<ChatScreen>
         break;
       case ActiveChatEvent.earlierMessagesLoaded:
       case ActiveChatEvent.responseMetrics:
-      case ActiveChatEvent.sessionInfo:
       case ActiveChatEvent.dashboardAuthChanged:
+        // A background read (resume, settle, recovery) found the profile
+        // unreachable on both routes.
+        if (_chat.profileTranscriptAccessBlocked) {
+          _showProfileTranscriptAccessError();
+        }
+        break;
+      case ActiveChatEvent.sessionInfo:
       case ActiveChatEvent.goalUpdated:
       // The generic setState above already repaints _buildGoalStrip; no
       // extra behavior (scrolling, etc.) is needed for a status change.
       case ActiveChatEvent.backgroundTaskComplete:
+      case ActiveChatEvent.reactionsChanged:
         break;
     }
   }
@@ -5661,7 +8996,7 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
-  /// El modo voz global cambió de estado: [VoiceStage] posee únicamente su
+  /// El modo voz global cambió de estado: [VoiceStatusLine] posee únicamente su
   /// ambiente visual; la pantalla se limita a reconstruir su proyección.
   void _onVoiceState() {
     if (_disposed || !mounted) return;
@@ -5670,29 +9005,35 @@ class _ChatScreenState extends State<ChatScreen>
 
   /// Resuelve la aprobación pendiente del agente desde el chat
   /// (once|session|always|deny). Respeta solo-lectura y App Lock como en runs.
+  Future<void> _openConnectionLink(Uri uri) async {
+    _chat.noteConnectionLinkOpened();
+    try {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } on Object {
+      // The card keeps its Open link action; nothing to undo.
+    }
+  }
+
+  void _answerConnection(Future<void> Function() answer) {
+    unawaited(answer().catchError((Object _) {}));
+  }
+
   Future<void> _resolveChatApproval(String choice) async {
     if (_resolvingApproval) return;
     final app = context.findAncestorStateOfType<HermesAppState>();
     final policy = app?.approvalPolicy;
-    final mode = policy?.effectiveMode(widget.session.id);
-    // Solo lectura (de instancia o de modo) bloquea aprobar; denegar se permite.
-    if (choice != 'deny' &&
-        (widget.connection.readOnly || mode == ApprovalMode.readOnly)) {
-      showReadOnlyNotice(context);
-      return;
-    }
-    // App Lock antes de aprobar acciones sensibles (deny nunca pide lock).
-    if (choice != 'deny' && (policy?.requireLock ?? true)) {
-      final lock = app?.appLock;
-      if (lock != null && lock.enabled) {
-        final reason = choice == 'always'
-            ? Strings.of(context).chaApproveAlways
-            : Strings.of(context).chaApproveOnce;
-        final verified = await LockScreen.verify(context, lock, reason: reason);
-        if (!verified) return;
-      }
-    }
-    if (!mounted) return;
+    // Solo lectura bloquea aprobar (denegar se permite) y App Lock antes de
+    // aprobar: las mismas reglas que Inicio ([approvalAnswerAllowed]).
+    final allowed = await approvalAnswerAllowed(
+      context,
+      choice: choice,
+      readOnlyInstance: widget.connection.readOnly,
+      sessionId: widget.session.id,
+      reason: choice == 'always'
+          ? Strings.of(context).chaApproveAlways
+          : Strings.of(context).chaApproveOnce,
+    );
+    if (!allowed || !mounted) return;
     final approval = _chat.pendingApproval;
     setState(() => _resolvingApproval = true);
     try {
@@ -5841,22 +9182,25 @@ class _ChatScreenState extends State<ChatScreen>
 
   @override
   void dispose() {
+    _profileRoster?.removeListener(_onProfileRoster);
+    AppLockSensitiveReadFence.changes.removeListener(_onDraftDisclosureChanged);
+    final foregroundLifecycle = _foregroundConversationLifecycle;
+    _modelPulse.dispose();
     // Corta YA la suscripción a los cambios del chat y marca el desmontaje, para
     // que ningún evento diferido del stream dispare setState sobre este State ya
     // defunct. El stream del agente NO se cancela aquí: el servicio lo mantiene
     // vivo en segundo plano (se suelta más abajo con _chatService.release).
     _disposed = true;
+    _accountLimits.dispose();
     _composerTurnSettleRetryTimer?.cancel();
     _composerTurnSettleRetryTimer = null;
-    final modelConfirmationNavigator = _modelConfirmationNavigator;
-    final modelConfirmationRoute = _modelConfirmationRoute;
-    _modelConfirmationNavigator = null;
-    _modelConfirmationRoute = null;
-    if (modelConfirmationNavigator != null &&
-        modelConfirmationNavigator.mounted &&
-        modelConfirmationRoute != null &&
-        modelConfirmationRoute.isActive) {
-      modelConfirmationNavigator.removeRoute(modelConfirmationRoute);
+    // Remove only routes this screen created. A different route may have been
+    // pushed above them while the chat was being dismissed.
+    _removeOwnedModelConfirmationRoute();
+    final statusSheet = _statusSheetRoute;
+    _statusSheetRoute = null;
+    if (statusSheet != null && statusSheet.isActive) {
+      statusSheet.navigator?.removeRoute(statusSheet);
     }
     final pendingModelConfirmation = _pendingModelConfirmation;
     _pendingModelConfirmation = null;
@@ -5874,8 +9218,17 @@ class _ChatScreenState extends State<ChatScreen>
     hermesRouteObserver.unsubscribe(this);
     // Al salir de la pantalla deja de ser la sesión visible (si lo era).
     _markChatVisible(false);
+    _persistLastRead();
     _chatSub?.cancel();
     _chatSub = null;
+    if (_chatBound) {
+      _chat.transportStatusListenable.removeListener(_syncTransportVisibility);
+    }
+    _transportVisibility.removeListener(_onTransportVisibilityChanged);
+    _transportVisibility.dispose();
+    _toolProgressFlushTimer?.cancel();
+    _toolProgressFlushTimer = null;
+    _coalescedPending = null;
     _attachmentDelivery?.removeAttachmentListener(_attachmentListener);
     _attachmentDelivery = null;
     // El modo voz YA NO se destruye al cerrar la pantalla: vive en el servicio
@@ -5884,12 +9237,19 @@ class _ChatScreenState extends State<ChatScreen>
     _vc?.removeListener(_onVoiceState);
     _voice?.voiceConsent.removeListener(_onVoicePreferenceChanged);
     _vcUnavailableSub?.cancel();
-    _slashCompletionDebounce?.cancel();
+    _recognizerPrewarm?.detach();
+    _slashCompletions.dispose();
+    _referenceCompletions.dispose();
     _stopFallback?.cancel();
     _stopConfirmationDismissTimer?.cancel();
     // Detén SOLO el dictado del composer (el de esta pantalla), no el TTS del
     // modo voz: ese debe seguir si está hablando en segundo plano.
+    String? dictatedDraft;
     if (_isRecording) {
+      _commitPendingDictationPartial();
+      if (_dictationBase != _dictationOriginal.trimRight()) {
+        dictatedDraft = _dictationBase;
+      }
       _sttSub?.cancel();
       _voice?.stopDictation();
     }
@@ -5920,14 +9280,18 @@ class _ChatScreenState extends State<ChatScreen>
     _streamingRevealTimer?.cancel();
     if (!_composerSubmissionInFlight && _failedTurnDiscardInFlightId == null) {
       final finalDraftSave = _saveDraftSnapshot(
-        _textController.text,
+        dictatedDraft ?? _textController.text,
         List<AttachmentDraft>.of(_pendingAttachments),
         finalDisposeSnapshot: true,
+        actionLifecycle: foregroundLifecycle,
       );
       // Let this captured flush settle before retiring its producer. Storage
       // still rechecks replacement owners and cleanup epochs at each effect.
       unawaited(
         finalDraftSave.whenComplete(() {
+          if (foregroundLifecycle != null) {
+            LocalConversationCleanupFence.endLifecycle(foregroundLifecycle);
+          }
           LocalConversationCleanupFence.endLifecycle(
             _localConversationLifecycle,
           );
@@ -5935,8 +9299,14 @@ class _ChatScreenState extends State<ChatScreen>
       );
     } else {
       LocalConversationCleanupFence.endLifecycle(_localConversationLifecycle);
+      if (foregroundLifecycle != null) {
+        LocalConversationCleanupFence.endLifecycle(foregroundLifecycle);
+      }
     }
     _textController.removeListener(_onComposerChanged);
+    if (_foregroundComposerListener case final listener?) {
+      _textController.removeListener(listener);
+    }
     _textFocusNode
       ..removeListener(_onComposerFocusChanged)
       ..dispose();
@@ -5945,9 +9315,20 @@ class _ChatScreenState extends State<ChatScreen>
     _scrollController.dispose();
     _liveAssistantFrame.dispose();
     _scrollToBottomVisibility.dispose();
+    _newWhileAway.dispose();
+    _transcriptConcealed
+      ..removeListener(_scheduleStickyPromptUpdate)
+      ..dispose();
+    _loadingEarlierMessages.dispose();
+    _stickyPrompt.dispose();
+    _findStatus.dispose();
+    _findActiveMessage.dispose();
     _activityPillExtent.dispose();
+    _bottomBarsExtent.dispose();
+    _runningWork.dispose();
     _compaction.dispose();
     _sessionContextMetrics.dispose();
+    _sheetCompaction.dispose();
     super.dispose();
   }
 
@@ -5956,9 +9337,20 @@ class _ChatScreenState extends State<ChatScreen>
     super.didChangeAppLifecycleState(state);
     final wasInForeground = _appInForeground;
     _appInForeground = state == AppLifecycleState.resumed;
+    if (_chatBound) _syncTransportVisibility();
+    if (!wasInForeground && _appInForeground) {
+      _clearOwnChatNotifications(resumed: true);
+    }
+    // Coming back from the browser leg of a connector: read the accounts now.
+    if (!wasInForeground && _appInForeground && _chatBound) {
+      _chat.connectionAppResumed();
+    }
     if (wasInForeground != _appInForeground) {
       _viewerAttachGeneration += 1;
       _cancelSessionContextBootstrapRetry();
+    }
+    if (!_appInForeground && (_streamingRevealTimer?.isActive ?? false)) {
+      _advanceStreamingReveal();
     }
     if (wasInForeground != _appInForeground && mounted && !_disposed) {
       setState(() {});
@@ -5977,6 +9369,11 @@ class _ChatScreenState extends State<ChatScreen>
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached ||
         state == AppLifecycleState.hidden) {
+      _releaseKeyboardWhileAway();
+      _unreadHide();
+      _persistLastRead();
+      // cs1215: a chat created during this visit has a durable id now.
+      if (_chatRouteVisible) _rememberColdStartRoute();
       // A setup that began while this route owned the foreground cannot regain
       // authority after an asynchronous dashboard response. This only revokes
       // the opaque preparation; an already-active opted-in conversation stays
@@ -5986,6 +9383,18 @@ class _ChatScreenState extends State<ChatScreen>
       // después de mandar la app al fondo. Persistimos el estado exacto del
       // composer (texto + adjuntos) antes de perder tiempo de ejecución.
       _draftTimer?.cancel();
+      if (_isRecording && !_transcribing) {
+        final voice = _voice;
+        if (voice != null && voice.sttRecordsThenTranscribes) {
+          // El audio ya grabado se transcribe y llega por la suscripción viva.
+          unawaited(_stopDictation());
+        } else {
+          _commitPendingDictationPartial();
+          _voice?.stopDictation();
+          _resetDictation();
+          _materializeDictation();
+        }
+      }
       if (!_composerSubmissionInFlight &&
           _failedTurnDiscardInFlightId == null) {
         unawaited(
@@ -5995,19 +9404,59 @@ class _ChatScreenState extends State<ChatScreen>
           ),
         );
       }
-      if (_isRecording) {
-        _voice?.stopDictation();
-        _resetDictation();
-      }
     }
     // Al volver a primer plano, repinta la configuración conocida sin mutarla.
     if (state == AppLifecycleState.resumed) {
+      if (!wasInForeground) _restoreKeyboardAfterReturn();
+      if (_chatRouteVisible) _unreadShow();
       _loadActiveModel();
       if (_chatBound) {
         unawaited(_chat.warmDesktopGatewayForAutomaticBootstrap());
         if (!wasInForeground) _relaunchViewerAttachOnResume();
       }
     }
+  }
+
+  /// QA 9491: leaving the app with the keyboard open and coming back showed
+  /// the composer floating over an empty band where the keyboard had been,
+  /// until the input was tapped. The composer kept focus and its input
+  /// connection while the app was away, so Android could hand back a stale
+  /// keyboard inset on return. Releasing the focus when the app leaves the
+  /// screen closes the connection; [_restoreKeyboardAfterReturn] asks for the
+  /// keyboard again, like messaging apps do.
+  void _releaseKeyboardWhileAway() {
+    // A restore that has not run yet keeps its intent in
+    // [_keyboardBeforeLeaving] for the next return (QA 9495).
+    if (!_textFocusNode.hasFocus) return;
+    _keyboardBeforeLeaving = true;
+    _textFocusNode.unfocus();
+  }
+
+  /// Gives the keyboard back to the composer on return, only when it had it
+  /// on leaving and this chat is still the screen on top: never behind the
+  /// App Lock screen, never after unlocking, never under another screen
+  /// opened meanwhile (a notification tap), never over another focused field.
+  ///
+  /// QA 9495: the intent is spent only when the restore actually runs in the
+  /// foreground. Switching away and back several times in a row used to clear
+  /// it on `resumed`, so leaving again before the next frame lost the
+  /// keyboard for good.
+  void _restoreKeyboardAfterReturn() {
+    if (!_keyboardBeforeLeaving) return;
+    SchedulerBinding.instance.addPostFrameCallback((_) {
+      if (_disposed || !mounted || !_appInForeground) return;
+      _keyboardBeforeLeaving = false;
+      if (_appLocked || _coveredByAppLock) return;
+      if (ModalRoute.of(context)?.isCurrent != true) return;
+      final focused = FocusManager.instance.primaryFocus;
+      if (focused != null &&
+          focused != _textFocusNode &&
+          focused.context?.findAncestorWidgetOfExactType<EditableText>() !=
+              null) {
+        return;
+      }
+      _textFocusNode.requestFocus();
+    });
   }
 
   Future<void>? _resumeViewerAttach;
@@ -6056,15 +9505,14 @@ class _ChatScreenState extends State<ChatScreen>
       _cancelMessageRefreshViewportAnchor();
     }
     _scheduleMessageRefreshViewportReanchor();
+    _scheduleStickyPromptUpdate();
+    _maybeAutoLoadEarlier();
     // Lista reverse:true → offset 0 es el FONDO (mensaje más nuevo) y
     // maxScrollExtent es lo más antiguo. "Estás abajo" = cerca de
     // minScrollExtent; medir contra maxScrollExtent detectaría lo contrario
     // (cerca de lo más viejo) → el botón "ir abajo" salía invertido en chats
     // largos y el auto-seguimiento del streaming no enganchaba.
     final atBottom = _isNearBottom;
-    // El historial anterior es una acción explícita. Llegar al borde solo hace
-    // visible el control flotante; nunca dispara red ni encadena páginas por un
-    // rebote de física/semántica de "scroll to top".
     // La flecha representa una distancia real al final, no el estado interno
     // del seguimiento. Un toque sin desplazamiento puede pausar el auto-follow
     // durante unos milisegundos, pero no debe enseñar una acción inútil si el
@@ -6080,33 +9528,71 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
+  bool get _appLocked =>
+      context.findAncestorStateOfType<HermesAppState>()?.appLock.locked.value ??
+      false;
+
+  /// Loads the next earlier page when the reader is within
+  /// [_earlierAutoLoadScreens] viewports of the oldest loaded row. Only once
+  /// per gesture, never while App Lock is locked or a landing walk runs.
+  void _maybeAutoLoadEarlier() {
+    if (!_earlierAutoArmed ||
+        _disposed ||
+        !_chatBound ||
+        _loadingEarlierMessages.value ||
+        !_chat.hasEarlierMessages ||
+        _transcriptConcealed.value ||
+        !_scrollController.hasClients) {
+      return;
+    }
+    final position = _scrollController.position;
+    if (!position.hasContentDimensions || !position.hasViewportDimension) {
+      return;
+    }
+    final toTop = position.maxScrollExtent - position.pixels;
+    if (toTop > _earlierAutoLoadScreens * position.viewportDimension) return;
+    if (_appLocked) return;
+    _earlierAutoArmed = false;
+    unawaited(_loadEarlierMessages());
+  }
+
   Future<void> _loadEarlierMessages() async {
-    if (_loadingEarlierMessages || !_chat.hasEarlierMessages) return;
-    final position = _scrollController.hasClients
-        ? _scrollController.position
-        : null;
-    final previousPixels = position?.pixels;
-    final previousMax = position?.maxScrollExtent;
-    setState(() {
-      _loadingEarlierMessages = true;
-      _coreReadCoverageNoticeDismissed = false;
-    });
-    await _chat.loadEarlierMessages(continuePastInvisible: true);
-    if (_disposed || !mounted) return;
-    setState(() => _loadingEarlierMessages = false);
-    if (previousPixels == null || previousMax == null) return;
+    if (_loadingEarlierMessages.value || !_chat.hasEarlierMessages) return;
+    if (_appLocked) return;
+    // Any load (automatic, retry or find paging) disarms the automatic one
+    // until the next pointer down, so a programmatic scroll that follows it
+    // (e.g. revealing a find hit near the top) never fetches another page.
+    _earlierAutoArmed = false;
+    _loadingEarlierMessages.value = true;
+    if (_coreReadCoverageNoticeDismissed) {
+      setState(() => _coreReadCoverageNoticeDismissed = false);
+    }
+    try {
+      await _chat.loadEarlierMessages(continuePastInvisible: true);
+    } finally {
+      if (!_disposed) _loadingEarlierMessages.value = false;
+    }
+    if (_disposed || !mounted || !_scrollController.hasClients) return;
+    // The rows are published but not laid out yet: this is where the
+    // reader is right now (a fling may have moved on since the request).
+    final anchorPixels = _scrollController.position.pixels;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_disposed || !mounted || !_scrollController.hasClients) return;
       final next = _scrollController.position;
-      final extentDelta = next.maxScrollExtent - previousMax;
-      if (extentDelta <= 0) return;
-      // The transcript is reverse:true: older rows extend the far (max) edge,
-      // while every existing row keeps its bottom-origin coordinate. Consume
-      // the measured extent delta by retaining the captured coordinate rather
-      // than following the new max edge.
-      next.jumpTo(
-        previousPixels.clamp(next.minScrollExtent, next.maxScrollExtent),
+      // A finger on the list or a fling in flight owns the offset: any
+      // distance from the anchor is the reader's own motion, and a jump here
+      // cancels it (QA: near the oldest row the chat stopped following the
+      // finger mid-swipe, and flings died where the earlier page landed).
+      if (_userIsDragging || next.isScrollingNotifier.value) return;
+      // The transcript is reverse:true: older rows extend the far (max) edge
+      // and every existing row keeps its bottom-origin coordinate, so the
+      // reader stays put as long as the offset does. Only restore it if the
+      // layout moved it; jumping to the same offset would stop a fling.
+      final target = anchorPixels.clamp(
+        next.minScrollExtent,
+        next.maxScrollExtent,
       );
+      if ((next.pixels - target).abs() > 0.5) next.jumpTo(target);
     });
   }
 
@@ -6117,6 +9603,7 @@ class _ChatScreenState extends State<ChatScreen>
       _terminalLiveHostReleasePending = false;
       if (_disposed ||
           !mounted ||
+          _findOpen ||
           _chat.isStreaming ||
           _autoFollowStreaming ||
           !_liveAssistantMaterialized ||
@@ -6173,6 +9660,8 @@ class _ChatScreenState extends State<ChatScreen>
     _streamingScrollPointer = event.pointer;
     _streamingScrollOrigin = event.position;
     _streamingScrollGestureMoved = false;
+    _streamingScrollFrozeFollow =
+        _autoFollowStreaming && _scrollController.hasClients && _isNearBottom;
     _freezeStreamingFollow();
   }
 
@@ -6190,6 +9679,7 @@ class _ChatScreenState extends State<ChatScreen>
     _streamingScrollPointer = null;
     _streamingScrollOrigin = null;
     _streamingScrollGestureMoved = false;
+    _streamingScrollFrozeFollow = false;
     return moved;
   }
 
@@ -6219,8 +9709,11 @@ class _ChatScreenState extends State<ChatScreen>
   /// se congeló en PointerDown. Si sí hubo scroll, conserva el viewport del
   /// lector y la flecha aparece por posición mediante [_onScroll].
   void _finishStreamingScrollInteraction(PointerEvent event) {
+    final frozeFollow =
+        event.pointer == _streamingScrollPointer && _streamingScrollFrozeFollow;
     final gestureMoved = _finishTrackedStreamingPointer(event);
     if (!_chat.isStreaming ||
+        _findOpen ||
         _autoFollowStreaming ||
         !_scrollController.hasClients) {
       return;
@@ -6232,9 +9725,17 @@ class _ChatScreenState extends State<ChatScreen>
       _onScroll();
       return;
     }
-    if (!_isNearBottom) return;
+    // A touch that froze the follow at the bottom and never moved did not
+    // leave the bottom: any distance from it is the lock holding the text
+    // still while the answer grew under the finger, so it never counts as
+    // reading history.
+    final heldAwayByLock = !_isNearBottom;
+    if (heldAwayByLock && !(frozeFollow && !gestureMoved)) return;
     final target = _chat.assistantContent.length;
     _streamingViewportLock.disable();
+    if (heldAwayByLock) {
+      _scrollController.jumpTo(_scrollController.position.minScrollExtent);
+    }
     // Reenganche sin setState: la estructura de la lista no cambia; el host
     // vivo se actualiza por su notifier y la flecha por el suyo.
     _autoFollowStreaming = true;
@@ -6317,6 +9818,10 @@ class _ChatScreenState extends State<ChatScreen>
       _liveAssistantFrame.value = null;
     }
     if (!_scrollController.hasClients) return;
+    // Already at the newest row, or bouncing past it: a jump would cut the
+    // spring (and a held drag) with a one-frame snap to the edge.
+    final position = _scrollController.position;
+    if (position.pixels <= position.minScrollExtent) return;
     if (animate && !_reduceMotion) {
       _scrollController.animateTo(
         0,
@@ -6333,9 +9838,16 @@ class _ChatScreenState extends State<ChatScreen>
   ChatRenderProjection get _currentRenderProjection {
     final messages = _messages;
     final cached = _renderProjection;
-    if (cached != null && cached.canReuseFor(messages)) return cached;
+    final streamingHead = _chat.isStreaming;
+    if (cached != null &&
+        cached.canReuseFor(messages, streamingHead: streamingHead)) {
+      return cached;
+    }
     widget.performanceProbe?.renderProjectionBuilds++;
-    return _renderProjection = ChatRenderProjection.build(messages);
+    return _renderProjection = ChatRenderProjection.build(
+      messages,
+      streamingHead: streamingHead,
+    );
   }
 
   List<_ChatListEntry> get _currentListEntries {
@@ -6418,9 +9930,12 @@ class _ChatScreenState extends State<ChatScreen>
     if (message['role'] != 'assistant' || message['_pipeline'] == true) {
       return null;
     }
-    final content = (message['content'] as String?) ?? '';
+    final content = _joinResponseGroupText(
+      _responseGroupTextPrefix(_olderResponseGroupRows(message)),
+      (message['content'] as String?) ?? '',
+    );
     if (content.length <= _assistantChunkMaxChars ||
-        _jobChipLabel(content) != null ||
+        _jobChipLabel(content, Strings.of(context)) != null ||
         _messageKeepsLiveHost(message) ||
         (_chat.isStreaming &&
             _messages.isNotEmpty &&
@@ -6453,8 +9968,8 @@ class _ChatScreenState extends State<ChatScreen>
         case GeneratedMediaTextSegment(:final text):
           for (final imageSegment in GeneratedImageService.segments(text)) {
             switch (imageSegment) {
-              case ImageSegment(:final basename):
-                chunks.add(_AssistantGeneratedImageChunk(basename));
+              case ImageSegment(:final source):
+                chunks.add(_AssistantGeneratedImageChunk(source));
               case TextSegment(:final text):
                 if (text.trim().isEmpty) continue;
                 final structured = prepareAssistantAnswerStructure(text);
@@ -6469,11 +9984,12 @@ class _ChatScreenState extends State<ChatScreen>
           }
       }
     }
-    final plan = chunks.length > 1
+    final merged = _mergeImageRuns(chunks);
+    final plan = merged.length > 1
         ? _AssistantRenderPlan(
             sourceContent: content,
             split: split,
-            chunks: List<_AssistantBodyChunk>.unmodifiable(chunks),
+            chunks: List<_AssistantBodyChunk>.unmodifiable(merged),
           )
         : null;
     _cacheAssistantRenderPlan(content, plan);
@@ -6525,9 +10041,11 @@ class _ChatScreenState extends State<ChatScreen>
     _streamingViewportLock.disable();
   }
 
-  void _beginMessageRefreshViewportAnchor(int refreshEpoch) {
-    _cancelMessageRefreshViewportAnchor();
-    if (!_scrollController.hasClients || _isNearBottom) return;
+  /// Bubble closest to the centre of the viewport: the text the reader is
+  /// looking at, used to keep it in place across a transcript replacement.
+  ({Map<String, dynamic> message, RenderBox anchor})?
+  _readerViewportAnchorCandidate() {
+    if (!_scrollController.hasClients || _isNearBottom) return null;
     final viewportHeight = _scrollController.position.viewportDimension;
     Map<String, dynamic>? selectedMessage;
     RenderBox? selectedAnchor;
@@ -6551,7 +10069,16 @@ class _ChatScreenState extends State<ChatScreen>
         selectedAnchor = anchor;
       }
     }
-    if (selectedMessage == null || selectedAnchor == null) return;
+    if (selectedMessage == null || selectedAnchor == null) return null;
+    return (message: selectedMessage, anchor: selectedAnchor);
+  }
+
+  void _beginMessageRefreshViewportAnchor(int refreshEpoch) {
+    _cancelMessageRefreshViewportAnchor();
+    final candidate = _readerViewportAnchorCandidate();
+    if (candidate == null) return;
+    final selectedMessage = candidate.message;
+    final selectedAnchor = candidate.anchor;
 
     if (!_messages.any((message) => identical(message, selectedMessage))) {
       return;
@@ -6559,7 +10086,7 @@ class _ChatScreenState extends State<ChatScreen>
 
     RenderBox? lookup() {
       if (_messageRefreshAnchorEpoch != refreshEpoch) return null;
-      final message = chatRefreshFindAnchorMessage(selectedMessage!, _messages);
+      final message = chatRefreshFindAnchorMessage(selectedMessage, _messages);
       return message == null ? null : _messageAnchors[message];
     }
 
@@ -6571,6 +10098,42 @@ class _ChatScreenState extends State<ChatScreen>
     )) {
       _cancelMessageRefreshViewportAnchor();
     }
+  }
+
+  /// A transcript replaced by the service outside a screen-owned read
+  /// (resume reconciliation, another surface's finished turn, compaction)
+  /// inserts rows below the reader in the reversed list. Without an anchor the
+  /// numeric offset is kept and the text being read jumps up by the height of
+  /// the new rows. Anchor the bubble being read for the next layout only.
+  void _anchorReaderAcrossServiceHydration() {
+    if (_chat.isStreaming || _streamingViewportLock.enabled) return;
+    final candidate = _readerViewportAnchorCandidate();
+    if (candidate == null) return;
+    final selected = candidate.message;
+    final serial = ++_hydrationAnchorSerial;
+    RenderBox? lookup() {
+      if (_hydrationAnchorSerial != serial) return null;
+      final message = chatRefreshFindAnchorMessage(selected, _messages);
+      return message == null ? null : _messageAnchors[message];
+    }
+
+    _streamingViewportLock.enable();
+    if (!_streamingViewportLock.expectAnchorVisualChange(
+      candidate.anchor,
+      lookup,
+    )) {
+      _streamingViewportLock.disable();
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_disposed || _hydrationAnchorSerial != serial) return;
+      _hydrationAnchorSerial++;
+      // Another owner (a new turn, a refresh) may have taken the lock during
+      // this frame; release it only if nothing else claimed it since.
+      if (!_chat.isStreaming && _messageRefreshAnchorEpoch == null) {
+        _streamingViewportLock.disable();
+      }
+    });
   }
 
   void _releaseMessageRefreshViewportAnchorAfterLayout(int refreshEpoch) {
@@ -6603,6 +10166,12 @@ class _ChatScreenState extends State<ChatScreen>
   Future<bool> _fetchMessages({bool passiveOnly = false}) async {
     await _profileReady;
     if (_disposed || !mounted) return false;
+    // Neither the profile's gateway route nor the Dashboard serves this
+    // transcript: polling stops until the user retries.
+    if (passiveOnly && _chat.profileTranscriptAccessBlocked) {
+      _showProfileTranscriptAccessError();
+      return false;
+    }
     // No recargues sobre un stream en curso: clobbearía el parcial que llega.
     if (_chat.isStreaming) {
       if (!passiveOnly && mounted) {
@@ -6664,8 +10233,15 @@ class _ChatScreenState extends State<ChatScreen>
           });
         },
       );
+      // ss1215: whatever this load proved (or failed to prove), the
+      // remembered status no longer stands in for it.
+      if (!passiveOnly) _chat.settleProvisionalLiveStatus();
       if (_disposed || !mounted || refreshEpoch != _messageRefreshEpoch) {
         return false;
+      }
+      // Rows already on screen can survive a refused read: the error stays.
+      if (_chat.profileTranscriptAccessBlocked) {
+        _showProfileTranscriptAccessError();
       }
       if (!passiveOnly) {
         // Una carga interactiva puede enlazar una sesión durable anterior. El
@@ -6678,12 +10254,20 @@ class _ChatScreenState extends State<ChatScreen>
       } else {
         _releaseMessageRefreshViewportAnchorAfterLayout(refreshEpoch);
       }
+      // Also after a reopen painted cached rows first: the marker is resolved
+      // against the first loaded transcript, not against the cached preview.
+      _resolveNewSinceYouLeft();
       return true;
     } catch (e) {
+      if (!passiveOnly) _chat.settleProvisionalLiveStatus();
       if (_disposed || !mounted || refreshEpoch != _messageRefreshEpoch) {
         return false;
       }
       _cancelMessageRefreshViewportAnchor();
+      if (e is ProfileTranscriptAccessRequired) {
+        _showProfileTranscriptAccessError();
+        return false;
+      }
       if (passiveOnly) return false;
       final errStr = e.toString();
       if (errStr.contains('404') || errStr.contains('not found')) {
@@ -6691,17 +10275,38 @@ class _ChatScreenState extends State<ChatScreen>
             widget.session.source == 'mobile' &&
             widget.session.messageCount == 0 &&
             _messages.isEmpty;
+        // cs1215: rows painted from the cold-start cache are not evidence
+        // that the session still exists.
+        final onlyCachedRows = _chat.showingCachedTranscript;
         // Hermes Desktop drops a verifiably gone id (its transcript AND its
         // row 404) to a fresh draft instead of an error; a 404 on the
         // transcript alone keeps the stable error with retry.
         final storedSessionGone =
             !isUnpersistedMobileChat &&
-            _messages.isEmpty &&
+            (_messages.isEmpty || onlyCachedRows) &&
             await _storedSessionIsGone();
         if (_disposed || !mounted || refreshEpoch != _messageRefreshEpoch) {
           return false;
         }
         if (storedSessionGone) {
+          _chat.discardCachedTranscript();
+          unawaited(
+            _chatService.forgetColdStartSession(
+              connectionId: widget.connection.id,
+              profile: _chat.sessionProfile,
+              sessionId: _chat.serverSessionId,
+            ),
+          );
+          if (widget.restoredFromColdStart) {
+            // The remembered chat was deleted elsewhere: back to Home, never
+            // a draft that silently replaces it.
+            HermesNotice.of(context).showSnackBar(
+              SnackBar(content: Text(Strings.of(context).chaSessionGone)),
+              kind: HermesNoticeKind.warning,
+            );
+            unawaited(Navigator.of(context).maybePop());
+            return false;
+          }
           _chat.markStoredSessionGone();
           setState(() => _error = null);
           HermesNotice.of(context).showSnackBar(
@@ -6747,6 +10352,26 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
+  /// One actionable error for a named profile whose transcript neither route
+  /// serves; repeated failures never stack notices. It is shown only by the
+  /// empty-history card: with rows on screen nothing is missing.
+  void _showProfileTranscriptAccessError() {
+    if (_disposed || !mounted) return;
+    final marker = const ProfileTranscriptAccessRequired().toString();
+    if (_error == marker) return;
+    setState(() {
+      _error = marker;
+      _refreshErrorNoticeDismissed = false;
+    });
+  }
+
+  /// Retry from the load error: a blocked profile gets one more Dashboard
+  /// attempt; any other error simply reloads.
+  Future<bool> _retryMessagesAfterError() {
+    _chat.retryProfileTranscriptAccess();
+    return _fetchMessages();
+  }
+
   /// The session's own row answers 404 too: deleted (here or on another
   /// surface), not a transient transcript read failure.
   Future<bool> _storedSessionIsGone() async {
@@ -6774,22 +10399,238 @@ class _ChatScreenState extends State<ChatScreen>
   ///
   /// When [_pendingAttachments] are staged, text files are embedded and binary
   /// files are uploaded through the Dashboard file API before chat streaming.
+  /// Why a composer action is dropped before it reaches the write fence, or
+  /// null when it may proceed. A coarse code for logs: no ids, text or paths.
+  String? _foregroundSendIgnoredReason(
+    LocalConversationLifecycle captured,
+    int generation,
+    ProfileReadTicket profileTicket,
+  ) {
+    if (_disposed || !mounted) return 'disposed';
+    if (!_chatBound) return 'chatUnbound';
+    if (generation != _foregroundActionGeneration) return 'staleGeneration';
+    if (!profileTicket.isCurrent) return 'staleProfileTicket';
+    if (ModalRoute.of(context)?.isCurrent != true) return 'routeNotCurrent';
+    if (widget.connection.readOnly) return 'readOnly';
+    if (_effectiveSessionProfile != captured.profile) {
+      return 'sessionProfileMismatch';
+    }
+    if (_chat.connection.id != captured.connectionId) {
+      return 'connectionMismatch';
+    }
+    if (_chat.sessionProfile != captured.profile) return 'chatProfileMismatch';
+    return null;
+  }
+
+  /// Logs the coarse reason the local write fence refused a composer action.
+  void _logLocalWriteRefusal(
+    String where,
+    LocalConversationLifecycle lifecycle, {
+    String? connectionId,
+    String? profile,
+  }) {
+    final reason = LocalConversationCleanupFence.writeRejectionReason(
+      connectionId: connectionId ?? widget.connection.id,
+      profile: profile ?? _effectiveSessionProfile,
+      sessionId: widget.session.id,
+      lifecycle: lifecycle,
+    );
+    debugPrint('[composer-send] $where refused (${reason ?? 'unknown'})');
+  }
+
+  /// A press of send that sends nothing says so: one coarse line in the log
+  /// (a code, never text, ids or paths) and, with [notice], one sentence that
+  /// tells what to do. Returns false, the answer of a send that did not go.
+  bool _sendRefused(
+    String reason, {
+    String? notice,
+    HermesNoticeKind kind = HermesNoticeKind.warning,
+  }) {
+    debugPrint('[composer-send] refused ($reason)');
+    if (notice != null && mounted && !_disposed) {
+      HermesNotice.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(notice)), kind: kind);
+    }
+    return false;
+  }
+
+  /// The chat did not take the turn; the composer already has it back. A
+  /// turn that failed on the chat's own terms shows its error card in the
+  /// transcript. Every other refusal is told here: it is the one place where
+  /// a press of send used to end with nothing on screen and nothing logged.
+  bool _sendNotAccepted(
+    ActiveTurnDelivery delivery,
+    LocalConversationLifecycle lifecycle,
+  ) {
+    final str = mounted ? Strings.of(context) : null;
+    if (delivery.persistenceFailed && !delivery.transportStarted) {
+      return _sendRefused(
+        'turnRecordWriteFailed',
+        notice: str?.chaOutboxUnavailable,
+      );
+    }
+    if (_chat.latestFailedTurnClientTurnId == delivery.current.clientTurnId) {
+      return _sendRefused('turnFailed');
+    }
+    if (_chat.mutationsBlockedByOwnershipConflict) {
+      return _sendRefused(
+        'ownedElsewhere',
+        notice: str?.chaSendNotSentElsewhere,
+      );
+    }
+    // The chat admits its own writes under its own id.
+    final chatWrite = LocalConversationCleanupFence.writeRejectionReason(
+      connectionId: _chat.connection.id,
+      profile: lifecycle.profile,
+      sessionId: _chat.sessionId,
+      lifecycle: lifecycle,
+    );
+    if (chatWrite != null) {
+      return _sendRefused(
+        'chatWrite:$chatWrite',
+        notice: str?.chaSendNotSentReopen,
+      );
+    }
+    if (_chat.state == ChatPipelineState.cancelled) {
+      // Stopped on its way out: the Stop that was pressed already says it.
+      return _sendRefused('stopped');
+    }
+    return _sendRefused('notAccepted', notice: str?.chaSendNotSentRetry);
+  }
+
+  /// What a composer action dropped by [_foregroundSendIgnoredReason] tells
+  /// the user. A callback built before the route, the profile or the lease
+  /// moved is rebuilt, so the same press works the next time.
+  void _noticeIgnoredForegroundSend(String reason) {
+    if (!mounted || _disposed) return;
+    switch (reason) {
+      case 'readOnly':
+        showReadOnlyNotice(context);
+      case 'staleGeneration' || 'staleProfileTicket' || 'staleLease':
+        setState(() {});
+        HermesNotice.of(context).showSnackBar(
+          SnackBar(content: Text(Strings.of(context).chaSendNotSentRetry)),
+          kind: HermesNoticeKind.warning,
+        );
+      case 'sessionProfileMismatch' ||
+          'connectionMismatch' ||
+          'chatProfileMismatch':
+        HermesNotice.of(context).showSnackBar(
+          SnackBar(content: Text(Strings.of(context).chaSendNotSentReopen)),
+          kind: HermesNoticeKind.warning,
+        );
+      // A route under another one cannot be pressed, and a chat that is not
+      // bound yet has no composer: nothing to tell.
+    }
+  }
+
+  Future<bool> _foregroundSend(
+    LocalConversationLifecycle captured,
+    int generation,
+    ProfileReadTicket profileTicket, {
+    bool queueOnly = false,
+  }) {
+    final ignored = _foregroundSendIgnoredReason(
+      captured,
+      generation,
+      profileTicket,
+    );
+    if (ignored != null) {
+      debugPrint('[composer-send] ignored ($ignored)');
+      _noticeIgnoredForegroundSend(ignored);
+      return Future.value(false);
+    }
+    final previous =
+        _foregroundConversationLifecycle ?? _localConversationLifecycle;
+    // A retained composer callback may not borrow a later lease.
+    if (!identical(captured, previous)) {
+      debugPrint('[composer-send] ignored (staleLease)');
+      _noticeIgnoredForegroundSend('staleLease');
+      return Future.value(false);
+    }
+    try {
+      LocalConversationCleanupFence.ensureWriteAllowed(
+        connectionId: captured.connectionId,
+        profile: captured.profile,
+        sessionId: widget.session.id,
+        lifecycle: captured,
+      );
+      return _sendMessage(actionLifecycle: captured, queueOnly: queueOnly);
+    } on LocalConversationWriteRejected {
+      // A popped viewer is the only recoverable displacement below.
+    }
+    final renewed = LocalConversationCleanupFence.renewAfterRouteReturn(
+      previous,
+    );
+    if (renewed == null) {
+      _logLocalWriteRefusal(
+        'renewal',
+        previous,
+        connectionId: captured.connectionId,
+        profile: captured.profile,
+      );
+      _showOutboxUnavailable();
+      return Future.value(false);
+    }
+    if (!identical(renewed, previous)) {
+      // The viewer that displaced this route may have been opened under the
+      // conversation's other id and left it behind, retired.
+      _coverConversationOf(_chat, renewed);
+      try {
+        _chat.adoptForegroundLocalConversationLifecycle(renewed);
+      } on LocalConversationWriteRejected {
+        _logLocalWriteRefusal(
+          'adoption',
+          renewed,
+          connectionId: captured.connectionId,
+          profile: captured.profile,
+        );
+        _showOutboxUnavailable();
+        return Future.value(false);
+      }
+      _textController.removeListener(_onComposerChanged);
+      if (_foregroundComposerListener case final listener?) {
+        _textController.removeListener(listener);
+      }
+      void listener() => _onComposerChanged(actionLifecycle: renewed);
+      _foregroundComposerListener = listener;
+      _textController.addListener(listener);
+      setState(() => _foregroundConversationLifecycle = renewed);
+    }
+    return _sendMessage(actionLifecycle: renewed, queueOnly: queueOnly);
+  }
+
   Future<bool> _sendMessage({
     String? initialText,
     bool queueOnly = false,
+    LocalConversationLifecycle? actionLifecycle,
   }) async {
+    final lifecycle = actionLifecycle ?? _localConversationLifecycle;
+    // A compression in flight no longer refuses the send: `_sendMessageOnce`
+    // routes it to the queue, which holds it until the compression ends.
     if (_composerSubmissionInFlight ||
         _attachmentSubmitting ||
-        _attachmentMutationInFlight ||
-        _compressingSession) {
+        _attachmentMutationInFlight) {
+      // The one refusal with nothing to tell: the send button shows the
+      // submission it is waiting for. That wait always ends: a submission
+      // awaits local storage, transport calls with their own timeouts, a
+      // dialog the user answers, and the restore read, which gives up when
+      // it parks (see [_initialOutboxReadParked]).
+      debugPrint('[composer-send] ignored (submissionInFlight)');
       return false;
     }
     // Claim the in-flight slot BEFORE any await: two same-tick sends (double
     // tap) must never both pass the guard above and submit twice.
     _composerSubmissionInFlight = true;
+    final claim = ++_composerSubmissionClaim;
     try {
-      await _recentInterrupt.interruptBeforeSend(_chat.cancel);
+      // Queuing behind a compression must never interrupt it.
+      if (!_compressingSession) {
+        await _recentInterrupt.interruptBeforeSend(_chat.cancel);
+      }
     } catch (_) {
+      debugPrint('[composer-send] refused (stopNotConfirmed)');
       if (mounted) {
         setState(() => _composerSubmissionInFlight = false);
         HermesNotice.of(context).showSnackBar(
@@ -6817,15 +10658,17 @@ class _ChatScreenState extends State<ChatScreen>
       return await _sendMessageOnce(
         textOverride: initialText,
         queueOnly: queueOnly,
+        actionLifecycle: lifecycle,
       );
     } finally {
+      final ownsSlot = claim == _composerSubmissionClaim;
       if (mounted) {
         setState(() {
-          _composerSubmissionInFlight = false;
+          if (ownsSlot) _composerSubmissionInFlight = false;
           if (submitsAttachment) _attachmentSubmitting = false;
         });
       } else {
-        _composerSubmissionInFlight = false;
+        if (ownsSlot) _composerSubmissionInFlight = false;
         if (submitsAttachment) _attachmentSubmitting = false;
       }
       _syncPassiveTranscriptRefresh(refreshNow: true);
@@ -6837,23 +10680,67 @@ class _ChatScreenState extends State<ChatScreen>
     String? textOverride,
     bool includeComposerAttachments = true,
     bool queueOnly = false,
+    LocalConversationLifecycle? actionLifecycle,
   }) async {
+    final lifecycle = actionLifecycle ?? _localConversationLifecycle;
     await _profileReady;
-    final outboxRecoveryAvailable = await _initialOutboxRead.future;
-    if (!mounted) return false;
-    if (_chat.mutationsBlockedByOwnershipConflict &&
-        !_chat.manualOwnershipProbeAvailable) {
-      return false;
-    }
-    if (!outboxRecoveryAvailable) {
+    // Null: the restore read parked without a result (the app lock closed
+    // the Keystore). The send is refused now, not held until an unlock.
+    final outboxRecoveryAvailable = await Future.any<bool?>([
+      _initialOutboxRead.future,
+      _initialOutboxReadParked.future.then<bool?>((_) => null),
+    ]);
+    if (!mounted) return _sendRefused('routeClosed');
+    final cronRunAllowsSend = await _cronRunAllowsSend();
+    if (!mounted) return _sendRefused('routeClosed');
+    final str = Strings.of(context);
+    try {
+      LocalConversationCleanupFence.ensureWriteAllowed(
+        connectionId: widget.connection.id,
+        profile: _effectiveSessionProfile,
+        sessionId: widget.session.id,
+        lifecycle: lifecycle,
+      );
+    } on LocalConversationWriteRejected {
+      _logLocalWriteRefusal('admission', lifecycle);
       _showOutboxUnavailable();
       return false;
     }
-    final str = Strings.of(context);
+    if (!cronRunAllowsSend) {
+      return _sendRefused(
+        'cronRunReadOnly',
+        notice: str.au1215CronRunSendBlocked,
+      );
+    }
+    if (_chat.mutationsBlockedByOwnershipConflict &&
+        !_chat.manualOwnershipProbeAvailable) {
+      return _sendRefused(
+        'ownedElsewhere',
+        notice: str.chaSendNotSentElsewhere,
+      );
+    }
+    if (outboxRecoveryAvailable != true) {
+      return _sendRefused(
+        outboxRecoveryAvailable == null
+            ? 'restoreParked'
+            : 'restoreUnavailable',
+        notice: str.chaOutboxUnavailable,
+      );
+    }
     final composerTextAtSubmit = _textController.text;
     final usesComposerState =
         textOverride == null || includeComposerAttachments;
     final rawComposerText = (textOverride ?? _textController.text).trim();
+    // Commands cannot wait in the queue, and running one now could start a
+    // second /compress over the one in flight. The text stays in the composer.
+    if (!skipSlashRouting &&
+        _compressingSession &&
+        rawComposerText.startsWith('/')) {
+      return _sendRefused(
+        'commandWaitsForCompaction',
+        notice: str.cq1215CommandWaitsForCompaction,
+      );
+    }
     if (!skipSlashRouting &&
         rawComposerText.startsWith('/') &&
         shouldRouteSlashBeforeBusyAttachmentQueue(rawComposerText)) {
@@ -6865,26 +10752,28 @@ class _ChatScreenState extends State<ChatScreen>
       }
       if (invocation == null) {
         final unknownName = rawComposerText.substring(1);
-        HermesNotice.of(context).showSnackBar(
-          SnackBar(content: Text(str.chaCommandUnknown(unknownName))),
-          kind: HermesNoticeKind.warning,
+        return _sendRefused(
+          'unknownCommand',
+          notice: str.chaCommandUnknown(unknownName),
         );
-        return false;
       }
       if (_pendingAttachments.isNotEmpty) {
-        HermesNotice.of(context).showSnackBar(
-          SnackBar(content: Text(str.chaCommandAttachmentsUnsupported)),
-          kind: HermesNoticeKind.warning,
+        return _sendRefused(
+          'commandWithAttachments',
+          notice: str.chaCommandAttachmentsUnsupported,
         );
-        return false;
       }
       if (local != null) {
-        await _executeSlash(local.command, local.arg);
+        await _executeSlash(
+          local.command,
+          local.arg,
+          fromComposerSubmission: true,
+        );
         return true;
       }
       if (!isUnavailableSlashName(invocation.name)) {
         final catalog = await _loadDesktopCommandCatalog();
-        if (!mounted) return false;
+        if (!mounted) return _sendRefused('routeClosed');
         CommandCatalogEntry? remote;
         for (final entry
             in catalog?.commands ?? const <CommandCatalogEntry>[]) {
@@ -6904,17 +10793,27 @@ class _ChatScreenState extends State<ChatScreen>
           );
           return true;
         }
+        // A skill installed after the catalog was cached is still named by
+        // complete.slash; the server owns it, as on Desktop.
+        final controller = _textController;
+        if (controller is _SlashAccentTextEditingController &&
+            controller.remoteCommandNames.contains(invocation.name)) {
+          await _executeSlash(
+            SlashCommand.remote(name: invocation.name, description: ''),
+            invocation.arg,
+          );
+          return true;
+        }
       }
       final unknownName = invocation.name;
-      HermesNotice.of(context).showSnackBar(
-        SnackBar(content: Text(str.chaCommandUnknown(unknownName))),
-        kind: HermesNoticeKind.warning,
+      return _sendRefused(
+        'unknownCommand',
+        notice: str.chaCommandUnknown(unknownName),
       );
-      return false;
     }
     if (widget.connection.readOnly) {
       showReadOnlyNotice(context);
-      return false;
+      return _sendRefused('readOnly');
     }
     final text = (textOverride ?? _textController.text).trim();
     final attachments = includeComposerAttachments
@@ -6922,7 +10821,10 @@ class _ChatScreenState extends State<ChatScreen>
         : const <AttachmentDraft>[];
     final selectedModel = _selectedModel;
     final firstSubmitConfig = _firstSubmitConfig;
-    if (text.isEmpty && attachments.isEmpty) return false;
+    if (text.isEmpty && attachments.isEmpty) {
+      // Only blank space was typed: the button was lit, nothing can go.
+      return _sendRefused('nothingToSend', notice: str.chaSendNothingToSend);
+    }
 
     // Un turno recuperado tras perder el ACK puede haberse ejecutado ya. Volver
     // a pulsar Enviar sobre el mismo texto no es una intención nueva y jamás
@@ -6937,7 +10839,10 @@ class _ChatScreenState extends State<ChatScreen>
       // Solo la evidencia durable decide: sin fila nueva de usuario tras la
       // frontera el turno nunca llegó y se reenvía con el mismo clientTurnId.
       if (!await _settleAmbiguousTurnForRetry(recoveredAmbiguous)) {
-        return false;
+        // Each outcome there shows itself: the turn that had already arrived
+        // leaves the composer for the transcript, the one nobody can prove
+        // gets its notice over the composer, a failed write its own.
+        return _sendRefused('recoveredTurnSettled');
       }
     }
 
@@ -6973,13 +10878,11 @@ class _ChatScreenState extends State<ChatScreen>
     }
     if (attachments.isNotEmpty &&
         !await AttachmentUploader.validateBatch(attachments)) {
-      if (mounted) {
-        HermesNotice.of(context).showSnackBar(
-          SnackBar(content: Text(str.chaAttachmentValidationFailed)),
-          kind: HermesNoticeKind.error,
-        );
-      }
-      return false;
+      return _sendRefused(
+        'attachmentInvalid',
+        notice: str.chaAttachmentValidationFailed,
+        kind: HermesNoticeKind.error,
+      );
     }
 
     // Si estabas dictando y mandas (sin pulsar parar antes), cerramos el dictado
@@ -7024,7 +10927,7 @@ class _ChatScreenState extends State<ChatScreen>
               ),
             );
           }
-          return false;
+          return _sendRefused('textAttachmentUnreadable');
         }
         final lang = AttachmentUploader.langHint(attachment);
         payloads.add(
@@ -7037,7 +10940,7 @@ class _ChatScreenState extends State<ChatScreen>
       // envía después los bytes por sus RPC nativos; solo si ese protocolo no
       // está disponible, ActiveChat usa la subida Dashboard de compatibilidad.
       if (binaries.isNotEmpty) {
-        if (!mounted) return false;
+        if (!mounted) return _sendRefused('routeClosed');
         final approved = await confirmMutatingAction(
           context,
           instanceId: widget.connection.id,
@@ -7046,7 +10949,8 @@ class _ChatScreenState extends State<ChatScreen>
           title: str.chaUploadTitle,
           detail: binaries.map((a) => a.messageLabel).join('\n'),
         );
-        if (!approved || !mounted) return false;
+        // Declining the upload is the user's own answer: nothing to tell.
+        if (!approved || !mounted) return _sendRefused('uploadDeclined');
       }
 
       // El historial conserva una copia privada verificable de cada elemento,
@@ -7059,13 +10963,11 @@ class _ChatScreenState extends State<ChatScreen>
           index: index,
         );
         if (reference == null) {
-          if (mounted) {
-            HermesNotice.of(context).showSnackBar(
-              SnackBar(content: Text(str.chaAttachmentPreparationFailed)),
-              kind: HermesNoticeKind.error,
-            );
-          }
-          return false;
+          return _sendRefused(
+            'attachmentCopyFailed',
+            notice: str.chaAttachmentPreparationFailed,
+            kind: HermesNoticeKind.error,
+          );
         }
         historyReferences.add(reference);
       }
@@ -7105,11 +11007,24 @@ class _ChatScreenState extends State<ChatScreen>
       _chat.mentionResolver.resolve(text),
     );
     final mentionAnnotation = buildBotMentionAnnotation(mentions);
+    try {
+      LocalConversationCleanupFence.ensureWriteAllowed(
+        connectionId: widget.connection.id,
+        profile: _effectiveSessionProfile,
+        sessionId: widget.session.id,
+        lifecycle: lifecycle,
+      );
+    } on LocalConversationWriteRejected {
+      _logLocalWriteRefusal('pre-outbox', lifecycle);
+      _showOutboxUnavailable();
+      return false;
+    }
     final waitsForExternalOwner = _chat.hasAuthoritativePassiveRemoteActivity;
+    final waitsForCompression = _compressingSession;
     // Every queued composer turn is written to the encrypted outbox before the
     // composer is cleared. This preserves FIFO across process death and keeps a
     // rejected head visible for explicit retry instead of dropping it.
-    if (_sending || waitsForExternalOwner) {
+    if (_sending || waitsForExternalOwner || waitsForCompression) {
       // Normal sends are next turns, never implicit steering: redirecting can
       // interrupt the live parent and its children. Steer stays a queue action.
       final now = DateTime.now().millisecondsSinceEpoch;
@@ -7133,12 +11048,23 @@ class _ChatScreenState extends State<ChatScreen>
       );
       final delivery = ActiveTurnDelivery(
         prepared: prepared,
-        store: await _outboxStore(),
+        store: TurnOutboxStore(lifecycle: lifecycle),
       );
       if (!await _chat.enqueuePreparedTurn(delivery)) {
         if (usesComposerState) await _saveDraftSnapshot(text, attachments);
-        _showOutboxUnavailable();
-        return false;
+        return _sendRefused('queueRefused', notice: str.chaOutboxUnavailable);
+      }
+      if (!mounted) {
+        // The route closed while the enqueue was in flight. The turn is now
+        // durable in the queue, so its saved draft must not come back on
+        // reopen as a second copy of the same prompt.
+        if (usesComposerState) {
+          await _clearQueuedDraftAfterLeaving(
+            composerTextAtSubmit,
+            attachments,
+          );
+        }
+        return true;
       }
       if (usesComposerState &&
           _textController.text == composerTextAtSubmit &&
@@ -7157,7 +11083,15 @@ class _ChatScreenState extends State<ChatScreen>
       if (mounted) {
         HermesNotice.of(context)
           ..hideCurrentSnackBar()
-          ..showSnackBar(SnackBar(content: Text(str.chaSteerQueued)));
+          ..showSnackBar(
+            SnackBar(
+              content: Text(
+                waitsForCompression && !_sending
+                    ? str.cq1215QueuedUntilCompacted
+                    : str.chaSteerQueued,
+              ),
+            ),
+          );
       }
       return true;
     }
@@ -7167,7 +11101,7 @@ class _ChatScreenState extends State<ChatScreen>
         !unresolvedHiddenTurn.restoresComposer &&
         unresolvedHiddenTurn.state != PreparedTurnState.terminal) {
       _showHiddenRecoveredTurn(unresolvedHiddenTurn);
-      return false;
+      return _sendRefused('recoveredTurnPending');
     }
 
     // Quitar un chip sigue disponible mientras se prepara el lote. Si cambió
@@ -7176,7 +11110,10 @@ class _ChatScreenState extends State<ChatScreen>
     if (usesComposerState &&
         !_sameAttachmentDrafts(_pendingAttachments, attachments)) {
       _scheduleDraftSave();
-      return false;
+      return _sendRefused(
+        'attachmentsChanged',
+        notice: str.chaSendNotSentRetry,
+      );
     }
 
     // Crea la identidad recuperable antes del último trabajo local y, sobre
@@ -7218,11 +11155,13 @@ class _ChatScreenState extends State<ChatScreen>
       state: PreparedTurnState.prepared,
       restoresComposer: usesComposerState,
     );
-    final outbox = await _outboxStore();
+    final outbox = TurnOutboxStore(lifecycle: lifecycle);
     if (!await _persistPreparedTurn(outbox, prepared)) {
       if (usesComposerState) await _saveDraftSnapshot(text, attachments);
-      _showOutboxUnavailable();
-      return false;
+      return _sendRefused(
+        'outboxWriteFailed',
+        notice: str.chaOutboxUnavailable,
+      );
     }
 
     await _persistAutoTitleIfNeeded(fullText);
@@ -7242,7 +11181,27 @@ class _ChatScreenState extends State<ChatScreen>
       }
       _observeAttachmentDelivery(null);
       _scheduleDraftSave();
-      return false;
+      return _sendRefused(
+        'attachmentsChanged',
+        notice: str.chaSendNotSentRetry,
+      );
+    }
+
+    // La outbox ya es durable: desde aquí el borrador cifrado se atribuye a
+    // este intento exacto. Si la pantalla muere antes del ACK, el ACK (o el
+    // siguiente restore) lo retira por identidad sin depender del widget.
+    if (textOverride == null &&
+        _textController.text == composerTextAtSubmit &&
+        _sameAttachmentDrafts(_pendingAttachments, attachments)) {
+      _draftTimer?.cancel();
+      unawaited(
+        _saveDraftSnapshot(
+          composerTextAtSubmit,
+          attachments,
+          submittedTurnClientTurnId: prepared.clientTurnId,
+          actionLifecycle: lifecycle,
+        ),
+      );
     }
 
     if (replacesProvenRejectedProjection) {
@@ -7266,6 +11225,7 @@ class _ChatScreenState extends State<ChatScreen>
     final delivery = ActiveTurnDelivery(prepared: prepared, store: outbox);
     _observeAttachmentDelivery(delivery);
     final acceptedFuture = _chat.send(
+      actionLifecycle: lifecycle,
       fullText: prepared.fullText,
       model: selectedModel,
       history: history,
@@ -7311,8 +11271,19 @@ class _ChatScreenState extends State<ChatScreen>
       // El transporte no confirmó el turno. Texto y lote permanecen tanto en
       // pantalla como en el borrador persistente; reintentar no pierde imágenes.
       _preparedTurn = delivery.current;
+      // Si el usuario escribió otro borrador mientras el turno estaba en vuelo,
+      // ese borrador es suyo: ni se enlaza al intento fallido (vaciarlo no
+      // debe descartar el turno) ni se sobrescribe con el lote fallido, que
+      // sigue a salvo en la outbox cifrada.
+      final composerHoldsOtherWork =
+          mounted &&
+          (_textController.text.isNotEmpty || _pendingAttachments.isNotEmpty) &&
+          !(_textController.text == composerTextAtSubmit &&
+              _sameAttachmentDrafts(_pendingAttachments, attachments));
       _composerPreparedTurnClientTurnId =
-          delivery.current.state == PreparedTurnState.failedBeforeAcceptance &&
+          !composerHoldsOtherWork &&
+              delivery.current.state ==
+                  PreparedTurnState.failedBeforeAcceptance &&
               delivery.current.restoresComposer
           ? delivery.current.clientTurnId
           : null;
@@ -7331,17 +11302,23 @@ class _ChatScreenState extends State<ChatScreen>
         });
         _restoringDraft = false;
       }
-      if (usesComposerState) {
+      if (usesComposerState && composerHoldsOtherWork) {
+        _draftTimer?.cancel();
+        await _saveDraftSnapshot(
+          _textController.text,
+          List<AttachmentDraft>.of(_pendingAttachments),
+          preparedTurnAuthorityCaptured: true,
+          actionLifecycle: lifecycle,
+        );
+      } else if (usesComposerState) {
         await _saveDraftSnapshot(
           text,
           attachments,
           preparedTurnClientTurnId: _composerPreparedTurnClientTurnId,
+          actionLifecycle: lifecycle,
         );
       }
-      if (delivery.persistenceFailed && !delivery.transportStarted) {
-        _showOutboxUnavailable();
-      }
-      return false;
+      return _sendNotAccepted(delivery, lifecycle);
     }
 
     // ActiveChat guardó accepted ANTES de devolver true. Conserva la propiedad
@@ -7383,12 +11360,15 @@ class _ChatScreenState extends State<ChatScreen>
       FocusManager.instance.primaryFocus?.unfocus();
     }
     if (canReleaseSubmittedDraft) {
-      await _clearDraft();
+      await _clearDraft(actionLifecycle: lifecycle);
     } else {
       // El usuario empezó un turno nuevo mientras esperaba el ACK. Ese draft
       // no pertenece al envío aceptado y nunca debe borrarse junto con él.
       _scheduleDraftSave();
     }
+    // Si la pantalla se cerró antes del ACK, `_clearDraft` no puede escribir.
+    // El borrado condicionado solo retira el lote enlazado a este turno.
+    await _clearSubmittedTurnDraft(prepared.clientTurnId);
     _preparedTurn = acceptedTurn;
 
     if (mounted) {
@@ -7452,6 +11432,179 @@ class _ChatScreenState extends State<ChatScreen>
     });
   }
 
+  bool _providerReauthRunning = false;
+
+  /// "Compactar conversación" on the card: the `/compress` the composer
+  /// already runs. That flow takes over the composer text, so a draft the user
+  /// was typing is put back afterwards.
+  Future<void> _compressFromError() async {
+    final draft = _textController.text;
+    await _compressDesktopSession('');
+    if (draft.isNotEmpty && mounted) _restoreSlashInvocation(draft);
+  }
+
+  /// "Editar mensaje" on the card: opens the edit of the message the failed
+  /// turn answered, or null when it cannot be edited.
+  VoidCallback? _editMessageOfError(Map<String, dynamic> error) {
+    var foundError = false;
+    Map<String, dynamic>? target;
+    for (final message in _messages) {
+      if (identical(message, error)) {
+        foundError = true;
+        continue;
+      }
+      if (foundError && isRealUserTurn(message)) {
+        target = message;
+        break;
+      }
+    }
+    // The card may hold a projected copy of its row: the newest user turn is
+    // then the one the failure answered.
+    if (!foundError) {
+      for (final message in _messages) {
+        if (isRealUserTurn(message)) {
+          target = message;
+          break;
+        }
+      }
+    }
+    final user = target;
+    if (user == null || !_canEditUserMessage(user)) return null;
+    return () {
+      if (!mounted) return;
+      _editUserMessage(user, MediaQuery.sizeOf(context).width * 0.85);
+    };
+  }
+
+  /// Billing action: Nous opens the existing Models/account screen; another
+  /// provider opens its `https` billing page in the system browser.
+  VoidCallback? _openBillingAction(TurnBillingBlock? billing) {
+    if (billing == null) return null;
+    if (billing.isNous) {
+      return () => _pushScreen(ModelsScreen(connection: widget.connection));
+    }
+    final url = billing.billingUrl;
+    if (url == null) return null;
+    return () => unawaited(
+      launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication),
+    );
+  }
+
+  /// Free-tier sign-in is only offered when the Accounts catalog of this
+  /// chat's profile lists `nous`, so it never opens a dead flow.
+  Future<bool> _freeTierSignInAvailable() async {
+    final client = (widget.providerReauthClientFactory ?? DashboardClient.lazy)(
+      widget.connection,
+    );
+    final rows = await client.getOAuthProviders(
+      profile: Session.profileOwner(_chat.sessionProfile),
+    );
+    return rows.any((row) => row['id'] == 'nous');
+  }
+
+  void _signInFreeTier() => unawaited(
+    _reauthProvider(
+      const ProviderAuthFailure(
+        provider: 'nous',
+        label: 'Nous',
+        kind: ProviderAuthKind.oauth,
+      ),
+    ),
+  );
+
+  /// "Volver a iniciar sesión" / "Revisar la clave" on a provider credential
+  /// failure. After a successful sign-in the turn can be retried in place.
+  bool _dashboardSignInRunning = false;
+
+  /// A turn failed because this instance's Dashboard has no working sign-in:
+  /// open the existing sign-in and, once it works, send that turn again.
+  Future<void> _signInDashboardFromError({VoidCallback? onRetry}) async {
+    if (_dashboardSignInRunning) return;
+    final app = context.findAncestorStateOfType<HermesAppState>();
+    if (app == null) return;
+    _dashboardSignInRunning = true;
+    final retryChat = _chat;
+    final failedTurn = retryChat.currentFailedTurnToken;
+    var signedIn = false;
+    try {
+      signedIn = await signInToDashboard(
+        Navigator.of(context),
+        app.connManager,
+        widget.connection,
+      );
+    } finally {
+      _dashboardSignInRunning = false;
+    }
+    if (!signedIn || !mounted || onRetry == null || failedTurn == null) {
+      return;
+    }
+    if (!identical(_chat, retryChat) ||
+        _chat.state != ChatPipelineState.failed ||
+        !_isSameFailedTurn(retryChat.currentFailedTurnToken, failedTurn)) {
+      return;
+    }
+    onRetry();
+  }
+
+  Future<void> _reauthProvider(
+    ProviderAuthFailure failure, {
+    VoidCallback? onRetry,
+  }) async {
+    if (_providerReauthRunning) return;
+    setState(() => _providerReauthRunning = true);
+    // Identidad del fallo que se ofrece reintentar. El flujo de inicio de
+    // sesión y el aviso posterior duran minutos: si entretanto el turno se
+    // reconcilia, se reintenta o falla otro, ese Retry ya no le corresponde.
+    final retryChat = _chat;
+    final failedTurn = onRetry == null
+        ? null
+        : retryChat.currentFailedTurnToken;
+    var renewed = false;
+    try {
+      renewed = await runProviderReauth(
+        context: context,
+        connection: widget.connection,
+        failure: failure,
+        profile: Session.profileOwner(_chat.sessionProfile),
+        clientFactory: widget.providerReauthClientFactory,
+      );
+    } finally {
+      if (mounted) setState(() => _providerReauthRunning = false);
+    }
+    if (!renewed || !mounted) return;
+    if (failure.origin == ProviderAuthOrigin.compaction) {
+      _chat.dismissCompactionAuthFailure();
+    }
+    final s = Strings.of(context);
+    final label = failure.label.isEmpty ? failure.provider : failure.label;
+    HermesNotice.of(context).showSnackBar(
+      SnackBar(
+        content: Text(s.hr1215SignedInAgain(label)),
+        duration: const Duration(seconds: 10),
+        action: onRetry == null || failedTurn == null
+            ? null
+            : SnackBarAction(
+                label: s.chaRetry,
+                onPressed: () {
+                  if (!mounted ||
+                      !identical(_chat, retryChat) ||
+                      !_isSameFailedTurn(
+                        retryChat.currentFailedTurnToken,
+                        failedTurn,
+                      )) {
+                    return;
+                  }
+                  onRetry();
+                },
+              ),
+      ),
+      kind: HermesNoticeKind.success,
+    );
+  }
+
+  static bool _isSameFailedTurn(Object? current, Object captured) =>
+      current is String ? current == captured : identical(current, captured);
+
   /// Retry the last failed send.
   Future<void> _retryLastPrompt([String? bubblePrompt]) async {
     // The error bubble remembers its own prompt; after a relaunch the screen's
@@ -7466,6 +11619,25 @@ class _ChatScreenState extends State<ChatScreen>
       // anything, so the retry the user asked for is a real resend.
     }
     if (prompt.isEmpty) return;
+    // Reintentar reenvía el composer. Si el usuario ya escribió OTRO borrador,
+    // reintentar mandaría ese borrador en lugar del turno fallido y lo
+    // retiraría del editor. Se conserva intacto y no se reintenta nada.
+    // «Otro» se decide con el lote completo (texto y adjuntos): el mismo texto
+    // con adjuntos distintos también es otro borrador.
+    final retryTarget = _preparedTurn;
+    final composerText = _textController.text.trim();
+    final composerIsRetryBatch =
+        retryTarget != null && retryTarget.restoresComposer
+        ? !_composerHoldsOtherDraft(retryTarget)
+        : composerText == prompt.trim() && _pendingAttachments.isEmpty;
+    if ((composerText.isNotEmpty || _pendingAttachments.isNotEmpty) &&
+        !composerIsRetryBatch) {
+      HermesNotice.of(context).showSnackBar(
+        SnackBar(content: Text(Strings.of(context).chaRetryKeepsDraft)),
+        kind: HermesNoticeKind.warning,
+      );
+      return;
+    }
     // Un fallo de transporte antes del ACK deja el turno `ambiguous`. Hay que
     // resolverlo ANTES de retirar la proyección fallida: si no se puede
     // demostrar que el servidor no lo tiene, la burbuja y el error se quedan.
@@ -7499,7 +11671,14 @@ class _ChatScreenState extends State<ChatScreen>
   /// Si el servidor ya lo persistió, se adopta el transcript sin reenviar.
   Future<bool> _settleAmbiguousTurnForRetry(PreparedTurn prepared) async {
     final evidence = await _chat.resolveAmbiguousRetryFromTranscript(prepared);
-    if (!mounted || !identical(_preparedTurn, prepared)) return false;
+    if (!mounted) return false;
+    if (!identical(_preparedTurn, prepared)) {
+      // Another owner settled or replaced the turn while it was checked.
+      return _sendRefused(
+        'recoveredTurnChanged',
+        notice: Strings.of(context).chaSendNotSentRetry,
+      );
+    }
     switch (evidence) {
       case AmbiguousRetryEvidence.notDelivered:
         final proven = prepared.copyWith(
@@ -7520,6 +11699,9 @@ class _ChatScreenState extends State<ChatScreen>
             '[turn-outbox] delivered retry cleanup failed '
             '(${error.runtimeType})',
           );
+          // It did arrive; only its record stays. Say so over the composer
+          // instead of leaving a send that seems to do nothing.
+          _showHiddenRecoveredTurn(prepared);
           return false;
         }
         if (identical(_preparedTurn, prepared)) {
@@ -7621,6 +11803,9 @@ class _ChatScreenState extends State<ChatScreen>
     if (widget.connection.readOnly ||
         _editingUserMessage ||
         _compressingSession ||
+        // Queued by the gateway behind the live reply: it has no durable row
+        // yet, so a rewrite of it could only fail.
+        message['_desktopAcceptedQueued'] == true ||
         ordinal == null ||
         parsed.text.trim().isEmpty ||
         !_attachmentsCanBeReused(parsed.attachments)) {
@@ -7629,122 +11814,118 @@ class _ChatScreenState extends State<ChatScreen>
     return true;
   }
 
-  /// ¿Es una fila del asistente cuyo único contenido es traza (razonamiento /
-  /// herramientas), sin texto visible, medios ni desenlace parado/cancelado?
-  bool _isTraceOnlyAssistantRow(Map<String, dynamic> row) {
-    if (row['role'] != 'assistant' ||
-        (row['display_kind']?.toString().trim().isNotEmpty ?? false) ||
-        row['_pipeline'] == true ||
-        row['_cancelled'] == true ||
-        row['_stopped'] == true ||
-        ((row['content'] as String?) ?? '').trim().isNotEmpty ||
-        _structuredGeneratedImages(row).isNotEmpty ||
-        _structuredGeneratedVideos(row).isNotEmpty) {
-      return false;
-    }
-    return normalizeAssistantActivityTrace(
-          row[assistantActivityTraceKey],
-        ).isNotEmpty ||
-        (row['reasoning'] is String &&
-            (row['reasoning'] as String).trim().isNotEmpty);
+  /// Filas más antiguas (más antigua primero) que comparten burbuja con
+  /// [msg] en el mismo turno, o vacío si [msg] no ancla un grupo de respuesta.
+  List<Map<String, dynamic>> _olderResponseGroupRows(
+    Map<String, dynamic> msg, {
+    bool liveHead = false,
+  }) {
+    final projection = _currentRenderProjection;
+    // A live frame may still carry the map of a previous flush; while the turn
+    // streams it always stands for the head row.
+    final index = projection.messageIndexOf(msg) ?? (liveHead ? 0 : null);
+    if (index == null) return const [];
+    final members = projection.responseGroupMembers(index);
+    if (members == null) return const [];
+    final messages = _messages;
+    return [for (var i = members.length - 1; i > 0; i--) messages[members[i]]];
   }
 
-  /// ¿Es una respuesta con texto visible, terminada y sin parar/cancelar?
-  bool _isMergeTargetAnswer(Map<String, dynamic> row) =>
-      row['role'] == 'assistant' &&
-      !(row['display_kind']?.toString().trim().isNotEmpty ?? false) &&
-      row['_pipeline'] != true &&
-      row['_cancelled'] != true &&
-      row['_stopped'] != true &&
-      ((row['content'] as String?) ?? '').trim().isNotEmpty;
-
-  /// Fusión de filas solo-traza con la respuesta que las sigue en el MISMO turno
-  /// (adyacentes, sin mensaje de usuario entre ellas):
-  ///  * en la fila solo-traza, `hidden` (no se pinta);
-  ///  * en la respuesta, `merged` con los pasos de todas (más antiguos primero).
-  /// El turno en vivo no se fusiona, ni se cruza un mensaje de usuario ni un
-  /// desenlace parado/cancelado.
-  ({bool hidden, Map<String, dynamic>? merged})? _traceMergeFor(
-    Map<String, dynamic> msg,
-  ) {
-    final projection = _currentRenderProjection;
-    final index = projection.messageIndexOf(msg);
-    if (index == null) return null;
-    if (_isTraceOnlyAssistantRow(msg)) {
-      final newerIndex = index - 1;
-      if (newerIndex < 0) return null;
-      final newer = _messages[newerIndex];
-      // Una fila solo-traza seguida de otra solo-traza se funde con la cadena
-      // completa: la oculta es cada una salvo que la cadena acabe en respuesta.
-      var probe = newerIndex;
-      var row = newer;
-      while (_isTraceOnlyAssistantRow(row) && probe > 0) {
-        probe -= 1;
-        row = _messages[probe];
-      }
-      final liveHead = _chat.isStreaming && probe == 0;
-      if (!liveHead && _isMergeTargetAnswer(row)) {
-        return (hidden: true, merged: null);
-      }
-      return null;
-    }
-    if (!_isMergeTargetAnswer(msg)) return null;
-    final older = <Map<String, dynamic>>[];
-    var probe = index + 1;
-    while (probe < _messages.length &&
-        _isTraceOnlyAssistantRow(_messages[probe])) {
-      older.add(_messages[probe]);
-      probe += 1;
-    }
-    if (older.isEmpty) return null;
+  /// Metadatos de la burbuja única de un turno (Desktop `ResponseMessages`):
+  /// traza, texto y medios de todas las filas del grupo, más antiguas primero.
+  /// [head] sustituye a la fila más nueva (p. ej. el frame vivo recortado).
+  Map<String, dynamic> _responseGroupMetadata(
+    Map<String, dynamic> msg, {
+    Map<String, dynamic>? head,
+  }) {
+    final older = _olderResponseGroupRows(msg, liveHead: head != null);
+    if (older.isEmpty) return head ?? msg;
+    final newest = head ?? msg;
     // La copia fusionada se reutiliza mientras las filas de origen no cambien:
     // su identidad alimenta la selección de texto y no debe variar por frame.
-    final cached = _traceMergeCache[msg];
+    final cached = _responseGroupCache[msg];
     if (cached != null &&
+        identical(cached.head, newest) &&
         cached.sources.length == older.length &&
-        [
-          for (var i = 0; i < older.length; i++)
-            identical(cached.sources[i], older[i]),
-        ].every((same) => same)) {
-      return (hidden: false, merged: cached.merged);
+        Iterable<int>.generate(
+          older.length,
+        ).every((i) => identical(cached.sources[i], older[i]))) {
+      return cached.merged;
     }
-    // `older` va del más nuevo al más antiguo: se invierte para el orden real.
-    final chain = [...older.reversed, msg];
-    final steps = <Map<String, dynamic>>[
-      for (final row in chain)
-        ...normalizeAssistantActivityTrace(row[assistantActivityTraceKey]),
-    ];
-    final reasoning = [
-      for (final row in chain)
-        if (row['reasoning'] is String &&
-            (row['reasoning'] as String).trim().isNotEmpty)
-          (row['reasoning'] as String).trim(),
-    ].join('\n\n');
-    var seconds = 0.0;
-    var hasSeconds = false;
-    for (final row in chain) {
-      final value = row['_activity_duration_seconds'];
-      if (value is num && value.isFinite && value > 0) {
-        seconds += value;
-        hasSeconds = true;
-      }
-    }
-    final merged = <String, dynamic>{
-      ...msg,
-      if (steps.isNotEmpty) assistantActivityTraceKey: steps,
-      if (reasoning.isNotEmpty) 'reasoning': reasoning,
-      if (hasSeconds) '_activity_duration_seconds': seconds,
-    };
-    if (_traceMergeCache.length > 64) _traceMergeCache.clear();
-    _traceMergeCache[msg] = (sources: older, merged: merged);
-    return (hidden: false, merged: merged);
+    final merged = mergeAssistantResponseGroup([...older, newest]);
+    if (_responseGroupCache.length > 64) _responseGroupCache.clear();
+    _responseGroupCache[msg] = (sources: older, head: newest, merged: merged);
+    return merged;
   }
 
   final Map<
     Map<String, dynamic>,
-    ({List<Map<String, dynamic>> sources, Map<String, dynamic> merged})
+    ({
+      List<Map<String, dynamic>> sources,
+      Map<String, dynamic> head,
+      Map<String, dynamic> merged,
+    })
   >
-  _traceMergeCache = Map.identity();
+  _responseGroupCache = Map.identity();
+
+  /// Texto visible de las filas anteriores del grupo, en orden.
+  static String _responseGroupTextPrefix(List<Map<String, dynamic>> older) => [
+    for (final row in older)
+      if (row['content'] is String &&
+          (row['content'] as String).trim().isNotEmpty)
+        row['content'] as String,
+  ].join('\n\n');
+
+  static String _joinResponseGroupText(String prefix, String content) =>
+      prefix.isEmpty
+      ? content
+      : content.trim().isEmpty
+      ? prefix
+      : '$prefix\n\n$content';
+
+  /// pt1215: durable tool outputs (diffs, terminal output) by tool id, built
+  /// lazily from the internal transcript and reused while it is unchanged.
+  Map<String, ToolOutputRecord> _durableToolOutputs = const {};
+  Object? _durableToolOutputsSource;
+
+  ToolOutputRecord? _toolOutputFor(String toolId) {
+    final live = _chat.toolOutputs[toolId];
+    if (live != null) return live;
+    // While a turn streams the transcript changes every flush; the live
+    // ledger covers the running turn and history keeps its last index.
+    if (!_chat.isStreaming) {
+      final source = _messages;
+      if (!identical(source, _durableToolOutputsSource)) {
+        _durableToolOutputsSource = source;
+        _durableToolOutputs = indexDurableToolOutputs(
+          _chat.contentHistoryTranscript,
+          toolResultsKey: assistantToolResultEvidenceKey,
+        );
+      }
+    }
+    return _durableToolOutputs[toolId];
+  }
+
+  /// While a sent message is being edited the composer and the queue strip
+  /// ignore touches and screen readers (the existing dim stays).
+  Widget _lockWhileEditing(Widget child, {bool unless = false}) {
+    final locked = _editingUserMessage && !unless;
+    return IgnorePointer(
+      ignoring: locked,
+      child: ExcludeSemantics(excluding: locked, child: child),
+    );
+  }
+
+  /// How many user turns come after [ordinal]: editing there removes them.
+  int _laterTurnsAfter(int? ordinal) {
+    if (ordinal == null) return 0;
+    final latest = _currentRenderProjection.latestUserMessage;
+    final latestOrdinal = latest == null
+        ? null
+        : _currentRenderProjection.userOrdinalFor(latest);
+    if (latestOrdinal == null || latestOrdinal <= ordinal) return 0;
+    return latestOrdinal - ordinal;
+  }
 
   bool _isLatestAssistant(Map<String, dynamic> target) {
     final indexes = _currentRenderProjection.assistantMessageIndexesNewestFirst;
@@ -7779,6 +11960,29 @@ class _ChatScreenState extends State<ChatScreen>
     });
   }
 
+  /// A failed save leaves the editor open with the rewritten text, ready to
+  /// retry or cancel, instead of closing it and losing what the user typed.
+  void _keepFailedEditOpen(String edited) {
+    if (_editingUserMessageTarget == null) {
+      _clearUserMessageEditingState();
+      _restoreFailedEditToComposer(edited);
+      return;
+    }
+    _editingUserMessageDraft = edited;
+    _editingRewriteSubmitted = false;
+  }
+
+  /// The editor already closed when the rewrite started, so a late rejection
+  /// has no editor to go back to: hand the text to an empty composer instead
+  /// of dropping it. A composer the user is already typing in is not touched.
+  void _restoreFailedEditToComposer(String edited) {
+    if (_textController.text.trim().isNotEmpty) return;
+    _textController.value = TextEditingValue(
+      text: edited,
+      selection: TextSelection.collapsed(offset: edited.length),
+    );
+  }
+
   void _cancelUserMessageEdit() {
     if (_editingRewriteSubmitted) return;
     FocusManager.instance.primaryFocus?.unfocus();
@@ -7793,6 +11997,20 @@ class _ChatScreenState extends State<ChatScreen>
     final rawContent = (message['content'] ?? '').toString();
     final parsed = _parseUserContent(rawContent);
     if (edited.isEmpty || edited == parsed.text.trim()) return;
+    // Saving while a reply streams interrupts that reply: ask first, and keep
+    // the editor open if the user backs out.
+    if (_chat.isStreaming) {
+      final str = Strings.of(context);
+      final confirmed = await showHermesConfirmDialog(
+        context: context,
+        title: str.tc1215EditStopsReplyTitle,
+        message: str.tc1215EditStopsReplyBody,
+        confirmLabel: str.tc1215EditStopsReplyConfirm,
+        cancelLabel: str.commonCancel,
+        destructive: true,
+      );
+      if (!confirmed || !mounted || _editingRewriteSubmitted) return;
+    }
     setState(() => _editingRewriteSubmitted = true);
 
     final nativeAttachments = parsed.attachments.isEmpty
@@ -7800,7 +12018,7 @@ class _ChatScreenState extends State<ChatScreen>
         : await _resolveAttachmentsForEdit(parsed.attachments);
     if (!mounted) return;
     if (nativeAttachments == null) {
-      setState(_clearUserMessageEditingState);
+      setState(() => _keepFailedEditOpen(edited));
       HermesNotice.of(context).showSnackBar(
         SnackBar(content: Text(Strings.of(context).chaEditFailed)),
         kind: HermesNoticeKind.error,
@@ -7859,7 +12077,9 @@ class _ChatScreenState extends State<ChatScreen>
     }
     if (!mounted) return;
     setState(() {
-      if (failed || _editingMessagesSnapshot == null) {
+      if (failed) {
+        _keepFailedEditOpen(edited);
+      } else if (_editingMessagesSnapshot == null) {
         _clearUserMessageEditingState();
       }
     });
@@ -7877,6 +12097,12 @@ class _ChatScreenState extends State<ChatScreen>
         entry.kind == QueuedEntryKind.desktopAccepted) {
       return;
     }
+    // The editor holds the row so the drain cannot send the old text while it
+    // is open. If the drain already took the row there is nothing to edit.
+    if (entry.sending || !_chat.holdQueuedTurn(entry.id)) {
+      _showQueueActionFailed(Strings.of(context).chaQueueEditFailed);
+      return;
+    }
     setState(() => _editingQueuedEntryId = entry.id);
     final edited = await showHermesFloatingSurface<String>(
       context: context,
@@ -7885,13 +12111,14 @@ class _ChatScreenState extends State<ChatScreen>
       maxHeightFactor: 1,
       builder: (_) => _EditQueuedEntrySheet(initialText: entry.text),
     );
-    if (!mounted) return;
     var saved = true;
-    if (edited != null &&
+    if (mounted &&
+        edited != null &&
         edited.trim().isNotEmpty &&
         edited.trim() != entry.text) {
       saved = await _chat.editQueuedTurn(entry.id, edited);
     }
+    _chat.releaseQueuedTurn(entry.id);
     if (!mounted) return;
     setState(() => _editingQueuedEntryId = null);
     if (!saved) {
@@ -7900,6 +12127,47 @@ class _ChatScreenState extends State<ChatScreen>
         kind: HermesNoticeKind.error,
       );
     }
+  }
+
+  Future<void> _sendQueuedEntryNow(QueuedEntryView entry) async {
+    final strings = Strings.of(context);
+    // Sending now while a reply streams stops that reply: say so first.
+    if (_chat.isStreaming) {
+      final confirmed = await showHermesConfirmDialog(
+        context: context,
+        title: strings.tc1215QueueStopAndSendTitle,
+        message: strings.tc1215QueueStopAndSendBody,
+        confirmLabel: strings.tc1215EditStopsReplyConfirm,
+        cancelLabel: strings.commonCancel,
+        destructive: true,
+      );
+      if (!confirmed || !mounted) return;
+    }
+    if (await _chat.sendQueuedNow(entry.id) || !mounted) return;
+    _showQueueActionFailed(
+      entry.missingAttachment
+          ? strings.q1215QueueMissingAttachment
+          : strings.chaQueueSendNowFailed,
+    );
+  }
+
+  Future<void> _moveQueuedEntry(String id, {required bool up}) async {
+    if (await _chat.moveQueuedTurn(id, up: up) || !mounted) return;
+    _showQueueActionFailed(Strings.of(context).tc1215QueueMoveFailed);
+  }
+
+  Future<void> _deleteQueuedEntry(String id) async {
+    if (await _chat.cancelQueuedByIdentity(id) || !mounted) return;
+    _showQueueActionFailed(Strings.of(context).chaQueueDeleteFailed);
+  }
+
+  void _showQueueActionFailed(String message) {
+    HermesNotice.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(content: Text(message)),
+        kind: HermesNoticeKind.error,
+      );
   }
 
   Future<void> _steerQueuedEntry(String id) async {
@@ -7926,7 +12194,8 @@ class _ChatScreenState extends State<ChatScreen>
     if (userOrdinal == null) return;
     final prompt = (user['content'] ?? '').toString().trim();
     if (prompt.isEmpty) return;
-    final confirmed = await showDialog<bool>(
+    releaseTextFocusIfKeyboardHidden(context);
+    final confirmed = await showHermesDialogRoute<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: Text(Strings.of(dialogContext).chaRegenerate),
@@ -7980,10 +12249,10 @@ class _ChatScreenState extends State<ChatScreen>
       ).showSnackBar(SnackBar(content: Text(str.setUpdateAlreadyRunning)));
       return;
     }
-    final confirm = await showDialog<bool>(
+    releaseTextFocusIfKeyboardHidden(context);
+    final confirm = await showHermesDialogRoute<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: colors.surface,
         content: Text(
           str.chaRestartGatewayConfirm,
           style: TextStyle(fontSize: 13, color: colors.textSecondary),
@@ -8039,8 +12308,9 @@ class _ChatScreenState extends State<ChatScreen>
       context,
       PageRouteBuilder<void>(
         transitionDuration: const Duration(milliseconds: 250),
-        pageBuilder: (context, animation, _) =>
-            ChatScreen(connection: widget.connection, session: session),
+        pageBuilder: (context, animation, _) => CoveredRouteMediaQueryFreeze(
+          child: ChatScreen(connection: widget.connection, session: session),
+        ),
         transitionsBuilder: (context, animation, _, child) {
           final curved = CurvedAnimation(
             parent: animation,
@@ -8103,7 +12373,11 @@ class _ChatScreenState extends State<ChatScreen>
   /// Ejecuta un comando slash conocido sin decidir el foco globalmente. Las
   /// rutas y superficies modales gestionan su propio foco; los errores conservan
   /// la invocación y las acciones aceptadas consumen el composer.
-  Future<void> _executeSlash(SlashCommand cmd, String arg) async {
+  Future<void> _executeSlash(
+    SlashCommand cmd,
+    String arg, {
+    bool fromComposerSubmission = false,
+  }) async {
     if (cmd.action == SlashAction.remote) {
       await _executeRemoteSlash(cmd, arg);
       return;
@@ -8127,8 +12401,25 @@ class _ChatScreenState extends State<ChatScreen>
     }
     if (cmd.action == SlashAction.compress) {
       final invocation = _textController.text;
-      final consumed = await _compressDesktopSession(arg);
+      final consumed = await _compressDesktopSession(
+        arg,
+        fromComposerSubmission: fromComposerSubmission,
+      );
       if (!mounted || !consumed) return;
+      _consumeSlashInvocation(invocation);
+      return;
+    }
+    if (cmd.action == SlashAction.btw || cmd.action == SlashAction.background) {
+      final invocation = _textController.text;
+      final consumed = await _runSideSlash(cmd, arg);
+      if (!mounted || !consumed) return;
+      _consumeSlashInvocation(invocation);
+      return;
+    }
+    if (cmd.action == SlashAction.branch) {
+      final invocation = _textController.text;
+      final opened = await _branchChat();
+      if (!mounted || !opened) return;
       _consumeSlashInvocation(invocation);
       return;
     }
@@ -8148,7 +12439,16 @@ class _ChatScreenState extends State<ChatScreen>
           await _setModelByName(arg.trim());
         }
       case SlashAction.skills:
-        _pushScreen(SkillsScreen(connection: widget.connection));
+        final connManager = context
+            .findAncestorStateOfType<HermesAppState>()!
+            .connManager;
+        _pushScreen(
+          buildCapabilitiesHub(
+            connection: widget.connection,
+            connManager: connManager,
+            capabilities: connManager.loadCapabilities(widget.connection.id),
+          ),
+        );
       case SlashAction.memory:
         _pushScreen(MemoryScreen(connection: widget.connection));
       case SlashAction.soul:
@@ -8159,12 +12459,118 @@ class _ChatScreenState extends State<ChatScreen>
         _pushScreen(ActivityScreen(connection: widget.connection));
       case SlashAction.kanban:
         _pushScreen(TasksScreen(connection: widget.connection));
+      case SlashAction.find:
+        _openFind(initialQuery: arg);
       case SlashAction.unavailable:
         return;
+      case SlashAction.btw:
+      case SlashAction.background:
+      case SlashAction.branch:
       case SlashAction.remote:
-        // Se maneja antes de limpiar el compositor para conservarlo si falla.
+        // Se manejan antes de limpiar el compositor para conservarlo si fallan.
         return;
     }
+  }
+
+  /// `/btw` and `/bg`: one direct request, allowed while a reply streams and
+  /// never queued. Returns whether the composer text was consumed; the generic
+  /// slash path takes over (and clears it itself) when the server lacks the
+  /// method.
+  Future<bool> _runSideSlash(SlashCommand cmd, String arg) async {
+    final str = Strings.of(context);
+    final isBtw = cmd.action == SlashAction.btw;
+    if (arg.trim().isEmpty) {
+      HermesNotice.of(context).showSnackBar(
+        SnackBar(content: Text(isBtw ? str.tc1215BtwUsage : str.tc1215BgUsage)),
+        kind: HermesNoticeKind.warning,
+      );
+      return false;
+    }
+    final outcome = isBtw
+        ? await _chat.askSideQuestion(arg)
+        : await _chat.startBackgroundPrompt(arg);
+    if (!mounted) return false;
+    switch (outcome) {
+      case SideCommandOutcome.started:
+        HermesNotice.of(context).showSnackBar(
+          SnackBar(
+            content: Text(isBtw ? str.tc1215BtwStarted : str.tc1215BgStarted),
+          ),
+          kind: HermesNoticeKind.success,
+        );
+        return true;
+      case SideCommandOutcome.unsupported:
+        await _executeRemoteSlash(
+          SlashCommand.remote(name: cmd.name, description: ''),
+          arg,
+        );
+        return false;
+      case SideCommandOutcome.readOnly:
+        showReadOnlyNotice(context);
+        return false;
+      case SideCommandOutcome.usage:
+      case SideCommandOutcome.failed:
+        HermesNotice.of(context).showSnackBar(
+          SnackBar(content: Text(str.tc1215SideFailed)),
+          kind: HermesNoticeKind.error,
+        );
+        return false;
+    }
+  }
+
+  /// Branches the live chat (up to [fromMessage], or the whole chat) and opens
+  /// the child on top of this one; the parent stays open and untouched.
+  /// Returns whether the child opened.
+  Future<bool> _branchChat({Map<String, dynamic>? fromMessage}) async {
+    final outcome = await _chat.branchChat(fromMessage: fromMessage);
+    if (!mounted) return false;
+    final str = Strings.of(context);
+    if (outcome.opened) {
+      final childId = outcome.storedSessionId;
+      if (childId == null || childId.isEmpty) return false;
+      final child = Session(
+        id: childId,
+        title: outcome.title ?? '',
+        model: '',
+        source: 'mobile',
+        messageCount: outcome.messageCount,
+        isActive: true,
+        preview: '',
+        startedAt: DateTime.now().millisecondsSinceEpoch / 1000,
+        parentSessionId: _chat.sessionId,
+        profile: _effectiveSessionProfile,
+      );
+      unawaited(
+        Navigator.of(context).push<void>(
+          MaterialPageRoute<void>(
+            builder: (_) =>
+                ChatScreen(connection: widget.connection, session: child),
+          ),
+        ),
+      );
+      return true;
+    }
+    final message = switch (outcome.status) {
+      BranchStatus.busy => str.tc1215BranchStopFirst,
+      BranchStatus.noRuntime => str.tc1215BranchNoRuntime,
+      BranchStatus.nothingToBranch => str.tc1215BranchNothing,
+      BranchStatus.targetNotFound => str.tc1215BranchTargetMissing,
+      BranchStatus.readOnly => str.readOnlyNotice,
+      BranchStatus.unsupported || BranchStatus.failed => str.tc1215BranchFailed,
+      // A second tap while one branch is pending does nothing.
+      BranchStatus.inFlight || BranchStatus.opened => null,
+    };
+    if (message != null) {
+      HermesNotice.of(context).showSnackBar(
+        SnackBar(content: Text(message)),
+        kind:
+            outcome.status == BranchStatus.busy ||
+                outcome.status == BranchStatus.nothingToBranch
+            ? HermesNoticeKind.warning
+            : HermesNoticeKind.error,
+      );
+    }
+    return false;
   }
 
   Future<void> _executeRemoteSlash(SlashCommand cmd, String arg) async {
@@ -8236,7 +12642,10 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
-  Future<bool> _compressDesktopSession(String focusTopic) async {
+  Future<bool> _compressDesktopSession(
+    String focusTopic, {
+    bool fromComposerSubmission = false,
+  }) async {
     if (_compressingSession) {
       _restoreComposerFocusAfterCompression();
       HermesNotice.of(context).showSnackBar(
@@ -8261,9 +12670,16 @@ class _ChatScreenState extends State<ChatScreen>
     _compressionInvocation = invocation;
     setState(() {
       _compressionCommandInFlight = true;
-      _compressionDraftFocusRetained = false;
       _slashSuggestions = const [];
       _textController.clear();
+      // From here `_compressingSession` fences the composer: what the user
+      // types next is queued behind the compression, so the submit slot that
+      // carried this `/compress` is released now instead of minutes later.
+      // Only that slot: a palette pick never owns someone else's send.
+      if (fromComposerSubmission) {
+        _composerSubmissionInFlight = false;
+        _composerSubmissionClaim++;
+      }
     });
     _syncCompaction();
     try {
@@ -8305,11 +12721,9 @@ class _ChatScreenState extends State<ChatScreen>
       final succeeded = _compressionSucceeded(result);
       _finishCompactionBar(result);
       if (!succeeded) {
-        // Dos preguntas distintas, no una: si el composer se desbloquea
-        // (`retainWhileFenced`, sin cambios: solo la ruta legacy —
-        // `compressionStatus` null — se desbloquea; un `pending` nativo
-        // fiable se queda bloqueado, igual que antes de esta noche) y si el
-        // texto se restaura. Para esto último, `compressionStatus` es la
+        // El composer ya es editable durante la compactación (lo escrito va a
+        // la cola); la única pregunta es si el texto se restaura. Para eso,
+        // `compressionStatus` es la
         // señal fiable en la ruta nativa (`pending` es lo único genuinamente
         // incierto; aborted/lock_held son un rechazo real). La ruta legacy
         // nunca la toca — ahí `accepted` es la señal: unknown == genuinamente
@@ -8319,9 +12733,7 @@ class _ChatScreenState extends State<ChatScreen>
         final fenced = result.compressionStatus != null
             ? result.compressionStatus == DesktopCompressionStatus.pending
             : result.accepted != DesktopCommandAcceptance.rejected;
-        _restoreComposerFocusAfterCompression(
-          retainWhileFenced: result.compressionStatus == null,
-        );
+        _restoreComposerFocusAfterCompression();
         if (!fenced) _restoreSlashInvocation(invocation);
       }
       return succeeded;
@@ -8357,8 +12769,7 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
-  void _restoreComposerFocusAfterCompression({bool retainWhileFenced = true}) {
-    _compressionDraftFocusRetained = retainWhileFenced;
+  void _restoreComposerFocusAfterCompression() {
     _textFocusNode.canRequestFocus = true;
     _textFocusNode.requestFocus();
     FocusManager.instance.applyFocusChangesIfNeeded();
@@ -8408,9 +12819,10 @@ class _ChatScreenState extends State<ChatScreen>
   Future<bool> _setModelByName(String arg) async {
     final q = arg.toLowerCase();
     try {
-      if (!_chat.hasDesktopRuntime &&
-          !await _chat.ensureDesktopRuntime(acquireForExplicitAction: true)) {
-        return false;
+      // Without a live runtime the lookup falls back to the other catalogs and
+      // _applyModelDirect stages or refuses exactly like the model sheet does.
+      if (!_chat.hasDesktopRuntime) {
+        await _chat.ensureDesktopRuntime(acquireForExplicitAction: true);
       }
       final (_, providers) = await _loadModelOptions();
       final matches = <(ModelProvider, String)>[];
@@ -8485,13 +12897,10 @@ class _ChatScreenState extends State<ChatScreen>
         return false;
       }
       await _stageSessionModel(provider.slug, modelId);
-      if (mounted) {
-        HermesNotice.of(context).showSnackBar(
-          SnackBar(
-            content: Text(str.chaModelActive(friendlyModelName(modelId))),
-          ),
-        );
-      }
+      await _applySelectedModelPreset(provider.slug, modelId);
+      // pm1215 (owner): no toast over the header; the bottom pill already
+      // names the model, its chip just glows once.
+      _pulseModelChip();
       return true;
     }
 
@@ -8535,12 +12944,13 @@ class _ChatScreenState extends State<ChatScreen>
             return false;
           }
           final navigator = Navigator.of(targetContext, rootNavigator: true);
-          final route = DialogRoute<bool>(
+          final route = hermesDialogRoute<bool>(
             context: targetContext,
             builder: (dctx) => AlertDialog(
-              backgroundColor: Theme.of(dctx).hermes.surface,
               title: Text(str.chaModelChangeTitle),
-              content: Text(confirmation.confirmMessage ?? ''),
+              content: Text(
+                confirmation.confirmMessage ?? str.chaModelChangeConfirmBody,
+              ),
               actions: [
                 TextButton(
                   onPressed: () => Navigator.pop(dctx, false),
@@ -8601,22 +13011,36 @@ class _ChatScreenState extends State<ChatScreen>
       return false;
     }
 
+    final deferred = result.deferred;
+    if (mounted) setState(() => _deferredModelId = deferred ? modelId : null);
     await _rememberSessionModel(
       provider.slug,
       modelId,
       updateEffectiveDisplay: false,
     );
-    if (mounted) {
+    await _applySelectedModelPreset(provider.slug, modelId);
+    // pm1215 (owner): no «model active» toast; the pill names the model and
+    // its chip glows once. A deferred change still says so (in the bottom
+    // lane): the clock mark alone does not tell that the old model answers
+    // the next turn.
+    if (deferred && mounted) {
       HermesNotice.of(context).showSnackBar(
-        SnackBar(content: Text(str.chaModelActive(friendlyModelName(modelId)))),
+        SnackBar(
+          content: Text(str.md1215ModelNextMessage(friendlyModelName(modelId))),
+        ),
       );
     }
+    _pulseModelChip();
     return true;
   }
 
-  Future<void> _applySessionReasoning(DesktopReasoningEffort effort) async {
+  Future<void> _applySessionReasoning(
+    DesktopReasoningEffort effort, {
+    bool acquireRuntime = true,
+    bool rememberPreset = true,
+  }) async {
     final str = Strings.of(context);
-    if (!_chat.hasDesktopRuntime) {
+    if (!_chat.hasDesktopRuntime && acquireRuntime) {
       try {
         await _chat.ensureDesktopRuntime(acquireForExplicitAction: true);
       } catch (error) {
@@ -8638,6 +13062,9 @@ class _ChatScreenState extends State<ChatScreen>
       if (!mounted) return;
       setState(() => _selectedReasoning = effort);
       _chat.stageFirstSubmitConfig(_firstSubmitConfig);
+      if (rememberPreset) {
+        await _rememberCurrentModelPreset(effort: effort);
+      }
       return;
     }
     if (!_chat.canConfigureDesktopSession) {
@@ -8671,11 +13098,18 @@ class _ChatScreenState extends State<ChatScreen>
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_sessionReasoningKey, effort.wire);
     if (mounted) setState(() => _selectedReasoning = effort);
+    if (rememberPreset) {
+      await _rememberCurrentModelPreset(effort: effort);
+    }
   }
 
-  Future<void> _applySessionFastMode(DesktopFastMode mode) async {
+  Future<void> _applySessionFastMode(
+    DesktopFastMode mode, {
+    bool acquireRuntime = true,
+    bool rememberPreset = true,
+  }) async {
     final str = Strings.of(context);
-    if (!_chat.hasDesktopRuntime) {
+    if (!_chat.hasDesktopRuntime && acquireRuntime) {
       try {
         await _chat.ensureDesktopRuntime(acquireForExplicitAction: true);
       } catch (error) {
@@ -8697,6 +13131,9 @@ class _ChatScreenState extends State<ChatScreen>
       if (!mounted) return;
       setState(() => _selectedFastMode = mode);
       _chat.stageFirstSubmitConfig(_firstSubmitConfig);
+      if (rememberPreset) {
+        await _rememberCurrentModelPreset(fast: mode);
+      }
       return;
     }
     if (!_chat.canConfigureDesktopSession) {
@@ -8730,6 +13167,9 @@ class _ChatScreenState extends State<ChatScreen>
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_sessionFastKey, mode.wire);
     if (mounted) setState(() => _selectedFastMode = mode);
+    if (rememberPreset) {
+      await _rememberCurrentModelPreset(fast: mode);
+    }
   }
 
   /// Aplica un modelo activo directamente (desde `/model <nombre>`), con la misma
@@ -8761,7 +13201,11 @@ class _ChatScreenState extends State<ChatScreen>
             style: TextStyle(color: colors.textSecondary, fontSize: 12.5),
           ),
           const SizedBox(height: 12),
-          for (final c in slashCommands(Strings.of(context)))
+          for (final c in slashCommands(
+            Strings.of(context),
+            sideAgents: _chat.canRunSideAgents,
+            branch: _chat.canBranchChat,
+          ))
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 6),
               child: Row(
@@ -8782,7 +13226,7 @@ class _ChatScreenState extends State<ChatScreen>
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
-                      c.description,
+                      plainPreview(c.description),
                       style: TextStyle(
                         color: colors.textSecondary,
                         fontSize: 13,
@@ -8837,17 +13281,36 @@ class _ChatScreenState extends State<ChatScreen>
         state != DesktopGatewayCapabilityState.invalid;
   }
 
-  Future<void> _showChatControlSheet() async {
+  /// The notch sheet is showing (tints the notch).
+  bool _notchSheetOpen = false;
+  final GlobalKey _notchKey = GlobalKey(debugLabel: 'chat-notch');
+
+  /// "Ajustes de esta conversación" + "Ir a", opened from the notch above the
+  /// composer. Every action of the former header ⋮ lives here, grouped.
+  Future<void> _showChatControlSheet({bool goTo = false}) async {
+    if (_notchSheetOpen) return;
     final strings = Strings.of(context);
-    final policy = context
-        .findAncestorStateOfType<HermesAppState>()
-        ?.approvalPolicy;
+    final app = context.findAncestorStateOfType<HermesAppState>();
+    final policy = app?.approvalPolicy;
     final sessionReadOnly =
         widget.connection.readOnly ||
         policy?.effectiveMode(widget.session.id) == ApprovalMode.readOnly;
+    final memoryReadable =
+        app == null ||
+        !app.connManager.loadCapabilities(widget.connection.id).memoryRead.isNo;
 
-    final action = await showHermesFloatingSurface<_ChatControlAction>(
+    setState(() => _notchSheetOpen = true);
+    // pm1215: the sheet grows out of the composer's grabber and shrinks
+    // back into it (read live: the composer may move with the keyboard).
+    Rect? grabber() {
+      final notch = pillMorphRectOf(_notchKey);
+      return notch == null ? null : chatNotchGrabberRect(notch);
+    }
+
+    ChatNotchDestination? destination;
+    final action = await showChatNotchSheet<_ChatControlAction>(
       context: context,
+      liveOrigin: grabber,
       surfaceKey: const ValueKey('chat-control-dialog'),
       maxWidth: 480,
       builder: (dialogContext) {
@@ -8864,25 +13327,47 @@ class _ChatScreenState extends State<ChatScreen>
             permissions: strings.chaPermissionsTitle,
             refresh: strings.chaUpdateTitle,
             artifacts: strings.chaArtifactsAction,
+            content: strings.sa1215ContentAction,
+            prompts: strings.pj1215PromptsAction,
+            showPinnedPrompt: strings.q90PinnedPromptShow,
+            branch: strings.tc1215BranchChat,
             details: strings.chaSessionDetailsAction,
             cron: strings.crnOpenFromConversation,
             recovery: strings.chaControlRecovery,
             extensions: strings.drawerExtensions,
+            skills: strings.drawerSkills,
+            memory: strings.drawerMemory,
             delete: strings.sesDelete,
             readOnly: strings.statusReadOnly,
-            releaseDesktop: strings.chaControlReleaseDesktop,
-            releaseUnavailable: strings.chaRuntimeReleaseUnavailable,
+            findInChat: strings.chatNotchFindInChat,
+            model: strings.chaModelSheetTitle,
+            previousChat: strings.chatNotchPreviousChat,
+            nextChat: strings.chatNotchNextChat,
+            searchChats: strings.chatNotchSearchChats,
+            goTo: strings.chatNotchGoTo,
+            chats: strings.chatNotchChats,
+            home: strings.drawerHome,
+            projects: strings.drawerProjects,
+            settings: strings.drawerSettings,
           ),
-          conversationTitle: widget.session.displayTitle,
+          conversationTitle: localizedSessionTitle(strings, widget.session),
+          initialGoTo: goTo,
           readOnly: sessionReadOnly,
-          showReleaseDesktop: _chat.showReleaseToDesktopControl,
-          releaseDesktopEnabled: _chat.canReleaseToDesktop,
-          releaseInFlight: _chat.runtimeReleaseInFlight,
           showDetails: _devDiagnostics,
           showCron: widget.session.isJob,
           onPermissions: () => select(_ChatControlAction.permissions),
           onRefresh: () => select(_ChatControlAction.refresh),
           onArtifacts: () => select(_ChatControlAction.artifacts),
+          onContent: () => select(_ChatControlAction.content),
+          onPrompts: () => select(_ChatControlAction.prompts),
+          onShowPinnedPrompt:
+              PinnedPromptPrefs.shared.enabled &&
+                  PinnedPromptPrefs.shared.isHiddenFor(_pinnedPromptChatKey)
+              ? () => select(_ChatControlAction.showPinnedPrompt)
+              : null,
+          onBranch: _chat.canBranchChat
+              ? () => select(_ChatControlAction.branch)
+              : null,
           onDetails: () => select(_ChatControlAction.details),
           onCron: () => select(_ChatControlAction.cron),
           onRecovery:
@@ -8897,17 +13382,55 @@ class _ChatScreenState extends State<ChatScreen>
               )
               ? null
               : () => select(_ChatControlAction.extensions),
-          onReleaseDesktop: () => select(_ChatControlAction.releaseDesktop),
+          onFindInChat: () => select(_ChatControlAction.find),
+          // Bot Chat has no status pill under the composer: its model lives
+          // here. The general chat keeps it in the status pill.
+          onModel: _isBotChatSurface
+              ? () => select(_ChatControlAction.model)
+              : null,
+          onPreviousChat: () => select(_ChatControlAction.previousChat),
+          onNextChat: () => select(_ChatControlAction.nextChat),
+          onSkills: () => select(_ChatControlAction.skills),
+          onMemory: memoryReadable
+              ? () => select(_ChatControlAction.memory)
+              : null,
+          onNavigate: (target) {
+            destination = target;
+            Navigator.of(dialogContext).pop();
+          },
           onDelete: () => select(_ChatControlAction.delete),
         );
       },
     );
-    if (!mounted || action == null) return;
+    if (!mounted) return;
+    setState(() => _notchSheetOpen = false);
+    final target = destination;
+    if (target != null) {
+      _goToFromNotch(target);
+      return;
+    }
+    if (action == null) return;
     switch (action) {
+      case _ChatControlAction.find:
+        _openFind();
+      case _ChatControlAction.model:
+        _showModelSheet();
+      case _ChatControlAction.previousChat:
+        unawaited(_moveToRecentChat(-1));
+      case _ChatControlAction.nextChat:
+        unawaited(_moveToRecentChat(1));
       case _ChatControlAction.permissions:
         if (policy != null) _showModeSheet(policy);
       case _ChatControlAction.refresh:
         unawaited(_fetchMessages());
+      case _ChatControlAction.prompts:
+        unawaited(_showPromptSheet());
+      case _ChatControlAction.showPinnedPrompt:
+        unawaited(PinnedPromptPrefs.shared.showFor(_pinnedPromptChatKey));
+      case _ChatControlAction.content:
+        unawaited(_openChatContent());
+      case _ChatControlAction.branch:
+        unawaited(_branchChat());
       case _ChatControlAction.artifacts:
         unawaited(_showSessionArtifacts());
       case _ChatControlAction.details:
@@ -8918,46 +13441,264 @@ class _ChatScreenState extends State<ChatScreen>
         unawaited(_openRecoveryCenter());
       case _ChatControlAction.extensions:
         unawaited(_openExtensionsCenter());
-      case _ChatControlAction.releaseDesktop:
-        unawaited(_releaseRuntimeForDesktop());
+      case _ChatControlAction.skills:
+        _openSkillsHub();
+      case _ChatControlAction.memory:
+        _pushScreen(MemoryScreen(connection: widget.connection));
       case _ChatControlAction.delete:
         unawaited(_deleteCurrentChat());
     }
   }
 
-  Future<void> _releaseRuntimeForDesktop() async {
-    final strings = Strings.of(context);
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        key: const ValueKey('chat-runtime-release-confirm-dialog'),
-        title: Text(strings.chaRuntimeReleaseConfirmTitle),
-        content: Text(strings.chaRuntimeReleaseConfirmBody),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: Text(strings.sesCancel),
-          ),
-          FilledButton(
-            key: const ValueKey('chat-runtime-release-confirm'),
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: Text(strings.chaRuntimeReleaseConfirm),
-          ),
-        ],
+  /// Same hub `/skills` opens: Skills had lost its button in the chat.
+  void _openSkillsHub() {
+    final connManager = context
+        .findAncestorStateOfType<HermesAppState>()!
+        .connManager;
+    _pushScreen(
+      buildCapabilitiesHub(
+        connection: widget.connection,
+        connManager: connManager,
+        capabilities: connManager.loadCapabilities(widget.connection.id),
       ),
     );
-    if (confirm != true || !mounted) return;
-    final released = await _chat.releaseRuntimeForDesktop();
-    if (!mounted) return;
-    HermesNotice.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          released
-              ? strings.chaRuntimeReleased
-              : strings.chaRuntimeReleaseFailed,
+  }
+
+  /// Switches only within this connection/profile's recent-first session
+  /// list. The dock owns the gesture and has no toast: the new chat route is
+  /// the brief slide feedback after its light haptic.
+  Future<void> _moveToRecentChat(int direction) async {
+    if (direction == 0) return;
+    final client = ApiClient(
+      baseUrl: widget.connection.gatewayUrl,
+      apiKey: widget.connection.apiKey,
+    );
+    try {
+      final profile = Session.profileOwner(widget.session.profile);
+      final sessions = await client.getSessions(profile: profile);
+      if (!mounted || sessions.length < 2) return;
+      final index = sessions.indexWhere(
+        (session) => session.id == widget.session.id,
+      );
+      if (index < 0) return;
+      final target =
+          sessions[(index + direction).clamp(0, sessions.length - 1)];
+      if (target.id == widget.session.id) return;
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute<void>(
+          builder: (_) =>
+              ChatScreen(connection: widget.connection, session: target),
+        ),
+      );
+    } catch (_) {
+      // A gesture dock stays quiet if the recent-list read is unavailable.
+    } finally {
+      client.close();
+    }
+  }
+
+  /// "Ir a": top-level hops, like the dock. The stack goes back to its root
+  /// first, so jumping never piles sections on top of the chat.
+  void _goToFromNotch(ChatNotchDestination destination) {
+    final app = context.findAncestorStateOfType<HermesAppState>();
+    final navigator = Navigator.of(context);
+    navigator.popUntil((route) => route.isFirst);
+    if (destination == ChatNotchDestination.home || app == null) return;
+    final connection = widget.connection;
+    final connManager = app.connManager;
+    final Widget screen = switch (destination) {
+      ChatNotchDestination.chats => SessionListScreen(
+        connection: connection,
+        connManager: connManager,
+      ),
+      ChatNotchDestination.searchChats => SessionListScreen(
+        connection: connection,
+        connManager: connManager,
+        autofocusSearch: true,
+      ),
+      ChatNotchDestination.projects => OwnedResourceHost<TuiGatewayClient>(
+        create: () => TuiGatewayClient(connection),
+        release: (gateway) => gateway.close(),
+        builder: (_, gateway) => ProjectsCenterScreen(
+          connection: connection,
+          connectionManager: connManager,
+          gateway: gateway,
         ),
       ),
+      ChatNotchDestination.settings => SettingsScreen(
+        connection: connection,
+        connManager: connManager,
+      ),
+      ChatNotchDestination.home => const SizedBox.shrink(),
+    };
+    navigator.push(MaterialPageRoute<void>(builder: (_) => screen));
+  }
+
+  /// Epoch of the open prompt list: a read that answers after the sheet was
+  /// closed (or the screen left) is dropped.
+  int _promptSheetEpoch = 0;
+
+  /// Rows the "Prompts" backfill may load to reach an unloaded prompt, the
+  /// same bound as the new-since-you-left lookback.
+  static const int _promptBackfillRows = 500;
+
+  /// Pages of the Dashboard index one open of the list may read.
+  static const int _promptIndexMaxPages = 3;
+
+  /// Lists the chat's prompts and reveals the chosen one. The loaded ones are
+  /// derived once per open; when older history exists, the Dashboard prompt
+  /// index adds the unloaded ones (one read on open, more only on request).
+  Future<void> _showPromptSheet() async {
+    final strings = Strings.of(context);
+    final epoch = ++_promptSheetEpoch;
+    final entries = deriveChatPromptEntries(
+      _messages,
+      isSystemRow: _isSystemChipRow,
     );
+    final tops = <double?>[
+      for (final entry in entries)
+        _ChatStreamingViewportLock._visualOffsetInViewport(
+          _messageAnchors[entry.message],
+        ),
+    ];
+    final active = activeChatPromptIndex(tops);
+    final oldestLoaded = _messages.isEmpty
+        ? null
+        : chatPromptRowId(_messages.last);
+    final remote = <({int rowId, String preview})>[];
+    var items = mergeChatPromptItems(
+      entries,
+      remote,
+      oldestLoadedRowId: oldestLoaded,
+    );
+    var hasMore = false;
+    var loading = _chat.hasEarlierMessages;
+    var pages = 0;
+    int? cursor;
+    bool open() => mounted && epoch == _promptSheetEpoch;
+
+    ChatPromptSheetModel snapshot() => ChatPromptSheetModel(
+      previews: [for (final item in items) item.preview],
+      activeIndex: active,
+      hasMore: hasMore,
+      loading: loading,
+    );
+
+    final model = ValueNotifier<ChatPromptSheetModel>(snapshot());
+
+    // One client for the whole sheet, closed with it; one read at a time.
+    DashboardClient? indexClient;
+    var reading = false;
+
+    Future<void> readIndexPage() async {
+      if (reading) return;
+      reading = true;
+      loading = true;
+      model.value = snapshot();
+      try {
+        final client = indexClient ??=
+            widget.promptTimelineClientFactory?.call(widget.connection) ??
+            DashboardClient.lazy(widget.connection);
+        final page = await client.getSessionTimelinePage(
+          _chat.storedSessionId ?? widget.session.id,
+          profile: ProfileReadTicket.fixed(widget.session.profile ?? '').name,
+          afterRowId: cursor,
+        );
+        if (!open()) return;
+        if (page == null) {
+          hasMore = false;
+        } else {
+          remote.addAll([
+            for (final entry in page.entries)
+              (rowId: entry.rowId, preview: entry.preview),
+          ]);
+          pages += 1;
+          cursor = page.nextCursor;
+          hasMore = page.hasMore && pages < _promptIndexMaxPages;
+        }
+      } on Object {
+        // An optional read: the loaded prompts stay usable.
+        if (!open()) return;
+        hasMore = false;
+      }
+      reading = false;
+      loading = false;
+      items = mergeChatPromptItems(
+        entries,
+        remote,
+        oldestLoadedRowId: oldestLoaded,
+      );
+      model.value = snapshot();
+    }
+
+    if (loading) unawaited(readIndexPage());
+    final picked = await showHermesFloatingSurface<int>(
+      context: context,
+      surfaceKey: const ValueKey('chat-prompt-dialog'),
+      maxWidth: 480,
+      builder: (dialogContext) => ChatPromptSheet(
+        title: strings.pj1215PromptsAction,
+        emptyLabel: strings.pj1215PromptsEmpty,
+        moreLabel: strings.chaLoadEarlierMessages,
+        model: model,
+        onSelect: (index) => Navigator.of(dialogContext).pop(index),
+        onMore: () {
+          if (!loading) unawaited(readIndexPage());
+        },
+      ),
+    );
+    if (epoch == _promptSheetEpoch) _promptSheetEpoch++;
+    indexClient?.close();
+    if (!mounted || picked == null || picked >= items.length) return;
+    final item = items[picked];
+    var target = item.message;
+    if (target == null) {
+      final rowId = item.rowId;
+      target = rowId == null ? null : await _loadPromptByRowId(rowId);
+      if (!mounted) return;
+      if (target == null) {
+        HermesNotice.of(context).showSnackBar(
+          SnackBar(content: Text(Strings.of(context).sa1215LoadOlderFailed)),
+          kind: HermesNoticeKind.warning,
+        );
+        return;
+      }
+    }
+    final live = chatRefreshFindAnchorMessage(target, _messages) ?? target;
+    _freezeStreamingFollow();
+    final revealed = await _revealTranscriptMessage(live);
+    if (revealed == false && mounted) {
+      HermesNotice.of(context).showSnackBar(
+        SnackBar(content: Text(Strings.of(context).artifactSourceUnavailable)),
+        kind: HermesNoticeKind.warning,
+      );
+    }
+  }
+
+  /// Loads earlier pages, contiguously and within [_promptBackfillRows], until
+  /// the row with the durable [rowId] is part of the transcript. Null when it
+  /// was not reached: the reader stays where they were.
+  Future<Map<String, dynamic>?> _loadPromptByRowId(int rowId) async {
+    Map<String, dynamic>? find() {
+      for (final message in _messages) {
+        if (chatPromptRowId(message) == rowId) return message;
+      }
+      return null;
+    }
+
+    final startLength = _messages.length;
+    while (mounted) {
+      final found = find();
+      if (found != null) return found;
+      if (!_chat.hasEarlierMessages ||
+          _messages.length - startLength >= _promptBackfillRows) {
+        return null;
+      }
+      final before = _messages.length;
+      await _loadEarlierMessages();
+      if (_messages.length <= before) return find();
+    }
+    return null;
   }
 
   void _showSessionDetails() {
@@ -8997,6 +13738,80 @@ class _ChatScreenState extends State<ChatScreen>
           ),
         ),
       ),
+    );
+  }
+
+  /// sa1215: per-chat «Archivos y enlaces» (Desktop Artifacts view scoped to
+  /// this conversation). Reads the loaded transcript; older pages load only
+  /// on the screen's explicit action.
+  Future<void> _openChatContent() async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => ChatContentScreen(
+          transcript: () => _chat.contentHistoryTranscript,
+          hasOlder: () => _chat.hasEarlierMessages,
+          loadOlder: () =>
+              _chat.loadEarlierMessages(continuePastInvisible: true),
+          onOpenFile: _openChatContentFile,
+          launchExternal: (uri) =>
+              launchUrl(uri, mode: LaunchMode.externalApplication),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openChatContentFile(ChatContentItem item) async {
+    final navigator = Navigator.of(context);
+    final value = item.value;
+    if (value.startsWith('data:')) {
+      final data = Uri.tryParse(value)?.data;
+      if (data == null || item.kind != ChatContentKind.image) {
+        throw const ChatContentUnreachable();
+      }
+      await navigator.push<void>(
+        MaterialPageRoute(
+          builder: (_) => ImageViewerScreen(
+            imageUrl: item.label,
+            imageBytes: data.contentAsBytes(),
+          ),
+        ),
+      );
+      return;
+    }
+    final reference = GeneratedMediaService.referenceFromSource(value);
+    if (reference == null) throw const ChatContentUnreachable();
+    final file = reference.sourceKind == GeneratedMediaSourceKind.https
+        ? await downloadGeneratedMedia(reference)
+        : await downloadUserServerAttachment(reference);
+    if (!mounted) return;
+    if (reference.kind == GeneratedMediaKind.image &&
+        !reference.displayName.toLowerCase().endsWith('.svg')) {
+      final bytes = await file.readAsBytes();
+      if (!mounted) return;
+      await navigator.push<void>(
+        MaterialPageRoute(
+          builder: (_) =>
+              ImageViewerScreen(imageUrl: file.path, imageBytes: bytes),
+        ),
+      );
+      return;
+    }
+    final length = await file.length();
+    if (!mounted) return;
+    await openArtifactViewer(
+      context,
+      name: reference.displayName,
+      mimeType: reference.mimeType,
+      file: file,
+      sizeBytes: length,
+      onOpenExternal: () => unawaited(
+        openGeneratedMediaExternally(
+          file,
+          mimeType: reference.mimeType,
+          expectedSize: length,
+        ).catchError((Object _) {}),
+      ),
+      onShare: () => unawaited(shareMediaFile(file).catchError((Object _) {})),
     );
   }
 
@@ -9128,44 +13943,255 @@ class _ChatScreenState extends State<ChatScreen>
     }
     final target = _messages[messageIndex];
     _freezeStreamingFollow();
-    final position = _scrollController.position;
-
-    Future<bool> alignIfMounted() async {
-      final anchor = _messageAnchors[target];
-      if (anchor == null || !anchor.attached) return false;
-      await scrollChatAnswerToStart(
-        anchor,
-        position,
-        duration: _reduceMotion ? Duration.zero : chatNavigationDuration,
-      );
-      return true;
-    }
-
-    if (await alignIfMounted()) return;
-    position.jumpTo(position.minScrollExtent);
-    await SchedulerBinding.instance.endOfFrame;
-    if (!mounted || !_scrollController.hasClients) return;
-    if (await alignIfMounted()) return;
-
-    for (var attempt = 0; attempt < 80; attempt++) {
-      if (!mounted || !_scrollController.hasClients) return;
-      if (position.pixels >= position.maxScrollExtent - 1) break;
-      position.jumpTo(
-        (position.pixels + position.viewportDimension * 0.9).clamp(
-          position.minScrollExtent,
-          position.maxScrollExtent,
-        ),
-      );
-      await SchedulerBinding.instance.endOfFrame;
-      if (await alignIfMounted()) return;
-    }
-
-    if (mounted) {
+    final revealed = await _revealTranscriptMessage(target);
+    if (revealed == false && mounted) {
       HermesNotice.of(context).showSnackBar(
         SnackBar(content: Text(Strings.of(context).artifactSourceUnavailable)),
         kind: HermesNoticeKind.warning,
       );
     }
+  }
+
+  /// Desplaza el historial hasta que [target] quede alineado arriba. Devuelve
+  /// true si lo alcanzó, false si recorrió todo sin materializarlo y null si la
+  /// pantalla o el scroll desaparecieron a mitad del recorrido.
+  /// [stillWanted] permite a un llamador abandonar el recorrido cuando otro
+  /// posterior (p. ej. el siguiente resultado de búsqueda) lo sustituye.
+  Future<bool?> _revealTranscriptMessage(
+    Map<String, dynamic> target, {
+    bool Function()? stillWanted,
+  }) async {
+    bool live() =>
+        mounted &&
+        _scrollController.hasClients &&
+        (stillWanted == null || stillWanted());
+    if (!live()) return null;
+    final reached = await _materializeTranscriptAnchor(
+      target,
+      stillWanted: stillWanted,
+    );
+    if (reached != true) return reached;
+    final anchor = _messageAnchors[target];
+    if (anchor == null || !anchor.attached || !live()) return null;
+    await scrollChatAnswerToStart(
+      anchor,
+      _scrollController.position,
+      duration: _reduceMotion ? Duration.zero : chatNavigationDuration,
+      topInset: _readTop,
+    );
+    return true;
+  }
+
+  /// Walks the lazy reversed history from the bottom up until [target] has a
+  /// laid-out anchor. True when it is attached (possibly without moving),
+  /// false after reaching the top without building it, null when the screen
+  /// or scroll went away or [stillWanted] withdrew the walk.
+  Future<bool?> _materializeTranscriptAnchor(
+    Map<String, dynamic> target, {
+    bool Function()? stillWanted,
+    int maxFrames = 80,
+    double Function(ScrollPosition position)? stepExtent,
+    Map<String, dynamic> Function()? resolve,
+    bool fromBottom = true,
+  }) async {
+    bool live() =>
+        mounted &&
+        _scrollController.hasClients &&
+        (stillWanted == null || stillWanted());
+    bool attached() =>
+        _messageAnchors[resolve?.call() ?? target]?.attached ?? false;
+    if (!live()) return null;
+    if (attached()) return true;
+    // Read the position after every frame: entering the chat can still swap
+    // the list's scrollable (loading state → transcript), which disposes the
+    // position a caller captured before the walk.
+    var position = _scrollController.position;
+    if (fromBottom) {
+      position.jumpTo(position.minScrollExtent);
+      await SchedulerBinding.instance.endOfFrame;
+      if (!live()) return null;
+      if (attached()) return true;
+    }
+
+    for (var attempt = 0; attempt < maxFrames; attempt++) {
+      if (!live()) return null;
+      position = _scrollController.position;
+      if (position.pixels >= position.maxScrollExtent - 1) break;
+      final step =
+          stepExtent?.call(position) ?? position.viewportDimension * 0.9;
+      position.jumpTo(
+        (position.pixels + step).clamp(
+          position.minScrollExtent,
+          position.maxScrollExtent,
+        ),
+      );
+      await SchedulerBinding.instance.endOfFrame;
+      if (!live()) return null;
+      if (attached()) return true;
+    }
+    return false;
+  }
+
+  void _openFind({String initialQuery = ''}) {
+    if (_findOpen) {
+      if (initialQuery.trim().isNotEmpty) _applyFindQuery(initialQuery);
+      return;
+    }
+    // Suspende el seguimiento del fondo con la misma ruta que un lector que
+    // pausa el stream con el dedo; en reposo basta con desactivar la bandera.
+    _freezeStreamingFollow();
+    setState(() {
+      _findOpen = true;
+      _findInitialQuery = initialQuery.trim();
+      _autoFollowStreaming = false;
+    });
+    if (_findInitialQuery.isNotEmpty) _applyFindQuery(_findInitialQuery);
+  }
+
+  void _closeFind() {
+    if (!_findOpen) return;
+    _findEpoch++;
+    _findQuery = '';
+    _findMatches = const [];
+    _findMatchMessages = const [];
+    _findIndex.clear();
+    _findStatus.value = const ChatFindStatus();
+    _findActiveMessage.value = null;
+    setState(() => _findOpen = false);
+    // Restaura el comportamiento normal: quien está en el fondo vuelve a
+    // seguirlo; quien quedó leyendo arriba conserva su vista y la flecha.
+    if (!_isNearBottom) {
+      _showScrollToBottom = true;
+      return;
+    }
+    if (_chat.isStreaming) {
+      _streamingViewportLock.disable();
+      _autoFollowStreaming = true;
+      _revealedChars = _chat.assistantContent.length;
+      _showScrollToBottom = false;
+      _publishLiveAssistantFrame();
+      _scheduleLiveFollowFrame();
+    } else if (_liveAssistantMaterialized) {
+      _scheduleTerminalLiveHostRelease();
+    } else {
+      _autoFollowStreaming = true;
+    }
+  }
+
+  bool _findRefreshScheduled = false;
+
+  void _scheduleFindRefresh() {
+    if (_findRefreshScheduled) return;
+    _findRefreshScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _findRefreshScheduled = false;
+      if (_disposed || !mounted || !_findOpen) return;
+      _recomputeFindMatches(keepCurrent: true);
+    });
+  }
+
+  void _recomputeFindMatches({required bool keepCurrent}) {
+    final previousStatus = _findStatus.value;
+    final previousIndex = previousStatus.current;
+    final previousMessage = previousIndex == null
+        ? null
+        : _findMatchMessages[previousIndex];
+    final previousMatch = previousIndex == null
+        ? null
+        : _findMatches[previousIndex];
+    final messages = _messages;
+    final matches = _findIndex.search(messages, _findQuery);
+    _findMatches = matches;
+    _findMatchMessages = [for (final m in matches) messages[m.messageIndex]];
+    int? current = matches.isEmpty ? null : 0;
+    if (keepCurrent && previousMessage != null && previousMatch != null) {
+      for (var i = 0; i < matches.length; i++) {
+        if (identical(_findMatchMessages[i], previousMessage) &&
+            matches[i].start == previousMatch.start) {
+          current = i;
+          break;
+        }
+      }
+    }
+    _publishFindStatus(current);
+  }
+
+  void _publishFindStatus(int? current, {bool searchingOlder = false}) {
+    _findStatus.value = ChatFindStatus(
+      query: _findQuery,
+      total: _findMatches.length,
+      current: current,
+      canSearchOlder: _chat.hasEarlierMessages,
+      searchingOlder: searchingOlder,
+    );
+    _findActiveMessage.value = current == null
+        ? null
+        : _findMatchMessages[current];
+  }
+
+  void _applyFindQuery(String query) {
+    if (!_findOpen) return;
+    _findEpoch++;
+    _findQuery = query;
+    _recomputeFindMatches(keepCurrent: false);
+    unawaited(_revealCurrentFindMatch());
+  }
+
+  Future<void> _revealCurrentFindMatch() async {
+    final current = _findStatus.value.current;
+    if (current == null) return;
+    final epoch = _findEpoch;
+    final source = _findMatchMessages[current];
+    final projection = _currentRenderProjection;
+    final messages = _messages;
+    var target = source;
+    final sourceIndex = messages.indexWhere((m) => identical(m, source));
+    if (sourceIndex >= 0) {
+      final renderIndex = projection.nearestRenderableMessageIndex(sourceIndex);
+      if (renderIndex != null) target = messages[renderIndex];
+    }
+    if (epoch != _findEpoch) return;
+    await _revealTranscriptMessage(
+      target,
+      stillWanted: () => _findOpen && epoch == _findEpoch,
+    );
+  }
+
+  void _stepFindMatch(int delta) {
+    final status = _findStatus.value;
+    final current = status.current;
+    if (current == null || status.total == 0) return;
+    _findEpoch++;
+    _publishFindStatus((current + delta) % status.total);
+    unawaited(_revealCurrentFindMatch());
+  }
+
+  /// Pagina historial anterior (la misma paginación del botón «cargar
+  /// anteriores») hasta encontrar la consulta o agotar el historial.
+  Future<void> _searchOlderFindMessages() async {
+    if (!_findOpen || _findQuery.trim().isEmpty) return;
+    final epoch = ++_findEpoch;
+    _publishFindStatus(null, searchingOlder: true);
+    while (mounted &&
+        !_disposed &&
+        _findOpen &&
+        epoch == _findEpoch &&
+        _chat.hasEarlierMessages) {
+      final before = _messages.length;
+      await _loadEarlierMessages();
+      if (!mounted || _disposed || !_findOpen || epoch != _findEpoch) return;
+      _findMatches = _findIndex.search(_messages, _findQuery);
+      if (_findMatches.isNotEmpty) break;
+      // Sin progreso (fallo de red): no reintentes en bucle.
+      if (_messages.length == before) break;
+    }
+    if (!mounted || _disposed || !_findOpen || epoch != _findEpoch) return;
+    _recomputeFindMatches(keepCurrent: false);
+    // Deja que la carga conserve primero el viewport del lector (su ajuste
+    // post-frame) y solo entonces recorre la lista hasta el resultado.
+    await SchedulerBinding.instance.endOfFrame;
+    if (!mounted || _disposed || !_findOpen || epoch != _findEpoch) return;
+    unawaited(_revealCurrentFindMatch());
   }
 
   bool _isSubagentOpenPending(SubagentActivity activity) {
@@ -9181,6 +14207,31 @@ class _ChatScreenState extends State<ChatScreen>
     return null;
   }
 
+  /// Watch en directo del hijo para su pantalla de detalle. El chat presta su
+  /// propio gateway y su perfil fijado (nunca el activo global); un cambio de
+  /// perfil activo también la invalida y la pantalla cae al tail sondeado.
+  SubagentLiveWatch? _openSubagentLiveWatch(SubagentActivity activity) {
+    final lease = _chat.subagentWatchLease(activity);
+    final childSessionId = activity.childSessionId?.trim();
+    if (lease == null || childSessionId == null || childSessionId.isEmpty) {
+      return null;
+    }
+    final scope = appActiveProfileScope(context, widget.connection.id);
+    final ticket = scope?.capture();
+    return SubagentLiveWatch(
+      gateway: lease.gateway,
+      childSessionId: childSessionId,
+      profile: lease.profile,
+      isCurrent: () => lease.isCurrent() && (ticket?.isCurrent ?? true),
+      // A profile switch with no event after it must still end the watch.
+      invalidation: scope,
+      childIsLive: () {
+        final current = _currentSubagentActivity(activity.key);
+        return current != null && subagentIsLive(current);
+      },
+    );
+  }
+
   /// Carga la sesión hija solo tras una acción explícita. La ruta recibe una
   /// copia solo lectura de la conexión para que inspeccionar el transcript no
   /// pueda enviar prompts, duplicar ni borrar la conversación del subagente.
@@ -9192,7 +14243,6 @@ class _ChatScreenState extends State<ChatScreen>
       return;
     }
     final readOnlyConnection = widget.connection.copyWith(readOnly: true);
-    final profile = _chat.sessionProfile;
     final strings = Strings.of(context);
     final goal = activity.goalPreview?.trim() ?? '';
     // Spec 080: the child conversation opens as a read-only transcript page
@@ -9211,7 +14261,13 @@ class _ChatScreenState extends State<ChatScreen>
               connectionId: readOnlyConnection.id,
             );
             try {
-              return await client.getMessages(childSessionId, profile: profile);
+              // Opening (or retrying) the page is an explicit action: it may
+              // try the Dashboard once more for a blocked named profile.
+              _chat.retryProfileTranscriptAccess();
+              return await _chat.loadChildTranscript(
+                childSessionId,
+                gateway: client,
+              );
             } finally {
               client.close();
             }
@@ -9313,11 +14369,14 @@ class _ChatScreenState extends State<ChatScreen>
       cronDeletion = choice;
     } else {
       final colors = Theme.of(context).hermes;
-      final confirm = await showDialog<bool>(
+      releaseTextFocusIfKeyboardHidden(context);
+      final confirm = await showHermesDialogRoute<bool>(
         context: context,
         builder: (_) => AlertDialog(
           title: Text(s.sesDeleteTitle),
-          content: Text(s.sesDeleteContent(widget.session.displayTitle)),
+          content: Text(
+            s.sesDeleteContent(localizedSessionTitle(s, widget.session)),
+          ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context, false),
@@ -9341,7 +14400,7 @@ class _ChatScreenState extends State<ChatScreen>
       final verified = await LockScreen.verify(
         context,
         lock,
-        reason: s.sesDeleteContent(widget.session.displayTitle),
+        reason: s.sesDeleteContent(localizedSessionTitle(s, widget.session)),
       );
       if (!verified || !mounted || isReadOnly()) return;
     }
@@ -9373,6 +14432,10 @@ class _ChatScreenState extends State<ChatScreen>
         remoteSessionId: _chat.serverSessionId,
         localRecoverySessionId: widget.session.id,
         clearLocalRecovery: _clearDeletedChatRecovery,
+        // Shared store first, before the local cleanup's awaits: Home,
+        // Conversations and the drawer drop the row in this same turn,
+        // whichever screen opened this chat.
+        onRemoteDeleted: _markDeletedInSharedStore,
         cronDeletion: cronDeletion,
         deleteCronJob:
             !widget.session.isJob ||
@@ -9458,14 +14521,29 @@ class _ChatScreenState extends State<ChatScreen>
   /// Cabecera de la ThinkingTraceCard mientras aún no hay herramientas.
   String _traceHeadline() {
     final s = Strings.of(context);
-    final activityHeadline = switch (_pipelineState) {
-      ChatPipelineState.connecting => s.chaPipelineConnecting,
-      ChatPipelineState.executing => s.chaPipelineExecuting,
-      ChatPipelineState.streaming => s.chaPipelineStreaming,
-      _ => s.chaPipelineThinking,
-    };
+    // ss1215: the headline only speaks when no step is running (a running
+    // tool names itself). «Ejecutando herramientas…» with none listed read
+    // as a pill out of sync with its own panel; between steps the agent is
+    // thinking, as the list and Home say.
+    // A provider wait the core explained ("⏳ waiting on provider…") is the
+    // turn's status line until the provider answers.
+    final providerWait = _pipelineState == ChatPipelineState.connecting
+        ? null
+        : _chat.providerWaitText;
+    final activityHeadline =
+        providerWait ??
+        switch (_pipelineState) {
+          // cq1215: a post-cut viewer stays `connecting` for the rest of the
+          // turn; with the socket back it is watching a running turn.
+          ChatPipelineState.connecting
+              when _chat.observesRemoteTurnAfterReconnect =>
+            s.ss1215StatusWorking,
+          ChatPipelineState.connecting => s.chaPipelineConnecting,
+          ChatPipelineState.streaming => s.chaPipelineStreaming,
+          _ => s.chaPipelineThinking,
+        };
     return chatActivityHeadlineForTransport(
-      status: _chat.transportStatus,
+      transportLossVisible: _transportVisibility.visible,
       authRequired: _chat.dashboardAuthRequired,
       activityHeadline: activityHeadline,
       reconnectingHeadline: s.chaConnectionLostReconnecting,
@@ -9550,90 +14628,39 @@ class _ChatScreenState extends State<ChatScreen>
     KeyboardInsertedContent content,
   ) async {
     if (_attachmentSubmitting) return;
-    final bytes = content.data;
-    if (bytes == null || bytes.isEmpty) {
-      if (mounted) {
-        HermesNotice.of(context).showSnackBar(
-          SnackBar(
-            content: Text(Strings.of(context).chaAttachmentPreparationFailed),
-          ),
-          kind: HermesNoticeKind.error,
-        );
-      }
+    void preparationFailed() {
+      if (!mounted) return;
+      HermesNotice.of(context).showSnackBar(
+        SnackBar(
+          content: Text(Strings.of(context).chaAttachmentPreparationFailed),
+        ),
+        kind: HermesNoticeKind.error,
+      );
+    }
+
+    // Shared with the room composer: same image types and batch limits.
+    if (composerPasteRejection(content, pending: _pendingAttachments) != null) {
+      preparationFailed();
       return;
     }
-    final currentImages = _pendingAttachments
-        .where((item) => item.isImage)
-        .length;
-    final currentBatchBytes = _pendingAttachments.fold<int>(
-      0,
-      (sum, item) => sum + item.sizeBytes,
-    );
-    if (currentImages >= _maxPendingImages ||
-        pendingAttachmentLimitViolation(
-              sizeBytes: bytes.length,
-              itemLimit: AttachmentUploader.maxBytes,
-              currentBatchBytes: currentBatchBytes,
-            ) !=
-            null) {
-      if (mounted) {
-        HermesNotice.of(context).showSnackBar(
-          SnackBar(
-            content: Text(Strings.of(context).chaAttachmentPreparationFailed),
-          ),
-          kind: HermesNoticeKind.error,
-        );
-      }
-      return;
-    }
-    final digest = sha256.convert(bytes).toString();
+    final digest = sha256.convert(content.data!).toString();
     if ((await _knownAttachmentDigests()).contains(digest)) return;
 
-    final extension = switch (content.mimeType.toLowerCase()) {
-      'image/jpeg' => 'jpg',
-      'image/gif' => 'gif',
-      'image/webp' => 'webp',
-      _ => 'png',
-    };
-    final source = File(
-      '${Directory.systemTemp.path}/hermes-ime-${const Uuid().v4()}.$extension',
-    );
-    AttachmentDraft? persisted;
     try {
-      await source.writeAsBytes(bytes, flush: true);
-      persisted = await _materializeAttachment(
-        AttachmentDraft(
-          localId: const Uuid().v4(),
-          type: AttachmentType.image,
-          name: 'pasted-image.$extension',
-          mimeType: content.mimeType,
-          sizeBytes: bytes.length,
-          localPath: source.path,
-        ),
+      final persisted = await stageComposerPastedImage(
+        content,
+        materialize: _materializeAttachment,
       );
       if (persisted == null || !mounted) {
         if (persisted != null) await _deletePrivateAttachmentCopy(persisted);
         return;
       }
       setState(() {
-        _pendingAttachments.add(persisted!);
+        _pendingAttachments.add(persisted);
       });
       _scheduleDraftSave();
     } catch (_) {
-      if (mounted) {
-        HermesNotice.of(context).showSnackBar(
-          SnackBar(
-            content: Text(Strings.of(context).chaAttachmentPreparationFailed),
-          ),
-          kind: HermesNoticeKind.error,
-        );
-      }
-    } finally {
-      if (persisted?.localPath != source.path) {
-        try {
-          if (await source.exists()) await source.delete();
-        } catch (_) {}
-      }
+      preparationFailed();
     }
   }
 
@@ -9805,6 +14832,159 @@ class _ChatScreenState extends State<ChatScreen>
     } finally {
       _imagePickerOpen = false;
     }
+  }
+
+  /// A large paste can become an attachment while the `+` could attach one.
+  bool get _largePasteAttachable =>
+      !widget.connection.readOnly &&
+      !_interactiveMessageRefreshPending &&
+      !_composerSubmissionInFlight &&
+      !_attachmentSubmitting &&
+      !_compressingSession;
+
+  /// Longest wait for a paste's private copy. Past it the paste simply stays
+  /// in the field as text and send is no longer held by it.
+  static const Duration _largePasteAttachTimeout = Duration(seconds: 15);
+
+  void _onLargePaste(String text, int offset) {
+    // The paste already sits in the field, which stays its only durable copy
+    // (draft, dispose, send) until the chip exists; only then does it leave.
+    unawaited(
+      _serializeAttachmentMutation(() => _attachPastedText(text, offset)),
+    );
+  }
+
+  Future<void> _attachPastedText(String text, int offset) async {
+    final bytes = utf8.encode(text);
+    final batchBytes = _pendingAttachments.fold<int>(
+      0,
+      (sum, item) => sum + item.sizeBytes,
+    );
+    AttachmentDraft? persisted;
+    File? source;
+    if (!_attachmentSubmitting &&
+        pendingAttachmentLimitViolation(
+              sizeBytes: bytes.length,
+              itemLimit: AttachmentUploader.maxTextBytes,
+              currentBatchBytes: batchBytes,
+            ) ==
+            null) {
+      final name = pastedContentFileName();
+      final file = source = File(
+        '${Directory.systemTemp.path}/hermes-paste-${const Uuid().v4()}.txt',
+      );
+      try {
+        await file.writeAsBytes(bytes, flush: true);
+        // Re-typed: a materializer may return a non-nullable future, whose
+        // timeout could not yield null.
+        final pending = _materializeAttachment(
+          AttachmentDraft(
+            localId: const Uuid().v4(),
+            type: AttachmentType.document,
+            name: name,
+            mimeType: 'text/plain',
+            sizeBytes: bytes.length,
+            localPath: file.path,
+          ),
+        ).then<AttachmentDraft?>((copy) => copy);
+        persisted = await pending.timeout(
+          _largePasteAttachTimeout,
+          onTimeout: () {
+            // A copy that shows up late is never attached: discard it.
+            unawaited(
+              pending.then((late) async {
+                if (late != null) await _deletePrivateAttachmentCopy(late);
+              }, onError: (Object _) {}),
+            );
+            return null;
+          },
+        );
+      } catch (_) {
+        persisted = null;
+      } finally {
+        if (persisted?.localPath != file.path) await _deleteQuietly(file);
+      }
+    }
+    final attached = persisted;
+    if (attached == null) return;
+    final at = mounted && !_disposed
+        ? pastedRunOffset(_textController.text, text, near: offset)
+        : -1;
+    if (at < 0) {
+      // Disposed, or the user edited the pasted run meanwhile: the field copy
+      // is the one the user sees, so the chip is dropped instead.
+      await _deletePrivateAttachmentCopy(attached);
+      if (source != null && attached.localPath == source.path) {
+        await _deleteQuietly(source);
+      }
+      return;
+    }
+    _textController.value = removePastedRun(
+      _textController.value,
+      at,
+      text.length,
+    );
+    setState(() => _pendingAttachments.add(attached));
+    _scheduleDraftSave();
+  }
+
+  Future<void> _deleteQuietly(File file) async {
+    try {
+      if (await file.exists()) await file.delete();
+    } catch (_) {}
+  }
+
+  /// Expands a collapsed paste to edit it; only while it is still a local
+  /// draft no delivery has taken.
+  Future<void> _openPastedText(String localId) async {
+    final index = _pendingAttachments.indexWhere(
+      (item) => item.localId == localId,
+    );
+    if (index < 0) return;
+    final attachment = _pendingAttachments[index];
+    final delivery = _chatBound ? _chat.activeTurnDelivery : null;
+    if (attachment.uploadState != AttachmentUploadState.pending ||
+        (delivery?.current.attachments.any((item) => item.localId == localId) ??
+            false)) {
+      return;
+    }
+    final String original;
+    try {
+      original = await File(attachment.localPath).readAsString();
+    } catch (_) {
+      return;
+    }
+    if (!mounted) return;
+    final edited = await showPastedTextEditor(context, original);
+    if (!mounted || _disposed || edited == null || edited == original) return;
+    if (edited.trim().isEmpty) {
+      await _removePendingAttachment(localId);
+      return;
+    }
+    await _serializeAttachmentMutation(() async {
+      final current = _pendingAttachments.indexWhere(
+        (item) => item.localId == localId,
+      );
+      if (current < 0 ||
+          _pendingAttachments[current].uploadState !=
+              AttachmentUploadState.pending) {
+        return;
+      }
+      final bytes = utf8.encode(edited);
+      if (bytes.length > AttachmentUploader.maxTextBytes) return;
+      try {
+        await File(attachment.localPath).writeAsBytes(bytes, flush: true);
+      } catch (_) {
+        return;
+      }
+      if (!mounted || _disposed) return;
+      setState(() {
+        _pendingAttachments[current] = _pendingAttachments[current].copyWith(
+          sizeBytes: bytes.length,
+        );
+      });
+      _scheduleDraftSave();
+    });
   }
 
   Future<void> _pickDocument() =>
@@ -9979,7 +15159,6 @@ class _ChatScreenState extends State<ChatScreen>
     final colors = Theme.of(context).hermes;
     final str = Strings.of(context);
     final voiceSessionActive = kVoiceRuntimeEnabled && _voiceForThisSession;
-    final showVoiceSurface = kVoiceRuntimeEnabled && _voiceOverlayVisible;
     final connManager = context
         .findAncestorStateOfType<HermesAppState>()
         ?.connManager;
@@ -9987,10 +15166,28 @@ class _ChatScreenState extends State<ChatScreen>
     // sin drawer ni "nueva sesión", y modelo/controles al overflow.
     final botSurface = _isBotChatSurface;
     final dedicatedChrome = botSurface;
+    // fh1215: no app bar band in any chat. The header floats over the
+    // transcript, which scrolls under it; voice runs inside the chat too.
+    _floatingTopInset = FloatingChatHeader.insetFor(context);
     // El observador del teclado envuelve al Scaffold en vez de leerse desde
     // este State: así la dependencia de `viewInsets` (que cambia en cada
     // frame de la animación del IME) vive en un elemento hoja y el Scaffold
     // —misma instancia de widget— no se vuelve a construir por ello.
+    // Under the floating header only the find bar is left: everything this
+    // conversation has to tell (connection, a question that was not shown,
+    // history that did not load, the profile's name) is said by the island.
+    final topNotices = <Widget>[
+      if (_findOpen)
+        ChatFindBar(
+          status: _findStatus,
+          initialQuery: _findInitialQuery,
+          onQueryChanged: _applyFindQuery,
+          onOlder: () => _stepFindMatch(1),
+          onNewer: () => _stepFindMatch(-1),
+          onSearchOlderMessages: () => unawaited(_searchOlderFindMessages()),
+          onClose: _closeFind,
+        ),
+    ];
     final scaffold = _KeyboardInsetWatcher(
       onBottomInset: _onKeyboardBottomInset,
       child: Scaffold(
@@ -10002,651 +15199,569 @@ class _ChatScreenState extends State<ChatScreen>
         },
         drawer: dedicatedChrome || connManager == null
             ? null
-            : HermesDrawer(
-                connection: widget.connection,
-                connManager: connManager,
-                current: DrawerSection.chat,
-                connected: true,
+            // The header/Bots dot mirror the live chat transport instead of
+            // always claiming the instance is online.
+            : ValueListenableBuilder<ChatTransportStatus>(
+                valueListenable: _chat.transportStatusListenable,
+                builder: (context, transport, _) => HermesDrawer(
+                  connection: widget.connection,
+                  connManager: connManager,
+                  current: DrawerSection.chat,
+                  connected: transport.isConnected,
+                ),
               ),
-        appBar: HermesAppBar(
-          centerTitle: !dedicatedChrome,
-          titleSpacing: 0,
-          // Cabecera plana: sin línea/sombra de elevación al hacer scroll del
-          // transcript por debajo (Material 3 la añade por defecto vía
-          // `scrolledUnderElevation`). Se funde con el chat en vez de
-          // cortarlo con un borde.
-          scrolledUnderElevation: 0,
-          bottom: dedicatedChrome || _activeProfile == null
-              ? null
-              : _ProfileContextChip(
-                  label: str.chaProfileChip(_activeProfile!),
-                  colors: colors,
-                ),
-          automaticallyImplyLeading: dedicatedChrome || connManager == null,
-          leading: dedicatedChrome || connManager == null
-              ? null
-              : Builder(
-                  builder: (ctx) => Center(
-                    child: IconButton(
-                      icon: const Icon(Icons.menu_rounded, size: 20),
-                      tooltip: str.chaMenuTooltip,
-                      // Botón circular sutil, estilo Claude.
-                      style: IconButton.styleFrom(
-                        backgroundColor: colors.surfaceVariant.withValues(
-                          alpha: 0.5,
-                        ),
-                        shape: const CircleBorder(),
-                        minimumSize: const Size(48, 48),
-                      ),
-                      onPressed: () => Scaffold.of(ctx).openDrawer(),
-                    ),
+        body: Stack(
+          children: [
+            // fh1215: the transcript runs under the floating header, so
+            // geometry alone would read a row scrolled under it before
+            // the header. Pin the reading order: header, then body.
+            Semantics(
+              container: true,
+              explicitChildNodes: true,
+              sortKey: const OrdinalSortKey(1),
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxWidth: Responsive.isTablet(context)
+                        ? 800
+                        : double.infinity,
                   ),
-                ),
-          title: botSurface
-              ? _BotChatAppBarTitle(
-                  key: const ValueKey('bot-chat-header'),
-                  profile: widget.missionBotProfile,
-                  fallbackName: Session.profileOwner(widget.session.profile),
-                  activity: _chatBound && !_turnActivityPillRevealed
-                      ? _chat.activityKind
-                      : null,
-                  avatarCache: widget.missionAvatarCache,
-                )
-              : Semantics(
-                  button: !showVoiceSurface,
-                  label: str.chaModelSheetTitle,
-                  excludeSemantics: true,
-                  child: InkWell(
-                    onTap: showVoiceSurface ? null : _showModelSheet,
-                    borderRadius: BorderRadius.circular(10),
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(minHeight: 48),
-                      child: AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 180),
-                        child: Padding(
-                          key: ValueKey(_activeModelLabel),
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 6,
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
+                  child: Column(
+                    children: [
+                      Expanded(
+                        // The bottom group (notices, strips, composer)
+                        // floats over the transcript: the column lays it
+                        // out first, then this builder (same frame) lets
+                        // the transcript run under it, reserving its
+                        // height below the newest row. No opaque band
+                        // cuts the list above the composer.
+                        child: () {
+                          // QA 9495: the layers are built with the
+                          // screen, not in the builder. Keyboard frames
+                          // re-run the builder (the body shrinks) and
+                          // must reuse this same widget, so the
+                          // transcript rows, the header and the notch
+                          // are not rebuilt on every frame.
+                          final layers = Stack(
                             children: [
-                              Flexible(
-                                child: Text(
-                                  _activeModelLabel,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    fontSize: 15.5,
-                                    fontWeight: FontWeight.w700,
-                                    color: colors.textPrimary,
-                                  ),
+                              // ct1215: the live turn's rows read what the
+                              // turn is doing from here, the same snapshot
+                              // the header pill is painted from.
+                              LiveTurnScope(
+                                status: LiveTurnStatus.of(
+                                  _buildActivitySnapshot(),
                                 ),
-                              ),
-                              const SizedBox(width: 3),
-                              Icon(
-                                Icons.expand_more_rounded,
-                                size: 19,
-                                color: colors.textSecondary,
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-          actions: showVoiceSurface
-              ? [
-                  IconButton(
-                    key: const ValueKey('voice-stage-minimize'),
-                    icon: const Icon(
-                      Icons.keyboard_arrow_down_rounded,
-                      size: 26,
-                    ),
-                    tooltip: str.chaVoiceMinimizeTooltip,
-                    onPressed: _vc?.minimizeOverlay,
-                  ),
-                  const SizedBox(width: 4),
-                ]
-              : botSurface
-              ? [
-                  PopupMenuButton<_BotChatHeaderAction>(
-                    key: const ValueKey('bot-chat-overflow-appbar'),
-                    tooltip: str.chaControlTitle,
-                    icon: const Icon(Icons.more_vert_rounded),
-                    onSelected: (action) {
-                      switch (action) {
-                        case _BotChatHeaderAction.model:
-                          _showModelSheet();
-                        case _BotChatHeaderAction.controls:
-                          unawaited(_showChatControlSheet());
-                      }
-                    },
-                    itemBuilder: (context) => [
-                      PopupMenuItem(
-                        key: const ValueKey('bot-chat-model-action'),
-                        value: _BotChatHeaderAction.model,
-                        child: Row(
-                          children: [
-                            const Icon(Icons.tune_rounded, size: 20),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Text(
-                                str.chaModelSheetTitle,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      PopupMenuItem(
-                        key: const ValueKey('bot-chat-control-action'),
-                        value: _BotChatHeaderAction.controls,
-                        child: Row(
-                          children: [
-                            const Icon(Icons.settings_outlined, size: 20),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Text(
-                                str.chaControlTitle,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(width: 4),
-                ]
-              : [
-                  // La presencia del Companion ya NO vive en el AppBar (ni el
-                  // spinner de carga): el estado vivo lo expresa la mascota
-                  // dentro del propio turno de Hermes.
-                  // El indicador de contexto+modo (antes aquí, como pill de
-                  // modo + SessionContextPopoverButton) ya no vive en la
-                  // AppBar: flota como una sola píldora combinada bajo el
-                  // composer — ver `_buildFloatingStatusPill` en
-                  // `_buildInputBar`.
-                  IconButton(
-                    key: const ValueKey('chat-new-session'),
-                    icon: Transform.translate(
-                      offset: const Offset(3, 0),
-                      child: const Icon(Icons.add_rounded, size: 26),
-                    ),
-                    tooltip: str.chaNewChatTooltip,
-                    color: (_messages.isNotEmpty || _sending)
-                        ? colors.accent
-                        : colors.textSecondary,
-                    onPressed: _newChat,
-                  ),
-                  const SizedBox(width: 4),
-                  IconButton(
-                    key: const ValueKey('chat-control-trigger'),
-                    icon: const Icon(Icons.more_vert),
-                    tooltip: str.chaControlTitle,
-                    onPressed: _showChatControlSheet,
-                  ),
-                ],
-        ),
-        body: showVoiceSurface
-            ? ColoredBox(
-                color: colors.background,
-                child: Center(
-                  child: ConstrainedBox(
-                    constraints: BoxConstraints(
-                      maxWidth: Responsive.isTablet(context)
-                          ? 800
-                          : double.infinity,
-                    ),
-                    child: _voiceConversationSurface(),
-                  ),
-                ),
-              )
-            : Stack(
-                children: [
-                  Center(
-                    child: ConstrainedBox(
-                      constraints: BoxConstraints(
-                        maxWidth: Responsive.isTablet(context)
-                            ? 800
-                            : double.infinity,
-                      ),
-                      child: Column(
-                        children: [
-                          if (_chat.dashboardAuthNoticeVisible)
-                            _DesktopAuthRequiredBanner(
-                              message: str.chaDesktopAuthRequiredBanner,
-                              onDismiss: () =>
-                                  setState(_chat.dismissDashboardAuthNotice),
-                            ),
-                          ValueListenableBuilder<ChatTransportStatus>(
-                            valueListenable: _chat.transportStatusListenable,
-                            builder: (_, status, _) =>
-                                ChatConnectionRecoveryRow(
-                                  status: status,
-                                  activeTurn: _chat.isStreaming,
-                                  authRequired: _chat.dashboardAuthRequired,
-                                  appForeground: _appInForeground,
-                                  offlineLabel: str.chaConnectionOffline,
-                                  reconnectingLabel:
-                                      str.chaConnectionReconnecting,
-                                  recoveredLabel: str.chaConnectionRecovered,
-                                ),
-                          ),
-                          if (_chat.localTranscriptTruncationNoticeVisible)
-                            _LocalTranscriptTruncationNotice(
-                              message: str.chaLocalTranscriptTruncated,
-                              onDismiss: () => setState(
-                                _chat.dismissLocalTranscriptTruncationNotice,
-                              ),
-                            ),
-                          // En flujo bajo la cabecera, como los avisos de
-                          // arriba: ya no flota sobre el botón «cargar
-                          // anteriores» ni sobre los primeros mensajes.
-                          if (_chat.earlierMessagesLoadFailed &&
-                              !_coreReadCoverageNoticeDismissed)
-                            _CoreReadPartialCoverageNotice(
-                              message: str.chaEarlierMessagesError,
-                              onDismiss: () => setState(
-                                () => _coreReadCoverageNoticeDismissed = true,
-                              ),
-                            ),
-                          Expanded(
-                            child: Stack(
-                              children: [
-                                AgentTaskScope(
-                                  tasks: _chat.agentTasks,
-                                  ownerStepId: _chat.agentTasks.isEmpty
+                                clock: _chat.wallNow,
+                                child: AgentTaskScope(
+                                  tasks: _chat.transcriptAgentTasks,
+                                  ownerStepId:
+                                      _chat.transcriptAgentTasks.isEmpty
                                       ? null
                                       : latestAgentTaskStepId(_messages),
                                   child: _buildBody(),
                                 ),
-                                Positioned(
-                                  top: 8,
+                              ),
+                              Positioned(
+                                top: 0,
+                                left: 0,
+                                right: 0,
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.stretch,
+                                  children: [
+                                    SizedBox(height: _floatingTopInset),
+                                    // No band behind it: nothing opaque
+                                    // cuts the transcript under the header.
+                                    _ExtentReporter(
+                                      onExtent: _setFloatingNoticesExtent,
+                                      child: Column(
+                                        mainAxisSize: MainAxisSize.min,
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.stretch,
+                                        children: topNotices,
+                                      ),
+                                    ),
+                                    _buildPinnedPromptHeader(str),
+                                    _buildEarlierHistoryRow(str),
+                                  ],
+                                ),
+                              ),
+                              // The foot of the page (owner, QA 9529): a
+                              // reply that scrolls behind the composer and
+                              // its status pill dissolves into the page
+                              // there, so it never reads through them or
+                              // beside their labels. Behind the bottom
+                              // pieces only: nothing above the composer.
+                              ValueListenableBuilder<double>(
+                                valueListenable: _bottomBarsExtent,
+                                builder: (context, bars, child) => Positioned(
                                   left: 0,
                                   right: 0,
-                                  height: 48,
-                                  child: _ChatTopButton(
-                                    controller: _scrollController,
-                                    hasEarlierMessages:
-                                        _chat.hasEarlierMessages,
-                                    loading: _loadingEarlierMessages,
-                                    contentChanges: _liveAssistantFrame,
-                                    transcriptOverlayExtent: () =>
-                                        _activityPillExtent.value +
-                                        (_scrollToBottomVisibility.value
-                                            ? 48
-                                            : 0),
-                                    onLoadEarlier: _loadEarlierMessages,
+                                  bottom: 0,
+                                  height: bars,
+                                  child: child!,
+                                ),
+                                child: const HermesBottomScrim(
+                                  key: ValueKey('chat-foot-scrim'),
+                                ),
+                              ),
+                              // Bottom overlay of the transcript. The
+                              // scroll-to-bottom arrow and the floating
+                              // activity pills share one bottom-centre
+                              // anchor, so they are STACKED in a single
+                              // bottom-anchored Column instead of two
+                              // Positioned children layered on top of each
+                              // other: the pills paint last, so the arrow
+                              // used to end up underneath them — invisible
+                              // and, once a pill owns the gesture, impossible
+                              // to tap. Stacking makes the arrow ride just
+                              // above whichever pill is showing and drop back
+                              // to its resting spot (8 dp) when none is, with
+                              // no measure-then-reposition frame in between.
+                              //
+                              // The pills stay glued near the composer like
+                              // the design mockup, but always INSIDE this
+                              // transcript Stack, never over the input.
+                              // Reply text keeps its clearance because the
+                              // measured stack extent pads the transcript by
+                              // the same amount.
+                              // pm1215 (owner, QA 9494; QA 9529): nothing is
+                              // painted above the composer, and no band
+                              // behind it: the transcript keeps running
+                              // under the bottom pieces, where the foot's
+                              // scrim dims it. Only the composer pill and
+                              // the notch have a surface.
+                              // The notch: a glass tab sitting on the
+                              // composer's top edge that opens the
+                              // conversation settings + "Ir a". Its touch
+                              // target extends up into the transcript.
+                              ValueListenableBuilder<double>(
+                                valueListenable: _bottomBarsExtent,
+                                builder: (context, bars, child) => Positioned(
+                                  left: 0,
+                                  right: 0,
+                                  bottom: bars,
+                                  height: kChatNotchSlotHeight,
+                                  child: child!,
+                                ),
+                                // QA 9494: own layer, see the header.
+                                child: Center(
+                                  child: RepaintBoundary(
+                                    child: _buildNotch(str),
                                   ),
                                 ),
-                                // Bottom overlay of the transcript. The
-                                // scroll-to-bottom arrow and the floating
-                                // activity pills share one bottom-centre
-                                // anchor, so they are STACKED in a single
-                                // bottom-anchored Column instead of two
-                                // Positioned children layered on top of each
-                                // other: the pills paint last, so the arrow
-                                // used to end up underneath them — invisible
-                                // and, once a pill owns the gesture, impossible
-                                // to tap. Stacking makes the arrow ride just
-                                // above whichever pill is showing and drop back
-                                // to its resting spot (8 dp) when none is, with
-                                // no measure-then-reposition frame in between.
-                                //
-                                // The pills stay glued near the composer like
-                                // the design mockup, but always INSIDE this
-                                // transcript Stack, never over the input.
-                                // Reply text keeps its clearance because the
-                                // measured stack extent pads the transcript by
-                                // the same amount.
-                                Positioned(
+                              ),
+                              ValueListenableBuilder<double>(
+                                valueListenable: _bottomBarsExtent,
+                                builder: (context, bars, child) => Positioned(
                                   left: 0,
                                   right: 0,
-                                  bottom: 8,
-                                  child: Column(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      SizedBox(
-                                        width: double.infinity,
-                                        height: 48,
-                                        child: ValueListenableBuilder<bool>(
-                                          valueListenable:
-                                              _scrollToBottomVisibility,
-                                          builder: (context, showScrollToBottom, _) {
-                                            return ExcludeSemantics(
-                                              excluding: !showScrollToBottom,
-                                              child: IgnorePointer(
-                                                ignoring: !showScrollToBottom,
-                                                child: Center(
-                                                  child: AnimatedOpacity(
-                                                    key: ValueKey(
-                                                      showScrollToBottom
-                                                          ? 'scroll-to-bottom-visible'
-                                                          : 'scroll-to-bottom-hidden',
-                                                    ),
-                                                    opacity: showScrollToBottom
+                                  // Rides just above the drawn tab.
+                                  bottom: bars + 8 + kChatNotchHeight,
+                                  child: child!,
+                                ),
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Container(
+                                      width: double.infinity,
+                                      height: 48,
+                                      padding: const EdgeInsetsDirectional.only(
+                                        end: 8,
+                                      ),
+                                      child: ValueListenableBuilder<bool>(
+                                        valueListenable:
+                                            _scrollToBottomVisibility,
+                                        builder: (context, showScrollToBottom, _) {
+                                          return ExcludeSemantics(
+                                            excluding: !showScrollToBottom,
+                                            child: IgnorePointer(
+                                              ignoring: !showScrollToBottom,
+                                              // QA 9493: one small round
+                                              // button at the row's end,
+                                              // clear of the centred notch.
+                                              child: Align(
+                                                alignment: AlignmentDirectional
+                                                    .centerEnd,
+                                                child: AnimatedOpacity(
+                                                  key: ValueKey(
+                                                    showScrollToBottom
+                                                        ? 'scroll-to-bottom-visible'
+                                                        : 'scroll-to-bottom-hidden',
+                                                  ),
+                                                  opacity: showScrollToBottom
+                                                      ? 1
+                                                      : 0,
+                                                  duration: _reduceMotion
+                                                      ? Duration.zero
+                                                      : const Duration(
+                                                          milliseconds: 160,
+                                                        ),
+                                                  curve: Curves.easeOutCubic,
+                                                  child: AnimatedScale(
+                                                    scale: showScrollToBottom
                                                         ? 1
-                                                        : 0,
+                                                        : 0.94,
                                                     duration: _reduceMotion
                                                         ? Duration.zero
                                                         : const Duration(
                                                             milliseconds: 160,
                                                           ),
                                                     curve: Curves.easeOutCubic,
-                                                    child: AnimatedScale(
-                                                      scale: showScrollToBottom
-                                                          ? 1
-                                                          : 0.94,
-                                                      duration: _reduceMotion
-                                                          ? Duration.zero
-                                                          : const Duration(
-                                                              milliseconds: 160,
-                                                            ),
-                                                      curve:
-                                                          Curves.easeOutCubic,
-                                                      child: _ScrollToBottomButton(
-                                                        key: const ValueKey(
-                                                          'chat-scroll-to-bottom',
-                                                        ),
-                                                        onTap: _scrollToBottom,
+                                                    child: _ScrollToBottomButton(
+                                                      key: const ValueKey(
+                                                        'chat-scroll-to-bottom',
                                                       ),
+                                                      newMessages:
+                                                          _newWhileAway,
+                                                      onTap: _scrollToBottom,
                                                     ),
                                                   ),
                                                 ),
                                               ),
-                                            );
-                                          },
-                                        ),
-                                      ),
-                                      // The pill area collapses to zero when
-                                      // nothing is running, and the gap below
-                                      // it collapses with it so the arrow lands
-                                      // back on its resting offset.
-                                      _BottomGapWhenVisible(
-                                        gap: 12,
-                                        onExtent: _setActivityPillExtent,
-                                        // Una sola pastilla para todo lo vivo
-                                        // (turno, tareas, segundo plano,
-                                        // subagentes, compactación): un único
-                                        // hueco medido, un único cronómetro. El
-                                        // panel sale de ella al tocarla.
-                                        child: Column(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            ActivityTaskLingerHost(
-                                              key: const ValueKey(
-                                                'chat-activity-pill',
-                                              ),
-                                              snapshot:
-                                                  _buildActivitySnapshot(),
-                                              actions: _buildActivityActions(),
-                                              suspended: _slashPaletteVisible,
                                             ),
-                                            KeyedSubtree(
+                                          );
+                                        },
+                                      ),
+                                    ),
+                                    // The pill area collapses to zero when
+                                    // nothing is running, and the gap below
+                                    // it collapses with it so the arrow lands
+                                    // back on its resting offset.
+                                    _BottomGapWhenVisible(
+                                      gap: 12,
+                                      onExtent: _setActivityPillExtent,
+                                      // Una sola pastilla para todo lo vivo
+                                      // (turno, tareas, segundo plano,
+                                      // subagentes, compactación): un único
+                                      // hueco medido, un único cronómetro.
+                                      child: Column(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          // fh1215: the activity pill lives
+                                          // in the floating header now
+                                          // (`_buildFloatingHeader`).
+                                          KeyedSubtree(
+                                            key: const ValueKey(
+                                              'chat-session-activity',
+                                            ),
+                                            child: SubagentActivityCard(
                                               key: const ValueKey(
-                                                'chat-session-activity',
+                                                'chat-subagent-status',
                                               ),
-                                              child: SubagentActivityCard(
-                                                key: const ValueKey(
-                                                  'chat-subagent-status',
-                                                ),
-                                                hidden: true,
-                                                controller: _subagentController,
-                                                activities:
-                                                    _displaySubagentActivities,
-                                                onDismiss: _dismissSubagentPill,
-                                                safeChildCount:
-                                                    _chat.safeActiveSubagentCount >
-                                                        (_chat.hasRecentPassiveRemoteActivity
-                                                            ? _chat
-                                                                  .passiveActivityAggregate
-                                                                  .total
-                                                            : 0)
-                                                    ? _chat
-                                                          .safeActiveSubagentCount
-                                                    : (_chat.hasRecentPassiveRemoteActivity
+                                              hidden: true,
+                                              controller: _subagentController,
+                                              activities:
+                                                  _displaySubagentActivities,
+                                              onDismiss: _dismissSubagentPill,
+                                              safeChildCount:
+                                                  _chat.safeActiveSubagentCount >
+                                                      (_chat.hasRecentPassiveRemoteActivity
                                                           ? _chat
                                                                 .passiveActivityAggregate
                                                                 .total
-                                                          : 0),
-                                                background:
-                                                    _chat
-                                                        .hasRecentPassiveRemoteActivity ||
-                                                    _chat.safeActiveSubagentCount >
-                                                        0,
-                                                canInterrupt:
-                                                    _chat.canInterruptSubagent,
-                                                canSteer:
-                                                    _chat.canSteerSubagent,
-                                                canTail: _chat.canTailSubagent,
-                                                parentTitle:
-                                                    widget.session.title,
-                                                acquirePresentation:
-                                                    _acquireSubagentDetailLease,
-                                                isInterruptPending: _chat
-                                                    .isSubagentInterruptPending,
-                                                appForeground:
-                                                    _appInForeground &&
-                                                    _chatRouteVisible,
-                                                onTail: (activity) async {
-                                                  final result = await _chat
-                                                      .tailSubagent(activity);
-                                                  return SubagentTailView(
-                                                    available: result.available,
-                                                    content: result.content,
-                                                    truncated: result.truncated,
-                                                  );
-                                                },
-                                                onSteer:
-                                                    (activity, text) async {
-                                                      final result = await _chat
-                                                          .steerSubagent(
-                                                            activity,
-                                                            text,
-                                                          );
-                                                      return SubagentSteerView(
-                                                        status: result.status,
-                                                      );
-                                                    },
-                                                isOpenPending:
-                                                    _isSubagentOpenPending,
-                                                onOpenConversation: (activity) {
-                                                  unawaited(
-                                                    _openSubagentConversation(
+                                                          : 0)
+                                                  ? _chat
+                                                        .safeActiveSubagentCount
+                                                  : (_chat.hasRecentPassiveRemoteActivity
+                                                        ? _chat
+                                                              .passiveActivityAggregate
+                                                              .total
+                                                        : 0),
+                                              background:
+                                                  _chat
+                                                      .hasRecentPassiveRemoteActivity ||
+                                                  _chat.safeActiveSubagentCount >
+                                                      0,
+                                              canInterrupt:
+                                                  _chat.canInterruptSubagent,
+                                              canSteer: _chat.canSteerSubagent,
+                                              canTail: _chat.canTailSubagent,
+                                              delegationControl:
+                                                  _chat.delegationControl,
+                                              parentTitle: widget.session.title,
+                                              acquirePresentation:
+                                                  _acquireSubagentDetailLease,
+                                              isInterruptPending: _chat
+                                                  .isSubagentInterruptPending,
+                                              appForeground:
+                                                  _appInForeground &&
+                                                  _chatRouteVisible,
+                                              openLiveWatch:
+                                                  _openSubagentLiveWatch,
+                                              onTail: (activity) async {
+                                                final result = await _chat
+                                                    .tailSubagent(activity);
+                                                return SubagentTailView(
+                                                  available: result.available,
+                                                  content: result.content,
+                                                  truncated: result.truncated,
+                                                );
+                                              },
+                                              onSteer: (activity, text) async {
+                                                final result = await _chat
+                                                    .steerSubagent(
                                                       activity,
-                                                    ),
-                                                  );
-                                                },
-                                                onStopRequested:
-                                                    _confirmInterruptSubagent,
-                                              ),
+                                                      text,
+                                                    );
+                                                return SubagentSteerView(
+                                                  status: result.status,
+                                                );
+                                              },
+                                              isOpenPending:
+                                                  _isSubagentOpenPending,
+                                              onOpenConversation: (activity) {
+                                                unawaited(
+                                                  _openSubagentConversation(
+                                                    activity,
+                                                  ),
+                                                );
+                                              },
+                                              onStopRequested:
+                                                  _confirmInterruptSubagent,
                                             ),
-                                            // Nearest the composer: the
-                                            // compaction pill, padded into
-                                            // the same measured gap.
-                                            _buildCompactionPill(),
-                                          ],
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              if (_chat.pendingInteractivePrompt != null)
+                                ValueListenableBuilder<double>(
+                                  valueListenable: _bottomBarsExtent,
+                                  builder: (context, bars, child) => Positioned(
+                                    left: 0,
+                                    right: 0,
+                                    top: 0,
+                                    bottom: bars,
+                                    child: child!,
+                                  ),
+                                  child: Stack(
+                                    children: [
+                                      // Light, un-blurred barrier — same
+                                      // idiom as the app's other floating
+                                      // popovers (session_context_usage.dart)
+                                      // — instead of a ~70% dim: the agent is
+                                      // just paused, not blocking the whole
+                                      // screen, so the transcript stays
+                                      // legible behind the card.
+                                      Positioned.fill(
+                                        child: ColoredBox(
+                                          color: colors.background.withAlpha(
+                                            41,
+                                          ),
+                                        ),
+                                      ),
+                                      Positioned(
+                                        left: 16,
+                                        right: 16,
+                                        bottom: 16,
+                                        child: InteractivePromptCard(
+                                          key: ValueKey(
+                                            'interactive-${_chat.pendingInteractivePrompt!.key.runtimeSessionId}-'
+                                            '${_chat.pendingInteractivePrompt!.key.requestId}',
+                                          ),
+                                          entry:
+                                              _chat.pendingInteractivePrompt!,
+                                          busy:
+                                              _resolvingInteractivePrompt ||
+                                              _chat
+                                                      .pendingInteractivePrompt!
+                                                      .status ==
+                                                  InteractivePromptStatus
+                                                      .responding,
+                                          onSubmit: (value) {
+                                            unawaited(
+                                              _resolveInteractivePrompt(value),
+                                            );
+                                          },
+                                          onSubmitBatch: (answers) {
+                                            return _resolveInteractivePromptBatch(
+                                              answers,
+                                            );
+                                          },
+                                          onCancel: _cancelInteractivePrompt,
                                         ),
                                       ),
                                     ],
                                   ),
                                 ),
-                                if (_chat.pendingInteractivePrompt != null)
-                                  Positioned.fill(
-                                    child: Stack(
-                                      children: [
-                                        // Light, un-blurred barrier — same
-                                        // idiom as the app's other floating
-                                        // popovers (session_context_usage.dart)
-                                        // — instead of a ~70% dim: the agent is
-                                        // just paused, not blocking the whole
-                                        // screen, so the transcript stays
-                                        // legible behind the card.
-                                        Positioned.fill(
-                                          child: ColoredBox(
-                                            color: colors.background.withAlpha(
-                                              41,
-                                            ),
-                                          ),
-                                        ),
-                                        Positioned(
-                                          left: 16,
-                                          right: 16,
-                                          bottom: 16,
-                                          child: InteractivePromptCard(
-                                            key: ValueKey(
-                                              'interactive-${_chat.pendingInteractivePrompt!.key.runtimeSessionId}-'
-                                              '${_chat.pendingInteractivePrompt!.key.requestId}',
-                                            ),
-                                            entry:
-                                                _chat.pendingInteractivePrompt!,
-                                            busy:
-                                                _resolvingInteractivePrompt ||
-                                                _chat
-                                                        .pendingInteractivePrompt!
-                                                        .status ==
-                                                    InteractivePromptStatus
-                                                        .responding,
-                                            onSubmit: (value) {
-                                              unawaited(
-                                                _resolveInteractivePrompt(
-                                                  value,
-                                                ),
-                                              );
-                                            },
-                                            onSubmitBatch: (answers) {
-                                              return _resolveInteractivePromptBatch(
-                                                answers,
-                                              );
-                                            },
-                                            onCancel: _cancelInteractivePrompt,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          ),
-                          // Lo que vive bajo el transcript (avisos en flujo,
-                          // tiras y composer) es un grupo en flujo: ningun
-                          // aviso transitorio flota sobre el, viven arriba.
-                          KeyedSubtree(
-                            key: const ValueKey('chat-bottom-bars'),
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                if (_chat.offerStaleResumedSessionStop)
-                                  StaleRunningSessionBanner(
-                                    enabled: _chat.gatewayConnected,
-                                    onStop: _cancelStream,
-                                    onDismiss: _chat
-                                        .dismissStaleResumedSessionStopOffer,
-                                  ),
-                                // Ownership conflicts keep the transcript and composer
-                                // mounted while fencing every mutation.
-                                // Cerrar el aviso solo lo compacta a una línea: el
-                                // estado de solo lectura sigue a la vista.
-                                if (_chat.conflictReadOnly)
-                                  _chat.ownershipConflictNoticeVisible
-                                      ? _buildRuntimeOwnershipBanner()
-                                      : _buildRuntimeOwnershipCompactIndicator(),
-                                // Aprobación inline: aparece justo encima del composer cuando el
-                                // agente pide permiso (motor /v1/runs).
-                                if (_chat.pendingApproval != null)
-                                  ChatApprovalCard(
-                                    approval: _chat.pendingApproval!,
-                                    busy: _resolvingApproval,
-                                    onChoice: _resolveChatApproval,
-                                    companion: context
-                                        .findAncestorStateOfType<
-                                          HermesAppState
-                                        >()
-                                        ?.companion,
-                                  ),
-                                if (_chat.desktopContinuationNoticeVisible)
-                                  Semantics(
-                                    container: true,
-                                    label: Strings.of(
-                                      context,
-                                    ).chatContinueOnDesktop,
-                                    child: Card(
-                                      key: const ValueKey(
-                                        'desktop-continuation-required',
-                                      ),
-                                      child: Padding(
-                                        padding: const EdgeInsets.fromLTRB(
-                                          16,
-                                          4,
-                                          4,
-                                          4,
-                                        ),
-                                        child: Row(
-                                          children: [
-                                            const Icon(
-                                              Icons.desktop_windows_outlined,
-                                            ),
-                                            const SizedBox(width: 12),
-                                            Expanded(
-                                              child: Text(
-                                                Strings.of(
-                                                  context,
-                                                ).chatContinueOnDesktop,
-                                              ),
-                                            ),
-                                            _ChatNoticeDismissButton(
-                                              key: const ValueKey(
-                                                'desktop-continuation-dismiss',
-                                              ),
-                                              onPressed: () => setState(
-                                                _chat
-                                                    .dismissDesktopContinuationNotice,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                // The subagent activity indicator now floats as an
-                                // overlay anchored above the transcript (see the
-                                // inner Stack below) instead of living here, so its
-                                // live/completed count changes never resize this
-                                // Column or shift the composer.
-                                _buildStopStatusStrip(colors),
-                                _buildBackgroundTaskStrip(colors),
-                                _buildQueueStrip(colors),
-                                if ((_vc?.active ?? false) && !showVoiceSurface)
-                                  _buildVoiceReturnBar(
-                                    colors,
-                                    ownsCurrentChat: voiceSessionActive,
-                                  ),
-                                if (!showVoiceSurface)
-                                  Opacity(
-                                    opacity: _editingUserMessage ? 0.62 : 1,
-                                    child: _buildInputBar(),
-                                  ),
-                              ],
-                            ),
-                          ),
-                        ],
+                            ],
+                          );
+                          return LayoutBuilder(
+                            builder: (context, constraints) {
+                              final bars = _bottomBarsHeightNow();
+                              if ((_bottomBarsExtent.value - bars).abs() >=
+                                  0.5) {
+                                _bottomBarsExtent.value = bars;
+                              }
+                              return OverflowBox(
+                                alignment: Alignment.topCenter,
+                                minHeight: constraints.maxHeight + bars,
+                                maxHeight: constraints.maxHeight + bars,
+                                child: layers,
+                              );
+                            },
+                          );
+                        }(),
                       ),
-                    ),
+                      KeyedSubtree(
+                        key: _bottomBarsBoxKey,
+                        child: KeyedSubtree(
+                          key: const ValueKey('chat-bottom-bars'),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              // A recovered turn and a session that was
+                              // already working are said by the island
+                              // (`_islandEvents`): nothing of theirs sits
+                              // above the composer.
+                              if (_chat.compactionAuthFailure
+                                  case final compactionAuth?)
+                                ProviderAuthBanner(
+                                  failure: compactionAuth,
+                                  onAction: _providerReauthRunning
+                                      ? null
+                                      : () => unawaited(
+                                          _reauthProvider(compactionAuth),
+                                        ),
+                                  onDismiss: _chat.dismissCompactionAuthFailure,
+                                ),
+                              // Ownership conflicts keep the transcript and composer
+                              // mounted while fencing every mutation.
+                              // Cerrar el aviso solo lo compacta a una línea: el
+                              // estado de solo lectura sigue a la vista.
+                              if (_chat.conflictReadOnly)
+                                _chat.ownershipConflictNoticeVisible
+                                    ? _buildRuntimeOwnershipBanner()
+                                    : _buildRuntimeOwnershipCompactIndicator(),
+                              // Aprobación inline: aparece justo encima del composer cuando el
+                              // agente pide permiso (motor /v1/runs).
+                              if (_chat.pendingApproval != null)
+                                ChatApprovalCard(
+                                  approval: _chat.pendingApproval!,
+                                  busy: _resolvingApproval,
+                                  onChoice: _resolveChatApproval,
+                                  companion: context
+                                      .findAncestorStateOfType<HermesAppState>()
+                                      ?.companion,
+                                ),
+                              if (_chat.desktopContinuationNoticeVisible)
+                                Semantics(
+                                  container: true,
+                                  label: Strings.of(
+                                    context,
+                                  ).chatContinueOnDesktop,
+                                  child: Card(
+                                    key: const ValueKey(
+                                      'desktop-continuation-required',
+                                    ),
+                                    child: Padding(
+                                      padding: const EdgeInsets.fromLTRB(
+                                        16,
+                                        4,
+                                        4,
+                                        4,
+                                      ),
+                                      child: Row(
+                                        children: [
+                                          const Icon(
+                                            Icons.desktop_windows_outlined,
+                                          ),
+                                          const SizedBox(width: 12),
+                                          Expanded(
+                                            child: Text(
+                                              Strings.of(
+                                                context,
+                                              ).chatContinueOnDesktop,
+                                            ),
+                                          ),
+                                          _ChatNoticeDismissButton(
+                                            key: const ValueKey(
+                                              'desktop-continuation-dismiss',
+                                            ),
+                                            onPressed: () => setState(
+                                              _chat
+                                                  .dismissDesktopContinuationNotice,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              // The subagent activity indicator now floats as an
+                              // overlay anchored above the transcript (see the
+                              // inner Stack below) instead of living here, so its
+                              // live/completed count changes never resize this
+                              // Column or shift the composer.
+                              _buildStopStatusStrip(colors),
+                              _buildBackgroundTaskStrip(colors),
+                              _lockWhileEditing(_buildQueueStrip(colors)),
+                              if (voiceSessionActive)
+                                ConsoleComposerBand(
+                                  focusNode: _textFocusNode,
+                                  top: 2,
+                                  bottom: 3,
+                                  child: _voiceConversationSurface(),
+                                )
+                              else if (_vc?.active ?? false)
+                                _buildVoiceReturnBar(colors),
+                              // The voice controls live in the composer and
+                              // must outlast this lock: the composer then
+                              // locks its own controls (`locked`).
+                              Opacity(
+                                opacity:
+                                    _editingUserMessage && !voiceSessionActive
+                                    ? 0.62
+                                    : 1,
+                                child: _lockWhileEditing(
+                                  _buildInputBar(),
+                                  unless: voiceSessionActive,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                ],
+                ),
               ),
+            ),
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: Semantics(
+                container: true,
+                explicitChildNodes: true,
+                sortKey: const OrdinalSortKey(0),
+                // QA 9494: its own layer. It shared the body's layer,
+                // so every keyboard frame (the body relayouts as the
+                // inset grows) re-recorded the whole header.
+                child: RepaintBoundary(
+                  child: _buildFloatingHeader(str, connManager),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
     return _BotChatIdentity(
       profile: botSurface ? widget.missionBotProfile : null,
       avatarCache: botSurface ? widget.missionAvatarCache : null,
-      child: scaffold,
+      child: ChatAskAboutScope(
+        label: Strings.of(context).rpl1215AskAboutThis,
+        // Stable tear-off: a fresh closure would rebuild every message.
+        onAsk: widget.connection.readOnly || _cronRunReadOnly
+            ? null
+            : _askAboutSelection,
+        child: scaffold,
+      ),
     );
   }
 
@@ -10656,695 +15771,256 @@ class _ChatScreenState extends State<ChatScreen>
   // `config.set`. En un borrador se captura hasta `session.create`; nunca cambia
   // el default global del servidor.
 
-  /// Selector de modelo: lista los proveedores configurados y sus modelos
-  /// (Dashboard/Bridge) y cambia solo el modelo de esta conversación.
-  /// Instala el Mobile Bridge en la instancia remota vía el agente del gateway
-  /// (un toque + aprobar una vez). Al terminar recarga el catálogo: el selector
-  /// pasa a usar el bridge y muestra TODOS los modelos configurados. Si el
-  /// servidor no lo permite (sin shell/systemd), ofrece el comando para pegarlo.
-  // ── Actualización del Mobile Bridge (Fase G) ──────────────────────────────
-  bool _bridgeUpdateChecked = false;
-
-  /// Comprueba UNA vez si el bridge de esta instancia está desactualizado. El
-  /// canal remoto solo se consulta aquí cuando el usuario autorizó el
-  /// mantenimiento automático; sin esa autorización se compara con el fallback
-  /// empaquetado y la consulta remota queda para la acción manual de Ajustes.
-  Future<void> _maybeCheckBridgeUpdate() async {
-    if (_bridgeUpdateChecked) return;
-    if (widget.connection.readOnly) return;
-    if (widget.connection.kind == InstanceKind.localhost) return;
-    _bridgeUpdateChecked = true;
-    final autoUpdate = await BridgeUpdateService.autoUpdateEnabled();
-    final check = await BridgeUpdateService.check(
-      widget.connection,
-      allowRemote: autoUpdate,
-    );
-    if (!mounted || !check.reachable || !check.outdated) return;
-    if (autoUpdate) {
-      _doBridgeUpdate(silent: true);
-      return;
-    }
-    if (!mounted) return;
-    HermesNotice.of(context).showSnackBar(
-      SnackBar(
-        duration: const Duration(seconds: 8),
-        content: Text(
-          Strings.of(context).bridgeUpdateAvailable(
-            check.installed ?? '?',
-            check.available ?? BridgeUpdateService.packagedVersion,
-          ),
-        ),
-        action: SnackBarAction(
-          label: Strings.of(context).commonUpdate,
-          onPressed: _doBridgeUpdate,
-        ),
-      ),
-    );
-  }
-
-  /// Actualiza el bridge a la mejor release validada. Con [silent] no muestra el
-  /// aviso de inicio (auto-update en 2º plano); siempre informa del resultado.
-  Future<void> _doBridgeUpdate({bool silent = false}) async {
-    final messenger = HermesNotice.of(context);
-    if (!silent) {
-      messenger.showSnackBar(
-        SnackBar(content: Text(Strings.of(context).bridgeUpdating)),
-      );
-    }
-    final res = await BridgeUpdateService.update(
-      widget.connection,
-      automatic: silent,
-    );
-    if (!mounted) return;
-    messenger.showSnackBar(
-      SnackBar(
-        content: Text(
-          res.ok
-              ? 'Mobile Bridge actualizado.'
-              : 'No se pudo actualizar el bridge: ${res.detail}',
-        ),
-      ),
-    );
-  }
-
-  Future<void> _promptInstallBridge(BuildContext sheetCtx) async {
-    Navigator.of(sheetCtx).pop(); // cierra el selector
-    final strings = Strings.of(context);
-    final progress = ValueNotifier<String>(strings.bridgeUpdating);
-    BuildContext? progressDialogContext;
-    final progressDialog = showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (dialogContext) {
-        progressDialogContext = dialogContext;
-        return PopScope(
-          canPop: false,
-          child: AlertDialog(
-            title: Text(Strings.of(context).chaInstallingMobileBridge),
-            content: Row(
-              children: [
-                const SizedBox(
-                  width: 22,
-                  height: 22,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: ValueListenableBuilder<String>(
-                    valueListenable: progress,
-                    builder: (_, v, _) => Text(v),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-    // Espera a que exista el contexto de la ruta: si el servicio devolviese de
-    // inmediato, no debemos quedarnos aguardando un diálogo que nunca cerramos.
-    while (mounted && progressDialogContext == null) {
-      await WidgetsBinding.instance.endOfFrame;
-    }
-    if (!mounted) {
-      progress.dispose();
-      return;
-    }
-    BridgeUpdateResult res = BridgeUpdateResult.failure(
-      BridgeUpdateFailure.repairFailed,
-      strings.bridgeNotDetected,
-    );
-    try {
-      res = await BridgeUpdateService.update(
-        widget.connection,
-        onProgress: (stage) => progress.value = stage,
-      );
-    } catch (error) {
-      res = BridgeUpdateResult.failure(
-        BridgeUpdateFailure.repairFailed,
-        '${strings.bridgeNotDetected} (${error.runtimeType})',
-      );
-    }
-    final dialogContext = progressDialogContext;
-    if (dialogContext != null && dialogContext.mounted) {
-      Navigator.of(dialogContext).pop();
-    }
-    await progressDialog;
-    progress.dispose();
-    if (!mounted) return;
-
-    if (res.ok) {
-      // `health` y versión no bastan para este flujo: la pantalla necesita el
-      // catálogo real. Sin esta comprobación, un bridge vivo pero sin
-      // `/bridge/model/options` reabría la misma hoja y ofrecía instalarlo en
-      // bucle, aparentando éxito sin explicar nada.
-      final catalog = await _bridgeModelOptions();
-      if (!mounted) return;
-      if (catalog != null) {
-        _modelSource = _ModelSource.bridge;
-        _modelOptionsFuture = Future.value(catalog);
-        HermesNotice.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(res.detail)));
-        _showModelSheet();
-        return;
-      }
-      res = BridgeUpdateResult.failure(
-        BridgeUpdateFailure.verificationFailed,
-        strings.bridgeNotDetected,
-      );
-    }
-
-    // El agente declinó, el servidor no tiene gestor persistente o el bridge
-    // arrancó sin el catálogo requerido. Mostramos siempre el motivo que antes
-    // quedaba oculto y mantenemos la vía fiable de copia-pega + verificación.
-    final verifying = ValueNotifier<bool>(false);
-    showDialog<void>(
-      context: context,
-      builder: (dctx) => AlertDialog(
-        title: Text(Strings.of(context).bridgeInstallServerTitle),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                res.detail,
-                style: TextStyle(color: Theme.of(context).hermes.error),
-              ),
-              const SizedBox(height: 10),
-              Text(Strings.of(context).bridgeInstallBody),
-              const SizedBox(height: 12),
-              const PlatformSetupCommands(),
-            ],
-          ),
-        ),
-        actions: [
-          ValueListenableBuilder<bool>(
-            valueListenable: verifying,
-            builder: (_, busy, _) => TextButton(
-              onPressed: busy
-                  ? null
-                  : () async {
-                      final messenger = HermesNotice.of(context);
-                      final nav = Navigator.of(dctx);
-                      final strConnected = Strings.of(context).bridgeConnected;
-                      final strNotDetected = Strings.of(
-                        context,
-                      ).bridgeNotDetected;
-                      verifying.value = true;
-                      final ok = await _verifyBridge();
-                      verifying.value = false;
-                      if (!mounted) return;
-                      if (ok) {
-                        nav.pop();
-                        _modelOptionsFuture = null;
-                        messenger.showSnackBar(
-                          SnackBar(content: Text(strConnected)),
-                          kind: HermesNoticeKind.success,
-                        );
-                        _showModelSheet();
-                      } else {
-                        messenger.showSnackBar(
-                          SnackBar(content: Text(strNotDetected)),
-                          kind: HermesNoticeKind.warning,
-                        );
-                      }
-                    },
-              child: busy
-                  ? const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : Text(Strings.of(context).bridgeAlreadyRanVerify),
-            ),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(dctx).pop(),
-            child: Text(Strings.of(context).commonClose),
-          ),
-        ],
-      ),
-    ).then((_) => verifying.dispose());
-  }
-
-  /// Comprueba que el Mobile Bridge responde y entrega el catálogo que necesita
-  /// este flujo ("Ya lo ejecuté — Verificar").
-  Future<bool> _verifyBridge() async {
-    try {
-      return await _bridgeModelOptions() != null;
-    } catch (_) {
-      return false;
-    }
-  }
-
   void _showModelSheet() {
     if (widget.connection.readOnly) {
       showReadOnlyNotice(context);
       return;
     }
-    // El catálogo se refresca al abrir; si ya hay runtime, `session.info` sigue
+    final generation = ++_modelPickerGeneration;
+    _modelOptionsFuture = null;
+    _modelOptionsPainted = null;
+    final chatOwner = _chat;
+    final connectionOwner = widget.connection;
+    final profileOwner = chatOwner.sessionProfile;
+    final pickerKey = ModelPickerCache.key(connectionOwner.id, profileOwner);
+    Route<void>? catalogRoute;
+    bool isCurrent() =>
+        mounted &&
+        _modelPickerGeneration == generation &&
+        identical(_chat, chatOwner) &&
+        identical(widget.connection, connectionOwner) &&
+        chatOwner.sessionProfile == profileOwner &&
+        (catalogRoute == null || catalogRoute!.isCurrent);
+    // mk1215: un catálogo cacheado se pinta al instante; si está caducado se
+    // revalida en segundo plano. Si ya hay runtime, `session.info` sigue
     // siendo la única fuente del badge efectivo.
-    _modelOptionsFuture ??= _loadModelOptions()
+    final cached = _modelPickerCache.peek(_modelPickerKey);
+    if (cached != null) {
+      _adoptModelPickerResult(cached.result);
+      if (!cached.fresh) {
+        _modelCatalogAvailability = ModelPickerAvailability.stale;
+      }
+      _modelOptionsPainted = _withoutHiddenModels(
+        cached.result,
+        _lastReadPrefs,
+      );
+      if (cached.fresh) {
+        _modelOptionsFuture ??= Future.value(_modelOptionsPainted!);
+      }
+    }
+    _modelOptionsFuture ??= _loadModelOptions(isCurrent: isCurrent)
       ..then((res) {
-        if (!mounted ||
-            _modelSource == _ModelSource.gateway ||
-            _chat.hasDesktopRuntime) {
+        if (!isCurrent()) return;
+        if (_modelCatalogAvailability == ModelPickerAvailability.stale) {
+          // Retained inventory is not confirmation of this session's model.
+          // Keep any existing session confirmation; never promote stale info.
+          setState(() {});
+          return;
+        }
+        if (_modelSource == _ModelSource.gateway || _chat.hasDesktopRuntime) {
           return;
         }
         final info = res.$1;
         if (info.model.isNotEmpty) setState(() => _activeModel = info);
       }).catchError((_) {});
-    var modelQuery = '';
-    showHermesFloatingSurface<void>(
+    unawaited(_accountLimits.refresh());
+    final strings = Strings.of(context);
+    // A picked model the server accepted but has not echoed in
+    // `session.info` yet is the one this session runs: the subtitle follows
+    // the pill, not the stale info.
+    final displayed = _displayedSessionModel;
+    final activeModel = displayed?.modelId ?? _activeModel?.model ?? '';
+    final activeProvider =
+        displayed?.providerSlug ?? _activeModel?.provider ?? '';
+    showStatusPillSheet<void>(
       context: context,
+      onRoute: (route) {
+        catalogRoute = route;
+        _trackStatusSheet(route);
+      },
+      origin: _statusPillRect,
       surfaceKey: const ValueKey('chat-model-dialog'),
-      maxWidth: 620,
+      title: strings.chaModelSheetTitle,
+      subtitle:
+          widget.session.isUnpersistedMobileDraft &&
+              _chat.storedSessionId == null
+          ? strings.chaModelSheetSubtitleDefault
+          : activeModel.isEmpty
+          ? strings.chaModelSheetSubtitleUnknown
+          : activeProvider.isNotEmpty
+          ? strings.chaModelSheetSubtitleActive(
+              friendlyModelName(activeModel),
+              activeProvider,
+            )
+          : strings.chaModelSheetSubtitleActiveOnly(
+              friendlyModelName(activeModel),
+            ),
       builder: (ctx) {
         final colors = Theme.of(ctx).hermes;
-        return SafeArea(
-          child: ConstrainedBox(
-            constraints: BoxConstraints(
-              maxHeight: MediaQuery.of(ctx).size.height * 0.8,
-            ),
-            child: StatefulBuilder(
-              builder: (ctx, setSheet) {
-                return FutureBuilder<(ModelActiveInfo, List<ModelProvider>)>(
-                  future: _modelOptionsFuture ??= _loadModelOptions(),
-                  builder: (ctx, snap) {
-                    final loading =
-                        snap.connectionState == ConnectionState.waiting;
-                    final active = _chat.hasDesktopRuntime
-                        ? _activeModel
-                        : snap.data?.$1;
-                    final providers = snap.data?.$2 ?? const <ModelProvider>[];
-                    final visibleProviders = filterModelProviders(
-                      providers,
-                      modelQuery,
-                    );
-                    final selectedOption = _desktopModelCatalog?.optionFor(
-                      _selectedProvider,
-                      _selectedModel,
-                    );
-                    final reasoningSupported =
-                        selectedOption?.capabilities.reasoning != false;
-                    final fastSupported =
-                        selectedOption?.capabilities.fast != false;
-                    return Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(16, 14, 16, 4),
-                          child: Align(
-                            alignment: Alignment.centerLeft,
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  Strings.of(ctx).chaModelSheetTitle,
-                                  style: Theme.of(ctx).textTheme.titleMedium,
-                                ),
-                                Text(
-                                  active == null
-                                      ? Strings.of(
-                                          ctx,
-                                        ).chaModelSheetSubtitleDefault
-                                      : (active.provider.isNotEmpty
-                                            ? Strings.of(
-                                                ctx,
-                                              ).chaModelSheetSubtitleActive(
-                                                friendlyModelName(active.model),
-                                                active.provider,
-                                              )
-                                            : Strings.of(
-                                                ctx,
-                                              ).chaModelSheetSubtitleActiveOnly(
-                                                friendlyModelName(active.model),
-                                              )),
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: colors.textSecondary,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-                          child: TextField(
-                            key: const ValueKey('chat-model-search'),
-                            textInputAction: TextInputAction.search,
-                            onChanged: (value) {
-                              setSheet(() => modelQuery = value);
-                            },
-                            decoration: InputDecoration(
-                              hintText: Strings.of(ctx).modelSearchHint,
-                              prefixIcon: const Icon(Icons.search_rounded),
-                              isDense: true,
-                            ),
-                          ),
-                        ),
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(16, 8, 16, 6),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                Strings.of(ctx).chaSessionReasoningLabel,
+        return StatefulBuilder(
+          builder: (ctx, setSheet) {
+            return FutureBuilder<(ModelActiveInfo, List<ModelProvider>)>(
+              future: _modelOptionsFuture ??= _loadModelOptions(
+                isCurrent: isCurrent,
+              ),
+              initialData: _modelOptionsPainted,
+              builder: (ctx, snap) {
+                // A failed background refresh keeps the painted catalog.
+                final data = snap.data ?? _modelOptionsPainted;
+                final loading =
+                    data == null &&
+                    snap.connectionState == ConnectionState.waiting;
+                final providers = data?.$2 ?? const <ModelProvider>[];
+                final selectedOption = _desktopModelCatalog?.optionFor(
+                  _selectedProvider,
+                  _selectedModel,
+                );
+                final reasoningSupported =
+                    selectedOption?.capabilities.reasoning != false;
+                final fastSupported =
+                    selectedOption?.capabilities.fast != false;
+                Widget note(String text) => Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  child: Text(
+                    text,
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      color: colors.textSecondary,
+                    ),
+                  ),
+                );
+                final header = Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // A failed catalog read does not prove Bridge absence.
+                    if (!loading &&
+                        (snap.hasError ||
+                            _modelCatalogAvailability !=
+                                ModelPickerAvailability.available))
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                _modelCatalogAvailability ==
+                                        ModelPickerAvailability.stale
+                                    ? Strings.of(ctx).chatModelCatalogStale
+                                    : Strings.of(ctx).chatModelCatalogDegraded,
                                 style: TextStyle(
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w700,
+                                  fontSize: 12.5,
                                   color: colors.textSecondary,
                                 ),
                               ),
-                              const SizedBox(height: 6),
-                              SingleChildScrollView(
-                                scrollDirection: Axis.horizontal,
-                                child: Row(
-                                  children: [
-                                    for (final effort
-                                        in DesktopReasoningEffort.values)
-                                      Padding(
-                                        padding: const EdgeInsets.only(
-                                          right: 6,
-                                        ),
-                                        child: ChoiceChip(
-                                          label: Text(effort.wire),
-                                          selected:
-                                              _selectedReasoning == effort,
-                                          onSelected:
-                                              _settingModel ||
-                                                  !reasoningSupported
-                                              ? null
-                                              : (_) async {
-                                                  await _applySessionReasoning(
-                                                    effort,
-                                                  );
-                                                  if (ctx.mounted) {
-                                                    setSheet(() {});
-                                                  }
-                                                },
-                                        ),
-                                      ),
-                                  ],
-                                ),
-                              ),
-                              if (!reasoningSupported)
-                                Padding(
-                                  padding: const EdgeInsets.only(top: 5),
-                                  child: Text(
-                                    Strings.of(
-                                      ctx,
-                                    ).chaModelReasoningUnavailable,
-                                    style: TextStyle(
-                                      fontSize: 11,
-                                      color: colors.textSecondary,
-                                    ),
-                                  ),
-                                ),
-                              const SizedBox(height: 8),
-                              Row(
-                                children: [
-                                  Text(
-                                    Strings.of(ctx).chaSessionFastLabel,
-                                    style: TextStyle(
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w700,
-                                      color: colors.textSecondary,
-                                    ),
-                                  ),
-                                  const Spacer(),
-                                  SegmentedButton<DesktopFastMode>(
-                                    segments: [
-                                      ButtonSegment(
-                                        value: DesktopFastMode.normal,
-                                        label: Text(
-                                          Strings.of(ctx).chaSessionFastNormal,
-                                        ),
-                                      ),
-                                      ButtonSegment(
-                                        value: DesktopFastMode.fast,
-                                        label: Text(
-                                          Strings.of(ctx).chaSessionFastEnabled,
-                                        ),
-                                      ),
-                                    ],
-                                    selected: {
-                                      _selectedFastMode ??
-                                          DesktopFastMode.normal,
+                            ),
+                            TextButton.icon(
+                              key: const ValueKey('model-catalog-retry'),
+                              onPressed:
+                                  snap.connectionState ==
+                                      ConnectionState.waiting
+                                  ? null
+                                  : () {
+                                      if (!isCurrent()) return;
+                                      setSheet(() {
+                                        _modelOptionsFuture = _loadModelOptions(
+                                          isCurrent: isCurrent,
+                                        );
+                                      });
                                     },
-                                    onSelectionChanged:
-                                        _settingModel || !fastSupported
-                                        ? null
-                                        : (selection) async {
-                                            await _applySessionFastMode(
-                                              selection.single,
-                                            );
-                                            if (ctx.mounted) setSheet(() {});
-                                          },
-                                    showSelectedIcon: false,
-                                  ),
-                                ],
+                              icon: const Icon(Icons.refresh, size: 18),
+                              label: Text(
+                                Strings.of(ctx).chatModelCatalogRetry,
                               ),
-                              if (!fastSupported)
-                                Padding(
-                                  padding: const EdgeInsets.only(top: 5),
-                                  child: Text(
-                                    Strings.of(ctx).chaModelFastUnavailable,
-                                    style: TextStyle(
-                                      fontSize: 11,
-                                      color: colors.textSecondary,
-                                    ),
-                                  ),
-                                ),
-                            ],
-                          ),
+                            ),
+                          ],
                         ),
-                        // Bridge ausente (solo se pudo listar el alias del
-                        // gateway): ofrece instalarlo para ver TODOS los modelos.
-                        if (!loading && _modelSource == _ModelSource.gateway)
-                          Padding(
-                            padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-                            child: InkWell(
-                              onTap: () => _promptInstallBridge(ctx),
-                              borderRadius: BorderRadius.circular(10),
-                              child: Container(
-                                padding: const EdgeInsets.all(12),
-                                decoration: BoxDecoration(
-                                  color: colors.surface,
-                                  borderRadius: BorderRadius.circular(10),
-                                  border: Border.all(color: colors.accent),
-                                ),
-                                child: Row(
-                                  children: [
-                                    Icon(
-                                      Icons.download_for_offline_outlined,
-                                      color: colors.accent,
-                                      size: 20,
-                                    ),
-                                    const SizedBox(width: 10),
-                                    Expanded(
-                                      child: Text(
-                                        Strings.of(
-                                          context,
-                                        ).chatInstallBridgeModels,
-                                        style: TextStyle(
-                                          fontSize: 12.5,
-                                          color: colors.textPrimary,
-                                        ),
-                                      ),
-                                    ),
-                                    Icon(
-                                      Icons.chevron_right,
-                                      color: colors.textSecondary,
-                                      size: 18,
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ),
-                        if (_settingModel)
-                          LinearProgressIndicator(
-                            minHeight: 2,
-                            backgroundColor: colors.surface,
-                            color: colors.accent,
-                          ),
-                        if (loading)
-                          const Padding(
-                            padding: EdgeInsets.all(24),
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        else if (snap.hasError)
-                          Padding(
-                            padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-                            child: Text(
-                              '${Strings.of(ctx).chaModelSheetError}\n\n${snap.error}',
-                              style: TextStyle(
-                                fontSize: 12.5,
-                                color: colors.textSecondary,
-                              ),
-                            ),
-                          )
-                        else if (providers.isEmpty)
-                          Padding(
-                            padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-                            child: Text(
-                              Strings.of(ctx).chaModelSheetEmpty,
-                              style: TextStyle(
-                                fontSize: 12.5,
-                                color: colors.textSecondary,
-                              ),
-                            ),
-                          )
-                        else if (visibleProviders.isEmpty)
-                          Padding(
-                            padding: const EdgeInsets.fromLTRB(16, 18, 16, 20),
-                            child: Text(
-                              Strings.of(ctx).modelSearchEmpty,
-                              style: TextStyle(
-                                fontSize: 12.5,
-                                color: colors.textSecondary,
-                              ),
-                            ),
-                          )
-                        else
-                          Flexible(
-                            child: ListView(
-                              shrinkWrap: true,
-                              children: [
-                                for (final p in visibleProviders) ...[
-                                  Padding(
-                                    padding: const EdgeInsets.fromLTRB(
-                                      16,
-                                      12,
-                                      16,
-                                      4,
-                                    ),
-                                    child: Row(
-                                      children: [
-                                        Text(
-                                          (p.name.isNotEmpty ? p.name : p.slug)
-                                              .toUpperCase(),
-                                          style: TextStyle(
-                                            fontSize: 10.5,
-                                            fontWeight: FontWeight.w700,
-                                            letterSpacing: 0.8,
-                                            // Encabezado de proveedor en el color
-                                            // del tema; se distingue por el texto
-                                            // (mayúsculas + negrita), no por marca.
-                                            color: colors.accent,
-                                          ),
-                                        ),
-                                        if (p.isCurrent) ...[
-                                          const SizedBox(width: 6),
-                                          Icon(
-                                            Icons.bolt,
-                                            size: 13,
-                                            color: colors.accent,
-                                          ),
-                                        ],
-                                      ],
-                                    ),
-                                  ),
-                                  for (final modelId in p.models)
-                                    _modelTile(
-                                      ctx,
-                                      setSheet,
-                                      colors,
-                                      provider: p,
-                                      modelId: modelId,
-                                      isActive:
-                                          _selectedProvider == p.slug &&
-                                          _selectedModel == modelId,
-                                    ),
-                                ],
-                                const SizedBox(height: 8),
-                              ],
-                            ),
-                          ),
-                      ],
+                      ),
+                    if (_settingModel)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: LinearProgressIndicator(
+                          minHeight: 2,
+                          backgroundColor: colors.surface,
+                          color: colors.accent,
+                        ),
+                      ),
+                    if (loading)
+                      const Padding(
+                        padding: EdgeInsets.all(24),
+                        child: Center(child: ConsoleLoader.medium()),
+                      )
+                    else if (providers.isEmpty && !snap.hasError)
+                      note(Strings.of(ctx).chaModelSheetEmpty),
+                  ],
+                );
+                return SessionModelSheetBody(
+                  providers: providers,
+                  accountLimits: _accountLimits.limits,
+                  header: header,
+                  isSelected: (slug, modelId) =>
+                      _isSelectedProvider(slug) && _selectedModel == modelId,
+                  isSelectedProvider: _isSelectedProvider,
+                  modelLabel: friendlyModelName,
+                  cardInfo: (slug, modelId) {
+                    final row = _desktopModelCatalog?.providerFor(slug);
+                    final option = row?.optionFor(modelId);
+                    return SessionModelCardInfo(
+                      // While Hermes is still checking the account's plan it
+                      // lists every model of the provider as unavailable:
+                      // that is not a verdict, and nothing is locked on it.
+                      usable:
+                          _modelSource != _ModelSource.gateway &&
+                          (_modelSource != _ModelSource.desktop ||
+                              (option != null &&
+                                  (!option.unavailable ||
+                                      row!.entitlementPending))),
+                      reasoning: option?.capabilities.reasoning,
+                      fast: option?.capabilities.fast,
+                      free: option?.pricing?.free == true,
                     );
                   },
+                  onPick: _settingModel
+                      ? null
+                      : (provider, modelId) =>
+                            _applyModel(ctx, setSheet, provider, modelId),
+                  reasoning: _selectedReasoning,
+                  reasoningSupported: reasoningSupported,
+                  onReasoning: _settingModel
+                      ? null
+                      : (effort) async {
+                          await _applySessionReasoning(effort);
+                          if (ctx.mounted) setSheet(() {});
+                        },
+                  fastMode: _selectedFastMode ?? DesktopFastMode.normal,
+                  fastSupported: fastSupported,
+                  onFastMode: _settingModel
+                      ? null
+                      : (mode) async {
+                          await _applySessionFastMode(mode);
+                          if (ctx.mounted) setSheet(() {});
+                        },
                 );
               },
-            ),
-          ),
+            );
+          },
         );
       },
-    ).whenComplete(() => _modelOptionsFuture = null);
+    ).whenComplete(() {
+      if (_modelPickerGeneration != generation) return;
+      _modelPickerGeneration++;
+      _modelPickerCache.cancelPending(pickerKey);
+      _modelOptionsFuture = null;
+      _modelOptionsPainted = null;
+    });
   }
 
-  Widget _modelTile(
-    BuildContext sheetCtx,
-    void Function(void Function()) setSheet,
-    HermesThemeColors colors, {
-    required ModelProvider provider,
-    required String modelId,
-    required bool isActive,
-  }) {
-    final desktopProvider = _desktopModelCatalog?.providerFor(provider.slug);
-    final desktopOption = desktopProvider?.optionFor(modelId);
-    final isUsable =
-        _modelSource != _ModelSource.desktop ||
-        (desktopOption != null && !desktopOption.unavailable);
-    final unavailableLabel = Strings.of(sheetCtx).chaModelUnavailable;
-    final dotColor = !isUsable
-        ? colors.textDisabled
-        : isActive
-        ? colors.accent
-        : colors.textSecondary;
-    return ListTile(
-      dense: true,
-      leading: SizedBox(
-        width: 24,
-        height: 24,
-        child: Center(
-          child: Container(
-            width: 10,
-            height: 10,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: isActive && isUsable ? dotColor : Colors.transparent,
-              border: Border.all(
-                color: dotColor,
-                width: isActive && isUsable ? 0 : 1.5,
-              ),
-            ),
-          ),
-        ),
-      ),
-      title: Text(
-        friendlyModelName(modelId),
-        style: TextStyle(
-          fontWeight: isActive ? FontWeight.w600 : FontWeight.normal,
-          color: !isUsable
-              ? colors.textDisabled
-              : isActive
-              ? colors.accent
-              : colors.textPrimary,
-        ),
-      ),
-      subtitle: Text(
-        isUsable ? modelId : '$modelId · $unavailableLabel',
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: TextStyle(fontSize: 11.5, color: colors.textSecondary),
-      ),
-      trailing: !isUsable
-          ? Icon(Icons.block_outlined, color: colors.textDisabled, size: 18)
-          : isActive
-          ? Icon(Icons.check, color: colors.accent)
-          : desktopOption?.pricing?.free == true
-          ? Icon(Icons.savings_outlined, color: colors.success, size: 18)
-          : null,
-      onTap: _settingModel || isActive || !isUsable
-          ? null
-          : () => _applyModel(sheetCtx, setSheet, provider, modelId),
-    );
-  }
+  /// md1215: `session.info` names a user-defined endpoint `custom:<key>`
+  /// while its catalog row uses the bare key; resolve through the catalog's
+  /// aliases like Desktop does so the active row is recognised.
+  bool _isSelectedProvider(String slug) =>
+      _selectedProvider == slug ||
+      _desktopModelCatalog?.providerFor(_selectedProvider)?.slug == slug;
 
   /// Cambia el modelo del runtime actual o lo captura para el primer submit.
   Future<void> _applyModel(
@@ -11395,11 +16071,9 @@ class _ChatScreenState extends State<ChatScreen>
     return (effective.label, _modeColor(effective, colors));
   }
 
-  /// Lista de opciones de modo (radio buttons), compartida por el sheet
-  /// independiente (menú ⋮ → "Permisos") y la sección de modo embebida en el
-  /// popover de contexto — una sola fuente de verdad para evitar duplicar el
-  /// bucle de `ListTile`s en dos sitios. [dismissHost] cierra la superficie
-  /// que aloja esta lista (el sheet o el popover) antes de aplicar el modo.
+  /// Opciones de modo (radio) de «Permisos de esta sesión». YOLO se confirma
+  /// con la ventana aún abierta y el modo no cambia hasta aceptar; cancelar
+  /// lo deja como estaba. El resto se aplica y cierra la ventana.
   List<Widget> _approvalModeOptionTiles({
     required BuildContext ctx,
     required ApprovalPolicyService policy,
@@ -11427,20 +16101,39 @@ class _ChatScreenState extends State<ChatScreen>
     return [
       for (final (mode, title, sub) in options)
         ListTile(
-          dense: true,
-          contentPadding: EdgeInsets.zero,
+          key: ValueKey('chat-mode-option-${mode?.name ?? 'global'}'),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+          minVerticalPadding: 8,
+          selected: override == mode,
+          selectedTileColor: colors.accent.withValues(alpha: 0.12),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
           leading: Icon(
             (override == mode)
                 ? Icons.radio_button_checked
                 : Icons.radio_button_unchecked,
             color: mode == null ? colors.accent : _modeColor(mode, colors),
           ),
-          title: Text(title),
+          title: Text(
+            title,
+            style: TextStyle(
+              fontWeight: FontWeight.w700,
+              color: mode == ApprovalMode.yolo
+                  ? colors.error
+                  : colors.textPrimary,
+            ),
+          ),
           subtitle: Text(
             sub,
-            style: TextStyle(fontSize: 11.5, color: colors.textSecondary),
+            style: TextStyle(fontSize: 12, color: colors.textSecondary),
           ),
           onTap: () async {
+            if (mode == ApprovalMode.yolo) {
+              final applied = await _selectSessionMode(policy, mode);
+              if (applied && ctx.mounted) dismissHost();
+              return;
+            }
             dismissHost();
             await _selectSessionMode(policy, mode);
           },
@@ -11449,96 +16142,41 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   void _showModeSheet(ApprovalPolicyService policy) {
-    showHermesFloatingSurface<void>(
+    final strings = Strings.of(context);
+    showStatusPillSheet<void>(
       context: context,
+      onRoute: _trackStatusSheet,
+      origin: _statusPillRect,
       surfaceKey: const ValueKey('chat-mode-dialog'),
-      maxWidth: 560,
+      title: strings.chaModeSheetTitle,
+      subtitle: strings.chaModeSheetEffective(
+        policy.effectiveMode(widget.session.id).label,
+      ),
       builder: (ctx) {
         final colors = Theme.of(ctx).hermes;
-        final s = Strings.of(ctx);
-        return ListView(
-          shrinkWrap: true,
-          padding: const EdgeInsets.only(bottom: 10),
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 14, 16, 4),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      s.chaModeSheetTitle,
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                    Text(
-                      s.chaModeSheetEffective(
-                        policy.effectiveMode(widget.session.id).label,
-                      ),
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: colors.textSecondary,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
             ..._approvalModeOptionTiles(
               ctx: ctx,
               policy: policy,
               colors: colors,
               dismissHost: () => Navigator.pop(ctx),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 10),
+            Text(
+              Strings.of(ctx).sp1215ModeAppliesNow,
+              style: TextStyle(fontSize: 12.5, color: colors.textSecondary),
+            ),
           ],
         );
       },
     );
   }
 
-  /// Sección de modo embebida al final del popover de contexto (ver
-  /// `showSessionContextPopover`'s `modeSectionBuilder`): mismo contenido que
-  /// `_showModeSheet`, reutilizado vía `_approvalModeOptionTiles` en vez de
-  /// duplicar el listado. [closePopover] es el `onClose` del propio popover.
-  Widget _buildApprovalModeSection(
-    BuildContext ctx,
-    VoidCallback closePopover,
-  ) {
-    final policy = context
-        .findAncestorStateOfType<HermesAppState>()
-        ?.approvalPolicy;
-    if (policy == null) return const SizedBox.shrink();
-    final colors = Theme.of(ctx).hermes;
-    final s = Strings.of(ctx);
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          s.chaModeSheetTitle,
-          style: Theme.of(
-            ctx,
-          ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
-        ),
-        const SizedBox(height: 2),
-        Text(
-          s.chaModeSheetEffective(
-            policy.effectiveMode(widget.session.id).label,
-          ),
-          style: TextStyle(fontSize: 12, color: colors.textSecondary),
-        ),
-        ..._approvalModeOptionTiles(
-          ctx: ctx,
-          policy: policy,
-          colors: colors,
-          dismissHost: closePopover,
-        ),
-      ],
-    );
-  }
-
-  Future<void> _selectSessionMode(
+  /// Applies [mode] to this session; true once it is applied.
+  Future<bool> _selectSessionMode(
     ApprovalPolicyService policy,
     ApprovalMode? mode,
   ) async {
@@ -11552,9 +16190,10 @@ class _ChatScreenState extends State<ChatScreen>
           lock,
           reason: Strings.of(context).chaYoloLockReason,
         );
-        if (!ok || !mounted) return;
+        if (!ok || !mounted) return false;
       }
-      final confirmed = await showDialog<bool>(
+      releaseTextFocusIfKeyboardHidden(context);
+      final confirmed = await showHermesDialogRoute<bool>(
         context: context,
         builder: (_) {
           final s = Strings.of(context);
@@ -11574,7 +16213,7 @@ class _ChatScreenState extends State<ChatScreen>
           );
         },
       );
-      if (confirmed != true || !mounted) return;
+      if (confirmed != true || !mounted) return false;
     }
     // El modo se evalúa EN VIVO en cada `approval.request` (no se manda al
     // agente al iniciar el run), así que el cambio se aplica de inmediato,
@@ -11582,7 +16221,7 @@ class _ChatScreenState extends State<ChatScreen>
     // esta sesión (sobrevive a reinicios).
     final wasSending = _sending;
     policy.setSessionMode(widget.session.id, mode);
-    if (!mounted) return;
+    if (!mounted) return true;
     setState(() {});
     if (wasSending) {
       final label = policy.effectiveMode(widget.session.id).label;
@@ -11596,6 +16235,7 @@ class _ChatScreenState extends State<ChatScreen>
           kind: HermesNoticeKind.success,
         );
     }
+    return true;
   }
 
   VoiceService? get _voice => _voiceService;
@@ -11606,11 +16246,33 @@ class _ChatScreenState extends State<ChatScreen>
   String _dictationBase = '';
   String _dictationOriginal = '';
   bool _dictationSendInFlight = false;
+  bool _dictationStarting = false;
   Completer<void>? _dictationCompletion;
+
+  /// Plazo máximo para recibir el final tras pulsar parar. Los motores que
+  /// graban y transcriben al parar (Whisper local, servidor Hermes) tardan lo
+  /// que dure el audio y ya acotan su propia transcripción; cortar antes
+  /// descartaba lo dictado con un falso «no se reconoció voz».
+  Duration _dictationStopBudget(VoiceService voice) =>
+      voice.sttRecordsThenTranscribes
+      ? const Duration(minutes: 3)
+      : const Duration(seconds: 4);
 
   Future<void> _startDictation() async {
     final voice = _voice;
     if (voice == null) return;
+    // Los `await` previos a escuchar dejan el micro pulsable: un segundo toque
+    // abría otra escucha y dejaba la primera huérfana.
+    if (_dictationStarting || _isRecording) return;
+    _dictationStarting = true;
+    try {
+      await _startDictationGuarded(voice);
+    } finally {
+      _dictationStarting = false;
+    }
+  }
+
+  Future<void> _startDictationGuarded(VoiceService voice) async {
     final perf = Stopwatch()..start();
     debugPrint('[VOICE-PERF] dictation.button.tap');
     // Cancela cualquier red de seguridad pendiente del dictado ANTERIOR: si no,
@@ -11669,6 +16331,9 @@ class _ChatScreenState extends State<ChatScreen>
       return;
     }
     if (!await voice.prepareForMicrophoneCapture()) return;
+    // The STT check can wait on the runtime permission prompt. If the chat
+    // closed meanwhile, never open a capture nobody owns or can stop.
+    if (!mounted || _disposed) return;
     // El dictado transforma el mismo composer sin desmontar su TextField. Si el
     // teclado ya estaba abierto conserva la conexión IME; tocar el micrófono no
     // debe cerrarlo ni abrirlo por sorpresa.
@@ -11745,7 +16410,7 @@ class _ChatScreenState extends State<ChatScreen>
   /// (_dictationBase = texto actual al arrancar). Así el micro no "sigue
   /// escribiendo" solo con alucinaciones del STT sobre ruido/silencio.
   void _onDictationSegmentDone() {
-    if (!_isRecording && !_transcribing) return;
+    if (!mounted || (!_isRecording && !_transcribing)) return;
     _commitPendingDictationPartial();
     _resetDictation();
     _materializeDictation();
@@ -11764,7 +16429,27 @@ class _ChatScreenState extends State<ChatScreen>
     _textController.selection = TextSelection.collapsed(offset: text.length);
   }
 
-  void _materializeDictation() => _setComposerText(_dictationBase);
+  /// Vuelca lo dictado al composer. Si el usuario escribió mientras el motor
+  /// grababa o esperaba al servidor, su texto se conserva y lo dictado se
+  /// inserta en el punto donde empezó el dictado; reemplazarlo por
+  /// [_dictationBase] borraba lo tecleado durante una transcripción lenta.
+  void _materializeDictation() {
+    final current = _textController.text;
+    final origin = _dictationOriginal.trimRight();
+    var text = _dictationBase;
+    if (current != _dictationOriginal) {
+      final dictated = _dictationBase.startsWith(origin)
+          ? _dictationBase.substring(origin.length).trim()
+          : _dictationBase.trim();
+      if (!current.startsWith(origin)) {
+        text = _joinDictation(current, dictated);
+      } else {
+        final typed = current.substring(origin.length).trim();
+        text = _joinDictation(_joinDictation(origin, dictated), typed);
+      }
+    }
+    _setComposerText(text);
+  }
 
   /// Si el motor cierra sin emitir un resultado final, usa el último parcial
   /// retenido en memoria. El usuario solo lo ve después de parar.
@@ -11796,7 +16481,7 @@ class _ChatScreenState extends State<ChatScreen>
     // El fallback empieza antes de esperar al motor: un backend que tarda en
     // cerrar no puede dejar la fila de dictado bloqueada indefinidamente.
     _stopFallback?.cancel();
-    _stopFallback = Timer(const Duration(seconds: 4), () {
+    _stopFallback = Timer(_dictationStopBudget(voice), () {
       if (mounted && (_isRecording || _transcribing)) {
         _commitPendingDictationPartial();
         _resetDictation();
@@ -11841,8 +16526,12 @@ class _ChatScreenState extends State<ChatScreen>
         }
       }
       if (completion != null && !completion.isCompleted) {
+        final voice = _voice;
         await completion.future.timeout(
-          const Duration(milliseconds: 4300),
+          (voice == null
+                  ? const Duration(seconds: 4)
+                  : _dictationStopBudget(voice)) +
+              const Duration(milliseconds: 300),
           onTimeout: () {
             if (mounted && (_isRecording || _transcribing)) {
               _commitPendingDictationPartial();
@@ -11932,10 +16621,10 @@ class _ChatScreenState extends State<ChatScreen>
       ),
       SttStatus.ready => ('', '', ''),
     };
-    await showDialog<void>(
+    releaseTextFocusIfKeyboardHidden(context);
+    await showHermesDialogRoute<void>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: colors.surface,
         icon: Icon(Icons.mic_off_rounded, color: colors.accent, size: 28),
         title: Text(
           title,
@@ -12009,6 +16698,52 @@ class _ChatScreenState extends State<ChatScreen>
 
   String _readAloudRevision(String answer) => _stableChatReadAloudHash(answer);
 
+  bool _removedVoiceEnginesChecked = false;
+
+  /// A saved voice engine that Settings no longer offers (a voice or
+  /// dictation service of the user's own) moves, once and silently, to one it
+  /// does offer. Nothing happens for everyone else.
+  Future<void> _migrateRemovedVoiceEngines(VoiceService voice) async {
+    if (!RemovedVoiceEngines.pending(voice.settings)) return;
+    final connection = widget.connection;
+    try {
+      await _profileReady;
+      if (!mounted) return;
+      final profile = _effectiveSessionProfile;
+      final preferences = await SharedPreferences.getInstance();
+      await RemovedVoiceEngines.migrate(
+        voice: voice,
+        serverDictation: () => RemovedVoiceEngines.serverDictationFor(
+          connection: connection,
+          preferences: preferences,
+          profile: profile,
+        ),
+      );
+    } catch (error) {
+      debugPrint(
+        '[hermes-voice] removed engine not migrated (${error.runtimeType})',
+      );
+    }
+  }
+
+  /// «Voz de las respuestas» is one choice per connection and profile: a reply
+  /// read aloud uses the same voice as the voice conversation (the Hermes
+  /// server's when that is chosen), not always the phone's.
+  Future<void> _alignReadAloudVoice(VoiceService voice) async {
+    try {
+      await ReadAloudVoiceRoute.align(
+        voice: voice,
+        connection: widget.connection,
+        preferences: await SharedPreferences.getInstance(),
+        profile: _effectiveSessionProfile,
+      );
+    } catch (error) {
+      debugPrint(
+        '[hermes-read] voice route unavailable (${error.runtimeType})',
+      );
+    }
+  }
+
   /// Alterna la sesión de lectura de una burbuja concreta. El servicio decide
   /// si el gesto pausa/reanuda o detiene/reinicia según la preferencia.
   Future<void> _toggleReadAloud(
@@ -12018,6 +16753,9 @@ class _ChatScreenState extends State<ChatScreen>
     final voice = _voice;
     if (voice == null || text.trim().isEmpty) return;
     try {
+      // A tap on the reply being read pauses it: there is nothing to prepare.
+      if (!voice.readAloud.value.isActive) await _alignReadAloudVoice(voice);
+      if (!mounted) return;
       await voice.toggleReadAloud(
         messageKey: _readAloudMessageKey(message, text),
         revision: _readAloudRevision(text),
@@ -12059,7 +16797,7 @@ class _ChatScreenState extends State<ChatScreen>
   // ── Modo voz manos libres (delega en el controlador local global) ──
   /// Abre el modo voz para ESTA sesión. La orquestación entera (bucle, fases,
   /// TTS) vive en el servicio global, así que sobrevive a la navegación y al 2º
-  /// plano. La pantalla solo abre y proyecta el VoiceStage.
+  /// plano. La pantalla solo abre y proyecta el VoiceStatusLine.
   /// Ofrece el modo de voz nativo Desktop (spec 048/US5) para esta conexión:
   /// sonda cacheada de `/api/audio/*`, consentimiento único por identidad de
   /// servidor y activación del enrutado en VoiceService. Devuelve `false` si
@@ -12285,22 +17023,46 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
-  /// Proyección móvil de Voz: Blobatar, una línea causal y controles mínimos.
-  /// Nunca pinta el transcript del usuario ni la respuesta final completa.
-  Widget _voiceConversationSurface() {
-    // La llamada está gated por `_voiceForThisSession`. Durante el teardown
-    // puede existir un único frame sin superficie: se oculta en vez de volver
-    // a montar la UI Jarvis retirada.
-    if (_vc == null) return const SizedBox.shrink();
-    final vc = _vc!;
+  /// What the voice conversation of THIS chat is doing, as its two pieces draw
+  /// it (the status line and the composer's controls); null without one.
+  VoiceStripState? get _voiceStripState {
+    final vc = _vc;
+    if (vc == null || !kVoiceRuntimeEnabled || !_voiceForThisSession) {
+      return null;
+    }
     final phase = vc.phase;
-    final strings = Strings.of(context);
-    final phaseLabel = switch (phase) {
-      VoicePhase.listening => strings.chaVoiceListeningLabel,
-      VoicePhase.transcribing => strings.chaVoiceTranscribingLabel,
-      VoicePhase.thinking => strings.chaVoiceThinkingLabel,
-      VoicePhase.speaking => strings.chaVoiceSpeakingLabel,
-      VoicePhase.toolCall => switch (voiceToolActivity(vc.activeTool ?? '')) {
+    return vc.note != null && phase == VoicePhase.idle
+        ? VoiceStripState.error
+        : vc.userPaused
+        ? VoiceStripState.paused
+        : switch (phase) {
+            VoicePhase.listening => VoiceStripState.listening,
+            VoicePhase.transcribing => VoiceStripState.transcribing,
+            VoicePhase.thinking => VoiceStripState.thinking,
+            VoicePhase.toolCall => VoiceStripState.toolCall,
+            VoicePhase.speaking => VoiceStripState.speaking,
+            VoicePhase.waitingPermission => VoiceStripState.waiting,
+            VoicePhase.idle => VoiceStripState.loading,
+          };
+  }
+
+  VoiceStripLabels _voiceStripLabels(Strings strings) => VoiceStripLabels(
+    finishListening: strings.chaVoiceFinishListening,
+    pause: strings.chaVoicePause,
+    resume: strings.chaVoicePlay,
+    stopAndTalk: strings.chaVoiceStopAndTalk,
+    cancel: strings.chaVoiceCancelRun,
+    stop: strings.chaStopTooltip,
+    retry: strings.chaVoiceRetry,
+    review: strings.chaVoiceViewApproval,
+    close: strings.chaVoiceExitTooltip,
+    end: strings.chaVoiceEnd,
+  );
+
+  /// The step Hermes is on, in plain words. The one place the voice line
+  /// names a tool: it never shows the technical name, arguments or output.
+  String _voiceStepLabel(Strings strings, String? tool) =>
+      switch (voiceToolActivity(tool ?? '')) {
         VoiceToolActivity.search => strings.chaVoicePhaseSearching,
         VoiceToolActivity.browse => strings.chaVoicePhaseBrowsing,
         VoiceToolActivity.read => strings.chaVoicePhaseReviewing,
@@ -12311,23 +17073,29 @@ class _ChatScreenState extends State<ChatScreen>
         VoiceToolActivity.coordinate => strings.chaVoicePhaseCoordinating,
         VoiceToolActivity.check => strings.chaVoicePhaseChecking,
         null => strings.chaVoicePhaseWorking,
-      },
+      };
+
+  /// Voice conversation inside the chat, as Desktop does it: the transcript
+  /// stays visible and one thin line sits on top of the composer with the
+  /// live state. The conversation controls are in the composer
+  /// ([_composerVoiceControls]).
+  Widget _voiceConversationSurface() {
+    // La llamada está gated por `_voiceForThisSession`. Durante el teardown
+    // puede existir un único frame sin superficie: se oculta.
+    final vc = _vc;
+    final stageState = _voiceStripState;
+    if (vc == null || stageState == null) return const SizedBox.shrink();
+    final phase = vc.phase;
+    final strings = Strings.of(context);
+    final phaseLabel = switch (phase) {
+      VoicePhase.listening => strings.chaVoiceListeningLabel,
+      VoicePhase.transcribing => strings.chaVoiceTranscribingLabel,
+      VoicePhase.thinking => strings.chaVoiceThinkingLabel,
+      VoicePhase.speaking => strings.chaVoiceSpeakingLabel,
+      VoicePhase.toolCall => _voiceStepLabel(strings, vc.activeTool),
       VoicePhase.waitingPermission => strings.chaVoiceWaitingLabel,
-      VoicePhase.idle => strings.chaVoiceIdleLabel,
+      VoicePhase.idle => strings.voicePreparingVoice,
     };
-    final stageState = vc.note != null && phase == VoicePhase.idle
-        ? VoiceStageState.error
-        : vc.userPaused
-        ? VoiceStageState.paused
-        : switch (phase) {
-            VoicePhase.listening => VoiceStageState.listening,
-            VoicePhase.transcribing => VoiceStageState.transcribing,
-            VoicePhase.thinking => VoiceStageState.thinking,
-            VoicePhase.toolCall => VoiceStageState.toolCall,
-            VoicePhase.speaking => VoiceStageState.speaking,
-            VoicePhase.waitingPermission => VoiceStageState.waiting,
-            VoicePhase.idle => VoiceStageState.loading,
-          };
     final safeNote = vc.note?.trim() ?? '';
     final label = voiceActivityLineLabel(
       // User pause clears `note`; automatic safety pauses keep a fixed local
@@ -12337,44 +17105,15 @@ class _ChatScreenState extends State<ChatScreen>
       publicCommentary: vc.publicCommentary,
       fallbackLabel: safeNote.isEmpty ? phaseLabel : safeNote,
     );
-    final voiceProfile = widget.missionBotProfile;
-    final profileName = voiceProfile?.name.trim().isNotEmpty == true
-        ? voiceProfile!.name
-        : _effectiveSessionProfile;
-    final configuredFace = voiceProfile?.botShape;
-    final voiceFace = configuredFace == null
-        ? null
-        : HermesBlobatarFaceVisual.tryParse(
-            shapeWire: configuredFace,
-            profileName: profileName,
-          );
-    final fallbackFace = HermesBlobatarFaceVisual.tryParse(
-      shapeWire: HermesBlobatarFaceVisual.buildWire()!,
-      profileName: profileName,
-    )!;
     return KeyedSubtree(
       key: const ValueKey('voice-conversation-surface'),
-      child: VoiceStage(
+      child: VoiceStatusLine(
         state: stageState,
         statusLabel: label,
-        faceVisual: voiceFace ?? fallbackFace,
-        labels: VoiceStageLabels(
-          finishListening: strings.chaVoiceFinishListening,
-          pause: strings.chaVoicePause,
-          resume: strings.chaVoicePlay,
-          stopAndTalk: strings.chaVoiceStopAndTalk,
-          cancel: strings.chaVoiceCancelRun,
-          retry: strings.chaVoiceRetry,
-          review: strings.chaVoiceViewApproval,
-          close: strings.chaVoiceExitTooltip,
-        ),
-        micLevel: phase == VoicePhase.listening ? _voice?.micLevel : null,
-        onFinishListening: phase == VoicePhase.listening && vc.whisper
-            ? vc.finishListening
-            : null,
-        onPause: phase == VoicePhase.waitingPermission
-            ? null
-            : vc.pauseConversation,
+        // While it listens the line shows what is being heard, as Desktop
+        // does; the final text still lands in the chat as a bubble.
+        heard: () => vc.partialTranscript,
+        labels: _voiceStripLabels(strings),
         onResume: vc.userPaused ? vc.playConversation : null,
         // Siempre disponible mientras el turno voz está activo (thinking,
         // toolCall o speaking): con el monitor full-duplex armado el gesto
@@ -12382,30 +17121,58 @@ class _ChatScreenState extends State<ChatScreen>
         // idempotente (requestManualInterruptionCapture ya desarma el barge-in
         // y drena el TTS antes de abrir la captura manual).
         onStopAndTalk: vc.stopAndTalk,
-        onCancel: vc.backendActive ? vc.cancelBackend : null,
-        onRetry: stageState == VoiceStageState.error ? vc.retry : null,
+        onRetry: stageState == VoiceStripState.error ? vc.retry : null,
+        // The approval card is already in the transcript above the line:
+        // bring it into view, nothing has to be moved out of its way.
         onReview: phase == VoicePhase.waitingPermission
-            ? () {
-                vc.pauseForApproval();
-                WidgetsBinding.instance.addPostFrameCallback((_) {
-                  if (mounted) _scrollToBottom();
-                });
-              }
+            ? _scrollToBottom
             : null,
-        // Terminar es distinto de minimizar: la flecha del AppBar conserva la
-        // conversación; este control explícito sí libera STT/TTS.
+      ),
+    );
+  }
+
+  /// The conversation's controls for the composer's trailing end: pause, the
+  /// one round button the state calls for and the pill that ends it. Null
+  /// without a voice conversation in this chat. [onStop] is the composer's
+  /// own Stop when the round button carries it.
+  ConsoleComposerVoiceControls? _composerVoiceControls({
+    required bool takesPrimarySlot,
+    VoidCallback? onStop,
+  }) {
+    final vc = _vc;
+    final stageState = _voiceStripState;
+    if (vc == null || stageState == null) return null;
+    final phase = vc.phase;
+    final labels = _voiceStripLabels(Strings.of(context));
+    return ConsoleComposerVoiceControls(
+      takesPrimarySlot: takesPrimarySlot,
+      minWidth: VoiceComposerControls.minWidth,
+      builder: (context, maxWidth, comfortWidth) => VoiceComposerControls(
+        state: stageState,
+        labels: labels,
+        maxWidth: maxWidth,
+        comfortWidth: comfortWidth,
+        // The pill's meter decides what it shows from the state; the level
+        // is only read while the microphone is open.
+        micLevel: _voice?.micLevel,
+        onFinishListening: phase == VoicePhase.listening && vc.whisper
+            ? vc.finishListening
+            : null,
+        onPause: phase == VoicePhase.waitingPermission
+            ? null
+            : vc.pauseConversation,
+        onCancel: vc.backendActive ? vc.cancelBackend : null,
+        onStop: onStop,
         onClose: () => unawaited(vc.exit()),
       ),
     );
   }
 
-  Widget _buildVoiceReturnBar(
-    HermesThemeColors colors, {
-    required bool ownsCurrentChat,
-  }) {
+  /// A voice conversation is running in another chat: one tap goes there.
+  Widget _buildVoiceReturnBar(HermesThemeColors colors) {
     final strings = Strings.of(context);
     final ownerTitle = _vc?.ownerChat?.sessionTitle.trim() ?? '';
-    final label = ownsCurrentChat || ownerTitle.isEmpty
+    final label = ownerTitle.isEmpty
         ? strings.chaVoiceReturnOverlay
         : strings.chaVoiceActiveElsewhere(ownerTitle);
     return SafeArea(
@@ -12418,9 +17185,7 @@ class _ChatScreenState extends State<ChatScreen>
           clipBehavior: Clip.antiAlias,
           child: InkWell(
             key: const ValueKey('voice-return-overlay'),
-            onTap: ownsCurrentChat
-                ? _vc?.resumeOverlay
-                : () => unawaited(_returnToActiveVoiceSession()),
+            onTap: () => unawaited(_returnToActiveVoiceSession()),
             child: ConstrainedBox(
               constraints: const BoxConstraints(minHeight: 56),
               child: Padding(
@@ -12440,9 +17205,7 @@ class _ChatScreenState extends State<ChatScreen>
                       ),
                     ),
                     Icon(
-                      ownsCurrentChat
-                          ? Icons.arrow_upward_rounded
-                          : Icons.open_in_new_rounded,
+                      Icons.open_in_new_rounded,
                       size: 19,
                       color: colors.textSecondary,
                     ),
@@ -12644,7 +17407,7 @@ class _ChatScreenState extends State<ChatScreen>
                 if (!goal.isDone)
                   TextButton(
                     onPressed: () async {
-                      final confirmed = await showDialog<bool>(
+                      final confirmed = await showHermesDialogRoute<bool>(
                         context: sheetContext,
                         builder: (dialogContext) => AlertDialog(
                           title: Text(s.chaGoalClearConfirmTitle),
@@ -12829,13 +17592,27 @@ class _ChatScreenState extends State<ChatScreen>
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        _chat.queueParked
+                        _chat.queueParkedAfterCompression
+                            ? Strings.of(
+                                context,
+                              ).cq1215QueueParkedAfterCompaction
+                            // A stuck head is the more useful note: resuming a
+                            // queue from a previous run would not send it either.
+                            : _chat.queueParkedFromPreviousSession &&
+                                  !_queueHeadStuck(queuedEntries)
+                            ? Strings.of(
+                                context,
+                              ).lo1216QueueParkedFromPreviousSession
+                            : _chat.queueParked &&
+                                  !_chat.queueParkedFromPreviousSession
                             ? Strings.of(context).chaQueueParkedNote
+                            : _queueHeadStuck(queuedEntries)
+                            ? Strings.of(context).q1215QueueHeadStuckNote
                             : Strings.of(context).chaQueuedNote,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           fontSize: 10,
-                          color: colors.textDisabled,
+                          color: colors.textTertiary,
                         ),
                       ),
                     ),
@@ -12856,7 +17633,7 @@ class _ChatScreenState extends State<ChatScreen>
               alignment: Alignment.centerRight,
               child: TextButton.icon(
                 key: const ValueKey('chat-queue-resume'),
-                onPressed: _chat.resumeParkedQueue,
+                onPressed: _resumeParkedQueue,
                 icon: const Icon(Icons.play_arrow_rounded),
                 label: Text(Strings.of(context).chaQueueResume),
                 style: TextButton.styleFrom(minimumSize: const Size(48, 48)),
@@ -12871,6 +17648,7 @@ class _ChatScreenState extends State<ChatScreen>
             for (var i = 0; i < queuedEntries.length; i++) ...[
               _QueuedRow(
                 entry: queuedEntries[i],
+                retryExhausted: _queuedRetryExhausted(queuedEntries[i]),
                 attachmentNames: queuedEntries[i].attachments
                     .map((item) => item.name)
                     .toList(growable: false),
@@ -12878,13 +17656,18 @@ class _ChatScreenState extends State<ChatScreen>
                 transportCanSteer: _chat.canSteerLiveTurn,
                 editingId: _editingQueuedEntryId,
                 onEdit: () => unawaited(_editQueuedEntry(queuedEntries[i])),
+                canMoveUp: _queueEntryMovable(queuedEntries, i, up: true),
+                canMoveDown: _queueEntryMovable(queuedEntries, i, up: false),
+                onMove: (up) =>
+                    unawaited(_moveQueuedEntry(queuedEntries[i].id, up: up)),
                 onSteer: () =>
                     unawaited(_steerQueuedEntry(queuedEntries[i].id)),
                 onSendNow: () =>
-                    unawaited(_chat.sendQueuedNow(queuedEntries[i].id)),
-                onDelete: () => unawaited(
-                  _chat.cancelQueuedByIdentity(queuedEntries[i].id),
-                ),
+                    unawaited(_sendQueuedEntryNow(queuedEntries[i])),
+                onDelete: () =>
+                    unawaited(_deleteQueuedEntry(queuedEntries[i].id)),
+                onAbandon: () =>
+                    unawaited(_abandonUncertainQueued(queuedEntries[i])),
               ),
               if (i != queuedEntries.length - 1)
                 Divider(
@@ -12898,6 +17681,70 @@ class _ChatScreenState extends State<ChatScreen>
         ],
       ),
     );
+  }
+
+  /// Whether row [index] can swap places with its neighbour: neither row may
+  /// be the one being sent, already on the server or of unknown delivery.
+  bool _queueEntryMovable(
+    List<QueuedEntryView> entries,
+    int index, {
+    required bool up,
+  }) {
+    final other = index + (up ? -1 : 1);
+    if (other < 0 || other >= entries.length) return false;
+    bool movable(QueuedEntryView entry) =>
+        entry.kind != QueuedEntryKind.desktopAccepted &&
+        !entry.sending &&
+        !entry.serverAccepted &&
+        !entry.deliveryUnknown &&
+        !entry.stopWaitingAvailable;
+    return movable(entries[index]) && movable(entries[other]);
+  }
+
+  /// Nothing is running and the first queued row will not go on its own
+  /// (unconfirmed, left over from an earlier run, attachment missing, retries
+  /// used up). The header must not promise it will be sent "when the turn
+  /// ends". A row merely `blocked` may have a retry scheduled, so it does not
+  /// count by itself.
+  bool _queueHeadStuck(List<QueuedEntryView> entries) {
+    if (_chat.isStreaming || entries.isEmpty) return false;
+    final head = entries.first;
+    if (head.kind == QueuedEntryKind.desktopAccepted) return false;
+    return head.stopWaitingAvailable ||
+        head.missingAttachment ||
+        _queuedRetryExhausted(head);
+  }
+
+  /// The entry used up its automatic retries on a healthy socket and will
+  /// not go on its own until the user retries it.
+  bool _queuedRetryExhausted(QueuedEntryView entry) {
+    if (entry.kind == QueuedEntryKind.desktopAccepted) return false;
+    final retryKey = entry.id.startsWith('prepared:')
+        ? entry.id.substring('prepared:'.length)
+        : entry.id;
+    return _chat.queuedRetriesExhausted.contains(retryKey);
+  }
+
+  Future<void> _abandonUncertainQueued(QueuedEntryView entry) async {
+    final strings = Strings.of(context);
+    final confirmed = await showHermesConfirmDialog(
+      context: context,
+      title: strings.chatQueueAbandonTitle,
+      message: entry.serverAccepted
+          ? strings.q1215QueueAbandonAcceptedBody
+          : strings.chatQueueAbandonBody,
+      confirmLabel: strings.chatQueueAbandonConfirm,
+      cancelLabel: strings.commonCancel,
+      destructive: true,
+    );
+    if (!confirmed || !mounted) return;
+    if (await _chat.abandonUncertainQueuedTurn(entry.id) || !mounted) return;
+    _showQueueActionFailed(Strings.of(context).q1215QueueAbandonFailed);
+  }
+
+  void _resumeParkedQueue() {
+    if (_chat.resumeParkedQueue()) return;
+    _showQueueActionFailed(Strings.of(context).q1215QueueResumeFailed);
   }
 
   ConsoleComposerDictation _composerDictation({
@@ -12918,16 +17765,20 @@ class _ChatScreenState extends State<ChatScreen>
     onSend: _sendDictation,
   );
 
+  /// The composer's primary slot is free for voice: nothing to send, stop or
+  /// wait for. The start-voice button stands there; the end pill of a running
+  /// conversation takes its place.
+  bool _voiceSlotFree(bool showStop) =>
+      kVoiceRuntimeEnabled &&
+      _allowsDedicatedVoiceLaunch &&
+      _nothingToSend &&
+      !showStop &&
+      !_composerSubmissionInFlight &&
+      !_compressingSession &&
+      !_isRecording;
+
   Widget? _composerVoiceModeAction(HermesThemeColors colors, bool showStop) {
-    if (!(kVoiceRuntimeEnabled &&
-        _allowsDedicatedVoiceLaunch &&
-        _nothingToSend &&
-        !showStop &&
-        !_composerSubmissionInFlight &&
-        !_compressingSession &&
-        !_isRecording)) {
-      return null;
-    }
+    if (!_voiceSlotFree(showStop)) return null;
     return HermesTactileAction(
       icon: Icons.graphic_eq_rounded,
       semanticLabel: Strings.of(context).chaVoiceModeTooltip,
@@ -13051,13 +17902,16 @@ class _ChatScreenState extends State<ChatScreen>
   Widget _buildInputBar() {
     widget.performanceProbe?.composerBuilds++;
     final colors = Theme.of(context).hermes;
-    if (widget.connection.readOnly) {
+    if (widget.connection.readOnly || _cronRunReadOnly) {
       // Mantiene la misma huella y superficie que el composer para no convertir
       // un estado persistente en una alerta separada del lugar al que afecta.
       return Container(
-        padding: const EdgeInsets.fromLTRB(14, 4, 14, 10),
+        // Same footprint as [ConsoleComposer] in a chat: the notch sits on
+        // its top edge, and the status bar is never the composer's concern.
+        padding: const EdgeInsets.fromLTRB(14, 0, 14, 10),
         color: colors.background,
         child: SafeArea(
+          top: false,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -13076,7 +17930,9 @@ class _ChatScreenState extends State<ChatScreen>
                       const SizedBox(width: 10),
                       Expanded(
                         child: Text(
-                          Strings.of(context).readOnlyNotice,
+                          widget.connection.readOnly
+                              ? Strings.of(context).readOnlyNotice
+                              : Strings.of(context).au1215CronRunViewOnly,
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
@@ -13087,6 +17943,11 @@ class _ChatScreenState extends State<ChatScreen>
                           ),
                         ),
                       ),
+                      // A voice conversation can always be paused and ended,
+                      // even here.
+                      ?_composerVoiceControls(
+                        takesPrimarySlot: true,
+                      )?.builder(context, 160, 160),
                     ],
                   ),
                 ),
@@ -13122,23 +17983,73 @@ class _ChatScreenState extends State<ChatScreen>
               onPick: _pickSlash,
             ),
           );
+    final mentionPalette =
+        _isRecording || _transcribing || _navigationDrawerOpen
+        ? null
+        : ChatMentionPalette(
+            controller: _textController,
+            focusNode: _textFocusNode,
+            connectionId: widget.connection.id,
+            profile: _effectiveSessionProfile,
+          );
+    final referencePalette = !_referencePaletteVisible
+        ? null
+        : TextFieldTapRegion(
+            child: ComposerReferencePalette(
+              items: _referenceItems,
+              onPick: _pickReference,
+              onDescend: _descendReference,
+            ),
+          );
     final floatingPalette =
         slashPalette ??
-        (_isRecording || _transcribing || _navigationDrawerOpen
-            ? null
-            : ChatMentionPalette(
-                controller: _textController,
-                focusNode: _textFocusNode,
-                connectionId: widget.connection.id,
-                profile: _effectiveSessionProfile,
+        (referencePalette == null
+            ? mentionPalette
+            : Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Flexible(child: referencePalette),
+                  ?mentionPalette,
+                ],
               ));
-    final showStop = _chat.canStopSessionWork && _nothingToSend;
+    // With a voice conversation in this chat one round button stops work:
+    // its own "Cancel task" while it has a turn to cancel, otherwise the
+    // composer's Stop, drawn in that button's place. Only when the round
+    // button is taken (finish speaking) or Stop is disabled does the
+    // composer keep its own Stop beside the conversation's controls.
+    final voiceState = _voiceStripState;
+    final stoppable = _chat.canStopSessionWork && _nothingToSend;
+    final voiceOffersCancel =
+        voiceState != null &&
+        voiceState.canCancelTurn &&
+        (_vc?.backendActive ?? false);
+    final voiceCarriesStop =
+        voiceState != null &&
+        stoppable &&
+        !voiceOffersCancel &&
+        !(voiceState == VoiceStripState.listening && (_vc?.whisper ?? false)) &&
+        _chat.gatewayConnected;
+    final showStop = stoppable && !voiceOffersCancel && !voiceCarriesStop;
+    final voiceControls = _composerVoiceControls(
+      takesPrimarySlot: _voiceSlotFree(showStop),
+      onStop: voiceCarriesStop ? _cancelStream : null,
+    );
+    final composerLifecycle =
+        _foregroundConversationLifecycle ?? _localConversationLifecycle;
+    final composerGeneration = _foregroundActionGeneration;
+    final composerProfileTicket = ActiveProfileScope.of(
+      context.findAncestorStateOfType<HermesAppState>()!.connManager,
+      widget.connection.id,
+    ).capture();
     // Composer premium compartido (ConsoleComposer): contenedor con borde
     // sutil, campo sin marco y fila de acciones con send cuadrado.
     return ConsoleComposer(
       controller: _textController,
       focusNode: _textFocusNode,
       palette: floatingPalette,
+      inputFormatters: _composerInputFormatters,
+      onOpenPastedText: (localId) => unawaited(_openPastedText(localId)),
       reduceMotion: _reduceMotion,
       attachments: _pendingAttachments,
       onRemoveAttachment: (localId) =>
@@ -13152,23 +18063,43 @@ class _ChatScreenState extends State<ChatScreen>
           ? Strings.of(context).chaUploadingAttachment
           : _pendingAttachments.isNotEmpty
           ? Strings.of(context).chaHintSystem
+          // The voice controls leave a narrow field: a hint that fits it.
+          : voiceControls != null
+          ? Strings.of(context).chaVoiceComposerHint
           : _botDisplayName != null
           ? Strings.of(context).botChatComposerHint(_botDisplayName!)
           : Strings.of(context).chaHintUser,
-      onKeyboardSubmit: _composerKeyboardSubmit,
-      onContentInserted: (content) =>
-          unawaited(_insertKeyboardContent(content)),
-      // A retained invocation may keep focus without authorizing edits or a
-      // second submission.
-      fieldReadOnly: _compressingSession,
-      // El usuario puede preparar texto y abrir el teclado mientras el
-      // transcript interactivo termina de publicar. El envío se mantiene
-      // bloqueado hasta entonces; adjuntar y dictar siguen cerrados porque
-      // mezclarían el lote en vuelo.
-      fieldEnabled:
-          !_attachmentSubmitting &&
-          (!_compressingSession || _compressionDraftFocusRetained),
-      voiceModeAction: _composerVoiceModeAction(colors, showStop),
+      onKeyboardSubmit: () {
+        if (_voiceForThisSession) {
+          _composerKeyboardSubmit();
+          return;
+        }
+        unawaited(
+          _foregroundSend(
+            composerLifecycle,
+            composerGeneration,
+            composerProfileTicket,
+          ),
+        );
+      },
+      // Pegar una imagen desde el teclado es adjuntar: cerrado mientras
+      // compacta, igual que el `+`.
+      onContentInserted: _compressingSession
+          ? null
+          : (content) => unawaited(_insertKeyboardContent(content)),
+      // Mientras compacta se puede escribir y poner en cola el siguiente
+      // turno; la cola lo retiene hasta que termine. La invocación `/compress`
+      // ya salió del composer y un comando escrito ahora no se ejecuta
+      // (`_sendMessageOnce`), así que no hay segundo envío. Adjuntar y dictar
+      // siguen cerrados porque mezclarían el lote en vuelo.
+      fieldEnabled: !_attachmentSubmitting,
+      voiceModeAction: voiceControls == null
+          ? _composerVoiceModeAction(colors, showStop)
+          : null,
+      voiceControls: voiceControls,
+      // A sent message being edited locks the composer, never the way out
+      // of a voice conversation.
+      locked: voiceControls != null && _editingUserMessage,
       showStop: showStop,
       // Sin lanzadera mientras compacta: la barra de compactación sobre el
       // compositor es la única señal viva.
@@ -13181,95 +18112,206 @@ class _ChatScreenState extends State<ChatScreen>
           !_interactiveMessageRefreshPending &&
           !_composerSubmissionInFlight &&
           !_attachmentSubmitting &&
-          !_compressingSession &&
           !_attachmentMutationInFlight &&
           !_nothingToSend,
-      onSend: (_, _) => _sendMessage(),
-      onQueue: _sending || _chat.hasAuthoritativePassiveRemoteActivity
-          ? () => _sendMessage(queueOnly: true)
+      onSend: (_, _) => _foregroundSend(
+        composerLifecycle,
+        composerGeneration,
+        composerProfileTicket,
+      ),
+      onQueue:
+          _sending ||
+              _chat.hasAuthoritativePassiveRemoteActivity ||
+              _compressingSession
+          ? () => _foregroundSend(
+              composerLifecycle,
+              composerGeneration,
+              composerProfileTicket,
+              queueOnly: true,
+            )
           : null,
       onStop: _cancelStream,
+      // The notch tab sits right on the composer's top edge.
+      topPadding: 0,
       footer: _buildFloatingStatusPill(colors),
     );
   }
 
-  /// Pastilla de compactación: vive en la pila flotante del transcript, justo
-  /// encima del composer, así que el transcript reserva su alto medido y
-  /// nunca tapa el último mensaje ni el composer. Entra y sale con un fundido.
-  Widget _buildCompactionPill() {
-    final compaction =
-        _compaction.current ??
-        (_compressingSession || _chat.desktopRestoredCompressionRunning
-            ? CompactionProgress(
-                startedAt: _chat.desktopCompactionStartedAt ?? DateTime.now(),
-                manual: true,
-                messagesBefore: _chat.desktopCompactionMessagesBefore,
-                tokensBefore: _chat.desktopCompactionTokensBefore,
-              )
-            : null);
-    return AnimatedSwitcher(
-      duration: _reduceMotion
-          ? Duration.zero
-          : const Duration(milliseconds: 220),
-      switchInCurve: Curves.easeOutCubic,
-      switchOutCurve: Curves.easeInCubic,
-      transitionBuilder: (child, animation) => FadeTransition(
-        opacity: animation,
-        child: ScaleTransition(
-          scale: Tween<double>(begin: 0.96, end: 1).animate(animation),
-          child: child,
-        ),
+  /// Compactación en curso o recién terminada, o `null`. Se pinta dentro de
+  /// la mini píldora de contexto+modo bajo el composer (tp1216), no en una
+  /// pastilla flotante aparte.
+  CompactionProgress? get _visibleCompaction =>
+      _compaction.current ??
+      (_chatBound &&
+              (_compressingSession || _chat.desktopRestoredCompressionRunning)
+          ? CompactionProgress(
+              startedAt: _chat.desktopCompactionStartedAt ?? DateTime.now(),
+              manual: true,
+              messagesBefore: _chat.desktopCompactionMessagesBefore,
+              tokensBefore: _chat.desktopCompactionTokensBefore,
+            )
+          : null);
+
+  /// Píldora de estado bajo el composer: `45% ⤓ | Sonnet 5 ▾ | 🛡`. Cada
+  /// zona abre su ventana: uso de contexto, modelo y sesión, y permisos de
+  /// esta sesión. QA 9493: también en Bot Chat (la misma píldora del diseño
+  /// chat v2); la compactación vive dentro de ella.
+  Widget _buildFloatingStatusPill(HermesThemeColors colors) {
+    final compaction = _visibleCompaction;
+    if (!identical(_sheetCompaction.value, compaction)) {
+      // The open context sheet lives on another route: notify after this
+      // frame, never mid-build.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!_disposed && mounted) _sheetCompaction.value = _visibleCompaction;
+      });
+    }
+    final policy = context
+        .findAncestorStateOfType<HermesAppState>()
+        ?.approvalPolicy;
+    final flag = _modeFlag(colors);
+    return ValueListenableBuilder<AccountUsageLimits?>(
+      valueListenable: _accountLimits.limits,
+      builder: (context, limits, _) => _statusPill(
+        colors,
+        compaction,
+        policy,
+        flag,
+        limits?.level ?? SubscriptionLimitLevel.none,
       ),
-      layoutBuilder: (current, previous) => Stack(
-        alignment: Alignment.bottomCenter,
-        children: [...previous, ?current],
-      ),
-      child: compaction == null
-          ? const SizedBox.shrink(key: ValueKey('compaction-pill-empty'))
-          // One key for live and done: the pill morphs in place (no
-          // cross-fade between two pills); only appearing/leaving animates.
-          : Padding(
-              key: const ValueKey('compaction-pill'),
-              padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
-              child: AnimatedSize(
-                duration: _reduceMotion
-                    ? Duration.zero
-                    : const Duration(milliseconds: 200),
-                curve: Curves.easeOutCubic,
-                child: CompactionDock(compaction: compaction),
-              ),
-            ),
     );
   }
 
-  /// Píldora combinada contexto+modo flotando bajo el composer (ver mockup
-  /// aprobado "v8 · estado debajo del input"): sustituye a los antiguos
-  /// `_buildModeBadge` + `SessionContextPopoverButton` de la AppBar. Oculta
-  /// en Bot Chat, igual que ocultaban esos widgets antes.
-  /// Sigue abriendo el mismo `showSessionContextPopover`; la sección de modo
-  /// se reutiliza de `_buildApprovalModeSection` en vez de duplicarla.
-  Widget _buildFloatingStatusPill(HermesThemeColors colors) {
-    if (_isBotChatSurface) {
-      return const SizedBox.shrink();
-    }
-    final flag = _modeFlag(colors);
-    return Padding(
-      padding: const EdgeInsets.only(top: 8),
-      child: Center(
-        child: SessionContextPopoverButton(
+  Widget _statusPill(
+    HermesThemeColors colors,
+    CompactionProgress? compaction,
+    ApprovalPolicyService? policy,
+    (String, Color)? flag,
+    SubscriptionLimitLevel limitLevel,
+  ) {
+    return Center(
+      child: KeyedSubtree(
+        key: _statusPillKey,
+        child: ChatStatusPill(
           key: const ValueKey('chat-status-pill'),
           metrics: _sessionContextMetrics,
-          loadBreakdown: _loadSessionContextDetails,
-          onMetricsSnapshot: (metrics) {
-            if (_disposed || !mounted) return;
-            _commitSessionContextMetrics(metrics);
-          },
-          modeLabel: flag?.$1,
-          modeColor: flag?.$2,
-          modeSectionBuilder: _buildApprovalModeSection,
+          onOpenContext: _showContextSheet,
+          compaction: compaction,
           compressionCount: _chatBound
               ? _chat.desktopSessionCompressionCount
               : 0,
+          modelLabel: _activeModelLabel,
+          onOpenModel: _showModelSheet,
+          // fh1215 moved the model out of the header: its provider logo and
+          // the md1215 "applies on the next message" mark ride on the pill.
+          modelLeading: switch (_headerModelId) {
+            final model? => ProviderLogo(
+              key: const ValueKey('provider-logo-chat-header'),
+              provider: _headerProviderSlug,
+              model: model,
+              size: 14,
+            ),
+            null => null,
+          },
+          modelTrailing: _modelChangePending
+              ? Tooltip(
+                  key: const ValueKey('md1215-model-pending'),
+                  message: Strings.of(context).md1215ModelPending,
+                  child: Icon(
+                    Icons.schedule_rounded,
+                    size: 12,
+                    color: colors.textSecondary,
+                  ),
+                )
+              : null,
+          // Plan limits from `session.usage` (as Hermes Desktop shows them):
+          // the dot appears only from an unambiguous number ≥ 80 %.
+          limitLevel: limitLevel,
+          permissionsLabel: policy?.effectiveMode(widget.session.id).label,
+          permissionsFlag: flag?.$1,
+          permissionsColor: flag?.$2,
+          onOpenPermissions: policy == null
+              ? null
+              : () => _showModeSheet(policy),
+          modelPulse: _modelPulse,
+        ),
+      ),
+    );
+  }
+
+  /// «Uso de contexto»: anillo grande, tokens de la ventana, Compactar (el
+  /// mismo `/compress` del composer), métricas y el desglose si Hermes lo
+  /// publica.
+  void _showContextSheet() {
+    final strings = Strings.of(context);
+    final readOnly =
+        widget.connection.readOnly ||
+        _chat.conflictReadOnly ||
+        _cronRunReadOnly;
+    showStatusPillSheet<void>(
+      context: context,
+      onRoute: _trackStatusSheet,
+      origin: _statusPillRect,
+      surfaceKey: const ValueKey('desktop-context-usage-popover-surface'),
+      title: strings.chaContextUsageTitle,
+      builder: (_) => SessionContextSheetBody(
+        metrics: _sessionContextMetrics,
+        loadBreakdown: _loadSessionContextDetails,
+        onMetricsSnapshot: (metrics) {
+          if (_disposed || !mounted) return;
+          _commitSessionContextMetrics(metrics);
+        },
+        compaction: _sheetCompaction,
+        onCompact: readOnly ? null : () => unawaited(_compressFromError()),
+      ),
+    );
+  }
+
+  /// Extra transcript padding so the last reply rests above the drawn notch
+  /// tab (the floating overlay starts the same distance higher).
+  static const double _kNotchTranscriptReserve = kChatNotchHeight;
+
+  bool _notchHorizontalSwipeSafe(BuildContext context) {
+    // Aspect-scoped lookups: MediaQuery.of would rebuild the chat on every
+    // keyboard animation frame.
+    return chatNotchHorizontalSwipeSafe(
+      MediaQuery.sizeOf(context),
+      MediaQuery.systemGestureInsetsOf(context),
+    );
+  }
+
+  Widget _buildNotch(Strings str) {
+    final app = context.findAncestorStateOfType<HermesAppState>();
+    final aggregate = app?.activeChats.globalActivity;
+    Widget notch(bool attention) => ChatNotch(
+      key: _notchKey,
+      open: _notchSheetOpen,
+      attention: attention,
+      semanticLabel: str.chatNotchLabel,
+      attentionLabel: str.chatNotchNeedsYouElsewhere,
+      onOpen: () => unawaited(_showChatControlSheet()),
+      onOpenGoTo: () => unawaited(_showChatControlSheet(goTo: true)),
+      onFindInChat: _openFind,
+      onPreviousChat: () => unawaited(_moveToRecentChat(-1)),
+      onNextChat: () => unawaited(_moveToRecentChat(1)),
+      horizontalSwipeEnabled: _notchHorizontalSwipeSafe(context),
+      gestureLabels: ChatNotchGestureLabels(
+        goTo: str.chatNotchGoTo,
+        findInChat: str.chatNotchFindInChat,
+        previousChat: str.chatNotchPreviousChat,
+        nextChat: str.chatNotchNextChat,
+      ),
+    );
+    if (aggregate == null) return notch(false);
+    return ListenableBuilder(
+      listenable: aggregate,
+      builder: (context, _) => notch(
+        chatNotchNeedsYouElsewhere(
+          aggregate.activities,
+          connectionId: widget.connection.id,
+          currentSessionIds: {
+            widget.session.id,
+            ?(_chatBound ? _chat.storedSessionId : null),
+          },
         ),
       ),
     );
@@ -13277,7 +18319,18 @@ class _ChatScreenState extends State<ChatScreen>
 
   Widget _buildBody() => KeyedSubtree(
     key: const ValueKey('chat-stable-body'),
-    child: _buildBodyContent(),
+    // Loading, error and empty states sit centred in what the floating
+    // bottom group leaves free; the transcript itself runs under it.
+    child: _messages.isEmpty
+        ? ValueListenableBuilder<double>(
+            valueListenable: _bottomBarsExtent,
+            builder: (context, bars, child) => Padding(
+              padding: EdgeInsets.only(bottom: bars),
+              child: child,
+            ),
+            child: _buildBodyContent(),
+          )
+        : _buildBodyContent(),
   );
 
   Widget _buildBodyContent() {
@@ -13285,18 +18338,12 @@ class _ChatScreenState extends State<ChatScreen>
     if (_messages.isEmpty &&
         (_interactiveMessageRefreshPending || !_chat.messagesLoaded) &&
         _error == null) {
-      // Estado de carga con la mascota (006): si la presencia está activa, el
-      // Companion "piensa" mientras carga; si está apagada, cae al spinner.
-      final app = context.findAncestorStateOfType<HermesAppState>();
+      // Loading preserves its text and footprint; identity lives in the pill.
       return Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            CompanionStatusIndicator(
-              companion: app?.companion,
-              mood: HermesSparkMood.thinking,
-              size: 88,
-            ),
+            const SizedBox.square(dimension: 88),
             const SizedBox(height: 14),
             Text(
               Strings.of(context).commonLoading,
@@ -13323,6 +18370,9 @@ class _ChatScreenState extends State<ChatScreen>
         ChatErrorKind.firstTokenTimeout => str.chaErrFirstTokenTimeout,
         ChatErrorKind.searchToolUnavailable => str.chaErrSearchToolUnavailable,
         ChatErrorKind.sessionTooLarge => str.chaErrSessionTooLarge,
+        ChatErrorKind.profileDashboardAccess =>
+          str.chaErrProfileDashboardAccess,
+        ChatErrorKind.dashboardSignInRequired => str.chaErrDashboardSignIn,
         ChatErrorKind.unknown => str.chaErrUnknown,
       };
       return Center(
@@ -13377,7 +18427,7 @@ class _ChatScreenState extends State<ChatScreen>
                   icon: Icons.refresh_rounded,
                   label: str.chaRetry,
                   color: colors.error,
-                  onTap: _fetchMessages,
+                  onTap: _retryMessagesAfterError,
                 ),
                 TextButton(
                   onPressed: () =>
@@ -13402,28 +18452,221 @@ class _ChatScreenState extends State<ChatScreen>
         child: _EmptyChatState(
           model: _activeModelLabel,
           agentName: _assistantName,
+          workspace: _newChatWorkspace,
         ),
       );
     }
 
     final entries = _currentListEntries;
-    pruneMessageAnchorCache(_messageAnchors, _messages);
+    final snapshot = _messages;
+    pruneMessageAnchorCache(_messageAnchors, snapshot);
+    if (!identical(snapshot, _stickySource)) {
+      _stickySource = snapshot;
+      _stickyIndex = null;
+      _scheduleStickyPromptUpdate();
+    }
 
+    // Overlay extents (activity pill, arrow) only change the list
+    // padding. Reusing the same delegate lets the sliver skip rebuilding
+    // every cached row when the ListenableBuilder below re-runs.
+    final rowDelegate = SliverChildBuilderDelegate(
+      (context, index) {
+        final entry = entries[index];
+        if (entry is _RetainedTerminalErrorChatListEntry) {
+          return _buildRetainedTerminalErrorEntry(entry);
+        }
+        final plan = entry.sourcePlan;
+        final assistantSlice = entry is _AssistantSliceChatListEntry
+            ? entry.slice
+            : null;
+        final sourceMessages = _sourceMessagesForRenderPlan(plan);
+        final reportsPreservedTurnInsertion = sourceMessages.any(
+          _readerPreservedTurnInsertions.contains,
+        );
+        final unit = _materializeRenderUnit(plan);
+        Widget child = _wrapFindHighlight(
+          _buildRenderUnit(unit, assistantSlice: assistantSlice),
+          unit: unit,
+          sourceMessages: sourceMessages,
+        );
+        child = _wrapReactions(
+          child,
+          unit: unit,
+          assistantSlice: assistantSlice,
+        );
+        if (_newSinceFirstUnread != null &&
+            (assistantSlice?.showHeader ?? true) &&
+            sourceMessages.any(_isNewSinceFirstUnread)) {
+          // Inside the row (not a list entry of its own): indices and
+          // the reader anchors keep their slots, and the landing jump
+          // aligns the divider with the top of the screen.
+          child = Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              RoomSeparator(
+                key: const ValueKey('chat-new-since-divider'),
+                label: Strings.of(context).sc1215NewSinceYouLeft,
+                highlight: true,
+              ),
+              child,
+            ],
+          );
+        }
+        final assistantMessage =
+            unit is Map<String, dynamic> &&
+                unit['role'] == 'assistant' &&
+                unit['_pipeline'] != true
+            ? unit
+            : null;
+        final ownsAnchor = assistantSlice?.showHeader ?? true;
+        Widget result = child;
+        if (ownsAnchor) {
+          result = ChatAnswerAnchor(
+            onLayout: (anchor) {
+              var added = false;
+              for (final message in sourceMessages) {
+                if (!identical(_messageAnchors[message], anchor)) {
+                  _messageAnchors[message] = anchor;
+                  added = true;
+                }
+              }
+              if (added) _scheduleStickyPromptUpdate();
+            },
+            onDetach: (anchor) {
+              for (final message in sourceMessages) {
+                if (identical(_messageAnchors[message], anchor)) {
+                  _messageAnchors.remove(message);
+                }
+              }
+            },
+            child: child,
+          );
+        } else if (sourceMessages.isNotEmpty) {
+          // A later slice of a long reply: it has no reader anchor of
+          // its own, but when it spans the viewport top the sticky
+          // prompt needs to know which reply it belongs to.
+          final replyMessage = sourceMessages.first;
+          result = ChatAnswerAnchor(
+            onLayout: (anchor) {
+              if (identical(_stickySliceAnchors[anchor], replyMessage)) {
+                return;
+              }
+              _stickySliceAnchors[anchor] = replyMessage;
+              _scheduleStickyPromptUpdate();
+            },
+            onDetach: (anchor) => _stickySliceAnchors.remove(anchor),
+            child: child,
+          );
+        }
+        if (assistantSlice != null && assistantMessage != null) {
+          result = KeyedSubtree(
+            key: ValueKey((assistantMessage, assistantSlice.index)),
+            child: result,
+          );
+        }
+        // Entrada suave del mensaje NUEVO: solo el más reciente (índice 0, la
+        // lista es reverse). El turno que esta superficie ya presentó queda
+        // fuera: su host crece por streaming y un translate adicional de 8 px
+        // se percibe como un pequeño tirón si el usuario empieza a leer o
+        // arrastrar. La guarda sobrevive al terminal para que cancelación,
+        // error o una reconciliación tardía tampoco animen de nuevo la fila.
+        // A response group grows at its newest row; its oldest row is
+        // the stable identity, so a joining row never replays the
+        // entrance nor remounts the bubble.
+        final groupStart =
+            plan is ChatMessageUnitPlan && sourceMessages.length > 1
+            ? sourceMessages.last
+            : null;
+        final key = _entranceKey(groupStart ?? unit);
+        final belongsToSurfaceTurn =
+            _surfaceTurnSerial == _assistantEntranceSerial &&
+            (_chat.isStreaming || _surfaceTurnTerminal);
+        if (index == 0 && key != null && !belongsToSurfaceTurn) {
+          result = MotionEntrance(key: ValueKey<Object>(key), child: result);
+        }
+        if (reportsPreservedTurnInsertion) {
+          result = _SurfaceTurnInitialExtentReporter(
+            onInitialExtent: _streamingViewportLock.record,
+            child: result,
+          );
+        }
+        // Cada mensaje repinta en su propia capa: el host vivo a 30 Hz (y el
+        // reveal gradual) no invalida la rasterización del historial visible.
+        // El host vivo/retenido queda fuera: su geometría la mide el lock del
+        // viewport y una capa intermedia rompe esa medición.
+        final keepsLiveHost =
+            assistantMessage != null && _messageKeepsLiveHost(assistantMessage);
+        final isLiveHead =
+            _chat.isStreaming &&
+            _messages.isNotEmpty &&
+            identical(unit, _messages.first);
+        if (!keepsLiveHost && !isLiveHead) {
+          result = RepaintBoundary(child: result);
+        }
+        // ct1215: the live turn before its reply has text; from the first
+        // token on, the live host measures itself.
+        if (isLiveHead &&
+            !_liveAssistantMaterialized &&
+            unit is Map<String, dynamic> &&
+            unit['role'] == 'assistant') {
+          result = _ExtentReporter(onExtent: _recordLiveTurnRow, child: result);
+        }
+        final durableEntryIds =
+            (groupStart == null ? sourceMessages : [groupStart])
+                .map((message) {
+                  final messageId = canonicalTranscriptMessageId(message);
+                  if (messageId != null) return 'message:$messageId';
+                  final rowId = canonicalTranscriptRowId(message);
+                  return rowId == null ? null : 'row:$rowId';
+                })
+                .whereType<String>()
+                .toList(growable: false);
+        if (durableEntryIds.length ==
+            (groupStart == null ? sourceMessages.length : 1)) {
+          // This must remain the outermost list child. Sliver reconciliation
+          // can then retain the complete bubble subtree even when refresh
+          // replaces its source Map or runtime presentation wrappers change.
+          result = KeyedSubtree(
+            key: ValueKey<Object>((
+              'chat-render-entry',
+              durableEntryIds.join('\u0000'),
+              assistantSlice?.index,
+            )),
+            child: result,
+          );
+        }
+        return result;
+      },
+      childCount: entries.length,
+      addAutomaticKeepAlives: false,
+    );
     final transcript = ListenableBuilder(
       listenable: Listenable.merge([
         _activityPillExtent,
         _scrollToBottomVisibility,
+        _bottomBarsExtent,
       ]),
       builder: (context, _) {
         final overlayExtent =
             _activityPillExtent.value +
-            (_scrollToBottomVisibility.value ? 48 : 0);
+            (_scrollToBottomVisibility.value ? 48 : 0) +
+            _bottomBarsExtent.value;
         return ChatScrollInteractionGuard(
-          onPointerDown: _pauseStreamingFollow,
-          onPointerMove: _trackStreamingScrollInteraction,
+          onPointerDown: (event) {
+            _streamingViewportLock.releaseLanding();
+            _earlierAutoArmed = true;
+            _pauseStreamingFollow(event);
+          },
+          onPointerMove: (event) {
+            _trackStreamingScrollInteraction(event);
+            // A transcript shorter than the screen never scrolls: dragging
+            // it down still asks for the earlier history.
+            if (event.delta.dy > 0) _maybeAutoLoadEarlier();
+          },
           onPointerUp: _finishStreamingScrollInteraction,
           onPointerCancel: _cancelStreamingScrollInteraction,
-          child: ListView.builder(
+          child: ListView.custom(
             controller: _scrollController,
             // En `reverse:true` el asistente vivo crece por debajo del contenido
             // que el lector está mirando. Conservar el mismo offset numérico hace
@@ -13439,143 +18682,177 @@ class _ChatScreenState extends State<ChatScreen>
             // `bottom` reserva la altura medida de toda la pila flotante y de la
             // flecha cuando está visible. Así ninguna fila tapa el último mensaje,
             // aunque cambie de alto o convivan varias actividades.
-            padding: EdgeInsets.only(bottom: 12 + overlayExtent),
+            // fh1215: under the floating header the transcript reserves its
+            // height above the first row; the notch keeps the last reply
+            // above its tab.
+            padding: EdgeInsets.only(
+              top: _readTop,
+              bottom: 12 + _kNotchTranscriptReserve + overlayExtent,
+            ),
             reverse: true,
             // Precarga ~1 pantalla extra fuera del viewport: al seguir el stream no
             // se materializan entradas frías en medio de un frame de scroll.
             scrollCacheExtent: const ScrollCacheExtent.pixels(1000),
-            itemCount: entries.length,
+            semanticChildCount: entries.length,
             // Una selección que sale del viewport no debe retener el RenderObject
             // (y con él todo un árbol Markdown) indefinidamente. Copiar el mensaje
             // completo sigue disponible en su cabecera y la selección visible se
             // mantiene dentro de cada bloque virtualizado.
-            addAutomaticKeepAlives: false,
             // No usar GlobalKey por índice: un rewind cambia los slots de golpe y
             // reparentar un árbol todavía dependiente del diálogo puede disparar
             // `_dependents.isEmpty` en Flutter. Las anclas de respuesta son
             // RenderObjects ligeros que no reutilizan el árbol Markdown.
-            itemBuilder: (context, index) {
-              final entry = entries[index];
-              if (entry is _RetainedTerminalErrorChatListEntry) {
-                return _buildRetainedTerminalErrorEntry(entry);
-              }
-              final plan = entry.sourcePlan;
-              final assistantSlice = entry is _AssistantSliceChatListEntry
-                  ? entry.slice
-                  : null;
-              final sourceMessages = _sourceMessagesForRenderPlan(plan);
-              final reportsPreservedTurnInsertion = sourceMessages.any(
-                _readerPreservedTurnInsertions.contains,
-              );
-              final unit = _materializeRenderUnit(plan);
-              final child = _buildRenderUnit(
-                unit,
-                assistantSlice: assistantSlice,
-              );
-              final assistantMessage =
-                  unit is Map<String, dynamic> &&
-                      unit['role'] == 'assistant' &&
-                      unit['_pipeline'] != true
-                  ? unit
-                  : null;
-              final ownsAnchor = assistantSlice?.showHeader ?? true;
-              Widget result = child;
-              if (ownsAnchor) {
-                result = ChatAnswerAnchor(
-                  onLayout: (anchor) {
-                    for (final message in sourceMessages) {
-                      _messageAnchors[message] = anchor;
-                    }
-                  },
-                  onDetach: (anchor) {
-                    for (final message in sourceMessages) {
-                      if (identical(_messageAnchors[message], anchor)) {
-                        _messageAnchors.remove(message);
-                      }
-                    }
-                  },
-                  child: child,
-                );
-              }
-              if (assistantSlice != null && assistantMessage != null) {
-                result = KeyedSubtree(
-                  key: ValueKey((assistantMessage, assistantSlice.index)),
-                  child: result,
-                );
-              }
-              // Entrada suave del mensaje NUEVO: solo el más reciente (índice 0, la
-              // lista es reverse). El turno que esta superficie ya presentó queda
-              // fuera: su host crece por streaming y un translate adicional de 8 px
-              // se percibe como un pequeño tirón si el usuario empieza a leer o
-              // arrastrar. La guarda sobrevive al terminal para que cancelación,
-              // error o una reconciliación tardía tampoco animen de nuevo la fila.
-              final key = _entranceKey(unit);
-              final belongsToSurfaceTurn =
-                  _surfaceTurnSerial == _assistantEntranceSerial &&
-                  (_chat.isStreaming || _surfaceTurnTerminal);
-              if (index == 0 && key != null && !belongsToSurfaceTurn) {
-                result = MotionEntrance(
-                  key: ValueKey<Object>(key),
-                  child: result,
-                );
-              }
-              if (reportsPreservedTurnInsertion) {
-                result = _SurfaceTurnInitialExtentReporter(
-                  onInitialExtent: _streamingViewportLock.record,
-                  child: result,
-                );
-              }
-              // Cada mensaje repinta en su propia capa: el host vivo a 30 Hz (y el
-              // reveal gradual) no invalida la rasterización del historial visible.
-              // El host vivo/retenido queda fuera: su geometría la mide el lock del
-              // viewport y una capa intermedia rompe esa medición.
-              final keepsLiveHost =
-                  assistantMessage != null &&
-                  _messageKeepsLiveHost(assistantMessage);
-              final isLiveHead =
-                  _chat.isStreaming &&
-                  _messages.isNotEmpty &&
-                  identical(unit, _messages.first);
-              if (!keepsLiveHost && !isLiveHead) {
-                result = RepaintBoundary(child: result);
-              }
-              final durableEntryIds = sourceMessages
-                  .map((message) {
-                    final messageId = canonicalTranscriptMessageId(message);
-                    if (messageId != null) return 'message:$messageId';
-                    final rowId = canonicalTranscriptRowId(message);
-                    return rowId == null ? null : 'row:$rowId';
-                  })
-                  .whereType<String>()
-                  .toList(growable: false);
-              if (durableEntryIds.length == sourceMessages.length) {
-                // This must remain the outermost list child. Sliver reconciliation
-                // can then retain the complete bubble subtree even when refresh
-                // replaces its source Map or runtime presentation wrappers change.
-                result = KeyedSubtree(
-                  key: ValueKey<Object>((
-                    'chat-render-entry',
-                    durableEntryIds.join('\u0000'),
-                    assistantSlice?.index,
-                  )),
-                  child: result,
-                );
-              }
-              return result;
-            },
+            childrenDelegate: rowDelegate,
           ),
         );
       },
     );
     return ChatRefreshStatusOverlay(
       loading: _interactiveMessageRefreshPending,
-      errorMessage: _error == null || _refreshErrorNoticeDismissed
+      cachedLabel: _chat.showingCachedTranscript
+          ? Strings.of(context).cs1215CachedTranscript
+          : null,
+      // A named profile whose REST history is refused while rows are on
+      // screen (the live gateway channel serves the chat) is missing
+      // nothing: no notice over a working chat. The empty-history card above
+      // is where that refusal is explained.
+      errorMessage:
+          _error == null ||
+              _refreshErrorNoticeDismissed ||
+              classifyChatError(_error!) == ChatErrorKind.profileDashboardAccess
           ? null
           : Strings.of(context).chaMessagesError,
       onDismissError: () => setState(() => _refreshErrorNoticeDismissed = true),
       // Bajo el botón «cargar anteriores» (8 + 48 + 8) cuando está a la vista.
-      errorTopInset: _chat.hasEarlierMessages ? 64 : 8,
-      child: transcript,
+      // Always in the tree so hiding never rebuilds the list or loses its
+      // scroll position; laid out while hidden so the landing walk can build
+      // rows, but neither painted nor touchable.
+      child: ValueListenableBuilder<bool>(
+        valueListenable: _transcriptConcealed,
+        builder: (context, concealed, child) => Visibility(
+          visible: !concealed,
+          maintainState: true,
+          maintainAnimation: true,
+          maintainSize: true,
+          child: child!,
+        ),
+        child: transcript,
+      ),
+    );
+  }
+
+  /// Resaltado del resultado actual de la búsqueda. Envuelve solo el
+  /// contenido de filas estables: el host vivo del streaming queda fuera para
+  /// no interponer nada en la geometría que mide el lock del viewport.
+  /// Reaction row under a persisted message, only while the user has turned
+  /// reactions on and the connection can store them. Live rows that have no
+  /// transcript id yet get the row once they are persisted.
+  Widget _wrapReactions(
+    Widget child, {
+    required Object unit,
+    required _AssistantRenderSlice? assistantSlice,
+  }) {
+    if (unit is! Map<String, dynamic>) return child;
+    if (assistantSlice != null && !assistantSlice.showFooter) return child;
+    final role = unit['role'];
+    if ((role != 'user' && role != 'assistant') || unit['_pipeline'] == true) {
+      return child;
+    }
+    final rowId = canonicalTranscriptRowId(unit);
+    if (rowId == null) return child;
+    return ListenableBuilder(
+      listenable: MessageReactionPrefs.shared,
+      child: child,
+      builder: (context, child) {
+        if (!MessageReactionPrefs.shared.enabled) return child!;
+        if (!_chat.canReact) {
+          // Hidden until the server has confirmed message.react. ActiveChat
+          // asks on connect and when the preference turns on, never a build.
+          return child!;
+        }
+        final reactions = _chat.reactionsFor(rowId);
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Long-press on the message: the six quick reactions on top of
+            // the message actions (copy, select text).
+            MessageQuickReactScope(
+              onReact: (emoji) => _react(rowId, emoji),
+              selected: reactions
+                  .where((r) => r.author == MessageReactionAuthor.user)
+                  .firstOrNull
+                  ?.emoji,
+              copyText: () => _reactionCopyText(unit),
+              child: child!,
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+              child: Align(
+                alignment: role == 'user'
+                    ? Alignment.centerRight
+                    : Alignment.centerLeft,
+                child: MessageReactionBar(
+                  key: ValueKey('message-reactions-$rowId'),
+                  reactions: reactions,
+                  addTooltip: Strings.of(context).reactAdd,
+                  onPick: (emoji) => _react(rowId, emoji),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  /// «Copy message» on the long-press surface: the same plain text as the
+  /// header copy button.
+  static String _reactionCopyText(Map<String, dynamic> unit) {
+    if (unit['role'] == 'user') return projectedUserVisibleContent(unit);
+    final content = unit['content'];
+    if (content is! String) return '';
+    return markdownToClipboardText(
+      trimMarkdownBlankLines(GeneratedMediaService.stripDirectives(content)),
+    );
+  }
+
+  Future<void> _react(int rowId, String emoji) async {
+    try {
+      await _chat.reactToMessage(rowId: rowId, emoji: emoji);
+    } catch (_) {
+      if (!mounted) return;
+      HermesNotice.of(context).showSnackBar(
+        SnackBar(content: Text(Strings.of(context).reactFailed)),
+        kind: HermesNoticeKind.warning,
+      );
+    }
+  }
+
+  Widget _wrapFindHighlight(
+    Widget child, {
+    required Object unit,
+    required List<Map<String, dynamic>> sourceMessages,
+  }) {
+    if (!_findOpen) return child;
+    final messages = _messages;
+    if (_chat.isStreaming &&
+        messages.isNotEmpty &&
+        identical(unit, messages.first)) {
+      return child;
+    }
+    if (unit is Map<String, dynamic> && _messageKeepsLiveHost(unit)) {
+      return child;
+    }
+    return ValueListenableBuilder<Map<String, dynamic>?>(
+      valueListenable: _findActiveMessage,
+      builder: (context, active, child) => ChatFindMatchHighlight(
+        active:
+            active != null && sourceMessages.any((m) => identical(m, active)),
+        semanticLabel: Strings.of(context).cs1215CurrentMatchLabel,
+        child: child!,
+      ),
+      child: child,
     );
   }
 
@@ -13596,7 +18873,11 @@ class _ChatScreenState extends State<ChatScreen>
       ),
     );
     return ChatAnswerAnchor(
-      onLayout: (anchor) => _messageAnchors[assistant] = anchor,
+      onLayout: (anchor) {
+        if (identical(_messageAnchors[assistant], anchor)) return;
+        _messageAnchors[assistant] = anchor;
+        _scheduleStickyPromptUpdate();
+      },
       onDetach: (anchor) {
         if (identical(_messageAnchors[assistant], anchor)) {
           _messageAnchors.remove(assistant);
@@ -13624,11 +18905,44 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
+  /// "Branch from here" for [message] when the chat can branch and the row is
+  /// part of the server's user/assistant history. Reached by long-pressing the
+  /// assistant header: the text itself keeps its own long-press selection and
+  /// the action buttons keep their tooltips.
+  VoidCallback? _branchFromHereFor(Map<String, dynamic> message) {
+    if (!_chat.canBranchChat ||
+        !isBranchHistoryRow(message) ||
+        message['_optimistic'] == true) {
+      return null;
+    }
+    return () async {
+      final strings = Strings.of(context);
+      final chosen = await showHermesMenu<bool>(
+        context: context,
+        surfaceKey: const ValueKey('chat-message-menu'),
+        actions: [
+          HermesAction<bool>(
+            key: const ValueKey('chat-message-branch'),
+            value: true,
+            label: strings.tc1215BranchFromHere,
+            icon: Icons.call_split_rounded,
+          ),
+        ],
+      );
+      if (chosen == true && mounted) {
+        unawaited(_branchChat(fromMessage: message));
+      }
+    };
+  }
+
   List<Map<String, dynamic>> _sourceMessagesForRenderPlan(
     ChatRenderUnitPlan plan,
   ) {
     final indexes = switch (plan) {
-      ChatMessageUnitPlan(:final messageIndex) => [messageIndex],
+      // Every row of a response group keeps its own anchor, find highlight
+      // and unread marker, newest first.
+      ChatMessageUnitPlan(:final memberIndexesNewestFirst) =>
+        memberIndexesNewestFirst,
       ChatUserTurnUnitPlan(
         :final primaryMessageIndex,
         :final supplementMessageIndexes,
@@ -13666,21 +18980,76 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   bool get _turnWaitsForUser =>
-      _chat.pendingApproval != null || _chat.pendingInteractivePrompt != null;
+      _chat.pendingApproval != null ||
+      _chat.pendingInteractivePrompt != null ||
+      _chat.awaitsUnseenInput;
 
-  HermesSparkMood _liveCompanionMood() {
-    final transport = _chat.transportStatus.state;
-    if (transport == ChatTransportState.offline ||
-        transport == ChatTransportState.reconnecting) {
-      return HermesSparkMood.offline;
+  CompanionMood _liveCompanionMood() {
+    if (_transportVisibility.visible && !_chat.dashboardAuthRequired) {
+      return CompanionMood.offline;
     }
-    if (_turnWaitsForUser) return HermesSparkMood.waiting;
+    if (_turnWaitsForUser) return CompanionMood.waiting;
     return switch (_pipelineState) {
-      ChatPipelineState.connecting => HermesSparkMood.connecting,
-      ChatPipelineState.waiting => HermesSparkMood.waiting,
-      _ => HermesSparkMood.thinking,
+      ChatPipelineState.connecting
+          when _chat.observesRemoteTurnAfterReconnect =>
+        CompanionMood.thinking,
+      ChatPipelineState.connecting => CompanionMood.connecting,
+      ChatPipelineState.waiting => CompanionMood.waiting,
+      _ => CompanionMood.thinking,
     };
   }
+
+  /// rp1215: the user bubbles of the running turn. Newest first, the units
+  /// above the answered prompt can only be the live answer (one bubble per
+  /// turn), tool groups and messages queued behind it; anything else means
+  /// the turn has no prompt row here (started elsewhere) and nothing is
+  /// marked rather than guessing. [answerStreaming] is true once the live
+  /// answer shows text of its own.
+  ({
+    Map<String, dynamic>? answering,
+    Set<Map<String, dynamic>> queued,
+    bool answerStreaming,
+  })
+  _liveUserTurnMarks() {
+    final queued = Set<Map<String, dynamic>>.identity();
+    if (!_chat.isStreaming || _compressingSession) {
+      return (answering: null, queued: queued, answerStreaming: false);
+    }
+    final messages = _messages;
+    var passedAnswer = false;
+    var answerStreaming = false;
+    for (final plan in _currentRenderProjection.units) {
+      switch (plan) {
+        case ChatToolActivityUnitPlan():
+          continue;
+        case ChatMessageUnitPlan(:final messageIndex):
+          final message = messages[messageIndex];
+          if (passedAnswer || message['role'] != 'assistant') {
+            return (answering: null, queued: queued, answerStreaming: false);
+          }
+          passedAnswer = true;
+          answerStreaming = _hasVisibleAnswer(
+            (message['content'] as String?) ?? '',
+          );
+        case ChatUserTurnUnitPlan(:final primaryMessageIndex):
+          final message = messages[primaryMessageIndex];
+          if (message['_desktopAcceptedQueued'] == true) {
+            queued.add(message);
+            continue;
+          }
+          return (
+            answering: message,
+            queued: queued,
+            answerStreaming:
+                answerStreaming || _hasVisibleAnswer(_chat.assistantContent),
+          );
+      }
+    }
+    return (answering: null, queued: queued, answerStreaming: false);
+  }
+
+  static bool _hasVisibleAnswer(String content) =>
+      content.isNotEmpty && splitReasoning(content).answer.trim().isNotEmpty;
 
   Widget _buildActiveThinkingState() {
     // La compresión no es actividad del modelo. Mostrar a la vez esta tarjeta,
@@ -13688,18 +19057,9 @@ class _ChatScreenState extends State<ChatScreen>
     // indeterminada pareciese bloqueada. El composer conserva el único estado
     // vivo hasta que Desktop reconcilia el transcript.
     if (_compressingSession) return const SizedBox.shrink();
-    return ValueListenableBuilder<ChatTransportStatus>(
-      valueListenable: _chat.transportStatusListenable,
-      builder: (context, _, _) {
-        final mood = _liveCompanionMood();
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _AssistantLiveHeader(agentName: _assistantName, mood: mood),
-          ],
-        );
-      },
+    return _AssistantLiveHeader(
+      agentName: _assistantName,
+      compact: _chatPreferences.density == TranscriptDensity.compact,
     );
   }
 
@@ -13720,7 +19080,7 @@ class _ChatScreenState extends State<ChatScreen>
     if (unit is _UserTurnGroup) {
       final rawContent = (unit.primary['content'] as String?) ?? '';
       final content = projectedUserVisibleContent(unit.primary);
-      final systemChip = _jobChipLabel(content);
+      final systemChip = _jobChipLabel(content, Strings.of(context));
       if (systemChip != null && unit.supplements.isEmpty) {
         return _SystemBlobChip(label: systemChip, raw: content);
       }
@@ -13734,12 +19094,29 @@ class _ChatScreenState extends State<ChatScreen>
           supplements.isEmpty) {
         return const SizedBox.shrink();
       }
+      final marks = _liveUserTurnMarks();
+      final answering = identical(marks.answering, unit.primary);
       return _UserMessage(
         content: content,
         verbose: _devDiagnostics,
         metadata: unit.primary,
         compact: compact,
         supplements: supplements,
+        // One owner per state (rp1215): the typing row below says who is
+        // replying or thinking; the bubble only says it was sent, and goes
+        // quiet once the answer itself is streaming.
+        status: answering
+            ? (marks.answerStreaming
+                  ? null
+                  : _UserBubbleStatus.sent(
+                      Strings.of(context).rp1215BubbleSent,
+                    ))
+            : marks.queued.contains(unit.primary)
+            ? _UserBubbleStatus.queued(Strings.of(context).rp1215BubbleQueued)
+            : null,
+        answering:
+            answering &&
+            (marks.queued.isNotEmpty || _chat.queuedEntries.isNotEmpty),
         onEdit:
             content == rawContent &&
                 unit.supplements.isEmpty &&
@@ -13748,8 +19125,10 @@ class _ChatScreenState extends State<ChatScreen>
             : null,
         editing: identical(unit.primary, _editingUserMessageTarget),
         editingText: _editingUserMessageText,
+        editingDraft: _editingUserMessageDraft,
         editingWidth: _editingUserMessageWidth,
         editSaving: _editingRewriteSubmitted,
+        editingLaterTurns: _laterTurnsAfter(_editingUserMessageOrdinal),
         onCancelEdit: _cancelUserMessageEdit,
         onSaveEdit: (text) => unawaited(_saveUserMessageEdit(text)),
       );
@@ -13758,13 +19137,17 @@ class _ChatScreenState extends State<ChatScreen>
     final msg = unit as Map<String, dynamic>;
     final role = (msg['role'] as String?) ?? 'assistant';
     var content = (msg['content'] as String?) ?? '';
-    final sourceContent = content;
-    // Un turno que primero piensa/llama herramientas y luego responde llega en
-    // varias filas del servidor: la fila solo-traza se funde en el desplegable
-    // de la respuesta que la sigue (una cabecera, un «Completado ⌄»).
-    final traceMerge = role == 'assistant' ? _traceMergeFor(msg) : null;
-    if (traceMerge?.hidden ?? false) return const SizedBox.shrink();
-    final metadataMsg = traceMerge?.merged ?? msg;
+    final rawContent = content;
+    // Un turno del agente llega en varias filas (herramientas, razonamiento,
+    // texto intermedio y final). Como Desktop, todas comparten UNA burbuja:
+    // una cabecera, un «Pensó ⌄» con todas las herramientas y el texto al
+    // final. [msg] es la fila más nueva y conserva acciones e identidad.
+    final groupRows = role == 'assistant'
+        ? _olderResponseGroupRows(msg)
+        : const <Map<String, dynamic>>[];
+    final metadataMsg = groupRows.isEmpty ? msg : _responseGroupMetadata(msg);
+    final groupPrefix = _responseGroupTextPrefix(groupRows);
+    final sourceContent = _joinResponseGroupText(groupPrefix, content);
 
     final historicalSubagents = historicalSubagentCompletionOf(msg);
     if (historicalSubagents != null) {
@@ -13775,6 +19158,16 @@ class _ChatScreenState extends State<ChatScreen>
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
         child: SubagentCompletionCard(data: historicalSubagents),
       );
+    }
+
+    // Aviso de fin de proceso en segundo plano: Hermes lo guarda como
+    // `role=user`; igual que Desktop se pinta como aviso compacto con la salida
+    // plegada, nunca como burbuja de la persona.
+    if (role == 'user' && effectiveUserDisplayKind(msg) == 'process_complete') {
+      final carrier = parseBackgroundProcessCarrier(sourceContent.trimRight());
+      if (carrier != null) {
+        return _ProcessNotificationRow(carrier: carrier, raw: sourceContent);
+      }
     }
 
     final timelineEvent = _timelineSystemEventPresentation(context, msg);
@@ -13792,7 +19185,7 @@ class _ChatScreenState extends State<ChatScreen>
     // CUALQUIER rol: el de compactación a veces llega como role=assistant (no
     // user), por eso no bastaba con el chip de _UserMessage. Se muestra un chip
     // limpio en vez del muro de texto.
-    final systemChip = _jobChipLabel(content);
+    final systemChip = _jobChipLabel(content, Strings.of(context));
     if (systemChip != null) {
       return _SystemBlobChip(label: systemChip, raw: content);
     }
@@ -13800,24 +19193,75 @@ class _ChatScreenState extends State<ChatScreen>
     // Error bubble with retry
     if (role == 'assistant_error') {
       final prompt = (msg['_prompt'] as String?) ?? _lastPrompt;
-      return _ErrorBubble(
+      final authFailure = ProviderAuthFailure.fromJson(
+        msg[providerAuthFailureKey],
+      );
+      final onRetry = _chat.conflictReadOnly || widget.connection.readOnly
+          ? null
+          : () => unawaited(_retryLastPrompt(prompt));
+      final surface = TurnErrorSurface.parse(msg[turnErrorSurfaceKey]);
+      final billing = TurnBillingBlock.parse(msg[turnBillingBlockKey]);
+      final failedTurn = _chat.currentFailedTurnToken;
+      final retryChat = _chat;
+      final readOnly = _chat.conflictReadOnly || widget.connection.readOnly;
+      return ChatErrorBubble(
         error: activeChatStoredErrorUiMessage(content),
-        onRetry: _chat.conflictReadOnly
-            ? null
-            : () => unawaited(_retryLastPrompt(prompt)),
+        onRetry: onRetry,
         prompt: prompt,
         onRestartGateway: _restartGatewayFromChat,
         onNewSession: _chat.conflictReadOnly ? null : _newChat,
+        authFailure: authFailure,
+        onReauth: authFailure == null || _providerReauthRunning
+            ? null
+            : () => unawaited(_reauthProvider(authFailure, onRetry: onRetry)),
+        onDashboardSignIn: () =>
+            unawaited(_signInDashboardFromError(onRetry: onRetry)),
+        surface: surface,
+        billing: billing,
+        onCompress: readOnly ? null : () => unawaited(_compressFromError()),
+        onChooseModel: readOnly ? null : _showModelSheet,
+        onEditMessage: _editMessageOfError(msg),
+        onOpenBilling: _openBillingAction(billing),
+        onSignInFreeTier: readOnly ? null : _signInFreeTier,
+        freeTierSignInAvailable: _freeTierSignInAvailable,
+        // A retry may only be armed on the failed turn that is still the last
+        // one; a different chat, profile or failed turn drops it.
+        canArmRetry:
+            onRetry != null &&
+            failedTurn != null &&
+            _chat.state == ChatPipelineState.failed,
+        retryScope: (
+          retryChat,
+          Session.profileOwner(_chat.sessionProfile),
+          failedTurn,
+        ),
+        onScheduledRetry: onRetry == null || failedTurn == null
+            ? null
+            : () {
+                if (!mounted ||
+                    !identical(_chat, retryChat) ||
+                    _chat.state != ChatPipelineState.failed ||
+                    !_isSameFailedTurn(
+                      retryChat.currentFailedTurnToken,
+                      failedTurn,
+                    )) {
+                  return;
+                }
+                onRetry();
+              },
+        now: _chat.wallNow,
+        composerProvider: _chat.desktopRuntimeInfo.provider,
+        composerModel: _chat.desktopRuntimeInfo.model,
       );
     }
 
     final isPipeline = msg['_pipeline'] == true;
     final hasUnifiedActivity =
         normalizeAssistantActivityTrace(
-          msg[assistantActivityTraceKey],
+          metadataMsg[assistantActivityTraceKey],
         ).isNotEmpty ||
-        (msg['reasoning'] is String &&
-            (msg['reasoning'] as String).trim().isNotEmpty);
+        (metadataMsg['reasoning'] is String &&
+            (metadataMsg['reasoning'] as String).trim().isNotEmpty);
     final isCancelled = msg['_cancelled'] == true;
     // El mensaje en curso es el más nuevo (índice 0) mientras hay streaming.
     // Solo en él aplicamos el normalizador visual de Markdown incompleto.
@@ -13846,6 +19290,7 @@ class _ChatScreenState extends State<ChatScreen>
         _revealedChars < content.length) {
       content = content.substring(0, _revealedChars);
     }
+    content = _joinResponseGroupText(groupPrefix, content);
 
     // Placeholder del turno activo: la ThinkingTraceCard en vivo agrega el
     // progreso del turno en curso (los eventos reales se agruparán al
@@ -13932,15 +19377,15 @@ class _ChatScreenState extends State<ChatScreen>
         msg['_stopped'] != true &&
         displayContent.trim().isEmpty &&
         operationalProjection.technicalDetails.isEmpty &&
-        _structuredGeneratedImages(msg).isEmpty &&
-        _structuredGeneratedVideos(msg).isEmpty &&
-        !_assistantActivityEvents(context, msg, '').any(
+        _structuredGeneratedImages(metadataMsg).isEmpty &&
+        _structuredGeneratedVideos(metadataMsg).isEmpty &&
+        !_assistantActivityEvents(context, metadataMsg, '').any(
           (event) =>
               event.kind == ChatTraceEventKind.reasoning ||
               !isInternalActivityLabel(event.label),
         ) &&
-        !(msg['reasoning'] is String &&
-            (msg['reasoning'] as String).trim().isNotEmpty)) {
+        !(metadataMsg['reasoning'] is String &&
+            (metadataMsg['reasoning'] as String).trim().isNotEmpty)) {
       return const SizedBox.shrink();
     }
     if (role == 'assistant' && isCancelled && content.isNotEmpty) {
@@ -13948,7 +19393,7 @@ class _ChatScreenState extends State<ChatScreen>
       // slice pinta su parte y solo el cierre lleva la marca 'cancelled'.
       return _AssistantMessageWithMark(
         content: displayContent,
-        mark: 'cancelled',
+        mark: _AssistantMessageMark.cancelled,
         verbose: _devDiagnostics,
         metadata: msg,
         linkCache: _linkCache,
@@ -13987,6 +19432,7 @@ class _ChatScreenState extends State<ChatScreen>
       isStreaming: isStreaming,
       companionMood: isStreaming || isPipeline ? _liveCompanionMood() : null,
       waitingForUser: (isStreaming || isPipeline) && _turnWaitsForUser,
+      turnLive: _chat.isStreaming,
       assistantSlice: displaySlice,
       terminalProjection: terminalProjection,
       technicalDetails: operationalProjection.technicalDetails,
@@ -13995,17 +19441,54 @@ class _ChatScreenState extends State<ChatScreen>
           : null,
       editing: role == 'user' && identical(msg, _editingUserMessageTarget),
       editingText: _editingUserMessageText,
+      editingDraft: _editingUserMessageDraft,
       editingWidth: _editingUserMessageWidth,
       editSaving: _editingRewriteSubmitted,
+      editingLaterTurns: _laterTurnsAfter(_editingUserMessageOrdinal),
       onCancelEdit: _cancelUserMessageEdit,
       onSaveEdit: (text) => unawaited(_saveUserMessageEdit(text)),
       onRegenerate: role == 'assistant' && _isLatestAssistant(msg)
           ? _regenerateLastResponse
           : null,
-      onSuggestionSelected: suggestionsEnabled
-          ? (suggestion) => _useAssistantSuggestion(msg, suggestion)
+      onBranch: _branchFromHereFor(msg),
+      connectionCard: role == 'assistant'
+          ? _connectionCardFor(metadataMsg)
           : null,
       compact: compact,
+      toolOutputs: role == 'assistant' ? _toolOutputFor : null,
+      latestReplyText:
+          role == 'assistant' &&
+              groupPrefix.isNotEmpty &&
+              rawContent.trim().isNotEmpty
+          ? () => projectAssistantSuggestions(
+              splitReasoning(rawContent).answer,
+            ).body
+          : null,
+      showChangedFiles:
+          role == 'assistant' &&
+          !isStreaming &&
+          !isPipeline &&
+          _isLatestAssistant(msg),
+    );
+  }
+
+  _ConnectionCardBinding? _connectionCardFor(Map<String, dynamic> metadata) {
+    final request = _chat.connectionRequest;
+    if (request == null) return null;
+    final belongsToMessage = normalizeAssistantActivityTrace(
+      metadata[assistantActivityTraceKey],
+    ).any((step) => step['id']?.toString() == request.toolCallId);
+    if (!belongsToMessage) return null;
+    return _ConnectionCardBinding(
+      toolCallId: request.toolCallId,
+      card: ChatConnectionCard(
+        request: request,
+        canAct: _chat.canActOnConnection,
+        onOpenLink: _openConnectionLink,
+        onSkip: (name) =>
+            _answerConnection(() => _chat.skipConnectionTarget(name)),
+        onContinue: () => _answerConnection(_chat.continueConnection),
+      ),
     );
   }
 
@@ -14033,17 +19516,104 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
+  /// ct1215: height of the live turn's row while it is still an ordinary
+  /// list row (its reply has no text yet), as last laid out; all of it has
+  /// been reported to the viewport lock.
+  double _liveTurnRowExtent = 0;
+
+  /// How many messages were under the live turn's row when it was last
+  /// measured: whatever stands above them once the turn ends took its place.
+  int _liveTurnRowOlder = 0;
+
+  /// A turn that ended without text is being settled by measure this frame
+  /// (see [_expectLiveTurnRowSettled]); a second terminal event of the same
+  /// turn must not hand the change back to the sliver's estimate.
+  bool _liveTurnRowSettling = false;
+
+  /// Before its reply has text the live turn is an ordinary row that grows
+  /// under the newest message: the thought being written, the tool in hand,
+  /// the plan. It is not the live host, so nothing else measures it, and a
+  /// reader scrolled up would be pushed away line by line. The row may be
+  /// rebuilt from scratch between two heights (its message is replaced on
+  /// every step), so the height is kept here, not in the render object.
+  void _recordLiveTurnRow(double height) {
+    final delta = height - _liveTurnRowExtent;
+    if (delta.abs() < 0.01) return;
+    final inserted = _liveTurnRowExtent == 0;
+    _liveTurnRowExtent = height;
+    _liveTurnRowOlder = _messages.length - 1;
+    // A turn chained under a reader's retained anchor already measures the
+    // rows it inserts (see [_beginSurfaceTurn]).
+    if (inserted &&
+        _messages.isNotEmpty &&
+        _readerPreservedTurnInsertions.contains(_messages.first)) {
+      return;
+    }
+    _streamingViewportLock.record(delta);
+  }
+
+  /// The in-list row of the live turn is leaving. [toLiveHost]: the live
+  /// host takes its place and reports its whole height from zero, so what
+  /// was counted for the row is given back first.
+  void _releaseLiveTurnRow({bool toLiveHost = false}) {
+    if (toLiveHost) _streamingViewportLock.record(-_liveTurnRowExtent);
+    _liveTurnRowExtent = 0;
+    _liveTurnRowOlder = 0;
+  }
+
+  /// The turn ended before its reply had any text, so the row that told it
+  /// folds (or goes) in one frame under a reader scrolled up. The sliver's
+  /// own figure for that change is an estimate over a virtualized history
+  /// and throws the reader off by hundreds of pixels; the change is measured
+  /// instead: what the row took is given back and the rows that stand in
+  /// its place report their height as they are laid out.
+  void _expectLiveTurnRowSettled(double liveRowExtent, int olderMessages) {
+    // The terminal rows are the newest ones: an error, the stopped turn, the
+    // reply that ran only tools; none when the placeholder just goes.
+    final settled = _messages.length - olderMessages;
+    if (settled < 0 || settled > 3 || !_streamingViewportLock.enabled) {
+      _expectTerminalStructuralChange();
+      return;
+    }
+    _liveTurnRowSettling = true;
+    _expectReportedTerminalStructuralChange();
+    _streamingViewportLock.record(-liveRowExtent);
+    _readerPreservedTurnInsertions
+      ..clear()
+      ..addAll(_messages.take(settled));
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _liveTurnRowSettling = false;
+      _readerPreservedTurnInsertions.clear();
+    });
+  }
+
   Widget _buildLiveAssistantMessage(
     _LiveAssistantFrame frame, {
     required bool compact,
   }) {
-    final projection = _projectOperationalArtifacts(context, frame.content);
+    // El turno vivo es la fila más nueva de su grupo de respuesta: las filas
+    // ya cerradas del mismo turno siguen en ESTA burbuja, que crece en su
+    // sitio en lugar de apilar otra cabecera.
+    final groupRows = _olderResponseGroupRows(
+      frame.metadata,
+      liveHead: frame.isStreaming,
+    );
+    final metadata = groupRows.isEmpty
+        ? frame.metadata
+        : _responseGroupMetadata(frame.metadata, head: frame.metadata);
+    final projection = _projectOperationalArtifacts(
+      context,
+      _joinResponseGroupText(
+        _responseGroupTextPrefix(groupRows),
+        frame.content,
+      ),
+    );
     final hasUnifiedActivity =
         normalizeAssistantActivityTrace(
-          frame.metadata[assistantActivityTraceKey],
+          metadata[assistantActivityTraceKey],
         ).isNotEmpty ||
-        (frame.metadata['reasoning'] is String &&
-            (frame.metadata['reasoning'] as String).trim().isNotEmpty);
+        (metadata['reasoning'] is String &&
+            (metadata['reasoning'] as String).trim().isNotEmpty);
     if (frame.isStreaming &&
         projection.visibleMarkdown.trim().isEmpty &&
         !hasUnifiedActivity) {
@@ -14054,7 +19624,7 @@ class _ChatScreenState extends State<ChatScreen>
         projection.visibleMarkdown.trim().isNotEmpty) {
       return _AssistantMessageWithMark(
         content: projection.visibleMarkdown,
-        mark: 'cancelled',
+        mark: _AssistantMessageMark.cancelled,
         verbose: _devDiagnostics,
         metadata: frame.metadata,
         linkCache: _linkCache,
@@ -14071,7 +19641,7 @@ class _ChatScreenState extends State<ChatScreen>
       content: projection.visibleMarkdown,
       isUser: false,
       verbose: _devDiagnostics,
-      metadata: frame.metadata,
+      metadata: metadata,
       linkCache: _linkCache,
       fetchLinkPreview: _fetchLinkPreview,
       firstUrl: _firstUrl,
@@ -14083,6 +19653,7 @@ class _ChatScreenState extends State<ChatScreen>
       isStreaming: frame.isStreaming,
       companionMood: frame.isStreaming ? _liveCompanionMood() : null,
       waitingForUser: frame.isStreaming && _turnWaitsForUser,
+      connectionCard: _connectionCardFor(metadata),
       compact: compact,
       performanceProbe: widget.performanceProbe,
     );
@@ -14099,6 +19670,8 @@ class _ChatScreenState extends State<ChatScreen>
         'image:${slice!.index}:$basename',
       _AssistantGeneratedMediaChunk(:final reference) =>
         'media:${slice!.index}:${sha256.convert(utf8.encode(reference.source))}',
+      _AssistantImageRunChunk(:final items) =>
+        'images:${slice!.index}:${sha256.convert(utf8.encode(items.map(_imageChunkId).join('\n')))}',
       null => '',
     };
     final key = _AssistantTerminalProjectionKey(
@@ -14161,6 +19734,17 @@ class _ChatScreenState extends State<ChatScreen>
         blocks.add(_ProjectedAssistantImage(basename));
       case _AssistantGeneratedMediaChunk(:final reference):
         blocks.add(_ProjectedAssistantMedia(reference));
+      case _AssistantImageRunChunk(:final items):
+        for (final item in items) {
+          switch (item) {
+            case _AssistantGeneratedImageChunk(:final basename):
+              blocks.add(_ProjectedAssistantImage(basename));
+            case _AssistantGeneratedMediaChunk(:final reference):
+              blocks.add(_ProjectedAssistantMedia(reference));
+            default:
+              break;
+          }
+        }
       case null:
         for (final mediaSegment in GeneratedMediaService.parseSegments(
           suggestions.body,
@@ -14171,8 +19755,8 @@ class _ChatScreenState extends State<ChatScreen>
             case GeneratedMediaTextSegment(:final text):
               for (final imageSegment in GeneratedImageService.segments(text)) {
                 switch (imageSegment) {
-                  case ImageSegment(:final basename):
-                    blocks.add(_ProjectedAssistantImage(basename));
+                  case ImageSegment(:final source):
+                    blocks.add(_ProjectedAssistantImage(source));
                   case TextSegment(:final text):
                     addMarkdown(text, structured: false);
                 }
@@ -14266,60 +19850,6 @@ class _KeyboardInsetWatcherState extends State<_KeyboardInsetWatcher> {
   Widget build(BuildContext context) => widget.child;
 }
 
-/// Superficie común de los avisos en flujo bajo la cabecera del chat: tarjeta
-/// neutra con filete (mismos tokens que el aviso flotante y las pastillas), el
-/// estado lo lleva solo el glifo. Sin relleno ni borde de color.
-class _ChatNoticeSurface extends StatelessWidget {
-  const _ChatNoticeSurface({
-    required this.icon,
-    required this.iconColor,
-    required this.message,
-    this.trailing,
-  });
-
-  final IconData icon;
-  final Color iconColor;
-  final String message;
-  final Widget? trailing;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
-    return Container(
-      width: double.infinity,
-      margin: const EdgeInsets.fromLTRB(12, 8, 12, 0),
-      padding: EdgeInsets.fromLTRB(14, 9, trailing == null ? 14 : 4, 9),
-      decoration: BoxDecoration(
-        color: colors.surface,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: colors.divider.withValues(alpha: 0.78)),
-      ),
-      child: Row(
-        children: [
-          // El envoltorio ya anuncia [message] como etiqueta del aviso; solo el
-          // cierre ([trailing]) queda como nodo accesible propio.
-          ExcludeSemantics(child: Icon(icon, size: 18, color: iconColor)),
-          const SizedBox(width: 10),
-          Expanded(
-            child: ExcludeSemantics(
-              child: Text(
-                message,
-                style: TextStyle(
-                  color: colors.textPrimary,
-                  fontSize: 12.5,
-                  height: 1.3,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-          ),
-          ?trailing,
-        ],
-      ),
-    );
-  }
-}
-
 /// Cierre común de los avisos en flujo del chat: X con tooltip «Cerrar»,
 /// área táctil de 48 dp y etiqueta accesible aunque el icono sea compacto.
 class _ChatNoticeDismissButton extends StatelessWidget {
@@ -14343,96 +19873,6 @@ class _ChatNoticeDismissButton extends StatelessWidget {
         iconSize: 18,
         color: Theme.of(context).hermes.textSecondary,
         constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-      ),
-    );
-  }
-}
-
-class _DesktopAuthRequiredBanner extends StatelessWidget {
-  const _DesktopAuthRequiredBanner({
-    required this.message,
-    required this.onDismiss,
-  });
-
-  final String message;
-  final VoidCallback onDismiss;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
-    return Semantics(
-      key: const ValueKey('chat-dashboard-auth-required'),
-      container: true,
-      liveRegion: true,
-      label: message,
-      child: _ChatNoticeSurface(
-        icon: Icons.lock_outline_rounded,
-        iconColor: colors.warning,
-        message: message,
-        trailing: _ChatNoticeDismissButton(
-          key: const ValueKey('chat-dashboard-auth-dismiss'),
-          onPressed: onDismiss,
-        ),
-      ),
-    );
-  }
-}
-
-class _CoreReadPartialCoverageNotice extends StatelessWidget {
-  const _CoreReadPartialCoverageNotice({
-    required this.message,
-    required this.onDismiss,
-  });
-
-  final String message;
-  final VoidCallback onDismiss;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
-    return Semantics(
-      key: const ValueKey('core-read-partial-coverage-notice'),
-      container: true,
-      liveRegion: true,
-      label: message,
-      child: _ChatNoticeSurface(
-        icon: Icons.account_tree_outlined,
-        iconColor: colors.warning,
-        message: message,
-        trailing: _ChatNoticeDismissButton(
-          key: const ValueKey('core-read-partial-coverage-dismiss'),
-          onPressed: onDismiss,
-        ),
-      ),
-    );
-  }
-}
-
-class _LocalTranscriptTruncationNotice extends StatelessWidget {
-  const _LocalTranscriptTruncationNotice({
-    required this.message,
-    required this.onDismiss,
-  });
-
-  final String message;
-  final VoidCallback onDismiss;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
-    return Semantics(
-      key: const ValueKey('local-transcript-truncation-notice'),
-      container: true,
-      liveRegion: true,
-      label: message,
-      child: _ChatNoticeSurface(
-        icon: Icons.history_toggle_off_rounded,
-        iconColor: colors.warning,
-        message: message,
-        trailing: _ChatNoticeDismissButton(
-          key: const ValueKey('local-transcript-truncation-dismiss'),
-          onPressed: onDismiss,
-        ),
       ),
     );
   }
@@ -14554,9 +19994,7 @@ class _EditQueuedEntrySheetState extends State<_EditQueuedEntrySheet> {
             children: [
               TextButton(
                 onPressed: () => _close(),
-                child: Text(
-                  MaterialLocalizations.of(context).cancelButtonLabel,
-                ),
+                child: Text(strings.commonCancel),
               ),
               FilledButton(
                 style: FilledButton.styleFrom(
@@ -14564,7 +20002,8 @@ class _EditQueuedEntrySheetState extends State<_EditQueuedEntrySheet> {
                   minimumSize: const Size(0, 46),
                 ),
                 onPressed: () => _close(_controller.text.trim()),
-                child: Text(strings.chaEditApply),
+                // Saving only rewrites the queued text; it stays in the queue.
+                child: Text(strings.commonSave),
               ),
             ],
           ),
@@ -14581,120 +20020,207 @@ class _UserTurnGroup {
   _UserTurnGroup(this.primary);
 }
 
-enum _BotChatHeaderAction { model, controls }
+/// fh1215 + QA 9493: the face that stands on a chat's island, always the
+/// chat's ORIGINAL face, in this order:
+///
+/// 1. the profile's custom avatar: a bot's own photo, else the companion of
+///    THIS chat's profile when it is shown (the same companion as the empty
+///    chat);
+/// 2. the bot's or profile's own face: the face the roster draws for that
+///    profile (shape, colour), or Console's face for its name;
+/// 3. Hermes' default face (the sprite engine through [HeaderMascotScope])
+///    for the default chat.
+///
+/// Never a sprite picked for somebody else, and ALWAYS still: its resting
+/// drawing, whatever Hermes is doing. It does not run, hop, bob or look
+/// around; the island's dot and its line say what is going on.
+class _ChatPillIdentityGate extends StatelessWidget {
+  const _ChatPillIdentityGate({required this.child});
 
-/// Cabecera del Bot Chat: avatar + nombre del bot + estado vivo, con el mismo
-/// protagonismo que la cabecera de una Room. El modelo y los controles viven
-/// en el overflow, siguiendo el patrón del plugin oficial Hermes Bot Mode.
-String? _modelLabel(AgentProfile? profile) {
-  final model = profile?.model.trim() ?? '';
-  return model.isEmpty ? null : model;
-}
-
-class _BotChatAppBarTitle extends StatelessWidget {
-  final AgentProfile? profile;
-  final String fallbackName;
-  final ChatActivityKind? activity;
-  final MissionProfileAvatarCache? avatarCache;
-
-  const _BotChatAppBarTitle({
-    required this.profile,
-    required this.fallbackName,
-    required this.activity,
-    required this.avatarCache,
-    super.key,
-  });
+  final Widget child;
 
   @override
   Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
-    final english = Localizations.localeOf(context).languageCode == 'en';
-    final profile = this.profile;
-    final name = profile != null && profile.name.isNotEmpty
-        ? profile.name
-        : fallbackName;
-    final displayName = profile?.botTitle ?? name;
-    final statusLabel = switch (activity) {
-      ChatActivityKind.thinking => english ? 'Thinking' : 'Pensando',
-      ChatActivityKind.usingTools => english ? 'Working' : 'Trabajando',
-      ChatActivityKind.responding => english ? 'Responding' : 'Respondiendo',
-      ChatActivityKind.awaitingApproval =>
-        english ? 'Approval required' : 'Aprobación requerida',
-      null => null,
-    };
-    return Padding(
-      padding: const EdgeInsetsDirectional.only(start: 4, end: 4),
-      child: Row(
-        children: [
-          profile == null
-              ? MissionProfileAvatar(
-                  key: ValueKey('bot-chat-avatar-$name'),
-                  profileName: name,
-                  hasAvatar: false,
-                  cache: avatarCache,
-                  size: 32,
-                )
-              // The same living face as the roster: it breathes, blinks and
-              // looks around; it reads a line while the bot works.
-              : LivingBotFace(
-                  key: ValueKey('bot-chat-avatar-$name'),
-                  profileName: profile.name,
-                  profile: profile,
-                  avatarCache: avatarCache,
-                  signal: switch (activity) {
-                    ChatActivityKind.thinking => BotFaceSignal.thinking,
-                    ChatActivityKind.usingTools => BotFaceSignal.working,
-                    ChatActivityKind.responding => BotFaceSignal.speaking,
-                    ChatActivityKind.awaitingApproval =>
-                      BotFaceSignal.attention,
-                    null => BotFaceSignal.idle,
-                  },
-                  size: 32,
-                  entrance: false,
-                ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  displayName,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w700,
-                    fontSize: 17.5,
-                    letterSpacing: -0.15,
-                  ),
-                ),
-                Text(
-                  [
-                    if (displayName != name || statusLabel == null) '@$name',
-                    ?statusLabel ?? _modelLabel(profile),
-                  ].join(' · '),
-                  key: const ValueKey('bot-chat-header-subtitle'),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: colors.textSecondary,
-                    fontSize: 11.5,
-                    height: 1.15,
-                  ),
-                ),
-              ],
+    final lock = context
+        .findAncestorStateOfType<HermesAppState>()
+        ?.appLock
+        .locked;
+    Widget slot(bool locked) => SizedBox.square(
+      key: const ValueKey('chat-pill-identity-slot'),
+      dimension: FloatingChatHeader.faceSize,
+      // No identity builder, asset read or decoder exists behind App Lock.
+      child: locked
+          ? null
+          : RepaintBoundary(
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.bottomCenter,
+                child: child,
+              ),
             ),
-          ),
-        ],
-      ),
+    );
+    if (lock == null) return slot(false);
+    return ValueListenableBuilder<bool>(
+      valueListenable: lock,
+      builder: (context, locked, _) => slot(locked),
     );
   }
 }
 
+class _ChatHeaderFace extends StatelessWidget {
+  const _ChatHeaderFace({
+    required this.connectionId,
+    required this.botSurface,
+    required this.profile,
+    required this.profileName,
+    required this.avatarCache,
+    required this.hermes,
+  });
+
+  final String connectionId;
+  final bool botSurface;
+
+  /// The Bot Chat's profile; elsewhere looked up in the shared roster.
+  final AgentProfile? profile;
+
+  /// The chat's profile name; null for the default profile.
+  final String? profileName;
+  final MissionProfileAvatarCache? avatarCache;
+
+  /// What the engine draws for the default Hermes chat.
+  final HeaderMascotRequest hermes;
+
+  static const double _size = FloatingChatHeader.faceSize;
+
+  @override
+  Widget build(BuildContext context) {
+    final known = profile;
+    final name = profileName;
+    // The profile this chat belongs to ('default' for the main one).
+    final owner = name ?? 'default';
+    final identities = ProfileIdentities.instance;
+    identities.requestAfterPaint(connectionId, owner);
+    Widget pick(AgentProfile? resolved) {
+      // Whatever the profile's own stores have not said yet draws nothing:
+      // never a stand-in that the answer would then replace.
+      if (!identities.isKnown(connectionId, owner)) return const SizedBox();
+      final cache = avatarCache;
+      // pet, else image, else face: the profile's identity, never the app's
+      // floating pet nor a device selection.
+      // The pet of THIS chat's profile, from its own stores; a bot's face
+      // carries it inside, the default profile's island draws it directly.
+      final pet = identities.pet(connectionId, owner);
+      if (pet != null && !botSurface && name == null) {
+        return ProfilePetAvatar(
+          key: const ValueKey('chat-header-companion'),
+          pet: pet,
+          size: _size,
+        );
+      }
+      if (pet != null) {
+        return LivingBotFace(
+          key: ValueKey(
+            botSurface ? 'bot-chat-avatar-$owner' : 'chat-header-face',
+          ),
+          profileName: owner,
+          profile: resolved,
+          avatarCache: cache,
+          connectionId: connectionId,
+          signal: BotFaceSignal.idle,
+          size: _size,
+          entrance: false,
+          animate: false,
+          stateMark: false,
+        );
+      }
+      if (resolved != null) return _face(resolved);
+      if (name != null) {
+        // Roster not known (yet): Console's face for the name, the same
+        // Blobatar the still avatar drew.
+        return LivingBotFace(
+          key: ValueKey(
+            botSurface ? 'bot-chat-avatar-$name' : 'chat-header-face',
+          ),
+          profileName: name,
+          connectionId: connectionId,
+          signal: BotFaceSignal.idle,
+          size: _size,
+          entrance: false,
+          animate: false,
+          stateMark: false,
+        );
+      }
+      // The default profile has no pet: Hermes' own sprite, the only
+      // identity it has left.
+      final engine = HeaderMascotScope.maybeOf(context);
+      if (engine != null) return engine(context, hermes);
+      return MissionProfileAvatar(
+        key: const ValueKey('chat-header-face'),
+        profileName: 'hermes',
+        hasAvatar: false,
+        cache: null,
+        size: _size,
+      );
+    }
+
+    Widget face() {
+      if (known != null || name == null) return pick(known);
+      // A named profile outside Bot Chat: its face from the shared roster,
+      // as the Bots home draws it; it follows renames and new faces.
+      final store = BotRosterRegistry.shared.store(connectionId);
+      return ListenableBuilder(
+        listenable: store,
+        builder: (context, _) => pick(store.profile(name)),
+      );
+    }
+
+    return SizedBox.square(
+      dimension: _size,
+      // A pet read after paint takes the place of what stood before.
+      child: ListenableBuilder(
+        listenable: identities,
+        builder: (context, _) => face(),
+      ),
+    );
+  }
+
+  Widget _face(AgentProfile profile) => LivingBotFace(
+    key: ValueKey(
+      botSurface ? 'bot-chat-avatar-${profile.name}' : 'chat-header-bot-face',
+    ),
+    profileName: profile.name,
+    profile: profile,
+    avatarCache: avatarCache,
+    connectionId: connectionId,
+    signal: BotFaceSignal.idle,
+    size: _size,
+    entrance: false,
+    animate: false,
+    stateMark: false,
+  );
+}
+
+final class _SlashLookup {
+  final DesktopCommandCatalog? catalog;
+  final SlashCompletionBatch? completion;
+
+  const _SlashLookup({this.catalog, this.completion});
+}
+
 class _SlashAccentTextEditingController extends TextEditingController {
+  /// Server commands and skills this chat's gateway publishes; they get the
+  /// same accent as local commands once the catalog or a completion names
+  /// them.
+  Set<String> remoteCommandNames = const <String>{};
+
   TextRange? slashCommandRange() {
-    final parsed = parseSlashCommand(value.text);
-    if (parsed == null) return null;
+    final known =
+        parseSlashCommand(value.text) != null ||
+        switch (parseSlashInvocation(value.text)) {
+          final invocation? => remoteCommandNames.contains(invocation.name),
+          null => false,
+        };
+    if (!known) return null;
     final text = value.text;
     final start = text.length - text.trimLeft().length;
     final trimmed = text.trimLeft();
@@ -14718,8 +20244,14 @@ class _SlashAccentTextEditingController extends TextEditingController {
     required bool withComposing,
   }) {
     final text = value.text;
-    final slashRange = slashCommandRange();
-    if (text.isEmpty || slashRange == null) {
+    final slashRange = text.isEmpty ? null : slashCommandRange();
+    // Complete `@file:`/`@folder:`/`@url:` references read as the same accent
+    // token Desktop renders as a chip.
+    final accentRanges = <TextRange>[
+      ?slashRange,
+      ...composerReferenceRanges(text),
+    ];
+    if (text.isEmpty || accentRanges.isEmpty) {
       return super.buildTextSpan(
         context: context,
         style: style,
@@ -14727,22 +20259,30 @@ class _SlashAccentTextEditingController extends TextEditingController {
       );
     }
     final composing = composingRange(value, withComposing);
-    final cuts = <int>{0, slashRange.start, slashRange.end, text.length};
+    final cuts = <int>{0, text.length};
+    for (final range in accentRanges) {
+      cuts
+        ..add(range.start)
+        ..add(range.end);
+    }
     if (!composing.isCollapsed) {
       cuts
         ..add(composing.start)
         ..add(composing.end);
     }
     final orderedCuts = cuts.toList()..sort();
+    final accent = Theme.of(context).hermes.accent;
     final spans = <InlineSpan>[];
     for (var index = 0; index < orderedCuts.length - 1; index++) {
       final start = orderedCuts[index];
       final end = orderedCuts[index + 1];
       if (start == end) continue;
       var segmentStyle = style;
-      if (start >= slashRange.start && end <= slashRange.end) {
+      if (accentRanges.any(
+        (range) => start >= range.start && end <= range.end,
+      )) {
         segmentStyle = (segmentStyle ?? const TextStyle()).copyWith(
-          color: Theme.of(context).hermes.accent,
+          color: accent,
         );
       }
       if (!composing.isCollapsed &&
@@ -14771,6 +20311,7 @@ class _SlashPalette extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
+    final firstSkill = commands.indexWhere((command) => command.isSkill);
     return Container(
       key: const ValueKey('chat-slash-palette'),
       margin: const EdgeInsets.fromLTRB(10, 0, 10, 9),
@@ -14802,88 +20343,115 @@ class _SlashPalette extends StatelessWidget {
             ),
             itemBuilder: (ctx, i) {
               final command = commands[i];
-              return InkWell(
-                key: ValueKey('chat-slash-command-${command.name}'),
-                onTap: () => onPick(command),
-                child: Padding(
-                  padding: const EdgeInsetsDirectional.fromSTEB(12, 8, 14, 8),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 36,
-                        height: 36,
-                        alignment: Alignment.center,
-                        decoration: BoxDecoration(
-                          color: colors.accent.withValues(alpha: 0.11),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(
-                            color: colors.accent.withValues(alpha: 0.24),
-                          ),
-                        ),
-                        child: Text(
-                          '/',
-                          textScaler: TextScaler.noScaling,
-                          style: TextStyle(
-                            color: colors.accent,
-                            fontFamily: 'monospace',
-                            fontWeight: FontWeight.w800,
-                            fontSize: 17,
-                          ),
-                        ),
+              final row = _row(colors, command);
+              if (!command.isSkill || i != firstSkill) return row;
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Padding(
+                    key: const ValueKey('chat-slash-skills-header'),
+                    padding: const EdgeInsetsDirectional.fromSTEB(14, 8, 14, 2),
+                    child: Text(
+                      Strings.of(ctx).t1215SlashSkillsHeader,
+                      style: TextStyle(
+                        color: colors.textSecondary,
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.4,
                       ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text.rich(
-                              TextSpan(
-                                children: [
-                                  TextSpan(
-                                    text: '/${command.name}',
-                                    style: TextStyle(
-                                      color: colors.accent,
-                                      fontWeight: FontWeight.w800,
-                                    ),
-                                  ),
-                                  if (command.argHint.isNotEmpty)
-                                    TextSpan(
-                                      text: '  ${command.argHint}',
-                                      style: TextStyle(
-                                        color: colors.textSecondary,
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                ],
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontFamily: 'monospace',
-                                fontSize: 13.5,
-                              ),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              command.description,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: colors.textSecondary,
-                                fontSize: 12.5,
-                                height: 1.2,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
+                    ),
                   ),
-                ),
+                  row,
+                ],
               );
             },
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget _row(HermesThemeColors colors, SlashCommand command) {
+    return InkWell(
+      key: ValueKey('chat-slash-command-${command.name}'),
+      onTap: () => onPick(command),
+      child: Padding(
+        padding: const EdgeInsetsDirectional.fromSTEB(12, 8, 14, 8),
+        child: Row(
+          children: [
+            Container(
+              width: 36,
+              height: 36,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: colors.accent.withValues(alpha: 0.11),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: colors.accent.withValues(alpha: 0.24),
+                ),
+              ),
+              child: command.isSkill
+                  ? Icon(Icons.bolt_rounded, size: 18, color: colors.accent)
+                  : Text(
+                      '/',
+                      textScaler: TextScaler.noScaling,
+                      style: TextStyle(
+                        color: colors.accent,
+                        fontFamily: 'monospace',
+                        fontWeight: FontWeight.w800,
+                        fontSize: 17,
+                      ),
+                    ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text.rich(
+                    TextSpan(
+                      children: [
+                        TextSpan(
+                          text: '/${command.name}',
+                          style: TextStyle(
+                            color: colors.accent,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        if (command.argHint.isNotEmpty)
+                          TextSpan(
+                            text: '  ${command.argHint}',
+                            style: TextStyle(
+                              color: colors.textSecondary,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                      ],
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 13.5,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    command.description,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: colors.textSecondary,
+                      fontSize: 12.5,
+                      height: 1.2,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -14895,8 +20463,13 @@ class _SlashPalette extends StatelessWidget {
 class _EmptyChatState extends StatelessWidget {
   final String model;
   final String agentName;
+  final String? workspace;
 
-  const _EmptyChatState({required this.model, this.agentName = 'hermes'});
+  const _EmptyChatState({
+    required this.model,
+    this.agentName = 'hermes',
+    this.workspace,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -14938,12 +20511,7 @@ class _EmptyChatState extends StatelessWidget {
                       return Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          CompanionMessagePresence(
-                            companion: companion,
-                            mood: HermesSparkMood.idle,
-                            size: 120,
-                            animateIdle: true,
-                          ),
+                          const SizedBox.square(dimension: 120),
                           const SizedBox(height: 18),
                         ],
                       );
@@ -14978,6 +20546,37 @@ class _EmptyChatState extends StatelessWidget {
                   ),
                 ],
               ),
+              if (workspace case final folder?) ...[
+                const SizedBox(height: 14),
+                ConstrainedBox(
+                  key: const ValueKey('pj1215-chat-workspace'),
+                  constraints: const BoxConstraints(maxWidth: 300),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.folder_outlined,
+                        size: 14,
+                        color: colors.textSecondary,
+                      ),
+                      const SizedBox(width: 6),
+                      Flexible(
+                        child: Text(
+                          Strings.of(
+                            context,
+                          ).pj1215ChatWorkspace(shortServerPath(folder)),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: colors.textSecondary,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ],
           ),
         ),
@@ -15088,7 +20687,8 @@ final _classifyError = classifyChatError;
 ///
 /// Diferencia el tipo de error (conexión/modelo/herramienta/local/desconocido)
 /// usando únicamente el copy público ya saneado por ActiveChat.
-class _ErrorBubble extends StatefulWidget {
+@visibleForTesting
+class ChatErrorBubble extends StatefulWidget {
   final String error;
   final String prompt;
   final VoidCallback? onRetry;
@@ -15101,19 +20701,79 @@ class _ErrorBubble extends StatefulWidget {
   /// contexto del modelo (reintentar repetiría el mismo fallo).
   final VoidCallback? onNewSession;
 
-  const _ErrorBubble({
+  /// The provider rejected its credential: the card names it and offers the
+  /// fix (sign in again / check the key) before Retry, as Desktop does.
+  final ProviderAuthFailure? authFailure;
+  final VoidCallback? onReauth;
+
+  /// Opens this instance's Dashboard sign-in. Offered, alone, by a turn that
+  /// failed because the Dashboard refused this phone.
+  final VoidCallback? onDashboardSignIn;
+
+  /// What the gateway said failed (`error_surface`) and, for a provider out of
+  /// credit, its `billing` block. With either, the card follows the recovery
+  /// plan; without them it is the text-classified card of older servers.
+  final TurnErrorSurface? surface;
+  final TurnBillingBlock? billing;
+
+  /// Recovery handlers the plan may offer; a null one is never painted.
+  final VoidCallback? onCompress;
+  final VoidCallback? onChooseModel;
+  final VoidCallback? onEditMessage;
+  final VoidCallback? onOpenBilling;
+
+  /// Free-tier sign-in: only painted when [freeTierSignInAvailable] answers
+  /// true (checked once, when the details open).
+  final VoidCallback? onSignInFreeTier;
+  final Future<bool> Function()? freeTierSignInAvailable;
+
+  /// A usage-limit retry may be armed only while the failed turn is the last
+  /// one; [retryScope] changing (another chat or profile) drops an armed retry.
+  final bool canArmRetry;
+  final Object? retryScope;
+
+  /// What an armed retry runs when its time comes; defaults to [onRetry]. The
+  /// screen guards it so it only resends the turn the card belongs to.
+  final VoidCallback? onScheduledRetry;
+
+  /// Clock and app version, replaceable in tests.
+  final DateTime Function()? now;
+  final String? composerProvider;
+  final String? composerModel;
+  final Future<String> Function()? appVersion;
+
+  const ChatErrorBubble({
+    super.key,
     required this.error,
     required this.prompt,
     required this.onRetry,
     this.onRestartGateway,
     this.onNewSession,
+    this.authFailure,
+    this.onReauth,
+    this.onDashboardSignIn,
+    this.surface,
+    this.billing,
+    this.onCompress,
+    this.onChooseModel,
+    this.onEditMessage,
+    this.onOpenBilling,
+    this.onSignInFreeTier,
+    this.freeTierSignInAvailable,
+    this.canArmRetry = false,
+    this.retryScope,
+    this.onScheduledRetry,
+    this.now,
+    this.composerProvider,
+    this.composerModel,
+    this.appVersion,
   });
 
   @override
-  State<_ErrorBubble> createState() => _ErrorBubbleState();
+  State<ChatErrorBubble> createState() => _ErrorBubbleState();
 }
 
-class _ErrorBubbleState extends State<_ErrorBubble> {
+class _ErrorBubbleState extends State<ChatErrorBubble> {
   bool _expanded = false;
 
   String _kindLabel(_ErrorKind kind, Strings s) => switch (kind) {
@@ -15125,6 +20785,8 @@ class _ErrorBubbleState extends State<_ErrorBubble> {
     _ErrorKind.firstTokenTimeout => s.chaErrFirstTokenTimeout,
     _ErrorKind.searchToolUnavailable => s.chaErrSearchToolUnavailable,
     _ErrorKind.sessionTooLarge => s.chaErrSessionTooLarge,
+    _ErrorKind.profileDashboardAccess => s.chaErrProfileDashboardAccess,
+    _ErrorKind.dashboardSignInRequired => s.chaErrDashboardSignIn,
     _ErrorKind.unknown => s.chaErrUnknown,
   };
 
@@ -15137,18 +20799,37 @@ class _ErrorBubbleState extends State<_ErrorBubble> {
     _ErrorKind.firstTokenTimeout => s.chaErrHintFirstTokenTimeout,
     _ErrorKind.searchToolUnavailable => s.chaErrHintSearchToolUnavailable,
     _ErrorKind.sessionTooLarge => s.chaErrHintSessionTooLarge,
+    _ErrorKind.profileDashboardAccess => null,
+    _ErrorKind.dashboardSignInRequired => null,
     _ErrorKind.unknown => null,
   };
 
   @override
   Widget build(BuildContext context) {
+    // The gateway named what failed: the card follows its recovery plan. Older
+    // servers send no surface and keep the text-classified card below.
+    if (widget.surface != null || widget.billing != null) {
+      return _PlannedErrorCard(bubble: widget);
+    }
     final colors = Theme.of(context).hermes;
     final str = Strings.of(context);
     final kind = _classifyError(widget.error);
-    final summary = widget.error.length > 140
+    final authFailure = widget.authFailure;
+    // A stable code is put into words by the title; it is never printed.
+    final coded = authFailure == null && isChatErrorCode(widget.error);
+    final signIn = coded && kind == _ErrorKind.dashboardSignInRequired
+        ? widget.onDashboardSignIn
+        : null;
+    final summary = authFailure != null
+        ? providerAuthBody(str, authFailure)
+        : widget.error.length > 140
         ? '${widget.error.substring(0, 140)}…'
         : widget.error;
-    final hasMore = widget.error.length > 140 || widget.error.contains('\n');
+    final hasMore =
+        !coded &&
+        (authFailure != null ||
+            widget.error.length > 140 ||
+            widget.error.contains('\n'));
 
     return Padding(
       padding: const EdgeInsets.only(left: 12, right: 56, top: 11, bottom: 3),
@@ -15161,10 +20842,6 @@ class _ErrorBubbleState extends State<_ErrorBubble> {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const _AssistantHeaderCompanion(
-                  mood: HermesSparkMood.error,
-                  animate: false,
-                ),
                 Text(
                   '▸ hermes',
                   style: TextStyle(
@@ -15190,29 +20867,41 @@ class _ErrorBubbleState extends State<_ErrorBubble> {
               children: [
                 Row(
                   children: [
-                    Icon(kind.icon, size: 14, color: colors.error),
+                    Icon(
+                      authFailure != null ? Icons.key_off_rounded : kind.icon,
+                      size: 14,
+                      color: colors.error,
+                    ),
                     const SizedBox(width: 6),
-                    Text(
-                      _kindLabel(kind, str),
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        color: colors.error,
+                    Flexible(
+                      child: Text(
+                        authFailure != null
+                            ? providerAuthTitle(str, authFailure)
+                            : _kindLabel(kind, str),
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: colors.error,
+                        ),
                       ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  _expanded ? widget.error : summary,
-                  style: TextStyle(
-                    fontSize: 12,
-                    height: 1.4,
-                    color: colors.error.withValues(alpha: 0.92),
-                    fontFamily: _expanded ? 'monospace' : null,
+                if (!coded) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    _expanded ? widget.error : summary,
+                    style: TextStyle(
+                      fontSize: 12,
+                      height: 1.4,
+                      color: colors.error.withValues(alpha: 0.92),
+                      fontFamily: _expanded ? 'monospace' : null,
+                    ),
                   ),
-                ),
-                if (_kindHint(kind, str) != null && !_expanded) ...[
+                ],
+                if (authFailure == null &&
+                    _kindHint(kind, str) != null &&
+                    !_expanded) ...[
                   const SizedBox(height: 4),
                   Text(
                     _kindHint(kind, str)!,
@@ -15223,10 +20912,29 @@ class _ErrorBubbleState extends State<_ErrorBubble> {
                 // A-114 (spec 028): las acciones de recuperación pasan a
                 // targets ≥48dp con rol de botón (eran texto de 11px con
                 // ~25dp tocables); el visual compacto se conserva.
-                Row(
+                Wrap(
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: 8,
                   children: [
-                    if (kind == _ErrorKind.sessionTooLarge &&
-                        widget.onNewSession != null)
+                    if (authFailure != null)
+                      _ErrorBubbleAction(
+                        key: const ValueKey('hr1215-error-reauth'),
+                        label: providerAuthActionLabel(str, authFailure),
+                        color: colors.error,
+                        onTap: widget.onReauth,
+                      ),
+                    // The one action that fixes it: sign in to this
+                    // instance's Dashboard (the turn is sent again after).
+                    if (signIn != null)
+                      _ErrorBubbleAction(
+                        key: const ValueKey('chat-error-dashboard-sign-in'),
+                        label: str.legacyBridgeStepAction,
+                        color: colors.error,
+                        onTap: signIn,
+                      )
+                    else if (kind == _ErrorKind.sessionTooLarge &&
+                        widget.onNewSession != null &&
+                        authFailure == null)
                       _ErrorBubbleAction(
                         label: Strings.of(context).chaNewChatTooltip,
                         color: colors.error,
@@ -15241,17 +20949,15 @@ class _ErrorBubbleState extends State<_ErrorBubble> {
                     // En errores de "agente colgado"/conexión, ofrecer reiniciar
                     // el gateway del servidor (puede estar atascado).
                     if (widget.onRestartGateway != null &&
+                        authFailure == null &&
                         (kind == _ErrorKind.firstTokenTimeout ||
-                            kind == _ErrorKind.connection)) ...[
-                      const SizedBox(width: 8),
+                            kind == _ErrorKind.connection))
                       _ErrorBubbleAction(
                         label: Strings.of(context).chaRestartGateway,
                         color: colors.error,
                         onTap: widget.onRestartGateway,
                       ),
-                    ],
-                    if (hasMore) ...[
-                      const SizedBox(width: 8),
+                    if (hasMore)
                       _ErrorBubbleAction(
                         label: _expanded
                             ? Strings.of(context).chaErrHideDetails
@@ -15260,9 +20966,436 @@ class _ErrorBubbleState extends State<_ErrorBubble> {
                         outlined: false,
                         onTap: () => setState(() => _expanded = !_expanded),
                       ),
-                    ],
                   ],
                 ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Error card driven by the gateway's `error_surface`: what failed, one
+/// visible recovery action, the rest behind the details, the usage-limit reset
+/// and "Copiar detalles".
+class _PlannedErrorCard extends StatefulWidget {
+  final ChatErrorBubble bubble;
+
+  const _PlannedErrorCard({required this.bubble});
+
+  @override
+  State<_PlannedErrorCard> createState() => _PlannedErrorCardState();
+}
+
+/// Whether [a] and [b] show the same failed turn of the same chat/profile.
+bool _sameFailure(ChatErrorBubble a, ChatErrorBubble b) =>
+    a.retryScope == b.retryScope &&
+    a.error == b.error &&
+    a.prompt == b.prompt &&
+    mapEquals(a.surface?.toJson(), b.surface?.toJson()) &&
+    mapEquals(a.billing?.toJson(), b.billing?.toJson());
+
+class _PlannedErrorCardState extends State<_PlannedErrorCard>
+    with WidgetsBindingObserver {
+  bool _expanded = false;
+
+  /// The single armed retry of a usage limit. Local only: it never outlives
+  /// the card, the failed turn, the chat/profile or the app in the foreground.
+  Timer? _armTimer;
+  Timer? _tickTimer;
+  double? _armedResetsAt;
+
+  /// `null` until the user opens the details of a free-tier failure.
+  bool? _freeTierSignInOffered;
+  bool _freeTierChecked = false;
+
+  /// Bumped when this slot starts showing another failure, so the answer of a
+  /// check started for the previous one is dropped.
+  int _failureGeneration = 0;
+
+  ChatErrorBubble get _bubble => widget.bubble;
+  bool get _armed => _armTimer != null;
+  DateTime _now() => (_bubble.now ?? DateTime.now)();
+
+  TurnErrorSurface get _surface =>
+      _bubble.surface ??
+      const TurnErrorSurface(
+        layer: 'billing',
+        code: 'billing',
+        retryable: false,
+      );
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void didUpdateWidget(_PlannedErrorCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final old = oldWidget.bubble;
+    if (!_sameFailure(old, _bubble)) {
+      _failureGeneration++;
+      _expanded = false;
+      _freeTierChecked = false;
+      _freeTierSignInOffered = null;
+    }
+    if (_armed &&
+        (!_bubble.canArmRetry ||
+            _bubble.retryScope != old.retryScope ||
+            _bubble.surface?.resetsAt != old.surface?.resetsAt)) {
+      _disarm();
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed && _armed) _disarm();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _armTimer?.cancel();
+    _tickTimer?.cancel();
+    super.dispose();
+  }
+
+  void _arm(double resetsAt, Duration delay) {
+    _armTimer?.cancel();
+    _tickTimer?.cancel();
+    _armedResetsAt = resetsAt;
+    _armTimer = Timer(delay, _fire);
+    _tickTimer = Timer.periodic(const Duration(seconds: 1), (_) => _tick());
+    setState(() {});
+  }
+
+  void _disarm() {
+    _armTimer?.cancel();
+    _tickTimer?.cancel();
+    _armTimer = null;
+    _tickTimer = null;
+    _armedResetsAt = null;
+    if (mounted) setState(() {});
+  }
+
+  /// Local one-second tick for the visible countdown; no network.
+  void _tick() {
+    if (!mounted) return;
+    // A route over the chat (an opaque page) turns this subtree's tickers off.
+    if (!TickerMode.valuesOf(context).enabled) {
+      _disarm();
+      return;
+    }
+    setState(() {});
+  }
+
+  void _fire() {
+    if (!mounted || !_armed) return;
+    final retry = _bubble.onScheduledRetry ?? _bubble.onRetry;
+    final allowed = _bubble.canArmRetry && TickerMode.valuesOf(context).enabled;
+    _disarm();
+    if (allowed) retry?.call();
+  }
+
+  void _toggleDetails() {
+    setState(() => _expanded = !_expanded);
+    if (!_expanded || _freeTierChecked) return;
+    final check = _bubble.freeTierSignInAvailable;
+    if (!_surface.isFreeTier ||
+        check == null ||
+        _bubble.onSignInFreeTier == null) {
+      return;
+    }
+    _freeTierChecked = true;
+    final generation = _failureGeneration;
+    check().then<void>(
+      (offered) {
+        if (mounted && generation == _failureGeneration) {
+          setState(() => _freeTierSignInOffered = offered);
+        }
+      },
+      onError: (Object _) {
+        if (mounted && generation == _failureGeneration) {
+          setState(() => _freeTierSignInOffered = false);
+        }
+      },
+    );
+  }
+
+  Future<void> _copyDetails() async {
+    final notices = HermesNotice.of(context);
+    final copied = Strings.of(context).te1215DetailsCopied;
+    String version;
+    try {
+      version = await (_bubble.appVersion ?? appVersionLabel)();
+    } catch (_) {
+      version = 'unknown';
+    }
+    final text = formatErrorDiagnostics(
+      now: _now(),
+      surface: _bubble.surface,
+      composerProvider: _bubble.composerProvider,
+      composerModel: _bubble.composerModel,
+      appVersion: version,
+      error: _bubble.error,
+    );
+    await Clipboard.setData(ClipboardData(text: text));
+    if (!mounted) return;
+    notices.showSnackBar(
+      SnackBar(content: Text(copied)),
+      kind: HermesNoticeKind.success,
+    );
+  }
+
+  /// The actions the plan allows and the screen can run, most relevant first.
+  List<({String name, String label, VoidCallback onTap})> _actions(
+    Strings s,
+    ErrorRecoveryPlan plan,
+  ) {
+    final out = <({String name, String label, VoidCallback onTap})>[];
+    final billing = _bubble.billing;
+    final onBilling = _bubble.onOpenBilling;
+    if (billing != null && onBilling != null) {
+      out.add((
+        name: 'billing',
+        label: billing.isNous ? s.te1215BillingNous : s.te1215BillingLink,
+        onTap: onBilling,
+      ));
+    }
+    for (final action in errorRecoveryActions(plan)) {
+      final VoidCallback? handler = switch (action) {
+        ErrorRecoveryAction.signInAgain || ErrorRecoveryAction.updateApiKey =>
+          _bubble.authFailure == null ? null : _bubble.onReauth,
+        ErrorRecoveryAction.compress => _bubble.onCompress,
+        ErrorRecoveryAction.chooseModel ||
+        ErrorRecoveryAction.switchProvider => _bubble.onChooseModel,
+        ErrorRecoveryAction.editMessage => _bubble.onEditMessage,
+        ErrorRecoveryAction.retry => _bubble.onRetry,
+        ErrorRecoveryAction.startNewSession => _bubble.onNewSession,
+        ErrorRecoveryAction.signInFreeTier =>
+          _freeTierSignInOffered == true ? _bubble.onSignInFreeTier : null,
+      };
+      // Choosing a model and switching provider open the same picker.
+      if (handler == null ||
+          out.any((entry) => identical(entry.onTap, handler))) {
+        continue;
+      }
+      out.add((
+        name: action.name,
+        label: errorRecoveryActionLabel(s, action),
+        onTap: handler,
+      ));
+    }
+    return out;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).hermes;
+    final s = Strings.of(context);
+    final surface = _surface;
+    final billing = _bubble.billing;
+    final authFailure = _bubble.authFailure;
+    final plan = errorRecoveryPlan(surface: surface, authFailure: authFailure);
+    final copy = turnErrorCopy(s, surface);
+    final title = billing != null
+        ? s.te1215BillingTitle(billing.providerLabel)
+        : authFailure != null
+        ? providerAuthTitle(s, authFailure)
+        : copy.title;
+    final errorText = _bubble.error;
+    final summary = billing != null
+        ? billing.firstLine
+        : authFailure != null
+        ? providerAuthBody(s, authFailure)
+        : surface.isFreeTier && surface.message != null
+        ? surface.message!
+        : copy.hint ??
+              (errorText.length > 140
+                  ? '${errorText.substring(0, 140)}…'
+                  : errorText);
+
+    final now = _now();
+    final reset = plan.retry ? formatLimitReset(surface.resetsAt, now) : null;
+    final delay = reset == null
+        ? null
+        : scheduledRetryDelay(surface.resetsAt, now);
+    final canSchedule =
+        delay != null && _bubble.canArmRetry && _bubble.onRetry != null;
+    final armedReset = _armed ? formatLimitReset(_armedResetsAt, now) : null;
+
+    final actions = _actions(s, plan);
+    final primary = actions.isEmpty ? null : actions.first;
+    final secondary = actions.skip(1).toList(growable: false);
+
+    return Padding(
+      padding: const EdgeInsets.only(left: 12, right: 56, top: 11, bottom: 3),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(bottom: 4),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  '▸ hermes',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: colors.error,
+                    letterSpacing: 0.8,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+            decoration: BoxDecoration(
+              color: colors.error.withValues(alpha: 0.07),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: colors.error.withValues(alpha: 0.18)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      authFailure != null
+                          ? Icons.key_off_rounded
+                          : _classifyError(errorText).icon,
+                      size: 14,
+                      color: colors.error,
+                    ),
+                    const SizedBox(width: 6),
+                    Flexible(
+                      child: Text(
+                        title,
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: colors.error,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  _expanded ? errorText : summary,
+                  style: TextStyle(
+                    fontSize: 12,
+                    height: 1.4,
+                    color: colors.error.withValues(alpha: 0.92),
+                    fontFamily: _expanded ? 'monospace' : null,
+                  ),
+                ),
+                if (reset != null) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    s.te1215ResetsAt(reset.clock, reset.remaining),
+                    key: const ValueKey('te1215-error-resets'),
+                    style: TextStyle(fontSize: 11, color: colors.textSecondary),
+                  ),
+                ],
+                if (armedReset != null) ...[
+                  const SizedBox(height: 4),
+                  Row(
+                    key: const ValueKey('te1215-error-armed'),
+                    children: [
+                      Flexible(
+                        child: Text(
+                          s.te1215RetryArmed(
+                            armedReset.clock,
+                            armedReset.remaining,
+                          ),
+                          style: TextStyle(fontSize: 11, color: colors.error),
+                        ),
+                      ),
+                      _ErrorBubbleAction(
+                        key: const ValueKey('te1215-error-cancel-arm'),
+                        label: s.chaCancel,
+                        color: colors.textSecondary,
+                        outlined: false,
+                        onTap: _disarm,
+                      ),
+                    ],
+                  ),
+                ],
+                const SizedBox(height: 8),
+                Wrap(
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: 8,
+                  children: [
+                    if (primary != null)
+                      _ErrorBubbleAction(
+                        // The sign-in / key action keeps the key it always had.
+                        key: ValueKey(
+                          primary.name ==
+                                      ErrorRecoveryAction.signInAgain.name ||
+                                  primary.name ==
+                                      ErrorRecoveryAction.updateApiKey.name
+                              ? 'hr1215-error-reauth'
+                              : 'te1215-error-primary',
+                        ),
+                        label: primary.label,
+                        color: colors.error,
+                        onTap: primary.onTap,
+                      ),
+                    _ErrorBubbleAction(
+                      key: const ValueKey('te1215-error-details-toggle'),
+                      label: _expanded
+                          ? s.chaErrHideDetails
+                          : s.chaErrViewDetails,
+                      color: colors.textSecondary,
+                      outlined: false,
+                      onTap: _toggleDetails,
+                    ),
+                  ],
+                ),
+                if (_expanded)
+                  Wrap(
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    spacing: 8,
+                    children: [
+                      for (final action in secondary)
+                        _ErrorBubbleAction(
+                          key: ValueKey(
+                            action.name ==
+                                        ErrorRecoveryAction.signInAgain.name ||
+                                    action.name ==
+                                        ErrorRecoveryAction.updateApiKey.name
+                                ? 'hr1215-error-reauth'
+                                : 'te1215-error-action-${action.name}',
+                          ),
+                          label: action.label,
+                          color: colors.error,
+                          onTap: action.onTap,
+                        ),
+                      if (canSchedule && !_armed && reset != null)
+                        _ErrorBubbleAction(
+                          key: const ValueKey('te1215-error-arm'),
+                          label: s.te1215RetryAt(reset.clock),
+                          color: colors.error,
+                          onTap: () => _arm(surface.resetsAt!, delay),
+                        ),
+                      _ErrorBubbleAction(
+                        key: const ValueKey('te1215-error-copy'),
+                        label: s.te1215CopyDetails,
+                        color: colors.textSecondary,
+                        outlined: false,
+                        onTap: () => unawaited(_copyDetails()),
+                      ),
+                    ],
+                  ),
               ],
             ),
           ),
@@ -15282,6 +21415,7 @@ class _ErrorBubbleAction extends StatelessWidget {
   final bool outlined;
 
   const _ErrorBubbleAction({
+    super.key,
     required this.label,
     required this.onTap,
     required this.color,
@@ -15298,6 +21432,9 @@ class _ErrorBubbleAction extends StatelessWidget {
         child: ConstrainedBox(
           constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
           child: Center(
+            // Shrink to the pill: inside the card's Wrap an unbounded Center
+            // would take a whole line per action.
+            widthFactor: 1,
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
               decoration: outlined
@@ -15315,10 +21452,14 @@ class _ErrorBubbleAction extends StatelessWidget {
   }
 }
 
-/// Assistant message with a subtle status mark (e.g. "cancelled").
+/// Estado terminal que se marca bajo una respuesta. Se localiza al pintar;
+/// nunca se muestra el identificador interno.
+enum _AssistantMessageMark { cancelled }
+
+/// Assistant message with a subtle status mark (e.g. "Cancelado").
 class _AssistantMessageWithMark extends StatelessWidget {
   final String content;
-  final String mark;
+  final _AssistantMessageMark mark;
   final bool verbose;
   final Map<String, dynamic> metadata;
   final Map<String, _LinkPreviewData?> linkCache;
@@ -15348,6 +21489,10 @@ class _AssistantMessageWithMark extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
+    final strings = Strings.of(context);
+    final markLabel = switch (mark) {
+      _AssistantMessageMark.cancelled => strings.tg1215TurnCancelled,
+    };
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
@@ -15371,8 +21516,8 @@ class _AssistantMessageWithMark extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.only(left: 14, bottom: 4),
             child: Text(
-              mark,
-              style: TextStyle(fontSize: 10, color: colors.textDisabled),
+              markLabel,
+              style: TextStyle(fontSize: 10, color: colors.textTertiary),
             ),
           ),
       ],
@@ -15482,22 +21627,32 @@ class _MessageBubble extends StatelessWidget {
   final ReadAloudStopBehavior readAloudStopBehavior;
   final String agentName;
   final bool isStreaming;
-  final HermesSparkMood? companionMood;
+  final CompanionMood? companionMood;
   final bool waitingForUser;
+
+  /// rp1215: the chat still runs this turn; a stopped or failed turn never
+  /// keeps the «está pensando…» row even while its row is not settled yet.
+  final bool turnLive;
   final _AssistantRenderSlice? assistantSlice;
   final _AssistantTerminalProjection? terminalProjection;
   final List<String> technicalDetails;
   final ValueChanged<double>? onEdit;
   final bool editing;
   final String? editingText;
+  final String? editingDraft;
   final double? editingWidth;
   final bool editSaving;
+  final int editingLaterTurns;
+  final VoidCallback? onBranch;
   final VoidCallback? onCancelEdit;
   final ValueChanged<String>? onSaveEdit;
   final VoidCallback? onRegenerate;
-  final AssistantSuggestionCallback? onSuggestionSelected;
+  final _ConnectionCardBinding? connectionCard;
   final bool compact;
   final ChatPerformanceProbe? performanceProbe;
+  final ToolOutputLookup? toolOutputs;
+  final String Function()? latestReplyText;
+  final bool showChangedFiles;
 
   const _MessageBubble({
     required this.content,
@@ -15515,20 +21670,27 @@ class _MessageBubble extends StatelessWidget {
     this.isStreaming = false,
     this.companionMood,
     this.waitingForUser = false,
+    this.turnLive = true,
     this.assistantSlice,
     this.terminalProjection,
     this.technicalDetails = const [],
     this.onEdit,
     this.editing = false,
     this.editingText,
+    this.editingDraft,
     this.editingWidth,
     this.editSaving = false,
+    this.editingLaterTurns = 0,
+    this.onBranch,
     this.onCancelEdit,
     this.onSaveEdit,
     this.onRegenerate,
-    this.onSuggestionSelected,
+    this.connectionCard,
     this.compact = false,
     this.performanceProbe,
+    this.toolOutputs,
+    this.latestReplyText,
+    this.showChangedFiles = false,
   });
 
   @override
@@ -15541,8 +21703,10 @@ class _MessageBubble extends StatelessWidget {
             onEdit: onEdit,
             editing: editing,
             editingText: editingText,
+            editingDraft: editingDraft,
             editingWidth: editingWidth,
             editSaving: editSaving,
+            editingLaterTurns: editingLaterTurns,
             onCancelEdit: onCancelEdit,
             onSaveEdit: onSaveEdit,
             compact: compact,
@@ -15562,13 +21726,18 @@ class _MessageBubble extends StatelessWidget {
             isStreaming: isStreaming,
             companionMood: companionMood,
             waitingForUser: waitingForUser,
+            turnLive: turnLive,
             slice: assistantSlice,
             terminalProjection: terminalProjection,
             technicalDetails: technicalDetails,
             onRegenerate: onRegenerate,
-            onSuggestionSelected: onSuggestionSelected,
+            onBranch: onBranch,
+            connectionCard: connectionCard,
             compact: compact,
             performanceProbe: performanceProbe,
+            toolOutputs: toolOutputs,
+            latestReplyText: latestReplyText,
+            showChangedFiles: showChangedFiles,
           );
   }
 }
@@ -15585,11 +21754,16 @@ class _ParsedAttachment {
   /// Ruta local persistente de la imagen, si el adjunto era una imagen. Permite
   /// leer historiales legacy `⟦img:...⟧` sin romper miniaturas existentes.
   final String? imagePath;
+
+  /// Server copy persisted by Hermes as an `@image:`/`@file:` line. Used when
+  /// the private local copy is missing (reinstall, other device, eviction).
+  final UserServerAttachmentRef? serverRef;
   const _ParsedAttachment(
     this.name,
     this.sizeLabel, {
     this.historyReference,
     this.imagePath,
+    this.serverRef,
   });
 }
 
@@ -15661,15 +21835,15 @@ final RegExp _kanbanWorkRe = RegExp(
   caseSensitive: false,
 );
 
-String? _jobChipLabel(String raw) {
-  if (_kanbanWorkRe.hasMatch(raw)) return 'Tarea del Kanban';
+String? _jobChipLabel(String raw, Strings strings) {
+  if (_kanbanWorkRe.hasMatch(raw)) return strings.i18n1215KanbanTask;
   final skill = _invokedSkillName(raw);
-  if (skill != null) return 'Skill · $skill';
+  if (skill != null) return strings.m1215SkillChip(skill);
   final t = raw.trimLeft();
   // Handoff de compactación sin mensaje real detrás → chip discreto.
   if (t.startsWith('[CONTEXT COMPACTION') &&
       _stripContextCompaction(raw).trim().isEmpty) {
-    return 'Contexto previo';
+    return strings.i18n1215PreviousContext;
   }
   final lower = t.toLowerCase();
   final looksJob =
@@ -15680,7 +21854,7 @@ String? _jobChipLabel(String raw) {
           lower.contains('delivery:') ||
           lower.contains('invoked'));
   if (looksJob && _stripCronPreamble(raw).trim().isEmpty) {
-    return 'Tarea programada';
+    return strings.i18n1215ScheduledTask;
   }
   return null;
 }
@@ -15731,6 +21905,33 @@ _timelineSystemEventPresentation(
         title: title.isNotEmpty ? title : strings.chaTimelineProcessFinished,
         detail: null,
         icon: Icons.terminal_rounded,
+      );
+    case 'side_answer':
+      // Local `/btw` or `/bg` answer: the header is the title, the answer the
+      // body (the full Desktop-format line stays in `content` for copy/export).
+      final rawMetadata = message['display_metadata'];
+      final metadata = rawMetadata is Map ? rawMetadata : const {};
+      final question = metadata['question'];
+      final asked = question is String ? question.trim() : '';
+      final answer = metadata['answer'];
+      final taskId = message['_btwTaskId'];
+      final isBackground = metadata['kind'] == 'bg';
+      return (
+        title: isBackground
+            ? (taskId is String && taskId.isNotEmpty
+                  ? strings.tc1215BgAnswerTitle(taskId)
+                  : 'bg')
+            : asked.isEmpty
+            ? strings.tc1215BtwAnswerNoQuestion
+            : strings.tc1215BtwAnswerTitle(asked),
+        detail: answer is String
+            ? answer
+            : (message['content'] ?? '').toString(),
+        icon: metadata['is_error'] == true
+            ? Icons.error_outline_rounded
+            : isBackground
+            ? Icons.task_alt_rounded
+            : Icons.chat_bubble_outline_rounded,
       );
     case 'model_switch':
       return (
@@ -15807,9 +22008,95 @@ AssistantOperationalProjection _projectOperationalArtifacts(
   );
 }
 
-({List<_ParsedAttachment> attachments, String text}) _parseUserContent(
-  String raw,
+typedef _ParsedUserContent = ({
+  List<_ParsedAttachment> attachments,
+  String text,
+});
+
+/// Bounded memo: every rebuild of a user bubble re-reads its content, and the
+/// transcript content of a row never changes in place.
+final LinkedHashMap<String, _ParsedUserContent> _parsedUserContentMemo =
+    LinkedHashMap<String, _ParsedUserContent>();
+const int _parsedUserContentMemoLimit = 256;
+
+_ParsedUserContent _parseUserContent(String raw) {
+  final cached = _parsedUserContentMemo.remove(raw);
+  if (cached != null) {
+    _parsedUserContentMemo[raw] = cached;
+    return cached;
+  }
+  final parsed = _parseUserContentUncached(raw);
+  _parsedUserContentMemo[raw] = parsed;
+  while (_parsedUserContentMemo.length > _parsedUserContentMemoLimit) {
+    _parsedUserContentMemo.remove(_parsedUserContentMemo.keys.first);
+  }
+  return parsed;
+}
+
+bool _parsedAttachmentIsImage(_ParsedAttachment attachment) =>
+    attachment.historyReference?.type == AttachmentType.image ||
+    (attachment.historyReference == null &&
+        attachmentKindFor(attachment.name, '') == AttachmentKind.image);
+
+/// Pairs Hermes' `@image:`/`@file:` lines with the `[📎 …]` markers of the same
+/// send (same kind, same order) so one attachment renders once; unmatched
+/// lines become standalone chips.
+List<_ParsedAttachment> _withServerRefs(
+  List<_ParsedAttachment> attachments,
+  List<UserServerAttachmentRef> serverRefs,
 ) {
+  if (serverRefs.isEmpty) return attachments;
+  final images = serverRefs.where((ref) => ref.isImage).toList();
+  final files = serverRefs.where((ref) => !ref.isImage).toList();
+  final paired = <_ParsedAttachment>[
+    for (final attachment in attachments)
+      switch (_parsedAttachmentIsImage(attachment) ? images : files) {
+        final pool when pool.isNotEmpty => _ParsedAttachment(
+          attachment.name,
+          attachment.sizeLabel,
+          historyReference: attachment.historyReference,
+          imagePath: attachment.imagePath,
+          serverRef: pool.removeAt(0),
+        ),
+        _ => attachment,
+      },
+  ];
+  for (final ref in serverRefs) {
+    if (images.contains(ref) || files.contains(ref)) {
+      paired.add(_ParsedAttachment(ref.displayName, '', serverRef: ref));
+    }
+  }
+  return List<_ParsedAttachment>.unmodifiable(paired);
+}
+
+_ParsedUserContent _parseUserContentUncached(String raw) {
+  final parsed = _parseUserContentMarkers(raw);
+  final serverRefs = parsed.serverRefs;
+  if (serverRefs.isEmpty) {
+    return (attachments: parsed.attachments, text: parsed.text);
+  }
+  var text = parsed.text.trim();
+  // Native-vision turns flatten each image part to a `[screenshot]` line; the
+  // lifted `@image:` ref already stands for it (Desktop drops it too).
+  if (serverRefs.any((ref) => ref.isImage)) {
+    text = text
+        .split('\n')
+        .where((line) => line.trim() != '[screenshot]')
+        .join('\n')
+        .trim();
+  }
+  return (
+    attachments: _withServerRefs(parsed.attachments, serverRefs),
+    text: text,
+  );
+}
+
+({
+  List<_ParsedAttachment> attachments,
+  String text,
+  List<UserServerAttachmentRef> serverRefs,
+})
+_parseUserContentMarkers(String raw) {
   raw = stripBotMentionNote(raw);
   // Quita los blobs de SISTEMA que no son del usuario: preámbulo de cron/skill y
   // el resumen de compactación de contexto. Si tras ellos hay un mensaje real,
@@ -15824,11 +22111,17 @@ AssistantOperationalProjection _projectOperationalArtifacts(
   final legacyImagePaths = <String>[];
   final indexedImgRe = RegExp(r'^⟦img:(\d+):(.+)⟧$');
   final legacyImgRe = RegExp(r'^⟦img:(.+)⟧$');
+  final serverRefs = <UserServerAttachmentRef>[];
   final kept = <String>[];
   for (final l in raw.split('\n')) {
     final reference = AttachmentHistoryReference.tryParseMarker(l);
     if (reference != null) {
       historyReferences.putIfAbsent(reference.index, () => reference);
+      continue;
+    }
+    final serverRef = UserServerAttachmentRef.tryParseLine(l);
+    if (serverRef != null) {
+      serverRefs.add(serverRef);
       continue;
     }
     final indexed = indexedImgRe.firstMatch(l.trim());
@@ -15844,7 +22137,9 @@ AssistantOperationalProjection _projectOperationalArtifacts(
     kept.add(l);
   }
   final lines = kept;
-  if (lines.isEmpty) return (attachments: const [], text: '');
+  if (lines.isEmpty) {
+    return (attachments: const [], text: '', serverRefs: serverRefs);
+  }
 
   final markerRe = RegExp(r'^\[📎 (.+?)\]$');
   final parsedAttachments = <_ParsedAttachment>[];
@@ -15876,7 +22171,11 @@ AssistantOperationalProjection _projectOperationalArtifacts(
     markerCount++;
   }
   if (parsedAttachments.isEmpty) {
-    return (attachments: const [], text: lines.join('\n'));
+    return (
+      attachments: const [],
+      text: lines.join('\n'),
+      serverRefs: serverRefs,
+    );
   }
 
   var rest = lines.skip(markerCount).toList();
@@ -15889,7 +22188,11 @@ AssistantOperationalProjection _projectOperationalArtifacts(
     // Compat con el formato anterior (línea de ruta entre paréntesis).
     rest = rest.skip(1).toList();
   }
-  return (attachments: parsedAttachments, text: rest.join('\n').trim());
+  return (
+    attachments: parsedAttachments,
+    text: rest.join('\n').trim(),
+    serverRefs: serverRefs,
+  );
 }
 
 /// Chip limpio que sustituye a un blob de SISTEMA (preámbulo de cron/skill o
@@ -15952,6 +22255,155 @@ class _SystemBlobChip extends StatelessWidget {
 /// Evento durable del transcript con tratamiento editorial, no una burbuja.
 /// El contenido interno solo queda accesible mediante pulsación larga para
 /// diagnóstico; rutas, roles y payloads nunca se vuelcan en el chat.
+/// Aviso compacto de un proceso en segundo plano terminado. La cabecera
+/// resume estado y código; la salida solo se muestra al desplegarla.
+class _ProcessNotificationRow extends StatefulWidget {
+  final BackgroundProcessCarrier carrier;
+  final String raw;
+
+  const _ProcessNotificationRow({required this.carrier, required this.raw});
+
+  @override
+  State<_ProcessNotificationRow> createState() =>
+      _ProcessNotificationRowState();
+}
+
+class _ProcessNotificationRowState extends State<_ProcessNotificationRow> {
+  bool _expanded = false;
+
+  String _statusLabel(Strings strings) => switch (widget.carrier.status) {
+    BackgroundProcessCarrierStatus.completed => strings.tg1215ProcessCompleted,
+    BackgroundProcessCarrierStatus.exited =>
+      widget.carrier.failed
+          ? strings.tg1215ProcessExited
+          : strings.tg1215ProcessCompleted,
+    BackgroundProcessCarrierStatus.terminated =>
+      strings.tg1215ProcessTerminated,
+    BackgroundProcessCarrierStatus.lost => strings.tg1215ProcessLost,
+    BackgroundProcessCarrierStatus.failedToStart =>
+      strings.tg1215ProcessFailedToStart,
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.hermes;
+    final strings = Strings.of(context);
+    final carrier = widget.carrier;
+    final title = [
+      _statusLabel(strings),
+      if (carrier.exitCode != '?')
+        strings.tg1215ProcessExitCode(carrier.exitCode),
+    ].join(' · ');
+    // El comando y la salida pueden llevar rutas o prompts privados: solo se
+    // construyen cuando la persona despliega el aviso.
+    final output = carrier.output.trimRight();
+    final details = [
+      '\$ ${carrier.command}',
+      output.isEmpty ? strings.tg1215ProcessNoOutput : output,
+    ].join('\n\n');
+    final failed = carrier.failed;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 2),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Semantics(
+            button: true,
+            expanded: _expanded,
+            label: title,
+            hint: _expanded
+                ? strings.tg1215ProcessHideOutput
+                : strings.tg1215ProcessShowOutput,
+            excludeSemantics: true,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(8),
+              onTap: () => setState(() => _expanded = !_expanded),
+              onLongPress: () {
+                Clipboard.setData(ClipboardData(text: widget.raw));
+                HermesNotice.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(strings.chaCopied),
+                    duration: const Duration(seconds: 1),
+                  ),
+                  kind: HermesNoticeKind.success,
+                );
+              },
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(minHeight: 48),
+                child: Row(
+                  children: [
+                    SizedBox(
+                      width: 28,
+                      child: Icon(
+                        Icons.terminal_rounded,
+                        size: 16,
+                        color: failed
+                            ? colors.error.withValues(alpha: 0.8)
+                            : colors.textSecondary.withValues(alpha: 0.72),
+                      ),
+                    ),
+                    Expanded(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            title,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: colors.textSecondary,
+                              fontSize: 13.5,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Icon(
+                      _expanded
+                          ? Icons.expand_less_rounded
+                          : Icons.expand_more_rounded,
+                      size: 18,
+                      color: colors.textSecondary.withValues(alpha: 0.72),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          if (_expanded)
+            Container(
+              margin: const EdgeInsets.only(left: 28, top: 2, bottom: 6),
+              padding: const EdgeInsets.all(10),
+              constraints: const BoxConstraints(maxHeight: 320),
+              decoration: BoxDecoration(
+                color: colors.surface,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: colors.divider.withValues(alpha: 0.5),
+                ),
+              ),
+              child: SingleChildScrollView(
+                child: SelectableText(
+                  details,
+                  style: TextStyle(
+                    fontFamily: 'monospace',
+                    fontSize: 11.5,
+                    height: 1.35,
+                    color: colors.textSecondary,
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
 class _TimelineSystemEventRow extends StatelessWidget {
   final String title;
   final String? detail;
@@ -16044,6 +22496,65 @@ class _TimelineSystemEventRow extends StatelessWidget {
   }
 }
 
+/// Last laid-out size of a user bubble, read when its edit button is tapped.
+final class _BubbleSizeHolder {
+  Size? size;
+}
+
+class _BubbleSizeReporter extends SingleChildRenderObjectWidget {
+  const _BubbleSizeReporter({required this.holder, super.child});
+
+  final _BubbleSizeHolder holder;
+
+  @override
+  _RenderBubbleSizeReporter createRenderObject(BuildContext context) =>
+      _RenderBubbleSizeReporter(holder);
+
+  @override
+  void updateRenderObject(
+    BuildContext context,
+    _RenderBubbleSizeReporter renderObject,
+  ) {
+    renderObject.holder = holder;
+  }
+}
+
+class _RenderBubbleSizeReporter extends RenderProxyBox {
+  _RenderBubbleSizeReporter(this._holder);
+
+  _BubbleSizeHolder _holder;
+  set holder(_BubbleSizeHolder value) {
+    if (identical(value, _holder)) return;
+    _holder = value;
+    if (hasSize) value.size = size;
+  }
+
+  @override
+  void performLayout() {
+    super.performLayout();
+    _holder.size = size;
+  }
+}
+
+/// The pinned (sticky) copy of a user prompt at the top of the transcript.
+///
+/// A short summary, like Desktop's sticky prompt (two-line clamp; attachments
+/// stay in the transcript): the text clamped to two lines, then the
+/// attachments as small chips. Every piece has a fixed size, so the pinned
+/// area never cuts a thumbnail or a line in half. The bubble starts after the
+/// same 56 dp left gutter as the transcript bubble; the load-earlier chevron
+/// sits there.
+/// rp1215: what the footer under a user bubble of the open turn says.
+final class _UserBubbleStatus {
+  const _UserBubbleStatus.sent(this.label) : sent = true;
+  const _UserBubbleStatus.queued(this.label) : sent = false;
+
+  final String label;
+
+  /// «Enviado» carries a small check; «En cola» does not.
+  final bool sent;
+}
+
 class _UserMessage extends StatelessWidget {
   final String content;
   final bool verbose;
@@ -16052,22 +22563,36 @@ class _UserMessage extends StatelessWidget {
   final ValueChanged<double>? onEdit;
   final bool editing;
   final String? editingText;
+  final String? editingDraft;
   final double? editingWidth;
   final bool editSaving;
+  final int editingLaterTurns;
   final VoidCallback? onCancelEdit;
   final ValueChanged<String>? onSaveEdit;
   final bool compact;
 
+  /// rp1215: small line under the bubble while its turn is open («✓
+  /// Enviado», «En cola»); `null` once the answer streams.
+  final _UserBubbleStatus? status;
+
+  /// rp1215: this is the bubble being answered while other messages wait;
+  /// its left edge takes the accent.
+  final bool answering;
+
   const _UserMessage({
     required this.content,
+    this.status,
+    this.answering = false,
     this.verbose = false,
     this.metadata = const {},
     this.supplements = const [],
     this.onEdit,
     this.editing = false,
     this.editingText,
+    this.editingDraft,
     this.editingWidth,
     this.editSaving = false,
+    this.editingLaterTurns = 0,
     this.onCancelEdit,
     this.onSaveEdit,
     this.compact = false,
@@ -16085,6 +22610,20 @@ class _UserMessage extends StatelessWidget {
           Builder(
             builder: (context) {
               final historyReference = attachment.historyReference;
+              final serverRef = attachment.serverRef;
+              final chatState = serverRef == null
+                  ? null
+                  : context.findAncestorStateOfType<_ChatScreenState>();
+              if (serverRef != null && chatState != null) {
+                return UserServerAttachmentCard(
+                  name: attachment.name,
+                  sizeLabel: attachment.sizeLabel,
+                  localReference: historyReference,
+                  serverRef: serverRef,
+                  cacheScope: chatState.userServerMediaScope,
+                  loader: chatState.downloadUserServerAttachment,
+                );
+              }
               if (historyReference != null) {
                 return AttachmentHistoryCard(
                   key: ValueKey(
@@ -16126,12 +22665,17 @@ class _UserMessage extends StatelessWidget {
     final List<String> metaLines = _buildMetaLines(verbose, metadata);
     final timestamp = _formatMessageTimestamp(metadata);
     final parsed = _parseUserContent(content);
-    final bubbleMeasureKey = GlobalKey();
+    // No GlobalKey here: a fresh key on every build remounted the inline
+    // editor below it on each chat rebuild (streaming, presence, timers) and
+    // wiped what the user was typing. The bubble reports its laid-out size
+    // into a plain holder instead.
+    final bubbleSize = _BubbleSizeHolder();
 
     return ChatMessageSelectionArea(
       enabled: !editing,
       selectionIdentity: metadata['message_id'] ?? metadata['id'] ?? metadata,
       child: Padding(
+        key: const ValueKey('user-turn-row'),
         padding: EdgeInsets.only(
           left: 56,
           right: 12,
@@ -16143,140 +22687,160 @@ class _UserMessage extends StatelessWidget {
           children: [
             KeyedSubtree(
               key: const ValueKey('user-message-bubble'),
-              child: Container(
-                key: bubbleMeasureKey,
-                // Mientras se edita la burbuja se ensancha al ancho máximo de
-                // una burbuja normal (alineada a la derecha) para que el texto
-                // tenga sitio, en vez de quedarse con el ancho del original.
-                width: editing ? double.infinity : null,
-                padding: EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: compact ? 8 : 11,
-                ),
-                // Burbuja estilo Claude: panel suave uniforme, redondeado, SIN
-                // borde. El mensaje del agente va en texto plano; el del usuario
-                // en esta burbuja sutil.
-                decoration: BoxDecoration(
-                  color: colors.surfaceVariant.withValues(alpha: 0.6),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: editing
-                    ? InlineMessageEditor(
-                        initialText: editingText ?? parsed.text.trim(),
-                        saving: editSaving,
-                        attachments: parsed.attachments.isEmpty
-                            ? null
-                            : _buildAttachmentCards(
-                                context,
-                                parsed.attachments,
-                              ),
-                        onCancel: onCancelEdit!,
-                        onSave: onSaveEdit!,
-                      )
-                    : Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          if (metaLines.isNotEmpty)
-                            _MetaBlock(lines: metaLines, onDark: true),
-                          if (parsed.attachments.isNotEmpty)
-                            Padding(
-                              padding: EdgeInsets.only(
-                                bottom: parsed.text.isNotEmpty ? 8 : 0,
-                              ),
-                              child: _buildAttachmentCards(
-                                context,
-                                parsed.attachments,
-                              ),
-                            ),
-                          if (parsed.text.isNotEmpty)
-                            MarkdownBody(
-                              data: parsed.text,
-                              selectable: false,
-                              // Respeta los saltos de línea simples (CommonMark los
-                              // colapsaría en espacios → texto "todo junto").
-                              softLineBreak: true,
-                              onTapLink: (text, href, title) =>
-                                  openChatMarkdownLink(context, href),
-                              styleSheet: _userSheet(theme, colors),
-                            ),
-                          if (supplements.isNotEmpty) ...[
-                            const SizedBox(height: 11),
-                            Divider(
-                              height: 1,
-                              color: colors.divider.withValues(alpha: 0.45),
-                            ),
-                            const SizedBox(height: 9),
-                            Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  Icons.add_comment_outlined,
-                                  size: 14,
-                                  color: colors.accent,
-                                ),
-                                const SizedBox(width: 6),
-                                Flexible(
-                                  child: Text(
-                                    Strings.of(
-                                      context,
-                                    ).chaSteerSupplementsLabel,
-                                    style: TextStyle(
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w700,
-                                      color: colors.textSecondary,
-                                    ),
+              child: _BubbleSizeReporter(
+                holder: bubbleSize,
+                // Always present (painter or not), so marking the bubble
+                // never remounts it or an inline editor inside it.
+                child: CustomPaint(
+                  foregroundPainter: answering
+                      ? UserBubbleAccentEdgePainter(colors.accent)
+                      : null,
+                  child: Container(
+                    // Mientras se edita la burbuja se ensancha al ancho máximo de
+                    // una burbuja normal (alineada a la derecha) para que el texto
+                    // tenga sitio, en vez de quedarse con el ancho del original.
+                    width: editing ? double.infinity : null,
+                    padding: EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: compact ? 8 : 11,
+                    ),
+                    // Burbuja estilo Claude: panel suave uniforme, redondeado, SIN
+                    // borde. El mensaje del agente va en texto plano; el del usuario
+                    // en esta burbuja sutil.
+                    decoration: BoxDecoration(
+                      color: colors.surfaceVariant.withValues(alpha: 0.6),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: editing
+                        ? InlineMessageEditor(
+                            initialText: editingText ?? parsed.text.trim(),
+                            draftText: editingDraft,
+                            saving: editSaving,
+                            attachments: parsed.attachments.isEmpty
+                                ? null
+                                : _buildAttachmentCards(
+                                    context,
+                                    parsed.attachments,
+                                  ),
+                            onCancel: onCancelEdit!,
+                            onSave: onSaveEdit!,
+                          )
+                        : Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (metaLines.isNotEmpty)
+                                _MetaBlock(lines: metaLines, onDark: true),
+                              if (parsed.attachments.isNotEmpty)
+                                Padding(
+                                  padding: EdgeInsets.only(
+                                    bottom: parsed.text.isNotEmpty ? 8 : 0,
+                                  ),
+                                  child: _buildAttachmentCards(
+                                    context,
+                                    parsed.attachments,
                                   ),
                                 ),
-                              ],
-                            ),
-                            const SizedBox(height: 7),
-                            for (
-                              var index = 0;
-                              index < supplements.length;
-                              index++
-                            )
-                              Padding(
-                                padding: EdgeInsets.only(
-                                  bottom: index == supplements.length - 1
-                                      ? 0
-                                      : 7,
+                              if (parsed.text.isNotEmpty)
+                                // `@url:`/`@file:` references read as chips, not
+                                // as raw directives with a backtick fence.
+                                UserMessageText(
+                                  data: parsed.text,
+                                  onTapLink: (href) =>
+                                      openChatMarkdownLink(context, href),
+                                  styleSheet: _userSheet(theme, colors),
                                 ),
-                                child: Row(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
+                              if (supplements.isNotEmpty) ...[
+                                const SizedBox(height: 11),
+                                Divider(
+                                  height: 1,
+                                  color: colors.divider.withValues(alpha: 0.45),
+                                ),
+                                const SizedBox(height: 9),
+                                Row(
+                                  mainAxisSize: MainAxisSize.min,
                                   children: [
-                                    Container(
-                                      width: 2,
-                                      height: 18,
-                                      margin: const EdgeInsets.only(
-                                        top: 2,
-                                        right: 8,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: colors.accent.withValues(
-                                          alpha: 0.55,
-                                        ),
-                                        borderRadius: BorderRadius.circular(2),
-                                      ),
+                                    Icon(
+                                      Icons.add_comment_outlined,
+                                      size: 14,
+                                      color: colors.accent,
                                     ),
-                                    Expanded(
+                                    const SizedBox(width: 6),
+                                    Flexible(
                                       child: Text(
-                                        supplements[index],
+                                        Strings.of(
+                                          context,
+                                        ).chaSteerSupplementsLabel,
                                         style: TextStyle(
-                                          fontSize: 13,
-                                          height: 1.35,
-                                          color: colors.textPrimary,
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w700,
+                                          color: colors.textSecondary,
                                         ),
                                       ),
                                     ),
                                   ],
                                 ),
-                              ),
-                          ],
-                        ],
-                      ),
+                                const SizedBox(height: 7),
+                                for (
+                                  var index = 0;
+                                  index < supplements.length;
+                                  index++
+                                )
+                                  Padding(
+                                    padding: EdgeInsets.only(
+                                      bottom: index == supplements.length - 1
+                                          ? 0
+                                          : 7,
+                                    ),
+                                    child: Row(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Container(
+                                          width: 2,
+                                          height: 18,
+                                          margin: const EdgeInsets.only(
+                                            top: 2,
+                                            right: 8,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: colors.accent.withValues(
+                                              alpha: 0.55,
+                                            ),
+                                            borderRadius: BorderRadius.circular(
+                                              2,
+                                            ),
+                                          ),
+                                        ),
+                                        Expanded(
+                                          child: Text(
+                                            supplements[index],
+                                            style: TextStyle(
+                                              fontSize: 13,
+                                              height: 1.35,
+                                              color: colors.textPrimary,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                              ],
+                            ],
+                          ),
+                  ),
+                ),
               ),
             ),
+            if (editing && editingLaterTurns > 0)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Text(
+                  Strings.of(context).tc1215EditLaterTurns(editingLaterTurns),
+                  key: const ValueKey('chat-edit-later-turns'),
+                  style: TextStyle(fontSize: 12, color: colors.textSecondary),
+                ),
+              ),
             if (!editing)
               Row(
                 mainAxisSize: MainAxisSize.min,
@@ -16284,12 +22848,8 @@ class _UserMessage extends StatelessWidget {
                   if (onEdit != null)
                     IconButton(
                       onPressed: () {
-                        final box =
-                            bubbleMeasureKey.currentContext?.findRenderObject()
-                                as RenderBox?;
-                        if (box != null && box.hasSize) {
-                          onEdit!(box.size.width);
-                        }
+                        final size = bubbleSize.size;
+                        if (size != null) onEdit!(size.width);
                       },
                       tooltip: Strings.of(context).chaEditMessage,
                       padding: EdgeInsets.zero,
@@ -16332,6 +22892,39 @@ class _UserMessage extends StatelessWidget {
                       color: colors.textSecondary,
                     ),
                   ),
+                  if (status case final status?)
+                    Flexible(
+                      child: Padding(
+                        padding: const EdgeInsets.only(top: 3, left: 4),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (status.sent)
+                              Padding(
+                                padding: const EdgeInsets.only(right: 3),
+                                child: Icon(
+                                  Icons.check_rounded,
+                                  key: const ValueKey('user-bubble-sent-check'),
+                                  size: 12,
+                                  color: colors.textTertiary,
+                                ),
+                              ),
+                            Flexible(
+                              child: Text(
+                                status.label,
+                                key: const ValueKey('user-bubble-status'),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 10.5,
+                                  color: colors.textTertiary,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
                   if (timestamp != null) ChatMessageTimestamp(timestamp),
                 ],
               ),
@@ -16345,8 +22938,9 @@ class _UserMessage extends StatelessWidget {
 List<ChatTraceEvent> _assistantActivityEvents(
   BuildContext context,
   Map<String, dynamic> metadata,
-  String legacyReasoning,
-) {
+  String legacyReasoning, {
+  ToolOutputLookup? toolOutputs,
+}) {
   final s = Strings.of(context);
   final normalized = normalizeAssistantActivityTrace(
     metadata[assistantActivityTraceKey],
@@ -16379,6 +22973,9 @@ List<ChatTraceEvent> _assistantActivityEvents(
         detail: measured?.detail,
         startedAt: measured?.startedAt,
         duration: measured?.duration,
+        title: measured?.title,
+        memory: MemoryWrite.fromStep(step[memoryWriteStepKey]),
+        output: _settledToolOutput(step, label, toolOutputs),
       ),
     );
   }
@@ -16397,53 +22994,28 @@ List<ChatTraceEvent> _assistantActivityEvents(
   return events;
 }
 
+typedef ToolOutputLookup = ToolOutputRecord? Function(String toolId);
+
+/// Only a settled step of a tool that can leave a diff/terminal output asks
+/// the lookup, so ordinary traces never touch the durable index.
+ToolOutputRecord? _settledToolOutput(
+  Map<String, dynamic> step,
+  String label,
+  ToolOutputLookup? lookup,
+) {
+  if (lookup == null || step['status'] == 'running') return null;
+  if (!isFileEditToolName(label) && !terminalOutputToolNames.contains(label)) {
+    return null;
+  }
+  final id = step['id'];
+  return id is String && id.isNotEmpty ? lookup(id) : null;
+}
+
 Duration? _assistantActivityDuration(Map<String, dynamic> metadata) {
   final raw = metadata['_activity_duration_seconds'];
   if (raw is! num || !raw.isFinite || raw <= 0 || raw > 604800) return null;
   return Duration(milliseconds: (raw * 1000).round());
 }
-
-const double _assistantHeaderCompanionSize = 44;
-
-class _AssistantHeaderCompanion extends StatelessWidget {
-  const _AssistantHeaderCompanion({required this.mood, required this.animate});
-
-  final HermesSparkMood mood;
-  final bool animate;
-
-  @override
-  Widget build(BuildContext context) {
-    final app = context.findAncestorStateOfType<HermesAppState>();
-    if (app == null) return const SizedBox.shrink();
-    final companion = app.companion;
-    return AnimatedBuilder(
-      animation: companion,
-      builder: (context, _) {
-        final visible =
-            companion.isInitialized &&
-            companion.enabled &&
-            companion.presenceLevel.showsStatusPresence;
-        if (!visible) return const SizedBox.shrink();
-        return SizedBox(
-          width: 50,
-          height: _assistantHeaderCompanionSize,
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: CompanionStatusIndicator(
-              key: const ValueKey('assistant-header-companion'),
-              companion: companion,
-              mood: mood,
-              size: _assistantHeaderCompanionSize,
-              animate: animate,
-            ),
-          ),
-        );
-      },
-    );
-  }
-}
-
-const double _botMessageFaceSize = 34;
 
 /// Bot Chat identity for descendants (assistant message headers): the bot
 /// whose chat this is. Absent in normal chats.
@@ -16469,120 +23041,90 @@ class _BotChatIdentity extends InheritedWidget {
       avatarCache != oldWidget.avatarCache;
 }
 
-/// Cabecera de un mensaje del asistente: la mascota (o la inicial, sin
-/// presencia) + título en acento + la segunda línea que pase el llamador.
-class _AssistantAvatarHeader extends StatelessWidget {
-  const _AssistantAvatarHeader({
+/// Opens the "Branch from here" menu on a long-press of an assistant header,
+/// outside the selectable text.
+class _BranchLongPress extends StatelessWidget {
+  const _BranchLongPress({required this.onLongPress, required this.child});
+
+  final VoidCallback? onLongPress;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => onLongPress == null
+      ? child
+      : GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onLongPress: onLongPress,
+          child: child,
+        );
+}
+
+/// Cabecera de un mensaje del asistente en un chat con un solo interlocutor
+/// (el chat normal y el de un bot): su nombre —en el color del bot, si lo es—
+/// y la segunda línea que pase el llamador. Sin cara ni mascota en ningún
+/// nivel de presencia (ct1215): quién habla ya está en la cabecera del chat,
+/// y el nombre, el turno y la respuesta empiezan en el mismo borde. En una
+/// sala cada turno sí lleva la cara de quien habla (`RoomMemberFace`).
+class _AssistantNameHeader extends StatelessWidget {
+  const _AssistantNameHeader({
     required this.name,
-    required this.mood,
-    required this.animate,
     this.subtitle,
     this.actions = const [],
   });
 
   final String name;
-  final HermesSparkMood mood;
-  final bool animate;
   final Widget? subtitle;
   final List<Widget> actions;
 
   @override
   Widget build(BuildContext context) {
-    Widget header(Widget? mascot) => ChatMessageHeader(
+    final bot = _BotChatIdentity.maybeOf(context);
+    return ChatMessageHeader(
       name: name,
-      avatar: mascot,
+      nameColor: bot == null
+          ? null
+          : botIdentityColor(bot.profile!, avatarCache: bot.avatarCache),
       subtitle: subtitle,
       actions: actions,
-    );
-    // Bot Chat: every assistant message wears the bot's own face (same as
-    // the header and the roster), never the Hermes companion.
-    final bot = _BotChatIdentity.maybeOf(context);
-    if (bot != null) {
-      final profile = bot.profile!;
-      return ChatMessageHeader(
-        name: name,
-        nameColor: botIdentityColor(profile, avatarCache: bot.avatarCache),
-        // Only the live turn moves; history keeps a static face so a long
-        // Bot Chat never runs one ticker per message.
-        avatar: animate
-            ? LivingBotFace(
-                key: ValueKey('assistant-header-bot-face-${profile.name}'),
-                profileName: profile.name,
-                profile: profile,
-                avatarCache: bot.avatarCache,
-                signal: BotFaceSignal.speaking,
-                size: _botMessageFaceSize,
-                entrance: false,
-                expressiveness: 1.2,
-              )
-            : MissionProfileAvatar(
-                key: ValueKey('assistant-header-bot-face-${profile.name}'),
-                profileName: profile.name,
-                hasAvatar: profile.botPaintsPhoto,
-                cache: bot.avatarCache,
-                size: _botMessageFaceSize,
-                shape: profile.botFaceShape,
-                colorHex: profile.botColorHex,
-                imageKind: profile.botImageKind,
-              ),
-        subtitle: subtitle,
-        actions: actions,
-      );
-    }
-    final app = context.findAncestorStateOfType<HermesAppState>();
-    if (app == null) return header(null);
-    final companion = app.companion;
-    return AnimatedBuilder(
-      animation: companion,
-      builder: (context, _) {
-        final visible =
-            companion.isInitialized &&
-            companion.enabled &&
-            companion.presenceLevel.showsStatusPresence;
-        return header(
-          visible
-              ? CompanionStatusIndicator(
-                  key: const ValueKey('assistant-header-companion'),
-                  companion: companion,
-                  mood: mood,
-                  size: kAvatarMascotSize,
-                  animate: animate,
-                )
-              : null,
-        );
-      },
     );
   }
 }
 
-/// Cabecera del turno en vivo antes de que haya texto: el estado lo cuenta la
-/// pastilla sobre el compositor; aquí, una sola palabra apagada.
+/// Cabecera del turno en vivo antes de que haya texto ni pasos: el nombre en
+/// el mismo sitio que tendrá la respuesta y, debajo, la línea de estado del
+/// turno (ct1215: «Pensando · 0:03»).
 class _AssistantLiveHeader extends StatelessWidget {
-  const _AssistantLiveHeader({required this.agentName, required this.mood});
+  const _AssistantLiveHeader({required this.agentName, required this.compact});
 
   final String agentName;
-  final HermesSparkMood mood;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
+    // Same insets as the answer's ChatMessageFrame: when the first text
+    // arrives the name stays where it is.
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 7, 16, 0),
-      child: _AssistantAvatarHeader(
-        name: agentName,
-        mood: mood,
-        animate: true,
-        subtitle: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 4),
-          child: Text(
-            Strings.of(context).liveHeaderWorking,
-            key: const ValueKey('assistant-header-working'),
-            style: TextStyle(fontSize: 11.5, color: colors.textSecondary),
+      padding: EdgeInsets.fromLTRB(12, compact ? 5 : 11, 16, 0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _AssistantNameHeader(
+            name: agentName,
+            subtitle: const TurnStatusLine(),
           ),
-        ),
+          const LiveTurnTasks(),
+        ],
       ),
     );
   }
+}
+
+final class _ConnectionCardBinding {
+  final String toolCallId;
+  final Widget card;
+
+  const _ConnectionCardBinding({required this.toolCallId, required this.card});
 }
 
 class _AssistantMessage extends StatelessWidget {
@@ -16598,15 +23140,29 @@ class _AssistantMessage extends StatelessWidget {
   final ReadAloudStopBehavior readAloudStopBehavior;
   final String agentName;
   final bool isStreaming;
-  final HermesSparkMood? companionMood;
+  final CompanionMood? companionMood;
   final bool waitingForUser;
+
+  /// rp1215: see [_MessageBubble.turnLive].
+  final bool turnLive;
   final _AssistantRenderSlice? slice;
   final _AssistantTerminalProjection? terminalProjection;
   final List<String> technicalDetails;
   final VoidCallback? onRegenerate;
-  final AssistantSuggestionCallback? onSuggestionSelected;
+  final VoidCallback? onBranch;
+  final _ConnectionCardBinding? connectionCard;
   final bool compact;
   final ChatPerformanceProbe? performanceProbe;
+  final ToolOutputLookup? toolOutputs;
+
+  /// The turn's newest reply alone, when earlier replies share this bubble
+  /// (Desktop «copy message» vs «copy full response»). Read at copy time.
+  final String Function()? latestReplyText;
+
+  /// Close the turn with its «Δ N files» chip, which opens the review of
+  /// every file it changed (Desktop shows the summary only on the newest
+  /// settled reply).
+  final bool showChangedFiles;
 
   const _AssistantMessage({
     required this.content,
@@ -16623,14 +23179,75 @@ class _AssistantMessage extends StatelessWidget {
     this.isStreaming = false,
     this.companionMood,
     this.waitingForUser = false,
+    this.turnLive = true,
     this.slice,
     this.terminalProjection,
     this.technicalDetails = const [],
     this.onRegenerate,
-    this.onSuggestionSelected,
+    this.onBranch,
+    this.connectionCard,
     this.compact = false,
     this.performanceProbe,
+    this.toolOutputs,
+    this.latestReplyText,
+    this.showChangedFiles = false,
   });
+
+  static final RegExp _markdownSyntax = RegExp(r'[`*#\[_|>~]');
+
+  /// Cheap gate for the long-press menu: an earlier reply in the bubble or
+  /// any Markdown syntax, indented code blocks included. The scopes
+  /// themselves are built on long press.
+  bool _hasCopyScopes(String answer) =>
+      latestReplyText != null ||
+      _markdownSyntax.hasMatch(answer) ||
+      markdownMayHaveCodeBlock(answer);
+
+  /// Long-press copy scopes; only those that differ from a plain copy and
+  /// have data are offered (no dead entries).
+  List<ChatCopyScope> _copyScopes(BuildContext context, String answer) {
+    final s = Strings.of(context);
+    final raw = trimMarkdownBlankLines(
+      GeneratedMediaService.stripDirectives(answer),
+    );
+    if (raw.isEmpty) return const [];
+    final plain = markdownToClipboardText(raw);
+    final latest = latestReplyText;
+    final code = markdownCodeBlocks(raw);
+    return [
+      if (latest != null) ...[
+        ChatCopyScope(
+          label: s.tc1215CopyLatest,
+          icon: Icons.short_text_rounded,
+          text: () => markdownToClipboardText(
+            GeneratedMediaService.stripDirectives(latest()),
+          ),
+        ),
+        ChatCopyScope(
+          label: s.tc1215CopyFull,
+          icon: Icons.copy_all_rounded,
+          text: () => plain,
+        ),
+      ] else
+        ChatCopyScope(
+          label: s.chaCopyMessage,
+          icon: Icons.copy_rounded,
+          text: () => plain,
+        ),
+      if (raw != plain)
+        ChatCopyScope(
+          label: s.tc1215CopyMarkdown,
+          icon: Icons.notes_rounded,
+          text: () => raw,
+        ),
+      if (code.isNotEmpty)
+        ChatCopyScope(
+          label: s.tc1215CopyCode(code.length),
+          icon: Icons.code_rounded,
+          text: () => code.join('\n\n'),
+        ),
+    ];
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -16651,6 +23268,7 @@ class _AssistantMessage extends StatelessWidget {
       context,
       metadata,
       split.reasoning,
+      toolOutputs: toolOutputs,
     );
     final activityActive =
         activityEvents.isNotEmpty &&
@@ -16664,14 +23282,23 @@ class _AssistantMessage extends StatelessWidget {
     final headerMood =
         companionMood ??
         switch (activityOutcome) {
-          TraceOutcome.working => HermesSparkMood.thinking,
-          TraceOutcome.stopped => HermesSparkMood.idle,
-          TraceOutcome.failed => HermesSparkMood.error,
+          TraceOutcome.working => CompanionMood.thinking,
+          TraceOutcome.stopped => CompanionMood.idle,
+          TraceOutcome.failed => CompanionMood.error,
           TraceOutcome.completed ||
-          TraceOutcome.recovered => HermesSparkMood.success,
+          TraceOutcome.recovered => CompanionMood.success,
         };
     final headerAnimated = isStreaming || metadata['_pipeline'] == true;
-    final showTrace = showHeader && (activityEvents.isNotEmpty || stopped);
+    final changedFiles =
+        showChangedFiles && showFooter && !headerAnimated && !stopped
+        ? aggregateChangedFiles(activityEvents.map((event) => event.output))
+        : const <FileDiff>[];
+    // ct1215: the turn tells what it is doing in its own row for as long as
+    // the chat runs it; a row that is no longer the chat's turn (stopped,
+    // failed, a placeholder that outlived it) folds like any finished one.
+    final turnInFlight = turnLive && headerAnimated && !stopped;
+    final showTrace =
+        showHeader && (activityEvents.isNotEmpty || stopped || turnInFlight);
     final structuredImages = _structuredGeneratedImages(metadata);
     final structuredVideos = _structuredGeneratedVideos(metadata);
     final textualGeneratedBasenames = <String, int>{};
@@ -16680,9 +23307,16 @@ class _AssistantMessage extends StatelessWidget {
       for (final segment in GeneratedImageService.segments(
         split.answer,
       ).whereType<ImageSegment>()) {
-        final key = segment.basename.toLowerCase();
+        final key = segment.source;
         textualGeneratedBasenames[key] =
             (textualGeneratedBasenames[key] ?? 0) + 1;
+        if (structuredImages.any(
+          (ref) =>
+              !ref.source.contains('/') && ref.basename == segment.basename,
+        )) {
+          textualGeneratedBasenames[segment.basename] =
+              (textualGeneratedBasenames[segment.basename] ?? 0) + 1;
+        }
       }
     }
     if (structuredVideos.isNotEmpty) {
@@ -16690,7 +23324,6 @@ class _AssistantMessage extends StatelessWidget {
         split.answer,
       ).whereType<GeneratedMediaFileSegment>()) {
         final reference = segment.reference;
-        if (reference.kind != GeneratedMediaKind.video) continue;
         textualGeneratedVideoSources[reference.source] =
             (textualGeneratedVideoSources[reference.source] ?? 0) + 1;
       }
@@ -16703,7 +23336,7 @@ class _AssistantMessage extends StatelessWidget {
                     basename == null) {
                   return true;
                 }
-                final key = basename.toLowerCase();
+                final key = ref.source.contains('/') ? ref.source : basename;
                 final remaining = textualGeneratedBasenames[key] ?? 0;
                 if (remaining <= 0) return true;
                 textualGeneratedBasenames[key] = remaining - 1;
@@ -16726,14 +23359,15 @@ class _AssistantMessage extends StatelessWidget {
         _stripStructuredGeneratedImageEchoes(text, structuredImages);
     final suggestionProjection =
         terminalProjection?.suggestions ??
-        (!isStreaming && showFooter && onSuggestionSelected != null
+        (!isStreaming && showFooter
             ? projectAssistantSuggestions(split.answer)
             : AssistantSuggestionsProjection(body: split.answer));
     final answer = suggestionProjection.body;
 
     // Un bloque de Markdown de la respuesta, con la presentación de siempre.
     // El [data] ya viene normalizado por [buildAssistantAnswerBlocks].
-    Widget markdownWidget(String data) => ChatMarkdownBlock(data: data);
+    Widget markdownWidget(String data) =>
+        ChatMarkdownBlock(data: data, embeds: !isStreaming);
 
     /// Reparte un segmento vivo en prefijo estable cacheable + cola mutable.
     /// Solo la cola se reconstruye en cada frame; el prefijo conserva el mismo
@@ -16768,6 +23402,16 @@ class _AssistantMessage extends StatelessWidget {
       if (tail.trim().isNotEmpty) yield markdownWidget(tail);
     }
 
+    Widget generatedImageSlot(_StructuredGeneratedImage ref) {
+      final owner = context
+          .findAncestorStateOfType<_ChatScreenState>()
+          ?.generatedImageScope;
+      final key = sha256
+          .convert(utf8.encode(jsonEncode([owner, ref.widgetKey.value])))
+          .toString();
+      return _GeneratedImageSlot(key: ValueKey(key), reference: ref);
+    }
+
     Iterable<Widget> structuredVideoWidgets() sync* {
       for (final ref in structuredFooterVideos) {
         yield _GeneratedMediaSlot(key: ref.widgetKey, reference: ref.reference);
@@ -16790,7 +23434,7 @@ class _AssistantMessage extends StatelessWidget {
               );
             case _ProjectedAssistantImage(:final basename):
               final ref = _StructuredGeneratedImage.textPath(basename);
-              yield _GeneratedImageSlot(key: ref.widgetKey, reference: ref);
+              yield generatedImageSlot(ref);
             case _ProjectedAssistantMedia(:final reference):
               yield _GeneratedMediaSlot(
                 key: _generatedMediaWidgetKey(
@@ -16804,7 +23448,7 @@ class _AssistantMessage extends StatelessWidget {
           }
         }
         for (final ref in structuredFooterImages) {
-          yield _GeneratedImageSlot(key: ref.widgetKey, reference: ref);
+          yield generatedImageSlot(ref);
         }
         yield* structuredVideoWidgets();
         return;
@@ -16814,12 +23458,28 @@ class _AssistantMessage extends StatelessWidget {
         switch (renderSlice.body) {
           case _AssistantGeneratedImageChunk(:final basename):
             final ref = _StructuredGeneratedImage.textPath(basename);
-            yield _GeneratedImageSlot(key: ref.widgetKey, reference: ref);
+            yield generatedImageSlot(ref);
           case _AssistantGeneratedMediaChunk(:final reference):
             yield _GeneratedMediaSlot(
               key: _generatedMediaWidgetKey(reference, renderSlice.index),
               reference: reference,
             );
+          case _AssistantImageRunChunk(:final items):
+            var ordinal = 0;
+            for (final item in items) {
+              switch (item) {
+                case _AssistantGeneratedImageChunk(:final basename):
+                  final ref = _StructuredGeneratedImage.textPath(basename);
+                  yield generatedImageSlot(ref);
+                case _AssistantGeneratedMediaChunk(:final reference):
+                  yield _GeneratedMediaSlot(
+                    key: _generatedMediaWidgetKey(reference, ordinal++),
+                    reference: reference,
+                  );
+                default:
+                  break;
+              }
+            }
           case _AssistantMarkdownChunk(:final data):
             yield* buildAssistantAnswerBlocks(
               stripStructuredEchoes(data),
@@ -16835,7 +23495,7 @@ class _AssistantMessage extends StatelessWidget {
             );
         }
         for (final ref in structuredFooterImages) {
-          yield _GeneratedImageSlot(key: ref.widgetKey, reference: ref);
+          yield generatedImageSlot(ref);
         }
         yield* structuredVideoWidgets();
         return;
@@ -16856,7 +23516,7 @@ class _AssistantMessage extends StatelessWidget {
         for (final segment in GeneratedImageService.segments(mediaText)) {
           if (segment is ImageSegment) {
             final ref = _StructuredGeneratedImage.textPath(segment.basename);
-            yield _GeneratedImageSlot(key: ref.widgetKey, reference: ref);
+            yield generatedImageSlot(ref);
             continue;
           }
           final text = stripStructuredEchoes((segment as TextSegment).text);
@@ -16883,10 +23543,14 @@ class _AssistantMessage extends StatelessWidget {
         }
       }
       for (final ref in structuredFooterImages) {
-        yield _GeneratedImageSlot(key: ref.widgetKey, reference: ref);
+        yield generatedImageSlot(ref);
       }
       yield* structuredVideoWidgets();
     }
+
+    Widget? branchable(Widget? header) => header == null
+        ? null
+        : _BranchLongPress(onLongPress: onBranch, child: header);
 
     // La copia completa vive en la cabecera y la selección parcial en la región
     // exterior. El Markdown permanece como texto normal: ningún párrafo crea un
@@ -16905,6 +23569,9 @@ class _AssistantMessage extends StatelessWidget {
         text: () => markdownToClipboardText(
           GeneratedMediaService.stripDirectives(answer),
         ),
+        scopes: isStreaming || !_hasCopyScopes(answer)
+            ? null
+            : () => _copyScopes(context, answer),
       ),
       if (onRegenerate != null)
         ChatMessageActionButton(
@@ -16920,6 +23587,7 @@ class _AssistantMessage extends StatelessWidget {
     return ChatMessageFrame(
       selectable: !isStreaming,
       selectionIdentity: metadata['message_id'] ?? metadata['id'] ?? metadata,
+      askable: true,
       padding: EdgeInsets.only(
         left: 12,
         right: 16,
@@ -16927,50 +23595,44 @@ class _AssistantMessage extends StatelessWidget {
         bottom: showFooter ? (compact ? 1 : 3) : 0,
       ),
       time: showFooter ? timestamp : null,
-      header: !showHeader
-          ? null
-          : showTrace
-          ? ThinkingTraceCard(
-              key: const ValueKey('assistant-activity-trace'),
-              events: activityEvents,
-              active: isStreaming || metadata['_pipeline'] == true,
-              liveInPill: true,
-              headline: Strings.of(context).chatActivityThinking,
-              activeMood: headerMood,
-              waitingForUser: activityActive && waitingForUser,
-              stopped: stopped,
-              duration: _assistantActivityDuration(metadata),
-              headerBuilder: (context, summary, details) => Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _AssistantAvatarHeader(
-                    name: agentName,
-                    mood: headerMood,
-                    animate: headerAnimated,
-                    subtitle: summary,
-                    actions: headerActions(),
-                  ),
-                  details,
-                ],
-              ),
-            )
-          : _AssistantAvatarHeader(
-              name: agentName,
-              mood: headerMood,
-              animate: headerAnimated,
-              actions: headerActions(),
-            ),
+      header: branchable(
+        !showHeader
+            ? null
+            : showTrace
+            ? ThinkingTraceCard(
+                key: const ValueKey('assistant-activity-trace'),
+                events: activityEvents,
+                active: turnInFlight,
+                liveInPill: true,
+                headline: Strings.of(context).chatActivityThinking,
+                activeMood: headerMood,
+                waitingForUser: activityActive && waitingForUser,
+                stopped: stopped,
+                duration: _assistantActivityDuration(metadata),
+                rowAttachments: connectionCard == null
+                    ? const {}
+                    : {connectionCard!.toolCallId: connectionCard!.card},
+                headerBuilder: (context, summary, details) => Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _AssistantNameHeader(
+                      name: agentName,
+                      subtitle: summary,
+                      actions: headerActions(),
+                    ),
+                    details,
+                  ],
+                ),
+              )
+            : _AssistantNameHeader(name: agentName, actions: headerActions()),
+      ),
       children: [
         if (showHeader && metaLines.isNotEmpty)
           _MetaBlock(lines: metaLines, onDark: false),
-        if (answer.isNotEmpty) ...answerWidgets(),
+        if (answer.isNotEmpty) ..._stackImageRuns(answerWidgets()),
+        if (changedFiles.isNotEmpty) TurnChangesChip(files: changedFiles),
         if (showFooter && technicalDetails.isNotEmpty)
           _AssistantTechnicalDetails(details: technicalDetails),
-        if (showFooter && suggestionProjection.hasSuggestions)
-          HermesSuggestions(
-            suggestions: suggestionProjection.suggestions,
-            onSelected: onSuggestionSelected!,
-          ),
         if (showFooter && metadata['show_link_preview'] == true)
           Builder(
             builder: (ctx) {
@@ -17129,7 +23791,7 @@ class _AssistantTechnicalDetailsState
 }
 
 /// Slot de una imagen generada por el agente dentro de la burbuja (spec 030).
-/// Las rutas del servidor pasan por Bridge; las fuentes HTTPS estructuradas se
+/// Las rutas del servidor pasan por el Dashboard; las fuentes HTTPS estructuradas se
 /// descargan directamente a la misma caché privada endurecida. Sin reintentos
 /// automáticos: solo el botón Reintentar.
 class _GeneratedImageSlot extends StatefulWidget {
@@ -17143,6 +23805,7 @@ class _GeneratedImageSlot extends StatefulWidget {
 class _GeneratedImageSlotState extends State<_GeneratedImageSlot> {
   GeneratedImageStatus _status = GeneratedImageStatus.downloading;
   File? _file;
+  int _generation = 0;
 
   @override
   void initState() {
@@ -17156,7 +23819,16 @@ class _GeneratedImageSlotState extends State<_GeneratedImageSlot> {
       if (mounted) setState(() => _status = GeneratedImageStatus.unsupported);
       return;
     }
-    setState(() => _status = GeneratedImageStatus.downloading);
+    final owner = state.generatedImageScope;
+    final generation = ++_generation;
+    bool owns() =>
+        mounted &&
+        generation == _generation &&
+        state.generatedImageScope == owner;
+    setState(() {
+      _file = null;
+      _status = GeneratedImageStatus.downloading;
+    });
     try {
       late final File file;
       switch (widget.reference.kind) {
@@ -17165,35 +23837,33 @@ class _GeneratedImageSlotState extends State<_GeneratedImageSlot> {
           if (basename == null) {
             throw const FormatException('imagen del servidor sin nombre');
           }
-          final supported = await state.resolveGeneratedImageSupport();
-          if (!mounted) return;
-          if (!supported) {
-            setState(() => _status = GeneratedImageStatus.unsupported);
-            return;
-          }
-          file = await state.downloadGeneratedImage(basename);
+          file = await state.downloadGeneratedImage(
+            widget.reference.source,
+            isCurrent: owns,
+          );
         case GeneratedImageSourceKind.https:
           file = await GeneratedImageService.ensureHttpsDownloaded(
-            state.widget.connection.id,
+            state.generatedImageScope,
             widget.reference.source,
+            isCurrent: owns,
           );
       }
-      if (!mounted) return;
+      if (!owns()) return;
       setState(() {
         _file = file;
         _status = GeneratedImageStatus.ready;
       });
-    } on BridgeException catch (e) {
-      if (!mounted) return;
+    } on DashboardHttpException catch (e) {
+      if (!owns()) return;
       // 404 = el archivo ya no está en el servidor (caché rotada): sin
-      // reintento útil. Otros fallos (red, token) → reintentable.
+      // reintento útil. Otros fallos (red, sesión) → reintentable.
       setState(
-        () => _status = e.status == 404
+        () => _status = e.statusCode == 404
             ? GeneratedImageStatus.gone
             : GeneratedImageStatus.error,
       );
     } catch (_) {
-      if (!mounted) return;
+      if (!owns()) return;
       setState(() => _status = GeneratedImageStatus.error);
     }
   }
@@ -17255,17 +23925,17 @@ class _GeneratedMediaSlotState extends State<_GeneratedMediaSlot> {
         widget.reference.mimeType == 'application/pdf' ||
         widget.reference.displayName.toLowerCase().endsWith('.pdf');
     if (!isPdf) {
-      await Navigator.of(context).push<void>(
-        MaterialPageRoute(
-          builder: (_) => GeneratedFileViewerScreen(
-            name: widget.reference.displayName,
-            mimeType: widget.reference.mimeType,
-            sizeBytes: length,
-            onOpenWith: onOpenExternal,
-            onShare: onShare,
-            onSave: onSave,
-          ),
-        ),
+      // In-app viewer: HTML/SVG in a locked WebView, Markdown/code/text and
+      // images natively; anything else falls back to "Abrir con…"/Share.
+      await openArtifactViewer(
+        context,
+        name: widget.reference.displayName,
+        mimeType: widget.reference.mimeType,
+        file: file,
+        sizeBytes: length,
+        onOpenExternal: onOpenExternal,
+        onShare: onShare,
+        onSave: onSave,
       );
       return;
     }
@@ -17331,6 +24001,9 @@ class _GeneratedMediaSlotState extends State<_GeneratedMediaSlot> {
     if (state == null) return const SizedBox.shrink();
     return GeneratedMediaAttachmentCard(
       reference: widget.reference,
+      // The lazy transcript disposes rows that scroll far away; this lets a
+      // returning card (e.g. an HTML preview) come back ready, not reload.
+      readyMemoKey: state.generatedMediaCacheScope,
       autoLoad:
           widget.reference.sourceKind == GeneratedMediaSourceKind.serverPath,
       load: (onProgress, isCancelled) => state.downloadGeneratedMedia(
@@ -17621,6 +24294,7 @@ class _MetaBlock extends StatelessWidget {
 /// no ocupa un turno visual y se puede retirar antes del envío automático.
 class _QueuedRow extends StatelessWidget {
   final QueuedEntryView entry;
+  final bool retryExhausted;
   final List<String> attachmentNames;
   final bool busy;
   final bool transportCanSteer;
@@ -17629,9 +24303,17 @@ class _QueuedRow extends StatelessWidget {
   final VoidCallback onSteer;
   final VoidCallback onSendNow;
   final VoidCallback onDelete;
+  final VoidCallback onAbandon;
+  final bool canMoveUp;
+  final bool canMoveDown;
+  final ValueChanged<bool>? onMove;
 
   const _QueuedRow({
     required this.entry,
+    this.canMoveUp = false,
+    this.canMoveDown = false,
+    this.onMove,
+    this.retryExhausted = false,
     this.attachmentNames = const [],
     required this.busy,
     required this.transportCanSteer,
@@ -17640,25 +24322,65 @@ class _QueuedRow extends StatelessWidget {
     required this.onSteer,
     required this.onSendNow,
     required this.onDelete,
+    required this.onAbandon,
   });
 
   @override
   Widget build(BuildContext context) {
+    final strings = Strings.of(context);
+    final canMove = onMove != null && (canMoveUp || canMoveDown);
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onLongPress: canMove
+          ? () async {
+              final up = await showHermesMenu<bool>(
+                context: context,
+                surfaceKey: ValueKey('chat-queue-menu-${entry.id}'),
+                actions: [
+                  if (canMoveUp)
+                    HermesAction<bool>(
+                      key: ValueKey('chat-queue-move-up-${entry.id}'),
+                      value: true,
+                      label: strings.tc1215QueueMoveUp,
+                      icon: Icons.arrow_upward_rounded,
+                    ),
+                  if (canMoveDown)
+                    HermesAction<bool>(
+                      key: ValueKey('chat-queue-move-down-${entry.id}'),
+                      value: false,
+                      label: strings.tc1215QueueMoveDown,
+                      icon: Icons.arrow_downward_rounded,
+                    ),
+                ],
+              );
+              if (up != null) onMove!(up);
+            }
+          : null,
+      child: _buildRow(context),
+    );
+  }
+
+  Widget _buildRow(BuildContext context) {
     final colors = Theme.of(context).hermes;
     final strings = Strings.of(context);
-    final preview = entry.text.length > 72
-        ? '${entry.text.substring(0, 72)}…'
-        : entry.text;
+    final plain = plainReferencePreview(entry.text);
+    final preview = plain.length > 72 ? '${plain.substring(0, 72)}…' : plain;
     final isEditing = editingId == entry.id;
-    final accepted = entry.kind == QueuedEntryKind.desktopAccepted;
-    final editEnabled = !accepted && (editingId == null || isEditing);
+    // Already on the server: edit/send/delete cannot act (and send-now would
+    // cancel the running turn), so the row shows them disabled.
+    final accepted =
+        entry.kind == QueuedEntryKind.desktopAccepted || entry.serverAccepted;
+    final editEnabled =
+        !accepted && !entry.sending && (editingId == null || isEditing);
     final canSteer =
         busy &&
         transportCanSteer &&
         entry.isSteerable &&
         !isEditing &&
         !accepted;
-    final sendLabel = busy ? strings.chaQueueSendNext : strings.chaQueueSend;
+    final sendLabel = busy
+        ? strings.tc1215QueueStopAndSend
+        : strings.chaQueueSend;
     Widget action({
       required String keyName,
       required String label,
@@ -17705,7 +24427,63 @@ class _QueuedRow extends StatelessWidget {
                       color: colors.textSecondary,
                     ),
                   ),
-                if (entry.blocked)
+                if (entry.sending)
+                  Text(
+                    strings.tc1215QueueSending,
+                    key: ValueKey('chat-queue-sending-${entry.id}'),
+                    style: TextStyle(
+                      fontSize: 10.5,
+                      color: colors.textTertiary,
+                    ),
+                  )
+                else if (entry.deliveryUnknown)
+                  Text(
+                    Strings.of(context).chatQueueDeliveryUnknown,
+                    key: ValueKey('chat-queue-unknown-${entry.id}'),
+                    style: TextStyle(fontSize: 10.5, color: colors.warning),
+                  )
+                else if (entry.stopWaitingAvailable)
+                  // Acknowledged in an earlier run; "retry" would promise an
+                  // action this row does not have.
+                  Text(
+                    strings.q1215QueueAcceptedStale,
+                    key: ValueKey('chat-queue-accepted-stale-${entry.id}'),
+                    style: TextStyle(fontSize: 10.5, color: colors.warning),
+                  )
+                else if (entry.missingAttachment)
+                  Text(
+                    strings.q1215QueueMissingAttachment,
+                    key: ValueKey('chat-queue-missing-attachment-${entry.id}'),
+                    style: TextStyle(fontSize: 10.5, color: colors.warning),
+                  )
+                else if (entry.persistenceFailed)
+                  Text(
+                    strings.qp1215QueueNotStored,
+                    key: ValueKey('chat-queue-not-stored-${entry.id}'),
+                    style: TextStyle(fontSize: 10.5, color: colors.warning),
+                  )
+                else if (retryExhausted)
+                  // qr1215: never silently stuck. Retrying is the same
+                  // exactly-once send as the row's send action.
+                  Semantics(
+                    button: true,
+                    excludeSemantics: true,
+                    label: strings.qr1215QueueRetryExhausted,
+                    onTap: isEditing ? null : onSendNow,
+                    child: InkWell(
+                      key: ValueKey('chat-queue-retry-exhausted-${entry.id}'),
+                      onTap: isEditing ? null : onSendNow,
+                      child: Text(
+                        strings.qr1215QueueRetryExhausted,
+                        style: TextStyle(
+                          fontSize: 10.5,
+                          color: colors.warning,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  )
+                else if (entry.blocked)
                   Text(
                     Strings.of(context).chatQueueBlockedRetry,
                     key: ValueKey('chat-queue-blocked-${entry.id}'),
@@ -17723,7 +24501,7 @@ class _QueuedRow extends StatelessWidget {
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
                               fontSize: 10.5,
-                              color: colors.textDisabled,
+                              color: colors.textTertiary,
                             ),
                           ),
                         )
@@ -17732,31 +24510,44 @@ class _QueuedRow extends StatelessWidget {
               ],
             ),
           ),
-          action(
-            keyName: 'chat-queue-edit-${entry.id}',
-            label: strings.chaQueueEdit,
-            icon: Icons.edit_outlined,
-            onPressed: editEnabled ? onEdit : null,
-          ),
-          if (canSteer)
+          if (entry.deliveryUnknown || entry.stopWaitingAvailable)
+            // Edit/send/delete cannot act on a message that may already be
+            // on the server; the one honest action is to stop waiting.
             action(
-              keyName: 'chat-queue-steer-${entry.id}',
-              label: strings.chaQueueSteer,
-              icon: Icons.turn_right_rounded,
-              onPressed: onSteer,
+              keyName: 'chat-queue-abandon-${entry.id}',
+              label: strings.chatQueueAbandon,
+              icon: Icons.remove_circle_outline_rounded,
+              onPressed: onAbandon,
+            )
+          else ...[
+            action(
+              keyName: 'chat-queue-edit-${entry.id}',
+              label: strings.chaQueueEdit,
+              icon: Icons.edit_outlined,
+              onPressed: editEnabled ? onEdit : null,
             ),
-          action(
-            keyName: 'chat-queue-send-now-${entry.id}',
-            label: sendLabel,
-            icon: Icons.keyboard_return_rounded,
-            onPressed: isEditing || accepted ? null : onSendNow,
-          ),
-          action(
-            keyName: 'chat-queue-delete-${entry.id}',
-            label: strings.chaQueueDelete,
-            icon: Icons.delete_outline_rounded,
-            onPressed: accepted ? null : onDelete,
-          ),
+            if (canSteer)
+              action(
+                keyName: 'chat-queue-steer-${entry.id}',
+                label: strings.chaQueueSteer,
+                icon: Icons.turn_right_rounded,
+                onPressed: onSteer,
+              ),
+            action(
+              keyName: 'chat-queue-send-now-${entry.id}',
+              label: sendLabel,
+              icon: Icons.keyboard_return_rounded,
+              onPressed: isEditing || accepted || entry.sending
+                  ? null
+                  : onSendNow,
+            ),
+            action(
+              keyName: 'chat-queue-delete-${entry.id}',
+              label: strings.chaQueueDelete,
+              icon: Icons.delete_outline_rounded,
+              onPressed: accepted ? null : onDelete,
+            ),
+          ],
         ],
       ),
     );
@@ -17862,85 +24653,29 @@ class _RenderBottomGapWhenVisible extends RenderShiftedBox {
 
 class _ScrollToBottomButton extends StatelessWidget {
   final VoidCallback onTap;
-  const _ScrollToBottomButton({required this.onTap, super.key});
-
-  @override
-  Widget build(BuildContext context) => _ChatScrollButton(
-    onTap: onTap,
-    label: Strings.of(context).chaScrollToBottom,
-    icon: Icons.keyboard_arrow_down,
-    iconSize: 20,
-  );
-}
-
-class _ChatTopButton extends StatefulWidget {
-  const _ChatTopButton({
-    required this.controller,
-    required this.hasEarlierMessages,
-    required this.loading,
-    required this.contentChanges,
-    required this.transcriptOverlayExtent,
-    required this.onLoadEarlier,
+  final ValueListenable<int> newMessages;
+  const _ScrollToBottomButton({
+    required this.onTap,
+    required this.newMessages,
+    super.key,
   });
 
-  final ScrollController controller;
-  final bool hasEarlierMessages;
-  final bool loading;
-  final Listenable contentChanges;
-  final ValueGetter<double> transcriptOverlayExtent;
-  final VoidCallback onLoadEarlier;
-
   @override
-  State<_ChatTopButton> createState() => _ChatTopButtonState();
-}
-
-class _ChatTopButtonState extends State<_ChatTopButton> {
-  // La flecha de subir es solo para cargar historial real, no un atajo
-  // genérico de "ir arriba" dentro de lo ya cargado: su visibilidad refleja
-  // únicamente hasEarlierMessages (la señal real del backend de que hay más
-  // que pedir), nunca la posición del scroll dentro de lo ya visible — ni
-  // controller ni contentChanges intervienen en si se muestra o no.
-  bool get _visible => widget.hasEarlierMessages;
-
-  void _activate() {
-    if (!widget.hasEarlierMessages) return;
-    widget.onLoadEarlier();
-  }
-
-  @override
-  Widget build(BuildContext context) => Center(
-    child: AnimatedSwitcher(
-      duration: const Duration(milliseconds: 160),
-      reverseDuration: const Duration(milliseconds: 120),
-      transitionBuilder: (child, animation) => AnimatedBuilder(
-        animation: animation,
-        builder: (context, child) {
-          final exiting = animation.status == AnimationStatus.reverse;
-          return IgnorePointer(
-            ignoring: exiting,
-            child: ExcludeSemantics(
-              excluding: exiting,
-              child: FadeTransition(
-                opacity: animation,
-                alwaysIncludeSemantics: !exiting,
-                child: child,
-              ),
-            ),
-          );
-        },
-        child: child,
-      ),
-      child: _visible
-          ? _ChatScrollButton(
-              key: const ValueKey('chat-load-earlier'),
-              onTap: widget.loading ? null : _activate,
-              label: Strings.of(context).chaLoadEarlierMessages,
-              icon: Icons.keyboard_arrow_up_rounded,
-              iconSize: 20,
-              loading: widget.loading,
-            )
-          : const SizedBox.shrink(key: ValueKey('chat-top-button-hidden')),
-    ),
+  Widget build(BuildContext context) => ValueListenableBuilder<int>(
+    valueListenable: newMessages,
+    builder: (context, count, _) {
+      final strings = Strings.of(context);
+      final newLabel = count > 0 ? strings.sc1215NewMessages(count) : null;
+      return _ChatScrollButton(
+        onTap: onTap,
+        label: newLabel == null
+            ? strings.chaScrollToBottom
+            : '${strings.chaScrollToBottom}, $newLabel',
+        icon: Icons.keyboard_arrow_down,
+        iconSize: 20,
+        badge: newLabel,
+      );
+    },
   );
 }
 
@@ -17949,15 +24684,17 @@ class _ChatScrollButton extends StatelessWidget {
   final String label;
   final IconData icon;
   final double iconSize;
-  final bool loading;
+
+  /// Short text shown next to the circle (e.g. "3 new"); the button keeps its
+  /// 48 dp height so the transcript padding never changes with it.
+  final String? badge;
 
   const _ChatScrollButton({
-    super.key,
     required this.onTap,
     required this.label,
     required this.icon,
     this.iconSize = 18,
-    this.loading = false,
+    this.badge,
   });
 
   @override
@@ -17975,35 +24712,48 @@ class _ChatScrollButton extends StatelessWidget {
           onTap: onTap,
           behavior: HitTestBehavior.opaque,
           child: SizedBox(
-            width: 48,
+            width: badge == null ? 48 : null,
             height: 48,
             child: Center(
+              widthFactor: 1,
               child: Container(
-                width: 32,
+                width: badge == null ? 32 : null,
                 height: 32,
+                padding: badge == null
+                    ? null
+                    : const EdgeInsetsDirectional.only(start: 12, end: 8),
+                // QA 9493: the floating header buttons' surface, no dark
+                // halo over the text it floats on.
                 decoration: BoxDecoration(
-                  color: colors.surfaceVariant,
-                  shape: BoxShape.circle,
+                  color: colors.surfaceVariant.withValues(alpha: 0.92),
+                  shape: badge == null ? BoxShape.circle : BoxShape.rectangle,
+                  borderRadius: badge == null
+                      ? null
+                      : BorderRadius.circular(16),
                   border: Border.all(
-                    color: colors.divider.withValues(alpha: 0.55),
+                    color: colors.divider.withValues(alpha: 0.6),
                   ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.3),
-                      blurRadius: 4,
-                      offset: const Offset(0, 2),
-                    ),
-                  ],
                 ),
-                child: loading
-                    ? Padding(
-                        padding: const EdgeInsets.all(8),
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: colors.accent,
+                child: badge == null
+                    ? Icon(icon, size: iconSize, color: colors.accent)
+                    : ExcludeSemantics(
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              badge!,
+                              maxLines: 1,
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: colors.accent,
+                              ),
+                            ),
+                            const SizedBox(width: 2),
+                            Icon(icon, size: iconSize, color: colors.accent),
+                          ],
                         ),
-                      )
-                    : Icon(icon, size: iconSize, color: colors.accent),
+                      ),
               ),
             ),
           ),
@@ -18129,6 +24879,16 @@ class _ChatStreamingViewportPhysics extends ScrollPhysics {
       velocity: velocity,
     );
     final overlayDelta = lock.takeOverlayExtentChange();
+    // Past an edge (the bounce region) the reader is AT that edge, not reading
+    // a row above it: every correction below would clamp the overscroll to
+    // the extent in one frame and the spring would snap instead of settling.
+    // Keep the inherited (bouncing) position; the ballistic activity started
+    // on release brings it back smoothly. Pending deltas are dropped because
+    // they describe growth the reader is already riding with the edge.
+    if (oldPosition.outOfRange) {
+      lock.clear();
+      return inherited;
+    }
     if (!lock.enabled) {
       lock.clear();
       return (inherited + overlayDelta)
@@ -18179,6 +24939,86 @@ class _ChatStreamingViewportPhysics extends ScrollPhysics {
   }
 }
 
+/// Transcript controller whose position applies the "new since you left"
+/// landing hold of [lock] in every viewport layout. The physics hook runs
+/// only when the scroll extents change, and a lazy reversed list often
+/// keeps its extent estimate while visible rows reflow, so the divider
+/// would drift with no hook ever running.
+class _ChatTranscriptScrollController extends ScrollController {
+  _ChatTranscriptScrollController(this.lock);
+
+  final _ChatStreamingViewportLock lock;
+
+  @override
+  ScrollPosition createScrollPosition(
+    ScrollPhysics physics,
+    ScrollContext context,
+    ScrollPosition? oldPosition,
+  ) => _ChatTranscriptScrollPosition(
+    lock: lock,
+    physics: physics,
+    context: context,
+    oldPosition: oldPosition,
+    debugLabel: debugLabel,
+  );
+}
+
+class _ChatTranscriptScrollPosition extends ScrollPositionWithSingleContext {
+  _ChatTranscriptScrollPosition({
+    required this.lock,
+    required super.physics,
+    required super.context,
+    super.oldPosition,
+    super.debugLabel,
+  });
+
+  final _ChatStreamingViewportLock lock;
+
+  // Any scroll other than the hold's own in-layout correction ends the
+  // landing: a touch (hold, drag), a fling, an animation, a jump. Idle is
+  // what a layout settles into, so it never releases by itself. (Pixels
+  // alone are no signal: the lazy list corrects its own offsets in layout.)
+  @override
+  void beginActivity(ScrollActivity? newActivity) {
+    if (newActivity != null && newActivity is! IdleScrollActivity) {
+      lock.releaseLanding();
+    }
+    super.beginActivity(newActivity);
+  }
+
+  @override
+  void jumpTo(double value) {
+    lock.releaseLanding();
+    super.jumpTo(value);
+  }
+
+  @override
+  void pointerScroll(double delta) {
+    lock.releaseLanding();
+    super.pointerScroll(delta);
+  }
+
+  @override
+  bool applyContentDimensions(double minScrollExtent, double maxScrollExtent) {
+    final settled = super.applyContentDimensions(
+      minScrollExtent,
+      maxScrollExtent,
+    );
+    if (!settled || !hasViewportDimension || outOfRange) return settled;
+    // The divider row keeps its place at the top while rows above or below
+    // it finish their layout (previews, rich text, a live reply), until
+    // anything else scrolls the list.
+    final correction = lock.landingCorrection();
+    if (correction == null || correction.abs() <= 0.5) return settled;
+    final target = (pixels + correction)
+        .clamp(this.minScrollExtent, this.maxScrollExtent)
+        .toDouble();
+    if ((target - pixels).abs() <= 0.01) return settled;
+    correctPixels(target);
+    return false;
+  }
+}
+
 class _ChatStreamingViewportLock {
   double _pendingExtentDelta = 0;
   double _pendingOverlayExtentDelta = 0;
@@ -18187,6 +25027,38 @@ class _ChatStreamingViewportLock {
   double? _anchorVisualOffset;
   RenderBox? Function()? _anchorVisualLookup;
   bool enabled = false;
+
+  // Landing hold: the row to keep and where it must stay (from the
+  // viewport top).
+  RenderBox? Function()? _landingLookup;
+  double? _landingVisualOffset;
+
+  /// Keeps the row found by [lookup] [visualOffset] px below the viewport
+  /// top in every layout until the list is scrolled by anything else.
+  void holdLanding(
+    RenderBox? Function() lookup, {
+    required double visualOffset,
+  }) {
+    _landingLookup = lookup;
+    _landingVisualOffset = visualOffset;
+  }
+
+  void releaseLanding() {
+    _landingLookup = null;
+    _landingVisualOffset = null;
+  }
+
+  /// Correction that puts the held row back in place, or null when no
+  /// landing is held or the row is not laid out.
+  double? landingCorrection() {
+    final lookup = _landingLookup;
+    final wanted = _landingVisualOffset;
+    if (lookup == null || wanted == null) return null;
+    final now = _visualOffsetInViewport(lookup());
+    if (now == null) return null;
+    final correction = wanted - now;
+    return correction.isFinite ? correction : null;
+  }
 
   void enable() => enabled = true;
 
@@ -18417,6 +25289,38 @@ class _SurfaceTurnInitialExtentReporter extends SingleChildRenderObjectWidget {
   }
 }
 
+/// fh1215: reports its child's height after every layout, without
+/// rebuilding anything.
+class _ExtentReporter extends SingleChildRenderObjectWidget {
+  const _ExtentReporter({required this.onExtent, required super.child});
+
+  final ValueChanged<double> onExtent;
+
+  @override
+  _RenderExtentReporter createRenderObject(BuildContext context) =>
+      _RenderExtentReporter(onExtent);
+
+  @override
+  void updateRenderObject(
+    BuildContext context,
+    _RenderExtentReporter renderObject,
+  ) {
+    renderObject.onExtent = onExtent;
+  }
+}
+
+class _RenderExtentReporter extends RenderProxyBox {
+  _RenderExtentReporter(this.onExtent);
+
+  ValueChanged<double> onExtent;
+
+  @override
+  void performLayout() {
+    super.performLayout();
+    onExtent(size.height);
+  }
+}
+
 class _SurfaceTurnInitialExtentRenderBox extends RenderProxyBox {
   ValueChanged<double> onInitialExtent;
   bool _reported = false;
@@ -18439,9 +25343,19 @@ Future<void> scrollChatAnswerToStart(
   RenderObject targetObject,
   ScrollPosition position, {
   Duration duration = chatNavigationDuration,
+  double topInset = 0,
 }) async {
-  final target = chatAnswerStartOffset(targetObject, position);
-  if (target == null) return;
+  final viewport = RenderAbstractViewport.maybeOf(targetObject);
+  if (viewport == null) return;
+  // fh1215: a floating header covers [topInset] of the viewport top; the
+  // answer starts just below it (reversed list: more offset = lower). The
+  // inset is added BEFORE clamping: a short newest answer already in view
+  // has a reveal offset below zero and must stay at the bottom, not be
+  // pushed down by the header's height.
+  final target =
+      (viewport.getOffsetToReveal(targetObject, 1).offset +
+              math.max(0.0, topInset))
+          .clamp(position.minScrollExtent, position.maxScrollExtent);
   if (duration == Duration.zero) {
     position.jumpTo(target);
     return;
@@ -18553,7 +25467,7 @@ class AssistantMarkdownView extends StatelessWidget {
         : buildAssistantAnswerBlocks(
             split.answer,
             isStreaming: isStreaming,
-            markdown: (d) => ChatMarkdownBlock(data: d),
+            markdown: (d) => ChatMarkdownBlock(data: d, embeds: !isStreaming),
             callout: (b) =>
                 CalloutCard(kind: b.kind, title: b.title, body: b.body),
             onLinkTap: (href) => openChatMarkdownLink(context, href),
@@ -18585,53 +25499,6 @@ class AssistantMarkdownView extends StatelessWidget {
   }
 }
 
-/// Tira fina bajo el AppBar del chat que indica el perfil de agente activo.
-/// Puramente informativa: el gateway sirve un único home, así que el perfil se
-/// refleja en el chat por su modelo (aplicado al activarlo en Perfiles); el chip
-/// recuerda al usuario qué perfil está en contexto.
-class _ProfileContextChip extends StatelessWidget
-    implements PreferredSizeWidget {
-  const _ProfileContextChip({required this.label, required this.colors});
-
-  final String label;
-  final HermesThemeColors colors;
-
-  @override
-  Size get preferredSize => const Size.fromHeight(30);
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      height: 30,
-      alignment: Alignment.center,
-      padding: const EdgeInsets.only(bottom: 6),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-        decoration: BoxDecoration(
-          color: colors.accent.withValues(alpha: 0.12),
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: colors.accent.withValues(alpha: 0.35)),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.layers_rounded, size: 12, color: colors.accent),
-            const SizedBox(width: 5),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 11,
-                color: colors.accent,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 /// Keeps an existing transcript mounted while a manual refresh is in flight or
 /// reports a failure. Initial loads without history still use the full states.
 class ChatRefreshStatusOverlay extends StatelessWidget {
@@ -18641,11 +25508,16 @@ class ChatRefreshStatusOverlay extends StatelessWidget {
     required this.child,
     this.errorTopInset = 8,
     this.onDismissError,
+    this.cachedLabel,
     super.key,
   });
 
   final bool loading;
   final String? errorMessage;
+
+  /// cs1215: the rows shown are the encrypted cold-start copy, not yet
+  /// confirmed by the server.
+  final String? cachedLabel;
   final Widget child;
 
   /// Con valor, el aviso de error muestra una X para cerrarlo.
@@ -18661,6 +25533,57 @@ class ChatRefreshStatusOverlay extends StatelessWidget {
     return Stack(
       children: [
         Positioned.fill(child: child),
+        if (cachedLabel != null)
+          Positioned(
+            // Below the error notice when both show: the copy is still the
+            // unconfirmed cache whatever the read did.
+            top: errorTopInset + (errorMessage == null ? 0 : 52),
+            left: 12,
+            right: 12,
+            child: Center(
+              child: Semantics(
+                key: const ValueKey('chat-cached-transcript'),
+                container: true,
+                liveRegion: true,
+                label: cachedLabel,
+                child: ExcludeSemantics(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: colors.surface,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: colors.divider.withValues(alpha: 0.78),
+                      ),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 4,
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.history,
+                            size: 14,
+                            color: colors.textSecondary,
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            cachedLabel!,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: colors.textSecondary,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
         if (loading)
           Positioned(
             top: 0,

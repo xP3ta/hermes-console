@@ -128,6 +128,41 @@ class HermesListRow extends StatelessWidget {
     this.semanticLabel,
   });
 
+  static const double _valueGap = 10;
+
+  /// The value ends where the row's text ends, next to the arrow: it has its
+  /// own width, and the title has all the rest. The title takes what one
+  /// line of it needs first; a value too long for what is left ends in an
+  /// ellipsis, but never gets less than two fifths of the row's text, so a
+  /// long title wraps (two lines, then its own ellipsis) instead of hiding
+  /// it.
+  double _valueMaxWidth(BuildContext context, double area) {
+    final base = DefaultTextStyle.of(context).style;
+    final scaler = MediaQuery.textScalerOf(context);
+    final direction = Directionality.of(context);
+    double oneLine(String text, TextStyle style) {
+      final painter = TextPainter(
+        text: TextSpan(text: text, style: base.merge(style)),
+        textDirection: direction,
+        textScaler: scaler,
+        maxLines: 1,
+      )..layout();
+      final width = painter.width;
+      painter.dispose();
+      return width;
+    }
+
+    var needed = oneLine(title, HermesType.body);
+    final under = subtitle;
+    if (under != null && under.isNotEmpty) {
+      final width = oneLine(under, HermesType.support);
+      if (width > needed) needed = width;
+    }
+    final rest = area - _valueGap - needed.ceilToDouble();
+    final least = area * 0.4;
+    return rest < least ? least : rest;
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
@@ -147,6 +182,24 @@ class HermesListRow extends StatelessWidget {
                     ? colors.error
                     : iconColor ?? colors.textSecondary,
               ));
+    final label = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: HermesType.body.copyWith(color: titleColor),
+        ),
+        if (subtitle != null && subtitle!.isNotEmpty)
+          Text(
+            subtitle!,
+            maxLines: subtitleMaxLines,
+            overflow: TextOverflow.ellipsis,
+            style: HermesType.support.copyWith(color: colors.textSecondary),
+          ),
+      ],
+    );
     Widget row = InkWell(
       onTap: onTap,
       child: ConstrainedBox(
@@ -163,41 +216,34 @@ class HermesListRow extends StatelessWidget {
                 const SizedBox(width: HermesSpace.rowIconGap),
               ],
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: HermesType.body.copyWith(color: titleColor),
-                    ),
-                    if (subtitle != null && subtitle!.isNotEmpty)
-                      Text(
-                        subtitle!,
-                        maxLines: subtitleMaxLines,
-                        overflow: TextOverflow.ellipsis,
-                        style: HermesType.support.copyWith(
-                          color: colors.textSecondary,
+                child: value == null || value!.isEmpty
+                    ? label
+                    : LayoutBuilder(
+                        builder: (context, area) => Row(
+                          children: [
+                            Expanded(child: label),
+                            const SizedBox(width: _valueGap),
+                            ConstrainedBox(
+                              constraints: BoxConstraints(
+                                maxWidth: _valueMaxWidth(
+                                  context,
+                                  area.maxWidth,
+                                ),
+                              ),
+                              child: Text(
+                                value!,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                textAlign: TextAlign.end,
+                                style: HermesType.value.copyWith(
+                                  color: colors.textSecondary,
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
-                  ],
-                ),
               ),
-              if (value != null && value!.isNotEmpty) ...[
-                const SizedBox(width: 10),
-                Flexible(
-                  child: Text(
-                    value!,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.end,
-                    style: HermesType.value.copyWith(
-                      color: colors.textSecondary,
-                    ),
-                  ),
-                ),
-              ],
               ?trailing,
               if (onTap != null && trailing == null && showChevron)
                 Icon(

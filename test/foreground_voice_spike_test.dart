@@ -36,6 +36,52 @@ void main() {
       );
     });
 
+    test('GPT-Live continues hidden only with the opt-in, under the '
+        'microphone service and with its chat still there', () {
+      for (final optIn in [true, false]) {
+        for (final service in [true, false]) {
+          for (final view in [true, false]) {
+            expect(
+              liveVoiceMayContinueHidden(
+                continueWhenLocked: optIn,
+                microphoneServiceHeld: service,
+                viewAttached: view,
+              ),
+              optIn && service && view,
+              reason: 'opt-in $optIn, service $service, view $view',
+            );
+          }
+        }
+      }
+    });
+
+    test('the voice service follows the lease of whichever engine runs', () {
+      final main = File('lib/main.dart').readAsStringSync();
+      final sync = main.substring(
+        main.indexOf('Future<void> _queueVoiceForegroundSync()'),
+        main.indexOf('void _onVoiceRuntimeChanged()'),
+      );
+      // `voiceConvo` is the coordinator: its lease is the chained engine's
+      // or the GPT-Live one's, so the same condition starts the microphone
+      // service for a live conversation while the app is still in front.
+      expect(sync, contains('active: voiceConvo.audioLeaseRequired,'));
+      expect(
+        sync,
+        contains('continueWhenLocked: voice.continueVoiceWhenLocked,'),
+      );
+      final coordinator = File(
+        'lib/core/services/voice/conversation/'
+        'voice_conversation_coordinator.dart',
+      ).readAsStringSync();
+      expect(
+        coordinator,
+        contains(
+          '_chained.audioLeaseRequired || '
+          '(_live?.audioLeaseRequired ?? false)',
+        ),
+      );
+    });
+
     test('Pause libera lease de audio sin terminar la conversación lógica', () {
       final main = File('lib/main.dart').readAsStringSync();
       final runtimeChanged = main.indexOf('void _onVoiceRuntimeChanged()');

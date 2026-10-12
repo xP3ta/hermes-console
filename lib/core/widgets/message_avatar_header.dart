@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../theme/app_theme.dart';
+import 'session_status_tone.dart';
 
 /// Tamaño de la mascota en la cabecera (el de siempre).
 const double kAvatarMascotSize = 44;
@@ -24,12 +25,14 @@ String displayAgentName(String raw) {
       .join(' ');
 }
 
-/// Cabecera de un mensaje del asistente: la mascota (sin marco ni anillo), el
-/// título en color de acento y, justo debajo, la segunda línea —el desplegable
-/// del turno, en tono apagado—. Las acciones quedan a la derecha.
+/// Cabecera de un mensaje del asistente: el título en color de acento y,
+/// justo debajo, la segunda línea —el estado del turno o su resumen plegado,
+/// en tono apagado—. Las acciones quedan a la derecha.
 ///
-/// Sin presencia (mascota apagada) el hueco lo ocupa la inicial del nombre, en
-/// acento y sin círculo, para que la geometría sea idéntica.
+/// Con [mascot], una cara (sin marco ni anillo) abre la cabecera en su hueco.
+/// Sin ella no hay hueco ni inicial: el nombre empieza donde el mensaje. Un
+/// chat con un solo interlocutor no la pasa (ct1215: quién habla ya está en
+/// la cabecera del chat).
 class MessageAvatarHeader extends StatelessWidget {
   const MessageAvatarHeader({
     required this.name,
@@ -42,10 +45,10 @@ class MessageAvatarHeader extends StatelessWidget {
 
   final String name;
 
-  /// La mascota ya construida (44 dp), o `null` con la presencia apagada.
+  /// La cara ya construida (44 dp), o `null` para una cabecera sin cara.
   final Widget? mascot;
 
-  /// Segunda línea bajo el título (desplegable del turno o «Trabajando…»).
+  /// Segunda línea bajo el título (estado del turno o su resumen plegado).
   final Widget? subtitle;
 
   /// Color del título; por defecto el acento del tema.
@@ -55,8 +58,34 @@ class MessageAvatarHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
-    final title = displayAgentName(name);
-    final initial = title.substring(0, 1).toUpperCase();
+    final face = mascot;
+    final text = Expanded(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            displayAgentName(name),
+            key: const ValueKey('assistant-header-name'),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 13.5,
+              fontWeight: FontWeight.w700,
+              // A profile's own colour can be as dark as the page; the
+              // theme's accent is used as the theme defines it.
+              color: nameColor == null
+                  ? colors.accent
+                  : readableLabelColor(nameColor!, colors.background),
+              letterSpacing: 0.3,
+            ),
+          ),
+          ?subtitle,
+        ],
+      ),
+    );
+    // No face, no slot: the name starts where the message does.
+    if (face == null) return Row(children: [text, ...actions]);
     return ConstrainedBox(
       constraints: const BoxConstraints(minHeight: kAvatarMascotSize),
       child: Row(
@@ -66,47 +95,15 @@ class MessageAvatarHeader extends StatelessWidget {
             width: kAvatarSlotWidth,
             height: kAvatarMascotSize,
             child: Align(
-              alignment: Alignment.centerLeft,
+              alignment: AlignmentDirectional.centerStart,
               child: SizedBox(
                 width: kAvatarMascotSize,
                 height: kAvatarMascotSize,
-                child:
-                    mascot ??
-                    Center(
-                      child: Text(
-                        initial,
-                        key: const ValueKey('assistant-avatar-initial'),
-                        style: TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.w700,
-                          color: colors.accent,
-                        ),
-                      ),
-                    ),
+                child: face,
               ),
             ),
           ),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  title,
-                  key: const ValueKey('assistant-header-name'),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 13.5,
-                    fontWeight: FontWeight.w700,
-                    color: nameColor ?? colors.accent,
-                    letterSpacing: 0.3,
-                  ),
-                ),
-                ?subtitle,
-              ],
-            ),
-          ),
+          text,
           ...actions,
         ],
       ),

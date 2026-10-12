@@ -3,11 +3,17 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
+import '../config/feature_flags.dart';
+import '../design/edges.dart';
 import '../screens/chat_screen.dart';
 import '../screens/mission_control_screen.dart';
 import '../screens/settings_screen.dart';
 import '../services/connection_manager.dart';
 import '../services/dock_preferences_store.dart';
+import '../shell/dock_screen.dart';
+import '../shell/gesture_dock.dart' show gestureDockFootprint;
+import '../shell/gesture_dock_state.dart' show GestureDockTab;
+import '../utils/responsive.dart';
 import 'dock.dart';
 import 'dock_shortcuts.dart';
 import 'dock_style.dart' show dockShowsBack;
@@ -56,6 +62,20 @@ class GeneralDockShell extends StatefulWidget {
   /// sección activa (`selected: true`) sin acción propia en vez de navegar.
   final DockItemId? currentDestination;
 
+  /// True when the screen lays out its own list-detail panes in an expanded
+  /// window: the shell then gives it the full width beside the rail instead
+  /// of centring it at [Responsive.maxContentWidth].
+  final bool paneLayout;
+
+  /// Gesture dock only: the tab this screen is when neither
+  /// [currentDestination] nor the include flags say so (Proyectos).
+  final GestureDockTab? gestureTab;
+
+  /// False on the pure configuration screens (Ajustes, Perfiles, Voz, the
+  /// Gateway manager): they have the dock, but the floating mascot does not
+  /// stand on them.
+  final bool pet;
+
   const GeneralDockShell({
     required this.body,
     required this.connection,
@@ -65,6 +85,9 @@ class GeneralDockShell extends StatefulWidget {
     this.includeSettingsAction = true,
     this.includeSessionsAction = true,
     this.currentDestination,
+    this.paneLayout = false,
+    this.gestureTab,
+    this.pet = true,
     super.key,
   });
 
@@ -87,6 +110,7 @@ class _GeneralDockShellState extends State<GeneralDockShell> {
   void initState() {
     super.initState();
     unawaited(DockPreferencesController.instance.ensureLoaded());
+    unawaited(FeatureFlags.instance.ensureLoaded());
   }
 
   void _handleCreate() {
@@ -157,8 +181,16 @@ class _GeneralDockShellState extends State<GeneralDockShell> {
 
   @override
   Widget build(BuildContext context) {
+    // The route carries the dock even when the bar is switched off below.
+    return DockScreen(carriesPet: widget.pet, child: _buildShell(context));
+  }
+
+  Widget _buildShell(BuildContext context) {
     return ListenableBuilder(
-      listenable: DockPreferencesController.instance.listenable,
+      listenable: Listenable.merge([
+        DockPreferencesController.instance.listenable,
+        FeatureFlags.instance.gestureDock,
+      ]),
       builder: (context, _) {
         // Interruptor global "Usar dock flotante" (Ajustes): cuando está
         // apagado, esta pantalla es simplemente su `body`, sin el `Stack`
@@ -174,9 +206,18 @@ class _GeneralDockShellState extends State<GeneralDockShell> {
         return Stack(
           fit: StackFit.expand,
           children: [
-            widget.body,
+            _AdaptiveDockBody(
+              paneLayout: widget.paneLayout,
+              gestureDock: FeatureFlags.instance.gestureDock.value,
+              body: widget.body,
+            ),
             Dock(
               profileId: DockProfileId.general,
+              adaptive: true,
+              gestureTab: widget.gestureTab,
+              connection: widget.connection,
+              connManager: widget.connManager,
+              onNewChat: _defaultCreate,
               showBackContext: _isSubscreen,
               onBack: () => Navigator.of(context).maybePop(),
               // Qué sabe hacer el perfil "General" desde una pantalla
@@ -245,6 +286,78 @@ class _GeneralDockShellState extends State<GeneralDockShell> {
           ],
         );
       },
+    );
+  }
+}
+
+/// Places the body beside the dock in whichever form the window size class
+/// gives it. Size-only dependencies (`Responsive`, `MediaQuery.*Of`): a
+/// keyboard animation never rebuilds this (see #141).
+class _AdaptiveDockBody extends StatelessWidget {
+  final bool paneLayout;
+  final bool gestureDock;
+  final Widget body;
+
+  const _AdaptiveDockBody({
+    required this.paneLayout,
+    required this.body,
+    this.gestureDock = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final sizeClass = Responsive.sizeClassOf(context);
+    if (sizeClass == WindowSizeClass.compact) {
+      // The dock floats over the bottom of the screen. The body ends above
+      // it, so scrolled to the end the last row is readable instead of
+      // hidden under the bar, and nothing passes behind the dock: the rows
+      // dissolve into the page just before it. Upwards the body stays open,
+      // so a list can keep scrolling under the floating header. The system
+      // inset is part of the footprint, so it is not reported twice.
+      return MediaQuery.removePadding(
+        context: context,
+        removeBottom: true,
+        child: Padding(
+          padding: EdgeInsets.only(
+            bottom: gestureDock
+                ? gestureDockFootprint(context)
+                : dockFootprint(context),
+          ),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              HermesOpenTopClip(child: body),
+              const Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                child: HermesBottomFade(key: ValueKey('dock-body-fade')),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    // Rail on the leading edge: the body starts after it. Single-pane
+    // screens are centred at a readable width; a pane screen in an
+    // expanded window lays out its own panes across the rest.
+    final constrained = !(paneLayout && sizeClass == WindowSizeClass.expanded);
+    return MediaQuery.removePadding(
+      context: context,
+      removeLeft: true,
+      child: Padding(
+        padding: EdgeInsets.only(left: dockRailFootprint(context)),
+        child: constrained
+            ? Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(
+                    maxWidth: Responsive.maxContentWidth,
+                  ),
+                  child: body,
+                ),
+              )
+            : body,
+      ),
     );
   }
 }

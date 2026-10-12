@@ -79,6 +79,19 @@ abstract class SttEngine {
   bool get supportsPartials;
 }
 
+/// An on-device engine whose recogniser takes seconds to load and can stay
+/// loaded between captures, so the next one starts at once.
+abstract interface class WarmSttEngine {
+  /// Loads the recogniser ahead of the first capture. Does nothing while a
+  /// capture is starting or running, or once it is loaded.
+  Future<void> prewarm();
+
+  /// Ends the capture now: the microphone is released and nothing is
+  /// transcribed, as [SttEngine.dispose] does, but the recogniser stays
+  /// loaded for the next [SttEngine.listen].
+  Future<void> park();
+}
+
 /// Motor local capaz de transcribir un WAV ya capturado por el recorder
 /// full-duplex. No abre un segundo micrófono ni cambia el origen del audio.
 abstract interface class CapturedWavSttEngine {

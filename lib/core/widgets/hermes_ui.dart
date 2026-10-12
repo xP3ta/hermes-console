@@ -7,6 +7,8 @@
 // Regla de renderizado: nunca combinar borderRadius con un Border no
 // uniforme de colores distintos (ver AccentCard). Todos los bordes aquí
 // son uniformes.
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -41,12 +43,23 @@ class HermesField extends StatelessWidget {
   final TextInputType? keyboardType;
   final bool autocorrect;
   final bool enableSuggestions;
+  final bool enableIMEPersonalizedLearning;
   final int minLines;
-  final int maxLines;
+
+  /// Null lets a multiline field grow with its content (use it on a page
+  /// that scrolls, never inside a small floating card).
+  final int? maxLines;
   final bool autofocus;
   final List<TextInputFormatter>? inputFormatters;
   final String? errorText;
   final String? helperText;
+  final bool enabled;
+  final TextInputAction? textInputAction;
+  final int? maxLength;
+  final FocusNode? focusNode;
+
+  /// Key of the inner [TextField], for finders that read its controller.
+  final Key? fieldKey;
 
   const HermesField({
     super.key,
@@ -60,12 +73,18 @@ class HermesField extends StatelessWidget {
     this.keyboardType,
     this.autocorrect = true,
     this.enableSuggestions = true,
+    this.enableIMEPersonalizedLearning = true,
     this.minLines = 1,
     this.maxLines = 1,
     this.autofocus = false,
     this.inputFormatters,
     this.errorText,
     this.helperText,
+    this.enabled = true,
+    this.textInputAction,
+    this.maxLength,
+    this.focusNode,
+    this.fieldKey,
   });
 
   @override
@@ -127,13 +146,19 @@ class HermesField extends StatelessWidget {
         Semantics(
           label: label,
           child: TextField(
+            key: fieldKey,
             controller: controller,
+            focusNode: focusNode,
+            enabled: enabled,
+            textInputAction: textInputAction,
+            maxLength: maxLength,
             obscureText: obscure,
             onSubmitted: onSubmitted,
             onChanged: onChanged,
             keyboardType: keyboardType,
             autocorrect: autocorrect,
             enableSuggestions: enableSuggestions,
+            enableIMEPersonalizedLearning: enableIMEPersonalizedLearning,
             minLines: minLines,
             maxLines: obscure ? 1 : maxLines,
             autofocus: autofocus,
@@ -233,6 +258,7 @@ class HermesSwitchTile extends StatelessWidget {
   final Key? controlKey;
   final String title;
   final String? subtitle;
+  final int? subtitleMaxLines;
   final Widget? secondary;
   final bool value;
   final ValueChanged<bool>? onChanged;
@@ -245,6 +271,7 @@ class HermesSwitchTile extends StatelessWidget {
     required this.onChanged,
     this.controlKey,
     this.subtitle,
+    this.subtitleMaxLines,
     this.secondary,
     this.contentPadding = const EdgeInsets.symmetric(horizontal: 16),
     this.dense = false,
@@ -262,7 +289,7 @@ class HermesSwitchTile extends StatelessWidget {
       secondary: secondary,
       title: Text(
         title,
-        style: TextStyle(
+        style: Theme.of(context).textTheme.bodyLarge!.copyWith(
           color: enabled ? colors.textPrimary : colors.textDisabled,
           fontSize: 14,
           fontWeight: FontWeight.w600,
@@ -274,7 +301,9 @@ class HermesSwitchTile extends StatelessWidget {
           ? null
           : Text(
               subtitle!,
-              style: TextStyle(
+              maxLines: subtitleMaxLines,
+              overflow: subtitleMaxLines == null ? null : TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.bodyMedium!.copyWith(
                 color: enabled ? colors.textSecondary : colors.textDisabled,
                 fontSize: 12,
                 fontWeight: FontWeight.w400,
@@ -671,6 +700,7 @@ class _FadeSlideInState extends State<FadeSlideIn>
     with SingleTickerProviderStateMixin {
   late final AnimationController _ctrl;
   late final CurvedAnimation _curve;
+  Timer? _delay;
 
   @override
   void initState() {
@@ -680,7 +710,8 @@ class _FadeSlideInState extends State<FadeSlideIn>
     if (widget.delayMs == 0) {
       _ctrl.forward();
     } else {
-      Future.delayed(Duration(milliseconds: widget.delayMs), () {
+      // A Timer (not Future.delayed) so leaving the screen first cancels it.
+      _delay = Timer(Duration(milliseconds: widget.delayMs), () {
         if (mounted) _ctrl.forward();
       });
     }
@@ -688,6 +719,7 @@ class _FadeSlideInState extends State<FadeSlideIn>
 
   @override
   void dispose() {
+    _delay?.cancel();
     _ctrl.dispose();
     super.dispose();
   }

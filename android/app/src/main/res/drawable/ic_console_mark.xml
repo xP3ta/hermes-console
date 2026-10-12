@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Console mark in brand terracotta (large notification glyph).
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#D97757"
+        android:strokeWidth="3.918"
+        android:pathData="M18.035,6.62 A8.041,8.041 0 1,0 18.035,17.38" />
+    <path
+        android:fillColor="#D97757"
+        android:pathData="M18.901,9.018 L21.942,9.018 L21.942,14.982 L18.901,14.982 Z" />
+</vector>

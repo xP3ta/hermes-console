@@ -7,12 +7,16 @@ import 'package:flutter/services.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../models/attachment_draft.dart';
+import '../services/artifact_viewer_kind.dart';
 import '../services/attachment_uploader.dart';
 import '../services/generated_media_service.dart';
 import '../theme/app_theme.dart';
+import 'artifact_viewer/artifact_viewer_screen.dart';
 import 'attachment_card.dart';
+import 'attachment_preview.dart';
 import 'hermes_app_bar.dart';
 import 'hermes_notice.dart';
+import 'console_loader.dart';
 
 @visibleForTesting
 const attachmentDocumentPreviewChannelName = 'hermes/document_preview';
@@ -119,6 +123,21 @@ class _AttachmentHistoryCardState extends State<AttachmentHistoryCard> {
       await showImageViewer(context, file);
       return;
     }
+    if (artifactViewerRendersInline(
+      artifactViewerKindFor(
+        name: widget.name,
+        mimeType: widget.reference.mimeType,
+      ),
+    )) {
+      await openArtifactViewer(
+        context,
+        name: widget.name,
+        mimeType: widget.reference.mimeType,
+        file: file,
+        sizeBytes: widget.reference.sizeBytes,
+      );
+      return;
+    }
     await Navigator.of(context).push<void>(
       MaterialPageRoute(
         builder: (_) => AttachmentBytesPreviewScreen(
@@ -131,6 +150,14 @@ class _AttachmentHistoryCardState extends State<AttachmentHistoryCard> {
     );
   }
 
+  bool get _playsInline => switch (attachmentPreviewKindFor(
+    widget.name,
+    widget.reference.mimeType,
+  )) {
+    AttachmentPreviewKind.video || AttachmentPreviewKind.audio => true,
+    _ => false,
+  };
+
   @override
   Widget build(BuildContext context) {
     return FutureBuilder<File?>(
@@ -139,6 +166,16 @@ class _AttachmentHistoryCardState extends State<AttachmentHistoryCard> {
       builder: (context, snapshot) {
         final file = snapshot.data;
         final available = file != null;
+        if (file != null && _playsInline) {
+          // Videos and audio play in place (poster frame, play, duration)
+          // instead of opening a byte dump.
+          return AttachmentPreview(
+            name: widget.name,
+            mimeType: widget.reference.mimeType,
+            sizeLabel: widget.sizeLabel,
+            file: file,
+          );
+        }
         final thumbnail =
             available && widget.reference.type == AttachmentType.image
             ? file
@@ -255,9 +292,9 @@ class _AttachmentBytesPreviewScreenState
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const CircularProgressIndicator(),
-                    const SizedBox(height: 16),
-                    Text(strings.chaAttachmentPreviewLoading),
+                    ConsoleLoader.large(
+                      label: strings.chaAttachmentPreviewLoading,
+                    ),
                   ],
                 ),
               );
@@ -429,7 +466,7 @@ class _PdfBytesPreviewState extends State<_PdfBytesPreview> {
       future: _renderPage(0),
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done) {
-          return const Center(child: CircularProgressIndicator());
+          return const Center(child: ConsoleLoader.medium());
         }
         if (snapshot.hasError || snapshot.data == null) {
           return _BinaryBytesPreview(
@@ -487,7 +524,7 @@ class _LazyPdfPage extends StatelessWidget {
                 future: rendered,
                 builder: (context, snapshot) {
                   if (snapshot.connectionState != ConnectionState.done) {
-                    return const Center(child: CircularProgressIndicator());
+                    return const Center(child: ConsoleLoader.medium());
                   }
                   final result = snapshot.data;
                   if (snapshot.hasError || result == null) {

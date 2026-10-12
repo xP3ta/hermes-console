@@ -18,6 +18,7 @@ import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../chat_draft_store.dart';
+import '../app_lock_sensitive_read_fence.dart';
 import '../connection_manager.dart';
 import '../secure_storage.dart';
 import 'notification_action_ops.dart';
@@ -44,11 +45,16 @@ class PrefsActionDedupeStore implements ActionDedupeStore {
     }
   }
 
+  String _entryKey(String key) =>
+      '$storageKey.${base64Url.encode(utf8.encode(key))}';
+
   @override
   Future<String?> stateOf(String key, DateTime now, Duration window) async {
-    final all = await _load();
-    final entry = all[key];
+    await prefs.reload();
+    final raw = prefs.getString(_entryKey(key));
+    final entry = raw == null ? (await _load())[key] : jsonDecode(raw);
     if (entry is! Map) return null;
+    if (entry['s'] == 'rescue_pending') return 'rescue_pending';
     final at = entry['at'];
     if (at is! int || now.millisecondsSinceEpoch - at > window.inMilliseconds) {
       return null;
@@ -58,19 +64,17 @@ class PrefsActionDedupeStore implements ActionDedupeStore {
 
   @override
   Future<void> mark(String key, String state, DateTime now) async {
-    final all = await _load();
-    final cutoff = now.millisecondsSinceEpoch - const Duration(hours: 1).inMilliseconds;
-    all.removeWhere((_, v) => v is! Map || (v['at'] as int? ?? 0) < cutoff);
-    all[key] = {'s': state, 'at': now.millisecondsSinceEpoch};
-    await prefs.setString(storageKey, jsonEncode(all));
+    if (!await prefs.setString(
+      _entryKey(key),
+      jsonEncode({'s': state, 'at': now.millisecondsSinceEpoch}),
+    )) {
+      throw StateError('checkpoint unavailable');
+    }
   }
 
   @override
   Future<void> forget(String key) async {
-    final all = await _load();
-    if (all.remove(key) != null) {
-      await prefs.setString(storageKey, jsonEncode(all));
-    }
+    await prefs.remove(_entryKey(key));
   }
 }
 
@@ -80,7 +84,7 @@ abstract interface class ReplyRescue {
 }
 
 /// Composer-draft key of the destination conversation (same keys the Bot
-/// Chat and Room screens read).
+/// Chat, Room and chat screens read).
 ({String sessionId, String profile})? replyDraftAddress(
   NotificationActionPayload p, {
   required String activeProfile,
@@ -99,6 +103,13 @@ abstract interface class ReplyRescue {
             'mob-room-${base64Url.encode(utf8.encode(jsonEncode([authority, room])))}',
         profile: activeProfile.trim().isEmpty ? 'default' : activeProfile,
       );
+    case NotificationActionRoute.session:
+      // The chat's own composer draft: the key the chat screen reads when
+      // the card's "open" brings the user to this session.
+      final session = p.sessionId;
+      if (session == null) return null;
+      final owner = p.profile?.trim() ?? '';
+      return (sessionId: session, profile: owner.isEmpty ? 'default' : owner);
     default:
       return null;
   }
@@ -112,28 +123,42 @@ class DraftReplyRescue implements ReplyRescue {
   final ChatDraftStore _store;
 
   @override
-  Future<void> keep(NotificationActionPayload p, String text) async {
+  Future<void> keep(
+    NotificationActionPayload p,
+    String text, {
+    String? actionUid,
+  }) => AppLockSensitiveReadFence.run(prefs, () => _keep(p, text, actionUid));
+
+  Future<void> _keep(
+    NotificationActionPayload p,
+    String text,
+    String? actionUid,
+  ) async {
+    if (actionUid == null || actionUid.isEmpty) {
+      throw StateError('rescue action identity unavailable');
+    }
     final address = replyDraftAddress(
       p,
       activeProfile: prefs.getString('active_profile_${p.connId}') ?? '',
     );
-    if (address == null) return;
+    if (address == null) throw StateError('rescue destination unavailable');
     final existing = await _store.load(
       p.connId,
       address.sessionId,
       profile: address.profile,
     );
-    final current = existing.text.trim();
-    if (current == text.trim() || current.endsWith(text.trim())) return;
-    await _store.save(
+    AppLockSensitiveReadFence.current.ensureCurrent();
+    final saved = await _store.save(
       p.connId,
       address.sessionId,
-      current.isEmpty ? text : '$current\n$text',
+      text,
       existing.attachments,
       profile: address.profile,
       preparedTurnClientTurnId: existing.preparedTurnClientTurnId,
       replyThreadId: existing.replyThreadId ?? p.threadId,
+      rescueActionUid: actionUid,
     );
+    if (!saved) throw StateError('rescue not committed');
   }
 }
 
@@ -163,12 +188,16 @@ class NotificationActionDrainer {
     try {
       for (var round = 0; round < maxRounds; round++) {
         _again = false;
+        final disclosure = AppLockSensitiveReadFence.capture();
         final actions = await inbox.takePendingActions(routes);
+        if (!disclosure.isCurrent) break;
         if (actions.isEmpty && !_again) break;
+        var retained = false;
         for (final action in actions) {
-          await _handleOne(action);
+          if (!await _handleOne(action, disclosure)) retained = true;
           handled++;
         }
+        if (retained) break;
       }
     } finally {
       _running = false;
@@ -176,32 +205,109 @@ class NotificationActionDrainer {
     return handled;
   }
 
-  Future<void> _handleOne(PendingNotificationAction action) async {
-    try {
-      if (action.expired) {
-        // Already reported as failed by the native sweep: never execute a
-        // stale tap; keep the reply text for the user.
-        await _rescue(action);
-      } else {
-        final outcome = await router.handle(action);
-        if (outcome == ActionOutcome.failed) await _rescue(action);
-      }
-    } catch (error) {
-      if (kDebugMode) debugPrint('[hermes-actions] ${error.runtimeType}');
-      await _rescue(action);
+  Future<bool> _handleOne(
+    PendingNotificationAction action,
+    SensitiveReadTicket disclosure,
+  ) async {
+    if (!disclosure.isCurrent) return false;
+    final custody = inbox is ClaimedNotificationActionInbox
+        ? inbox as ClaimedNotificationActionInbox
+        : null;
+    var phase = action.phase;
+    if (action.action == 'reply' &&
+        (action.text?.trim().isEmpty ?? true) &&
+        phase != 'confirmed' &&
+        phase != 'rescued') {
+      return false;
     }
-    // Terminal for this tap (done / answered / possibly sent / failed and
-    // rescued): remove it. A crash before this line re-delivers it.
-    await inbox.ackActions([action.uid]);
+    Future<void> checkpoint(String next) async {
+      if (phase == next) return;
+      if (next == 'rescued') disclosure.ensureCurrent();
+      if (custody != null && !await custody.checkpoint(action, phase, next)) {
+        throw StateError('retired notification claim');
+      }
+      phase = next;
+    }
+
+    try {
+      if (phase == 'uncertain') {
+        return false; // No resend and no rejection/rescue assertion.
+      }
+      if (phase != 'confirmed' && phase != 'rescued') {
+        if (action.expired || phase == 'rescue_pending') {
+          await checkpoint('rescue_pending');
+        } else {
+          await checkpoint('executing');
+          final outcome = await router.handle(
+            action,
+            checkpoint: checkpoint,
+            disclosure: disclosure,
+          );
+          if (outcome == ActionOutcome.maybeDone) {
+            await checkpoint('uncertain');
+            return false;
+          }
+          if (outcome == ActionOutcome.failed && phase != 'confirmed') {
+            await checkpoint('rescue_pending');
+          } else {
+            await checkpoint('confirmed');
+          }
+        }
+        if (phase == 'rescue_pending') {
+          if (!await _rescue(action, disclosure)) {
+            await custody?.deferClaim(action);
+            return false;
+          }
+          await checkpoint('rescued');
+        }
+      }
+      // A rescued checkpoint handed off before revocation may finish, but an
+      // old execution must not retire custody after that await.
+      if (phase == 'rescued') disclosure.ensureCurrent();
+      if (custody != null) {
+        return await custody.ackClaim(action);
+      } else {
+        await inbox.ackActions([action.uid]); // Legacy test/custom inbox only.
+      }
+      return true;
+    } catch (error) {
+      if (error is SensitiveReadUnavailable) await custody?.deferClaim(action);
+      // Keep native custody. A failed checkpoint is not a failed remote send.
+      if (kDebugMode) {
+        debugPrint('[hermes-actions] retained ${error.runtimeType}');
+      }
+      return false;
+    }
   }
 
-  Future<void> _rescue(PendingNotificationAction action) async {
+  Future<bool> _rescue(
+    PendingNotificationAction action,
+    SensitiveReadTicket disclosure,
+  ) async {
     final text = action.text?.trim() ?? '';
-    if (action.action != 'reply' || text.isEmpty) return;
+    if (action.action != 'reply') return true;
+    if (text.isEmpty || rescue == null) return false;
     try {
-      await rescue?.keep(action.payload, text);
+      return await AppLockSensitiveReadFence.runWithTicket(
+        disclosure,
+        () async {
+          final target = rescue!;
+          if (target is DraftReplyRescue) {
+            await target.keep(action.payload, text, actionUid: action.uid);
+          } else {
+            await target.keep(action.payload, text);
+          }
+          // Even an already-admitted write or custom rescue may complete after
+          // revocation. Completion is not authority to confirm rescue or ACK.
+          disclosure.ensureCurrent();
+          return true;
+        },
+      );
     } catch (error) {
-      if (kDebugMode) debugPrint('[hermes-actions] rescue ${error.runtimeType}');
+      if (kDebugMode) {
+        debugPrint('[hermes-actions] rescue ${error.runtimeType}');
+      }
+      return false;
     }
   }
 }
@@ -233,6 +339,8 @@ const allNotificationActionRoutes = {
   NotificationActionRoute.chat,
   NotificationActionRoute.botChat,
   NotificationActionRoute.cron,
+  NotificationActionRoute.session,
+  NotificationActionRoute.kanban,
 };
 
 /// Headless entrypoint booted by `HermesActionDrainWorker` when no engine is
@@ -262,7 +370,9 @@ Future<void> hermesNotificationActionDrain() async {
     );
     await drainer.drain().timeout(const Duration(seconds: 80));
   } catch (error) {
-    if (kDebugMode) debugPrint('[hermes-actions] headless ${error.runtimeType}');
+    if (kDebugMode) {
+      debugPrint('[hermes-actions] headless ${error.runtimeType}');
+    }
   } finally {
     await platform.drainFinished();
   }

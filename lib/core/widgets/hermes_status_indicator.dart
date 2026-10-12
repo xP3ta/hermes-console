@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../theme/app_theme.dart';
-import 'hermes_spark_mascot.dart' show HermesSparkMood;
+import '../companion/models/companion_mood.dart';
 
 /// Pulso cuadrado al estilo del `StatusPulse` de Hermes Desktop: un
 /// cuadradito de 12 px (esquinas de 2 px) que late mientras el agente
@@ -28,7 +28,20 @@ class _HermesStatusPulseState extends State<HermesStatusPulse>
     _controller = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 900),
-    )..repeat(reverse: true);
+    );
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
+    if (reduceMotion) {
+      _controller
+        ..stop()
+        ..value = 1;
+    } else if (!_controller.isAnimating) {
+      _controller.repeat(reverse: true);
+    }
   }
 
   @override
@@ -67,23 +80,20 @@ class _HermesStatusPulseState extends State<HermesStatusPulse>
 /// comprobando → spinner, OK → check verde, error → icono rojo,
 /// sin conexión → "cloud off", reposo → punto tenue.
 ///
-/// El `HermesSparkMascot` se reserva como mascota/companion; este widget cubre
+/// La mascota/companion (`CompanionView`) es otra superficie; este widget cubre
 /// los usos puramente funcionales de estado.
 class HermesStatusIndicator extends StatelessWidget {
-  final HermesSparkMood mood;
+  final CompanionMood mood;
   final double size;
 
   const HermesStatusIndicator({super.key, required this.mood, this.size = 24});
-
-  static const _ok = Color(0xFF3FB950);
-  static const _err = Color(0xFFE5534B);
 
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
     switch (mood) {
-      case HermesSparkMood.connecting:
-      case HermesSparkMood.thinking:
+      case CompanionMood.connecting:
+      case CompanionMood.thinking:
         return SizedBox(
           width: size,
           height: size,
@@ -92,20 +102,19 @@ class HermesStatusIndicator extends StatelessWidget {
             valueColor: AlwaysStoppedAnimation<Color>(colors.accent),
           ),
         );
-      case HermesSparkMood.success:
-        return Icon(Icons.check_circle, color: _ok, size: size);
-      case HermesSparkMood.error:
-        return Icon(Icons.error_outline, color: _err, size: size);
-      case HermesSparkMood.offline:
+      case CompanionMood.success:
+        return Icon(Icons.check_circle, color: colors.success, size: size);
+      case CompanionMood.error:
+        return Icon(Icons.error_outline, color: colors.error, size: size);
+      case CompanionMood.offline:
         return Icon(
           Icons.cloud_off,
           color: colors.textSecondary,
           size: size * 0.9,
         );
-      case HermesSparkMood.idle:
-      case HermesSparkMood.waiting:
-      case HermesSparkMood
-          .jump: // no se usa aquí; icono neutro por exhaustividad
+      case CompanionMood.idle:
+      case CompanionMood.waiting:
+      case CompanionMood.jump: // no se usa aquí; icono neutro por exhaustividad
         return Icon(
           Icons.radio_button_unchecked,
           color: colors.textSecondary,

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+
+import '../../l10n/app_localizations.dart';
 import '../widgets/hermes_app_bar.dart';
 
 class ImageViewerScreen extends StatelessWidget {
@@ -30,9 +32,16 @@ class ImageViewerScreen extends StatelessWidget {
           statusBarBrightness: Brightness.dark,
           systemNavigationBarIconBrightness: Brightness.light,
         ),
-        leading: IconButton(
-          icon: const Icon(Icons.close),
-          onPressed: () => Navigator.pop(context),
+        leading: Semantics(
+          label: Strings.of(context).commonClose,
+          button: true,
+          onTap: () => Navigator.pop(context),
+          excludeSemantics: true,
+          child: IconButton(
+            icon: const Icon(Icons.close),
+            tooltip: Strings.of(context).commonClose,
+            onPressed: () => Navigator.pop(context),
+          ),
         ),
       ),
       body: Center(

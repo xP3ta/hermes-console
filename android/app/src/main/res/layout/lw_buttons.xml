@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Answer buttons. What you see is a 32 dp pill; what you tap is its 48 dp
+     tall box. The label is centred in the pill both ways, with the same
+     padding on both sides. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/lw_buttons"
+    android:layout_width="match_parent"
+    android:layout_height="@dimen/lw_touch"
+    android:baselineAligned="false"
+    android:orientation="horizontal">
+
+    <FrameLayout
+        android:id="@+id/lw_button_yes"
+        android:layout_width="wrap_content"
+        android:layout_height="match_parent">
+
+        <TextView
+            android:id="@+id/lw_button_yes_label"
+            style="@style/LW.Text.Medium.Button.Go"
+            android:text="@string/lw_allow" />
+    </FrameLayout>
+
+    <FrameLayout
+        android:id="@+id/lw_button_no"
+        android:layout_width="wrap_content"
+        android:layout_height="match_parent"
+        android:layout_marginStart="@dimen/lw_button_gap">
+
+        <TextView
+            android:id="@+id/lw_button_no_label"
+            style="@style/LW.Text.Medium.Button"
+            android:text="@string/lw_deny" />
+    </FrameLayout>
+
+    <FrameLayout
+        android:id="@+id/lw_button_open"
+        android:layout_width="wrap_content"
+        android:layout_height="match_parent"
+        android:layout_marginStart="@dimen/lw_button_gap">
+
+        <TextView
+            android:id="@+id/lw_button_open_label"
+            style="@style/LW.Text.Medium.Button"
+            android:text="@string/lw_open" />
+    </FrameLayout>
+</LinearLayout>

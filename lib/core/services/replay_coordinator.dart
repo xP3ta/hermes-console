@@ -391,6 +391,36 @@ final class ReplayCoordinator {
     }
   }
 
+  /// Drops every trace of [runtime] once nobody on this transport reads it
+  /// any more (the chat that attached it on a shared socket was released).
+  /// Unlike [quarantine] it frees the slot: a long-lived socket shared by many
+  /// chats would otherwise reach [maxTrackedRuntimes] and poison every live
+  /// runtime. A later resume of the same runtime starts from no watermark,
+  /// exactly as a fresh socket would.
+  void forget(String runtime) {
+    if (_resourceOverflowed) return;
+    _watermarks.remove(runtime);
+    _quarantine.remove(runtime);
+    _recoveryExceptions.remove(runtime);
+    _committedRecoveryEvents.remove(runtime);
+    _committedRecoveryAuthorities.remove(runtime);
+    _outstandingRecoveryProofs.removeWhere(
+      (proof) => proof.runtimeSessionId == runtime,
+    );
+    final replay = _transactions.remove(runtime);
+    if (replay != null) {
+      _totalHeldEvents -= replay.held.length;
+      replay.held.clear();
+      replay.closed = true;
+    }
+    final recovery = _recoveryTransactions.remove(runtime);
+    if (recovery != null) {
+      if (!recovery.poisoned) _totalHeldEvents -= recovery.held.length;
+      recovery.held.clear();
+      recovery.poisoned = true;
+    }
+  }
+
   void quarantine(String runtime) {
     _committedRecoveryEvents.remove(runtime);
     _committedRecoveryAuthorities.remove(runtime);

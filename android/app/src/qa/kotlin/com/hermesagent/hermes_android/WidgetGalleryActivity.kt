@@ -15,22 +15,19 @@ import android.widget.ScrollView
 import android.widget.TextView
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
-import androidx.glance.appwidget.ExperimentalGlanceRemoteViewsApi
-import androidx.glance.appwidget.GlanceRemoteViews
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import java.io.File
 
 /**
- * QA-only widget gallery: renders the REAL Bot Mode Glance composables
- * (same code as the placed widgets) with synthetic sample data for every
- * state and size, shows them and writes PNGs to
+ * QA-only widget gallery: renders the REAL launcher widgets (the renderer
+ * the placed widgets use) with synthetic sample data for every state and
+ * size, shows them and writes PNGs to
  * `getExternalFilesDir("widget-gallery")`. Never talks to a server and never
  * reads the owner's snapshot. Launch:
  * `adb shell am start -n <pkg>/com.hermesagent.hermes_android.WidgetGalleryActivity`
  */
-@OptIn(ExperimentalGlanceRemoteViewsApi::class)
 class WidgetGalleryActivity : Activity() {
     private val scope = CoroutineScope(Dispatchers.Main)
 
@@ -56,13 +53,32 @@ class WidgetGalleryActivity : Activity() {
             finish()
             return
         }
+        val refresh = intent?.getIntExtra("refresh", 0) ?: 0
+        if (refresh > 0) {
+            // QA: asks every placed launcher widget to redraw `refresh` times,
+            // the way the app does when a snapshot changes (a shell cannot:
+            // the receivers are not exported). Nothing is drawn here.
+            scope.launch {
+                repeat(refresh) {
+                    LauncherWidgets.requestUpdate(applicationContext, launcherWidgetReceivers())
+                    kotlinx.coroutines.delay(1500)
+                }
+                finish()
+            }
+            return
+        }
         scope.launch {
-            renderAll(column)
+            renderLauncherWidgets(column)
             renderPickerPreviews(column)
             if (intent?.getBooleanExtra("notifications", false) == true) {
                 postSampleNotifications()
                 renderPostedNotifications(column)
             }
+            // What a capture script waits for.
+            column.addView(
+                TextView(this@WidgetGalleryActivity).apply { text = "done"; setTextColor(Color.WHITE); tag = "gallery-done" },
+                ViewGroup.LayoutParams(-2, -2),
+            )
         }
     }
 
@@ -148,85 +164,6 @@ class WidgetGalleryActivity : Activity() {
             else -> "idle"
         }
         return WidgetRoomMember(name, state, face(profile, faceState))
-    }
-
-    private fun scenarios(): List<Triple<String, BotModeWidgetKind, Pair<DpSize, BotModeWidgetState>>> {
-        val now = System.currentTimeMillis()
-        val base = BotModeWidgetState(connectionId = "gallery", connectionLabel = "Home server", connected = true, updatedAtMs = now)
-        val idleBots = listOf(
-            bot("builder", "Builder", WidgetBotState.IDLE, role = "Publica la app Android"),
-            bot("scout", "Scout", WidgetBotState.IDLE, role = "Investigación"),
-            bot("review", "Review", WidgetBotState.IDLE, role = "Revisión de código"),
-            bot("lead", "Lead", WidgetBotState.IDLE, role = "Planifica la semana"),
-        )
-        val steps = listOf(getString(R.string.botw_preview_step_1), getString(R.string.botw_preview_step_2), getString(R.string.botw_preview_step_3))
-        val working = bot("builder", "Builder", WidgetBotState.WORKING, steps, room = "Console Devs")
-        val devsRoom = WidgetRoom(
-            id = "r-devs", name = "Console Devs", working = true,
-            members = listOf(member("builder", "builder", "working"), member("review", "review", "done"), member("lead", "lead", "idle")),
-            lastSpeaker = "review", lastMessage = "Bien, un detalle de nombres.",
-            openPayload = open("r-devs"), stopPayload = "{}",
-            phase = "working", sinceMs = now - 90_000,
-        )
-        val opsRoom = WidgetRoom(
-            id = "r-ops", name = "Atlas", working = false,
-            members = listOf(member("lead", "lead", "needs_you"), member("scout", "scout", "done")),
-            lastSpeaker = null, lastMessage = null, openPayload = open("r-ops"), stopPayload = null,
-            phase = "needs_you", sinceMs = now - 30_000,
-        )
-        val sq = DpSize(170.dp, 170.dp)
-        val wide = DpSize(350.dp, 170.dp)
-        val large = DpSize(350.dp, 350.dp)
-        val strip = DpSize(350.dp, 70.dp)
-        val small = DpSize(170.dp, 70.dp)
-        fun heroState(b: WidgetBot, others: List<WidgetActiveRef> = emptyList()) = base.copy(
-            bots = listOf(b) + idleBots.filter { it.profile != b.profile },
-            active = listOf(WidgetActiveRef("bot", b.profile)) + others,
-            hero = WidgetActiveRef("bot", b.profile),
-            workingCount = if (b.state == WidgetBotState.WORKING) 1 else 0,
-        )
-        val multi = base.copy(
-            bots = listOf(
-                bot("lead", "Lead", WidgetBotState.NEEDS_YOU, room = "Atlas"),
-                working,
-                bot("scout", "Scout", WidgetBotState.WORKING, listOf("Comparar Glance")),
-                bot("review", "Review", WidgetBotState.DONE, room = "Console Devs"),
-            ),
-            rooms = listOf(opsRoom, devsRoom),
-            active = listOf(
-                WidgetActiveRef("room", "r-ops"),
-                WidgetActiveRef("room", "r-devs"),
-                WidgetActiveRef("bot", "scout"),
-            ),
-            hero = WidgetActiveRef("room", "r-ops"),
-            workingCount = 2,
-            needsYouCount = 1,
-            approvals = listOf(
-                WidgetApproval("a1", "lead · Atlas", "Quiere ejecutar “gh pr ready 51”", face("lead", "needs"), "{}", open("r-ops"), true),
-                WidgetApproval("a2", "builder · Console Devs", "Necesita tu OK · editar 3 archivos", face("builder", "needs"), "{}", open("r-devs"), true),
-            ),
-            quick = working,
-        )
-        return listOf(
-            Triple("bots_2x2_overview", BotModeWidgetKind.BOTS, sq to base.copy(bots = idleBots)),
-            Triple("bots_2x2_working", BotModeWidgetKind.BOTS, sq to heroState(working, listOf(WidgetActiveRef("bot", "scout"), WidgetActiveRef("room", "r-ops")))),
-            Triple("bots_2x2_done", BotModeWidgetKind.BOTS, sq to heroState(bot("builder", "Builder", WidgetBotState.DONE, steps))),
-            Triple("bots_2x2_needs_you", BotModeWidgetKind.BOTS, sq to heroState(bot("lead", "Lead", WidgetBotState.NEEDS_YOU, room = "Atlas"))),
-            Triple("bots_2x2_failed", BotModeWidgetKind.BOTS, sq to heroState(bot("scout", "Scout", WidgetBotState.FAILED))),
-            Triple("bots_2x2_room_hero", BotModeWidgetKind.BOTS, sq to multi.copy(hero = WidgetActiveRef("room", "r-devs"))),
-            Triple("bots_4x2_list_multi", BotModeWidgetKind.BOTS, wide to multi),
-            Triple("bots_4x4_hero_list", BotModeWidgetKind.BOTS, large to multi.copy(hero = WidgetActiveRef("room", "r-devs"), active = listOf(WidgetActiveRef("room", "r-devs"), WidgetActiveRef("room", "r-ops"), WidgetActiveRef("bot", "scout")))),
-            Triple("needs_you_2x2", BotModeWidgetKind.NEEDS_YOU, sq to multi),
-            Triple("needs_you_4x2", BotModeWidgetKind.NEEDS_YOU, wide to multi),
-            Triple("needs_you_clear", BotModeWidgetKind.NEEDS_YOU, sq to base.copy(bots = idleBots)),
-            Triple("room_2x2", BotModeWidgetKind.ROOM, sq to multi.copy(rooms = listOf(devsRoom, opsRoom))),
-            Triple("room_4x2", BotModeWidgetKind.ROOM, wide to multi.copy(rooms = listOf(devsRoom, opsRoom))),
-            Triple("room_4x2_needs_you", BotModeWidgetKind.ROOM, wide to multi),
-            Triple("quick_ask_4x1", BotModeWidgetKind.QUICK_ASK, strip to multi),
-            Triple("status_2x1", BotModeWidgetKind.STATUS, small to multi),
-            Triple("bots_4x4_idle", BotModeWidgetKind.BOTS, large to base.copy(bots = idleBots)),
-            Triple("room_4x4", BotModeWidgetKind.ROOM, large to multi.copy(rooms = listOf(devsRoom, opsRoom))),
-        )
     }
 
     /**
@@ -352,15 +289,293 @@ class WidgetGalleryActivity : Activity() {
         }
     }
 
+    /**
+     * The launcher widgets (Ahora, Chat rápido) through their REAL renderer,
+     * with sample data, at the cell sizes of a Pixel: `lw_<name>.png`.
+     */
+    private fun renderLauncherWidgets(column: LinearLayout) {
+        val out = getExternalFilesDir("widget-gallery")?.apply { mkdirs() }
+        val now = System.currentTimeMillis()
+        val chat = HermesWidgetState(
+            configured = true,
+            instanceId = "gallery",
+            instanceLabel = "Home server",
+            connectionState = HermesWidgetConnectionState.CONNECTED,
+            sessionId = "gallery-session",
+            sessionTitle = "Prueba con subagentes, herramientas y pensamiento",
+            agentState = HermesWidgetAgentState.TOOL_EXECUTION,
+            toolName = "Terminal",
+            lastActivityAtMs = now - 42_000,
+            updatedAtMs = now,
+        )
+        val bots = BotModeWidgetState(
+            connectionId = "gallery",
+            connectionLabel = "Home server",
+            connected = true,
+            bots = listOf(
+                bot("builder", "Builder", WidgetBotState.WORKING, listOf("Console Devs"), room = "Console Devs"),
+                bot("review", "Review", WidgetBotState.DONE, listOf("Diseño de píldora de estado")),
+                bot("lead", "Lead", WidgetBotState.IDLE),
+            ),
+            approvals = listOf(
+                WidgetApproval("a1", "Lead", "rm -rf build/", face("lead", "needs"), "{}", open("lead"), true),
+            ),
+            updatedAtMs = now,
+        )
+        val calm = chat.copy(agentState = HermesWidgetAgentState.IDLE, toolName = null)
+        val quiet = bots.copy(approvals = emptyList(), bots = bots.bots.takeLast(2))
+        val old = now - 3 * 60 * 60_000
+        // Schema 2: the app lists every chat that runs or waits.
+        val listed = chat.copy(
+            schemaVersion = 2,
+            agentState = HermesWidgetAgentState.WAITING_APPROVAL,
+            toolName = null,
+            active = listOf(
+                HermesWidgetChatActivity(
+                    "gallery-session", "Limpiar el build", null, HermesWidgetAgentState.WAITING_APPROVAL, null, now - 42_000,
+                    HermesWidgetNeed("req-1", false, "rm -rf build/", "{}"),
+                ),
+                HermesWidgetChatActivity(
+                    "gallery-other", "Prueba con subagentes, herramientas y pensamiento", "builder",
+                    HermesWidgetAgentState.TOOL_EXECUTION, "Terminal", now - 134_000, null,
+                ),
+            ),
+        )
+        val samples = listOf(
+            Triple("chat_need", listed, quietBots(bots)),
+            Triple("chat_run", listed.copy(active = listed.active.drop(1), agentState = HermesWidgetAgentState.IDLE), quietBots(bots)),
+            Triple("need", chat, bots),
+            Triple("run", chat, quiet),
+            Triple("calm", calm, quiet),
+            Triple("offline", calm.copy(updatedAtMs = old, lastActivityAtMs = old), BotModeWidgetState()),
+            Triple("setup", HermesWidgetState(), BotModeWidgetState()),
+        )
+        val sizes = listOf("2x1" to (184f to 98f), "4x1" to (380f to 98f), "2x2" to (184f to 208f), "4x2" to (380f to 208f), "4x3" to (380f to 318f),
+            "5x3" to (395f to 288f), "3x2" to (235f to 190f), "5x4" to (395f to 384f), "2x3" to (160f to 288f))
+        val scenes = mutableListOf<Scene>()
+        fun shot(name: String, subject: LauncherWidgetSubject, data: LauncherWidgetData, size: LauncherWidgetSize) {
+            scenes += Scene(name, subject, data, size)
+            val host = FrameLayout(this)
+            val view = LauncherWidgetRenderer(this, data, size, false).build(subject).apply(this, host)
+            val w = dp(size.width.toInt())
+            val h = dp(size.height.toInt())
+            host.addView(view, FrameLayout.LayoutParams(w, h))
+            host.measure(View.MeasureSpec.makeMeasureSpec(w, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(h, View.MeasureSpec.EXACTLY))
+            host.layout(0, 0, w, h)
+            val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            host.draw(android.graphics.Canvas(bitmap))
+            out?.let { dir -> File(dir, "lw_$name.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) } }
+            column.addView(TextView(this).apply { text = "lw_$name"; setTextColor(Color.WHITE) })
+            column.addView(ImageView(this).apply { setImageBitmap(bitmap) }, LinearLayout.LayoutParams(w, h).apply { bottomMargin = dp(12) })
+        }
+        for ((state, chatState, botState) in samples) {
+            val data = LauncherWidgetData(now, chatState, botState)
+            for ((cells, pair) in sizes) {
+                shot("ahora_${state}_$cells", LauncherWidgetSubject.AHORA, data, LauncherWidgetSize(pair.first, pair.second))
+            }
+        }
+        val hour = 60 * 60_000L
+        val cron = CronWidgetState(
+            connectionId = "gallery",
+            updatedAtMs = now,
+            jobs = listOf(
+                CronWidgetJob("j1", "Salida RRHH", now + 2 * hour, now - 70 * hour, CronWidgetResult.OK, false, null),
+                CronWidgetJob("j2", "Resumen del día", now + 6 * hour, now - 18 * hour, CronWidgetResult.OK, false, null),
+                CronWidgetJob("j3", "Copia de seguridad", now + 12 * hour, now - 5 * hour, CronWidgetResult.FAILED, false, null),
+                CronWidgetJob("j4", "Entrada RRHH", now + 17 * hour, now - 1 * hour, CronWidgetResult.OK, false, null),
+                CronWidgetJob("j5", "Informe semanal", now + 90 * hour, now - 78 * hour, CronWidgetResult.OK, false, null),
+                CronWidgetJob("j6", "Limpieza", 0, 0, CronWidgetResult.NONE, true, null),
+            ),
+        )
+        val data = LauncherWidgetData(now, chat, bots, cron)
+        shot("quick_2x1", LauncherWidgetSubject.QUICK, data, LauncherWidgetSize(184f, 98f))
+        shot("quick_4x1", LauncherWidgetSubject.QUICK, data, LauncherWidgetSize(380f, 98f))
+        val oldCron = LauncherWidgetData(now, chat, bots, cron.copy(updatedAtMs = now - 3 * hour))
+        val noCron = LauncherWidgetData(now, chat, bots)
+        for ((cells, pair) in sizes) {
+            val size = LauncherWidgetSize(pair.first, pair.second)
+            shot("cron_$cells", LauncherWidgetSubject.CRON, data, size)
+            shot("cron_old_$cells", LauncherWidgetSubject.CRON, oldCron, size)
+        }
+        shot("cron_none_2x1", LauncherWidgetSubject.CRON, noCron, LauncherWidgetSize(184f, 98f))
+        shot("cron_none_4x2", LauncherWidgetSubject.CRON, noCron, LauncherWidgetSize(380f, 208f))
+        // Bots and Salas: a team with every state, and the same one with old data.
+        val devs = WidgetRoom(
+            id = "r-devs", name = "Console Devs", working = true,
+            members = listOf(member("builder", "Builder", "working"), member("review", "Review", "queued"), member("lead", "Lead", "idle"), member("scout", "Scout", "idle")),
+            lastSpeaker = "Review", lastMessage = "Bien, un detalle de nombres.",
+            openPayload = open("r-devs"), stopPayload = null, phase = "working", sinceMs = now - 134_000,
+        )
+        val ideas = WidgetRoom(
+            id = "r-ideas", name = "Ideas", working = false,
+            members = listOf(member("review", "Review", "idle"), member("scout", "Scout", "idle")),
+            lastSpeaker = "Review", lastMessage = "¿Y si el sprite corre por encima de la píldora?",
+            openPayload = open("r-ideas"), stopPayload = null,
+        )
+        val team = bots.copy(
+            bots = listOf(
+                bot("lead", "Lead", WidgetBotState.NEEDS_YOU, room = "Console Devs"),
+                bot("builder", "Builder", WidgetBotState.WORKING, room = "Console Devs"),
+                bot("review", "Review", WidgetBotState.DONE, listOf("Diseño de píldora de estados")),
+                bot("scout", "Scout", WidgetBotState.IDLE, role = "Investigación"),
+            ),
+            rooms = listOf(devs, ideas),
+        )
+        val board = TasksWidgetState(
+            connectionId = "gallery",
+            updatedAtMs = now,
+            running = 2,
+            pending = 3,
+            tasks = listOf(
+                TaskWidgetTask("t1", "Publicar 1.2.15", TaskWidgetState.RUNNING, "Builder", null),
+                TaskWidgetTask("t2", "Rediseñar Inicio", TaskWidgetState.RUNNING, "Lead", null),
+                TaskWidgetTask("t3", "Probar GPT-Live con pantalla apagada", TaskWidgetState.PENDING, null, null),
+                TaskWidgetTask("t4", "Notas de la versión 1.2.15", TaskWidgetState.PENDING, null, null),
+                TaskWidgetTask("t5", "Revisar permisos de la sala Ideas", TaskWidgetState.PENDING, null, null),
+            ),
+        )
+        val withTasks = LauncherWidgetData(now, chat, team, cron, board)
+        val oldTasks = LauncherWidgetData(now, chat, team, cron, board.copy(updatedAtMs = now - 3 * hour))
+        for ((cells, pair) in sizes) {
+            val size = LauncherWidgetSize(pair.first, pair.second)
+            shot("tareas_$cells", LauncherWidgetSubject.TASKS, withTasks, size)
+            shot("tareas_old_$cells", LauncherWidgetSubject.TASKS, oldTasks, size)
+        }
+        val recent = ChatsWidgetState(
+            connectionId = "gallery",
+            updatedAtMs = now,
+            chats = listOf(
+                ChatWidgetChat("gallery-other", "Prueba con subagentes, herramientas y pensamiento", null, now - 60_000, null),
+                ChatWidgetChat("gallery-session", "Limpiar el build", "Listo, el build está limpio", now - 5 * 60_000, null),
+                ChatWidgetChat("c3", "Saludo amistoso", "¡Buenos días! ¿Qué hacemos hoy?", now - 2 * hour, null),
+                ChatWidgetChat("c4", "Arreglar selección de modelo", "Ya elige el de reserva si falla", now - 26 * hour, null),
+                ChatWidgetChat("c5", "Notas de la versión", "Aquí tienes el borrador", now - 50 * hour, null),
+            ),
+        )
+        val long = ChatsWidgetState(
+            connectionId = "gallery",
+            updatedAtMs = now,
+            chats = listOf(
+                ChatWidgetChat("m1", "Revisar por qué el widget de chats repite las conversaciones cuando se actualiza varias veces", "Listo: era el contenedor que no se vaciaba", now - 3 * 60_000, null),
+                ChatWidgetChat("m2", "Hola", null, now - 40 * 60_000, null),
+                ChatWidgetChat("m3", "Saludo", "¡Buenos días!", now - 3 * hour, null),
+                ChatWidgetChat("m4", "Plan de migración del servidor a otra máquina con más memoria", "Primero copiamos los datos y después probamos", now - 20 * hour, null),
+                ChatWidgetChat("m5", "Receta", "Aquí tienes la receta completa", now - 30 * hour, null),
+                ChatWidgetChat("m6", "Notas de la versión 1.2.15 para la tienda y para GitHub", "Borrador listo", now - 52 * hour, null),
+                ChatWidgetChat("m7", "Pruebas", "Todo en verde", now - 80 * hour, null),
+                ChatWidgetChat("m8", "Ideas para el widget de tareas", null, now - 200 * hour, null),
+            ),
+        )
+        val noChat = LauncherWidgetData(now, calm, team, cron, board, ChatsWidgetState(connectionId = "gallery", updatedAtMs = now))
+        val unknownChats = LauncherWidgetData(now, calm, team, cron, board)
+        val longChats = LauncherWidgetData(now, chat.copy(schemaVersion = 2, active = listOf(
+            HermesWidgetChatActivity("m2", "Hola", null, HermesWidgetAgentState.THINKING, null, now - 20_000, null),
+        )), team, cron, board, long)
+        val staleLong = LauncherWidgetData(now, calm, team, cron, board, long.copy(updatedAtMs = now - 3 * hour))
+        for ((cells, pair) in sizes) {
+            val size = LauncherWidgetSize(pair.first, pair.second)
+            shot("chats_long_$cells", LauncherWidgetSubject.CHATS, longChats, size)
+            shot("chats_stale8_$cells", LauncherWidgetSubject.CHATS, staleLong, size)
+            shot("chats_none_$cells", LauncherWidgetSubject.CHATS, noChat, size)
+            shot("chats_unknown_$cells", LauncherWidgetSubject.CHATS, unknownChats, size)
+        }
+        val withChats = LauncherWidgetData(now, listed, team, cron, board, recent)
+        val oldChats = LauncherWidgetData(now, calm.copy(updatedAtMs = old, lastActivityAtMs = old), team, cron, board, recent.copy(updatedAtMs = now - 3 * hour))
+        for ((cells, pair) in sizes) {
+            val size = LauncherWidgetSize(pair.first, pair.second)
+            shot("chats_$cells", LauncherWidgetSubject.CHATS, withChats, size)
+            shot("chats_old_$cells", LauncherWidgetSubject.CHATS, oldChats, size)
+        }
+        val live = LauncherWidgetData(now, chat, team)
+        val gone = LauncherWidgetData(now, chat, team.copy(updatedAtMs = now - 3 * hour))
+        for ((cells, pair) in sizes) {
+            val size = LauncherWidgetSize(pair.first, pair.second)
+            shot("bots_$cells", LauncherWidgetSubject.BOTS, live, size)
+            shot("bots_old_$cells", LauncherWidgetSubject.BOTS, gone, size)
+            shot("salas_$cells", LauncherWidgetSubject.ROOMS, live, size)
+            shot("salas_old_$cells", LauncherWidgetSubject.ROOMS, gone, size)
+        }
+
+        reapplyCheck(scenes, out)
+    }
+
+    private class Scene(val name: String, val subject: LauncherWidgetSubject, val data: LauncherWidgetData, val size: LauncherWidgetSize)
+
+    /**
+     * What a launcher does with an update: when the new drawing has the layout
+     * it already shows, it applies the new actions onto the views it holds. A
+     * drawing that only looks right on a fresh inflate is wrong on a phone.
+     * Every scene of a subject and size is shown after every other one (and
+     * the same one three times in a row) on ONE view held like that, and must
+     * come out pixel-identical to a fresh inflate. Result: `reapply.txt`.
+     */
+    private fun reapplyCheck(scenes: List<Scene>, out: File?) {
+        fun render(rv: android.widget.RemoteViews, size: LauncherWidgetSize, held: Pair<Int, View>?): Pair<Int, View> {
+            val w = dp(size.width.toInt())
+            val h = dp(size.height.toInt())
+            val view: View
+            if (held != null && held.first == rv.layoutId) {
+                rv.reapply(this, held.second)
+                view = held.second
+            } else {
+                view = rv.apply(this, FrameLayout(this))
+            }
+            view.measure(View.MeasureSpec.makeMeasureSpec(w, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(h, View.MeasureSpec.EXACTLY))
+            view.layout(0, 0, w, h)
+            return rv.layoutId to view
+        }
+        fun draw(view: View, size: LauncherWidgetSize): Bitmap {
+            val bitmap = Bitmap.createBitmap(dp(size.width.toInt()), dp(size.height.toInt()), Bitmap.Config.ARGB_8888)
+            view.draw(android.graphics.Canvas(bitmap))
+            return bitmap
+        }
+        val report = StringBuilder()
+        var checked = 0
+        var bad = 0
+        for (group in scenes.groupBy { it.subject to it.size }.values) {
+            val order = group + group.reversed() + listOf(group.first(), group.first(), group.first())
+            var held: Pair<Int, View>? = null
+            for (scene in order) {
+                fun build() = LauncherWidgetRenderer(this, scene.data, scene.size, false).build(scene.subject)
+                held = render(build(), scene.size, held)
+                val got = draw(held.second, scene.size)
+                val fresh = render(build(), scene.size, null)
+                var want = draw(fresh.second, scene.size)
+                checked++
+                if (!got.sameAs(want)) {
+                    // A running timer may have ticked between the two: look again.
+                    held = render(build(), scene.size, held)
+                    want = draw(render(build(), scene.size, null).second, scene.size)
+                    if (!draw(held.second, scene.size).sameAs(want)) {
+                        bad++
+                        report.append("MISMATCH ${scene.name} ${scene.subject} ${scene.size}\n")
+                        out?.let { dir ->
+                            File(dir, "reapply_bad_${bad}_${scene.name}_got.png").outputStream().use { got.compress(Bitmap.CompressFormat.PNG, 100, it) }
+                            File(dir, "reapply_bad_${bad}_${scene.name}_want.png").outputStream().use { want.compress(Bitmap.CompressFormat.PNG, 100, it) }
+                        }
+                    }
+                }
+            }
+        }
+        report.append("reapply: $checked drawings checked, $bad differ from a fresh inflate\n")
+        out?.let { File(it, "reapply.txt").writeText(report.toString()) }
+        android.util.Log.i("WidgetGallery", report.toString())
+    }
+
+    private fun quietBots(bots: BotModeWidgetState): BotModeWidgetState =
+        bots.copy(approvals = emptyList(), bots = bots.bots.takeLast(2))
+
     /** Widget-picker previews: the real previewLayout XML, inflated. */
     private fun renderPickerPreviews(column: LinearLayout) {
         val out = getExternalFilesDir("widget-gallery")?.apply { mkdirs() }
         val previews = listOf(
-            "picker_bots" to Pair(R.layout.botw_preview_bots, DpSize(170.dp, 170.dp)),
-            "picker_needs_you" to Pair(R.layout.botw_preview_needs_you, DpSize(350.dp, 170.dp)),
-            "picker_room" to Pair(R.layout.botw_preview_room, DpSize(350.dp, 170.dp)),
-            "picker_quick_ask" to Pair(R.layout.botw_preview_quick_ask, DpSize(350.dp, 70.dp)),
-            "picker_status" to Pair(R.layout.botw_preview_status, DpSize(170.dp, 70.dp)),
+            "picker_ahora" to Pair(R.layout.lw_preview_ahora, DpSize(380.dp, 98.dp)),
+            "picker_chat_rapido" to Pair(R.layout.lw_quick_small, DpSize(184.dp, 98.dp)),
+            "picker_cron" to Pair(R.layout.lw_strip, DpSize(184.dp, 98.dp)),
+            "picker_bots" to Pair(R.layout.lw_preview_bots, DpSize(184.dp, 98.dp)),
+            "picker_salas" to Pair(R.layout.lw_preview_rooms, DpSize(184.dp, 98.dp)),
+            "picker_tareas" to Pair(R.layout.lw_preview_tasks, DpSize(184.dp, 98.dp)),
+            "picker_chats" to Pair(R.layout.lw_preview_chats, DpSize(184.dp, 98.dp)),
         )
         for ((name, pair) in previews) {
             val (layout, size) = pair
@@ -375,33 +590,5 @@ class WidgetGalleryActivity : Activity() {
             column.addView(TextView(this).apply { text = name; setTextColor(Color.WHITE) })
             column.addView(ImageView(this).apply { setImageBitmap(bitmap) }, LinearLayout.LayoutParams(w, h))
         }
-    }
-
-    private suspend fun renderAll(column: LinearLayout) {
-        val out = getExternalFilesDir("widget-gallery")?.apply { mkdirs() }
-        val legacy = HermesWidgetState.from(getSharedPreferences("gallery", MODE_PRIVATE))
-        for ((name, kind, pair) in scenarios()) {
-            val (size, state) = pair
-            val result = GlanceRemoteViews().compose(this, size) {
-                BotModeWidgetContent(this@WidgetGalleryActivity, kind, state, legacy, System.currentTimeMillis(), size)
-            }
-            val host = FrameLayout(this)
-            val view = result.remoteViews.apply(this, host)
-            val w = dp(size.width.value.toInt())
-            val h = dp(size.height.value.toInt())
-            view.layoutParams = FrameLayout.LayoutParams(w, h)
-            host.addView(view)
-            host.measure(View.MeasureSpec.makeMeasureSpec(w, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(h, View.MeasureSpec.EXACTLY))
-            host.layout(0, 0, w, h)
-            val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-            host.draw(android.graphics.Canvas(bitmap))
-            out?.let { dir -> File(dir, "$name.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) } }
-            column.addView(TextView(this).apply { text = name; setTextColor(Color.WHITE) })
-            column.addView(
-                ImageView(this).apply { setImageBitmap(bitmap) },
-                LinearLayout.LayoutParams(w, h).apply { bottomMargin = dp(12) },
-            )
-        }
-        column.addView(TextView(this).apply { text = "done"; setTextColor(Color.WHITE); tag = "gallery-done" }, ViewGroup.LayoutParams(-2, -2))
     }
 }

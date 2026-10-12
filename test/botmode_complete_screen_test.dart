@@ -97,48 +97,30 @@ void main() {
       false,
     );
   });
-  testWidgets(
-    'model warning requires an explicit confirmation before resending',
-    (tester) async {
-      final writes = <Map<String, dynamic>>[];
-      final gateway = BotProfileClient((method, params) async {
-        if (method == 'profiles.describe') {
-          return {
-            'model': {'provider': 'vendor', 'default': 'old'},
-          };
-        }
-        writes.add(params);
-        return params['confirm_expensive_model'] == true
-            ? {
-                'applied': {'model': true},
-              }
-            : {'confirm_required': true, 'confirm_message': 'Provider warning'};
-      });
-      await tester.pumpWidget(
-        host(BotProfileSettingsScreen(profile: 'bot', gateway: gateway)),
-      );
-      await tester.pumpAndSettle();
-      await tester.enterText(
-        find.byKey(const ValueKey('bot-settings-model')),
-        'new',
-      );
-      await tester.pump();
-      await tester.tap(label('Save'));
-      await tester.pumpAndSettle();
-      expect(writes, hasLength(1));
-      expect(label('Provider warning'), findsOneWidget);
-      await tester.tap(
-        find.descendant(
-          of: find.byKey(const ValueKey('hermes-dialog')),
-          matching: label('Save'),
-        ),
-      );
-      await tester.pumpAndSettle();
-      expect(writes, hasLength(2));
-      expect(writes.last['confirm_expensive_model'], true);
-      expect(writes.last['provider'], 'vendor');
-    },
-  );
+  // The model is no longer typed here: it is a picker on the bot's card
+  // and in the profile editor (test/bots/bot_model_picker_test.dart), where
+  // the server's warning about a model is confirmed.
+  testWidgets('advanced settings never ask for a model or a provider', (
+    tester,
+  ) async {
+    final gateway = BotProfileClient((method, params) async {
+      return {
+        'description': 'Before',
+        'model': {'provider': 'vendor', 'default': 'old'},
+      };
+    });
+    await tester.pumpWidget(
+      host(BotProfileSettingsScreen(profile: 'bot', gateway: gateway)),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('bot-settings-description')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('bot-settings-model')), findsNothing);
+    expect(find.byKey(const ValueKey('bot-settings-provider')), findsNothing);
+    expect(find.text('old'), findsNothing);
+  });
 
   for (final locale in ['en', 'es']) {
     testWidgets(

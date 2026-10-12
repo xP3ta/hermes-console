@@ -162,6 +162,8 @@ class _RecordingNotifications extends NotificationService {
     String? profile,
     String? roomId,
     List<String>? approvalChoices,
+    String? command,
+    String? description,
   }) async {
     if (approvalId != null) approvalIds.add(approvalId);
   }
@@ -176,6 +178,7 @@ class _RecordingNotifications extends NotificationService {
     NotificationChatSurface surface = NotificationChatSurface.normal,
     String? profile,
     String? roomId,
+    bool replyable = false,
   }) async {
     eventLog?.add('show');
   }
@@ -742,6 +745,44 @@ void main() {
     expect(chat.canSteerSubagent(present), isTrue);
     expect(chat.activeSubagentCount, 1);
   });
+
+  test(
+    'a live roster row with no status or a future one reaches the chat',
+    () async {
+      // subagent.list rows are parsed by the contract defaults (82261b3);
+      // the roster consumer must not narrow them back to a live allowlist.
+      final gateway = _SubagentGateway();
+      final chat = await _start(gateway);
+      addTearDown(chat.dispose);
+      await _settle();
+      final rows = [
+        for (final raw in const [
+          {'subagent_id': 'child-unstated', 'goal': 'sin estado'},
+          {
+            'subagent_id': 'child-future',
+            'status': 'paused_for_input',
+            'goal': 'estado futuro',
+          },
+        ])
+          DesktopSubagentSnapshot.tryParse(raw)!,
+      ];
+
+      gateway.listGate = Completer<List<DesktopSubagentSnapshot>>();
+      final refresh = chat.refreshSubagentsForTesting();
+      gateway.listGate!.complete(rows);
+      await refresh;
+
+      expect(
+        chat.subagentActivities.map((activity) => activity.subagentId),
+        unorderedEquals(['child-unstated', 'child-future']),
+      );
+      expect(
+        chat.subagentActivities.every((activity) => !activity.isTerminal),
+        isTrue,
+      );
+      expect(chat.activeSubagentCount, 2);
+    },
+  );
 
   test(
     'recycled child id without secondary proof remains distinct across runtimes',

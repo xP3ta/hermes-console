@@ -4,40 +4,34 @@ This file records the origin, redistribution terms and reproducible SHA-256
 digests for artwork maintained by Hermes Console. It does not grant rights in
 third-party names or trademarks.
 
-## Hermes Console identity
+## Console identity
 
-The project owner states that the current gold woman-and-circuit logo was
-created under their direction using ChatGPT and selected by them as original
-Hermes Console artwork. It was not copied from or derived from Nous Research or
-Hermes Agent artwork. The owner licenses the files listed below for this
-repository under `GPL-3.0-only`.
+The Console mark (a terracotta «C» with a cursor bar on a graphite rounded
+square) was supplied by the project owner as vector artwork and selected as
+the app identity for launcher, splash, notifications, store and repository
+use. It was not copied from or derived from Nous Research or Hermes Agent
+artwork. The owner licenses the files listed below for this repository under
+`GPL-3.0-only`.
 
 This statement is limited to copyright permission for the listed files in this
 repository. It makes no broader trademark claim and grants no trademark rights.
 
 | File | Role | Source | License | SHA-256 |
 |---|---|---|---|---|
-| `assets/branding/hermes_logo.webp` | Canonical dark-background in-app logo | Owner-directed ChatGPT output, selected and edited for Hermes Console | GPL-3.0-only | `400bdeabc916c7f17dfb3434acdc8064f1c5d3a5dfd5d1612834e93a08fd1359` |
-| `assets/branding/hermes_logo_light.png` | Light-background in-app variant | Owner-directed ChatGPT output, selected and edited for Hermes Console | GPL-3.0-only | `75a8a05bff4bd92ab17dc2720f171e004a98f372fdaf363d27fc770fe492d98c` |
-| `assets/icon/play_store_512.png` | Store/readme rendition of the current logo | Raster preparation of the owner-selected identity | GPL-3.0-only | `f6826e87e7f751b253e83efacbf2f67fd9af583b6e9ca6b19c3e8bb87f193161` |
-| `assets/branding/hermes_console_hero.svg` | Editable repository hero | Project-authored vector composition using the owner-selected Hermes Console identity | GPL-3.0-only | `455f918d7fe75605831cf0e692848bf261d08ba57dafb838e9443ef6afa3e9e0` |
-| `assets/branding/hermes_console_hero.png` | Raster repository hero | PNG render of `hermes_console_hero.svg` | GPL-3.0-only | `456f6743ca3bc463009bc822c06c5c042f383ad075a70e39d2d4294834659883` |
+| `assets/branding/console_mark.svg` | Editable mark (terracotta) | Owner-supplied vector artwork | GPL-3.0-only | `259d95c15bc2ffc4e4c5aefd9f6f6e4e3986bbcb90e396561847d604a9a5baa2` |
+| `assets/branding/console_icon.svg` | Editable app icon (graphite rounded square + mark) | Owner-supplied vector artwork | GPL-3.0-only | `e543e80eb6bdcb38fc19d8a74a1b709fffc37f80cfcba51494ea1b7531905e9f` |
+| `assets/branding/console_mark.png` | In-app mark (splash, onboarding) | PNG render of `console_mark.svg` | GPL-3.0-only | `34efb1edb6ac87ebb8d94fa5947d4bdee777cbf0e0edee21bead7a6fd298ac71` |
+| `assets/branding/console_icon.png` | In-app app icon (About) | Owner-supplied 512 px render of `console_icon.svg` | GPL-3.0-only | `7401045439e5fb107905b4e331eaa16def54bd8856fe7d77f44862446fde8fc4` |
+| `assets/icon/play_store_512.png` | Store/readme rendition of the icon (full-bleed square) | Owner-supplied Play Store render | GPL-3.0-only | `8af00bd7efe9c16c998e3aefd9e65010f9896a4484535acb29bdc6de99a91442` |
+| `assets/branding/hermes_console_hero.svg` | Editable repository hero | Project-authored vector composition of the mark and an outlined Inter wordmark | GPL-3.0-only | `19cf1e8e28c2d04f3e57b0e292cfcd7b365cc33df90135a6bc0517169f44923c` |
+| `assets/branding/hermes_console_hero.png` | Raster repository hero | PNG render of `hermes_console_hero.svg` | GPL-3.0-only | `fbfada6ff6e3a7a21a0cf9eca106ec1f8b57f495e2cc712be2bddbd6dc02f9ae` |
+| `assets/branding/console_banner.png` | README banner (mark and wordmark on the graphite card, rounded corners) | Project-authored composition of `console_mark.svg`, the bundled Inter wordmark and the first-run glow | GPL-3.0-only | `4423bec14eeb6e3964fe310533dfabbcc19f93669225f18d57dcf55b7e5c227b` |
 
-The launcher, adaptive-icon and splash PNGs below are raster derivatives of
-this identity generated for Android densities and flavors. Their complete
-file-by-file digest manifest is
+The Android launcher, adaptive-icon, notification and splash resources are
+vector drawables transcribed from the mark's SVG geometry plus raster
+derivatives for legacy densities and the splash. The complete file-by-file
+digest manifest of the raster files is
 [`assets/branding/android-launcher-splash.sha256`](assets/branding/android-launcher-splash.sha256).
-
-The geometric Spark symbol is project-native artwork authored for Hermes
-Console, not a Nous Research asset. `assets/branding/spark_mark.svg` is the
-editable source; its PNG and WebP files are raster derivatives. These files are
-also distributed under `GPL-3.0-only`:
-
-| File | SHA-256 |
-|---|---|
-| `assets/branding/spark_mark.svg` | `ee080350da83301388a3548173d81638d975c27af3c4d6f98183476a418dee5c` |
-| `assets/branding/spark_mark.png` | `af46285441375edeabe72db278a2e0d33a533cfac8c901d0153586a27c6d073c` |
-| `assets/branding/spark_mark.webp` | `33d8cafd4d3906b4878cea0f2d87fe9dfc7a14475c497451f7fe316ef2bc9067` |
 
 ## Approved public demo screenshots
 
@@ -71,16 +65,104 @@ manifest repeats the license declaration. The complete CC0 legal code is in
 | Violet | `assets/companions/violet/spritesheet.webp` | Created for Hermes Console by the Hermes Console team | CC0-1.0 | `163b19c92d285e9b5c54b1d22ae9902a68af532bfd4912df0336e387b7ab918b` |
 | Violet | `assets/companions/violet/pet.json` | Project-authored manifest | CC0-1.0 | `8ce3c39e29b9690b0c1a3587d38446efafbdd03fadc81b5f9a395836530d9983` |
 
+The header mascot atlases are derived from these sheets (cells cropped and
+turned into white bodies for tinting) and keep their CC0-1.0 licence; see
+[`assets/mascot/LICENSES.md`](assets/mascot/LICENSES.md).
+
+| Mascot | File | Provenance | License | SHA-256 |
+|---|---|---|---|---|
+| Nimbus (header mascot) | `assets/mascot/nimbus.webp` | Derived from the Nimbus companion sheet by `tool/mascot/build_atlas.py` | CC0-1.0 | `e5bf12f45bfc9ad1d852587a5939f50ba5b10304748b7dcf397546a137b9260b` |
+| Pixel (header mascot) | `assets/mascot/pixel.webp` | Derived from the Pixel companion sheet by `tool/mascot/build_atlas.py` | CC0-1.0 | `7c7c8d45f9e9f6543de596cd61a97d849f3435a8302a22b52f1f5f29ae31be49` |
+| Violet (header mascot) | `assets/mascot/violet.webp` | Derived from the Violet companion sheet by `tool/mascot/build_atlas.py` | CC0-1.0 | `438b2a866bd6aaf7d5363c2ddd9d2b9982d3055c15620f377741bbc305045e7c` |
+
 To verify the canonical files from the repository root:
 
 ```bash
 sha256sum -c assets/branding/android-launcher-splash.sha256
-sha256sum assets/branding/hermes_logo.webp \
-  assets/branding/hermes_logo_light.png \
-  assets/branding/spark_mark.svg \
-  assets/branding/spark_mark.png \
-  assets/branding/spark_mark.webp \
+sha256sum assets/branding/console_mark.svg \
+  assets/branding/console_icon.svg \
+  assets/branding/console_mark.png \
+  assets/branding/console_icon.png \
   assets/icon/play_store_512.png \
   assets/companions/*/pet.json \
   assets/companions/*/spritesheet.webp
 ```
+
+## Provider logos (model picker and Models)
+
+Models and providers are identified by a small monochrome mark. The path data
+in `lib/core/widgets/provider_logo_glyphs.dart` is copied unchanged from
+[Simple Icons](https://github.com/simple-icons/simple-icons) release 16.1.0
+(npm `simple-icons@16.1.0`, file `icons/<slug>.svg`), which is dedicated to
+the public domain under `CC0-1.0` (full text in
+[`LICENSES/CC0-1.0.txt`](LICENSES/CC0-1.0.txt)). Only the vector path is used;
+brand colours are not: the app tints every mark with its own theme colours.
+Hermes Desktop ships no provider logos (it uses Simple Icons only for MCP
+connector glyphs), so nothing is taken from it.
+
+| Provider | Simple Icons slug | License |
+|---|---|---|
+| Alibaba Cloud | `alibabacloud` | CC0-1.0 |
+| Anthropic | `anthropic` | CC0-1.0 |
+| Cloudflare | `cloudflare` | CC0-1.0 |
+| Google Gemini | `googlegemini` | CC0-1.0 |
+| GitHub Copilot | `githubcopilot` | CC0-1.0 |
+| Google | `google` | CC0-1.0 |
+| Hugging Face | `huggingface` | CC0-1.0 |
+| Meta | `meta` | CC0-1.0 |
+| MiniMax | `minimax` | CC0-1.0 |
+| Mistral AI | `mistralai` | CC0-1.0 |
+| NVIDIA | `nvidia` | CC0-1.0 |
+| Ollama | `ollama` | CC0-1.0 |
+| OpenRouter | `openrouter` | CC0-1.0 |
+| Perplexity | `perplexity` | CC0-1.0 |
+| Vercel | `vercel` | CC0-1.0 |
+
+Marks missing from Simple Icons come from
+[LobeHub Icons](https://github.com/lobehub/lobe-icons), npm
+`@lobehub/icons-static-svg@1.95.1` (tag `@lobehub/icons-static-svg@1.95.1`,
+commit `49a2130df7bfa5eb1b088261bff20a37e2967789`), released under the MIT License, Copyright (c) 2023 LobeHub
+([licence at that commit](https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/LICENSE);
+full notice in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md), text in
+[`LICENSES/MIT.txt`](LICENSES/MIT.txt)). Only the monochrome `icons/<file>.svg`
+variants are used, never the `-color` ones: the `d` attribute of each `<path>`
+is copied unchanged into `lib/core/widgets/provider_logo_glyphs_lobehub.dart`
+and filled in the app's theme colour (a test checks each glyph fills the same
+as under the source's even-odd rule). For
+LM Studio the translucent underlay path is omitted so the mark stays
+single-tone.
+
+| Provider | LobeHub Icons file | License | Copyright |
+|---|---|---|---|
+| OpenAI | [`icons/openai.svg`](https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/packages/static-svg/icons/openai.svg) | MIT | Copyright (c) 2023 LobeHub |
+| DeepSeek | [`icons/deepseek.svg`](https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/packages/static-svg/icons/deepseek.svg) | MIT | Copyright (c) 2023 LobeHub |
+| xAI | [`icons/xai.svg`](https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/packages/static-svg/icons/xai.svg) | MIT | Copyright (c) 2023 LobeHub |
+| Nous Research | [`icons/nousresearch.svg`](https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/packages/static-svg/icons/nousresearch.svg) | MIT | Copyright (c) 2023 LobeHub |
+| Moonshot AI | [`icons/moonshot.svg`](https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/packages/static-svg/icons/moonshot.svg) | MIT | Copyright (c) 2023 LobeHub |
+| Z.ai | [`icons/zai.svg`](https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/packages/static-svg/icons/zai.svg) | MIT | Copyright (c) 2023 LobeHub |
+| Microsoft | [`icons/microsoft.svg`](https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/packages/static-svg/icons/microsoft.svg) | MIT | Copyright (c) 2023 LobeHub |
+| LM Studio | [`icons/lmstudio.svg`](https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/packages/static-svg/icons/lmstudio.svg) | MIT | Copyright (c) 2023 LobeHub |
+
+llama.cpp has no permissively licensed mark in either set, so it, like any
+unknown or custom endpoint, is shown as a project-drawn monogram: the first
+letter of the provider name in a rounded square.
+
+The names and marks remain trademarks of their respective owners. They are
+used only to identify which company makes or serves a model; their use implies
+no affiliation or endorsement.
+
+## README buttons
+
+The store buttons under the README tagline live in `docs/badges/`; none of them
+is packaged in the app.
+
+| File | Source | License |
+|---|---|---|
+| `docs/badges/google-play-en.png`, `docs/badges/google-play-es.png` | Official Google Play badges, unmodified, from <https://play.google.com/intl/en_us/badges/> | Google Play badge guidelines (`LICENSES/LicenseRef-Google-Play-Badge.txt`); trademark notice in the README footer |
+| `docs/badges/obtainium.png` | `assets/graphics/badge_obtainium.png` of <https://github.com/ImranR98/Obtainium> | GPL-3.0-only, as that repository |
+| `docs/badges/get-it-on-github.png` and `.svg` | Project-authored button in the same shape as the other two; the GitHub mark is the Simple Icons path (CC0 file), text set in Inter (OFL-1.1) | GPL-3.0-only; the mark remains GitHub's, used only to link to the Releases page |
+| `docs/badges/visit-website-en.png`, `docs/badges/visit-website-es.png` and their `.svg` | Project-authored buttons in the same shape; the mark is the project's own `assets/branding/console_mark.svg`, text set in Inter (OFL-1.1) | GPL-3.0-only |
+
+The Ko-fi button in the README is Ko-fi's own image, linked from
+`storage.ko-fi.com` and not stored in this repository.
+

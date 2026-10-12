@@ -8,15 +8,23 @@ import '../models/admin_integrations.dart';
 import '../models/desktop_control_center.dart';
 import '../services/desktop_control_gateway.dart';
 import '../theme/app_theme.dart';
-import '../widgets/hermes_notice.dart';
+import '../widgets/hermes_app_bar.dart';
 import '../widgets/hermes_premium_ui.dart';
 import '../widgets/hermes_ui.dart';
 import '../widgets/mcp_provisioning_surface.dart';
 import 'admin_integrations_copy.dart';
 import 'admin_integrations_screen.dart';
 import 'lock_screen.dart';
+import '../widgets/console_loader.dart';
 import '../design/hermes_design.dart'
-    show HermesDialogAction, HermesDialogActionStyle, showHermesDialog;
+    show
+        HermesAction,
+        HermesDialogAction,
+        HermesDialogActionStyle,
+        HermesMenuButton,
+        showHermesDialog;
+import '../feedback/feedback_policy.dart';
+import '../feedback/screen_help.dart';
 
 enum _ExtensionsSection { plugins, tools, mcp }
 
@@ -287,10 +295,7 @@ class _ExtensionsCenterScreenState extends State<ExtensionsCenterScreen> {
       await action();
       await _load();
       if (!mounted || success == null) return;
-      HermesNotice.of(context).showSnackBar(
-        SnackBar(content: Text(success)),
-        kind: HermesNoticeKind.success,
-      );
+      AppFeedback.of(context).notify(FeedbackKind.routine, success);
     } catch (error) {
       if (!mounted) return;
       _showMutationFailure(error);
@@ -333,9 +338,12 @@ class _ExtensionsCenterScreenState extends State<ExtensionsCenterScreen> {
       final notice = result.notices.isEmpty
           ? strings.extensionsCenterPluginInstalled
           : strings.extensionsCenterPluginInstalledWithNotice;
-      HermesNotice.of(
+      AppFeedback.notify(
         context,
-      ).showSnackBar(SnackBar(content: Text(notice)));
+        result.notices.isEmpty ? FeedbackKind.routine : FeedbackKind.critical,
+        notice,
+        warning: result.notices.isNotEmpty,
+      );
     } catch (error) {
       if (mounted) _showMutationFailure(error);
     } finally {
@@ -422,14 +430,11 @@ class _ExtensionsCenterScreenState extends State<ExtensionsCenterScreen> {
       );
       await _load();
       if (!mounted) return;
-      HermesNotice.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            result.background
-                ? strings.extensionsCenterMcpInstallStarted
-                : strings.extensionsCenterMcpInstalled,
-          ),
-        ),
+      AppFeedback.of(context).notify(
+        FeedbackKind.routine,
+        result.background
+            ? strings.extensionsCenterMcpInstallStarted
+            : strings.extensionsCenterMcpInstalled,
       );
     } catch (error) {
       if (mounted) _showMutationFailure(error);
@@ -500,9 +505,13 @@ class _ExtensionsCenterScreenState extends State<ExtensionsCenterScreen> {
           : result.authorizationRequired
           ? strings.extensionsCenterMcpTestNeedsAuth
           : strings.extensionsCenterMcpTestFailed;
-      HermesNotice.of(
+      AppFeedback.notify(
         context,
-      ).showSnackBar(SnackBar(content: Text(message)));
+        // The user asked for this test: its result is shown either way.
+        result.ok ? FeedbackKind.critical : FeedbackKind.error,
+        message,
+        warning: !result.ok,
+      );
     } catch (error) {
       if (mounted) _showMutationFailure(error);
     } finally {
@@ -549,9 +558,9 @@ class _ExtensionsCenterScreenState extends State<ExtensionsCenterScreen> {
 
   void _showMutationFailure(Object error) {
     final strings = Strings.of(context);
-    HermesNotice.of(context).showSnackBar(
-      SnackBar(content: Text(_extensionsMutationFailureText(error, strings))),
-      kind: HermesNoticeKind.error,
+    AppFeedback.of(context).notify(
+      FeedbackKind.error,
+      _extensionsMutationFailureText(error, strings),
     );
   }
 
@@ -647,10 +656,14 @@ class _ExtensionsCenterScreenState extends State<ExtensionsCenterScreen> {
     };
 
     return Scaffold(
-      appBar: AppBar(
+      appBar: HermesAppBar(
         centerTitle: false,
         title: Text(strings.extensionsCenterTitle),
         actions: [
+          ScreenHelpButton(
+            title: strings.extensionsCenterTitle,
+            paragraphs: [strings.extensionsCenterIntro],
+          ),
           IconButton(
             tooltip: strings.extensionsCenterRefreshTooltip,
             onPressed: _loading ? null : _load,
@@ -660,7 +673,7 @@ class _ExtensionsCenterScreenState extends State<ExtensionsCenterScreen> {
       ),
       body: SafeArea(
         child: _loading && inventory == null
-            ? const Center(child: CircularProgressIndicator())
+            ? const Center(child: ConsoleLoader.large())
             : _failure != null && inventory == null
             ? _ExtensionsFailure(
                 message: _extensionsFailureText(_failure!, strings),
@@ -669,19 +682,11 @@ class _ExtensionsCenterScreenState extends State<ExtensionsCenterScreen> {
             : RefreshIndicator(
                 onRefresh: _load,
                 child: ListView(
+                  clipBehavior: hermesUnderHeader,
                   physics: const AlwaysScrollableScrollPhysics(),
                   padding: const EdgeInsets.only(top: 6, bottom: 30),
                   children: [
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
-                      child: Text(
-                        strings.extensionsCenterIntro,
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: colors.textSecondary,
-                          height: 1.4,
-                        ),
-                      ),
-                    ),
+                    const SizedBox(height: 8),
                     if (widget.readOnly)
                       Padding(
                         padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
@@ -1057,26 +1062,23 @@ class _PluginRow extends StatelessWidget {
                   onChanged: readOnly ? null : onChanged,
                 ),
                 if (hasMenu)
-                  PopupMenuButton<String>(
+                  HermesMenuButton<String>(
                     tooltip: strings.commonMoreOptions,
                     onSelected: (action) {
                       if (action == 'update') onUpdate();
                       if (action == 'remove') onRemove();
                     },
-                    itemBuilder: (_) => [
+                    actions: (_) => [
                       if (control?.canUpdate == true)
-                        PopupMenuItem(
+                        HermesAction(
                           value: 'update',
-                          child: Text(
-                            strings.extensionsCenterPluginUpdateAction,
-                          ),
+                          label: strings.extensionsCenterPluginUpdateAction,
                         ),
                       if (control?.canRemove == true)
-                        PopupMenuItem(
+                        HermesAction(
                           value: 'remove',
-                          child: Text(
-                            strings.extensionsCenterPluginRemoveAction,
-                          ),
+                          label: strings.extensionsCenterPluginRemoveAction,
+                          destructive: true,
                         ),
                     ],
                   ),
@@ -1175,29 +1177,28 @@ class _McpServerRow extends StatelessWidget {
                   value: server.enabled,
                   onChanged: readOnly ? null : onChanged,
                 ),
-                PopupMenuButton<String>(
+                HermesMenuButton<String>(
                   tooltip: strings.commonMoreOptions,
                   onSelected: (action) {
                     if (action == 'test') onTest();
                     if (action == 'authorize') onAuthorize();
                     if (action == 'remove') onRemove();
                   },
-                  itemBuilder: (_) => [
-                    PopupMenuItem(
+                  actions: (context) => [
+                    HermesAction(
                       value: 'test',
-                      child: Text(strings.extensionsCenterMcpTestAction),
+                      label: strings.extensionsCenterMcpTestAction,
                     ),
                     if (canAuthorize && !readOnly)
-                      PopupMenuItem(
+                      HermesAction(
                         value: 'authorize',
-                        child: Text(
-                          AdminIntegrationsCopy.of(context).authorize,
-                        ),
+                        label: AdminIntegrationsCopy.of(context).authorize,
                       ),
                     if (!readOnly)
-                      PopupMenuItem(
+                      HermesAction(
                         value: 'remove',
-                        child: Text(strings.extensionsCenterMcpRemoveAction),
+                        label: strings.extensionsCenterMcpRemoveAction,
+                        destructive: true,
                       ),
                   ],
                 ),

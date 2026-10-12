@@ -3,7 +3,8 @@ import 'package:flutter/services.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../theme/app_theme.dart';
-import 'hermes_notice.dart';
+import '../feedback/feedback_policy.dart';
+import '../design/modal.dart' show showHermesDialogRoute;
 
 /// Tappable helper shown under gateway API key fields so the user never has
 /// to guess which key the app is asking for or where to find it.
@@ -23,12 +24,9 @@ class ApiKeyHelpLink extends StatelessWidget {
         icon: Icon(Icons.help_outline, size: 14, color: colors.accentHover),
         label: Text(
           Strings.of(context).apiKeyHelpLinkLabel,
-          style: TextStyle(
-            fontSize: 11,
-            color: colors.accentHover,
-          ),
+          style: TextStyle(fontSize: 11, color: colors.accentHover),
         ),
-        onPressed: () => showDialog(
+        onPressed: () => showHermesDialogRoute(
           context: context,
           builder: (_) => const _ApiKeyHelpDialog(),
         ),
@@ -77,33 +75,19 @@ class _ApiKeyHelpDialog extends StatelessWidget {
                 Expanded(
                   child: Text(
                     _command,
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: colors.accentHover,
-                    ),
+                    style: TextStyle(fontSize: 11, color: colors.accentHover),
                   ),
                 ),
                 IconButton(
                   tooltip: Strings.of(context).apiKeyHelpCopy,
                   onPressed: () {
                     Clipboard.setData(const ClipboardData(text: _command));
-                    HermesNotice.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(
-                          Strings.of(context).apiKeyHelpCopied,
-                          style: TextStyle(
-                            fontSize: 13,
-                          ),
-                        ),
-                      ),
-                      kind: HermesNoticeKind.success,
+                    AppFeedback.of(context).notify(
+                      FeedbackKind.routine,
+                      Strings.of(context).apiKeyHelpCopied,
                     );
                   },
-                  icon: Icon(
-                    Icons.copy,
-                    size: 14,
-                    color: colors.textSecondary,
-                  ),
+                  icon: Icon(Icons.copy, size: 14, color: colors.textSecondary),
                 ),
               ],
             ),

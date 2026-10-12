@@ -42,8 +42,8 @@ typedef WidgetSessionNavigator =
       String sessionId,
     );
 
-/// Serializes shortcut/widget actions behind Splash, onboarding, App Lock and
-/// Navigator readiness without creating any remote session.
+/// Serializes shortcut/widget actions behind the first frame, onboarding,
+/// App Lock and Navigator readiness without creating any remote session.
 ///
 /// Gate owners call [retry] when their state changes. [navigate] must complete
 /// after the route is pushed, not after the route is later popped.

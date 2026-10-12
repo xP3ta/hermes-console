@@ -6,10 +6,13 @@
 library;
 
 export 'content.dart';
+export 'edges.dart';
+export 'floating.dart';
 export 'list.dart';
 export 'modal.dart';
 export 'page.dart';
 export 'schedule_builder.dart';
 export 'schedule_humanizer.dart';
 export 'schedule_model.dart';
+export 'select.dart';
 export 'tokens.dart';

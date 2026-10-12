@@ -1,0 +1,25 @@
+name: Feature request
+description: An idea that would make Console better for your Hermes.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Console follows Hermes Agent and Hermes Desktop: a feature is shown only
+        when the connected server offers what it needs. Please say what you want
+        to do, not only the screen you imagine.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like Console to do?
+  - type: textarea
+    id: desktop
+    attributes:
+      label: Does Hermes Desktop or Hermes Agent already do this?
+      description: A link or a short description helps a lot.

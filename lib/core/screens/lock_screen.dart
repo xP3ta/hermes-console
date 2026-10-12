@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import '../../l10n/app_localizations.dart';
 import '../services/app_lock.dart';
 import '../theme/app_theme.dart';
+import '../theme/motion.dart';
 
 /// Pantalla de desbloqueo: PIN propio + biometría opcional.
 ///
@@ -29,8 +30,11 @@ class LockScreen extends StatefulWidget {
   /// Pide verificación (biometría o PIN) para una acción sensible.
   /// Devuelve true si el usuario verificó. Si el bloqueo no está activo,
   /// devuelve true sin pedir nada.
-  static Future<bool> verify(BuildContext context, AppLockService lock,
-      {required String reason}) async {
+  static Future<bool> verify(
+    BuildContext context,
+    AppLockService lock, {
+    required String reason,
+  }) async {
     if (!lock.enabled) return true;
     final ok = await Navigator.push<bool>(
       context,
@@ -38,8 +42,9 @@ class LockScreen extends StatefulWidget {
         opaque: false,
         barrierColor: Colors.black54,
         fullscreenDialog: true,
-        pageBuilder: (_, _, _) =>
-            LockScreen(lock: lock, verifyMode: true, reason: reason),
+        pageBuilder: (_, _, _) => CoveredRouteMediaQueryFreeze(
+          child: LockScreen(lock: lock, verifyMode: true, reason: reason),
+        ),
         transitionsBuilder: (_, anim, _, child) =>
             FadeTransition(opacity: anim, child: child),
       ),
@@ -74,8 +79,7 @@ class _LockScreenState extends State<LockScreen> {
   }
 
   Future<void> _tryBiometric() async {
-    final ok =
-        await widget.lock.authenticateBiometric(reason: widget.reason);
+    final ok = await widget.lock.authenticateBiometric(reason: widget.reason);
     if (!mounted) return;
     if (ok) _succeed();
   }
@@ -111,7 +115,9 @@ class _LockScreenState extends State<LockScreen> {
       }
       final left = widget.lock.cooldownRemaining;
       setState(() {
-        _error = left > 0 ? Strings.of(context).lockTooManyAttempts(left.toString()) : null;
+        _error = left > 0
+            ? Strings.of(context).lockTooManyAttempts(left.toString())
+            : null;
       });
       if (left <= 0) t.cancel();
     });
@@ -174,8 +180,7 @@ class _LockScreenState extends State<LockScreen> {
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Icon(Icons.lock_outline,
-                        size: 40, color: colors.accent),
+                    Icon(Icons.lock_outline, size: 40, color: colors.accent),
                     const SizedBox(height: 16),
                     Text(
                       'HERMES',
@@ -208,16 +213,13 @@ class _LockScreenState extends State<LockScreen> {
                         LengthLimitingTextInputFormatter(8),
                       ],
                       textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        fontSize: 22,
-                        letterSpacing: 8,
-                      ),
+                      style: const TextStyle(fontSize: 22, letterSpacing: 8),
                       decoration: InputDecoration(
                         hintText: 'PIN',
                         hintStyle: TextStyle(
                           fontSize: 14,
                           letterSpacing: 2,
-                          color: colors.textDisabled,
+                          color: colors.textTertiary,
                         ),
                         errorText: _error,
                       ),
@@ -233,7 +235,8 @@ class _LockScreenState extends State<LockScreen> {
                                 width: 18,
                                 height: 18,
                                 child: CircularProgressIndicator(
-                                    strokeWidth: 2),
+                                  strokeWidth: 2,
+                                ),
                               )
                             : Text(Strings.of(context).lockUnlockShort),
                       ),
@@ -296,17 +299,22 @@ class AppLockGate extends StatefulWidget {
   State<AppLockGate> createState() => _AppLockGateState();
 }
 
-class _AppLockGateState extends State<AppLockGate>
-    with WidgetsBindingObserver {
+class _AppLockGateState extends State<AppLockGate> with WidgetsBindingObserver {
   /// Ruta de bloqueo activa, o null si la app está desbloqueada. El gate es el
   /// ÚNICO dueño del ciclo de vida de esta ruta: la empuja al bloquear y la
   /// retira al desbloquear (incluido el desbloqueo programático vía
   /// `unlock()`/`disable()`), nunca la propia LockScreen.
   Route<void>? _lockRoute;
 
+  /// A cold start that opens locked shows the lock screen without a fade of
+  /// its own: the app-wide startup hand-off already fades it in. Later
+  /// locks (back from background) keep the short fade.
+  late bool _instantPresent;
+
   @override
   void initState() {
     super.initState();
+    _instantPresent = widget.lock.locked.value;
     WidgetsBinding.instance.addObserver(this);
     widget.lock.locked.addListener(_sync);
     // Si la app arranca bloqueada, presentar tras el primer frame (cuando el
@@ -338,11 +346,16 @@ class _AppLockGateState extends State<AppLockGate>
     }
     final locked = widget.lock.locked.value;
     if (locked && _lockRoute == null) {
+      final instant = _instantPresent;
+      _instantPresent = false;
       final route = PageRouteBuilder<void>(
         opaque: true,
         barrierDismissible: false,
-        transitionDuration: const Duration(milliseconds: 200),
-        pageBuilder: (_, _, _) => LockScreen(lock: widget.lock),
+        transitionDuration: instant
+            ? Duration.zero
+            : const Duration(milliseconds: 200),
+        pageBuilder: (_, _, _) =>
+            CoveredRouteMediaQueryFreeze(child: LockScreen(lock: widget.lock)),
         transitionsBuilder: (_, anim, _, child) =>
             FadeTransition(opacity: anim, child: child),
       );
@@ -352,7 +365,9 @@ class _AppLockGateState extends State<AppLockGate>
         if (_lockRoute == route) _lockRoute = null;
         _sync();
       });
-    } else if (!locked && _lockRoute != null) {
+    } else if (!locked) {
+      _instantPresent = false;
+      if (_lockRoute == null) return;
       nav.removeRoute(_lockRoute!);
       _lockRoute = null;
     }

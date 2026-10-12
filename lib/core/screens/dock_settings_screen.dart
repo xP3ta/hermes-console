@@ -7,6 +7,7 @@ import '../models/dock_config.dart';
 import '../services/dock_preferences_store.dart';
 import '../theme/app_theme.dart';
 import '../widgets/dock_style.dart';
+import '../widgets/hermes_app_bar.dart';
 import '../widgets/hermes_ui.dart';
 import '../design/hermes_design.dart'
     show HermesDialogAction, HermesDialogActionStyle, showHermesDialog;
@@ -49,8 +50,9 @@ class _DockSettingsScreenState extends State<DockSettingsScreen> {
       ? _controller.resetBots()
       : _controller.resetGeneral();
 
-  String _profileLabel(Strings strings) =>
-      _tab == _DockTab.bots ? strings.dockProfileBots : strings.dockProfileGeneral;
+  String _profileLabel(Strings strings) => _tab == _DockTab.bots
+      ? strings.dockProfileBots
+      : strings.dockProfileGeneral;
 
   // "Restablecer" reseteaba solo el perfil activo sin decirlo ni pedir
   // confirmación: con dos perfiles delante (Bots/General) se lee como un
@@ -83,12 +85,14 @@ class _DockSettingsScreenState extends State<DockSettingsScreen> {
   Widget build(BuildContext context) {
     final strings = Strings.of(context);
     return Scaffold(
-      appBar: AppBar(
+      appBar: HermesAppBar(
         title: Text(strings.dockSettingsTitle),
         actions: [
           TextButton(
             onPressed: () => unawaited(_confirmAndReset(context)),
-            child: Text(strings.dockSettingsResetProfile(_profileLabel(strings))),
+            child: Text(
+              strings.dockSettingsResetProfile(_profileLabel(strings)),
+            ),
           ),
         ],
       ),
@@ -129,6 +133,7 @@ class _DockSettingsBody extends StatelessWidget {
     final visibleCount = profile.items.where((i) => i.visible).length;
 
     return ListView(
+      clipBehavior: hermesUnderHeader,
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
       children: [
         _Segmented<_DockTab>(
@@ -380,7 +385,7 @@ class _DockItemList extends StatelessWidget {
                               fontWeight: FontWeight.w500,
                               color: item.visible
                                   ? colors.textPrimary
-                                  : colors.textDisabled,
+                                  : colors.textTertiary,
                             ),
                           ),
                           if (_subtitleFor(strings, item.id) != null)
@@ -522,7 +527,8 @@ class _DockStyleEditor extends StatelessWidget {
                 // confirmado, E).
                 onTap: () => unawaited(
                   onUpdate(
-                    (p) => p.copyWith(style: p.style.copyWith(borderShape: shape)),
+                    (p) =>
+                        p.copyWith(style: p.style.copyWith(borderShape: shape)),
                   ),
                 ),
               ),
@@ -553,13 +559,15 @@ class _DockStyleEditor extends StatelessWidget {
               // `onChangeEnd`.
               onChanged: (value) => unawaited(
                 onUpdate(
-                  (p) => p.copyWith(style: p.style.copyWith(transparency: value)),
+                  (p) =>
+                      p.copyWith(style: p.style.copyWith(transparency: value)),
                   persist: false,
                 ),
               ),
               onChangeEnd: (value) => unawaited(
                 onUpdate(
-                  (p) => p.copyWith(style: p.style.copyWith(transparency: value)),
+                  (p) =>
+                      p.copyWith(style: p.style.copyWith(transparency: value)),
                 ),
               ),
             ),
@@ -601,7 +609,9 @@ Widget _swatchRow(BuildContext context, List<Widget> swatches) {
     return Wrap(
       spacing: 10,
       runSpacing: 10,
-      children: [for (final swatch in swatches) SizedBox(width: 140, child: swatch)],
+      children: [
+        for (final swatch in swatches) SizedBox(width: 140, child: swatch),
+      ],
     );
   }
   return Row(

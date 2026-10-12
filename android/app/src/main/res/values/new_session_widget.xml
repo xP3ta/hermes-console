@@ -1,65 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- The launcher shortcut, and two strings the Bot Mode widgets still use.
+     The launcher widgets have their own file: launcher_widgets_strings.xml. -->
 <resources>
     <string name="new_session_shortcut_short_label">New conversation</string>
     <string name="new_session_shortcut_long_label">Start a new Hermes conversation</string>
-    <string name="new_session_widget_description">Hermes status and quick actions</string>
-    <string name="hermes_widget_compact_name">Hermes · Compact</string>
-    <string name="hermes_widget_compact_description">Connection, instance and two quick actions</string>
-    <string name="hermes_widget_control_name">Hermes · Controls</string>
-    <string name="hermes_widget_control_description">Context and conversation controls</string>
-    <string name="hermes_widget_dashboard_name">Hermes · Dashboard</string>
-    <string name="hermes_widget_dashboard_description">Session, context and performance metrics</string>
-    <string name="new_session_widget_content_description">Open a new conversation</string>
-    <string name="new_session_widget_brand">HERMES CONSOLE</string>
-    <string name="new_session_widget_action">New conversation</string>
-    <string name="new_session_widget_supporting_text">Open a blank draft, ready to write.</string>
-    <string name="new_session_widget_composer_hint">Message Hermes…</string>
-    <string name="new_session_widget_composer_description">Open a new conversation, ready to type</string>
-    <string name="new_session_widget_camera_description">Open a new conversation with the camera</string>
-    <string name="new_session_widget_gallery_description">Open a new conversation with the photo gallery</string>
-    <string name="new_session_widget_voice_description">Open a new voice conversation</string>
-    <string name="hermes_widget_brand">HERMES</string>
     <string name="hermes_widget_not_configured">Not configured</string>
-    <string name="hermes_widget_no_instance">Choose an instance in Hermes Console</string>
     <string name="hermes_widget_setup_action">Set up Hermes</string>
-    <string name="hermes_widget_new_chat">New conversation</string>
-    <string name="hermes_widget_new_short">New</string>
-    <string name="hermes_widget_voice">Voice</string>
-    <string name="hermes_widget_open">Open</string>
-    <string name="hermes_widget_return">Return</string>
-    <string name="hermes_widget_instance">Instance</string>
-    <string name="hermes_widget_context">Context</string>
-    <string name="hermes_widget_session">Session</string>
-    <string name="hermes_widget_agent">Agent</string>
-    <string name="hermes_widget_unknown">Unavailable</string>
-    <string name="hermes_widget_online">ONLINE</string>
-    <string name="hermes_widget_offline">OFFLINE</string>
-    <string name="hermes_widget_connecting">CONNECTING</string>
-    <string name="hermes_widget_error">ERROR</string>
-    <string name="hermes_widget_setup">SET UP</string>
-    <string name="hermes_widget_stale_short">OLD DATA</string>
-    <string name="hermes_widget_idle">Idle</string>
-    <string name="hermes_widget_thinking">Thinking</string>
-    <string name="hermes_widget_streaming">Responding</string>
-    <string name="hermes_widget_tool">Using tool</string>
-    <string name="hermes_widget_approval">Needs approval</string>
-    <string name="hermes_widget_now">now</string>
-    <string name="hermes_widget_minutes">%1$d min</string>
-    <string name="hermes_widget_hours">%1$d h</string>
     <string name="new_session_target_package" translatable="false">dev.xpetalab.hermesconsole</string>
-
-    <color name="new_session_widget_background">#F8F6F1</color>
-    <color name="new_session_widget_on_background">#211F1A</color>
-    <color name="new_session_widget_secondary">#69645A</color>
-    <color name="new_session_widget_accent">#806000</color>
-    <color name="new_session_widget_accent_surface">#FFF0BB</color>
-    <color name="new_session_widget_outline">#24211F1A</color>
-    <color name="new_session_widget_control_surface">#0F211F1A</color>
-
-    <dimen name="new_session_widget_corner_radius">22dp</dimen>
-
-    <style name="NewSessionWidgetTheme" parent="@android:style/Theme.Material.Light.NoActionBar">
-        <item name="android:colorAccent">@color/new_session_widget_accent</item>
-        <item name="android:fontFamily">sans</item>
-    </style>
 </resources>

@@ -227,6 +227,33 @@ void main() {
     );
   });
 
+  test(
+    'gateway.ready with heartbeat: null connects without heartbeat',
+    () async {
+      // GatewayReadyPayload.heartbeat is `bool | null`: null means "not
+      // offered", never a malformed frame that closes the socket.
+      gateway.readyPayload = {
+        'change_events': true,
+        'replay_epoch': 'epoch-1',
+        'heartbeat': null,
+        'skin': {'name': 'default'},
+      };
+      final client = _clientFor(gateway);
+      await client.connect().timeout(const Duration(seconds: 2));
+      expect(client.isConnected, isTrue);
+      expect(client.changeEventsAvailable, isTrue);
+    },
+  );
+
+  test('gateway.ready with a non-boolean heartbeat still fails closed', () async {
+    gateway.readyPayload = {'replay_epoch': 'epoch-1', 'heartbeat': 'yes'};
+    final client = _clientFor(gateway);
+    await expectLater(
+      client.connect().timeout(const Duration(seconds: 2)),
+      throwsA(isA<TuiGatewayRpcError>()),
+    );
+  });
+
   test('advertises again after reconnect', () async {
     final client = _clientFor(gateway);
     await client.connect();
@@ -464,10 +491,12 @@ void main() {
       expect(responded.payload['request_id'], 'apr-3');
       expect(events.where((e) => e.type == 'request.cancel'), isEmpty);
 
-      // Nothing is open any more: a late answer takes the compat RPC path
-      // instead of writing an orphan response frame.
+      // Nothing is open any more: a late answer takes the `request.answer`
+      // proxy (current Hermes has no `clarify.respond`) instead of writing an
+      // orphan response frame.
       await client.respondToClarify('srq-clarify0002', 'sí');
-      expect(gateway.rpcCalls('clarify.respond'), hasLength(1));
+      expect(gateway.rpcCalls('request.answer'), hasLength(1));
+      expect(gateway.rpcCalls('clarify.respond'), isEmpty);
       expect(
         gateway.frames.where(
           (frame) =>

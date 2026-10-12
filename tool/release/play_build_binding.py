@@ -31,7 +31,7 @@ GIT_CONTEXT_VARIABLES = (
 )
 BUILD_COMMAND = (
     "flutter build appbundle --release --flavor play "
-    "--dart-define=HERMES_FLAVOR=play --dart-define=HERMES_LOCAL_AGENT=false"
+    "--dart-define=HERMES_FLAVOR=play"
 )
 
 

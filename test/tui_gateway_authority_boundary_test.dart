@@ -71,6 +71,9 @@ String _event({
   },
 });
 
+/// Sessionless test-only event used as an in-order delivery barrier.
+const _barrierType = 'test.delivery_barrier';
+
 final class _WatchdogFixture {
   final HttpServer server;
   final List<WebSocket> sockets = <WebSocket>[];
@@ -82,6 +85,8 @@ final class _WatchdogFixture {
   DateTime now = DateTime.utc(2026);
   bool holdProbes = false;
   int _eventSequence = 0;
+  int _barrierCount = 0;
+  TuiGatewayClient? _boundClient;
   final Completer<WebSocket> _connected = Completer<WebSocket>();
   final Completer<void> _probeArrived = Completer<void>();
 
@@ -94,7 +99,7 @@ final class _WatchdogFixture {
     return fixture;
   }
 
-  TuiGatewayClient createClient() => _client(
+  TuiGatewayClient createClient() => _boundClient = _client(
     server,
     fanoutInactivityDeadline: const Duration(seconds: 10),
     now: () => now,
@@ -231,7 +236,6 @@ final class _WatchdogFixture {
     String type,
     Map<String, dynamic> payload,
   ) async {
-    final delivered = Completer<void>();
     final socket = await connected;
     _eventSequence += 1;
     socket.add(
@@ -242,9 +246,37 @@ final class _WatchdogFixture {
         payload: payload,
       ),
     );
-    scheduleMicrotask(delivered.complete);
-    await delivered.future;
-    await Future<void>.delayed(Duration.zero);
+    await _barrier(socket);
+  }
+
+  /// Waits until the client has handled every frame sent before this call.
+  ///
+  /// The client parses inbound frames one at a time and in order, so once a
+  /// sessionless barrier event sent after [emit]'s frame reaches
+  /// `client.events`, the watchdog has already observed the emitted event.
+  /// A loopback write alone proves nothing under CPU load.
+  Future<void> _barrier(WebSocket socket) async {
+    final client = _boundClient;
+    if (client == null) throw StateError('createClient() was not called');
+    _barrierCount += 1;
+    final id = _barrierCount;
+    final reached = client.events.firstWhere(
+      (event) =>
+          event.type == _barrierType &&
+          event.sessionId.isEmpty &&
+          event.payload['barrier'] == id,
+    );
+    socket.add(
+      jsonEncode({
+        'jsonrpc': '2.0',
+        'method': 'event',
+        'params': {
+          'type': _barrierType,
+          'payload': {'barrier': id},
+        },
+      }),
+    );
+    await reached;
   }
 
   Future<void> dispose(TuiGatewayClient client) async {
@@ -324,16 +356,47 @@ Future<List<TuiGatewayEvent>> _eventsForRaw(String rawFrame) async {
   server.listen((request) async {
     final socket = await WebSocketTransformer.upgrade(request);
     socket.add(_ready());
-    await Future<void>.delayed(const Duration(milliseconds: 20));
-    socket.add(rawFrame);
+    await for (final raw in socket) {
+      final frame = jsonDecode(raw as String) as Map<String, dynamic>;
+      // The client advertises its capabilities right after connect() marks
+      // the transport connected, so the frame under test is judged by a
+      // connected client rather than racing the readiness handshake.
+      if (frame['method'] != 'client.capabilities') continue;
+      socket.add(rawFrame);
+      // Frames are handled one at a time in arrival order: once this barrier
+      // is delivered, the client has already accepted or rejected rawFrame.
+      socket.add(
+        jsonEncode({
+          'jsonrpc': '2.0',
+          'method': 'event',
+          'params': {
+            'type': _barrierType,
+            'payload': const {'barrier': 0},
+          },
+        }),
+      );
+    }
   });
   final client = _client(server);
   final events = <TuiGatewayEvent>[];
   final errors = <Object>[];
-  final subscription = client.events.listen(events.add, onError: errors.add);
+  final judged = Completer<void>();
+  final subscription = client.events.listen(
+    (event) {
+      if (event.type == _barrierType && event.sessionId.isEmpty) {
+        if (!judged.isCompleted) judged.complete();
+        return;
+      }
+      events.add(event);
+    },
+    onError: (Object error) {
+      errors.add(error);
+      if (!judged.isCompleted) judged.complete();
+    },
+  );
   try {
     await client.connect();
-    await Future<void>.delayed(const Duration(milliseconds: 60));
+    await judged.future;
     if (errors.isNotEmpty) throw errors.single;
     return events;
   } finally {

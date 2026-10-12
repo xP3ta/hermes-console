@@ -7,7 +7,7 @@ set -Eeuo pipefail
 unset GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
 unset GIT_DIR GIT_WORK_TREE
 
-readonly LOCK_SHA256="f366fdfc011b65c1b3f44e777fc876be21d3492ec3b0b0cf014536c0ac3490c3"
+readonly LOCK_SHA256="e3f8811963c2c1ab5eb7f62fd8ea86c5a3661bc98214017a720680019d6042c8"
 readonly SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 fail() {
@@ -92,8 +92,7 @@ build_replica() {
         ANDROID_HOME="$CLEAN_ANDROID_HOME" \
         ANDROID_SDK_ROOT="$CLEAN_ANDROID_SDK_ROOT" JAVA_HOME="$CLEAN_JAVA_HOME" \
         flutter build apk --release --flavor full --split-per-abi \
-          --dart-define=HERMES_FLAVOR=full \
-          --dart-define=HERMES_LOCAL_AGENT=true
+          --dart-define=HERMES_FLAVOR=full
     )
     install -m 600 -- "$clone"/build/app/outputs/flutter-apk/*-full-release.apk "$destination/"
   else
@@ -109,8 +108,7 @@ build_replica() {
         ANDROID_HOME="$CLEAN_ANDROID_HOME" \
         ANDROID_SDK_ROOT="$CLEAN_ANDROID_SDK_ROOT" JAVA_HOME="$CLEAN_JAVA_HOME" \
         flutter build appbundle --release --flavor play \
-          --dart-define=HERMES_FLAVOR=play \
-          --dart-define=HERMES_LOCAL_AGENT=false
+          --dart-define=HERMES_FLAVOR=play
     )
     install -m 600 -- \
       "$clone/build/app/outputs/bundle/playRelease/app-play-release.aab" \

@@ -32,17 +32,48 @@ void main() {
       final source = File(
         'lib/core/screens/home_dashboard_screen.dart',
       ).readAsStringSync();
-      final hydration = _between(
-        source,
-        'Future<void> _hydrateTurnPreviews(',
-        'String _recentGroupLabel(',
-      );
-
-      expect(hydration, isNot(contains('.getMessages(')));
-      expect(hydration, isNot(contains('latestUserPreview(messages')));
-      expect(hydration, isNot(contains('latestAssistantPreview(messages')));
+      // Home paints the session list's own preview (sessionListPreview, the
+      // Desktop sidebar rule); it never reads a transcript to fill one in.
+      expect(source, isNot(contains('_hydrateTurnPreviews')));
+      expect(source, isNot(contains('.getMessages(')));
+      expect(source, isNot(contains('latestUserPreview(')));
+      expect(source, isNot(contains('latestAssistantPreview(')));
+      expect(source, contains('sessionListPreview('));
     },
   );
+
+  test('the list preview consumes only the canonical session preview', () {
+    // Desktop's sidebar (session-row.tsx) paints `session.preview` and
+    // nothing else: no last-turn fallback on Home or Conversations.
+    final helpers = File(
+      'lib/core/utils/home_recent_sessions.dart',
+    ).readAsStringSync();
+    final start = helpers.indexOf('String? sessionListPreview(Session');
+    expect(start, isNonNegative);
+    final body = helpers.substring(start, helpers.indexOf('\n}\n', start));
+    expect(body, contains('.cleanPreview'));
+    expect(body, isNot(contains('lastAssistantPreview')));
+    expect(body, isNot(contains('lastUserPreview')));
+    for (final screen in [
+      'lib/core/screens/home_dashboard_screen.dart',
+      'lib/core/screens/session_list_screen.dart',
+    ]) {
+      final source = File(screen).readAsStringSync();
+      expect(source, contains('sessionListPreview('), reason: screen);
+      expect(source, isNot(contains('homeRecentSummary(')), reason: screen);
+      // No fabricated line where Desktop paints none.
+      expect(
+        source,
+        isNot(contains('sessionPreviewUnavailable')),
+        reason: screen,
+      );
+    }
+    final home = File(
+      'lib/core/screens/home_dashboard_screen.dart',
+    ).readAsStringSync();
+    expect(home, isNot(contains('.lastAssistantPreview')));
+    expect(home, isNot(contains('.lastUserPreview')));
+  });
 
   test('secondary SessionDetail has no transcript reconstruction surface', () {
     final source = File(

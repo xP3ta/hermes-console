@@ -147,6 +147,7 @@ class RoomTeamRow extends StatelessWidget {
               IconButton(
                 key: ValueKey('room-team-secondary-action-$profileName'),
                 onPressed: onSecondaryAction,
+                tooltip: Strings.of(context).commonOpen,
                 icon: Icon(
                   secondaryActionIcon ?? Icons.message_outlined,
                   size: 20,
@@ -233,7 +234,7 @@ class RoomMemberAvatar extends StatelessWidget {
       size: size,
       manager: manager,
       shape: resolvedProfile.botFaceShape,
-      colorHex: resolvedProfile.botColorHex,
+      colorHex: resolvedProfile.botFaceColorHex,
       imageKind: resolvedProfile.botImageKind,
       privacySafeElementKeys: true,
       working: working,

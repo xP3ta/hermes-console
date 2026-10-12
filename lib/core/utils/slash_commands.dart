@@ -5,6 +5,7 @@
 library;
 
 import '../../l10n/app_localizations.dart';
+import '../models/command_descriptor.dart';
 
 /// Qué hace un comando al ejecutarse (la lógica vive en el chat).
 enum SlashAction {
@@ -18,6 +19,10 @@ enum SlashAction {
   models,
   activity,
   kanban,
+  find,
+  btw,
+  background,
+  branch,
   remote,
   unavailable,
 }
@@ -39,27 +44,108 @@ class SlashCommand {
   /// la app suele abrir un selector en su lugar.
   final bool takesArg;
 
+  /// A server skill command (`complete.slash` kind `skill` or a catalog
+  /// `skills` key); the palette groups these under their own header.
+  final bool isSkill;
+
   const SlashCommand({
     required this.name,
     required this.description,
     required this.action,
     this.argHint = '',
     this.takesArg = false,
+    this.isSkill = false,
   });
 
   factory SlashCommand.remote({
     required String name,
     required String description,
+    bool isSkill = false,
   }) => SlashCommand(
     name: name,
     description: description,
     action: SlashAction.remote,
     takesArg: true,
+    isSkill: isSkill,
   );
 }
 
+/// Most rows the palette shows for one query: the bare `/` lists the server's
+/// ranked catalog, skills included, so it needs room beyond the local list.
+const int maxSlashPaletteRows = 40;
+
+/// Merges the local palette with the server's live answer for [input]
+/// (`complete.slash`, falling back to the `commands.catalog` prefix match when
+/// the gateway lacks completion). Local commands lead, then server commands,
+/// then skills (Desktop groups Commands before Skills, each keeping the
+/// backend's relevance order). A suggestion never grants availability: the
+/// send path re-resolves every remote name against the catalog.
+List<SlashCommand> mergeSlashSuggestions({
+  required String input,
+  required List<SlashCommand> local,
+  DesktopCommandCatalog? catalog,
+  SlashCompletionBatch? completion,
+  int limit = maxSlashPaletteRows,
+}) {
+  final byName = <String, SlashCommand>{
+    for (final item in local) item.name: item,
+  };
+  final prefix = input.startsWith('/')
+      ? input.substring(1).toLowerCase()
+      : input.toLowerCase();
+  final catalogByName = <String, CommandCatalogEntry>{
+    for (final item in catalog?.commands ?? const <CommandCatalogEntry>[])
+      item.canonicalName: item,
+  };
+  final skillNames = catalog?.skillNames ?? const <String>{};
+  final commands = <SlashCommand>[];
+  final skills = <SlashCommand>[];
+
+  void offer(String name, String meta, bool skillKind) {
+    if (isUnavailableSlashName(name) || byName.containsKey(name)) return;
+    final entry = catalogByName[name];
+    final skill = skillKind || skillNames.contains(name);
+    final command = SlashCommand.remote(
+      name: name,
+      description: entry?.description.isNotEmpty == true
+          ? entry!.description
+          : meta,
+      isSkill: skill,
+    );
+    byName[name] = command;
+    (skill ? skills : commands).add(command);
+  }
+
+  if (completion != null) {
+    for (final item in completion.suggestions) {
+      final name = CommandDescriptor.tryNormalizeName(
+        item.replacement.trim().split(RegExp(r'\s+')).first,
+      );
+      if (name == null) continue;
+      offer(name, item.meta, item.isSkill);
+    }
+  } else {
+    for (final name in catalogByName.keys) {
+      if (name.startsWith(prefix)) offer(name, '', false);
+    }
+  }
+  final merged = <SlashCommand>[
+    ...local.where((item) => byName[item.name] == item),
+    ...commands,
+    ...skills,
+  ];
+  return merged.length <= limit ? merged : merged.sublist(0, limit);
+}
+
 /// Catálogo de comandos conocidos (cliente). El orden es el de la paleta.
-List<SlashCommand> slashCommands(Strings s) => [
+///
+/// `/btw`, `/bg` and `/branch` only appear when the chat can run them
+/// ([sideAgents], [branch]); typing them still routes correctly either way.
+List<SlashCommand> slashCommands(
+  Strings s, {
+  bool sideAgents = false,
+  bool branch = false,
+}) => [
   SlashCommand(
     name: 'help',
     description: s.slashDescHelp,
@@ -119,16 +205,57 @@ List<SlashCommand> slashCommands(Strings s) => [
     description: s.slashDescActivity,
     action: SlashAction.activity,
   ),
+  SlashCommand(
+    name: 'find',
+    argHint: s.cs1215SlashArg,
+    description: s.cs1215SlashDesc,
+    action: SlashAction.find,
+    takesArg: true,
+  ),
+  SlashCommand(
+    name: 'buscar',
+    argHint: s.cs1215SlashArg,
+    description: s.cs1215SlashDesc,
+    action: SlashAction.find,
+    takesArg: true,
+  ),
+  if (sideAgents) ...[
+    SlashCommand(
+      name: 'btw',
+      argHint: s.tc1215SlashArgBtw,
+      description: s.tc1215SlashDescBtw,
+      action: SlashAction.btw,
+      takesArg: true,
+    ),
+    SlashCommand(
+      name: 'bg',
+      argHint: s.tc1215SlashArgBg,
+      description: s.tc1215SlashDescBg,
+      action: SlashAction.background,
+      takesArg: true,
+    ),
+  ],
+  if (branch)
+    SlashCommand(
+      name: 'branch',
+      description: s.tc1215SlashDescBranch,
+      action: SlashAction.branch,
+    ),
 ];
 
 /// Sugerencias mientras se escribe el nombre del comando: el texto empieza por
 /// `/` y aún no tiene espacio ni salto (todavía no se escriben argumentos).
 /// Devuelve lista vacía si no procede mostrar la paleta.
-List<SlashCommand> slashSuggestionsFor(String text, Strings s) {
+List<SlashCommand> slashSuggestionsFor(
+  String text,
+  Strings s, {
+  bool sideAgents = false,
+  bool branch = false,
+}) {
   if (!text.startsWith('/')) return const [];
   if (text.contains(' ') || text.contains('\n')) return const [];
   final q = text.substring(1).toLowerCase();
-  final cmds = slashCommands(s);
+  final cmds = slashCommands(s, sideAgents: sideAgents, branch: branch);
   if (q.isEmpty) return cmds;
   return cmds.where((c) => c.name.startsWith(q)).toList();
 }
@@ -187,6 +314,12 @@ ParsedSlash? parseSlashCommand(String text) {
     'soul': SlashAction.soul,
     'kanban': SlashAction.kanban,
     'activity': SlashAction.activity,
+    'find': SlashAction.find,
+    'buscar': SlashAction.find,
+    'btw': SlashAction.btw,
+    'bg': SlashAction.background,
+    'background': SlashAction.background,
+    'branch': SlashAction.branch,
   };
   final action = nameToAction[name];
   if (action != null) {

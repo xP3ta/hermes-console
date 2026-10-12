@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../utils/plain_preview.dart';
 import '../../l10n/app_localizations.dart';
 import '../models/agent_task_list.dart';
 import '../services/session_reconciler.dart';
@@ -7,10 +8,7 @@ import '../theme/app_theme.dart';
 
 /// Etiquetas con las que el gateway nombra la herramienta de lista de tareas
 /// (`todo_list`; `todo` en transcripts anteriores al renombrado).
-bool isAgentTaskToolLabel(String label) {
-  final normalized = label.trim().toLowerCase();
-  return normalized == 'todo_list' || normalized == 'todo';
-}
+bool isAgentTaskToolLabel(String label) => isAgentTaskToolName(label);
 
 /// Id del paso `todo_list` más reciente del transcript, o `null`.
 ///
@@ -292,7 +290,7 @@ class _TaskRow extends StatelessWidget {
             SizedBox(width: dense ? 6 : 8),
             Expanded(
               child: Text(
-                item.content,
+                plainPreview(item.content),
                 style: textStyle.copyWith(
                   fontSize: dense ? 12 : 14,
                   height: 1.35,

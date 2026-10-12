@@ -335,7 +335,7 @@ void main() {
         store.values[HermesHomeWidgetSnapshot.atomicStorageKey],
         contains('"instance_id":"demo"'),
       );
-      expect(store.values[schemaKey], 1);
+      expect(store.values[schemaKey], HermesHomeWidgetSnapshot.schemaVersion);
       expect(store.values['hermes_widget_updated_at_ms'], 1234);
       expect(store.writes.last, schemaKey);
       expect(store.updates, 1);
@@ -461,6 +461,65 @@ void main() {
 
       expect(publisher.latest.instanceId, 'second');
       expect(store.updates, 1);
+    });
+  });
+
+  group('limits identity (additive field of schema 2)', () {
+    const group = HomeWidgetLimitGroup(
+      provider: 'openai-codex',
+      providerName: 'OpenAI Codex',
+      plan: 'Plus',
+      inUse: true,
+      windows: [
+        HomeWidgetLimitWindow(
+          label: 'Sesión actual',
+          usedPercent: 28,
+          detail: 'Se reinicia en 2 h 13 min',
+        ),
+      ],
+    );
+
+    test('round trips with the same schema version', () {
+      const snapshot = HermesHomeWidgetSnapshot(limits: [group]);
+      final map = snapshot.toMap();
+      expect(map['schema_version'], 2);
+      expect((map['limits'] as List).single, {
+        'provider': 'openai-codex',
+        'provider_name': 'OpenAI Codex',
+        'plan': 'Plus',
+        'in_use': true,
+        'windows': [
+          {
+            'label': 'Sesión actual',
+            'used_percent': 28,
+            'detail': 'Se reinicia en 2 h 13 min',
+          },
+        ],
+      });
+      final back = HermesHomeWidgetSnapshot.fromMap(map);
+      expect(back.limits.single.provider, 'openai-codex');
+      expect(back.limits.single.plan, 'Plus');
+      expect(back.limits.single.windows.single.usedPercent, 28);
+    });
+
+    test('a plan the server did not give is absent, never invented', () {
+      const none = HomeWidgetLimitGroup(
+        provider: 'anthropic',
+        providerName: 'Anthropic',
+      );
+      final map = const HermesHomeWidgetSnapshot(limits: [none]).toMap();
+      expect((map['limits'] as List).single, isNot(contains('plan')));
+    });
+
+    test('a snapshot written before the field reads with no limits, and '
+        'a bad provider id is dropped', () {
+      final old = const HermesHomeWidgetSnapshot().toMap()..remove('limits');
+      expect(HermesHomeWidgetSnapshot.fromMap(old).limits, isEmpty);
+      final bad = const HermesHomeWidgetSnapshot().toMap()
+        ..['limits'] = [
+          {'provider': 'https://x.example', 'provider_name': 'X'},
+        ];
+      expect(HermesHomeWidgetSnapshot.fromMap(bad).limits, isEmpty);
     });
   });
 }

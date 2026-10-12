@@ -9,6 +9,7 @@ import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/desktop_gateway_capabilities.dart';
+import 'package:hermes_android/core/services/home_widget_publisher.dart';
 import 'package:hermes_android/core/services/session_config_reducer.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:http/http.dart' as http;
@@ -44,6 +45,7 @@ class _ConfiguredCreateGateway
   Object? configuredCreateError;
   Object? activationError;
   bool resumeExistingSucceeds = false;
+  bool deferModelChanges = false;
   bool connected = true;
   int activationCalls = 0;
   int activeListCalls = 0;
@@ -234,6 +236,7 @@ class _ConfiguredCreateGateway
     return DesktopConfigSetResult(
       key: DesktopSessionConfigKey.model,
       value: selection.modelId,
+      deferred: deferModelChanges,
     );
   }
 
@@ -325,6 +328,93 @@ ActiveChat _chat(
   allowUnownedDesktopSnapshotForTesting: true,
   sessionProfile: sessionProfile,
 );
+
+class _MemoryWidgetStore implements HomeWidgetStore {
+  final values = <String, Object?>{};
+
+  @override
+  Future<Object?> read(String key) async => values[key];
+
+  @override
+  Future<void> write(String key, Object? value) async {
+    if (value == null) {
+      values.remove(key);
+    } else {
+      values[key] = value;
+    }
+  }
+
+  @override
+  Future<void> requestUpdate() async {}
+}
+
+/// Chat attached through the service so its events reach the home widget.
+Future<
+  ({
+    ActiveChatService service,
+    ActiveChat chat,
+    HermesHomeWidgetPublisher publisher,
+  })
+>
+_widgetChat(_ConfiguredCreateGateway gateway) async {
+  final publisher = HermesHomeWidgetPublisher(
+    store: _MemoryWidgetStore(),
+    nowMs: () => 2000000000000,
+  );
+  final service = ActiveChatService(
+    compressionRestoreStore: testCompressionRestoreStore(),
+  )..bindHomeWidgetPublisher(publisher, activeConnectionId: 'conn-widget');
+  final chat = service.attach(
+    connection: SavedConnection(
+      id: 'conn-widget',
+      label: 'Widget',
+      host: '127.0.0.1',
+      port: 8642,
+      apiKey: 'test-key',
+      kind: InstanceKind.vps,
+    ),
+    sessionId: 'draft-mobile',
+    sessionTitle: 'Widget model',
+    api: ApiClient(
+      baseUrl: 'http://127.0.0.1:8642',
+      apiKey: 'test-key',
+      httpClient: MockClient((_) async => http.Response('unexpected', 500)),
+    ),
+    desktopGateway: gateway,
+    storedMessageLoader: (_, _) async => const [],
+    attachDesktopRuntimeOnLoad: false,
+    allowUnownedDesktopSnapshotForTesting: true,
+  );
+  for (var i = 0; i < 5; i++) {
+    await Future<void>.delayed(Duration.zero);
+  }
+  expect(
+    await chat.ensureDesktopRuntime(acquireForExplicitAction: true),
+    isTrue,
+  );
+  await publisher.flush();
+  return (service: service, chat: chat, publisher: publisher);
+}
+
+const _newModel = 'anthropic/claude-opus-4-8';
+
+Future<void> _switchModel(ActiveChat chat) async {
+  final change = await chat.setSessionModel(
+    DesktopModelSelection(modelId: _newModel, providerSlug: 'anthropic'),
+    confirmExpensiveModel: true,
+  );
+  expect(change.status, SessionConfigChangeStatus.accepted);
+}
+
+/// The same precedence the chat header paints (`_activeModelLabel`).
+String? _headerModel(ActiveChat chat) {
+  final displayed = chat
+      .pendingSessionConfigChange(DesktopSessionConfigKey.model)
+      ?.displayValue;
+  return displayed is SessionModelConfigValue
+      ? displayed.modelId
+      : chat.effectiveSessionConfig.model ?? chat.desktopRuntimeInfo.model;
+}
 
 void main() {
   test(
@@ -713,5 +803,85 @@ void main() {
     expect((result.displayValue as SessionFastConfigValue).enabled, isFalse);
     expect(chat.effectiveSessionConfig.fast, isFalse);
     expect(chat.hasDesktopRuntime, isTrue);
+  });
+
+  group('home widget follows the session model of the header', () {
+    test('an immediate switch reaches the widget before any turn', () async {
+      final gateway = _ConfiguredCreateGateway()..resumeExistingSucceeds = true;
+      final h = await _widgetChat(gateway);
+      addTearDown(h.service.dispose);
+      expect(h.publisher.latest.model, 'openai/gpt-5.5-codex');
+
+      await _switchModel(h.chat);
+      await h.publisher.flush();
+
+      expect(_headerModel(h.chat), _newModel);
+      expect(h.publisher.latest.model, _newModel);
+      expect(h.publisher.latest.provider, 'anthropic');
+    });
+
+    test('a deferred switch shows the model the header shows', () async {
+      final gateway = _ConfiguredCreateGateway()
+        ..resumeExistingSucceeds = true
+        ..deferModelChanges = true;
+      final h = await _widgetChat(gateway);
+      addTearDown(h.service.dispose);
+
+      await _switchModel(h.chat);
+      await h.publisher.flush();
+
+      final change = h.chat.pendingSessionConfigChange(
+        DesktopSessionConfigKey.model,
+      );
+      expect(change?.deferred, isTrue);
+      expect(h.chat.effectiveSessionConfig.model, 'openai/gpt-5.5-codex');
+      expect(_headerModel(h.chat), _newModel);
+      expect(h.publisher.latest.model, _headerModel(h.chat));
+      // The widget keeps the model/provider pair together, like Desktop's
+      // optimistic paint of a deferred config.set.
+      expect(h.publisher.latest.provider, 'anthropic');
+    });
+
+    test('a late session.info with the old model does not win', () async {
+      final gateway = _ConfiguredCreateGateway()..resumeExistingSucceeds = true;
+      final h = await _widgetChat(gateway);
+      addTearDown(h.service.dispose);
+      await _switchModel(h.chat);
+
+      gateway.emitSessionInfo(const {
+        'model': 'openai/gpt-5.5-codex',
+        'provider': 'openai-codex',
+        'fast': false,
+      });
+      await Future<void>.delayed(Duration.zero);
+      await h.publisher.flush();
+
+      expect(h.chat.desktopRuntimeInfo.model, 'openai/gpt-5.5-codex');
+      expect(_headerModel(h.chat), _newModel);
+      expect(h.publisher.latest.model, _newModel);
+      expect(h.publisher.latest.provider, 'anthropic');
+    });
+
+    test('a rejected switch keeps the previous model on both', () async {
+      final gateway = _ConfiguredCreateGateway()
+        ..resumeExistingSucceeds = true
+        ..configError = const TuiGatewayRpcError(
+          'config.set',
+          'busy',
+          code: 4009,
+        );
+      final h = await _widgetChat(gateway);
+      addTearDown(h.service.dispose);
+
+      final change = await h.chat.setSessionModel(
+        DesktopModelSelection(modelId: _newModel, providerSlug: 'anthropic'),
+        confirmExpensiveModel: true,
+      );
+      await h.publisher.flush();
+
+      expect(change.status, SessionConfigChangeStatus.rejected);
+      expect(_headerModel(h.chat), 'openai/gpt-5.5-codex');
+      expect(h.publisher.latest.model, 'openai/gpt-5.5-codex');
+    });
   });
 }

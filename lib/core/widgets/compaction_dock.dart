@@ -3,8 +3,7 @@ import 'package:flutter/material.dart';
 import '../../l10n/app_localizations.dart';
 import '../models/compaction_progress.dart';
 import '../theme/app_theme.dart';
-import 'activity_pill.dart'
-    show ActivityTicker, activityTextScale, formatTurnElapsed;
+import 'activity_pill.dart' show ActivityTicker, formatTurnElapsed;
 
 /// Duración de una compactación en segundos enteros («71 s»), con un decimal por
 /// debajo de 10 s y `m:ss` pasados 3 minutos.
@@ -74,143 +73,139 @@ String compactionResultText(
   ].join(' · ');
 }
 
-/// Pastilla flotante de la compactación, del mismo lenguaje que la pastilla
-/// de actividad: se ajusta a su contenido, sin barra.
+/// Texto completo de la compactación para lectores de pantalla y el panel:
+/// «Compactando · 22 msj · ~21.5k tok» en curso, el desenlace al terminar.
+String compactionStatusText(
+  Strings strings,
+  CompactionProgress compaction,
+  String languageCode,
+) => compaction.isFinished
+    ? compactionResultText(strings, compaction, languageCode)
+    : [
+        strings.liveCompacting,
+        ...compactionFacts(strings, compaction),
+      ].join(' · ');
+
+/// Estado de la compactación dentro de la mini píldora de contexto+modo
+/// bajo el composer: sustituye al aro y al porcentaje mientras dura.
 ///
-///  * en curso: aro indeterminado (o determinado si el backend publica
-///    `chunk_index/chunk_count`) + «Compactando» + hechos atenuados + reloj;
-///  * terminada: la misma pastilla cambia a ✓ + el desenlace unos segundos.
+///  * en curso: aro indeterminado (determinado solo si el backend publica
+///    `chunk_index/chunk_count`) + «Compactando…» + reloj medido;
+///  * terminada: ✓ + «Compactada» unos segundos (los que el tracker retiene
+///    el resultado) y la píldora vuelve sola a su porcentaje.
 ///
-/// El reloj es el medido en el dispositivo; no hay tiempo restante estimado.
-class CompactionDock extends StatelessWidget {
-  const CompactionDock({required this.compaction, this.clock, super.key});
+/// Las cifras (mensajes, tokens, partes) no caben aquí: van en la etiqueta
+/// semántica y en el panel que abre la píldora. Sin estimaciones.
+class CompactionPillSegment extends StatelessWidget {
+  const CompactionPillSegment({
+    required this.compaction,
+    this.clock,
+    this.fontSize = 10.5,
+    super.key,
+  });
 
   final CompactionProgress compaction;
   final DateTime Function()? clock;
+  final double fontSize;
 
   @override
   Widget build(BuildContext context) {
     final strings = Strings.of(context);
+    final colors = Theme.of(context).hermes;
     final lang = Localizations.localeOf(context).languageCode;
     final finished = compaction.isFinished;
-    return ActivityTicker(
-      active: !finished,
-      clock: clock,
-      builder: (context, now) {
-        final label = finished
-            ? compactionResultText(strings, compaction, lang)
-            : strings.liveCompacting;
-        final facts = finished
-            ? const <String>[]
-            : compactionFacts(strings, compaction);
-        return _CompactionPill(
-          compaction: compaction,
-          label: label,
-          facts: facts,
-          elapsed: finished ? null : formatTurnElapsed(compaction.elapsed(now)),
-        );
-      },
-    );
-  }
-}
-
-class _CompactionPill extends StatelessWidget {
-  const _CompactionPill({
-    required this.compaction,
-    required this.label,
-    required this.facts,
-    required this.elapsed,
-  });
-
-  final CompactionProgress compaction;
-  final String label;
-  final List<String> facts;
-  final String? elapsed;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
-    final finished = compaction.isFinished;
-    final bigText = activityTextScale(context) >= 1.6;
-    final factsText = facts.join(' · ');
-    final text = Text.rich(
-      TextSpan(
-        children: [
-          TextSpan(
-            text: label,
-            style: TextStyle(
-              fontWeight: finished ? FontWeight.w600 : FontWeight.w700,
-              color: colors.textPrimary,
-            ),
-          ),
-          if (factsText.isNotEmpty)
-            TextSpan(
-              text: ' · $factsText',
-              style: TextStyle(color: colors.textSecondary),
-            ),
-        ],
-      ),
-      key: const ValueKey('compaction-label'),
-      maxLines: bigText ? 2 : 1,
-      overflow: TextOverflow.ellipsis,
-      style: const TextStyle(fontSize: 13, height: 1.25),
-    );
+    final label = finished
+        ? (compaction.noop
+              ? strings.tp1216PillNothingToCompact
+              : strings.tp1216PillCompacted)
+        : strings.tp1216PillCompacting;
     return Semantics(
       key: ValueKey(
         finished ? 'compaction-result' : 'desktop-session-compression-progress',
       ),
       liveRegion: true,
       container: true,
-      label: [label, ...facts].join(', '),
+      label: compactionStatusText(strings, compaction, lang),
       excludeSemantics: true,
-      child: Material(
-        key: const ValueKey('compaction-dock'),
-        color: colors.surface,
-        shape: StadiumBorder(
-          side: BorderSide(color: colors.divider, width: 0.8),
-        ),
-        clipBehavior: Clip.antiAlias,
-        elevation: 10,
-        shadowColor: Colors.black.withValues(alpha: 0.45),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(minHeight: 40),
-          child: Padding(
-            padding: const EdgeInsetsDirectional.fromSTEB(12, 8, 14, 8),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                _CompactionGlyph(compaction: compaction),
-                const SizedBox(width: 9),
-                Flexible(child: text),
-                if (elapsed != null) ...[
-                  const SizedBox(width: 9),
-                  Text(
-                    elapsed!,
-                    key: const ValueKey('compaction-elapsed'),
-                    maxLines: 1,
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      color: colors.textSecondary,
-                      fontFeatures: const [FontFeature.tabularFigures()],
-                    ),
-                  ),
-                ],
-              ],
+      child: ActivityTicker(
+        active: !finished,
+        clock: clock,
+        builder: (context, now) => Row(
+          key: const ValueKey('compaction-dock'),
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CompactionGlyph(compaction: compaction),
+            const SizedBox(width: 5),
+            Flexible(
+              child: Text(
+                label,
+                key: const ValueKey('compaction-label'),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: colors.textPrimary,
+                  fontSize: fontSize,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
             ),
-          ),
+            if (!finished) ...[
+              const SizedBox(width: 5),
+              Text(
+                formatTurnElapsed(compaction.elapsed(now)),
+                key: const ValueKey('compaction-elapsed'),
+                maxLines: 1,
+                style: TextStyle(
+                  fontSize: fontSize,
+                  fontWeight: FontWeight.w600,
+                  color: colors.textSecondary,
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                ),
+              ),
+            ],
+          ],
         ),
       ),
     );
   }
 }
 
-/// Aro fino mientras trabaja (determinado solo con trozos reales publicados),
-/// ✓ al terminar. Con movimiento reducido, un aro quieto.
-class _CompactionGlyph extends StatelessWidget {
-  const _CompactionGlyph({required this.compaction});
+/// Indicador mínimo para superficies sin la píldora de contexto (Bot Chat):
+/// la misma cápsula pequeña bajo el composer, solo con la compactación.
+class CompactionInlineIndicator extends StatelessWidget {
+  const CompactionInlineIndicator({
+    required this.compaction,
+    this.clock,
+    super.key,
+  });
 
   final CompactionProgress compaction;
+  final DateTime Function()? clock;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).hermes;
+    return Container(
+      key: const ValueKey('compaction-inline-indicator'),
+      height: 30,
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      decoration: BoxDecoration(
+        color: colors.surfaceVariant.withValues(alpha: 0.92),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: colors.divider.withValues(alpha: 0.7)),
+      ),
+      child: CompactionPillSegment(compaction: compaction, clock: clock),
+    );
+  }
+}
+
+/// Aro fino mientras trabaja (determinado solo con trozos reales publicados),
+/// ✓ al terminar. Con movimiento reducido, un aro quieto.
+class CompactionGlyph extends StatelessWidget {
+  const CompactionGlyph({required this.compaction, this.size = 14, super.key});
+
+  final CompactionProgress compaction;
+  final double size;
 
   @override
   Widget build(BuildContext context) {
@@ -221,7 +216,7 @@ class _CompactionGlyph extends StatelessWidget {
             ? Icons.check_circle_outline_rounded
             : Icons.check_circle_rounded,
         key: const ValueKey('compaction-done-icon'),
-        size: 16,
+        size: size + 1,
         color: compaction.noop ? colors.textSecondary : colors.success,
       );
     }
@@ -229,7 +224,7 @@ class _CompactionGlyph extends StatelessWidget {
     final fraction = compaction.fraction;
     return SizedBox.square(
       key: const ValueKey('compaction-spinner'),
-      dimension: 14,
+      dimension: size,
       child: CircularProgressIndicator(
         value: fraction ?? (reduceMotion ? 0.25 : null),
         strokeWidth: 2,

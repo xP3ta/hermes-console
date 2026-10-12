@@ -5,6 +5,31 @@ import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/hermes_ui.dart';
 
 void main() {
+  testWidgets('settings switches use the selected theme font for both lines', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.hermesRedDark,
+        home: Scaffold(
+          body: HermesSwitchTile(
+            title: 'Herramientas',
+            subtitle: 'Descripción',
+            value: true,
+            onChanged: (_) {},
+          ),
+        ),
+      ),
+    );
+    expect(
+      tester.widget<Text>(find.text('Herramientas')).style!.fontFamily,
+      'Inter',
+    );
+    expect(
+      tester.widget<Text>(find.text('Descripción')).style!.fontFamily,
+      'Inter',
+    );
+  });
   testWidgets('shared forms keep a readable and neutral type scale', (
     tester,
   ) async {
