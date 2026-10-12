@@ -308,7 +308,7 @@ class AuroraData {
     'role': 'assistant',
     'content': text,
     'text': text,
-    if (calls != null) 'tool_calls': calls,
+    'tool_calls': ?calls,
   };
 
   Map<String, dynamic> _call(String id, String name, Map<String, dynamic> args) =>
@@ -628,14 +628,13 @@ class AuroraData {
   Map<String, dynamic> groupsState(String roomId) {
     final room = _rooms().where((r) => r['room_id'] == roomId).firstOrNull ??
         _rooms().first;
-    const working = false;
     return {
       'room': room,
       'driver_status': {
         'running': true,
-        'working': working,
+        'working': false,
         'blocked': false,
-        'counts': {'running': working ? 1 : 0, 'settled': 4, 'indeterminate': 0},
+        'counts': {'running': 0, 'settled': 4, 'indeterminate': 0},
         'pending_actions': <Object>[],
         'peer_routes': <Object>[],
       },
@@ -1166,7 +1165,7 @@ class AuroraData {
   // ------------------------------------------------------------ live turn
 
   List<TurnStep> liveTurn(String stored, String prompt, {bool hold = false}) {
-    final todo = (List<Map<String, String>> items) => {
+    Map<String, Object> todo(List<Map<String, String>> items) => {
       'todos': items,
       'revision': ++_todoRevision,
     };
