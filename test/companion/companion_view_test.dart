@@ -7,7 +7,8 @@ import 'package:hermes_android/core/companion/models/companion_animation_state.d
 import 'package:hermes_android/core/companion/render/companion_view.dart';
 import 'package:hermes_android/core/companion/render/spritesheet_renderer.dart';
 import 'package:hermes_android/core/companion/state/companion_controller.dart';
-import 'package:hermes_android/core/widgets/hermes_spark_mascot.dart';
+import 'package:hermes_android/core/theme/app_theme.dart';
+import 'package:hermes_android/core/companion/render/companion_face.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class _FakeController extends CompanionController {
@@ -41,14 +42,17 @@ Future<_FakeController> _fake(Companion? active) async {
 }
 
 void main() {
-  testWidgets('sin controller → fallback HermesSparkMascot', (tester) async {
+  testWidgets('sin controller → fallback a la cara de Hermes', (tester) async {
     await tester.pumpWidget(
-      const MaterialApp(home: CompanionView(animate: false)),
+      MaterialApp(
+        theme: AppTheme.hermesRedDark,
+        home: const CompanionView(animate: false),
+      ),
     );
-    expect(find.byType(HermesSparkMascot), findsOneWidget);
+    expect(find.byType(CompanionFace), findsOneWidget);
     expect(find.byType(SpritesheetRenderer), findsNothing);
     expect(
-      tester.widget<HermesSparkMascot>(find.byType(HermesSparkMascot)).animate,
+      tester.widget<CompanionFace>(find.byType(CompanionFace)).animate,
       isFalse,
     );
   });
@@ -56,9 +60,12 @@ void main() {
   testWidgets('controller sin mascota activa → fallback', (tester) async {
     final controller = await _fake(null);
     await tester.pumpWidget(
-      MaterialApp(home: CompanionView(controller: controller)),
+      MaterialApp(
+        theme: AppTheme.hermesRedDark,
+        home: CompanionView(controller: controller),
+      ),
     );
-    expect(find.byType(HermesSparkMascot), findsOneWidget);
+    expect(find.byType(CompanionFace), findsOneWidget);
     expect(find.byType(SpritesheetRenderer), findsNothing);
   });
 
@@ -70,10 +77,10 @@ void main() {
       MaterialApp(home: CompanionView(controller: controller)),
     );
     expect(find.byType(SpritesheetRenderer), findsOneWidget);
-    expect(find.byType(HermesSparkMascot), findsNothing);
+    expect(find.byType(CompanionFace), findsNothing);
   });
 
-  testWidgets('desactivada → no muestra NADA (ni Spark ni sprite)', (
+  testWidgets('desactivada → no muestra NADA (ni cara ni sprite)', (
     tester,
   ) async {
     final controller = await _fake(_companion());
@@ -81,7 +88,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(home: CompanionView(controller: controller)),
     );
-    expect(find.byType(HermesSparkMascot), findsNothing);
+    expect(find.byType(CompanionFace), findsNothing);
     expect(find.byType(SpritesheetRenderer), findsNothing);
   });
 }

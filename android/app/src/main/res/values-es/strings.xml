@@ -31,4 +31,8 @@
         <item quantity="one">%d más</item>
         <item quantity="other">%d más</item>
     </plurals>
+    <plurals name="rich_auto_summary">
+        <item quantity="one">%d automatización</item>
+        <item quantity="other">%d automatizaciones</item>
+    </plurals>
 </resources>

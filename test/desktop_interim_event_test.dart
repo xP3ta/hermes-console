@@ -911,14 +911,17 @@ void main() {
     );
 
     test(
-      'status error no conserva el descriptor remoto de facturación',
+      'status error conserva solo el bloque de facturación saneado',
       () async {
         final fixture = await _startChat();
         addTearDown(fixture.dispose);
         const billing = {
           'provider': 'nous',
+          'provider_label': 'Nous',
+          'model': 'private-model',
           'billing_url': 'https://example.invalid/billing',
-          'message': 'Crédito agotado',
+          'is_nous': false,
+          'message': 'Crédito agotado\nSegunda línea privada',
         };
 
         await _failComplete(fixture, const {
@@ -934,14 +937,25 @@ void main() {
           fixture.chat.messages.first['content'],
           'No se pudo completar la respuesta. Inténtalo de nuevo.',
         );
+        // The raw descriptor is never copied; only its sanitized form is kept.
         expect(fixture.chat.messages.first, isNot(contains('billing')));
+        expect(fixture.chat.messages.first['_billingBlock'], {
+          'provider_label': 'Nous',
+          'is_nous': false,
+          'billing_url': 'https://example.invalid/billing',
+          'message': 'Crédito agotado',
+        });
         expect(
           fixture.chat.messages.toString(),
           isNot(contains('payment required')),
         );
         expect(
           fixture.chat.messages.toString(),
-          isNot(contains('Crédito agotado')),
+          isNot(contains('Segunda línea privada')),
+        );
+        expect(
+          fixture.chat.messages.toString(),
+          isNot(contains('private-model')),
         );
         expect(fixture.chat.messages.first['recoverable'], isTrue);
         expect(fixture.events, contains(ActiveChatEvent.error));

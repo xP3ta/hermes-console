@@ -6,9 +6,9 @@ import '../services/artifact_export_service.dart';
 import '../services/generated_artifact_registry.dart';
 import '../theme/app_theme.dart';
 import '../utils/generated_artifact_detector.dart';
-import 'hermes_notice.dart';
 import 'hermes_premium_ui.dart';
 import 'hermes_ui.dart';
+import '../feedback/feedback_policy.dart';
 
 const int generatedArtifactPreviewCharacterLimit = 120000;
 
@@ -394,7 +394,9 @@ class _GeneratedArtifactViewerState extends State<GeneratedArtifactViewer> {
       switch (action) {
         case _ArtifactExportAction.copy:
           await widget.exporter.copyText(version.content);
-          if (mounted) _message(strings.generatedArtifactCopied);
+          if (mounted) {
+            _message(strings.generatedArtifactCopied, FeedbackKind.routine);
+          }
           break;
         case _ArtifactExportAction.share:
           await widget.exporter.shareText(
@@ -409,7 +411,10 @@ class _GeneratedArtifactViewerState extends State<GeneratedArtifactViewer> {
             content: version.content,
           );
           if (mounted && result == ArtifactSaveResult.saved) {
-            _message(strings.generatedArtifactSaved(fileName));
+            _message(
+              strings.generatedArtifactSaved(fileName),
+              FeedbackKind.critical,
+            );
           }
           break;
       }
@@ -428,8 +433,8 @@ class _GeneratedArtifactViewerState extends State<GeneratedArtifactViewer> {
     }
   }
 
-  void _message(String message) {
-    HermesNotice.of(context).showSnackBar(SnackBar(content: Text(message)));
+  void _message(String message, [FeedbackKind kind = FeedbackKind.error]) {
+    AppFeedback.notify(context, kind, message);
   }
 }
 

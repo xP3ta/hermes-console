@@ -18,7 +18,6 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 import 'package:hermes_android/core/services/active_chat_service.dart';
-import 'package:hermes_android/core/services/bridge_client.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/main.dart'
     show NetworkAvailabilityRecoveryListener;
@@ -294,79 +293,47 @@ void main() {
     });
   });
 
-  group('Bridge — resiliencia de red', () {
-    BridgeClient bridge(MockClient client) => BridgeClient(
-      baseUrl: 'http://hermes.local:9131',
-      token: 'bridge-token',
-      httpClient: client,
+  group('official Dashboard network resilience', () {
+    DashboardClient client(MockClient transport) => DashboardClient(
+      host: 'fixture.invalid',
+      useHttps: true,
+      manualToken: 'synthetic-canary',
+      httpClientOverride: transport,
     );
-
+    test('404 HTML is a typed HTTP cause, not a JSON parse failure', () async {
+      final c = client(
+        MockClient((_) async => http.Response('<html>not found</html>', 404)),
+      );
+      addTearDown(c.close);
+      await expectLater(
+        c.apiGet('model/info'),
+        throwsA(
+          isA<DashboardHttpException>().having(
+            (e) => e.statusCode,
+            'status',
+            404,
+          ),
+        ),
+      );
+    });
     test(
-      '1c. 404 en /bridge/chat → BridgeException con hint, no FormatException',
+      'malformed success is rejected rather than accepted as a catalog',
       () async {
-        // Un endpoint inexistente suele devolver HTML (no JSON). El fix de _decode
-        // (57d20de) debe convertirlo en un BridgeException legible en vez de
-        // reventar al hacer jsonDecode del HTML.
-        final client = bridge(
-          MockClient(
-            (request) async => http.Response(
-              '<html><body>404 Not Found</body></html>',
-              404,
-              headers: {'content-type': 'text/html'},
-            ),
-          ),
+        final c = client(
+          MockClient((_) async => http.Response('<html>invalid</html>', 200)),
         );
-
-        await expectLater(
-          client.chat('hola'),
-          throwsA(
-            allOf(
-              isA<BridgeException>(),
-              isNot(isA<FormatException>()),
-              predicate(
-                (e) => e.toString().contains('endpoint no disponible'),
-                'incluye el hint "endpoint no disponible"',
-              ),
-            ),
-          ),
-        );
-        client.close();
+        addTearDown(c.close);
+        await expectLater(c.getModelInfo(), throwsA(isA<FormatException>()));
       },
     );
-
-    test(
-      '1d. body 200 malformado lanza una excepción manejable (no crash)',
-      () async {
-        // El cuerpo 2xx se decodifica sin try/catch en BridgeClient._decode, así
-        // que un body no-JSON propaga un FormatException. Es CATCHABLE (no peta el
-        // isolate) y el llamador lo maneja como cualquier error del turno.
-        // TODO: requires refactor of BridgeClient._decode to wrap 2xx JSON parse
-        // errors in a BridgeException with a human-readable message.
-        final client = bridge(
-          MockClient(
-            (request) async => http.Response('<html>not json at all', 200),
-          ),
-        );
-
-        await expectLater(client.chat('hola'), throwsA(isA<Exception>()));
-        client.close();
-      },
-    );
-
-    test(
-      '1e. conexión rechazada (SocketException) en health → false, no lanza',
-      () async {
-        final client = bridge(
-          MockClient(
-            (request) async =>
-                throw const SocketException('connection refused'),
-          ),
-        );
-
-        // health() captura cualquier fallo de red y degrada a false sin propagar.
-        expect(await client.health(), isFalse);
-        client.close();
-      },
-    );
+    test('connection refusal remains an honest unavailable failure', () async {
+      final c = client(
+        MockClient(
+          (_) async => throw const SocketException('synthetic refusal'),
+        ),
+      );
+      addTearDown(c.close);
+      await expectLater(c.getModelInfo(), throwsA(isA<SocketException>()));
+    });
   });
 }

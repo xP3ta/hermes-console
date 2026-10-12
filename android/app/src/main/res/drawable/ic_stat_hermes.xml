@@ -1,33 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
 <!--
-  Icono de notificación monocromo (blanco sobre transparente). Android lo tiñe
-  con el color del canal/notificación (ámbar Hermes). Glyph: prompt de terminal
-  ">_" dentro de un círculo = identidad de Hermes Console (no un rayo genérico).
-  Los iconos de estado DEBEN ser blancos con alfa, no a color.
+  Status-bar / notification small icon: the Console mark as a white
+  silhouette on transparency (Android tints it). Status-bar icons MUST
+  be white with alpha, never coloured.
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
     android:height="24dp"
     android:viewportWidth="24"
     android:viewportHeight="24">
-    <!-- Anillo (círculo) -->
     <path
-        android:strokeColor="#FFFFFFFF"
-        android:strokeWidth="1.8"
         android:fillColor="#00000000"
-        android:pathData="M12,2.6 a9.4,9.4 0 1,0 0.01,0 z" />
-    <!-- Prompt ">" -->
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="3.918"
+        android:pathData="M18.035,6.62 A8.041,8.041 0 1,0 18.035,17.38" />
     <path
-        android:strokeColor="#FFFFFFFF"
-        android:strokeWidth="1.8"
-        android:strokeLineCap="round"
-        android:strokeLineJoin="round"
-        android:fillColor="#00000000"
-        android:pathData="M8.3,8.6 L11.7,12 L8.3,15.4" />
-    <!-- Prompt "_" -->
-    <path
-        android:strokeColor="#FFFFFFFF"
-        android:strokeWidth="1.8"
-        android:strokeLineCap="round"
-        android:fillColor="#00000000"
-        android:pathData="M13.2,15.4 L16,15.4" />
+        android:fillColor="#FFFFFF"
+        android:pathData="M18.901,9.018 L21.942,9.018 L21.942,14.982 L18.901,14.982 Z" />
 </vector>

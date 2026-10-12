@@ -203,4 +203,62 @@ void main() {
     expect(bubble.bottom - save.bottom, lessThanOrEqualTo(12));
     expect(cancel.right, lessThan(save.left));
   });
+
+  testWidgets('tras un guardado fallido Guardar vuelve a funcionar', (
+    tester,
+  ) async {
+    var saving = false;
+    String? draft;
+    final saves = <String>[];
+    late StateSetter update;
+    await tester.pumpWidget(
+      MaterialApp(
+        locale: const Locale('es'),
+        localizationsDelegates: Strings.localizationsDelegates,
+        supportedLocales: Strings.supportedLocales,
+        theme: AppTheme.hermesRedDark,
+        home: Scaffold(
+          body: StatefulBuilder(
+            builder: (context, setState) {
+              update = setState;
+              return InlineMessageEditor(
+                initialText: 'Texto original',
+                draftText: draft,
+                saving: saving,
+                onCancel: () {},
+                onSave: (value) {
+                  saves.add(value);
+                  setState(() => saving = true);
+                },
+              );
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    final field = find.byKey(const ValueKey('inline-message-editor-field'));
+    final save = find.byKey(const ValueKey('inline-message-editor-save'));
+    await tester.enterText(field, 'Texto corregido');
+    await tester.pump();
+    FocusManager.instance.primaryFocus?.unfocus();
+    await tester.pump();
+    await tester.tap(save);
+    await tester.pump();
+    expect(saves, ['Texto corregido']);
+    expect(tester.widget<IconButton>(save).onPressed, isNull);
+
+    // The save failed: the host keeps the text and stops saving.
+    update(() {
+      saving = false;
+      draft = 'Texto corregido';
+    });
+    await tester.pump();
+    expect(tester.widget<TextField>(field).controller!.text, 'Texto corregido');
+    expect(tester.widget<IconButton>(save).onPressed, isNotNull);
+    await tester.tap(save);
+    await tester.pump();
+    expect(saves, ['Texto corregido', 'Texto corregido']);
+    expect(tester.takeException(), isNull);
+  });
 }

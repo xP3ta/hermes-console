@@ -26,6 +26,7 @@ class MissionBotTaskSheet extends StatefulWidget {
   final MissionProfileAvatarCache? avatarCache;
   final String? botShape;
   final String? botColorHex;
+  final bool botUsesShapeColor;
   final String? botImageKind;
 
   const MissionBotTaskSheet({
@@ -36,6 +37,7 @@ class MissionBotTaskSheet extends StatefulWidget {
     this.avatarCache,
     this.botShape,
     this.botColorHex,
+    this.botUsesShapeColor = false,
     this.botImageKind,
     super.key,
   });
@@ -151,7 +153,9 @@ class _MissionBotTaskSheetState extends State<MissionBotTaskSheet> {
                     cache: widget.avatarCache,
                     size: 40,
                     shape: widget.botShape,
-                    colorHex: widget.botColorHex,
+                    colorHex: widget.botUsesShapeColor
+                        ? widget.botColorHex
+                        : null,
                     imageKind: widget.botImageKind,
                   ),
                   const SizedBox(width: 12),
@@ -190,8 +194,8 @@ class _MissionBotTaskSheetState extends State<MissionBotTaskSheet> {
               decoration: InputDecoration(
                 labelText: _english ? 'What' : 'Qué',
                 hintText: _english
-                    ? 'What should this bot do?'
-                    : '¿Qué debe hacer este bot?',
+                    ? 'What should this profile do?'
+                    : '¿Qué debe hacer este perfil?',
               ),
               validator: (value) {
                 if (value == null || value.trim().isEmpty) {

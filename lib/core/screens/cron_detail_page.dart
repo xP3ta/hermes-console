@@ -9,14 +9,17 @@ import '../../l10n/app_localizations.dart';
 import '../design/hermes_design.dart';
 import '../models/cron_job.dart';
 import '../models/session.dart';
+import '../utils/session_title.dart';
+import '../services/connection_manager.dart' show CronJobNotFoundException;
 import '../services/cron_repository.dart';
 import '../services/notifications/notification_mute_store.dart';
 import '../services/notifications/notification_service.dart';
 import '../models/agent_profile.dart';
 import '../services/tui_gateway_client.dart';
 import '../theme/app_theme.dart';
-import '../widgets/hermes_notice.dart';
+import '../utils/api_error.dart';
 import '../widgets/mission_profile_avatar.dart';
+import '../feedback/feedback_policy.dart';
 
 @visibleForTesting
 const cronDetailRefreshInterval = Duration(seconds: 60);
@@ -159,7 +162,7 @@ class CronOwnerLine extends StatelessWidget {
           cache: avatarCache,
           size: faceSize,
           shape: info?.botFaceShape,
-          colorHex: info?.botColorHex,
+          colorHex: info?.botFaceColorHex,
           imageKind: info?.botImageKind,
         ),
         const SizedBox(width: 6),
@@ -224,7 +227,8 @@ class CronJobDetailPage extends StatefulWidget {
   State<CronJobDetailPage> createState() => _CronJobDetailPageState();
 }
 
-class _CronJobDetailPageState extends State<CronJobDetailPage> {
+class _CronJobDetailPageState extends State<CronJobDetailPage>
+    with WidgetsBindingObserver {
   late CronJob _job = widget.initialJob;
   CronRuns? _runs;
   Timer? _timer;
@@ -238,15 +242,41 @@ class _CronJobDetailPageState extends State<CronJobDetailPage> {
   bool get _refreshAllowed =>
       mounted &&
       WidgetsBinding.instance.lifecycleState != AppLifecycleState.paused &&
+      WidgetsBinding.instance.lifecycleState != AppLifecycleState.hidden &&
       ModalRoute.of(context)?.isCurrent != false;
+
+  /// Backstop refresh while visible. It sleeps while the app is hidden or
+  /// paused and restarts on resume after an immediate refresh.
+  void _armRefreshTimer() {
+    _timer?.cancel();
+    _timer = Timer.periodic(cronDetailRefreshInterval, (_) {
+      if (_refreshAllowed) unawaited(_refresh());
+    });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    switch (state) {
+      case AppLifecycleState.resumed:
+        if (_timer != null) return;
+        _armRefreshTimer();
+        if (_refreshAllowed) unawaited(_refresh());
+      case AppLifecycleState.hidden:
+      case AppLifecycleState.paused:
+      case AppLifecycleState.detached:
+        _timer?.cancel();
+        _timer = null;
+      case AppLifecycleState.inactive:
+        break;
+    }
+  }
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     unawaited(_refresh());
-    _timer = Timer.periodic(cronDetailRefreshInterval, (_) {
-      if (_refreshAllowed) unawaited(_refresh());
-    });
+    _armRefreshTimer();
     _events = widget.eventStream?.listen((event) {
       if (!_refreshAllowed || !_isCronRefreshEvent(event)) return;
       _debounce?.cancel();
@@ -258,6 +288,7 @@ class _CronJobDetailPageState extends State<CronJobDetailPage> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
     _debounce?.cancel();
     unawaited(_events?.cancel());
@@ -293,11 +324,11 @@ class _CronJobDetailPageState extends State<CronJobDetailPage> {
 
   void _failure(Object error) {
     if (!mounted) return;
-    HermesNotice.show(
+    final s = Strings.of(context);
+    AppFeedback.of(
       context,
-      message: Strings.of(context).crnFailed(error.toString()),
-      kind: HermesNoticeKind.error,
-    );
+    ).notify(FeedbackKind.error, s.crnFailed(localizedApiError(s, error)));
+    if (error is CronJobNotFoundException) unawaited(_refresh());
   }
 
   Future<void> _run(Future<void> Function() action) async {
@@ -316,11 +347,9 @@ class _CronJobDetailPageState extends State<CronJobDetailPage> {
     final updated = await widget.repository.trigger(_job);
     _apply(updated);
     if (mounted) {
-      HermesNotice.show(
+      AppFeedback.of(
         context,
-        message: Strings.of(context).crnJobTriggered,
-        kind: HermesNoticeKind.success,
-      );
+      ).notify(FeedbackKind.routine, Strings.of(context).crnJobTriggered);
     }
     unawaited(_refresh());
   });
@@ -331,9 +360,9 @@ class _CronJobDetailPageState extends State<CronJobDetailPage> {
     _apply(updated);
     if (mounted) {
       final s = Strings.of(context);
-      HermesNotice.show(
-        context,
-        message: wasPaused ? s.crnJobResumed : s.crnJobPaused,
+      AppFeedback.of(context).notify(
+        FeedbackKind.routine,
+        wasPaused ? s.crnJobResumed : s.crnJobPaused,
       );
     }
   });
@@ -360,11 +389,9 @@ class _CronJobDetailPageState extends State<CronJobDetailPage> {
       );
       _apply(updated);
       if (mounted) {
-        HermesNotice.show(
+        AppFeedback.of(
           context,
-          message: Strings.of(context).crnJobUpdated,
-          kind: HermesNoticeKind.success,
-        );
+        ).notify(FeedbackKind.routine, Strings.of(context).crnJobUpdated);
       }
     });
   }
@@ -637,8 +664,48 @@ class _CronJobDetailPageState extends State<CronJobDetailPage> {
       dividerIndent: HermesSpace.rowH,
       children: [
         for (final session in runs.sessions.take(10))
-          _RunRow(session: session, onTap: () => widget.onOpenRun(session)),
+          if (_isCronOutputRun(session))
+            _CronOutputRow(session: session)
+          else
+            _RunRow(session: session, onTap: () => widget.onOpenRun(session)),
       ],
+    );
+  }
+}
+
+/// Script-only (no_agent) jobs have no agent session: the runs endpoint
+/// serves their per-fire output docs as `source: cron_output` rows (Desktop
+/// `cron-jobs-section.tsx` `isSyntheticCronOutputRun`). Nothing backs them
+/// to open, so they are plain rows.
+bool _isCronOutputRun(Session run) => run.source.trim() == 'cron_output';
+
+/// Desktop `cron/index.tsx` output row: the recorded title or preview and the
+/// run time, without a chat-navigation affordance.
+class _CronOutputRow extends StatelessWidget {
+  final Session session;
+
+  const _CronOutputRow({required this.session});
+
+  @override
+  Widget build(BuildContext context) {
+    final s = Strings.of(context);
+    final title = session.title.trim();
+    final preview = session.preview.trim();
+    final at = session.updatedAt ?? session.startedAt;
+    return HermesListRow(
+      muted: true,
+      title: title.isNotEmpty && title != 'Untitled'
+          ? title
+          : preview.isNotEmpty
+          ? preview
+          : session.id,
+      value: at > 0
+          ? hermesFormatNextRun(
+              s,
+              DateTime.fromMillisecondsSinceEpoch((at * 1000).round()),
+            )
+          : null,
+      showChevron: false,
     );
   }
 }
@@ -675,7 +742,7 @@ class _RunRow extends StatelessWidget {
       duration = secs < 90 ? '$secs s' : '${(secs / 60).round()} min';
     }
     final when = started == null
-        ? session.displayTitle
+        ? localizedSessionTitle(s, session)
         : hermesFormatNextRun(s, started);
     return Semantics(
       button: true,

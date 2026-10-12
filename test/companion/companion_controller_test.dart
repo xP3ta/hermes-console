@@ -49,8 +49,8 @@ void main() {
     expect(c.enabled, isTrue);
     expect(c.selectedSlug, isNull);
     expect(c.activeCompanion, isNull); // sin selección → fallback
-    expect(c.roamingEnabled, isFalse);
-    expect(c.showOnHome, isTrue);
+    // On, everywhere, for whoever never touched the setting.
+    expect(c.presence, CompanionPresenceLevel.full);
   });
 
   test('seleccionar activa la mascota', () async {
@@ -69,41 +69,6 @@ void main() {
       await c.setEnabled(false);
       expect(c.enabled, isFalse);
       expect(c.activeCompanion, isNull);
-    },
-  );
-
-  test('paseo opt-in persiste y notifica al controller', () async {
-    final c = await _controller([_nimbus()]);
-    await c.init();
-
-    var notifications = 0;
-    c.addListener(() => notifications++);
-    await c.setRoamingEnabled(true);
-
-    expect(c.roamingEnabled, isTrue);
-    expect(notifications, 1);
-
-    final prefs = await CompanionPreferences.load();
-    expect(prefs.roamingEnabled, isTrue);
-  });
-
-  test(
-    'visibilidad de Inicio persiste sin cambiar la presencia global',
-    () async {
-      final c = await _controller([_nimbus()]);
-      await c.init();
-
-      var notifications = 0;
-      c.addListener(() => notifications++);
-      await c.setShowOnHome(false);
-
-      expect(c.showOnHome, isFalse);
-      expect(c.enabled, isTrue);
-      expect(c.presenceLevel, CompanionPresenceLevel.minimal);
-      expect(notifications, 1);
-
-      final prefs = await CompanionPreferences.load();
-      expect(prefs.showOnHome, isFalse);
     },
   );
 
@@ -138,11 +103,73 @@ void main() {
 
     await c.setVisibilityLevel(CompanionPresenceLevel.off);
     expect(c.enabled, isFalse);
+    expect(c.presence, CompanionPresenceLevel.off);
     expect(c.presenceLevel, CompanionPresenceLevel.off);
 
     await c.setVisibilityLevel(CompanionPresenceLevel.full);
     expect(c.enabled, isTrue);
-    expect(c.presenceLevel, CompanionPresenceLevel.full);
+    expect(c.presence, CompanionPresenceLevel.full);
+
+    await c.setVisibilityLevel(CompanionPresenceLevel.chat);
+    expect(c.enabled, isTrue);
+    expect(c.presence, CompanionPresenceLevel.chat);
+  });
+
+  group('what a chat reads (presenceLevel)', () {
+    test('no pet of its own: the island keeps the face it had', () async {
+      final c = await _controller([_nimbus()]);
+      await c.init();
+      expect(c.presence, CompanionPresenceLevel.full);
+      expect(c.presenceLevel, CompanionPresenceLevel.ambient);
+      expect(c.presenceLevel.showsStatusPresence, isFalse);
+      expect(c.presenceLevel.isVisible, isTrue);
+      await c.setVisibilityLevel(CompanionPresenceLevel.chat);
+      expect(c.presenceLevel, CompanionPresenceLevel.ambient);
+    });
+
+    test('with a pet: it stands on the island in both choices', () async {
+      final c = await _controller([_nimbus()]);
+      await c.init();
+      await c.select('nimbus');
+      expect(c.presenceLevel, CompanionPresenceLevel.full);
+      expect(c.presenceLevel.showsStatusPresence, isTrue);
+      await c.setVisibilityLevel(CompanionPresenceLevel.chat);
+      expect(c.presenceLevel, CompanionPresenceLevel.chat);
+      expect(c.presenceLevel.showsStatusPresence, isTrue);
+      await c.setVisibilityLevel(CompanionPresenceLevel.off);
+      expect(c.presenceLevel, CompanionPresenceLevel.off);
+    });
+
+    test('the old stored values', () async {
+      // "Mínima" (and nothing stored): now everywhere.
+      SharedPreferences.setMockInitialValues({
+        CompanionPreferences.presenceLevelKey: 'minimal',
+      });
+      var c = await _controller([_nimbus()]);
+      await c.init();
+      expect(c.presence, CompanionPresenceLevel.full);
+      expect(c.presenceLevel, CompanionPresenceLevel.ambient);
+
+      // "Completa" without a pet kept the profile's face in the pet's
+      // slot of the island: whoever had it keeps it.
+      SharedPreferences.setMockInitialValues({
+        CompanionPreferences.presenceLevelKey: 'full',
+      });
+      c = await _controller([_nimbus()]);
+      await c.init();
+      expect(c.presence, CompanionPresenceLevel.full);
+      expect(c.presenceLevel, CompanionPresenceLevel.full);
+      // Choosing again is a choice of the new setting.
+      await c.setVisibilityLevel(CompanionPresenceLevel.chat);
+      expect(c.presenceLevel, CompanionPresenceLevel.ambient);
+
+      SharedPreferences.setMockInitialValues({
+        CompanionPreferences.presenceLevelKey: 'off',
+      });
+      c = await _controller([_nimbus()]);
+      await c.init();
+      expect(c.presence, CompanionPresenceLevel.off);
+    });
   });
 
   test('la velocidad es independiente para cada mascota', () async {

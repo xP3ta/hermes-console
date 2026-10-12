@@ -6,6 +6,8 @@ import '../../l10n/app_localizations.dart';
 import '../design/hermes_design.dart';
 import '../models/subagent_activity.dart';
 import '../screens/subagent_detail_screen.dart';
+import '../services/subagent_live_watch.dart';
+import '../services/delegation_control.dart';
 import '../theme/app_theme.dart';
 import 'activity_pill.dart' show formatTurnElapsed;
 
@@ -40,6 +42,12 @@ typedef SubagentStopRequester =
 typedef SubagentTailScheduler =
     VoidCallback Function(Duration delay, VoidCallback callback);
 
+/// Opens a live watch of the child, or null when none can be offered (no
+/// child session, no watch-capable gateway). The detail page owns the result
+/// and closes it when it is covered or left.
+typedef SubagentLiveWatchOpener =
+    SubagentLiveWatch? Function(SubagentActivity activity);
+
 /// Lets the unified activity panel open a subagent (detail page, or the
 /// floating list when several and none is preselected).
 class SubagentActivityController {
@@ -70,6 +78,10 @@ class SubagentActivityCard extends StatefulWidget {
   final SubagentSteerSender? onSteer;
   final SubagentTailLoader? onTail;
   final SubagentTailScheduler? scheduleTailPoll;
+  final SubagentLiveWatchOpener? openLiveWatch;
+
+  /// Server-wide pause switch, handed to the detail's overflow.
+  final HermesDelegationGateway? delegationControl;
   final DateTime? now;
   final bool background;
   final bool appForeground;
@@ -100,6 +112,8 @@ class SubagentActivityCard extends StatefulWidget {
     this.onSteer,
     this.onTail,
     this.scheduleTailPoll,
+    this.openLiveWatch,
+    this.delegationControl,
     this.now,
     this.background = false,
     this.appForeground = true,
@@ -222,6 +236,8 @@ class _SubagentActivityCardState extends State<SubagentActivityCard> {
           isOpenPending: widget.isOpenPending,
           acquirePresentation: widget.acquirePresentation,
           scheduleTailPoll: widget.scheduleTailPoll,
+          openLiveWatch: widget.openLiveWatch,
+          delegationControl: widget.delegationControl,
           clock: widget.now == null ? null : () => widget.now!,
           hideGoal: !_ownerWired,
         ),

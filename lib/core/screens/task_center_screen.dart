@@ -13,28 +13,23 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../l10n/app_localizations.dart';
 import '../../main.dart';
 import '../services/active_chat_service.dart';
-import '../services/bridge_client.dart';
 import '../services/connection_manager.dart';
 import '../services/run_registry.dart';
 import '../services/run_template_store.dart';
 import '../design/hermes_design.dart'
-    show
-        HermesDialogAction,
-        HermesDialogActionStyle,
-        HermesLogPage,
-        showHermesDialog;
+    show HermesDialogAction, HermesDialogActionStyle, showHermesDialog;
 import '../theme/app_theme.dart';
 import '../services/notifications/notification_controller.dart';
 import '../utils/relative_time.dart';
 import '../utils/run_event_normalizer.dart';
 import '../widgets/accent_card.dart';
 import '../widgets/hermes_app_bar.dart';
-import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_pill.dart';
 import '../widgets/hermes_ui.dart';
 import '../widgets/read_only.dart';
 import '../widgets/run_template_composer.dart';
 import 'runs_screen.dart' show RunDetailScreen, runStatusColor, runStatusLabel;
+import '../feedback/feedback_policy.dart';
 
 // Máximo de streams SSE simultáneos para no saturar el gateway.
 const _kMaxLiveStreams = 5;
@@ -373,13 +368,8 @@ class _TaskCenterScreenState extends State<TaskCenterScreen> {
 
     final s = Strings.of(context);
     try {
-      // Instancia LOCAL: el agente no expone /v1/runs (daba HTTP 405). Ejecuta
-      // por el Mobile Bridge (igual que el chat local) y muestra el resultado.
-      // REMOTO: flujo /v1/runs + SSE en vivo, intacto.
-      if (widget.connection.kind == InstanceKind.localhost) {
-        await _launchLocalRun(prompt);
-        return;
-      }
+      // Existing localhost and remote connections share the official Gateway
+      // run lifecycle. A failed route/auth never authorizes a companion fallback.
       final runId = await _client.startRun(
         input: prompt,
         profile: widget.profile,
@@ -399,60 +389,10 @@ class _TaskCenterScreenState extends State<TaskCenterScreen> {
       _openDetail(record);
     } catch (e) {
       if (!mounted) return;
-      HermesNotice.of(context).showSnackBar(
-        SnackBar(content: Text(s.runsLaunchError(e.toString()))),
-        kind: HermesNoticeKind.error,
-      );
-    }
-  }
-
-  /// Ejecución en instancia LOCAL vía Mobile Bridge (oneshot). No hay SSE en
-  /// vivo: el bridge devuelve la respuesta final, que registramos y mostramos.
-  Future<void> _launchLocalRun(String prompt) async {
-    final conn = widget.connection;
-    final s = Strings.of(context);
-    if (mounted) {
-      HermesNotice.of(
+      AppFeedback.of(
         context,
-      ).showSnackBar(SnackBar(content: Text(s.runsLocalRunning)));
+      ).notify(FeedbackKind.error, s.runsLaunchError(e.toString()));
     }
-    final base = conn.derivedBridgeUrl;
-    final token = await BridgeClient.provision(base, conn.apiKey.trim());
-    if (token == null || token.isEmpty) {
-      throw Exception(s.runsLocalBridgeUnavailable);
-    }
-    final client = BridgeClient(baseUrl: base, token: token);
-    final response = (await client.chat(prompt)).trim();
-    final record = RunRecord(
-      runId: 'local-${DateTime.now().millisecondsSinceEpoch}',
-      prompt: prompt,
-      createdAt: DateTime.now().millisecondsSinceEpoch / 1000,
-      lastStatus: 'completed',
-      output: response,
-      connId: widget.connection.id,
-      profile: widget.profile,
-    );
-    await _registry?.add(record);
-    if (!mounted) return;
-    setState(() {});
-    await _showLocalResult(response);
-  }
-
-  /// Muestra el resultado de una ejecución local (sin detalle en vivo). Texto
-  /// plano (no SelectableText) para no reactivar el crash `_dependents.isEmpty`.
-  Future<void> _showLocalResult(String response) async {
-    if (!mounted) return;
-    final s = Strings.of(context);
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => HermesLogPage(
-          key: const ValueKey('local-run-result-page'),
-          title: s.commonResult,
-          text: response.isEmpty ? s.commonNoOutput : response,
-          mono: false,
-        ),
-      ),
-    );
   }
 
   void _openDetail(RunRecord record) {
@@ -482,10 +422,9 @@ class _TaskCenterScreenState extends State<TaskCenterScreen> {
     await _registry?.remove(record.runId, profile: record.profile);
     if (!mounted) return;
     setState(() {});
-    HermesNotice.of(context).showSnackBar(
-      SnackBar(content: Text(Strings.of(context).runsDeleted)),
-      kind: HermesNoticeKind.success,
-    );
+    AppFeedback.of(
+      context,
+    ).notify(FeedbackKind.routine, Strings.of(context).runsDeleted);
   }
 
   /// Vacía toda la lista local de ejecuciones (con confirmación).
@@ -517,10 +456,7 @@ class _TaskCenterScreenState extends State<TaskCenterScreen> {
     await registry.clear();
     if (!mounted) return;
     setState(() {});
-    HermesNotice.of(context).showSnackBar(
-      SnackBar(content: Text(s.runsCleared)),
-      kind: HermesNoticeKind.success,
-    );
+    AppFeedback.of(context).notify(FeedbackKind.routine, s.runsCleared);
   }
 
   // ─── Build ───────────────────────────────────────────────────────────────────
@@ -535,7 +471,7 @@ class _TaskCenterScreenState extends State<TaskCenterScreen> {
       appBar: HermesAppBar(
         centerTitle: false,
         title: Text(
-          'EJECUCIONES',
+          s.drawerTaskCenter.toUpperCase(),
           style: TextStyle(
             fontWeight: FontWeight.bold,
             fontSize: 15,
@@ -544,6 +480,14 @@ class _TaskCenterScreenState extends State<TaskCenterScreen> {
           ),
         ),
         actions: [
+          // A new run starts from up here, not from a button over the list.
+          if (!widget.connection.readOnly)
+            IconButton(
+              key: const ValueKey('runs-create'),
+              icon: const Icon(Icons.add_rounded),
+              tooltip: s.runsNewRun,
+              onPressed: _newRun,
+            ),
           if (registry != null && registry.records.isNotEmpty)
             IconButton(
               icon: const Icon(Icons.delete_sweep_outlined, size: 20),
@@ -567,13 +511,6 @@ class _TaskCenterScreenState extends State<TaskCenterScreen> {
             ),
         ],
       ),
-      floatingActionButton: widget.connection.readOnly
-          ? null
-          : FloatingActionButton(
-              onPressed: _newRun,
-              tooltip: s.runsNewRun,
-              child: const Icon(Icons.add),
-            ),
       body: registry == null
           ? const Center(child: TuiLoader())
           : _buildWithActiveIds(registry, colors, s),
@@ -624,7 +561,7 @@ class _TaskCenterScreenState extends State<TaskCenterScreen> {
             const SizedBox(height: 4),
             Text(
               s.runsEmptySub,
-              style: TextStyle(fontSize: 11, color: colors.textDisabled),
+              style: TextStyle(fontSize: 11, color: colors.textTertiary),
             ),
           ],
         ),
@@ -635,6 +572,7 @@ class _TaskCenterScreenState extends State<TaskCenterScreen> {
       color: colors.accent,
       onRefresh: _refreshStatuses,
       child: ListView.builder(
+        clipBehavior: hermesUnderHeader,
         physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.fromLTRB(12, 10, 12, 80),
         itemCount: records.length,

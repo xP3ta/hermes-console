@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../models/connection.dart';
-import '../widgets/hermes_notice.dart';
+import '../feedback/feedback_policy.dart';
 
 /// Single gate for routes that only make sense after an instance is active.
 ///
@@ -21,9 +21,10 @@ abstract final class InstanceRouteGuard {
     if (onBlocked != null) {
       onBlocked();
     } else {
-      HermesNotice.of(context).showSnackBar(
-        SnackBar(content: Text(Strings.of(context).drawerNeedInstance)),
-        kind: HermesNoticeKind.warning,
+      AppFeedback.of(context).notify(
+        FeedbackKind.error,
+        Strings.of(context).drawerNeedInstance,
+        warning: true,
       );
     }
     return null;

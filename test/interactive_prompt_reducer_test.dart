@@ -174,13 +174,6 @@ void main() {
           ],
           'answers': ['A'],
         },
-        {
-          'request_id': 'unknown-answer-qid',
-          'questions': [
-            {'qid': 'q0', 'question': '¿A?'},
-          ],
-          'answers': {'q1': 'A'},
-        },
       ];
 
       for (final payload in invalidPayloads) {
@@ -641,6 +634,48 @@ void main() {
       },
     );
 
+    test('null optional fields from the Hermes wire mean absent', () {
+      // `_clarify_block` writes `"choices": null` for an open-ended batch
+      // question; the contract types every optional field `T | null`.
+      final batch =
+          InteractivePromptRequest.fromGatewayEvent(
+                type: 'clarify.request',
+                runtimeSessionId: 'runtime-a',
+                payload: const {
+                  'request_id': 'null-fields',
+                  'questions': [
+                    {
+                      'qid': 'q0',
+                      'question': '¿Par?',
+                      'choices': null,
+                      'multi_select': null,
+                    },
+                  ],
+                  'answers': null,
+                },
+              )
+              as ClarifyPromptRequest;
+      expect(batch.isBatch, isTrue);
+      expect(batch.questions.single.choices, isEmpty);
+      expect(batch.questions.single.multiSelect, isFalse);
+      expect(batch.lockedAnswers, isEmpty);
+
+      final single =
+          InteractivePromptRequest.fromGatewayEvent(
+                type: 'clarify.request',
+                runtimeSessionId: 'runtime-a',
+                payload: const {
+                  'request_id': 'null-single',
+                  'question': '¿Seguimos?',
+                  'choices': null,
+                  'questions': null,
+                },
+              )
+              as ClarifyPromptRequest;
+      expect(single.isBatch, isFalse);
+      expect(single.choices, isEmpty);
+    });
+
     test('legacy single-question payload still works', () {
       final request = InteractivePromptRequest.fromGatewayEvent(
         type: 'clarify.request',
@@ -658,20 +693,90 @@ void main() {
       expect(clarify.multiSelect, isFalse);
     });
 
-    test('legacy multi_select is rejected instead of answered as single', () {
-      expect(
-        () => InteractivePromptRequest.fromGatewayEvent(
-          type: 'clarify.request',
-          runtimeSessionId: 'runtime-a',
-          payload: const {
-            'request_id': 'legacy-multi',
-            'question': '¿Cuáles?',
-            'choices': ['A', 'B'],
-            'multi_select': true,
-          },
-        ),
-        throwsFormatException,
-      );
+    test('a single multi-select question is kept, not dropped', () {
+      // `_clarify_block` sends exactly this for `clarify(question, choices,
+      // multi_select=True)`; Hermes parses a plain or comma-separated answer
+      // (`_parse_multi_select_response`), so one picked choice is valid.
+      final request =
+          InteractivePromptRequest.fromGatewayEvent(
+                type: 'clarify.request',
+                runtimeSessionId: 'runtime-a',
+                payload: const {
+                  'request_id': 'single-multi',
+                  'question': '¿Cuáles?',
+                  'choices': ['A', 'B'],
+                  'multi_select': true,
+                },
+              )
+              as ClarifyPromptRequest;
+      expect(request.isBatch, isFalse);
+      expect(request.question, '¿Cuáles?');
+      expect(request.choices, ['A', 'B']);
+      expect(request.multiSelect, isTrue);
+    });
+
+    test('multi_select without choices means an open question', () {
+      // Desktop: `multi_select === true && choices.length > 0`.
+      for (final payload in const <Map<String, dynamic>>[
+        {'request_id': 'single', 'question': '¿Qué?', 'multi_select': true},
+        {
+          'request_id': 'batch',
+          'questions': [
+            {'qid': 'q0', 'question': '¿Qué?', 'multi_select': true},
+          ],
+        },
+      ]) {
+        final request =
+            InteractivePromptRequest.fromGatewayEvent(
+                  type: 'clarify.request',
+                  runtimeSessionId: 'runtime-a',
+                  payload: payload,
+                )
+                as ClarifyPromptRequest;
+        expect(
+          request.multiSelect,
+          isFalse,
+          reason: '${payload['request_id']}',
+        );
+        expect(
+          request.questions.every((question) => !question.multiSelect),
+          isTrue,
+        );
+      }
+    });
+
+    test('replayed answers the request cannot place are ignored', () {
+      // `answers` is only a reconnect hint of locks already accepted; one
+      // that names no question of this request must not drop the prompt.
+      final batch =
+          InteractivePromptRequest.fromGatewayEvent(
+                type: 'clarify.request',
+                runtimeSessionId: 'runtime-a',
+                payload: const {
+                  'request_id': 'stray-lock',
+                  'questions': [
+                    {'qid': 'q0', 'question': '¿A?'},
+                  ],
+                  'answers': {'q0': 'si', 'q9': 'otro'},
+                },
+              )
+              as ClarifyPromptRequest;
+      expect(batch.lockedAnswers, {'q0': 'si'});
+
+      final single =
+          InteractivePromptRequest.fromGatewayEvent(
+                type: 'clarify.request',
+                runtimeSessionId: 'runtime-a',
+                payload: const {
+                  'request_id': 'single-with-answers',
+                  'question': '¿Seguimos?',
+                  'answers': {'q0': 'si'},
+                },
+              )
+              as ClarifyPromptRequest;
+      expect(single.isBatch, isFalse);
+      expect(single.question, '¿Seguimos?');
+      expect(single.lockedAnswers, isEmpty);
     });
 
     test('opaque ids, text, choices and locked answers stay literal', () {
@@ -770,5 +875,69 @@ void main() {
         throwsFormatException,
       );
     });
+  });
+
+  test('an unacknowledged answer lost with its transport forgets only the '
+      'responded tombstone', () {
+    var state = const InteractivePromptState.empty();
+    for (final id in ['answered', 'expired', 'cancelled', 'pending', 'busy']) {
+      state = InteractivePromptReducer.reduce(
+        state,
+        InteractivePromptReceived(_clarify('runtime-a', id)),
+      );
+    }
+    state = InteractivePromptReducer.reduce(
+      state,
+      InteractivePromptResponseStarted(_key('runtime-a', 'answered')),
+    );
+    state = InteractivePromptReducer.reduce(
+      state,
+      InteractivePromptResponded(_key('runtime-a', 'answered')),
+    );
+    state = InteractivePromptReducer.reduce(
+      state,
+      InteractivePromptExpired(_key('runtime-a', 'expired')),
+    );
+    state = InteractivePromptReducer.reduce(
+      state,
+      InteractivePromptCancelled(_key('runtime-a', 'cancelled')),
+    );
+    state = InteractivePromptReducer.reduce(
+      state,
+      InteractivePromptResponseStarted(_key('runtime-a', 'busy')),
+    );
+    for (final id in ['answered', 'expired', 'cancelled', 'pending', 'busy']) {
+      state = InteractivePromptReducer.reduce(
+        state,
+        InteractivePromptUnacknowledgedAnswerLost(_key('runtime-a', id)),
+      );
+    }
+    expect(state[_key('runtime-a', 'answered')], isNull);
+    expect(
+      state[_key('runtime-a', 'expired')]?.status,
+      InteractivePromptStatus.expired,
+    );
+    expect(
+      state[_key('runtime-a', 'cancelled')]?.status,
+      InteractivePromptStatus.cancelled,
+    );
+    expect(
+      state[_key('runtime-a', 'pending')]?.status,
+      InteractivePromptStatus.pending,
+    );
+    expect(
+      state[_key('runtime-a', 'busy')]?.status,
+      InteractivePromptStatus.responding,
+    );
+
+    // The replay of a request Hermes still holds open shows it again.
+    state = InteractivePromptReducer.reduce(
+      state,
+      InteractivePromptReceived(_clarify('runtime-a', 'answered')),
+    );
+    expect(
+      state[_key('runtime-a', 'answered')]?.status,
+      InteractivePromptStatus.pending,
+    );
   });
 }

@@ -384,7 +384,7 @@ void main() {
       );
 
       test(
-        'a non-bot cron result is a rich Hermes card with the glyph',
+        'a non-bot cron result is a plain row from Tareas programadas',
         () async {
           final (s, sink) = await service();
           await deliver(
@@ -412,17 +412,16 @@ void main() {
             ),
           );
           final card = sink.posts.single;
+          expect(card['style'], 'row');
           expect(card['title'], 'Resumen de noticias');
           expect(card['accent'], RichAccent.failed);
-          final msg = (card['messages'] as List).single as Map;
-          expect(msg['senderName'], 'Tareas programadas');
-          expect(msg['text'], 'Falló · Resumen de noticias');
-          expect(msg['iconPath'] as String, contains('glyph_'));
-          expect(msg['iconPath'] as String, contains('failed'));
+          expect(card['subText'], 'Tareas programadas');
+          expect(card['text'], 'Falló');
+          expect(card.containsKey('conversationId'), isFalse);
           final actions = [
             for (final a in card['actions'] as List) (a as Map)['id'],
           ];
-          expect(actions, ['retry', 'open']);
+          expect(actions, ['retry', 'open', 'mute']);
           expect(
             NotificationActionPayload.tryParse(
               card['actionPayload'] as String,

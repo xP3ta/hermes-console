@@ -19,40 +19,34 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../../main.dart';
-import '../companion/models/companion_presence_level.dart';
 import '../services/notifications/background_listener.dart';
 import '../services/notifications/notification_service.dart';
 import '../services/approval_activity.dart';
 import '../services/approval_policy.dart';
-import '../services/bridge_client.dart';
 import '../services/capability_payload_sanitizer.dart';
 import '../services/command_risk.dart';
 import '../services/connection_manager.dart';
 import '../services/run_registry.dart';
-import '../services/run_template_store.dart';
 import '../design/hermes_design.dart' as d show HermesListRow;
 import '../design/hermes_design.dart'
     show
         HermesListGroup,
-        HermesLogPage,
         HermesSpace,
         HermesStatusText,
         HermesStatusTone,
-        HermesStatusToneColor,
         HermesTextBlock,
         HermesType;
 import '../theme/app_theme.dart';
 import '../utils/enum_labels.dart';
-import '../widgets/hermes_notice.dart';
-import '../widgets/hermes_spark_mascot.dart';
 import '../utils/relative_time.dart';
 import '../widgets/hermes_pill.dart';
 import '../widgets/hermes_premium_ui.dart';
 import '../widgets/hermes_ui.dart';
 import '../widgets/read_only.dart';
-import '../widgets/run_template_composer.dart';
 import 'lock_screen.dart';
 import '../widgets/hermes_app_bar.dart';
+import '../feedback/feedback_policy.dart';
+import '../design/modal.dart' show showHermesDialogRoute;
 
 @visibleForTesting
 bool runTerminalCancelsApproval(String eventType) =>
@@ -95,7 +89,7 @@ Color runStatusColor(String status, HermesThemeColors colors) =>
       'waiting_for_approval' => colors.warning,
       'completed' => colors.success,
       'failed' => colors.error,
-      'cancelled' || 'expired' => colors.textDisabled,
+      'cancelled' || 'expired' => colors.textTertiary,
       _ => colors.textSecondary,
     };
 
@@ -107,435 +101,6 @@ HermesStatusTone runStatusTone(String status) => switch (status) {
   'failed' => HermesStatusTone.error,
   _ => HermesStatusTone.neutral,
 };
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Pestaña de ejecuciones (embebida en Actividad)
-// ─────────────────────────────────────────────────────────────────────────────
-
-class RunsTab extends StatefulWidget {
-  final SavedConnection connection;
-  final String profile;
-  const RunsTab({
-    required this.connection,
-    this.profile = 'default',
-    super.key,
-  });
-
-  @override
-  State<RunsTab> createState() => _RunsTabState();
-}
-
-class _RunsTabState extends State<RunsTab> with AutomaticKeepAliveClientMixin {
-  late final ApiClient _client;
-  RunRegistry? _registry;
-  RunTemplateStore? _templateStore;
-  bool _refreshing = false;
-
-  @override
-  bool get wantKeepAlive => true;
-
-  @override
-  void initState() {
-    super.initState();
-    _client = ApiClient(
-      baseUrl: widget.connection.baseUrl,
-      apiKey: widget.connection.apiKey,
-    );
-    _init();
-  }
-
-  @override
-  void dispose() {
-    _client.close();
-    super.dispose();
-  }
-
-  Future<void> _init() async {
-    final prefs = await SharedPreferences.getInstance();
-    final registry = await RunRegistry.load(prefs, widget.connection.id);
-    final templateStore = await RunTemplateStore.load(prefs);
-    if (!mounted) return;
-    setState(() {
-      _registry = registry;
-      _templateStore = templateStore;
-    });
-    _refreshStatuses();
-  }
-
-  /// Refresca el estado de los runs no terminales contra el servidor.
-  Future<void> _refreshStatuses() async {
-    final registry = _registry;
-    if (registry == null || _refreshing) return;
-    setState(() => _refreshing = true);
-    for (final r in registry.records.where((r) => !r.isTerminal)) {
-      try {
-        final status = await _client.getRun(r.runId, profile: r.profile);
-        await registry.update(
-          r.runId,
-          profile: r.profile,
-          lastStatus: status['status'] as String?,
-          output: status['output'] as String?,
-          error: status['error'] as String?,
-        );
-      } catch (e) {
-        if (e.toString().contains('404')) {
-          // El gateway ya no conserva este run (se barre tras completar o
-          // al reiniciar): estado final desconocido.
-          await registry.update(
-            r.runId,
-            profile: r.profile,
-            lastStatus: 'expired',
-          );
-        }
-      }
-    }
-    if (mounted) setState(() => _refreshing = false);
-  }
-
-  Future<void> _newRun() async {
-    if (widget.connection.readOnly) {
-      showReadOnlyNotice(context);
-      return;
-    }
-    final s = Strings.of(context);
-    final store = _templateStore;
-    if (store == null) return;
-    // Composer con plantillas (predefinidas + propias) en vez del campo en
-    // blanco. Devuelve el prompt a lanzar, o null si se cancela.
-    final prompt = await showRunComposer(context, store);
-    if (prompt == null || prompt.isEmpty || !mounted) return;
-
-    try {
-      await _launch(prompt);
-    } catch (e) {
-      if (!mounted) return;
-      HermesNotice.of(context).showSnackBar(
-        SnackBar(content: Text(s.runsLaunchError(e.toString()))),
-        kind: HermesNoticeKind.error,
-      );
-    }
-  }
-
-  /// Relanza una ejecución previa con el mismo prompt (un toque, sin reescribir).
-  Future<void> _repeatRun(RunRecord record) async {
-    if (widget.connection.readOnly) {
-      showReadOnlyNotice(context);
-      return;
-    }
-    final s = Strings.of(context);
-    try {
-      await _launch(record.prompt, profile: record.profile);
-    } catch (e) {
-      if (!mounted) return;
-      HermesNotice.of(context).showSnackBar(
-        SnackBar(content: Text(s.runsLaunchError(e.toString()))),
-        kind: HermesNoticeKind.error,
-      );
-    }
-  }
-
-  /// Lanza una ejecución. REMOTO: `/v1/runs` + detalle en vivo (SSE), como
-  /// siempre. LOCAL: el agente NO expone `/v1/runs` (daba 405); ejecutamos por el
-  /// Mobile Bridge (`/bridge/chat`), igual que el chat local, y mostramos el
-  /// resultado. El camino remoto queda intacto.
-  Future<void> _launch(String prompt, {String? profile}) async {
-    if (widget.connection.kind == InstanceKind.localhost) {
-      await _launchLocalRun(prompt);
-      return;
-    }
-    final ownerProfile = profile ?? widget.profile;
-    final runId = await _client.startRun(input: prompt, profile: ownerProfile);
-    final record = RunRecord(
-      runId: runId,
-      prompt: prompt,
-      createdAt: DateTime.now().millisecondsSinceEpoch / 1000,
-      lastStatus: 'queued',
-      connId: widget.connection.id,
-      profile: ownerProfile,
-    );
-    await _registry?.add(record);
-    if (!mounted) return;
-    setState(() {});
-    _openDetail(record);
-  }
-
-  /// Ejecución en instancia LOCAL vía Mobile Bridge (oneshot `hermes -z`). No hay
-  /// SSE en vivo: el bridge devuelve la respuesta final, que registramos y
-  /// mostramos. Reutiliza el MISMO mecanismo que el chat local (ya probado).
-  Future<void> _launchLocalRun(String prompt) async {
-    final conn = widget.connection;
-    final s = Strings.of(context);
-    if (mounted) {
-      HermesNotice.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(s.runsLocalRunning)));
-    }
-    final base = conn.derivedBridgeUrl;
-    final token = await BridgeClient.provision(base, conn.apiKey.trim());
-    if (token == null || token.isEmpty) {
-      throw Exception(s.runsLocalBridgeUnavailable);
-    }
-    final client = BridgeClient(baseUrl: base, token: token);
-    final response = (await client.chat(prompt)).trim();
-    final record = RunRecord(
-      runId: 'local-${DateTime.now().millisecondsSinceEpoch}',
-      prompt: prompt,
-      createdAt: DateTime.now().millisecondsSinceEpoch / 1000,
-      lastStatus: 'completed',
-      output: response,
-      connId: widget.connection.id,
-      profile: widget.profile,
-    );
-    await _registry?.add(record);
-    if (!mounted) return;
-    setState(() {});
-    await _showLocalResult(response);
-  }
-
-  /// Muestra el resultado de una ejecución local (sin detalle en vivo). Texto
-  /// plano (no SelectableText) para no reactivar el crash `_dependents.isEmpty`.
-  Future<void> _showLocalResult(String response) async {
-    if (!mounted) return;
-    final s = Strings.of(context);
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => HermesLogPage(
-          key: const ValueKey('local-run-result-page'),
-          title: s.commonResult,
-          text: response.isEmpty ? s.commonNoOutput : response,
-          mono: false,
-        ),
-      ),
-    );
-  }
-
-  void _openDetail(RunRecord record) {
-    Navigator.push(
-      context,
-      MaterialPageRoute<void>(
-        builder: (_) =>
-            RunDetailScreen(connection: widget.connection, record: record),
-      ),
-    ).then((_) {
-      if (mounted) {
-        setState(() {});
-        _refreshStatuses();
-      }
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    super.build(context);
-    final s = Strings.of(context);
-    final colors = Theme.of(context).hermes;
-    final registry = _registry;
-    if (registry == null) {
-      return const Center(child: TuiLoader());
-    }
-    final records = registry.records;
-
-    return Scaffold(
-      backgroundColor: Colors.transparent,
-      floatingActionButton: FloatingActionButton(
-        onPressed: _newRun,
-        tooltip: s.runsNewRun,
-        child: const Icon(Icons.add),
-      ),
-      body: _buildList(colors, records, s),
-    );
-  }
-
-  Widget _buildList(
-    HermesThemeColors colors,
-    List<RunRecord> records,
-    Strings s,
-  ) {
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(HermesSpace.pageH + 6, 6, 8, 0),
-          child: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  s.runsListNote,
-                  style: HermesType.support.copyWith(
-                    color: colors.textSecondary,
-                  ),
-                ),
-              ),
-              IconButton(
-                icon: const Icon(Icons.refresh, size: 18),
-                tooltip: s.runsRefreshStates,
-                onPressed: _refreshing ? null : _refreshStatuses,
-              ),
-            ],
-          ),
-        ),
-        Expanded(
-          child: records.isEmpty
-              ? Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Builder(
-                        builder: (context) {
-                          final companion = context
-                              .findAncestorStateOfType<HermesAppState>()
-                              ?.companion;
-                          if (companion == null) {
-                            return const SizedBox.shrink();
-                          }
-                          return AnimatedBuilder(
-                            animation: companion,
-                            builder: (context, _) {
-                              if (!companion.isInitialized ||
-                                  !companion.enabled ||
-                                  !companion
-                                      .presenceLevel
-                                      .showsStatusPresence) {
-                                return const SizedBox.shrink();
-                              }
-                              return const Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  HermesSparkMascot(
-                                    mood: HermesSparkMood.idle,
-                                    size: 48,
-                                  ),
-                                  SizedBox(height: 12),
-                                ],
-                              );
-                            },
-                          );
-                        },
-                      ),
-                      Text(
-                        s.runsEmpty,
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: colors.textSecondary,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        s.runsEmptySub,
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: colors.textDisabled,
-                        ),
-                      ),
-                    ],
-                  ),
-                )
-              : RefreshIndicator(
-                  color: colors.accent,
-                  onRefresh: _refreshStatuses,
-                  child: ListView(
-                    key: const ValueKey('runs-list'),
-                    physics: const AlwaysScrollableScrollPhysics(),
-                    padding: const EdgeInsets.fromLTRB(
-                      HermesSpace.pageH,
-                      HermesSpace.x2,
-                      HermesSpace.pageH,
-                      96,
-                    ),
-                    children: [
-                      HermesListGroup(
-                        children: [
-                          for (final record in records)
-                            _RunTile(
-                              record: record,
-                              onTap: _openDetail,
-                              onRepeat: () => _repeatRun(record),
-                            ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-        ),
-      ],
-    );
-  }
-}
-
-class _RunTile extends StatelessWidget {
-  final RunRecord record;
-  final void Function(RunRecord) onTap;
-  final VoidCallback? onRepeat;
-
-  const _RunTile({required this.record, required this.onTap, this.onRepeat});
-
-  @override
-  Widget build(BuildContext context) {
-    final s = Strings.of(context);
-    final colors = Theme.of(context).hermes;
-    final waiting = record.lastStatus == 'waiting_for_approval';
-    // Editorial row (spec 080): title, inline status · age, one action.
-    return InkWell(
-      onTap: () => onTap(record),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(minHeight: HermesSpace.rowMin),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(
-            HermesSpace.rowH,
-            HermesSpace.rowV,
-            4,
-            HermesSpace.rowV,
-          ),
-          child: Row(
-            children: [
-              Icon(
-                waiting
-                    ? Icons.pan_tool_outlined
-                    : record.lastStatus == 'failed'
-                    ? Icons.error_outline
-                    : Icons.rocket_launch_outlined,
-                size: 20,
-                color:
-                    runStatusTone(record.lastStatus) == HermesStatusTone.neutral
-                    ? colors.textSecondary
-                    : runStatusTone(record.lastStatus).colorIn(colors),
-              ),
-              const SizedBox(width: HermesSpace.rowIconGap),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      record.prompt,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: HermesType.body.copyWith(
-                        color: colors.textPrimary,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    HermesStatusText(
-                      label: runStatusLabel(record.lastStatus, s),
-                      tone: runStatusTone(record.lastStatus),
-                      meta: relativeTime(record.createdAt),
-                      maxLines: 1,
-                    ),
-                  ],
-                ),
-              ),
-              if (onRepeat != null)
-                IconButton(
-                  icon: const Icon(Icons.replay_rounded, size: 20),
-                  color: colors.textSecondary,
-                  tooltip: s.runsRepeat,
-                  onPressed: onRepeat,
-                ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Detalle de ejecución — SSE en vivo + aprobaciones
@@ -959,16 +524,14 @@ class _RunDetailScreenState extends State<RunDetailScreen> {
         command: command,
         sessionId: widget.record.sessionId,
       );
-      HermesNotice.of(context).showSnackBar(
-        SnackBar(content: Text(s.runsAutoApproved(reason))),
-        kind: HermesNoticeKind.success,
-      );
+      AppFeedback.of(
+        context,
+      ).notify(FeedbackKind.routine, s.runsAutoApproved(reason));
     } catch (e) {
       if (!mounted) return;
-      HermesNotice.of(context).showSnackBar(
-        SnackBar(content: Text(s.runsAutoApproveError(e.toString()))),
-        kind: HermesNoticeKind.error,
-      );
+      AppFeedback.of(
+        context,
+      ).notify(FeedbackKind.error, s.runsAutoApproveError(e.toString()));
       _pollStatus();
     } finally {
       if (mounted) setState(() => _resolvingApproval = false);
@@ -1086,13 +649,12 @@ class _RunDetailScreenState extends State<RunDetailScreen> {
         _ => s.runsApprovalSent,
       };
       if (!mounted) return;
-      HermesNotice.of(context).showSnackBar(SnackBar(content: Text(msg)));
+      AppFeedback.of(context).notify(FeedbackKind.routine, msg);
     } catch (e) {
       if (!mounted) return;
-      HermesNotice.of(context).showSnackBar(
-        SnackBar(content: Text(s.runsResolveError(e.toString()))),
-        kind: HermesNoticeKind.error,
-      );
+      AppFeedback.of(
+        context,
+      ).notify(FeedbackKind.error, s.runsResolveError(e.toString()));
       _pollStatus();
     } finally {
       if (mounted) setState(() => _resolvingApproval = false);
@@ -1103,7 +665,7 @@ class _RunDetailScreenState extends State<RunDetailScreen> {
     final colors = Theme.of(context).hermes;
     final command = (_pendingApproval?['command'] ?? '').toString();
     final risk = assessCommandRisk(command);
-    final ok = await showDialog<bool>(
+    final ok = await showHermesDialogRoute<bool>(
       context: context,
       builder: (ctx) {
         final ls = Strings.of(ctx);
@@ -1181,20 +743,16 @@ class _RunDetailScreenState extends State<RunDetailScreen> {
       _persist();
     } catch (e) {
       if (!mounted) return;
-      HermesNotice.of(context).showSnackBar(
-        SnackBar(content: Text(s.runsStopError(e.toString()))),
-        kind: HermesNoticeKind.error,
-      );
+      AppFeedback.of(
+        context,
+      ).notify(FeedbackKind.error, s.runsStopError(e.toString()));
     }
   }
 
   void _copyOutput() {
     final s = Strings.of(context);
     Clipboard.setData(ClipboardData(text: _output));
-    HermesNotice.of(context).showSnackBar(
-      SnackBar(content: Text(s.runsReplyCopied)),
-      kind: HermesNoticeKind.success,
-    );
+    AppFeedback.of(context).notify(FeedbackKind.routine, s.runsReplyCopied);
   }
 
   bool get _isLive => const {
@@ -1231,6 +789,7 @@ class _RunDetailScreenState extends State<RunDetailScreen> {
         ],
       ),
       body: ListView(
+        clipBehavior: hermesUnderHeader,
         key: const ValueKey('run-detail'),
         padding: const EdgeInsets.fromLTRB(
           HermesSpace.pageH,
@@ -1280,10 +839,9 @@ class _RunDetailScreenState extends State<RunDetailScreen> {
                 semanticLabel: s.commonCopy,
                 onTap: () {
                   Clipboard.setData(ClipboardData(text: widget.record.runId));
-                  HermesNotice.of(context).showSnackBar(
-                    SnackBar(content: Text(s.runsRunIdCopied)),
-                    kind: HermesNoticeKind.success,
-                  );
+                  AppFeedback.of(
+                    context,
+                  ).notify(FeedbackKind.routine, s.runsRunIdCopied);
                 },
               ),
             ],
@@ -1371,7 +929,7 @@ class _RunDetailScreenState extends State<RunDetailScreen> {
               'tokens: ${_usage!['total_tokens'] ?? '—'} '
               '(in ${_usage!['input_tokens'] ?? '—'} / '
               'out ${_usage!['output_tokens'] ?? '—'})',
-              style: TextStyle(fontSize: 10.5, color: colors.textDisabled),
+              style: TextStyle(fontSize: 10.5, color: colors.textTertiary),
             ),
           ],
 
@@ -1422,7 +980,7 @@ class _EventLine extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       fontSize: 10.5,
-                      color: colors.textDisabled,
+                      color: colors.textTertiary,
                     ),
                   ),
               ],
@@ -1481,10 +1039,9 @@ class _RunApprovalDecisionBlockState extends State<RunApprovalDecisionBlock> {
 
   void _copyCommand(BuildContext context, String command) {
     Clipboard.setData(ClipboardData(text: command));
-    HermesNotice.of(context).showSnackBar(
-      SnackBar(content: Text(Strings.of(context).runsCommandCopied)),
-      kind: HermesNoticeKind.success,
-    );
+    AppFeedback.of(
+      context,
+    ).notify(FeedbackKind.routine, Strings.of(context).runsCommandCopied);
   }
 
   @override
@@ -1596,21 +1153,30 @@ class _RunApprovalDecisionBlockState extends State<RunApprovalDecisionBlock> {
           label: Text(s.runsDeny),
         ),
         if (!widget.readOnly) ...[
-          TextButton.icon(
-            onPressed: widget.busy ? null : () => widget.onChoice('session'),
-            icon: const Icon(Icons.repeat_rounded, size: 17),
-            label: Text(s.runsApproveSession),
+          Tooltip(
+            message: s.apx1215ScopeSessionHint,
+            child: TextButton.icon(
+              onPressed: widget.busy ? null : () => widget.onChoice('session'),
+              icon: const Icon(Icons.repeat_rounded, size: 17),
+              label: Text(s.runsApproveSession),
+            ),
           ),
           if (showAlways)
-            TextButton.icon(
-              onPressed: widget.busy ? null : widget.onAlways,
-              icon: const Icon(Icons.all_inclusive_rounded, size: 17),
-              label: Text(s.runsAllowAlways),
+            Tooltip(
+              message: s.apx1215ScopeAlwaysHint,
+              child: TextButton.icon(
+                onPressed: widget.busy ? null : widget.onAlways,
+                icon: const Icon(Icons.all_inclusive_rounded, size: 17),
+                label: Text(s.runsAllowAlways),
+              ),
             ),
-          FilledButton.icon(
-            onPressed: widget.busy ? null : () => widget.onChoice('once'),
-            icon: const Icon(Icons.check_rounded, size: 18),
-            label: Text(s.runsApproveOnce),
+          Tooltip(
+            message: s.apx1215ScopeOnceHint,
+            child: FilledButton.icon(
+              onPressed: widget.busy ? null : () => widget.onChoice('once'),
+              icon: const Icon(Icons.check_rounded, size: 18),
+              label: Text(s.runsApproveOnce),
+            ),
           ),
         ],
       ],

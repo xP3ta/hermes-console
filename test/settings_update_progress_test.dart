@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/screens/settings_screen.dart';
+import 'package:hermes_android/core/services/hermes_update_monitor.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 
@@ -172,6 +173,91 @@ void main() {
       tester.element(find.byType(HermesUpdateProgressPanel)),
     );
     expect(find.text(strings.setGatewayRestarting), findsOneWidget);
+  });
+
+  testWidgets('the panel shows the latest update log line while running', (
+    tester,
+  ) async {
+    Future<void> pump(HermesUpdateProgress progress) => tester.pumpWidget(
+      MaterialApp(
+        locale: const Locale('es'),
+        localizationsDelegates: Strings.localizationsDelegates,
+        supportedLocales: Strings.supportedLocales,
+        theme: AppTheme.fromId('dark'),
+        home: Scaffold(body: HermesUpdateProgressPanel(progress: progress)),
+      ),
+    );
+    await pump(
+      const HermesUpdateProgress(
+        step: HermesUpdateStep.applying,
+        elapsedSeconds: 40,
+        detail: '→ Installing dependencies…',
+      ),
+    );
+    expect(find.text('→ Installing dependencies…'), findsOneWidget);
+    // A finished panel shows the result, not the last log line.
+    await pump(
+      const HermesUpdateProgress(
+        step: HermesUpdateStep.done,
+        detail: '→ Installing dependencies…',
+      ),
+    );
+    expect(find.text('→ Installing dependencies…'), findsNothing);
+  });
+
+  testWidgets('result messages say what happened to the gateway', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        locale: const Locale('en'),
+        localizationsDelegates: Strings.localizationsDelegates,
+        supportedLocales: Strings.supportedLocales,
+        home: const SizedBox(),
+      ),
+    );
+    final s = Strings.of(tester.element(find.byType(SizedBox)));
+    expect(
+      hermesUpdateResultMessage(
+        s,
+        const HermesUpdateResult(
+          HermesUpdateOutcome.partial,
+          issue: HermesUpdateIssue.gatewayNotConfirmed,
+        ),
+      ),
+      s.setUpdateGatewayNotConfirmed,
+    );
+    expect(
+      hermesUpdateResultMessage(
+        s,
+        const HermesUpdateResult(HermesUpdateOutcome.partial),
+      ),
+      s.setUpdatePartial,
+    );
+    expect(
+      hermesUpdateResultMessage(
+        s,
+        const HermesUpdateResult(
+          HermesUpdateOutcome.failed,
+          issue: HermesUpdateIssue.serverNoReturn,
+        ),
+      ),
+      s.setUpdateError(s.setUpdateServerNoReturn),
+    );
+    expect(
+      hermesUpdateResultMessage(
+        s,
+        const HermesUpdateResult(HermesUpdateOutcome.failed, detail: 'boom'),
+      ),
+      s.setUpdateError('boom'),
+    );
+    expect(
+      hermesUpdateResultMessage(
+        s,
+        const HermesUpdateResult(HermesUpdateOutcome.confirmed, version: '1.2'),
+      ),
+      s.setHermesUpdatedTo('1.2'),
+    );
   });
 
   test(

@@ -72,6 +72,7 @@ final class BotFaceIdentity {
     required this.source,
     required this.shapeWire,
     required this.sphere,
+    required this.faceColorHex,
   });
 
   final String profile;
@@ -83,6 +84,7 @@ final class BotFaceIdentity {
   /// Sphere palette key (always set, also used for the sphere fallback when
   /// an avatar image cannot be decoded).
   final String sphere;
+  final String? faceColorHex;
 
   /// Resolves [profile]'s face from its configured metadata.
   ///
@@ -94,6 +96,7 @@ final class BotFaceIdentity {
     String? faceShape,
     String? colorHex,
     bool paintsPhoto = false,
+    bool useShapeColor = false,
   }) {
     final sphere = BotSpherePalette.nearest(colorHex, seed: profile);
     if (paintsPhoto) {
@@ -102,6 +105,7 @@ final class BotFaceIdentity {
         source: BotFaceSource.avatar,
         shapeWire: faceShape,
         sphere: sphere,
+        faceColorHex: useShapeColor ? colorHex : null,
       );
     }
     final shape = faceShape?.trim();
@@ -111,6 +115,7 @@ final class BotFaceIdentity {
         source: BotFaceSource.procedural,
         shapeWire: shape,
         sphere: sphere,
+        faceColorHex: useShapeColor ? colorHex : null,
       );
     }
     return BotFaceIdentity._(
@@ -118,6 +123,7 @@ final class BotFaceIdentity {
       source: BotFaceSource.sphere,
       shapeWire: null,
       sphere: sphere,
+      faceColorHex: useShapeColor ? colorHex : null,
     );
   }
 
@@ -127,6 +133,7 @@ final class BotFaceIdentity {
     faceShape: p?.botFaceShape,
     colorHex: p?.botColorHex,
     paintsPhoto: p?.botPaintsPhoto ?? false,
+    useShapeColor: p?.botUsesShapeColor ?? false,
   );
 
   /// Procedural face to paint: the configured shape when it parses, else
@@ -136,14 +143,18 @@ final class BotFaceIdentity {
       HermesBlobatarFaceVisual.tryParse(
         shapeWire: shapeWire ?? 'blobatar',
         profileName: profile,
+        colorHex: faceColorHex,
       ) ??
       HermesBlobatarFaceVisual.tryParse(
         shapeWire: 'blobatar',
         profileName: profile,
+        colorHex: faceColorHex,
       )!;
 
   /// Stable cache key of everything that changes the rendered face.
-  String get cacheKey => '${source.name}:${shapeWire ?? ''}:$sphere';
+  String get cacheKey =>
+      '${source.name}:${shapeWire ?? ''}:$sphere'
+      '${faceColorHex == null ? '' : ':$faceColorHex'}';
 
   @override
   bool operator ==(Object other) =>

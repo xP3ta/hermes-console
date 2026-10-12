@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../../widgets/hermes_spark_mascot.dart';
+import '../models/companion_mood.dart';
 import '../models/companion_presence_level.dart';
 import '../state/companion_controller.dart';
 import 'companion_view.dart';
@@ -24,7 +24,7 @@ import 'companion_view.dart';
 ///   rango seguro previsto.
 class CompanionMessagePresence extends StatelessWidget {
   final CompanionController companion;
-  final HermesSparkMood mood;
+  final CompanionMood mood;
 
   /// Tamaño base de la mascota mini (antes del multiplicador continuo).
   final double size;
@@ -58,7 +58,7 @@ class CompanionMessagePresence extends StatelessWidget {
           mood: mood,
           size: size,
           controller: companion,
-          animate: animate ?? (animateIdle || mood != HermesSparkMood.idle),
+          animate: animate ?? (animateIdle || mood != CompanionMood.idle),
         );
       },
     );

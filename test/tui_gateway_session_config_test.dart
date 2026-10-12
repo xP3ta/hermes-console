@@ -33,6 +33,82 @@ TuiGatewayClient _clientFor(HttpServer server) => TuiGatewayClient(
 );
 
 void main() {
+  for (final knowsFlag in [true, false]) {
+    test('a Bot Chat is created following its profile'
+        '${knowsFlag ? '' : '; a Gateway that does not know the flag gets '
+                  'the request without it'}', () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(server.close);
+      final requests = <Map<String, dynamic>>[];
+
+      server.listen((request) async {
+        final socket = await WebSocketTransformer.upgrade(request);
+        socket.add(
+          jsonEncode({
+            'jsonrpc': '2.0',
+            'method': 'event',
+            'params': {'type': 'gateway.ready', 'payload': <String, dynamic>{}},
+          }),
+        );
+        await for (final raw in socket) {
+          final frame = jsonDecode(raw as String) as Map<String, dynamic>;
+          if (isClientCapabilitiesFrame(frame)) {
+            socket.add(jsonEncode(clientCapabilitiesResponse(frame)));
+            continue;
+          }
+          requests.add(frame);
+          final params = frame['params'] as Map<String, dynamic>? ?? const {};
+          final refused =
+              !knowsFlag &&
+              frame['method'] == 'session.create' &&
+              params.containsKey('follow_profile_config');
+          socket.add(
+            jsonEncode({
+              'jsonrpc': '2.0',
+              'id': frame['id'],
+              if (refused)
+                'error': {'code': -32602, 'message': 'Invalid params'}
+              else
+                'result': frame['method'] == 'gateway.capabilities'
+                    ? {'per_session_exclusive_submit': true}
+                    : {
+                        'session_id': 'runtime-bot',
+                        'stored_session_id': 'stored-bot',
+                      },
+            }),
+          );
+        }
+      });
+
+      final client = _clientFor(server);
+      addTearDown(client.close);
+      final snapshot = await client.createForFirstSubmitConfigured(
+        profile: 'oficina',
+        config: const DesktopSessionCreateConfig(
+          title: 'Bot Chat',
+          hidden: true,
+          followProfileConfig: true,
+        ),
+      );
+
+      expect(snapshot.created, isTrue);
+      final creates = [
+        for (final request in requests)
+          if (request['method'] == 'session.create') request['params'],
+      ];
+      const plain = {
+        'source': 'desktop',
+        'profile': 'oficina',
+        'title': 'Bot Chat',
+        'hidden': true,
+        'close_on_disconnect': false,
+      };
+      expect(creates.first, {...plain, 'follow_profile_config': true});
+      expect(creates, hasLength(knowsFlag ? 1 : 2));
+      if (!knowsFlag) expect(creates.last, plain);
+    });
+  }
+
   test('crea la primera sesión capturando toda la configuración', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     addTearDown(server.close);

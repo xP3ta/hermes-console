@@ -443,6 +443,13 @@ def asset_licence(path: Path) -> tuple[str, str]:
                     return str(expression), manifest.relative_to(ROOT).as_posix()
             except (json.JSONDecodeError, OSError):
                 pass
+    if relative.parts[:2] == ("assets", "mascot") and len(relative.parts) == 3:
+        notes = ROOT / "assets/mascot/LICENSES.md"
+        if notes.is_file():
+            for line in notes.read_text(encoding="utf-8").splitlines():
+                cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+                if len(cells) == 3 and cells[0] == f"`{relative.name}`" and cells[2] == "CC0-1.0":
+                    return "CC0-1.0", "assets/mascot/LICENSES.md"
     provenance = ROOT / "ASSET_PROVENANCE.md"
     if provenance.is_file():
         identity = provenance.read_text(encoding="utf-8", errors="replace").split(

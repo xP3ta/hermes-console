@@ -1,0 +1,168 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Launcher (home-screen) widgets: Ahora, Chat rápido, Cron, Chats, Bots,
+     Salas, Tareas. One look for all of them, the same vocabulary as the
+     in-app Home board: a rounded dark card, the gold accent, bot faces, the
+     system font. Every size below is read by tool/qa/widget_shots.py and by
+     test/launcher_widget_layout_test.dart: change them here, not in a layout. -->
+<resources>
+    <color name="lw_card">#FF272834</color>
+    <color name="lw_card_stroke">#FF33343F</color>
+    <color name="lw_card_hero_top">#FF2D2B33</color>
+    <color name="lw_card_hero_stroke">#6BEEC46E</color>
+    <color name="lw_card_stale_stroke">#FF3A3530</color>
+    <color name="lw_ink">#FFF3EFDE</color>
+    <color name="lw_muted">#FFB1A793</color>
+    <color name="lw_faint">#FF8B8373</color>
+    <color name="lw_gold">#FFEEC46E</color>
+    <color name="lw_gold_ink">#FF211909</color>
+    <color name="lw_wave">#FFC59267</color>
+    <color name="lw_chip">#FF353640</color>
+    <color name="lw_pill">#FF32323F</color>
+    <color name="lw_line">#FF31323F</color>
+    <color name="lw_green">#FF83D399</color>
+    <color name="lw_red">#FFDD817A</color>
+    <color name="lw_amber">#FFE2B866</color>
+    <color name="lw_chip_gold">#29EEC46E</color>
+    <color name="lw_chip_green">#2983D399</color>
+    <color name="lw_chip_amber">#24E2B866</color>
+
+    <!-- Card. The radius is the system one from Android 12 (values-v31). -->
+    <dimen name="lw_radius">28dp</dimen>
+    <dimen name="lw_pad_h">14dp</dimen>
+    <!-- 9 + 10 (the mock-up drew 11 + 12): with the head they leave 144 dp
+         in a 188 dp card, three rows of 48 dp, each a full tap target. -->
+    <dimen name="lw_pad_top">9dp</dimen>
+    <dimen name="lw_pad_bottom">10dp</dimen>
+    <dimen name="lw_strip_pad">13dp</dimen>
+    <dimen name="lw_gap">10dp</dimen>
+
+    <!-- Type. Nothing below 13 sp. Each single-line text sits in a box of a
+         fixed height and is centred in it, so two lines always add up to the
+         same block whatever the font. -->
+    <dimen name="lw_text_title">14sp</dimen>
+    <dimen name="lw_text_sub">13sp</dimen>
+    <dimen name="lw_text_button">13.5sp</dimen>
+    <dimen name="lw_text_calm">16sp</dimen>
+    <dimen name="lw_line_title">19sp</dimen>
+    <dimen name="lw_line_sub">17sp</dimen>
+
+    <!-- Anything you can tap is at least this tall and wide. -->
+    <dimen name="lw_touch">48dp</dimen>
+    <dimen name="lw_button_height">32dp</dimen>
+    <dimen name="lw_button_pad">14dp</dimen>
+    <dimen name="lw_button_gap">7dp</dimen>
+    <dimen name="lw_lead">34dp</dimen>
+    <dimen name="lw_head_height">22dp</dimen>
+    <dimen name="lw_head_chip">21dp</dimen>
+    <dimen name="lw_head_gap">3dp</dimen>
+    <dimen name="lw_row_min">48dp</dimen>
+    <!-- Bots in one row: four faces fit a two-cell card (4 x 35 - 7 = 133 of
+         its 143 dp). A room's members overlap. -->
+    <dimen name="lw_face">28dp</dimen>
+    <dimen name="lw_face_gap">7dp</dimen>
+    <dimen name="lw_room_face">22dp</dimen>
+
+    <!-- Chat rápido. The icon + label group is centred in its pill; the pill
+         padding is only the least room it keeps on each side, the same on
+         both. A two-cell card of 171 dp leaves the pill 91 dp: 18 + 8 + the
+         label (about 42 dp) fits with more than 8 dp on each side. -->
+    <dimen name="lw_quick_pad">12dp</dimen>
+    <dimen name="lw_quick_gap">8dp</dimen>
+    <dimen name="lw_quick_pill_pad">8dp</dimen>
+    <dimen name="lw_quick_hint_pad">16dp</dimen>
+    <dimen name="lw_quick_icon">18dp</dimen>
+    <dimen name="lw_quick_icon_gap">8dp</dimen>
+    <dimen name="lw_quick_glyph">20dp</dimen>
+
+    <style name="LW" />
+
+    <style name="LW.Card">
+        <item name="android:background">@drawable/lw_card</item>
+    </style>
+
+    <!-- One line of text: system font, no font padding (the glyphs, not the
+         font's spare room, are what gets centred), ellipsis at the end. -->
+    <style name="LW.Text" parent="@android:style/TextAppearance.DeviceDefault">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:includeFontPadding">false</item>
+        <item name="android:maxLines">1</item>
+        <item name="android:ellipsize">end</item>
+        <item name="android:gravity">center_vertical</item>
+        <item name="android:textAlignment">viewStart</item>
+        <item name="android:textDirection">locale</item>
+        <item name="android:textColor">@color/lw_ink</item>
+        <item name="android:textSize">@dimen/lw_text_title</item>
+    </style>
+
+    <style name="LW.Text.Medium">
+        <item name="android:fontFamily">sans-serif-medium</item>
+    </style>
+
+    <style name="LW.Text.Medium.Title">
+        <item name="android:layout_height">@dimen/lw_line_title</item>
+    </style>
+
+    <style name="LW.Text.Sub">
+        <item name="android:layout_height">@dimen/lw_line_sub</item>
+        <item name="android:textSize">@dimen/lw_text_sub</item>
+        <item name="android:textColor">@color/lw_muted</item>
+    </style>
+
+    <style name="LW.Text.Mono">
+        <item name="android:fontFamily">monospace</item>
+        <item name="android:textSize">@dimen/lw_text_sub</item>
+        <item name="android:textColor">@color/lw_muted</item>
+    </style>
+
+    <style name="LW.Text.Medium.Head">
+        <item name="android:textSize">@dimen/lw_text_sub</item>
+        <item name="android:textColor">@color/lw_muted</item>
+    </style>
+
+    <style name="LW.Text.HeadRight">
+        <item name="android:textSize">@dimen/lw_text_sub</item>
+        <item name="android:textColor">@color/lw_faint</item>
+    </style>
+
+    <!-- Clock times and timers: figures of one width, so they do not jump. -->
+    <style name="LW.Text.Time">
+        <item name="android:textSize">@dimen/lw_text_sub</item>
+        <item name="android:textColor">@color/lw_faint</item>
+        <item name="android:fontFeatureSettings">tnum</item>
+    </style>
+
+    <style name="LW.Text.Medium.Timer">
+        <item name="android:textSize">@dimen/lw_text_sub</item>
+        <item name="android:textColor">@color/lw_gold</item>
+        <item name="android:fontFeatureSettings">tnum</item>
+    </style>
+
+    <style name="LW.Text.Medium.Clock">
+        <item name="android:layout_height">@dimen/lw_line_title</item>
+        <item name="android:fontFeatureSettings">tnum</item>
+    </style>
+
+    <style name="LW.Text.Medium.Calm">
+        <item name="android:textSize">@dimen/lw_text_calm</item>
+    </style>
+
+    <!-- A button: the label is centred both ways in a pill of a fixed
+         height, with the same padding on both sides. -->
+    <style name="LW.Text.Medium.Button">
+        <item name="android:layout_height">@dimen/lw_button_height</item>
+        <item name="android:layout_gravity">center_vertical</item>
+        <item name="android:minWidth">@dimen/lw_touch</item>
+        <item name="android:paddingStart">@dimen/lw_button_pad</item>
+        <item name="android:paddingEnd">@dimen/lw_button_pad</item>
+        <item name="android:gravity">center</item>
+        <item name="android:textAlignment">center</item>
+        <item name="android:textSize">@dimen/lw_text_button</item>
+        <item name="android:background">@drawable/lw_button</item>
+    </style>
+
+    <style name="LW.Text.Medium.Button.Go">
+        <item name="android:textColor">@color/lw_gold_ink</item>
+        <item name="android:background">@drawable/lw_button_go</item>
+    </style>
+</resources>

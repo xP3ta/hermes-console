@@ -31,11 +31,11 @@ TOOL_NAMES = ("flutter", "git", "python3", "java", "sha256sum", "install", "mkte
 BUILD_COMMANDS = {
     "direct-public": (
         "flutter build apk --release --flavor full --split-per-abi "
-        "--dart-define=HERMES_FLAVOR=full --dart-define=HERMES_LOCAL_AGENT=true"
+        "--dart-define=HERMES_FLAVOR=full"
     ),
     "play-private": (
         "flutter build appbundle --release --flavor play "
-        "--dart-define=HERMES_FLAVOR=play --dart-define=HERMES_LOCAL_AGENT=false"
+        "--dart-define=HERMES_FLAVOR=play"
     ),
 }
 MAX_JSON_BYTES = 2 * 1024 * 1024

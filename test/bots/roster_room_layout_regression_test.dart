@@ -8,11 +8,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/bots/state/attention.dart';
 import 'package:hermes_android/core/bots/ui/profile/bot_profile_screen.dart';
 import 'package:hermes_android/core/bots/ui/room/room_gateway.dart';
+import 'package:hermes_android/core/bots/ui/room/room_header.dart';
 import 'package:hermes_android/core/bots/ui/room/room_prefs.dart';
 import 'package:hermes_android/core/bots/ui/room/room_screen.dart';
-import 'package:hermes_android/core/bots/ui/room/room_widgets.dart';
-import 'package:hermes_android/core/bots/ui/room_avatar_tile.dart';
-import 'package:hermes_android/core/bots/ui/roster/bots_roster_view.dart';
+import 'package:hermes_android/core/bots/ui/roster/dots_home_view.dart';
 import 'package:hermes_android/core/bots/ui/roster/living_bot_face.dart';
 import 'package:hermes_android/core/bots/ui/roster/roster_model.dart';
 import 'package:hermes_android/core/models/agent_profile.dart';
@@ -22,7 +21,7 @@ import 'package:hermes_android/core/models/room_member_status.dart';
 import 'package:hermes_android/core/screens/chat_screen.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:hermes_android/core/widgets/floating_chat_header.dart';
 
 import '../support/inter_font.dart';
 import 'room/room_fixtures.dart';
@@ -64,22 +63,12 @@ MissionAgent _agent(
   usage: const MissionUsage(),
 );
 
-BotRosterEntry _bot(String name, {Map<String, dynamic>? meta, int at = 0}) =>
-    BotRosterEntry(
-      agent: _agent(name, meta: meta),
-      signal: BotFaceSignal.idle,
-      preview: 'hello',
-      at: at == 0 ? null : DateTime.fromMillisecondsSinceEpoch(at * 1000),
-    );
-
 Future<void> _pumpRoster(
   WidgetTester tester, {
   required List<BotRosterEntry> bots,
   List<RoomRosterEntry> rooms = const [],
 }) async {
   _phone(tester);
-  SharedPreferences.setMockInitialValues({});
-  final prefs = await SharedPreferences.getInstance();
   final search = ValueNotifier(false);
   addTearDown(search.dispose);
   await tester.pumpWidget(
@@ -90,13 +79,11 @@ Future<void> _pumpRoster(
           disableAnimations: true,
         ),
         child: Scaffold(
-          body: BotsRosterView(
+          body: DotsHomeView(
             bots: bots,
             rooms: rooms,
             avatarCache: null,
             searchOpen: search,
-            prefs: prefs,
-            connectionId: 'c',
             onOpenBot: (_) {},
             onBotActions: (_) {},
             onOpenRoom: (_) {},
@@ -180,13 +167,12 @@ void main() {
       final paragraph = _paragraph(tester, title);
       expect(paragraph.didExceedMaxLines, isFalse);
       expect(paragraph.text.toPlainText(), contains('Design Review'));
-      // The room avatar tile is the same size as a bot face (48).
+      // The Dots room card clusters its members' faces (up to three).
       final row = find.byKey(ValueKey('roster-room-row-${room.publicKey}'));
-      final stack = find.descendant(
-        of: row,
-        matching: find.byType(RoomAvatarTile),
+      expect(
+        find.descendant(of: row, matching: find.byType(LivingBotFace)),
+        findsNWidgets(3),
       );
-      expect(tester.getSize(stack), const Size(48, 48));
 
       // A title too long for one line wraps to two instead of ellipsizing
       // after a handful of characters.
@@ -211,7 +197,8 @@ void main() {
         rosterPreviewText('Reviewed. Summary: **Failure today (16:20:21)**'),
         'Reviewed. Summary: Failure today (16:20:21)',
       );
-      expect(rosterPreviewText('## Plan\n\n- `a`\n- b'), 'Plan • a • b');
+      // rt1215: list markers go too (shared plainPreview).
+      expect(rosterPreviewText('## Plan\n\n- `a`\n- b'), 'Plan a b');
 
       final bot = BotRosterEntry.from(
         agent: _agent(
@@ -242,131 +229,6 @@ void main() {
       );
       expect(rooms.single.preview, 'Done Failure today — see log.txt');
     });
-
-    testWidgets('#3 no dead gap between pinned faces and first section', (
-      tester,
-    ) async {
-      await _pumpRoster(
-        tester,
-        bots: [
-          _bot('hermes', meta: {'pinned': true}),
-          _bot('astra', meta: {'pinned': true}),
-          _bot('radar', at: 1789990000),
-        ],
-      );
-      // Two pinned bots use the compact row (spec 080): measure from the
-      // strip's bottom edge, which now also carries the status line.
-      final nameBottom = tester
-          .getBottomLeft(find.byKey(const ValueKey('mission-pinned-strip')))
-          .dy;
-      final header = find.byKey(const ValueKey('roster-section-recent'));
-      final headerText = find.descendant(
-        of: header,
-        matching: find.byKey(const ValueKey('roster-section-title')),
-      );
-      final gap = tester.getTopLeft(headerText).dy - nameBottom;
-      // Before: ~48 dp (fixed 124 dp strip + 6 + header padding).
-      expect(gap, lessThanOrEqualTo(20));
-      expect(gap, greaterThan(0));
-    });
-
-    testWidgets('pinned strip: compact and start-aligned for 1–2 bots', (
-      tester,
-    ) async {
-      await _pumpRoster(
-        tester,
-        bots: [
-          _bot('hermes', meta: {'pinned': true}),
-          _bot('astra', meta: {'pinned': true}),
-          _bot('radar', at: 1789990000),
-        ],
-      );
-      final strip = tester.getRect(
-        find.byKey(const ValueKey('mission-pinned-strip')),
-      );
-      final a = tester.getRect(
-        find.byKey(const ValueKey('mission-pinned-tile-hermes')),
-      );
-      final b = tester.getRect(
-        find.byKey(const ValueKey('mission-pinned-tile-astra')),
-      );
-      // Starts at the strip's leading edge and fills the width: no big
-      // empty area on the right.
-      final left = a.left < b.left ? a.left : b.left;
-      final right = a.right > b.right ? a.right : b.right;
-      expect(left - strip.left, lessThanOrEqualTo(8));
-      expect(strip.right - right, lessThanOrEqualTo(8));
-      // Equal sizes and names on one baseline.
-      expect(a.size, b.size);
-      expect(
-        tester.getTopLeft(find.text('hermes').first).dy,
-        tester.getTopLeft(find.text('astra').first).dy,
-      );
-      expect(a.height, greaterThanOrEqualTo(48));
-    });
-
-    testWidgets('pinned strip: three or more stay a face strip from start', (
-      tester,
-    ) async {
-      await _pumpRoster(
-        tester,
-        bots: [
-          _bot('hermes', meta: {'pinned': true}),
-          _bot('astra', meta: {'pinned': true}),
-          _bot('forja', meta: {'pinned': true}),
-        ],
-      );
-      final strip = tester.getRect(
-        find.byKey(const ValueKey('mission-pinned-strip')),
-      );
-      final lefts = [
-        for (final n in const ['hermes', 'astra', 'forja'])
-          tester.getRect(find.byKey(ValueKey('mission-pinned-tile-$n'))).left,
-      ]..sort();
-      expect(lefts.first - strip.left, lessThanOrEqualTo(8));
-      // Even spacing between tiles.
-      expect(lefts[1] - lefts[0], lefts[2] - lefts[1]);
-      final names = [
-        for (final n in const ['hermes', 'astra', 'forja'])
-          tester.getTopLeft(find.text(n).first).dy,
-      ];
-      expect(names.toSet(), hasLength(1));
-    });
-
-    testWidgets('#4 section count sits next to the title in the same style', (
-      tester,
-    ) async {
-      await _pumpRoster(
-        tester,
-        bots: [_bot('radar', at: 1789990000), _bot('forja', at: 1789980000)],
-      );
-      final header = find.byKey(const ValueKey('roster-section-recent'));
-      final title = find.descendant(
-        of: header,
-        matching: find.byKey(const ValueKey('roster-section-title')),
-      );
-      final count = find.descendant(
-        of: header,
-        matching: find.byKey(const ValueKey('roster-section-count')),
-      );
-      expect(tester.widget<Text>(count).data, '2');
-      final titleStyle = tester.widget<Text>(title).style!;
-      final countStyle = tester.widget<Text>(count).style!;
-      expect(countStyle.fontSize, titleStyle.fontSize);
-      expect(
-        tester.getCenter(count).dy,
-        moreOrLessEquals(tester.getCenter(title).dy, epsilon: .5),
-      );
-      // Count follows the label instead of floating at the far edge.
-      expect(
-        tester.getTopLeft(count).dx - tester.getTopRight(title).dx,
-        lessThanOrEqualTo(8),
-      );
-      // Still collapsible.
-      await tester.tap(header);
-      await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey('mission-bot-row-radar')), findsNothing);
-    });
   });
 
   group('room layout #5–#8', () {
@@ -385,17 +247,17 @@ void main() {
       ];
     }
 
-    testWidgets('#5 opening never leaves a run header under the status line', (
+    testWidgets('#5 opening never leaves a run header under the room header', (
       tester,
     ) async {
       final events = longRun();
       await _pumpRoom(tester, events: events);
       final transcript = find.byKey(const ValueKey('room-transcript'));
-      final top = tester.getTopLeft(transcript).dy;
-      final status = find.byKey(const ValueKey('room-status-line'));
-      expect(status, findsOneWidget);
-      // Transcript starts below the status line (column layout, no overlap).
-      expect(top, greaterThanOrEqualTo(tester.getBottomLeft(status).dy));
+      // fh1215: the transcript runs under the floating header; what is
+      // readable starts below the header's inset.
+      expect(tester.getTopLeft(transcript).dy, 0);
+      expect(find.byKey(const ValueKey('room-header-bar')), findsOneWidget);
+      final top = FloatingChatHeader.insetFor(tester.element(transcript));
       // The newest speaker run's header (face, name, time) is fully visible
       // below the status line, not cut at (or hidden above) the list edge.
       final lead = events.last['event_id'] as String;
@@ -479,7 +341,7 @@ And whether `fix/tap-targets` is still open.''';
       expect(room, main);
     });
 
-    testWidgets('#7 header avatar: 2x2 tile, no overlap, +n in the 4th cell', (
+    testWidgets('#7 header faces: one overlapping cluster, four max, +n', (
       tester,
     ) async {
       final room = buildRoom(
@@ -492,45 +354,34 @@ And whether `fix/tap-targets` is still open.''';
         ],
       );
       await _pumpRoom(tester, events: const [], room: room);
-      final tile = find.descendant(
-        of: find.byKey(const ValueKey('room-header-faces')),
-        matching: find.byKey(const ValueKey('room-avatar-tile')),
-      );
-      expect(tester.getSize(tile), const Size.square(RoomHeaderFaces.size));
-      final rects = [
-        for (var i = 0; i < 3; i++)
-          tester.getRect(
-            find.descendant(
-              of: tile,
-              matching: find.byKey(ValueKey(RoomAvatarTile.cellKey(i))),
-            ),
-          ),
+      // The old 2×2 mosaic is gone from the header.
+      expect(find.byKey(const ValueKey('room-header-faces')), findsNothing);
+      final cluster = find.byKey(const ValueKey('room-header-cluster'));
+      final faces = [
+        for (final id in ['m-1', 'm-2', 'm-3', 'm-4'])
+          tester.getRect(find.byKey(ValueKey('room-header-face-$id'))),
       ];
-      expect(find.byKey(ValueKey(RoomAvatarTile.cellKey(3))), findsNothing);
-      final more = find.byKey(const ValueKey('room-avatar-more'));
+      expect(find.byKey(const ValueKey('room-header-face-m-5')), findsNothing);
       expect(
-        find.descendant(of: more, matching: find.text('+2')),
+        find.descendant(of: cluster, matching: find.text('+1')),
         findsOneWidget,
       );
-      final all = [...rects, tester.getRect(more)];
-      // Same size, fully inside the tile and never overlapping.
-      final box = tester.getRect(tile);
-      for (var a = 0; a < all.length; a++) {
-        expect(all[a].size, all[0].size);
-        expect(box.contains(all[a].topLeft), isTrue);
-        expect(
-          box.contains(all[a].bottomRight - const Offset(.01, .01)),
-          isTrue,
-        );
-        for (var b = a + 1; b < all.length; b++) {
-          expect(all[a].overlaps(all[b]), isFalse);
+      final bar = tester.getRect(find.byKey(const ValueKey('room-header-bar')));
+      for (var i = 0; i < faces.length; i++) {
+        expect(faces[i].size, const Size.square(RoomFaceCluster.faceSize));
+        expect(bar.contains(faces[i].topLeft), isTrue);
+        expect(bar.contains(faces[i].bottomRight), isTrue);
+        if (i > 0) {
+          // Overlapping, in a stable left-to-right order.
+          expect(faces[i].left, greaterThan(faces[i - 1].left));
+          expect(faces[i].overlaps(faces[i - 1]), isTrue);
         }
       }
     });
 
     for (final (locale, expected) in const [
-      (Locale('en'), 'Round 1 finished · '),
-      (Locale('es'), 'Ronda 1 terminada · '),
+      (Locale('en'), '4 bots · round finished '),
+      (Locale('es'), '4 bots · ronda terminada '),
     ]) {
       testWidgets('#8 idle finished round is ONE compact line ($locale)', (
         tester,
@@ -550,31 +401,57 @@ And whether `fix/tap-targets` is still open.''';
           events: [u, started, reply, settled],
           locale: locale,
         );
-        // No panel stacked over a last-activity bar: one line that opens
-        // Activity.
+        // No panel stacked over a last-activity bar. fh1215: idle, the
+        // island says the room name in one line; the finished-round line
+        // is the header's semantics.
         expect(find.byKey(const ValueKey('room-round-panel')), findsNothing);
         final line = tester.widget<Text>(
-          find.byKey(const ValueKey('room-status-text')),
+          find.descendant(
+            of: find.byKey(const ValueKey('room-header')),
+            matching: find.byKey(const ValueKey('island-name')),
+          ),
         );
-        expect(line.data, startsWith(expected));
         expect(line.maxLines, 1);
+        expect(
+          tester.widget<RoomHeaderBar>(find.byType(RoomHeaderBar)).status,
+          startsWith(expected),
+        );
       });
     }
 
-    testWidgets('#8b a working round keeps the full round panel', (
+    testWidgets('#8b a working round says who works, same header height', (
       tester,
     ) async {
       final seq = EventSeq();
       final u = seq.user('@builder go');
       final disc = u['event_id'] as String;
+      // A current turn: without driver status the room applies the roster
+      // worker freshness, so the turn must be recent at the screen clock.
+      seq.at = 1790000400 - 40;
       final started = seq.started('m-builder', disc);
       await _pumpRoom(tester, events: [u, started], locale: const Locale('en'));
-      expect(find.byKey(const ValueKey('room-round-panel')), findsOneWidget);
+      expect(find.byType(AppBar), findsNothing);
+      // Who replies and for how long (the clock of the working turn).
+      expect(roomIslandSays(tester), 'console-builder is replying');
+      expect(find.byKey(const ValueKey('room-header-elapsed')), findsOneWidget);
       expect(
-        tester
-            .widget<Text>(find.byKey(const ValueKey('room-round-summary')))
-            .data,
-        startsWith('Round 1'),
+        find.byKey(const ValueKey('room-header-dot-m-builder-working')),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('#8d a stale started turn without driver status is not '
+        'shown as replying', (tester) async {
+      final seq = EventSeq();
+      final u = seq.user('@builder go');
+      final disc = u['event_id'] as String;
+      // Started ~280 s before the screen clock: past the worker freshness.
+      final started = seq.started('m-builder', disc);
+      await _pumpRoom(tester, events: [u, started], locale: const Locale('en'));
+      expect(roomIslandSays(tester), isNot(contains('is replying')));
+      expect(
+        find.byKey(const ValueKey('room-header-dot-m-builder-working')),
+        findsNothing,
       );
     });
 
@@ -637,7 +514,7 @@ And whether `fix/tap-targets` is still open.''';
     await tester.pumpAndSettle();
     final appBar = find.byType(AppBar);
     expect(
-      find.descendant(of: appBar, matching: find.text('Bot profile')),
+      find.descendant(of: appBar, matching: find.text('Profile')),
       findsOneWidget,
     );
     expect(
@@ -659,7 +536,7 @@ And whether `fix/tap-targets` is still open.''';
     );
     await tester.pumpAndSettle();
     expect(
-      find.descendant(of: appBar, matching: find.text('Bot profile')),
+      find.descendant(of: appBar, matching: find.text('Profile')),
       findsOneWidget,
     );
   });

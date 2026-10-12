@@ -1,10 +1,13 @@
+import 'dart:convert';
 import 'dart:io';
+import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:hermes_android/core/services/app_error_log.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/diagnostic_bundle_service.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
@@ -151,5 +154,55 @@ void main() {
     expect(existedDuringShare, isTrue);
     expect(shared?.parent.path, cache.path);
     expect(await shared!.exists(), isFalse);
+  });
+
+  test('lo1216 the export includes the local error log by type only', () async {
+    final savedFlutter = FlutterError.onError;
+    final savedPlatform = PlatformDispatcher.instance.onError;
+    AppErrorLog.resetForTesting();
+    addTearDown(() {
+      FlutterError.onError = savedFlutter;
+      PlatformDispatcher.instance.onError = savedPlatform;
+      AppErrorLog.resetForTesting();
+    });
+    FlutterError.onError = (_) {};
+    PlatformDispatcher.instance.onError = (_, _) => true;
+    AppErrorLog.install();
+    FlutterError.reportError(
+      FlutterErrorDetails(exception: StateError('prompt secreto')),
+    );
+    PlatformDispatcher.instance.onError!(
+      ArgumentError('token-123'),
+      StackTrace.current,
+    );
+    final support = await Directory.systemTemp.createTemp('hermes-diag-');
+    addTearDown(() => support.delete(recursive: true));
+    final controller = DiagnosticBundleController(
+      manager: await manager(),
+      service: DiagnosticBundleService(
+        cacheDirectory: () async => support,
+        now: () => DateTime.utc(2026, 7, 14, 20),
+      ),
+      runtimeInfo: () async => const DiagnosticRuntimeInfo(
+        version: '1.2.16',
+        build: 1,
+        flavor: DiagnosticFlavor.qa,
+        androidApi: 36,
+      ),
+      supportDirectory: () async => support,
+    );
+
+    final bundle = await controller.prepare(DiagnosticFormFactor.phone);
+
+    final decoded = jsonDecode(bundle.preview) as Map<String, dynamic>;
+    final errors = (decoded['recentErrors'] as List)
+        .cast<Map<String, dynamic>>();
+    expect(errors.map((e) => '${e['component']} ${e['errorType']}').toSet(), {
+      'flutter StateError',
+      'platform ArgumentError',
+    });
+    expect(errors.every((e) => e['occurredAt'] is String), isTrue);
+    expect(bundle.preview, isNot(contains('prompt secreto')));
+    expect(bundle.preview, isNot(contains('token-123')));
   });
 }

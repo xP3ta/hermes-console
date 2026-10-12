@@ -350,11 +350,19 @@ Future<void> _waitForController(
   }
 
   controller.addListener(observe);
+  final waited = Stopwatch()..start();
   try {
     observe();
     await reached.future.timeout(
       const Duration(seconds: 5),
-      onTimeout: () => throw TestFailure(reason),
+      // Name what the controller published so a timeout can be told apart
+      // from a sync that settled on the wrong pet.
+      onTimeout: () => throw TestFailure(
+        '$reason (after ${waited.elapsedMilliseconds} ms: '
+        'selected=${controller.selectedSlug}, '
+        'active=${controller.activeCompanion?.slug}, '
+        'origin=${controller.activeCompanion?.origin.name})',
+      ),
     );
   } finally {
     controller.removeListener(observe);
@@ -398,7 +406,7 @@ void main() {
 
       await h.switchProfile('beta');
       expect(h.controller.selectedSlug, isNull); // perfil nuevo: sin selección
-      expect(h.controller.activeCompanion, isNull); // → fallback Spark
+      expect(h.controller.activeCompanion, isNull); // → cara del perfil
 
       await h.controller.select('jinx');
       expect(h.controller.activeCompanion?.slug, 'jinx');
@@ -526,7 +534,7 @@ void main() {
       await pumpEventQueue();
       expect(h.gateway.selectCalls, [(profile: 'alpha', slug: 'nimbus')]);
 
-      // Volver al Spark por defecto equivale a apagar la mascota del perfil.
+      // Volver a la cara del perfil equivale a apagar la mascota del perfil.
       await h.controller.select(null);
       await pumpEventQueue();
       expect(h.gateway.disableCalls, ['alpha']);

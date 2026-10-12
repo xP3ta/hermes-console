@@ -316,6 +316,57 @@ void main() {
   });
 
   group('semantic round-trip', () {
+    test(
+      'silhouette colour is opt-in, persisted in the profile, and survives rehydration',
+      () {
+        final legacy = _profile({
+          'shape': 'blobatar:nimbus:sun',
+          'color': '#8b5cf6',
+          'imageKind': 'shape',
+        });
+        expect(legacy.botFaceColorHex, isNull);
+        expect(
+          (BotVisualIdentity.resolve(legacy, ProfilePetInfo.disabled, null)!
+                  as ProceduralFaceIdentity)
+              .useShapeColor,
+          isFalse,
+        );
+        final identity = ProceduralFaceIdentity(
+          shapeWire: 'blobatar:nimbus:sun',
+          dormantColorHex: '#ef4444',
+          useShapeColor: true,
+        );
+        final metadata = identity.toBotModeMetadata();
+        expect(metadata, {
+          'shape': 'blobatar:nimbus:sun',
+          'color': '#ef4444',
+          'useShapeColor': true,
+          'imageKind': 'shape',
+          'custom': true,
+        });
+        final profile = _profile(metadata);
+        expect(profile.botFaceColorHex, '#ef4444');
+        expect(
+          BotVisualIdentity.resolve(profile, ProfilePetInfo.disabled, null),
+          identity,
+        );
+        expect(
+          BotVisualIdentityState.rehydrate(
+            profileName: 'nimbus',
+            botMeta: metadata,
+            hasAvatar: false,
+          ).identity,
+          identity,
+        );
+        final classic = BotVisualIdentityState(
+          identity: ClassicFaceIdentity(shape: 'circle', colorHex: '#14b8a6'),
+        );
+        expect(
+          classic.mergeBotMeta(metadata),
+          isNot(contains('useShapeColor')),
+        );
+      },
+    );
     test('pet serializes and resolves with the active pet contract', () {
       const identity = PetSpriteIdentity(slug: 'zoro', revision: 'rev-1');
       final metadata = identity.toBotModeMetadata();

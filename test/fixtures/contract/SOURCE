@@ -1,0 +1,6 @@
+repository: https://github.com/NousResearch/hermes-agent
+path: apps/shared/src/gateway-contract.openrpc.json
+checkout_commit: c8173e038727967108a998815c02406d38743da7
+contract_last_changed_commit: 28365a5bec35d8f66f7e961a5648b7283952c796
+sha256: 6ac2d31f61da33037b86a4d3a8dd53ca4552378bcdac0dec4e898d91f35eb40a
+license: MIT (Copyright (c) 2025 Nous Research)

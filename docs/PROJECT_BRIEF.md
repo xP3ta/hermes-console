@@ -1,60 +1,58 @@
-# Project Brief — Hermes Mobile Client
+# Project brief
 
-## Problema
+## The problem
 
-Hermes Agent es un agente AI self-hosted (NousResearch) con capacidades de memoria, cron, skills y MCP. Su interfaz oficial no está optimizada para uso móvil desde Android/GrapheneOS. Las alternativas actuales para controlarlo desde el móvil son:
+[Hermes Agent](https://github.com/NousResearch/hermes-agent) is a self-hosted AI
+agent (by Nous Research) with memory, scheduled jobs, skills and MCP servers.
+Its official interfaces are not built for a phone, and the usual ways of
+reaching it from one all give something up:
 
-- **Telegram bot**: requiere cuenta Telegram, dependencia de terceros
-- **PWA/navegador**: sin soporte offline, sin integración OS Android
-- **SSH + Termux**: flujo de trabajo de desarrollador, no usuario
-- **SillyTavern/OpenWebUI**: pensados para desktop, UX no móvil
+- **A messaging bot** needs a third-party account and a third party in the path.
+- **A browser or PWA** has no integration with the operating system:
+  notifications, widgets, share sheet, App Lock.
+- **A remote shell** is a developer workflow, not an everyday one.
+- **Desktop-first web UIs** are not designed for a small screen.
 
-Ninguna de estas opciones es una interfaz cómoda, privada y de primera clase para Android.
+## The solution
 
-## Solución
+Console is a native Android client (Flutter) that connects remotely to the
+Gateway and Dashboard of the user's own Hermes Agent:
 
-Un cliente Android nativo (Flutter) que se conecta remotamente al Gateway de Hermes Agent:
+- **Remote.** Hermes runs on a computer, homelab or VPS, not on the phone. The
+  app never runs a model locally on behalf of Hermes.
+- **Private.** No Console account, no backend and no telemetry operated by XPeta
+  Lab. Optional third-party services are disclosed in the privacy policy.
+- **Private-network first.** Works over Tailscale, a LAN or HTTPS without
+  exposing unauthenticated services to the internet.
+- **Minimal permissions.** Each permission is justified in
+  [`PLAY_PERMISSIONS.md`](PLAY_PERMISSIONS.md); Google Play Services is not
+  required.
+- **Faithful to Hermes.** Behaviour follows Hermes Desktop and Hermes Agent as
+  the protocol contract (see [`UPSTREAM_CONTRACT.md`](UPSTREAM_CONTRACT.md)).
 
-- **Remoto**: Hermes corre en servidor/VM/homelab, no en el teléfono
-- **Privado**: sin backend ni telemetría de XPeta Lab; servicios externos
-  opcionales divulgados en la política de privacidad
-- **Tailscale-first**: conexión segura sin exponer puertos públicos
-- **GrapheneOS-ready**: permisos mínimos, sin Google Play Services requerido
+## Who it is for
 
-## Público objetivo
+- Self-hosters running Hermes Agent at home or on a VPS.
+- People who prefer a privacy-respecting phone setup (including degoogled
+  Android) and private networks such as Tailscale.
+- Developers who want a hackable, open Hermes client for Android.
+- Users of the Nous Research / Hermes ecosystem.
 
-- Self-hosters con Hermes Agent en homelab o VPS
-- Usuarios de GrapheneOS que priorizan privacidad
-- Usuarios de Tailscale para redes privadas
-- Desarrolladores que quieren un cliente Hermes móvil hackeable
-- Usuarios del ecosistema NousResearch/Hermes
+## What it is not
 
-## Base de trabajo
+- Not a general AI chat app.
+- Not a clone of any cloud provider's interface.
+- Not a Hermes runtime: it does not run Hermes on the phone.
+- Not a service for paid cloud AI; it brings no model access of its own.
+- Not a project with telemetry, tracking or analytics.
 
-Fork de: https://github.com/rusty4444/hermes-android  
-Hermes Agent upstream: https://github.com/NousResearch/hermes-agent
+## Stack
 
-## Lo que NO es este proyecto
-
-- ❌ Una app de IA genérica tipo ChatGPT
-- ❌ Un clon de interfaz de ningún proveedor cloud
-- ❌ Un runtime de Hermes en el móvil (no ejecuta modelos localmente)
-- ❌ Una app para usuarios de servicios cloud de pago
-- ❌ Un proyecto con telemetría, tracking o analytics
-
-## Stack técnico
-
-- **Frontend**: Flutter (Dart)
-- **Backend**: Hermes Agent Gateway (self-hosted)
-- **Conectividad**: Tailscale / LAN / HTTPS
-- **Seguridad**: Android Keystore, flutter_secure_storage
-- **Target**: Android 10+, GrapheneOS compatible
-
-## Métricas de éxito de la fase inicial
-
-- [ ] App compila sin errores
-- [ ] Conecta a Hermes Gateway self-hosted
-- [ ] Chat funcional con streaming
-- [ ] API key almacenada de forma segura
-- [ ] Sin permisos Android innecesarios
-- [ ] Sin telemetría operada por XPeta Lab; métricas de SDK declaradas
+- **App:** Flutter (Dart), Android 7.0+ (API 24).
+- **Server side:** Hermes Agent's Gateway and Dashboard (self-hosted).
+- **Connectivity:** HTTPS, LAN or a private network such as Tailscale.
+- **Security:** Android Keystore through `flutter_secure_storage`; see
+  [`SECURITY_POLICY.md`](SECURITY_POLICY.md).
+- **Origin:** started from a fork of
+  [`rusty4444/hermes-android`](https://github.com/rusty4444/hermes-android) (MIT
+  notice preserved in [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md)).

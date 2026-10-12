@@ -33,7 +33,6 @@ path = [
   "android/gradle.properties",
   "android/settings.gradle.kts",
   "assets/branding/**",
-  "assets/bridge/**",
   "assets/icon/**",
   "docs/**",
   "lib/**",
@@ -84,3 +83,58 @@ path = "assets/companions/**"
 precedence = "override"
 SPDX-FileCopyrightText = "Copyright (c) 2026 XPeta Lab"
 SPDX-License-Identifier = "CC0-1.0"
+
+# Header atlases retain the CC0 dedication of their companion source sheets.
+[[annotations]]
+path = "assets/mascot/*.webp"
+precedence = "override"
+SPDX-FileCopyrightText = "Copyright (c) 2026 XPeta Lab"
+SPDX-License-Identifier = "CC0-1.0"
+
+# Project-authored licence/provenance commentary, not the CC0 legal code.
+[[annotations]]
+path = "assets/mascot/LICENSES.md"
+precedence = "override"
+SPDX-FileCopyrightText = "Copyright (c) 2026 XPeta Lab"
+SPDX-License-Identifier = "GPL-3.0-only"
+
+# Test-only verbatim copy of Hermes Agent's generated gateway wire contract
+# (tool/contract/update_contract.sh; upstream commit in SOURCE). Never packaged.
+[[annotations]]
+path = "test/fixtures/contract/gateway-contract.openrpc.json"
+precedence = "override"
+SPDX-FileCopyrightText = "Copyright (c) 2025 Nous Research"
+SPDX-License-Identifier = "MIT"
+
+# Provider-logo path data copied unchanged from Simple Icons 16.1.0
+# (CC0-1.0); see ASSET_PROVENANCE.md. Brand marks remain their owners'.
+[[annotations]]
+path = "lib/core/widgets/provider_logo_glyphs.dart"
+precedence = "override"
+SPDX-FileCopyrightText = "Simple Icons contributors"
+SPDX-License-Identifier = "CC0-1.0"
+
+# Provider-logo path data copied from LobeHub Icons
+# (@lobehub/icons-static-svg@1.95.1, MIT); see ASSET_PROVENANCE.md and
+# THIRD_PARTY_NOTICES.md. Brand marks remain their owners'.
+[[annotations]]
+path = "lib/core/widgets/provider_logo_glyphs_lobehub.dart"
+precedence = "override"
+SPDX-FileCopyrightText = "Copyright (c) 2023 LobeHub"
+SPDX-License-Identifier = "MIT"
+
+# Official Google Play badge artwork, unmodified, used only to link to the
+# Play listing (see LICENSES/LicenseRef-Google-Play-Badge.txt).
+[[annotations]]
+path = "docs/badges/google-play-*.png"
+precedence = "override"
+SPDX-FileCopyrightText = "Copyright Google LLC"
+SPDX-License-Identifier = "LicenseRef-Google-Play-Badge"
+
+# Obtainium's own "Get it on Obtainium" badge (ImranR98/Obtainium, assets/graphics).
+[[annotations]]
+path = "docs/badges/obtainium.png"
+precedence = "override"
+SPDX-FileCopyrightText = "Copyright (c) Obtainium contributors"
+SPDX-License-Identifier = "GPL-3.0-only"
+

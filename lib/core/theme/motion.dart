@@ -29,11 +29,115 @@ class Motion {
 
   /// True si el sistema pide reducir el movimiento (accesibilidad/ahorro).
   static bool reduced(BuildContext context) =>
-      MediaQuery.maybeOf(context)?.disableAnimations ?? false;
+      MediaQuery.maybeDisableAnimationsOf(context) ?? false;
 
   /// Duración efectiva: la nominal, o cero si hay que reducir el movimiento.
   static Duration duration(BuildContext context, Duration nominal) =>
       reduced(context) ? Duration.zero : nominal;
+}
+
+/// A floating route's enter and exit curves, held for as long as its
+/// transition is in the tree.
+///
+/// A route's `transitionsBuilder` runs on every tick of its animation. A
+/// `CurvedAnimation(curve:, reverseCurve:)` created there is a new object on
+/// every frame, so it cannot remember which curve the transition was on: a
+/// surface closed before it had finished opening (a quick outside tap, Back,
+/// a row tapped at once) left the enter curve for the exit curve at the
+/// same route value. Half-way in, that is opacity 0.88 → 0.15 in one frame.
+/// The one CurvedAnimation kept here stays on the curve it was following,
+/// so that close retraces the opening.
+class RouteCurves extends StatefulWidget {
+  const RouteCurves({
+    required this.animation,
+    required this.builder,
+    this.child,
+    super.key,
+  });
+
+  /// The route's own (linear) animation.
+  final Animation<double> animation;
+
+  /// Builds the transition around [child] from the curved animation.
+  final Widget Function(
+    BuildContext context,
+    Animation<double> curved,
+    Widget? child,
+  )
+  builder;
+  final Widget? child;
+
+  @override
+  State<RouteCurves> createState() => _RouteCurvesState();
+}
+
+class _RouteCurvesState extends State<RouteCurves> {
+  late CurvedAnimation _curved = _curve();
+
+  CurvedAnimation _curve() => CurvedAnimation(
+    parent: widget.animation,
+    curve: Motion.enter,
+    reverseCurve: Motion.exit,
+  );
+
+  @override
+  void didUpdateWidget(RouteCurves oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.animation, widget.animation)) {
+      _curved.dispose();
+      _curved = _curve();
+    }
+  }
+
+  @override
+  void dispose() {
+    _curved.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) =>
+      widget.builder(context, _curved, widget.child);
+}
+
+/// Keeps a route that is covered by an opaque route off the MediaQuery
+/// stream.
+///
+/// The [Overlay] disables [TickerMode] for routes under an opaque route. Those
+/// routes are not painted, but every widget in them that depends on the
+/// MediaQuery is still rebuilt (and their layout boundaries laid out again)
+/// whenever it changes. While the soft keyboard animates in a chat, Android
+/// publishes a new `viewInsets` every frame, so the screens below the chat
+/// (Home, Mission Control's Bots tab) rebuilt on every step: about 20 ms of UI
+/// thread per frame on a Pixel.
+///
+/// While covered, this publishes the last MediaQueryData seen while the route
+/// was visible. As soon as the route is uncovered (the pop starts, so the
+/// TickerMode flips in that same frame) it publishes the live value again, so
+/// insets, size and text scale changed meanwhile are applied in the first
+/// visible frame.
+class CoveredRouteMediaQueryFreeze extends StatefulWidget {
+  final Widget child;
+
+  const CoveredRouteMediaQueryFreeze({super.key, required this.child});
+
+  @override
+  State<CoveredRouteMediaQueryFreeze> createState() =>
+      _CoveredRouteMediaQueryFreezeState();
+}
+
+class _CoveredRouteMediaQueryFreezeState
+    extends State<CoveredRouteMediaQueryFreeze> {
+  MediaQueryData? _visible;
+
+  @override
+  Widget build(BuildContext context) {
+    final live = MediaQuery.maybeOf(context);
+    if (live == null) return widget.child;
+    final covered = !TickerMode.valuesOf(context).enabled;
+    final data = covered ? (_visible ??= live) : (_visible = live);
+    return MediaQuery(data: data, child: widget.child);
+  }
 }
 
 /// Transición de navegación de la app: fade + un leve deslizamiento ascendente,
@@ -50,6 +154,7 @@ class HermesPageTransitionsBuilder extends PageTransitionsBuilder {
     Animation<double> secondaryAnimation,
     Widget child,
   ) {
+    child = CoveredRouteMediaQueryFreeze(child: child);
     if (Motion.reduced(context)) return child;
     final curved = CurvedAnimation(
       parent: animation,

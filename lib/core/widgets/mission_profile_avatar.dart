@@ -4,6 +4,8 @@ import 'dart:collection';
 import 'package:flutter/material.dart';
 
 import '../models/agent_profile.dart';
+import '../models/profile_identity.dart';
+import 'profile_pet_avatar.dart';
 import '../theme/app_theme.dart';
 import 'hermes_bot_face.dart';
 import 'bot_avatar_motion.dart';
@@ -26,6 +28,7 @@ final class MissionProfileAvatarCache {
   // Resultados ya entregados, legibles de forma síncrona desde `build` (ver
   // [resolved]). Se expulsan a la vez que su Future en [_entries].
   final Map<String, AgentProfileAvatar?> _resolved = {};
+  final Map<String, Future<AgentProfileAvatar?>> _afterFrame = {};
   final Queue<_AvatarLoadJob> _queue = Queue();
   int _active = 0;
 
@@ -76,6 +79,17 @@ final class MissionProfileAvatarCache {
     return future;
   }
 
+  Future<AgentProfileAvatar?> loadAfterFrame(String profileName) =>
+      _afterFrame.putIfAbsent(profileName, () {
+        final done = Completer<AgentProfileAvatar?>();
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          load(
+            profileName,
+          ).then(done.complete, onError: (_) => done.complete());
+        });
+        return done.future;
+      });
+
   /// `true` si la carga de [profileName] ya terminó y su resultado (aunque
   /// sea "sin avatar") sigue en caché: [resolved] puede leerse en `build` sin
   /// pasar por un `FutureBuilder`.
@@ -92,11 +106,13 @@ final class MissionProfileAvatarCache {
   }
 
   void clear() {
+    _afterFrame.clear();
     _entries.clear();
     _resolved.clear();
   }
 
   void _evict(String profile) {
+    _afterFrame.remove(profile);
     _entries.remove(profile);
     _resolved.remove(profile);
   }
@@ -140,6 +156,7 @@ class MissionProfileAvatar extends StatelessWidget {
   final String? imageKind;
   final bool privacySafeElementKeys;
   final bool working;
+  final bool allowPet;
 
   const MissionProfileAvatar({
     super.key,
@@ -153,18 +170,38 @@ class MissionProfileAvatar extends StatelessWidget {
     this.imageKind,
     this.privacySafeElementKeys = false,
     this.working = false,
+    this.allowPet = true,
   });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => ListenableBuilder(
+    listenable: ProfileIdentities.instance,
+    builder: (context, _) => _buildIdentity(context),
+  );
+
+  Widget _buildIdentity(BuildContext context) {
     final colors = Theme.of(context).hermes;
     // Desktop may publish a 160px PNG backfill for procedural faces. It is an
     // interoperability asset, not the selected identity: shape metadata must
     // continue through the native Blobatar renderer instead of becoming a
     // frozen raster in Android.
     final avatarCache = cache;
+    if (allowPet) {
+      ProfileIdentities.instance.requestAfterPaint(avatarCache?.connectionId, profileName);
+    }
+    final identity = profileIdentityFor(
+      profileName: profileName,
+      connectionId: avatarCache?.connectionId,
+      hasAvatar: hasAvatar,
+      imageKind: imageKind,
+      shape: shape,
+    );
+    if (allowPet && identity.pet != null) {
+      final pet = identity.pet!;
+      return ProfilePetAvatar(pet: pet, size: size);
+    }
     final shouldLoadAvatar =
-        hasAvatar && avatarCache != null && imageKind?.toLowerCase() != 'shape';
+        identity.kind == ProfileIdentityKind.image && avatarCache != null;
     final Widget content;
     if (!shouldLoadAvatar) {
       content = _AvatarFace(
@@ -192,7 +229,7 @@ class MissionProfileAvatar extends StatelessWidget {
       );
     } else {
       content = FutureBuilder<AgentProfileAvatar?>(
-        future: avatarCache.load(profileName),
+        future: avatarCache.loadAfterFrame(profileName),
         builder: (context, snapshot) => _AvatarFace(
           profileName: profileName,
           size: size,
@@ -306,6 +343,7 @@ class _AvatarFace extends StatelessWidget {
         : HermesBlobatarFaceVisual.tryParse(
             shapeWire: shapeWire,
             profileName: profileName,
+            colorHex: colorHex,
           );
     if (blobatar != null) return blobatar;
     // Classic shape/color metadata remains readable for rollback and Desktop

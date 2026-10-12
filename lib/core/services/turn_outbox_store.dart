@@ -3,6 +3,8 @@ import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 
+import 'app_lock_sensitive_read_fence.dart';
+
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -224,8 +226,20 @@ class AttachmentOwnershipCoordinator {
     SharedPreferences? preferences,
   }) async {
     try {
+      AppLockSensitiveReadFence.current.ensureCurrent();
+      final ticket = AppLockSensitiveReadFence.capture(preferences);
+      final prefs = preferences ?? await SharedPreferences.getInstance();
+      await prefs.reload();
+      ticket.ensureCurrent();
+      final admitted = preferences == null
+          ? AppLockSensitiveReadFence.capture(prefs)
+          : ticket;
+      AppLockSensitiveReadFence.current.ensureCurrent();
+      admitted.ensureCurrent();
       final values = <Object?>[];
       final secureEntries = await secure.readAll();
+      AppLockSensitiveReadFence.current.ensureCurrent();
+      admitted.ensureCurrent();
       for (final entry in secureEntries.entries) {
         final relevant =
             entry.key == 'chat_turn_outbox_v1' ||
@@ -236,7 +250,6 @@ class AttachmentOwnershipCoordinator {
         if (decoded is! Map) return null;
         values.add(decoded);
       }
-      final prefs = preferences ?? await SharedPreferences.getInstance();
       for (final key in prefs.getKeys()) {
         if (!key.startsWith('chat_draft_v1_')) continue;
         final raw = prefs.getString(key);
@@ -384,6 +397,15 @@ class TurnOutboxStore
        _deletePrivateCopy =
            deletePrivateCopy ?? AttachmentUploader.deletePrivateDraftCopy,
        _nowMs = nowMs ?? (() => DateTime.now().millisecondsSinceEpoch);
+
+  /// The same encrypted outbox written on behalf of another chat screen.
+  TurnOutboxStore withLifecycle(LocalConversationLifecycle? next) =>
+      TurnOutboxStore(
+        secureStorage: _secure,
+        deletePrivateCopy: _deletePrivateCopy,
+        nowMs: _nowMs,
+        lifecycle: next,
+      );
 
   /// Cada widget test usa una zona FakeAsync distinta. Un Future estático que
   /// quedó ligado a la zona anterior no puede avanzar en la siguiente aunque
@@ -1114,10 +1136,26 @@ class TurnOutboxStore
 
   Future<void> _cleanupUnowned(List<AttachmentDraft> candidates) async {
     if (candidates.isEmpty) return;
+    final ticket = AppLockSensitiveReadFence.current;
     final decoded = await AttachmentOwnershipCoordinator.loadDurableReferences(
       _secure,
     );
-    if (decoded == null) return;
+    if (decoded == null || !ticket.isCurrent) {
+      void retry() {
+        if (!AppLockSensitiveReadFence.capture().isCurrent) return;
+        AppLockSensitiveReadFence.changes.removeListener(retry);
+        unawaited(
+          AppLockSensitiveReadFence.recover(
+            () => AttachmentOwnershipCoordinator.serialize(
+              () => _cleanupUnowned(candidates),
+            ),
+          ),
+        );
+      }
+
+      AppLockSensitiveReadFence.changes.addListener(retry);
+      return;
+    }
     final visitedPaths = <String>{};
     for (final candidate in candidates) {
       if (candidate.localPath.isEmpty ||
@@ -1132,6 +1170,10 @@ class TurnOutboxStore
         (value) => _outboxReferencesAttachment(value, candidate),
       )) {
         continue;
+      }
+      if (!ticket.isCurrent) {
+        await _cleanupUnowned(candidates);
+        return;
       }
       await _deletePrivateCopy(candidate);
     }

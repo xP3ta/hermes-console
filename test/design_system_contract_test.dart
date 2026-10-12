@@ -127,22 +127,15 @@ void main() {
 }
 
 const _alertDialogAllowed = <String, int>{
-  'lib/core/screens/chat_screen.dart': 10,
-  'lib/core/screens/instance_edit_screen.dart': 2,
+  'lib/core/screens/chat_screen.dart': 7,
   'lib/core/screens/mission_control_screen.dart': 1,
-  'lib/core/screens/models_screen.dart': 1,
   'lib/core/screens/notification_settings_screen.dart': 1,
-  'lib/core/screens/ollama_models_screen.dart': 6,
-  'lib/core/screens/onboarding/local_agent_setup_screen.dart': 1,
-  'lib/core/screens/onboarding/local_install_screen.dart': 1,
-  'lib/core/screens/profiles_screen.dart': 1,
+  'lib/core/screens/profile_flows.dart': 1,
   'lib/core/screens/recovery_center_screen.dart': 1,
   'lib/core/screens/runs_screen.dart': 1,
   'lib/core/screens/settings_screen.dart': 1,
   'lib/core/widgets/action_approval.dart': 1,
   'lib/core/widgets/api_key_help.dart': 1,
-  'lib/core/widgets/bot_avatar_generate_button.dart': 1,
-  'lib/core/widgets/bridge_update_banner.dart': 2,
   'lib/core/widgets/diagnostic_bundle_tile.dart': 1,
   'lib/core/widgets/room_member_status.dart': 2,
   'lib/core/widgets/session_deletion_dialogs.dart': 1,
@@ -150,60 +143,17 @@ const _alertDialogAllowed = <String, int>{
   'lib/core/widgets/voice_disclosure_dialog.dart': 2,
 };
 
-const _showDialogAllowed = <String, int>{
-  'lib/core/screens/chat_screen.dart': 9,
-  'lib/core/screens/instance_edit_screen.dart': 2,
-  'lib/core/screens/mission_control_screen.dart': 1,
-  'lib/core/screens/models_screen.dart': 1,
-  'lib/core/screens/notification_settings_screen.dart': 1,
-  'lib/core/screens/ollama_models_screen.dart': 6,
-  'lib/core/screens/onboarding/local_agent_setup_screen.dart': 1,
-  'lib/core/screens/onboarding/local_install_screen.dart': 1,
-  'lib/core/screens/profiles_screen.dart': 1,
-  'lib/core/screens/recovery_center_screen.dart': 1,
-  'lib/core/screens/runs_screen.dart': 1,
-  'lib/core/screens/settings_screen.dart': 1,
-  'lib/core/widgets/action_approval.dart': 1,
-  'lib/core/widgets/api_key_help.dart': 1,
-  'lib/core/widgets/bot_avatar_generate_button.dart': 1,
-  'lib/core/widgets/bridge_update_banner.dart': 2,
-  'lib/core/widgets/diagnostic_bundle_tile.dart': 1,
-  'lib/core/widgets/room_member_status.dart': 2,
-  'lib/core/widgets/session_deletion_dialogs.dart': 1,
-  'lib/core/widgets/ssh_host_key_dialog.dart': 1,
-  'lib/core/widgets/voice_disclosure_dialog.dart': 2,
-};
+// Every caller-built dialog outside the chat goes through
+// `showHermesDialogRoute` (the shared scrim, receding exit and drag); the
+// chat's own are next.
+const _showDialogAllowed = <String, int>{};
 
-const _dropdownButtonAllowed = <String, int>{
-  'lib/core/screens/bot_create_screen.dart': 1,
-  'lib/core/screens/instance_edit_screen.dart': 1,
-  'lib/core/screens/mission_control_screen.dart': 1,
-  'lib/core/screens/onboarding/local_install_screen.dart': 1,
-  'lib/core/screens/security_info_screen.dart': 1,
-  'lib/core/screens/settings_screen.dart': 1,
-  'lib/core/screens/theme_studio_screen.dart': 1,
-  'lib/core/screens/voice_settings_screen.dart': 2,
-  'lib/core/widgets/mcp_provisioning_surface.dart': 1,
-  'lib/core/widgets/server_voice_control_surface.dart': 2,
-  'lib/core/widgets/webhook_admin_surfaces.dart': 1,
-};
+const _dropdownButtonAllowed = <String, int>{};
 
-const _popupMenuButtonAllowed = <String, int>{
-  'lib/core/screens/admin_integrations_screen.dart': 1,
-  'lib/core/screens/chat_screen.dart': 1,
-  'lib/core/screens/extensions_center_screen.dart': 2,
-  'lib/core/screens/gateway_manager_screen.dart': 1,
-  'lib/core/screens/mission_control_screen.dart': 1,
-  'lib/core/screens/session_list_screen.dart': 1,
-  'lib/core/screens/sftp_browser_screen.dart': 1,
-  'lib/core/screens/tasks_screen.dart': 1,
-  'lib/core/screens/themes_screen.dart': 1,
-};
+const _popupMenuButtonAllowed = <String, int>{};
 
 const _hermesPillAllowed = <String, int>{
   'lib/core/screens/litert_store_screen.dart': 4,
-  'lib/core/screens/local_instance_control_screen.dart': 1,
-  'lib/core/screens/ollama_models_screen.dart': 1,
   'lib/core/screens/permissions_screen.dart': 3,
   'lib/core/screens/runs_screen.dart': 2,
   'lib/core/screens/task_center_screen.dart': 1,

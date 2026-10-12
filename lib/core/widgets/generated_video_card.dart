@@ -1,34 +1,56 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:video_player/video_player.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../theme/app_theme.dart';
+import '../theme/motion.dart';
 import 'attachment_card.dart' show saveMediaToGallery, shareMediaFile;
-
-/// `mm:ss` for a playback position/duration. Local formatting only — does
-/// not touch how the video is decoded or played.
-String _formatPlaybackTime(Duration d) {
-  final minutes = d.inMinutes.remainder(60).toString();
-  final seconds = d.inSeconds.remainder(60).toString().padLeft(2, '0');
-  return '$minutes:$seconds';
-}
+import 'video_player_controls.dart';
 
 /// Inline, non-autoplaying player for generated videos cached in app-private
-/// storage. Playback is paused whenever the app leaves the foreground.
+/// storage, with the shared [VideoPlayerControls] (scrub, replay, ±10 s,
+/// mute, speed, full screen). Playback pauses whenever the app leaves the
+/// foreground or a page covers the chat.
+///
+/// Every mount owns a fresh [VideoPlayerController]: the lazy transcript
+/// disposes and rebuilds rows freely (leaving the chat, scrolling, a new turn
+/// shifting rows), so nothing may keep using a controller after its card is
+/// gone. The last position per file is remembered so a remounted row resumes
+/// where the user left it instead of jumping back to the first frame.
 class GeneratedVideoCard extends StatefulWidget {
   final File file;
 
   const GeneratedVideoCard({super.key, required this.file});
 
+  static const int _positionMemoCapacity = 24;
+
+  /// Insertion-ordered: the first entry is the least recently used.
+  static final Map<String, Duration> _positions = <String, Duration>{};
+
+  @visibleForTesting
+  static void clearPlaybackMemoryForTesting() => _positions.clear();
+
+  static Duration? _recallPosition(String path) => _positions[path];
+
+  static void _rememberPosition(String path, Duration position) {
+    _positions.remove(path);
+    if (position <= Duration.zero) return;
+    _positions[path] = position;
+    while (_positions.length > _positionMemoCapacity) {
+      _positions.remove(_positions.keys.first);
+    }
+  }
+
   @override
   State<GeneratedVideoCard> createState() => _GeneratedVideoCardState();
 }
 
-class _GeneratedVideoCardState extends State<GeneratedVideoCard>
-    with WidgetsBindingObserver {
+class _GeneratedVideoCardState extends State<GeneratedVideoCard> {
   VideoPlayerController? _controller;
   Object? _error;
   bool _initializing = false;
@@ -37,7 +59,6 @@ class _GeneratedVideoCardState extends State<GeneratedVideoCard>
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) unawaited(_initialize(autoplay: false));
     });
@@ -48,9 +69,7 @@ class _GeneratedVideoCardState extends State<GeneratedVideoCard>
     super.didUpdateWidget(oldWidget);
     if (oldWidget.file.path != widget.file.path) {
       _generation++;
-      final previous = _controller;
-      _controller = null;
-      if (previous != null) unawaited(previous.dispose());
+      _releaseController(rememberAs: oldWidget.file.path);
       _error = null;
       _initializing = false;
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -59,12 +78,41 @@ class _GeneratedVideoCardState extends State<GeneratedVideoCard>
     }
   }
 
+  /// Detaches and disposes the current controller, remembering where it was.
+  void _releaseController({String? rememberAs}) {
+    final previous = _controller;
+    _controller = null;
+    if (previous == null) return;
+    previous.removeListener(_onControllerValue);
+    if (previous.value.isInitialized) {
+      GeneratedVideoCard._rememberPosition(
+        rememberAs ?? widget.file.path,
+        previous.value.position,
+      );
+    }
+    unawaited(previous.dispose());
+  }
+
+  /// A platform failure after initialization (decoder or surface lost, e.g.
+  /// on resume) turns the value erroneous. Without this the card kept the
+  /// dead frame and its play button did nothing visible.
+  void _onControllerValue() {
+    final controller = _controller;
+    if (controller == null || !mounted || !controller.value.hasError) return;
+    _generation++;
+    controller.removeListener(_onControllerValue);
+    _controller = null;
+    unawaited(controller.dispose());
+    setState(() {
+      _error = controller.value.errorDescription ?? 'playback error';
+      _initializing = false;
+    });
+  }
+
   Future<void> _initialize({bool autoplay = true}) async {
     if (_initializing) return;
     final generation = ++_generation;
-    final previous = _controller;
-    _controller = null;
-    await previous?.dispose();
+    _releaseController();
     if (!mounted || generation != _generation) return;
     setState(() {
       _initializing = true;
@@ -78,10 +126,17 @@ class _GeneratedVideoCardState extends State<GeneratedVideoCard>
         return;
       }
       await controller.setLooping(false);
+      final resumeAt = GeneratedVideoCard._recallPosition(widget.file.path);
+      if (resumeAt != null &&
+          resumeAt > Duration.zero &&
+          resumeAt < controller.value.duration) {
+        await controller.seekTo(resumeAt);
+      }
       if (!mounted || generation != _generation) {
         await controller.dispose();
         return;
       }
+      controller.addListener(_onControllerValue);
       setState(() {
         _controller = controller;
         _initializing = false;
@@ -99,42 +154,38 @@ class _GeneratedVideoCardState extends State<GeneratedVideoCard>
   }
 
   @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state != AppLifecycleState.resumed) {
-      _controller?.pause();
-    }
-  }
-
-  @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
     _generation++;
-    final controller = _controller;
-    if (controller != null) unawaited(controller.dispose());
+    _releaseController();
     super.dispose();
   }
 
-  Future<void> _togglePlayback() async {
+  /// Full screen gets its own controller (see [showVideoViewer]); the inline
+  /// one hands over position, play state, volume and speed, and picks the
+  /// viewer's state back up on return.
+  Future<void> _openFullscreen() async {
     final controller = _controller;
-    if (controller == null || !controller.value.isInitialized) {
-      await _initialize();
-      return;
-    }
-    if (controller.value.isPlaying) {
+    final path = widget.file.path;
+    var start = const VideoPlaybackHandoff();
+    if (controller != null && controller.value.isInitialized) {
+      start = VideoPlaybackHandoff.of(controller);
       await controller.pause();
-    } else {
-      if (controller.value.position >= controller.value.duration) {
-        await controller.seekTo(Duration.zero);
-      }
-      await controller.play();
     }
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    final back = await showVideoViewer(context, widget.file, start: start);
+    if (back != null) GeneratedVideoCard._rememberPosition(path, back.position);
+    final current = _controller;
+    if (!mounted || back == null || current == null) return;
+    if (current.value.isInitialized) await back.applyTo(current);
   }
+
+  /// The placeholder's button: Retry after a failure (shows the paused
+  /// first frame again), Play otherwise.
+  Future<void> _startOrRetry() => _initialize(autoplay: _error == null);
 
   @override
   Widget build(BuildContext context) {
     final strings = Strings.of(context);
-    final colors = Theme.of(context).hermes;
     final controller = _controller;
     if (_initializing) {
       return _VideoFrame(
@@ -149,7 +200,7 @@ class _GeneratedVideoCardState extends State<GeneratedVideoCard>
       return _VideoFrame(
         child: Center(
           child: TextButton.icon(
-            onPressed: _togglePlayback,
+            onPressed: _startOrRetry,
             icon: Icon(
               failed ? Icons.refresh_rounded : Icons.play_arrow_rounded,
             ),
@@ -161,7 +212,7 @@ class _GeneratedVideoCardState extends State<GeneratedVideoCard>
 
     final rawRatio = controller.value.aspectRatio;
     final ratio = rawRatio.isFinite && rawRatio > 0
-        ? rawRatio.clamp(0.5, 2.4)
+        ? rawRatio.clamp(0.5, 2.4).toDouble()
         : 16 / 9;
     return Semantics(
       container: true,
@@ -170,177 +221,63 @@ class _GeneratedVideoCardState extends State<GeneratedVideoCard>
         borderRadius: BorderRadius.circular(12),
         child: ColoredBox(
           color: Colors.black,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: _togglePlayback,
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final width = constraints.hasBoundedWidth
+                  ? constraints.maxWidth
+                  : 300.0;
+              // Tall enough for the three control rows even for a very wide
+              // clip; capped so a portrait clip does not fill the chat.
+              final height = math.max(
+                _inlineMinHeight,
+                math.min(width / ratio, _inlineMaxHeight),
+              );
+              return SizedBox(
+                width: width,
+                height: height,
                 child: Stack(
-                  alignment: Alignment.center,
+                  fit: StackFit.expand,
                   children: [
-                    AspectRatio(
-                      aspectRatio: ratio.toDouble(),
-                      child: VideoPlayer(controller),
+                    Center(
+                      child: AspectRatio(
+                        aspectRatio: ratio,
+                        child: VideoPlayer(controller),
+                      ),
                     ),
-                    ValueListenableBuilder<VideoPlayerValue>(
-                      valueListenable: controller,
-                      builder: (context, value, _) => AnimatedOpacity(
-                        opacity: value.isPlaying ? 0 : 1,
-                        duration: const Duration(milliseconds: 150),
-                        child: DecoratedBox(
-                          decoration: BoxDecoration(
-                            color: Colors.black.withValues(alpha: 0.58),
-                            shape: BoxShape.circle,
-                          ),
-                          child: Semantics(
-                            button: true,
-                            label: strings.genVideoPlay,
-                            excludeSemantics: true,
-                            child: const Padding(
-                              padding: EdgeInsets.all(14),
-                              child: Icon(
-                                Icons.play_arrow_rounded,
-                                color: Colors.white,
-                                size: 34,
-                              ),
-                            ),
+                    VideoPlayerControls(
+                      controller: controller,
+                      isFullscreen: false,
+                      onFullscreen: () => unawaited(_openFullscreen()),
+                      leading: [
+                        VideoControlButton(
+                          icon: Icons.download_rounded,
+                          label: strings.imgSaveToGallery,
+                          onPressed: () => saveMediaToGallery(
+                            context,
+                            widget.file,
+                            isVideo: true,
                           ),
                         ),
-                      ),
-                    ),
-                    // Degradado superior + fila de iconos (descargar,
-                    // compartir, pantalla completa) — misma anatomía que ya
-                    // existe para las imágenes generadas.
-                    Positioned(
-                      left: 0,
-                      right: 0,
-                      top: 0,
-                      child: IgnorePointer(
-                        child: Container(
-                          height: 52,
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              begin: Alignment.topCenter,
-                              end: Alignment.bottomCenter,
-                              colors: [
-                                Colors.black.withValues(alpha: 0.55),
-                                Colors.black.withValues(alpha: 0),
-                              ],
-                            ),
-                          ),
+                        VideoControlButton(
+                          icon: Icons.share_outlined,
+                          label: strings.commonShare,
+                          onPressed: () => shareMediaFile(widget.file),
                         ),
-                      ),
-                    ),
-                    Positioned(
-                      top: 6,
-                      right: 6,
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          _VideoOverlayIconButton(
-                            icon: Icons.download_rounded,
-                            tooltip: strings.imgSaveToGallery,
-                            onPressed: () => saveMediaToGallery(
-                              context,
-                              widget.file,
-                              isVideo: true,
-                            ),
-                          ),
-                          const SizedBox(width: 4),
-                          _VideoOverlayIconButton(
-                            icon: Icons.share_outlined,
-                            tooltip: strings.commonShare,
-                            onPressed: () => shareMediaFile(widget.file),
-                          ),
-                          const SizedBox(width: 4),
-                          _VideoOverlayIconButton(
-                            icon: Icons.fullscreen_rounded,
-                            tooltip: strings.genVideoFullscreen,
-                            onPressed: () => showVideoViewer(
-                              context,
-                              widget.file,
-                              controller,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    // Badge de duración, igual que en el visor de imágenes.
-                    Positioned(
-                      left: 8,
-                      bottom: 8,
-                      child: IgnorePointer(
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 3,
-                          ),
-                          decoration: BoxDecoration(
-                            color: Colors.black.withValues(alpha: 0.55),
-                            borderRadius: BorderRadius.circular(999),
-                          ),
-                          child: Text(
-                            _formatPlaybackTime(controller.value.duration),
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ),
-                      ),
+                      ],
                     ),
                   ],
                 ),
-              ),
-              ColoredBox(
-                color: colors.surfaceVariant,
-                child: Row(
-                  children: [
-                    ValueListenableBuilder<VideoPlayerValue>(
-                      valueListenable: controller,
-                      builder: (context, value, _) => Semantics(
-                        button: true,
-                        label: value.isPlaying
-                            ? strings.genVideoPause
-                            : strings.genVideoPlay,
-                        excludeSemantics: true,
-                        child: IconButton(
-                          onPressed: _togglePlayback,
-                          icon: Icon(
-                            value.isPlaying
-                                ? Icons.pause_rounded
-                                : Icons.play_arrow_rounded,
-                          ),
-                        ),
-                      ),
-                    ),
-                    Expanded(
-                      child: VideoProgressIndicator(
-                        controller,
-                        allowScrubbing: true,
-                        padding: const EdgeInsets.symmetric(vertical: 18),
-                        colors: VideoProgressColors(
-                          playedColor: colors.accent,
-                          bufferedColor: colors.textSecondary.withValues(
-                            alpha: 0.35,
-                          ),
-                          backgroundColor: colors.divider,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                  ],
-                ),
-              ),
-            ],
+              );
+            },
           ),
         ),
       ),
     );
   }
 }
+
+const double _inlineMinHeight = 200;
+const double _inlineMaxHeight = 480;
 
 class _VideoFrame extends StatelessWidget {
   final Widget child;
@@ -362,225 +299,207 @@ class _VideoFrame extends StatelessWidget {
   }
 }
 
-/// Small round icon button used in the card's top overlay row (download,
-/// share, fullscreen) — same 28px-ish scrim-circle affordance the image
-/// viewer uses, just sized for an inline card instead of a full toolbar.
-class _VideoOverlayIconButton extends StatelessWidget {
-  const _VideoOverlayIconButton({
-    required this.icon,
-    required this.tooltip,
-    required this.onPressed,
-  });
-
-  final IconData icon;
-  final String tooltip;
-  final VoidCallback onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    return Tooltip(
-      message: tooltip,
-      child: Material(
-        color: Colors.black.withValues(alpha: 0.4),
-        shape: const CircleBorder(),
-        child: InkWell(
-          customBorder: const CircleBorder(),
-          onTap: onPressed,
-          child: SizedBox(
-            width: 28,
-            height: 28,
-            child: Icon(icon, size: 15, color: Colors.white),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Fullscreen video viewer: same anatomy as [showImageViewer] (black
-/// background, white download/share/spacer/close row on top) plus a
-/// floating playback bar (play/pause, accent scrubber, times) over black,
-/// with no extra container.
+/// Full-screen video viewer: black page, the shared [VideoPlayerControls]
+/// (download/share/close on top, exit-full-screen on the timeline row) and
+/// landscape allowed while it is open.
 ///
-/// Reuses the [controller] the card already created and initialized —
-/// playback/decoding is entirely owned by [GeneratedVideoCard]; this route
-/// only reads its [ValueListenableBuilder] state and calls the same
-/// play/pause/seekTo controls the card's own toggle already uses.
-Future<void> showVideoViewer(
+/// The route creates, plays and disposes its OWN controller. It used to
+/// borrow the inline card's controller, and the lazy transcript disposes
+/// that card whenever it rebuilds or recycles the row underneath the open
+/// viewer, which left the viewer driving a disposed player: play did nothing.
+/// It starts from [start] (playing only if the card was playing) and
+/// completes with its own final state so the card resumes from there.
+Future<VideoPlaybackHandoff?> showVideoViewer(
   BuildContext context,
-  File file,
-  VideoPlayerController controller,
-) {
-  return Navigator.of(context).push(
-    PageRouteBuilder<void>(
+  File file, {
+  VideoPlaybackHandoff start = const VideoPlaybackHandoff(),
+}) {
+  return Navigator.of(context).push<VideoPlaybackHandoff>(
+    PageRouteBuilder<VideoPlaybackHandoff>(
       opaque: false,
       barrierColor: Colors.black,
-      barrierDismissible: true,
       transitionDuration: const Duration(milliseconds: 180),
-      pageBuilder: (ctx, anim, _) => FadeTransition(
-        opacity: anim,
-        child: Scaffold(
-          backgroundColor: Colors.black,
-          body: SafeArea(
-            child: Stack(
-              key: const ValueKey<String>('generated-video-viewer-safe-area'),
-              children: [
-                Positioned.fill(
-                  child: GestureDetector(
-                    onTap: () {
-                      if (controller.value.isPlaying) {
-                        controller.pause();
-                      } else {
-                        controller.play();
-                      }
-                    },
-                    child: Center(
-                      child: AspectRatio(
-                        aspectRatio: controller.value.aspectRatio,
-                        child: VideoPlayer(controller),
-                      ),
-                    ),
-                  ),
-                ),
-                Positioned(
-                  top: 8,
-                  right: 8,
-                  left: 8,
-                  child: Row(
-                    children: [
-                      Builder(
-                        builder: (innerCtx) => IconButton(
-                          icon: const Icon(
-                            Icons.download_rounded,
-                            color: Colors.white,
-                          ),
-                          tooltip: Strings.of(innerCtx).imgSaveToGallery,
-                          onPressed: () =>
-                              saveMediaToGallery(innerCtx, file, isVideo: true),
-                        ),
-                      ),
-                      IconButton(
-                        icon: const Icon(
-                          Icons.share_outlined,
-                          color: Colors.white,
-                        ),
-                        tooltip: Strings.of(ctx).commonShare,
-                        onPressed: () => shareMediaFile(file),
-                      ),
-                      const Spacer(),
-                      IconButton(
-                        icon: const Icon(Icons.close, color: Colors.white),
-                        tooltip: Strings.of(ctx).commonClose,
-                        onPressed: () => Navigator.of(ctx).pop(),
-                      ),
-                    ],
-                  ),
-                ),
-                Positioned(
-                  left: 20,
-                  right: 20,
-                  bottom: 20,
-                  child: _VideoViewerPlaybackBar(controller: controller),
-                ),
-              ],
-            ),
-          ),
+      pageBuilder: (ctx, anim, _) => CoveredRouteMediaQueryFreeze(
+        child: FadeTransition(
+          opacity: anim,
+          child: _GeneratedVideoViewer(file: file, start: start),
         ),
       ),
     ),
   );
 }
 
-/// Floating playback bar for the fullscreen viewer: play/pause, an
-/// accent-colored scrubber and elapsed/total times — no background
-/// container, just white/accent controls over the black viewer.
-class _VideoViewerPlaybackBar extends StatelessWidget {
-  const _VideoViewerPlaybackBar({required this.controller});
+class _GeneratedVideoViewer extends StatefulWidget {
+  const _GeneratedVideoViewer({required this.file, required this.start});
 
-  final VideoPlayerController controller;
+  final File file;
+  final VideoPlaybackHandoff start;
+
+  @override
+  State<_GeneratedVideoViewer> createState() => _GeneratedVideoViewerState();
+}
+
+class _GeneratedVideoViewerState extends State<_GeneratedVideoViewer> {
+  VideoPlayerController? _controller;
+  bool _ready = false;
+  Object? _error;
+  int _generation = 0;
+
+  /// The state handed back to the card; updated before every pop.
+  late VideoPlaybackHandoff _resume = widget.start;
+
+  @override
+  void initState() {
+    super.initState();
+    // Landscape is allowed only while full screen is open; leaving restores
+    // the app's own orientation policy.
+    unawaited(SystemChrome.setPreferredOrientations(DeviceOrientation.values));
+    unawaited(_start());
+  }
+
+  Future<void> _start() async {
+    final generation = ++_generation;
+    final controller = VideoPlayerController.file(widget.file);
+    setState(() {
+      _controller = controller;
+      _ready = false;
+      _error = null;
+    });
+    try {
+      await controller.initialize();
+      if (!mounted || generation != _generation) return;
+      await controller.setLooping(false);
+      await _resume.applyTo(controller);
+      if (!mounted || generation != _generation) return;
+      setState(() => _ready = true);
+    } catch (error) {
+      if (!mounted || generation != _generation) return;
+      _controller = null;
+      unawaited(controller.dispose());
+      setState(() => _error = error);
+    }
+  }
+
+  @override
+  void dispose() {
+    _generation++;
+    final controller = _controller;
+    if (controller != null) {
+      if (controller.value.isInitialized) {
+        GeneratedVideoCard._rememberPosition(
+          widget.file.path,
+          controller.value.position,
+        );
+      }
+      unawaited(controller.dispose());
+    }
+    unawaited(
+      SystemChrome.setPreferredOrientations(const <DeviceOrientation>[]),
+    );
+    super.dispose();
+  }
+
+  void _close() {
+    final controller = _controller;
+    if (_ready && controller != null && controller.value.isInitialized) {
+      _resume = VideoPlaybackHandoff.of(controller);
+      unawaited(controller.pause());
+    }
+    Navigator.of(context).pop(_ready ? _resume : null);
+  }
 
   @override
   Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
     final strings = Strings.of(context);
-    return ValueListenableBuilder<VideoPlayerValue>(
-      valueListenable: controller,
-      builder: (context, value, _) {
-        return Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            Material(
-              color: Colors.white.withValues(alpha: 0.12),
-              shape: const CircleBorder(),
-              child: InkWell(
-                customBorder: const CircleBorder(),
-                onTap: () {
-                  if (value.isPlaying) {
-                    controller.pause();
-                  } else {
-                    controller.play();
-                  }
-                },
-                child: SizedBox(
-                  width: 40,
-                  height: 40,
-                  child: Semantics(
-                    button: true,
-                    label: value.isPlaying
-                        ? strings.genVideoPause
-                        : strings.genVideoPlay,
-                    excludeSemantics: true,
-                    child: Icon(
-                      value.isPlaying
-                          ? Icons.pause_rounded
-                          : Icons.play_arrow_rounded,
-                      color: Colors.white,
-                      size: 20,
-                    ),
-                  ),
-                ),
-              ),
+    final controller = _controller;
+    final file = widget.file;
+    final download = VideoControlButton(
+      icon: Icons.download_rounded,
+      label: strings.imgSaveToGallery,
+      onPressed: () => saveMediaToGallery(context, file, isVideo: true),
+    );
+    final share = VideoControlButton(
+      icon: Icons.share_outlined,
+      label: strings.commonShare,
+      onPressed: () => shareMediaFile(file),
+    );
+    final close = VideoControlButton(
+      icon: Icons.close,
+      label: strings.commonClose,
+      onPressed: _close,
+    );
+    final Widget body;
+    if (_ready && controller != null) {
+      final ratio = controller.value.aspectRatio;
+      body = Stack(
+        fit: StackFit.expand,
+        children: [
+          Center(
+            child: AspectRatio(
+              aspectRatio: ratio.isFinite && ratio > 0 ? ratio : 16 / 9,
+              child: VideoPlayer(controller),
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Row(
-                children: [
-                  Text(
-                    _formatPlaybackTime(value.position),
-                    style: const TextStyle(
-                      color: Colors.white70,
-                      fontSize: 11,
-                      fontFeatures: [FontFeature.tabularFigures()],
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: VideoProgressIndicator(
-                      controller,
-                      allowScrubbing: true,
-                      padding: EdgeInsets.zero,
-                      colors: VideoProgressColors(
-                        playedColor: colors.accent,
-                        bufferedColor: Colors.white.withValues(alpha: 0.3),
-                        backgroundColor: Colors.white.withValues(alpha: 0.2),
+          ),
+          VideoPlayerControls(
+            key: const ValueKey<String>('generated-video-viewer-playback'),
+            controller: controller,
+            isFullscreen: true,
+            onFullscreen: _close,
+            leading: [download, share],
+            trailing: [close],
+          ),
+        ],
+      );
+    } else {
+      body = Stack(
+        fit: StackFit.expand,
+        children: [
+          Center(
+            child: _error == null
+                ? Semantics(
+                    label: strings.genMediaLoading,
+                    child: const CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        strings.genMediaError,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(color: Colors.white70),
                       ),
-                    ),
+                      const SizedBox(height: 12),
+                      TextButton.icon(
+                        onPressed: () => unawaited(_start()),
+                        icon: const Icon(Icons.refresh_rounded),
+                        label: Text(strings.commonRetry),
+                      ),
+                    ],
                   ),
-                  const SizedBox(width: 10),
-                  Text(
-                    _formatPlaybackTime(value.duration),
-                    style: const TextStyle(
-                      color: Colors.white70,
-                      fontSize: 11,
-                      fontFeatures: [FontFeature.tabularFigures()],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        );
+          ),
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: Row(children: [download, share, const Spacer(), close]),
+          ),
+        ],
+      );
+    }
+    return PopScope<VideoPlaybackHandoff>(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _close();
       },
+      child: Scaffold(
+        backgroundColor: Colors.black,
+        body: SafeArea(
+          child: KeyedSubtree(
+            key: const ValueKey<String>('generated-video-viewer-safe-area'),
+            child: body,
+          ),
+        ),
+      ),
     );
   }
 }

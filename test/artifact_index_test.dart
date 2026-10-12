@@ -226,6 +226,41 @@ void main() {
     expect(snapshot.buildStats.candidateCount, 0);
   });
 
+  test('indexa MEDIA de un tool result de texto sin la prosa', () {
+    final tool = _message({
+      'role': 'tool',
+      'message_id': 'tool-media-1',
+      'content':
+          'Informe listo en /home/hermes/work.\n'
+          'MEDIA:/home/hermes/work/informe.pdf\n'
+          'MEDIA:/home/hermes/work/informe.pdf\n'
+          'MEDIA:/home/hermes/.ssh/id_ed25519',
+    });
+    final assistantProse = _message({
+      'role': 'assistant',
+      'content': 'MEDIA:/home/hermes/work/eco.png',
+    });
+
+    final snapshot = ArtifactIndex.resolve(
+      scope: _scope(),
+      transcriptRevision: 1,
+      transcript: [
+        _entry(tool, ordinal: 0, id: 'tool-media-1'),
+        _entry(assistantProse, ordinal: 1),
+      ],
+      policy: _policy(),
+    );
+
+    expect(snapshot.artifacts, hasLength(1));
+    final artifact = snapshot.artifacts.single;
+    expect(artifact.displayName, 'informe.pdf');
+    expect(artifact.kind, SessionArtifactKind.generated);
+    expect(artifact.mimeType, 'application/pdf');
+    expect(artifact.managedReference, '/home/hermes/work/informe.pdf');
+    expect(artifact.primarySource.messageId, 'tool-media-1');
+    expect(snapshot.toString(), isNot(contains('Informe listo')));
+  });
+
   test('acepta solo tool results estructurados con tipo explícito', () {
     final typed = _message({
       'role': 'tool',

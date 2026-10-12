@@ -44,6 +44,32 @@ class MomentumScrollBehavior extends MaterialScrollBehavior {
     return const BouncingScrollPhysics();
   }
 
+  /// A page's list that scrolls under the floating header does not clip
+  /// itself (`clipBehavior: Clip.none`), so its rows keep painting past its
+  /// upper edge. It still has to end somewhere: at its sides, at its lower
+  /// edge (rows waiting below must not show behind what follows the list)
+  /// and at the top of the screen. That is also what a screen reader is
+  /// told: a row under the header is on screen, the ones above the screen
+  /// or below the list are hidden until scrolled to.
+  @override
+  Widget buildOverscrollIndicator(
+    BuildContext context,
+    Widget child,
+    ScrollableDetails details,
+  ) {
+    final built = super.buildOverscrollIndicator(context, child, details);
+    if (details.decorationClipBehavior != Clip.none ||
+        axisDirectionToAxis(details.direction) != Axis.vertical) {
+      return built;
+    }
+    return ClipRect(
+      clipper: UnderHeaderClipper(
+        MediaQuery.viewPaddingOf(context).top + kToolbarHeight,
+      ),
+      child: built,
+    );
+  }
+
   /// True when no vertical [Scrollable] encloses [context]. Routes live as
   /// siblings in the Overlay, so a pushed page never sees the page below.
   static bool isPageLevelScrollable(BuildContext context) {
@@ -59,4 +85,22 @@ class MomentumScrollBehavior extends MaterialScrollBehavior {
     });
     return !nested;
   }
+}
+
+/// The area a list that scrolls under the floating header may paint in: its
+/// own box, opened upwards by [reach] (the header: status bar and toolbar).
+class UnderHeaderClipper extends CustomClipper<Rect> {
+  const UnderHeaderClipper(this.reach);
+
+  /// How far above the list its rows are still painted.
+  final double reach;
+
+  @override
+  Rect getClip(Size size) => Rect.fromLTRB(0, -reach, size.width, size.height);
+
+  @override
+  Rect getApproximateClipRect(Size size) => getClip(size);
+
+  @override
+  bool shouldReclip(UnderHeaderClipper oldClipper) => oldClipper.reach != reach;
 }

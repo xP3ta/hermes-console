@@ -6,9 +6,9 @@ import 'support/theme_profile_fixtures.dart';
 
 void main() {
   group('catálogo de temas', () {
-    test('el default es Amber y va primero', () {
-      expect(AppTheme.defaultThemeId, 'amber');
-      expect(AppTheme.presets.first.id, 'amber');
+    test('el default es Console y va primero', () {
+      expect(AppTheme.defaultThemeId, 'console');
+      expect(AppTheme.presets.first.id, 'console');
     });
 
     test('todos los ids son únicos y no vacíos', () {
@@ -17,146 +17,87 @@ void main() {
       expect(ids.every((id) => id.isNotEmpty), isTrue);
     });
 
-    test(
-      'el catálogo incluye la selección móvil y Hermes Desktop completo',
-      () {
-        expect(AppTheme.presets.map((p) => p.id).toList(), [
-          'amber',
-          'claude',
-          'amber-oled',
-          'crimson',
-          'steel',
-          'bordeaux',
-          'hermes-console',
-          'mocha',
-          'dracula',
-          'phosphor',
-          'gruvbox',
-          'graphite',
-          'sage-garden',
+    test('el catálogo Desktop sigue el orden de BUILTIN_THEMES', () {
+      // The full list, families and modes live in theme_family_catalog_test.
+      expect(
+        AppTheme.presets
+            .where((preset) => preset.desktopOfficial)
+            .map((preset) => preset.id),
+        orderedEquals([
           'nous',
           'nous-dark',
+          'github',
+          'github-dark',
+          'catppuccin',
+          'catppuccin-dark',
+          'everforest',
+          'everforest-dark',
+          'solarized',
+          'solarized-dark',
+          'nous-alt',
+          'nous-alt-dark',
+          'classic',
+          'classic-dark',
           'midnight-light',
           'midnight',
           'ember-light',
           'ember',
           'mono-light',
           'mono',
-          'cyberpunk-light',
-          'cyberpunk',
           'slate-light',
           'slate',
-          'claude-light',
-        ]);
-        final claros = AppTheme.presets
-            .where((p) => p.brightness == Brightness.light)
-            .toList();
-        expect(claros.map((p) => p.id).toList(), [
-          'nous',
-          'midnight-light',
-          'ember-light',
-          'mono-light',
           'cyberpunk-light',
-          'slate-light',
-          'claude-light',
-        ]);
-        expect(
-          AppTheme.presets
-              .where((preset) => preset.desktopOfficial)
-              .map((preset) => preset.id),
-          orderedEquals([
-            'nous',
-            'nous-dark',
-            'midnight-light',
-            'midnight',
-            'ember-light',
-            'ember',
-            'mono-light',
-            'mono',
-            'cyberpunk-light',
-            'cyberpunk',
-            'slate-light',
-            'slate',
-          ]),
-        );
-        expect(
-          AppTheme.presets
-              .where((preset) => preset.desktopOfficial)
-              .map((preset) => preset.desktopFamily)
-              .toSet(),
-          {'nous', 'midnight', 'ember', 'mono', 'cyberpunk', 'slate'},
-        );
-      },
-    );
+          'cyberpunk',
+        ]),
+      );
+    });
 
     test('mapea claves antiguas de AppThemeMode a los nuevos ids', () {
       expect(AppTheme.themeIdFromLegacy('dark'), 'amber');
-      expect(AppTheme.themeIdFromLegacy('oled'), 'amber-oled');
+      expect(AppTheme.themeIdFromLegacy('oled'), 'amber');
       expect(AppTheme.themeIdFromLegacy('teal'), 'dracula');
-      expect(AppTheme.themeIdFromLegacy('light'), 'claude-light');
-    });
-
-    test('migra los ids retirados (U-10) a un superviviente, sin crash', () {
-      // Todo id retirado del catálogo debe caer a un preset existente: un
-      // usuario con ese tema guardado arranca con el más parecido.
-      const retirados = {
-        'nous-aqua': 'hermes-console',
-        'tokyo': 'steel',
-        'onedark': 'steel',
-        'cobalt2': 'hermes-console',
-        'aguamarina': 'steel',
-        'solarized-dark': 'dracula',
-        'synthwave': 'dracula',
-        'everforest': 'phosphor',
-        'ayu-mirage': 'amber',
-        'latte': 'claude-light',
-        'solarized-light': 'claude-light',
-        'gruvbox-light': 'claude-light',
-        'manga': 'claude-light',
-      };
-      retirados.forEach((retirado, destino) {
-        final id = AppTheme.themeIdFromLegacy(retirado);
-        expect(id, destino, reason: retirado);
-        expect(
-          AppTheme.presets.any((p) => p.id == id),
-          isTrue,
-          reason: 'el destino de $retirado debe existir en el catálogo',
-        );
-      });
+      expect(AppTheme.themeIdFromLegacy('light'), 'amber-light');
     });
 
     test('respeta ids nuevos válidos y cae al default con basura/null', () {
-      expect(AppTheme.themeIdFromLegacy('mocha'), 'mocha');
+      expect(AppTheme.themeIdFromLegacy('steel-light'), 'steel-light');
       expect(AppTheme.themeIdFromLegacy('ember'), 'ember');
-      expect(AppTheme.themeIdFromLegacy('no-existe'), 'amber');
-      expect(AppTheme.themeIdFromLegacy(null), 'amber');
+      expect(AppTheme.themeIdFromLegacy('no-existe'), 'console');
+      expect(AppTheme.themeIdFromLegacy(null), 'console');
     });
 
     test('presetById devuelve el preset o el primero como fallback', () {
-      expect(AppTheme.presetById('graphite').name, 'Graphite');
-      expect(AppTheme.presetById('nope').id, 'amber');
+      expect(AppTheme.presetById('mono').name, 'Mono');
+      expect(AppTheme.presetById('nope').id, 'console');
     });
 
     test('fromId construye un ThemeData con la extensión Hermes', () {
-      final theme = AppTheme.fromId('mocha');
+      final theme = AppTheme.fromId('catppuccin-dark');
       final colors = theme.hermes;
-      expect(colors.accent, const Color(0xFFCBA6F7));
+      expect(colors.accent, const Color(0xFFD4B8F7));
       // El tema claro usa brightness light.
       expect(AppTheme.fromId('claude-light').brightness, Brightness.light);
+      expect(AppTheme.fromId('amber-light').brightness, Brightness.light);
       expect(AppTheme.fromId('amber').brightness, Brightness.dark);
     });
 
-    test('las seis familias Desktop conservan sus acentos oficiales', () {
-      const expected = {
+    test('las familias Desktop conservan el tono de sus acentos', () {
+      // Softened to the Claude bands (theme_claude_bands_test), but each
+      // accent keeps the hue Desktop ships.
+      const desktop = {
         'nous': Color(0xFF0053FD),
         'midnight': Color(0xFF8B80E8),
         'ember': Color(0xFFD97316),
-        'mono': Color(0xFF9A9A9A),
         'cyberpunk': Color(0xFF00FF41),
         'slate': Color(0xFF58A6FF),
       };
-      expected.forEach((id, accent) {
-        expect(AppTheme.presetById(id).colors.accent, accent, reason: id);
+      desktop.forEach((id, source) {
+        final accent = AppTheme.presetById(id).colors.accent;
+        final a = HSVColor.fromColor(accent).hue;
+        final b = HSVColor.fromColor(source).hue;
+        final delta = ((a - b + 540) % 360) - 180;
+        expect(delta.abs(), lessThan(18), reason: id);
+        expect(accent, isNot(source), reason: '$id is softened');
       });
     });
 
@@ -164,26 +105,28 @@ void main() {
       // El color de contraste rompe el monocromo: llega a la extensión Hermes
       // y al colorScheme, y difiere del acento principal del tema.
       final steel = AppTheme.fromId('steel');
-      expect(steel.hermes.secondary, const Color(0xFFD9A868));
-      expect(steel.colorScheme.secondary, const Color(0xFFD9A868));
+      expect(steel.hermes.secondary, const Color(0xFFD1AB7A));
+      expect(steel.colorScheme.secondary, const Color(0xFFD1AB7A));
       expect(steel.hermes.secondary, isNot(steel.hermes.accent));
 
       // Temas distintos tienen contrastes distintos (identidad propia).
       final bordeaux = AppTheme.fromId('bordeaux');
-      expect(bordeaux.hermes.secondary, const Color(0xFF86BFA0));
+      expect(bordeaux.hermes.secondary, const Color(0xFF90BCA4));
       expect(bordeaux.hermes.secondary, isNot(steel.hermes.secondary));
     });
 
     test('los títulos llevan el peso/tracking del tema', () {
-      // Mocha usa títulos gruesos; Crimson (elegante) tracking amplio.
-      expect(
-        AppTheme.fromId('mocha').textTheme.titleLarge?.fontWeight,
-        FontWeight.w800,
-      );
-      expect(
-        AppTheme.fromId('crimson').textTheme.titleLarge?.letterSpacing,
-        1.5,
-      );
+      // Amber usa títulos gruesos; Bordeaux (elegante) tracking amplio, en
+      // sus dos modos.
+      for (final id in ['amber', 'amber-light']) {
+        expect(
+          AppTheme.fromId(id).textTheme.titleLarge?.fontWeight,
+          FontWeight.w700,
+        );
+      }
+      for (final id in ['bordeaux', 'bordeaux-light']) {
+        expect(AppTheme.fromId(id).textTheme.titleLarge?.letterSpacing, 1.2);
+      }
     });
 
     test('titleMedium conserva la jerarquía global del tema', () {

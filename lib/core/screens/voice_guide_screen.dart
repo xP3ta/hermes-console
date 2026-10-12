@@ -19,6 +19,7 @@ class VoiceGuideScreen extends StatelessWidget {
       backgroundColor: colors.background,
       appBar: HermesAppBar(title: Text(strings.voiceGuideButton)),
       body: ListView(
+        clipBehavior: hermesUnderHeader,
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
         children: [
           Text(

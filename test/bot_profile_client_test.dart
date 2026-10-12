@@ -44,27 +44,22 @@ void main() {
       expect(saves, 2);
     },
   );
-  test(
-    'avatar generation probes and refuses URLs, SVG, and unsupported servers',
-    () async {
-      final client = BotProfileClient((method, params) async {
-        expect(method, 'image.generate');
-        if (params['probe'] == true) return {'available': true};
-        expect(params['max_bytes'], 2000000);
-        return {'success': true, 'image': 'https://provider.invalid/image'};
-      });
-      expect(await client.canGenerateBotAvatar(), true);
-      await expectLater(
-        client.generateBotAvatar('A calm owl'),
-        throwsStateError,
-      );
-      final absent = BotProfileClient(
-        (_, _) async => throw StateError('unknown'),
-      );
-      expect(await absent.canGenerateBotAvatar(), false);
-      await expectLater(client.generateBotAvatar(' '), throwsFormatException);
-    },
-  );
+  test('retired avatar API cannot probe or spend a model request', () async {
+    final requests = <String>[];
+    final dynamic client = BotProfileClient((method, params) async {
+      requests.add(method);
+      return {'available': true, 'success': true};
+    });
+    await expectLater(
+      Future.sync(() => client.canGenerateBotAvatar()),
+      throwsNoSuchMethodError,
+    );
+    await expectLater(
+      Future.sync(() => client.generateBotAvatar('A calm owl')),
+      throwsNoSuchMethodError,
+    );
+    expect(requests, isEmpty);
+  });
   test('section name limits and Desktop-compatible IDs', () {
     expect(() => BotSectionChange.create('x' * 41), throwsFormatException);
     expect(() => BotSectionChange.create('bad\nname'), throwsFormatException);

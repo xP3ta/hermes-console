@@ -9,7 +9,7 @@ This checklist must be completed before every release PR. Mark each item as pass
 - [ ] `flutter build apk --release --split-per-abi` — clean release build
 
 ## Architecture
-- [ ] State management is consistent for each screen or feature (Riverpod / `setState` usage is intentional)
+- [ ] State management is consistent for each screen or feature (the pattern in use is intentional)
 - [ ] No orphaned imports, dead code, or unused assets
 - [ ] Network calls have visible error handling paths
 - [ ] `StatefulWidget` resources are disposed correctly (`TextEditingController`, `ScrollController`, timers, streams, WebSockets)

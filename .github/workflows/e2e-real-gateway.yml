@@ -1,0 +1,49 @@
+name: Real-gateway E2E
+
+# Console's real gateway client (TuiGatewayClient + ActiveChat, Dart VM, no
+# emulator) against a real `hermes serve` + API server built from the public
+# Hermes commit pinned in tool/e2e/hermes_pin. The model is Hermes' own
+# scripted loopback provider: no secrets, no provider keys, no network model.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-real-gateway-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    name: Console ↔ real hermes serve
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          flutter-version: '3.47.1'
+          channel: 'stable'
+
+      - name: Install dependencies
+        run: flutter pub get --enforce-lockfile
+
+      - name: Install uv
+        run: python3 -m pip install --disable-pip-version-check uv==0.12.7
+
+      - name: Run the real-gateway lane
+        env:
+          UV_CACHE_DIR: ${{ runner.temp }}/uv-cache
+          UV_PYTHON_INSTALL_DIR: ${{ runner.temp }}/uv-python
+          TMPDIR: ${{ runner.temp }}
+        run: tool/e2e/run_local.sh

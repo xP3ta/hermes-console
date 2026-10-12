@@ -1,27 +1,3 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- Permisos y queries EXCLUSIVOS del flavor `full` (instancia local en
-         Termux). El flavor `play` (Google Play, solo-remoto) NO los incluye, lo
-         que minimiza el riesgo de rechazo por Device and Network Abuse.
-         Ver docs/PLAY_PERMISSIONS.md. -->
-
-    <!-- Lanzar el instalador/arranque del agente en Termux (RUN_COMMAND).
-         Best-effort: requiere Termux con allow-external-apps. -->
-    <uses-permission android:name="com.termux.permission.RUN_COMMAND" />
-    <!-- Pedir excluir a Termux del ahorro de batería (Doze / App Standby). Sin
-         esto, Android congela com.termux y mata los procesos en background
-         (gateway/dashboard) antes de que arranquen. La app solo abre el diálogo
-         del sistema; el usuario concede o no. Se solicita únicamente al
-         configurar una instancia local (opt-in, gateado por kLocalAgentEnabled). -->
-    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
-
-    <queries>
-        <!-- Onboarding: detectar/abrir Termux (agente local) y el cliente de
-             F-Droid; resolver enlaces market://. -->
-        <package android:name="com.termux" />
-        <package android:name="org.fdroid.fdroid" />
-        <intent>
-            <action android:name="android.intent.action.VIEW" />
-            <data android:scheme="market" />
-        </intent>
-    </queries>
-</manifest>
+<!-- SPDX-License-Identifier: GPL-3.0-only -->
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 XPeta Lab -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" />

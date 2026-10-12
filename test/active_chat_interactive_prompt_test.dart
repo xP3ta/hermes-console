@@ -787,11 +787,9 @@ void main() {
       final key = chat.pendingInteractivePrompt!.key;
 
       gateway.disconnect();
-      await _waitUntil(
-        () =>
-            chat.interactivePrompts[key]?.status ==
-            InteractivePromptStatus.expired,
-      );
+      // The card leaves with the socket. It is forgotten, not tombstoned:
+      // Hermes keeps the request open and replays it on resume.
+      await _waitUntil(() => chat.interactivePrompts[key] == null);
 
       expect(chat.pendingInteractivePrompt, isNull);
     },

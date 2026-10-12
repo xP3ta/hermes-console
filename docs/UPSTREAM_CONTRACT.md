@@ -1,125 +1,130 @@
-# Contrato con upstream (Hermes Agent / Nous)
+# Contract with upstream (Hermes Agent / Nous Research)
 
-Hermes Console es un **cliente** de un agente de terceros self-hosted (Hermes,
-de Nous Research). Por tanto, inevitablemente "sigue" a Hermes: si Nous cambia
-su API, CLI, instalador o puertos, hay que actualizar la app. Este documento
-lista **exactamente qué depende de upstream y dónde tocarlo**, para que mantener
-sea un cambio de una línea y no una caza del tesoro.
+Console is a **client** of a third-party, self-hosted agent (Hermes, by Nous
+Research). It therefore inevitably follows Hermes: if Nous changes its API,
+ports or protocol, the app must be updated. This document lists **exactly what
+depends on upstream and where to change it**, so that maintenance is a one-line
+change and not a treasure hunt.
 
-Principio de diseño: **fallar suave, no petar.** Toda dependencia de upstream
-debe degradar a un estado honesto ("no disponible", "necesita X") en vez de
-crashear. La adaptación y sus límites se describen en
-[`ARCHITECTURE.md`](ARCHITECTURE.md) y en la matriz de capacidades de este
-documento.
+Design principle: **fail soft, never crash.** Every dependency on upstream
+degrades to an honest state ("not available", "needs X") instead of crashing. A
+feature is shown only when the connected server offers what it needs; Console
+does not invent endpoints. The adaptation and its limits are described in
+[`ARCHITECTURE.md`](ARCHITECTURE.md).
 
-Fuentes de verdad del contrato (no inventar endpoints):
-- `docs/API_AUDIT.md` — endpoints reales de hermes-agent (sondeados en vivo).
-- `../docs/MOBILE_BRIDGE_SPEC.md` (workspace) — contrato del Mobile Bridge.
-
----
-
-## 1. Puertos y endpoints (loopback / red)
-
-| Qué | Valor | Dónde en el código |
-|---|---|---|
-| Gateway (API server, Bearer) | `:8642` | `AgentRuntimeConsts.localGatewayPort`; `SavedConnection.baseUrl` |
-| Dashboard / Admin (API web) | `:9119` | `AgentRuntimeConsts.localDashboardPort`; `dashboardUrl` |
-| Mobile Bridge | `:9131` (deriva del host) | `BridgeManager.derivedBridgeUrl` |
-| Progreso de instalación (local) | `:8643` | `AgentRuntimeConsts.localInstallPort` |
-
-Si Hermes cambia un puerto por defecto → actualizar la constante correspondiente.
-
-## 2. Dashboard API (lo que usa la app)
-
-`DashboardClient` / `ConnectionManager`. Auth: token de sesión scrapeado del
-HTML (`window.__HERMES_SESSION_TOKEN__`), enviado en `X-Hermes-Session-Token`.
-Endpoints usados: `/api/status`, `/api/profiles` (+`/{name}/soul`, POST/PATCH/
-DELETE), `/api/skills`, `/api/model/info|options|set`, `/api/cron/jobs`,
-`/api/logs`, `/api/config`, `/api/env`, `/api/sessions`. Escalado por perfil con
-`?profile=`. **Si un endpoint cambia de forma/nombre**, está centralizado en
-`connection_manager.dart` (buscar `apiGet/apiPost('...')`).
-
-⚠️ **Modelo principal NO se aísla por perfil**: `POST /api/model/set?profile=X`
-cambia el modelo del gateway en ejecución (hay un solo gateway). La app avisa
-antes (confirmación en `profiles_screen` y `models_screen`). No es un bug de la
-app, es la semántica de Hermes.
-
-## 3. Gateway API (Bearer = `API_SERVER_KEY`)
-
-`/v1/runs` (+`/{id}`, `/{id}/approval`), `/v1/capabilities`, `/v1/skills`,
-`/v1/toolsets`, chat SSE. El gateway NO lista runs (405) ni los conserva tras
-completar (404 expired) → registro local en `RunRegistry`. Ver `API_AUDIT.md`.
-
-## 4. Mobile Bridge (`bridge/hermes_bridge.py`)
-
-Provisión automática con la `API_SERVER_KEY` (`POST /bridge/provision`). Token
-del bridge persistente (sobrevive reinicios). Gestiona skills/SOUL/memoria/cron.
-
-⚠️ **Comandos de skills**: el bridge DEBE usar el CLI de Hermes, no `npx skills`
-(que NO toca el almacén de skills de Hermes y da falso éxito). Correcto:
-- instalar: `hermes skills install --yes <owner/repo>`
-- quitar: `hermes skills uninstall <name>` (pide [y/N], sin flag --yes → se pasa
-  "y" por stdin; OJO: devuelve rc=0 también si se cancela → éxito por el texto
-  "Uninstalled"). Ver `skills_install`/`skills_remove` en `hermes_bridge.py`.
-
-El dashboard debe correr como **servicio systemd** (`hermes-dashboard.service`),
-no como proceso manual, o `hermes update` lo tira. Gateway/bridge ya son
-servicios.
-
-## 5. Instalador del agente local
-
-| Qué | Valor | Dónde |
-|---|---|---|
-| URL del instalador | `hermes-agent.nousresearch.com/install.sh` | `AgentRuntimeConsts.installerUrl` |
-| Wrapper (sirve log por localhost) | — | `AgentRuntimeConsts.installWrapperCommand` |
-| Etapas (parseo del log) | palabras clave | `_stages` en `local_install_screen.dart` |
-
-El **fin de la instalación NO depende del parseo**: se detecta cuando el agente
-responde en `localhost:8642` (`isAgentRunning`). Si el instalador cambia su
-salida, la barra de etapas se desincroniza pero la app sigue detectando bien el
-fin. Las etapas son "best-effort" cosméticas. Si quieres re-afinar la barra,
-toca solo `_stages`.
-
-Pre-flight antes de instalar (`_init`): ABI 64-bit, ~3 GB de disco
-(`deviceInfo().freeDiskBytes`, vía `StatFs` nativo en `MainActivity.kt`), y red
-(`installerReachable()`). Errores con causa: `_friendlyError` (espacio/red/
-libcrypto/rust).
-
-## 5b. Voz neuronal on-device (TTS, modelos de HuggingFace)
-
-La voz que LEE las respuestas puede ser neuronal y 100% on-device (sin nube, sin
-clave) vía `sherpa_onnx` + un modelo Piper/VITS descargado en runtime.
-
-| Qué | Valor | Dónde |
-|---|---|---|
-| Catálogo de voces (ES) | id/url/dirName/onnxFile | `kNeuralVoices` en `tts_model_manager.dart` |
-| Origen de los modelos | release `tts-models` de sherpa-onnx (.tar.bz2) | `_ttsRelease` |
-| Motor de síntesis | `OnDeviceNeuralTtsEngine` | `tts_engine.dart` |
-
-Cada voz es un único `.tar.bz2` con `<voz>.onnx` + `tokens.txt` +
-`espeak-ng-data/`. Se descarga con progreso a disco y se **extrae en un isolate**
-(`_extractTarBz2`, bzip2+tar vía `package:archive`). **Fallar suave**: si la voz
-elegida no está descargada, `VoiceService._buildOnnxEngine` cae a la voz del
-sistema (`DeviceTtsEngine`) en vez de petar. Para añadir una voz: una entrada más
-en `kNeuralVoices` (verificar que la URL existe en el release y que `dirName`/
-`onnxFile` casan con el contenido del tar). Las libs nativas (`libonnxruntime.so`,
-`libsherpa-onnx-*.so`) las aporta el plugin; suben ~30 MB por ABI → **publicar como
-AAB / split-per-abi**, no APK universal.
-
-## 6. Termux
-
-`allow-external-apps=true` (en `~/.termux/termux.properties`) es necesario para
-RUN_COMMAND. **La app no puede activarlo** (sandbox de Android); guía al usuario
-una vez. Paquete `com.termux`; enlace de instalación: F-Droid
-(`f-droid.org/packages/com.termux/`), no Google Play (obsoleto).
+Sources of truth for the contract (do not invent endpoints): Hermes Agent's own
+source and the behaviour of a live Hermes server. Console talks to the Gateway
+and the Dashboard of Hermes itself and to nothing else; the Mobile Bridge was
+retired in 1.2.15 (section 4).
 
 ---
 
-## Checklist "Hermes cambió algo, ¿qué toco?"
+## 1. Ports and endpoints
 
-- Endpoint del Dashboard → `connection_manager.dart` (+ `API_AUDIT.md`).
-- Comando de skills del bridge → `bridge/hermes_bridge.py` (`_hermes()`).
-- URL del instalador → `AgentRuntimeConsts.installerUrl`.
-- Texto del instalador (barra de progreso) → `_stages` (no bloquea el fin).
-- Puerto → `AgentRuntimeConsts` / `BridgeManager`.
-- Forma de un payload → el `*.fromJson` correspondiente (parseo defensivo).
+| What | Default | Where in the code |
+|---|---|---|
+| Gateway (API server, Bearer `API_SERVER_KEY`) | `:8642` | `SavedConnection` (port field of a connection) |
+| Dashboard / admin API | `:9119` | `SavedConnection` (`dashboardPort`) |
+
+If Hermes changes a default port, update the constants in `SavedConnection` and
+the connection screen (`instance_edit_screen.dart`). The setup helper
+([xP3ta/hermes-setup](https://github.com/xP3ta/hermes-setup)) uses the same
+defaults and lets them be moved.
+
+## 2. Dashboard (what the app uses)
+
+`ConnectionManager` and the typed clients around it. Authentication, in the order
+the app prefers: a cookie session after the Dashboard login, a session token
+scraped from the Dashboard HTML (`window.__HERMES_SESSION_TOKEN__`) and sent as
+`X-Hermes-Session-Token`, or Basic Auth, according to what the server really
+accepts.
+
+- **Chat and live state:** the WebSocket `/api/ws` carrying JSON-RPC 2.0, the
+  same channel Hermes Desktop uses (`TuiGatewayClient`, sessions, history,
+  approvals, profiles, rooms, Kanban and voice methods). Unknown
+  methods degrade silently.
+- **REST endpoints used:** `/api/status`, `/api/profiles` (and `/{name}/soul`),
+  `/api/sessions`, `/api/model/info|options|set`, `/api/cron/jobs`, `/api/logs`,
+  `/api/config`, `/api/env`, `/api/mcp/servers`, `/api/plugins` and the voice
+  endpoints under `/api/audio/*` (including `voice-live` for GPT-Live). Most are
+  scoped by profile with `?profile=`.
+- If an endpoint changes shape or name, it is centralised in
+  `connection_manager.dart` (look for `apiGet`/`apiPost`) and in the typed
+  clients of `lib/core/services/`.
+
+The main model is **not isolated per profile**: `POST /api/model/set?profile=X`
+changes the model of the running gateway (there is a single gateway). The app
+asks for confirmation first. That is Hermes' semantics, not an app bug.
+
+## 3. Gateway (Bearer = `API_SERVER_KEY`)
+
+`/health`, `/v1/capabilities`, `/v1/runs` (and `/{id}`, `/{id}/approval`) and
+`/v1/chat/completions`. The Gateway does not list runs and does not keep them
+after completion, so the app keeps its own local record (`RunRegistry`).
+
+## 4. Mobile Bridge (retired in 1.2.15)
+
+The app no longer talks to the Mobile Bridge (`:9131`). Skills, SOUL, memory,
+cron and Dashboard access go through Hermes' own Gateway and Dashboard. The app
+has no bridge client, provisioning or update, and no request goes to `/bridge/*`
+(guarded by retirement tests).
+
+What remains of an earlier install:
+
+- On the phone, the Keystore secrets `bridge_url_<id>` / `bridge_token_<id>` and
+  the `bridge_auto_update` preference are deleted on the first launch after
+  updating (`LegacyBridgeRetirement`), after probing each instance's Dashboard
+  once.
+- On the server, the bridge service keeps running until its owner stops it: the
+  Linux user unit `hermes-bridge.service`, the macOS LaunchAgent
+  `dev.xpetalab.hermes-console.bridge`, or the Windows tasks
+  `HermesConsole-MobileBridge` and `HermesConsole-Restart-MobileBridge`. The
+  app shows how to remove it (the setup helper's `--retire-bridge` /
+  `-RetireBridge` line); it does not remove it itself.
+
+The Dashboard should run as a **service** (systemd user unit, LaunchAgent or
+Scheduled Task, which the setup helper creates), not as a manual process, or
+`hermes update` will take it down.
+
+## 5. Setup helper
+
+The app ships no setup scripts. `HermesSetupCommands`
+(`lib/core/services/hermes_setup_commands.dart`) holds the helper's four lines
+per system (set up, show the code again, a new Dashboard sign-in, retire the
+bridge); a test pins them so the app and the helper cannot drift apart. If the
+helper's URL or arguments change, change them there. The pairing link
+(`hermes://pair`) carries the Gateway address and key and, when known, the
+Dashboard sign-in (`dash_user`, `dash_pass`); the app shows what a link sets up
+before saving anything.
+
+## 6. On-device neural voice (TTS, models from GitHub releases)
+
+The voice that reads replies can be neural and fully on-device (no cloud, no key)
+through `sherpa_onnx` and a Piper/VITS model downloaded at runtime.
+
+| What | Value | Where |
+|---|---|---|
+| Voice catalogue | id/url/dirName/onnxFile | `kNeuralVoices` in `tts_model_manager.dart` |
+| Model source | the sherpa-onnx `tts-models` release (`.tar.bz2`) | `_ttsRelease` |
+| Synthesis engine | `OnDeviceNeuralTtsEngine` | `tts_engine.dart` |
+
+Each voice is one `.tar.bz2` with `<voice>.onnx`, `tokens.txt` and
+`espeak-ng-data/`. It is downloaded with progress to disk and extracted in an
+isolate. **Fail soft:** if the chosen voice is not downloaded, the app falls back
+to the system voice (`DeviceTtsEngine`). To add a voice, add an entry to
+`kNeuralVoices` and check that the URL exists in the release and that
+`dirName`/`onnxFile` match the archive. The native libraries come from the
+plugin and add roughly 30 MB per ABI, so publish as an AAB / split-per-ABI APKs,
+never a universal APK.
+
+---
+
+## Checklist: "Hermes changed something, what do I touch?"
+
+- A Dashboard endpoint -> `connection_manager.dart` and the typed client that
+  uses it.
+- A JSON-RPC method of `/api/ws` -> `tui_gateway_client.dart`.
+- A port -> `SavedConnection` and `instance_edit_screen.dart` (8642 Gateway,
+  9119 Dashboard).
+- The helper's lines -> `hermes_setup_commands.dart` (and its test).
+- The shape of a payload -> the matching `*.fromJson` (parse defensively).

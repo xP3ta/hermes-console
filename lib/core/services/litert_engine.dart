@@ -3,7 +3,7 @@
 /// endpoint OpenAI-compatible en `127.0.0.1:8000`).
 ///
 /// Por qué directo (sin el bridge): en el escenario local TODO vive en el mismo
-/// móvil — la app Hermes Console, Termux (agente Hermes) y OlliteRT — así que la
+/// móvil — la app Hermes Console, el agente Hermes local y OlliteRT — así que la
 /// app llega a OlliteRT por loopback igual que lo hace el agente. La app solo
 /// LEE estado (`/health`, `/v1/models`); la descarga y el arranque de modelos los
 /// gestiona OlliteRT desde su propia UI (su API remota no los expone).

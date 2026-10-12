@@ -1,4 +1,28 @@
+import 'package:flutter/widgets.dart';
+import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/models/hosted_groups.dart';
+
+/// What the room's island says now: an event's line, or the room's name at
+/// rest. The island is the header's pill (`room-header`).
+String roomIslandSays(WidgetTester tester) {
+  final island = find.byKey(const ValueKey('room-header'));
+  final line = find.descendant(
+    of: island,
+    matching: find.byKey(const ValueKey('island-event-line')),
+  );
+  if (line.evaluate().isNotEmpty) {
+    final text = tester.widget<Text>(line);
+    return text.data ?? text.textSpan!.toPlainText();
+  }
+  return tester
+      .widget<Text>(
+        find.descendant(
+          of: island,
+          matching: find.byKey(const ValueKey('island-name')),
+        ),
+      )
+      .data!;
+}
 
 /// Builders for hosted room fixtures (contract shapes from
 /// `test/fixtures/spec070`), kept small for Room screen tests.
@@ -141,11 +165,12 @@ final class EventSeq {
     int round = 0,
     bool passed = false,
     String? messageId,
+    String? task,
   }) => _event(
     'turn.settled',
     {'kind': 'gateway', 'id': gatewayId},
     {
-      ..._coords(member, discussion, round: round),
+      ..._coords(member, discussion, round: round, task: task),
       'seen_through_seq': seq,
       'message_event_id': messageId,
       'passed': passed,
@@ -166,6 +191,49 @@ final class EventSeq {
       'error': 'provider timeout',
       'reason_code': 'provider_timeout',
     },
+  );
+
+  /// Server cancellation (`turn.cancelled`, exact payload of
+  /// `hosted_room_discussion.py::_cancelled_effects`).
+  Map<String, dynamic> cancelled(
+    String member,
+    String discussion, {
+    int round = 0,
+    String? task,
+  }) => _event(
+    'turn.cancelled',
+    {'kind': 'gateway', 'id': gatewayId},
+    {
+      ..._coords(member, discussion, round: round, task: task),
+      'seen_through_seq': seq,
+      'reason': 'superseded_by_newer_user_event',
+    },
+  );
+
+  /// Server deferral of an attempt it gave up on (`turn.deferred`, exact
+  /// payload of `hosted_room_discussion.py::_deferred_effects`).
+  Map<String, dynamic> deferred(
+    String member,
+    String discussion, {
+    int round = 0,
+    String? task,
+  }) => _event(
+    'turn.deferred',
+    {'kind': 'gateway', 'id': gatewayId},
+    {
+      ..._coords(member, discussion, round: round, task: task),
+      'seen_through_seq': seq,
+      'execution_generation': 1,
+      'reason': 'member_unavailable',
+    },
+    id: 'ddeferred:${task ?? member}:g1',
+  );
+
+  /// The server reports [member] as unavailable (`member.unavailable`).
+  Map<String, dynamic> unavailable(String member) => _event(
+    'member.unavailable',
+    {'kind': 'gateway', 'id': gatewayId},
+    {'member_id': member, 'reason': 'member_unavailable'},
   );
 
   /// Gateway round verdict (`room.activity`, status settled|bounded).
@@ -206,12 +274,13 @@ HostedGroupLogPage buildLog(
 }
 
 RoomDriverStatus driver({
+  bool running = true,
   bool working = false,
   bool blocked = false,
   Map<String, int> counts = const {},
   List<Map<String, dynamic>> pending = const [],
 }) => RoomDriverStatus.tryParse({
-  'running': true,
+  'running': running,
   'working': working,
   'blocked': blocked,
   'counts': counts,
@@ -238,4 +307,26 @@ Map<String, dynamic> approvalAction({
     'description': 'dangerous command',
     'choices': choices,
   },
+};
+
+/// Builds one published terminal event for [task] of [member].
+typedef TerminalEventBuilder =
+    Map<String, dynamic> Function(
+      EventSeq seq,
+      String member,
+      String discussion,
+      String task,
+    );
+
+/// The four terminal kinds the server publishes when a driver task leaves
+/// the running state (`hosted_room_discussion.py::_TERMINAL_FIELDS`).
+final Map<String, TerminalEventBuilder> terminalKinds = {
+  'turn.settled': (seq, member, discussion, task) =>
+      seq.settled(member, discussion, passed: true, task: task),
+  'turn.failed': (seq, member, discussion, task) =>
+      seq.failed(member, discussion, task: task),
+  'turn.cancelled': (seq, member, discussion, task) =>
+      seq.cancelled(member, discussion, task: task),
+  'turn.deferred': (seq, member, discussion, task) =>
+      seq.deferred(member, discussion, task: task),
 };

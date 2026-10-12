@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/models/kanban.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite/sqflite.dart' as sqflite;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
@@ -1556,5 +1557,68 @@ void main() {
     );
     expect(calls, 1);
     expect(executions, isEmpty);
+  });
+
+  group('background run poll backoff', () {
+    const run = WatchedRun(
+      connId: 'c1',
+      base: 'http://127.0.0.1:8642',
+      runId: 'run-1',
+      prompt: '',
+    );
+
+    Future<({int requests, List<int?> seen})> drive(
+      int? Function(int index) status, {
+      required int ticks,
+      Duration tick = const Duration(seconds: 30),
+    }) async {
+      var now = DateTime.utc(2026, 10, 1);
+      var requests = 0;
+      final seen = <int?>[];
+      final backoff = BackgroundRunPollBackoff(now: () => now);
+      final client = MockClient((_) async {
+        final code = status(requests++);
+        if (code == null) throw http.ClientException('offline');
+        return http.Response('{"status":"running"}', code);
+      });
+      for (var i = 0; i < ticks; i++) {
+        try {
+          final res = await fetchWatchedRunStatus(
+            client: client,
+            backoff: backoff,
+            run: run,
+            safeBase: run.base,
+            readToken: () async => null,
+          );
+          seen.add(res?.statusCode);
+        } on http.ClientException {
+          seen.add(-1);
+        }
+        now = now.add(tick);
+      }
+      return (requests: requests, seen: seen);
+    }
+
+    test('401/403/404 back off instead of polling every tick', () async {
+      for (final code in [401, 403, 404]) {
+        // One hour of 30 s ticks.
+        final result = await drive((_) => code, ticks: 120);
+        // 2, 4, 8, 15, 15, 15 min gaps: 7 requests instead of 120.
+        expect(result.requests, 7, reason: 'HTTP $code');
+      }
+    });
+
+    test('a backed-off run is kept and polled again after the gate', () async {
+      final result = await drive((i) => i == 0 ? 404 : 200, ticks: 6);
+      // Tick 0 answers 404; ticks 1-3 are skipped (null); tick 4 at +2 min
+      // is asked again and answers 200, which clears the gate.
+      expect(result.seen, [404, null, null, null, 200, 200]);
+      expect(result.requests, 3);
+    });
+
+    test('transient failures keep the normal cadence', () async {
+      final result = await drive((i) => i.isEven ? 503 : null, ticks: 10);
+      expect(result.requests, 10);
+    });
   });
 }

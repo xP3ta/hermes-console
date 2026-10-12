@@ -8,6 +8,178 @@ import 'package:hermes_android/core/services/generated_image_service.dart';
 import 'package:http/http.dart' as http;
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  test(
+    'image security rejects PNG signature without actual image before cache write',
+    () async {
+      final dir = await Directory.systemTemp.createTemp('image-security-');
+      addTearDown(() => dir.delete(recursive: true));
+      await expectLater(
+        GeneratedImageService.ensureDownloaded(
+          'security',
+          'same.png',
+          baseDir: dir,
+          fetch: (_) async =>
+              Uint8List.fromList([137, 80, 78, 71, 13, 10, 26, 10, 1]),
+        ),
+        throwsA(isA<FormatException>()),
+      );
+      expect(dir.listSync(recursive: true).whereType<File>(), isEmpty);
+    },
+  );
+  test('image security revoked owner cannot publish pending bytes', () async {
+    final dir = await Directory.systemTemp.createTemp('image-revoked-');
+    addTearDown(() => dir.delete(recursive: true));
+    var current = true;
+    await expectLater(
+      GeneratedImageService.ensureDownloaded(
+        'revoked',
+        'same.png',
+        baseDir: dir,
+        isCurrent: () => current,
+        fetch: (_) async {
+          current = false;
+          return Uint8List.fromList(_pngBytes);
+        },
+      ),
+      throwsA(isA<StateError>()),
+    );
+    expect(dir.listSync(recursive: true).whereType<File>(), isEmpty);
+  });
+  test('image security revoked HTTPS owner cannot publish bytes', () async {
+    final dir = await Directory.systemTemp.createTemp('https-revoked-');
+    addTearDown(() => dir.delete(recursive: true));
+    var current = true;
+    await expectLater(
+      GeneratedImageService.ensureHttpsDownloaded(
+        'revoked-https',
+        'https://cdn.example/same.png',
+        baseDir: dir,
+        isCurrent: () => current,
+        client: _HandlerClient((_) async {
+          current = false;
+          return _response(_pngBytes, contentType: 'image/png');
+        }),
+      ),
+      throwsA(isA<StateError>()),
+    );
+    expect(dir.listSync(recursive: true).whereType<File>(), isEmpty);
+  });
+  test(
+    'image security sensitive basename produces no normalized reference',
+    () {
+      expect(
+        GeneratedImageService.imageReferencesFromResult({
+          'success': true,
+          'host_image': '/home/demo/.hermes/cache/images/id_ed25519.png',
+        }),
+        isEmpty,
+      );
+      expect(
+        GeneratedImageService.segments(
+          'file:///home/demo/.hermes/cache/images/same.png',
+        ).whereType<ImageSegment>(),
+        isEmpty,
+      );
+    },
+  );
+  test('image security oversized header leaves no cache file', () async {
+    final dir = await Directory.systemTemp.createTemp('image-pixels-');
+    addTearDown(() => dir.delete(recursive: true));
+    final bytes = Uint8List.fromList(_pngBytes);
+    bytes.buffer.asByteData().setUint32(16, 100000);
+    await expectLater(
+      GeneratedImageService.ensureDownloaded(
+        'pixels',
+        'same.png',
+        baseDir: dir,
+        fetch: (_) async => bytes,
+      ),
+      throwsA(isA<FormatException>()),
+    );
+    expect(dir.listSync(recursive: true).whereType<File>(), isEmpty);
+  });
+  test('image security invalid existing cache is not reused', () async {
+    final dir = await Directory.systemTemp.createTemp('image-invalid-cache-');
+    addTearDown(() => dir.delete(recursive: true));
+    final old = await GeneratedImageService.localFileFor(
+      'invalid-cache',
+      'same.png',
+      digest: 'invalid',
+      baseDir: dir,
+    );
+    await old.writeAsBytes([137, 80, 78, 71, 13, 10, 26, 10, 1]);
+    var calls = 0;
+    final file = await GeneratedImageService.ensureDownloaded(
+      'invalid-cache',
+      'same.png',
+      baseDir: dir,
+      fetch: (_) async {
+        calls++;
+        return Uint8List.fromList(_pngBytes);
+      },
+    );
+    expect(calls, 1);
+    expect(file.path, isNot(old.path));
+    expect(await old.exists(), isFalse);
+    expect(await file.readAsBytes(), _pngBytes);
+  });
+  test(
+    'image security sensitive name makes zero fetch and zero cache files',
+    () async {
+      final dir = await Directory.systemTemp.createTemp('image-sensitive-');
+      addTearDown(() => dir.delete(recursive: true));
+      var calls = 0;
+      await expectLater(
+        GeneratedImageService.ensureDownloaded(
+          'security',
+          'id_ed25519.png',
+          baseDir: dir,
+          fetch: (_) async {
+            calls++;
+            return Uint8List.fromList(_pngBytes);
+          },
+        ),
+        throwsA(anything),
+      );
+      expect(calls, 0);
+      expect(dir.listSync(recursive: true).whereType<File>(), isEmpty);
+    },
+  );
+  test('official current producer profile path prefers host image', () {
+    const host =
+        '/home/demo/.hermes/profiles/work_bot/cache/generated/images/same.png';
+    final refs = GeneratedImageService.imageReferencesFromResult({
+      'success': true,
+      'host_image': host,
+      'image': '/home/demo/.hermes/cache/images/other.png',
+      'agent_visible_image':
+          '/home/remote/.hermes/cache/generated/images/same.png',
+    });
+    expect(refs.single.source, host);
+    expect(refs.single.basename, 'same.png');
+  });
+  test('legacy unscoped generated images are never reused', () async {
+    final dir = await Directory.systemTemp.createTemp('media-migration-');
+    addTearDown(() => dir.delete(recursive: true));
+    final oldDir = Directory('${dir.path}/generated_images')..createSync();
+    final png = Uint8List.fromList(_pngBytes);
+    // Legacy connection hash for synthetic owner c, without a profile.
+    await File(
+      '${oldDir.path}/2e7d2c03a9507ae2_old_same.png',
+    ).writeAsBytes(png);
+    var calls = 0;
+    await GeneratedImageService.ensureDownloaded(
+      'c',
+      'same.png',
+      baseDir: dir,
+      fetch: (_) async {
+        calls++;
+        return png;
+      },
+    );
+    expect(calls, 1);
+  });
   group('GeneratedImageService.segments — detector (spec 030)', () {
     const real =
         '/home/demo/.hermes/cache/images/openai_codex_gpt-image-2-medium_20260705_203332_4155a10b.png';
@@ -232,23 +404,6 @@ void main() {
     });
   });
 
-  group('bridgeSupportsImages — capacidad por versión (US2)', () {
-    test('1.11.4 → false (bridge viejo)', () {
-      expect(GeneratedImageService.bridgeSupportsImages('1.11.4'), isFalse);
-    });
-    test('1.12.0 → true', () {
-      expect(GeneratedImageService.bridgeSupportsImages('1.12.0'), isTrue);
-    });
-    test('1.12.1 / 2.0.0 → true', () {
-      expect(GeneratedImageService.bridgeSupportsImages('1.12.1'), isTrue);
-      expect(GeneratedImageService.bridgeSupportsImages('2.0.0'), isTrue);
-    });
-    test('null / vacío → false (sin bridge)', () {
-      expect(GeneratedImageService.bridgeSupportsImages(null), isFalse);
-      expect(GeneratedImageService.bridgeSupportsImages(''), isFalse);
-    });
-  });
-
   group('ensureDownloaded — caché local idempotente', () {
     late Directory tmp;
 
@@ -264,17 +419,7 @@ void main() {
       var calls = 0;
       Future<Uint8List> fetch(String name) async {
         calls++;
-        return Uint8List.fromList([
-          0x89,
-          0x50,
-          0x4e,
-          0x47,
-          0x0d,
-          0x0a,
-          0x1a,
-          0x0a,
-          1,
-        ]);
+        return Uint8List.fromList(_pngBytes);
       }
 
       final f1 = await GeneratedImageService.ensureDownloaded(
@@ -353,6 +498,52 @@ void main() {
     tearDown(() {
       tmp.deleteSync(recursive: true);
     });
+
+    test(
+      'same HTTPS source remains private across profile scopes and in-flight ABA',
+      () async {
+        final held = Completer<void>();
+        final started = Completer<void>();
+        final scopeA = jsonEncode(['connection', 'work_bot']);
+        final scopeB = jsonEncode(['connection', 'personal']);
+        const source = 'https://cdn.example/same.png?sig=fixture';
+        final pending = GeneratedImageService.ensureHttpsDownloaded(
+          scopeA,
+          source,
+          baseDir: tmp,
+          client: _HandlerClient((_) async {
+            started.complete();
+            await held.future;
+            return _response([..._pngBytes, 1], contentType: 'image/png');
+          }),
+        );
+        await started.future;
+        final newer = await GeneratedImageService.ensureHttpsDownloaded(
+          scopeB,
+          source,
+          baseDir: tmp,
+          client: _HandlerClient(
+            (_) async => _response([..._pngBytes, 2], contentType: 'image/png'),
+          ),
+        );
+        held.complete();
+        final older = await pending;
+        expect(older.path, isNot(newer.path));
+        expect((await older.readAsBytes()).last, 1);
+        expect((await newer.readAsBytes()).last, 2);
+        final restored = await GeneratedImageService.ensureHttpsDownloaded(
+          scopeA,
+          source,
+          baseDir: tmp,
+          client: _HandlerClient(
+            (_) async => throw StateError('owned cache should be reused'),
+          ),
+        );
+        expect(restored.path, older.path);
+        expect(older.path, isNot(contains('work_bot')));
+        expect(newer.path, isNot(contains('personal')));
+      },
+    );
 
     test('acepta PNG/JPEG/WebP válidos', () async {
       for (final entry in <(String, List<int>)>[
@@ -551,22 +742,15 @@ void main() {
   });
 }
 
-const List<int> _pngBytes = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1];
-const List<int> _jpegBytes = [0xff, 0xd8, 0xff, 1];
-const List<int> _webpBytes = [
-  0x52,
-  0x49,
-  0x46,
-  0x46,
-  0,
-  0,
-  0,
-  0,
-  0x57,
-  0x45,
-  0x42,
-  0x50,
-];
+final List<int> _pngBytes = base64Decode(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNQSFgAAAHEASFiX4r9AAAAAElFTkSuQmCC',
+);
+final List<int> _jpegBytes = base64Decode(
+  '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAABAAEDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDk6KKK+mPnj//Z',
+);
+final List<int> _webpBytes = base64Decode(
+  'UklGRjgAAABXRUJQVlA4ICwAAADQAQCdASoBAAEAAUAmJaACdLoB+AADsAD+8Por/zNExzH7V//lKvBY3N8AAA==',
+);
 
 http.StreamedResponse _response(
   List<int> bytes, {

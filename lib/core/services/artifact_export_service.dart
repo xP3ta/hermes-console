@@ -80,7 +80,7 @@ final class PlatformArtifactExportActions implements ArtifactExportActions {
   }) async {
     _checkSize(bytes.length);
     final path = await FilePicker.platform.saveFile(
-      dialogTitle: 'Hermes Console',
+      dialogTitle: 'Console',
       fileName: sanitizeFileName(fileName),
       bytes: bytes,
     );

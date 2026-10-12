@@ -11,8 +11,10 @@
 //   MCP      GET /api/mcp/{catalog,servers} · POST /api/mcp/catalog/install
 //            PUT /api/mcp/servers/{n}/enabled · DELETE /api/mcp/servers/{n}
 //            POST /api/mcp/servers[/{n}/test|/{n}/auth] · GET /api/mcp/oauth/flows/{id}
+//   MCP live RPC mcp.servers.status · GET /api/logs (on demand, one read)
 //   hosted   RPC connectors.{list,catalog,accounts,connect,operation.status,
-//            operation.wake,accounts.remove} · connection.respond
+//            operation.wake,accounts.remove,tools,policy.get,policy.set}
+//            · connection.respond
 //
 // Every capability is detected per server: a 404/405 (REST) or -32601 (RPC)
 // marks it unsupported for this repository's lifetime and the UI hides it
@@ -24,8 +26,12 @@ import '../models/desktop_control_center.dart';
 import '../services/connection_manager.dart'
     show DashboardAuthException, DashboardHttpException;
 import '../services/desktop_control_gateway.dart';
-import '../services/tui_gateway_client.dart' show TuiGatewayRpcError;
+import '../services/tui_gateway_client.dart'
+    show TuiGatewayRpcError, TuiGatewayRpcFailureKind;
 import 'capability_models.dart';
+import 'connector_policy.dart';
+import 'mcp_log_filter.dart';
+import 'mcp_runtime_status.dart';
 
 /// Minimal REST surface (implemented by `DashboardClient`).
 abstract interface class CapabilitiesRest {
@@ -53,13 +59,21 @@ enum CapabilityFeature {
   officialSkills,
   hubSearch,
   skillInstall,
+  skillPreview,
+  skillScan,
+  envSet,
   skillsUpdate,
   pluginCatalog,
   pluginInstalled,
   pluginMutations,
+  pluginsManage,
   mcpCatalog,
   mcpServers,
+  mcpStatus,
+  mcpLogs,
   hostedConnectors,
+  connectorPolicy,
+  connectorTools,
 }
 
 enum CapabilityFailureKind {
@@ -68,6 +82,9 @@ enum CapabilityFailureKind {
   rejected,
   unavailable,
   blockedByScan,
+
+  /// The request may still have landed (client timeout): refresh, never retry.
+  uncertain,
   invalidResponse,
 }
 
@@ -78,10 +95,55 @@ final class CapabilityFailure implements Exception {
   /// secret: only emitted for action logs and connector reasons.
   final String detail;
 
-  const CapabilityFailure(this.kind, {this.detail = ''});
+  /// High-risk finding count of a blocked skill install, when stated.
+  final int? findings;
+
+  const CapabilityFailure(this.kind, {this.detail = '', this.findings});
 
   @override
   String toString() => 'CapabilityFailure(${kind.name})';
+}
+
+/// Cooperative cancel / pause handle for the action loop. A cancelled loop
+/// ends with [CapabilityActionAbandoned]; a paused one (app in background,
+/// route covered) makes no reads until [resume], which reads exactly once.
+final class CapabilityActionToken {
+  bool _cancelled = false;
+  Completer<void>? _gate;
+
+  bool get cancelled => _cancelled;
+  bool get paused => _gate != null;
+
+  void cancel() {
+    _cancelled = true;
+    _release();
+  }
+
+  void pause() {
+    if (!_cancelled) _gate ??= Completer<void>();
+  }
+
+  void resume() => _release();
+
+  void _release() {
+    final gate = _gate;
+    _gate = null;
+    if (gate != null && !gate.isCompleted) gate.complete();
+  }
+
+  Future<void> _untilResumed() async {
+    while (_gate != null) {
+      await _gate!.future;
+    }
+  }
+}
+
+/// The action loop was cancelled: not a success and not a failure to report.
+final class CapabilityActionAbandoned implements Exception {
+  const CapabilityActionAbandoned();
+
+  @override
+  String toString() => 'CapabilityActionAbandoned';
 }
 
 class CapabilitiesRepository implements HermesMcpProvisioningGateway {
@@ -91,6 +153,7 @@ class CapabilitiesRepository implements HermesMcpProvisioningGateway {
   final Duration actionPollInterval;
   final Duration actionTimeout;
   final Future<void> Function(Duration) _sleep;
+  final DateTime Function() _clock;
   final Map<CapabilityFeature, bool> _support = {};
 
   CapabilitiesRepository({
@@ -100,7 +163,9 @@ class CapabilitiesRepository implements HermesMcpProvisioningGateway {
     this.actionPollInterval = const Duration(milliseconds: 1200),
     this.actionTimeout = const Duration(minutes: 10),
     Future<void> Function(Duration)? sleep,
-  }) : _sleep = sleep ?? Future<void>.delayed;
+    DateTime Function()? clock,
+  }) : _sleep = sleep ?? Future<void>.delayed,
+       _clock = clock ?? DateTime.now;
 
   /// `true` supported, `false` unsupported, `null` not probed yet.
   bool? supports(CapabilityFeature feature) => _support[feature];
@@ -171,6 +236,9 @@ class CapabilitiesRepository implements HermesMcpProvisioningGateway {
       throw const CapabilityFailure(CapabilityFailureKind.invalidResponse);
     } on TimeoutException {
       throw const CapabilityFailure(CapabilityFailureKind.unavailable);
+    } on Exception {
+      // The dashboard could not be reached (socket error, no dashboard).
+      throw const CapabilityFailure(CapabilityFailureKind.unavailable);
     }
   }
 
@@ -240,6 +308,29 @@ class CapabilitiesRepository implements HermesMcpProvisioningGateway {
     });
   }
 
+  Future<SkillPreview> skillPreview(
+    String identifier,
+  ) => _call(CapabilityFeature.skillPreview, () async {
+    final result = await rest.get(
+      _withProfile(
+        'skills/hub/preview?identifier=${Uri.encodeQueryComponent(identifier.trim())}',
+      ),
+    );
+    return SkillPreview.fromJson(result);
+  });
+
+  /// Install-time security scan, without installing.
+  Future<SkillScan> skillScan(
+    String identifier,
+  ) => _call(CapabilityFeature.skillScan, () async {
+    final result = await rest.get(
+      _withProfile(
+        'skills/hub/scan?identifier=${Uri.encodeQueryComponent(identifier.trim())}',
+      ),
+    );
+    return SkillScan.fromJson(result);
+  });
+
   Future<void> setSkillEnabled(String name, bool enabled) =>
       _call(CapabilityFeature.skillToggle, () async {
         final result = await rest.put(
@@ -255,30 +346,36 @@ class CapabilitiesRepository implements HermesMcpProvisioningGateway {
   Future<CapabilityActionStatus> installSkill(
     String identifier, {
     void Function(CapabilityActionStatus)? onProgress,
+    CapabilityActionToken? token,
   }) => _runAction(
     CapabilityFeature.skillInstall,
     'skills/hub/install',
     _profileBody({'identifier': identifier.trim()}),
     onProgress,
+    token,
   );
 
   Future<CapabilityActionStatus> uninstallSkill(
     String name, {
     void Function(CapabilityActionStatus)? onProgress,
+    CapabilityActionToken? token,
   }) => _runAction(
     CapabilityFeature.skillInstall,
     'skills/hub/uninstall',
     _profileBody({'name': name.trim()}),
     onProgress,
+    token,
   );
 
   Future<CapabilityActionStatus> updateSkills({
     void Function(CapabilityActionStatus)? onProgress,
+    CapabilityActionToken? token,
   }) => _runAction(
     CapabilityFeature.skillsUpdate,
     'skills/hub/update',
     _profileBody(),
     onProgress,
+    token,
   );
 
   Future<CapabilityActionStatus> _runAction(
@@ -286,7 +383,9 @@ class CapabilitiesRepository implements HermesMcpProvisioningGateway {
     String endpoint,
     Map<String, dynamic> body,
     void Function(CapabilityActionStatus)? onProgress,
+    CapabilityActionToken? token,
   ) async {
+    await _gate(token);
     final started = await _call(
       feature,
       () => rest.post(_withProfile(endpoint), body: body),
@@ -295,28 +394,67 @@ class CapabilitiesRepository implements HermesMcpProvisioningGateway {
     if (started['ok'] != true || name.isEmpty) {
       throw const CapabilityFailure(CapabilityFailureKind.invalidResponse);
     }
-    final deadline = DateTime.now().add(actionTimeout);
+    return (await _followAction(
+      feature,
+      name,
+      onProgress,
+      null,
+      token: token,
+    ))!;
+  }
+
+  /// Every request of an action waits here first: cancelled → abandoned,
+  /// paused → held until resumed (or cancelled).
+  Future<void> _gate(CapabilityActionToken? token) async {
+    if (token == null) return;
+    if (token.cancelled) throw const CapabilityActionAbandoned();
+    await token._untilResumed();
+    if (token.cancelled) throw const CapabilityActionAbandoned();
+  }
+
+  /// Polls `GET actions/{name}/status` until the action exits, on the one
+  /// shared cadence. [shouldStop] is asked before every read: once true the
+  /// follow ends with `null` and no further request (the server process keeps
+  /// running). The loop never outlives its [token]: cancelled → abandoned,
+  /// paused → no reads until resumed (then one read, and on only while still
+  /// running). Gives up after [actionTimeout] of the repository clock or of
+  /// accumulated poll intervals, whichever comes first.
+  Future<CapabilityActionStatus?> _followAction(
+    CapabilityFeature feature,
+    String name,
+    void Function(CapabilityActionStatus)? onProgress,
+    bool Function()? shouldStop, {
+    bool throwOnFailure = true,
+    CapabilityActionToken? token,
+  }) async {
+    final deadline = _clock().add(actionTimeout);
+    var elapsed = Duration.zero;
     while (true) {
+      if (shouldStop?.call() ?? false) return null;
+      await _gate(token);
       final status = await _call(
         feature,
         () async => CapabilityActionStatus.fromJson(
           await rest.get('actions/${_seg(name)}/status?lines=200'),
         ),
       );
+      if (token?.cancelled ?? false) throw const CapabilityActionAbandoned();
       onProgress?.call(status);
       if (!status.running) {
-        if (status.succeeded) return status;
+        if (status.succeeded || !throwOnFailure) return status;
         throw CapabilityFailure(
           status.blockedByScan
               ? CapabilityFailureKind.blockedByScan
               : CapabilityFailureKind.rejected,
           detail: status.tail,
+          findings: status.scanFindings,
         );
       }
-      if (DateTime.now().isAfter(deadline)) {
+      if (_clock().isAfter(deadline) || elapsed >= actionTimeout) {
         throw const CapabilityFailure(CapabilityFailureKind.unavailable);
       }
       await _sleep(actionPollInterval);
+      elapsed += actionPollInterval;
     }
   }
 
@@ -325,11 +463,42 @@ class CapabilitiesRepository implements HermesMcpProvisioningGateway {
   Future<List<CapabilityItem>> pluginCatalog() =>
       _call(CapabilityFeature.pluginCatalog, () async {
         final result = await rest.get('dashboard/plugins/catalog');
+        final removed = result['removed'] is List
+            ? _list(result['removed'])
+            : const <Map<String, dynamic>>[];
         return _list(result['entries'])
             .map(CapabilityItem.catalogPlugin)
             .whereType<CapabilityItem>()
+            .map((item) => _markRemoved(item, removed))
             .toList(growable: false);
       });
+
+  static String _repoKey(Object? value) => '${value ?? ''}'
+      .trim()
+      .toLowerCase()
+      .replaceAll(RegExp(r'/+$'), '')
+      .replaceAll(RegExp(r'\.git$'), '');
+
+  /// The catalog's blocklist is enforced by the installer; Console shows the
+  /// reason and offers no install for a listed name or repo.
+  static CapabilityItem _markRemoved(
+    CapabilityItem item,
+    List<Map<String, dynamic>> removed,
+  ) {
+    final repo = _repoKey(item.disclosure.repo);
+    for (final row in removed) {
+      final byName = '${row['name'] ?? ''}'.trim() == item.installId;
+      final byRepo = repo.isNotEmpty && _repoKey(row['repo']) == repo;
+      if (!byName && !byRepo) continue;
+      final reason = '${row['reason'] ?? ''}'.trim();
+      return item.copyWith(
+        disclosure: item.disclosure.withRemoved(
+          reason.isEmpty ? 'removed' : reason,
+        ),
+      );
+    }
+    return item;
+  }
 
   Future<List<CapabilityItem>> installedPlugins() =>
       _call(CapabilityFeature.pluginInstalled, () async {
@@ -341,59 +510,155 @@ class CapabilitiesRepository implements HermesMcpProvisioningGateway {
             .toList(growable: false);
       });
 
-  Future<PluginMutationResult> installPlugin(String catalogName) =>
-      _call(CapabilityFeature.pluginMutations, () async {
-        final result = PluginMutationResult.fromJson(
+  /// `true` when the hub is on the default/unscoped profile, where the
+  /// server's launch-profile REST flags are authoritative.
+  bool get usesDefaultProfile => _defaultProfile;
+
+  bool get _defaultProfile {
+    final value = profile.trim();
+    return value.isEmpty || value == 'default';
+  }
+
+  /// `plugins.manage` list: the installed state of the hub profile.
+  Future<List<InstalledPluginRow>> installedPluginsRpc() =>
+      _call(CapabilityFeature.pluginsManage, () async {
+        final result = await _rpc('plugins.manage', {'action': 'list'});
+        return _list(result['plugins'])
+            .map(InstalledPluginRow.tryParse)
+            .whereType<InstalledPluginRow>()
+            .toList(growable: false);
+      });
+
+  /// Runs a plugin mutation on the hub profile through `plugins.manage`.
+  /// Without the method, the REST routes (server launch profile) are used
+  /// only when the hub is on the default profile; otherwise the mutation is
+  /// unsupported and the UI hides it.
+  Future<T> _pluginMutation<T>(
+    Map<String, dynamic> params,
+    T Function(Map<String, dynamic>) parse,
+    Future<T> Function() viaRest,
+  ) async {
+    final call = rpc;
+    if (call != null && _support[CapabilityFeature.pluginsManage] != false) {
+      try {
+        final result = await _call(CapabilityFeature.pluginsManage, () async {
+          try {
+            return await _rpc('plugins.manage', params);
+          } on TuiGatewayRpcError catch (error) {
+            if (error.failureKind == TuiGatewayRpcFailureKind.timeout) {
+              throw const CapabilityFailure(CapabilityFailureKind.uncertain);
+            }
+            rethrow;
+          }
+        });
+        _support[CapabilityFeature.pluginMutations] = true;
+        return parse(result);
+      } on CapabilityFailure catch (error) {
+        if (error.kind != CapabilityFailureKind.unsupported) rethrow;
+      }
+    }
+    if (!_defaultProfile) {
+      _support[CapabilityFeature.pluginMutations] = false;
+      throw const CapabilityFailure(CapabilityFailureKind.unsupported);
+    }
+    return _call(CapabilityFeature.pluginMutations, viaRest);
+  }
+
+  PluginMutationResult _checked(PluginMutationResult result) {
+    if (!result.ok && !result.consentRequired) {
+      throw const CapabilityFailure(CapabilityFailureKind.rejected);
+    }
+    return result;
+  }
+
+  Future<PluginMutationResult> installPlugin(String catalogName) {
+    final name = catalogName.trim();
+    return _pluginMutation(
+      {
+        'action': 'install',
+        'catalog_name': name,
+        'enable': true,
+        'force': false,
+      },
+      (json) => _checked(PluginMutationResult.fromJson(json)),
+      () async => _checked(
+        PluginMutationResult.fromJson(
           await rest.post(
             'dashboard/agent-plugins/install',
             body: {
               'identifier': '',
-              'catalog_name': catalogName.trim(),
+              'catalog_name': name,
               'force': false,
               'enable': true,
             },
             timeout: const Duration(minutes: 3),
           ),
-        );
-        if (!result.ok && !result.consentRequired) {
-          throw const CapabilityFailure(CapabilityFailureKind.rejected);
-        }
-        return result;
-      });
+        ),
+      ),
+    );
+  }
 
   Future<PluginMutationResult> updatePlugin(
     String name, {
     bool acceptCapabilities = false,
-  }) => _call(CapabilityFeature.pluginMutations, () async {
-    final result = PluginMutationResult.fromJson(
-      await rest.post(
-        'dashboard/agent-plugins/${_seg(name)}/update',
-        body: acceptCapabilities ? {'accept_capabilities': true} : null,
-        timeout: const Duration(minutes: 3),
+  }) => _pluginMutation(
+    {
+      'action': 'update',
+      'name': name.trim(),
+      if (acceptCapabilities) 'accept_capabilities': true,
+    },
+    (json) => _checked(PluginMutationResult.fromJson(json)),
+    () async => _checked(
+      PluginMutationResult.fromJson(
+        await rest.post(
+          'dashboard/agent-plugins/${_seg(name)}/update',
+          body: acceptCapabilities ? {'accept_capabilities': true} : null,
+          timeout: const Duration(minutes: 3),
+        ),
       ),
-    );
-    if (!result.ok && !result.consentRequired) {
-      throw const CapabilityFailure(CapabilityFailureKind.rejected);
-    }
-    return result;
-  });
+    ),
+  );
 
+  /// Toggles by canonical [key] (Desktop sends the key only). [name] is used
+  /// only by the REST fallback.
   Future<void> setPluginEnabled(
     String name,
-    bool enabled,
-  ) => _call(CapabilityFeature.pluginMutations, () async {
-    final result = await rest.post(
-      'dashboard/agent-plugins/${_seg(name)}/${enabled ? 'enable' : 'disable'}',
-    );
-    if (result['ok'] != true) {
+    bool enabled, {
+    String key = '',
+  }) async {
+    final canonical = key.trim();
+    // Names collide across categories (`image_gen/fal`, `video_gen/fal`): a
+    // keyless row is read-only for the profile-aware path, as on Desktop.
+    if (canonical.isEmpty &&
+        rpc != null &&
+        _support[CapabilityFeature.pluginsManage] != false) {
       throw const CapabilityFailure(CapabilityFailureKind.rejected);
     }
-  });
+    await _pluginMutation(
+      {'action': 'toggle', 'key': canonical, 'enable': enabled},
+      (json) => _checked(PluginMutationResult.fromJson(json)),
+      () async {
+        final result = await rest.post(
+          'dashboard/agent-plugins/${_seg(name)}/${enabled ? 'enable' : 'disable'}',
+        );
+        if (result['ok'] != true) {
+          throw const CapabilityFailure(CapabilityFailureKind.rejected);
+        }
+        return const PluginMutationResult(ok: true);
+      },
+    );
+  }
 
-  Future<void> removePlugin(String name) => _call(
-    CapabilityFeature.pluginMutations,
-    () => rest.delete('dashboard/agent-plugins/${_seg(name)}'),
-  );
+  Future<void> removePlugin(String name) async {
+    await _pluginMutation(
+      {'action': 'remove', 'name': name.trim()},
+      (json) => _checked(PluginMutationResult.fromJson(json)),
+      () async {
+        await rest.delete('dashboard/agent-plugins/${_seg(name)}');
+        return const PluginMutationResult(ok: true);
+      },
+    );
+  }
 
   // ── MCP ─────────────────────────────────────────────────────────────────
 
@@ -415,28 +680,140 @@ class CapabilitiesRepository implements HermesMcpProvisioningGateway {
             .toList(growable: false);
       });
 
+  /// Installs a catalog MCP entry through the server's secret path.
+  ///
+  /// [environment] values are secrets: only keys in [declaredEnv] are sent
+  /// (when given), values never reach an error, log or notice, and a git
+  /// bootstrap (`background: true`) is followed to its exit.
+  /// Cached runtime state per configured server, keyed by name. One RPC;
+  /// `-32601` marks it unsupported and callers keep today's static rows.
+  Future<Map<String, McpRuntimeRow>> mcpRuntimeStatus() =>
+      _call(CapabilityFeature.mcpStatus, () async {
+        final result = await _rpc(
+          'mcp.servers.status',
+          const {},
+          feature: CapabilityFeature.mcpStatus,
+        );
+        final servers = result['servers'];
+        if (servers is! List) throw const FormatException('list expected');
+        return {
+          for (final row in servers.map(McpRuntimeRow.tryParse).nonNulls)
+            row.name: row,
+        };
+      });
+
+  /// One read of the server's log for [server]. stdio servers log into the
+  /// shared MCP stderr file (cut to their own sections); others are found in
+  /// the agent log by name. Lines are returned to the caller and never kept.
+  Future<List<String>> mcpLogLines(String server, {required bool stdio}) =>
+      _call(CapabilityFeature.mcpLogs, () async {
+        final query = stdio
+            ? 'logs?file=mcp&lines=500'
+            : 'logs?file=agent&lines=300'
+                  '&search=${Uri.encodeQueryComponent(server)}';
+        final result = await rest.get(_withProfile(query));
+        final lines = result['lines'];
+        if (lines is! List) throw const FormatException('list expected');
+        final text = lines.whereType<String>().toList(growable: false);
+        return stdio ? filterStdioSections(text, server) : text;
+      });
+
   Future<void> installMcp(
     String name, {
     Map<String, String> environment = const {},
-  }) => _call(CapabilityFeature.mcpCatalog, () async {
-    for (final key in environment.keys) {
-      if (!RegExp(r'^[A-Za-z_][A-Za-z0-9_]{0,127}$').hasMatch(key)) {
+    List<String>? declaredEnv,
+    void Function(CapabilityActionStatus)? onProgress,
+    CapabilityActionToken? token,
+  }) async {
+    await _gate(token);
+    final env = <String, String>{};
+    for (final entry in environment.entries) {
+      if (!RegExp(r'^[A-Za-z_][A-Za-z0-9_]{0,127}$').hasMatch(entry.key)) {
         throw const CapabilityFailure(CapabilityFailureKind.rejected);
       }
+      if (declaredEnv != null && !declaredEnv.contains(entry.key)) continue;
+      env[entry.key] = entry.value;
     }
-    final result = await rest.post(
-      _withProfile('mcp/catalog/install'),
-      body: _profileBody({
-        'name': name.trim(),
-        'env': environment,
-        'enable': true,
-      }),
-      timeout: const Duration(minutes: 2),
-    );
+    final Map<String, dynamic> result;
+    try {
+      result = await _call(
+        CapabilityFeature.mcpCatalog,
+        () => rest.post(
+          _withProfile('mcp/catalog/install'),
+          body: _profileBody({
+            'name': name.trim(),
+            'env': Map<String, String>.of(env),
+            'enable': true,
+          }),
+          timeout: const Duration(minutes: 2),
+        ),
+      );
+    } on CapabilityFailure catch (error) {
+      throw CapabilityFailure(
+        error.kind,
+        detail: _redact(error.detail, env.values),
+      );
+    } finally {
+      env.clear();
+    }
     if (result['ok'] != true) {
       throw const CapabilityFailure(CapabilityFailureKind.rejected);
     }
-  });
+    final action = '${result['action'] ?? ''}'.trim();
+    if (result['background'] == true && action.isNotEmpty) {
+      await _followAction(
+        CapabilityFeature.mcpCatalog,
+        action,
+        onProgress,
+        null,
+        token: token,
+      );
+    }
+  }
+
+  static String _redact(String text, Iterable<String> secrets) {
+    var out = text;
+    for (final secret in secrets) {
+      if (secret.isNotEmpty) out = out.replaceAll(secret, '…');
+    }
+    return out;
+  }
+
+  /// Sets the credentials a plugin install reported as missing, one
+  /// `PUT /api/env {key, value, profile}` per declared name. Values are
+  /// secrets: undeclared names are dropped and no error carries a value.
+  Future<void> setPluginEnv(
+    Map<String, String> values, {
+    required List<String> declared,
+  }) async {
+    final pending = <String, String>{
+      for (final entry in values.entries)
+        if (declared.contains(entry.key) &&
+            RegExp(r'^[A-Za-z_][A-Za-z0-9_]{0,127}$').hasMatch(entry.key))
+          entry.key: entry.value,
+    };
+    try {
+      for (final entry in pending.entries) {
+        await _call(CapabilityFeature.envSet, () async {
+          final result = await rest.put('env', {
+            'key': entry.key,
+            'value': entry.value,
+            if (!_defaultProfile) 'profile': profile.trim(),
+          });
+          if (result['ok'] != true) {
+            throw const CapabilityFailure(CapabilityFailureKind.rejected);
+          }
+        });
+      }
+    } on CapabilityFailure catch (error) {
+      throw CapabilityFailure(
+        error.kind,
+        detail: _redact(error.detail, pending.values),
+      );
+    } finally {
+      pending.clear();
+    }
+  }
 
   Future<void> setMcpEnabled(String name, bool enabled) =>
       _call(CapabilityFeature.mcpServers, () async {
@@ -513,7 +890,7 @@ class CapabilitiesRepository implements HermesMcpProvisioningGateway {
           DesktopControlFailureKind.rejected,
         CapabilityFailureKind.invalidResponse =>
           DesktopControlFailureKind.invalidResponse,
-        CapabilityFailureKind.unavailable =>
+        CapabilityFailureKind.unavailable || CapabilityFailureKind.uncertain =>
           DesktopControlFailureKind.unavailable,
       });
     }
@@ -523,10 +900,14 @@ class CapabilitiesRepository implements HermesMcpProvisioningGateway {
 
   static const Map<String, String> _account = {'type': 'account'};
 
-  Future<Map<String, dynamic>> _rpc(String method, Map<String, dynamic> p) {
+  Future<Map<String, dynamic>> _rpc(
+    String method,
+    Map<String, dynamic> p, {
+    CapabilityFeature feature = CapabilityFeature.hostedConnectors,
+  }) {
     final call = rpc;
     if (call == null) {
-      _support[CapabilityFeature.hostedConnectors] = false;
+      _support[feature] = false;
       throw const CapabilityFailure(CapabilityFailureKind.unsupported);
     }
     final value = profile.trim();
@@ -626,4 +1007,67 @@ class CapabilitiesRepository implements HermesMcpProvisioningGateway {
     CapabilityFeature.hostedConnectors,
     () => _rpc('connectors.accounts.remove', {'connection_id': connectionId}),
   );
+
+  // ── Connector policy (member rules, org locks) ──────────────────────────
+
+  Future<ConnectorPolicy> connectorPolicy() =>
+      _call(CapabilityFeature.connectorPolicy, () async {
+        final result = await _rpc(
+          'connectors.policy.get',
+          const {},
+          feature: CapabilityFeature.connectorPolicy,
+        );
+        return ConnectorPolicy.fromJson(result);
+      });
+
+  Future<List<ConnectorTool>> connectorTools(String slug) =>
+      _call(CapabilityFeature.connectorTools, () async {
+        final result = await _rpc('connectors.tools', {
+          'slug': slug.trim(),
+        }, feature: CapabilityFeature.connectorTools);
+        final tools = result['tools'];
+        if (tools is! List) throw const FormatException('list expected');
+        return [
+          for (final row in tools.whereType<Map>())
+            ConnectorTool.fromJson(Map<String, dynamic>.from(row)),
+        ].where((tool) => tool.slug.isNotEmpty).toList(growable: false);
+      });
+
+  /// Saves the member's full `disabled_tools` list for [slug]. Returns the
+  /// member layer's new revision. A stale [expectedRevision] fails with
+  /// detail `POLICY_CONFLICT`.
+  Future<String> setConnectorTools(
+    String slug,
+    List<String> disabledTools, {
+    required String expectedRevision,
+  }) => _policySet({
+    'type': 'tools',
+    'connector': slug.trim(),
+    'disabled_tools': disabledTools,
+  }, expectedRevision);
+
+  Future<String> setConnectorEnabled(
+    String slug,
+    bool enabled, {
+    required String expectedRevision,
+  }) => _policySet({
+    'type': 'connector',
+    'connector': slug.trim(),
+    'enabled': enabled,
+  }, expectedRevision);
+
+  Future<String> _policySet(
+    Map<String, dynamic> change,
+    String expectedRevision,
+  ) => _call(CapabilityFeature.connectorPolicy, () async {
+    final result = await _rpc('connectors.policy.set', {
+      'change': change,
+      'expected_revision': expectedRevision,
+    }, feature: CapabilityFeature.connectorPolicy);
+    final revision = result['revision'];
+    if (revision is! String || revision.isEmpty) {
+      throw const FormatException('revision expected');
+    }
+    return revision;
+  });
 }

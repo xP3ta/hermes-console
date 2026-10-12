@@ -1,92 +1,81 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../../l10n/app_localizations.dart';
-import '../services/server_setup_generator.dart';
+import '../design/tokens.dart';
 import '../theme/app_theme.dart';
-import 'hermes_notice.dart';
+import 'command_block.dart';
+import 'dashboard_password_help.dart';
 
-/// Dos comandos ejecutables por separado. Evita que una persona en Windows
-/// copie por accidente el `curl | sh`, o que alguien en Unix copie PowerShell.
-class PlatformSetupCommands extends StatelessWidget {
-  const PlatformSetupCommands({super.key, this.pairing = false});
+/// What a computer that already runs Hermes needs so this phone can reach
+/// it: the Dashboard with a username and password, and the Gateway with its
+/// key. Text to run there, as Hermes documents it; none of it can be done
+/// from the phone, and nothing here installs or downloads anything.
+class PlatformConnectionInstructions extends StatelessWidget {
+  const PlatformConnectionInstructions({super.key});
 
-  final bool pairing;
+  /// `hermes dashboard` binds to the computer itself unless told otherwise,
+  /// and refuses a wider bind without a sign-in.
+  static const dashboardCommand =
+      'hermes dashboard --no-open --host 0.0.0.0 --port 9119';
 
-  @override
-  Widget build(BuildContext context) {
-    final str = Strings.of(context);
-    final commands = <(String, String)>[
-      (
-        '${str.setupPlatformLinux} / ${str.setupPlatformMacos}',
-        pairing
-            ? ServerSetupGenerator.pairCommand
-            : ServerSetupGenerator.curlCommand,
-      ),
-      (
-        '${str.setupPlatformWindows} PowerShell',
-        pairing
-            ? ServerSetupGenerator.powershellPairCommand
-            : ServerSetupGenerator.powershellCommand,
-      ),
-    ];
-    return Column(
-      children: commands
-          .map(
-            (entry) => Padding(
-              padding: const EdgeInsets.only(bottom: 12),
-              child: _PlatformCommand(label: entry.$1, command: entry.$2),
-            ),
-          )
-          .toList(growable: false),
-    );
-  }
-}
+  /// Hermes refuses to start the Gateway with a short key.
+  static const keyCommand = 'openssl rand -hex 32';
 
-class _PlatformCommand extends StatelessWidget {
-  const _PlatformCommand({required this.label, required this.command});
+  static const gatewayCommand = 'hermes gateway';
 
-  final String label;
-  final String command;
+  static String gatewayEnvLines(Strings s) =>
+      'API_SERVER_ENABLED=true\n'
+      'API_SERVER_HOST=0.0.0.0\n'
+      'API_SERVER_KEY=${s.setupStepsKeyPlaceholder}';
 
   @override
   Widget build(BuildContext context) {
-    // Bug real: usaba Theme.of(context).colorScheme en vez de `hermes`.
+    final s = Strings.of(context);
     final colors = Theme.of(context).hermes;
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: colors.surfaceVariant.withValues(alpha: 0.5),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: colors.divider),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(label, style: const TextStyle(fontWeight: FontWeight.w700)),
-          const SizedBox(height: 7),
-          SelectableText(
-            command,
-            style: const TextStyle(fontFamily: 'monospace', fontSize: 11.5),
-          ),
-          const SizedBox(height: 6),
-          Align(
-            alignment: Alignment.centerRight,
-            child: TextButton.icon(
-              onPressed: () {
-                Clipboard.setData(ClipboardData(text: command));
-                HermesNotice.of(context).showSnackBar(
-                  SnackBar(content: Text(Strings.of(context).qrCmdCopied)),
-                  kind: HermesNoticeKind.success,
-                );
-              },
-              icon: const Icon(Icons.copy_rounded, size: 16),
-              label: Text(Strings.of(context).commonCopy),
-            ),
-          ),
-        ],
-      ),
+    final title = HermesType.title.copyWith(color: colors.textPrimary);
+    final line = HermesType.text.copyWith(color: colors.textSecondary);
+    Widget gap(double height) => SizedBox(height: height);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(s.setupStepsDashboardTitle, style: title),
+        gap(HermesSpace.x2),
+        Text(s.setupStepsDashboardEnv, style: line),
+        gap(HermesSpace.x2),
+        CommandBlock(
+          dashboardPasswordEnvLines(s),
+          key: const ValueKey('setup-step-dashboard-env'),
+        ),
+        gap(HermesSpace.x3),
+        Text(s.setupStepsDashboardRun, style: line),
+        gap(HermesSpace.x2),
+        const CommandBlock(
+          dashboardCommand,
+          key: ValueKey('setup-step-dashboard-run'),
+        ),
+        gap(HermesSpace.x6),
+        Text(s.setupStepsGatewayTitle, style: title),
+        gap(HermesSpace.x2),
+        Text(s.setupStepsGatewayKey, style: line),
+        gap(HermesSpace.x2),
+        const CommandBlock(keyCommand, key: ValueKey('setup-step-key')),
+        gap(HermesSpace.x3),
+        Text(s.setupStepsGatewayEnv, style: line),
+        gap(HermesSpace.x2),
+        CommandBlock(
+          gatewayEnvLines(s),
+          key: const ValueKey('setup-step-gateway-env'),
+        ),
+        gap(HermesSpace.x3),
+        Text(s.setupStepsGatewayRun, style: line),
+        gap(HermesSpace.x2),
+        const CommandBlock(
+          gatewayCommand,
+          key: ValueKey('setup-step-gateway-run'),
+        ),
+        gap(HermesSpace.x4),
+        Text(s.setupStepsPrivateOnly, style: line),
+      ],
     );
   }
 }

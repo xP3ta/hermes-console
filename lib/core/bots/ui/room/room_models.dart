@@ -10,11 +10,18 @@ import 'package:flutter/painting.dart' show Color, HSLColor;
 
 import '../../../models/agent_profile.dart';
 import '../../../models/hosted_groups.dart';
+import '../../../utils/plain_preview.dart';
+import '../../../utils/unread_rules.dart';
 import '../../../models/room_member_status.dart' show resolveRoomRecipients;
 import '../../../widgets/mission_profile_avatar.dart'
     show MissionProfileAvatarCache;
+import '../../data/room_member_live.dart';
+import '../../data/room_member_prompts.dart';
+import '../../state/bot_presence.dart';
 import '../bot_identity.dart';
 
+export '../../data/room_member_prompts.dart';
+export '../../data/room_member_live.dart';
 export '../bot_identity.dart' show botIdentityColor;
 
 // ─── Attachments (gap G1 interim) ───────────────────────────────────────────
@@ -105,9 +112,53 @@ String appendRoomAttachmentSuffix(String text, List<RoomAttachmentRef> refs) {
   return body.isEmpty ? suffix : '$body\n\n$suffix';
 }
 
-/// Splits a trailing attachment suffix off [text]. Anything malformed stays
+/// A whole line holding exactly `MEDIA:<absolute path>` (Hermes' native
+/// media convention, passed through as text by the bot room adapter).
+/// Inline mentions inside prose never match.
+final RegExp _mediaLineRe = RegExp(r'^\s*MEDIA:\s*(\S(?:.*\S)?)\s*$');
+
+/// Lifts `MEDIA:<path>` lines out of [body] (outside code fences) into
+/// attachment refs, so bot members' images render as previews instead of
+/// raw paths. Lines whose path is not a safe absolute path stay text.
+RoomMessageBody _liftMediaLines(RoomMessageBody body) {
+  if (!body.text.contains('MEDIA:')) return body;
+  final kept = <String>[];
+  final refs = <RoomAttachmentRef>[];
+  var inFence = false;
+  for (final line in body.text.split('\n')) {
+    final trimmed = line.trimLeft();
+    if (trimmed.startsWith('```') || trimmed.startsWith('~~~')) {
+      inFence = !inFence;
+      kept.add(line);
+      continue;
+    }
+    final match = inFence ? null : _mediaLineRe.firstMatch(line);
+    final path = match == null ? null : _unquote(match.group(1)!);
+    if (path == null || !_safeAbsolutePath(path)) {
+      kept.add(line);
+      continue;
+    }
+    final leaf = path.split('/').where((part) => part.isNotEmpty).lastOrNull;
+    if (leaf == null || leaf.length > 255) {
+      kept.add(line);
+      continue;
+    }
+    refs.add(RoomAttachmentRef(name: leaf, path: path));
+  }
+  if (refs.isEmpty) return body;
+  return RoomMessageBody(
+    kept.join('\n').replaceAll(RegExp(r'\n{3,}'), '\n\n').trim(),
+    List.unmodifiable([...refs, ...body.attachments]),
+  );
+}
+
+/// Splits a trailing attachment suffix off [text], and lifts whole-line
+/// `MEDIA:<path>` directives into attachments. Anything malformed stays
 /// part of the Markdown body (never silently dropped).
-RoomMessageBody parseRoomMessageText(String text) {
+RoomMessageBody parseRoomMessageText(String text) =>
+    _liftMediaLines(_parseAttachmentSuffix(text));
+
+RoomMessageBody _parseAttachmentSuffix(String text) {
   final index = text.lastIndexOf(roomAttachmentHeader);
   if (index < 0) return RoomMessageBody(text, const []);
   if (index > 0 && text[index - 1] != '\n') {
@@ -284,6 +335,30 @@ final class RoomThreadSummary {
   });
 }
 
+/// rp1215: the owner's message a member reply answers, from the server's
+/// own coordinate: every `message.member` carries `discussion_event_id`, the
+/// event id of the `message.user` that opened its discussion (the round
+/// trigger, `gateway/hosted_room_discussion.py::_turn_coordinates`). Hermes
+/// publishes no finer `reply_to`, so all replies of a round quote the same
+/// message. Never guessed: no quote when that message is not in the log.
+final class RoomReplyQuote {
+  /// Event id of the quoted message.
+  final String eventId;
+
+  /// One-line plain preview of its text (or its attachment names).
+  final String preview;
+
+  /// Who wrote the quoted message; null when it is the owner's ("You").
+  final String? speaker;
+
+  const RoomReplyQuote({
+    required this.eventId,
+    required this.preview,
+    this.speaker,
+  });
+}
+
+
 final class RoomMessageEntry extends RoomTranscriptEntry {
   final HostedGroupEvent event;
   final RoomMessageBody body;
@@ -291,12 +366,17 @@ final class RoomMessageEntry extends RoomTranscriptEntry {
   final bool firstOfRun;
   final RoomThreadSummary? thread;
 
+  /// Owner message this member reply answers (first reply of a run only):
+  /// the message that opened the discussion. Console-only, never guessed.
+  final RoomReplyQuote? quote;
+
   const RoomMessageEntry({
     required this.event,
     required this.body,
     required this.member,
     required this.firstOfRun,
     this.thread,
+    this.quote,
   });
 
   bool get isUser => event.actor.kind == 'user';
@@ -319,28 +399,11 @@ bool _sameDay(DateTime a, DateTime b) =>
 
 String _speaker(HostedGroupEvent e) => '${e.actor.kind}:${e.actor.id}';
 
+String? _memberLabel(HostedGroupMember? member) =>
+    member?.displayName ?? member?.handle;
+
 String? _discussionOf(HostedGroupEvent e) =>
     e.kind == 'message.user' ? e.eventId : e.activity.discussionId;
-
-/// Thread roots: the first discussion of each thread lives in the main
-/// timeline; later discussions in that thread fold into a reply summary.
-Map<String, String> _rootDiscussions(List<HostedGroupEvent> messages) {
-  final roots = <String, String>{};
-  for (final e in messages) {
-    final thread = e.threadId;
-    final discussion = _discussionOf(e);
-    if (thread == null || discussion == null) continue;
-    roots.putIfAbsent(thread, () => discussion);
-  }
-  return roots;
-}
-
-bool _inMainTimeline(HostedGroupEvent e, Map<String, String> roots) {
-  final thread = e.threadId;
-  final discussion = _discussionOf(e);
-  if (thread == null || discussion == null) return true;
-  return roots[thread] == discussion;
-}
 
 /// Messages of one thread (for the thread sheet), in order.
 List<HostedGroupEvent> roomThreadMessages(
@@ -351,11 +414,24 @@ List<HostedGroupEvent> roomThreadMessages(
     if (e.publicText != null && e.threadId == threadId) e,
 ];
 
+/// What a room log event is for the unread rules: the owner's messages
+/// (from any device) are their own, members' messages are news, the rest
+/// (turn lifecycle, activity) is quiet.
+UnreadRowKind roomEventUnreadKind(HostedGroupEvent e) {
+  if (e.publicText == null) return UnreadRowKind.quiet;
+  return switch (e.kind) {
+    'message.user' => UnreadRowKind.own,
+    'message.member' => UnreadRowKind.news,
+    _ => UnreadRowKind.quiet,
+  };
+}
+
 /// Builds the grouped group-chat transcript (oldest first).
 List<RoomTranscriptEntry> buildRoomTranscript({
   required List<HostedGroupEvent> events,
   required List<HostedGroupMember> members,
   int? lastSeenSeq,
+  int? arrivedThroughSeq,
   Duration runGap = const Duration(minutes: 5),
 }) {
   final messages = [
@@ -364,21 +440,13 @@ List<RoomTranscriptEntry> buildRoomTranscript({
           (e.kind == 'message.user' || e.kind == 'message.member'))
         e,
   ];
-  final roots = _rootDiscussions(messages);
-  final main = <HostedGroupEvent>[];
-  final hiddenByThread = <String, List<HostedGroupEvent>>{};
-  for (final e in messages) {
-    if (_inMainTimeline(e, roots)) {
-      main.add(e);
-    } else {
-      hiddenByThread.putIfAbsent(e.threadId!, () => []).add(e);
-    }
-  }
-  // Where each thread summary / passes line hangs: last main message.
-  final lastMainOfThread = <String, String>{};
+  // Every message stays in the timeline in log order, like Desktop rooms:
+  // a reply in an existing thread and the answers it triggers land at the
+  // bottom, where the owner is, never folded into a summary far above.
+  final main = messages;
+  // Where each passes line hangs: last message of the discussion.
   final lastMainOfDiscussion = <String, String>{};
   for (final e in main) {
-    if (e.threadId != null) lastMainOfThread[e.threadId!] = e.eventId;
     final discussion = _discussionOf(e);
     if (discussion != null) lastMainOfDiscussion[discussion] = e.eventId;
   }
@@ -393,12 +461,61 @@ List<RoomTranscriptEntry> buildRoomTranscript({
     }
   }
 
+  final byId = <String, HostedGroupEvent>{
+    for (final e in messages) e.eventId: e,
+  };
+  // One preview per quoted message, however many replies quote it.
+  final quotes = <String, RoomReplyQuote?>{};
+  RoomReplyQuote? quoteOf(HostedGroupEvent target) =>
+      quotes.putIfAbsent(target.eventId, () {
+        final body = parseRoomMessageText(target.publicText!);
+        // Bounded: a pasted page must not cost a full Markdown pass.
+        final head = body.text.length > 600
+            ? String.fromCharCodes(body.text.runes.take(600))
+            : body.text;
+        var preview = plainPreview(head, maxChars: 120);
+        if (preview.isEmpty) {
+          preview = body.attachments.map((a) => a.name).join(', ');
+        }
+        if (preview.isEmpty) return null;
+        return RoomReplyQuote(
+          eventId: target.eventId,
+          preview: preview,
+          speaker: target.kind == 'message.user'
+              ? null
+              : _memberLabel(roomMemberForActor(target.actor, members)) ??
+                    target.actor.publicLabel,
+        );
+      });
+  // The message a member reply answers: the owner message that opened its
+  // discussion (the round's trigger).
+  HostedGroupEvent? targetOf(HostedGroupEvent e) {
+    if (e.kind != 'message.member') return null;
+    final trigger = byId[e.activity.discussionId];
+    return trigger?.kind == 'message.user' ? trigger : null;
+  }
+
   final out = <RoomTranscriptEntry>[];
   HostedGroupEvent? previous;
   var breakRun = true;
   var newSinceShown = false;
   final seen = lastSeenSeq ?? 0;
-  final hasOlder = main.any((e) => e.sequence <= seen);
+  // One unread rule for every chat (unread_rules.dart): the divider marks
+  // the first reply from someone else that arrived while the reader was
+  // away (after the marker, up to what was there when they came back);
+  // never the owner's own messages, never what arrives while reading.
+  final firstNewIndex = seen <= 0
+      ? null
+      : unreadFirstAwayIndex<HostedGroupEvent>(
+          main,
+          seenThrough: seen,
+          arrivedThrough: arrivedThroughSeq ?? (1 << 62),
+          positionOf: (e) => e.sequence,
+          kindOf: roomEventUnreadKind,
+        );
+  final firstNewSeq = firstNewIndex == null
+      ? null
+      : main[firstNewIndex].sequence;
   final roundOf = <String, int>{};
   for (final e in main) {
     final at = roomEventTime(e);
@@ -406,7 +523,7 @@ List<RoomTranscriptEntry> buildRoomTranscript({
       out.add(RoomDaySeparator(DateTime(at.year, at.month, at.day)));
       breakRun = true;
     }
-    if (!newSinceShown && seen > 0 && hasOlder && e.sequence > seen) {
+    if (!newSinceShown && firstNewSeq != null && e.sequence >= firstNewSeq) {
       out.add(const RoomNewSinceDivider());
       newSinceShown = true;
       breakRun = true;
@@ -426,17 +543,7 @@ List<RoomTranscriptEntry> buildRoomTranscript({
         previous == null ||
         _speaker(previous) != _speaker(e) ||
         at.difference(roomEventTime(previous)) > runGap;
-    final hidden = e.threadId == null ? null : hiddenByThread[e.threadId!];
-    final summary =
-        hidden != null &&
-            hidden.isNotEmpty &&
-            lastMainOfThread[e.threadId] == e.eventId
-        ? RoomThreadSummary(
-            threadId: e.threadId!,
-            replies: hidden.length,
-            lastActor: hidden.last.actor,
-          )
-        : null;
+    final target = targetOf(e);
     out.add(
       RoomMessageEntry(
         event: e,
@@ -445,10 +552,16 @@ List<RoomTranscriptEntry> buildRoomTranscript({
             ? null
             : roomMemberForActor(e.actor, members),
         firstOfRun: firstOfRun,
-        thread: summary,
+        // Once per run of the same discussion: a speaker's follow-up
+        // bubbles answer the same message.
+        quote:
+            target != null &&
+                (firstOfRun || _discussionOf(previous) != discussion)
+            ? quoteOf(target)
+            : null,
       ),
     );
-    breakRun = summary != null;
+    breakRun = false;
     if (discussion != null &&
         lastMainOfDiscussion[discussion] == e.eventId &&
         (passes[discussion]?.isNotEmpty ?? false)) {
@@ -484,9 +597,30 @@ final class RoomRoundRow {
   final String? taskId;
   final RoomApprovalAction? approval;
 
+  /// A human prompt open in the member's own session (clarify question,
+  /// approval the driver did not report, or an unreadable wait).
+  final RoomMemberPrompt? prompt;
+
   /// Retry is offered by the server for this task.
   final bool retryOffered;
   final String? reasonCode;
+
+  /// Place among the members still waiting (1 = next). Only set when the
+  /// server's serial order makes it known; never guessed.
+  final int? queuePosition;
+
+  /// `turn.settled.message_event_id` of a reply, to jump to it.
+  final String? replyEventId;
+
+  /// Turn duration: its terminal event minus the previous event of the
+  /// same discussion (the driver runs one task per room at a time).
+  final Duration? took;
+
+  /// The server deferred the turn (`turn.deferred`) and will retry it.
+  final bool deferred;
+
+  /// Live steps of a working local member (read-only ring tail).
+  final RoomMemberLive? live;
 
   const RoomRoundRow({
     required this.member,
@@ -494,9 +628,23 @@ final class RoomRoundRow {
     this.since,
     this.taskId,
     this.approval,
+    this.prompt,
     this.retryOffered = false,
     this.reasonCode,
+    this.queuePosition,
+    this.replyEventId,
+    this.took,
+    this.deferred = false,
+    this.live,
   });
+}
+
+/// One finished earlier round of the current discussion.
+final class RoomPastRound {
+  /// 1-based.
+  final int round;
+  final List<RoomRoundRow> rows;
+  const RoomPastRound({required this.round, required this.rows});
 }
 
 final class RoomRoundModel {
@@ -509,6 +657,20 @@ final class RoomRoundModel {
   final int queued;
   final bool active;
 
+  /// Members expected in this round, when the server's rule makes it
+  /// known (the first round answers the user's mentions, or everyone).
+  /// Later rounds go to whoever a Bot cites: unknown in advance.
+  final int? total;
+
+  /// When the discussion started (the user's message).
+  final DateTime? startedAt;
+
+  /// Latest event of the discussion once nothing is running.
+  final DateTime? endedAt;
+
+  /// Earlier rounds of the same discussion, oldest first.
+  final List<RoomPastRound> previous;
+
   const RoomRoundModel({
     required this.discussionId,
     required this.round,
@@ -516,11 +678,47 @@ final class RoomRoundModel {
     required this.working,
     required this.queued,
     required this.active,
+    this.total,
+    this.startedAt,
+    this.endedAt,
+    this.previous = const [],
   });
 
   int get needsYou =>
       rows.where((r) => r.state == RoomTurnState.needsYou).length;
   int get failed => rows.where((r) => r.state == RoomTurnState.failed).length;
+
+  /// Members that replied or passed in this round.
+  int get responded => rows
+      .where(
+        (r) =>
+            (r.state == RoomTurnState.replied ||
+                r.state == RoomTurnState.passed) &&
+            r.inRound,
+      )
+      .length;
+}
+
+extension on RoomRoundRow {
+  /// Rows built for the current round carry no marker; rows whose last
+  /// event belongs to an earlier round are flagged by [_RoomRoundRowEarlier].
+  bool get inRound => this is! _RoomRoundRowEarlier;
+}
+
+/// A row whose latest terminal event is from an earlier round (it is shown
+/// with that state but does not count toward this round's progress).
+final class _RoomRoundRowEarlier extends RoomRoundRow {
+  const _RoomRoundRowEarlier({
+    required super.member,
+    required super.state,
+    super.since,
+    super.taskId,
+    super.reasonCode,
+    super.replyEventId,
+    super.took,
+    super.retryOffered,
+    super.deferred,
+  });
 }
 
 const _turnKinds = {
@@ -531,13 +729,40 @@ const _turnKinds = {
   'turn.deferred',
 };
 
+RoomTurnState _terminalState(HostedGroupEvent e, {required bool retry}) =>
+    switch (e.kind) {
+      'turn.settled' =>
+        e.activity.passed ? RoomTurnState.passed : RoomTurnState.replied,
+      'turn.failed' => RoomTurnState.failed,
+      'turn.cancelled' => RoomTurnState.stopped,
+      'turn.deferred' => retry ? RoomTurnState.failed : RoomTurnState.queued,
+      _ => RoomTurnState.working,
+    };
+
 /// Current round of the latest discussion, per member, from `turn.*`
 /// events plus `driver_status` (approvals, retries, counts). Returns `null`
 /// when the room has no user discussion yet.
+///
+/// The hosted driver publishes only terminal turn events and runs one task
+/// per room at a time, in roster order among the first round's recipients.
+/// So while `driver_status.counts.running` says a task runs and no member
+/// is known to be working, the first recipient without a terminal event is
+/// the one running and the rest wait in that order. Without driver evidence
+/// nobody is shown working and no queue position is given.
+///
+/// [live] (read from local members' sessions) marks a member working even
+/// in later rounds, whose responders the log cannot predict.
+///
+/// Without a driver status, an open `turn.started` counts as working only
+/// while the latest activity of that member's turn is fresh at [now]
+/// (same window as [BotPresence.workerFreshness]).
 RoomRoundModel? deriveRoomRound({
   required List<HostedGroupEvent> events,
   required List<HostedGroupMember> members,
   RoomDriverStatus? driverStatus,
+  DateTime? now,
+  List<RoomMemberPrompt> memberPrompts = const [],
+  Map<String, RoomMemberLive> live = const {},
 }) {
   HostedGroupEvent? discussion;
   for (final e in events.reversed) {
@@ -567,6 +792,28 @@ RoomRoundModel? deriveRoomRound({
     final r = e.activity.roundIndex;
     if (r != null && r > round) round = r;
   }
+  final startedAt = roomEventTime(discussion);
+
+  /// Start of the turn that ended with [e]: the previous event of the
+  /// discussion (serial driver), else the user's message.
+  DateTime anchorBefore(int sequence) {
+    var at = startedAt;
+    for (final e in current) {
+      if (e.sequence >= sequence) break;
+      at = roomEventTime(e);
+    }
+    return at;
+  }
+
+  final latestAnchor = current.isEmpty
+      ? startedAt
+      : roomEventTime(current.last);
+  Duration? tookOf(HostedGroupEvent e) {
+    if (e.kind == 'turn.started' || e.kind == 'turn.deferred') return null;
+    final d = roomEventTime(e).difference(anchorBefore(e.sequence));
+    return d.isNegative ? null : d;
+  }
+
   final driver = driverStatus;
   final roomWorking = driver?.working ?? false;
   final recipients = resolveRoomRecipients(
@@ -580,9 +827,12 @@ RoomRoundModel? deriveRoomRound({
   final ordered = [
     ...recipients,
     for (final m in members)
-      if (!recipients.contains(m) && touched.contains(m.memberId)) m,
+      if (!recipients.contains(m) &&
+          (touched.contains(m.memberId) || live.containsKey(m.memberId)))
+        m,
   ];
   final rows = <RoomRoundRow>[];
+  final pending = <int>[]; // indexes of rows with no turn event yet
   for (final member in ordered) {
     HostedGroupEvent? last;
     for (final e in current) {
@@ -592,61 +842,176 @@ RoomRoundModel? deriveRoomRound({
     for (final a in driver?.approvals ?? const <RoomApprovalAction>[]) {
       if (a.memberId == member.memberId) approval = a;
     }
+    RoomMemberPrompt? prompt;
+    for (final p in memberPrompts) {
+      if (p.memberId == member.memberId) {
+        prompt = p;
+        break;
+      }
+    }
     final taskId = last?.activity.taskId;
     final retry = taskId != null && (driver?.offersRetry(taskId) ?? false);
-    final since = last == null ? null : roomEventTime(last);
+    var since = last == null ? null : roomEventTime(last);
+    bool turnIsFresh() {
+      if (now == null) return true;
+      var latest = last!.createdAt;
+      for (final e in events) {
+        if (e.sequence <= last.sequence) continue;
+        final memberId =
+            e.activity.memberId ??
+            (e.kind == 'message.member' ? e.actor.id : null);
+        if (memberId == member.memberId && e.createdAt > latest) {
+          latest = e.createdAt;
+        }
+      }
+      final seconds = latest < 1e12 ? latest : latest / 1000;
+      return BotPresence.isFreshActivity(seconds, now);
+    }
+
+    final memberLive = live[member.memberId];
     RoomTurnState state;
-    if (approval != null) {
+    // A member blocked on a human is waiting for you, never "working".
+    if (approval != null || prompt != null) {
       state = RoomTurnState.needsYou;
+      since ??= latestAnchor;
+    } else if (memberLive != null) {
+      state = RoomTurnState.working;
+      since = latestAnchor;
     } else {
       switch (last?.kind) {
         case 'turn.started':
-          state = roomWorking || driver == null
+          state = roomWorking || (driver == null && turnIsFresh())
               ? RoomTurnState.working
               : RoomTurnState.noReply;
-        case 'turn.settled':
-          state = last!.activity.passed
-              ? RoomTurnState.passed
-              : RoomTurnState.replied;
-        case 'turn.failed':
-          state = RoomTurnState.failed;
-        case 'turn.cancelled':
-          state = RoomTurnState.stopped;
-        case 'turn.deferred':
-          state = retry ? RoomTurnState.failed : RoomTurnState.queued;
-        default:
+        case null:
           state = roomWorking ? RoomTurnState.queued : RoomTurnState.noReply;
+          if (roomWorking) pending.add(rows.length);
+        default:
+          state = _terminalState(last!, retry: retry);
       }
     }
+    final earlier =
+        last != null &&
+        last.kind != 'turn.started' &&
+        (last.activity.roundIndex ?? 0) < round &&
+        state != RoomTurnState.needsYou &&
+        state != RoomTurnState.working;
+    final replyEventId = last?.kind == 'turn.settled' && !last!.activity.passed
+        ? last.activity.messageEventId
+        : null;
+    final took = last == null ? null : tookOf(last);
+    final deferred = last?.kind == 'turn.deferred' && !retry;
     rows.add(
-      RoomRoundRow(
-        member: member,
-        state: state,
-        since: since,
-        taskId: approval?.taskId ?? taskId,
-        approval: approval,
-        retryOffered: retry,
-        reasonCode: last?.activity.reasonCode,
-      ),
+      earlier
+          ? _RoomRoundRowEarlier(
+              member: member,
+              state: state,
+              since: since,
+              taskId: taskId,
+              retryOffered: retry,
+              reasonCode: last.activity.reasonCode,
+              replyEventId: replyEventId,
+              took: took,
+              deferred: deferred,
+            )
+          : RoomRoundRow(
+              member: member,
+              state: state,
+              since: since,
+              taskId: approval?.taskId ?? taskId,
+              approval: approval,
+              prompt: prompt,
+              retryOffered: retry,
+              reasonCode: last?.activity.reasonCode,
+              replyEventId: replyEventId,
+              took: took,
+              deferred: deferred,
+              live: memberLive,
+            ),
     );
+  }
+  // Serial driver, first round: the running task is the first recipient
+  // without a terminal event, the others wait in roster order.
+  final running = driver?.counts['running'] ?? 0;
+  final someoneWorks = rows.any(
+    (r) =>
+        r.state == RoomTurnState.working || r.state == RoomTurnState.needsYou,
+  );
+  if (round == 0 && pending.isNotEmpty) {
+    var position = 0;
+    for (final index in pending) {
+      final row = rows[index];
+      if (!someoneWorks && running > 0 && index == pending.first) {
+        rows[index] = RoomRoundRow(
+          member: row.member,
+          state: RoomTurnState.working,
+          since: latestAnchor,
+        );
+        continue;
+      }
+      position++;
+      rows[index] = RoomRoundRow(
+        member: row.member,
+        state: RoomTurnState.queued,
+        queuePosition: position,
+      );
+    }
+  }
+  final previous = <RoomPastRound>[];
+  for (var r = 0; r < round; r++) {
+    final byMember = <String, HostedGroupEvent>{};
+    for (final e in current) {
+      final id = e.activity.memberId;
+      if (id == null || (e.activity.roundIndex ?? 0) != r) continue;
+      if (e.kind == 'turn.started') continue;
+      byMember.remove(id);
+      byMember[id] = e;
+    }
+    final pastRows = <RoomRoundRow>[];
+    for (final m in members) {
+      final e = byMember[m.memberId];
+      if (e == null) continue;
+      pastRows.add(
+        RoomRoundRow(
+          member: m,
+          state: _terminalState(e, retry: false),
+          reasonCode: e.activity.reasonCode,
+          replyEventId: e.kind == 'turn.settled' && !e.activity.passed
+              ? e.activity.messageEventId
+              : null,
+          took: tookOf(e),
+          deferred: e.kind == 'turn.deferred',
+        ),
+      );
+    }
+    if (pastRows.isNotEmpty) {
+      previous.add(
+        RoomPastRound(round: r + 1, rows: List.unmodifiable(pastRows)),
+      );
+    }
   }
   final working = rows.where((r) => r.state == RoomTurnState.working).length;
   final queuedRows = rows.where((r) => r.state == RoomTurnState.queued).length;
   final queuedDriver = driver?.counts['queued'] ?? 0;
+  final active =
+      roomWorking ||
+      (driver?.needsUser ?? false) ||
+      rows.any(
+        (r) =>
+            r.state == RoomTurnState.working ||
+            r.state == RoomTurnState.needsYou,
+      );
   return RoomRoundModel(
     discussionId: discussionId,
     round: round + 1,
     rows: List.unmodifiable(rows),
     working: working,
     queued: queuedDriver > queuedRows ? queuedDriver : queuedRows,
-    active:
-        roomWorking ||
-        (driver?.needsUser ?? false) ||
-        rows.any(
-          (r) =>
-              r.state == RoomTurnState.working ||
-              r.state == RoomTurnState.needsYou,
-        ),
+    active: active,
+    total: round == 0 ? recipients.length : null,
+    startedAt: startedAt,
+    endedAt: active ? null : latestAnchor,
+    previous: List.unmodifiable(previous),
   );
 }
 

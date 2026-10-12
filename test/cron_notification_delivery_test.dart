@@ -347,7 +347,7 @@ void main() {
       jsonDecode(args['payload'] as String) as Map,
     );
 
-    expect(args['title'], 'Tarea programada completada');
+    expect(args['title'], 'Tarea programada terminada');
     expect(body, contains('3 tareas verificadas'));
     expect(body, contains('2 pendientes'));
     expect(body, isNot(contains('**')));
@@ -390,7 +390,7 @@ void main() {
       final shown = calls.where((call) => call.method == 'show').single;
       final args = Map<String, dynamic>.from(shown.arguments as Map);
       expect(args['title'], 'Nueva actividad en Hermes');
-      expect(args['body'], 'Abre la aplicación para ver los detalles.');
+      expect(args['body'], 'Toca para verla');
       expect(
         Map<String, dynamic>.from(args['platformSpecifics'] as Map)['subText'],
         'Hermes',

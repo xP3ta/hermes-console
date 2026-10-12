@@ -8,6 +8,8 @@ import '../models/interactive_prompt.dart';
 import '../services/interactive_prompt_reducer.dart';
 import '../theme/app_theme.dart';
 import '../theme/component_profile.dart';
+import '../utils/plain_preview.dart';
+import 'compact_markdown.dart';
 import 'hermes_premium_ui.dart';
 
 /// Inline tactile surface for Hermes Desktop 0.19 blocking requests.
@@ -56,6 +58,7 @@ class _InteractivePromptCardState extends State<InteractivePromptCard> {
   final TextEditingController _controller = TextEditingController();
   final Map<String, _StagedAnswer> _batchAnswers = {};
   final Map<String, TextEditingController> _batchControllers = {};
+  final List<String> _singleSelected = [];
   bool _obscure = true;
   bool _batchSubmissionStarted = false;
 
@@ -122,6 +125,7 @@ class _InteractivePromptCardState extends State<InteractivePromptCard> {
     }
     final request = widget.entry.request;
     final oldRequest = oldWidget.entry.request;
+    if (oldRequest?.key != request?.key) _singleSelected.clear();
     if (request is! ClarifyPromptRequest || !request.isBatch) return;
     if (oldRequest is! ClarifyPromptRequest ||
         !oldRequest.isBatch ||
@@ -155,10 +159,38 @@ class _InteractivePromptCardState extends State<InteractivePromptCard> {
 
   void _submit([String? explicitValue]) {
     if (widget.busy) return;
+    if (explicitValue == null && _isSingleMultiSelect) {
+      _submitSingleMultiSelect();
+      return;
+    }
     final value = explicitValue ?? _controller.text;
     if (!_isTerminalRead && value.trim().isEmpty) return;
     _controller.clear();
     widget.onSubmit(value);
+  }
+
+  /// A single `multi_select` clarify: Desktop answers with the JSON list of
+  /// picked choices plus any typed extra (`clarify-tool.tsx`), which Hermes
+  /// reads back through `_parse_multi_select_response`.
+  bool get _isSingleMultiSelect {
+    final request = _request;
+    return request is ClarifyPromptRequest &&
+        !request.isBatch &&
+        request.multiSelect;
+  }
+
+  void _toggleSingleChoice(String choice) => setState(() {
+    _singleSelected.contains(choice)
+        ? _singleSelected.remove(choice)
+        : _singleSelected.add(choice);
+  });
+
+  void _submitSingleMultiSelect() {
+    final draft = _controller.text.trim();
+    final answer = [..._singleSelected, if (draft.isNotEmpty) draft];
+    if (answer.isEmpty) return;
+    _controller.clear();
+    widget.onSubmit(jsonEncode(answer));
   }
 
   Future<void> _submitBatch() async {
@@ -338,7 +370,7 @@ class _InteractivePromptCardState extends State<InteractivePromptCard> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: _isBatchClarify
                           ? _batchBody(context, constraints)
-                          : _requestBody(context, request, colors),
+                          : _requestBody(context, request, colors, constraints),
                     ),
                     actions: _isBatchClarify
                         ? _batchActions(strings, compact: compactBatchActions)
@@ -359,27 +391,53 @@ class _InteractivePromptCardState extends State<InteractivePromptCard> {
     BuildContext context,
     InteractivePromptRequest request,
     HermesThemeColors colors,
+    BoxConstraints constraints,
   ) {
     final strings = Strings.of(context);
     switch (request) {
-      case ClarifyPromptRequest(:final question, :final choices):
+      case ClarifyPromptRequest(
+        :final question,
+        :final choices,
+        :final multiSelect,
+      ):
+        // rt1215: a long question or many choices scroll inside a bounded
+        // box (as the batch body does); the answer field stays reachable.
         return [
-          _questionText(question, colors),
-          if (choices.isNotEmpty) ...[
-            const SizedBox(height: 10),
-            for (final choice in choices) ...[
-              _choiceRow(
-                context,
-                label: choice,
-                selected: false,
-                multiSelect: false,
-                trailingChevron: true,
-                onTap: widget.busy ? null : () => _submit(choice),
+          ConstrainedBox(
+            key: const ValueKey('interactive-prompt-scroll'),
+            constraints: BoxConstraints(
+              maxHeight: _scrollCap(context, constraints),
+            ),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _questionText(question, colors),
+                  if (choices.isNotEmpty) ...[
+                    const SizedBox(height: 10),
+                    for (final choice in choices) ...[
+                      _choiceRow(
+                        context,
+                        label: choice,
+                        selected:
+                            multiSelect && _singleSelected.contains(choice),
+                        multiSelect: multiSelect,
+                        trailingChevron: !multiSelect,
+                        onTap: widget.busy
+                            ? null
+                            : multiSelect
+                            ? () => _toggleSingleChoice(choice)
+                            : () => _submit(choice),
+                      ),
+                      const SizedBox(height: 6),
+                    ],
+                  ],
+                ],
               ),
-              const SizedBox(height: 6),
-            ],
-          ] else
-            const SizedBox(height: 10),
+            ),
+          ),
+          if (choices.isEmpty) const SizedBox(height: 10),
           _input(strings.interactiveAnswerHint, sensitive: false),
         ];
       case SudoPromptRequest():
@@ -413,15 +471,34 @@ class _InteractivePromptCardState extends State<InteractivePromptCard> {
     }
   }
 
-  Widget _questionText(String text, HermesThemeColors colors) => Text(
-    text,
-    style: TextStyle(
-      color: colors.textPrimary,
-      fontSize: 14.5,
-      height: 1.3,
-      fontWeight: FontWeight.w600,
-    ),
-  );
+  // rt1215: an agent question written in Markdown renders as Markdown.
+  Widget _questionText(String text, HermesThemeColors colors) =>
+      looksLikeMarkdown(text)
+      ? CompactMarkdown(
+          data: text,
+          tone: CompactMarkdownTone.body,
+          fontSize: 14.5,
+        )
+      : Text(
+          text,
+          style: TextStyle(
+            color: colors.textPrimary,
+            fontSize: 14.5,
+            height: 1.3,
+            fontWeight: FontWeight.w600,
+          ),
+        );
+
+  /// Height left for a scrolling question body once the header, the answer
+  /// field and the actions have their room (at most half the screen).
+  double _scrollCap(BuildContext context, BoxConstraints constraints) {
+    final reserved = MediaQuery.textScalerOf(context).scale(240.0);
+    final screen = MediaQuery.sizeOf(context).height;
+    final host = constraints.maxHeight.isFinite ? constraints.maxHeight : screen;
+    final room = (host < screen ? host : screen) - reserved;
+    final half = screen * 0.5;
+    return (room < half ? room : half).clamp(96.0, double.infinity);
+  }
 
   List<Widget> _batchBody(BuildContext context, BoxConstraints constraints) {
     final request = _request as ClarifyPromptRequest;
@@ -735,14 +812,28 @@ class _InteractivePromptCardState extends State<InteractivePromptCard> {
     onSubmitted: (_) => _submit(),
     sensitive: sensitive,
     suffixIcon: sensitive
-        ? IconButton(
-            onPressed: widget.busy
+        ? Semantics(
+            label: _obscure
+                ? Strings.of(context).a11yShowAnswer
+                : Strings.of(context).a11yHideAnswer,
+            button: true,
+            enabled: !widget.busy,
+            onTap: widget.busy
                 ? null
                 : () => setState(() => _obscure = !_obscure),
-            icon: Icon(
-              _obscure
-                  ? Icons.visibility_outlined
-                  : Icons.visibility_off_outlined,
+            excludeSemantics: true,
+            child: IconButton(
+              onPressed: widget.busy
+                  ? null
+                  : () => setState(() => _obscure = !_obscure),
+              tooltip: _obscure
+                  ? Strings.of(context).a11yShowAnswer
+                  : Strings.of(context).a11yHideAnswer,
+              icon: Icon(
+                _obscure
+                    ? Icons.visibility_outlined
+                    : Icons.visibility_off_outlined,
+              ),
             ),
           )
         : null,

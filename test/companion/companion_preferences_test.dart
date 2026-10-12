@@ -6,17 +6,25 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   group('CompanionPreferences', () {
-    test(
-      'valores por defecto: enabled=true, Inicio visible y paseo=false',
-      () async {
-        SharedPreferences.setMockInitialValues({});
-        final prefs = await CompanionPreferences.load();
-        expect(prefs.enabled, isTrue);
-        expect(prefs.selectedSlug, isNull);
-        expect(prefs.roamingEnabled, isFalse);
-        expect(prefs.showOnHome, isTrue);
-      },
-    );
+    test('valores por defecto: enabled=true, sin mascota elegida', () async {
+      SharedPreferences.setMockInitialValues({});
+      final prefs = await CompanionPreferences.load();
+      expect(prefs.enabled, isTrue);
+      expect(prefs.selectedSlug, isNull);
+    });
+
+    test('the two retired Inicio switches are neither read nor lost', () async {
+      SharedPreferences.setMockInitialValues({
+        CompanionPreferences.roamingEnabledKey: true,
+        CompanionPreferences.showOnHomeKey: false,
+      });
+      final store = await SharedPreferences.getInstance();
+      final prefs = await CompanionPreferences.load();
+      expect(prefs.enabled, isTrue);
+      // A backup made by an older version still carries them.
+      expect(store.getBool(CompanionPreferences.roamingEnabledKey), isTrue);
+      expect(store.getBool(CompanionPreferences.showOnHomeKey), isFalse);
+    });
 
     test('round-trip de slug y enabled', () async {
       SharedPreferences.setMockInitialValues({});
@@ -45,14 +53,10 @@ void main() {
       final a = await CompanionPreferences.load();
       await a.setSelectedSlug('nova');
       await a.setEnabled(false);
-      await a.setRoamingEnabled(true);
-      await a.setShowOnHome(false);
 
       final b = await CompanionPreferences.load();
       expect(b.selectedSlug, 'nova');
       expect(b.enabled, isFalse);
-      expect(b.roamingEnabled, isTrue);
-      expect(b.showOnHome, isFalse);
     });
 
     test('migra el tamaño continuo desde el preset S/M/L anterior', () async {

@@ -1,12 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Chat rápido. Two cells by default; widened to four it gains the field
+     and the camera. One row only. -->
 <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
-    android:description="@string/hermes_widget_compact_description"
-    android:initialKeyguardLayout="@layout/hermes_widget_compact_preview"
-    android:initialLayout="@layout/hermes_widget_compact_preview"
+    android:description="@string/lw_quick_description"
+    android:initialLayout="@layout/lw_quick_small"
     android:minWidth="110dp"
     android:minHeight="40dp"
     android:minResizeWidth="110dp"
-    android:previewLayout="@layout/hermes_widget_compact_preview"
+    android:previewLayout="@layout/lw_quick_small"
     android:resizeMode="horizontal"
     android:targetCellWidth="2"
     android:targetCellHeight="1"

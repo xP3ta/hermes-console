@@ -10,14 +10,14 @@ void main() {
     'en': [
       'Bots',
       'Create',
-      'New bot',
+      'New profile',
       'New room',
       '1 member, incomplete team',
     ],
     'es': [
       'Bots',
       'Crear',
-      'Nuevo bot',
+      'Nuevo perfil',
       'Nueva sala',
       '1 miembro, equipo incompleto',
     ],

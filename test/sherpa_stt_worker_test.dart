@@ -1,6 +1,9 @@
 import 'dart:async';
+import 'dart:io';
+import 'dart:isolate';
 import 'dart:typed_data';
 
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/services/voice/sherpa_stt_worker.dart';
 import 'package:hermes_android/core/services/voice/stt_engine.dart';
@@ -86,6 +89,9 @@ class _FakeWorker implements SherpaSttWorker {
   List<String> flushSegments = const [];
   List<String> acceptSegments = const [];
 
+  /// The real gate, fed like the isolate feeds it.
+  final SherpaSpeechGate gate = SherpaSpeechGate();
+
   final List<int> acceptedGenerations = [];
   final List<int> acceptedLengths = [];
   final List<int> flushGenerations = [];
@@ -117,22 +123,34 @@ class _FakeWorker implements SherpaSttWorker {
     return flushSegments;
   }
 
+  /// One chunk of [frames] 30 ms frames at [level]. [segments] is the text
+  /// Whisper would write for a segment made of those frames: as in the
+  /// isolate, it is only "transcribed" when the gate finds speech in it.
   void emit({
     required int generation,
     double level = 0.5,
     bool speechDetected = true,
-    bool? acousticSpeechEvidence,
+    int frames = SherpaSpeechGate.sustainedWindow,
     List<String> segments = const [],
   }) {
+    final evidence = gate.accept(
+      _steady(level, frames),
+      speechDetected: speechDetected,
+    );
+    final kept =
+        segments.isEmpty || gate.levelsHaveSpeech(List.filled(frames, level));
     updatesController.add(
       SherpaSttWorkerUpdate(
         generation: generation,
         level: level,
         speechDetected: speechDetected,
-        acousticSpeechEvidence:
-            acousticSpeechEvidence ??
-            (speechDetected && level >= SherpaDesktopSpeechGate.levelThreshold),
-        segments: segments,
+        acousticSpeechEvidence: evidence,
+        segments: kept ? segments : const [],
+        rejectedSegments: kept ? 0 : segments.length,
+        rejectedMs: kept ? 0 : frames * 30,
+        rejectedPeak: kept ? 0 : level,
+        noiseFloor: gate.noiseFloor,
+        trigger: gate.trigger,
       ),
     );
   }
@@ -143,6 +161,64 @@ class _FakeWorker implements SherpaSttWorker {
     if (!updatesController.isClosed) await updatesController.close();
   }
 }
+
+/// The worker isolate's protocol without the native library. `numThreads` is
+/// how long "opening the model" keeps it inside one call, and `tokensPath` a
+/// file where it leaves what it did last.
+void _fakeWorkerIsolate(Map<String, Object?> bootstrap) {
+  final replyTo = bootstrap['replyTo']! as SendPort;
+  final state = File(bootstrap['tokensPath']! as String);
+  final commands = ReceivePort();
+  replyTo.send(commands.sendPort);
+  commands.listen((message) {
+    if (message is! Map) return;
+    switch (message['type']) {
+      case 'prepare':
+        sleep(Duration(milliseconds: bootstrap['numThreads']! as int));
+        state.writeAsStringSync('loaded');
+        replyTo.send({
+          'type': 'result',
+          'id': message['id'],
+          'load': const {'bindings': 3, 'recognizer': 40, 'vad': 5},
+        });
+      case 'dispose':
+        state.writeAsStringSync('freed');
+        replyTo.send(const {'type': 'disposed'});
+        commands.close();
+    }
+  });
+}
+
+/// [samples] PCM16 samples of a steady signal at [amplitude] of full scale.
+Uint8List _pcm16Steady(double amplitude, int samples) {
+  final data = ByteData(samples * 2);
+  for (var index = 0; index < samples; index++) {
+    data.setInt16(index * 2, (amplitude * 32768).round(), Endian.little);
+  }
+  return data.buffer.asUint8List();
+}
+
+/// [frames] 30 ms frames of a steady signal whose Sherpa level is [level].
+Float32List _steady(double level, int frames) =>
+    Float32List(SherpaSpeechGate.frameSamples * frames)
+      ..fillRange(0, SherpaSpeechGate.frameSamples * frames, level / 4);
+
+/// A gate that has heard [frames] quiet frames at [floor].
+SherpaSpeechGate _gateInRoom(double floor, {int frames = 20}) {
+  final gate = SherpaSpeechGate();
+  for (var index = 0; index < frames; index++) {
+    gate.acceptLevelFrame(floor, speechDetected: false);
+  }
+  return gate;
+}
+
+/// A second of a spoken sentence whose loudest frame is [peak]: syllables
+/// rise and fall, with the dips between words that an absolute level missed.
+List<double> _sentence(double peak) => [
+  for (var syllable = 0; syllable < 4; syllable++)
+    for (final part in const [0.3, 0.7, 1.0, 0.85, 0.6, 0.35, 0.15, 0.1])
+      peak * part,
+];
 
 class _ManualVoiceTurnTimer implements Timer {
   _ManualVoiceTurnTimer(this.duration, this._callback);
@@ -235,73 +311,205 @@ void main() {
     _expectDesktopSpeechCaptureConfig();
   });
 
-  test('el gate Desktop rechaza picos aislados y exige mayoria 8 de 10', () {
-    final gate = SherpaDesktopSpeechGate();
-    final high = SherpaDesktopSpeechGate.levelThreshold + 0.01;
-    final low = SherpaDesktopSpeechGate.levelThreshold - 0.01;
+  group('speech gate', () {
+    // What the owner's Pixel logged on 2026-10-12: sentences the recogniser
+    // understood, loudest chunk at these levels, in a quiet room. Desktop's
+    // absolute level threw four of the five away.
+    const pixelPeaks = [0.080, 0.084, 0.106, 0.170, 0.183];
+    const quietRoom = 0.006;
 
-    for (final level in <double>[high, low, low, high, low, low, high, low]) {
-      expect(gate.acceptLevelFrame(level), isFalse);
-    }
-    expect(gate.hasEvidence, isFalse);
+    test('a sentence spoken to a phone is speech at every logged level', () {
+      for (final peak in pixelPeaks) {
+        final gate = _gateInRoom(quietRoom);
+        expect(gate.trigger, lessThan(0.03), reason: 'peak $peak');
+        final sentence = _sentence(peak);
 
-    gate.reset();
-    for (final level in <double>[
-      high,
-      high,
-      low,
-      high,
-      high,
-      high,
-      low,
-      high,
-      high,
-    ]) {
-      expect(gate.acceptLevelFrame(level), isFalse);
-    }
-    expect(gate.acceptLevelFrame(high), isTrue);
-    expect(gate.hasEvidence, isTrue);
-  });
+        // As the segment the VAD closes...
+        expect(gate.levelsHaveSpeech(sentence), isTrue, reason: 'peak $peak');
+        // ...and live, so the turn can end on the silence that follows.
+        for (final level in sentence) {
+          gate.acceptLevelFrame(level, speechDetected: true);
+        }
+        expect(gate.hasEvidence, isTrue, reason: 'peak $peak');
+      }
+    });
 
-  test('el gate conserva frames de 30 ms entre chunks PCM desalineados', () {
-    final gate = SherpaDesktopSpeechGate();
-    final samples = Float32List(
-      SherpaDesktopSpeechGate.frameSamples *
-          SherpaDesktopSpeechGate.majorityWindow,
-    );
-    samples.fillRange(0, samples.length, 0.03);
+    test('the quietest logged sentence is speech in a room that is not '
+        'quiet', () {
+      // A fan, a street behind the window: the floor is three times higher
+      // and the sentence only peaks 12 dB above it.
+      final gate = _gateInRoom(0.02);
+      final sentence = _sentence(pixelPeaks.first);
 
-    expect(
-      gate.accept(
-        Float32List.sublistView(samples, 0, 1000),
-        speechDetected: true,
-      ),
-      isFalse,
-    );
-    expect(
-      gate.accept(Float32List.sublistView(samples, 1000), speechDetected: true),
-      isTrue,
-    );
-    expect(gate.hasEvidence, isTrue);
-  });
+      expect(gate.levelsHaveSpeech(sentence), isTrue);
+      for (final level in sentence) {
+        gate.acceptLevelFrame(level, speechDetected: true);
+      }
+      expect(gate.hasEvidence, isTrue);
+      // The room's own noise, taken for a word by the VAD, still is not.
+      expect(gate.levelsHaveSpeech(List.filled(40, 0.03)), isFalse);
+    });
 
-  test('ruido sin Silero no prearma una alucinacion posterior', () {
-    final gate = SherpaDesktopSpeechGate();
-    final loudNoise = Float32List(
-      SherpaDesktopSpeechGate.frameSamples *
-          SherpaDesktopSpeechGate.majorityWindow,
-    );
-    loudNoise.fillRange(0, loudNoise.length, 0.08);
+    test('the same sentence as PCM is speech too', () {
+      final gate = _gateInRoom(quietRoom);
+      final sentence = _sentence(pixelPeaks.first);
+      final pcm = Float32List(SherpaSpeechGate.frameSamples * sentence.length);
+      for (var frame = 0; frame < sentence.length; frame++) {
+        pcm.fillRange(
+          frame * SherpaSpeechGate.frameSamples,
+          (frame + 1) * SherpaSpeechGate.frameSamples,
+          sentence[frame] / 4,
+        );
+      }
+      expect(gate.segmentHasSpeech(pcm), isTrue);
+    });
 
-    expect(gate.accept(loudNoise, speechDetected: false), isFalse);
-    expect(gate.hasEvidence, isFalse);
+    test('silence is not speech, whatever the VAD says', () {
+      final gate = _gateInRoom(quietRoom);
+      // The VAD cut a segment out of the room's own hiss.
+      final hiss = [
+        for (var frame = 0; frame < 40; frame++)
+          quietRoom * (0.6 + frame % 3 * 0.4),
+      ];
+      expect(gate.levelsHaveSpeech(hiss), isFalse);
+      for (final level in hiss) {
+        gate.acceptLevelFrame(level, speechDetected: true);
+      }
+      expect(gate.hasEvidence, isFalse);
 
-    final quietFalsePositive = Float32List(
-      SherpaDesktopSpeechGate.frameSamples,
-    );
-    quietFalsePositive.fillRange(0, quietFalsePositive.length, 0.005);
-    expect(gate.accept(quietFalsePositive, speechDetected: true), isFalse);
-    expect(gate.hasEvidence, isFalse);
+      // Digital silence in a room that is not known yet.
+      final fresh = SherpaSpeechGate();
+      expect(fresh.calibrated, isFalse);
+      expect(fresh.levelsHaveSpeech(List.filled(40, 0.004)), isFalse);
+    });
+
+    test('a breath is not speech', () {
+      final gate = _gateInRoom(quietRoom);
+      // The VAD does not call it speech: it only joins the room's noise.
+      for (var frame = 0; frame < 20; frame++) {
+        gate.acceptLevelFrame(0.03, speechDetected: false);
+      }
+      expect(gate.hasEvidence, isFalse);
+      // A breath the VAD does mistake for a word, too faint to stand out.
+      expect(gate.levelsHaveSpeech(List.filled(12, 0.01)), isFalse);
+    });
+
+    test('key presses are not speech', () {
+      final gate = _gateInRoom(quietRoom);
+      // Loud, but one frame each: nothing is sustained.
+      final typing = [
+        for (var frame = 0; frame < 60; frame++)
+          frame % 4 == 0 ? 0.25 : quietRoom,
+      ];
+      expect(gate.levelsHaveSpeech(typing), isFalse);
+      for (final level in typing) {
+        gate.acceptLevelFrame(level, speechDetected: true);
+      }
+      expect(gate.hasEvidence, isFalse);
+
+      // Two keys in a row are still not a word.
+      expect(
+        gate.levelsHaveSpeech([
+          for (var frame = 0; frame < 60; frame++)
+            frame % 6 < 2 ? 0.25 : quietRoom,
+        ]),
+        isFalse,
+      );
+    });
+
+    test('a burst the VAD does not call speech arms nothing', () {
+      final gate = _gateInRoom(quietRoom);
+      expect(gate.accept(_steady(0.32, 10), speechDetected: false), isFalse);
+      expect(gate.hasEvidence, isFalse);
+
+      expect(gate.accept(_steady(0.008, 3), speechDetected: true), isFalse);
+      expect(gate.hasEvidence, isFalse);
+    });
+
+    test('speech needs four of five frames, and dips do not reset it', () {
+      const loud = 0.1;
+      final gate = _gateInRoom(quietRoom);
+      for (final level in <double>[loud, loud, loud]) {
+        expect(gate.acceptLevelFrame(level, speechDetected: true), isFalse);
+      }
+      // A dip inside the word...
+      expect(gate.acceptLevelFrame(quietRoom, speechDetected: true), isFalse);
+      // ...and the fourth frame above closes the run.
+      expect(gate.acceptLevelFrame(loud, speechDetected: true), isTrue);
+      // Evidence stays for the utterance, through the pauses between words.
+      expect(gate.acceptLevelFrame(quietRoom, speechDetected: false), isTrue);
+    });
+
+    test('30 ms frames survive PCM chunks that do not line up', () {
+      final gate = _gateInRoom(quietRoom);
+      final samples = _steady(0.12, SherpaSpeechGate.sustainedWindow);
+
+      expect(
+        gate.accept(
+          Float32List.sublistView(samples, 0, 1000),
+          speechDetected: true,
+        ),
+        isFalse,
+      );
+      expect(
+        gate.accept(
+          Float32List.sublistView(samples, 1000),
+          speechDetected: true,
+        ),
+        isTrue,
+      );
+    });
+
+    test('the trigger follows the room, within its bounds', () {
+      final unknown = SherpaSpeechGate();
+      expect(unknown.noiseFloor, 0);
+      expect(unknown.trigger, SherpaSpeechGate.minimumTrigger);
+
+      // A suppressor's residue never counts as sound.
+      expect(_gateInRoom(0.001).trigger, SherpaSpeechGate.minimumTrigger);
+      expect(_gateInRoom(0.01).trigger, closeTo(0.02, 1e-9));
+      // Never stricter than the level Desktop uses.
+      expect(_gateInRoom(0.08).trigger, SherpaSpeechGate.desktopLevel);
+
+      // It keeps adapting: the room gets noisier, then the floor moves.
+      final gate = _gateInRoom(0.004, frames: 100);
+      expect(gate.noiseFloor, closeTo(0.004, 1e-9));
+      for (var frame = 0; frame < 40; frame++) {
+        gate.acceptLevelFrame(0.02, speechDetected: false);
+      }
+      expect(gate.noiseFloor, closeTo(0.004, 1e-9));
+      for (var frame = 0; frame < 20; frame++) {
+        gate.acceptLevelFrame(0.02, speechDetected: false);
+      }
+      expect(gate.noiseFloor, closeTo(0.02, 1e-9));
+    });
+
+    test('whatever passed the old rule passes in any room', () {
+      const high = SherpaSpeechGate.desktopLevel + 0.01;
+      const low = SherpaSpeechGate.desktopLevel - 0.01;
+      // Desktop's majority: 8 of the last 10 frames at its level.
+      const old = [high, high, low, high, high, high, low, high, high, high];
+      for (final room in <double>[0, 0.002, 0.02, 0.09]) {
+        final gate = room == 0 ? SherpaSpeechGate() : _gateInRoom(room);
+        expect(gate.levelsHaveSpeech(old), isTrue, reason: 'room $room');
+      }
+    });
+
+    test('a new utterance keeps the room and drops the evidence', () {
+      final gate = _gateInRoom(0.01);
+      for (var frame = 0; frame < 5; frame++) {
+        gate.acceptLevelFrame(0.2, speechDetected: true);
+      }
+      expect(gate.hasEvidence, isTrue);
+
+      gate.resetUtterance();
+      expect(gate.hasEvidence, isFalse);
+      expect(gate.noiseFloor, closeTo(0.01, 1e-9));
+
+      gate.reset();
+      expect(gate.calibrated, isFalse);
+      expect(gate.trigger, SherpaSpeechGate.minimumTrigger);
+    });
   });
 
   test('publica capture ready solo después del ACK de startStream', () async {
@@ -324,6 +532,128 @@ void main() {
     await engine.dispose();
     await runtime.audio.close();
   });
+
+  test('solo dice que escucha cuando el reconocedor está cargado, y lo dicho '
+      'mientras tanto no se pierde', () async {
+    final runtime = _FakeRuntime();
+    final worker = _FakeWorker()..prepareGate = Completer<void>();
+    final timers = _ManualVoiceTurnTimers();
+    final engine = _engine(runtime, worker, timerFactory: timers.create);
+    var captureReady = 0;
+    final subscription = engine
+        .listen(onCaptureReady: () => captureReady++)
+        .listen((_) {});
+
+    await _waitFor(() => worker.prepareCalls == 1);
+    // The microphone is open and the user is already talking...
+    runtime.audio.add(Uint8List(640));
+    runtime.audio.add(Uint8List(320));
+    await Future<void>.delayed(Duration.zero);
+    // ...but nobody is listening yet: no "listening", no countdown to a
+    // first word that could not be heard anyway.
+    expect(runtime.startCalls, 1);
+    expect(captureReady, 0);
+    expect(timers.created, isEmpty);
+
+    worker.prepareGate!.complete();
+    await _waitFor(() => captureReady == 1);
+    // What was said meanwhile reached the recogniser, in order.
+    expect(worker.acceptedLengths, [640, 320]);
+    expect(timers.created, hasLength(1));
+
+    await subscription.cancel();
+    await engine.dispose();
+    await runtime.audio.close();
+  });
+
+  test('aparcar suelta el micro sin transcribir y deja el reconocedor '
+      'cargado para el siguiente arranque', () async {
+    final runtime = _FakeRuntime();
+    final worker = _FakeWorker()..flushSegments = const ['no debe salir'];
+    var workersBuilt = 0;
+    final engine = SherpaSttEngine(
+      model: sherpaModelByKind(SherpaModelKind.whisperBase),
+      manager: _FakeManager(),
+      runtime: runtime,
+      workerFactory: (_) async {
+        workersBuilt++;
+        return worker;
+      },
+    );
+    final results = <SttResult>[];
+    final done = Completer<void>();
+    engine.listen().listen(results.add, onDone: done.complete);
+    await _waitFor(() => worker.prepareCalls == 1);
+    runtime.audio.add(Uint8List(640));
+    await _waitFor(() => worker.acceptedGenerations.isNotEmpty);
+
+    await engine.park();
+    await done.future;
+
+    expect(runtime.stopCalls, 1, reason: 'the microphone is released');
+    expect(worker.flushGenerations, isEmpty, reason: 'nothing is transcribed');
+    expect(results, isEmpty);
+    expect(worker.disposeCalls, 0, reason: 'the recogniser stays loaded');
+    expect(runtime.disposeCalls, 0);
+
+    // The next start reuses it: no second load.
+    var captureReady = 0;
+    final again = engine
+        .listen(onCaptureReady: () => captureReady++)
+        .listen((_) {});
+    await _waitFor(() => captureReady == 1);
+    expect(workersBuilt, 1);
+    expect(worker.prepareCalls, 2);
+
+    await again.cancel();
+    await engine.dispose();
+    expect(worker.disposeCalls, 1, reason: 'released for good with the engine');
+    await runtime.audio.close();
+  });
+
+  test(
+    'precalentar carga el reconocedor una vez y antes de abrir el micro',
+    () async {
+      final runtime = _FakeRuntime();
+      final worker = _FakeWorker();
+      var workersBuilt = 0;
+      final engine = SherpaSttEngine(
+        model: sherpaModelByKind(SherpaModelKind.whisperBase),
+        manager: _FakeManager(),
+        runtime: runtime,
+        workerFactory: (_) async {
+          workersBuilt++;
+          return worker;
+        },
+      );
+
+      await Future.wait([engine.prewarm(), engine.prewarm()]);
+      await engine.prewarm();
+      expect(workersBuilt, 1);
+      expect(worker.prepareCalls, 1);
+      expect(
+        runtime.startCalls,
+        0,
+        reason: 'warming never opens the microphone',
+      );
+
+      var captureReady = 0;
+      final subscription = engine
+          .listen(onCaptureReady: () => captureReady++)
+          .listen((_) {});
+      await _waitFor(() => captureReady == 1);
+      expect(workersBuilt, 1);
+      // While a capture runs, warming leaves its recogniser alone.
+      await engine.prewarm();
+      expect(worker.prepareCalls, 2);
+
+      await subscription.cancel();
+      await engine.dispose();
+      await engine.prewarm();
+      expect(workersBuilt, 1);
+      await runtime.audio.close();
+    },
+  );
 
   test('cierra a los 12 s sin proyectar fin de habla inexistente', () async {
     final timers = _ManualVoiceTurnTimers();
@@ -671,42 +1001,148 @@ void main() {
     },
   );
 
-  test(
-    'descarta texto Whisper sin evidencia acústica del umbral Desktop',
-    () async {
-      final runtime = _FakeRuntime();
-      final worker = _FakeWorker()
-        ..flushSegments = const ['de decir las noticias de hoy en España'];
-      final engine = _engine(runtime, worker);
-      final results = <SttResult>[];
-      final done = Completer<void>();
-      engine.listen().listen(results.add, onDone: done.complete);
+  test('una frase dicha al teléfono llega aunque no alcance el nivel de '
+      'Desktop', () async {
+    final runtime = _FakeRuntime();
+    final worker = _FakeWorker();
+    final engine = _engine(runtime, worker);
+    final results = <SttResult>[];
+    final done = Completer<void>();
+    engine.listen().listen(results.add, onDone: done.complete);
 
-      await _waitFor(() => runtime.startCalls == 1);
-      runtime.audio.add(Uint8List.fromList(const [0, 0]));
-      await _waitFor(() => worker.acceptedGenerations.isNotEmpty);
-      final generation = worker.acceptedGenerations.single;
+    await _waitFor(() => runtime.startCalls == 1);
+    runtime.audio.add(Uint8List.fromList(const [0, 0]));
+    await _waitFor(() => worker.acceptedGenerations.isNotEmpty);
+    final generation = worker.acceptedGenerations.single;
 
-      worker.emit(
-        generation: generation,
-        level: 0.05,
-        speechDetected: true,
-        acousticSpeechEvidence: false,
-        segments: const ['Me siento'],
-      );
-      await Future<void>.delayed(Duration.zero);
-      expect(results, isEmpty);
+    // A quiet room, then a sentence whose loudest chunk is the weakest the
+    // Pixel logged (0.080): under Desktop's 0.098 from start to end.
+    worker.emit(
+      generation: generation,
+      level: 0.006,
+      speechDetected: false,
+      frames: 20,
+    );
+    worker.emit(
+      generation: generation,
+      level: 0.08,
+      frames: 12,
+      segments: const ['cuánto disco queda libre'],
+    );
+    await _waitFor(() => results.isNotEmpty);
+    expect(results.single.text, 'cuánto disco queda libre');
+    expect(results.single.isFinal, isFalse);
 
-      await engine.stop();
-      await done.future;
-      expect(results, hasLength(1));
-      expect(results.single.text, isEmpty);
-      expect(results.single.isFinal, isTrue);
+    await engine.stop();
+    await done.future;
+    expect(results.last.text, 'cuánto disco queda libre');
+    expect(results.last.isFinal, isTrue);
 
-      await engine.dispose();
-      await runtime.audio.close();
-    },
-  );
+    await engine.dispose();
+    await runtime.audio.close();
+  });
+
+  test('el dictado del compositor recibe lo dicho al nivel de un '
+      'teléfono', () async {
+    final runtime = _FakeRuntime();
+    final worker = _FakeWorker();
+    final engine = _engine(runtime, worker);
+    final results = <SttResult>[];
+    final done = Completer<void>();
+    // The composer's microphone: the same engine, the user decides the end.
+    engine.listen(continuous: true).listen(results.add, onDone: done.complete);
+
+    await _waitFor(() => runtime.startCalls == 1);
+    runtime.audio.add(Uint8List.fromList(const [0, 0]));
+    await _waitFor(() => worker.acceptedGenerations.isNotEmpty);
+    final generation = worker.acceptedGenerations.single;
+
+    worker.emit(
+      generation: generation,
+      level: 0.006,
+      speechDetected: false,
+      frames: 20,
+    );
+    worker.emit(
+      generation: generation,
+      level: 0.084,
+      frames: 12,
+      segments: const ['primera frase'],
+    );
+    // Thinking between two sentences ends nothing while dictating.
+    worker.emit(
+      generation: generation,
+      level: 0.006,
+      speechDetected: false,
+      frames: 60,
+    );
+    worker.emit(
+      generation: generation,
+      level: 0.106,
+      frames: 12,
+      segments: const ['segunda frase'],
+    );
+    await _waitFor(() => results.length == 2);
+    expect(results.last.text, 'primera frase segunda frase');
+    expect(results.last.isFinal, isFalse);
+    expect(runtime.stopCalls, 0);
+    expect(done.isCompleted, isFalse);
+
+    await engine.stop();
+    await done.future;
+    expect(results.last.text, 'primera frase segunda frase');
+    expect(results.last.isFinal, isTrue);
+
+    await engine.dispose();
+    await runtime.audio.close();
+  });
+
+  test('lo que Whisper escribiría sobre silencio no llega nunca', () async {
+    final runtime = _FakeRuntime();
+    final worker = _FakeWorker();
+    final engine = _engine(runtime, worker);
+    final results = <SttResult>[];
+    final done = Completer<void>();
+    engine.listen().listen(results.add, onDone: done.complete);
+
+    await _waitFor(() => runtime.startCalls == 1);
+    runtime.audio.add(Uint8List.fromList(const [0, 0]));
+    await _waitFor(() => worker.acceptedGenerations.isNotEmpty);
+    final generation = worker.acceptedGenerations.single;
+
+    worker.emit(
+      generation: generation,
+      level: 0.006,
+      speechDetected: false,
+      frames: 20,
+    );
+    // The VAD cuts a segment out of the room's hiss: the phrase Whisper is
+    // known to invent there is not even transcribed.
+    worker.emit(
+      generation: generation,
+      level: 0.008,
+      frames: 12,
+      segments: const ['Gracias por ver el video'],
+    );
+    // And if it were said out loud, the text filter still drops it.
+    worker.emit(
+      generation: generation,
+      level: 0.2,
+      frames: 12,
+      segments: const ['Gracias por ver el video'],
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(results, isEmpty);
+
+    await engine.stop();
+    await done.future;
+    expect(results, hasLength(1));
+    expect(results.single.text, isEmpty);
+    expect(results.single.isFinal, isTrue);
+
+    await engine.dispose();
+    await runtime.audio.close();
+  });
 
   test(
     'solo aplica updates de la generación activa y flush conserva orden',
@@ -772,6 +1208,150 @@ void main() {
       await runtime.audio.close();
     },
   );
+
+  test('while the recogniser loads, what the microphone captures already '
+      'moves the level', () async {
+    final runtime = _FakeRuntime();
+    final worker = _FakeWorker()..prepareGate = Completer<void>();
+    final levels = <double>[];
+    final engine = SherpaSttEngine(
+      model: sherpaModelByKind(SherpaModelKind.whisperBase),
+      manager: _FakeManager(),
+      runtime: runtime,
+      onLevel: levels.add,
+      workerFactory: (_) async => worker,
+    );
+    var captureReady = 0;
+    final subscription = engine
+        .listen(onCaptureReady: () => captureReady++)
+        .listen((_) {});
+    await _waitFor(() => worker.prepareCalls == 1);
+
+    // Quiet, then a voice at a tenth of full scale.
+    runtime.audio.add(Uint8List(640));
+    runtime.audio.add(_pcm16Steady(0.1, 320));
+    await Future<void>.delayed(Duration.zero);
+
+    expect(captureReady, 0, reason: 'still not listening');
+    expect(levels, hasLength(2));
+    expect(levels.first, 0);
+    expect(levels.last, closeTo(0.4, 0.01), reason: 'RMS x 4, as the worker');
+
+    worker.prepareGate!.complete();
+    await _waitFor(() => captureReady == 1);
+    // It was true: that audio was kept, and reached the recogniser.
+    expect(worker.acceptedLengths, [640, 640]);
+
+    // Listening now, the level is the recogniser's own again.
+    runtime.audio.add(_pcm16Steady(0.2, 320));
+    await Future<void>.delayed(Duration.zero);
+    expect(worker.acceptedLengths, hasLength(3));
+    expect(levels, hasLength(2));
+
+    await subscription.cancel();
+    await engine.dispose();
+    await runtime.audio.close();
+  });
+
+  test('the model directory is asked of the platform once, not once per '
+      'file', () async {
+    final support = Directory.systemTemp.createTempSync('sherpa-models-');
+    addTearDown(() => support.deleteSync(recursive: true));
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    const pathProvider = MethodChannel('plugins.flutter.io/path_provider');
+    var asked = 0;
+    messenger.setMockMethodCallHandler(pathProvider, (call) async {
+      asked++;
+      return support.path;
+    });
+    addTearDown(() => messenger.setMockMethodCallHandler(pathProvider, null));
+    final manager = SherpaSttModelManager();
+    final model = sherpaModelByKind(SherpaModelKind.whisperBase);
+    final base = '${support.path}/stt_sherpa_models';
+    for (final file in [
+      '${model.dirName}/${model.encoder}',
+      '${model.dirName}/${model.decoder}',
+      '${model.dirName}/${model.tokens}',
+      'silero_vad.onnx',
+    ]) {
+      File('$base/$file').createSync(recursive: true);
+    }
+
+    // What one start asks: is the model there, then where each file is.
+    expect(await manager.isReady(model), isTrue);
+    final paths = [
+      await manager.tokensPath(model),
+      await manager.encoderPath(model),
+      await manager.decoderPath(model),
+      await manager.sileroPath(),
+    ];
+
+    expect(paths.every((path) => path.startsWith(base)), isTrue);
+    expect(asked, 1, reason: 'it was eight platform round trips');
+  });
+
+  group('the worker isolate', () {
+    late Directory scratch;
+    setUp(() => scratch = Directory.systemTemp.createTempSync('sherpa-wk-'));
+    tearDown(() => scratch.deleteSync(recursive: true));
+
+    File state() => File('${scratch.path}/state');
+
+    Future<SherpaSttWorker> start({required int loadMs}) =>
+        IsolateSherpaSttWorker.startWith(
+          SherpaSttWorkerConfig(
+            tokensPath: state().path,
+            encoderPath: '',
+            decoderPath: '',
+            joinerPath: '',
+            sileroPath: '',
+            language: 'es',
+            transducer: false,
+            numThreads: loadMs,
+          ),
+          _fakeWorkerIsolate,
+        );
+
+    test('says where its load went, once it has loaded', () async {
+      final worker = await start(loadMs: 0);
+      final timed = worker as SherpaSttLoadTimed;
+      expect(timed.loadTiming, isNull);
+
+      await worker.prepare();
+
+      final timing = timed.loadTiming!;
+      expect(timing.spawnMs, greaterThanOrEqualTo(0));
+      expect(
+        '$timing',
+        'spawn_ms=${timing.spawnMs} bindings_ms=3 recognizer_ms=40 vad_ms=5',
+      );
+      await worker.dispose();
+      expect(state().readAsStringSync(), 'freed');
+    });
+
+    test('released while it opens its model, it is not killed inside the '
+        'call: it comes back and frees the model', () async {
+      final worker = await start(loadMs: 1500);
+      final loading = worker.prepare().then<Object?>(
+        (_) => null,
+        onError: (Object error) => error,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      await worker.dispose();
+
+      // Whoever released it is not held for the rest of the load...
+      expect(await loading, isA<SherpaSttWorkerException>());
+      // ...and the model that load returns is freed, not left in memory.
+      final deadline = DateTime.now().add(const Duration(seconds: 20));
+      while (DateTime.now().isBefore(deadline) &&
+          !(state().existsSync() && state().readAsStringSync() == 'freed')) {
+        await Future<void>.delayed(const Duration(milliseconds: 25));
+      }
+      expect(state().readAsStringSync(), 'freed');
+    });
+  });
 
   test(
     'el worker real se puede liberar varias veces antes de cargar modelos',

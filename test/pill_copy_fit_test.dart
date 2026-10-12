@@ -5,7 +5,7 @@ import 'package:hermes_android/core/models/subagent_activity.dart';
 import 'package:hermes_android/core/models/room_summary.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/models/activity_snapshot.dart';
-import 'package:hermes_android/core/widgets/activity_panel.dart';
+import 'package:hermes_android/core/widgets/activity_pill.dart';
 import 'package:hermes_android/core/widgets/subagent_activity_card.dart';
 import 'package:hermes_android/core/widgets/room_summary_pill.dart';
 import 'package:hermes_android/core/widgets/status_pill.dart';

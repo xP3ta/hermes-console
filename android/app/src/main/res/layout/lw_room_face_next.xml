@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A further member's face of a room row: it overlaps the one before. -->
+<ImageView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/lw_room_face"
+    android:layout_width="@dimen/lw_room_face"
+    android:layout_height="@dimen/lw_room_face"
+    android:layout_marginStart="-7dp"
+    android:importantForAccessibility="no" />

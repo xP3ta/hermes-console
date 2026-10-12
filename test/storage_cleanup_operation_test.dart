@@ -200,4 +200,145 @@ void main() {
     expect(settled, isTrue);
     expect(await committing, isTrue);
   });
+
+  group('operation journal stays bounded in a long-lived process', () {
+    LocalConversationResourceKey key(String session) =>
+        LocalConversationResourceKey(
+          connectionId: 'c',
+          profile: 'p',
+          sessionId: session,
+          physicalKey: 'draft-$session',
+        );
+
+    Future<void> completedSave(
+      LocalConversationLifecycle life,
+      String session,
+    ) async {
+      assert(life.sessionId == session);
+      final operation = LocalConversationCleanupFence.admitOperation(
+        connectionId: 'c',
+        profile: 'p',
+        sessionId: session,
+        lifecycle: life,
+        kind: LocalConversationOperationKind.save,
+        resources: [key(session)],
+      );
+      expect(
+        await LocalConversationCleanupFence.commitEffect(
+          operation: operation,
+          resource: key(session),
+          mutation: () async {},
+        ),
+        isTrue,
+      );
+    }
+
+    test('thousands of finished saves do not accumulate', () async {
+      final life = LocalConversationCleanupFence.beginLifecycle(
+        connectionId: 'c',
+        profile: 'p',
+        sessionId: 's',
+      );
+      for (var i = 0; i < 2000; i++) {
+        await completedSave(life, 's');
+      }
+      expect(
+        LocalConversationCleanupFence.operationJournalLengthForTesting,
+        lessThan(5),
+      );
+    });
+
+    test('saves of a closed screen that never ran are dropped', () async {
+      for (var i = 0; i < 200; i++) {
+        final life = LocalConversationCleanupFence.beginLifecycle(
+          connectionId: 'c',
+          profile: 'p',
+          sessionId: 's',
+        );
+        LocalConversationCleanupFence.admitOperation(
+          connectionId: 'c',
+          profile: 'p',
+          sessionId: 's',
+          lifecycle: life,
+          kind: LocalConversationOperationKind.save,
+          resources: [key('s')],
+        );
+        LocalConversationCleanupFence.endLifecycle(life);
+      }
+      expect(
+        LocalConversationCleanupFence.operationJournalLengthForTesting,
+        lessThan(5),
+      );
+    });
+
+    test('a save still waiting to run survives pruning and is superseded '
+        'by a later session clear', () async {
+      final life = LocalConversationCleanupFence.beginLifecycle(
+        connectionId: 'c',
+        profile: 'p',
+        sessionId: 's',
+      );
+      final pending = LocalConversationCleanupFence.admitOperation(
+        connectionId: 'c',
+        profile: 'p',
+        sessionId: 's',
+        lifecycle: life,
+        kind: LocalConversationOperationKind.save,
+        resources: [key('s')],
+      );
+      final other = LocalConversationCleanupFence.beginLifecycle(
+        connectionId: 'c',
+        profile: 'p',
+        sessionId: 'other',
+      );
+      for (var i = 0; i < 50; i++) {
+        await completedSave(other, 'other');
+      }
+      final clear = LocalConversationCleanupFence.admitSessionClear(
+        connectionId: 'c',
+        sessionId: 's',
+      );
+      expect(LocalConversationCleanupFence.resourcesBefore(clear), [key('s')]);
+      var mutations = 0;
+      expect(
+        await LocalConversationCleanupFence.commitEffect(
+          operation: pending,
+          resource: key('s'),
+          mutation: () async => mutations++,
+        ),
+        isFalse,
+      );
+      expect(mutations, 0);
+    });
+
+    test('an unfinished session clear keeps blocking readers', () async {
+      final clear = LocalConversationCleanupFence.admitSessionClear(
+        connectionId: 'c',
+        sessionId: 's',
+      );
+      final other = LocalConversationCleanupFence.beginLifecycle(
+        connectionId: 'c',
+        profile: 'p',
+        sessionId: 'other',
+      );
+      for (var i = 0; i < 50; i++) {
+        await completedSave(other, 'other');
+      }
+      var released = false;
+      final waiting = LocalConversationCleanupFence.waitForSessionClears(
+        connectionId: 'c',
+        sessionId: 's',
+      ).then((_) => released = true);
+      await Future<void>.delayed(Duration.zero);
+      expect(released, isFalse);
+
+      LocalConversationCleanupFence.completeOperation(clear);
+      await waiting;
+      await completedSave(other, 'other');
+      expect(
+        LocalConversationCleanupFence.operationJournalLengthForTesting,
+        lessThan(5),
+      );
+    });
+  });
 }

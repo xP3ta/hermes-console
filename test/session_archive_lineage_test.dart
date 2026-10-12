@@ -231,4 +231,76 @@ void main() {
       expect(attempts, 2);
     },
   );
+
+  test('every local mutation advances the archive revision', () async {
+    final prefs = await SharedPreferences.getInstance();
+    final archive = await SessionArchive.load(prefs, 'conn-a');
+    final row = _session('tip', root: 'root');
+    var last = archive.revision;
+    void expectAdvanced(String step) {
+      expect(archive.revision, greaterThan(last), reason: step);
+      last = archive.revision;
+    }
+
+    // The bump must be visible synchronously, before the write completes.
+    final pinning = archive.pinSession(row);
+    expectAdvanced('pin (synchronous)');
+    await pinning;
+    await archive.unpinSession(row);
+    expectAdvanced('unpin');
+    await archive.archiveSession(row);
+    expectAdvanced('archive');
+    await archive.unarchiveSession(row);
+    expectAdvanced('unarchive');
+    await archive.hideSession(row);
+    expectAdvanced('hide');
+    await archive.unhideSession(row);
+    expectAdvanced('unhide');
+    await archive.hideAll(['a', 'b']);
+    expectAdvanced('hideAll');
+    await archive.clearHidden();
+    expectAdvanced('clearHidden');
+    await archive.setSessionTitle(row, 'Local');
+    expectAdvanced('title');
+    expect(
+      await archive.autoTitleIfPlaceholder(
+        sessionId: 'other',
+        currentTitle: 'Untitled',
+        prompt: 'Plan the release',
+      ),
+      isTrue,
+    );
+    expectAdvanced('auto title');
+    await archive.migrateLogicalIdentity(
+      _session('tip-2', root: 'root-2', parent: 'tip-1'),
+      knownPhysicalIds: const ['other'],
+    );
+    expectAdvanced('lineage migration');
+
+    // No-op reads leave it unchanged.
+    archive.isSessionPinned(row);
+    archive.titleForSession(row);
+    expect(archive.revision, last);
+  });
+
+  test('remote pin reconciliation advances the archive revision', () async {
+    final prefs = await SharedPreferences.getInstance();
+    final archive = await SessionArchive.load(prefs, 'conn-a');
+    final sync = SessionPinSync(archive, writeRemote: (_, _, _) async {});
+    final before = archive.revision;
+
+    await sync.updateSessions([
+      _remoteSession('tip-1', root: 'root-1', pinned: true),
+    ]);
+    expect(archive.isPinned('root-1'), isTrue);
+    expect(archive.revision, greaterThan(before));
+
+    final afterAdopt = archive.revision;
+    await sync.setLocalPinned(
+      _remoteSession('tip-1', root: 'root-1', pinned: true),
+      false,
+    );
+    expect(archive.isPinned('root-1'), isFalse);
+    expect(archive.revision, greaterThan(afterAdopt));
+  });
 }

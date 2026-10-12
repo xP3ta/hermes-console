@@ -1,9 +1,8 @@
-import 'dart:ui';
-
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
 import 'compact_pill_text.dart';
+import 'frosted_backdrop.dart';
 import '../models/agent_profile.dart';
 import '../models/room_summary.dart';
 import '../theme/app_theme.dart';
@@ -75,119 +74,114 @@ class _RoomSummaryPillState extends State<RoomSummaryPill> {
     final expanded = _expanded && !widget.compact;
     return Padding(
       padding: const EdgeInsets.fromLTRB(14, 2, 14, 6),
-      child: ClipRRect(
+      child: FrostedBackdrop(
+        sigma: 12,
+        tint: colors.surfaceVariant.withValues(alpha: .65),
         borderRadius: BorderRadius.circular(20),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-          child: Material(
-            key: const ValueKey('room-summary-pill'),
-            color: colors.surfaceVariant.withValues(alpha: .65),
-            child: _transition(
-              ConstrainedBox(
-                constraints: BoxConstraints(maxHeight: widget.maxHeight),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Semantics(
-                      expanded: expanded,
-                      child: InkWell(
-                        key: const ValueKey('room-summary-toggle'),
-                        onTap: widget.compact
-                            ? null
-                            : () => setState(() => _expanded = !_expanded),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 8,
-                          ),
-                          child: Row(
-                            children: [
-                              for (final row in avatarRows.take(3)) ...[
-                                RoomStatusAvatar(
-                                  member: row.member!,
-                                  status:
-                                      summary.statuses[row.member!.memberId]!,
-                                  profile:
-                                      row.member!.owner.connectionId ==
-                                          widget.localGatewayId
-                                      ? widget.profiles[row
-                                            .member!
-                                            .owner
-                                            .profile]
-                                      : null,
-                                  avatarCache: widget.avatarCache,
-                                  size: 20,
-                                ),
-                                const SizedBox(width: 5),
-                              ],
-                              Expanded(
-                                child: CompactPillText(
-                                  label: label,
-                                  compactLabel: s.roomSummaryCompact,
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: colors.textSecondary,
-                                  ),
-                                ),
+        builder: (context, fill) => Material(
+          key: const ValueKey('room-summary-pill'),
+          color: fill,
+          child: _transition(
+            ConstrainedBox(
+              constraints: BoxConstraints(maxHeight: widget.maxHeight),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Semantics(
+                    expanded: expanded,
+                    child: InkWell(
+                      key: const ValueKey('room-summary-toggle'),
+                      onTap: widget.compact
+                          ? null
+                          : () => setState(() => _expanded = !_expanded),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 8,
+                        ),
+                        child: Row(
+                          children: [
+                            for (final row in avatarRows.take(3)) ...[
+                              RoomStatusAvatar(
+                                member: row.member!,
+                                status: summary.statuses[row.member!.memberId]!,
+                                profile:
+                                    row.member!.owner.connectionId ==
+                                        widget.localGatewayId
+                                    ? widget.profiles[row.member!.owner.profile]
+                                    : null,
+                                avatarCache: widget.avatarCache,
+                                size: 20,
                               ),
-                              if (!widget.compact)
-                                Icon(
-                                  expanded
-                                      ? Icons.expand_less
-                                      : Icons.expand_more,
-                                  size: 16,
+                              const SizedBox(width: 5),
+                            ],
+                            Expanded(
+                              child: CompactPillText(
+                                label: label,
+                                compactLabel: s.roomSummaryCompact,
+                                style: TextStyle(
+                                  fontSize: 12,
                                   color: colors.textSecondary,
                                 ),
-                            ],
-                          ),
+                              ),
+                            ),
+                            if (!widget.compact)
+                              Icon(
+                                expanded
+                                    ? Icons.expand_less
+                                    : Icons.expand_more,
+                                size: 16,
+                                color: colors.textSecondary,
+                              ),
+                          ],
                         ),
                       ),
                     ),
-                    if (expanded)
-                      Flexible(
-                        child: SingleChildScrollView(
-                          key: const ValueKey('room-summary-expanded'),
-                          padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              if (summary.topic != null)
-                                Tooltip(
-                                  message: summary.topic!,
-                                  child: Text(
-                                    s.roomSummaryTopic(summary.topic!),
-                                    key: const ValueKey('room-summary-topic'),
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      color: colors.textPrimary,
-                                    ),
+                  ),
+                  if (expanded)
+                    Flexible(
+                      child: SingleChildScrollView(
+                        key: const ValueKey('room-summary-expanded'),
+                        padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            if (summary.topic != null)
+                              Tooltip(
+                                message: summary.topic!,
+                                child: Text(
+                                  s.roomSummaryTopic(summary.topic!),
+                                  key: const ValueKey('room-summary-topic'),
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: colors.textPrimary,
                                   ),
                                 ),
-                              _section('now', s.roomSummaryNow, summary.now),
-                              _section(
-                                'done',
-                                s.roomSummaryDone,
-                                summary.done,
-                                checks: true,
                               ),
-                              _section(
-                                'pending',
-                                s.roomSummaryPending,
-                                summary.pending,
-                              ),
-                              _section(
-                                'recent',
-                                s.roomSummaryRecent,
-                                summary.recent,
-                              ),
-                            ],
-                          ),
+                            _section('now', s.roomSummaryNow, summary.now),
+                            _section(
+                              'done',
+                              s.roomSummaryDone,
+                              summary.done,
+                              checks: true,
+                            ),
+                            _section(
+                              'pending',
+                              s.roomSummaryPending,
+                              summary.pending,
+                            ),
+                            _section(
+                              'recent',
+                              s.roomSummaryRecent,
+                              summary.recent,
+                            ),
+                          ],
                         ),
                       ),
-                  ],
-                ),
+                    ),
+                ],
               ),
             ),
           ),

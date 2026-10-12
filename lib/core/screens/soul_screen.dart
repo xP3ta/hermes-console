@@ -21,21 +21,30 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../../main.dart';
-import '../services/bridge_manager.dart';
+import '../services/active_profile_scope.dart';
+import '../services/app_lock_sensitive_read_fence.dart';
+
 import '../services/command_risk.dart';
 import '../services/connection_manager.dart';
 import '../theme/app_theme.dart';
 import '../utils/api_error.dart';
 import '../widgets/action_approval.dart';
-import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_premium_ui.dart';
 import '../widgets/hermes_ui.dart';
 import '../widgets/read_only.dart';
-import 'bridge_editor_mixin.dart';
+
 import 'lock_screen.dart';
 import '../widgets/hermes_app_bar.dart';
+import '../widgets/profile_scope.dart';
+import '../widgets/console_loader.dart';
 import '../design/hermes_design.dart'
-    show HermesDialogAction, HermesDialogActionStyle, showHermesDialog;
+    show
+        HermesDialogAction,
+        HermesDialogActionStyle,
+        showHermesDialog,
+        showHermesReviewPage;
+import '../feedback/feedback_policy.dart';
+import '../feedback/screen_help.dart';
 
 // ── Repository interface (local-first, API-ready) ─────────────────────────────
 
@@ -195,14 +204,28 @@ class SoulScreen extends StatefulWidget {
   /// Dashboard API (`/api/profiles/<name>/soul`). Pass null for a generic draft.
   final SavedConnection? connection;
 
-  const SoulScreen({this.connection, super.key});
+  /// Fixed profile (a bot card). Null follows the active profile.
+  final String? profileOverride;
+
+  /// Active profile source; defaults to the app's for [connection].
+  final ActiveProfileScope? profileScope;
+  final DashboardClient? dashboardClientForTesting;
+
+  const SoulScreen({
+    this.connection,
+    this.profileOverride,
+    this.profileScope,
+    @visibleForTesting this.dashboardClientForTesting,
+
+    super.key,
+  });
 
   @override
   State<SoulScreen> createState() => _SoulScreenState();
 }
 
 class _SoulScreenState extends State<SoulScreen>
-    with BridgeEditorMixin<SoulScreen> {
+    with ActiveProfileFollower<SoulScreen> {
   final LocalSoulRepository _repo = LocalSoulRepository();
   final TextEditingController _controller = TextEditingController();
   Timer? _debounce;
@@ -212,11 +235,21 @@ class _SoulScreenState extends State<SoulScreen>
   Timer? _savedTimer;
   bool _hasBackup = false; // hay copia previa restaurable
 
-  // Perfil activo (no-default ⇒ SOUL por perfil vía Dashboard API).
-  String _profile = '';
+  // Profile whose SOUL is edited (empty = default): via the Dashboard API.
+  String get _profile => scopedProfileName;
   DashboardClient? _dashClient;
+
+  /// Draft key of the text now in the editor. The default profile keeps the
+  /// historical per-connection key; any other profile gets its own key, so
+  /// one profile's draft never shows (or is applied) as another's.
+  String _editorScope = '';
+  String get _draftScope => _effectiveProfile == 'default'
+      ? _connectionId
+      : '$_connectionId@$_effectiveProfile';
   bool _profileBusy = false;
   bool _serverSoulTried = false;
+  int _operation = 0;
+  String? _lastServerContent;
 
   String get _connectionId => widget.connection?.id ?? 'default';
   // Nombre de perfil efectivo para la Dashboard API: el perfil default expone
@@ -225,94 +258,70 @@ class _SoulScreenState extends State<SoulScreen>
   String get _effectiveProfile => _profile.isEmpty ? 'default' : _profile;
   // Con conexión, el SOUL siempre tira del agente (Dashboard API por perfil),
   // incluido default — sin depender del bridge. Sin conexión cae al borrador
-  // local / bridge.
+  // local.
   bool get _profileScoped => widget.connection != null;
-
-  // ── BridgeEditorMixin ──
-  @override
-  String get bridgeConnectionId => _connectionId;
-  @override
-  String get bridgeTarget => 'soul';
-  @override
-  TextEditingController get bridgeController => _controller;
-  @override
-  String get bridgeLockReason => Strings.of(context).soulApplyToServer;
 
   @override
   void initState() {
     super.initState();
+    final connection = widget.connection;
+    if (connection != null) {
+      final override = widget.profileOverride?.trim() ?? '';
+      followActiveProfile(
+        widget.profileScope ?? appActiveProfileScope(context, connection.id),
+        fixedProfile: override.isEmpty ? null : override,
+      );
+    }
     _loadDraft();
     _controller.addListener(_onTextChanged);
   }
 
   @override
+  void onActiveProfileChanged() {
+    // Keep what was typed for the previous profile under its own key, then
+    // load the new profile's draft and SOUL.
+    final pending = _debounce?.isActive ?? false;
+    _debounce?.cancel();
+    if (pending) unawaited(_repo.save(_editorScope, _controller.text));
+    _serverSoulTried = false;
+    _operation++;
+    _lastServerContent = null;
+    setState(() {
+      _profileBusy = false;
+      _loading = true;
+      _hasBackup = false;
+    });
+    unawaited(_loadDraft());
+  }
+
+  @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    probeBridgeOnce();
-    // Perfil activo de esta instancia: si no es default, el SOUL se edita por
-    // perfil vía Dashboard API en vez del bridge (que apunta al home default).
-    final cm = context.findAncestorStateOfType<HermesAppState>()?.connManager;
-    final p = (widget.connection != null && cm != null)
-        ? cm.activeProfileFor(widget.connection!.id)
-        : '';
+
     // Cliente del Dashboard para CUALQUIER perfil (incluido default): permite
     // leer el SOUL real del servidor sin el bridge, vía /api/profiles/*/soul.
     if (widget.connection != null) {
-      _dashClient ??= DashboardClient.lazy(widget.connection!);
-    }
-    if (p != _profile) {
-      setState(() => _profile = p);
-    }
-    // El perfil activo se resuelve AQUÍ (después de initState, donde _loadDraft
-    // pudo cargar el SOUL del default por timing). Para un perfil NO-default,
-    // carga su SOUL real vía Dashboard scoped (una vez), de modo que se vea y
-    // edite el SOUL del perfil activo y no el del default. El auto-load del
-    // bridge queda desactivado para no-default (ver bridgeAutoLoadEnabled), que
-    // apunta siempre al home default.
-    if (widget.connection != null &&
-        _effectiveProfile != 'default' &&
-        !_initialProfileLoadDone) {
-      _initialProfileLoadDone = true;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _loadProfileSoul();
-      });
+      _dashClient ??=
+          widget.dashboardClientForTesting ??
+          DashboardClient.lazy(widget.connection!);
     }
   }
-
-  bool _initialProfileLoadDone = false;
-
-  /// Desactiva la auto-carga del bridge cuando el perfil activo NO es default: el
-  /// bridge lee/escribe el home default y pisaría (o sobreescribiría) el perfil.
-  /// El SOUL por perfil se gestiona vía Dashboard scoped (`_loadProfileSoul` /
-  /// `_applyProfileSoul`).
-  @override
-  bool get bridgeAutoLoadEnabled => _effectiveProfile == 'default';
 
   /// Carga el SOUL real del servidor (Dashboard API) en el editor cuando el
   /// borrador local está vacío, para que el usuario vea su SOUL y no una página
   /// en blanco que parece "borrada". No pisa un borrador con contenido.
   Future<void> _loadServerSoulIfEmpty() async {
-    final s = Strings.of(context);
     if (_serverSoulTried) return;
     _serverSoulTried = true;
-    final conn = widget.connection;
-    if (conn == null) return;
-    final client = _dashClient ??= DashboardClient.lazy(conn);
-    try {
-      final res = await client.getProfileSoul(_effectiveProfile);
-      final content = (res['content'] ?? '').toString();
-      if (!mounted || content.isEmpty) return;
-      if (_controller.text.trim().isEmpty) {
-        _setText(content);
-        _toast(s.soulServerLoaded);
-      }
-    } catch (_) {
-      // Sin conexión/sin auth: se queda el borrador local. No es un error grave.
-    }
+    await _loadProfileSoul(replaceDraft: false);
   }
 
   @override
   void dispose() {
+    if (_debounce?.isActive ?? false) {
+      // Final flush owns its captured key/text even after navigation disposes UI.
+      unawaited(_repo.save(_editorScope, _controller.text));
+    }
     _debounce?.cancel();
     _savedTimer?.cancel();
     _controller.removeListener(_onTextChanged);
@@ -321,24 +330,71 @@ class _SoulScreenState extends State<SoulScreen>
     super.dispose();
   }
 
+  String _officialContent(Map<String, dynamic> response) {
+    final content = response['content'];
+    if (content is! String || response['exists'] is! bool) {
+      throw const FormatException('Invalid SOUL response');
+    }
+    return content;
+  }
+
   // ── SOUL por perfil (Dashboard API) ─────────────────────────────────────
 
   /// Carga el SOUL del perfil activo desde `/api/profiles/<name>/soul`.
-  Future<void> _loadProfileSoul() async {
+  Future<void> _loadProfileSoul({bool replaceDraft = true}) async {
     final s = Strings.of(context);
     final client = _dashClient;
     if (client == null) return;
+    final ticket = profileReadTicket();
+    final disclosure = AppLockSensitiveReadFence.capture();
+    final operation = ++_operation;
+    final textBefore = _controller.text;
+    bool current() =>
+        mounted &&
+        operation == _operation &&
+        ticket.isCurrent &&
+        disclosure.isCurrent;
+    if (!current()) return;
     setState(() => _profileBusy = true);
     try {
-      final res = await client.getProfileSoul(_effectiveProfile);
-      final content = (res['content'] ?? '').toString();
-      if (!mounted) return;
-      _setText(content);
-      _toast(s.soulProfileLoaded(_effectiveProfile));
+      if (replaceDraft &&
+          textBefore.isNotEmpty &&
+          textBefore != _lastServerContent) {
+        final confirmed = await showHermesDialog<bool>(
+          context: context,
+          title: s.bfeReloadTitle,
+          message: s.bfeReloadBody,
+          actions: [
+            HermesDialogAction(
+              label: s.commonCancel,
+              value: false,
+              style: HermesDialogActionStyle.cancel,
+            ),
+            HermesDialogAction(label: s.commonReload, value: true),
+          ],
+        );
+        if (confirmed != true || !current() || _controller.text != textBefore) {
+          return;
+        }
+      }
+      final content = _officialContent(
+        await client.getProfileSoul(ticket.owner),
+      );
+      if (!current()) return;
+      _lastServerContent = content;
+      // A pending initial read never overwrites a local edit or another owner.
+      if (_controller.text == textBefore &&
+          (replaceDraft || textBefore.isEmpty)) {
+        _setText(content);
+        _toast(s.soulProfileLoaded(ticket.owner), FeedbackKind.routine);
+      }
     } catch (e) {
-      if (mounted) _toast(s.soulLoadFailed(localizedApiError(s, e)));
+      if (current()) _toast(s.soulLoadFailed(localizedApiError(s, e)));
     } finally {
-      if (mounted) setState(() => _profileBusy = false);
+      // Busy belongs to this operation, independent of disclosure authority.
+      if (mounted && operation == _operation) {
+        setState(() => _profileBusy = false);
+      }
     }
   }
 
@@ -346,9 +402,17 @@ class _SoulScreenState extends State<SoulScreen>
   Future<void> _applyProfileSoul() async {
     final s = Strings.of(context);
     final client = _dashClient;
-    if (client == null) return;
-    // Política de aprobación: Solo-lectura bloquea; YOLO aplica directo;
-    // Preguntar muestra el diálogo + App Lock. Escribir SOUL → riesgo medio.
+    if (client == null || _profileBusy) return;
+    final ticket = profileReadTicket();
+    final disclosure = AppLockSensitiveReadFence.capture();
+    final scope = _editorScope;
+    final content = _controller.text;
+    bool current() =>
+        mounted &&
+        ticket.isCurrent &&
+        disclosure.isCurrent &&
+        scope == _editorScope &&
+        scope == _draftScope;
     final gate = approvalGate(
       context,
       instanceId: _connectionId,
@@ -360,49 +424,70 @@ class _SoulScreenState extends State<SoulScreen>
       showReadOnlyNotice(context);
       return;
     }
-    if (gate == ActionGate.ask) {
-      final confirm = await showHermesDialog<bool>(
-        context: context,
-        title: s.soulApplyProfileTitle(_effectiveProfile),
-        message: s.soulApplyProfileBody(_effectiveProfile),
-        actions: [
-          HermesDialogAction(
-            label: s.commonCancel,
-            value: false,
-            style: HermesDialogActionStyle.cancel,
-          ),
-          HermesDialogAction(
-            label: s.soulApply,
-            value: true,
-          ),
-        ],
-      );
-      if (confirm != true || !mounted) return;
-      final lock = context.findAncestorStateOfType<HermesAppState>()?.appLock;
-      if (lock != null && lock.enabled) {
-        final ok = await LockScreen.verify(
-          context,
-          lock,
-          reason: s.soulApplyGateTitle(_effectiveProfile),
-        );
-        if (!ok || !mounted) return;
-      }
-    }
+    if (!current()) return;
     setState(() => _profileBusy = true);
     try {
-      await client.setProfileSoul(_effectiveProfile, _controller.text);
-      if (mounted) _toast(s.soulProfileApplied(_effectiveProfile));
+      // The official route has no dry-run or remote backup capability.
+      final before = _officialContent(
+        await client.getProfileSoul(ticket.owner),
+      );
+      if (!mounted || !current()) return;
+      if (gate == ActionGate.ask) {
+        final diff = before == content
+            ? s.bfeNoDiff
+            : '--- SOUL.md\n+++ SOUL.md\n${before.split('\n').map((line) => '-$line').join('\n')}\n${content.split('\n').map((line) => '+$line').join('\n')}';
+        final confirmed = await showHermesReviewPage(
+          context: context,
+          pageKey: const ValueKey('soul-diff-page'),
+          title: s.soulApplyProfileTitle(ticket.owner),
+          text: diff,
+          confirmLabel: s.soulApply,
+        );
+        if (!confirmed || !mounted || !current()) return;
+        final lock = context.findAncestorStateOfType<HermesAppState>()?.appLock;
+        if (lock != null && lock.enabled) {
+          final ok = await LockScreen.verify(
+            context,
+            lock,
+            reason: s.soulApplyGateTitle(ticket.owner),
+          );
+          if (!ok || !current()) return;
+        }
+      }
+      // Recheck after approval; never overwrite a server edit made during review.
+      final fresh = _officialContent(await client.getProfileSoul(ticket.owner));
+      if (!current()) return;
+      if (fresh != before || content != _controller.text) {
+        throw StateError(
+          'SOUL changed during review. Reload and review again.',
+        );
+      }
+      final result = await client.setProfileSoul(ticket.owner, content);
+      if (!current()) return;
+      if (result['ok'] != true) {
+        throw const FormatException('SOUL write not confirmed');
+      }
+      final saved = _officialContent(await client.getProfileSoul(ticket.owner));
+      if (!current()) return;
+      if (saved != content) {
+        throw const FormatException('SOUL write not verified');
+      }
+      _toast(s.soulProfileApplied(ticket.owner), FeedbackKind.routine);
     } catch (e) {
-      if (mounted) _toast(s.soulApplyFailed(localizedApiError(s, e)));
+      if (current()) _toast(s.soulApplyFailed(localizedApiError(s, e)));
     } finally {
-      if (mounted) setState(() => _profileBusy = false);
+      if (mounted && ticket.isCurrent) setState(() => _profileBusy = false);
     }
   }
 
   Future<void> _loadDraft() async {
-    final content = await _repo.load(_connectionId);
-    final hasBackup = await _repo.hasBackup(_connectionId);
-    if (!mounted) return;
+    final ticket = profileReadTicket();
+    final disclosure = AppLockSensitiveReadFence.capture();
+    final scope = _draftScope;
+    final content = await _repo.load(scope);
+    final hasBackup = await _repo.hasBackup(scope);
+    if (!mounted || !ticket.isCurrent || !disclosure.isCurrent) return;
+    _editorScope = scope;
     _controller.text = content ?? '';
     // Move cursor to end
     _controller.selection = TextSelection.collapsed(
@@ -412,12 +497,13 @@ class _SoulScreenState extends State<SoulScreen>
       _loading = false;
       _hasBackup = hasBackup;
     });
-    // Si el borrador local está vacío, intenta mostrar el SOUL real del
-    // servidor (sin bridge, vía Dashboard API). Tras un frame para que
-    // didChangeDependencies haya creado el cliente del Dashboard.
-    if ((content ?? '').trim().isEmpty) {
+    // A stored empty draft is an intentional reset, not missing local data.
+    // Only a missing draft is initialized from the official server document.
+    if (content == null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _loadServerSoulIfEmpty();
+        if (mounted && ticket.isCurrent && disclosure.isCurrent) {
+          _loadServerSoulIfEmpty();
+        }
       });
     }
   }
@@ -431,7 +517,7 @@ class _SoulScreenState extends State<SoulScreen>
   }
 
   Future<void> _autosave() async {
-    await _repo.save(_connectionId, _controller.text);
+    await _repo.save(_editorScope, _controller.text);
     if (!mounted) return;
     setState(() => _saved = true);
     _savedTimer?.cancel();
@@ -448,15 +534,15 @@ class _SoulScreenState extends State<SoulScreen>
   void _copyAll() {
     Clipboard.setData(ClipboardData(text: _controller.text));
     if (!mounted) return;
-    HermesNotice.of(context).show(
-      message: Strings.of(context).soulCopied,
-      kind: HermesNoticeKind.success,
-      duration: const Duration(seconds: 2),
-    );
+    AppFeedback.of(
+      context,
+    ).notify(FeedbackKind.routine, Strings.of(context).soulCopied);
   }
 
   Future<void> _showTemplateMenu() async {
     final colors = Theme.of(context).hermes;
+    final ticket = profileReadTicket();
+    final disclosure = AppLockSensitiveReadFence.capture();
     final hasContent = _controller.text.trim().isNotEmpty;
 
     await showHermesFloatingSurface<void>(
@@ -468,6 +554,7 @@ class _SoulScreenState extends State<SoulScreen>
         hasContent: hasContent,
         onSelect: (template) async {
           Navigator.pop(ctx);
+          if (!mounted || !ticket.isCurrent || !disclosure.isCurrent) return;
           await _applyTemplate(template);
         },
       ),
@@ -484,6 +571,14 @@ class _SoulScreenState extends State<SoulScreen>
   /// restaurable. Si el borrador está vacío, la inserta sin preguntar.
   Future<void> _applyTemplate(_SoulTemplate template) async {
     final s = Strings.of(context);
+    final ticket = profileReadTicket();
+    final disclosure = AppLockSensitiveReadFence.capture();
+    final scope = _editorScope;
+    bool ownerCurrent() =>
+        mounted &&
+        ticket.isCurrent &&
+        disclosure.isCurrent &&
+        scope == _editorScope;
     final current = _controller.text;
     final hasContent = current.trim().isNotEmpty;
     if (!hasContent) {
@@ -492,11 +587,12 @@ class _SoulScreenState extends State<SoulScreen>
       return;
     }
     final mode = await _askApplyMode(_soulTplLabel(s, template));
-    if (mode == null || !mounted) return; // cancelado
+    if (mode == null || !ownerCurrent() || _controller.text != current) return;
 
-    // Copia de seguridad del contenido anterior antes de tocarlo.
-    await _repo.saveBackup(_connectionId, current);
-    if (mounted) setState(() => _hasBackup = true);
+    // Keep the local backup under the captured owner, not the successor.
+    await _repo.saveBackup(scope, current);
+    if (!ownerCurrent() || _controller.text != current) return;
+    setState(() => _hasBackup = true);
 
     if (mode == _SoulApplyMode.append) {
       if (template.content.trim().isEmpty) return; // nada que añadir
@@ -506,7 +602,7 @@ class _SoulScreenState extends State<SoulScreen>
       _setText(template.content);
     }
     await _forceSave();
-    _toast(s.soulPrevSaved);
+    _toast(s.soulPrevSaved, FeedbackKind.routine);
   }
 
   Future<_SoulApplyMode?> _askApplyMode(String templateLabel) {
@@ -525,18 +621,25 @@ class _SoulScreenState extends State<SoulScreen>
           label: s.soulAppendToEnd,
           value: _SoulApplyMode.append,
         ),
-        HermesDialogAction(
-          label: s.soulReplace,
-          value: _SoulApplyMode.replace,
-        ),
+        HermesDialogAction(label: s.soulReplace, value: _SoulApplyMode.replace),
       ],
     );
   }
 
   Future<void> _restoreBackup() async {
     final s = Strings.of(context);
-    final backup = await _repo.loadBackup(_connectionId);
-    if (backup == null || !mounted) return;
+    final ticket = profileReadTicket();
+    final disclosure = AppLockSensitiveReadFence.capture();
+    final scope = _editorScope;
+    final text = _controller.text;
+    bool current() =>
+        mounted &&
+        ticket.isCurrent &&
+        disclosure.isCurrent &&
+        scope == _editorScope &&
+        text == _controller.text;
+    final backup = await _repo.loadBackup(scope);
+    if (backup == null || !mounted || !current()) return;
     final ok = await showHermesDialog<bool>(
       context: context,
       title: s.soulRestorePrevTitle,
@@ -547,26 +650,18 @@ class _SoulScreenState extends State<SoulScreen>
           value: false,
           style: HermesDialogActionStyle.cancel,
         ),
-        HermesDialogAction(
-          label: s.soulRestore,
-          value: true,
-        ),
+        HermesDialogAction(label: s.soulRestore, value: true),
       ],
     );
-    if (ok != true || !mounted) return;
+    if (ok != true || !current()) return;
     _setText(backup);
     await _forceSave();
-    _toast(s.soulRestored);
+    _toast(s.soulRestored, FeedbackKind.routine);
   }
 
-  void _toast(String msg) {
+  void _toast(String msg, [FeedbackKind kind = FeedbackKind.error]) {
     if (!mounted) return;
-    HermesNotice.of(context).showSnackBar(
-      SnackBar(
-        content: Text(msg, style: const TextStyle(fontSize: 12)),
-        duration: const Duration(seconds: 2),
-      ),
-    );
+    AppFeedback.notify(context, kind, msg);
   }
 
   @override
@@ -575,49 +670,35 @@ class _SoulScreenState extends State<SoulScreen>
 
     return Scaffold(
       appBar: HermesAppBar(
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('SOUL'),
-            _profileScoped
-                ? Text(
-                    Strings.of(context).soulProfileLabelFmt(_effectiveProfile),
-                    style: TextStyle(fontSize: 11, color: colors.accentHover),
-                  )
-                : AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 300),
-                    child: _saved
-                        ? Text(
-                            Strings.of(context).soulDraftSaved,
-                            key: const ValueKey('saved'),
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: colors.success,
-                            ),
-                          )
-                        : Text(
-                            Strings.of(context).soulLocalDoc,
-                            key: const ValueKey('local'),
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: colors.textDisabled,
-                            ),
-                          ),
-                  ),
-          ],
-        ),
+        title: const Text('SOUL'),
+        // Whose SOUL this is, when it is not the default profile's; for the
+        // local document, the mark that the draft was just saved.
+        titleBadge: _profileScoped
+            ? ProfileScopeLabel.badgeFor(
+                profile: _profile,
+                connectionId: widget.connection?.id,
+              )
+            : _saved
+            ? Icon(
+                Icons.check_circle_rounded,
+                key: const ValueKey('saved'),
+                size: 16,
+                color: colors.success,
+                semanticLabel: Strings.of(context).soulDraftSaved,
+              )
+            : null,
         actions: [
+          // Saving and the templates come first: they are the two that stay
+          // in the header's pill; the rest go behind its "more".
           IconButton(
-            icon: Icon(
-              bridgeIcon,
-              color: bridge.connected
-                  ? colors.success
-                  : bridge.running
-                  ? colors.accent
-                  : colors.textSecondary,
-            ),
-            tooltip: Strings.of(context).soulConfigBridge,
-            onPressed: configureBridge,
+            icon: const Icon(Icons.save_outlined),
+            tooltip: Strings.of(context).soulSaveDraft,
+            onPressed: _forceSave,
+          ),
+          IconButton(
+            icon: const Icon(Icons.auto_fix_high_outlined),
+            tooltip: Strings.of(context).soulTemplatesTitle,
+            onPressed: _showTemplateMenu,
           ),
           IconButton(
             icon: const Icon(Icons.copy_outlined),
@@ -630,36 +711,17 @@ class _SoulScreenState extends State<SoulScreen>
               tooltip: Strings.of(context).soulRestorePrevTitle,
               onPressed: _restoreBackup,
             ),
-          IconButton(
-            icon: const Icon(Icons.auto_fix_high_outlined),
-            tooltip: Strings.of(context).soulTemplatesTitle,
-            onPressed: _showTemplateMenu,
-          ),
-          IconButton(
-            icon: const Icon(Icons.save_outlined),
-            tooltip: Strings.of(context).soulSaveDraft,
-            onPressed: _forceSave,
-          ),
+          if (!_profileScoped)
+            ScreenHelpButton(
+              title: 'SOUL',
+              paragraphs: [Strings.of(context).soulLocalDocNote],
+            ),
         ],
       ),
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const Center(child: ConsoleLoader.large())
           : Column(
               children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-                  child: Builder(
-                    builder: (_) {
-                      // Sin bridge conectado: mantener el banner local original.
-                      if (bridge.status == BridgeStatus.notConfigured ||
-                          bridge.status == BridgeStatus.unreachable) {
-                        return _ApiBanner(colors: colors);
-                      }
-                      final b = bridgeBanner(localFallback: '');
-                      return HermesInfoBanner(b.text, icon: b.icon);
-                    },
-                  ),
-                ),
                 Expanded(
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
@@ -677,7 +739,7 @@ class _SoulScreenState extends State<SoulScreen>
                         hintText: Strings.of(context).soulEditorHint,
                         hintStyle: TextStyle(
                           fontSize: 13,
-                          color: colors.textDisabled,
+                          color: colors.textTertiary,
                           height: 1.5,
                         ),
                         filled: true,
@@ -732,100 +794,9 @@ class _SoulScreenState extends State<SoulScreen>
                         ],
                       ),
                     ),
-                  )
-                else if (bridgeCanRead || bridgeCanWrite)
-                  Container(
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
-                    child: SafeArea(
-                      top: false,
-                      child: SingleChildScrollView(
-                        scrollDirection: Axis.horizontal,
-                        reverse: true,
-                        child: Row(
-                          children: [
-                            if (bridgeCanRead) ...[
-                              HermesSecondaryButton(
-                                label: bridgeLoading
-                                    ? Strings.of(context).commonLoading
-                                    : Strings.of(context).soulReload,
-                                icon: Icons.cloud_download_outlined,
-                                onTap: bridgeLoading
-                                    ? null
-                                    : () => loadFromServer(),
-                              ),
-                              const SizedBox(width: 7),
-                            ],
-                            if (bridgeCanWrite)
-                              HermesSecondaryButton(
-                                label: bridgeApplying
-                                    ? Strings.of(context).soulApplying
-                                    : Strings.of(context).soulApply,
-                                icon: Icons.cloud_upload_outlined,
-                                color: colors.accent,
-                                onTap: bridgeApplying ? null : applyToServer,
-                              ),
-                          ],
-                        ),
-                      ),
-                    ),
                   ),
               ],
             ),
-    );
-  }
-}
-
-// ── Banner discreto ────────────────────────────────────────────────────────────
-
-class _ApiBanner extends StatefulWidget {
-  final HermesThemeColors colors;
-  const _ApiBanner({required this.colors});
-
-  @override
-  State<_ApiBanner> createState() => _ApiBannerState();
-}
-
-class _ApiBannerState extends State<_ApiBanner> {
-  bool _dismissed = false;
-
-  @override
-  Widget build(BuildContext context) {
-    if (_dismissed) return const SizedBox.shrink();
-    return Container(
-      margin: const EdgeInsets.fromLTRB(16, 10, 16, 0),
-      padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
-      decoration: BoxDecoration(
-        color: widget.colors.surfaceVariant,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: widget.colors.divider),
-      ),
-      child: Row(
-        children: [
-          Icon(
-            Icons.cloud_off_outlined,
-            size: 14,
-            color: widget.colors.textDisabled,
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              Strings.of(context).soulLocalDocNote,
-              style: TextStyle(fontSize: 11, color: widget.colors.textDisabled),
-            ),
-          ),
-          IconButton(
-            icon: Icon(
-              Icons.close,
-              size: 14,
-              color: widget.colors.textDisabled,
-            ),
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-            tooltip: Strings.of(context).commonClose,
-            onPressed: () => setState(() => _dismissed = true),
-          ),
-        ],
-      ),
     );
   }
 }
@@ -863,7 +834,7 @@ class _TemplateSheet extends StatelessWidget {
             const SizedBox(height: 4),
             Text(
               Strings.of(context).soulPickTemplateReplaces,
-              style: TextStyle(fontSize: 12, color: colors.textDisabled),
+              style: TextStyle(fontSize: 12, color: colors.textTertiary),
             ),
           ],
           const SizedBox(height: 12),

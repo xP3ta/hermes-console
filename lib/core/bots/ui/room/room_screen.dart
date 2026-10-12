@@ -1,4 +1,6 @@
 import 'dart:async';
+import '../../../design/edges.dart' show HermesBottomScrim;
+import '../../../services/app_lock_sensitive_read_fence.dart';
 import 'dart:io';
 import 'dart:math' as math;
 
@@ -11,16 +13,27 @@ import '../../../../l10n/app_localizations.dart';
 import '../../../models/attachment_draft.dart';
 import '../../../models/hosted_groups.dart';
 import '../../../services/attachment_uploader.dart';
+import '../../../services/tui_gateway_client.dart' show TuiGatewayRpcError;
 import '../../../theme/app_theme.dart';
+import '../../../utils/plain_preview.dart';
+import '../../../utils/unread_rules.dart';
+import '../../../widgets/anchored_transcript_scroll.dart';
 import '../../../widgets/attachment_source_sheet.dart';
+import '../../../widgets/chat/chat_notch.dart';
+import '../../../widgets/chat/composer_pasted_image.dart';
+import '../../../widgets/extent_reporter.dart';
 import '../../../widgets/chat/console_composer.dart';
+import '../../../widgets/floating_chat_header.dart';
 import '../../../widgets/hermes_app_bar.dart';
+import '../../../feedback/feedback_policy.dart';
 import '../../../widgets/hermes_notice.dart';
 import '../../../widgets/hermes_premium_ui.dart';
 import '../../../widgets/mission_profile_avatar.dart';
 import '../../data/room_log_cursor.dart';
 import 'room_dictation.dart';
 import 'room_gateway.dart';
+import 'room_header.dart';
+import 'room_mentions.dart';
 import 'room_models.dart';
 import 'room_prefs.dart';
 import 'room_sheets.dart';
@@ -29,10 +42,95 @@ import 'room_widgets.dart';
 /// Composer draft persistence for one room (Mission Control adapts the
 /// encrypted `ChatDraftStore`).
 abstract interface class RoomDraftStore {
-  Future<({String text, String? threadId})> load();
-  Future<void> save(String text, {String? threadId, String? preparedId});
+  /// [preparedId] is set while the stored text is a send still waiting for
+  /// the server's acknowledgement; [preparedText] is the leading part of the
+  /// text that is that send (null: all of it).
+  Future<RoomDraft> load();
+  Future<void> save(
+    String text, {
+    String? threadId,
+    String? preparedId,
+    String? preparedText,
+  });
+
+  /// Retires the send [preparedId]: only its own text, never what was typed
+  /// after it.
   Future<void> clear({required String preparedId});
 }
+
+typedef RoomDraft = ({
+  String text,
+  String? threadId,
+  String? preparedId,
+  String? preparedText,
+});
+
+/// A stored draft bound to a send: [sent] is that send's own text, the
+/// leading part of [text]; whatever follows it was typed later.
+/// One transcript item: stable identity, what it is for the unread rules,
+/// its log sequence (0 when it has none) and how to build it.
+typedef _RoomItem = ({
+  String key,
+  UnreadRowKind kind,
+  int seq,
+  Widget Function() build,
+});
+
+typedef _HeldDraft = ({
+  String text,
+  String sent,
+  String? threadId,
+  String preparedId,
+});
+
+/// The part of [held] typed after its send, without the separator.
+String _typedAfterSend(_HeldDraft held) {
+  if (held.text.length <= held.sent.length ||
+      !held.text.startsWith(held.sent)) {
+    return '';
+  }
+  final rest = held.text.substring(held.sent.length);
+  return rest.startsWith('\n') ? rest.substring(1) : rest;
+}
+
+String _joinDraft(String a, String b) => a.trim().isEmpty
+    ? b
+    : b.trim().isEmpty
+    ? a
+    : '$a\n$b';
+
+/// Which call failed and how, without any message content: the error type,
+/// the RPC method for gateway errors (`groups.state`, `groups.log`,
+/// `groups.capabilities`) with its code and failure kind, and the text of
+/// local errors only when it is one of the client's own constants below.
+/// Any other message may carry remote text and is never logged.
+String roomRefreshFailureKind(Object error) {
+  if (error is TuiGatewayRpcError) {
+    return 'TuiGatewayRpcError method=${error.method} code=${error.code} '
+        'kind=${error.failureKind?.name} reason=${error.reason}';
+  }
+  final message = switch (error) {
+    StateError(:final message) => message,
+    FormatException(:final message) => message,
+    _ => null,
+  };
+  if (message != null && _roomRefreshLocalFailures.contains(message)) {
+    return '${error.runtimeType} $message';
+  }
+  return error.runtimeType.toString();
+}
+
+/// Constant failure texts of the room read path (this screen, Mission
+/// Control's repository and the gateway client), safe to log.
+const _roomRefreshLocalFailures = {
+  'room refresh authority changed',
+  'room refresh unavailable',
+  'incoherent hosted room mutation readback',
+  'hosted group capability unavailable',
+  'hosted groups unsupported',
+  'MissionControlRepository is closed',
+  'Hermes Desktop WebSocket is not connected',
+};
 
 /// The hosted Room screen (spec 070 S3): group-chat layout, round panel,
 /// approvals/retry/stop, activity, shared composer and attachments.
@@ -55,6 +153,20 @@ class RoomScreen extends StatefulWidget {
   final Widget? roomAvatar;
   final void Function(HostedGroupMember member)? onOpenMember;
 
+  /// Reads and answers prompts open in members' own sessions (clarify,
+  /// approvals the room driver does not report). Null: not available.
+  final RoomMemberPromptSource? memberPrompts;
+  final GatewayRoomMemberCompressor? memberCompressor;
+
+  /// Reads local members' live turn steps while the Activity sheet is
+  /// open. Null: not available (rows fall back to the log's state).
+  final RoomMemberLiveSource? memberLive;
+
+  /// Opens a member's room session as a chat ([storedSessionId] is its
+  /// durable id), where the full request UI is available.
+  final void Function(HostedGroupMember member, String storedSessionId)?
+  onOpenMemberChat;
+
   /// Poll timer seam for tests (defaults to [Timer.new]).
   final RoomPollTimerFactory? pollTimer;
   final DateTime Function()? clock;
@@ -76,6 +188,10 @@ class RoomScreen extends StatefulWidget {
     this.displayName,
     this.roomAvatar,
     this.onOpenMember,
+    this.memberPrompts,
+    this.memberCompressor,
+    this.memberLive,
+    this.onOpenMemberChat,
     this.pollTimer,
     this.clock,
   });
@@ -91,58 +207,198 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
   late final RoomLogPoller _poller;
   final TextEditingController _composer = TextEditingController();
   final FocusNode _focus = FocusNode();
-  final ScrollController _transcriptScroll = ScrollController();
+
+  /// Focus scope of the transcript. Tapping a message gives focus to its
+  /// selection region; when that row later leaves the lazy list (scrolled
+  /// away or rebuilt) the framework hands focus back to the scope's
+  /// previously focused child. Without a scope of its own that child is the
+  /// composer, and the keyboard opens by itself mid-scroll.
+  final FocusScopeNode _transcriptFocus = FocusScopeNode(
+    debugLabel: 'room-transcript',
+  );
+  late final AnchoredTranscriptScrollController _transcriptScroll =
+      AnchoredTranscriptScrollController(following: () => _reading == null);
   final GlobalKey _transcriptKey = GlobalKey(debugLabel: 'room-transcript');
   bool _openAnchored = false;
+
+  /// Reading anchor. The transcript is two slivers around a center: the
+  /// history up to a boundary row (center sliver, growing up) and every
+  /// item after it (growing down). While following, the boundary is the
+  /// newest history row and only volatile rows (own pending sends, cards,
+  /// "is replying") sit below it, so they come and go without moving the
+  /// history. While reading ([_reading]) the boundary stays where the
+  /// reader left the bottom (or where they landed on the divider): new
+  /// content grows below it and what they read never moves. Back at the
+  /// bottom everything merges again, pinned by the scroll controller.
+  final GlobalKey _centerKey = GlobalKey(debugLabel: 'room-center');
+
+  /// Last history row kept in the center while reading, and the newest log
+  /// sequence at that moment: the pill counts only news after it.
+  ({String boundary, int ceiling})? _reading;
+
+  /// Unread rules (unread_rules.dart): whether the room is on screen, the
+  /// newest sequence when it was hidden, a pending "came back after
+  /// leaving", and what was already there when the reader arrived.
+  late final UnreadPresence _presence = UnreadPresence(clock: () => _now);
+  bool _coverVisible = true;
+  int? _awaySeq;
+  int? _returnFrom;
+  bool _rebasePending = false;
+  int? _arrivedThroughSeq;
+  bool _landPending = false;
+  bool _programmaticScroll = false;
+
+  /// rp1215: owner message just shown from a quote chip, briefly washed.
+  String? _highlightedEventId;
+  Timer? _highlightTimer;
+
+  /// Context kept above the divider when landing on it.
+  static const double _landingContext = 56;
+  Set<String> _dismissedTasks = const {};
+  bool _localLoaded = false;
+  bool _detailOpen = false;
+
+  /// Live steps of working local members, read only while the Activity
+  /// sheet is open and the room works.
+  Map<String, RoomMemberLive> _live = const {};
+  Timer? _liveTimer;
+  bool _liveReading = false;
+
+  /// Header shows only the name while the reader is up in the history.
+  /// fh1215: what the floating header covers at the top of the screen.
+  /// The transcript reserves it above its oldest row and the landing keeps
+  /// the divider below it.
+  double _headerInset = 0;
+
+  /// Measured height of the floating bottom stack (fade, stale line and
+  /// composer). The transcript runs to the bottom under it and reserves
+  /// this much below its newest row, so the last message can always
+  /// scroll clear of the composer.
+  final ValueNotifier<double> _composerExtent = ValueNotifier(0);
+
+  void _setComposerExtent(double value) {
+    if ((value - _composerExtent.value).abs() < 0.5) return;
+    _composerExtent.value = value;
+    // The open anchor waits for the first reserve: applied earlier, the
+    // reserve arriving a frame later would move the anchored header.
+    if (!_openAnchored) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _anchorOnOpen());
+    }
+  }
+
   final List<AttachmentDraft> _attachments = [];
+  Future<void> _pasteTail = Future<void>.value();
   final Set<String> _answering = {};
+
+  /// Prompts open in members' sessions (latest probe), and the ones being
+  /// answered. [_promptEpoch] discards a probe that started before an
+  /// answer landed, so an answered card never comes back from a stale read.
+  List<RoomMemberPrompt> _prompts = const [];
+  final Set<String> _promptBusy = {};
+  int _promptEpoch = 0;
+  bool _probing = false;
+  bool _probeAgain = false;
+
+  /// A member whose turn cannot start because its room session has no live
+  /// runtime (latest probe), and the single in-flight resume of it.
+  RoomMemberStall? _stall;
+  bool _stallProbing = false;
+  bool _stallAgain = false;
+  bool _resuming = false;
+  bool _compressing = false;
   final Set<String> _retrying = {};
   Animation<double>? _coverAnimation;
-  bool _sending = false;
   bool _stopping = false;
+
+  /// When the server accepted «stop all», and the log head at that moment.
+  /// The idle header pill says «Room stopped» for a short while unless the
+  /// room works again or someone writes (see [_showsStopped]).
+  DateTime? _stoppedAt;
+  int? _stoppedHead;
+  Timer? _stoppedTimer;
+  static const _stoppedLineFor = Duration(minutes: 2);
   bool _pickerOpen = false;
   String? _threadId;
-  String? _error;
+
+  /// The message the owner tapped reply on: shown in the banner («Respondiendo
+  /// a…»). The reply goes in the same thread with the @mention; Console
+  /// sends no `reply_to`. Cleared with the thread.
+  ({String eventId, String label})? _replyTarget;
+
+  /// When the room was last read successfully, or when polling (re)started.
+  /// The room counts as stale only once this is [roomStaleAfter] old and a
+  /// read failed; a single failed poll never shows anything.
+  late DateTime _freshAt;
+  bool _stale = false;
   int? _lastSeenSeq;
   bool _lastSeenLoaded = false;
   RoomNotificationLevel _notifications = RoomNotificationLevel.all;
-  HostedGroupSendAttempt? _pendingAttempt;
-  String? _pendingText;
+
+  /// Messages sent from this screen that the server has not acknowledged
+  /// yet, in the order the user sent them. They show at once as local
+  /// bubbles; one worker delivers them strictly in order.
+  final List<_OutgoingMessage> _outbox = [];
+  int _outboxVersion = 0;
+  bool _draining = false;
   Timer? _draftTimer;
   bool _draftDirty = false;
   bool _restoringDraft = false;
   bool _foreground = true;
 
-  String get _roomKey => '${_room.authorityGatewayId}:${_room.roomId}';
+  /// Sends of this app still waiting for the server, by attempt id. They
+  /// outlive the screen that started them, so re-entering the room waits
+  /// for their outcome instead of reading a log that predates them.
+  static final Map<String, Future<bool>> _inFlightSends = {};
+
+  /// A stored draft bound to a send attempt, kept out of the composer until
+  /// the room proves whether that send landed: a sent text must never come
+  /// back as a draft, and an unsent one must never be lost.
+  _HeldDraft? _heldDraft;
+
+  /// Composer text typed while [_heldDraft] was unresolved and the screen
+  /// closed; written once the held draft is settled.
+  String? _typedWhileHeld;
+  bool _sentWhileHeld = false;
+  bool _settlingHeld = false;
+
+  String get _roomKey => roomPrefsKey(_room);
   DateTime get _now => (widget.clock ?? DateTime.now)();
   List<HostedGroupEvent> get _events => _log?.events ?? const [];
 
   @visibleForTesting
   RoomLogPoller get poller => _poller;
 
+  void _onDraftDisclosureChanged() {
+    if (!mounted) return;
+    if (AppLockSensitiveReadFence.capture().isCurrent) {
+      unawaited(_restoreDraft());
+    } else if (!_draftDirty && _restoredDraftText == _composer.text) {
+      _restoringDraft = true;
+      _composer.clear();
+      _restoringDraft = false;
+    }
+  }
+
   @override
   void initState() {
     super.initState();
+    AppLockSensitiveReadFence.changes.addListener(_onDraftDisclosureChanged);
     WidgetsBinding.instance.addObserver(this);
+    _freshAt = _now;
     _poller = RoomLogPoller(
       tick: _tick,
       onDelta: (_) {},
-      onError: (_) {
-        if (mounted) {
-          setState(() => _error = Strings.of(context).roomRefreshFailed);
-        }
-      },
+      onError: (error) => _refreshFailed(error, via: 'poll'),
       timer: widget.pollTimer,
+      backoff: RoomPollBackoff(clock: () => _now),
     );
+    // Text, focus and dictation rebuild only the composer area (a
+    // ListenableBuilder in build), never the whole screen.
     _composer.addListener(_onComposerChanged);
-    _focus.addListener(_rebuild);
-    widget.dictation?.addListener(_rebuild);
     unawaited(_loadLocal());
     unawaited(_restoreDraft());
-  }
-
-  void _rebuild() {
-    if (mounted) setState(() {});
+    unawaited(_probePrompts());
+    unawaited(_probeStall());
   }
 
   @override
@@ -155,11 +411,131 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
       _coverAnimation = animation;
       animation?.addStatusListener(_onCoverChanged);
       _poller.setVisible(animation == null || animation.isDismissed);
+      _coverVisible = animation == null || animation.isDismissed;
+      _syncPresence();
     }
   }
 
   void _onCoverChanged(AnimationStatus status) {
-    _poller.setVisible(status == AnimationStatus.dismissed);
+    final visible = status == AnimationStatus.dismissed;
+    if (visible && !_poller.active) _restartStaleClock();
+    _poller.setVisible(visible);
+    _syncAgoTick();
+    _coverVisible = visible;
+    _syncPresence();
+  }
+
+  /// The room is present only on screen with the app in the foreground
+  /// (another route, the App Lock or the background hide it). Coming back
+  /// after a long enough absence arms the divider for what arrived
+  /// meanwhile; it is applied by the next read while present.
+  void _syncPresence() {
+    final visible = _foreground && _coverVisible;
+    final wasPresent = _presence.present;
+    if (!visible) {
+      if (wasPresent) _awaySeq = _log?.latestSeq;
+      _presence.hide();
+    } else if (!wasPresent) {
+      // What arrives while hidden is never "while you read": the next read
+      // moves the pill's baseline past it.
+      _rebasePending = true;
+      if (_presence.show()) _returnFrom = _awaySeq;
+    }
+    if (wasPresent != _presence.present && mounted) setState(() {});
+  }
+
+  /// Back after leaving: what other members wrote meanwhile gets the
+  /// divider (and the landing when the reader was following); it is never
+  /// counted by the pill.
+  void _applyReturn() {
+    if (!_presence.present || !mounted) return;
+    final rebase = _rebasePending;
+    _rebasePending = false;
+    final from = _returnFrom;
+    _returnFrom = null;
+    final reading = _reading;
+    if (from == null) {
+      if (rebase && reading != null) {
+        final latest = _log?.latestSeq ?? 0;
+        if (latest != reading.ceiling) {
+          setState(
+            () => _reading = (boundary: reading.boundary, ceiling: latest),
+          );
+        }
+      }
+      return;
+    }
+    final latest = _log?.latestSeq ?? 0;
+    final news = _events.any(
+      (e) =>
+          e.sequence > from &&
+          e.sequence <= latest &&
+          unreadCounts(roomEventUnreadKind(e)),
+    );
+    if (!news) return;
+    setState(() {
+      _lastSeenSeq = from;
+      _lastSeenLoaded = true;
+      _arrivedThroughSeq = latest;
+      if (reading == null) {
+        _landPending = true;
+      } else {
+        _reading = (boundary: reading.boundary, ceiling: latest);
+      }
+    });
+  }
+
+  /// Start of the idle status line's relative age ("… · 8 min ago"), as
+  /// last painted; null when the line shows no age.
+  DateTime? _agoSince;
+  DateTime? _agoTimerSince;
+  Timer? _agoTimer;
+
+  /// Whether the relative-age repaint is scheduled.
+  @visibleForTesting
+  bool get ageTickArmed => _agoTimer?.isActive ?? false;
+
+  Duration? _agoTickDelay;
+  int _agoTicks = 0;
+
+  /// Delay of the last armed repaint (null before the first).
+  @visibleForTesting
+  Duration? get ageTickDelay => _agoTickDelay;
+
+  /// Age repaints fired so far.
+  @visibleForTesting
+  int get ageTicks => _agoTicks;
+
+  /// Repaints the relative age when its label next changes (a minute, an
+  /// hour or a day later), only while the room is on screen: no timer runs
+  /// in the background or under another route.
+  void _armAgoTick() {
+    final since = _agoSince;
+    if (since == null || !_poller.active) {
+      _agoTimer?.cancel();
+      _agoTimer = null;
+      return;
+    }
+    if (_agoTimer != null && _agoTimerSince == since) return;
+    _agoTimer?.cancel();
+    _agoTimerSince = since;
+    final delay = _agoTickDelay = roomAgoNextChange(_now.difference(since));
+    _agoTimer = Timer(delay, () {
+      _agoTimer = null;
+      _agoTicks += 1;
+      if (mounted && _poller.active) setState(() {});
+    });
+  }
+
+  /// Visibility changed: stop the age timer, or repaint a fresh age (which
+  /// arms it again) when the room is back on screen.
+  void _syncAgoTick() {
+    if (!_poller.active) {
+      _agoTimer?.cancel();
+      _agoTimer = null;
+    } else if (_agoSince != null && mounted) {
+      setState(() {});
+    }
   }
 
   @override
@@ -167,7 +543,10 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     final foreground = state == AppLifecycleState.resumed;
     if (foreground == _foreground) return;
     _foreground = foreground;
+    if (foreground) _restartStaleClock();
     _poller.setForeground(foreground);
+    _syncAgoTick();
+    _syncPresence();
     if (!foreground) {
       _flushDraft();
       _markSeen();
@@ -182,7 +561,46 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
       _lastSeenSeq = seen;
       _lastSeenLoaded = true;
       _notifications = level;
+      _arrivedThroughSeq ??= _log?.latestSeq;
+      _landPending = true;
     });
+    Set<String> dismissed = const {};
+    try {
+      dismissed = await widget.prefs.dismissedTasks(_roomKey);
+    } catch (_) {
+      // Unreadable local state only means nothing is dismissed.
+    }
+    if (!mounted) return;
+    setState(() {
+      _dismissedTasks = {..._dismissedTasks, ...dismissed};
+      _localLoaded = true;
+    });
+  }
+
+  /// Dismisses a failed-task card on this device. Keyed by the exact task,
+  /// so a later failure (new task id) always shows again.
+  void _dismissTask(String taskId) {
+    final next = {..._dismissedTasks, taskId};
+    setState(() => _dismissedTasks = next);
+    unawaited(
+      widget.prefs
+          .setDismissedTasks(_roomKey, next)
+          .then<void>((_) {}, onError: (Object _) {}),
+    );
+  }
+
+  /// Retries the server is still recovering by itself: not failures yet.
+  Set<String> get _recoveringRetries =>
+      roomRecoveringRetryTasks(_driver, _events);
+
+  List<RoomRetryAction> get _visibleRetries {
+    final recovering = _recoveringRetries;
+    return [
+      for (final r in _driver?.retries ?? const <RoomRetryAction>[])
+        if (!_dismissedTasks.contains(r.taskId) &&
+            !recovering.contains(r.taskId))
+          r,
+    ];
   }
 
   void _markSeen() {
@@ -210,17 +628,22 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
         if (e.sequence > previousLatest) e,
     ];
     final reset = log.latestSeq < previousLatest;
+    if (reset) {
+      _reading = null;
+      _transcriptScroll.releaseLanding();
+    }
     final driverChanged = !_sameDriver(_driver, result.driverStatus);
+    _freshAt = _now;
     if (added.isNotEmpty ||
         reset ||
         driverChanged ||
         result.room.revision != previous.revision ||
-        _error != null) {
+        _stale) {
       setState(() {
         _room = result.room;
         _log = log;
         _driver = result.driverStatus ?? _driver;
-        _error = null;
+        _stale = false;
         _answering.removeWhere(
           (id) => !(_driver?.approvals.any((a) => a.requestId == id) ?? false),
         );
@@ -230,6 +653,15 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
       // no frame on a quiet poll.
       setState(() {});
     }
+    if ((added.isNotEmpty || reset || driverChanged) && _reading == null) {
+      // Following: what just arrived pins the list to the bottom.
+      _transcriptScroll.requestFollow();
+    }
+    if (added.isNotEmpty || reset) _retirePublishedOutbox();
+    _applyReturn();
+    _settleHeldDraftFromLog();
+    unawaited(_probePrompts());
+    unawaited(_probeStall());
     if (result.room.disbanded && mounted) Navigator.of(context).maybePop();
     return (
       delta: RoomLogDelta(added: added, log: log, reset: reset),
@@ -258,71 +690,292 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
   Future<void> refresh() async {
     try {
       await _tick();
-    } catch (_) {
-      if (mounted) {
-        setState(() => _error = Strings.of(context).roomRefreshFailed);
-      }
+    } catch (error) {
+      _refreshFailed(error, via: 'refresh');
     }
+  }
+
+  /// Silence tolerated before the room shows itself as reconnecting:
+  /// time since the last successful read, not a count of failed polls.
+  ///
+  /// * The idle poll cadence tops out at 15 s (`RoomPollBackoff.slow`), so
+  ///   one lost idle tick plus the retry that succeeds already lands ~30 s
+  ///   after the last good read; anything shorter flags a single blip.
+  /// * 45 s is the silence the client already tolerates before calling the
+  ///   socket half-open (`TuiGatewayClient.defaultHeartbeatDeadline`, the
+  ///   same as Desktop, sized against the server's 30 s send deadline). The
+  ///   room never looks less healthy than the connection itself does.
+  static const roomStaleAfter = Duration(seconds: 45);
+
+  void _restartStaleClock() {
+    // A stale room stays flagged until a read succeeds; otherwise paused
+    // time (background, covered by another route) is not silence.
+    if (!_stale) _freshAt = _now;
+  }
+
+  void _refreshFailed(Object error, {required String via}) {
+    if (!mounted) return;
+    // Which call failed and how, for device logs; never any content.
+    debugPrint('room refresh failed ($via): ${roomRefreshFailureKind(error)}');
+    final stale = _now.difference(_freshAt) >= roomStaleAfter;
+    if (stale != _stale) setState(() => _stale = stale);
   }
 
   // ── Draft ────────────────────────────────────────────────────────────
 
+  String? _restoredDraftText;
+  SensitiveReadTicket? _heldDisclosureTicket;
+  bool _draftRestoreRunning = false;
   Future<void> _restoreDraft() async {
+    if (_draftRestoreRunning) return;
+    final ticket = AppLockSensitiveReadFence.capture();
+    if (!ticket.isCurrent) return;
+    _draftRestoreRunning = true;
     final store = widget.drafts;
-    if (store == null) return;
+    if (store == null) {
+      _draftRestoreRunning = false;
+      return;
+    }
     try {
       final draft = await store.load();
-      if (!mounted || _draftDirty) return;
+      if (!mounted || !ticket.isCurrent) return;
+      // A draft bound to a send attempt is that send's text, kept until the
+      // server acknowledged it. The log this screen opened with may predate
+      // the send (or the send may still be in flight from the screen the
+      // user just left), so it stays out of the composer until the room
+      // proves the send did not land.
+      final prepared = draft.preparedId;
+      if (prepared != null && draft.text.isNotEmpty) {
+        _heldDisclosureTicket = ticket;
+        _heldDraft = (
+          text: draft.text,
+          sent: draft.preparedText ?? draft.text,
+          threadId: draft.threadId,
+          preparedId: prepared,
+        );
+        await _settleHeldDraft();
+        return;
+      }
+      if (_draftDirty) return;
       _restoringDraft = true;
       _threadId = draft.threadId;
       _composer.text = draft.text;
+      _restoredDraftText = draft.text;
       _restoringDraft = false;
     } catch (_) {
       // Never overwrite an unreadable draft.
+    } finally {
+      _draftRestoreRunning = false;
+      if (!ticket.isCurrent &&
+          AppLockSensitiveReadFence.capture().isCurrent &&
+          mounted) {
+        unawaited(_restoreDraft());
+      }
+    }
+  }
+
+  String? _heldDurableEventId(String preparedId) {
+    try {
+      return HostedGroupSendAttempt.forClientEvent(preparedId).durableEventId;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Decides the held draft: first from a send of this app still in flight,
+  /// then from a fresh read of the room. Runs on even after the screen
+  /// closed. An unreadable room keeps it held (and stored) for a later poll.
+  Future<void> _settleHeldDraft() async {
+    if (_settlingHeld) return;
+    _settlingHeld = true;
+    try {
+      await _settleHeldDraftOnce();
+    } finally {
+      _settlingHeld = false;
+    }
+  }
+
+  Future<void> _settleHeldDraftOnce() async {
+    final ticket = _heldDisclosureTicket ?? AppLockSensitiveReadFence.capture();
+    if (!ticket.isCurrent) return;
+    final held = _heldDraft;
+    if (held == null) return;
+    final durable = _heldDurableEventId(held.preparedId);
+    if (durable == null) return _resolveHeldDraft(held, published: false);
+    final inFlight = _inFlightSends[held.preparedId];
+    if (inFlight != null && await inFlight) {
+      if (!ticket.isCurrent) return;
+      return _resolveHeldDraft(held, published: true);
+    }
+    if (_isPublished(durable)) {
+      return _resolveHeldDraft(held, published: true);
+    }
+    if (mounted) {
+      // A refresh shows the room as it is now and settles the draft from it.
+      try {
+        await _tick();
+      } catch (_) {
+        // Still held; the next poll decides while the room stays open.
+      }
+      if (mounted || !identical(_heldDraft, held)) return;
+    }
+    final HostedGroupWorkspaceReadback result;
+    try {
+      result = await widget.gateway.read(_room);
+    } catch (_) {
+      return _keepTypedWithHeldDraft(held);
+    }
+    if (!ticket.isCurrent) return;
+    final log = result.log;
+    if (log == null || result.room.roomId != _room.roomId) {
+      return _keepTypedWithHeldDraft(held);
+    }
+    _resolveHeldDraft(
+      held,
+      published: log.events.any((e) => e.eventId == durable),
+    );
+  }
+
+  /// The room closed and could not be read: keep what was typed next to the
+  /// still-unproven send, bound to it, so the next visit decides both.
+  void _keepTypedWithHeldDraft(_HeldDraft held) {
+    if (_heldDisclosureTicket?.isCurrent == false) return;
+    final typed = _typedWhileHeld;
+    final store = widget.drafts;
+    if (!identical(_heldDraft, held) ||
+        store == null ||
+        typed == null ||
+        typed.trim().isEmpty) {
+      return;
+    }
+    _heldDraft = null;
+    // Still bound to the unproven send, which is only the leading part: if
+    // the send turns out to have landed, the text typed after it stays.
+    unawaited(
+      store
+          .save(
+            '${held.text}\n$typed',
+            threadId: held.threadId,
+            preparedId: held.preparedId,
+            preparedText: held.sent,
+          )
+          .then<void>((_) {}, onError: (Object _) {}),
+    );
+  }
+
+  /// A fresh log from a poll or a send settles the held draft too.
+  void _settleHeldDraftFromLog() {
+    final held = _heldDraft;
+    if (held == null || _inFlightSends.containsKey(held.preparedId)) return;
+    final durable = _heldDurableEventId(held.preparedId);
+    _resolveHeldDraft(
+      held,
+      published: durable != null && _isPublished(durable),
+    );
+  }
+
+  void _resolveHeldDraft(_HeldDraft held, {required bool published}) {
+    if (_heldDisclosureTicket?.isCurrent == false) return;
+    if (!identical(_heldDraft, held)) return;
+    _heldDraft = null;
+    final store = widget.drafts;
+    if (store == null) return;
+    if (published) {
+      // Only the send landed; text typed after it on an earlier visit is
+      // still unsent and stays a draft.
+      final earlier = _typedAfterSend(held);
+      unawaited(
+        store
+            .clear(preparedId: held.preparedId)
+            .then<void>((_) {}, onError: (Object _) {}),
+      );
+      if (mounted) {
+        if (earlier.trim().isNotEmpty) {
+          final typed = _draftDirty ? _composer.text : '';
+          _restoringDraft = true;
+          _composer.text = _joinDraft(earlier, typed);
+          _restoringDraft = false;
+          _draftDirty = true;
+        }
+        _flushDraft();
+      } else {
+        final kept = _joinDraft(earlier, _typedWhileHeld ?? '');
+        if (kept.trim().isNotEmpty) {
+          unawaited(
+            store
+                .save(kept, threadId: _threadId)
+                .then<void>((_) {}, onError: (Object _) {}),
+          );
+        }
+      }
+      return;
+    }
+    if (!mounted) {
+      final typed = _typedWhileHeld;
+      if (typed != null && typed.trim().isNotEmpty) {
+        unawaited(
+          store
+              .save('${held.text}\n$typed', threadId: held.threadId)
+              .then<void>((_) {}, onError: (Object _) {}),
+        );
+      }
+      return;
+    }
+    final typed = _draftDirty ? _composer.text : '';
+    _restoringDraft = true;
+    _threadId ??= held.threadId;
+    _composer.text = typed.trim().isEmpty ? held.text : '${held.text}\n$typed';
+    _restoringDraft = false;
+    // The stored slot may hold newer text now; keep both in the store.
+    if (typed.trim().isNotEmpty || _sentWhileHeld) {
+      _draftDirty = true;
+      _flushDraft();
     }
   }
 
   void _onComposerChanged() {
-    if (_pendingAttempt != null && _composer.text.trim() != _pendingText) {
-      _pendingAttempt = null;
-      _pendingText = null;
-    }
     if (!_restoringDraft && widget.drafts != null) {
       _draftDirty = true;
       _draftTimer?.cancel();
       _draftTimer = Timer(const Duration(milliseconds: 350), _flushDraft);
     }
-    if (mounted) setState(() {});
   }
 
   void _flushDraft() {
     _draftTimer?.cancel();
     final store = widget.drafts;
-    if (!_draftDirty || store == null) return;
+    // Never overwrite a held draft before it is settled.
+    if (!_draftDirty || store == null || _heldDraft != null) return;
     unawaited(
       store
-          .save(
-            _composer.text,
-            threadId: _threadId,
-            preparedId: _pendingAttempt?.clientEventId,
-          )
+          .save(_composer.text, threadId: _threadId)
           .then<void>((_) {}, onError: (Object _) {}),
     );
   }
 
   @override
   void dispose() {
+    AppLockSensitiveReadFence.changes.removeListener(_onDraftDisclosureChanged);
     WidgetsBinding.instance.removeObserver(this);
     _coverAnimation?.removeStatusListener(_onCoverChanged);
+    _agoTimer?.cancel();
+    _liveTimer?.cancel();
+    _stoppedTimer?.cancel();
     _poller.dispose();
+    if (_heldDraft != null && _draftDirty) {
+      _typedWhileHeld = _composer.text;
+      // Settles in the background so the typed text is written.
+      unawaited(_settleHeldDraft());
+    }
     _flushDraft();
     _markSeen();
-    widget.dictation?.removeListener(_rebuild);
     _composer.removeListener(_onComposerChanged);
     _composer.dispose();
-    _focus.removeListener(_rebuild);
     _focus.dispose();
+    _transcriptFocus.dispose();
+    _highlightTimer?.cancel();
     _transcriptScroll.dispose();
+    _composerExtent.dispose();
     super.dispose();
   }
 
@@ -340,8 +993,46 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
       _room = result.room;
       if (result.log != null) _log = result.log;
       if (result.driverStatus != null) _driver = result.driverStatus;
-      _error = null;
+      if (result.log != null) {
+        _freshAt = _now;
+        _stale = false;
+      }
     });
+    if (result.log != null) {
+      _retirePublishedOutbox();
+      _settleHeldDraftFromLog();
+    }
+  }
+
+  bool _isPublished(String durableEventId) =>
+      _events.any((e) => e.eventId == durableEventId);
+
+  /// A send whose acknowledgement failed but whose event is in the log did
+  /// land: drop its local bubble and retire its stored draft, exactly once.
+  void _retirePublishedOutbox() {
+    if (_outbox.isEmpty) return;
+    final published = {for (final e in _events) e.eventId};
+    final landed = [
+      for (final m in _outbox)
+        if (published.contains(m.attempt.durableEventId)) m,
+    ];
+    if (landed.isEmpty) return;
+    for (final m in landed) {
+      _outbox.remove(m);
+      unawaited(
+        widget.drafts
+                ?.clear(preparedId: m.attempt.clientEventId)
+                .then<void>((_) {}, onError: (Object _) {}) ??
+            Future<void>.value(),
+      );
+    }
+    // Messages held back only behind a send that did land may go now.
+    for (final m in _outbox) {
+      m.failed = false;
+    }
+    _outboxVersion++;
+    if (mounted) setState(() {});
+    if (_outbox.isNotEmpty) unawaited(_drain());
   }
 
   Future<void> _stop() async {
@@ -359,6 +1050,25 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     setState(() => _stopping = true);
     try {
       _apply(await widget.gateway.stop(_room));
+      // QA: the stop landed but nothing said so, and the owner could not tell
+      // it worked. The header line keeps saying it once the room is idle
+      // (inline, so no notice covers the header); screen readers hear it now.
+      if (mounted) {
+        setState(() {
+          _stoppedAt = _now;
+          _stoppedHead = _events.isEmpty ? null : _events.last.sequence;
+        });
+        // The idle header has nothing else to repaint it when the line ends.
+        _stoppedTimer?.cancel();
+        _stoppedTimer = Timer(_stoppedLineFor, () {
+          if (mounted) setState(() {});
+        });
+        AppFeedback.notify(
+          context,
+          FeedbackKind.routine,
+          s.roomActivityStopLine,
+        );
+      }
       await refresh();
     } catch (_) {
       if (mounted) _notice(s.roomActionFailed);
@@ -375,6 +1085,9 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     try {
       await widget.gateway.approve(_room, action: action, choice: choice);
       await refresh();
+      // The answer landed: never leave the card disabled if the server still
+      // lists the request (a quiet poll does not clear [_answering]).
+      if (mounted) setState(() => _answering.remove(action.requestId));
     } catch (_) {
       await refresh();
       final stillPending =
@@ -389,6 +1102,264 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
         if (stillPending) _notice(s.roomActionFailed);
       }
     }
+  }
+
+  // ── Member prompts ───────────────────────────────────────────────────
+
+  /// Reads members' open prompts while the room works (a blocked member
+  /// keeps the driver working) or while a prompt is still shown. An idle
+  /// room sends nothing.
+  Future<void> _probePrompts() async {
+    final source = widget.memberPrompts;
+    if (source == null || !mounted) return;
+    if (!(_driver?.working ?? false) && _prompts.isEmpty) return;
+    if (_probing) {
+      _probeAgain = true;
+      return;
+    }
+    _probing = true;
+    try {
+      do {
+        _probeAgain = false;
+        final epoch = _promptEpoch;
+        List<RoomMemberPrompt> found;
+        try {
+          found = await source.probe(
+            _room,
+            skipApprovalIds: {
+              for (final a
+                  in _driver?.approvals ?? const <RoomApprovalAction>[])
+                a.requestId,
+            },
+          );
+        } catch (_) {
+          // Unknown is not "nobody waits": keep what is shown.
+          continue;
+        }
+        if (!mounted || epoch != _promptEpoch) continue;
+        _setPrompts(found);
+      } while (_probeAgain && mounted);
+    } finally {
+      _probing = false;
+    }
+  }
+
+  void _setPrompts(List<RoomMemberPrompt> next) {
+    final same =
+        next.length == _prompts.length &&
+        [
+          for (var i = 0; i < next.length; i++)
+            next[i].key == _prompts[i].key &&
+                next[i].runtimeSessionId == _prompts[i].runtimeSessionId,
+        ].every((v) => v);
+    if (same) return;
+    setState(() {
+      _prompts = List.unmodifiable(next);
+      _promptBusy.removeWhere((k) => !_prompts.any((p) => p.key == k));
+    });
+  }
+
+  /// One answer in flight per prompt; on success the card goes at once and
+  /// the room is read again.
+  Future<void> _answerPrompt(
+    RoomMemberPrompt prompt,
+    Future<void> Function(RoomMemberPromptSource source) send, {
+    required String failure,
+  }) async {
+    final source = widget.memberPrompts;
+    if (source == null ||
+        !widget.capabilities.canAnswerPrompts ||
+        _promptBusy.contains(prompt.key)) {
+      return;
+    }
+    setState(() => _promptBusy.add(prompt.key));
+    try {
+      await send(source);
+      if (!mounted) return;
+      _promptEpoch++;
+      setState(() {
+        _promptBusy.remove(prompt.key);
+        _prompts = List.unmodifiable(
+          _prompts.where((p) => p.key != prompt.key),
+        );
+      });
+      await refresh();
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _promptBusy.remove(prompt.key));
+      _notice(failure);
+      unawaited(_probePrompts());
+    }
+  }
+
+  Future<void> _cancelWait(RoomMemberPrompt prompt) async {
+    final s = Strings.of(context);
+    final member = roomMemberById(prompt.memberId, _room.members);
+    final name = member == null
+        ? prompt.memberId
+        : roomSpeakerName(member, null, widget.profileFor(member));
+    final ok = await showHermesConfirmDialog(
+      context: context,
+      title: s.rq1215CancelWaitTitle(name),
+      message: s.rq1215CancelWaitBody(name),
+      confirmLabel: s.rq1215CancelWait,
+      cancelLabel: s.rq1215KeepWaiting,
+      destructive: true,
+    );
+    if (!ok || !mounted) return;
+    await _answerPrompt(
+      prompt,
+      (source) => source.cancelWait(
+        prompt,
+        expectedTaskId: _openTaskOf(prompt.memberId),
+      ),
+      failure: s.rq1215CancelWaitFailed,
+    );
+  }
+
+  // ── Stalled member ───────────────────────────────────────────────────
+
+  /// How long the room log must stay quiet while the driver works before a
+  /// member without a live runtime counts as stalled (the driver retries an
+  /// unavailable member every 1-30 s, so a healthy turn never waits this
+  /// long without the log moving or a runtime appearing).
+  static const roomStallAfter = Duration(minutes: 2);
+
+  /// The member the driver is due to run, when the room may be stalled:
+  /// working, not blocked or waiting on a human, and the log quiet for
+  /// [roomStallAfter]. Same order as upstream `plan_next_task`: the round's
+  /// members rotated by the round index, first one without a terminal turn.
+  HostedGroupMember? _stallCandidate() {
+    final driver = _driver;
+    if (driver == null ||
+        !driver.working ||
+        driver.blocked ||
+        driver.needsUser ||
+        _prompts.isNotEmpty) {
+      return null;
+    }
+    final events = _events;
+    if (events.isEmpty) return null;
+    var latest = events.first;
+    for (final e in events) {
+      if (e.createdAt > latest.createdAt) latest = e;
+    }
+    if (_now.difference(roomEventTime(latest)) < roomStallAfter) return null;
+    final rows = _roundView()?.rows;
+    if (rows == null || rows.isEmpty) return null;
+    final round = (_roundView()?.round ?? 1) - 1;
+    final shift = round % rows.length;
+    for (final row in [...rows.skip(shift), ...rows.take(shift)]) {
+      if (row.state == RoomTurnState.queued ||
+          row.state == RoomTurnState.working) {
+        return row.member;
+      }
+    }
+    return null;
+  }
+
+  /// Reads (never writes) whether the due member has a live runtime. One
+  /// probe at a time; a request during a probe runs once more after it.
+  Future<void> _probeStall() async {
+    final source = widget.memberPrompts;
+    if (source == null || !mounted) return;
+    if (_stallProbing) {
+      _stallAgain = true;
+      return;
+    }
+    _stallProbing = true;
+    try {
+      do {
+        _stallAgain = false;
+        if (_resuming) return;
+        final member = _stallCandidate();
+        RoomMemberStall? found;
+        if (member != null) {
+          try {
+            found = await source.findStall(_room, member);
+          } catch (_) {
+            // Unknown is not "stalled": keep what is shown.
+            continue;
+          }
+        }
+        if (!mounted) return;
+        if (found?.key != _stall?.key) setState(() => _stall = found);
+      } while (_stallAgain && mounted);
+    } finally {
+      _stallProbing = false;
+    }
+  }
+
+  /// Re-opens only that member's room session after the user confirms,
+  /// then re-reads the room. Never runs on its own.
+  Future<void> _resumeStall(RoomMemberStall stall) async {
+    final source = widget.memberPrompts;
+    if (source == null || !widget.capabilities.canAnswerPrompts || _resuming) {
+      return;
+    }
+    final s = Strings.of(context);
+    final member = roomMemberById(stall.memberId, _room.members);
+    final name = member == null
+        ? stall.memberId
+        : roomSpeakerName(member, null, widget.profileFor(member));
+    final ok = await showHermesConfirmDialog(
+      context: context,
+      title: s.rr1215ResumeTitle(name),
+      message: s.rr1215ResumeBody(name),
+      confirmLabel: s.rr1215Resume,
+      cancelLabel: s.rr1215KeepAsIs,
+    );
+    if (!ok || !mounted || _resuming) return;
+    setState(() => _resuming = true);
+    try {
+      await source.resumeStalled(stall);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _resuming = false);
+      _notice(s.rr1215ResumeFailed(name));
+      return;
+    }
+    if (!mounted) return;
+    setState(() => _resuming = false);
+    _notice(s.rr1215Resumed(name), kind: HermesNoticeKind.success);
+    // The re-read probes again (`_tick`), clearing the banner once the
+    // member's runtime is listed.
+    await refresh();
+  }
+
+  /// Task of the member's open room turn (`turn.started` without a
+  /// terminal event), so the interrupt is fenced to that exact turn.
+  String? _openTaskOf(String memberId) {
+    String? open;
+    for (final e in _events) {
+      if (e.activity.memberId != memberId) continue;
+      if (e.kind == 'turn.started') {
+        open = e.activity.taskId;
+      } else if (const {
+        'turn.settled',
+        'turn.failed',
+        'turn.cancelled',
+        'turn.deferred',
+      }.contains(e.kind)) {
+        open = null;
+      }
+    }
+    return open;
+  }
+
+  /// Whether the idle header pill still confirms the last stop: only while
+  /// the room is idle, for [_stoppedLineFor], and until a new message (from
+  /// this or another client) shows a new round. Never claims more.
+  bool get _showsStopped {
+    final at = _stoppedAt;
+    if (at == null || (_driver?.working ?? false)) return false;
+    if (_now.difference(at) >= _stoppedLineFor) return false;
+    final head = _stoppedHead ?? -1;
+    return !_events.any(
+      (e) =>
+          e.sequence > head &&
+          (e.kind == 'message.user' || e.kind == 'message.member'),
+    );
   }
 
   Future<void> _retry(String taskId) async {
@@ -420,72 +1391,157 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     return crossGateway ? RoomAttachBlock.crossGateway : RoomAttachBlock.none;
   }
 
-  Future<void> _send(String raw, List<AttachmentDraft> drafts) async {
+  /// Optimistic send: the message shows as a local bubble and the composer
+  /// is free again in the same frame; delivery (upload, `groups.send` and
+  /// its verified readback) runs behind it, strictly in order.
+  void _send(String raw, List<AttachmentDraft> drafts) {
+    _stoppedAt = null;
     final text = raw.trim();
-    if ((text.isEmpty && drafts.isEmpty) ||
-        _sending ||
-        !widget.capabilities.canSend) {
+    if ((text.isEmpty && drafts.isEmpty) || !widget.capabilities.canSend) {
       return;
     }
-    final s = Strings.of(context);
-    setState(() => _sending = true);
-    try {
-      final refs = <RoomAttachmentRef>[];
-      for (final draft in drafts) {
-        final path = await widget.uploader?.upload(draft);
-        if (path == null) {
-          if (mounted) _notice(s.roomAttachFailed(draft.name));
-          return;
-        }
-        refs.add(RoomAttachmentRef(name: draft.name, path: path));
-      }
-      final full = appendRoomAttachmentSuffix(text, refs);
-      if (_pendingAttempt == null || _pendingText != text || refs.isNotEmpty) {
-        _pendingAttempt = HostedGroupSendAttempt.forClientEvent(
-          const Uuid().v4(),
-          threadId: _threadId,
-        );
-        _pendingText = text;
-      }
-      final attempt = _pendingAttempt!;
-      _flushDraft();
-      final submittedThread = _threadId;
-      final result = await widget.gateway.send(
-        _room,
-        text: full,
-        attempt: attempt,
+    if (RegExp(r'^/[a-z][\w-]*(?:\s|$)', caseSensitive: false).hasMatch(text)) {
+      _notice(
+        Strings.of(context).roomSlashUnsupported,
+        kind: HermesNoticeKind.warning,
       );
-      // The acknowledged send never waits on draft storage.
-      unawaited(
-        widget.drafts
-                ?.clear(preparedId: attempt.clientEventId)
-                .then<void>((_) {}, onError: (Object _) {}) ??
-            Future<void>.value(),
-      );
-      if (!mounted) return;
-      _apply(result);
-      setState(() {
-        _pendingAttempt = null;
-        _pendingText = null;
-        _attachments.clear();
-        if (_composer.text.trim() == text && _threadId == submittedThread) {
-          _composer.clear();
-          _threadId = null;
-        }
-      });
-      _poller.setVisible(true);
-    } catch (_) {
-      if (mounted) setState(() => _error = s.roomActionFailed);
-    } finally {
-      if (mounted) setState(() => _sending = false);
+      return;
     }
+    final thread = _threadId;
+    final message = _OutgoingMessage(
+      attempt: HostedGroupSendAttempt.forClientEvent(
+        const Uuid().v4(),
+        threadId: thread,
+      ),
+      text: text,
+      attachments: List.unmodifiable(drafts),
+    );
+    // Until the server acknowledges it, the sent text stays in the stored
+    // draft bound to this attempt; the acknowledgement retires exactly it.
+    _draftTimer?.cancel();
+    _draftDirty = false;
+    if (_heldDraft != null) _sentWhileHeld = true;
+    unawaited(
+      widget.drafts
+              ?.save(
+                raw,
+                threadId: thread,
+                preparedId: message.attempt.clientEventId,
+              )
+              .then<void>((_) {}, onError: (Object _) {}) ??
+          Future<void>.value(),
+    );
+    setState(() {
+      _outbox.add(message);
+      _outboxVersion++;
+      _attachments.clear();
+      _threadId = null;
+      _replyTarget = null;
+      _restoringDraft = true;
+      _composer.clear();
+      _restoringDraft = false;
+    });
+    _toBottom();
+    unawaited(_drain());
+  }
+
+  void _retrySend(_OutgoingMessage message) {
+    if (!message.failed || !_outbox.contains(message)) return;
+    setState(() {
+      message.failed = false;
+      _outboxVersion++;
+    });
+    unawaited(_drain());
+  }
+
+  /// Delivers queued messages one at a time, oldest first. Keeps running
+  /// after the screen closes so nothing already sent is dropped.
+  Future<void> _drain() async {
+    if (_draining) return;
+    _draining = true;
+    try {
+      while (true) {
+        final message = _outbox.where((m) => !m.failed).firstOrNull;
+        if (message == null) return;
+        final id = message.attempt.clientEventId;
+        final outcome = Completer<bool>();
+        _inFlightSends[id] = outcome.future;
+        try {
+          final HostedGroupWorkspaceReadback result;
+          try {
+            result = await _deliver(message);
+            outcome.complete(true);
+          } catch (_) {
+            outcome.complete(false);
+            rethrow;
+          } finally {
+            if (identical(_inFlightSends[id], outcome.future)) {
+              _inFlightSends.remove(id);
+            }
+          }
+          // The acknowledged send never waits on draft storage.
+          unawaited(
+            widget.drafts
+                    ?.clear(preparedId: message.attempt.clientEventId)
+                    .then<void>((_) {}, onError: (Object _) {}) ??
+                Future<void>.value(),
+          );
+          _outbox.remove(message);
+          _outboxVersion++;
+          if (!mounted) continue;
+          _apply(result);
+          _poller.setVisible(true);
+        } catch (_) {
+          // Later messages never overtake one that did not go out.
+          final from = _outbox.indexOf(message);
+          for (final m in _outbox.skip(from < 0 ? 0 : from)) {
+            m.failed = true;
+          }
+          _outboxVersion++;
+          if (mounted) setState(() {});
+        }
+      }
+    } finally {
+      _draining = false;
+    }
+  }
+
+  Future<HostedGroupWorkspaceReadback> _deliver(
+    _OutgoingMessage message,
+  ) async {
+    final refs = <RoomAttachmentRef>[];
+    for (final draft in message.attachments) {
+      final path = await widget.uploader?.upload(draft);
+      if (path == null) {
+        if (mounted) _notice(Strings.of(context).roomAttachFailed(draft.name));
+        throw StateError('attachment upload failed');
+      }
+      refs.add(RoomAttachmentRef(name: draft.name, path: path));
+    }
+    return widget.gateway.send(
+      _room,
+      text: appendRoomAttachmentSuffix(message.text, refs),
+      attempt: message.attempt,
+    );
+  }
+
+  /// Local bubbles still to show: an attempt whose durable event is already
+  /// in the log (e.g. a refresh saw it first) is shown once, from the log.
+  List<_OutgoingMessage> _visibleOutbox() {
+    if (_outbox.isEmpty) return const [];
+    final published = {for (final e in _events) e.eventId};
+    return [
+      for (final m in _outbox)
+        if (!published.contains(m.attempt.durableEventId)) m,
+    ];
   }
 
   Future<void> _pick(AttachmentSourceChoice source) async {
     if (_pickerOpen || _attachBlock != RoomAttachBlock.none) return;
     _pickerOpen = true;
     try {
-      final picked = <({String path, String name, AttachmentType type})>[];
+      final picked = <({String? path, String name, AttachmentType type})>[];
+      final blocked = <String>[];
       switch (source) {
         case AttachmentSourceChoice.camera:
         case AttachmentSourceChoice.photos:
@@ -512,20 +1568,49 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
             allowMultiple: true,
           );
           for (final f in result?.files ?? const <PlatformFile>[]) {
-            if (f.path == null ||
-                !AttachmentUploader.isAllowedDocumentName(f.name)) {
+            if (!AttachmentUploader.isAllowedDocumentName(f.name)) {
+              blocked.add(f.name);
               continue;
             }
             picked.add((
-              path: f.path!,
+              path: f.path,
               name: f.name,
               type: AttachmentType.document,
             ));
           }
       }
+      // Same caps as the main chat (8 MB per file, 24 MB per message), but
+      // every room file is uploaded, never embedded as text: a large .html
+      // or .md must not hit the 256 KB inline-text cap and vanish.
+      var batchBytes = _attachments.fold<int>(0, (sum, a) => sum + a.sizeBytes);
+      int? tooBig;
+      var batchFull = false;
+      var unreadable = false;
       for (final f in picked) {
-        final size = await File(f.path).length();
-        if (size <= 0 || size > AttachmentUploader.maxBytes) continue;
+        final path = f.path;
+        int size;
+        try {
+          size = path == null ? 0 : await File(path).length();
+        } catch (_) {
+          size = 0;
+        }
+        switch (pendingAttachmentLimitViolation(
+          sizeBytes: size,
+          itemLimit: AttachmentUploader.maxBytes,
+          currentBatchBytes: batchBytes,
+        )) {
+          case PendingAttachmentLimitViolation.invalid:
+            unreadable = true;
+            continue;
+          case PendingAttachmentLimitViolation.item:
+            tooBig = AttachmentUploader.maxBytes;
+            continue;
+          case PendingAttachmentLimitViolation.batch:
+            batchFull = true;
+            continue;
+          case null:
+            break;
+        }
         final draft = await AttachmentUploader.materializeForDraft(
           AttachmentDraft(
             localId: const Uuid().v4(),
@@ -533,15 +1618,94 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
             name: f.name,
             mimeType: _mime(f.name, f.type),
             sizeBytes: size,
-            localPath: f.path,
+            localPath: path!,
           ),
+          itemLimit: AttachmentUploader.maxBytes,
         );
-        if (draft != null && mounted) setState(() => _attachments.add(draft));
+        if (draft == null) {
+          unreadable = true;
+          continue;
+        }
+        if (!mounted) {
+          await AttachmentUploader.deletePrivateDraftCopy(draft);
+          continue;
+        }
+        batchBytes += draft.sizeBytes;
+        setState(() => _attachments.add(draft));
+      }
+      if (!mounted) return;
+      final s = Strings.of(context);
+      if (blocked.isNotEmpty) {
+        _notice(
+          s.roomAttachTypeBlocked(blocked.join(', ')),
+          kind: HermesNoticeKind.warning,
+        );
+      } else if (tooBig != null) {
+        _notice(
+          s.chaFileTooBig('${tooBig ~/ (1024 * 1024)} MB'),
+          kind: HermesNoticeKind.warning,
+        );
+      } else if (batchFull) {
+        _notice(
+          s.chaAttachmentBatchTooBig(
+            '${AttachmentUploader.maxBatchBytes ~/ (1024 * 1024)} MB',
+          ),
+          kind: HermesNoticeKind.warning,
+        );
+      } else if (unreadable) {
+        _notice(s.chaAttachmentPreparationFailed);
       }
     } catch (_) {
       if (mounted) _notice(Strings.of(context).roomActionFailed);
     } finally {
       _pickerOpen = false;
+    }
+  }
+
+  /// Pastes from the keyboard are serialized so two quick pastes cannot
+  /// both pass the batch limits checked against the same strip.
+  Future<void> _insertKeyboardContent(KeyboardInsertedContent content) {
+    final run = _pasteTail.then((_) => _insertKeyboardContentNow(content));
+    _pasteTail = run.catchError((Object _) {});
+    return run;
+  }
+
+  Future<void> _insertKeyboardContentNow(
+    KeyboardInsertedContent content,
+  ) async {
+    if (!mounted) return;
+    final s = Strings.of(context);
+    switch (_attachBlock) {
+      case RoomAttachBlock.none:
+        break;
+      case RoomAttachBlock.crossGateway:
+        _notice(s.roomAttachCrossGateway, kind: HermesNoticeKind.warning);
+        return;
+      case RoomAttachBlock.noUploader:
+      case RoomAttachBlock.readOnly:
+        _notice(s.roomAttachUnavailable, kind: HermesNoticeKind.warning);
+        return;
+    }
+    if (composerPasteRejection(content, pending: _attachments) != null) {
+      _notice(s.chaAttachmentPreparationFailed);
+      return;
+    }
+    try {
+      final draft = await stageComposerPastedImage(
+        content,
+        materialize: AttachmentUploader.materializeForDraft,
+      );
+      if (draft == null) {
+        if (mounted) _notice(s.chaAttachmentPreparationFailed);
+        return;
+      }
+      if (!mounted) {
+        await AttachmentUploader.deletePrivateDraftCopy(draft);
+        return;
+      }
+      setState(() => _attachments.add(draft));
+    } catch (_) {
+      if (mounted) _notice(s.chaAttachmentPreparationFailed);
     }
   }
 
@@ -563,15 +1727,65 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     };
   }
 
-  void _setThread(String? threadId) {
+  /// Targets [threadId] with the next send. Only an explicit reply action
+  /// ([focus]) opens the keyboard; the small reply icon beside every message
+  /// sits where a scroll is stopped, so it only shows the thread banner and
+  /// the user taps the composer to type.
+  void _setThread(
+    String? threadId, {
+    bool focus = false,
+    ({String eventId, String label})? replyTarget,
+  }) {
     setState(() {
       _threadId = threadId;
-      _pendingAttempt = null;
-      _pendingText = null;
+      _replyTarget = threadId == null ? null : replyTarget;
     });
     _draftDirty = true;
     _flushDraft();
-    if (threadId != null) _focus.requestFocus();
+    if (threadId != null && focus) _focus.requestFocus();
+  }
+
+  void _replyInThread(RoomMessageEntry entry) {
+    final member = entry.member;
+    if (!entry.isUser &&
+        member != null &&
+        _room.members.any((current) => current.memberId == member.memberId)) {
+      final handle = member.handle;
+      final duplicate = RegExp(
+        '(^|[^A-Za-z0-9._:-])@${RegExp.escape(handle)}'
+        r'(?=$|[^A-Za-z0-9._:-])',
+        caseSensitive: false,
+      ).hasMatch(_composer.text);
+      if (!duplicate) {
+        final prefix = '@$handle ';
+        _composer.value = TextEditingValue(
+          text: '$prefix${_composer.text}',
+          selection: TextSelection.collapsed(offset: prefix.length),
+        );
+      }
+    }
+    final s = Strings.of(context);
+    final speaker = entry.isUser
+        ? s.roomYou
+        : roomSpeakerName(
+            member,
+            entry.event.actor,
+            member == null ? null : widget.profileFor(member),
+          );
+    final preview = plainPreview(
+      entry.body.text.length > 400
+          ? String.fromCharCodes(entry.body.text.runes.take(400))
+          : entry.body.text,
+      maxChars: 60,
+    );
+    _setThread(
+      entry.event.threadId,
+      focus: true,
+      replyTarget: (
+        eventId: entry.event.eventId,
+        label: preview.isEmpty ? speaker : '$speaker: $preview',
+      ),
+    );
   }
 
   void _insertMention(String handle) {
@@ -612,8 +1826,13 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
 
   // ── Overflow ─────────────────────────────────────────────────────────
 
-  Future<void> _openActivity() =>
-      showRoomActivitySheet(context, events: _events, members: _room.members);
+  Future<void> _openActivity() => showRoomActivitySheet(
+    context,
+    events: _events,
+    members: _room.members,
+    profileFor: widget.profileFor,
+    avatarCache: widget.avatarCache,
+  );
 
   Future<void> _openMembers() => showRoomMembersSheet(
     context,
@@ -623,11 +1842,60 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
       events: _events,
       members: _room.members,
       driverStatus: _driver,
+      now: _now,
     ),
     profileFor: widget.profileFor,
     avatarCache: widget.avatarCache,
     onOpenMember: widget.onOpenMember,
   );
+
+  Future<void> _compressMemberHistory(HostedGroupMember member) async {
+    final compressor = widget.memberCompressor;
+    if (compressor == null ||
+        !widget.capabilities.canCompressMembers ||
+        _compressing ||
+        (_driver?.working ?? false) ||
+        (_driver?.running ?? false)) {
+      return;
+    }
+    setState(() => _compressing = true);
+    try {
+      final result = await compressor.compress(_room, member);
+      if (!mounted) return;
+      final s = Strings.of(context);
+      switch (result.kind) {
+        case RoomMemberCompressionKind.pending:
+          _notice(s.roomCompressPending, kind: HermesNoticeKind.info);
+        case RoomMemberCompressionKind.nothing:
+          _notice(
+            result.detail ?? s.roomCompressNothing,
+            kind: HermesNoticeKind.info,
+          );
+        case RoomMemberCompressionKind.compressed:
+          _notice(
+            s.roomCompressSuccess(result.detail ?? ''),
+            kind: HermesNoticeKind.success,
+          );
+      }
+    } on TuiGatewayRpcError catch (error) {
+      if (!mounted) return;
+      final s = Strings.of(context);
+      if (error.code == 4009) {
+        _notice(
+          s.roomCompressBusy(member.handle),
+          kind: HermesNoticeKind.warning,
+        );
+      } else if (error.code == 4007) {
+        _notice(s.roomCompressNothing, kind: HermesNoticeKind.info);
+      } else {
+        _notice(s.roomActionFailed);
+      }
+    } catch (_) {
+      if (mounted) _notice(Strings.of(context).roomActionFailed);
+    } finally {
+      if (mounted) setState(() => _compressing = false);
+    }
+  }
 
   Future<void> _openThread(String threadId) => Navigator.of(context).push<void>(
     MaterialPageRoute(
@@ -638,25 +1906,43 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
         avatarCache: widget.avatarCache,
         attachmentActions: widget.attachmentActions,
         canReply: widget.capabilities.canSend,
+        mentionHandles: _openableHandles(),
+        onMention: _openMention,
         onReply: () {
           Navigator.of(context).pop();
-          _setThread(threadId);
+          _setThread(threadId, focus: true);
         },
       ),
     ),
   );
 
+  /// The room menu is showing (tints the notch).
+  bool _menuOpen = false;
+
   Future<void> _openMenu() async {
-    final action = await showRoomOverflowMenu(
-      context,
-      memberCount: _room.members.length,
-      threadCount: roomThreads(_events).length,
-      fileCount: roomFiles(_events).length,
-      notifications: _notifications,
-      canStop: widget.capabilities.canStop,
-      canDisband: widget.capabilities.canDisband,
-      readOnly: !widget.capabilities.canSend && !widget.capabilities.canRename,
-    );
+    if (_menuOpen) return;
+    setState(() => _menuOpen = true);
+    final RoomMenuAction? action;
+    try {
+      action = await _showMenu();
+    } finally {
+      if (mounted) setState(() => _menuOpen = false);
+    }
+    await _runMenuAction(action);
+  }
+
+  Future<RoomMenuAction?> _showMenu() => showRoomOverflowMenu(
+    context,
+    memberCount: _room.members.length,
+    threadCount: roomThreads(_events).length,
+    fileCount: roomFiles(_events).length,
+    notifications: _notifications,
+    canStop: widget.capabilities.canStop,
+    canDisband: widget.capabilities.canDisband,
+    readOnly: !widget.capabilities.canSend && !widget.capabilities.canRename,
+  );
+
+  Future<void> _runMenuAction(RoomMenuAction? action) async {
     if (action == null || !mounted) return;
     final s = Strings.of(context);
     switch (action) {
@@ -691,6 +1977,22 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
           context,
           name: _room.name,
           canRename: widget.capabilities.canRename,
+          room: _room,
+          localMembers: [
+            for (final member in _room.members)
+              if (member.owner.connectionId == _room.authorityGatewayId) member,
+          ],
+          profileFor: widget.profileFor,
+          avatarCache: widget.avatarCache,
+          onCompress:
+              widget.memberCompressor == null ||
+                  !widget.capabilities.canCompressMembers
+              ? null
+              : _compressMemberHistory,
+          compressDisabled:
+              _compressing ||
+              (_driver?.working ?? false) ||
+              (_driver?.running ?? false),
         );
         if (name != null && mounted) {
           try {
@@ -721,6 +2023,70 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     }
   }
 
+  // ── Quote chip (rp1215) ──────────────────────────────────────────────
+
+  BuildContext? _mountedMessage(String eventId) {
+    final list = _transcriptKey.currentContext;
+    if (list == null) return null;
+    final wanted = ValueKey('room-message-$eventId');
+    BuildContext? found;
+    void visit(Element element) {
+      if (found != null) return;
+      if (element.widget.key == wanted) {
+        found = element;
+        return;
+      }
+      element.visitChildElements(visit);
+    }
+
+    (list as Element).visitChildElements(visit);
+    return found;
+  }
+
+  /// Shows the owner message a reply quotes and washes it briefly. The
+  /// quoted message is always older than the reply, so a lazy row not built
+  /// yet is reached by walking up from here (bounded); when it never shows
+  /// up (log page gone) the list goes back where it was.
+  Future<void> _openQuote(String eventId) async {
+    if (!_transcriptScroll.hasClients) return;
+    final position = _transcriptScroll.position;
+    final start = position.pixels;
+    var target = _mountedMessage(eventId);
+    for (var step = 0; target == null && step < 40; step++) {
+      // Reverse list: older content is at larger offsets.
+      if (position.pixels >= position.maxScrollExtent) break;
+      position.jumpTo(
+        math.min(
+          position.pixels + position.viewportDimension * 0.8,
+          position.maxScrollExtent,
+        ),
+      );
+      await WidgetsBinding.instance.endOfFrame;
+      if (!mounted) return;
+      target = _mountedMessage(eventId);
+    }
+    if (target == null) {
+      if (position.pixels != start) position.jumpTo(start);
+      return;
+    }
+    if (!target.mounted) return;
+    final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
+    await Scrollable.ensureVisible(
+      target,
+      alignment: 0.3,
+      duration: reduceMotion
+          ? Duration.zero
+          : const Duration(milliseconds: 260),
+      curve: Curves.easeOutCubic,
+    );
+    if (!mounted) return;
+    _highlightTimer?.cancel();
+    setState(() => _highlightedEventId = eventId);
+    _highlightTimer = Timer(const Duration(milliseconds: 1600), () {
+      if (mounted) setState(() => _highlightedEventId = null);
+    });
+  }
+
   // ── Open anchor ──────────────────────────────────────────────────────
 
   /// The transcript opens at the newest content (reverse list), so whatever
@@ -729,14 +2095,18 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
   /// hidden under the status line (spec 070). Once, after the first layout,
   /// shift the list just enough to show that header in full.
   void _anchorOnOpen() {
-    if (!mounted || _openAnchored) return;
+    if (!mounted || _openAnchored || _composerExtent.value == 0) return;
     final list = _transcriptKey.currentContext;
     if (list == null || !_transcriptScroll.hasClients) return;
     _openAnchored = true;
+    // Landed on the divider: that position is the one to keep.
+    if (_reading != null || _transcriptScroll.landingPending) return;
     final viewport = list.findRenderObject();
     if (viewport is! RenderBox || !viewport.hasSize) return;
-    final top = viewport.localToGlobal(Offset.zero).dy;
+    // fh1215: the readable top is below the floating header.
+    final top = viewport.localToGlobal(Offset.zero).dy + _headerInset;
     double? shift;
+    String? straddling;
     void visit(Element element) {
       if (shift != null) return;
       final key = element.widget.key;
@@ -747,6 +2117,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
           final tileBottom = tileTop + box.size.height;
           if (tileTop < top && tileBottom > top) {
             final id = key.value.substring('room-message-'.length);
+            straddling = id;
             Element? header;
             void find(Element e) {
               if (header != null) return;
@@ -772,27 +2143,95 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     (list as Element).visitChildElements(visit);
     final delta = shift;
     if (delta == null || delta <= 0) return;
+    // The newest row (e.g. a member's typing row, or the answer that just
+    // arrived) stays fully on screen: when the shift would push any of it
+    // below the list, opening at the live bottom wins (rr1215: a shift that
+    // kept only its top edge visible hid the newest answer on open).
+    final newestKey = _lastItemKeys.isEmpty ? null : _lastItemKeys.last;
+    double? newestBottom;
+    void findNewest(Element element) {
+      if (newestBottom != null) return;
+      final key = element.widget.key;
+      if (key is ValueKey<String> && key.value == newestKey) {
+        final box = element.renderObject;
+        if (box is RenderBox && box.attached && box.hasSize) {
+          newestBottom = box.localToGlobal(Offset(0, box.size.height)).dy;
+        }
+        return;
+      }
+      element.visitChildElements(findNewest);
+    }
+
+    if (newestKey != null) list.visitChildElements(findNewest);
+    // The composer (and the notch tab on its top edge) floats over the
+    // list's bottom: what is under it is not on screen.
+    final bottom =
+        viewport.localToGlobal(Offset.zero).dy +
+        viewport.size.height -
+        _composerExtent.value -
+        kChatNotchHeight;
+    final newest = newestBottom;
+    // Revealing the newest row's own header (a long answer read from its
+    // start) is the point of the shift; any other shift must not hide it.
+    final newestIsStraddling =
+        straddling != null && newestKey == 'msg-$straddling';
+    if (!newestIsStraddling &&
+        newest != null &&
+        newest + delta > bottom + 0.5) {
+      return;
+    }
     final position = _transcriptScroll.position;
     // Reverse list: a larger offset moves the content down.
-    position.jumpTo(
-      (position.pixels + delta).clamp(
-        position.minScrollExtent,
-        position.maxScrollExtent,
-      ),
-    );
+    _programmaticScroll = true;
+    try {
+      position.jumpTo(
+        (position.pixels + delta).clamp(
+          position.minScrollExtent,
+          position.maxScrollExtent,
+        ),
+      );
+    } finally {
+      _programmaticScroll = false;
+    }
   }
 
   // ── Build ────────────────────────────────────────────────────────────
 
+  /// fh1215: how the header pill shows [_statusLine]'s last answer: idle
+  /// lines stay in the semantics label, the rest ride in the pill.
+  FloatingHeaderTone _lineTone = FloatingHeaderTone.idle;
+
   String _statusLine(Strings s, RoomRoundModel? round) {
+    _agoSince = null;
     final driver = _driver;
+    _lineTone = FloatingHeaderTone.waiting;
     if (driver != null && driver.approvals.isNotEmpty) {
       return s.roomStatusNeedsApproval;
     }
-    if (driver != null && (driver.blocked || driver.retries.isNotEmpty)) {
-      return s.roomStatusBlocked;
+    if (_prompts.isNotEmpty) {
+      return _prompts.any((p) => p is RoomMemberApproval)
+          ? s.roomStatusNeedsApproval
+          : s.rq1215StatusNeedsAnswer;
+    }
+    if (driver != null &&
+        _visibleRetries.isEmpty &&
+        _recoveringRetries.isNotEmpty) {
+      // The server is still checking an interrupted reply; it settles or
+      // defers it on its own, so this is not a failure (yet).
+      _lineTone = FloatingHeaderTone.working;
+      return s.roomStatusRecovering;
+    }
+    if (driver != null &&
+        (_visibleRetries.isNotEmpty ||
+            (driver.blocked && driver.retries.isEmpty))) {
+      // Only offer a retry the card can actually perform; otherwise the
+      // strip would promise what "Can't be retried from here" denies.
+      return widget.capabilities.canRetry
+          ? s.roomStatusBlocked
+          : s.roomStatusFailed;
     }
     if (driver?.working ?? false) {
+      _lineTone = FloatingHeaderTone.working;
       final working = round?.rows
           .where((r) => r.state == RoomTurnState.working)
           .toList();
@@ -802,15 +2241,32 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
             )
           : s.roomStatusWorking;
     }
+    // Idle: who is in the room and how the last round ended, in ONE grey
+    // line ("4 bots · round finished 5 min ago").
+    _lineTone = FloatingHeaderTone.idle;
+    final presence = _presenceLine(s);
+    if (_showsStopped) return '${s.roomActivityStopLine} · $presence';
     final events = _events;
-    if (events.isEmpty) return '';
-    final ago = roomAgo(s, _now.difference(roomEventTime(events.last)));
-    // Idle room with a finished round: ONE line, "Round 1 finished · 17 h
-    // ago", instead of a round panel stacked over a last-activity bar.
+    if (events.isEmpty) return presence;
+    final since = _agoSince = roomEventTime(events.last);
+    final ago = roomAgo(s, _now.difference(since));
     if (round != null && !_roundNeedsPanel(round)) {
-      return s.roomStatusRoundFinished(round.round, ago);
+      return '$presence · ${s.rhdrRoundFinished(ago)}';
     }
-    return s.roomStatusLastActivity(ago);
+    return '$presence · ${s.rhdrLastActivity(ago)}';
+  }
+
+  /// "4 bots", or "3 of 4 bots" while the server reports someone
+  /// unavailable.
+  String _presenceLine(Strings s) {
+    final total = _room.members.length;
+    final unavailable = roomUnavailableMembers(_events);
+    final available = _room.members
+        .where((m) => !unavailable.contains(m.memberId))
+        .length;
+    return available == total
+        ? s.rhdrBots(total)
+        : s.rhdrBotsAvailable(available, total);
   }
 
   /// The full round panel is shown only while the round is working or
@@ -819,74 +2275,58 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
   static bool _roundNeedsPanel(RoomRoundModel round) =>
       round.active || round.needsYou > 0 || round.failed > 0;
 
-  PreferredSizeWidget _header(Strings s) {
-    final colors = Theme.of(context).hermes;
-    final unavailable = roomUnavailableMembers(_events);
-    final available = _room.members
-        .where((m) => !unavailable.contains(m.memberId))
-        .length;
-    return HermesAppBar(
-      scrolledUnderElevation: 0,
-      titleSpacing: 0,
-      title: Semantics(
-        button: true,
-        label: s.roomMenuMembers,
-        child: InkWell(
-          key: const ValueKey('room-header'),
-          onTap: () => unawaited(_openMembers()),
-          borderRadius: BorderRadius.circular(12),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 4),
-            child: Row(
-              children: [
-                widget.roomAvatar ??
-                    RoomHeaderFaces(
-                      members: _room.members,
-                      profileFor: widget.profileFor,
-                      avatarCache: widget.avatarCache,
-                    ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        widget.displayName ?? _room.name,
-                        key: const ValueKey('room-title'),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      Text(
-                        s.roomViewAvailability(available, _room.members.length),
-                        key: const ValueKey('room-availability'),
-                        maxLines: 1,
-                        style: TextStyle(
-                          fontSize: 11.5,
-                          color: colors.textSecondary,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-      actions: [
-        IconButton(
-          key: const ValueKey('room-overflow'),
-          tooltip: s.roomMoreActions,
-          icon: const Icon(Icons.more_horiz_rounded),
-          onPressed: () => unawaited(_openMenu()),
-        ),
-      ],
+  /// The header opens what the old status strip opened: the round detail
+  /// while there is a round, else the members sheet.
+  void _openHeaderDetail(RoomRoundModel? round) {
+    if (round != null) {
+      _setDetailOpen(!_detailOpen);
+      return;
+    }
+    unawaited(_openMembers());
+  }
+
+  void _setDetailOpen(bool open) {
+    setState(() => _detailOpen = open);
+    _liveTimer?.cancel();
+    _liveTimer = null;
+    if (!open) {
+      if (_live.isNotEmpty) setState(() => _live = const {});
+      return;
+    }
+    if (widget.memberLive == null) return;
+    unawaited(_readLive());
+    _armLive();
+  }
+
+  /// One read every 3 s while the sheet is open; nothing while the room is
+  /// idle (a read then costs one cheap `session.active_list` at most).
+  void _armLive() {
+    _liveTimer?.cancel();
+    if (!_detailOpen || widget.memberLive == null) return;
+    _liveTimer = (widget.pollTimer ?? Timer.new)(
+      const Duration(seconds: 3),
+      () {
+        unawaited(_readLive().whenComplete(_armLive));
+      },
     );
+  }
+
+  Future<void> _readLive() async {
+    final source = widget.memberLive;
+    if (source == null || _liveReading || !mounted) return;
+    if (!(_driver?.working ?? false)) {
+      if (_live.isNotEmpty) setState(() => _live = const {});
+      return;
+    }
+    _liveReading = true;
+    try {
+      final live = await source.read(_room);
+      if (mounted && _detailOpen) setState(() => _live = live);
+    } catch (_) {
+      // Live steps are best effort: rows keep the log's state.
+    } finally {
+      _liveReading = false;
+    }
   }
 
   Widget? _palette(Strings s) {
@@ -972,12 +2412,20 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
             children: [
               Icon(Icons.reply_rounded, size: 14, color: colors.accentText),
               const SizedBox(width: 6),
-              Text(
-                s.roomReplyingInThread,
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  color: colors.accentText,
+              Flexible(
+                child: Text(
+                  switch (_replyTarget) {
+                    final target? => s.rr1215ReplyingTo(target.label),
+                    null => s.roomReplyingInThread,
+                  },
+                  key: const ValueKey('room-thread-banner-text'),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: colors.accentText,
+                  ),
                 ),
               ),
               IconButton(
@@ -991,6 +2439,44 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  /// The calm "reconnecting" line under the transcript: neutral color, a
+  /// small spinner while polls keep retrying and a retry that reads now.
+  /// It never touches the composer.
+  Widget _staleStatus(Strings s, HermesThemeColors colors) {
+    return Padding(
+      key: const ValueKey('room-refresh-stale'),
+      padding: const EdgeInsets.fromLTRB(16, 2, 8, 2),
+      child: Row(
+        children: [
+          SizedBox.square(
+            dimension: 10,
+            child: CircularProgressIndicator(
+              strokeWidth: 1.5,
+              color: colors.textSecondary,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              s.roomRefreshStale,
+              maxLines: 2,
+              style: TextStyle(color: colors.textSecondary, fontSize: 12),
+            ),
+          ),
+          TextButton(
+            key: const ValueKey('room-refresh-retry'),
+            onPressed: () => unawaited(refresh()),
+            style: TextButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              textStyle: const TextStyle(fontSize: 12),
+            ),
+            child: Text(s.commonRetry),
+          ),
+        ],
       ),
     );
   }
@@ -1015,31 +2501,51 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     final dictation = widget.dictation;
     final hasContent =
         _composer.text.trim().isNotEmpty || _attachments.isNotEmpty;
+    final unknownMention = firstUnknownRoomMention(_composer.text, [
+      for (final member in _room.members) member.handle,
+    ]);
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         if (_threadId != null) _threadBanner(s),
+        if (unknownMention != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(24, 2, 24, 4),
+            child: Align(
+              alignment: AlignmentDirectional.centerStart,
+              child: Text(
+                s.roomUnknownMention(unknownMention),
+                key: const ValueKey('room-unknown-mention'),
+                style: TextStyle(fontSize: 11, color: colors.textSecondary),
+              ),
+            ),
+          ),
         if (block == RoomAttachBlock.crossGateway ||
             block == RoomAttachBlock.noUploader)
           const SizedBox.shrink(),
         ConsoleComposer(
           key: const ValueKey('room-composer'),
+          // The notch tab sits right on the composer's top edge.
+          topPadding: 0,
           controller: _composer,
           focusNode: _focus,
           showBotModeToggle: false,
           hintText: s.roomComposerHint,
-          onSend: (text, drafts) => unawaited(_send(text, List.of(drafts))),
+          onSend: (text, drafts) => _send(text, List.of(drafts)),
           onAttach: (source) {
             if (block == RoomAttachBlock.none) {
               unawaited(_pick(source));
             }
           },
-          attachEnabled: block == RoomAttachBlock.none && !_sending,
+          attachEnabled: block == RoomAttachBlock.none,
+          // Keyboard images (Gboard, clipboard screenshots) join the same
+          // strip as the `+` picks, with the main composer's limits.
+          onContentInserted: (content) =>
+              unawaited(_insertKeyboardContent(content)),
           attachments: _attachments,
           onRemoveAttachment: (id) =>
               setState(() => _attachments.removeWhere((a) => a.localId == id)),
-          busy: _sending,
-          sendEnabled: hasContent && !_sending,
+          sendEnabled: hasContent,
           palette: _palette(s),
           reduceMotion: MediaQuery.maybeDisableAnimationsOf(context) ?? false,
           dictation: dictation == null
@@ -1079,19 +2585,114 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
                   : s.roomAttachUnavailable,
               key: const ValueKey('room-attach-disabled-reason'),
               textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 11, color: colors.textDisabled),
+              style: TextStyle(fontSize: 11, color: colors.textTertiary),
             ),
           ),
       ],
     );
   }
 
-  List<Widget> _inlineCards() {
-    final driver = _driver;
-    if (driver == null) return const [];
+  List<Widget> _promptCards() {
+    final s = Strings.of(context);
+    final canAnswer = widget.capabilities.canAnswerPrompts;
+    final cards = <Widget>[];
+    for (final prompt in _prompts) {
+      final member = roomMemberById(prompt.memberId, _room.members);
+      final profile = member == null ? null : widget.profileFor(member);
+      final busy = _promptBusy.contains(prompt.key);
+      switch (prompt) {
+        case RoomMemberClarify():
+          cards.add(
+            RoomMemberClarifyCard(
+              key: ValueKey('room-inline-${prompt.key}'),
+              prompt: prompt,
+              member: member,
+              profile: profile,
+              busy: busy,
+              onAnswer: canAnswer
+                  ? (answer) => unawaited(
+                      _answerPrompt(
+                        prompt,
+                        (source) => source.answerClarify(prompt, answer),
+                        failure: s.rq1215AnswerFailed,
+                      ),
+                    )
+                  : null,
+            ),
+          );
+        case RoomMemberApproval():
+          cards.add(
+            RoomApprovalCard(
+              key: ValueKey('room-inline-${prompt.key}'),
+              action: prompt.toDisplayAction(),
+              member: member,
+              profile: profile,
+              busy: busy,
+              onChoice: canAnswer
+                  ? (choice) => unawaited(
+                      _answerPrompt(
+                        prompt,
+                        (source) => source.answerApproval(prompt, choice),
+                        failure: s.rq1215AnswerFailed,
+                      ),
+                    )
+                  : null,
+            ),
+          );
+        case RoomMemberWaitingUnreachable():
+          if (member == null) continue;
+          final open = widget.onOpenMemberChat;
+          cards.add(
+            RoomMemberWaitingBanner(
+              key: ValueKey('room-inline-${prompt.key}'),
+              member: member,
+              profile: profile,
+              busy: busy,
+              onOpenChat: open == null
+                  ? null
+                  : () => open(member, prompt.storedSessionId),
+              onCancelWait: canAnswer
+                  ? () => unawaited(_cancelWait(prompt))
+                  : null,
+            ),
+          );
+      }
+    }
+    return cards;
+  }
+
+  List<Widget> _stallCards() {
+    final stall = _stall;
+    final member = stall == null
+        ? null
+        : roomMemberById(stall.memberId, _room.members);
+    if (stall == null || member == null) return const [];
     return [
-      for (final action in driver.approvals)
-        RoomApprovalCard(
+      RoomMemberStallBanner(
+        key: ValueKey('room-inline-${stall.key}'),
+        member: member,
+        profile: widget.profileFor(member),
+        busy: _resuming,
+        onResume: widget.capabilities.canAnswerPrompts
+            ? () => unawaited(_resumeStall(stall))
+            : null,
+      ),
+    ];
+  }
+
+  /// Approvals waiting on the user, for the top of the Activity sheet:
+  /// the driver's and those read from members' own sessions.
+  List<Widget> _sheetApprovals() => [
+    for (final card in _promptCards())
+      if (card is RoomApprovalCard)
+        KeyedSubtree(
+          key: ValueKey('room-round-approval-${card.action.requestId}'),
+          child: card,
+        ),
+    for (final action in _driver?.approvals ?? const <RoomApprovalAction>[])
+      KeyedSubtree(
+        key: ValueKey('room-round-approval-${action.requestId}'),
+        child: RoomApprovalCard(
           action: action,
           member: roomMemberById(action.memberId, _room.members),
           profile: () {
@@ -1103,17 +2704,163 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
               ? (choice) => unawaited(_approve(action, choice))
               : null,
         ),
-      for (final retry in driver.retries)
-        RoomRetryCard(
-          taskId: retry.taskId,
-          member: _memberForTask(retry.taskId),
-          busy: _retrying.contains(retry.taskId),
-          onRetry: widget.capabilities.canRetry
-              ? () => unawaited(_retry(retry.taskId))
+      ),
+  ];
+
+  List<Widget> _inlineCards() {
+    final driver = _driver;
+    if (driver == null) return [..._promptCards(), ..._stallCards()];
+    return [
+      ..._promptCards(),
+      ..._stallCards(),
+      for (final action in driver.approvals)
+        RoomApprovalCard(
+          key: ValueKey('room-inline-approval-${action.requestId}'),
+          action: action,
+          member: roomMemberById(action.memberId, _room.members),
+          profile: () {
+            final m = roomMemberById(action.memberId, _room.members);
+            return m == null ? null : widget.profileFor(m);
+          }(),
+          busy: _answering.contains(action.requestId),
+          onChoice: widget.capabilities.canApprove
+              ? (choice) => unawaited(_approve(action, choice))
               : null,
         ),
+      // Until local state is read, a dismissed card must not flash back.
+      if (_localLoaded)
+        for (final retry in _visibleRetries)
+          RoomRetryCard(
+            key: ValueKey('room-inline-retry-${retry.taskId}'),
+            taskId: retry.taskId,
+            member: _memberForTask(retry.taskId),
+            profile: switch (_memberForTask(retry.taskId)) {
+              final m? => widget.profileFor(m),
+              null => null,
+            },
+            busy: _retrying.contains(retry.taskId),
+            onRetry: widget.capabilities.canRetry
+                ? () => unawaited(_retry(retry.taskId))
+                : null,
+            onDismiss: () => _dismissTask(retry.taskId),
+          ),
     ];
   }
+
+  /// The round as the user sees it: a failure they dismissed no longer
+  /// raises the alarm (it reads as "no reply"), and a room kept "active"
+  /// only by dismissed retries is idle.
+  RoomRoundModel? _visibleRound(RoomRoundModel? round) {
+    if (round == null || _dismissedTasks.isEmpty) return round;
+    var changed = false;
+    final rows = [
+      for (final r in round.rows)
+        if (r.state == RoomTurnState.failed &&
+            r.taskId != null &&
+            _dismissedTasks.contains(r.taskId))
+          () {
+            changed = true;
+            return RoomRoundRow(
+              member: r.member,
+              state: RoomTurnState.noReply,
+              since: r.since,
+              taskId: r.taskId,
+              prompt: r.prompt,
+              reasonCode: r.reasonCode,
+            );
+          }()
+        else
+          r,
+    ];
+    final driver = _driver;
+    final active =
+        round.active &&
+        ((driver?.working ?? false) ||
+            (driver?.approvals.isNotEmpty ?? false) ||
+            _prompts.isNotEmpty ||
+            _visibleRetries.isNotEmpty ||
+            rows.any(
+              (r) =>
+                  r.state == RoomTurnState.working ||
+                  r.state == RoomTurnState.needsYou,
+            ));
+    if (!changed && active == round.active) return round;
+    return RoomRoundModel(
+      discussionId: round.discussionId,
+      round: round.round,
+      rows: List.unmodifiable(rows),
+      working: round.working,
+      queued: round.queued,
+      active: active,
+      total: round.total,
+      startedAt: round.startedAt,
+      endedAt: round.endedAt,
+      previous: round.previous,
+    );
+  }
+
+  // ── Reading anchor ───────────────────────────────────────────────────
+
+  bool get _atBottom {
+    if (!_transcriptScroll.hasClients) return true;
+    final p = _transcriptScroll.position;
+    return p.pixels <= p.minScrollExtent + 0.5;
+  }
+
+  bool _onScroll(ScrollNotification n) {
+    if (n.depth != 0) return false;
+    if (_programmaticScroll) return false;
+    if (n is ScrollUpdateNotification && _reading == null && !_atBottom) {
+      // The reader left the bottom (drag or fling): keep the boundary at
+      // the newest history row. While following it already is, so nothing
+      // moves now; from here on new content grows below it.
+      _startReading();
+    } else if (n is ScrollEndNotification && _reading != null && _atBottom) {
+      _unfreeze();
+    }
+    return false;
+  }
+
+  /// Key of the newest history row in the last built transcript.
+  String? _lastHistoryKey;
+
+  void _startReading() {
+    final boundary = _lastHistoryKey;
+    if (boundary == null) return;
+    _reading = (boundary: boundary, ceiling: _log?.latestSeq ?? 0);
+  }
+
+  void _unfreeze() {
+    if (_reading == null) return;
+    // At the bottom edge: the controller pins the merged list to its new
+    // bottom inside the same layout, so nothing visibly moves.
+    setState(() => _reading = null);
+  }
+
+  void _toBottom() {
+    if (!_transcriptScroll.hasClients) {
+      _reading = null;
+      return;
+    }
+    final p = _transcriptScroll.position;
+    if (_reading == null) {
+      if (p.pixels != p.minScrollExtent) p.jumpTo(p.minScrollExtent);
+      return;
+    }
+    unawaited(
+      p
+          .animateTo(
+            p.minScrollExtent,
+            duration: const Duration(milliseconds: 260),
+            curve: Curves.easeOutCubic,
+          )
+          .then((_) {
+            if (mounted) _unfreeze();
+          }),
+    );
+  }
+
+  List<String> _lastItemKeys = const [];
 
   HostedGroupMember? _memberForTask(String taskId) {
     for (final e in _events.reversed) {
@@ -1142,6 +2889,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
       RoomPassesEntry() => RoomPassesLine(
         entry: entry,
         members: _room.members,
+        profileFor: widget.profileFor,
         onOpenActivity: () => unawaited(_openActivity()),
       ),
       RoomMessageEntry() => RoomMessageTile(
@@ -1153,18 +2901,346 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
         attachmentActions: widget.attachmentActions,
         onReplyInThread:
             widget.capabilities.canSend && entry.event.threadId != null
-            ? () => _setThread(entry.event.threadId)
+            ? () => _replyInThread(entry)
             : null,
         onOpenThread: entry.thread == null
             ? null
             : () => unawaited(_openThread(entry.thread!.threadId)),
-        onMention: (handle) {
-          final member = _room.members
-              .where((m) => m.handle.toLowerCase() == handle.toLowerCase())
-              .firstOrNull;
-          if (member != null) widget.onOpenMember?.call(member);
-        },
+        onMention: _openMention,
+        onOpenQuote: entry.quote == null
+            ? null
+            : () => unawaited(_openQuote(entry.quote!.eventId)),
+        highlighted: entry.event.eventId == _highlightedEventId,
       ),
+    };
+  }
+
+  /// Handles whose mention opens something: members with a local profile
+  /// when the host can open them (same rule as the members sheet). Peers,
+  /// `@all` and `@everyone` stay plain text rather than dead links.
+  List<String> _openableHandles() => [
+    if (widget.onOpenMember != null)
+      for (final m in _room.members)
+        if (widget.profileFor(m) != null) m.handle,
+  ];
+
+  void _openMention(String handle) {
+    final member = _room.members
+        .where((m) => m.handle.toLowerCase() == handle.toLowerCase())
+        .firstOrNull;
+    if (member != null) widget.onOpenMember?.call(member);
+  }
+
+  /// Inputs the transcript depends on. Typing, focus, dictation and working
+  /// timers change none of them, so the transcript subtree is reused as is
+  /// (identical widget = no rebuild of any message).
+  List<Object?> _transcriptInputs(Locale locale) => [
+    _log,
+    _driver,
+    _room,
+    _reading,
+    _arrivedThroughSeq,
+    _landPending,
+    _dismissedTasks,
+    _lastSeenSeq,
+    _lastSeenLoaded,
+    _localLoaded,
+    _threadId == null,
+    _retrying.join(','),
+    _answering.join(','),
+    _prompts,
+    _promptBusy.join(','),
+    _stall,
+    _resuming,
+    _outboxVersion,
+    _highlightedEventId ?? '',
+    locale,
+    widget,
+    DateUtils.dateOnly(_now),
+  ];
+
+  List<Object?>? _viewInputs;
+  ({Widget widget, int unread, bool repliesToYou})? _view;
+  List<Object?>? _roundInputs;
+  RoomRoundModel? _round;
+
+  static bool _sameInputs(List<Object?>? a, List<Object?> b) {
+    if (a == null || a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] is String ||
+          a[i] is bool ||
+          a[i] is int ||
+          a[i] is DateTime ||
+          a[i] is Locale) {
+        if (a[i] != b[i]) return false;
+      } else if (!identical(a[i], b[i])) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  RoomRoundModel? _roundView() {
+    final now = _now;
+    final inputs = [
+      _log,
+      _driver,
+      _room,
+      _dismissedTasks,
+      _prompts,
+      _live,
+      // Without driver status an open turn expires with time.
+      if (_driver == null) now.millisecondsSinceEpoch ~/ 10000,
+    ];
+    if (_sameInputs(_roundInputs, inputs)) return _round;
+    _roundInputs = inputs;
+    return _round = _visibleRound(
+      deriveRoomRound(
+        events: _events,
+        members: _room.members,
+        driverStatus: _driver,
+        now: now,
+        memberPrompts: _prompts,
+        live: _live,
+      ),
+    );
+  }
+
+  /// Starts fetching the newest images of the room log as soon as the log
+  /// changes, before their rows are built (lazy list), so a row scrolled
+  /// into view paints from the private cache. Bounded per pass; the
+  /// prefetcher dedupes, caps concurrency and waits while App Lock is on.
+  void _prefetchRoomMedia(List<RoomTranscriptEntry> transcript) {
+    final actions = widget.attachmentActions;
+    if (actions == null || actions is! RoomAttachmentCache) return;
+    final cache = actions as RoomAttachmentCache;
+    var queued = 0;
+    for (var i = transcript.length - 1; i >= 0 && queued < 12; i--) {
+      final entry = transcript[i];
+      if (entry is! RoomMessageEntry) continue;
+      for (final ref in entry.body.attachments) {
+        if (!ref.isImage || !actions.canFetch(ref)) continue;
+        cache.prefetch(ref);
+        queued++;
+      }
+    }
+  }
+
+  ({Widget widget, int unread, bool repliesToYou}) _transcriptView(
+    Strings s,
+    HermesThemeColors colors,
+  ) {
+    final inputs = _transcriptInputs(Localizations.localeOf(context));
+    final cached = _view;
+    if (cached != null && _sameInputs(_viewInputs, inputs)) return cached;
+    _viewInputs = inputs;
+    final transcript = buildRoomTranscript(
+      events: _events,
+      members: _room.members,
+      lastSeenSeq: _lastSeenLoaded ? _lastSeenSeq : null,
+      arrivedThroughSeq: _arrivedThroughSeq,
+    );
+    _prefetchRoomMedia(transcript);
+    final handles = _openableHandles();
+    // Chronological items (oldest first), each with a stable identity.
+    final items = <_RoomItem>[
+      for (final entry in transcript)
+        (
+          key: entry.key,
+          kind: entry is RoomMessageEntry
+              ? roomEventUnreadKind(entry.event)
+              : UnreadRowKind.quiet,
+          seq: entry is RoomMessageEntry ? entry.event.sequence : 0,
+          build: () => _entry(entry, s, handles),
+        ),
+      for (final message in _visibleOutbox())
+        (
+          key: 'room-pending-${message.attempt.clientEventId}',
+          kind: UnreadRowKind.own,
+          seq: 0,
+          build: () => RoomPendingMessageTile(
+            key: ValueKey('room-pending-${message.attempt.clientEventId}'),
+            id: message.attempt.clientEventId,
+            text: message.text,
+            attachments: message.attachments,
+            failed: message.failed,
+            onRetry: () => _retrySend(message),
+          ),
+        ),
+      for (final card in _inlineCards())
+        (
+          key: (card.key! as ValueKey<String>).value,
+          kind: UnreadRowKind.quiet,
+          seq: 0,
+          build: () => card,
+        ),
+      // Whoever is replying right now, where the answer will appear.
+      for (final row in _roundView()?.rows ?? const <RoomRoundRow>[])
+        if (row.state == RoomTurnState.working)
+          (
+            key: 'room-typing-${row.member.memberId}',
+            kind: UnreadRowKind.quiet,
+            seq: 0,
+            build: () => RoomTypingRow(
+              key: ValueKey('room-typing-${row.member.memberId}'),
+              member: row.member,
+              name: roomSpeakerName(
+                row.member,
+                null,
+                widget.profileFor(row.member),
+              ),
+              profile: widget.profileFor(row.member),
+              avatarCache: widget.avatarCache,
+            ),
+          ),
+    ];
+    _lastItemKeys = [for (final i in items) i.key];
+    _lastHistoryKey = transcript.isEmpty ? null : transcript.last.key;
+    if (_landPending && _lastSeenLoaded && _log != null) {
+      // Entry (or return after leaving) with news from while away: open
+      // with the divider at the top, the history above it in the center.
+      // Decided only once the log is here: consumed on an empty transcript
+      // (read marker loaded before the first read) the room opened at the
+      // bottom with the divider out of sight.
+      _landPending = false;
+      final at = transcript.indexWhere((e) => e is RoomNewSinceDivider);
+      if (at > 0 && _reading == null) {
+        _reading = (
+          boundary: transcript[at - 1].key,
+          ceiling: _arrivedThroughSeq ?? _log?.latestSeq ?? 0,
+        );
+        _transcriptScroll.requestLanding(
+          context: _landingContext + _headerInset,
+        );
+      }
+    }
+    var reading = _reading;
+    var boundary = transcript.length - 1;
+    if (reading != null) {
+      boundary = items.indexWhere((i) => i.key == reading!.boundary);
+      if (boundary < 0) {
+        // The boundary row is gone (log reset): follow again.
+        reading = _reading = null;
+        _transcriptScroll.releaseLanding();
+        boundary = transcript.length - 1;
+      }
+    }
+    final anchored = items.sublist(0, boundary + 1);
+    final newer = items.sublist(boundary + 1);
+    final unread = reading == null
+        ? 0
+        : unreadNewsAfter<_RoomItem>(
+            newer,
+            baseline: reading.ceiling,
+            positionOf: (i) => i.seq,
+            kindOf: (i) => i.kind,
+          );
+    // The pill says "New replies to your message" when what arrived below
+    // answers the owner's newest message (the one just sent or replied).
+    final answering = reading == null || unread == 0
+        ? const <String>{}
+        : _answersToNewestOwnMessage(transcript);
+    final ceiling = reading?.ceiling ?? 0;
+    final repliesToYou =
+        answering.isNotEmpty &&
+        newer.any((i) => i.seq > ceiling && answering.contains(i.key));
+    _viewInputs = _transcriptInputs(Localizations.localeOf(context));
+    final Widget view = items.isEmpty
+        ? Center(
+            child: Padding(
+              padding: const EdgeInsets.all(32),
+              child: Text(
+                s.roomEmpty,
+                key: const ValueKey('room-empty'),
+                textAlign: TextAlign.center,
+                style: TextStyle(color: colors.textSecondary),
+              ),
+            ),
+          )
+        : NotificationListener<ScrollNotification>(
+            onNotification: _onScroll,
+            child: KeyedSubtree(
+              key: _transcriptKey,
+              child: ValueListenableBuilder<double>(
+                valueListenable: _composerExtent,
+                builder: (context, composerExtent, _) {
+                  // The last message rests above the notch tab, which sits
+                  // on the composer's top edge.
+                  final bottomInset = composerExtent + kChatNotchHeight;
+                  _transcriptScroll.centerReserve = newer.isEmpty
+                      ? bottomInset
+                      : 0;
+                  return CustomScrollView(
+                    key: const ValueKey('room-transcript'),
+                    controller: _transcriptScroll,
+                    reverse: true,
+                    center: _centerKey,
+                    slivers: [
+                      // Under the floating composer: the newest row rests
+                      // above it and scrolls under it, never behind a band.
+                      // The reserve is the bottom-most thing in the list: below
+                      // the newer rows when there are any, else the leading
+                      // edge of the center sliver (so a short room has no slack
+                      // to drag its last message under the composer).
+                      if (newer.isNotEmpty)
+                        SliverToBoxAdapter(
+                          key: const ValueKey('room-bottom-inset'),
+                          child: SizedBox(height: bottomInset),
+                        ),
+                      // Newer than what the user is
+                      // reading: grows below it.
+                      SliverList(
+                        delegate: SliverChildBuilderDelegate(
+                          (context, index) => newer[index].build(),
+                          childCount: newer.length,
+                        ),
+                      ),
+                      SliverPadding(
+                        key: _centerKey,
+                        // Reverse list: `bottom` is the leading (lowest) edge.
+                        padding: EdgeInsets.only(
+                          top: 8,
+                          bottom: newer.isEmpty ? bottomInset : 0,
+                        ),
+                        sliver: SliverList(
+                          delegate: SliverChildBuilderDelegate(
+                            (context, index) =>
+                                anchored[anchored.length - 1 - index].build(),
+                            childCount: anchored.length,
+                          ),
+                        ),
+                      ),
+                      // Under the floating header: the oldest row is never
+                      // hidden behind it.
+                      SliverToBoxAdapter(
+                        key: const ValueKey('room-top-inset'),
+                        child: SizedBox(height: _headerInset),
+                      ),
+                    ],
+                  );
+                },
+              ),
+            ),
+          );
+    return _view = (widget: view, unread: unread, repliesToYou: repliesToYou);
+  }
+
+  /// Keys of member messages answering the owner's newest message.
+  Set<String> _answersToNewestOwnMessage(List<RoomTranscriptEntry> entries) {
+    String? newest;
+    for (final e in entries.reversed) {
+      if (e is RoomMessageEntry && e.isUser) {
+        newest = e.event.eventId;
+        break;
+      }
+    }
+    if (newest == null) return const {};
+    return {
+      for (final e in entries)
+        if (e is RoomMessageEntry &&
+            !e.isUser &&
+            e.event.activity.discussionId == newest)
+          e.key,
     };
   }
 
@@ -1172,148 +3248,263 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     final s = Strings.of(context);
     final colors = Theme.of(context).hermes;
-    final transcript = buildRoomTranscript(
-      events: _events,
-      members: _room.members,
-      lastSeenSeq: _lastSeenLoaded ? _lastSeenSeq : null,
-    );
-    final round = deriveRoomRound(
-      events: _events,
-      members: _room.members,
-      driverStatus: _driver,
-    );
-    final handles = [
-      for (final m in _room.members) m.handle,
-      'all',
-      'everyone',
-    ];
-    final inline = _inlineCards();
-    final status = _statusLine(s, round);
-    final itemCount = transcript.length + inline.length;
-    if (!_openAnchored && itemCount > 0) {
+    final round = _roundView();
+    _headerInset = FloatingChatHeader.insetFor(context);
+    final view = _transcriptView(s, colors);
+    if (!_openAnchored && _lastItemKeys.isNotEmpty) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _anchorOnOpen());
     }
+    String nameOf(HostedGroupMember m) =>
+        roomSpeakerName(m, null, widget.profileFor(m));
+    final idleStatus = _statusLine(s, round);
+    final summary = roomStripSummary(
+      s,
+      round: round,
+      idleStatus: idleStatus,
+      nameOf: nameOf,
+      now: _now,
+    );
+    // The same line without its clock: what the island says, once. The
+    // clock rides after the room's name while one member replies.
+    final summaryLine = roomStripSummary(
+      s,
+      round: round,
+      idleStatus: idleStatus,
+      nameOf: nameOf,
+    );
+    final replying = [
+      for (final r in round?.rows ?? const <RoomRoundRow>[])
+        if (r.state == RoomTurnState.working) r,
+    ];
+    final replyingSince = replying.length == 1 ? replying.single.since : null;
+    _armAgoTick();
+    final detailOpen = _detailOpen && round != null;
     return Scaffold(
       key: const ValueKey('room-screen'),
-      appBar: _header(s),
-      body: SafeArea(
-        top: false,
-        // The real height left (after app bar, safe area and IME) decides
-        // what fits: in landscape with the keyboard open the round panel and
-        // status line step aside so the composer never overflows.
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            final available = constraints.maxHeight;
-            final roomy = available > 300;
-            return Column(
-              children: [
-                if (round != null && _roundNeedsPanel(round) && roomy)
-                  RoomRoundPanel(
-                    round: round,
-                    now: _now,
-                    profileFor: widget.profileFor,
-                    avatarCache: widget.avatarCache,
-                    onStopAll: widget.capabilities.canStop && !_stopping
-                        ? () => unawaited(_stop())
-                        : null,
-                    onRetry: widget.capabilities.canRetry
-                        ? (row) {
-                            final task = row.taskId;
-                            if (task != null) unawaited(_retry(task));
-                          }
-                        : null,
+      body: Stack(
+        children: [
+          _body(s, colors, round, view, detailOpen),
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: RoomHeaderBar(
+              title: widget.displayName ?? _room.name,
+              status: summary,
+              line: summaryLine,
+              elapsed: replyingSince == null
+                  ? null
+                  : roomElapsed(_now.difference(replyingSince)),
+              members: _room.members,
+              states: {
+                for (final r in round?.rows ?? const <RoomRoundRow>[])
+                  r.member.memberId: r.state,
+              },
+              lineTone: _lineTone,
+              showIdleStatus: _showsStopped,
+              profileFor: widget.profileFor,
+              avatarCache: widget.avatarCache,
+              roomAvatar: widget.roomAvatar,
+              onOpenDetail: () => _openHeaderDetail(round),
+              onMore: () => unawaited(_openMenu()),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _body(
+    Strings s,
+    HermesThemeColors colors,
+    RoomRoundModel? round,
+    ({Widget widget, int unread, bool repliesToYou}) view,
+    bool detailOpen,
+  ) {
+    return SafeArea(
+      top: false,
+      // The real height left (after app bar, safe area and IME) bounds the
+      // composer so it never overflows in landscape with the keyboard.
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final available = constraints.maxHeight;
+          // The transcript fills the whole body and scrolls under the
+          // floating composer; nothing is painted above the composer
+          // (pm1215), and behind it the foot's scrim dims what passes.
+          return Stack(
+            children: [
+              Positioned.fill(
+                child: FocusScope(node: _transcriptFocus, child: view.widget),
+              ),
+              if (unreadPillVisible(
+                present: _presence.present,
+                reading: _reading != null,
+                count: view.unread,
+              ))
+                ValueListenableBuilder<double>(
+                  valueListenable: _composerExtent,
+                  builder: (context, extent, child) => Positioned(
+                    // Above the notch tab.
+                    bottom: extent + 8 + kChatNotchHeight,
+                    left: 0,
+                    right: 0,
+                    child: child!,
                   ),
-                if (status.isNotEmpty && !(round?.active ?? false) && roomy)
-                  InkWell(
-                    key: const ValueKey('room-status-line'),
-                    onTap: () => unawaited(_openActivity()),
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 4, 12, 6),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              status,
-                              key: const ValueKey('room-status-text'),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 11.5,
-                                color: colors.textSecondary,
-                              ),
-                            ),
-                          ),
-                          Icon(
-                            Icons.chevron_right_rounded,
-                            size: 16,
-                            color: colors.textSecondary,
-                          ),
-                        ],
+                  child: Center(
+                    child: RoomNewPill(
+                      count: view.unread,
+                      repliesToYou: view.repliesToYou,
+                      onTap: _toBottom,
+                    ),
+                  ),
+                ),
+              if (detailOpen) ...[
+                Positioned.fill(
+                  child: GestureDetector(
+                    key: const ValueKey('room-round-sheet-barrier'),
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () => _setDetailOpen(false),
+                    child: ColoredBox(
+                      color: colors.background.withValues(alpha: 0.35),
+                    ),
+                  ),
+                ),
+                Positioned(
+                  top: _headerInset + 4,
+                  left: 8,
+                  right: 8,
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      maxHeight: math.max(120, available * 0.55),
+                    ),
+                    child: Material(
+                      color: colors.surface,
+                      elevation: 8,
+                      borderRadius: BorderRadius.circular(16),
+                      clipBehavior: Clip.antiAlias,
+                      child: SingleChildScrollView(
+                        child: RoomRoundDetail(
+                          round: round!,
+                          now: _now,
+                          profileFor: widget.profileFor,
+                          avatarCache: widget.avatarCache,
+                          onStopAll: widget.capabilities.canStop && !_stopping
+                              ? () => unawaited(_stop())
+                              : null,
+                          onRetry: widget.capabilities.canRetry
+                              ? (row) {
+                                  final task = row.taskId;
+                                  if (task != null) {
+                                    unawaited(_retry(task));
+                                  }
+                                }
+                              : null,
+                          approvals: _sheetApprovals(),
+                          onOpenReply: (eventId) {
+                            _setDetailOpen(false);
+                            unawaited(_openQuote(eventId));
+                          },
+                          onOpenMembers: () {
+                            _setDetailOpen(false);
+                            unawaited(_openMembers());
+                          },
+                        ),
                       ),
                     ),
                   ),
-                Expanded(
-                  child: itemCount == 0
-                      ? Center(
-                          child: Padding(
-                            padding: const EdgeInsets.all(32),
-                            child: Text(
-                              s.roomEmpty,
-                              key: const ValueKey('room-empty'),
-                              textAlign: TextAlign.center,
-                              style: TextStyle(color: colors.textSecondary),
-                            ),
-                          ),
-                        )
-                      : KeyedSubtree(
-                          key: _transcriptKey,
-                          child: ListView.builder(
-                            key: const ValueKey('room-transcript'),
-                            controller: _transcriptScroll,
-                            reverse: true,
-                            padding: const EdgeInsets.only(bottom: 12, top: 8),
-                            itemCount: itemCount,
-                            itemBuilder: (context, index) {
-                              if (index < inline.length) {
-                                return inline[inline.length - 1 - index];
-                              }
-                              final entry =
-                                  transcript[transcript.length -
-                                      1 -
-                                      (index - inline.length)];
-                              return _entry(entry, s, handles);
-                            },
-                          ),
-                        ),
-                ),
-                if (_error != null)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 4,
-                    ),
-                    child: Text(
-                      _error!,
-                      key: const ValueKey('room-error'),
-                      style: TextStyle(color: colors.error, fontSize: 12),
-                    ),
-                  ),
-                ConstrainedBox(
-                  constraints: BoxConstraints(
-                    maxHeight: math.max(
-                      0,
-                      math.min(available * 0.6, available - 48),
-                    ),
-                  ),
-                  child: SingleChildScrollView(
-                    reverse: true,
-                    child: _composerArea(s),
-                  ),
                 ),
               ],
-            );
-          },
-        ),
+              // The foot of the page (owner, QA 9529): behind the composer
+              // a message that scrolls past dissolves into the page, so it
+              // never reads through it or beside it. Behind the composer
+              // only: the slot above it, where the notch rides, stays bare.
+              ValueListenableBuilder<double>(
+                valueListenable: _composerExtent,
+                builder: (context, extent, child) => Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  height: math.max(0, extent - kComposerFadeHeight),
+                  child: child!,
+                ),
+                child: const HermesBottomScrim(
+                  key: ValueKey('room-foot-scrim'),
+                ),
+              ),
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                child: ExtentReporter(
+                  onExtent: _setComposerExtent,
+                  child: Column(
+                    key: const ValueKey('room-bottom-stack'),
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      // pm1215 (owner, QA 9494): an empty slot where the
+                      // notch tab rides, painted with nothing, like under
+                      // the floating header: the transcript stays visible
+                      // under and around the composer. Only the composer
+                      // pill and the notch have a surface.
+                      const IgnorePointer(
+                        child: SizedBox(
+                          key: ValueKey('room-bottom-gap'),
+                          height: kComposerFadeHeight,
+                        ),
+                      ),
+                      if (_stale) _staleStatus(s, colors),
+                      ConstrainedBox(
+                        constraints: BoxConstraints(
+                          maxHeight: math.max(
+                            0,
+                            math.min(available * 0.6, available - 48),
+                          ),
+                        ),
+                        child: SingleChildScrollView(
+                          reverse: true,
+                          child: ListenableBuilder(
+                            listenable: Listenable.merge([
+                              _composer,
+                              _focus,
+                              widget.dictation,
+                            ]),
+                            builder: (context, _) => _composerArea(s),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              // QA 9494: the chat's notch, attached to the composer's top
+              // edge (just below the empty slot); it opens the room menu (members,
+              // threads, files, activity, notifications, settings). Painted
+              // after the bottom stack.
+              ValueListenableBuilder<double>(
+                valueListenable: _composerExtent,
+                builder: (context, extent, child) => Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: math.max(0, extent - kComposerFadeHeight),
+                  height: kChatNotchSlotHeight,
+                  child: child!,
+                ),
+                child: Center(
+                  child: RepaintBoundary(
+                    child: ChatNotch(
+                      key: const ValueKey('room-notch'),
+                      open: _menuOpen,
+                      semanticLabel: s.roomNotchLabel,
+                      onOpen: () => unawaited(_openMenu()),
+                      horizontalSwipeEnabled: false,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -1327,6 +3518,8 @@ class _RoomThreadPage extends StatelessWidget {
   final MissionProfileAvatarCache? avatarCache;
   final RoomAttachmentActions? attachmentActions;
   final bool canReply;
+  final List<String> mentionHandles;
+  final ValueChanged<String> onMention;
   final VoidCallback onReply;
 
   const _RoomThreadPage({
@@ -1336,6 +3529,8 @@ class _RoomThreadPage extends StatelessWidget {
     required this.avatarCache,
     required this.attachmentActions,
     required this.canReply,
+    required this.mentionHandles,
+    required this.onMention,
     required this.onReply,
   });
 
@@ -1346,7 +3541,6 @@ class _RoomThreadPage extends StatelessWidget {
       events: messages,
       members: members,
     ).whereType<RoomMessageEntry>().toList();
-    final handles = [for (final m in members) m.handle];
     return Scaffold(
       key: const ValueKey('room-thread-page'),
       appBar: HermesAppBar(title: Text(s.roomThreadTitle)),
@@ -1368,8 +3562,9 @@ class _RoomThreadPage extends StatelessWidget {
                       ? null
                       : profileFor(entries[index].member!),
                   avatarCache: avatarCache,
-                  mentionHandles: handles,
+                  mentionHandles: mentionHandles,
                   attachmentActions: attachmentActions,
+                  onMention: onMention,
                 ),
               ),
             ),
@@ -1388,4 +3583,19 @@ class _RoomThreadPage extends StatelessWidget {
       ),
     );
   }
+}
+
+/// One message sent from this screen and not yet acknowledged.
+final class _OutgoingMessage {
+  /// Reused on retry, so the server keeps the send idempotent.
+  final HostedGroupSendAttempt attempt;
+  final String text;
+  final List<AttachmentDraft> attachments;
+  bool failed = false;
+
+  _OutgoingMessage({
+    required this.attempt,
+    required this.text,
+    required this.attachments,
+  });
 }

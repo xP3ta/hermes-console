@@ -1,87 +1,93 @@
 # Google Play — Permissions justification
 
-Justificación de cada permiso para la revisión de Google Play. Esta tabla apunta
-al candidato fuente `1.2.10` y se reconcilió el 2026-09-03 con sus manifests
-versionados. El AAB firmado definitivo todavía no se ha generado ni inspeccionado
-con bundletool, por lo que no se registra aquí ningún hash o permiso efectivo
-como si ya existiera. Antes de copiar el texto a Play Console hay que repetir la
-comprobación sobre el AAB exacto seleccionado, confirmar SDK 24/36 y demostrar
-que los permisos exclusivos de la variante completa no están presentes.
+Justification of each permission for Google Play review. The table is the
+merged manifest of `1.2.15 (9540)`: the app's own
+`android/app/src/main/AndroidManifest.xml` (shared by the `play` and `full`
+flavors; `android/app/src/full/AndroidManifest.xml` declares nothing extra) plus
+what its dependencies add. It is enforced as an exact set by
+`tool/release/full_release_policy.json` (APKs: `inspect_public_apk.py`; any
+manifest text, AAB included: `check_manifest_policy.py`) and by
+`test/release_policy_truth_test.py`. A candidate AAB and APK of this version,
+built before the last source changes, were read with bundletool, aapt2 and
+apkanalyzer: both flavors carry exactly the 21 entries below (20 permissions plus
+the signature permission of AndroidX), no package queries and two foreground
+services. No hash is recorded here. Before copying any text into Play Console,
+repeat the check on the exact AAB selected:
+`java -jar bundletool.jar dump manifest --bundle=<aab> > manifest.xml` and then
+`python3 tool/release/check_manifest_policy.py --manifest manifest.xml --pubspec pubspec.yaml`.
 
-## Permisos del build de Play (flavor `play`)
+## Permissions of the Play build
 
-| Permiso | Para qué | Justificación |
+| Permission | Used for | Justification |
 |---|---|---|
-| `INTERNET` | Conectar al servidor Hermes del usuario | Funcionalidad central |
-| `RECORD_AUDIO` | Dictado y modo conversación | Solo empieza tras una acción del usuario y su divulgación. Continuar una conversación fuera de la app requiere opt-in separado y notificación persistente; la app no guarda el audio |
-| `CAMERA` | Escanear un QR de conexión o tomar una foto adjunta | Solo se abre tras una acción del usuario. ZXing procesa los frames del QR íntegramente en el dispositivo; una foto capturada se envía únicamente al servidor configurado cuando el usuario manda el mensaje. Sin captura en background |
-| `POST_NOTIFICATIONS` | Respuestas, automatizaciones y controles de Voz/lectura | Avisos privados de respuestas, runs, Cron y transiciones Kanban con opt-in; controles persistentes del audio iniciado por el usuario; sin push de terceros |
-| `VIBRATE` | Feedback de notificaciones | Complementa las notificaciones |
-| `FOREGROUND_SERVICE` + `FOREGROUND_SERVICE_DATA_SYNC` | Mantener red visible en 2º plano | Tipo `dataSync`: mantiene SSH/SFTP explícito (servicio nativo separado en API ≥35) y, solo en Android ≤14, el fallback Flutter de escucha opt-in. SSH/SFTP termina con la operación; la escucha termina al apagarla |
-| `FOREGROUND_SERVICE_REMOTE_MESSAGING` | Mantener la continuidad opt-in de chat en Android ≥15 | Tipo `remoteMessaging`: conserva el transporte de mensajes entre el agente/Desktop autoalojado y el móvil; runs, Cron y Kanban son avisos secundarios. Muestra notificación persistente y evita usar la cuota finita `dataSync` en Android ≥15 |
-| `FOREGROUND_SERVICE_MICROPHONE` | Continuar una conversación de voz fuera de la app | Tipo `microphone`: solo se arranca desde una Activity visible, después de `RECORD_AUDIO` y del opt-in correspondiente. Muestra controles persistentes y nunca arranca desde boot/receiver. Tras process death no restaura la conversación |
-| `FOREGROUND_SERVICE_MEDIA_PLAYBACK` | Continuar lectura TTS y respuestas de Voz | Tipo `mediaPlayback`: protege audio solicitado por el usuario; la notificación no incluye contenido de conversación y no se restaura desde boot/process death |
-| `WRITE_EXTERNAL_STORAGE` (solo Android ≤9) | Guardar una imagen generada cuando el usuario pulsa “Guardar” | Limitado con `maxSdkVersion=28`; Android moderno no lo recibe |
-| `WAKE_LOCK` | Mantener una operación iniciada por el usuario mientras el FGS está activo | Añadido por `flutter_foreground_task`; no se mantiene sin trabajo/opt-in |
-| `ACCESS_NETWORK_STATE` | Adaptar componentes de red al estado de conectividad | Permiso normal añadido por dependencias Android |
-| `USE_BIOMETRIC` | App Lock opcional con biometría del dispositivo | Delega la verificación en Android mediante `local_auth`; Hermes Console no accede a plantillas ni datos biométricos |
-| `USE_FINGERPRINT` | Compatibilidad biométrica en Android antiguos | Alias legado de `local_auth`; la app no accede a datos biométricos |
-| `RECEIVE_BOOT_COMPLETED` | Restaurar la escucha persistente elegida por el usuario | Restaura solo automatización: `remoteMessaging` en API ≥35 o el fallback `dataSync` en API ≤34. Nunca inicia micrófono, reproducción, SSH ni SFTP desde boot |
-| `dev.xpetalab.hermesconsole.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION` | Restringir receivers dinámicos internos | Permiso `signature` generado por AndroidX para que solo código firmado como la app pueda dirigirse a receivers no exportados; no es un permiso de usuario ni concede acceso a datos del dispositivo |
+| `INTERNET` | Connecting to the user's own Hermes server | Core function |
+| `ACCESS_NETWORK_STATE` | Adapting network components to connectivity | Normal permission added by Android dependencies and declared in the manifest; used for an immediate retry when connectivity returns |
+| `RECORD_AUDIO` | Dictation and voice conversation | Starts only after a user action and its disclosure. Continuing a conversation outside the app needs a separate opt-in and a persistent notification; the app does not store the audio |
+| `CAMERA` | Scanning a connection QR code or taking an attachment photo | Opened only after a user action. ZXing processes the QR frames entirely on the device; a captured photo goes only to the configured server when the user sends the message. No background capture |
+| `POST_NOTIFICATIONS` | Replies, approvals, automations and voice/read-aloud controls | Private, local notifications (no third-party push): replies, approvals, runs, Cron and task transitions, with opt-in; persistent controls for audio the user started. Asked for once, after the first connection is saved |
+| `POST_PROMOTED_NOTIFICATIONS` | Android 16 Live Updates | Lets a turn or a room that is working appear as a live update (status-bar chip, lock screen) with its progress. Normal permission without a dialog; the lock-screen version never names a chat or a tool |
+| `MODIFY_AUDIO_SETTINGS` | Audio mode and routing of the opt-in GPT-Live voice session | Normal permission used by `flutter_webrtc` to set the communication audio mode while a live session the user started is running. Off by default; no audio leaves the device unless the user enables GPT-Live and starts a session |
+| `CHANGE_NETWORK_STATE` | Network handling of the same WebRTC session | Normal permission declared by the WebRTC stack; used only while a GPT-Live session is open |
+| `BLUETOOTH` (Android 11 and older) | Letting the audio of a GPT-Live call follow a Bluetooth headset | Normal install-time permission, limited to `maxSdkVersion=30` and added by the call-audio library under `flutter_webrtc` (Twilio AudioSwitch). No dialog, and modern Android does not receive it. Used only while a GPT-Live session the user started is running, and only to see which headset is already connected: no scanning, pairing or device list. Console requests neither `BLUETOOTH_CONNECT` nor `BLUETOOTH_SCAN`, so that library cannot manage Bluetooth headsets on Android 12 and newer. `android.hardware.bluetooth` is declared `required=false`, so no device is filtered out |
+| `VIBRATE` | Notification feedback | Complements notifications |
+| `FOREGROUND_SERVICE` + `FOREGROUND_SERVICE_DATA_SYNC` | Keeping explicit SSH/SFTP work and the listening fallback visible in the background | Type `dataSync`: keeps SSH/SFTP the user started (a separate native service on API >= 35) and, on Android <= 14 only, the opt-in listening fallback. SSH/SFTP ends with the operation; listening ends when switched off |
+| `FOREGROUND_SERVICE_REMOTE_MESSAGING` | Keeping the opt-in chat continuity on Android 15+ | Type `remoteMessaging`: keeps the message transport between the self-hosted agent/Desktop and the phone; runs, Cron and tasks are secondary notices. Shows a persistent notification and avoids the finite `dataSync` budget on Android 15+ |
+| `FOREGROUND_SERVICE_MICROPHONE` | Continuing a voice conversation outside the app | Type `microphone`: started only from a visible Activity, after `RECORD_AUDIO` and the matching opt-in. Shows persistent controls and never starts from boot or a receiver. The conversation is not restored after process death |
+| `FOREGROUND_SERVICE_MEDIA_PLAYBACK` | Continuing read-aloud and voice replies | Type `mediaPlayback`: protects audio the user asked for; the notification carries no conversation content and is not restored from boot or process death |
+| `RECEIVE_BOOT_COMPLETED` | Restoring the listening the user chose | Restores automation only: `remoteMessaging` on API >= 35 or the `dataSync` fallback on API <= 34. Never starts microphone, playback, SSH or SFTP from boot |
+| `USE_BIOMETRIC` | Optional App Lock with device biometrics | Verification is delegated to Android through `local_auth`; Console never accesses biometric templates or data |
+| `WRITE_EXTERNAL_STORAGE` (Android 9 and older) | Saving a generated image when the user taps "Save" | Limited with `maxSdkVersion=28`; modern Android does not receive it |
+| `WAKE_LOCK` | Keeping a user-started operation alive while its foreground service runs | Added by `flutter_foreground_task`; not held without work or opt-in |
+| `USE_FINGERPRINT` | Biometric compatibility on old Android | Legacy alias added by `local_auth`; the app does not access biometric data |
+| `dev.xpetalab.hermesconsole.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION` | Restricting internal dynamic receivers | `signature` permission generated by AndroidX so that only code signed like the app can address non-exported receivers; not a user permission and grants no access to device data |
 
-### Foreground services — declaración para Play Console
+### Foreground services — declaration for Play Console
 
-- **Tipo `dataSync`:** mantiene SSH/SFTP iniciado por el usuario —en un servicio
-  nativo efímero separado en API ≥35— y, en API ≤34, el fallback Flutter de
-  escucha persistente. Ofrece notificación y parada directa.
-- **Tipo `remoteMessaging`:** en API ≥35 mantiene la continuidad de chat entre
-  el agente/Desktop autoalojado y Console; runs, Cron y Kanban son avisos
-  secundarios. Requiere opt-in, notificación persistente y parada directa.
-- **Tipo `microphone`:** mantiene una conversación iniciada por el usuario tras
-  el opt-in de continuidad. Terminar libera el micrófono y degrada el servicio.
-- **Tipo `mediaPlayback`:** mantiene ReadAloud, las respuestas de una
-  conversación de voz y sus controles para pausar/reanudar o terminar el audio.
-- Los cuatro tipos, su impacto al aplazarse/interrumpirse y sus vídeos se detallan
-  en `PLAY_FGS_DECLARATION.md`.
+- **Type `dataSync`:** keeps user-started SSH/SFTP (an ephemeral native service on
+  API >= 35) and, on API <= 34, the persistent listening fallback. Offers a
+  notification and a direct stop.
+- **Type `remoteMessaging`:** on API >= 35, keeps chat continuity between the
+  self-hosted agent/Desktop and Console; runs, Cron and tasks are secondary
+  notices. Requires opt-in, a persistent notification and a direct stop.
+- **Type `microphone`:** keeps a user-started conversation after the continuity
+  opt-in. Ending it releases the microphone and downgrades the service.
+- **Type `mediaPlayback`:** keeps read-aloud, the replies of a voice conversation
+  and their controls to pause/resume or end the audio.
+- The four types, the impact of being deferred or interrupted, and their videos
+  are detailed in [`PLAY_FGS_DECLARATION.md`](PLAY_FGS_DECLARATION.md).
 
-## Permisos EXCLUSIVOS de la variante completa (`full`) — NO en Play
+## Sensitive and restricted permissions — status
 
-Estos permisos viven en `src/full/AndroidManifest.xml` y **no se incluyen** en el
-AAB de Play:
+- `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`: not declared in any flavor.
+- No flavor contains the retired on-device agent's `com.termux.permission.RUN_COMMAND`
+  or any `<queries><package>` entry; the release policy forbids the permission and
+  requires an empty package-query list.
+- `RECEIVE_BOOT_COMPLETED`: restores only the authorized listener (`remoteMessaging`
+  on API >= 35, `dataSync` on API <= 34). SSH/SFTP, microphone and playback are
+  not restored after boot.
+- `QUERY_ALL_PACKAGES` is not used. The `queries` block declares only the speech
+  recognition service, the text-to-speech service, `PROCESS_TEXT` and `http`
+  links, so that the system speech engines and links resolve on Android 11+.
+- `USE_FULL_SCREEN_INTENT` is not declared; voice uses a normal notification and
+  never takes over the lock screen with an Activity.
+- `READ_PHONE_STATE` and `READ_EXTERNAL_STORAGE` are removed explicitly in the main
+  manifest as a defense against transitive additions. Android <= 9 may list read
+  access as a historical consequence of `WRITE_EXTERNAL_STORAGE maxSdkVersion=28`;
+  Console does not enumerate or import general storage, and attachments use the
+  system file picker and Photo Picker. The effective result must be confirmed on
+  the final signed AAB.
+- Camera and microphone are declared with `uses-feature required=false`, so Play
+  does not filter tablets or Chromebooks where those optional features are
+  missing.
+- The app declares no SMS, call-log, contacts, location or accounts permissions.
 
-| Permiso | Para qué |
-|---|---|
-| `com.termux.permission.RUN_COMMAND` | Lanzar/instalar el agente local en Termux (solo en la variante de descarga directa) |
-| `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` | Evitar que Doze mate los procesos del agente local; se solicita solo al configurar una instancia local (opt-in) |
+## Evidence pending before Play
 
-Y las `queries` de `com.termux` / `org.fdroid.fdroid` / `market`, también
-exclusivas de la variante completa.
-
-## Permisos sensibles/restringidos — estado
-- `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`: **eliminado del build de Play** (era el
-  de mayor riesgo de objeción). Solo en la variante completa, opt-in.
-- `RECEIVE_BOOT_COMPLETED`: restaura únicamente el listener autorizado, como
-  `remoteMessaging` en API ≥35 o `dataSync` en API ≤34. SSH/SFTP, micrófono y
-  reproducción no se restauran tras boot.
-- No se usa `QUERY_ALL_PACKAGES` (solo queries específicas y necesarias).
-- No se declara `USE_FULL_SCREEN_INTENT`; la voz usa una notificación normal,
-  nunca invade la pantalla de bloqueo con una Activity.
-- `READ_PHONE_STATE` y `READ_EXTERNAL_STORAGE` se eliminan explícitamente en el
-  manifest principal como defensa frente a cualquier aporte transitivo. Android
-  <=9 puede enumerar lectura como consecuencia histórica de
-  `WRITE_EXTERNAL_STORAGE maxSdkVersion=28`; Hermes no enumera ni importa
-  almacenamiento general y los adjuntos usan SAF/Photo Picker. El resultado
-  efectivo debe confirmarse sobre el AAB firmado final.
-- Cámara y micrófono se declaran con `uses-feature required=false`: Play no
-  debe filtrar tablets o Chromebooks donde esas funciones opcionales no estén
-  disponibles.
-
-## Evidencia pendiente antes de Play
-
-- Manifest fusionado y permisos efectivos del AAB firmado finalmente elegido.
-- Flujo E2E en emulador de permiso y ciclo de vida de cámara con una imagen QR
-  de prueba leída por ZXing, incluyendo denegación y el fallback de pegar enlace.
-- Los cuatro vídeos FGS y la QA E2E en emulador detallada en
+- Merged manifest and effective permissions of the exact signed AAB (the command
+  at the top of this document).
+- Emulator end-to-end run of the camera permission and lifecycle with a test QR
+  image read by ZXing, including denial and the paste-the-code fallback.
+- The four foreground-service videos and the emulator QA described in
   [`PLAY_FGS_DECLARATION.md`](PLAY_FGS_DECLARATION.md).
-- Coincidencia entre esta tabla, Data Safety, la política desplegada y el
-  artefacto que finalmente se seleccione en Play Console.
+- Agreement between this table, Data Safety, the deployed privacy policy and the
+  artifact finally selected in Play Console.

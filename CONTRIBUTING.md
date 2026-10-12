@@ -1,8 +1,8 @@
-# Contributing to Hermes Console
+# Contributing to Console
 
-Thanks for helping improve Hermes Console. Keep changes focused, reviewable,
-and compatible with a privacy-first Android client for self-hosted Hermes
-Agent instances.
+Thanks for helping improve Console. Keep changes focused, reviewable, and
+compatible with a privacy-first Android client for self-hosted Hermes Agent
+instances.
 
 ## Before opening a pull request
 
@@ -12,8 +12,11 @@ Agent instances.
 3. Do not add analytics, tracking, permissions, dependencies, endpoints, or
    cleartext network exceptions without an explicit design and security review.
 4. Preserve upstream and third-party copyright and license notices.
-5. Keep one logical change per pull request and use the existing commit style:
-   `type(scope): short description`.
+5. Keep one logical change per pull request, with a short English subject that
+   says what changed for the user or the code, optionally prefixed by the area
+   (`Voice: ...`, `fix(chat): ...`). The commit history shows the tone.
+6. Public text (README, release notes, issues, commit messages) is in English.
+   The app itself is translated into English and Spanish in `lib/l10n/*.arb`.
 
 ## Development checks
 

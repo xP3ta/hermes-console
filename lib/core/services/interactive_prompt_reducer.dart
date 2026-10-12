@@ -141,6 +141,28 @@ final class InteractivePromptRuntimeExpired extends InteractivePromptEvent {
   const InteractivePromptRuntimeExpired(this.runtimeSessionId);
 }
 
+/// The transport carrying a runtime dropped. Nothing was answered or
+/// withdrawn: Hermes keeps every unanswered request open and returns it as
+/// `open_requests` when the client resumes. Forget the live entries without
+/// tombstones so that replay can show the same question again; terminal
+/// tombstones stay, so an answered or withdrawn prompt never reopens.
+final class InteractivePromptRuntimeDetached extends InteractivePromptEvent {
+  final String runtimeSessionId;
+
+  const InteractivePromptRuntimeDetached(this.runtimeSessionId);
+}
+
+/// The transport that carried an unacknowledged answer to [key] dropped, so
+/// Hermes may never have read it. Forget the `responded` tombstone: if the
+/// server still holds the request open it replays it on resume and the card
+/// becomes answerable again; if it consumed the answer it does not replay it.
+final class InteractivePromptUnacknowledgedAnswerLost
+    extends InteractivePromptEvent {
+  final InteractivePromptKey key;
+
+  const InteractivePromptUnacknowledgedAnswerLost(this.key);
+}
+
 /// Permanently closes the reducer. Later socket events are ignored.
 final class InteractivePromptDisposed extends InteractivePromptEvent {
   const InteractivePromptDisposed();
@@ -215,6 +237,10 @@ abstract final class InteractivePromptReducer {
       ),
       InteractivePromptRuntimeExpired(:final runtimeSessionId) =>
         _expireRuntime(state, runtimeSessionId),
+      InteractivePromptRuntimeDetached(:final runtimeSessionId) =>
+        _detachRuntime(state, runtimeSessionId),
+      InteractivePromptUnacknowledgedAnswerLost(:final key) =>
+        _forgetUnacknowledgedAnswer(state, key),
       InteractivePromptDisposed() => const InteractivePromptState.disposed(),
     };
   }
@@ -363,6 +389,29 @@ abstract final class InteractivePromptReducer {
       changed[entry.key] = entry.withStatus(InteractivePromptStatus.expired);
     }
     return changed == null ? state : InteractivePromptState._(changed);
+  }
+
+  static InteractivePromptState _detachRuntime(
+    InteractivePromptState state,
+    String runtimeSessionId,
+  ) {
+    Map<InteractivePromptKey, InteractivePromptEntry>? changed;
+    for (final entry in state.entries.values) {
+      if (entry.key.runtimeSessionId != runtimeSessionId || entry.isTerminal) {
+        continue;
+      }
+      changed ??= Map.of(state.entries);
+      changed.remove(entry.key);
+    }
+    return changed == null ? state : InteractivePromptState._(changed);
+  }
+
+  static InteractivePromptState _forgetUnacknowledgedAnswer(
+    InteractivePromptState state,
+    InteractivePromptKey key,
+  ) {
+    if (state[key]?.status != InteractivePromptStatus.responded) return state;
+    return InteractivePromptState._(Map.of(state.entries)..remove(key));
   }
 
   static InteractivePromptState _responseFailed(

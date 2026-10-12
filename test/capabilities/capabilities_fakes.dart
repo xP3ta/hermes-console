@@ -1,4 +1,6 @@
 // Shared fakes for the Capabilities widget tests (no network, no server).
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/capabilities/capabilities_repository.dart';
@@ -12,6 +14,7 @@ class ScriptedRest implements CapabilitiesRest {
   final Map<String, Object> posts = {};
   final Map<String, Object> puts = {};
   final List<String> calls = [];
+  final List<Map<String, dynamic>?> bodies = [];
   final List<Map<String, dynamic>> statusQueue = [];
   Object? deleteError;
 
@@ -41,6 +44,7 @@ class ScriptedRest implements CapabilitiesRest {
     Duration? timeout,
   }) async {
     calls.add('POST $endpoint');
+    bodies.add(body);
     final value = _resolve(posts, endpoint);
     if (value is Exception) throw value;
     return Map<String, dynamic>.from(value as Map);
@@ -52,6 +56,7 @@ class ScriptedRest implements CapabilitiesRest {
     Map<String, dynamic> body,
   ) async {
     calls.add('PUT $endpoint');
+    bodies.add(body);
     final value = _resolve(puts, endpoint);
     if (value is Exception) throw value;
     return Map<String, dynamic>.from(value as Map);
@@ -159,8 +164,75 @@ Widget spanishApp(Widget home) => MaterialApp(
   home: home,
 );
 
-CapabilitiesRepository repoOf(ScriptedRest rest) => CapabilitiesRepository(
-  rest: rest,
-  sleep: (_) async {},
-  actionPollInterval: Duration.zero,
-);
+/// A Dashboard whose launches are held until [releasePost]; once launched the
+/// action reads as running for a few reads, then finishes.
+final class RacingOpsRest implements CapabilitiesRest {
+  final Map<String, Completer<void>> _gates = {};
+  final Set<String> _running = {};
+  final Map<String, int> _reads = {};
+  int posts = 0;
+  bool failNextPost = false;
+
+  Completer<void> _gate(String name) =>
+      _gates.putIfAbsent(name, () => Completer<void>());
+
+  void releasePost() {
+    for (final name in ['doctor', 'security-audit']) {
+      final gate = _gate(name);
+      if (!gate.isCompleted) gate.complete();
+    }
+  }
+
+  @override
+  Future<Map<String, dynamic>> get(String endpoint) async {
+    final path = endpoint.split('?').first.split('/');
+    // Anything that is not an action read (health, usage...) just answers.
+    if (path.first != 'actions') {
+      return {'ok': true, 'version': '1', 'idle': true};
+    }
+    final name = path[1];
+    if (_running.contains(name)) {
+      final reads = _reads[name] = (_reads[name] ?? 0) + 1;
+      if (reads > 100) _running.remove(name);
+      return {
+        'name': name,
+        'running': reads <= 100,
+        'exit_code': reads <= 100 ? null : 0,
+        'lines': <String>[],
+      };
+    }
+    return {
+      'name': name,
+      'running': false,
+      'exit_code': null,
+      'lines': <String>[],
+    };
+  }
+
+  @override
+  Future<Map<String, dynamic>> post(
+    String endpoint, {
+    Map<String, dynamic>? body,
+    Duration? timeout,
+  }) async {
+    final name = endpoint.split('?').first.split('/').last;
+    posts++;
+    if (failNextPost) {
+      failNextPost = false;
+      throw const DashboardHttpException(500);
+    }
+    await _gate(name).future;
+    _running.add(name);
+    return {'ok': true, 'name': name};
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+CapabilitiesRepository repoOf(ScriptedRest rest, {CapabilitiesRpc? rpc}) =>
+    CapabilitiesRepository(
+      rest: rest,
+      rpc: rpc,
+      sleep: (_) async {},
+      actionPollInterval: Duration.zero,
+    );

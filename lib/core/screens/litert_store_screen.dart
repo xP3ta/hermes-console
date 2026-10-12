@@ -17,9 +17,9 @@ import '../services/litert_engine.dart';
 import '../services/platform/android_apps.dart';
 import '../theme/app_theme.dart';
 import '../widgets/hermes_app_bar.dart';
-import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_pill.dart';
-import '../widgets/hermes_ui.dart';
+import '../feedback/feedback_policy.dart';
+import '../feedback/screen_help.dart';
 
 /// Encaje del modelo en la RAM del dispositivo.
 enum _Fit { fits, tight, tooBig, unknown }
@@ -65,12 +65,19 @@ class LitertStoreScreen extends StatelessWidget {
     final colors = Theme.of(context).hermes;
     final s = Strings.of(context);
     return Scaffold(
-      appBar: HermesAppBar(title: Text(s.litertStoreTitle)),
+      appBar: HermesAppBar(
+        title: Text(s.litertStoreTitle),
+        actions: [
+          ScreenHelpButton(
+            title: s.litertStoreTitle,
+            paragraphs: [s.litertStoreIntro],
+          ),
+        ],
+      ),
       body: ListView(
+        clipBehavior: hermesUnderHeader,
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
         children: [
-          HermesInfoBanner(s.litertStoreIntro, icon: Icons.storefront_outlined),
-          const SizedBox(height: 16),
           for (final m in kLitertCatalog) ...[
             _modelCard(context, colors, m),
             const SizedBox(height: 12),
@@ -228,12 +235,10 @@ class LitertStoreScreen extends StatelessWidget {
         '[litert-store] excepción silenciada (se avisa al usuario y se sigue): $e',
       );
       if (context.mounted) {
-        HermesNotice.of(context).showSnackBar(
-          SnackBar(
-            content: Text(Strings.of(context).litertStoreOpenError(m.hfUrl)),
-            duration: const Duration(seconds: 3),
-          ),
-          kind: HermesNoticeKind.error,
+        AppFeedback.of(context).notify(
+          FeedbackKind.error,
+          Strings.of(context).litertStoreOpenError(m.hfUrl),
+          duration: const Duration(seconds: 3),
         );
       }
     }

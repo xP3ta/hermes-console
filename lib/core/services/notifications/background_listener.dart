@@ -9,6 +9,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -22,6 +23,9 @@ import 'package:sqflite/sqflite.dart' as sqflite;
 import '../../models/cron_job.dart';
 import '../../models/kanban.dart';
 import '../connection_manager.dart';
+import '../kanban_watch_board.dart';
+import '../launcher_widget_cron.dart';
+import '../launcher_widget_tasks.dart';
 import '../secure_storage.dart';
 import '../shared_gateway_pool.dart';
 import '../tui_gateway_client.dart';
@@ -30,6 +34,8 @@ import 'bot_mode_background.dart';
 import 'notification_delivery_store.dart';
 import 'notification_mute_store.dart';
 import 'notification_service.dart';
+import 'bot_notification_presenter.dart' show humanizeBotHandle;
+import 'live_turn_notifications.dart';
 import 'rich_notifications.dart';
 import 'notification_strings.dart';
 import 'voice_notification_card_adapter.dart';
@@ -464,6 +470,98 @@ String _normalizeRunOwnerProfile(String value) {
 Uri backgroundRunStatusUri(String safeBase, WatchedRun run) => Uri.parse(
   '$safeBase/${ApiClient.profileEndpoint('v1/runs/${Uri.encodeComponent(run.runId)}', profile: run.profile)}',
 );
+
+/// Per-run retry gate for the background `/v1/runs/{id}` poller.
+///
+/// A non-200 answer never proves the run ended, so the run is always kept.
+/// What changes is how often it is asked again: 401/403/404 are stable
+/// answers (revoked key, expired ledger) and back off from [stableBase] up to
+/// [maxDelay]. Timeouts, transport errors and 5xx keep the normal cadence so
+/// a completion is still noticed on the next tick once the link recovers.
+/// Any other answer clears the state. State is in memory only.
+class BackgroundRunPollBackoff {
+  BackgroundRunPollBackoff({
+    DateTime Function()? now,
+    this.stableBase = const Duration(minutes: 2),
+    this.maxDelay = const Duration(minutes: 15),
+  }) : _now = now ?? DateTime.now;
+
+  final DateTime Function() _now;
+  final Duration stableBase;
+  final Duration maxDelay;
+  final Map<
+    ({String connId, String profile, String runId}),
+    ({int failures, DateTime retryAt})
+  >
+  _states = {};
+
+  static bool isStableRejection(int statusCode) =>
+      statusCode == 401 || statusCode == 403 || statusCode == 404;
+
+  bool allows(WatchedRun run) {
+    final state = _states[_watchedRunOwner(run)];
+    return state == null || !_now().isBefore(state.retryAt);
+  }
+
+  /// [statusCode] null means the request did not produce an HTTP answer.
+  void record(WatchedRun run, int? statusCode) {
+    final owner = _watchedRunOwner(run);
+    if (statusCode == null || !isStableRejection(statusCode)) {
+      _states.remove(owner);
+      return;
+    }
+    final failures = (_states[owner]?.failures ?? 0) + 1;
+    var delayMs = stableBase.inMilliseconds;
+    for (var i = 1; i < failures && delayMs < maxDelay.inMilliseconds; i++) {
+      delayMs *= 2;
+    }
+    if (delayMs > maxDelay.inMilliseconds) delayMs = maxDelay.inMilliseconds;
+    _states[owner] = (
+      failures: failures,
+      retryAt: _now().add(Duration(milliseconds: delayMs)),
+    );
+  }
+
+  /// Drops state for runs no longer watched.
+  void retain(Iterable<WatchedRun> runs) {
+    final live = runs.map(_watchedRunOwner).toSet();
+    _states.removeWhere((owner, _) => !live.contains(owner));
+  }
+}
+
+/// Reads one watched run's status through [backoff]. Returns null without
+/// touching the network while the run is backing off; otherwise the HTTP
+/// response (any status). Transport failures are recorded and rethrown.
+@visibleForTesting
+Future<http.Response?> fetchWatchedRunStatus({
+  required http.Client client,
+  required BackgroundRunPollBackoff backoff,
+  required WatchedRun run,
+  required String safeBase,
+  required Future<String?> Function() readToken,
+  Duration timeout = const Duration(seconds: 12),
+}) async {
+  if (!backoff.allows(run)) return null;
+  final http.Response res;
+  try {
+    final token = await readToken();
+    res = await client
+        .get(
+          backgroundRunStatusUri(safeBase, run),
+          headers: {
+            if (token != null && token.isNotEmpty)
+              'Authorization': 'Bearer $token',
+            'Accept': 'application/json',
+          },
+        )
+        .timeout(timeout);
+  } catch (_) {
+    backoff.record(run, null);
+    rethrow;
+  }
+  backoff.record(run, res.statusCode);
+  return res;
+}
 
 /// QA-only delivery trace (`--dart-define=HERMES_NOTIF_TRACE=true`). Off by
 /// default and compiled out of normal builds. Prints only opaque ids, states
@@ -1136,6 +1234,21 @@ class KanbanDiscoveryEntry {
   final String? assignee;
 }
 
+/// In-memory event cursor of one watched board, like Desktop's per-board
+/// `seenEventIdByBoard`: the last `latest_event_id` plus the failure streak
+/// and status of each task, to tell which tasks moved.
+class KanbanBoardCursor {
+  const KanbanBoardCursor({
+    required this.latestEventId,
+    required this.failures,
+    required this.statuses,
+  });
+
+  final int latestEventId;
+  final Map<String, int> failures;
+  final Map<String, String> statuses;
+}
+
 /// Cursor local para los estados del Kanban oficial de Hermes Agent.
 ///
 /// La primera lectura siembra el tablero y no repite el historial. Después
@@ -1148,6 +1261,19 @@ class BackgroundKanbanWatch {
   // or explicitly triaged needs an owner-facing notification.
   static const Set<String> _notifiableStatuses = {'blocked', 'triage'};
 
+  /// Terminal event kinds Desktop notifies besides the status columns
+  /// (`plugins/kanban/completion-notify.ts` TERMINAL_NOTIFY; `completed` and
+  /// `blocked` arrive here as the `done` / `blocked` status transitions).
+  static const Set<String> failureEventKinds = {
+    'crashed',
+    'timed_out',
+    'gave_up',
+    'block_loop_detected',
+  };
+
+  /// Most task detail reads one tick may spend on moved tasks.
+  static const int maxEventReadsPerTick = 8;
+
   @visibleForTesting
   static List<KanbanDiscoveryEntry> discoveryEntriesForTest({
     required String connId,
@@ -1156,6 +1282,9 @@ class BackgroundKanbanWatch {
     for (final task in tasks)
       if (task.id.trim().isNotEmpty && task.status.trim().isNotEmpty)
         KanbanDiscoveryEntry(
+          // One durable cursor per task whatever board it was read from:
+          // the ledger keys cursors by (connection, profile, kind, task), and
+          // task ids are unique across boards.
           scopeKey: '$connId/default/kanban/${task.id.trim()}',
           taskId: task.id.trim(),
           title: task.title.trim().isEmpty ? task.id.trim() : task.title.trim(),
@@ -1178,14 +1307,94 @@ class BackgroundKanbanWatch {
   static Future<List<KanbanTask>?> loadTasks(
     Future<Map<String, dynamic>> Function(String endpoint) apiGet,
   ) async {
+    final board = await loadBoard(apiGet);
+    return board == null
+        ? null
+        : <KanbanTask>[for (final column in board.columns) ...column.tasks];
+  }
+
+  /// `GET plugins/kanban/board[?board=<slug>]`: the tasks plus the board's
+  /// `latest_event_id`, the event cursor Desktop baselines from.
+  static Future<KanbanBoard?> loadBoard(
+    Future<Map<String, dynamic>> Function(String endpoint) apiGet, {
+    String? board,
+  }) async {
     try {
-      final data = await apiGet('plugins/kanban/board');
-      final board = KanbanBoard.fromJson(data);
-      return <KanbanTask>[for (final column in board.columns) ...column.tasks];
+      final query = board == null
+          ? ''
+          : '?board=${Uri.encodeQueryComponent(board)}';
+      return KanbanBoard.fromJson(await apiGet('plugins/kanban/board$query'));
     } on DashboardHttpException catch (error) {
       if (error.statusCode == 404) return null;
       rethrow;
     }
+  }
+
+  /// The task's events (`GET plugins/kanban/tasks/<id>`), read only for a
+  /// task whose state moved while the board's event cursor advanced.
+  static Future<List<KanbanEvent>> loadTaskEvents(
+    Future<Map<String, dynamic>> Function(String endpoint) apiGet,
+    String taskId, {
+    String? board,
+  }) async {
+    final query = board == null
+        ? ''
+        : '?board=${Uri.encodeQueryComponent(board)}';
+    final data = await apiGet(
+      'plugins/kanban/tasks/${Uri.encodeComponent(taskId)}$query',
+    );
+    final raw = data['events'];
+    return <KanbanEvent>[
+      if (raw is List)
+        for (final item in raw)
+          if (item is Map)
+            KanbanEvent.fromJson(Map<String, dynamic>.from(item)),
+    ];
+  }
+
+  /// Desktop's cursor contract (`completion-notify.ts`): the first look at a
+  /// board only baselines; afterwards an event counts when its id is above
+  /// the previous `latest_event_id` and at most the current one. Candidates
+  /// are the tasks whose failure streak rose or that just moved to
+  /// `blocked`/`triage`; nothing is read when the cursor did not advance.
+  @visibleForTesting
+  static ({KanbanBoardCursor cursor, List<String> candidates}) planEventReads({
+    required KanbanBoardCursor? previous,
+    required KanbanBoard board,
+  }) {
+    final failures = <String, int>{};
+    final statuses = <String, String>{};
+    for (final column in board.columns) {
+      for (final task in column.tasks) {
+        final id = task.id.trim();
+        if (id.isEmpty || statuses.length >= _maxTasksPerConnection) continue;
+        failures[id] = task.consecutiveFailures;
+        statuses[id] = task.status.trim().toLowerCase();
+      }
+    }
+    final next = KanbanBoardCursor(
+      latestEventId: previous == null
+          ? board.latestEventId
+          : math.max(previous.latestEventId, board.latestEventId),
+      failures: failures,
+      statuses: statuses,
+    );
+    if (previous == null || board.latestEventId <= previous.latestEventId) {
+      return (cursor: next, candidates: const <String>[]);
+    }
+    final candidates = <String>[];
+    for (final entry in statuses.entries) {
+      if (candidates.length >= maxEventReadsPerTick) break;
+      final id = entry.key;
+      final before = previous.failures[id];
+      final rose = before != null && (failures[id] ?? 0) > before;
+      final moved =
+          previous.statuses[id] != null &&
+          previous.statuses[id] != entry.value &&
+          (entry.value == 'blocked' || entry.value == 'triage');
+      if (rose || moved) candidates.add(id);
+    }
+    return (cursor: next, candidates: candidates);
   }
 
   @visibleForTesting
@@ -1232,16 +1441,23 @@ class BackgroundKanbanWatch {
 /// while a watched room works or waits for an approval, 60 s while Cron or
 /// Kanban are watched, otherwise the 180 s base. Configured connections
 /// alone never force a faster cadence.
+///
+/// [quietTicks] counts consecutive ticks in which discovery saw nothing in
+/// flight and nothing changed. Watched automation then backs off 60 → 120 →
+/// 180 s; any activity, a kick or a watched run resets the streak to 0.
 @visibleForTesting
 int listenerIdleIntervalMs({
   required bool roomsActive,
   required bool watchesCron,
   required bool watchesKanban,
-}) => roomsActive
-    ? 30000
-    : watchesCron || watchesKanban
-    ? 60000
-    : 180000;
+  int quietTicks = 0,
+}) {
+  if (roomsActive) return 30000;
+  if (!(watchesCron || watchesKanban)) return 180000;
+  if (quietTicks >= 6) return 180000;
+  if (quietTicks >= 3) return 120000;
+  return 60000;
+}
 
 /// Punto de entrada del isolate del servicio. Debe ser top-level y anotado.
 @pragma('vm:entry-point')
@@ -1472,12 +1688,17 @@ class _HermesTaskHandler extends TaskHandler {
 
   int _emptyPolls = 0;
 
+  /// Consecutive ticks in which watched Cron/Kanban showed nothing in flight
+  /// and nothing changed; drives the idle backoff of the listener cadence.
+  int _quietTicks = 0;
+
   /// Cliente HTTP REUTILIZADO entre ticks: sin él, cada sondeo abría una
   /// conexión TCP nueva por run vigilada cada 30 s (handshake con la radio
   /// despierta). Se cierra en [onDestroy].
   final http.Client _http = http.Client();
   final BackgroundDashboardClientCache _dashboardClients =
       BackgroundDashboardClientCache();
+  final BackgroundRunPollBackoff _runPollBackoff = BackgroundRunPollBackoff();
   final BackgroundDiscoveryBackoff _discoveryBackoff =
       BackgroundDiscoveryBackoff();
   late final BackgroundAutomationDiscovery _discovery =
@@ -1509,14 +1730,6 @@ class _HermesTaskHandler extends TaskHandler {
         stopWithTask: false,
         allowWakeLock: false,
         allowWifiLock: false,
-      ),
-    );
-    // The plugin re-posts its plain card (launcher portrait) on every
-    // options update too: restore the ">_" glyph once it has landed.
-    unawaited(
-      Future<void>.delayed(
-        const Duration(milliseconds: 800),
-        _decorateServiceCard,
       ),
     );
   }
@@ -1553,18 +1766,25 @@ class _HermesTaskHandler extends TaskHandler {
       // persistidos evita una tarjeta de Voz/TTS huérfana sobre remoteMessaging.
       await prefs.setBool(BackgroundListener.voiceCardActiveKey, false);
       await VoiceNotificationCardAdapter.clear();
-      final t = NotifL10n.of(prefs);
+      final card = BackgroundListener.networkCard(
+        NotifL10n.of(prefs),
+        connected: true,
+      );
       await FlutterForegroundTask.updateService(
         foregroundTaskOptions: BackgroundListener._taskOptions(
           autoRunOnBoot: true,
         ),
-        notificationTitle: 'Hermes Console',
-        notificationText: t.bgActive,
+        notificationTitle: card.title,
+        notificationText: card.text,
         notificationIcon: BackgroundListener._serviceNotificationIcon,
-        notificationButtons: [NotificationButton(id: 'stop', text: t.bgStop)],
+        notificationButtons: card.buttons,
       );
     }
-    unawaited(_decorateServiceCard());
+    // Only the Voice / Read Aloud card is restyled; the fixed connection
+    // card stays the plain, silent row the system draws.
+    if (prefs.getBool(BackgroundListener.voiceCardActiveKey) == true) {
+      unawaited(_decorateServiceCard());
+    }
   }
 
   static Future<void> _decorateServiceCard() async {
@@ -1588,6 +1808,7 @@ class _HermesTaskHandler extends TaskHandler {
   void onReceiveData(Object data) {
     if (!BackgroundListener.roomKickFromData(data)) return;
     _botMode.expectActivity();
+    _quietTicks = 0;
     _setPollInterval(_kActiveIntervalMs, persistentAutomation: true);
     if (_polling) {
       _kickPending = true;
@@ -1601,9 +1822,6 @@ class _HermesTaskHandler extends TaskHandler {
     if (_polling) return;
     _polling = true;
     _kickPending = false;
-    // The plugin re-posts the ongoing card with the launcher portrait on
-    // every content update: keep the neutral ">_" glyph as its large icon.
-    unawaited(_decorateServiceCard());
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.reload();
@@ -1615,6 +1833,9 @@ class _HermesTaskHandler extends TaskHandler {
       final voiceCardActive =
           prefs.getBool(BackgroundListener.voiceCardActiveKey) == true;
       final audioCardActive = voiceCardActive;
+      // The plugin re-posts the Voice / Read Aloud card with the launcher
+      // portrait on every content update: keep its ">_" glyph.
+      if (audioCardActive) unawaited(_decorateServiceCard());
       // El servicio también puede estar vivo por Voz, Read Aloud o una
       // transferencia puntual. Solo el opt-in persistente autoriza el sondeo
       // de runs, Cron y Kanban.
@@ -1681,6 +1902,10 @@ class _HermesTaskHandler extends TaskHandler {
           debugPrint('[hermes-notif] rooms tick (${error.runtimeType})');
         }
       }
+      final discoveryActive = _discovery.takeObservedActivity();
+      _quietTicks = roomsWorking || discoveryActive || runs.isNotEmpty
+          ? 0
+          : _quietTicks + 1;
       if (runs.isEmpty) {
         if (!_stopFence.allowsUpdate) return;
         // Con opt-in de escucha permanente y NADA que vigilar, baja el ritmo
@@ -1693,6 +1918,7 @@ class _HermesTaskHandler extends TaskHandler {
               roomsActive: roomsWorking,
               watchesCron: watchesCron,
               watchesKanban: watchesKanban,
+              quietTicks: _quietTicks,
             ),
             persistentAutomation: true,
           );
@@ -1719,31 +1945,10 @@ class _HermesTaskHandler extends TaskHandler {
         snapshot: runs,
         keep: pollKeep,
       );
-
-      // Texto vivo en la notificación persistente.
-      if (kDebugMode) {
-        debugPrint('[hermes-notif] BG updateService (keep=${keep.length})');
-      }
-      if (!audioCardActive) {
-        await prefs.reload();
-        if (!_stopFence.allowsUpdate) return;
-        if (prefs.getBool(BackgroundListener.prefKey) != true) return;
-        final t = NotifL10n.of(prefs);
-        FlutterForegroundTask.updateService(
-          notificationTitle: 'Hermes Console',
-          notificationText: keep.isEmpty
-              ? t.bgActive
-              : t.bgWatching(keep.length),
-        );
-        // The plugin re-posts its plain card (launcher portrait) on every
-        // text update: restore the ">_" glyph once it has landed.
-        unawaited(
-          Future<void>.delayed(
-            const Duration(milliseconds: 800),
-            _decorateServiceCard,
-          ),
-        );
-      }
+      _runPollBackoff.retain(keep);
+      // What runs is told by its own live row. The fixed card says one
+      // thing and is not posted again on every poll.
+      await _syncWatchedRunRows(prefs, notif, keep);
     } catch (error) {
       if (kDebugMode) {
         debugPrint('[hermes-notif] BG poll error (${error.runtimeType})');
@@ -1755,6 +1960,39 @@ class _HermesTaskHandler extends TaskHandler {
         unawaited(_poll());
       }
     }
+  }
+
+  final WatchedRunLiveRows _runRows = WatchedRunLiveRows(
+    sink: PlatformRichNotifications(),
+    whoFor: humanizeBotHandle,
+  );
+
+  /// Live rows of the watched runs no chat of the app can show any more
+  /// (the app was closed mid-turn): this isolate only knows they run. While
+  /// the app is in front it shows its own state, so none is posted.
+  Future<void> _syncWatchedRunRows(
+    SharedPreferences prefs,
+    NotificationService notif,
+    List<WatchedRun> running,
+  ) async {
+    try {
+      await _runRows.sync(
+        NotifL10n.of(prefs),
+        [
+          for (final run in running)
+            (
+              connId: run.connId,
+              profile: run.profile,
+              sessionId: run.sessionId,
+              runId: run.runId,
+            ),
+        ],
+        show:
+            notif.enabled &&
+            notif.notifyReplies &&
+            prefs.getBool(BackgroundListener.uiForegroundKey) != true,
+      );
+    } catch (_) {}
   }
 
   /// A-302/U-11 (spec 028): el servicio no debe quedarse vivo sin trabajo.
@@ -1849,10 +2087,12 @@ class _HermesTaskHandler extends TaskHandler {
     }
     if (id != 'stop') return;
     _stopFence.requestStop();
-    // Parada pedida desde la notificación: apaga también el opt-in para que
-    // el servicio no se rearme en el siguiente arranque (boot o app). Primero
-    // entrega la orden a la UI para que cierre SSH/SFTP reales; la valla local
-    // impide que un poll tardío publique API_UPDATE durante el margen.
+    // The card's direct Stop (the Play foreground-service declaration
+    // promises it, docs/PLAY_FGS_DECLARATION.md): it turns background
+    // listening off too, so the service is not re-armed at the next start
+    // (boot or app). The order reaches the UI first so it closes real
+    // SSH/SFTP; the local fence keeps a late poll from publishing API_UPDATE
+    // during the grace.
     FlutterForegroundTask.sendDataToMain(
       BackgroundListener.foregroundStopActionEnvelope(),
     );
@@ -1902,18 +2142,15 @@ class _HermesTaskHandler extends TaskHandler {
       return null;
     }
     try {
-      final token = await _secure.readApiKey(r.connId);
-      final uri = backgroundRunStatusUri(safeBase, r);
-      final res = await _http
-          .get(
-            uri,
-            headers: {
-              if (token != null && token.isNotEmpty)
-                'Authorization': 'Bearer $token',
-              'Accept': 'application/json',
-            },
-          )
-          .timeout(const Duration(seconds: 12));
+      final res = await fetchWatchedRunStatus(
+        client: _http,
+        backoff: _runPollBackoff,
+        run: r,
+        safeBase: safeBase,
+        readToken: () => _secure.readApiKey(r.connId),
+      );
+      // Backing off after a stable 401/403/404: keep the run, skip the call.
+      if (res == null) return r;
       if (kDebugMode) {
         debugPrint('[hermes-notif] run poll HTTP ${res.statusCode}');
       }
@@ -2030,6 +2267,26 @@ class BackgroundAutomationDiscovery {
   BackgroundDiscoveryBackoff get _discoveryBackoff => discoveryBackoff;
   final void Function(Object data) _sendToMain;
 
+  /// Last observed Cron/Kanban state per connection, used only to decide the
+  /// listener cadence (never delivery).
+  final Map<String, String> _activitySignatures = {};
+  bool _observedActivity = false;
+
+  /// True when, since the previous call, discovery saw a cron run in flight,
+  /// a running Kanban task or any change in the observed state. Resets.
+  bool takeObservedActivity() {
+    final observed = _observedActivity;
+    _observedActivity = false;
+    return observed;
+  }
+
+  void _noteActivity(String key, String signature, {required bool inFlight}) {
+    if (inFlight || _activitySignatures[key] != signature) {
+      _observedActivity = true;
+    }
+    _activitySignatures[key] = signature;
+  }
+
   /// The UI is in front: the system notification was withheld, so hand the
   /// completion to the main isolate for an in-app notice.
   void _forwardForegroundNotices(
@@ -2067,7 +2324,10 @@ class BackgroundAutomationDiscovery {
       final dashboard = _dashboardClients.clientFor(connection);
       List<CronExecutionSnapshot>? executions;
       try {
-        executions = await BackgroundCronWatch.loadExecutions(dashboard.apiGet);
+        // The same read also feeds the Cron launcher widget (no extra call).
+        executions = await BackgroundCronWatch.loadExecutions(
+          launcherWidgetCronTap(connection.id, dashboard.apiGet),
+        );
       } catch (error) {
         notifTrace(() => 'cron load error ${error.runtimeType}');
         _discoveryBackoff.recordFailure(
@@ -2127,6 +2387,14 @@ class BackgroundAutomationDiscovery {
         executions = BackgroundCronWatch.mergeExecutionAuthority(
           jobExecutions: executions,
           sessions: sessions,
+        );
+        _noteActivity(
+          '${connection.id}/cron',
+          ([
+            for (final e in executions)
+              '${e.jobKey}:${e.executionId}:${e.status}',
+          ]..sort()).join('|'),
+          inFlight: executions.any((e) => !e.terminal),
         );
 
         final groups = BackgroundCronWatch.discoveryGroups(executions);
@@ -2302,6 +2570,7 @@ class BackgroundAutomationDiscovery {
                           ok: execution.ok,
                           jobId: execution.jobId,
                           profile: normalizedProfile,
+                          preview: preview,
                         ),
                   botRoutine: execution.ownerBot == null
                       ? null
@@ -2335,6 +2604,115 @@ class BackgroundAutomationDiscovery {
     return true;
   }
 
+  /// Per (connection, board) event cursor, in memory like Desktop's: after a
+  /// restart the first tick baselines again; the status path stays durable.
+  final Map<String, KanbanBoardCursor> _kanbanCursors = {};
+
+  /// Terminal events of the tasks that moved since the previous tick, keyed
+  /// by task id. Reads task details only when the board's `latest_event_id`
+  /// advanced; a failed read leaves that task to the status path.
+  Future<Map<String, List<KanbanEvent>>> _freshKanbanEvents(
+    DashboardClient dashboard,
+    String connId,
+    String? boardSlug,
+    KanbanBoard board,
+  ) async {
+    final key = '$connId|${boardSlug ?? ''}';
+    final previous = _kanbanCursors[key];
+    final plan = BackgroundKanbanWatch.planEventReads(
+      previous: previous,
+      board: board,
+    );
+    _kanbanCursors[key] = plan.cursor;
+    final fresh = <String, List<KanbanEvent>>{};
+    if (previous == null) return fresh;
+    for (final taskId in plan.candidates) {
+      try {
+        final events = await BackgroundKanbanWatch.loadTaskEvents(
+          dashboard.apiGet,
+          taskId,
+          board: boardSlug,
+        );
+        final picked = <KanbanEvent>[
+          for (final event in events)
+            if (event.id > previous.latestEventId &&
+                event.id <= board.latestEventId &&
+                BackgroundKanbanWatch.failureEventKinds.contains(event.kind))
+              event,
+        ]..sort((a, b) => a.id.compareTo(b.id));
+        if (picked.isNotEmpty) fresh[taskId] = picked;
+      } catch (error) {
+        notifTrace(() => 'kanban events error ${error.runtimeType}');
+      }
+    }
+    return fresh;
+  }
+
+  /// `crashed` / `timed_out` leave the task retrying, so no status column
+  /// tells about them: each event is its own notification, deduplicated by
+  /// its event id in the durable ledger. Runs after the status delivery of
+  /// the same task, so the cursor already exists.
+  Future<void> _deliverKanbanRetryEvents(
+    NotificationService notif,
+    NotifL10n t,
+    NotificationMuteStore mutes,
+    String connId,
+    KanbanDiscoveryEntry entry,
+    List<KanbanEvent> fresh, {
+    required String? boardSlug,
+    required bool suppressByPolicy,
+  }) async {
+    final retries = [
+      for (final event in fresh)
+        if (event.kind == 'crashed' || event.kind == 'timed_out') event,
+    ];
+    if (retries.isEmpty) return;
+    if (mutes.kanbanMuted(connId: connId, taskId: entry.taskId)) return;
+    final events = <DurableDiscoveryNotification>[
+      for (final event in retries)
+        DurableDiscoveryNotification(
+          identity: NotificationEventIdentity(
+            connId: connId,
+            profile: 'default',
+            sourceKind: 'kanban',
+            objectId: entry.taskId,
+            eventKind: event.kind,
+            sourceVersion: 'event:${boardSlug ?? ''}:${event.id}',
+          ),
+          destinationKind: 'kanban_transition',
+          kind: NotificationKind.run,
+          title: event.kind == 'crashed' ? t.kanbanCrashed : t.kanbanTimedOut,
+          body: entry.title,
+          taskId: entry.taskId,
+          subText: 'Kanban · ${entry.taskId}',
+          rich: NotificationService.kanbanRichSpec(
+            t: t,
+            title: entry.title,
+            status: 'blocked',
+            assignee: entry.assignee,
+            taskId: entry.taskId,
+            retry: event.kind,
+          ),
+        ),
+    ];
+    // Same cursor as the status path (one cursor per task), written back
+    // unchanged: these events carry their own identity and must not be
+    // dropped because the task's column did not change.
+    await notif.deliverDiscoveryBatch(
+      scopeKey: entry.scopeKey,
+      connId: connId,
+      profile: 'default',
+      sourceKind: 'kanban',
+      objectId: entry.taskId,
+      lastState: entry.state,
+      sourceVersion: entry.state,
+      events: events,
+      suppressByPolicy: suppressByPolicy,
+      onForegroundSuppressed: (events) =>
+          _forwardForegroundNotices(connId, events),
+    );
+  }
+
   /// Observa el board nativo de Agent 0.20 con su propio opt-in
   /// ([NotificationService.notifyKanbanResults]), independiente del de Cron.
   /// En servidores legacy sin Kanban, [BackgroundKanbanWatch.loadTasks]
@@ -2356,9 +2734,13 @@ class BackgroundAutomationDiscovery {
         continue;
       }
       final dashboard = _dashboardClients.clientFor(connection);
-      List<KanbanTask>? tasks;
+      final boardSlug = KanbanWatchBoard.read(prefs, connection.id);
+      KanbanBoard? board;
       try {
-        tasks = await BackgroundKanbanWatch.loadTasks(dashboard.apiGet);
+        board = await BackgroundKanbanWatch.loadBoard(
+          dashboard.apiGet,
+          board: boardSlug,
+        );
       } catch (error) {
         notifTrace(() => 'kanban load error ${error.runtimeType}');
         _discoveryBackoff.recordFailure(
@@ -2372,13 +2754,23 @@ class BackgroundAutomationDiscovery {
         }
         continue;
       }
-      if (tasks == null) {
+      if (board == null) {
         _discoveryBackoff.recordFailure(
           connection.id,
           BackgroundDiscoveryCapability.kanban,
         );
         continue;
       }
+      final tasks = <KanbanTask>[
+        for (final column in board.columns) ...column.tasks,
+      ];
+      // The same read also feeds the Tareas launcher widget (no extra call).
+      unawaited(
+        LauncherWidgetTasksPublisher.instance.offer(
+          connectionId: connection.id,
+          tasks: tasks,
+        ),
+      );
       _discoveryBackoff.recordSuccess(
         connection.id,
         BackgroundDiscoveryCapability.kanban,
@@ -2388,6 +2780,19 @@ class BackgroundAutomationDiscovery {
         final entries = BackgroundKanbanWatch.discoveryEntriesForTest(
           connId: connection.id,
           tasks: tasks,
+        );
+        final freshEvents = await _freshKanbanEvents(
+          dashboard,
+          connection.id,
+          boardSlug,
+          board,
+        );
+        _noteActivity(
+          '${connection.id}/kanban',
+          ([
+            for (final e in entries) '${e.taskId}:${e.state}',
+          ]..sort()).join('|'),
+          inFlight: entries.any((e) => e.state == 'running'),
         );
         for (final entry in entries) {
           final status = entry.state;
@@ -2412,12 +2817,16 @@ class BackgroundAutomationDiscovery {
               eventKind: status,
               sourceVersion: '${entry.taskId}:$status',
             );
-            final title = switch (status) {
-              'done' => t.kanbanCompleted,
-              'blocked' => t.kanbanBlocked,
-              'triage' => t.kanbanNeedsAttention,
-              _ => t.kanbanUpdated,
+            final kinds = <String>{
+              for (final event in freshEvents[entry.taskId] ?? const [])
+                event.kind,
             };
+            // Same notification, Desktop's wording when the event says why.
+            final title = NotificationService.kanbanTitle(
+              t,
+              status,
+              eventKinds: kinds,
+            );
             events.add(
               DurableDiscoveryNotification(
                 identity: identity,
@@ -2433,6 +2842,7 @@ class BackgroundAutomationDiscovery {
                   status: status,
                   assignee: entry.assignee,
                   taskId: entry.taskId,
+                  eventKinds: kinds,
                 ),
               ),
             );
@@ -2451,6 +2861,21 @@ class BackgroundAutomationDiscovery {
             onForegroundSuppressed: (events) =>
                 _forwardForegroundNotices(connection.id, events),
           );
+          try {
+            await _deliverKanbanRetryEvents(
+              notif,
+              t,
+              mutes,
+              connection.id,
+              entry,
+              freshEvents[entry.taskId] ?? const <KanbanEvent>[],
+              boardSlug: boardSlug,
+              suppressByPolicy: uiForeground && !notif.evenInForeground,
+            );
+          } catch (error) {
+            // Never let a retry notice stop the status notices of the board.
+            notifTrace(() => 'kanban retry notice error ${error.runtimeType}');
+          }
         }
       } catch (error) {
         if (kDebugMode) {
@@ -2575,6 +3000,10 @@ class BackgroundListener {
     if (event.sessionId?.isNotEmpty == true) 'sid': event.sessionId!,
     if (event.jobId?.isNotEmpty == true) 'jid': event.jobId!,
     if (event.taskId?.isNotEmpty == true) 'tid': event.taskId!,
+    // The owner profile of the run/job. Without it "Ir" resolved the run in
+    // the ACTIVE profile, so another profile's run opened nothing useful.
+    if (event.identity.profile.trim().isNotEmpty)
+      'profile': event.identity.profile.trim(),
   };
 
   /// Decodes [automationNoticeEnvelope]; null for any other envelope.
@@ -2603,6 +3032,7 @@ class BackgroundListener {
         sessionId: opt('sid') ?? '',
         jobId: opt('jid'),
         taskId: opt('tid'),
+        profile: opt('profile'),
       ),
     );
   }
@@ -2709,19 +3139,36 @@ class BackgroundListener {
       });
 
   static void _armUiHeartbeat() {
-    _uiHeartbeat ??= Timer.periodic(const Duration(minutes: 1), (_) async {
-      if (await FlutterForegroundTask.isRunningService) await _touchUiAlive();
-    });
+    _uiHeartbeat ??= Timer.periodic(
+      const Duration(minutes: 1),
+      (_) => _uiHeartbeatTick(),
+    );
   }
+
+  /// The stamp only feeds the listener auto-stop, which never runs while the
+  /// automation opt-in is on: skip the channel probe and the disk write then.
+  /// [_stopAutomationSerialized] stamps once when the opt-in goes off.
+  static Future<void> _uiHeartbeatTick() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (_automationMessagingDemand(prefs)) return;
+    if (await FlutterForegroundTask.isRunningService) await _touchUiAlive();
+  }
+
+  @visibleForTesting
+  static Future<void> runUiHeartbeatTickForTest() => _uiHeartbeatTick();
 
   static bool _inited = false;
   static Future<void>? _initFuture;
+
+  /// Android category of the fixed card. Settings opens its system screen,
+  /// where the user can minimise the card.
+  static const String serviceChannelId = 'hermes_service_v2';
 
   static AndroidNotificationOptions _androidOptions(NotifL10n t) =>
       AndroidNotificationOptions(
         // Id NUEVO: recrear el mismo id puede heredar la importancia vieja
         // (Android guarda los ajustes de canales borrados). Este nace en LOW.
-        channelId: 'hermes_service_v2',
+        channelId: serviceChannelId,
         channelName: t.bgChannel,
         channelDescription: t.bgChannelDesc,
         // LOW (A-303, spec 028): silenciosa (sin sonido ni heads-up) pero con
@@ -2806,49 +3253,6 @@ class BackgroundListener {
     } catch (_) {}
   }
 
-  /// Actualiza el texto de la notificación persistente del foreground service
-  /// (si está corriendo). Lo usa el chat LOCAL (bridge): su turno es una llamada
-  /// HTTP larga a `hermes -z`, no un run pollable, así que el isolate del
-  /// servicio (que sondea /v1/runs) no tiene nada que reflejar. Esto deja la
-  /// notificación persistente informando del turno en curso aunque la app esté
-  /// en 2º plano. No-op si el servicio no está activo. Nunca lanza.
-  static Future<void> updateText({
-    required String title,
-    required String text,
-  }) => _foregroundMutations.run(
-    () => _updateTextSerialized(title: title, text: text),
-  );
-
-  static Future<void> _updateTextSerialized({
-    required String title,
-    required String text,
-  }) async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.reload();
-      if (prefs.getBool(voiceCardActiveKey) == true) {
-        return;
-      }
-      if (await FlutterForegroundTask.isRunningService) {
-        await FlutterForegroundTask.updateService(
-          notificationTitle: title,
-          notificationText: text,
-        );
-        unawaited(
-          Future<void>.delayed(
-            const Duration(milliseconds: 800),
-            () => PlatformRichNotifications().decorateServiceNotification(),
-          ),
-        );
-        await _persistDurableRestartContract(prefs);
-      }
-    } catch (error) {
-      if (kDebugMode) {
-        debugPrint('[hermes-notif] updateText falló (${error.runtimeType})');
-      }
-    }
-  }
-
   static Future<bool> isEnabled() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getBool(prefKey) == true;
@@ -2882,6 +3286,9 @@ class BackgroundListener {
   static Future<void> _stopAutomationSerialized() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(prefKey, false);
+    // The heartbeat was idle while the opt-in was on; refresh it before the
+    // listener may evaluate auto-stop without the opt-in.
+    await _touchUiAlive();
     NotificationService.setAutomationNotificationsOptedIn(false);
     await _clearLegacyFiniteSessionState(prefs);
     await BackgroundCronWatch.syncConnections(const <SavedConnection>[]);
@@ -3269,6 +3676,7 @@ class BackgroundListener {
       return false;
     }
     if (running && _activeNetworkMode == mode) {
+      await _syncNetworkCard(prefs);
       await _persistDurableRestartContract(prefs);
       return true;
     }
@@ -3282,24 +3690,63 @@ class BackgroundListener {
     final persistentAutomation = _automationMessagingDemand(prefs);
     _configure(t, autoRunOnBoot: persistentAutomation);
     if (!await _prepareFlutterRuntimeService()) return false;
+    final card = networkCard(t, connected: persistentAutomation);
     final result = await FlutterForegroundTask.startService(
       serviceId: 256,
       serviceTypes: _serviceTypesFor(mode),
-      notificationTitle: 'Hermes Console',
-      notificationText: t.bgActive,
+      notificationTitle: card.title,
+      notificationText: card.text,
       notificationIcon: _serviceNotificationIcon,
-      // A-303 (spec 028): acción de parada directa en la notificación — la
-      // declaración FGS de Play promete que el usuario controla el servicio.
-      notificationButtons: [NotificationButton(id: 'stop', text: t.bgStop)],
+      notificationButtons: card.buttons,
       callback: hermesForegroundCallback,
     );
     final ok = result is ServiceRequestSuccess;
     _activeNetworkMode = ok ? mode : _ForegroundNetworkMode.none;
+    _networkCardConnected = ok ? persistentAutomation : null;
     if (ok) await _persistDurableRestartContract(prefs);
     if (kDebugMode && !ok) {
       debugPrint('[hermes-notif] start falló (${result.runtimeType})');
     }
     return ok;
+  }
+
+  /// What the fixed card of the network service says.
+  ///
+  /// While the background connection is on ([connected]) it is one calm
+  /// line; a transfer the user started (SSH / SFTP before Android 15) keeps
+  /// the generic text. Both carry the direct Stop the Play foreground-service
+  /// declaration describes (docs/PLAY_FGS_DECLARATION.md): the user can end
+  /// the work from the notification itself.
+  @visibleForTesting
+  static ({String title, String text, List<NotificationButton> buttons})
+  networkCard(NotifL10n t, {required bool connected}) => (
+    title: connected ? t.bgConnected : 'Console',
+    text: connected ? '' : t.bgActive,
+    buttons: [NotificationButton(id: 'stop', text: t.bgStop)],
+  );
+
+  /// What the running card was posted with, in this isolate.
+  static bool? _networkCardConnected;
+
+  /// The running card follows what holds the service. It is posted again
+  /// only when that changed (the connection turned on or off under the same
+  /// service type), never on a timer.
+  static Future<void> _syncNetworkCard(SharedPreferences prefs) async {
+    final connected = _automationMessagingDemand(prefs);
+    if (_networkCardConnected == connected) return;
+    final card = networkCard(NotifL10n.of(prefs), connected: connected);
+    try {
+      await FlutterForegroundTask.updateService(
+        notificationTitle: card.title,
+        notificationText: card.text,
+        notificationButtons: card.buttons,
+      );
+      _networkCardConnected = connected;
+    } catch (error) {
+      if (kDebugMode) {
+        debugPrint('[hermes-notif] card sync falló (${error.runtimeType})');
+      }
+    }
   }
 
   /// True si el FGS se arrancó en esta sesión con el tipo `microphone`
@@ -3437,7 +3884,7 @@ class BackgroundListener {
     final result = await FlutterForegroundTask.startService(
       serviceId: 256,
       serviceTypes: await _voiceServiceTypes(prefs),
-      notificationTitle: 'Hermes Console',
+      notificationTitle: 'Console',
       notificationText: t.voiceActive,
       notificationIcon: _voiceNotificationIcon(paused: false),
       notificationButtons: [
@@ -3504,7 +3951,7 @@ class BackgroundListener {
     final result = await FlutterForegroundTask.startService(
       serviceId: 256,
       serviceTypes: await _readAloudServiceTypes(prefs),
-      notificationTitle: 'Hermes Console',
+      notificationTitle: 'Console',
       notificationText: paused ? t.readAloudPaused : t.readAloudPlaying,
       notificationIcon: _serviceNotificationIcon,
       notificationButtons: [
@@ -3546,7 +3993,7 @@ class BackgroundListener {
     final prefs = await SharedPreferences.getInstance();
     final t = NotifL10n.of(prefs);
     await FlutterForegroundTask.updateService(
-      notificationTitle: 'Hermes Console',
+      notificationTitle: 'Console',
       notificationText: paused ? t.readAloudPaused : t.readAloudPlaying,
       notificationIcon: _serviceNotificationIcon,
       notificationButtons: [
@@ -3579,7 +4026,7 @@ class BackgroundListener {
     final t = NotifL10n.of(prefs);
     final projection = _voiceProjection(t, state);
     await FlutterForegroundTask.updateService(
-      notificationTitle: 'Hermes Console',
+      notificationTitle: 'Console',
       notificationText: projection.text,
       notificationIcon: _voiceNotificationIcon(paused: projection.paused),
       notificationButtons: [

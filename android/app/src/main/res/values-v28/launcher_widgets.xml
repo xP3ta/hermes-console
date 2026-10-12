@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 9+: the medium weight of the device's own font (Google Sans Text
+     on a Pixel) instead of naming Roboto Medium. -->
+<resources>
+    <style name="LW.Text.Medium">
+        <item name="android:textFontWeight">500</item>
+    </style>
+</resources>

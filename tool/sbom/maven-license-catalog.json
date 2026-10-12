@@ -97,6 +97,18 @@
       "group": "org.slf4j",
       "license": "MIT",
       "evidence": "https://www.slf4j.org/license.html"
+    },
+    {
+      "group": "com.github.davidliu",
+      "artifact": "audioswitch",
+      "license": "Apache-2.0",
+      "evidence": "https://github.com/davidliu/audioswitch/blob/dl/jitpack/LICENSE.txt"
+    },
+    {
+      "group": "io.github.webrtc-sdk",
+      "artifact": "android",
+      "license": "BSD-3-Clause",
+      "evidence": "https://github.com/webrtc-sdk/webrtc/blob/m137_release/LICENSE"
     }
   ]
 }

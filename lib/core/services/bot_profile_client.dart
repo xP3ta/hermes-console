@@ -35,11 +35,6 @@ abstract interface class BotModelGateway {
   Future<void> setBotReasoning(String profile, String effort);
 }
 
-abstract interface class BotAvatarGenerationGateway {
-  Future<bool> canGenerateBotAvatar();
-  Future<AgentProfileAvatar> generateBotAvatar(String prompt);
-}
-
 final class BotDuplicateIncomplete implements Exception {
   final String name;
   const BotDuplicateIncomplete(this.name);
@@ -47,39 +42,11 @@ final class BotDuplicateIncomplete implements Exception {
 
 /// All mutations use the owning connection's RPC, never a cached roster.
 final class BotProfileClient
-    implements BotProfileGateway, BotAvatarGenerationGateway, BotModelGateway {
+    implements BotProfileGateway, BotModelGateway {
   final BotProfileRpc request;
   final _pendingCopies =
       <String, ({String name, Map<String, dynamic> patch})>{};
   BotProfileClient(this.request);
-
-  @override
-  Future<bool> canGenerateBotAvatar() async {
-    try {
-      return (await request('image.generate', {'probe': true}))['available'] ==
-          true;
-    } catch (_) {
-      return false;
-    }
-  }
-
-  @override
-  Future<AgentProfileAvatar> generateBotAvatar(String prompt) async {
-    if (prompt.trim().isEmpty || prompt.length > 2048) {
-      throw const FormatException('Invalid avatar prompt');
-    }
-    final result = await request('image.generate', {
-      'prompt':
-          '${prompt.trim()}. Avatar for an AI agent: centered, solid color background, no text.',
-      'aspect_ratio': 'square',
-      'max_bytes': AgentProfileAvatar.maxBytes,
-    });
-    if (result['success'] != true || result['image_data'] is! String) {
-      throw StateError('Avatar generation unavailable');
-    }
-    // Never fetch a server path or provider URL with the mobile credentials.
-    return AgentProfileAvatar.fromDataUri(result['image_data'] as String);
-  }
 
   static void validateProfile(String profile) {
     if (!RegExp(r'^[a-z0-9][a-z0-9_-]{0,63}$').hasMatch(profile)) {

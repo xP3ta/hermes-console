@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../../widgets/hermes_spark_mascot.dart';
+import '../models/companion_mood.dart';
 import '../../widgets/hermes_status_indicator.dart';
 import '../models/companion_presence_level.dart';
 import '../state/companion_controller.dart';
@@ -15,7 +15,7 @@ import 'companion_message_presence.dart';
 class CompanionStatusIndicator extends StatelessWidget {
   /// Controller del Companion. Si es null, se usa el fallback sin mascota.
   final CompanionController? companion;
-  final HermesSparkMood mood;
+  final CompanionMood mood;
   final double size;
   final bool? animate;
 
@@ -34,9 +34,9 @@ class CompanionStatusIndicator extends StatelessWidget {
   /// reservado sea grande.
   Widget _fallback() {
     return switch (mood) {
-      HermesSparkMood.connecting ||
-      HermesSparkMood.waiting ||
-      HermesSparkMood.thinking => HermesStatusPulse(size: size >= 64 ? 16 : 12),
+      CompanionMood.connecting ||
+      CompanionMood.waiting ||
+      CompanionMood.thinking => HermesStatusPulse(size: size >= 64 ? 16 : 12),
       _ => HermesStatusIndicator(size: size, mood: mood),
     };
   }

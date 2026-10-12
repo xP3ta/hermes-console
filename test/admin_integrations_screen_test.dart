@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/design/select.dart';
 import 'package:hermes_android/core/models/admin_integrations.dart';
 import 'package:hermes_android/core/models/desktop_control_center.dart';
 import 'package:hermes_android/core/screens/admin_integrations_screen.dart';
@@ -179,7 +180,7 @@ Future<void> _chooseHttp(WidgetTester tester) async {
 }
 
 Future<void> _chooseAuth(WidgetTester tester, String label) async {
-  await tester.tap(find.byType(DropdownButtonFormField<McpAuthMode>));
+  await tester.tap(find.byType(HermesSelectField<McpAuthMode>));
   await tester.pumpAndSettle();
   await tester.tap(find.text(label).last);
   await tester.pumpAndSettle();
@@ -315,6 +316,8 @@ void main() {
       find.byKey(const ValueKey('webhook-draft-name')),
       'deploy-hook',
     );
+    // The action is enabled once the frame with the typed name is built.
+    await tester.pump();
     await tester.tap(find.byKey(const ValueKey('webhook-draft-submit')));
     await tester.pumpAndSettle();
 
@@ -426,7 +429,9 @@ void main() {
     await tester.scrollUntilVisible(
       find.byKey(const ValueKey('admin-add-mcp')),
       200,
-      scrollable: find.byType(Scrollable).last,
+      // The section switch floats over the list and scrolls sideways at
+      // this text size: the page's own list is the first scrollable.
+      scrollable: find.byType(Scrollable).first,
     );
     await tester.tap(find.byKey(const ValueKey('admin-add-mcp')));
     await tester.pumpAndSettle();

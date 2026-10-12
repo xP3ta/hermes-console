@@ -6,6 +6,7 @@ import 'package:hermes_android/core/services/desktop_control_gateway.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/hermes_ui.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
+import 'support/quiet_feedback.dart';
 
 class _RecoveryGateway implements HermesDesktopControlGateway {
   RecoveryTimeline timeline = const RecoveryTimeline(
@@ -150,7 +151,7 @@ void main() {
     expect(gateway.restoreCalls, 1);
     expect(gateway.restoredHash, _hash);
     expect(gateway.listCalls, 2);
-    expect(find.text('Checkpoint restaurado.'), findsOneWidget);
+    expectRoutineFeedback(tester, 'Checkpoint restaurado.');
   });
 
   testWidgets('read-only keeps restore disabled and sends no mutation', (

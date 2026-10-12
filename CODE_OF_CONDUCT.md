@@ -2,7 +2,7 @@
 
 ## Our standard
 
-We want participation in Hermes Console to be respectful, constructive, and
+We want participation in Console to be respectful, constructive, and
 safe. Be considerate, disagree with ideas rather than people, accept good-faith
 feedback, and respect privacy. Harassment, discrimination, threats, sexualized
 attention, doxxing, or publishing another person's credentials or private data

@@ -31,20 +31,23 @@ Future<TimeOfDay?> showHermesTimePicker(
   TimeOfDay initial,
 ) {
   final colors = Theme.of(context).hermes;
-  return showTimePicker(
+  final chrome = HermesChrome.of(colors);
+  // The clock is a dialog like the others: same tone, scrim and exit. Its
+  // hand is dragged, so the dialog itself is not.
+  return showHermesDialogRoute<TimeOfDay>(
     context: context,
-    initialTime: initial,
-    initialEntryMode: TimePickerEntryMode.dial,
-    builder: (context, child) {
+    draggable: false,
+    builder: (context) {
       final theme = Theme.of(context);
       return MediaQuery(
         data: MediaQuery.of(context).copyWith(alwaysUse24HourFormat: true),
         child: Theme(
           data: theme.copyWith(
             timePickerTheme: TimePickerThemeData(
-              backgroundColor: colors.surface,
+              backgroundColor: chrome.opaque,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(HermesRadius.dialog),
+                side: BorderSide(color: chrome.line),
               ),
               hourMinuteShape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(14),
@@ -80,7 +83,10 @@ Future<TimeOfDay?> showHermesTimePicker(
               ),
             ),
           ),
-          child: child!,
+          child: TimePickerDialog(
+            initialTime: initial,
+            initialEntryMode: TimePickerEntryMode.dial,
+          ),
         ),
       );
     },
@@ -349,6 +355,7 @@ class _HermesScheduleBuilderState extends State<HermesScheduleBuilder> {
       body: SafeArea(
         top: false,
         child: ListView(
+          clipBehavior: hermesUnderHeader,
           key: const ValueKey('schedule-builder'),
           padding: const EdgeInsets.fromLTRB(
             HermesSpace.pageH,

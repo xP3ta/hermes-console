@@ -20,6 +20,7 @@ import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/models/desktop_active_session.dart';
 import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
+import 'package:hermes_android/core/screens/chat_render_projection.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/desktop_gateway_capabilities.dart';
@@ -628,6 +629,78 @@ void main() {
         ),
         isTrue,
       );
+    },
+  );
+
+  test(
+    'rg1215 a remote turn closed before its prompt hydrates keeps its own bubble',
+    () async {
+      final gateway = _TerminalAuthorityGateway();
+      addTearDown(gateway.close);
+      final chat = await _liveTurn(
+        gateway,
+        id: 'remote-successor-group',
+        withToolPart: false,
+      );
+      final producerChannel = Object();
+      final parentDone = chat.changes.firstWhere(
+        (event) => event == ActiveChatEvent.done,
+      );
+      gateway.emit(
+        'message.complete',
+        const {'text': 'RESPUESTA_ANTERIOR'},
+        40,
+        7,
+        producerChannel,
+      );
+      await parentDone.timeout(const Duration(seconds: 2));
+
+      // A turn started on another client: no prompt reaches this socket.
+      gateway.emit('message.start', const {}, 41, 7, producerChannel);
+      await _waitUntil(() => chat.sessionActivity.foregroundTurn);
+      gateway.emit(
+        'message.delta',
+        const {'text': 'RESPUESTA_REMOTA'},
+        42,
+        7,
+        producerChannel,
+      );
+      await _waitUntil(
+        () => chat.assistantContent.contains('RESPUESTA_REMOTA'),
+      );
+      final successorDone = chat.changes.firstWhere(
+        (event) => event == ActiveChatEvent.done,
+      );
+      gateway.emit(
+        'message.complete',
+        const {'text': 'RESPUESTA_REMOTA'},
+        43,
+        7,
+        producerChannel,
+      );
+      await successorDone.timeout(const Duration(seconds: 2));
+
+      // Terminal frame: streaming is over and no remote prompt hydrated yet.
+      expect(chat.isStreaming, isFalse);
+      final messages = chat.messages;
+      expect(
+        [for (final m in messages) (m['role'], m['content'])],
+        [
+          ('assistant', 'RESPUESTA_REMOTA'),
+          ('assistant', 'RESPUESTA_ANTERIOR'),
+          ('user', 'sigue trabajando'),
+        ],
+      );
+      final projection = ChatRenderProjection.build(messages);
+      final bubbles = projection.units
+          .whereType<ChatMessageUnitPlan>()
+          .map((unit) => unit.memberIndexesNewestFirst)
+          .toList();
+      expect(bubbles, [
+        [0],
+        [1],
+      ]);
+      expect(projection.renderedMessageCount, 3);
     },
   );
 }

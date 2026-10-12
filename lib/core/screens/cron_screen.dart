@@ -19,9 +19,11 @@ import '../models/agent_profile.dart';
 import '../models/cron_job.dart';
 import '../models/dock_config.dart' show DockItemId;
 import '../navigation/chat_route.dart';
+import '../navigation/enclosing_route.dart';
+import '../services/bot_roster_store.dart';
 import '../services/connection_manager.dart';
 import '../services/cron_repository.dart';
-import '../services/dock_preferences_store.dart';
+import '../services/launcher_widget_cron.dart';
 import '../design/hermes_design.dart';
 import '../services/notifications/notification_mute_store.dart';
 import '../services/notifications/notification_service.dart';
@@ -29,20 +31,21 @@ import '../services/tui_gateway_client.dart';
 import '../theme/app_theme.dart';
 import '../utils/api_error.dart';
 import '../widgets/feature_dependency_notice.dart';
+import '../widgets/form_page.dart';
 import '../widgets/general_dock_shell.dart';
 import '../widgets/hermes_app_bar.dart';
-import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_pill.dart' show TuiLoader;
 import '../widgets/hermes_premium_ui.dart'
     show HermesSegment, HermesSegmentedControl;
 import '../widgets/hermes_ui.dart' show HermesField;
 import '../widgets/mission_profile_avatar.dart';
 import '../widgets/read_only.dart';
-import 'bridge_file_editor_screen.dart';
+import '../utils/plain_preview.dart';
 import 'cron_detail_page.dart';
 import 'chat_screen.dart';
 import 'instance_edit_screen.dart';
 import 'notification_settings_screen.dart';
+import '../feedback/feedback_policy.dart';
 
 @visibleForTesting
 const cronBackstopRefreshInterval = Duration(seconds: 60);
@@ -67,11 +70,21 @@ class CronScreen extends StatefulWidget {
   /// funcionando igual, simplemente sin el dock.
   final ConnectionManager? connManager;
 
+  /// Roster shared with every other screen; [BotRosterRegistry.shared] by
+  /// default.
+  final BotRosterRegistry? rosterRegistry;
+
+  /// Replaces the local notification-policy write that follows a remote
+  /// create/update (tests only: lets a test make that local step fail).
+  final CronPolicyWriter? cronPolicyWriterOverride;
+
   const CronScreen({
     required this.connection,
     this.connManager,
+    this.rosterRegistry,
     @visibleForTesting this.clientOverride,
     @visibleForTesting this.eventStreamOverride,
+    @visibleForTesting this.cronPolicyWriterOverride,
     this.initialJobId,
     this.profileOverride,
     this.botRoutines = false,
@@ -81,6 +94,15 @@ class CronScreen extends StatefulWidget {
   @override
   State<CronScreen> createState() => _CronScreenState();
 }
+
+/// Persists the local notification policy of a Cron job.
+typedef CronPolicyWriter =
+    Future<void> Function({
+      required String connId,
+      required String profile,
+      required String jobId,
+      required CronNotifyPolicy policy,
+    });
 
 class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
   late final DashboardClient _client;
@@ -98,7 +120,8 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
   List<CronJob> _jobs = const [];
 
   /// Bot profiles by name (title, face) for owner lines and destinations.
-  Map<String, AgentProfile> _profiles = const {};
+  late final BotRosterRegistry _roster;
+  late final BotRosterStore _rosterStore;
   MissionProfileAvatarCache? _avatarCache;
   String _profile = '';
   String _query = '';
@@ -121,11 +144,7 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     _client = widget.clientOverride ?? DashboardClient.lazy(widget.connection);
     _repository = CronRepository(_client);
-    _refreshTimer = Timer.periodic(cronBackstopRefreshInterval, (_) {
-      if (_refreshAllowed && !_fetching) {
-        unawaited(_loadJobs(showLoader: false));
-      }
-    });
+    _armRefreshTimer();
     _startEventUpdates();
     final gateway = _ownedEventClient;
     if (gateway != null) {
@@ -134,13 +153,21 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
         connectionId: widget.connection.id,
       );
     }
+    _roster = widget.rosterRegistry ?? BotRosterRegistry.shared;
+    _roster.hydrate(widget.connection);
+    _rosterStore = _roster.store(widget.connection.id)..addListener(_onRoster);
     unawaited(_loadProfiles());
+  }
+
+  void _onRoster() {
+    if (mounted) setState(() {});
   }
 
   /// Best effort: without profile metadata the owner line still shows the
   /// procedural face and a readable name. The gateway roster carries the
   /// Bot Mode title and face; the dashboard list is the fallback.
   Future<void> _loadProfiles() async {
+    final ticket = _roster.beginRead(widget.connection.id);
     try {
       final gateway = _ownedEventClient;
       List<AgentProfile> profiles;
@@ -151,15 +178,37 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
       } catch (_) {
         profiles = await _client.getProfiles();
       }
-      if (!mounted) return;
-      setState(() => _profiles = {for (final p in profiles) p.name: p});
+      // Shared with every screen; a late older read never wins.
+      _roster.publish(
+        widget.connection.id,
+        widget.connection.label,
+        profiles,
+        ticket: ticket,
+      );
     } catch (_) {}
   }
 
-  AgentProfile? _profileInfo(String name) => _profiles[name];
+  AgentProfile? _profileInfo(String name) => _rosterStore.profile(name);
+
+  /// Backstop refresh while the app is visible. It is cancelled in background
+  /// (its ticks would only wake the isolate to find refresh disallowed) and
+  /// re-armed on resume, right after the immediate resume refresh.
+  void _armRefreshTimer() {
+    _refreshTimer?.cancel();
+    _refreshTimer = Timer.periodic(cronBackstopRefreshInterval, (_) {
+      if (_refreshAllowed && !_fetching) {
+        unawaited(_loadJobs(showLoader: false));
+      }
+    });
+  }
+
+  // The route arrives through [EnclosingRoute] (see `build`): reading
+  // `ModalRoute.of(context)` from this guard subscribed the whole screen to
+  // the route status, so it rebuilt in the first frame of every transition.
+  ModalRoute<Object?>? _ownRoute;
 
   bool get _refreshAllowed =>
-      mounted && _foreground && ModalRoute.of(context)?.isCurrent != false;
+      mounted && _foreground && _ownRoute?.isCurrent != false;
 
   void _startEventUpdates() {
     final override = widget.eventStreamOverride;
@@ -246,9 +295,14 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _foreground = state == AppLifecycleState.resumed;
     if (_foreground) {
+      if (_refreshTimer == null) _armRefreshTimer();
       _scheduleEventReconnect(immediate: true);
       if (!_fetching) unawaited(_loadJobs(showLoader: false));
     } else {
+      if (state != AppLifecycleState.inactive) {
+        _refreshTimer?.cancel();
+        _refreshTimer = null;
+      }
       _eventReconnectTimer?.cancel();
       _eventReconnectTimer = null;
       _eventStableTimer?.cancel();
@@ -258,6 +312,7 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    _rosterStore.removeListener(_onRoster);
     WidgetsBinding.instance.removeObserver(this);
     _refreshTimer?.cancel();
     _eventRefreshDebounce?.cancel();
@@ -286,6 +341,19 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
     try {
       final listing = await _repository.listJobsForScope(_profileScope);
       final jobs = listing.jobs;
+      // The Cron launcher widget shows this same listing (no request of
+      // its own): every profile's jobs, or only this profile's.
+      unawaited(
+        LauncherWidgetCronPublisher.instance.offer(
+          connectionId: widget.connection.id,
+          jobs: jobs,
+          profile:
+              _profileScope == CronProfileScope.all &&
+                  !listing.usedLegacyActiveFallback
+              ? null
+              : _profileOrDefault,
+        ),
+      );
       if (!mounted) return;
       setState(() {
         _jobs = jobs;
@@ -311,8 +379,22 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
     }
   }
 
+  String get _profileOrDefault => _profile.isEmpty ? 'default' : _profile;
+
   bool get _mutationsDisabled =>
       widget.connection.readOnly || _profileScope == CronProfileScope.all;
+
+  /// Explains why a mutation is blocked: a read-only instance, or only the
+  /// aggregated "All profiles" view on an instance that is writable.
+  void _showMutationsDisabledNotice() {
+    if (widget.connection.readOnly) return showReadOnlyNotice(context);
+    AppFeedback.of(context).notify(
+      FeedbackKind.error,
+      Strings.of(context).crnAllScopeReadOnly,
+      warning: true,
+      duration: const Duration(seconds: 3),
+    );
+  }
 
   void _selectProfileScope(Set<CronProfileScope> selection) {
     final scope = selection.firstOrNull;
@@ -369,35 +451,39 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _pauseOrResume(CronJob job) async {
-    if (_mutationsDisabled) return showReadOnlyNotice(context);
+    if (_mutationsDisabled) return _showMutationsDisabledNotice();
     try {
       final updated = await _repository.pauseOrResume(job);
       if (!mounted) return;
       _replaceJob(updated);
-      HermesNotice.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            job.isPaused
-                ? Strings.of(context).crnJobResumed
-                : Strings.of(context).crnJobPaused,
-          ),
-        ),
+      AppFeedback.of(context).notify(
+        FeedbackKind.routine,
+        job.isPaused
+            ? Strings.of(context).crnJobResumed
+            : Strings.of(context).crnJobPaused,
       );
     } catch (error) {
       _showFailure(error);
     }
   }
 
+  /// A 404 in the owner profile means the list is stale: refresh it so the
+  /// row stays only if the server still lists it.
+  void _refreshIfMissing(Object error) {
+    if (error is CronJobNotFoundException && mounted) {
+      unawaited(_loadJobs(showLoader: false));
+    }
+  }
+
   Future<void> _trigger(CronJob job) async {
-    if (_mutationsDisabled) return showReadOnlyNotice(context);
+    if (_mutationsDisabled) return _showMutationsDisabledNotice();
     try {
       final updated = await _repository.trigger(job);
       if (!mounted) return;
       _replaceJob(updated);
-      HermesNotice.of(context).showSnackBar(
-        SnackBar(content: Text(Strings.of(context).crnJobTriggered)),
-        kind: HermesNoticeKind.success,
-      );
+      AppFeedback.of(
+        context,
+      ).notify(FeedbackKind.routine, Strings.of(context).crnJobTriggered);
     } catch (error) {
       _showFailure(error);
     }
@@ -405,22 +491,21 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
 
   void _showFailure(Object error) {
     if (!mounted) return;
+    _refreshIfMissing(error);
     final s = Strings.of(context);
-    HermesNotice.of(context).showSnackBar(
-      SnackBar(
-        content: Text(s.crnFailed(localizedApiError(s, error))),
-        backgroundColor: Theme.of(context).hermes.warning,
-      ),
-      kind: HermesNoticeKind.error,
-    );
+    AppFeedback.of(
+      context,
+    ).notify(FeedbackKind.error, s.crnFailed(localizedApiError(s, error)));
   }
 
   Future<bool> _delete(CronJob job) async {
     if (_mutationsDisabled) {
-      showReadOnlyNotice(context);
+      _showMutationsDisabledNotice();
       return false;
     }
     final s = Strings.of(context);
+    final repository = _repository;
+    final connection = widget.connection;
     final confirmed = await showHermesDialog<bool>(
       context: context,
       surfaceKey: const ValueKey('cron-delete-dialog'),
@@ -441,8 +526,17 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
       ],
     );
     if (confirmed != true || !mounted) return false;
+    if (_mutationsDisabled ||
+        !identical(repository, _repository) ||
+        !identical(connection, widget.connection)) {
+      _showMutationsDisabledNotice();
+      return false;
+    }
 
     try {
+      // The profile that holds the job, never the screen's: the default
+      // profile's list also shows other profiles' (bot) jobs.
+      final owner = CronRepository.ownerProfileOf(job);
       final manager = context
           .findAncestorStateOfType<HermesAppState>()
           ?.connManager;
@@ -450,39 +544,33 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
         await manager.deleteLinkedCronJob(
           widget.connection,
           job.id,
-          profile: _profile,
+          profile: owner,
         );
       } else {
-        await _client.deleteCronJob(job.id, profile: _profile);
+        await _client.deleteCronJob(job.id, profile: owner);
       }
       if (!mounted) return true;
       setState(() => _jobs = _jobs.where((row) => row.id != job.id).toList());
-      HermesNotice.of(context).showSnackBar(
-        SnackBar(content: Text(Strings.of(context).crnJobDeleted(job.title))),
-        kind: HermesNoticeKind.success,
+      AppFeedback.of(context).notify(
+        FeedbackKind.routine,
+        Strings.of(context).crnJobDeleted(job.title),
       );
       return true;
     } on CronDeleteRejectedException {
       if (mounted) {
-        HermesNotice.of(context).showSnackBar(
-          SnackBar(
-            content: Text(Strings.of(context).crnDeleteRejected),
-            backgroundColor: Theme.of(context).hermes.warning,
-          ),
-          kind: HermesNoticeKind.warning,
+        AppFeedback.of(context).notify(
+          FeedbackKind.error,
+          Strings.of(context).crnDeleteRejected,
+          warning: true,
         );
       }
     } catch (error) {
       if (!mounted) return false;
+      _refreshIfMissing(error);
       final strings = Strings.of(context);
-      HermesNotice.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            strings.crnDeleteFailed(localizedApiError(strings, error)),
-          ),
-          backgroundColor: Theme.of(context).hermes.warning,
-        ),
-        kind: HermesNoticeKind.error,
+      AppFeedback.of(context).notify(
+        FeedbackKind.error,
+        strings.crnDeleteFailed(localizedApiError(strings, error)),
       );
     }
     return false;
@@ -495,15 +583,27 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
   /// floating card; its pickers are floating surfaces.
   Future<CronJob?> _showEditor({CronJob? job}) async {
     if (_mutationsDisabled) {
-      showReadOnlyNotice(context);
+      _showMutationsDisabledNotice();
       return null;
     }
     final notif = _notifications;
-    final result = await Navigator.of(context).push<_CronEditorResult>(
+    final repository = _repository;
+    final connection = widget.connection;
+    final revokedMessage = Strings.of(context).statusReadOnly;
+    return Navigator.of(context).push<CronJob>(
       MaterialPageRoute(
         fullscreenDialog: true,
         builder: (_) => _CronEditorPage(
-          repository: _repository,
+          repository: repository,
+          onSave: (result) {
+            if (!mounted ||
+                _mutationsDisabled ||
+                !identical(repository, _repository) ||
+                !identical(connection, widget.connection)) {
+              throw StateError(revokedMessage);
+            }
+            return _applyEditorResult(result, job);
+          },
           job: job,
           initialPolicy: job == null || notif == null
               ? CronNotifyPolicy.all
@@ -516,7 +616,6 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
         ),
       ),
     );
-    return _applyEditorResult(result, job);
   }
 
   /// The dock's contextual "+" opens the same editor page.
@@ -529,8 +628,11 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
     CronJob? job,
   ) async {
     if (result == null || !mounted) return null;
+    if (_mutationsDisabled) {
+      throw StateError(Strings.of(context).crnAllScopeReadOnly);
+    }
+    final CronJob updated;
     try {
-      final CronJob updated;
       switch (result) {
         case _ManualCronResult(:final values):
           updated = job == null
@@ -554,44 +656,54 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
         case _BlueprintCronResult(:final blueprint, :final values):
           updated = await _repository.instantiateBlueprint(blueprint, values);
       }
-      final notif = _notifications;
-      final jobId = updated.id.isNotEmpty ? updated.id : job?.id ?? '';
-      if (notif != null && jobId.isNotEmpty) {
-        await notif.muteStore.setCronPolicy(
+    } catch (error) {
+      if (!mounted) return null;
+      _refreshIfMissing(error);
+      final strings = Strings.of(context);
+      final message = job == null
+          ? strings.crnAddFailed(localizedApiError(strings, error))
+          : strings.crnUpdateFailed(localizedApiError(strings, error));
+      AppFeedback.of(
+        context,
+      ).notify(FeedbackKind.error, message, warning: true);
+      rethrow;
+    }
+    // The server accepted the mutation. From here on nothing may report a
+    // failed save or keep the editor open: a second Save would POST again
+    // and create the job twice. A failing local step is reported on its own.
+    var policySaved = true;
+    final jobId = updated.id.isNotEmpty ? updated.id : job?.id ?? '';
+    final notif = _notifications;
+    final CronPolicyWriter? writePolicy =
+        widget.cronPolicyWriterOverride ?? notif?.muteStore.setCronPolicy;
+    if (writePolicy != null && jobId.isNotEmpty) {
+      try {
+        await writePolicy(
           connId: widget.connection.id,
           profile: updated.profile.isNotEmpty ? updated.profile : _profile,
           jobId: jobId,
           policy: result.policy,
         );
+      } catch (_) {
+        policySaved = false;
       }
-      if (!mounted) return updated;
-      _replaceJob(updated);
-      HermesNotice.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            job == null
-                ? Strings.of(context).crnJobCreated
-                : Strings.of(context).crnJobUpdated,
-          ),
-        ),
-      );
-      unawaited(_loadJobs(showLoader: false));
-      return updated;
-    } catch (error) {
-      if (!mounted) return null;
-      final strings = Strings.of(context);
-      final message = job == null
-          ? strings.crnAddFailed(localizedApiError(strings, error))
-          : strings.crnUpdateFailed(localizedApiError(strings, error));
-      HermesNotice.of(context).showSnackBar(
-        SnackBar(
-          content: Text(message),
-          backgroundColor: Theme.of(context).hermes.warning,
-        ),
-        kind: HermesNoticeKind.warning,
-      );
-      return null;
     }
+    if (!mounted) return updated;
+    _replaceJob(updated);
+    final strings = Strings.of(context);
+    AppFeedback.of(context).notify(
+      FeedbackKind.routine,
+      job == null ? strings.crnJobCreated : strings.crnJobUpdated,
+    );
+    if (!policySaved) {
+      AppFeedback.of(context).notify(
+        FeedbackKind.error,
+        strings.crnNotifyPolicyNotSaved,
+        warning: true,
+      );
+    }
+    unawaited(_loadJobs(showLoader: false));
+    return updated;
   }
 
   Future<void> _openRun(Session session) async {
@@ -603,9 +715,15 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _showJobDetail(CronJob job) async {
-    final detailRepository =
-        _profileScope == CronProfileScope.all && job.profile.isNotEmpty
-        ? CronRepository(_client, profile: job.profile)
+    // Reads (job, runs) go to the profile that holds the job; actions take
+    // it from the job itself.
+    final owner = job.targetProfile;
+    final detailRepository = owner != null && owner != _profileOrDefault
+        ? CronRepository(
+            _client,
+            profile: owner == 'default' ? '' : owner,
+            botRoutines: widget.botRoutines,
+          )
         : _repository;
     await Navigator.of(context).push<void>(
       MaterialPageRoute(
@@ -678,34 +796,6 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _showScreenMenu(BuildContext anchor) async {
-    final s = Strings.of(context);
-    final action = await showHermesMenu<String>(
-      context: context,
-      originRect: hermesOriginOf(anchor),
-      surfaceKey: const ValueKey('cron-screen-menu'),
-      actions: [
-        HermesAction(
-          value: 'raw',
-          icon: Icons.data_object_rounded,
-          label: s.crnEditJobsJson,
-        ),
-      ],
-    );
-    if (action != 'raw' || !mounted) return;
-    await Navigator.of(context).push<void>(
-      MaterialPageRoute(
-        builder: (_) => BridgeFileEditorScreen(
-          connectionId: widget.connection.id,
-          target: 'cron',
-          titleLabel: s.crnJobsJsonLabel,
-          readOnly: widget.connection.readOnly,
-          lockReason: s.crnApplyJobsJson,
-        ),
-      ),
-    );
-  }
-
   List<CronJob> get _visibleJobs {
     final query = _query.trim().toLowerCase();
     final rows = query.isEmpty
@@ -720,7 +810,7 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
               cronDeliveryLabel(job.deliver, s, ownProfile: job.profile),
               job.profile,
               if (job.ownerBot != null)
-                cronBotName(job.ownerBot!, info: _profiles[job.ownerBot]),
+                cronBotName(job.ownerBot!, info: _profileInfo(job.ownerBot!)),
             ].any((value) => value.toLowerCase().contains(query));
           }).toList();
     rows.sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
@@ -728,7 +818,12 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => EnclosingRoute(
+    onRoute: (route) => _ownRoute = route,
+    child: _buildScreen(context),
+  );
+
+  Widget _buildScreen(BuildContext context) {
     final s = Strings.of(context);
     return Scaffold(
       appBar: HermesAppBar(
@@ -745,40 +840,23 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
                 ),
               ),
             ),
+          // This screen's own way to add a job lives up here, with the dock
+          // on, off or hidden (the dock's "+" is a new chat).
+          if (!_mutationsDisabled)
+            IconButton(
+              key: const ValueKey('cron-create'),
+              icon: const Icon(Icons.add_rounded),
+              tooltip: s.crnAddNew,
+              onPressed: _loading ? null : () => _showEditor(),
+            ),
           IconButton(
             icon: const Icon(Icons.refresh),
             tooltip: s.crnRetry,
             onPressed: _fetching ? null : () => _loadJobs(showLoader: false),
           ),
-          if (_profileScope == CronProfileScope.active)
-            Builder(
-              builder: (anchor) => IconButton(
-                key: const ValueKey('cron-screen-more'),
-                tooltip: MaterialLocalizations.of(context).moreButtonTooltip,
-                icon: const Icon(Icons.more_vert_rounded),
-                onPressed: () => _showScreenMenu(anchor),
-              ),
-            ),
         ],
       ),
       body: _wrapWithDock(_buildBody()),
-      // Con el dock activo y presente, su "+" contextual reemplaza a este FAB.
-      // Con el interruptor global "Usar dock flotante" apagado, el FAB debe
-      // reaparecer o la única forma de crear un cron job desaparecería.
-      floatingActionButton: ListenableBuilder(
-        listenable: DockPreferencesController.instance.listenable,
-        builder: (context, _) {
-          final dockActive =
-              widget.connManager != null &&
-              DockPreferencesController.instance.value.useDock;
-          if (dockActive || _mutationsDisabled) return const SizedBox.shrink();
-          return FloatingActionButton(
-            tooltip: s.crnAddNew,
-            onPressed: _loading ? null : () => _showEditor(),
-            child: const Icon(Icons.add),
-          );
-        },
-      ),
     );
   }
 
@@ -867,6 +945,7 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
       onRefresh: () => _loadJobs(showLoader: false),
       child: ListView(
         key: const ValueKey('cron-list'),
+        clipBehavior: hermesUnderHeader,
         padding: EdgeInsets.fromLTRB(
           HermesSpace.pageH,
           HermesSpace.pageTop,
@@ -895,6 +974,7 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
                 suffixIcon: _query.isEmpty
                     ? null
                     : IconButton(
+                        tooltip: s.slClearSearch,
                         onPressed: () {
                           _searchController.clear();
                           setState(() => _query = '');
@@ -1040,7 +1120,9 @@ class _CronJobRow extends StatelessWidget {
                         faceSize: 16,
                         trailing: job.preview.isEmpty
                             ? null
-                            : Session.stripCronPreamble(job.preview),
+                            : plainPreview(
+                                Session.stripCronPreamble(job.preview),
+                              ),
                       ),
                     ] else if (job.preview.isNotEmpty || showProfile) ...[
                       const SizedBox(height: 2),
@@ -1051,7 +1133,10 @@ class _CronJobRow extends StatelessWidget {
                               job.profile,
                               info: profileInfo(job.profile),
                             ),
-                          if (job.preview.isNotEmpty) job.preview,
+                          if (job.preview.isNotEmpty)
+                            plainPreview(
+                              Session.stripCronPreamble(job.preview),
+                            ),
                         ].join(' · '),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
@@ -1131,11 +1216,13 @@ class _CronEditorValues {
 class _CronEditorPage extends StatefulWidget {
   final CronRepository repository;
   final CronJob? job;
+  final Future<CronJob?> Function(_CronEditorResult) onSave;
   final CronNotifyPolicy initialPolicy;
   final bool notificationsAvailable;
 
   const _CronEditorPage({
     required this.repository,
+    required this.onSave,
     required this.initialPolicy,
     required this.notificationsAvailable,
     this.job,
@@ -1144,6 +1231,14 @@ class _CronEditorPage extends StatefulWidget {
   @override
   State<_CronEditorPage> createState() => _CronEditorPageState();
 }
+
+/// Error text for the Cron editor. Always localized: the server's response
+/// body is never shown, whatever its HTTP status or field (`detail`,
+/// `message`, `error`, HTML). A rejection body is untrusted text and can
+/// carry paths, tracebacks or other server internals; there is no structured
+/// error-code contract for Cron to translate instead.
+String cronEditorErrorText(Strings strings, Object error) =>
+    localizedApiError(strings, error);
 
 class _CronEditorPageState extends State<_CronEditorPage> {
   static const _defaultModel = HermesModelChoice.defaultModel();
@@ -1154,14 +1249,48 @@ class _CronEditorPageState extends State<_CronEditorPage> {
   AutomationBlueprint? _blueprint;
   Map<String, String> _blueprintValues = {};
   bool _loadingResources = true;
+  bool _saving = false;
   late String _schedule;
   late String _deliver;
   late HermesModelChoice _model;
   late CronNotifyPolicy _policy;
   String? _error;
+  late final String _initialName;
+  late final String _initialPrompt;
+  late final String _initialSchedule;
+  late final String _initialDeliver;
+  late final HermesModelChoice _initialModel;
 
   bool get _editing => widget.job != null;
   bool get _scriptOnly => widget.job?.isScriptOnly == true;
+
+  /// Save is offered only when the form can actually be saved.
+  bool get _canSubmit {
+    if (_loadingResources || _saving) return false;
+    final blueprint = _blueprint;
+    if (blueprint != null) {
+      return blueprint.fields.every(
+        (field) =>
+            field.optional ||
+            (_blueprintValues[field.name] ?? '').trim().isNotEmpty,
+      );
+    }
+    return _schedule.trim().isNotEmpty &&
+        (_scriptOnly || _promptController.text.trim().isNotEmpty);
+  }
+
+  bool get _dirty =>
+      _blueprint != null ||
+      _nameController.text.trim() != _initialName.trim() ||
+      _promptController.text.trim() != _initialPrompt.trim() ||
+      _schedule != _initialSchedule ||
+      _deliver != _initialDeliver ||
+      _model != _initialModel ||
+      _policy != widget.initialPolicy;
+
+  void _onTextChanged() {
+    if (mounted) setState(() {});
+  }
 
   @override
   void initState() {
@@ -1185,6 +1314,13 @@ class _CronEditorPageState extends State<_CronEditorPage> {
         ? HermesModelChoice(job!.provider, job.model)
         : _defaultModel;
     _policy = widget.initialPolicy;
+    _initialName = _nameController.text;
+    _initialPrompt = _promptController.text;
+    _initialSchedule = _schedule;
+    _initialDeliver = _deliver;
+    _initialModel = _model;
+    _nameController.addListener(_onTextChanged);
+    _promptController.addListener(_onTextChanged);
     unawaited(_loadResources());
   }
 
@@ -1322,7 +1458,8 @@ class _CronEditorPageState extends State<_CronEditorPage> {
     return '[bot:$owner] $name';
   }
 
-  void _submit() {
+  Future<void> _submit() async {
+    if (_saving) return;
     final s = Strings.of(context);
     if (_blueprint != null) {
       for (final field in _blueprint!.fields) {
@@ -1332,8 +1469,7 @@ class _CronEditorPageState extends State<_CronEditorPage> {
           return;
         }
       }
-      Navigator.pop(
-        context,
+      await _save(
         _BlueprintCronResult(_blueprint!, Map.of(_blueprintValues), _policy),
       );
       return;
@@ -1348,8 +1484,7 @@ class _CronEditorPageState extends State<_CronEditorPage> {
       setState(() => _error = s.crnPromptRequired);
       return;
     }
-    Navigator.pop(
-      context,
+    await _save(
       _ManualCronResult(
         _CronEditorValues(
           name: _ownedName(_nameController.text.trim()),
@@ -1364,117 +1499,109 @@ class _CronEditorPageState extends State<_CronEditorPage> {
     );
   }
 
+  Future<void> _save(_CronEditorResult result) async {
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      final updated = await widget.onSave(result);
+      if (!mounted) return;
+      if (updated != null) Navigator.pop(context, updated);
+    } catch (error) {
+      if (mounted) {
+        setState(
+          () => _error = cronEditorErrorText(Strings.of(context), error),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final s = Strings.of(context);
-    return Scaffold(
-      appBar: HermesAppBar(
-        centerTitle: false,
-        leading: IconButton(
-          tooltip: s.commonCancel,
-          icon: const Icon(Icons.close_rounded),
-          onPressed: () => Navigator.of(context).pop(),
-        ),
-        title: Text(_editing ? s.crnEditJob : s.crnAddJob),
-        actions: [
-          Padding(
-            padding: const EdgeInsets.only(right: 10),
-            child: FilledButton(
-              key: const ValueKey('cron-editor-submit'),
-              onPressed: _loadingResources ? null : _submit,
-              style: FilledButton.styleFrom(
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(HermesRadius.control),
-                ),
-                padding: const EdgeInsets.symmetric(horizontal: 18),
+    return HermesFormPage(
+      title: _editing ? s.crnEditJob : s.crnAddJob,
+      submitLabel: _blueprint != null
+          ? s.crnBlueprintCreate
+          : (_editing ? s.commonSave : s.crnAdd),
+      submitKey: const ValueKey('cron-editor-submit'),
+      bodyKey: const ValueKey('cron-editor'),
+      onSubmit: _canSubmit ? _submit : null,
+      dirty: _dirty,
+      children: _loadingResources
+          ? const [
+              Padding(
+                padding: EdgeInsets.only(top: 120),
+                child: Center(child: TuiLoader()),
               ),
-              child: Text(
-                _blueprint != null
-                    ? s.crnBlueprintCreate
-                    : (_editing ? s.commonSave : s.crnAdd),
-              ),
-            ),
-          ),
-        ],
-      ),
-      body: SafeArea(
-        top: false,
-        child: _loadingResources
-            ? const Center(child: TuiLoader())
-            : ListView(
-                key: const ValueKey('cron-editor'),
-                padding: const EdgeInsets.fromLTRB(
-                  HermesSpace.pageH,
-                  HermesSpace.pageTop,
-                  HermesSpace.pageH,
-                  HermesSpace.pageBottom + 24,
+            ]
+          : [
+              if (!_editing &&
+                  (_resources?.blueprints.isNotEmpty ?? false)) ...[
+                HermesListGroup(
+                  children: [
+                    Builder(
+                      builder: (anchor) => HermesSelectRow(
+                        key: const ValueKey('cron-template-row'),
+                        icon: Icons.auto_awesome_outlined,
+                        title: s.crnStartFrom,
+                        value: _blueprint?.title ?? s.crnCustomSetup,
+                        subtitle: _blueprint?.description,
+                        onTap: () => _pickTemplate(anchor),
+                      ),
+                    ),
+                  ],
                 ),
+              ],
+              if (_blueprint != null)
+                ..._buildBlueprintFields()
+              else
+                ..._buildManualFields(),
+              HermesSectionHeader(s.crnNotifications),
+              HermesListGroup(
+                dividerIndent: HermesSpace.rowH,
                 children: [
-                  if (!_editing &&
-                      (_resources?.blueprints.isNotEmpty ?? false)) ...[
-                    HermesListGroup(
-                      children: [
-                        Builder(
-                          builder: (anchor) => HermesSelectRow(
-                            key: const ValueKey('cron-template-row'),
-                            icon: Icons.auto_awesome_outlined,
-                            title: s.crnStartFrom,
-                            value: _blueprint?.title ?? s.crnCustomSetup,
-                            subtitle: _blueprint?.description,
-                            onTap: () => _pickTemplate(anchor),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                  if (_blueprint != null)
-                    ..._buildBlueprintFields()
-                  else
-                    ..._buildManualFields(),
-                  HermesSectionHeader(s.crnNotifications),
-                  HermesListGroup(
-                    dividerIndent: HermesSpace.rowH,
-                    children: [
-                      HermesToggleRow(
-                        switchKey: const ValueKey('cron-editor-notify'),
-                        title: s.crnNotifyFinish,
-                        value: _policy != CronNotifyPolicy.off,
-                        onChanged: widget.notificationsAvailable
-                            ? (v) => setState(
-                                () => _policy = v
-                                    ? CronNotifyPolicy.all
-                                    : CronNotifyPolicy.off,
-                              )
-                            : null,
-                      ),
-                      HermesToggleRow(
-                        switchKey: const ValueKey('cron-editor-notify-fail'),
-                        title: s.crnNotifyFailOnly,
-                        value: _policy == CronNotifyPolicy.failuresOnly,
-                        onChanged:
-                            widget.notificationsAvailable &&
-                                _policy != CronNotifyPolicy.off
-                            ? (v) => setState(
-                                () => _policy = v
-                                    ? CronNotifyPolicy.failuresOnly
-                                    : CronNotifyPolicy.all,
-                              )
-                            : null,
-                      ),
-                    ],
+                  HermesToggleRow(
+                    switchKey: const ValueKey('cron-editor-notify'),
+                    title: s.crnNotifyFinish,
+                    value: _policy != CronNotifyPolicy.off,
+                    onChanged: widget.notificationsAvailable
+                        ? (v) => setState(
+                            () => _policy = v
+                                ? CronNotifyPolicy.all
+                                : CronNotifyPolicy.off,
+                          )
+                        : null,
                   ),
-                  if (_error != null) ...[
-                    const SizedBox(height: HermesSpace.x3),
-                    HermesInlineNotice(
-                      key: const ValueKey('cron-editor-error'),
-                      icon: Icons.error_outline_rounded,
-                      tone: HermesStatusTone.error,
-                      message: _error!,
-                    ),
-                  ],
+                  HermesToggleRow(
+                    switchKey: const ValueKey('cron-editor-notify-fail'),
+                    title: s.crnNotifyFailOnly,
+                    value: _policy == CronNotifyPolicy.failuresOnly,
+                    onChanged:
+                        widget.notificationsAvailable &&
+                            _policy != CronNotifyPolicy.off
+                        ? (v) => setState(
+                            () => _policy = v
+                                ? CronNotifyPolicy.failuresOnly
+                                : CronNotifyPolicy.all,
+                          )
+                        : null,
+                  ),
                 ],
               ),
-      ),
+              if (_error != null) ...[
+                const SizedBox(height: HermesSpace.x3),
+                HermesInlineNotice(
+                  key: const ValueKey('cron-editor-error'),
+                  icon: Icons.error_outline_rounded,
+                  tone: HermesStatusTone.error,
+                  message: _error!,
+                ),
+              ],
+            ],
     );
   }
 
@@ -1502,8 +1629,10 @@ class _CronEditorPageState extends State<_CronEditorPage> {
         controller: _promptController,
         label: s.crnPromptLabel,
         hint: s.crnFieldPromptHint,
-        minLines: 3,
-        maxLines: 8,
+        keyboardType: TextInputType.multiline,
+        // Grows with the text; the page scrolls, never a small inner box.
+        minLines: 6,
+        maxLines: null,
       ),
       HermesSectionHeader(s.crnWhen),
       HermesListGroup(
@@ -1519,6 +1648,8 @@ class _CronEditorPageState extends State<_CronEditorPage> {
           ),
         ],
       ),
+      if (next != null)
+        _CronNextRuns(schedule: _schedule, from: DateTime.now()),
       HermesSectionHeader(s.crnDetails),
       HermesListGroup(
         children: [
@@ -1650,7 +1781,8 @@ class _CronEditorPageState extends State<_CronEditorPage> {
                 labelText: field.label,
                 hintText: field.help.isEmpty ? null : field.help,
               ),
-              onChanged: (next) => _blueprintValues[field.name] = next,
+              onChanged: (next) =>
+                  setState(() => _blueprintValues[field.name] = next),
             ),
           ),
         );
@@ -1663,6 +1795,66 @@ class _CronEditorPageState extends State<_CronEditorPage> {
         HermesListGroup(dividerIndent: HermesSpace.rowH, children: rows),
       ],
     ];
+  }
+}
+
+/// The next [count] runs of [schedule] after [from], strictly increasing;
+/// fewer when the schedule has no further runs (or none is computable).
+List<DateTime> cronUpcomingRuns(
+  String schedule,
+  DateTime from, {
+  int count = 3,
+}) {
+  final runs = <DateTime>[];
+  var cursor = from;
+  while (runs.length < count) {
+    final next = hermesScheduleNextRun(schedule, cursor);
+    if (next == null || !next.isAfter(cursor)) break;
+    runs.add(next);
+    cursor = next;
+  }
+  return runs;
+}
+
+/// Preview under the schedule: the next three runs with weekday and date, so
+/// the human summary above can be checked against real times.
+class _CronNextRuns extends StatelessWidget {
+  final String schedule;
+  final DateTime from;
+
+  const _CronNextRuns({required this.schedule, required this.from});
+
+  @override
+  Widget build(BuildContext context) {
+    final s = Strings.of(context);
+    final colors = Theme.of(context).hermes;
+    final runs = cronUpcomingRuns(schedule, from);
+    if (runs.isEmpty) return const SizedBox.shrink();
+    final style = TextStyle(
+      color: colors.textSecondary,
+      fontSize: 12.5,
+      height: 1.45,
+    );
+    return Padding(
+      key: const ValueKey('cron-next-runs'),
+      padding: const EdgeInsets.fromLTRB(6, 10, 6, 0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            s.fp1215NextRuns,
+            style: style.copyWith(fontWeight: FontWeight.w600),
+          ),
+          for (final (index, run) in runs.indexed)
+            Text(
+              '${HermesSchedule.weekdayAbbr(s, run.weekday)} ${run.day}/'
+              '${run.month} · ${HermesSchedule.formatTime24(run.hour, run.minute)}',
+              key: ValueKey('cron-next-run-$index'),
+              style: style,
+            ),
+        ],
+      ),
+    );
   }
 }
 

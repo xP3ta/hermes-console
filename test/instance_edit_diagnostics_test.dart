@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:hermes_android/core/screens/instance_edit_screen.dart';
+import 'package:hermes_android/core/widgets/hermes_app_bar.dart';
 import 'package:hermes_android/core/services/connection_diagnostics.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
@@ -22,8 +23,7 @@ class _FakeDiagnostics extends ConnectionDiagnostics {
     Strings s,
     SavedConnection conn,
     DashboardSecrets secrets, {
-    String? bridgeUrl,
-    String? bridgeToken,
+    DiagnosticsStageCallback? onStage,
   }) async {
     runCalls++;
     return report;
@@ -139,9 +139,7 @@ void main() {
     WidgetTester tester, {
     bool english = false,
   }) async {
-    final entry = find.text(
-      english ? 'Check connection' : 'Comprobar conexión',
-    );
+    final entry = find.byKey(const ValueKey('instance-details'));
     await reveal(tester, entry);
     await tester.tap(entry.first);
     await tester.pumpAndSettle();
@@ -246,7 +244,6 @@ void main() {
           ProbeResult(name: 'sessions', status: ProbeStatus.ok),
         ],
         dashboard: const [ProbeResult(name: 'status', status: ProbeStatus.ok)],
-        bridge: const [ProbeResult(name: 'health', status: ProbeStatus.ok)],
         matrix: allVerified,
         suggestions: const [],
         ranAt: DateTime.fromMillisecondsSinceEpoch(1784062800000),
@@ -287,6 +284,57 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('plugins the Gateway does not serve never ask for a review', (
+    tester,
+  ) async {
+    // Hermes serves plugins from the Dashboard: a 404 for them on the
+    // Gateway describes the server, it is not a fault of the connection.
+    final manager = await managerWith(savedConnection());
+    final fake = _FakeDiagnostics(
+      DiagnosticsReport(
+        gateway: [
+          const ProbeResult(name: 'health', status: ProbeStatus.ok),
+          const ProbeResult(name: 'sessions', status: ProbeStatus.ok),
+          const ProbeResult(
+            name: 'plugins',
+            status: ProbeStatus.notFound,
+            httpCode: 404,
+            detail: 'HTTP 404',
+          ).asOptional(),
+        ],
+        dashboard: const [ProbeResult(name: 'status', status: ProbeStatus.ok)],
+        matrix: allVerified,
+        suggestions: const [],
+        ranAt: DateTime.fromMillisecondsSinceEpoch(1784062800000),
+      ),
+    );
+
+    await pumpEditor(tester, manager, diagnostics: fake);
+    await openDiagnostics(tester);
+
+    expect(semanticsLabel('Estado del diagnóstico: correcto'), findsOneWidget);
+    expect(find.text('revisar'), findsNothing);
+    expect(find.text('Necesita revisión'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  test(
+    'only an optional capability that is absent is left out of the verdict',
+    () {
+      const absent = ProbeResult(name: 'plugins', status: ProbeStatus.notFound);
+      expect(absent.absentOptional, isFalse);
+      expect(absent.asOptional().absentOptional, isTrue);
+      // A real failure of an optional probe still counts.
+      expect(
+        const ProbeResult(
+          name: 'plugins',
+          status: ProbeStatus.authInvalid,
+        ).asOptional().absentOptional,
+        isFalse,
+      );
+    },
+  );
+
   testWidgets('sí, no y desconocido son inequívocos sin depender del color', (
     tester,
   ) async {
@@ -319,7 +367,7 @@ void main() {
     );
     expect(
       tester.widget<Text>(find.text('SKILLS (TOGGLE): NO')).style?.color,
-      colors.textDisabled,
+      colors.textTertiary,
     );
     expect(semanticsLabel('CHAT: SÍ'), findsOneWidget);
     expect(semanticsLabel('STREAMING: ?'), findsOneWidget);
@@ -338,7 +386,6 @@ void main() {
           ),
         ],
         dashboard: const [],
-        bridge: const [],
         matrix: const CapabilityMatrix(
           gatewayOnline: CapState.no,
           checkedAtMs: 1784062800000,
@@ -380,7 +427,6 @@ void main() {
           ),
         ],
         dashboard: const [],
-        bridge: const [],
         matrix: const CapabilityMatrix(
           gatewayOnline: CapState.no,
           checkedAtMs: 1784062800000,
@@ -397,8 +443,15 @@ void main() {
       locale: const Locale('en'),
     );
 
-    expect(find.text('Edit instance'), findsOneWidget);
-    expect(find.text('Editar instancia'), findsNothing);
+    expect(
+      find.descendant(
+        of: find.byType(HermesAppBar),
+        matching: find.text('Server'),
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('Where is your Hermes?'), findsOneWidget);
+    expect(find.text('¿Dónde está tu Hermes?'), findsNothing);
 
     await openDiagnostics(tester, english: true);
     await expandTechnicalDetails(tester, english: true);
@@ -427,9 +480,9 @@ void main() {
     );
     await tester.pump();
 
-    expect(find.text('New instance'), findsOneWidget);
-    await reveal(tester, find.text('save instance'));
-    expect(find.text('save instance'), findsOneWidget);
+    expect(find.text('Connect manually'), findsOneWidget);
+    await reveal(tester, find.text('Save'));
+    expect(find.text('Save'), findsOneWidget);
     expect(find.text('Nueva instancia'), findsNothing);
     expect(find.text('guardar instancia'), findsNothing);
   });

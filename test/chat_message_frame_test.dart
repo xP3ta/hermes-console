@@ -48,7 +48,9 @@ void main() {
     expect(find.byType(SelectableText), findsNothing);
   });
 
-  testWidgets('sin avatar muestra la inicial en acento', (tester) async {
+  testWidgets('sin avatar no hay hueco: el nombre empieza donde el cuerpo', (
+    tester,
+  ) async {
     await tester.pumpWidget(
       _host(
         const ChatMessageFrame(
@@ -58,11 +60,20 @@ void main() {
         ),
       ),
     );
-    final initial = tester.widget<Text>(
+    expect(find.byKey(const ValueKey('assistant-avatar-slot')), findsNothing);
+    expect(
       find.byKey(const ValueKey('assistant-avatar-initial')),
+      findsNothing,
     );
-    expect(initial.data, 'H');
-    expect(initial.style?.color, AppTheme.hermesRedDark.hermes.accent);
+    final name = tester.widget<Text>(
+      find.byKey(const ValueKey('assistant-header-name')),
+    );
+    expect(name.data, 'Hermes');
+    expect(name.style?.color, AppTheme.hermesRedDark.hermes.accent);
+    expect(
+      tester.getTopLeft(find.byKey(const ValueKey('assistant-header-name'))).dx,
+      tester.getTopLeft(find.text('cuerpo')).dx,
+    );
     expect(find.byType(SelectionArea), findsNothing);
   });
 

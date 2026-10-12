@@ -268,12 +268,13 @@ void main() {
           ']';
       final carrier = _message('user', raw)..['row_id'] = 1210;
 
-      expect(effectiveUserDisplayKind(carrier), 'hidden');
+      // Igual que Desktop: aviso de proceso (no burbuja ni turno de usuario).
+      expect(effectiveUserDisplayKind(carrier), 'process_complete');
       expect(isRealUserTurn(carrier), isFalse);
 
       final projection = ChatRenderProjection.build([carrier]);
 
-      expect(projection.units, isEmpty);
+      expect(projection.units.single, isA<ChatMessageUnitPlan>());
       expect(projection.visibleUserCount, 0);
       expect(projection.userOrdinalFor(carrier), isNull);
       expect(carrier['content'], raw, reason: 'la historia durable no se muta');
@@ -426,25 +427,22 @@ void main() {
     expect(projection.units.whereType<ChatUserTurnUnitPlan>(), hasLength(1));
   });
 
-  test(
-    'un carrier interno sin display_kind sigue oculto junto a process_complete',
-    () {
-      final carrier = _message('user', _processCompleteCarrier)
-        ..['row_id'] = 9102;
+  test('un carrier sin display_kind se proyecta como process_complete', () {
+    final carrier = _message('user', _processCompleteCarrier)
+      ..['row_id'] = 9102;
 
-      expect(effectiveUserDisplayKind(carrier), 'hidden');
+    expect(effectiveUserDisplayKind(carrier), 'process_complete');
 
-      final hidden = _message('user', 'payload interno de otro carrier')
-        ..['display_kind'] = 'hidden';
+    final hidden = _message('user', 'payload interno de otro carrier')
+      ..['display_kind'] = 'hidden';
 
-      expect(normalizeTranscriptMessageForDisplay(hidden), isNull);
+    expect(normalizeTranscriptMessageForDisplay(hidden), isNull);
 
-      final projection = ChatRenderProjection.build([carrier, hidden]);
+    final projection = ChatRenderProjection.build([carrier, hidden]);
 
-      expect(projection.units, isEmpty);
-      expect(projection.visibleUserCount, 0);
-    },
-  );
+    expect(projection.units.single, isA<ChatMessageUnitPlan>());
+    expect(projection.visibleUserCount, 0);
+  });
 
   test(
     'un prompt real parecido a un aviso de proceso sigue siendo del usuario',
@@ -496,6 +494,134 @@ void main() {
       expect(projectedUserVisibleContent(mixed), 'Pregunta visible');
       expect(effectiveUserDisplayKind(mixed), isEmpty);
     }
+  });
+
+  group('tg1215 carriers de proceso con todos los estados de Hermes', () {
+    // `_completion_status` de tools/process_registry_notifications.py.
+    const headlines = [
+      'completed normally (exit code 0)',
+      'exited (exit code 1)',
+      'exited (exit code 137)',
+      'terminated by process.kill (exit code -15, SIGTERM)',
+      'terminated by Hermes (exit code -15, SIGTERM)',
+      'terminated by api_server_run_stop (exit code 143, SIGTERM)',
+      'marked lost because the process backend disappeared (exit code -1)',
+      'failed to start (exit code -1)',
+    ];
+    for (final headline in headlines) {
+      test('se proyecta como aviso de proceso: $headline', () {
+        final carrier =
+            '[IMPORTANT: Background process proc_f4c048969c1b $headline.\n'
+            'Command: cd /tmp && flutter test\n'
+            'Output:\n'
+            'bash: no se puede establecer el grupo de proceso de terminal (-1)\n'
+            'All tests passed!\n'
+            ']';
+        final user = _message('user', carrier)..['row_id'] = 77;
+        expect(stripBackgroundProcessCarrier(carrier), isEmpty);
+        expect(effectiveUserDisplayKind(user), 'process_complete');
+        expect(isRealUserTurn(user), isFalse);
+        final projection = ChatRenderProjection.build([user]);
+        expect(projection.units.single, isA<ChatMessageUnitPlan>());
+        expect(projection.visibleUserCount, 0);
+        expect(projection.userOrdinalFor(user), isNull);
+        expect(user['content'], carrier, reason: 'la historia no se muta');
+
+        final mixed = _message('user', 'Pregunta visible\n\n$carrier');
+        expect(projectedUserVisibleContent(mixed), 'Pregunta visible');
+        expect(effectiveUserDisplayKind(mixed), isEmpty);
+      });
+    }
+
+    test('acepta salida vacía, sin salto final y con atribución', () {
+      for (final carrier in const [
+        '[IMPORTANT: Background process proc_f4c048969c1b completed normally (exit code 0).\n'
+            'Command: true\nOutput:\n]',
+        '[IMPORTANT: Background process proc_f4c048969c1b completed normally (exit code 0).\n'
+            'Command: echo hi\nOutput:\nhi]',
+        '[IMPORTANT: Background process proc_f4c048969c1b exited (exit code 2).\n'
+            'Started by subagent sa-1-abc of delegation deleg_12345678. Task: "x"\n'
+            'Command: make\nOutput:\nerror\n]',
+        '[IMPORTANT: Background process proc_f4c048969c1b exited (exit code 2).\r\n'
+            'Command: make\r\nOutput:\r\nerror\r\n]',
+      ]) {
+        expect(
+          effectiveUserDisplayKind(_message('user', carrier)),
+          'process_complete',
+          reason: carrier,
+        );
+      }
+    });
+
+    test('un parecido escrito por la persona sigue siendo su mensaje', () {
+      for (final raw in const [
+        '[IMPORTANT: Background process proc_f4c048969c1b completed normally (exit code 0).',
+        '[IMPORTANT: Background process proc_f4c048969c1b finished happily (exit code 0).\n'
+            'Command: x\nOutput:\ny\n]',
+        '[IMPORTANT: Background process proc_f4c048969c1b completed normally (exit code 0).\n'
+            'Command: x\nOutput:\ny\n] ¿y esto qué es?',
+        '[IMPORTANT: Background process proc_f4c048969c1b terminated by (exit code 0).\n'
+            'Command: x\nOutput:\ny\n]',
+        '[IMPORTANT: Background process proc_SHORT completed normally (exit code 0).\n'
+            'Command: x\nOutput:\ny\n]',
+        'Mira: [IMPORTANT: Background process proc_f4c048969c1b completed normally (exit code 0).\n'
+            'Command: x\nOutput:\ny\n]',
+        '[IMPORTANT: Background process proc_f4c048969c1b completed normally (exit code 0).\n'
+            'Output:\ny\n]',
+      ]) {
+        final user = _message('user', raw);
+        expect(projectedUserVisibleContent(user), raw, reason: raw);
+        expect(effectiveUserDisplayKind(user), isEmpty, reason: raw);
+        expect(isRealUserTurn(user), isTrue, reason: raw);
+      }
+    });
+
+    test('parsea estado, código, comando y salida sin tocar el texto', () {
+      const carrier =
+          '[IMPORTANT: Background process proc_f4c048969c1b completed normally (exit code 0).\n'
+          'Command: flutter test\n'
+          'Output:\n'
+          'bash: no se puede establecer el grupo de proceso de terminal (-1)\n'
+          'ok\n'
+          ']';
+      final parsed = parseBackgroundProcessCarrier(carrier)!;
+      expect(parsed.status, BackgroundProcessCarrierStatus.completed);
+      expect(parsed.exitCode, '0');
+      expect(parsed.command, 'flutter test');
+      expect(
+        parsed.output,
+        'bash: no se puede establecer el grupo de proceso de terminal (-1)\nok',
+      );
+      expect(
+        parseBackgroundProcessCarrier(
+          '[IMPORTANT: Background process proc_f4c048969c1b terminated by process.kill '
+          '(exit code -15, SIGTERM).\nCommand: sleep 9\nOutput:\n]',
+        )?.status,
+        BackgroundProcessCarrierStatus.terminated,
+      );
+      expect(parseBackgroundProcessCarrier('hola'), isNull);
+    });
+
+    // Follow-up to 7b9381a: the legacy "exited" phrase with exit code 0 is a
+    // success; only a non-zero (or unknown) exit is a failure.
+    test('un carrier exited con exit 0 es un éxito', () {
+      BackgroundProcessCarrier parse(String headline) =>
+          parseBackgroundProcessCarrier(
+            '[IMPORTANT: Background process proc_f4c048969c1b $headline.\n'
+            'Command: ./build.sh\nOutput:\nok\n]',
+          )!;
+      expect(parse('exited (exit code 0)').failed, isFalse);
+      expect(parse('completed normally (exit code 0)').failed, isFalse);
+      expect(parse('exited (exit code 1)').failed, isTrue);
+      expect(parse('exited (exit code 137)').failed, isTrue);
+      expect(parse('exited (exit code -9)').failed, isTrue);
+      expect(parse('exited (exit code ?)').failed, isTrue);
+      expect(
+        parse('terminated by process.kill (exit code -15, SIGTERM)').failed,
+        isTrue,
+      );
+      expect(parse('failed to start (exit code 0)').failed, isTrue);
+    });
   });
 
   test(
@@ -712,4 +838,172 @@ void main() {
       expect(projection.canReuseFor(messages), isFalse);
     },
   );
+
+  group('rg1215 grupo de respuesta', () {
+    Map<String, dynamic> toolRow(String id, String label) => {
+      'role': 'assistant',
+      'content': '',
+      'id': id,
+      '_activity_trace': [
+        {'kind': 'tool', 'label': label, 'status': 'completed', 'id': id},
+      ],
+    };
+
+    test('filas consecutivas del asistente forman una sola unidad', () {
+      final messages = <Map<String, dynamic>>[
+        {'role': 'assistant', 'content': 'RESPUESTA_FINAL', 'id': 'r4'},
+        toolRow('r3', 'terminal'),
+        toolRow('r2', 'write_file'),
+        toolRow('r1', 'skill_view'),
+        {'role': 'user', 'content': 'Pregunta', 'id': 'u1'},
+      ];
+      final projection = ChatRenderProjection.build(messages);
+
+      expect(projection.units, hasLength(2));
+      final group = projection.units.first as ChatMessageUnitPlan;
+      expect(group.messageIndex, 0);
+      // Más nuevo primero, sin perder ni duplicar ninguna fila.
+      expect(group.memberIndexesNewestFirst, [0, 1, 2, 3]);
+      for (var index = 0; index < 4; index++) {
+        expect(projection.nearestRenderableMessageIndex(index), index);
+      }
+      expect(projection.renderedMessageCount, 5);
+    });
+
+    test('un usuario o un aviso editorial cortan el grupo', () {
+      final messages = <Map<String, dynamic>>[
+        toolRow('r4', 'terminal'),
+        {
+          'role': 'user',
+          'content': 'aviso',
+          'display_kind': 'process_complete',
+          'id': 'p1',
+        },
+        toolRow('r3', 'write_file'),
+        {'role': 'user', 'content': 'Segunda', 'id': 'u2'},
+        toolRow('r2', 'read_file'),
+        {'role': 'user', 'content': 'Primera', 'id': 'u1'},
+      ];
+      final projection = ChatRenderProjection.build(messages);
+      final groups = projection.units.whereType<ChatMessageUnitPlan>().where(
+        (unit) => messages[unit.messageIndex]['role'] == 'assistant',
+      );
+      expect(groups.map((unit) => unit.memberIndexesNewestFirst), [
+        [0],
+        [2],
+        [4],
+      ]);
+    });
+
+    test('un turno vivo sin prompt visible no crece la respuesta anterior', () {
+      final messages = <Map<String, dynamic>>[
+        {'role': 'assistant', 'content': 'NUEVO'},
+        {'role': 'assistant', 'content': 'RESPUESTA_ANTERIOR'},
+        {'role': 'user', 'content': 'Pregunta'},
+      ];
+      ChatRenderProjection build() =>
+          ChatRenderProjection.build(messages, streamingHead: true);
+      expect(build().units, hasLength(3));
+      expect(build().canReuseFor(messages), isFalse);
+      // Las filas solo-traza del turno vivo sí comparten su burbuja.
+      messages[1] = toolRow('r1', 'terminal');
+      expect(build().units, hasLength(2));
+    });
+
+    test(
+      'un turno remoto cerrado sin prompt no crece la respuesta anterior',
+      () {
+        // Frame terminal: message.complete ya cerró el streaming y la
+        // hidratación todavía no trajo el prompt remoto.
+        final messages = <Map<String, dynamic>>[
+          {
+            'role': 'assistant',
+            'content': 'NUEVO',
+            '_responseGroupStart': true,
+          },
+          {'role': 'assistant', 'content': 'RESPUESTA_ANTERIOR'},
+          {'role': 'user', 'content': 'Pregunta'},
+        ];
+        for (final streamingHead in [false, true]) {
+          final projection = ChatRenderProjection.build(
+            messages,
+            streamingHead: streamingHead,
+          );
+          expect(projection.units, hasLength(3), reason: '$streamingHead');
+        }
+        // Las filas posteriores del mismo turno remoto sí se agrupan con él.
+        final later = <Map<String, dynamic>>[
+          toolRow('r2', 'terminal'),
+          ...messages,
+        ];
+        final projection = ChatRenderProjection.build(later);
+        expect(
+          projection.units.whereType<ChatMessageUnitPlan>().map(
+            (unit) => unit.memberIndexesNewestFirst,
+          ),
+          [
+            [0, 1],
+            [2],
+          ],
+        );
+      },
+    );
+
+    test('una respuesta parada queda fuera del grupo', () {
+      final messages = <Map<String, dynamic>>[
+        {
+          'role': 'assistant',
+          'content': 'PARADA',
+          '_cancelled': true,
+          '_stopped': true,
+        },
+        toolRow('r1', 'terminal'),
+        {'role': 'user', 'content': 'Pregunta'},
+      ];
+      final projection = ChatRenderProjection.build(messages);
+      expect(projection.units, hasLength(3));
+    });
+
+    test('fusiona traza, razonamiento, texto y medios en orden', () {
+      final merged = mergeAssistantResponseGroup([
+        {
+          'role': 'assistant',
+          'content': '',
+          'reasoning': 'primero pienso',
+          '_activity_duration_seconds': 10,
+          '_activity_trace': [
+            {'kind': 'tool', 'label': 'skill_view', 'id': 'a'},
+          ],
+          '_generatedImages': [
+            {'tool_call_id': 'a', 'source': 'uno.png'},
+          ],
+        },
+        {
+          'role': 'assistant',
+          'content': 'Voy a escribir.',
+          '_activity_trace': [
+            {'kind': 'tool', 'label': 'write_file', 'id': 'b'},
+          ],
+        },
+        {
+          'role': 'assistant',
+          'content': 'RESPUESTA_FINAL',
+          'timestamp': 99,
+          '_activity_duration_seconds': 5,
+        },
+      ]);
+      expect(merged['content'], 'Voy a escribir.\n\nRESPUESTA_FINAL');
+      expect(merged['timestamp'], 99);
+      expect(merged['_activity_duration_seconds'], 15);
+      expect(
+        [
+          for (final step in merged['_activity_trace'] as List)
+            step['label'] ?? step['kind'],
+        ],
+        ['reasoning', 'skill_view', 'write_file'],
+      );
+      expect(merged['reasoning'], 'primero pienso');
+      expect((merged['_generatedImages'] as List), hasLength(1));
+    });
+  });
 }

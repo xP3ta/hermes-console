@@ -60,4 +60,50 @@ void main() {
     expect(dartPreview, contains("'renderPdfPage'"));
     expect(dartPreview, isNot(contains("'path': widget.file.path")));
   });
+
+  test('"Abrir fuera" abre la app predeterminada, sin selector forzado', () {
+    final handler = File(
+      'android/app/src/main/kotlin/com/hermesagent/hermes_android/'
+      'HermesDocumentPreviewHandler.kt',
+    ).readAsStringSync();
+    final start = handler.indexOf('private fun launchExternalViewer(');
+    expect(start, isNonNegative);
+    final end = handler.indexOf('\n    private fun ', start + 1);
+    final body = handler.substring(start, end);
+
+    // The plain ACTION_VIEW is started first: Android resolves the user's
+    // default app (or shows its own "Abrir con" when none is set).
+    final direct = body.indexOf('applicationContext.startActivity(viewIntent)');
+    final catchAt = body.indexOf('catch (_: ActivityNotFoundException)');
+    final chooserAt = body.indexOf('Intent.createChooser(viewIntent');
+    expect(direct, isNonNegative);
+    expect(catchAt, greaterThan(direct));
+    // The chooser survives only as the fallback inside the catch.
+    expect(chooserAt, greaterThan(catchAt));
+    expect(RegExp(r'Intent\.createChooser').allMatches(body), hasLength(1));
+    // The read grant and the new-task flag ride on the direct intent too.
+    final viewIntent = body.substring(
+      body.indexOf('val viewIntent'),
+      body.indexOf('try {'),
+    );
+    expect(viewIntent, contains('FLAG_GRANT_READ_URI_PERMISSION'));
+    expect(viewIntent, contains('FLAG_ACTIVITY_NEW_TASK'));
+    expect(
+      handler,
+      contains('import android.content.ActivityNotFoundException'),
+    );
+  });
+
+  test(
+    'los enlaces tocados en el visor HTML van al navegador predeterminado',
+    () {
+      final policy = File(
+        'lib/core/widgets/artifact_viewer/artifact_html_policy.dart',
+      ).readAsStringSync();
+      expect(policy, contains('LaunchMode.externalApplication'));
+      expect(policy, isNot(contains('externalNonBrowserApplication')));
+      expect(policy, isNot(contains('inAppBrowserView')));
+      expect(policy, isNot(contains('inAppWebView')));
+    },
+  );
 }

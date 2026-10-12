@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:hermes_android/core/bots/ui/room/room_prefs.dart';
 import 'package:hermes_android/core/bots/ui/room/room_screen.dart';
 import 'package:hermes_android/core/models/agent_profile.dart';
 import 'package:hermes_android/core/models/hosted_groups.dart';
@@ -17,6 +18,13 @@ import 'package:hermes_android/core/widgets/room_team_row.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'support/inter_font.dart';
+
+/// The amber "waiting for you" dot of any room card.
+Finder _roomNeedsYou() => find.byWidgetPredicate(
+  (w) =>
+      w.key is ValueKey<String> &&
+      (w.key! as ValueKey<String>).value.startsWith('roster-room-needs-you-'),
+);
 
 void main() {
   setUpAll(loadInterFont);
@@ -59,6 +67,64 @@ void main() {
         await tester.pumpWidget(const SizedBox());
       }
     }
+  });
+
+  testWidgets('a seen room stops asking for the user in the Bots list', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    final manager = await ConnectionManager.create(
+      await SharedPreferences.getInstance(),
+    );
+    addTearDown(manager.dispose);
+    final mention = HostedGroupLogPage.fromJson(
+      {
+        'events': [
+          {
+            'room_id': 'room-private',
+            'seq': 1,
+            'event_id': 'mention-1',
+            'kind': 'message.member',
+            'actor': {
+              'kind': 'member',
+              'id': 'member-private',
+              'profile': 'builder',
+            },
+            'authority_epoch': 1,
+            'payload': {
+              'discussion_event_id': 'user:d1',
+              'member_id': 'member-private',
+              'member_index': 0,
+              'round_index': 0,
+              'task_id': 'task-1',
+              'thread_id': 'thread-1',
+              'turn_id': 'turn-1',
+              'text': 'Done. @user FYI the build is green.',
+            },
+            'created_at': 2,
+            'idempotent': false,
+          },
+        ],
+        'cursor': 1,
+        'latest_seq': 1,
+        'has_more': false,
+        'authority': {'gateway_id': 'gateway-private', 'epoch': 1},
+      },
+      expectedRoomId: 'room-private',
+      sinceSeq: 0,
+    );
+    await _pumpHostedScreen(tester, manager, _workspaceSource(log: mention));
+    final needs = _roomNeedsYou();
+    expect(needs, findsOneWidget);
+
+    // Leaving the room writes the seen marker, exactly as RoomScreen does.
+    await tester.runAsync(
+      () => SharedPreferencesRoomPrefs(
+        manager.prefs,
+      ).setLastSeenSeq('gateway-private:room-private', 1),
+    );
+    await tester.pumpAndSettle();
+    expect(needs, findsNothing);
   });
 
   for (final missingMethod in [false, true]) {
@@ -500,7 +566,9 @@ void main() {
       await _pumpHostedScreen(tester, manager, source);
 
       await _openRoomActions(tester);
-      await tester.tap(find.byKey(const ValueKey('roster-room-action-disband')));
+      await tester.tap(
+        find.byKey(const ValueKey('roster-room-action-disband')),
+      );
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('roster-room-confirm')));
       await tester.pumpAndSettle();
@@ -631,7 +699,7 @@ void main() {
     );
     final source = _workspaceSource(deferred: true);
     await _pumpHostedScreen(tester, manager, source);
-    await tester.tap(_roomRow());
+    await _tapRoom(tester);
     await tester.pumpAndSettle();
 
     expect(find.text('A room task can be retried.'), findsNothing);
@@ -846,9 +914,72 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  // The Work area (its "ROOMS" section, the "whole team sees it" line and
-  // the stacked-face cards) is gone: rooms are rows of the Bots roster.
-  testWidgets('rooms are roster rows, never a separate Work section', (
+  // Owner decision 1.2.15: Desktop's local (projection) rooms are gone from
+  // Console. Even when the default profile's ui_meta still carries them,
+  // only the server's hosted rooms are listed, searched or flagged.
+  testWidgets('Desktop projection rooms never show; hosted rooms still do', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    final manager = await ConnectionManager.create(
+      await SharedPreferences.getInstance(),
+    );
+    addTearDown(manager.dispose);
+    final withDesktopRooms = AgentProfile.fromJson({
+      'name': 'default',
+      'is_default': true,
+      'ui_meta': {
+        'hermes-bots-groups': {
+          'version': 3,
+          'updatedAt': 1790000600000,
+          'rooms': {
+            'id:room-desktop-1': {
+              'name': 'Desktop crew',
+              'roomId': 'room-desktop-1',
+              'revision': 12,
+              'members': [
+                {'name': 'astra'},
+              ],
+              'log': [
+                {
+                  'id': 'm2',
+                  'from': {'kind': 'member', 'name': 'astra'},
+                  'text': 'All green. @user ready to merge?',
+                  'at': 1790000560000,
+                },
+              ],
+            },
+          },
+        },
+      },
+    });
+    await _pumpHostedScreen(
+      tester,
+      manager,
+      _workspaceSource(profiles: [withDesktopRooms]),
+    );
+
+    expect(_roomRow(), findsOneWidget, reason: 'the hosted room');
+    expect(find.text('Shared'), findsOneWidget);
+    expect(find.text('Desktop crew'), findsNothing);
+    expect(find.text('Desktop'), findsNothing);
+    expect(_roomNeedsYou(), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('roster-search')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('mission-bot-search')),
+      'crew',
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Desktop crew'), findsNothing);
+    expect(find.text('Shared'), findsNothing, reason: 'no match, no rooms');
+    expect(tester.takeException(), isNull);
+  });
+
+  // The old Work area (the "whole team sees it" line, the shared-rooms feed)
+  // is gone: rooms are the Dots home's ROOMS cards.
+  testWidgets('rooms are the Bots home ROOMS cards, never a Work section', (
     tester,
   ) async {
     SharedPreferences.setMockInitialValues({});
@@ -857,7 +988,7 @@ void main() {
     );
     await _pumpHostedScreen(tester, manager, _workspaceSource());
 
-    expect(find.text('ROOMS'), findsNothing);
+    expect(find.text('ROOMS'), findsOneWidget);
     expect(find.textContaining('The whole team sees it'), findsNothing);
     expect(find.byKey(const ValueKey('mission-shared-rooms')), findsNothing);
     expect(find.byKey(const ValueKey('mission-work-feed')), findsNothing);
@@ -867,6 +998,64 @@ void main() {
       findsNothing,
     );
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('a room action keeps every room\'s driver status', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    final manager = await ConnectionManager.create(
+      await SharedPreferences.getInstance(),
+    );
+    addTearDown(manager.dispose);
+    final source = _workspaceSource();
+    final base = source.snapshot;
+    source.snapshot = MissionBackendSnapshot(
+      profiles: base.profiles,
+      board: base.board,
+      profilesCapability: base.profilesCapability,
+      sessionsCapability: base.sessionsCapability,
+      kanbanCapability: base.kanbanCapability,
+      hostedGroupsCapability: base.hostedGroupsCapability,
+      hostedGroups: HostedGroupsSnapshot(
+        capabilities: base.hostedGroups.capabilities,
+        rooms: base.hostedGroups.rooms,
+        logs: base.hostedGroups.logs,
+        driverStatuses: {
+          'room-private': RoomDriverStatus.tryParse({
+            'running': true,
+            'working': false,
+            'blocked': false,
+            'pending_actions': [
+              {
+                'kind': 'approval',
+                'task_id': 't-approve',
+                'member_id': 'member-private',
+                'execution_generation': 1,
+                'request_id': 'r-approve',
+              },
+            ],
+          })!,
+        },
+      ),
+      loadedAt: base.loadedAt,
+    );
+    await _pumpHostedScreen(tester, manager, source);
+    expect(_roomNeedsYou(), findsOneWidget);
+
+    await _openRoomActions(tester);
+    await tester.tap(find.byKey(const ValueKey('roster-room-action-rename')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('roster-room-rename-field')),
+      'Renamed room',
+    );
+    await tester.tap(find.byKey(const ValueKey('roster-room-rename-save')));
+    await tester.pumpAndSettle();
+    expect(source.calls, contains('rename:3:Renamed room'));
+
+    // The pending approval did not go anywhere: the room still needs you.
+    expect(_roomNeedsYou(), findsOneWidget);
   });
 
   testWidgets('room actions from the roster rename and stop the room', (
@@ -1104,7 +1293,7 @@ void main() {
     addTearDown(manager.dispose);
     final source = _workspaceSource();
     await _pumpHostedScreen(tester, manager, source);
-    await tester.tap(_roomRow());
+    await _tapRoom(tester);
     await tester.pumpAndSettle();
     expect(
       find.byKey(const ValueKey('mission-hosted-room-workspace')),
@@ -1160,7 +1349,7 @@ void main() {
       addTearDown(manager.dispose);
       final source = _workspaceSource();
       await _pumpHostedScreen(tester, manager, source);
-      await tester.tap(_roomRow());
+      await _tapRoom(tester);
       await tester.pumpAndSettle();
       await tester.tap(roomField());
       await tester.enterText(roomField(), '@${handle.substring(0, 1)}');
@@ -1191,7 +1380,7 @@ void main() {
     addTearDown(manager.dispose);
     final source = _RefreshingHostedSource(_workspaceSource().snapshot);
     await _pumpHostedScreen(tester, manager, source);
-    await tester.tap(_roomRow());
+    await _tapRoom(tester);
     await tester.pumpAndSettle();
     await tester.pump(const Duration(seconds: 3));
     await tester.pumpAndSettle();
@@ -1200,12 +1389,109 @@ void main() {
     source.failRead = true;
     await tester.pump(const Duration(seconds: 16));
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('room-error')), findsOneWidget);
+    // One failed poll is not worth a status line (the room shows itself as
+    // reconnecting only once stale; see room_refresh_health_test.dart), and
+    // the remote failure text never reaches the screen.
+    expect(source.reads, greaterThan(1));
+    expect(find.byKey(const ValueKey('room-error')), findsNothing);
+    expect(find.byKey(const ValueKey('room-refresh-stale')), findsNothing);
     expect(find.textContaining('private remote failure'), findsNothing);
     final reads = source.reads;
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump(const Duration(seconds: 20));
     expect(source.reads, reads);
+  });
+
+  // The owner's room kept failing to refresh after the server closed the
+  // socket and accepted a new one: the room was bound to the capability
+  // generation it was opened with, which belongs to the old socket.
+  testWidgets('an open room resumes after a reconnect without reopening', (
+    tester,
+  ) async {
+    FlutterSecureStorage.setMockInitialValues({});
+    SharedPreferences.setMockInitialValues({});
+    final manager = await ConnectionManager.create(
+      await SharedPreferences.getInstance(),
+    );
+    addTearDown(manager.dispose);
+    final source = _ReconnectingHostedSource(_workspaceSource().snapshot);
+    await _pumpHostedScreen(tester, manager, source);
+    await _tapRoom(tester);
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 3));
+    await tester.pumpAndSettle();
+    expect(source.reads, contains(3));
+    final opened = tester.state(find.byType(RoomScreen));
+    await tester.enterText(roomField(), 'still typing');
+
+    source.live = 4;
+    source.reply('After reconnect');
+    for (var i = 0; i < 2; i++) {
+      await tester.pump(const Duration(seconds: 16));
+      await tester.pumpAndSettle();
+    }
+
+    expect(source.reads, contains(4));
+    expect(find.text('After reconnect'), findsOneWidget);
+    expect(find.text('Before'), findsOneWidget);
+    expect(find.byKey(const ValueKey('room-refresh-stale')), findsNothing);
+    expect(
+      identical(tester.state(find.byType(RoomScreen)), opened),
+      isTrue,
+      reason: 'the same open room recovered; it was never reopened',
+    );
+    expect(
+      tester.widget<TextField>(roomField()).controller!.text,
+      'still typing',
+    );
+    await tapSend(tester);
+    expect(source.calls.where((call) => call.startsWith('send:')), [
+      'send:4:still typing',
+    ]);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('a send never goes out under the previous socket generation', (
+    tester,
+  ) async {
+    FlutterSecureStorage.setMockInitialValues({});
+    SharedPreferences.setMockInitialValues({});
+    final manager = await ConnectionManager.create(
+      await SharedPreferences.getInstance(),
+    );
+    addTearDown(manager.dispose);
+    final source = _ReconnectingHostedSource(_workspaceSource().snapshot);
+    await _pumpHostedScreen(tester, manager, source);
+    await _tapRoom(tester);
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 3));
+    await tester.pumpAndSettle();
+    expect(source.reads, contains(3));
+
+    // Reconnected: the first read under the new generation is on the wire.
+    source.live = 4;
+    source.reply('After reconnect');
+    source.holdGeneration = 4;
+    source.hold = Completer<void>();
+    await tester.pump(const Duration(seconds: 16));
+    expect(source.reads.last, 4);
+    await tester.enterText(roomField(), 'too early');
+    await tapSend(tester);
+    expect(
+      source.calls.where((call) => call.startsWith('send:')),
+      isEmpty,
+      reason: 'generation 3 belongs to a closed socket',
+    );
+
+    source.hold!.complete();
+    await tester.pumpAndSettle();
+    expect(find.text('After reconnect'), findsOneWidget);
+    await tester.enterText(roomField(), 'after the read');
+    await tapSend(tester);
+    expect(source.calls.where((call) => call.startsWith('send:')), [
+      'send:4:after the read',
+    ]);
+    await tester.pumpWidget(const SizedBox.shrink());
   });
 
   testWidgets('overflow rename, stop and disband converge then close', (
@@ -1218,11 +1504,11 @@ void main() {
     addTearDown(manager.dispose);
     final source = _workspaceSource();
     await _pumpHostedScreen(tester, manager, source);
-    await tester.tap(_roomRow());
+    await _tapRoom(tester);
     await tester.pumpAndSettle();
 
     Future<void> menu(String item) async {
-      await tester.tap(find.byKey(const ValueKey('room-overflow')));
+      await tester.longPress(find.byKey(const ValueKey('room-header')));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(ValueKey('room-menu-$item')));
       await tester.pumpAndSettle();
@@ -1310,7 +1596,7 @@ void main() {
       ],
     );
     await _pumpHostedScreen(tester, manager, source);
-    await tester.tap(_roomRow());
+    await _tapRoom(tester);
     await tester.pumpAndSettle();
     final local = tester.widget<RoomMemberAvatar>(
       find.descendant(
@@ -1352,7 +1638,7 @@ void main() {
     addTearDown(manager.dispose);
     final source = _workspaceSource();
     await _pumpHostedScreen(tester, manager, source);
-    await tester.tap(_roomRow());
+    await _tapRoom(tester);
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('room-reply-event-private')));
     await tester.pumpAndSettle();
@@ -1380,7 +1666,7 @@ void main() {
       addTearDown(manager.dispose);
       final source = _workspaceSource(room: _crowdedRoom(14));
       await _pumpHostedScreen(tester, manager, source);
-      await tester.tap(_roomRow());
+      await _tapRoom(tester);
       await tester.pumpAndSettle();
       final screen = tester.getRect(
         find.byKey(const ValueKey('mission-hosted-room-workspace')),
@@ -1409,7 +1695,7 @@ void main() {
       addTearDown(manager.dispose);
       final source = _presenceSource();
       await _pumpHostedScreen(tester, manager, source);
-      await tester.tap(_roomRow());
+      await _tapRoom(tester);
       await tester.pumpAndSettle();
       await tester.enterText(roomField(), '@builder @reviewer please reply');
       await tester.pump();
@@ -1538,15 +1824,23 @@ Future<void> _pumpHostedScreen(
 
 /// The first hosted room row of the Bots roster (rooms live there now; the
 /// separate Work destination is gone).
-Finder _roomRow() => find
-    .byWidgetPredicate((widget) {
-      final key = widget.key;
-      return key is ValueKey<String> && key.value.startsWith('roster-room-row-');
-    })
-    .first;
+Finder _roomRow() => find.byWidgetPredicate((widget) {
+  final key = widget.key;
+  return key is ValueKey<String> && key.value.startsWith('roster-room-row-');
+}).first;
+
+/// Tap the room card, scrolled into view first: the Dots home puts the
+/// rooms under the main bot and the team grid.
+Future<void> _tapRoom(WidgetTester tester) async {
+  await tester.ensureVisible(_roomRow());
+  await tester.pumpAndSettle();
+  await tester.tap(_roomRow());
+}
 
 /// Long-press a room row to open its actions sheet.
 Future<void> _openRoomActions(WidgetTester tester) async {
+  await tester.ensureVisible(_roomRow());
+  await tester.pumpAndSettle();
   await tester.longPress(_roomRow());
   await tester.pumpAndSettle();
   expect(find.byKey(const ValueKey('roster-room-actions')), findsOneWidget);
@@ -1560,17 +1854,19 @@ Future<void> _openCreateRoom(WidgetTester tester) async {
   await tester.pumpAndSettle();
 }
 
-GroupsCapabilities _capabilities(List<GroupMethod> methods) =>
-    GroupsCapabilities.tryParse(
-      {
-        'protocol_version': 2,
-        'driver': true,
-        'methods': methods.map((method) => method.wire).toList(),
-        'max_log_limit': 50,
-      },
-      connectionId: 'screen-connection',
-      generation: 3,
-    )!;
+GroupsCapabilities _capabilities(
+  List<GroupMethod> methods, {
+  int generation = 3,
+}) => GroupsCapabilities.tryParse(
+  {
+    'protocol_version': 2,
+    'driver': true,
+    'methods': methods.map((method) => method.wire).toList(),
+    'max_log_limit': 50,
+  },
+  connectionId: 'screen-connection',
+  generation: generation,
+)!;
 
 _HostedScreenSource _workspaceSource({
   int remainingSendFailures = 0,
@@ -1845,6 +2141,132 @@ final class _RefreshingHostedSource extends _HostedScreenSource
         expectedRoomId: 'room-private',
         sinceSeq: 0,
       ),
+      capabilityGeneration: generation,
+    );
+  }
+}
+
+/// A gateway whose socket can reconnect: `groups.capabilities` reports the
+/// live generation and, like the repository, every read or send bound to
+/// another generation is refused before reaching the server.
+final class _ReconnectingHostedSource extends _HostedScreenSource
+    implements
+        MissionHostedGroupsReadDataSource,
+        MissionHostedGroupsCapabilitySource {
+  _ReconnectingHostedSource(super.snapshot);
+
+  int live = 3;
+  final events = <Map<String, Object?>>[_event(text: 'Before')];
+  final reads = <int>[];
+
+  /// Holds the next read under this generation until completed.
+  int? holdGeneration;
+  Completer<void>? hold;
+
+  List<GroupMethod> get _methods => [
+    GroupMethod.capabilities,
+    GroupMethod.list,
+    GroupMethod.state,
+    GroupMethod.log,
+    GroupMethod.send,
+    GroupMethod.rename,
+    GroupMethod.stop,
+    GroupMethod.disband,
+  ];
+
+  @override
+  Future<MissionBackendSnapshot> load() async {
+    loadCount += 1;
+    final base = snapshot;
+    return MissionBackendSnapshot(
+      profiles: base.profiles,
+      board: base.board,
+      profilesCapability: base.profilesCapability,
+      sessionsCapability: base.sessionsCapability,
+      kanbanCapability: base.kanbanCapability,
+      hostedGroupsCapability: base.hostedGroupsCapability,
+      hostedGroups: HostedGroupsSnapshot(
+        capabilities: _capabilities(_methods, generation: live),
+        rooms: base.hostedGroups.rooms,
+        logs: base.hostedGroups.logs,
+      ),
+      loadedAt: base.loadedAt,
+    );
+  }
+
+  @override
+  Future<GroupsCapabilities> hostedGroupCapabilities() async =>
+      _capabilities(_methods, generation: live);
+
+  HostedGroupLogPage _logOf(List<Map<String, Object?>> events) =>
+      HostedGroupLogPage.fromJson(
+        {
+          'events': events,
+          'cursor': events.length,
+          'latest_seq': events.length,
+          'has_more': false,
+          'authority': {'gateway_id': 'gateway-private', 'epoch': 1},
+        },
+        expectedRoomId: 'room-private',
+        sinceSeq: 0,
+      );
+
+  Map<String, Object?> _message(String text) => {
+    ..._event(text: text),
+    'seq': events.length + 1,
+    'event_id': 'event-${events.length + 1}',
+    'payload': {'text': text, 'thread_id': 'thread-${events.length + 1}'},
+  };
+
+  void reply(String text) => events.add(_message(text));
+
+  @override
+  Future<HostedGroupWorkspaceReadback> readHostedGroup(
+    HostedGroupRoom room, {
+    required int generation,
+  }) async {
+    reads.add(generation);
+    final held = holdGeneration == generation ? hold : null;
+    if (held != null) {
+      holdGeneration = null;
+      // What the server answered when the read was sent; it lands later.
+      final answered = [...events];
+      await held.future;
+      return HostedGroupWorkspaceReadback(
+        room: room,
+        log: _logOf(answered),
+        capabilityGeneration: generation,
+      );
+    }
+    if (generation != live) {
+      throw StateError('hosted group capability unavailable');
+    }
+    return HostedGroupWorkspaceReadback(
+      room: room,
+      log: _logOf([...events]),
+      capabilityGeneration: generation,
+    );
+  }
+
+  @override
+  Future<HostedGroupWorkspaceReadback> sendHostedGroupText(
+    HostedGroupRoom room, {
+    required String text,
+    required HostedGroupSendAttempt attempt,
+    required int generation,
+  }) async {
+    calls.add('send:$generation:$text');
+    if (generation != live) {
+      throw StateError('hosted group capability unavailable');
+    }
+    events.add({
+      ..._message(text),
+      'event_id': attempt.durableEventId,
+      'kind': 'message.user',
+    });
+    return HostedGroupWorkspaceReadback(
+      room: room,
+      log: _logOf([...events]),
       capabilityGeneration: generation,
     );
   }

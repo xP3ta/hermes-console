@@ -36,7 +36,11 @@ class PetdexRemotePet {
 /// aviso claro; **nunca** debe propagar un crash.
 class PetdexRemoteException implements Exception {
   final String message;
-  PetdexRemoteException(this.message);
+
+  /// Petdex no se pudo alcanzar (sin red, DNS, TLS), frente a una respuesta
+  /// que llegó pero no sirve.
+  final bool offline;
+  PetdexRemoteException(this.message, {this.offline = false});
   @override
   String toString() => 'PetdexRemoteException: $message';
 }
@@ -169,7 +173,7 @@ class PetdexRemoteService {
     } on TimeoutException {
       throw PetdexRemoteException('tiempo de espera agotado');
     } catch (e) {
-      throw PetdexRemoteException('fallo de red: $e');
+      throw PetdexRemoteException('fallo de red: $e', offline: true);
     }
   }
 

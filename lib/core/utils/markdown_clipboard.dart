@@ -5,7 +5,8 @@ import 'package:markdown/markdown.dart' as md;
 ///
 /// Se mantiene separado del copiado de respuestas para poder preservar el
 /// contrato de round-trip del mensaje original.
-String userMessageClipboardText(String markdown) => stripBotMentionNote(markdown);
+String userMessageClipboardText(String markdown) =>
+    stripBotMentionNote(markdown);
 
 /// Convierte el Markdown de un mensaje en el texto legible que ve el usuario.
 ///
@@ -24,6 +25,47 @@ String markdownToClipboardText(String markdown) {
     document.parse(markdown),
   );
   return rendered.replaceAll('\r\n', '\n').replaceAll(RegExp(r'^\n+|\n+$'), '');
+}
+
+final RegExp _indentedLine = RegExp(r'(?:^|\n)(?: {4}|\t)');
+
+/// Cheap gate for [markdownCodeBlocks]: a fence, or a line indented by four
+/// spaces or a tab anywhere, the first line included.
+bool markdownMayHaveCodeBlock(String markdown) =>
+    markdown.contains('```') ||
+    markdown.contains('~~~') ||
+    _indentedLine.hasMatch(markdown);
+
+/// [markdown] without blank lines before its first line or whitespace after
+/// its last; unlike `trim()` it keeps the first line's indentation, which can
+/// make it a code block.
+String trimMarkdownBlankLines(String markdown) =>
+    markdown.replaceFirst(RegExp(r'^(?:[ \t]*\r?\n)+'), '').trimRight();
+
+/// Literal contents of the message's code blocks (fenced or indented), in
+/// order, for the «copy code» scope. Inline code is not a block.
+List<String> markdownCodeBlocks(String markdown) {
+  if (!markdownMayHaveCodeBlock(markdown)) return const [];
+  final document = md.Document(
+    extensionSet: md.ExtensionSet.gitHubFlavored,
+    encodeHtml: false,
+  );
+  final blocks = <String>[];
+  void visit(List<md.Node> nodes) {
+    for (final node in nodes) {
+      if (node is! md.Element) continue;
+      if (node.tag == 'pre') {
+        final text = node.textContent.replaceAll(RegExp(r'\n$'), '');
+        if (text.trim().isNotEmpty) blocks.add(text);
+        continue;
+      }
+      final children = node.children;
+      if (children != null) visit(children);
+    }
+  }
+
+  visit(document.parse(markdown));
+  return blocks;
 }
 
 /// Convierte Markdown en una sola línea de texto legible para previews.

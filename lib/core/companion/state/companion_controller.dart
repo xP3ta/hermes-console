@@ -4,7 +4,9 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 
 import '../../models/profile_pet.dart';
+import '../../models/profile_identity.dart';
 import '../../services/profile_pet_service.dart';
+import '../../widgets/mission_profile_avatar.dart';
 import '../data/companion_import_service.dart';
 import '../data/companion_preferences.dart';
 import '../data/companion_repository.dart';
@@ -27,6 +29,26 @@ class CompanionScope {
   const CompanionScope(this.connId, this.profileId);
 }
 
+/// Whether the companion of [scope] is THIS chat's own companion (QA 9493):
+/// same connection and same profile ('' and 'default' are the default
+/// profile). Without a scope (legacy global companion) it belongs only to
+/// the default chat, never to a bot or a named profile.
+bool companionScopeMatchesChat(
+  CompanionScope? scope, {
+  required String connectionId,
+  required String? profileName,
+  required bool botSurface,
+}) {
+  String key(String? name) {
+    final value = name?.trim() ?? '';
+    return value.isEmpty ? 'default' : value;
+  }
+
+  if (scope == null) return !botSurface && profileName == null;
+  return scope.connId == connectionId &&
+      key(scope.profileId) == key(profileName);
+}
+
 /// Resuelve el ámbito actual, o `null` si no hay conexión activa (→
 /// comportamiento global legado).
 typedef CompanionScopeResolver = CompanionScope? Function();
@@ -34,6 +56,11 @@ typedef CompanionScopeResolver = CompanionScope? Function();
 /// Resuelve el servicio `pet.*` de una conexión, o `null` si no aplica (sin
 /// gateway, instancia de solo lectura, etc.).
 typedef ProfilePetServiceResolver = ProfilePetService? Function(String connId);
+
+/// Caché de avatares de la instancia [connId], para pintar la foto del perfil
+/// cuando no hay mascota.
+typedef ProfileAvatarCacheResolver =
+    MissionProfileAvatarCache? Function(String connId);
 
 /// Estado de la galería de mascotas "Companion".
 ///
@@ -46,8 +73,8 @@ typedef ProfilePetServiceResolver = ProfilePetService? Function(String connId);
 /// soporta los RPCs nativos `pet.*`, el servidor es la autoridad (`pet.info`
 /// al resolver + `pet.changed` como señal de re-lectura; `pet.select` /
 /// `pet.disable` al elegir). Sin gateway o sin mascota de perfil en el
-/// servidor manda el espejo local scoped; el fallback final de render sigue
-/// siendo `HermesSparkMascot`.
+/// servidor manda el espejo local scoped. Sin mascota válida se pinta la cara
+/// original del perfil ([scope] + [avatarCacheFor]).
 class CompanionController extends ChangeNotifier {
   final CompanionRepository _repository;
   final CompanionPreferences _preferences;
@@ -57,6 +84,8 @@ class CompanionController extends ChangeNotifier {
   /// Proveedor de generación ("Hatch") activo, o `null` si no hay ninguno
   /// disponible (→ la UI deriva al import de ZIP, US3). Inyectable para tests.
   final HatchProvider? hatchProvider;
+  final bool appPet;
+  final bool publishProfileIdentity;
 
   CompanionController(
     this._repository,
@@ -64,12 +93,89 @@ class CompanionController extends ChangeNotifier {
     this.importService = const CompanionImportService(),
     this.hatchService = const HatchService(),
     this.hatchProvider,
+    this.appPet = false,
+    this.publishProfileIdentity = false,
   });
+
+  /// Device-only app selection, seeded once from what the old floating pet
+  /// showed. A remote atlas is pinned to that revision, never re-synced.
+  Future<void> initAppFromProfile(CompanionController source) async {
+    assert(appPet);
+    // The raw stored choices, not the profile controller's getters: those
+    // report a profile's identity, which no app setting switches off.
+    final originalSlug = source._selectedSlug;
+    final originalEnabled = source._enabled;
+    final originalSize = source._sizeMultiplier;
+    final originalScope = source._scope;
+    final originalRevision = source._remoteCompanionRevision;
+    final originalPet = source._legacyPet;
+    final originalPresence = source._presence;
+    _available = await _repository.loadAll();
+    await _preferences.migrateAppPet(
+      slug: originalSlug,
+      enabled: originalEnabled,
+      size: originalSize,
+      presence: originalPresence,
+      connection: originalScope?.connId,
+      profile: originalScope?.profileId,
+      revision: originalRevision,
+    );
+    _scope = null;
+    _selectedSlug = _preferences.appSlug;
+    _enabled = _preferences.appEnabled;
+    _sizeMultiplier = _preferences.appSize;
+    _scale = CompanionScale.values.reduce(
+      (a, b) =>
+          (a.multiplier - _sizeMultiplier).abs() <=
+              (b.multiplier - _sizeMultiplier).abs()
+          ? a
+          : b,
+    );
+    _presence = _preferences.appPresence;
+    final connection = _preferences.appSourceConnection;
+    final profile = _preferences.appSourceProfile;
+    final slug = _selectedSlug;
+    if (originalPet?.slug == slug &&
+        originalPet?.isRemote == true &&
+        originalRevision == _preferences.appSourceRevision) {
+      _remoteCompanion = originalPet;
+      _remoteCompanionScope = null;
+      _remoteCompanionRevision = originalRevision;
+    } else if (connection != null &&
+        profile != null &&
+        slug != null &&
+        slug.isNotEmpty) {
+      final revision =
+          _preferences.appSourceRevision ??
+          await _repository.cachedProfilePetRevision(
+            connectionId: connection,
+            profileId: profile,
+            slug: slug,
+          );
+      if (revision != null) {
+        _remoteCompanion = await _repository.loadCachedProfilePet(
+          connectionId: connection,
+          profileId: profile,
+          slug: slug,
+          revision: revision,
+        );
+        _remoteCompanionScope = null;
+        _remoteCompanionRevision = revision;
+      }
+    }
+    _initialized = true;
+    notifyListeners();
+  }
 
   CompanionScopeResolver? _scopeResolver;
   ProfilePetServiceResolver? _petServiceResolver;
   Listenable? _scopeChanges;
   CompanionScope? _scope;
+
+  /// The (connection, profile) this companion belongs to; null without an
+  /// active connection (legacy global companion). Lets a chat tell its own
+  /// profile's companion from another profile's.
+  CompanionScope? get scope => _scope;
   ProfilePetService? _petService;
   StreamSubscription<void>? _petChangedSub;
 
@@ -80,6 +186,9 @@ class CompanionController extends ChangeNotifier {
   /// Ordena también sincronizaciones concurrentes dentro del mismo scope.
   int _serverSyncGeneration = 0;
 
+  /// Fotos de perfil por instancia para la cara que sustituye a la mascota.
+  ProfileAvatarCacheResolver? _avatarCacheResolver;
+
   Companion? _remoteCompanion;
   CompanionScope? _remoteCompanionScope;
   String? _remoteCompanionRevision;
@@ -89,16 +198,18 @@ class CompanionController extends ChangeNotifier {
   String? _selectedSlug;
   CompanionScale _scale = CompanionScale.medium;
   double _sizeMultiplier = CompanionDisplaySettings.defaultSizeMultiplier;
-  CompanionPresenceLevel _presenceLevel = CompanionPresenceLevel.minimal;
-  bool _roamingEnabled = false;
-  bool _showOnHome = true;
+  CompanionPresenceLevel _presence = CompanionPresenceLevel.full;
+  bool _legacyFullPresence = false;
   bool _initialized = false;
 
   /// Mascotas locales válidas disponibles para elegir.
   List<Companion> get available => List.unmodifiable(_available);
 
-  /// Si la mascota está activada por el usuario.
-  bool get enabled => _enabled;
+  /// Si la mascota está activada por el usuario. The controller that holds
+  /// the profiles' identities ([publishProfileIdentity]) is never off: a
+  /// profile's pet is its identity, not the app's floating mascot, and no
+  /// app setting switches it off.
+  bool get enabled => publishProfileIdentity || _enabled;
 
   /// Slug seleccionado (puede no resolver a una mascota válida).
   String? get selectedSlug => _selectedSlug;
@@ -113,22 +224,51 @@ class CompanionController extends ChangeNotifier {
   double get animationSpeed =>
       _preferences.animationSpeedFor(activeCompanion?.slug);
 
-  /// Nivel de presencia (006): off/minimal/full.
-  CompanionPresenceLevel get presenceLevel => _presenceLevel;
+  /// Where the user wants the pet: off, only in the chat, or everywhere.
+  /// The Mascotas screen and the floating mascot read this.
+  CompanionPresenceLevel get presence =>
+      publishProfileIdentity ? CompanionPresenceLevel.full : _presence;
 
-  /// Si la mascota sustituye su posición fija por el paseo de Inicio.
-  bool get roamingEnabled => _roamingEnabled;
-
-  /// Si la presencia grande se muestra sobre el compositor de Inicio.
-  /// No modifica la presencia contextual configurada para otras superficies.
-  bool get showOnHome => _showOnHome;
+  /// What the chats read. It is [presence], except while the presence is on
+  /// and the profile has no pet of its own: then it is
+  /// [CompanionPresenceLevel.ambient], and the chat's island keeps the face
+  /// it always had instead of a stand-in. Whoever stored the old "Completa"
+  /// keeps the stand-in he had.
+  CompanionPresenceLevel get presenceLevel {
+    final presence = this.presence;
+    if (presence == CompanionPresenceLevel.off) return presence;
+    if (_legacyFullPresence || activeCompanion != null) return presence;
+    return CompanionPresenceLevel.ambient;
+  }
 
   bool get isInitialized => _initialized;
 
+  /// Caché de avatares de [connId] (foto del perfil), si la app la provee.
+  MissionProfileAvatarCache? avatarCacheFor(String connId) =>
+      _avatarCacheResolver?.call(connId);
+
   /// Mascota efectiva a renderizar, o `null` si debe usarse el fallback
-  /// (`HermesSparkMascot`): desactivada, sin selección, o slug inválido.
-  Companion? get activeCompanion {
-    if (!_enabled || _selectedSlug == null) return null;
+  /// (la cara original del perfil): desactivada, sin selección, o slug
+  /// inválido.
+  Companion? get activeCompanion => enabled ? _materializedPet : null;
+
+  /// The pet this controller stands for. The controller of the profiles'
+  /// identities answers from [ProfileIdentities] (what the profile's own
+  /// stores say), never from the device selection; the app's controller
+  /// answers from its own device selection.
+  Companion? get _materializedPet {
+    if (!publishProfileIdentity) return _legacyPet;
+    final scope = _scope;
+    if (scope == null) return null;
+    final pet = ProfileIdentities.instance.pet(scope.connId, scope.profileId);
+    return pet != null && pet.isValid ? pet : null;
+  }
+
+  /// The device-side selection (slug mirror plus its cached atlas). For the
+  /// profiles' controller it is only the record the app pet was migrated
+  /// from; nothing draws it.
+  Companion? get _legacyPet {
+    if (_selectedSlug == null) return null;
     final remote = _remoteCompanion;
     if (remote != null &&
         _sameScope(_remoteCompanionScope, _scope) &&
@@ -153,9 +293,11 @@ class CompanionController extends ChangeNotifier {
     }
     _attachPetService();
     await _restoreCachedRemote(epoch);
-    _presenceLevel = _preferences.presenceLevel;
-    _roamingEnabled = _preferences.roamingEnabled;
-    _showOnHome = _preferences.showOnHome;
+    _presence = _preferences.presenceLevel;
+    // The stand-in the old "Completa" kept for a profile without a pet is
+    // the app pet's business; a profile without one draws its own face.
+    _legacyFullPresence =
+        !publishProfileIdentity && _preferences.presenceIsLegacyFull;
     _initialized = true;
     notifyListeners();
     // Revalida el scope y consulta la autoridad servidor sin bloquear la
@@ -171,11 +313,16 @@ class CompanionController extends ChangeNotifier {
     required CompanionScopeResolver resolveScope,
     required ProfilePetServiceResolver resolvePetService,
     required Listenable changes,
+    ProfileAvatarCacheResolver? resolveAvatarCache,
   }) {
     if (_scopeResolver != null) return; // binding único (singleton de app)
     _scopeResolver = resolveScope;
     _petServiceResolver = resolvePetService;
+    _avatarCacheResolver = resolveAvatarCache;
     _scopeChanges = changes..addListener(_onScopeChanged);
+    if (publishProfileIdentity) {
+      ProfileIdentities.instance.addListener(notifyListeners);
+    }
   }
 
   void _onScopeChanged() {
@@ -190,6 +337,19 @@ class CompanionController extends ChangeNotifier {
     if (!_initialized) return;
     await _restoreCachedRemote(epoch);
     if (epoch != _resolutionEpoch) return;
+    if (publishProfileIdentity) {
+      // The profile's pet is read from the profile's own stores, not from
+      // the device selection this controller mirrors.
+      final scope = _scope;
+      if (scope != null) {
+        ProfileIdentities.instance.requestAfterPaint(
+          scope.connId,
+          scope.profileId,
+        );
+      }
+      notifyListeners();
+      return;
+    }
     notifyListeners();
     await _syncWithServer(epoch);
   }
@@ -251,6 +411,11 @@ class CompanionController extends ChangeNotifier {
   }
 
   void _onServerPetChanged() {
+    if (publishProfileIdentity) {
+      final scope = _scope;
+      if (scope != null) ProfileIdentities.instance.refresh(scope.connId);
+      return;
+    }
     unawaited(_syncWithServer(_resolutionEpoch));
   }
 
@@ -402,6 +567,68 @@ class CompanionController extends ChangeNotifier {
       generation == _serverSyncGeneration &&
       _sameScope(scope, _scope);
 
+  /// A profile's pet as its own stores say, after paint: the server's
+  /// `pet.info` for that profile, kept on this device (under its own key,
+  /// not the selection Mascotas used to write) to paint it at the next
+  /// start. Offline, the copy of its last answer stands in. Never selects a
+  /// pet, never touches the app's choice.
+  Future<ProfileIdentityRead> loadIdentityFor(
+    String connection,
+    String owner,
+  ) async {
+    final profile = owner == 'default' ? '' : owner;
+    final scope = CompanionScope(connection, profile);
+    final info = await _petServiceResolver
+        ?.call(connection)
+        ?.activePet(profile: profile);
+    if (info == null) return cachedIdentityFor(connection, owner);
+    if (!info.hasPet) {
+      await _preferences.setIdentitySlugFor(connection, profile, null);
+      return (known: true, pet: null);
+    }
+    final pet = await _candidateForServerInfo(info, scope);
+    if (pet == null) return cachedIdentityFor(connection, owner);
+    if (pet.isRemote) {
+      await _repository.promoteProfilePetRevision(
+        connectionId: connection,
+        profileId: profile,
+        slug: info.slug,
+        revision: info.spritesheetRevision,
+      );
+    }
+    await _preferences.setIdentitySlugFor(connection, profile, pet.slug);
+    return (known: true, pet: pet);
+  }
+
+  /// The last pet the profile's stores gave, from this device only.
+  Future<ProfileIdentityRead> cachedIdentityFor(
+    String connection,
+    String owner,
+  ) async {
+    final profile = owner == 'default' ? '' : owner;
+    final slug = _preferences.identitySlugFor(connection, profile);
+    if (slug == null) return (known: false, pet: null);
+    if (slug.isEmpty) return (known: true, pet: null);
+    for (final pet in _available) {
+      if (pet.slug == slug && pet.isValid) return (known: true, pet: pet);
+    }
+    final revision = await _repository.cachedProfilePetRevision(
+      connectionId: connection,
+      profileId: profile,
+      slug: slug,
+    );
+    if (revision == null) return (known: false, pet: null);
+    final cached = await _repository.loadCachedProfilePet(
+      connectionId: connection,
+      profileId: profile,
+      slug: slug,
+      revision: revision,
+    );
+    return cached == null
+        ? (known: false, pet: null)
+        : (known: true, pet: cached);
+  }
+
   static bool _sameScope(CompanionScope? a, CompanionScope? b) =>
       identical(a, b) ||
       (a != null &&
@@ -428,7 +655,9 @@ class CompanionController extends ChangeNotifier {
       _remoteCompanionRevision = null;
     }
     final scope = _scope;
-    if (scope == null) {
+    if (appPet) {
+      await _preferences.setAppSlug(slug);
+    } else if (scope == null) {
       await _preferences.setSelectedSlug(slug);
     } else {
       await _preferences.setSelectedSlugFor(
@@ -452,7 +681,9 @@ class CompanionController extends ChangeNotifier {
   Future<void> setEnabled(bool value) async {
     _enabled = value;
     final scope = _scope;
-    if (scope == null) {
+    if (appPet) {
+      await _preferences.setAppEnabled(value);
+    } else if (scope == null) {
       await _preferences.setEnabled(value);
     } else {
       await _preferences.setEnabledFor(scope.connId, scope.profileId, value);
@@ -466,7 +697,9 @@ class CompanionController extends ChangeNotifier {
     _scale = value;
     _sizeMultiplier = value.multiplier;
     final scope = _scope;
-    if (scope == null) {
+    if (appPet) {
+      await _preferences.setAppSize(value.multiplier);
+    } else if (scope == null) {
       await _preferences.setScale(value);
     } else {
       await _preferences.setScaleFor(scope.connId, scope.profileId, value);
@@ -485,7 +718,9 @@ class CompanionController extends ChangeNotifier {
           (a.multiplier - safe).abs() <= (b.multiplier - safe).abs() ? a : b,
     );
     final scope = _scope;
-    if (scope == null) {
+    if (appPet) {
+      await _preferences.setAppSize(safe);
+    } else if (scope == null) {
       await _preferences.setSizeMultiplier(safe);
     } else {
       await _preferences.setSizeMultiplierFor(
@@ -508,15 +743,19 @@ class CompanionController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Modo único que sustituye la antigua combinación ambigua de interruptor
-  /// global + selector de presencia.
+  /// The one "Presencia" choice: [value] is off, chat or full. Off also
+  /// switches this profile's pet off; the other two switch it on.
   Future<void> setVisibilityLevel(CompanionPresenceLevel value) async {
+    assert(value != CompanionPresenceLevel.ambient);
     final shouldEnable = value != CompanionPresenceLevel.off;
-    if (_enabled == shouldEnable && _presenceLevel == value) return;
+    if (_enabled == shouldEnable && _presence == value) return;
     _enabled = shouldEnable;
-    _presenceLevel = value;
+    _presence = value;
+    _legacyFullPresence = false;
     final scope = _scope;
-    if (scope == null) {
+    if (appPet) {
+      await _preferences.setAppEnabled(shouldEnable);
+    } else if (scope == null) {
       await _preferences.setEnabled(shouldEnable);
     } else {
       await _preferences.setEnabledFor(
@@ -525,28 +764,26 @@ class CompanionController extends ChangeNotifier {
         shouldEnable,
       );
     }
-    await _preferences.setPresenceLevel(value);
+    if (appPet) {
+      await _preferences.setAppPresence(value);
+    } else {
+      await _preferences.setPresenceLevel(value);
+    }
     notifyListeners();
   }
 
+  /// Sets where the pet shows without touching whether this profile's pet
+  /// is on.
   Future<void> setPresenceLevel(CompanionPresenceLevel value) async {
-    if (value == _presenceLevel) return;
-    _presenceLevel = value;
-    await _preferences.setPresenceLevel(value);
-    notifyListeners();
-  }
-
-  Future<void> setRoamingEnabled(bool value) async {
-    if (value == _roamingEnabled) return;
-    _roamingEnabled = value;
-    await _preferences.setRoamingEnabled(value);
-    notifyListeners();
-  }
-
-  Future<void> setShowOnHome(bool value) async {
-    if (value == _showOnHome) return;
-    _showOnHome = value;
-    await _preferences.setShowOnHome(value);
+    assert(value != CompanionPresenceLevel.ambient);
+    if (value == _presence) return;
+    _presence = value;
+    _legacyFullPresence = false;
+    if (appPet) {
+      await _preferences.setAppPresence(value);
+    } else {
+      await _preferences.setPresenceLevel(value);
+    }
     notifyListeners();
   }
 
@@ -644,7 +881,7 @@ class CompanionController extends ChangeNotifier {
   /// protegidas: borrarlas es un **no-op seguro** (nunca se eliminan, FR-011).
   ///
   /// Si se borrara la mascota activa (caso de importadas en Fase B.2), la
-  /// selección recae en una base válida, o en `null` → fallback Spark (FR-012).
+  /// selección recae en una base válida, o en `null` → cara del perfil (FR-012).
   /// En Fase B inicial no hay importadas, así que esta operación nunca borra
   /// nada de facto. Devuelve `true` solo si hubo borrado real.
   Future<bool> delete(String slug) async {
@@ -681,7 +918,7 @@ class CompanionController extends ChangeNotifier {
           break;
         }
       }
-      await select(fallback); // persiste selección; null → Spark
+      await select(fallback); // persiste selección; null → cara del perfil
     } else {
       notifyListeners();
     }
@@ -690,6 +927,9 @@ class CompanionController extends ChangeNotifier {
 
   @override
   void dispose() {
+    if (publishProfileIdentity) {
+      ProfileIdentities.instance.removeListener(notifyListeners);
+    }
     _resolutionEpoch++;
     _serverSyncGeneration++;
     _scopeChanges?.removeListener(_onScopeChanged);

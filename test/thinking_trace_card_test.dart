@@ -4,8 +4,9 @@ import 'package:hermes_android/core/companion/render/companion_status_indicator.
 import 'package:hermes_android/core/companion/render/companion_view.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/hermes_status_indicator.dart';
-import 'package:hermes_android/core/widgets/hermes_spark_mascot.dart';
+import 'package:hermes_android/core/companion/models/companion_mood.dart';
 import 'package:hermes_android/core/widgets/chat_event_cards.dart';
+import 'package:hermes_android/core/widgets/chat_turn_activity.dart';
 import 'package:hermes_android/core/widgets/hermes_pill.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 
@@ -25,11 +26,55 @@ Widget _cardHost({
       disableAnimations: disableAnimations,
       textScaler: TextScaler.linear(textScale),
     ),
-    child: Scaffold(body: SizedBox(width: width, child: card)),
+    child: Scaffold(
+      body: SizedBox(width: width, child: card),
+    ),
   ),
 );
 
 void main() {
+  testWidgets('connection card is attached to its matching live tool row', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _cardHost(
+        card: ThinkingTraceCard(
+          events: [
+            ChatTraceEvent(
+              id: 'other-tool',
+              label: 'other',
+              status: 'completed',
+            ),
+            ChatTraceEvent(
+              id: 'tool-connect',
+              label: 'connector',
+              status: 'running',
+            ),
+          ],
+          active: true,
+          rowAttachments: const {
+            'tool-connect': Text('Connection request card'),
+          },
+          headerBuilder: (context, summary, details) => Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [summary, details],
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('Connection request card'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('activity-step-attachment-tool-connect')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('activity-step-attachment-other-tool')),
+      findsNothing,
+    );
+  });
+
   testWidgets('actividad muestra el estado limpio sin puntos ni LIVE', (
     tester,
   ) async {
@@ -72,7 +117,7 @@ void main() {
 
   testWidgets('estados vivos usan iconos compactos veraces', (tester) async {
     Future<void> expectState({
-      required HermesSparkMood mood,
+      required CompanionMood mood,
       required IconData icon,
       bool waitingForUser = false,
     }) async {
@@ -96,20 +141,20 @@ void main() {
     }
 
     await expectState(
-      mood: HermesSparkMood.connecting,
+      mood: CompanionMood.connecting,
       icon: Icons.cloud_queue_rounded,
     );
     await expectState(
-      mood: HermesSparkMood.waiting,
+      mood: CompanionMood.waiting,
       icon: Icons.cloud_queue_rounded,
     );
     await expectState(
-      mood: HermesSparkMood.waiting,
+      mood: CompanionMood.waiting,
       icon: Icons.help_outline_rounded,
       waitingForUser: true,
     );
     await expectState(
-      mood: HermesSparkMood.offline,
+      mood: CompanionMood.offline,
       icon: Icons.cloud_off_rounded,
     );
   });
@@ -119,10 +164,8 @@ void main() {
   ) async {
     Finder stateIcon() =>
         find.byKey(const ValueKey('thinking-trace-state-icon'));
-    Finder iconScale() => find.ancestor(
-      of: stateIcon(),
-      matching: find.byType(ScaleTransition),
-    );
+    Finder iconScale() =>
+        find.ancestor(of: stateIcon(), matching: find.byType(ScaleTransition));
 
     await tester.pumpWidget(
       _cardHost(
@@ -139,7 +182,7 @@ void main() {
         card: const ThinkingTraceCard(
           events: [],
           active: true,
-          activeMood: HermesSparkMood.connecting,
+          activeMood: CompanionMood.connecting,
         ),
       ),
     );
@@ -147,9 +190,7 @@ void main() {
     expect(iconScale(), findsNothing);
 
     await tester.pumpWidget(
-      _cardHost(
-        card: const ThinkingTraceCard(events: [], active: true),
-      ),
+      _cardHost(card: const ThinkingTraceCard(events: [], active: true)),
     );
     await tester.pump();
     expect(iconScale(), findsNothing);
@@ -337,12 +378,7 @@ void main() {
     tester,
   ) async {
     await tester.pumpWidget(
-      _cardHost(
-        card: ThinkingTraceCard(
-          events: const [],
-          active: true,
-        ),
-      ),
+      _cardHost(card: ThinkingTraceCard(events: const [], active: true)),
     );
     await tester.pump();
     expect(find.byType(CompanionView), findsNothing);
@@ -350,12 +386,7 @@ void main() {
     expect(find.byIcon(Icons.psychology_alt_rounded), findsOneWidget);
 
     await tester.pumpWidget(
-      _cardHost(
-        card: ThinkingTraceCard(
-          events: const [],
-          active: false,
-        ),
-      ),
+      _cardHost(card: ThinkingTraceCard(events: const [], active: false)),
     );
     await tester.pump();
     expect(find.byType(CompanionView), findsNothing);
@@ -400,7 +431,7 @@ void main() {
           card: const ThinkingTraceCard(
             events: [],
             active: true,
-            activeMood: HermesSparkMood.connecting,
+            activeMood: CompanionMood.connecting,
             headline: 'Connecting',
           ),
         ),
@@ -529,7 +560,7 @@ void main() {
     await tester.tap(find.text('Thought'));
     await tester.pump(const Duration(milliseconds: 250));
     expect(find.byKey(const ValueKey('activity-done-title')), findsOneWidget);
-    expect(find.text('terminal · date', findRichText: true), findsOneWidget);
+    expect(find.text('Ran · date', findRichText: true), findsOneWidget);
     expect(find.text('0.7 s'), findsOneWidget);
   });
 
@@ -602,7 +633,7 @@ void main() {
     },
   );
 
-  testWidgets('en la cabecera: resumen apagado bajo el título y detalle debajo', (
+  testWidgets('en la cabecera: estado bajo el título y líneas debajo', (
     tester,
   ) async {
     final theme = AppTheme.hermesRedDark;
@@ -638,43 +669,56 @@ void main() {
       ),
     );
 
-    // En vivo: una sola palabra apagada, sin icono ni spinner ni shimmer.
+    // En vivo (ct1215): la línea de estado y la herramienta en curso, en
+    // líneas sueltas; sin icono de estado, spinner ni shimmer.
     await pump(active: true);
     await tester.pump();
-    final working = tester.widget<Text>(
-      find.byKey(const ValueKey('thinking-trace-live-in-pill')),
+    final status = tester.widget<Text>(
+      find.byKey(const ValueKey('turn-status-text')),
     );
-    expect(working.data, 'Working…');
-    expect(working.style!.color, colors.textSecondary);
+    expect(status.textSpan!.toPlainText(), 'Running tool');
+    expect(status.style!.color, colors.textSecondary);
+    expect(status.style!.fontSize, TurnType.status);
+    expect(find.text('Running · sleep', findRichText: true), findsOneWidget);
     expect(find.byType(CircularProgressIndicator), findsNothing);
-    expect(find.byKey(const ValueKey('thinking-trace-state-icon')), findsNothing);
+    expect(
+      find.byKey(const ValueKey('thinking-trace-state-icon')),
+      findsNothing,
+    );
     expect(find.byKey(const ValueKey('thinking-shimmer')), findsNothing);
+    expect(find.byKey(const ValueKey('thinking-trace-summary')), findsNothing);
 
-    // Terminado: «Thought for 1:12 ⌄» con el mismo tono del resto de la línea.
+    // Terminado: «Thought for 1:12 · 1 command ⌄», apagado, y nada vivo.
     await pump(active: false);
     await tester.pump();
-    final label = tester.widget<Text>(find.text('Thought for 1:12'));
+    final label = tester.widget<Text>(
+      find.text('Thought for 1:12 · 1 command'),
+    );
     expect(label.style!.color, colors.textSecondary);
-    expect(label.style!.fontSize, 11.5);
+    expect(label.style!.fontSize, TurnType.fold);
     final chevron = tester.widget<Icon>(find.byIcon(Icons.expand_more));
     expect(chevron.color, colors.textSecondary);
     expect(chevron.size, lessThanOrEqualTo(16));
-    expect(find.byKey(const ValueKey('thinking-trace-state-icon')), findsNothing);
-    expect(find.byKey(const ValueKey('activity-done-section')), findsNothing);
+    expect(
+      find.byKey(const ValueKey('thinking-trace-state-icon')),
+      findsNothing,
+    );
+    expect(find.byKey(const ValueKey('turn-status-line')), findsNothing);
+    expect(find.byKey(const ValueKey('thinking-trace-steps')), findsNothing);
 
-    // Al tocarlo se despliega el detalle debajo, con la marca en tono apagado.
+    // Al tocarlo se despliega el detalle debajo: la fila con su duración.
     await tester.tap(find.byKey(const ValueKey('thinking-trace-summary')));
     await tester.pump(const Duration(milliseconds: 250));
-    expect(find.byKey(const ValueKey('activity-done-section')), findsOneWidget);
-    expect(find.text('terminal · sleep', findRichText: true), findsOneWidget);
-    final check = tester.widget<Icon>(find.byIcon(Icons.check_rounded));
-    expect(check.color, isNot(colors.success));
+    expect(find.byKey(const ValueKey('thinking-trace-steps')), findsOneWidget);
+    expect(find.text('Ran · sleep', findRichText: true), findsOneWidget);
+    expect(find.text('5.0 s'), findsOneWidget);
     expect(
-      tester.getTopLeft(find.byKey(const ValueKey('activity-done-section'))).dy,
-      greaterThan(tester.getRect(find.byKey(const ValueKey('fake-title'))).bottom - 1),
+      tester.getTopLeft(find.byKey(const ValueKey('thinking-trace-steps'))).dy,
+      greaterThan(
+        tester.getRect(find.byKey(const ValueKey('fake-title'))).bottom - 1,
+      ),
     );
   });
-
   testWidgets('el cargador por defecto respeta locale=en', (tester) async {
     await tester.pumpWidget(
       MaterialApp(

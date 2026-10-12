@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Chat rápido, four cells wide: the agent, a field to write, camera and
+     microphone. Four controls of the same height on one centre line; the
+     field's hint starts where a typed text would, with the same padding on
+     both sides. The agent's face starts at the card's padding, like the
+     microphone ends at it; the rest of its 48 dp box is the gap to the
+     field. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@android:id/background"
+    style="@style/LW.Card"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:baselineAligned="false"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:paddingStart="@dimen/lw_quick_pad"
+    android:paddingEnd="@dimen/lw_quick_pad">
+
+    <FrameLayout
+        android:id="@+id/lw_quick_agent"
+        android:layout_width="@dimen/lw_touch"
+        android:layout_height="@dimen/lw_touch"
+        android:contentDescription="@string/lw_open_description">
+
+        <ImageView
+            android:id="@+id/lw_quick_glyph"
+            android:layout_width="38dp"
+            android:layout_height="38dp"
+            android:layout_gravity="center_vertical|start"
+            android:background="@drawable/lw_okc_chip"
+            android:importantForAccessibility="no"
+            android:padding="10dp"
+            android:src="@drawable/ic_console_mark" />
+
+        <ImageView
+            android:id="@+id/lw_quick_face"
+            android:layout_width="38dp"
+            android:layout_height="38dp"
+            android:layout_gravity="center_vertical|start"
+            android:importantForAccessibility="no"
+            android:visibility="gone" />
+    </FrameLayout>
+
+    <LinearLayout
+        android:id="@+id/lw_quick_new"
+        android:layout_width="0dp"
+        android:layout_height="@dimen/lw_touch"
+        android:layout_weight="1"
+        android:background="@drawable/lw_pill"
+        android:baselineAligned="false"
+        android:contentDescription="@string/lw_new_description"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="@dimen/lw_quick_hint_pad"
+        android:paddingEnd="@dimen/lw_quick_hint_pad">
+
+        <TextView
+            android:id="@+id/lw_quick_hint"
+            style="@style/LW.Text"
+            android:layout_width="match_parent"
+            android:text="@string/lw_ask_hint"
+            android:textColor="@color/lw_muted" />
+    </LinearLayout>
+
+    <FrameLayout
+        android:id="@+id/lw_quick_camera"
+        android:layout_width="@dimen/lw_touch"
+        android:layout_height="@dimen/lw_touch"
+        android:layout_marginStart="@dimen/lw_quick_gap"
+        android:background="@drawable/lw_circle"
+        android:contentDescription="@string/lw_camera_description">
+
+        <ImageView
+            android:layout_width="@dimen/lw_quick_glyph"
+            android:layout_height="@dimen/lw_quick_glyph"
+            android:layout_gravity="center"
+            android:importantForAccessibility="no"
+            android:src="@drawable/lw_ic_cam"
+            android:tint="@color/lw_ink" />
+    </FrameLayout>
+
+    <FrameLayout
+        android:id="@+id/lw_quick_voice"
+        android:layout_width="@dimen/lw_touch"
+        android:layout_height="@dimen/lw_touch"
+        android:layout_marginStart="@dimen/lw_quick_gap"
+        android:background="@drawable/lw_circle_wave"
+        android:contentDescription="@string/lw_voice_description">
+
+        <ImageView
+            android:layout_width="@dimen/lw_quick_glyph"
+            android:layout_height="@dimen/lw_quick_glyph"
+            android:layout_gravity="center"
+            android:importantForAccessibility="no"
+            android:src="@drawable/lw_ic_mic"
+            android:tint="@color/lw_gold_ink" />
+    </FrameLayout>
+</LinearLayout>

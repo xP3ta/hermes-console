@@ -49,7 +49,9 @@ class ProfilePetService {
     }
   }
 
-  /// Galería adoptable del perfil, o `null` si no está disponible.
+  /// Galería adoptable del perfil. `null` solo cuando el gateway no tiene
+  /// `pet.*` (`-32601`); una lectura que falla se propaga, para que quien la
+  /// pinta pueda decirlo y ofrecer el reintento.
   Future<ProfilePetGallery?> gallery({
     String profile = '',
     bool localOnly = false,
@@ -61,7 +63,8 @@ class ProfilePetService {
       );
     } catch (error) {
       _logRead('pet.gallery', error);
-      return null;
+      if (error is TuiGatewayRpcError && error.code == -32601) return null;
+      rethrow;
     }
   }
 
@@ -100,7 +103,7 @@ class ProfilePetService {
   }
 
   /// Apaga la mascota del perfil en el servidor ("sin mascota" → la app
-  /// muestra el Spark por defecto). Misma política que [selectPet].
+  /// muestra la cara del perfil). Misma política que [selectPet].
   Future<bool> disablePet({String profile = ''}) async {
     if (!allowWrites) return false;
     try {

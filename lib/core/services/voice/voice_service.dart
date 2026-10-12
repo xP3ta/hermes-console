@@ -8,6 +8,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:uuid/uuid.dart';
 import 'package:whisper_ggml_plus/whisper_ggml_plus.dart';
 
 import '../secure_storage.dart';
@@ -205,6 +206,17 @@ class VoiceService {
   final SharedPreferences _prefs;
   final SecureStorage _secure;
   final Duration heavyModelIdleTimeout;
+
+  /// How long the on-device recogniser stays loaded after a voice
+  /// conversation ends or is paused, so starting again does not pay its
+  /// load (5-6 s on a Pixel). Memory pressure and leaving the app release it
+  /// sooner.
+  final Duration warmRecognizerIdleTimeout;
+
+  /// How long a recogniser that is only waiting for a next start stays once
+  /// the last chat has left the screen with nothing running. Going from one
+  /// chat to the next finds it loaded instead of loading it again.
+  final Duration chatLeftRecognizerGrace;
   final VoiceIdleTimerFactory _idleTimerFactory;
 
   static const String _elevenKeyName = 'elevenlabs_key';
@@ -253,6 +265,12 @@ class VoiceService {
   int? _ttsBuildInFlightEpoch;
   int _ttsBuildEpoch = 0;
   SttEngine? _stt;
+  // The engine whose recogniser was kept loaded when a voice conversation
+  // ended or paused. While it is still [_stt] nobody is using it: it only
+  // waits for the next start.
+  SttEngine? _parkedRecognizer;
+  bool get _sttParkedWarm =>
+      _parkedRecognizer != null && identical(_parkedRecognizer, _stt);
   // Serializa liberaciones STT. Pause/Stop y X pueden encadenarse antes de que
   // el plugin termine de destruir AudioRecord; la salida debe esperar esa cola
   // antes de liberar las cachés nativas de Sherpa.
@@ -295,6 +313,27 @@ class VoiceService {
       }
     }());
     return tail;
+  }
+
+  // Paradas de dictado que todavía esperan su transcripción final. Los motores
+  // que graban y transcriben (servidor Hermes, Whisper) entregan el texto
+  // cuando termina esa parada; liberar el motor antes lo descartaba.
+  final Map<SttEngine, Future<void>> _sttStopsInFlight =
+      Map<SttEngine, Future<void>>.identity();
+
+  /// Libera [engine] cuando haya entregado la transcripción que está en curso.
+  /// Devuelve `null` si no había ninguna: el llamador libera como siempre.
+  Future<void>? _disposeSttEngineAfterPendingStop(
+    SttEngine? engine, {
+    required String reason,
+  }) {
+    final pending = engine == null ? null : _sttStopsInFlight[engine];
+    if (pending == null) return null;
+    debugPrint('[voice-stab] disposeStt deferred reason=$reason');
+    return pending.then(
+      (_) => _disposeSttEngine(engine, reason: reason),
+      onError: (Object _) => _disposeSttEngine(engine, reason: reason),
+    );
   }
 
   // Tipo del motor STT cacheado en [_stt]. Permite reportar el motor REAL ya
@@ -360,6 +399,8 @@ class VoiceService {
     this._secure, {
     VoiceSettings? initialSettings,
     this.heavyModelIdleTimeout = const Duration(seconds: 90),
+    this.warmRecognizerIdleTimeout = const Duration(minutes: 3),
+    this.chatLeftRecognizerGrace = const Duration(seconds: 20),
     VoiceIdleTimerFactory? idleTimerFactory,
   }) : _settings = initialSettings ?? VoiceSettings.load(_prefs),
        _idleTimerFactory =
@@ -470,7 +511,18 @@ class VoiceService {
       unawaited(_evictIdleHeavyModels(reason: 'idle'));
       return;
     }
-    _heavyModelIdleTimer = _idleTimerFactory(heavyModelIdleTimeout, () {
+    // A recogniser parked for the next start, alone in memory, waits longer
+    // than the models a finished dictation or reading leaves behind.
+    final onlyParkedRecognizer =
+        _sttParkedWarm &&
+        _stt != null &&
+        !(effectiveConversationTtsEngine == TtsEngineKind.onnx && _tts != null);
+    final timeout =
+        onlyParkedRecognizer &&
+            warmRecognizerIdleTimeout > heavyModelIdleTimeout
+        ? warmRecognizerIdleTimeout
+        : heavyModelIdleTimeout;
+    _heavyModelIdleTimer = _idleTimerFactory(timeout, () {
       _heavyModelIdleTimer = null;
       unawaited(_evictIdleHeavyModels(reason: 'idle'));
     });
@@ -527,6 +579,13 @@ class VoiceService {
   bool _nativeSpeechStreamingDisabled = false;
   bool _sttNativeVoice = false;
   VoidCallback? _nativeVoiceOnDispose;
+  HermesTtsLeaseRequest? _nativeTtsLease;
+  Future<void> _ttsLeaseQueue = Future<void>.value();
+  final Set<Future<void>> _pendingTtsLeaseReleases = {};
+  static const Duration _ttsLeaseOrderWait = Duration(seconds: 2);
+  static const Duration _ttsLeaseReleaseWait = Duration(seconds: 5);
+  String? _ttsLeaseName;
+  static const String _ttsLeaseIdKey = 'voice_tts_lease_id_v1';
   NativeVoicePreparation? _nativeVoicePreparation;
   int _nativeVoicePreparationGeneration = 0;
 
@@ -667,7 +726,10 @@ class VoiceService {
     _sttKind = null;
     _sttNativeVoice = false;
     if (previous == null) return null;
-    return _disposeSttEngine(previous, reason: reason);
+    // Un clip ya subido sigue transcribiéndose: su final y el cliente del
+    // Dashboard que lo transporta se conservan hasta que llegue.
+    return _disposeSttEngineAfterPendingStop(previous, reason: reason) ??
+        _disposeSttEngine(previous, reason: reason);
   }
 
   void _releaseHermesDictationResource(
@@ -755,6 +817,7 @@ class VoiceService {
     required HermesSpeakRequest speak,
     required HermesTranscribeRequest transcribe,
     HermesSpeechStreamSessionFactory? speechStream,
+    HermesTtsLeaseRequest? ttsLease,
     VoidCallback? onDispose,
   }) {
     if (_disposed) return false;
@@ -763,6 +826,7 @@ class VoiceService {
       speak: speak,
       transcribe: transcribe,
       speechStream: speechStream,
+      ttsLease: ttsLease,
       onDispose: onDispose,
     );
   }
@@ -773,6 +837,7 @@ class VoiceService {
     required HermesSpeakRequest speak,
     required HermesTranscribeRequest transcribe,
     HermesSpeechStreamSessionFactory? speechStream,
+    HermesTtsLeaseRequest? ttsLease,
     VoidCallback? onDispose,
   }) {
     if (_disposed ||
@@ -786,6 +851,7 @@ class VoiceService {
       speak: speak,
       transcribe: transcribe,
       speechStream: speechStream,
+      ttsLease: ttsLease,
       onDispose: onDispose,
     );
   }
@@ -794,6 +860,7 @@ class VoiceService {
     required HermesSpeakRequest speak,
     required HermesTranscribeRequest transcribe,
     HermesSpeechStreamSessionFactory? speechStream,
+    HermesTtsLeaseRequest? ttsLease,
     VoidCallback? onDispose,
   }) {
     final frozen = _voiceRouteSnapshot;
@@ -805,6 +872,7 @@ class VoiceService {
       return false;
     }
     final previousDispose = _nativeVoiceOnDispose;
+    final previousLease = _nativeTtsLease;
     _onDeviceConversationRoute = false;
     _nativeSpeechStreamEpoch += 1;
     unawaited(_cancelNativeSpeechStream());
@@ -814,9 +882,81 @@ class VoiceService {
     _nativeSpeechStreamFactory = speechStream;
     _nativeSpeechStreamingDisabled = false;
     _nativeVoiceOnDispose = onDispose;
+    _nativeTtsLease = ttsLease;
     _invalidateEnginesForNativeSwitch(reason: 'native_voice_on');
-    _releaseNativeVoiceResource(previousDispose);
+    if (ttsLease != null) {
+      // Mismo nombre de lease: re-adquirir por el cliente nuevo mantiene el
+      // motor caliente sin la ventana de descarga de un release intermedio.
+      unawaited(_queueTtsLease(ttsLease, active: true));
+      _releaseNativeVoiceResource(previousDispose);
+    } else {
+      _releaseNativeVoiceLease(previousLease, previousDispose);
+    }
     return true;
+  }
+
+  /// Nombre estable del lease TTS de esta instalación. Distinto por
+  /// instalación para que otro móvil o Desktop no suelten el motor que esta
+  /// app sigue usando.
+  String get _ttsLeaseId {
+    final cached = _ttsLeaseName;
+    if (cached != null) return cached;
+    var id = _prefs.getString(_ttsLeaseIdKey);
+    if (id == null || id.isEmpty) {
+      id = const Uuid().v4();
+      unawaited(
+        _prefs
+            .setString(_ttsLeaseIdKey, id)
+            .then<void>((_) {}, onError: (_) {}),
+      );
+    }
+    return _ttsLeaseName = 'console:voice:$id';
+  }
+
+  /// Serializa acquire/release para que un on→off→on rápido no llegue
+  /// desordenado. El precalentamiento es una optimización: cualquier fallo
+  /// (servidor antiguo sin la ruta, red, auth) se ignora sin bloquear la voz.
+  Future<void> _queueTtsLease(
+    HermesTtsLeaseRequest request, {
+    required bool active,
+  }) {
+    final lease = _ttsLeaseId;
+    // Una precarga lenta no puede retener indefinidamente la señal siguiente.
+    final previous = _ttsLeaseQueue.timeout(
+      _ttsLeaseOrderWait,
+      onTimeout: () {},
+    );
+    final next = previous.then((_) async {
+      try {
+        await request(lease, active);
+      } catch (error) {
+        debugPrint(
+          '[voice-lease] ${active ? 'acquire' : 'release'} omitido '
+          '(${error.runtimeType})',
+        );
+      }
+    });
+    _ttsLeaseQueue = next;
+    return next;
+  }
+
+  /// Suelta el lease por el mismo cliente antes de cerrarlo.
+  void _releaseNativeVoiceLease(
+    HermesTtsLeaseRequest? lease,
+    VoidCallback? release,
+  ) {
+    if (lease == null) {
+      _releaseNativeVoiceResource(release);
+      return;
+    }
+    late final Future<void> done;
+    done = _queueTtsLease(lease, active: false)
+        .timeout(_ttsLeaseReleaseWait, onTimeout: () {})
+        .whenComplete(() {
+          _releaseNativeVoiceResource(release);
+          _pendingTtsLeaseReleases.remove(done);
+        });
+    _pendingTtsLeaseReleases.add(done);
   }
 
   /// Activa para la próxima conversación una ruta estrictamente on-device sin
@@ -833,7 +973,10 @@ class VoiceService {
     if (onDeviceVoiceActive) return true;
     disableNativeVoice();
     _onDeviceConversationRoute = true;
-    _invalidateEnginesForNativeSwitch(reason: 'on_device_voice_on');
+    _invalidateEnginesForNativeSwitch(
+      reason: 'on_device_voice_on',
+      keepParkedRecognizer: true,
+    );
     return true;
   }
 
@@ -853,13 +996,19 @@ class VoiceService {
     if (_nativeVoiceSession == null &&
         _nativeSpeak == null &&
         _nativeTranscribe == null &&
-        _nativeVoiceOnDispose == null) {
+        _nativeVoiceOnDispose == null &&
+        _nativeTtsLease == null) {
       if (hadOnDeviceRoute) {
-        _invalidateEnginesForNativeSwitch(reason: 'on_device_voice_off');
+        _invalidateEnginesForNativeSwitch(
+          reason: 'on_device_voice_off',
+          keepParkedRecognizer: true,
+        );
       }
       return hadOnDeviceRoute;
     }
     final release = _nativeVoiceOnDispose;
+    final lease = _nativeTtsLease;
+    _nativeTtsLease = null;
     _nativeVoiceSession = null;
     _nativeSpeak = null;
     _nativeTranscribe = null;
@@ -869,7 +1018,7 @@ class VoiceService {
     _nativeSpeechStreamEpoch += 1;
     unawaited(_cancelNativeSpeechStream());
     _invalidateEnginesForNativeSwitch(reason: 'native_voice_off');
-    _releaseNativeVoiceResource(release);
+    _releaseNativeVoiceLease(lease, release);
     return true;
   }
 
@@ -962,8 +1111,15 @@ class VoiceService {
     }
   }
 
-  void _invalidateEnginesForNativeSwitch({required String reason}) {
+  void _invalidateEnginesForNativeSwitch({
+    required String reason,
+    bool keepParkedRecognizer = false,
+  }) {
     unawaited(_resetTtsEngine());
+    // The recogniser a voice conversation left loaded is no route's engine
+    // any more: the phone's route ending, or starting again, must not throw
+    // it away. Whoever captures next checks it is the engine it wants.
+    if (keepParkedRecognizer && _sttParkedWarm) return;
     final previous = _stt;
     _stt = null;
     _sttKind = null;
@@ -1052,6 +1208,146 @@ class VoiceService {
     );
   }
 
+  // ── Recogniser loaded ahead of the first voice start ────────────────
+  // Loading this phone's recogniser takes seconds, and the first voice start
+  // used to wait for all of them. A chat on screen loads it before it is
+  // asked for — only for somebody who talks to this phone, and only where
+  // that is free: see [recognizerAheadBlocker] and `ChatRecognizerPrewarm`.
+
+  /// A chat loads the recogniser ahead only if a voice conversation or a
+  /// dictation ran on it this many days ago at most.
+  static const int recentVoiceUseDays = 7;
+
+  /// The day of the last voice conversation or dictation on this phone's
+  /// recogniser, as [voiceUseDay]. Nothing else about its use is kept.
+  @visibleForTesting
+  static const String lastOnDeviceVoiceDayKey =
+      'voice_on_device_last_use_day_v1';
+
+  @visibleForTesting
+  static int voiceUseDay(DateTime moment) =>
+      moment.millisecondsSinceEpoch ~/ Duration.millisecondsPerDay;
+
+  bool get _usedOnDeviceVoiceRecently {
+    final day = _prefs.getInt(lastOnDeviceVoiceDayKey);
+    return day != null &&
+        voiceUseDay(DateTime.now()) - day <= recentVoiceUseDays;
+  }
+
+  void _noteOnDeviceVoiceUse() {
+    final today = voiceUseDay(DateTime.now());
+    if (_prefs.getInt(lastOnDeviceVoiceDayKey) == today) return;
+    unawaited(_prefs.setInt(lastOnDeviceVoiceDayKey, today));
+  }
+
+  // The system reported memory pressure during this run of the app: nothing
+  // is loaded ahead again until the app starts anew. The UI merely being
+  // hidden is not that.
+  bool _memoryPressureSeen = false;
+  int _chatsOnScreen = 0;
+  VoiceIdleTimer? _chatLeftTimer;
+
+  /// Why the recogniser is not to be loaded ahead right now, or null when
+  /// nothing this service knows stands in the way. Reads of memory only, the
+  /// cheapest first: who has not talked to this phone lately stops at one
+  /// preference lookup.
+  String? get recognizerAheadBlocker {
+    if (_disposed) return 'disposed';
+    if (!_usedOnDeviceVoiceRecently) return 'no_recent_use';
+    if (_memoryPressureSeen) return 'memory_pressure';
+    // A recogniser already loaded, a conversation, a dictation, a reading:
+    // whoever is using the voice decides what is in memory.
+    if (_stt != null ||
+        _voiceConversationActive ||
+        _heavyModelUseActive ||
+        nativeVoiceActive) {
+      return 'in_use';
+    }
+    final settings = _settings;
+    // Only the recogniser a conversation on this phone will really use, and
+    // only the one that can wait loaded.
+    if (_resolveConversationSttEngine(settings, onDevice: true) !=
+        SttEngineKind.sherpaLive) {
+      return 'engine';
+    }
+    // Where the recogniser and the voice may not share memory each turn
+    // loads them in turn anyway: nothing is held ahead there.
+    if (_resolveConversationTtsEngine(settings, onDevice: true) ==
+            TtsEngineKind.onnx &&
+        !_deviceMemory.residencyEligible) {
+      return 'memory';
+    }
+    return null;
+  }
+
+  /// Loads this phone's recogniser before anybody asks for it, so the first
+  /// voice start finds it ready. The caller has checked what only it knows:
+  /// the chat's voice conversation runs on this phone and the device is not
+  /// constrained. [stillWanted] is asked again once the model is known to be
+  /// on disk.
+  ///
+  /// The microphone is not opened and its permission is not asked. What is
+  /// loaded is nobody's yet: it waits like the recogniser a finished
+  /// conversation leaves, and the same rules release it
+  /// ([warmRecognizerIdleTimeout], memory pressure, leaving the app, another
+  /// engine, model or language, [chatLeft]).
+  Future<bool> loadRecognizerAhead({bool Function()? stillWanted}) async {
+    _recycleSttIfLangChanged();
+    if (recognizerAheadBlocker != null) return false;
+    if (debugSttFactory == null && !await sherpaModelReady()) return false;
+    if (recognizerAheadBlocker != null || !(stillWanted?.call() ?? true)) {
+      return false;
+    }
+    _recycleSttIfLangChanged();
+    final engine = debugSttFactory?.call() ?? _newSherpaEngine();
+    if (engine is! WarmSttEngine) {
+      unawaited(_disposeSttEngine(engine, reason: 'ahead_cannot_wait'));
+      return false;
+    }
+    _stt = engine;
+    _sttKind = SttEngineKind.sherpaLive;
+    _sttNativeVoice = false;
+    _parkedRecognizer = engine;
+    debugPrint('[VOICE-PERF] voice.recognizer.ahead=load');
+    unawaited((engine as WarmSttEngine).prewarm());
+    _scheduleHeavyModelIdleRelease();
+    return true;
+  }
+
+  /// A chat came on screen. A recogniser that waits in a language the app no
+  /// longer speaks is released here instead of at the next voice start.
+  void chatShown() {
+    _chatsOnScreen++;
+    _chatLeftTimer?.cancel();
+    _chatLeftTimer = null;
+    if (_sttParkedWarm && !_voiceConversationActive) {
+      _recycleSttIfLangChanged();
+    }
+  }
+
+  /// A chat left the screen for good. With no other chat on screen, a
+  /// recogniser that is only waiting for a next start is released after
+  /// [chatLeftRecognizerGrace]: there is no voice button to press from here.
+  void chatLeft() {
+    if (_chatsOnScreen > 0) _chatsOnScreen--;
+    if (_chatsOnScreen > 0 || _disposed || !_sttParkedWarm) return;
+    _chatLeftTimer?.cancel();
+    _chatLeftTimer = _idleTimerFactory(chatLeftRecognizerGrace, () {
+      _chatLeftTimer = null;
+      if (_chatsOnScreen > 0) return;
+      unawaited(releaseWaitingRecognizer(reason: 'chat_left'));
+    });
+  }
+
+  /// Releases a recogniser that is only waiting for a next start. One in
+  /// use, or one a conversation keeps while it is paused, is not touched.
+  Future<void> releaseWaitingRecognizer({required String reason}) async {
+    if (_disposed || !_sttParkedWarm || _voiceConversationActive) return;
+    await _disposeSttAndCaches(reason: reason);
+    // Whatever else is loaded keeps its own time.
+    _scheduleHeavyModelIdleRelease();
+  }
+
   /// Perfil de memoria del proceso, leído una vez. Inyectable en tests. Solo
   /// Android lee `/proc/meminfo`: en cualquier otra plataforma (tests de
   /// host incluidos) el perfil es "no elegible" y rige la serialización
@@ -1074,6 +1370,7 @@ class VoiceService {
   /// libere el recurso. Una conversación lógicamente pausada no bloquea por sí
   /// sola la liberación.
   Future<void> onMemoryPressure() async {
+    _memoryPressureSeen = true;
     _voiceMemoryPressure = true;
     _cancelHeavyModelIdleRelease();
     if (_heavyModelUseActive) {
@@ -1102,7 +1399,19 @@ class VoiceService {
   /// background SIN conversación de voz activa evacuan; con la conversación
   /// viva los modelos permanecen residentes porque cada turno los necesita.
   Future<void> onTrimMemory(int level) async {
-    if (_disposed || level <= 0 || level == trimMemoryUiHidden) return;
+    if (_disposed || level <= 0) return;
+    if (level == trimMemoryUiHidden) {
+      // The app left the screen: no pressure. A conversation that goes on
+      // there keeps its models; a recogniser that was only waiting for the
+      // next start has nobody to wait for.
+      if (_sttParkedWarm && !_voiceConversationActive) {
+        await _evictIdleHeavyModels(reason: 'ui_hidden');
+      }
+      return;
+    }
+    // Any other level is the system short of memory, also the ones a running
+    // conversation sits out below: nothing is loaded ahead after it.
+    _memoryPressureSeen = true;
     final foregroundPressure =
         level == trimMemoryRunningLow || level == trimMemoryRunningCritical;
     if (!foregroundPressure && _voiceConversationActive) {
@@ -2455,10 +2764,25 @@ class VoiceService {
   Future<SttCheck> checkStt({bool forComposerDictation = false}) async {
     _cancelHeavyModelIdleRelease();
     try {
-      return await _checkStt(forComposerDictation: forComposerDictation);
+      final check = await _checkStt(forComposerDictation: forComposerDictation);
+      if (check.ready) _prewarmRecognizer();
+      return check;
     } finally {
       _scheduleHeavyModelIdleRelease();
     }
+  }
+
+  /// The engine is resolved and about to be used: start loading its
+  /// recogniser now instead of when the microphone opens. Where two heavy
+  /// models may not share memory the load keeps its place in the handoff.
+  void _prewarmRecognizer() {
+    final engine = _stt;
+    if (engine is! WarmSttEngine ||
+        _sttNativeVoice ||
+        serializesHeavyLocalVoiceModels) {
+      return;
+    }
+    unawaited((engine as WarmSttEngine).prewarm());
   }
 
   Future<SttCheck> _checkStt({bool forComposerDictation = false}) async {
@@ -2496,6 +2820,12 @@ class VoiceService {
     // permiso de micro + modelo presente), pero sin recrear el recorder.
     // El motor SERVER se excluye de la reutilización ordinaria para comprobar
     // de nuevo la conexión antes de cada captura.
+    if (_sttParkedWarm && _sttKind != effectiveEngine) {
+      // The recogniser was kept loaded for the next voice start, and this
+      // capture wants another engine (the composer's dictation has a setting
+      // of its own): it is released and the engine resolved as always.
+      await _disposeSttAndCaches(reason: 'parked_engine_not_wanted');
+    }
     final reusable =
         _stt != null &&
         _sttKind != SttEngineKind.server &&
@@ -2515,7 +2845,18 @@ class VoiceService {
       final oldStt = _stt;
       _stt = null;
       _sttKind = null;
-      await _disposeSttEngine(oldStt, reason: 'server_recheck');
+      // Volver a dictar mientras el servidor aún transcribe el clip anterior
+      // no puede descartarlo: el motor viejo se libera tras entregar su final
+      // y el nuevo arranca sin esperarlo.
+      final deferred = _disposeSttEngineAfterPendingStop(
+        oldStt,
+        reason: 'server_recheck',
+      );
+      if (deferred == null) {
+        await _disposeSttEngine(oldStt, reason: 'server_recheck');
+      } else {
+        unawaited(deferred);
+      }
     }
     debugPrint('[voice-stab] checkStt create engine=${effectiveEngine.name}');
 
@@ -2668,11 +3009,14 @@ class VoiceService {
     bool forComposerDictation = false,
   }) {
     _cancelHeavyModelIdleRelease();
+    _parkedRecognizer = null;
     _setDictationActive(true);
     final epoch = ++_dictationEpoch;
     late final Stream<SttResult> source;
     try {
-      source = _sttEngine(forComposerDictation: forComposerDictation).listen(
+      final engine = _sttEngine(forComposerDictation: forComposerDictation);
+      if (engine is WarmSttEngine && !_sttNativeVoice) _noteOnDeviceVoiceUse();
+      source = engine.listen(
         onSpeechEnd: onSpeechEnd,
         onCaptureReady: onCaptureReady,
         continuous: continuous,
@@ -2731,9 +3075,18 @@ class VoiceService {
   /// del modo voz, usa [disposeSttForVoiceExit].
   Future<void> stopDictation() async {
     try {
-      if (_stt == null) return;
+      final engine = _stt;
+      if (engine == null) return;
       debugPrint('[voice-stab] stopDictation');
-      await _stt!.stop();
+      final stop = engine.stop();
+      _sttStopsInFlight[engine] = stop;
+      try {
+        await stop;
+      } finally {
+        if (identical(_sttStopsInFlight[engine], stop)) {
+          _sttStopsInFlight.remove(engine);
+        }
+      }
       micLevel.value = 0;
     } finally {
       _setDictationActive(false);
@@ -2787,13 +3140,33 @@ class VoiceService {
   /// micrófono vivo en segundo plano (FIX-1, TASK-022). Usa `dispose()` del motor
   /// (no `stop()`) para abortar la grabación SIN disparar una transcripción al
   /// salir. Idempotente y best-effort: un fallo al liberar nunca tumba la app.
-  Future<void> disposeSttForVoiceExit() {
+  ///
+  /// [keepRecognizerWarm]: the conversation ended or paused by the user's
+  /// hand. The capture ends the same way (microphone released, nothing
+  /// transcribed) but an on-device recogniser stays loaded for the next
+  /// start, until [warmRecognizerIdleTimeout], memory pressure or leaving
+  /// the app release it. Never under memory pressure.
+  Future<void> disposeSttForVoiceExit({bool keepRecognizerWarm = false}) {
     _cancelHeavyModelIdleRelease();
     _setDictationActive(false);
     ++_dictationEpoch;
+    final pressure = _voiceMemoryPressure || _memoryPressureEvictionPending;
     // La presión de memoria es por sesión de voz: al salir se limpia para que
     // la siguiente sesión vuelva a decidir con el perfil del dispositivo.
     _voiceMemoryPressure = false;
+    final engine = _stt;
+    if (keepRecognizerWarm &&
+        !pressure &&
+        !_disposed &&
+        !_sttNativeVoice &&
+        engine is WarmSttEngine) {
+      micLevel.value = 0;
+      _parkedRecognizer = engine;
+      debugPrint('[voice-stab] parkStt reason=voice_exit');
+      final parked = (engine as WarmSttEngine).park();
+      _scheduleHeavyModelIdleRelease();
+      return parked;
+    }
     return _disposeSttAndCaches(reason: 'voice_exit');
   }
 
@@ -2801,6 +3174,7 @@ class VoiceService {
     final engine = _stt;
     _stt = null;
     _sttKind = null;
+    _parkedRecognizer = null;
     micLevel.value = 0;
     if (engine == null) {
       return _sttDisposalTail ?? Future<void>.value();
@@ -2843,6 +3217,9 @@ class VoiceService {
     _localTts = null;
     _ttsLang = null;
     _syncSpeaking();
+    // The recogniser the conversation left loaded keeps its own release
+    // timer, which the first line above cancelled with everything else.
+    if (_sttParkedWarm) _scheduleHeavyModelIdleRelease();
 
     final pending = _ttsDisposalTail;
     if (response == null && local == null) {
@@ -2949,8 +3326,12 @@ class VoiceService {
     disableHermesServerDictation(force: true);
     disableNativeVoice(force: true);
     _disposed = true;
+    // Los clientes propios se cierran tras enviar el release del lease TTS.
+    await Future.wait(_pendingTtsLeaseReleases.toList());
     _activeConversationSpeechLease = null;
     _cancelHeavyModelIdleRelease();
+    _chatLeftTimer?.cancel();
+    _chatLeftTimer = null;
     _memoryPressureEvictionPending = false;
     prepareReadAloudPlayback = null;
     _invalidateReadOperation(discard: true, stopNative: false);

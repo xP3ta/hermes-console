@@ -40,12 +40,9 @@ void main() {
 
         final snapshot = await store.load();
 
-        expect(snapshot.activeProfileId, 'amber-oled');
+        expect(snapshot.activeProfileId, 'amber');
         expect(snapshot.customProfiles, isEmpty);
-        expect(
-          prefs.getString(ThemeProfileStore.activeProfileKey),
-          'amber-oled',
-        );
+        expect(prefs.getString(ThemeProfileStore.activeProfileKey), 'amber');
         expect(prefs.getString(ThemeProfileStore.customProfilesKey), isNull);
         expect(prefs.getInt(ThemeProfileStore.schemaVersionKey), isNull);
       },
@@ -91,8 +88,8 @@ void main() {
         final snapshot = await store.load();
 
         expect(snapshot.customProfiles.single.id, 'low-contrast');
-        expect(snapshot.activeProfileId, 'amber');
-        expect(prefs.getString(ThemeProfileStore.activeProfileKey), 'amber');
+        expect(snapshot.activeProfileId, 'console');
+        expect(prefs.getString(ThemeProfileStore.activeProfileKey), 'console');
       },
     );
 
@@ -116,10 +113,10 @@ void main() {
         await store.save(unsafeDraft);
         final snapshot = await store.load();
 
-        expect(snapshot.activeProfileId, 'amber');
+        expect(snapshot.activeProfileId, 'console');
         expect(snapshot.customById(profile.id), unsafeDraft);
-        expect(prefs.getString(ThemeProfileStore.activeProfileKey), 'amber');
-        expect(prefs.getString(ThemeProfileStore.legacyThemeKey), 'amber');
+        expect(prefs.getString(ThemeProfileStore.activeProfileKey), 'console');
+        expect(prefs.getString(ThemeProfileStore.legacyThemeKey), 'console');
       },
     );
 
@@ -139,10 +136,10 @@ void main() {
         final first = await store.load();
         final second = await ThemeProfileStore(prefs).load();
 
-        expect(first.activeProfileId, 'amber');
+        expect(first.activeProfileId, 'console');
         expect(first.customProfiles, isEmpty);
         expect(first.quarantinedPayload, contains('var(--remote)'));
-        expect(second.activeProfileId, 'amber');
+        expect(second.activeProfileId, 'console');
         expect(second.customProfiles, isEmpty);
         expect(second.quarantinedPayload, first.quarantinedPayload);
       },
@@ -194,7 +191,7 @@ void main() {
 
         expect(snapshot.hasFutureSchema, isTrue);
         expect(snapshot.customProfiles, isEmpty);
-        expect(snapshot.activeProfileId, 'amber');
+        expect(snapshot.activeProfileId, 'console');
         expect(snapshot.quarantinedPayload, isNull);
         expect(prefs.getString(ThemeProfileStore.customProfilesKey), raw);
       },
@@ -333,23 +330,26 @@ void main() {
         store.activate(draft.id),
         throwsA(_storeError('profile_not_activatable')),
       );
-      expect((await store.load()).activeProfileId, 'amber');
+      expect((await store.load()).activeProfileId, 'console');
     });
 
-    test('deleting the active custom profile falls back to Amber', () async {
-      final (prefs, store) = await _newStore({});
-      final profile = validCustomTheme(id: 'active-theme');
-      await store.save(profile);
-      await store.activate(profile.id);
+    test(
+      'deleting the active custom profile falls back to the default',
+      () async {
+        final (prefs, store) = await _newStore({});
+        final profile = validCustomTheme(id: 'active-theme');
+        await store.save(profile);
+        await store.activate(profile.id);
 
-      await store.delete(profile.id);
+        await store.delete(profile.id);
 
-      final snapshot = await store.load();
-      expect(snapshot.activeProfileId, 'amber');
-      expect(snapshot.customProfiles, isEmpty);
-      expect(prefs.getString(ThemeProfileStore.activeProfileKey), 'amber');
-      expect(prefs.getString(ThemeProfileStore.legacyThemeKey), 'amber');
-    });
+        final snapshot = await store.load();
+        expect(snapshot.activeProfileId, 'console');
+        expect(snapshot.customProfiles, isEmpty);
+        expect(prefs.getString(ThemeProfileStore.activeProfileKey), 'console');
+        expect(prefs.getString(ThemeProfileStore.legacyThemeKey), 'console');
+      },
+    );
 
     test('migrates legacy component preferences to unified minimal', () async {
       for (final legacy in ['terminal', 'future-components']) {
@@ -403,12 +403,124 @@ void main() {
           ThemeProfileStore.activeComponentProfileKey: 'soft',
         });
 
-        await store.activate('amber-oled');
+        await store.activate('steel-light');
 
         final snapshot = await store.load();
-        expect(snapshot.activeProfileId, 'amber-oled');
+        expect(snapshot.activeProfileId, 'steel-light');
         expect(snapshot.activeComponentProfileId, 'minimal');
       },
     );
+  });
+
+  group('ThemeProfileStore 1.2.15 removed themes', () {
+    const removed = {
+      'amber-oled': 'amber',
+      'crimson': 'bordeaux',
+      'hermes-console': 'slate',
+      'mocha': 'catppuccin-dark',
+      'phosphor': 'cyberpunk',
+      'graphite': 'mono',
+    };
+
+    removed.forEach((stored, target) {
+      test('$stored is migrated to $target once and persisted', () async {
+        final (prefs, store) = await _newStore({
+          ThemeProfileStore.activeProfileKey: stored,
+          ThemeProfileStore.legacyThemeKey: stored,
+        });
+
+        final snapshot = await store.load();
+
+        expect(snapshot.activeProfileId, target);
+        expect(prefs.getString(ThemeProfileStore.activeProfileKey), target);
+        expect(prefs.getString(ThemeProfileStore.legacyThemeKey), target);
+
+        // A restart reads the migrated id as-is.
+        final restarted = await ThemeProfileStore(prefs).load();
+        expect(restarted.activeProfileId, target);
+      });
+    });
+
+    test('a removed id kept only in the legacy key is migrated too', () async {
+      final (prefs, store) = await _newStore({
+        ThemeProfileStore.legacyThemeKey: 'crimson',
+      });
+
+      final snapshot = await store.load();
+
+      expect(snapshot.activeProfileId, 'bordeaux');
+      expect(prefs.getString(ThemeProfileStore.activeProfileKey), 'bordeaux');
+      expect(prefs.getString(ThemeProfileStore.legacyThemeKey), 'bordeaux');
+    });
+
+    test('an unknown id falls back to the default without throwing', () async {
+      final (prefs, store) = await _newStore({
+        ThemeProfileStore.activeProfileKey: 'no-such-theme',
+      });
+
+      final snapshot = await store.load();
+
+      expect(snapshot.activeProfileId, 'console');
+      expect(prefs.getString(ThemeProfileStore.activeProfileKey), 'console');
+    });
+
+    test(
+      'a custom theme derived from a removed preset keeps working',
+      () async {
+        final document = validThemeDocument(id: 'from-crimson');
+        final profile = document['profile'] as Map<String, dynamic>;
+        profile['base_preset_id'] = 'crimson';
+        final (prefs, store) = await _newStore({
+          ThemeProfileStore.customProfilesKey: jsonEncode([document]),
+          ThemeProfileStore.schemaVersionKey: 1,
+          ThemeProfileStore.activeProfileKey: 'from-crimson',
+        });
+
+        final snapshot = await store.load();
+
+        expect(snapshot.activeProfileId, 'from-crimson');
+        expect(snapshot.customById('from-crimson')?.basePresetId, 'crimson');
+        expect(
+          prefs.getString(ThemeProfileStore.activeProfileKey),
+          'from-crimson',
+        );
+      },
+    );
+  });
+
+  group('default theme for new installs (1.2.15)', () {
+    test('an install that never chose a theme gets Console', () async {
+      final (prefs, store) = await _newStore({});
+
+      final snapshot = await store.load();
+
+      expect(snapshot.activeProfileId, 'console');
+      // Nothing is written: the default stays a default, so a later default
+      // change can still reach installs that never chose.
+      expect(prefs.getString(ThemeProfileStore.activeProfileKey), isNull);
+      expect(prefs.getString(ThemeProfileStore.legacyThemeKey), isNull);
+    });
+
+    test('a saved Amber choice is kept (never moved to Console)', () async {
+      for (final values in <Map<String, Object>>[
+        {ThemeProfileStore.activeProfileKey: 'amber'},
+        {ThemeProfileStore.legacyThemeKey: 'amber'},
+        {
+          ThemeProfileStore.activeProfileKey: 'amber',
+          ThemeProfileStore.legacyThemeKey: 'amber',
+        },
+      ]) {
+        final (prefs, store) = await _newStore(values);
+        expect(
+          (await store.load()).activeProfileId,
+          'amber',
+          reason: '$values',
+        );
+        expect(
+          prefs.getString(ThemeProfileStore.activeProfileKey),
+          values[ThemeProfileStore.activeProfileKey],
+        );
+      }
+    });
   });
 }

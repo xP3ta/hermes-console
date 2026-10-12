@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import '../../l10n/app_localizations.dart';
 import '../theme/app_theme.dart';
 import 'hermes_premium_ui.dart';
+import 'menu_back_guard.dart';
 
 enum AttachmentSourceChoice { camera, photos, files }
 
@@ -58,61 +59,67 @@ class AttachmentSourceMenuButton extends StatelessWidget {
       );
     }
 
-    return MenuAnchor(
-      animated: !reduceMotion,
-      crossAxisUnconstrained: false,
-      style: MenuStyle(
-        backgroundColor: WidgetStatePropertyAll(colors.surface),
-        surfaceTintColor: const WidgetStatePropertyAll(Colors.transparent),
-        elevation: const WidgetStatePropertyAll(8),
-        shape: WidgetStatePropertyAll(
-          RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(18),
-            side: BorderSide(color: colors.divider.withValues(alpha: 0.72)),
+    // Back closes the open menu only, never the chat underneath.
+    return MenuBackGuard(
+      builder: (context, menuController, onOpen, onClose) => MenuAnchor(
+        controller: menuController,
+        onOpen: onOpen,
+        onClose: onClose,
+        animated: !reduceMotion,
+        crossAxisUnconstrained: false,
+        style: MenuStyle(
+          backgroundColor: WidgetStatePropertyAll(colors.surface),
+          surfaceTintColor: const WidgetStatePropertyAll(Colors.transparent),
+          elevation: const WidgetStatePropertyAll(8),
+          shape: WidgetStatePropertyAll(
+            RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(18),
+              side: BorderSide(color: colors.divider.withValues(alpha: 0.72)),
+            ),
+          ),
+          padding: const WidgetStatePropertyAll(
+            EdgeInsets.symmetric(vertical: 6),
           ),
         ),
-        padding: const WidgetStatePropertyAll(
-          EdgeInsets.symmetric(vertical: 6),
-        ),
+        menuChildren: [
+          item(
+            source: AttachmentSourceChoice.camera,
+            icon: Icons.photo_camera_outlined,
+            label: strings.chatAttachCamera,
+          ),
+          item(
+            source: AttachmentSourceChoice.photos,
+            icon: Icons.photo_library_outlined,
+            label: strings.chatAttachPhotos,
+          ),
+          item(
+            source: AttachmentSourceChoice.files,
+            icon: Icons.attach_file_rounded,
+            label: strings.chatAttachFiles,
+          ),
+        ],
+        builder: (context, controller, child) {
+          return HermesTactileAction(
+            icon: Icons.add_rounded,
+            iconSize: 23,
+            semanticLabel: semanticLabel,
+            onPressed: !enabled
+                ? null
+                : () {
+                    HapticFeedback.selectionClick();
+                    if (controller.isOpen) {
+                      controller.close();
+                    } else {
+                      controller.open();
+                    }
+                  },
+            foregroundColor: colors.textPrimary,
+            enabled: enabled,
+            size: 38,
+            visual: HermesTactileActionVisual.quiet,
+          );
+        },
       ),
-      menuChildren: [
-        item(
-          source: AttachmentSourceChoice.camera,
-          icon: Icons.photo_camera_outlined,
-          label: strings.chatAttachCamera,
-        ),
-        item(
-          source: AttachmentSourceChoice.photos,
-          icon: Icons.photo_library_outlined,
-          label: strings.chatAttachPhotos,
-        ),
-        item(
-          source: AttachmentSourceChoice.files,
-          icon: Icons.attach_file_rounded,
-          label: strings.chatAttachFiles,
-        ),
-      ],
-      builder: (context, controller, child) {
-        return HermesTactileAction(
-          icon: Icons.add_rounded,
-          iconSize: 23,
-          semanticLabel: semanticLabel,
-          onPressed: !enabled
-              ? null
-              : () {
-                  HapticFeedback.selectionClick();
-                  if (controller.isOpen) {
-                    controller.close();
-                  } else {
-                    controller.open();
-                  }
-                },
-          foregroundColor: colors.textPrimary,
-          enabled: enabled,
-          size: 38,
-          visual: HermesTactileActionVisual.quiet,
-        );
-      },
     );
   }
 }

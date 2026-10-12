@@ -1,14 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Chat rápido for the widgets placed as "Hermes · Controles" (four cells).
+     Hidden from the picker (Android 9+): the picker offers Chat rápido once,
+     and that one grows to this same form. -->
 <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
-    android:description="@string/hermes_widget_control_description"
-    android:initialKeyguardLayout="@layout/new_session_widget_large"
-    android:initialLayout="@layout/new_session_widget_large"
+    android:description="@string/lw_quick_description"
+    android:initialLayout="@layout/lw_quick_wide"
     android:minWidth="250dp"
     android:minHeight="40dp"
-    android:minResizeWidth="250dp"
-    android:previewLayout="@layout/new_session_widget_large"
+    android:minResizeWidth="110dp"
+    android:previewLayout="@layout/lw_quick_wide"
     android:resizeMode="horizontal"
     android:targetCellWidth="4"
     android:targetCellHeight="1"
     android:updatePeriodMillis="0"
-    android:widgetCategory="home_screen" />
+    android:widgetCategory="home_screen"
+    android:widgetFeatures="hide_from_picker" />

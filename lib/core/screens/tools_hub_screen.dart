@@ -7,6 +7,7 @@ import '../theme/app_theme.dart';
 import '../widgets/general_dock_shell.dart';
 import '../widgets/hermes_app_bar.dart';
 import '../widgets/hermes_notice.dart';
+import '../feedback/feedback_policy.dart';
 
 String _withInitialUppercase(String value) {
   if (value.isEmpty) return value;
@@ -88,18 +89,14 @@ class _ToolsHubScreenState extends State<ToolsHubScreen> {
 
   void _open(HermesToolDestination destination) {
     if (!destination.enabled) {
-      HermesNotice.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          SnackBar(
-            content: Text(
-              destination.disabledReason ??
-                  Strings.of(context).drawerNeedInstance,
-            ),
-            duration: const Duration(seconds: 3),
-          ),
-          kind: HermesNoticeKind.warning,
-        );
+      HermesNotice.of(context).hideCurrentSnackBar();
+      AppFeedback.notify(
+        context,
+        FeedbackKind.error,
+        destination.disabledReason ?? Strings.of(context).drawerNeedInstance,
+        warning: true,
+        duration: const Duration(seconds: 3),
+      );
       return;
     }
     Navigator.of(context).push(MaterialPageRoute(builder: destination.builder));
@@ -120,6 +117,7 @@ class _ToolsHubScreenState extends State<ToolsHubScreen> {
         SafeArea(
           top: false,
           child: ListView(
+            clipBehavior: hermesUnderHeader,
             key: const ValueKey('tools-hub-list'),
             physics: const ClampingScrollPhysics(),
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),

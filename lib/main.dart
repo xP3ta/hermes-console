@@ -8,12 +8,42 @@ import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'core/guide/guide_layer.dart';
+import 'core/widgets/artifact_viewer/code_view_prefs.dart';
+import 'core/widgets/floating_chat_header.dart';
+import 'core/widgets/instance_kind_picker.dart';
+import 'core/widgets/mascot/header_mascot.dart';
+import 'core/widgets/mascot/float/mascot_overlay.dart';
+import 'core/widgets/mascot/float/mascot_route_watch.dart';
+import 'core/widgets/mascot/float/mascot_sources.dart';
+import 'core/widgets/mascot/mascot_sprite.dart';
+import 'core/widgets/mission_profile_avatar.dart';
+import 'core/widgets/profile_face.dart';
+import 'core/models/profile_identity.dart';
+import 'core/services/message_reaction_prefs.dart';
+import 'core/services/pinned_prompt_prefs.dart';
+import 'core/services/retired_prefs.dart';
 import 'core/app_header_title.dart';
 import 'core/companion/data/companion_preferences.dart';
 import 'core/companion/data/companion_repository.dart';
 import 'core/companion/hatch/mock_hatch_provider.dart';
 import 'core/companion/state/companion_controller.dart';
 import 'core/companion/state/companion_presence_controller.dart';
+import 'core/shell/mascot_bridge.dart';
+import 'core/bots/ui/room/room_screen.dart';
+import 'core/screens/companion/companion_playground_screen.dart';
+import 'core/screens/companion/mascotas_screen.dart';
+import 'core/screens/companion/petdex_gallery_screen.dart';
+import 'core/screens/image_viewer_screen.dart';
+import 'core/screens/notification_settings_screen.dart';
+import 'core/screens/qr_scan_screen.dart';
+import 'core/screens/ssh_terminal_screen.dart';
+import 'core/widgets/artifact_viewer/artifact_viewer_screen.dart';
+import 'core/widgets/attachment_card.dart'
+    show
+        GeneratedAudioViewerScreen,
+        GeneratedFileViewerScreen,
+        GeneratedTextViewerScreen;
 import 'core/config/flavor.dart';
 import 'core/models/new_session_launch_action.dart';
 import 'core/models/home_widget_snapshot.dart';
@@ -25,21 +55,30 @@ import 'core/screens/session_list_screen.dart';
 import 'core/screens/runs_screen.dart';
 
 import 'core/screens/tasks_screen.dart';
+import 'core/screens/cron_screen.dart';
+import 'core/services/app_error_log.dart';
 import 'core/services/startup_destination.dart';
+import 'core/services/notifications/notification_permission_moment.dart';
+import 'core/services/startup_guard.dart';
 import 'core/services/run_registry.dart';
 import 'core/screens/lock_screen.dart';
 import 'core/screens/instance_edit_screen.dart';
+import 'core/screens/legacy_bridge_notices.dart';
 import 'core/screens/onboarding_screen.dart';
-import 'core/screens/splash_screen.dart';
+import 'core/capabilities/catalog_deep_link.dart';
+import 'core/capabilities/catalog_deep_link_screen.dart';
 import 'core/services/pairing_link.dart';
 import 'core/services/pairing_link_delivery_gate.dart';
 import 'core/services/active_chat_service.dart';
 import 'core/services/compression_restore_store.dart';
+import 'core/services/cold_start_store.dart';
 import 'core/services/android_launch_action_inbox.dart';
 import 'core/services/android_share_inbox.dart';
 import 'core/services/app_lock.dart';
+import 'core/services/clipboard_image_source.dart';
+import 'core/services/generated_media_service.dart';
+import 'core/services/media_prefetcher.dart';
 import 'core/services/approval_policy.dart';
-import 'core/services/bridge_manager.dart';
 import 'core/services/chat_draft_store.dart';
 import 'core/services/connection_manager.dart';
 import 'core/services/font_size_service.dart';
@@ -48,31 +87,46 @@ import 'core/services/notifications/background_listener.dart';
 import 'core/services/notifications/notification_service.dart';
 import 'core/services/performance_trace.dart';
 import 'core/bots/data/gateway_socket_meter.dart';
+import 'core/services/hermes_update_monitor.dart';
+import 'core/services/hermes_update_probes.dart';
 import 'core/services/shared_gateway_pool.dart';
 import 'core/services/new_session_launch_coordinator.dart';
 import 'core/services/profile_pet_service.dart';
 import 'core/services/platform/native_appearance.dart';
 import 'core/services/secure_storage.dart';
 import 'core/services/screen_security.dart';
+import 'core/services/session_archive.dart';
 import 'core/services/sftp_transfer_service.dart';
 import 'core/services/ssh_manager.dart';
 import 'core/services/ssh_session_service.dart';
 import 'core/services/tui_gateway_client.dart';
+import 'core/services/voice/conversation/gpt_live_voice_conversation_controller.dart';
 import 'core/services/voice/conversation/local_voice_conversation_controller.dart';
+import 'core/services/voice/conversation/voice_conversation_coordinator.dart';
+import 'core/services/voice/live/flutter_webrtc_transport.dart';
+import 'core/services/voice/live/live_audio_environment.dart';
+import 'core/services/voice/live/voice_chat_mode_store.dart';
+import 'core/services/voice/live/voice_live_api.dart';
 import 'core/services/voice/read_aloud_session.dart';
 import 'core/services/voice/voice_phase.dart';
 import 'core/services/voice/voice_latency_trace.dart';
+import 'core/services/voice/voice_lang.dart';
 import 'core/services/voice/voice_service.dart';
 import 'core/services/voice/voice_settings.dart';
+import 'core/theme/active_theme_appearance.dart';
 import 'core/theme/app_theme.dart';
 import 'core/theme/component_profile.dart';
 import 'core/theme/scroll_behavior.dart';
 import 'core/theme/theme_profile_store.dart';
 import 'core/widgets/attachment_source_sheet.dart';
+import 'core/widgets/chat/embeds/embed_consent_store.dart';
+import 'core/widgets/frosted_backdrop.dart';
 import 'core/widgets/hermes_notice.dart';
 import 'core/widgets/hermes_premium_ui.dart';
+import 'core/widgets/startup_handoff.dart';
 import 'core/services/notifications/ui_notification_actions.dart';
 import 'l10n/app_localizations.dart';
+import 'core/feedback/feedback_policy.dart';
 
 /// Observador global de rutas. Lo usa [ChatScreen] (vía RouteAware) para saber
 /// cuándo su pantalla es la visible en pila y fijar/limpiar
@@ -222,17 +276,42 @@ Future<T?> pushNotificationOwnerRoute<T>(
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  AppErrorLog.install();
   PerformanceTrace.qa.start();
   if (kVoiceRuntimeEnabled) {
     FlutterForegroundTask.initCommunicationPort();
   }
+  // Any throw while preparing the app (corrupt or unreadable secure storage,
+  // Keystore unavailable before first unlock) shows a recoverable screen
+  // instead of leaving the native splash up forever. Nothing is wiped.
+  await runGuardedStartup(bootstrap: bootstrapHermesApp, run: runApp);
+}
+
+/// Everything awaited before the first frame. Independent storage reads run
+/// concurrently; the resulting state is the same as reading them in order.
+@visibleForTesting
+Future<Widget> bootstrapHermesApp() async {
   final prefs = await SharedPreferences.getInstance();
+  // Rich-embed consent is per device; until it loads every type reads as off.
+  await EmbedConsentStore.load(prefs);
+  await MessageReactionPrefs.load(prefs);
+  await CodeViewPrefs.load(prefs);
+  await PinnedPromptPrefs.load(prefs);
+  await clearRetiredPrefs(prefs);
   final themeProfileStore = ThemeProfileStore(prefs);
-  final initialThemeProfiles = await themeProfileStore.load();
   final cancelledTurnStore = CancelledTurnTombstoneStore.secure();
-  await cancelledTurnStore.initialize();
   final compressionRestoreStore = CompressionRestoreStore();
-  final connManager = await ConnectionManager.create(
+  final coldStartStore = ColdStartStore();
+  ActiveChatService? coldStartOwner;
+  // The tombstone store and the connection list touch disjoint keys; the
+  // store is only consulted by ConnectionManager when a connection is
+  // deleted, which cannot happen during create().
+  final themeLoad = themeProfileStore.load();
+  // Stop tombstones are optional at startup: an unreadable or corrupt blob is
+  // left untouched (the store never rewrites what it could not parse) and
+  // chats simply run without restored tombstones this session.
+  final tombstonesLoad = tryStartupStep(cancelledTurnStore.initialize);
+  final connManagerLoad = ConnectionManager.create(
     prefs,
     clearCancelledTurns: (connectionId) async {
       var removed = 0;
@@ -245,49 +324,113 @@ void main() async {
         firstStack = stackTrace;
       }
       await compressionRestoreStore.clearConnection(connectionId);
+      // cs1215: the connection's cached tails and remembered route go too.
+      await (coldStartOwner?.forgetColdStartConnection(connectionId) ??
+          coldStartStore.forgetScope(connectionId).catchError((_) {}));
       if (firstError != null) {
         Error.throwWithStackTrace(firstError, firstStack!);
       }
       return removed;
     },
   );
-  // Arranque en frío: si el usuario fijó una instancia predeterminada, la app
-  // abre con ella (sembrándola como activa). El cambio de instancia en caliente
-  // se sigue respetando durante la sesión.
-  await connManager.applyDefaultOnLaunch();
+  await Future.wait<void>([themeLoad, tombstonesLoad, connManagerLoad]);
+  final initialThemeProfiles = await themeLoad;
+  final tombstonesReady = await tombstonesLoad;
+  final connManager = await connManagerLoad;
+  await Future.wait<void>([
+    // Arranque en frío: si el usuario fijó una instancia predeterminada, la
+    // app abre con ella (sembrándola como activa). El cambio de instancia en
+    // caliente se sigue respetando durante la sesión.
+    connManager.applyDefaultOnLaunch(),
+    // FLAG_SECURE must be in place before any content is visible.
+    ScreenSecurityService(prefs).apply(),
+  ]);
   final appLock = AppLockService(prefs);
+  // Clipboard images are never probed or read while the app is locked.
+  ClipboardImageSource.appLocked = appLock.locked;
+  // Media prefetch never fetches or decodes while the app is locked; the
+  // cache root is resolved now so reopened chats read media synchronously.
+  MediaPrefetcher.appLocked = appLock.locked;
+  // The header mascot produces no frames while the app is locked.
+  MascotSprite.appLocked = appLock.locked;
+  // The drawer's profile faces read no custom avatar while locked.
+  ProfileFace.appLocked = appLock.locked;
+  unawaited(GeneratedMediaService.warmCacheRoot());
   final approvalPolicy = ApprovalPolicyService(prefs);
   final fontSize = FontSizeService(prefs);
-  final bridgeManager = BridgeManager(SecureStorage(), connManager);
   final sshManager = SshManager(SecureStorage(), connManager);
   final notifications = NotificationService(prefs);
-  await ScreenSecurityService(prefs).apply();
+  // A chat read on another device (or opened here) retracts this phone's
+  // notification on the next session list read the app already makes; never
+  // while App Lock is locked.
+  SessionArchive.listReadObserver = notifications.enableChatReadSync(
+    locked: appLock.locked,
+  );
   final sftpTransfers = SftpTransferService(sshManager, notifications);
   final sshSessions = SshSessionService(sshManager);
   final activeChats = ActiveChatService(
     notifications: notifications,
     policy: approvalPolicy,
     prefs: prefs,
-    cancelledTurnStore: cancelledTurnStore,
+    cancelledTurnStore: tombstonesReady ? cancelledTurnStore : null,
     compressionRestoreStore: compressionRestoreStore,
+    connectionCredentialsRevision: connManager.connectionsRevision,
+    coldStartStore: coldStartStore,
   );
-  await activeChats.globalActivity.initialize();
-  runApp(
-    HermesApp(
-      connManager: connManager,
-      appLock: appLock,
-      approvalPolicy: approvalPolicy,
-      fontSize: fontSize,
-      bridgeManager: bridgeManager,
-      sshManager: sshManager,
-      sftpTransfers: sftpTransfers,
-      sshSessions: sshSessions,
-      notifications: notifications,
-      activeChats: activeChats,
-      themeProfileStore: themeProfileStore,
-      initialThemeProfiles: initialThemeProfiles,
-    ),
+  coldStartOwner = activeChats;
+  // Decrypting the last chats' tails overlaps the first frames; nothing
+  // waits here.
+  // With App Lock on, nothing private is decrypted before unlock: the shell
+  // starts the restore when the lock opens (HermesAppState).
+  if (!appLock.locked.value) unawaited(activeChats.coldStartTailsReady);
+  await Future.wait<void>([
+    activeChats.globalActivity.initialize(),
+    // The first frame paints the native splash mark (StartupHandoff) and,
+    // with the lock open, Home's recents: both are ready before runApp.
+    StartupHandoff.precacheMark(),
+    if (!appLock.locked.value) primeHomeRecents(connManager, coldStartStore),
+  ]);
+  return HermesApp(
+    connManager: connManager,
+    appLock: appLock,
+    approvalPolicy: approvalPolicy,
+    fontSize: fontSize,
+    sshManager: sshManager,
+    sftpTransfers: sftpTransfers,
+    sshSessions: sshSessions,
+    notifications: notifications,
+    activeChats: activeChats,
+    themeProfileStore: themeProfileStore,
+    initialThemeProfiles: initialThemeProfiles,
   );
+}
+
+/// Decrypts the recents snapshot of the connection Home opens on, so its
+/// first frame paints them (see `ColdStartStore.peekRecents`). Bounded and
+/// never throws: a slow Keystore only means Home reads them a frame later.
+/// Callers skip it while App Lock is locked.
+@visibleForTesting
+Future<void> primeHomeRecents(
+  ConnectionManager connManager,
+  ColdStartStore store, {
+  Duration budget = const Duration(milliseconds: 300),
+}) async {
+  final connections = connManager.getConnections();
+  final lastId = connManager.prefs.getString(ConnectionManager.lastConnKey);
+  final active =
+      connections.where((c) => c.id == lastId).firstOrNull ??
+      connections.firstOrNull;
+  if (active == null) return;
+  try {
+    await store
+        .loadRecents(
+          connectionId: active.id,
+          profile: connManager.activeProfileFor(active.id),
+        )
+        .timeout(budget);
+  } catch (_) {
+    // Home falls back to its own asynchronous read.
+  }
 }
 
 /// Una opción del selector de estilo de fuente. `family` es null para la fuente
@@ -450,7 +593,6 @@ class HermesApp extends StatefulWidget {
   final AppLockService appLock;
   final ApprovalPolicyService approvalPolicy;
   final FontSizeService fontSize;
-  final BridgeManager bridgeManager;
   final SshManager sshManager;
   final SftpTransferService sftpTransfers;
   final SshSessionService sshSessions;
@@ -475,7 +617,6 @@ class HermesApp extends StatefulWidget {
     required this.appLock,
     required this.approvalPolicy,
     required this.fontSize,
-    required this.bridgeManager,
     required this.sshManager,
     required this.sftpTransfers,
     required this.sshSessions,
@@ -496,7 +637,11 @@ class HermesApp extends StatefulWidget {
   /// antiguas dark/oled/teal/light, que se mapean a los nuevos ids).
   static String getThemeId(SharedPreferences prefs) {
     final active = prefs.getString(ThemeProfileStore.activeProfileKey);
-    if (active != null && active.isNotEmpty) return active;
+    // A removed theme maps to its survivor here too, so the first frame
+    // already paints it (no flash of the default before the store loads).
+    if (active != null && active.isNotEmpty) {
+      return AppTheme.migrateStoredThemeId(active);
+    }
     return AppTheme.themeIdFromLegacy(prefs.getString('theme_mode'));
   }
 
@@ -547,6 +692,7 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
   NetworkAvailabilityRecoveryListener? _networkAvailabilityListener;
 
   Timer? _deferredNotificationInitTimer;
+  NotificationPermissionMoment? _notificationPermissionMoment;
 
   // La selección phone/server ocurre antes de que el controller publique
   // `active`. Serializar ese preflight evita que dos ChatScreen solapadas
@@ -574,6 +720,9 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
   final PairingLinkDeliveryGate _pairingLinkDeliveryGate =
       PairingLinkDeliveryGate();
   bool _pairingLinkRetryScheduled = false;
+  // hermes://plugin|skill/install: held until unlocked, onboarded and
+  // connected; opens a confirmation, never an install.
+  final CatalogDeepLinkInbox _catalogLinks = CatalogDeepLinkInbox();
 
   // Share Sheet Android. La bandeja cifra el contenido hasta convertirlo en un
   // borrador local; nunca lo envía automáticamente al agente.
@@ -583,7 +732,8 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
   bool _shareWaitingNoticeShown = false;
 
   // Shortcut y widget “Nueva conversación”. Ambos entran por el mismo contrato
-  // nativo y quedan en memoria hasta superar Splash, onboarding y App Lock.
+  // nativo y quedan en memoria hasta superar primer frame, onboarding y
+  // App Lock.
   final AndroidLaunchActionInbox _newSessionLaunchInbox =
       AndroidLaunchActionInbox();
   StreamSubscription<NewSessionLaunchAction>? _newSessionLaunchSub;
@@ -594,6 +744,11 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
   /// nativas directamente.
   final HermesHomeWidgetPublisher homeWidgetPublisher =
       HermesHomeWidgetPublisher();
+  late final HomeWidgetDeletedSessionGuard _homeWidgetDeletedSessions =
+      HomeWidgetDeletedSessionGuard(
+        homeWidgetPublisher,
+        widget.connManager.prefs,
+      );
 
   /// Para mostrar el banner discreto in-app (Regla 2) desde fuera del árbol de
   /// una pantalla concreta (lo dispara un evento de otro chat).
@@ -632,11 +787,6 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
   /// `MaterialApp.builder` vía `MediaQuery.textScaler`. Acceso vía
   /// `context.findAncestorStateOfType<HermesAppState>()?.fontSize`.
   FontSizeService get fontSize => widget.fontSize;
-
-  /// Resolución/sondeo centralizado del Mobile Bridge (memoria, SOUL, cron,
-  /// config, skills). Acceso vía
-  /// `context.findAncestorStateOfType<HermesAppState>()?.bridgeManager`.
-  BridgeManager get bridgeManager => widget.bridgeManager;
 
   /// Gestor SSH (terminal/SFTP) centralizado por instancia. Acceso vía
   /// `context.findAncestorStateOfType<HermesAppState>()?.sshManager`.
@@ -691,8 +841,46 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
   /// perezosos, así que el servicio NO se instancia mientras nadie lo lea.
   /// Todos los accesos de esta clase están condicionados al gate; los de la
   /// pantalla de chat también. Con el gate en false, nunca llega a existir.
-  late final LocalVoiceConversationController voiceConvo =
-      LocalVoiceConversationController(voice);
+  late final VoiceConversationCoordinator voiceConvo =
+      VoiceConversationCoordinator(
+        chained: LocalVoiceConversationController(voice),
+        liveFactory: () => GptLiveVoiceConversationController(
+          apiFactory: (chat) =>
+              DashboardVoiceLiveApi(DashboardClient.lazy(chat.connection)),
+          transportFactory: FlutterWebRtcTransport.new,
+          audioEvents: platformLiveAudioEvents,
+          languageCode: () => effectiveVoiceLang(widget.connManager.prefs),
+          // With the lock-screen opt-in an open GPT-Live session survives the
+          // screen turning off, but only under the microphone foreground
+          // service, which was started while the app was in front, and only
+          // while the chat it belongs to still exists behind the lock screen.
+          continueWhenHidden: () => liveVoiceMayContinueHidden(
+            continueWhenLocked: voice.continueVoiceWhenLocked,
+            microphoneServiceHeld:
+                _foregroundAudioOwner == ForegroundAudioOwner.voiceConversation,
+            viewAttached: _appLifecycle != AppLifecycleState.detached,
+          ),
+        ),
+        // The server's `voice.voice_chat_mode` decides, per connection and
+        // profile; the same preferences back the Voice settings screen.
+        modes: VoiceChatModeStore(widget.connManager.prefs),
+        apiFactory: (chat) =>
+            DashboardVoiceLiveApi(DashboardClient.lazy(chat.connection)),
+        languageCode: () => effectiveVoiceLang(widget.connManager.prefs),
+        visibleSession: widget.notifications.visibleSession,
+        profileWatch: (chat) => (
+          changes: widget.connManager.activeProfileRevisionFor(
+            chat.connection.id,
+          ),
+          current: () =>
+              widget.connManager.activeProfileFor(chat.connection.id),
+        ),
+        // GPT-Live never starts unless the app is on screen. `inactive` is
+        // still on screen (a system dialog, the notification shade).
+        appVisible: () =>
+            _appLifecycle == AppLifecycleState.resumed ||
+            _appLifecycle == AppLifecycleState.inactive,
+      );
 
   AppLifecycleState _appLifecycle =
       WidgetsBinding.instance.lifecycleState ?? AppLifecycleState.resumed;
@@ -724,10 +912,20 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
   late final CompanionController companion = CompanionController(
     CompanionRepository(importedRootProvider: _companionImportRoot),
     CompanionPreferences(widget.connManager.prefs),
+    publishProfileIdentity: true,
     // Proveedor de "Hatch" v1: generador local **offline** (avatar procedural,
     // sin red, sin cuentas). El proveedor de la conexión Hermes (gated por
     // probe/opt-in) se conectará cuando el gateway exponga generación de
     // imágenes; mientras tanto, esto mantiene la feature local y privada.
+    hatchProvider: const MockHatchProvider(),
+  );
+
+  /// The app's own pet. Mascotas and the floating overlay share only this
+  /// device preference; profile identity remains on `companion`/the server.
+  late final CompanionController appCompanion = CompanionController(
+    CompanionRepository(importedRootProvider: _companionImportRoot),
+    CompanionPreferences(widget.connManager.prefs),
+    appPet: true,
     hatchProvider: const MockHatchProvider(),
   );
 
@@ -773,6 +971,22 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
       );
     }
     return _companionPetSvc;
+  }
+
+  MissionProfileAvatarCache? _companionAvatarCache;
+
+  /// Fotos de perfil de [connId] para la cara que sustituye a la mascota.
+  /// Reutiliza la conexión del servicio `pet.*` de esa instancia.
+  MissionProfileAvatarCache? _companionAvatars(String connId) {
+    if (_companionPetService(connId) == null) return null;
+    final gateway = _companionPetGateway;
+    if (gateway == null) return null;
+    final cached = _companionAvatarCache;
+    if (cached != null && cached.connectionId == connId) return cached;
+    return _companionAvatarCache = MissionProfileAvatarCache(
+      connectionId: connId,
+      loader: gateway.profileAvatar,
+    );
   }
 
   /// Presencia ambiental del Companion (feature 006): ánimo central compartido
@@ -921,6 +1135,7 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     if (widget.appLock.locked.value) {
       unawaited(voiceConvo.suspendForPrivacy());
     } else if (_appLifecycle == AppLifecycleState.resumed) {
+      voiceConvo.onAppResumed(appUnlocked: true);
       unawaited(voiceConvo.resumeFullDuplexCaptureIfNeeded());
       unawaited(_openVoiceOwnerChatIfReady());
     }
@@ -931,7 +1146,7 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
         _voiceChatRouteOpen ||
         !mounted ||
         _appLifecycle != AppLifecycleState.resumed ||
-        _showSplash ||
+        !_firstFrameShown ||
         _showOnboarding ||
         widget.appLock.locked.value) {
       return;
@@ -1049,17 +1264,75 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     return Directory('${base.path}/companions');
   }
 
-  HomeWidgetTheme _homeWidgetTheme(ThemeProfileStoreSnapshot profiles) {
-    final id = profiles.activeProfileId.toLowerCase();
-    if (id.contains('oled')) return HomeWidgetTheme.oled;
-    final custom = profiles.customById(profiles.activeProfileId);
-    final theme = custom == null
-        ? AppTheme.fromId(profiles.activeProfileId)
-        : AppTheme.fromProfile(custom);
-    return theme.brightness == Brightness.light
-        ? HomeWidgetTheme.light
-        : HomeWidgetTheme.dark;
-  }
+  HomeWidgetTheme _homeWidgetTheme(ThemeProfileStoreSnapshot profiles) =>
+      homeWidgetThemeFor(
+        profiles,
+        platformBrightness:
+            WidgetsBinding.instance.platformDispatcher.platformBrightness,
+      );
+
+  /// Menu actions of the floating mascot: a new chat and the Mascotas
+  /// screen.
+  MascotOverlayActions _mascotActions() => MascotOverlayActions(
+    onTalk: () {
+      final connection = _activeHomeWidgetConnection();
+      final nav = _navigatorKey.currentState;
+      if (connection == null || nav == null) return;
+      final session = Session(
+        id: GatewayChatClient.generateSessionId(),
+        title: Strings.of(nav.context).drawerNewChat,
+        model: 'hermes-agent',
+        source: 'mobile',
+        messageCount: 0,
+        isActive: true,
+        preview: '',
+        startedAt: DateTime.now().millisecondsSinceEpoch / 1000,
+      );
+      openChatFromHomeNavigator<void>(
+        nav,
+        builder: (_) => ChatScreen(connection: connection, session: session),
+      );
+    },
+    onChange: () => _navigatorKey.currentState?.push(
+      MaterialPageRoute<void>(builder: (_) => const MascotasScreen()),
+    ),
+  );
+
+  /// What the floating mascot is told: the attached chats, the notices the
+  /// app already shows, the active profile's pet.
+  late final MascotBridge _mascot = MascotBridge(
+    companion: appCompanion,
+    presence: companionPresence,
+    activeChats: activeChats,
+    connManager: widget.connManager,
+    notifications: widget.notifications,
+    homeWidget: homeWidgetPublisher,
+    context: () => _navigatorKey.currentContext,
+    open: (target) => unawaited(_openSessionFromNotification(target)),
+    openNotificationSettings: () => _navigatorKey.currentState?.push(
+      MaterialPageRoute<void>(
+        builder: (_) => const NotificationSettingsScreen(),
+      ),
+    ),
+  );
+
+  /// Pages the floating mascot stays out of: chats and rooms (their pet
+  /// stands on the island), full-screen viewers and tools, onboarding, and
+  /// the screens that already show the pet large.
+  static bool _mascotQuietPage(Widget page) =>
+      page is ChatScreen ||
+      page is RoomScreen ||
+      page is OnboardingScreen ||
+      page is ImageViewerScreen ||
+      page is ArtifactViewerScreen ||
+      page is GeneratedTextViewerScreen ||
+      page is GeneratedAudioViewerScreen ||
+      page is GeneratedFileViewerScreen ||
+      page is QrScanScreen ||
+      page is SshTerminalScreen ||
+      page is MascotasScreen ||
+      page is PetdexGalleryScreen ||
+      page is CompanionPlaygroundScreen;
 
   SavedConnection? _activeHomeWidgetConnection() {
     final connections = widget.connManager.getConnections();
@@ -1101,6 +1374,7 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
 
   Future<void> _syncHomeWidgetConnection() async {
     final connectionId = _activeHomeWidgetConnection()?.id;
+    unawaited(_homeWidgetDeletedSessions.follow(connectionId));
     await widget.activeChats.setHomeWidgetActiveConnection(connectionId);
     await _publishHomeWidgetBase();
   }
@@ -1112,18 +1386,42 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
       homeWidgetPublisher,
       activeConnectionId: _activeHomeWidgetConnection()?.id,
     );
+    // A confirmed delete on any screen leaves the widget too.
+    unawaited(
+      _homeWidgetDeletedSessions.follow(_activeHomeWidgetConnection()?.id),
+    );
     // Carga (no bloqueante) de las mascotas locales y la preferencia guardada.
     // La selección es por perfil: se re-resuelve al cambiar de instancia o de
     // perfil, cruzando con `pet.info` del gateway cuando éste soporta `pet.*`.
     companion.bindProfileScope(
       resolveScope: _companionScope,
       resolvePetService: _companionPetService,
+      resolveAvatarCache: _companionAvatars,
       changes: Listenable.merge([
         widget.connManager.activeConnectionId,
         widget.connManager.activeProfile,
       ]),
     );
-    unawaited(companion.init());
+    ProfileIdentities.instance.connectionId = () =>
+        widget.connManager.activeConnectionId.value;
+    ProfileIdentities.instance.cacheReader = (connection, profile) async {
+      if (appLock.locked.value) return (known: false, pet: null);
+      return companion.cachedIdentityFor(connection, profile);
+    };
+    ProfileIdentities.instance.loader = (connection, profile) async {
+      if (appLock.locked.value) return (known: false, pet: null);
+      return companion.loadIdentityFor(connection, profile);
+    };
+    final profilePetReady = companion.init();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(() async {
+        await profilePetReady;
+        if (!mounted) return;
+        await appCompanion.initAppFromProfile(companion);
+      }());
+    });
+    MascotRouteWatch.instance.quietPage = _mascotQuietPage;
+    _mascot.start();
     themeProfileStore =
         widget.themeProfileStore ?? ThemeProfileStore(widget.connManager.prefs);
     final initialThemes =
@@ -1151,7 +1449,7 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
       onboardingComplete: () => !_showOnboarding,
       unlocked: () => !widget.appLock.locked.value,
       navigatorReady: () =>
-          !_showSplash && _navigatorKey.currentState?.mounted == true,
+          _firstFrameShown && _navigatorKey.currentState?.mounted == true,
       newChatTitle: () =>
           Strings.of(_navigatorKey.currentContext!).drawerNewChat,
       selectConnection: _selectNewSessionConnection,
@@ -1164,9 +1462,12 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
       _onHomeWidgetConnectionChanged,
     );
     unawaited(_publishHomeWidgetBase());
-    if (!_showOnboarding) {
-      _scheduleHomeInitialLoad();
-    }
+    unawaited(FrostedBackdropPolicy.refresh());
+    // A cold start that opens locked builds nothing of Home (no private
+    // store read) until the lock opens.
+    _homeHeldByLock = widget.appLock.locked.value;
+    widget.appLock.locked.addListener(_releaseHomeOnUnlock);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _onFirstFrame());
     WidgetsBinding.instance.addObserver(this);
     if (Platform.isAndroid) {
       _networkAvailabilityListener = NetworkAvailabilityRecoveryListener(
@@ -1195,11 +1496,11 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     // Approve / Deny / Stop / Reply tapped on rich notifications or Bot Mode
     // widgets (spec 070): same server calls as the in-app controls.
     if (Platform.isAndroid) {
-      UiNotificationActionHandler(
+      _uiNotificationActionHandler = UiNotificationActionHandler(
         connManager: widget.connManager,
         activeChats: activeChats,
         prefs: widget.connManager.prefs,
-      ).start();
+      )..start();
     }
     // Regla 2: avisos discretos de eventos en OTRO chat con la app delante.
     _inAppSub = widget.notifications.inAppNotices.listen(_showInAppNotice);
@@ -1207,8 +1508,8 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     companionPresence.onEvent(PresenceEvent.appOpened);
     activeChats.activeIds.addListener(_onActiveChatsChanged);
     // Crear canales toca el hilo principal nativo durante cientos de ms en
-    // algunos Android. Se difiere hasta terminar la entrada del splash para no
-    // congelar una animación ya visible.
+    // algunos Android. Se difiere para no congelar los primeros frames (la
+    // transición de entrada y el primer pintado de Home).
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _deferredNotificationInitTimer = Timer(
@@ -1216,6 +1517,7 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
         () {
           widget.notifications.init().then((_) {
             if (!mounted) return;
+            _notificationPermissionMoment?.check();
             WidgetsBinding.instance.addPostFrameCallback(
               (_) => unawaited(widget.notifications.retryPendingOpen()),
             );
@@ -1238,6 +1540,21 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     FlutterForegroundTask.addTaskDataCallback(_onVoiceTaskData);
     // Deep link hermes://pair → abrir el alta de instancia ya rellena.
     _initDeepLinks();
+    // Notifications are asked for once there is a Hermes to hear from,
+    // never on opening the app.
+    _notificationPermissionMoment = NotificationPermissionMoment(
+      connManager: widget.connManager,
+      request: widget.notifications.requestPermissionWhenUseful,
+      quiet: () => _showOnboarding,
+    );
+    // Updating from a bridge-era install: one silent probe, one calm notice.
+    unawaited(
+      LegacyBridgeNotices.start(
+        connManager: widget.connManager,
+        navigator: () => _navigatorKey.currentState,
+        quiet: () => _showOnboarding || widget.appLock.locked.value,
+      ),
+    );
     // ACTION_SEND/ACTION_SEND_MULTIPLE → borrador revisable en un chat nuevo.
     widget.connManager.activeConnectionId.addListener(_retryPendingShare);
     unawaited(_initShareInbox());
@@ -1246,6 +1563,17 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     );
     widget.appLock.locked.addListener(_retryPendingNewSessionLaunch);
     widget.appLock.locked.addListener(_onAppLockNoticeGateChanged);
+    widget.appLock.locked.addListener(_restoreColdStartTailsAfterUnlock);
+    // A finished server update restarted the gateway: re-dial its sockets
+    // (Desktop `reconnectGateway()` after a backend update).
+    HermesUpdateSession.reconnectGateway = (connectionId) {
+      widget.activeChats.requestTransportRecoveryForConnection(connectionId);
+      unawaited(SharedGatewayPool.instance.probeConnection(connectionId));
+    };
+    widget.appLock.locked.addListener(_resumeHermesUpdates);
+    _resumeHermesUpdates();
+    widget.appLock.locked.addListener(_openCatalogLinks);
+    widget.connManager.activeConnectionId.addListener(_openCatalogLinks);
     unawaited(_initNewSessionLaunchInbox());
     // Cableado del modo conversación. Con el kill-switch de compilación no se
     // instancia ningún orquestador; STT/TTS del chat siguen independientes.
@@ -1299,6 +1627,8 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     final imageCache = PaintingBinding.instance.imageCache;
     imageCache.clear();
     imageCache.clearLiveImages();
+    // co1215: parked sockets of released chats are only a reopen shortcut.
+    widget.activeChats.closeWarmGateways();
     // La voz NO reacciona aquí: esta señal binaria también llega al pasar a
     // background y evacuaba Sherpa/Whisper/ONNX en cada ida (recarga de
     // varios segundos por turno). La evacuación la decide `onTrimMemory` con
@@ -1308,11 +1638,18 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _appLifecycle = state;
+    // Battery saver can change while the app is in the background.
+    if (state == AppLifecycleState.resumed) {
+      unawaited(FrostedBackdropPolicy.refresh());
+    }
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.hidden ||
         state == AppLifecycleState.detached) {
       unawaited(widget.activeChats.globalActivity.flushJournal());
       unawaited(updateHomeWidget((snapshot) => snapshot));
+      // cs1215: Android may kill the process from here; keep what is on
+      // screen for the next cold start (encrypted, bounded).
+      widget.activeChats.persistColdStartTails();
     }
     if (kVoiceRuntimeEnabled) {
       if (state == AppLifecycleState.resumed) {
@@ -1346,6 +1683,7 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
         }
       });
       widget.activeChats.reconcileAfterResume();
+      _resumeHermesUpdates();
       // Volver a primer plano no deshace una pausa explícita; el usuario puede
       // continuar con el orbe o desde la notificación.
       if (kVoiceRuntimeEnabled) {
@@ -1359,6 +1697,8 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
         _gatewayIdleTimer = null;
         if (_appLifecycle != AppLifecycleState.resumed) {
           SharedGatewayPool.instance.disconnectIdle();
+          // co1215: released chats' parked sockets follow the same rule.
+          widget.activeChats.closeWarmGateways();
         }
       });
       // No cerramos el WebSocket por lifecycle. Android puede encadenar
@@ -1369,9 +1709,13 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
       // real de transporte sin destruir trabajo deliberadamente.
       // Sin opt-in de pantalla bloqueada, pausa y silencia micro+TTS. Con opt-in
       // no se toca el bucle: ya está protegido por el FGS iniciado en foreground.
+      // GPT-Live follows the same opt-in for a session that is already open
+      // and holds that service; in every other case the coordinator still
+      // asks for it to stop (`requiresForegroundVisibility`).
       if (kVoiceRuntimeEnabled &&
           voiceConvo.active &&
-          !voice.continueVoiceWhenLocked) {
+          (voiceConvo.requiresForegroundVisibility ||
+              !voice.continueVoiceWhenLocked)) {
         unawaited(voiceConvo.onAppBackgrounded());
       }
       // U-11 (spec 028): una shell SSH parada en el prompt mantiene vivos el
@@ -1451,6 +1795,8 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
   /// una aprobación pendiente nunca se interpreta como aprobada o denegada.
   /// No usa notificación del sistema; solo aparece con la app delante.
   void _showInAppNotice(InAppNotice notice) {
+    // The floating mascot keeps what happened elsewhere until it is seen.
+    _mascot.onNotice(notice);
     // Presencia (006): un aviso de aprobación pone la mascota en "esperando
     // permiso" (waiting). Se hace antes del early-return del banner para que la
     // mascota reaccione aunque no haya messenger montado. La resolución (vuelta
@@ -1459,7 +1805,9 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     if (notice.kind == NotificationKind.approval) {
       companionPresence.onEvent(PresenceEvent.approvalNeeded);
     }
-    if (_showSplash || _showOnboarding || widget.appLock.locked.value) return;
+    if (!_firstFrameShown || _showOnboarding || widget.appLock.locked.value) {
+      return;
+    }
     // Una respuesta o run informativo nunca desplaza una aprobacion que aun
     // necesita al usuario. Otra aprobacion mas reciente si puede actualizarla.
     if (!shouldReplaceInAppNotice(_inAppNoticeKind, notice.kind)) {
@@ -1534,6 +1882,8 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     handle?.dismiss();
   }
 
+  UiNotificationActionHandler? _uiNotificationActionHandler;
+
   void _onAppLockNoticeGateChanged() {
     if (widget.appLock.locked.value) {
       _dismissInAppNotice();
@@ -1599,7 +1949,9 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     // Si la notificación es de una ejecución (runId presente), navegar a
     // RunDetailScreen; si el run ya expiró, fallback a TaskCenterScreen.
     final runId = open.runId;
-    if (runId != null && runId.isNotEmpty) {
+    if (runId != null &&
+        runId.isNotEmpty &&
+        !await _isChatOwnedRun(connection, open, runId)) {
       final profile = open.profile?.trim().toLowerCase();
       if (profile == null || profile.isEmpty) {
         return NavigationDeliveryOutcome.deferred;
@@ -1671,6 +2023,24 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
       return _openMissionControlFromNotification(nav, connection, ownedTarget);
     }
 
+    // A cron completion with no session yet carries only its job: open that
+    // job's detail. CronScreen falls back to its list if the job is gone.
+    final jobId = open.jobId?.trim();
+    if (open.sessionId.isEmpty && jobId != null && jobId.isNotEmpty) {
+      nav.push(
+        MaterialPageRoute(
+          builder: (_) => CronScreen(
+            connection: connection,
+            connManager: widget.connManager,
+            initialJobId: jobId,
+            profileOverride: open.profile?.trim(),
+          ),
+        ),
+      );
+      await WidgetsBinding.instance.endOfFrame;
+      return NavigationDeliveryOutcome.delivered;
+    }
+
     // Sin runId: comportamiento anterior — abrir la sesión de chat.
     if (open.sessionId.isEmpty) return NavigationDeliveryOutcome.deferred;
     final liveOwner = activeChats
@@ -1703,6 +2073,32 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     return NavigationDeliveryOutcome.delivered;
   }
 
+  /// A run whose owner is a conversation (chat runtime or Desktop runtime
+  /// session) is never registered in Task Center, so waiting for its run
+  /// record would retain the tap forever. Its conversation is the content:
+  /// the approval card and the result live there.
+  Future<bool> _isChatOwnedRun(
+    SavedConnection connection,
+    NotificationOpen open,
+    String runId,
+  ) async {
+    if (open.sessionId.isEmpty) return false;
+    final profile = open.profile?.trim().toLowerCase();
+    try {
+      final registry = await RunRegistry.load(
+        widget.connManager.prefs,
+        connection.id,
+      );
+      return !registry.records.any(
+        (r) =>
+            r.runId == runId &&
+            (profile == null || profile.isEmpty || r.profile == profile),
+      );
+    } catch (_) {
+      return true;
+    }
+  }
+
   Future<NavigationDeliveryOutcome> _openMissionControlFromNotification(
     NavigatorState nav,
     SavedConnection connection,
@@ -1718,10 +2114,18 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     if (!_appNavigationFence.canCommit(request, nav, intent: intent)) {
       return NavigationDeliveryOutcome.deferred;
     }
+    // Reuse a live Mission Control (and do nothing when the target is already
+    // on screen) instead of stacking a second copy of it or of the room.
+    if (MissionControlScreen.openInExisting(nav, connection.id, target)) {
+      await WidgetsBinding.instance.endOfFrame;
+      return NavigationDeliveryOutcome.delivered;
+    }
+    // Mission Control appears without its own slide: the room/Bot Chat it
+    // opens on its first frame is the single visible transition.
     unawaited(
       pushNotificationOwnerRoute<void>(
         nav,
-        MaterialPageRoute<void>(
+        MissionControlOwnerRoute<void>(
           builder: (_) => MissionControlScreen(
             connection: connection,
             connManager: widget.connManager,
@@ -1795,57 +2199,42 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
   /// Onboarding de primera ejecución (se muestra una sola vez).
   late bool _showOnboarding;
 
-  /// Intro animada al abrir la app. En instalaciones configuradas permanece
-  /// sobre Home hasta que conexiones y conversaciones iniciales estén listas.
-  bool _showSplash = true;
-  bool _startHomeInitialLoad = false;
-  bool _homeInitialLoadComplete = false;
-  Timer? _homeInitialLoadTimer;
-  Timer? _homeReadyTimer;
-  final ValueNotifier<double> _startupProgress = ValueNotifier<double>(0.06);
+  /// The first frame is on screen: the native splash has left and the
+  /// root Navigator exists. Launch actions wait for it (plus onboarding and
+  /// App Lock) instead of for an intro screen.
+  bool _firstFrameShown = false;
 
-  @visibleForTesting
-  static const homeInitialLoadDeferral = Duration(milliseconds: 1500);
+  /// A cold start that opened locked: Home is not built (nothing private is
+  /// read or painted) until the first unlock.
+  bool _homeHeldByLock = false;
 
-  void _reportStartupProgress(double value) {
-    final next = value.clamp(0.0, 1.0);
-    if (next > _startupProgress.value) _startupProgress.value = next;
+  void _releaseHomeOnUnlock() {
+    if (!mounted || !_homeHeldByLock || widget.appLock.locked.value) return;
+    widget.appLock.locked.removeListener(_releaseHomeOnUnlock);
+    setState(() => _homeHeldByLock = false);
   }
 
-  void _scheduleHomeInitialLoad() {
-    if (_startHomeInitialLoad || _homeInitialLoadTimer?.isActive == true) {
-      return;
-    }
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted ||
-          _showOnboarding ||
-          _startHomeInitialLoad ||
-          _homeInitialLoadTimer?.isActive == true) {
-        return;
-      }
-      _reportStartupProgress(0.20);
-      // Deja que la entrada de marca termine antes de construir el Home
-      // completo. La carga sigue cubierta por este mismo splash, pero ya no
-      // compite con su animación en los primeros frames.
-      _homeInitialLoadTimer = Timer(homeInitialLoadDeferral, () {
-        if (!mounted || _showOnboarding || _startHomeInitialLoad) return;
-        _reportStartupProgress(0.34);
-        setState(() => _startHomeInitialLoad = true);
-      });
-    });
-  }
-
-  void _finishSplash() {
-    if (!mounted || !_showSplash) return;
-    setState(() => _showSplash = false);
+  /// Runs once, right after the first frame: what used to wait for the
+  /// end of the intro now runs as soon as the app is on screen.
+  void _onFirstFrame() {
+    if (!mounted || _firstFrameShown) return;
+    _firstFrameShown = true;
     _retryPendingNewSessionLaunch();
+    _openCatalogLinks();
     unawaited(_openVoiceOwnerChatIfReady());
-    unawaited(_openConfiguredStartupDestination());
+    unawaited(_startupDestinationRun = _openConfiguredStartupDestination());
   }
+
+  Future<void>? _startupDestinationRun;
+
+  /// The startup-destination pass (remembered route included), so tests
+  /// can assert that a wait it parked (App Lock) really ends.
+  @visibleForTesting
+  Future<void>? get debugStartupDestinationRun => _startupDestinationRun;
 
   /// Aplica la pantalla de arranque elegida por el usuario (issue #47).
   ///
-  /// Se ejecuta una sola vez, al terminar el splash de un arranque en frío.
+  /// Se ejecuta una sola vez, tras el primer frame de un arranque en frío.
   /// Cede el paso a cualquier navegación ya en curso —notificación, enlace de
   /// emparejamiento, chat de voz—: quien llega por una notificación espera ir
   /// a ESE destino, no al suyo por defecto.
@@ -1854,19 +2243,34 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     _startupDestinationApplied = true;
 
     final nav = _navigatorKey.currentState;
-    if (nav == null || nav.canPop()) return;
+    if (nav == null) return;
+    // The App Lock route may already cover Home; it is not a destination.
+    if (nav.canPop() && !widget.appLock.locked.value) return;
+    // Without an intro in front, this runs on the first frame, before the
+    // deferred notification init has read the launch intent. A tap on a
+    // notification, widget or shortcut that started the app wins over the
+    // remembered route and the configured destination.
+    if (await _externalLaunchPending()) return;
+    // An entry already delivered in the meantime is on the stack.
+    if (!mounted || (nav.canPop() && !widget.appLock.locked.value)) return;
+    if (await _reopenRememberedRoute(nav)) return;
+    if (!mounted || nav.canPop()) return;
 
-    // El fence se abre ANTES de leer la preferencia: entre ese `await` y el
-    // push puede llegar una notificación o un enlace de emparejamiento, y esa
-    // navegación invalida la petición. Quien abre desde una notificación
-    // espera ESE destino, no el de arranque.
-    const intent = 'startup-destination';
-    final request = _appNavigationFence.begin(nav, intent: intent);
-
+    // The preference is read first and the fence only opens when there is a
+    // destination to push: this pass now runs on the first frame, and
+    // opening a fence invalidates any navigation already in flight (a
+    // notification tapped a moment after launch). Anything that navigated
+    // or arrived during the read wins.
     final destination = await StartupDestinationStore.load();
     if (!mounted || destination == StartupDestination.home) return;
+    if (nav.canPop() ||
+        widget.notifications.hasPendingOpen ||
+        _newSessionLaunchCoordinator.hasPending) {
+      return;
+    }
+    const intent = 'startup-destination';
+    final request = _appNavigationFence.begin(nav, intent: intent);
     if (!_appNavigationFence.canCommit(request, nav, intent: intent)) return;
-    if (nav.canPop()) return;
 
     final connections = widget.connManager.getConnections();
     if (connections.isEmpty) return;
@@ -1891,30 +2295,222 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
 
   bool _startupDestinationApplied = false;
 
-  void _markHomeInitialLoadComplete() {
-    if (!mounted ||
-        _homeInitialLoadComplete ||
-        _homeReadyTimer?.isActive == true) {
-      return;
+  /// Completes once the native launch-action inbox answered (or failed),
+  /// so the startup pass knows whether a widget/shortcut started the app.
+  final Completer<void> _launchInboxRead = Completer<void>();
+  Timer? _externalLaunchTimer;
+  VoidCallback? _releaseExternalLaunchWait;
+
+  void _completeLaunchInboxRead() {
+    if (!_launchInboxRead.isCompleted) _launchInboxRead.complete();
+  }
+
+  /// Whether the process was started (or is already being driven) by an
+  /// external entry: a notification tap, a widget or a shortcut. Bounded:
+  /// a silent platform side never holds the startup pass.
+  Future<bool> _externalLaunchPending() async {
+    final settled = Completer<List<Object?>>();
+    void settle(List<Object?> results) {
+      if (!settled.isCompleted) settled.complete(results);
     }
-    _reportStartupProgress(1);
-    // Deja que la barra alcance visualmente el 100 % y que Home conserve un
-    // frame ya pintado antes de iniciar el cross-fade del splash.
-    _homeReadyTimer = Timer(const Duration(milliseconds: 240), () {
-      if (!mounted || _homeInitialLoadComplete) return;
-      setState(() => _homeInitialLoadComplete = true);
-    });
+
+    // A plain Timer, cancelled on dispose, so a silent platform side never
+    // leaves anything running behind the shell.
+    _externalLaunchTimer = Timer(
+      const Duration(milliseconds: 600),
+      () => settle(const []),
+    );
+    _releaseExternalLaunchWait = () => settle(const []);
+    unawaited(
+      Future.wait<Object?>([
+        _launchInboxRead.future,
+        widget.notifications.launchedFromNotification(),
+      ]).then(settle),
+    );
+    final results = await settled.future;
+    _externalLaunchTimer?.cancel();
+    _externalLaunchTimer = null;
+    _releaseExternalLaunchWait = null;
+    if (!mounted) return true;
+    final notification = results.length == 2 && results[1] == true;
+    return notification ||
+        widget.notifications.hasPendingOpen ||
+        _newSessionLaunchCoordinator.hasPending;
+  }
+
+  /// Removes the remembered-route unlock listener while it is waiting.
+  VoidCallback? _releaseColdStartUnlockWait;
+
+  /// A server update persisted before Android killed the app keeps being
+  /// followed on cold start and on return to foreground; not before App
+  /// Lock opens.
+  void _resumeHermesUpdates() {
+    if (widget.appLock.locked.value) return;
+    unawaited(
+      resumePersistedHermesUpdates(widget.connManager.getConnections()),
+    );
+  }
+
+  /// App Lock policy: cold-start tails are decrypted only after unlock. The
+  /// restore runs once per process (`coldStartTailsReady` is memoized), so
+  /// later unlocks do nothing.
+  void _restoreColdStartTailsAfterUnlock() {
+    if (widget.appLock.locked.value) return;
+    unawaited(
+      widget.activeChats.coldStartTailsReady.catchError((Object _) => 0),
+    );
+  }
+
+  /// cs1215: like Desktop's remembered route, a cold start reopens the
+  /// surface the user was on for the active connection. A notification,
+  /// shortcut or deep link already in flight wins; App Lock defers it until
+  /// unlock; a deleted session falls back to Home (see ChatScreen).
+  Future<bool> _reopenRememberedRoute(NavigatorState nav) async {
+    final store = widget.activeChats.coldStartStore;
+    final connectionId = widget.connManager.activeConnectionId.value;
+    if (store == null || connectionId == null) return false;
+    SavedConnection? connection;
+    for (final candidate in widget.connManager.getConnections()) {
+      if (candidate.id == connectionId) connection = candidate;
+    }
+    if (connection == null) return false;
+    const intent = 'cold-start-route';
+    final request = _appNavigationFence.begin(nav, intent: intent);
+    ColdStartRoute? route;
+    try {
+      // Identifiers only; no transcript content is read here.
+      route = await store.routeFor(connection.id);
+      // The first frame of the chat paints its cached tail. Under App Lock
+      // the tails stay encrypted until unlock (see below).
+      if (!widget.appLock.locked.value) {
+        await widget.activeChats.coldStartTailsReady;
+      }
+    } catch (error) {
+      debugPrint('main: cold-start route unavailable (${error.runtimeType})');
+      return false;
+    }
+    if (route == null || !mounted) return false;
+    // An explicit «open Bot Mode on start» keeps winning over a remembered
+    // normal chat; a remembered Bot Mode surface refines it.
+    if (route.kind == ColdStartRouteKind.chat &&
+        await StartupDestinationStore.load() == StartupDestination.bots) {
+      return false;
+    }
+    if (!mounted) return false;
+    bool externalEntryPending() =>
+        widget.notifications.hasPendingOpen ||
+        _newSessionLaunchCoordinator.hasPending;
+    if (externalEntryPending()) return true;
+    if (!widget.appLock.locked.value &&
+        !_appNavigationFence.canCommit(request, nav, intent: intent)) {
+      return true;
+    }
+    if (widget.appLock.locked.value) {
+      // Nothing of the chat is built before unlock. Any navigation in the
+      // meantime (a notification delivered on unlock) wins. Unlocking itself
+      // begins the post-unlock notification handoff, so the fence generation
+      // cannot tell; a pushed route or a pending open can.
+      while (mounted && widget.appLock.locked.value) {
+        final unlocked = Completer<void>();
+        void onChange() {
+          if (!widget.appLock.locked.value && !unlocked.isCompleted) {
+            unlocked.complete();
+          }
+        }
+
+        final lock = widget.appLock.locked;
+        lock.addListener(onChange);
+        // dispose() runs this if the shell unmounts while still locked: the
+        // listener goes and the wait ends (`mounted` is then false).
+        _releaseColdStartUnlockWait = () {
+          lock.removeListener(onChange);
+          if (!unlocked.isCompleted) unlocked.complete();
+        };
+        onChange();
+        await unlocked.future;
+        _releaseColdStartUnlockWait?.call();
+        _releaseColdStartUnlockWait = null;
+      }
+      if (!mounted) return true;
+      // Decrypted only now that the lock is open; the chat's first frame
+      // still paints the cached tail.
+      try {
+        await widget.activeChats.coldStartTailsReady;
+      } catch (error) {
+        debugPrint('main: cold-start tails unavailable (${error.runtimeType})');
+      }
+      await WidgetsBinding.instance.endOfFrame;
+      if (!mounted || nav.canPop() || externalEntryPending()) {
+        return true;
+      }
+    }
+    final target = connection;
+    switch (route.kind) {
+      case ColdStartRouteKind.chat:
+        final profile = _sessionProfileOwner(target, owner: route.profile);
+        final session = Session(
+          id: route.sessionId,
+          title: '',
+          model: '',
+          source: route.source,
+          // A remembered chat always had a durable transcript.
+          messageCount: 1,
+          isActive: false,
+          preview: '',
+          startedAt: 0,
+          profile: profile,
+          isDefaultProfile: profile == 'default',
+        );
+        unawaited(
+          openChatFromHomeNavigator<void>(
+            nav,
+            builder: (_) => ChatScreen(
+              connection: target,
+              session: session,
+              restoredFromColdStart: true,
+            ),
+          ),
+        );
+      case ColdStartRouteKind.bot:
+        await _openMissionControlFromNotification(
+          nav,
+          target,
+          MissionControlOpenTarget.bot(
+            sessionId: route.sessionId,
+            profile: route.profile,
+          ),
+        );
+      case ColdStartRouteKind.room:
+        await _openMissionControlFromNotification(
+          nav,
+          target,
+          MissionControlOpenTarget.room(
+            sessionId: route.sessionId,
+            roomId: route.roomId,
+            profile: route.profile,
+          ),
+        );
+      case ColdStartRouteKind.missionControl:
+        unawaited(
+          nav.push(
+            MaterialPageRoute<void>(
+              builder: (_) => MissionControlScreen(
+                connection: target,
+                connManager: widget.connManager,
+                activeChats: activeChats,
+              ),
+            ),
+          ),
+        );
+    }
+    return true;
   }
 
   Future<void> _finishOnboarding() async {
+    if (widget.connManager.getConnections().isEmpty) return;
     await widget.connManager.prefs.setBool('onboarding_done', true);
     if (mounted) {
-      setState(() {
-        _showOnboarding = false;
-        // El onboarding ya ha ocupado el arranque: Home puede montarse al
-        // terminar sin volver a mostrar ni retrasar otra pantalla intermedia.
-        _startHomeInitialLoad = true;
-      });
+      setState(() => _showOnboarding = false);
       _retryPendingNewSessionLaunch();
       unawaited(_openVoiceOwnerChatIfReady());
     }
@@ -1927,13 +2523,18 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     try {
       final initial = await _newSessionLaunchInbox.initialize();
       if (initial != null) {
-        await _newSessionLaunchCoordinator.enqueue(initial);
+        // enqueue() queues synchronously; the startup pass can see it now.
+        final queued = _newSessionLaunchCoordinator.enqueue(initial);
+        _completeLaunchInboxRead();
+        await queued;
       }
     } catch (error) {
       debugPrint(
         'main: acceso Nueva conversación no disponible '
         '(${error.runtimeType})',
       );
+    } finally {
+      _completeLaunchInboxRead();
     }
   }
 
@@ -1967,7 +2568,7 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
           ),
           for (final connection in candidates)
             ListTile(
-              leading: const Icon(Icons.dns_outlined),
+              leading: Icon(instanceKindIcon(connection.kind)),
               title: Text(connection.label),
               onTap: () => Navigator.of(surfaceContext).pop(connection),
             ),
@@ -2125,17 +2726,34 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     return NavigationDeliveryOutcome.delivered;
   }
 
-  Future<void> setThemeId(String id) async {
-    await themeProfileStore.activate(id);
+  /// [followSystem] is the "Auto" segment: the family follows the system.
+  Future<void> setThemeId(String id, {bool followSystem = false}) async {
+    await themeProfileStore.activate(id, followSystem: followSystem);
     await refreshThemeProfiles();
   }
 
-  Future<void> _syncNativeAppearance(ThemeProfileStoreSnapshot snapshot) async {
-    final custom = snapshot.customById(snapshot.activeProfileId);
-    final theme = custom == null
-        ? AppTheme.fromId(snapshot.activeProfileId)
-        : AppTheme.fromProfile(custom);
-    await NativeAppearance.sync(theme.brightness);
+  Future<void> _syncNativeAppearance(ThemeProfileStoreSnapshot snapshot) =>
+      NativeAppearance.sync(
+        activeThemeBrightness(
+          snapshot,
+          platformBrightness:
+              WidgetsBinding.instance.platformDispatcher.platformBrightness,
+        ),
+      );
+
+  @override
+  void didChangePlatformBrightness() {
+    super.didChangePlatformBrightness();
+    // With "Auto" the app swaps theme on its own (MaterialApp.darkTheme);
+    // the native day/night setting and the home widget follow here.
+    final snapshot = themeProfiles.value;
+    if (followSystemThemeIds(snapshot) == null) return;
+    unawaited(_syncNativeAppearance(snapshot));
+    unawaited(
+      updateHomeWidget(
+        (current) => current.copyWith(theme: _homeWidgetTheme(snapshot)),
+      ),
+    );
   }
 
   Future<ThemeProfileStoreSnapshot> refreshThemeProfiles({
@@ -2181,6 +2799,15 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
   /// Si la URI es un enlace de emparejado válido, abre el alta de instancia ya
   /// precargada (reutiliza InstanceEditScreen.initialLink). Si no, la ignora.
   void _handlePairingUri(Uri uri) {
+    switch (_catalogLinks.offer(uri)) {
+      case CatalogOfferResult.notCatalog:
+        break;
+      case CatalogOfferResult.queued:
+      case CatalogOfferResult.duplicate:
+      case CatalogOfferResult.overflow:
+        _openCatalogLinks();
+        return;
+    }
     final link = PairingLink.tryParse(uri.toString());
     if (link == null) return;
     final nav = _navigatorKey.currentState;
@@ -2192,16 +2819,58 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     if (!_pairingLinkDeliveryGate.shouldHandle(uri)) return;
     nav.push(
       MaterialPageRoute(
-        builder: (_) => InstanceEditScreen(
-          connManager: widget.connManager,
-          initialLink: link,
-          fromDeepLink: true,
-        ),
+        builder: (_) => _showOnboarding
+            ? OnboardingScreen(
+                connManager: widget.connManager,
+                initialLink: link,
+                onDone: () {
+                  unawaited(_finishOnboarding());
+                  nav.popUntil((r) => r.isFirst);
+                },
+              )
+            : InstanceEditScreen(
+                connManager: widget.connManager,
+                initialLink: link,
+                fromDeepLink: true,
+              ),
       ),
     );
     if (_pairingLinkDeliveryGate.hasDeferred) {
       _scheduleDeferredPairingLink();
     }
+  }
+
+  void _openCatalogLinks() {
+    final nav = _navigatorKey.currentState;
+    final active = _activeHomeWidgetConnection();
+    final locked = widget.appLock.locked.value;
+    final onboarding = !_firstFrameShown || _showOnboarding;
+    final connected = nav != null && active != null;
+    // A refused link is reported once the app can show it, never lost.
+    reportCatalogOverflow(
+      _catalogLinks,
+      navigator: nav,
+      locked: locked,
+      onboarding: onboarding,
+      connected: connected,
+    );
+    final action = _catalogLinks.take(
+      locked: locked,
+      onboarding: onboarding,
+      connected: connected,
+    );
+    if (action == null || nav == null || active == null) return;
+    // The next held link opens once this one is shown or replaced.
+    unawaited(
+      openCatalogDeepLink(
+        navigator: nav,
+        connManager: widget.connManager,
+        connection: active,
+        action: action,
+      ).whenComplete(() {
+        if (mounted) _openCatalogLinks();
+      }),
+    );
   }
 
   void _scheduleDeferredPairingLink() {
@@ -2252,9 +2921,11 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     if (connections.isEmpty) {
       if (!_shareWaitingNoticeShown) {
         _shareWaitingNoticeShown = true;
-        HermesNotice.ofNavigator(
-          nav,
-        )?.show(message: Strings.of(nav.context).shareNeedsInstance);
+        AppFeedback.ofNavigator(nav)?.notify(
+          FeedbackKind.error,
+          Strings.of(nav.context).shareNeedsInstance,
+          warning: true,
+        );
       }
       return;
     }
@@ -2273,9 +2944,10 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
       if (content.text.trim().isEmpty && content.attachments.isEmpty) {
         await _shareInbox.acknowledge(content.id);
         if (mounted) {
-          HermesNotice.ofNavigator(nav)?.show(
-            message: Strings.of(nav.context).shareFilesRejected,
-            kind: HermesNoticeKind.warning,
+          AppFeedback.ofNavigator(nav)?.notify(
+            FeedbackKind.error,
+            Strings.of(nav.context).shareFilesRejected,
+            warning: true,
           );
         }
         return;
@@ -2313,9 +2985,10 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
       );
       _shareWaitingNoticeShown = false;
       if (content.rejectedAttachments > 0) {
-        HermesNotice.ofNavigator(nav)?.show(
-          message: Strings.of(nav.context).shareSomeFilesRejected,
-          kind: HermesNoticeKind.warning,
+        AppFeedback.ofNavigator(nav)?.notify(
+          FeedbackKind.error,
+          Strings.of(nav.context).shareSomeFilesRejected,
+          warning: true,
         );
       }
       unawaited(
@@ -2326,10 +2999,9 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
       );
     } catch (_) {
       if (mounted) {
-        HermesNotice.ofNavigator(nav)?.show(
-          message: Strings.of(nav.context).shareOpenFailed,
-          kind: HermesNoticeKind.error,
-        );
+        AppFeedback.ofNavigator(
+          nav,
+        )?.notify(FeedbackKind.error, Strings.of(nav.context).shareOpenFailed);
       }
     } finally {
       _openingSharedContent = false;
@@ -2340,15 +3012,20 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     unawaited(_networkAvailabilityListener?.dispose());
-    _homeInitialLoadTimer?.cancel();
-    _homeReadyTimer?.cancel();
-    _startupProgress.dispose();
+    widget.appLock.locked.removeListener(_releaseHomeOnUnlock);
+    _uiNotificationActionHandler?.dispose();
+    widget.appLock.releaseDisclosure();
+    _externalLaunchTimer?.cancel();
+    _releaseExternalLaunchWait?.call();
     _deferredNotificationInitTimer?.cancel();
+    _notificationPermissionMoment?.dispose();
 
     _sshIdleTimer?.cancel();
     _gatewayIdleTimer?.cancel();
     _externalDataSyncControl.setMethodCallHandler(null);
     _linkSub?.cancel();
+    widget.appLock.locked.removeListener(_openCatalogLinks);
+    widget.connManager.activeConnectionId.removeListener(_openCatalogLinks);
     widget.connManager.activeConnectionId.removeListener(_retryPendingShare);
     widget.connManager.connectionsRevision.removeListener(
       _syncBackgroundCronConnections,
@@ -2361,14 +3038,22 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     widget.connManager.activeConnectionId.removeListener(
       _onHomeWidgetConnectionChanged,
     );
+    _homeWidgetDeletedSessions.dispose();
     widget.appLock.locked.removeListener(_retryPendingNewSessionLaunch);
     widget.appLock.locked.removeListener(_onAppLockNoticeGateChanged);
+    widget.appLock.locked.removeListener(_restoreColdStartTailsAfterUnlock);
+    widget.appLock.locked.removeListener(_resumeHermesUpdates);
+    _releaseColdStartUnlockWait?.call();
+    _releaseColdStartUnlockWait = null;
     _newSessionLaunchSub?.cancel();
     unawaited(_newSessionLaunchInbox.dispose());
     _inAppSub?.cancel();
     _dismissInAppNotice();
     activeChats.activeIds.removeListener(_onActiveChatsChanged);
+    _mascot.dispose();
     companion.dispose();
+    appCompanion.dispose();
+    ProfileIdentities.instance.detach();
     _companionPetLease?.release();
     _companionPetLease = null;
     companionPresence.dispose();
@@ -2402,15 +3087,23 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
         final id = profiles.activeProfileId;
         final custom = profiles.customById(id);
         final component = ComponentProfiles.minimal;
-        final activeTheme = custom == null
+        // "Auto": the family's light variant is the theme and its dark
+        // variant the darkTheme, so Material follows the system itself.
+        final auto = followSystemThemeIds(profiles);
+        final activeTheme = auto != null
+            ? AppTheme.fromId(auto.light, componentProfile: component)
+            : custom == null
             ? AppTheme.fromId(id, componentProfile: component)
             : AppTheme.fromProfile(custom, componentProfile: component);
+        final darkTheme = auto == null
+            ? null
+            : AppTheme.fromId(auto.dark, componentProfile: component);
         return ValueListenableBuilder<String>(
           valueListenable: fontId,
           builder: (context, font, _) => ValueListenableBuilder<String>(
             valueListenable: localeId,
             builder: (context, locId, _) => MaterialApp(
-              title: 'Hermes Console',
+              title: 'Console',
               debugShowCheckedModeBanner: false,
               // Scroll con inercia (coasting) en toda la app: un flick sigue
               // rodando y frena solo, en vez del frenazo seco de Material.
@@ -2428,12 +3121,21 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
                 return const Locale('en');
               },
               theme: AppFonts.applyToTheme(activeTheme, AppFonts.byId(font)),
+              darkTheme: darkTheme == null
+                  ? null
+                  : AppFonts.applyToTheme(darkTheme, AppFonts.byId(font)),
               // Transición suave al cambiar de tema (sensación premium).
               themeAnimationDuration: const Duration(milliseconds: 420),
               themeAnimationCurve: Curves.easeInOutCubic,
               navigatorKey: _navigatorKey,
               scaffoldMessengerKey: _messengerKey,
-              navigatorObservers: [hermesRouteObserver, _appNavigationFence],
+              navigatorObservers: [
+                hermesRouteObserver,
+                _appNavigationFence,
+                // Chats, viewers, dialogs and sheets hide the floating
+                // mascot.
+                MascotRouteWatch.instance,
+              ],
               // El gate orquesta una ruta de bloqueo sobre el Navigator raíz: cubre
               // también las rutas empujadas, sin Overlay casero.
               builder: (context, navChild) => ListenableBuilder(
@@ -2455,42 +3157,66 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
                     ),
                   ),
                   child: WithForegroundTask(
-                    child: AppLockGate(
-                      lock: widget.appLock,
-                      navigatorKey: _navigatorKey,
-                      child: navChild!,
+                    // Soft hand-off from the native splash: same background
+                    // and mark on the first frame, then the app (or the lock
+                    // screen) fades in. It starts with that frame and never
+                    // waits for data.
+                    child: StartupHandoff(
+                      background: NativeAppearance.splashBackground(
+                        activeTheme.brightness,
+                      ),
+                      child: AppLockGate(
+                        lock: widget.appLock,
+                        navigatorKey: _navigatorKey,
+                        // Guided tours point at the real widgets of whatever
+                        // the navigator shows; never over the lock screen.
+                        child: GuideLayer(
+                          locked: widget.appLock.locked,
+                          // Every floating chat header draws its mascot with
+                          // the sprite engine.
+                          child: HeaderMascotScope(
+                            builder: buildHeaderMascot,
+                            // The active profile's pet, outside chats,
+                            // while "Presencia" is "En toda la app".
+                            child: MascotOverlayHost(
+                              pet: _mascot.pet,
+                              sources: _mascot.sources,
+                              actions: _mascotActions(),
+                              suspended: _showOnboarding || _homeHeldByLock,
+                              child: navChild!,
+                            ),
+                          ),
+                        ),
+                      ),
                     ),
                   ),
                 ),
               ),
               home: _showOnboarding
-                  ? _showSplash
-                        ? SplashScreen(onDone: _finishSplash)
-                        : OnboardingScreen(
-                            connManager: widget.connManager,
-                            onDone: _finishOnboarding,
-                          )
-                  : Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        if (_startHomeInitialLoad)
-                          HomeDashboardScreen(
-                            connManager: widget.connManager,
-                            onInitialLoadProgress: _reportStartupProgress,
-                            onInitialLoadComplete: _markHomeInitialLoadComplete,
-                          ),
-                        if (_showSplash)
-                          SplashScreen(
-                            ready: _homeInitialLoadComplete,
-                            progress: _startupProgress,
-                            onDone: _finishSplash,
-                          ),
-                      ],
-                    ),
+                  ? OnboardingScreen(
+                      connManager: widget.connManager,
+                      onDone: _finishOnboarding,
+                    )
+                  : _homeHeldByLock
+                  ? const _LockedStartCover()
+                  : HomeDashboardScreen(connManager: widget.connManager),
             ),
           ),
         );
       },
     );
   }
+}
+
+/// What sits under the App Lock screen on a cold start that opened locked:
+/// the theme background only. Home is built after the first unlock.
+class _LockedStartCover extends StatelessWidget {
+  const _LockedStartCover();
+
+  @override
+  Widget build(BuildContext context) => ColoredBox(
+    key: const ValueKey('startup-locked-cover'),
+    color: Theme.of(context).hermes.background,
+    child: const SizedBox.expand(),
+  );
 }

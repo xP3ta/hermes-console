@@ -1,32 +1,37 @@
-// Pantalla de configuración de proveedor externo (Ollama remoto, LM Studio,
-// OpenAI-compatible, custom). Usa ruta completa (no dialog/showModalBottomSheet)
-// para evitar el assert _dependents.isEmpty con TextField enfocado.
+// Add/edit form for one custom endpoint (Ollama, LM Studio,
+// OpenAI-compatible, custom). The saved list, activate and delete live in the
+// Models screen (custom_endpoints_section.dart), like Desktop's
+// custom-endpoints-settings.tsx. Full route (not a dialog) to avoid the
+// _dependents.isEmpty assert with a focused TextField.
 //
-// Lógica:
-//  - El usuario ingresa tipo + base_url + api_key opcional.
-//  - "Probar conexión" hace GET {base_url}/v1/models desde el móvil para
-//    listar modelos. Si Ollama, intenta /api/tags como fallback.
-//  - "Usar" llama a model/set (bridge para local, Dashboard para remoto)
-//    con base_url, para que Hermes apunte a ese proveedor.
-//
-// Nota importante (se muestra en UI): la prueba es desde el teléfono.
-// Hermes también debe poder llegar al proveedor desde su servidor.
+//  - Remote Hermes: "Test connection" asks Hermes to validate the URL from
+//    its server (/api/providers/custom-endpoints/validate, or the older
+//    /api/providers/validate). The phone never contacts the endpoint.
+//  - Instance on this phone (InstanceKind.localhost): the phone is the
+//    server, so it probes {base_url}/models itself (Ollama /api/tags as
+//    fallback).
+//  - Save stores the endpoint on the active profile; older servers without
+//    the saved-endpoints route apply the model with model/set instead.
 
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import '../services/origin_bound_http_client.dart';
 
 import '../../l10n/app_localizations.dart';
-import '../../main.dart';
-import '../services/bridge_manager.dart';
+
 import '../services/connection_manager.dart';
+import '../services/active_profile_scope.dart';
+import '../widgets/read_only.dart';
+import '../services/custom_endpoints_api.dart';
 import '../theme/app_theme.dart';
 import '../utils/api_error.dart';
 import '../utils/transport_privacy.dart';
 import '../widgets/hermes_app_bar.dart';
-import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_ui.dart';
+import '../feedback/feedback_policy.dart';
+import '../feedback/screen_help.dart';
 
 // ── Provider type ────────────────────────────────────────────────────────────
 
@@ -146,6 +151,16 @@ String humanizeExternalProviderError(Object error) {
 
 class ExternalProviderScreen extends StatefulWidget {
   final SavedConnection connection;
+  final String profile;
+  final ActiveProfileScope? profileScope;
+
+  /// Immutable authority inherited from the actual parent navigation action.
+  final bool Function()? actionAuthority;
+
+  /// Dashboard client shared with the caller (the Models screen); not closed
+  /// by this form.
+  final DashboardClient? dashboard;
+  final DashboardClient? dashboardClientForTesting;
 
   /// URL pre-cargada cuando se abre en modo edición.
   final String? prefillUrl;
@@ -153,15 +168,29 @@ class ExternalProviderScreen extends StatefulWidget {
   /// Nombre/label pre-cargado cuando se abre en modo edición.
   final String? prefillName;
 
-  /// Si es true, muestra "Editar proveedor" en lugar de "Proveedor externo"
-  /// y habilita el botón de eliminar.
+  /// Shows the edit title instead of "Add endpoint".
   final bool isEditing;
+
+  /// Saved endpoint being edited, from the Models custom endpoints section.
+  final CustomEndpoint? endpoint;
+
+  /// HTTP client for the phone-side probe, used only for an instance on this
+  /// phone ([InstanceKind.localhost]).
+  @visibleForTesting
+  final http.Client? probeClientForTesting;
 
   const ExternalProviderScreen({
     required this.connection,
+    this.profile = '',
+    this.profileScope,
+    this.actionAuthority,
+    this.dashboard,
+    this.dashboardClientForTesting,
     this.prefillUrl,
     this.prefillName,
     this.isEditing = false,
+    this.endpoint,
+    this.probeClientForTesting,
     super.key,
   });
 
@@ -175,6 +204,11 @@ class _ExternalProviderScreenState extends State<ExternalProviderScreen> {
   final _keyCtrl = TextEditingController();
   final _nameCtrl = TextEditingController();
 
+  /// Desktop #122920: a reachable endpoint that lists no models gets a
+  /// manual model name instead of a dead end.
+  final _manualModelCtrl = TextEditingController();
+  bool _needsManualModel = false;
+
   bool _testing = false;
   List<String> _models = [];
   String? _testError;
@@ -184,41 +218,179 @@ class _ExternalProviderScreenState extends State<ExternalProviderScreen> {
   String? _activeModel;
   String? _testedInputBaseUrl;
   String? _resolvedBaseUrl;
+  String? _testMessage;
+  List<Map<String, dynamic>> _modelDetails = const [];
 
-  BridgeManager? _bridgeMgr;
+  late final DashboardClient _dashboard;
+  late final bool _ownsDashboard;
+  bool? _savedEndpointsSupported;
+  CustomEndpoint? _editingEndpoint;
+  bool _makeDefault = false;
+  bool _changed = false;
+
+  int _ownerGeneration = 0;
+  bool _retired = false;
+
+  ProfileReadTicket _ticket() =>
+      widget.profileScope?.capture() ?? ProfileReadTicket.fixed(widget.profile);
+  bool _owns(ProfileReadTicket ticket, int generation) =>
+      mounted &&
+      !_retired &&
+      (widget.actionAuthority?.call() ?? true) &&
+      ticket.isCurrent &&
+      generation == _ownerGeneration &&
+      ticket.owner == Session.profileOwner(widget.profile);
+  void _ownerChanged() {
+    _ownerGeneration++;
+    // Revocation is monotonic for this form. A→B→A cannot revive its draft
+    // intent; reopening captures fresh authority. Pending work keeps its own
+    // busy lease until its completion, independently of publication authority.
+    _retired = true;
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void didUpdateWidget(covariant ExternalProviderScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.profileScope != widget.profileScope) {
+      oldWidget.profileScope?.removeListener(_ownerChanged);
+      widget.profileScope?.addListener(_ownerChanged);
+    }
+    if (oldWidget.profile != widget.profile ||
+        oldWidget.connection != widget.connection ||
+        oldWidget.profileScope != widget.profileScope ||
+        oldWidget.dashboard != widget.dashboard ||
+        oldWidget.actionAuthority != widget.actionAuthority) {
+      _ownerChanged();
+    }
+  }
 
   bool get _isLocal => widget.connection.kind == InstanceKind.localhost;
 
   @override
   void initState() {
     super.initState();
+    widget.profileScope?.addListener(_ownerChanged);
+    final shared = widget.dashboard ?? widget.dashboardClientForTesting;
+    _ownsDashboard = shared == null;
+    _dashboard = shared ?? DashboardClient.lazy(widget.connection);
     if (widget.prefillUrl != null && widget.prefillUrl!.isNotEmpty) {
       _urlCtrl.text = widget.prefillUrl!;
     }
     if (widget.prefillName != null && widget.prefillName!.isNotEmpty) {
       _nameCtrl.text = widget.prefillName!;
     }
-  }
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    _bridgeMgr ??= context
-        .findAncestorStateOfType<HermesAppState>()
-        ?.bridgeManager;
+    final endpoint = widget.endpoint;
+    if (endpoint != null) {
+      // Opened from a saved row: the server has the saved-endpoints route.
+      _savedEndpointsSupported = true;
+      _editingEndpoint = endpoint;
+      _nameCtrl.text = endpoint.name;
+      _urlCtrl.text = endpoint.baseUrl;
+      _models = endpoint.models;
+      _activeModel = endpoint.model.isEmpty ? null : endpoint.model;
+    } else {
+      _detectSavedEndpoints();
+    }
   }
 
   @override
   void dispose() {
+    widget.profileScope?.removeListener(_ownerChanged);
+    _ownerGeneration++;
+    if (_ownsDashboard) _dashboard.close();
     _urlCtrl.dispose();
     _keyCtrl.dispose();
     _nameCtrl.dispose();
+    _manualModelCtrl.dispose();
     super.dispose();
+  }
+
+  /// Whether this server stores endpoints per profile (Desktop's flow) or
+  /// only accepts model/set (older servers).
+  Future<void> _detectSavedEndpoints() async {
+    final ticket = _ticket();
+    final ownerGeneration = _ownerGeneration;
+    bool current() => _owns(ticket, ownerGeneration);
+    if (!mounted || !current()) return;
+    try {
+      final catalog = await _dashboard.listCustomEndpoints(
+        profile: widget.profile,
+      );
+      if (mounted && current()) {
+        setState(() => _savedEndpointsSupported = catalog != null);
+      }
+    } catch (_) {
+      if (mounted && current()) {
+        setState(() => _savedEndpointsSupported = false);
+      }
+    }
+  }
+
+  CustomEndpointDraft _endpointDraft({bool makeDefault = false}) =>
+      CustomEndpointDraft(
+        id: _editingEndpoint?.id ?? '',
+        name: _nameCtrl.text,
+        baseUrl: _urlCtrl.text,
+        model: _needsManualModel
+            ? _manualModelCtrl.text.trim()
+            : _activeModel ?? _editingEndpoint?.model ?? '',
+        apiKey: _keyCtrl.text,
+        apiMode: _editingEndpoint?.apiMode ?? '',
+        contextLength: _editingEndpoint?.contextLength,
+        discoverModels: _editingEndpoint?.discoverModels ?? true,
+        makeDefault: makeDefault,
+        models: _models,
+        modelDetails: _modelDetails,
+      );
+
+  Future<void> _saveEndpoint() async {
+    if (_setting || _testing) return;
+    final ticket = _ticket();
+    final ownerGeneration = _ownerGeneration;
+    bool current() => _owns(ticket, ownerGeneration);
+    if (!mounted || !current()) return;
+    if (widget.connection.readOnly) {
+      showReadOnlyNotice(context);
+      return;
+    }
+    setState(() => _setting = true);
+    try {
+      await DashboardClient.guardedWrite(
+        () => current() && !widget.connection.readOnly,
+        () => _dashboard.saveCustomEndpoint(
+          _endpointDraft(makeDefault: _makeDefault),
+          profile: widget.profile,
+        ),
+      );
+      if (!mounted || !current()) return;
+      _changed = true;
+      Navigator.of(context).pop(true);
+    } catch (error) {
+      if (mounted && current()) {
+        AppFeedback.of(
+          context,
+        ).notify(FeedbackKind.error, humanizeExternalProviderError(error));
+      }
+    } finally {
+      if (mounted) setState(() => _setting = false);
+    }
   }
 
   // ── Test connection ──────────────────────────────────────────────────────
 
   Future<void> _testConnection() async {
+    if (_testing || _setting) return;
+    // A localhost probe is read-only GET. Remote validation sends a POST and
+    // must retain the same mutation admission as Save/Use.
+    if (widget.connection.readOnly && !_isLocal) {
+      showReadOnlyNotice(context);
+      return;
+    }
+    final ticket = _ticket();
+    final ownerGeneration = _ownerGeneration;
+    bool current() => _owns(ticket, ownerGeneration);
+    if (!mounted || !current()) return;
     final s = Strings.of(context);
     final rawUrl = _urlCtrl.text.trim();
     if (rawUrl.isEmpty) {
@@ -232,13 +404,36 @@ class _ExternalProviderScreenState extends State<ExternalProviderScreen> {
     setState(() {
       _testing = true;
       _testError = null;
+      _testMessage = null;
       _models = [];
+      _needsManualModel = false;
     });
     try {
       final inputBase = normalizeExternalProviderUrl(rawUrl);
+      if (!_isLocal && _savedEndpointsSupported == true) {
+        final validation = await _dashboard.validateCustomEndpoint(
+          _endpointDraft(),
+          profile: widget.profile,
+        );
+        if (!mounted || !current()) return;
+        final resolved = validation.resolvedBaseUrl.trim();
+        setState(() {
+          if (resolved.isNotEmpty) _urlCtrl.text = resolved;
+          _models = validation.models;
+          _modelDetails = validation.modelDetails;
+          _needsManualModel = validation.ok && validation.models.isEmpty;
+          _testedInputBaseUrl = inputBase;
+          _resolvedBaseUrl = resolved.isEmpty ? inputBase : resolved;
+          _testMessage = validation.message;
+          _testError = validation.ok ? null : validation.message;
+          _testing = false;
+        });
+        return;
+      }
       final probe = _isLocal
           ? await _probeDirect(inputBase, headers)
-          : await _probeFromHermes(inputBase, apiKey, headers);
+          : await _probeFromHermes(inputBase, apiKey, current);
+      if (!mounted || !current()) return;
       setState(() {
         _models = probe.models;
         _testedInputBaseUrl = inputBase;
@@ -246,7 +441,14 @@ class _ExternalProviderScreenState extends State<ExternalProviderScreen> {
         _testError = probe.models.isEmpty ? s.extNoModels : null;
         _testing = false;
       });
+    } on _ServerValidationUnavailable {
+      if (!mounted || !current()) return;
+      setState(() {
+        _testError = s.extServerValidationUnavailable;
+        _testing = false;
+      });
     } catch (e) {
+      if (!mounted || !current()) return;
       setState(() {
         _testError = humanizeProviderTestError(
           s,
@@ -254,52 +456,67 @@ class _ExternalProviderScreenState extends State<ExternalProviderScreen> {
         );
         _testing = false;
       });
+    } finally {
+      if (mounted) setState(() => _testing = false);
     }
   }
 
   Future<ExternalProviderProbe> _probeFromHermes(
     String inputBase,
     String apiKey,
-    Map<String, String> directHeaders,
+    bool Function() current,
   ) async {
-    final dash = DashboardClient.lazy(widget.connection);
-    try {
-      for (final candidate in externalProviderBaseUrlCandidates(inputBase)) {
-        try {
-          final result = await dash.validateExternalProvider(
-            baseUrl: candidate,
-            apiKey: apiKey,
-          );
-          final models = (result['models'] as List? ?? const [])
-              .map((value) => value.toString().trim())
-              .where((value) => value.isNotEmpty)
-              .toList();
-          if (models.isNotEmpty) {
-            return (baseUrl: candidate, models: models);
-          }
-          final reachable = result['reachable'] != false;
-          final message = (result['message'] ?? '').toString().trim();
-          if (!reachable && message.isNotEmpty) throw Exception(message);
-        } on DashboardHttpException catch (error) {
-          // Hermes antiguos no tienen /api/providers/validate. Conservamos el
-          // flujo anterior como compatibilidad, sin ocultar otros 4xx.
-          if (error.statusCode != 404 && error.statusCode != 405) rethrow;
-          return await _probeDirect(inputBase, directHeaders);
+    for (final candidate in externalProviderBaseUrlCandidates(inputBase)) {
+      if (!current()) throw StateError('Provider action expired');
+      try {
+        final result = await _dashboard.validateExternalProvider(
+          baseUrl: candidate,
+          apiKey: apiKey,
+        );
+        if (!current()) throw StateError('Provider action expired');
+        final models = (result['models'] as List? ?? const [])
+            .map((value) => value.toString().trim())
+            .where((value) => value.isNotEmpty)
+            .toList();
+        if (models.isNotEmpty) {
+          return (baseUrl: candidate, models: models);
         }
+        final reachable = result['reachable'] != false;
+        final message = (result['message'] ?? '').toString().trim();
+        if (!reachable && message.isNotEmpty) throw Exception(message);
+      } on DashboardHttpException catch (error) {
+        // Older Hermes without /api/providers/validate. The phone must not
+        // probe a remote server's endpoint itself: what the phone reaches
+        // says nothing about what Hermes reaches.
+        if (error.statusCode != 404 && error.statusCode != 405) rethrow;
+        throw _ServerValidationUnavailable();
       }
-      return (baseUrl: inputBase, models: const <String>[]);
-    } finally {
-      dash.close();
     }
+    return (baseUrl: inputBase, models: const <String>[]);
   }
 
+  /// Phone-side probe. Only for an instance on this phone.
   Future<ExternalProviderProbe> _probeDirect(
     String inputBase,
     Map<String, String> headers,
-  ) => probeExternalProviderCandidates(
-    inputBase,
-    (candidate) => _fetchModels(candidate, headers),
-  );
+  ) {
+    return probeExternalProviderCandidates(
+      inputBase,
+      (candidate) => _fetchModels(candidate, headers),
+    );
+  }
+
+  Future<http.Response> _probeGet(Uri url, Map<String, String> headers) async {
+    final injected = widget.probeClientForTesting;
+    final client = OriginBoundHttpClient(injected);
+    try {
+      return await client
+          .get(url, headers: headers)
+          .timeout(const Duration(seconds: 8));
+    } finally {
+      if (injected == null) client.close();
+    }
+  }
 
   /// Intenta `{base_url}/models`; si Ollama y falla, prueba `/api/tags` en la
   /// raíz. [base] es también la URL exacta que se persistirá si responde.
@@ -307,9 +524,7 @@ class _ExternalProviderScreenState extends State<ExternalProviderScreen> {
     String base,
     Map<String, String> headers,
   ) async {
-    final res = await http
-        .get(Uri.parse('$base/models'), headers: headers)
-        .timeout(const Duration(seconds: 8));
+    final res = await _probeGet(Uri.parse('$base/models'), headers);
     if (res.statusCode == 200) {
       final models = _parseOpenAiModels(res.body);
       if (models.isNotEmpty) return models;
@@ -319,9 +534,7 @@ class _ExternalProviderScreenState extends State<ExternalProviderScreen> {
       final root = base.endsWith('/v1')
           ? base.substring(0, base.length - 3)
           : base;
-      final r = await http
-          .get(Uri.parse('$root/api/tags'), headers: headers)
-          .timeout(const Duration(seconds: 8));
+      final r = await _probeGet(Uri.parse('$root/api/tags'), headers);
       if (r.statusCode == 200) return _parseOllamaTags(r.body);
     }
     if (res.statusCode != 200) {
@@ -371,6 +584,16 @@ class _ExternalProviderScreenState extends State<ExternalProviderScreen> {
   // ── Use model ────────────────────────────────────────────────────────────
 
   Future<void> _useModel(String modelId) async {
+    if (_setting || _testing) return;
+    final ticket = _ticket();
+    final ownerGeneration = _ownerGeneration;
+    bool current() => _owns(ticket, ownerGeneration);
+    if (!mounted || !current()) return;
+    if (widget.connection.readOnly) {
+      showReadOnlyNotice(context);
+      return;
+    }
+    final profile = widget.profile;
     final s = Strings.of(context);
     setState(() => _setting = true);
     try {
@@ -379,64 +602,36 @@ class _ExternalProviderScreenState extends State<ExternalProviderScreen> {
           ? (_resolvedBaseUrl ?? inputBase)
           : inputBase;
       final apiKey = _keyCtrl.text.trim();
-      if (_isLocal) {
-        final client = await _bridgeMgr?.clientFor(widget.connection.id);
-        if (client == null) {
-          throw Exception(s.extBridgeUnavailable);
-        }
-        try {
-          final r = await client.setModel(
-            provider: _type.hermesProvider,
-            model: modelId,
-            modelBaseUrl: base,
-            contextLength: 65536,
-          );
-          if (r['ok'] != true) {
-            throw Exception(
-              (r['error'] ?? r['message'] ?? s.extApplyRejected).toString(),
-            );
-          }
-        } finally {
-          client.close();
-        }
-      } else {
-        final dash = DashboardClient.lazy(widget.connection);
-        try {
-          final ok = await dash.setActiveModel(
-            providerSlug: _type.hermesProvider,
-            modelId: modelId,
-            baseUrl: base,
-            apiKey: apiKey,
-          );
-          if (!ok) throw Exception(s.extApplyRejected);
-        } finally {
-          dash.close();
-        }
-      }
-      if (!mounted) return;
-      // No cerramos la pantalla: el usuario puede cambiar de modelo sin salir.
-      setState(() => _activeModel = modelId);
-      HermesNotice.of(context).showSnackBar(
-        SnackBar(
-          content: Text(Strings.of(context).extActiveModel(modelId)),
-          duration: const Duration(seconds: 3),
+      final ok = await DashboardClient.guardedWrite(
+        () => current() && !widget.connection.readOnly,
+        () => _dashboard.setActiveModel(
+          providerSlug: _type.hermesProvider,
+          modelId: modelId,
+          baseUrl: base,
+          profile: profile,
+          apiKey: apiKey,
         ),
       );
+      if (!ok) throw Exception(s.extApplyRejected);
+      if (!mounted || !current()) return;
+      // No cerramos la pantalla: el usuario puede cambiar de modelo sin salir.
+      setState(() => _activeModel = modelId);
+      AppFeedback.of(context).notify(
+        FeedbackKind.routine,
+        Strings.of(context).extActiveModel(modelId),
+      );
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || !current()) return;
       final msg = humanizeExternalProviderError(e);
       final isVenvBroken =
           msg.contains('hermes_cli') ||
           msg.contains('ModuleNotFoundError') ||
           msg.contains('No module named') ||
           msg.contains('ruamel_unavailable');
-      HermesNotice.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            isVenvBroken ? s.extVenvUnavailable : s.extApplyError(msg),
-          ),
-          duration: Duration(seconds: isVenvBroken ? 6 : 4),
-        ),
+      AppFeedback.of(context).notify(
+        FeedbackKind.error,
+        isVenvBroken ? s.extVenvUnavailable : s.extApplyError(msg),
+        duration: Duration(seconds: isVenvBroken ? 6 : 4),
       );
     } finally {
       if (mounted) setState(() => _setting = false);
@@ -451,17 +646,25 @@ class _ExternalProviderScreenState extends State<ExternalProviderScreen> {
     final s = Strings.of(context);
     return Scaffold(
       appBar: HermesAppBar(
-        title: Text(widget.isEditing ? s.extEditTitle : s.extTitle),
+        title: Text(widget.isEditing ? s.extEditTitle : s.mdlAddEndpoint),
         leading: IconButton(
           icon: const Icon(Icons.close),
-          onPressed: () => Navigator.of(context).pop(false),
+          tooltip: s.commonClose,
+          onPressed: () => Navigator.of(context).pop(_changed),
         ),
+        actions: [
+          ScreenHelpButton(
+            title: widget.isEditing ? s.extEditTitle : s.mdlAddEndpoint,
+            paragraphs: [
+              _isLocal ? s.extReachabilityInfo : s.extServerReachabilityInfo,
+            ],
+          ),
+        ],
       ),
       body: ListView(
+        clipBehavior: hermesUnderHeader,
         padding: const EdgeInsets.all(16),
         children: [
-          HermesInfoBanner(s.extReachabilityInfo, icon: Icons.info_outline),
-          const SizedBox(height: 20),
           _label(s.extProviderType, colors),
           const SizedBox(height: 8),
           Wrap(
@@ -520,31 +723,50 @@ class _ExternalProviderScreenState extends State<ExternalProviderScreen> {
             hint: s.extApiKeyHint,
           ),
           const SizedBox(height: 20),
-          FilledButton.icon(
-            onPressed: _testing ? null : _testConnection,
-            icon: _testing
-                ? SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: colors.onAccent,
-                    ),
-                  )
-                : const Icon(Icons.wifi_tethering_rounded, size: 18),
-            label: Text(
-              _testing
-                  ? Strings.of(context).commonTesting
-                  : Strings.of(context).extTestConnection,
+          if (_savedEndpointsSupported == true)
+            OutlinedButton.icon(
+              onPressed: _testing ? null : _testConnection,
+              icon: _testing
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.wifi_tethering_rounded, size: 18),
+              label: Text(_testing ? s.commonTesting : s.extTestConnection),
+            )
+          else
+            FilledButton.icon(
+              onPressed: _testing ? null : _testConnection,
+              icon: _testing
+                  ? SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: colors.onAccent,
+                      ),
+                    )
+                  : const Icon(Icons.wifi_tethering_rounded, size: 18),
+              label: Text(
+                _testing
+                    ? Strings.of(context).commonTesting
+                    : Strings.of(context).extTestConnection,
+              ),
+              style: FilledButton.styleFrom(
+                backgroundColor: colors.accent,
+                foregroundColor: colors.onAccent,
+              ),
             ),
-            style: FilledButton.styleFrom(
-              backgroundColor: colors.accent,
-              foregroundColor: colors.onAccent,
-            ),
-          ),
           if (_testError != null) ...[
             const SizedBox(height: 12),
             _ErrorBanner(_testError!, colors),
+          ],
+          if (_testError == null &&
+              _testMessage != null &&
+              _testMessage!.trim().isNotEmpty) ...[
+            const SizedBox(height: 12),
+            HermesInfoBanner(_testMessage!, icon: Icons.check_circle_outline),
           ],
           if (_models.isNotEmpty) ...[
             const SizedBox(height: 24),
@@ -556,7 +778,48 @@ class _ExternalProviderScreenState extends State<ExternalProviderScreen> {
                 isActive: _activeModel == m,
                 colors: colors,
                 setting: _setting,
-                onUse: () => _useModel(m),
+                onUse: _savedEndpointsSupported == true
+                    ? () => setState(() {
+                        _activeModel = m;
+                        _makeDefault = true;
+                      })
+                    : () => _useModel(m),
+              ),
+            ),
+          ],
+          if (_needsManualModel) ...[
+            const SizedBox(height: 20),
+            HermesField(
+              key: const ValueKey('ext-manual-model'),
+              controller: _manualModelCtrl,
+              autocorrect: false,
+              enableSuggestions: false,
+              label: s.extManualModelLabel,
+              hint: s.extManualModelHint,
+              onChanged: (_) => setState(() {}),
+            ),
+          ],
+          if (_savedEndpointsSupported == true) ...[
+            const SizedBox(height: 20),
+            FilledButton.icon(
+              onPressed:
+                  _setting ||
+                      (_needsManualModel &&
+                          _manualModelCtrl.text.trim().isEmpty)
+                  ? null
+                  : _saveEndpoint,
+              icon: _setting
+                  ? SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: colors.onAccent,
+                      ),
+                    )
+                  : const Icon(Icons.save_outlined, size: 18),
+              label: Text(
+                !_makeDefault ? s.mdlEndpointSave : s.mdlEndpointSaveAndUse,
               ),
             ),
           ],
@@ -571,11 +834,14 @@ class _ExternalProviderScreenState extends State<ExternalProviderScreen> {
     style: TextStyle(
       fontSize: 11,
       fontWeight: FontWeight.w600,
-      color: colors.textDisabled,
+      color: colors.textTertiary,
       letterSpacing: 1.2,
     ),
   );
 }
+
+/// The server has no validation route and the instance is remote.
+class _ServerValidationUnavailable implements Exception {}
 
 // ── Sub-widgets ──────────────────────────────────────────────────────────────
 

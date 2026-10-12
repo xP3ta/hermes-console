@@ -1,49 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- El acceso directo del lanzador y dos textos que aún usan los widgets de
+     bots. Los widgets del lanzador tienen su archivo:
+     launcher_widgets_strings.xml. -->
 <resources>
     <string name="new_session_shortcut_short_label">Nueva conversación</string>
     <string name="new_session_shortcut_long_label">Iniciar una conversación nueva con Hermes</string>
-    <string name="new_session_widget_description">Estado de Hermes y acciones rápidas</string>
-    <string name="hermes_widget_compact_name">Hermes · Compacto</string>
-    <string name="hermes_widget_compact_description">Conexión, instancia y dos acciones rápidas</string>
-    <string name="hermes_widget_control_name">Hermes · Controles</string>
-    <string name="hermes_widget_control_description">Contexto y controles de conversación</string>
-    <string name="hermes_widget_dashboard_name">Hermes · Panel</string>
-    <string name="hermes_widget_dashboard_description">Sesión, contexto y métricas de rendimiento</string>
-    <string name="new_session_widget_content_description">Abrir una conversación nueva</string>
-    <string name="new_session_widget_brand">HERMES CONSOLE</string>
-    <string name="new_session_widget_action">Nueva conversación</string>
-    <string name="new_session_widget_supporting_text">Abre un borrador en blanco listo para escribir.</string>
-    <string name="new_session_widget_composer_hint">Escribe a Hermes…</string>
-    <string name="new_session_widget_composer_description">Abrir una conversación nueva lista para escribir</string>
-    <string name="new_session_widget_camera_description">Abrir una conversación nueva con la cámara</string>
-    <string name="new_session_widget_gallery_description">Abrir una conversación nueva con la galería de fotos</string>
-    <string name="new_session_widget_voice_description">Abrir una conversación de voz nueva</string>
-    <string name="hermes_widget_brand">HERMES</string>
     <string name="hermes_widget_not_configured">Sin configurar</string>
-    <string name="hermes_widget_no_instance">Elige una instancia en Hermes Console</string>
     <string name="hermes_widget_setup_action">Configurar Hermes</string>
-    <string name="hermes_widget_new_chat">Nueva conversación</string>
-    <string name="hermes_widget_new_short">Nuevo</string>
-    <string name="hermes_widget_voice">Voz</string>
-    <string name="hermes_widget_open">Abrir</string>
-    <string name="hermes_widget_return">Volver</string>
-    <string name="hermes_widget_instance">Instancia</string>
-    <string name="hermes_widget_context">Contexto</string>
-    <string name="hermes_widget_session">Sesión</string>
-    <string name="hermes_widget_agent">Agente</string>
-    <string name="hermes_widget_unknown">No disponible</string>
-    <string name="hermes_widget_online">ONLINE</string>
-    <string name="hermes_widget_offline">OFFLINE</string>
-    <string name="hermes_widget_connecting">CONECTANDO</string>
-    <string name="hermes_widget_error">ERROR</string>
-    <string name="hermes_widget_setup">CONFIGURAR</string>
-    <string name="hermes_widget_stale_short">DATOS ANTIGUOS</string>
-    <string name="hermes_widget_idle">En reposo</string>
-    <string name="hermes_widget_thinking">Pensando</string>
-    <string name="hermes_widget_streaming">Respondiendo</string>
-    <string name="hermes_widget_tool">Usando herramienta</string>
-    <string name="hermes_widget_approval">Requiere aprobación</string>
-    <string name="hermes_widget_now">ahora</string>
-    <string name="hermes_widget_minutes">%1$d min</string>
-    <string name="hermes_widget_hours">%1$d h</string>
 </resources>

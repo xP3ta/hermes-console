@@ -2,6 +2,9 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../design/modal.dart' show releaseTextFocusIfKeyboardHidden;
+import '../theme/motion.dart';
+
 /// Abre una superficie modal anclada a la posición actual de [anchorKey], en
 /// vez de centrada como [showHermesFloatingSurface] (`hermes_premium_ui.dart`).
 ///
@@ -38,6 +41,7 @@ Future<T?> showDockAnchoredPopover<T>({
       : null;
   final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
   final focusScopeNode = FocusScopeNode(debugLabel: 'DockAnchoredPopover');
+  releaseTextFocusIfKeyboardHidden(context);
   return Navigator.of(context).push<T>(
     _DockAnchoredPopoverRoute<T>(
       anchor: anchorBox,
@@ -73,32 +77,34 @@ class _DockAnchoredPopoverRoute<T> extends PageRouteBuilder<T> {
          reverseTransitionDuration: reduceMotion
              ? Duration.zero
              : const Duration(milliseconds: 150),
-         pageBuilder: (routeContext, animation, secondaryAnimation) => PopScope(
-           child: FocusScope(
-             node: focusScopeNode,
-             child: _DockAnchoredPopoverFrame(
-               anchor: anchor,
-               maxWidth: maxWidth,
-               decorated: decorated,
-               child: Builder(builder: builder),
+         pageBuilder: (routeContext, animation, secondaryAnimation) =>
+             CoveredRouteMediaQueryFreeze(
+               child: PopScope(
+                 child: FocusScope(
+                   node: focusScopeNode,
+                   child: _DockAnchoredPopoverFrame(
+                     anchor: anchor,
+                     maxWidth: maxWidth,
+                     decorated: decorated,
+                     child: Builder(builder: builder),
+                   ),
+                 ),
+               ),
              ),
-           ),
-         ),
          transitionsBuilder:
              (routeContext, animation, secondaryAnimation, child) {
                if (reduceMotion) return child;
-               final curved = CurvedAnimation(
-                 parent: animation,
-                 curve: Curves.easeOutCubic,
-                 reverseCurve: Curves.easeInCubic,
-               );
-               return FadeTransition(
-                 opacity: curved,
-                 child: ScaleTransition(
-                   scale: Tween<double>(begin: 0.85, end: 1).animate(curved),
-                   alignment: Alignment.bottomCenter,
-                   child: child,
+               return RouteCurves(
+                 animation: animation,
+                 builder: (context, curved, child) => FadeTransition(
+                   opacity: curved,
+                   child: ScaleTransition(
+                     scale: Tween<double>(begin: 0.85, end: 1).animate(curved),
+                     alignment: Alignment.bottomCenter,
+                     child: child,
+                   ),
                  ),
+                 child: child,
                );
              },
        );

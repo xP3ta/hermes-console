@@ -1,9 +1,8 @@
-// Adaptador de plataforma para apps externas e instalación del agente local.
+// Adaptador de plataforma para apps externas.
 //
-// La UI y los providers NUNCA tocan intents directamente: pasan por esta
-// interfaz. La impl real usa un MethodChannel nativo ("hermes/android_apps")
-// para detectar/abrir paquetes y lanzar Termux, y `url_launcher` para los
-// enlaces de F-Droid. En tests se inyecta una implementación falsa.
+// La UI y los providers pasan por esta interfaz; la implementación real usa
+// el MethodChannel "hermes/android_apps" para detectar/abrir paquetes y consultar
+// el dispositivo, y `url_launcher` para los enlaces de F-Droid.
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -14,30 +13,6 @@ abstract class AppBridge {
 
   /// Abre la app por su paquete. Devuelve false si no se pudo.
   Future<bool> launch(String package);
-
-  /// Lanza un comando en Termux (RUN_COMMAND). Best-effort: false si no es
-  /// posible (Termux sin allow-external-apps / sin permiso).
-  ///
-  /// [background] true (por defecto): corre sin abrir terminal; la app muestra
-  /// el progreso leyendo el log por localhost. La app no debe usar false en
-  /// flujos de usuario.
-  Future<bool> runInTermux(String command, {bool background = true});
-
-  /// Abre Termux como ACTIVIDAD en primer plano ejecutando [command]. A
-  /// diferencia de [runInTermux] (que usa RunCommandService y EXIGE
-  /// allow-external-apps), TermuxActivity acepta los extras de comando sin esa
-  /// propiedad, así que es la vía para el bootstrap que precisamente la activa.
-  /// Best-effort: false si Termux no está o el intent no se resuelve.
-  Future<bool> launchTermuxForeground(String command);
-
-  /// Ejecuta [command] en Termux y DEVUELVE su stdout (vía el PendingIntent de
-  /// resultado de RUN_COMMAND). A diferencia de [runInTermux] (fire-and-forget),
-  /// permite SONDEAR el sistema de archivos de Termux —p. ej. saber si el agente
-  /// Hermes está instalado aunque esté parado—, algo imposible desde la app de
-  /// otro modo. Devuelve null si Termux no responde, falta el permiso/propiedad
-  /// allow-external-apps, o se agota el tiempo. El comando debe ser corto y sin
-  /// efectos (idempotente): es una sonda, no una acción.
-  Future<String?> probeTermux(String command);
 
   /// Abre la ficha de F-Droid del paquete: intenta `market://` y cae a la web.
   Future<bool> installFromFDroid(String package);
@@ -101,48 +76,6 @@ class AndroidApps implements AppBridge {
     try {
       final ok = await _channel.invokeMethod<bool>('launch', {
         'package': package,
-      });
-      return ok ?? false;
-    } on PlatformException {
-      return false;
-    } on MissingPluginException {
-      return false;
-    }
-  }
-
-  @override
-  Future<bool> runInTermux(String command, {bool background = true}) async {
-    try {
-      final ok = await _channel.invokeMethod<bool>('runInTermux', {
-        'command': command,
-        'background': background,
-      });
-      return ok ?? false;
-    } on PlatformException {
-      return false;
-    } on MissingPluginException {
-      return false;
-    }
-  }
-
-  @override
-  Future<String?> probeTermux(String command) async {
-    try {
-      return await _channel.invokeMethod<String>('probeTermux', {
-        'command': command,
-      });
-    } on PlatformException {
-      return null;
-    } on MissingPluginException {
-      return null;
-    }
-  }
-
-  @override
-  Future<bool> launchTermuxForeground(String command) async {
-    try {
-      final ok = await _channel.invokeMethod<bool>('launchTermuxForeground', {
-        'command': command,
       });
       return ok ?? false;
     } on PlatformException {

@@ -641,12 +641,31 @@ final class FullDuplexBargeInMonitor {
       );
       return true;
     } catch (error) {
+      if (!_isCurrent(operation)) {
+        // Disarmed while the capture was still opening: the speaker turned
+        // out to have no echo cancellation, or the turn moved on. Android
+        // answers the cancelled start with an error; it is the expected end
+        // of this attempt, and whoever disarmed already owns the state.
+        debugPrint('[VOICE-PERF] voice.barge.arm cancelled');
+        return false;
+      }
+      _wantArmed = false;
+      _armed = false;
+      if (error is PlatformException && error.code == 'unsafe_playback_route') {
+        // Android's own verdict on opening the capture: what plays would be
+        // heard as speech. Talking over Hermes is not offered on this output;
+        // "Stop and talk" still is.
+        _playbackUnsafeLatched = true;
+        debugPrint(
+          '[voice-stab] barge.unsafe_playback_route action=arm_refused',
+        );
+        await source.stop();
+        return false;
+      }
       if (_playbackActive) _playbackUnsafeLatched = true;
       debugPrint(
         '[VOICE-PERF] voice.barge.arm_failed error=${error.runtimeType}',
       );
-      _wantArmed = false;
-      _armed = false;
       await source.stop();
       return false;
     }

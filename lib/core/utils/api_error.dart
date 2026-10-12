@@ -1,8 +1,12 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
+
+import 'package:http/http.dart' as http;
 import 'package:flutter/foundation.dart';
 
 import '../../l10n/app_localizations.dart';
-import '../services/bridge_client.dart';
+import '../models/cron_job.dart';
 import '../services/connection_manager.dart';
 
 /// Causa que una pantalla puede presentar como dependencia del Dashboard.
@@ -39,25 +43,11 @@ String localizedApiError(Strings strings, Object error) {
   if (error is CronDeleteRejectedException) {
     return strings.crnDeleteRejected;
   }
-  if (error is BridgeException) {
-    final specific = switch (error.code) {
-      'cron_remove_unconfirmed' => strings.bridgeErrorCronDeleteUnconfirmed,
-      'attachment_too_large' => strings.bridgeErrorAttachmentTooLarge,
-      'attachment_invalid_path' => strings.bridgeErrorAttachmentInvalidPath,
-      'image_invalid_type' => strings.bridgeErrorImageInvalidType,
-      'image_too_large' => strings.bridgeErrorImageTooLarge,
-      _ => null,
-    };
-    if (specific != null) return specific;
-    return switch (error.kind) {
-      BridgeErrorKind.network => strings.bridgeErrorNetwork,
-      BridgeErrorKind.timeout => strings.bridgeErrorTimeout,
-      BridgeErrorKind.badRequest => strings.bridgeErrorBadRequest,
-      BridgeErrorKind.auth => strings.bridgeErrorAuth,
-      BridgeErrorKind.notFound => strings.bridgeErrorNotFound,
-      BridgeErrorKind.server => strings.bridgeErrorServer,
-      BridgeErrorKind.unknown => strings.bridgeErrorUnknown,
-    };
+  if (error is CronJobNotFoundException) {
+    return strings.crnJobNotFoundInProfile(error.profile);
+  }
+  if (error is CronJobOwnerUnknownException) {
+    return strings.crnJobOwnerUnknown;
   }
   if (error is DashboardAuthException) {
     return switch (error.code) {
@@ -72,6 +62,21 @@ String localizedApiError(Strings strings, Object error) {
       DashboardAuthFailureCode.sessionCookieMissing =>
         strings.dashboardAuthSessionCookieMissing,
     };
+  }
+  if (error is DashboardHttpException) {
+    return switch (error.statusCode) {
+      400 || 422 => strings.apiErrorBadRequest,
+      401 || 403 => strings.apiErrorAuth,
+      404 => strings.apiErrorNotFound,
+      >= 500 => strings.apiErrorServer,
+      _ => strings.apiErrorUnknown,
+    };
+  }
+  if (error is TimeoutException) return strings.apiErrorTimeout;
+  if (error is SocketException ||
+      error is HandshakeException ||
+      error is http.ClientException) {
+    return strings.apiErrorNetwork;
   }
   if (error is ArgumentError && error.name == 'jobId') {
     return strings.cronJobIdInvalid;
@@ -143,7 +148,7 @@ String? _extractDetail(String body) {
       }
     }
   } catch (e) {
-    debugPrint('[api-error] excepción silenciada (se devuelve null): $e');
+    debugPrint('[api-error] invalid error payload (${e.runtimeType})');
     return null;
   }
   return null;

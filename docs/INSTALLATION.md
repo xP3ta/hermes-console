@@ -1,62 +1,68 @@
 # Installation
 
-## Current status
+Console requires Android 7.0 (API 24) or newer. It does not include Hermes Agent
+or an AI service: before connecting it, you need a Hermes server that you
+control. Do not install or share a `qa`, `debug` or `profile` APK; those are
+internal test builds, not distribution artifacts, and the QA flavor uses a
+different package name.
 
-`1.2.12` is the source-current publication candidate. Its final signed
-distribution artifacts remain pending until the release gates close. Any QA
-profile build is for internal validation only. `1.2.11` is the latest release
-published through GitHub Releases/Obtainium; verify Google Play's displayed
-version in the listing before assuming channel parity.
+## Requirements
 
-Do not install or share a `qa`, `debug`, or `profile` APK outside the internal
-validation flow. Those builds use different guarantees and, in the QA flavor,
-a different package name; they are not distribution artifacts.
+- Android 7.0 (API 24) or newer.
+- A Hermes Agent you run, with its **Gateway** (default port 8642, with an
+  `API_SERVER_KEY`) and **Dashboard** (default port 9119) reachable from the
+  phone. The setup helper prepares both.
+- There is no fixed minimum Hermes version: a feature appears when your server
+  offers what it needs, and older servers simply show less. A few things, such
+  as per-session settings, need a recent Hermes (0.19 or newer).
+- Console 1.2.15 or newer to use the current setup helper.
 
-Hermes Console requires Android API 24 or later, with Android 10+ recommended.
-The app does not include Hermes Agent or an AI service. Before connecting it,
-you need a compatible Hermes server that you control.
+More in [server configuration](CONFIGURATION.md) and the
+[upstream contract](UPSTREAM_CONTRACT.md).
 
 ## Official installation channels
 
 ### Google Play
 
 Install the app from its
-[Google Play listing](https://play.google.com/store/apps/details?id=dev.xpetalab.hermesconsole).
-The Play package is `dev.xpetalab.hermesconsole` and uses Play App Signing.
-Installing a build with ADB does not validate the update path delivered by
-Google Play.
+[Google Play listing](https://play.google.com/store/apps/details?id=dev.xpetalab.hermesconsole)
+(titled "Hermes Console by XPeta Lab"). The package is
+`dev.xpetalab.hermesconsole` and Play builds use Play App Signing. Installing a
+build with ADB does not validate the update path delivered by Google Play.
 
 ### Obtainium
 
-Once the first signed GitHub release is available, install Obtainium, choose
-**Add App**, and paste `https://github.com/xP3ta/hermes-console`. Confirm that
+Install [Obtainium](https://github.com/ImranR98/Obtainium), choose **Add App**
+and paste `https://github.com/xP3ta/hermes-console` (or use the
+[Add to Obtainium](https://hermes.xpetalab.dev/obtainium/) button). Confirm that
 it detects GitHub Releases and verify the published signature before switching
 from another update channel.
 
 ### Direct APK
 
-The `full` variant will only be distributed through the official channel named
-by the website and the matching GitHub Release. Before installing it, verify
-the published version, signing certificate, and SHA-256 digest.
+Only install a production APK attached to an official
+[GitHub Release](https://github.com/xP3ta/hermes-console/releases). Releases carry
+the signed `full` build as one APK per CPU architecture; most phones need
+`arm64-v8a`. Before installing, verify the published version, signing
+certificate and SHA-256 digest.
 
-The `play` and `full` variants share the same package and cannot coexist. A
-valid update between them must preserve application data. The `qa` variant has
-a separate package for internal testing and must never be presented as the
-public APK.
+The `play` and `full` variants share the same package and cannot coexist. The
+`qa` variant has a separate package for internal testing and must never be
+presented as the public APK.
 
 ### Troubleshooting: "App not installed"
 
 Google Play builds are re-signed by Play App Signing, while GitHub/Obtainium
-builds are signed with the project's own key. Android only updates an app with
-a build signed by the same key, so installing a GitHub APK over a Play install
-(or the reverse) fails with **App not installed** (sometimes "package conflicts
-with an existing package").
+builds are signed with the project's own key. Android only updates an app with a
+build signed by the same key, so installing a GitHub APK over a Play install (or
+the reverse) fails with **App not installed** (sometimes "package conflicts with
+an existing package").
 
 To switch channel:
 
 1. Check the current channel in **Settings → About → Updates**.
 2. Export or note anything you need (connections can be re-paired).
-3. Uninstall Hermes Console.
+3. Uninstall Console.
 4. Install it from the other channel.
 
 Stay on one channel afterwards; updates then install normally.
@@ -73,9 +79,7 @@ Requirements for the current tree:
 flutter pub get
 flutter analyze
 flutter test
-flutter build apk --debug --flavor full \
-  --dart-define=HERMES_FLAVOR=full \
-  --dart-define=HERMES_LOCAL_AGENT=true
+flutter build apk --debug --flavor full --dart-define=HERMES_FLAVOR=full
 ```
 
 The debug output is for development only. Release builds require a signing key
@@ -85,12 +89,20 @@ kept outside this repository and all gates in
 
 ## First launch
 
-1. Open Hermes Console and choose to connect a remote server.
-2. Scan its pairing QR code or paste the link generated by your server.
-3. Review the connection diagnostics before saving the instance.
-4. Grant camera, microphone, or notification access only when you use the
-   corresponding feature.
+1. Open Console. The first screen offers one action, **Scan code**.
+2. On the computer where Hermes lives, run the setup helper's one line (see the
+   [README](../README.md#connect)); it shows a code. Scan it,
+   or paste its `hermes://pair` link. If you cannot, choose **I don't have a code** for the
+   numbered recipe, or add the connection by hand as described in
+   [server configuration](CONFIGURATION.md).
+3. Console says in plain words what it is about to connect, then checks the
+   address, the chat key and the Dashboard sign-in before saving anything.
+4. Grant camera access only on the scan screen (pasting the code works without
+   it) and microphone access only when you use voice. Notifications are asked for
+   once, after the first connection is saved, never on opening the app.
 
-A pairing QR code or link may contain access details. Treat it as a secret: do
-not share it, include it in an issue, or expose it in launch media. Continue
-with [server configuration](CONFIGURATION.md).
+A pairing code or link carries access details. Treat it as a secret: do not share
+it, include it in an issue, or expose it in screenshots or media.
+
+Coming from a Mobile Bridge install? See "Coming from a Mobile Bridge install" in
+[server configuration](CONFIGURATION.md).

@@ -6,8 +6,9 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../theme/app_theme.dart';
-import '../widgets/hermes_notice.dart';
+import '../widgets/animated_hermes_logo.dart' show kConsoleIconAsset;
 import '../design/hermes_design.dart';
+import '../feedback/feedback_policy.dart';
 
 /// Acerca de: identidad de la app, estado del proyecto, atribuciones y
 /// acceso a las licencias open source. Las licencias viven aquí a propósito
@@ -67,10 +68,9 @@ SOFTWARE.
     } catch (e) {
       debugPrint('[about] no se pudo abrir $url: $e');
       if (!mounted) return;
-      HermesNotice.of(context).showSnackBar(
-        SnackBar(content: Text(Strings.of(context).aboutLinkError)),
-        kind: HermesNoticeKind.error,
-      );
+      AppFeedback.of(
+        context,
+      ).notify(FeedbackKind.error, Strings.of(context).aboutLinkError);
     }
   }
 
@@ -80,9 +80,7 @@ SOFTWARE.
     if (!_appLicensesRegistered) {
       LicenseRegistry.addLicense(() async* {
         final projectLicense = await rootBundle.loadString('LICENSE');
-        yield LicenseEntryWithLineBreaks(const [
-          'Hermes Console',
-        ], projectLicense);
+        yield LicenseEntryWithLineBreaks(const ['Console'], projectLicense);
         yield const LicenseEntryWithLineBreaks([
           'hermes-android (upstream)',
         ], _upstreamMitNotice);
@@ -125,11 +123,11 @@ SOFTWARE.
           child: Row(
             children: [
               Image.asset(
-                'assets/branding/hermes_logo.webp',
+                kConsoleIconAsset,
+                key: const Key('about-console-icon'),
                 width: 56,
                 height: 56,
-                // El master es 1024×1024; decodificar acotado al tamaño
-                // mostrado (×3 de DPR) ahorra ~4 MB de bitmap.
+                // Decodificar acotado al tamaño mostrado (×3 de DPR).
                 cacheWidth: 168,
                 cacheHeight: 168,
                 filterQuality: FilterQuality.medium,
@@ -142,7 +140,7 @@ SOFTWARE.
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Hermes Console',
+                      'Console',
                       style: HermesType.display.copyWith(
                         color: colors.textPrimary,
                       ),
@@ -174,7 +172,7 @@ SOFTWARE.
               subtitle: s.aboutThirdParty,
               onTap: () => showLicensePage(
                 context: context,
-                applicationName: 'Hermes Console',
+                applicationName: 'Console',
                 applicationVersion: 'v$_version',
               ),
             ),
@@ -227,7 +225,7 @@ SOFTWARE.
           padding: const EdgeInsets.fromLTRB(6, 16, 6, 0),
           child: Text(
             s.aboutUnofficial,
-            style: HermesType.support.copyWith(color: colors.textDisabled),
+            style: HermesType.support.copyWith(color: colors.textTertiary),
           ),
         ),
       ],

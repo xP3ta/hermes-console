@@ -3,7 +3,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/companion/render/companion_status_indicator.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
-import 'package:hermes_android/core/widgets/hermes_spark_mascot.dart';
+import 'package:hermes_android/core/companion/models/companion_mood.dart';
 import 'package:hermes_android/core/widgets/message_avatar_header.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 
@@ -55,7 +55,7 @@ Widget _header({
       ? const CompanionStatusIndicator(
           key: ValueKey('assistant-header-companion'),
           companion: null,
-          mood: HermesSparkMood.thinking,
+          mood: CompanionMood.thinking,
           size: kAvatarMascotSize,
           animate: false,
         )
@@ -118,32 +118,78 @@ void main() {
     }
   });
 
+  // ct1215: a chat with one speaker gives the header no face; then there
+  // is no slot and no letter in its place.
   testWidgets(
-    'sin presencia: la inicial en acento, sin círculo y misma geometría',
+    'sin cara no hay hueco ni inicial: el nombre empieza en el borde',
     (tester) async {
       await tester.pumpWidget(_app(_header()));
       await tester.pump();
-      final withMascot = tester.getRect(find.byType(MessageAvatarHeader));
-      final nameWith = tester.getTopLeft(
-        find.byKey(const ValueKey('assistant-header-name')),
+      expect(
+        tester
+            .getTopLeft(find.byKey(const ValueKey('assistant-header-name')))
+            .dx,
+        tester.getRect(find.byType(MessageAvatarHeader)).left +
+            kAvatarSlotWidth,
       );
       await tester.pumpWidget(_app(_header(mascot: false)));
       await tester.pump();
+      for (final key in const [
+        'assistant-header-companion',
+        'assistant-avatar-slot',
+        'assistant-avatar-initial',
+        'assistant-avatar-ring',
+      ]) {
+        expect(find.byKey(ValueKey(key)), findsNothing, reason: key);
+      }
+      final edge = tester.getRect(find.byType(MessageAvatarHeader)).left;
       expect(
-        find.byKey(const ValueKey('assistant-header-companion')),
-        findsNothing,
+        tester
+            .getTopLeft(find.byKey(const ValueKey('assistant-header-name')))
+            .dx,
+        edge,
       );
-      final initial = tester.widget<Text>(
-        find.byKey(const ValueKey('assistant-avatar-initial')),
-      );
-      expect(initial.data, 'H');
-      expect(initial.style!.color, AppTheme.hermesRedDark.hermes.accent);
-      expect(tester.getRect(find.byType(MessageAvatarHeader)), withMascot);
+      // The second line hangs from the same edge.
       expect(
-        tester.getTopLeft(find.byKey(const ValueKey('assistant-header-name'))),
-        nameWith,
+        tester.getTopLeft(find.byKey(const ValueKey('fake-summary'))).dx,
+        edge,
       );
-      expect(find.byKey(const ValueKey('assistant-avatar-ring')), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'de derecha a izquierda: el nombre al inicio, las acciones al final',
+    (tester) async {
+      await tester.pumpWidget(
+        _app(
+          Directionality(
+            textDirection: TextDirection.rtl,
+            child: _header(
+              mascot: false,
+              actions: const [
+                SizedBox(key: ValueKey('act-copy'), width: 48, height: 48),
+              ],
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      final header = tester.getRect(find.byType(MessageAvatarHeader));
+      expect(
+        tester
+            .getRect(find.byKey(const ValueKey('assistant-header-name')))
+            .right,
+        closeTo(header.right, 0.5),
+      );
+      expect(
+        tester.getRect(find.byKey(const ValueKey('fake-summary'))).right,
+        closeTo(header.right, 0.5),
+      );
+      expect(
+        tester.getRect(find.byKey(const ValueKey('act-copy'))).left,
+        closeTo(header.left, 0.5),
+      );
+      expect(tester.takeException(), isNull);
     },
   );
 
@@ -213,5 +259,42 @@ void main() {
       await tester.pump();
       expect(tester.takeException(), isNull, reason: preset.id);
     }
+  });
+
+  testWidgets('a name in a colour as dark as the page is made legible', (
+    tester,
+  ) async {
+    double contrast(Color a, Color b) {
+      final la = a.computeLuminance(), lb = b.computeLuminance();
+      final hi = la > lb ? la : lb, lo = la > lb ? lb : la;
+      return (hi + 0.05) / (lo + 0.05);
+    }
+
+    Finder named(String name) => find.byWidgetPredicate(
+      (w) => w is Text && (w.data ?? '').toLowerCase() == name,
+    );
+
+    for (final theme in [AppTheme.hermesRedDark, AppTheme.hermesRedLight]) {
+      final background = theme.hermes.background;
+      // A profile's own colour, nearly the page's.
+      final own = Color.lerp(background, const Color(0xFF7A1F2B), 0.25)!;
+      await tester.pumpWidget(
+        _app(
+          MessageAvatarHeader(name: 'social-writer', nameColor: own),
+          theme: theme,
+        ),
+      );
+      // A theme change animates: let it end before reading the colour.
+      await tester.pump(const Duration(seconds: 1));
+      final shown = tester.widget<Text>(named('social-writer')).style!.color!;
+      expect(contrast(shown, background), greaterThanOrEqualTo(3.0));
+    }
+    // A colour that already reads is kept as chosen.
+    const bright = Color(0xFFFFC14D);
+    await tester.pumpWidget(
+      _app(const MessageAvatarHeader(name: 'forja', nameColor: bright)),
+    );
+    await tester.pump(const Duration(seconds: 1));
+    expect(tester.widget<Text>(named('forja')).style!.color, bright);
   });
 }

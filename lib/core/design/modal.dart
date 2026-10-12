@@ -4,8 +4,74 @@ import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../theme/app_theme.dart';
+import '../theme/motion.dart';
 import '../theme/scroll_behavior.dart';
+import '../widgets/pill_morph.dart' show PillMorphDrag;
+import 'floating.dart';
 import 'tokens.dart';
+
+/// Call right before pushing a sheet or popup route over a screen with a text
+/// field. When that field still holds focus but the keyboard is hidden (the
+/// user dismissed it with system Back), the field is unfocused, because
+/// popping the route restores focus to it and a focused field shows the
+/// keyboard again by itself. With the keyboard visible nothing changes and
+/// the focus comes back on close as before.
+///
+/// Reads the raw view insets: inside a Scaffold body `MediaQuery.viewInsets`
+/// is always zero.
+///
+/// QA 9495: a field that had the keyboard when a surface opened gets the
+/// focus back when it closes, but the IME takes a moment to report its inset
+/// again. Until it does, "focused, no inset" does not mean the user hid the
+/// keyboard, so a surface reopened in that moment keeps the field focused
+/// (see [_KeyboardHandBack]).
+void releaseTextFocusIfKeyboardHidden(BuildContext context) {
+  final focused = FocusManager.instance.primaryFocus;
+  final focusedContext = focused?.context;
+  if (focused == null || focusedContext == null) return;
+  if (focusedContext.findAncestorWidgetOfExactType<EditableText>() == null) {
+    return;
+  }
+  final view = View.maybeOf(context);
+  if (view == null) return;
+  if (view.viewInsets.bottom > 0) {
+    _KeyboardHandBack.instance.expect(focused);
+    return;
+  }
+  if (_KeyboardHandBack.instance.pendingFor(focused)) return;
+  focused.unfocus();
+}
+
+/// The text field whose keyboard was up when a surface opened over it, until
+/// the keyboard is seen up again while that field has the focus.
+class _KeyboardHandBack with WidgetsBindingObserver {
+  _KeyboardHandBack._();
+
+  static final instance = _KeyboardHandBack._();
+
+  WeakReference<FocusNode>? _node;
+
+  void expect(FocusNode node) {
+    if (_node == null) WidgetsBinding.instance.addObserver(this);
+    _node = WeakReference(node);
+  }
+
+  bool pendingFor(FocusNode node) => identical(_node?.target, node);
+
+  @override
+  void didChangeMetrics() {
+    final node = _node?.target;
+    if (node == null) return _clear();
+    if (!node.hasFocus) return;
+    final views = WidgetsBinding.instance.platformDispatcher.views;
+    if (views.any((v) => v.viewInsets.bottom > 0)) _clear();
+  }
+
+  void _clear() {
+    _node = null;
+    WidgetsBinding.instance.removeObserver(this);
+  }
+}
 
 // ── The ONE modal container ────────────────────────────────────────────────
 
@@ -16,7 +82,14 @@ import 'tokens.dart';
 ///   height (70 % by default: pickers never go full screen).
 /// * Anchored popover under/over its origin when [anchorKey] or [originRect]
 ///   is given, centred otherwise.
-/// * Scrim; tap-out dismisses when [barrierDismissible].
+/// * Scrim ([scrim]: light under a menu, stronger under a sheet, strongest
+///   under a dialog); tap-out dismisses when [barrierDismissible].
+/// * It leaves by receding towards where it came from, and a dismissible one
+///   can be dragged away with a finger: down, or up when it hangs from
+///   something at the top of the screen. The drag follows the finger; let go
+///   past the threshold and it goes on from there, short of it and it
+///   settles back. One that needs an answer ([barrierDismissible] false)
+///   does not move.
 /// * IME and safe-area aware; scrollables inside clamp (no bounce).
 Future<T?> showHermesSurface<T>({
   required BuildContext context,
@@ -29,11 +102,13 @@ Future<T?> showHermesSurface<T>({
   bool useRootNavigator = false,
   GlobalKey? anchorKey,
   Rect? originRect,
+  HermesScrim scrim = HermesScrim.sheet,
 }) {
   assert(maxWidth > 0);
   assert(maxHeightFactor > 0 && maxHeightFactor <= 1);
   final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
   final focusScopeNode = FocusScopeNode(debugLabel: 'HermesFloatingSurface');
+  releaseTextFocusIfKeyboardHidden(context);
   Rect? origin = originRect;
   if (origin == null && anchorKey != null) {
     final box = anchorKey.currentContext?.findRenderObject();
@@ -53,8 +128,27 @@ Future<T?> showHermesSurface<T>({
       barrierLabel: MaterialLocalizations.of(context).modalBarrierDismissLabel,
       reduceMotion: reduceMotion,
       origin: origin,
+      scrim: scrim,
     ),
   );
+}
+
+/// How much of the page a modal surface dims.
+enum HermesScrim {
+  /// A menu or popover: what is behind stays readable.
+  menu(HermesChrome.scrimMenu),
+
+  /// A sheet, a picker, a panel.
+  sheet(HermesChrome.scrimSheet),
+
+  /// A dialog that asks for an answer.
+  dialog(HermesChrome.scrimDialog);
+
+  const HermesScrim(this.opacity);
+
+  final double opacity;
+
+  Color get color => Colors.black.withValues(alpha: opacity);
 }
 
 /// Global rect of the widget that owns [context] (for anchored surfaces).
@@ -76,10 +170,11 @@ class _HermesSurfaceRoute<T> extends PageRouteBuilder<T> {
     required String barrierLabel,
     required bool reduceMotion,
     required Rect? origin,
+    required HermesScrim scrim,
   }) : _focusScopeNode = focusScopeNode,
        super(
          opaque: false,
-         barrierColor: Colors.black.withValues(alpha: 0.5),
+         barrierColor: scrim.color,
          barrierLabel: barrierLabel,
          maintainState: true,
          transitionDuration: reduceMotion
@@ -87,39 +182,33 @@ class _HermesSurfaceRoute<T> extends PageRouteBuilder<T> {
              : const Duration(milliseconds: 200),
          reverseTransitionDuration: reduceMotion
              ? Duration.zero
-             : const Duration(milliseconds: 150),
-         pageBuilder: (context, animation, secondaryAnimation) => PopScope(
-           canPop: systemDismissible,
-           child: FocusScope(
-             node: focusScopeNode,
-             child: HermesModalScrollScope(
-               child: _HermesSurfaceFrame(
-                 surfaceKey: surfaceKey,
-                 maxWidth: maxWidth,
-                 maxHeightFactor: maxHeightFactor,
-                 reduceMotion: reduceMotion,
-                 origin: origin,
-                 child: Builder(builder: builder),
+             : const Duration(milliseconds: 180),
+         pageBuilder: (context, animation, secondaryAnimation) =>
+             CoveredRouteMediaQueryFreeze(
+               child: PopScope(
+                 canPop: systemDismissible,
+                 child: FocusScope(
+                   node: focusScopeNode,
+                   child: HermesModalScrollScope(
+                     child: _HermesSurfaceFrame(
+                       surfaceKey: surfaceKey,
+                       maxWidth: maxWidth,
+                       maxHeightFactor: maxHeightFactor,
+                       reduceMotion: reduceMotion,
+                       origin: origin,
+                       draggable: barrierDismissible && systemDismissible,
+                       child: Builder(builder: builder),
+                     ),
+                   ),
+                 ),
                ),
              ),
-           ),
-         ),
          transitionsBuilder: (context, animation, secondaryAnimation, child) {
            if (reduceMotion) return child;
-           final curved = CurvedAnimation(
-             parent: animation,
-             curve: Curves.easeOutCubic,
-             reverseCurve: Curves.easeInCubic,
-           );
-           return FadeTransition(
-             opacity: curved,
-             child: ScaleTransition(
-               scale: Tween<double>(
-                 begin: origin == null ? 0.97 : 0.92,
-                 end: 1,
-               ).animate(curved),
-               child: child,
-             ),
+           return _SurfaceMotion(
+             animation: animation,
+             origin: origin,
+             child: child,
            );
          },
        );
@@ -169,13 +258,104 @@ Rect hermesAnchoredSurfaceRect({
   return Rect.fromLTWH(left, y, width, math.min(height, bottom - top));
 }
 
-class _HermesSurfaceFrame extends StatelessWidget {
+/// How a floating surface arrives and leaves. It comes forward from its
+/// origin (or from the centre) and, leaving, recedes into it: it shrinks and
+/// fades back towards where it came from. Closed before it had finished
+/// opening, it goes on from what was on screen: neither its opacity nor its
+/// size ever jumps or comes back up.
+class _SurfaceMotion extends StatefulWidget {
+  const _SurfaceMotion({
+    required this.animation,
+    required this.origin,
+    required this.child,
+  });
+
+  final Animation<double> animation;
+  final Rect? origin;
+  final Widget child;
+
+  @override
+  State<_SurfaceMotion> createState() => _SurfaceMotionState();
+}
+
+class _SurfaceMotionState extends State<_SurfaceMotion> {
+  late _RecedingScale _scale = _recede();
+
+  _RecedingScale _recede() =>
+      _RecedingScale(widget.animation, widget.origin == null ? 0.97 : 0.92);
+
+  @override
+  void didUpdateWidget(_SurfaceMotion oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.animation, widget.animation)) _scale = _recede();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final size = MediaQuery.sizeOf(context);
+    final from = widget.origin?.center;
+    final alignment = from == null || size.isEmpty
+        ? Alignment.center
+        : Alignment(
+            (from.dx / size.width * 2 - 1).clamp(-1.0, 1.0),
+            (from.dy / size.height * 2 - 1).clamp(-1.0, 1.0),
+          );
+    return RouteCurves(
+      animation: widget.animation,
+      builder: (context, curved, child) => FadeTransition(
+        opacity: curved,
+        child: ScaleTransition(
+          scale: _scale,
+          alignment: alignment,
+          child: child,
+        ),
+      ),
+      child: widget.child,
+    );
+  }
+}
+
+/// The size of a surface along its route: it grows to 1 while opening and,
+/// from wherever it was when the close began, shrinks to [receded].
+class _RecedingScale extends Animation<double>
+    with AnimationWithParentMixin<double> {
+  _RecedingScale(this.parent, this.start);
+
+  @override
+  final Animation<double> parent;
+
+  /// The size it opens from.
+  final double start;
+
+  /// How small it gets as it recedes.
+  static const double receded = 0.82;
+
+  ({double t, double scale})? _closingFrom;
+
+  double _opening(double t) => start + (1 - start) * Motion.enter.transform(t);
+
+  @override
+  double get value {
+    final t = parent.value.clamp(0.0, 1.0);
+    if (parent.status != AnimationStatus.reverse) {
+      _closingFrom = null;
+      return _opening(t);
+    }
+    final from = _closingFrom ??= (t: t, scale: _opening(t));
+    if (from.t <= 0) return receded;
+    final gone = Curves.easeIn.transform((1 - t / from.t).clamp(0.0, 1.0));
+    return from.scale + (receded - from.scale) * gone;
+  }
+}
+
+class _HermesSurfaceFrame extends StatefulWidget {
   const _HermesSurfaceFrame({
     required this.surfaceKey,
     required this.maxWidth,
     required this.maxHeightFactor,
     required this.reduceMotion,
     required this.origin,
+    required this.draggable,
     required this.child,
   });
 
@@ -184,40 +364,130 @@ class _HermesSurfaceFrame extends StatelessWidget {
   final double maxHeightFactor;
   final bool reduceMotion;
   final Rect? origin;
+
+  /// Whether a finger can drag it away.
+  final bool draggable;
   final Widget child;
+
+  @override
+  State<_HermesSurfaceFrame> createState() => _HermesSurfaceFrameState();
+}
+
+class _HermesSurfaceFrameState extends State<_HermesSurfaceFrame>
+    with SingleTickerProviderStateMixin {
+  late final PillMorphDrag _drag = PillMorphDrag(
+    vsync: this,
+    onDismiss: () => Navigator.of(context).maybePop(),
+  );
+
+  /// A finger (not a fling) is moving the content's own scrollable.
+  bool _fingerScrolls = false;
+
+  @override
+  void dispose() {
+    _drag.dispose();
+    super.dispose();
+  }
+
+  /// The natural way out: up for a surface that hangs from something in the
+  /// upper half of the screen, down for everything else. +1 is down.
+  double _sign(Size screen) {
+    final origin = widget.origin;
+    return origin != null && origin.center.dy < screen.height / 2 ? -1 : 1;
+  }
+
+  /// Content that scrolls takes the drag; once it is at the end that faces
+  /// the way out, the pull moves the surface instead.
+  bool _onScroll(ScrollNotification n, double sign) {
+    if (n.depth != 0 || n.metrics.axis != Axis.vertical) return false;
+    // A wheel picker or the text of a field scrolling to its end is not a
+    // pull on the surface.
+    if (n.metrics is FixedExtentMetrics ||
+        n.context?.findAncestorWidgetOfExactType<EditableText>() != null) {
+      return false;
+    }
+    _fingerScrolls = switch (n) {
+      ScrollStartNotification(:final dragDetails) => dragDetails != null,
+      ScrollUpdateNotification(:final dragDetails) => dragDetails != null,
+      OverscrollNotification(:final dragDetails) => dragDetails != null,
+      ScrollEndNotification() => false,
+      _ => _fingerScrolls,
+    };
+    if (n is OverscrollNotification && n.dragDetails != null) {
+      final toward = -n.overscroll * sign;
+      if (toward > 0) _drag.dragBy(toward);
+    } else if (n is ScrollUpdateNotification &&
+        n.dragDetails != null &&
+        _drag.offset > 0) {
+      final back = (n.scrollDelta ?? 0) * sign;
+      if (back > 0) _drag.dragBy(-back);
+    } else if (n is ScrollEndNotification) {
+      _drag.release(
+        (n.dragDetails?.primaryVelocity ?? 0) * sign,
+        reduceMotion: widget.reduceMotion,
+      );
+    }
+    return false;
+  }
 
   @override
   Widget build(BuildContext context) {
     final media = MediaQuery.of(context);
-    final theme = Theme.of(context);
-    final colors = theme.hermes;
     final keyboard = media.viewInsets.bottom;
     final free =
         media.size.height -
         math.max(media.padding.bottom, keyboard) -
         media.padding.top -
         32;
-    final maxHeight = free <= 0 ? 0.0 : free * maxHeightFactor;
-    final width = math.min(maxWidth, media.size.width - 32);
-    final surface = Material(
-      key: surfaceKey,
-      color: theme.dialogTheme.backgroundColor ?? colors.surface,
-      surfaceTintColor: Colors.transparent,
-      elevation: 12,
-      shadowColor: Colors.black.withValues(alpha: .5),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(HermesRadius.floating),
-      ),
-      clipBehavior: Clip.antiAlias,
+    final maxHeight = free <= 0 ? 0.0 : free * widget.maxHeightFactor;
+    final width = math.min(widget.maxWidth, media.size.width - 32);
+    Widget surface = HermesFloatingSurface(
+      key: widget.surfaceKey,
+      modal: true,
+      shape: HermesFloatingSurface.rounded(),
       child: ConstrainedBox(
         constraints: BoxConstraints(maxWidth: width, maxHeight: maxHeight),
-        child: child,
+        child: widget.child,
       ),
     );
-    final anchor = origin;
+    if (widget.draggable) {
+      final sign = _sign(media.size);
+      surface = NotificationListener<OverscrollIndicatorNotification>(
+        onNotification: (n) {
+          // The pull moves the surface: the list must not also stretch.
+          if (n.depth == 0 && _fingerScrolls && n.leading == (sign > 0)) {
+            n.disallowIndicator();
+          }
+          return false;
+        },
+        child: NotificationListener<ScrollNotification>(
+          onNotification: (n) => _onScroll(n, sign),
+          child: GestureDetector(
+            key: const ValueKey('hermes-surface-drag'),
+            behavior: HitTestBehavior.translucent,
+            onVerticalDragUpdate: (d) => _drag.dragBy(d.delta.dy * sign),
+            onVerticalDragEnd: (d) => _drag.release(
+              (d.primaryVelocity ?? 0) * sign,
+              reduceMotion: widget.reduceMotion,
+            ),
+            onVerticalDragCancel: () =>
+                _drag.release(0, reduceMotion: widget.reduceMotion),
+            child: AnimatedBuilder(
+              animation: _drag,
+              child: surface,
+              builder: (context, child) => Transform.translate(
+                offset: Offset(0, _drag.offset * sign),
+                child: child,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+    final anchor = widget.origin;
     if (anchor == null) {
       return AnimatedPadding(
-        duration: reduceMotion
+        duration: widget.reduceMotion
             ? Duration.zero
             : const Duration(milliseconds: 180),
         curve: Curves.easeOutCubic,
@@ -268,6 +538,121 @@ class _AnchoredLayout extends SingleChildLayoutDelegate {
   @override
   bool shouldRelayout(_AnchoredLayout old) =>
       old.origin != origin || old.safe != safe || old.keyboard != keyboard;
+}
+
+// ── A caller-built dialog, shown the same way ──────────────────────────────
+
+/// Shows a dialog the caller builds itself ([AlertDialog], [Dialog]) the way
+/// every other floating surface is shown: the dialog scrim, the receding
+/// exit and, when it can be dismissed, a finger drag down that takes it away.
+/// Same contract as Material's `showDialog`; prefer [showHermesDialog] for a
+/// plain confirmation.
+///
+/// [draggable] false keeps the tap outside but not the drag, for a dialog
+/// whose own content is dragged (the hand of a clock).
+Future<T?> showHermesDialogRoute<T>({
+  required BuildContext context,
+  required WidgetBuilder builder,
+  bool barrierDismissible = true,
+  bool? draggable,
+}) {
+  releaseTextFocusIfKeyboardHidden(context);
+  return Navigator.of(context, rootNavigator: true).push<T>(
+    hermesDialogRoute<T>(
+      context: context,
+      builder: builder,
+      barrierDismissible: barrierDismissible,
+      draggable: draggable,
+    ),
+  );
+}
+
+/// The route [showHermesDialogRoute] pushes, for a caller that keeps the
+/// route to take it away itself. Push it on the root navigator.
+Route<T> hermesDialogRoute<T>({
+  required BuildContext context,
+  required WidgetBuilder builder,
+  bool barrierDismissible = true,
+  bool? draggable,
+}) {
+  final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
+  final themes = InheritedTheme.capture(
+    from: context,
+    to: Navigator.of(context, rootNavigator: true).context,
+  );
+  return RawDialogRoute<T>(
+    barrierDismissible: barrierDismissible,
+    barrierLabel: MaterialLocalizations.of(context).modalBarrierDismissLabel,
+    barrierColor: HermesScrim.dialog.color,
+    transitionDuration: reduceMotion
+        ? Duration.zero
+        : const Duration(milliseconds: 200),
+    pageBuilder: (context, animation, secondaryAnimation) => themes.wrap(
+      SafeArea(
+        child: _DragAway(
+          enabled: draggable ?? barrierDismissible,
+          reduceMotion: reduceMotion,
+          child: Builder(builder: builder),
+        ),
+      ),
+    ),
+    transitionBuilder: (context, animation, secondaryAnimation, child) =>
+        reduceMotion
+        ? child
+        : _SurfaceMotion(animation: animation, origin: null, child: child),
+  );
+}
+
+/// Lets a finger drag a dismissible surface down and away. The drag follows
+/// the finger; let go past the threshold and it goes on from there.
+class _DragAway extends StatefulWidget {
+  const _DragAway({
+    required this.enabled,
+    required this.reduceMotion,
+    required this.child,
+  });
+
+  final bool enabled;
+  final bool reduceMotion;
+  final Widget child;
+
+  @override
+  State<_DragAway> createState() => _DragAwayState();
+}
+
+class _DragAwayState extends State<_DragAway>
+    with SingleTickerProviderStateMixin {
+  late final PillMorphDrag _drag = PillMorphDrag(
+    vsync: this,
+    onDismiss: () => Navigator.of(context).maybePop(),
+  );
+
+  @override
+  void dispose() {
+    _drag.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!widget.enabled) return widget.child;
+    return GestureDetector(
+      key: const ValueKey('hermes-dialog-drag'),
+      onVerticalDragUpdate: (d) => _drag.dragBy(d.delta.dy),
+      onVerticalDragEnd: (d) => _drag.release(
+        d.primaryVelocity ?? 0,
+        reduceMotion: widget.reduceMotion,
+      ),
+      onVerticalDragCancel: () =>
+          _drag.release(0, reduceMotion: widget.reduceMotion),
+      child: AnimatedBuilder(
+        animation: _drag,
+        child: widget.child,
+        builder: (context, child) =>
+            Transform.translate(offset: Offset(0, _drag.offset), child: child),
+      ),
+    );
+  }
 }
 
 // ── Surface header ─────────────────────────────────────────────────────────
@@ -344,6 +729,9 @@ class HermesOption<T> {
   final Key? key;
   final bool enabled;
 
+  /// Draws the label in this family: a font offered in its own letters.
+  final String? fontFamily;
+
   const HermesOption({
     required this.value,
     required this.label,
@@ -352,6 +740,7 @@ class HermesOption<T> {
     this.icon,
     this.key,
     this.enabled = true,
+    this.fontFamily,
   });
 }
 
@@ -481,6 +870,7 @@ class _HermesOptionListState<T> extends State<HermesOptionList<T>> {
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
                             style: HermesType.body.copyWith(
+                              fontFamily: option.fontFamily,
                               color: option.enabled
                                   ? colors.textPrimary
                                   : colors.textDisabled,
@@ -589,13 +979,81 @@ class HermesAction<T> {
   final bool destructive;
   final Key? key;
 
+  /// True marks the action as the one in force (the board shown, the order
+  /// in use) with a check at its end; null when it is not a choice.
+  final bool? selected;
+
+  /// A small heading drawn above this action, for the first of a group
+  /// («Ordenar por»). A hairline separates the group from what is above.
+  final String? section;
+
+  /// True draws a hairline above this action: it starts a group of its own.
+  final bool divided;
+
   const HermesAction({
     required this.value,
     required this.label,
     this.icon,
     this.destructive = false,
     this.key,
+    this.selected,
+    this.section,
+    this.divided = false,
   });
+}
+
+/// A button that opens [showHermesMenu] from itself: the three dots of a row
+/// or of a header. It is how a screen offers a menu — the floating tone, the
+/// light scrim, the exit that recedes into the button and the drag away come
+/// with it.
+class HermesMenuButton<T> extends StatelessWidget {
+  const HermesMenuButton({
+    required this.actions,
+    required this.onSelected,
+    this.icon,
+    this.tooltip,
+    this.iconSize,
+    this.iconColor,
+    this.padding,
+    this.enabled = true,
+    this.title,
+    this.surfaceKey = const ValueKey('hermes-menu'),
+    super.key,
+  });
+
+  /// Built when the menu opens, so it reflects the state of that moment.
+  final List<HermesAction<T>> Function(BuildContext context) actions;
+  final ValueChanged<T> onSelected;
+  final Widget? icon;
+  final String? tooltip;
+  final double? iconSize;
+  final Color? iconColor;
+  final EdgeInsetsGeometry? padding;
+  final bool enabled;
+  final String? title;
+  final Key surfaceKey;
+
+  @override
+  Widget build(BuildContext context) => IconButton(
+    tooltip: tooltip ?? MaterialLocalizations.of(context).showMenuTooltip,
+    icon: icon ?? const Icon(Icons.more_vert),
+    iconSize: iconSize,
+    color: iconColor,
+    padding: padding,
+    onPressed: !enabled
+        ? null
+        : () async {
+            final choices = actions(context);
+            if (choices.isEmpty) return;
+            final value = await showHermesMenu<T>(
+              context: context,
+              actions: choices,
+              title: title,
+              surfaceKey: surfaceKey,
+            );
+            if (value != null && context.mounted) onSelected(value);
+          },
+  );
 }
 
 /// Popover menu anchored to its button: 48 dp rows, destructive last in red.
@@ -619,6 +1077,7 @@ Future<T?> showHermesMenu<T>({
     originRect:
         originRect ?? (anchorKey == null ? hermesOriginOf(context) : null),
     maxWidth: 280,
+    scrim: HermesScrim.menu,
     builder: (context) {
       final colors = Theme.of(context).hermes;
       return Column(
@@ -632,45 +1091,69 @@ Future<T?> showHermesMenu<T>({
               padding: const EdgeInsets.symmetric(vertical: 6),
               children: [
                 for (var i = 0; i < ordered.length; i++) ...[
-                  if (ordered[i].destructive &&
-                      i > 0 &&
-                      !ordered[i - 1].destructive)
+                  if (i > 0 &&
+                      (ordered[i].divided ||
+                          ordered[i].section != null ||
+                          (ordered[i].destructive &&
+                              !ordered[i - 1].destructive)))
                     Divider(
                       height: 9,
                       indent: 16,
                       endIndent: 16,
                       color: HermesSurfaces.divider(colors),
                     ),
-                  InkWell(
-                    key: ordered[i].key,
-                    onTap: () => Navigator.of(context).pop(ordered[i].value),
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(minHeight: 48),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 18),
-                        child: Row(
-                          children: [
-                            if (ordered[i].icon != null) ...[
-                              Icon(
-                                ordered[i].icon,
-                                size: 20,
-                                color: ordered[i].destructive
-                                    ? colors.error
-                                    : colors.textSecondary,
-                              ),
-                              const SizedBox(width: 14),
-                            ],
-                            Expanded(
-                              child: Text(
-                                ordered[i].label,
-                                style: HermesType.body.copyWith(
+                  if (ordered[i].section case final section?)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(18, 8, 18, 4),
+                      child: Text(
+                        section,
+                        style: HermesType.caption.copyWith(
+                          color: colors.textTertiary,
+                        ),
+                      ),
+                    ),
+                  Semantics(
+                    // Says «seleccionado» for the choice in force.
+                    selected: ordered[i].selected,
+                    child: InkWell(
+                      key: ordered[i].key,
+                      onTap: () => Navigator.of(context).pop(ordered[i].value),
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(minHeight: 48),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 18),
+                          child: Row(
+                            children: [
+                              if (ordered[i].icon != null) ...[
+                                Icon(
+                                  ordered[i].icon,
+                                  size: 20,
                                   color: ordered[i].destructive
                                       ? colors.error
-                                      : colors.textPrimary,
+                                      : colors.textSecondary,
+                                ),
+                                const SizedBox(width: 14),
+                              ],
+                              Expanded(
+                                child: Text(
+                                  ordered[i].label,
+                                  style: HermesType.body.copyWith(
+                                    color: ordered[i].destructive
+                                        ? colors.error
+                                        : colors.textPrimary,
+                                  ),
                                 ),
                               ),
-                            ),
-                          ],
+                              if (ordered[i].selected == true) ...[
+                                const SizedBox(width: 12),
+                                Icon(
+                                  Icons.check_rounded,
+                                  size: 20,
+                                  color: colors.accent,
+                                ),
+                              ],
+                            ],
+                          ),
                         ),
                       ),
                     ),
@@ -717,6 +1200,7 @@ Future<T?> showHermesDialog<T>({
   context: context,
   surfaceKey: surfaceKey,
   maxWidth: 400,
+  scrim: HermesScrim.dialog,
   // Content-sized; the cap only matters with the keyboard up (small free
   // height), where the actions must stay inside the surface.
   maxHeightFactor: 0.9,
@@ -857,6 +1341,7 @@ Future<T?> showHermesFormDialog<T>({
   context: context,
   surfaceKey: surfaceKey,
   maxWidth: 440,
+  scrim: HermesScrim.dialog,
   maxHeightFactor: 0.8,
   barrierDismissible: barrierDismissible,
   useRootNavigator: useRootNavigator,
@@ -928,11 +1413,13 @@ class HermesModelGroup {
   final String slug;
   final String name;
   final List<String> models;
+  final Set<String> unavailableModels;
 
   const HermesModelGroup({
     required this.slug,
     required this.name,
     required this.models,
+    this.unavailableModels = const {},
   });
 }
 
@@ -990,6 +1477,10 @@ Future<HermesModelChoice?> showHermesModelPicker({
           key: ValueKey('$keyPrefix-${group.slug}-$model'),
           value: HermesModelChoice(group.slug, model),
           label: model,
+          enabled: !group.unavailableModels.contains(model),
+          subtitle: group.unavailableModels.contains(model)
+              ? Strings.of(context).chaModelUnavailable
+              : null,
           group: group.name.isEmpty ? group.slug : group.name,
         ),
   ];

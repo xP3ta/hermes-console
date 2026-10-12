@@ -50,4 +50,23 @@ void main() {
       expect(tracker.consecutiveFailures, 0);
     });
   });
+
+  test(
+    'qa9485: un re-sondeo de una conexión sana no muestra «comprobando»',
+    () {
+      final tracker = ConnectionHealthTracker();
+      tracker.beginProbe();
+      // Primer sondeo: nada conocido aún.
+      expect(tracker.showsChecking, isTrue);
+      tracker.recordResult(1, healthy: true);
+      final probe = tracker.beginProbe();
+      expect(tracker.checking, isTrue);
+      expect(tracker.showsChecking, isFalse);
+      // Tras caer a offline, el siguiente sondeo vuelve a «comprobando».
+      tracker.recordResult(probe, healthy: false);
+      tracker.recordResult(tracker.beginProbe(), healthy: false);
+      tracker.beginProbe();
+      expect(tracker.showsChecking, isTrue);
+    },
+  );
 }

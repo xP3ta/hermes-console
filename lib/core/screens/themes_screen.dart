@@ -18,16 +18,19 @@ import '../theme/theme_profile_adapter.dart';
 import '../theme/theme_profile_codec.dart';
 import '../theme/theme_profile_store.dart';
 import '../theme/theme_profile_validator.dart';
+import '../theme/theme_tagline.dart';
 import '../widgets/hermes_app_bar.dart';
-import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_premium_ui.dart';
 import '../widgets/hermes_ui.dart';
 import 'theme_studio_screen.dart';
 import '../design/hermes_design.dart'
     show
+        HermesAction,
         HermesDialogAction,
         HermesDialogActionStyle,
+        HermesMenuButton,
         showHermesDialog;
+import '../feedback/feedback_policy.dart';
 
 @visibleForTesting
 Future<Uint8List> readThemeImportBytes(PlatformFile selected) async {
@@ -88,8 +91,21 @@ Future<Uint8List> _readBoundedThemeBytes(Stream<List<int>> stream) async {
   return output.takeBytes();
 }
 
+typedef ThemeSelectCallback =
+    Future<void> Function(String id, {bool followSystem});
+
 class ThemesScreen extends StatefulWidget {
-  const ThemesScreen({super.key});
+  const ThemesScreen({
+    super.key,
+    this.snapshotForTesting,
+    this.onSelectForTesting,
+  });
+
+  /// Tests drive the screen without a running [HermesApp].
+  @visibleForTesting
+  final ThemeProfileStoreSnapshot? snapshotForTesting;
+  @visibleForTesting
+  final ThemeSelectCallback? onSelectForTesting;
 
   @override
   State<ThemesScreen> createState() => _ThemesScreenState();
@@ -103,12 +119,17 @@ class _ThemesScreenState extends State<ThemesScreen> {
   bool get _es => Localizations.localeOf(context).languageCode == 'es';
   String _t(String es, String en) => _es ? es : en;
 
-  Future<void> _select(String id) async {
+  Future<void> _select(String id, {bool followSystem = false}) async {
+    final testSelect = widget.onSelectForTesting;
+    if (testSelect != null) {
+      await testSelect(id, followSystem: followSystem);
+      return;
+    }
     final root = _root;
     if (root == null || _busy) return;
     setState(() => _busy = true);
     try {
-      await root.setThemeId(id);
+      await root.setThemeId(id, followSystem: followSystem);
     } on ThemeProfileStoreException catch (error) {
       _message(error.message);
     } finally {
@@ -246,7 +267,10 @@ class _ThemesScreenState extends State<ThemesScreen> {
             value: false,
             style: HermesDialogActionStyle.cancel,
           ),
-          HermesDialogAction(label: Strings.of(context).themesImport, value: true),
+          HermesDialogAction(
+            label: Strings.of(context).themesImport,
+            value: true,
+          ),
         ],
       );
       if (confirmed != true || !mounted) return;
@@ -262,7 +286,9 @@ class _ThemesScreenState extends State<ThemesScreen> {
         await root.themeProfileStore.importProfile(raw, replaceId: replaceId);
       }
       await root.refreshThemeProfiles(force: true);
-      if (mounted) _message(Strings.of(context).themesImported);
+      if (mounted) {
+        _message(Strings.of(context).themesImported, FeedbackKind.routine);
+      }
     } on UnsupportedThemeSchemaException {
       if (mounted) {
         _message(Strings.of(context).themesFutureSchema);
@@ -308,14 +334,14 @@ class _ThemesScreenState extends State<ThemesScreen> {
     );
   }
 
-  void _message(String message) {
-    HermesNotice.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+  void _message(String message, [FeedbackKind kind = FeedbackKind.error]) {
+    AppFeedback.notify(context, kind, message);
   }
 
   @override
   Widget build(BuildContext context) {
+    final testSnapshot = widget.snapshotForTesting;
+    if (testSnapshot != null) return _buildScreen(testSnapshot);
     final root = _root;
     final fallback = ThemeProfileStoreSnapshot(
       customProfiles: const [],
@@ -330,27 +356,19 @@ class _ThemesScreenState extends State<ThemesScreen> {
   }
 
   Widget _buildScreen(ThemeProfileStoreSnapshot snapshot) {
-    final desktop = AppTheme.presets
-        .where((preset) => preset.desktopOfficial)
-        .toList(growable: false);
-    final desktopFamilies = <String, List<HermesThemePreset>>{};
-    for (final preset in desktop) {
-      desktopFamilies
-          .putIfAbsent(preset.desktopFamily ?? preset.id, () => [])
-          .add(preset);
+    // One row per family (light + dark variant behind a mode selector):
+    // Console's own families first, then the Hermes Desktop catalogue.
+    Map<String, List<HermesThemePreset>> families({required bool desktop}) {
+      final grouped = <String, List<HermesThemePreset>>{};
+      for (final preset in AppTheme.presets) {
+        if (preset.desktopOfficial != desktop) continue;
+        grouped.putIfAbsent(preset.familyId, () => []).add(preset);
+      }
+      return grouped;
     }
-    final dark = AppTheme.presets
-        .where(
-          (preset) =>
-              !preset.desktopOfficial && preset.brightness == Brightness.dark,
-        )
-        .toList(growable: false);
-    final light = AppTheme.presets
-        .where(
-          (preset) =>
-              !preset.desktopOfficial && preset.brightness == Brightness.light,
-        )
-        .toList(growable: false);
+
+    final consoleFamilies = families(desktop: false);
+    final desktopFamilies = families(desktop: true);
     final activeCustom = snapshot.customById(snapshot.activeProfileId);
     final activeName =
         activeCustom?.name ??
@@ -374,13 +392,10 @@ class _ThemesScreenState extends State<ThemesScreen> {
         ],
       ),
       body: ListView(
+        clipBehavior: hermesUnderHeader,
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
         children: [
-          _Intro(
-            activeName: activeName,
-            builtinCount: AppTheme.presets.length,
-            customCount: snapshot.customProfiles.length,
-          ),
+          _Intro(activeName: activeName),
           const SizedBox(height: 20),
           _SectionLabel(
             '${Strings.of(context).themesMyThemes} · '
@@ -396,70 +411,36 @@ class _ThemesScreenState extends State<ThemesScreen> {
             _customGrid(snapshot.customProfiles, snapshot.activeProfileId),
           const SizedBox(height: 22),
           _SectionLabel(
-            Strings.of(context).themesDesktopSection(desktopFamilies.length),
-          ),
-          const SizedBox(height: 3),
-          Text(
-            Strings.of(context).themesDesktopModesHint,
-            style: TextStyle(
-              color: Theme.of(context).hermes.textSecondary,
-              fontSize: 11.5,
-              height: 1.35,
-            ),
+            Strings.of(context).themesConsoleSection(consoleFamilies.length),
           ),
           const SizedBox(height: 8),
-          _desktopList(desktopFamilies, snapshot.activeProfileId),
+          _familyList(consoleFamilies, snapshot, 'console'),
           const SizedBox(height: 20),
-          _SectionLabel(Strings.of(context).themesDarkSection(dark.length)),
+          _SectionLabel(
+            Strings.of(context).themesDesktopSection(desktopFamilies.length),
+          ),
           const SizedBox(height: 7),
-          _grid(dark, snapshot.activeProfileId),
-          const SizedBox(height: 20),
-          _SectionLabel(Strings.of(context).themesLightSection(light.length)),
-          const SizedBox(height: 7),
-          _grid(light, snapshot.activeProfileId),
+          _familyList(desktopFamilies, snapshot, 'desktop'),
         ],
       ),
     );
   }
 
-  Widget _grid(List<HermesThemePreset> items, String activeId) {
-    return Column(
-      children: [
-        for (var index = 0; index < items.length; index++) ...[
-          ThemeCard(
-            preset: items[index],
-            selected: items[index].id == activeId,
-            onTap: () => _select(items[index].id),
-            onDuplicate: () => _openStudio(
-              ThemeProfileAdapter.duplicatePreset(
-                items[index],
-                id: const Uuid().v4(),
-                name: _copyName(items[index].name),
-              ).copyWith(draft: true),
-            ),
-          ),
-          if (index != items.length - 1)
-            Divider(
-              height: 1,
-              color: Theme.of(context).hermes.divider.withValues(alpha: 0.55),
-            ),
-        ],
-      ],
-    );
-  }
-
-  Widget _desktopList(
+  Widget _familyList(
     Map<String, List<HermesThemePreset>> families,
-    String activeId,
+    ThemeProfileStoreSnapshot snapshot,
+    String section,
   ) {
     final entries = families.entries.toList(growable: false);
     return Column(
       children: [
         for (var index = 0; index < entries.length; index++) ...[
-          _DesktopThemeFamilyRow(
+          _ThemeFamilyRow(
+            section: section,
             family: entries[index].key,
             variants: entries[index].value,
-            activeId: activeId,
+            activeId: snapshot.activeProfileId,
+            followSystem: snapshot.followSystem,
             onSelect: _select,
           ),
           if (index != entries.length - 1)
@@ -500,13 +481,7 @@ class _ThemesScreenState extends State<ThemesScreen> {
 
 class _Intro extends StatelessWidget {
   final String activeName;
-  final int builtinCount;
-  final int customCount;
-  const _Intro({
-    required this.activeName,
-    required this.builtinCount,
-    required this.customCount,
-  });
+  const _Intro({required this.activeName});
 
   @override
   Widget build(BuildContext context) {
@@ -545,21 +520,6 @@ class _Intro extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: 5),
-          Padding(
-            padding: const EdgeInsetsDirectional.only(start: 23),
-            child: Text(
-              '${Strings.of(context).themesHint(builtinCount)}'
-              '${customCount == 0 ? '' : ' · +$customCount'}',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: colors.textDisabled,
-                fontSize: 10.5,
-                letterSpacing: 0,
-              ),
-            ),
-          ),
         ],
       ),
     );
@@ -575,113 +535,27 @@ class _SectionLabel extends StatelessWidget {
       HermesSectionHeader(text, padding: const EdgeInsets.only(bottom: 8));
 }
 
-/// Fila compacta de tema. La paleta se reconoce en una muestra pequeña; el
-/// resto permanece en la superficie actual para que el catálogo no se convierta
-/// en una pared de tarjetas coloreadas.
-class ThemeCard extends StatelessWidget {
-  final HermesThemePreset preset;
-  final bool selected;
-  final VoidCallback onTap;
-  final VoidCallback? onDuplicate;
-  const ThemeCard({
-    required this.preset,
-    required this.selected,
-    required this.onTap,
-    this.onDuplicate,
-    super.key,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final c = preset.colors;
-    final appColors = Theme.of(context).hermes;
-    return Semantics(
-      button: true,
-      selected: selected,
-      label: preset.name,
-      child: InkWell(
-        onTap: onTap,
-        onLongPress: onDuplicate,
-        borderRadius: BorderRadius.circular(10),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(4, 9, 0, 9),
-          child: Row(
-            children: [
-              _ThemeSwatch(colors: c),
-              const SizedBox(width: 11),
-              Expanded(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      preset.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 13.5,
-                        fontWeight: FontWeight.w600,
-                        color: appColors.textPrimary,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      preset.tagline,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 10.5,
-                        height: 1.25,
-                        color: appColors.textSecondary,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              if (selected)
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 7),
-                  child: Icon(
-                    Icons.check_rounded,
-                    size: 19,
-                    color: appColors.accent,
-                  ),
-                ),
-              if (onDuplicate != null)
-                IconButton(
-                  constraints: const BoxConstraints.tightFor(
-                    width: 44,
-                    height: 48,
-                  ),
-                  padding: EdgeInsets.zero,
-                  tooltip: Strings.of(context).themesDuplicate,
-                  onPressed: onDuplicate,
-                  icon: Icon(
-                    Icons.copy_outlined,
-                    size: 17,
-                    color: appColors.textSecondary,
-                  ),
-                ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _DesktopThemeFamilyRow extends StatelessWidget {
-  const _DesktopThemeFamilyRow({
+/// One theme family: a small swatch of the variant in use (or the dark one)
+/// and a Light/Dark selector, the same for Console and Desktop families.
+class _ThemeFamilyRow extends StatelessWidget {
+  const _ThemeFamilyRow({
+    required this.section,
     required this.family,
     required this.variants,
     required this.activeId,
+    required this.followSystem,
     required this.onSelect,
   });
 
+  /// `console` or `desktop`; part of the selector keys.
+  final String section;
   final String family;
   final List<HermesThemePreset> variants;
   final String activeId;
-  final ValueChanged<String> onSelect;
+
+  /// "Auto" is on for the active theme.
+  final bool followSystem;
+  final ThemeSelectCallback onSelect;
 
   HermesThemePreset? _variant(Brightness brightness) {
     for (final preset in variants) {
@@ -700,28 +574,46 @@ class _DesktopThemeFamilyRow extends StatelessWidget {
       orElse: () => dark ?? light ?? variants.first,
     );
     final title = variants.first.name;
+    final activeHere = variants.any((preset) => preset.id == activeId);
+    final auto = followSystem && activeHere;
     Widget controls({required bool showLabels}) => Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         if (light != null)
           _ThemeModeButton(
-            key: ValueKey('desktop-theme-$family-light'),
+            key: ValueKey('$section-theme-$family-light'),
             icon: Icons.light_mode_outlined,
             label: Strings.of(context).themesLightChoice,
             showLabel: showLabels,
-            selected: activeId == light.id,
+            selected: !auto && activeId == light.id,
             onTap: () => onSelect(light.id),
           ),
         if (light != null && dark != null) const SizedBox(width: 4),
         if (dark != null)
           _ThemeModeButton(
-            key: ValueKey('desktop-theme-$family-dark'),
+            key: ValueKey('$section-theme-$family-dark'),
             icon: Icons.dark_mode_outlined,
             label: Strings.of(context).themesDarkChoice,
             showLabel: showLabels,
-            selected: activeId == dark.id,
+            selected: !auto && activeId == dark.id,
             onTap: () => onSelect(dark.id),
           ),
+        if (light != null && dark != null) ...[
+          const SizedBox(width: 4),
+          _ThemeModeButton(
+            key: ValueKey('$section-theme-$family-auto'),
+            icon: Icons.brightness_auto_outlined,
+            label: Strings.of(context).themesAutoChoice,
+            showLabel: showLabels,
+            selected: auto,
+            onTap: () => onSelect(
+              MediaQuery.platformBrightnessOf(context) == Brightness.light
+                  ? light.id
+                  : dark.id,
+              followSystem: true,
+            ),
+          ),
+        ],
       ],
     );
     return Padding(
@@ -729,7 +621,9 @@ class _DesktopThemeFamilyRow extends StatelessWidget {
       child: LayoutBuilder(
         builder: (context, constraints) {
           final largeText = MediaQuery.textScalerOf(context).scale(12) >= 18;
-          final stacked = constraints.maxWidth < 330 || largeText;
+          // Three segments (Light, Dark, Auto) fit beside the name only on
+          // wide screens; phones put them under it.
+          final stacked = constraints.maxWidth < 400 || largeText;
           final identity = Row(
             children: [
               _ThemeSwatch(colors: preview.colors),
@@ -748,7 +642,7 @@ class _DesktopThemeFamilyRow extends StatelessWidget {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      preview.tagline,
+                      themeTagline(Strings.of(context), preview),
                       maxLines: stacked ? 2 : 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
@@ -967,7 +861,7 @@ class _CustomThemeCard extends StatelessWidget {
               SizedBox(
                 width: 40,
                 height: 48,
-                child: PopupMenuButton<_CustomThemeAction>(
+                child: HermesMenuButton<_CustomThemeAction>(
                   tooltip: MaterialLocalizations.of(context).moreButtonTooltip,
                   padding: EdgeInsets.zero,
                   iconSize: 18,
@@ -984,23 +878,23 @@ class _CustomThemeCard extends StatelessWidget {
                         onDelete();
                     }
                   },
-                  itemBuilder: (_) => [
-                    PopupMenuItem(
+                  actions: (context) => [
+                    HermesAction(
                       value: _CustomThemeAction.edit,
-                      child: Text(Strings.of(context).themesEdit),
+                      label: Strings.of(context).themesEdit,
                     ),
-                    PopupMenuItem(
+                    HermesAction(
                       value: _CustomThemeAction.duplicate,
-                      child: Text(Strings.of(context).themesDuplicate),
+                      label: Strings.of(context).themesDuplicate,
                     ),
-                    PopupMenuItem(
+                    HermesAction(
                       value: _CustomThemeAction.export,
-                      child: Text(Strings.of(context).themesExport),
+                      label: Strings.of(context).themesExport,
                     ),
-                    const PopupMenuDivider(),
-                    PopupMenuItem(
+                    HermesAction(
                       value: _CustomThemeAction.delete,
-                      child: Text(Strings.of(context).themesDeleteAction),
+                      label: Strings.of(context).themesDeleteAction,
+                      destructive: true,
                     ),
                   ],
                 ),

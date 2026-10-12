@@ -22,12 +22,15 @@ SavedConnection _conn(String id) => SavedConnection(
 );
 
 class _Gateway implements HermesDesktopGateway {
-  _Gateway({this.todoState});
+  _Gateway({this.todoState, this.running = false});
 
   final StreamController<TuiGatewayEvent> _events =
       StreamController<TuiGatewayEvent>.broadcast();
   String runtimeId = 'runtime-a';
   AgentTaskList? todoState;
+
+  /// What `session.resume` says about the server's turn.
+  final bool running;
 
   @override
   Stream<TuiGatewayEvent> get events => _events.stream;
@@ -49,6 +52,7 @@ class _Gateway implements HermesDesktopGateway {
     storedSessionId: storedSessionId,
     created: false,
     todoState: todoState,
+    running: running,
   );
 
   @override
@@ -260,10 +264,13 @@ void main() {
     final gateway = _Gateway(todoState: snapshot.todoState);
     addTearDown(gateway.close);
     final chat = await _chat(service, gateway, 'reopen');
-    expect(chat.agentTasks.revision, 7);
-    expect(chat.agentTasks.done, 2);
-    expect(chat.agentTasks.cancelledCount, 1);
-    // ...but a rebuilt list is presentation only: it must not make an idle
+    // tk1215: the server is idle, so the list comes back as history (the
+    // last turn's), not as the plan of the turn being sent.
+    expect(chat.agentTasks.isEmpty, isTrue);
+    expect(chat.retainedAgentTasks.revision, 7);
+    expect(chat.retainedAgentTasks.done, 2);
+    expect(chat.retainedAgentTasks.cancelledCount, 1);
+    // ...and a rebuilt list is presentation only: it must not make an idle
     // chat look like it still has background work.
     expect(chat.sessionActivity.tasks, isEmpty);
   });
@@ -271,12 +278,15 @@ void main() {
   test(
     'reconnect: a fresher todo_state wins, an older one is ignored',
     () async {
+      // tk1215: an unfinished plan is restored only for a session the server
+      // reports as running; on an idle one it is the previous turn's.
       final gateway = _Gateway(
         todoState: AgentTaskList.tryParse(
           _todo(3, [
             ['1', 'Uno', 'in_progress'],
           ]),
         ),
+        running: true,
       );
       addTearDown(gateway.close);
       final chat = await _chat(service, gateway, 'reconnect');

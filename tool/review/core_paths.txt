@@ -1,0 +1,34 @@
+# Paths whose changes always need the core Console reviewer, whatever
+# the pull request says it is about. One shell glob per line, matched
+# against repository-relative paths. Changing this list is itself a
+# reviewed change.
+
+# Transcript, turn state and recovery
+lib/core/services/active_chat_service.dart
+lib/core/services/session_reconciler.dart
+lib/core/screens/chat_render_projection.dart
+lib/core/screens/foreground_conversation_reader.dart
+lib/core/services/global_activity_aggregate.dart
+
+# Gateway transport and connection
+lib/core/services/tui_gateway_client.dart
+lib/core/services/shared_gateway_pool.dart
+lib/core/services/replay_coordinator.dart
+lib/core/services/connection_manager.dart
+
+# Queue, drafts and local persistence
+lib/core/services/*outbox*
+lib/core/services/*queue*
+lib/core/services/*draft*
+lib/core/services/cold_start_store.dart
+lib/core/services/session_archive.dart
+
+# Wire parsing
+lib/core/models/interactive_prompt.dart
+lib/core/models/desktop_session_snapshot.dart
+
+# Security-sensitive surfaces
+lib/core/services/app_lock.dart
+lib/core/services/secure_storage.dart
+android/app/src/main/AndroidManifest.xml
+.github/workflows/*

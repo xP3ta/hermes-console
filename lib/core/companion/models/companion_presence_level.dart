@@ -1,49 +1,57 @@
-/// Nivel de la presencia ambiental del Companion (feature 006).
+/// Where the pet shows ("Presencia" in the Mascotas screen). The user picks
+/// one of three that say where it is:
 ///
-/// - `off`: sin presencia ni reactividad (la mascota mini no aparece y el Home
-///   no refleja la actividad de chat).
-/// - `minimal`: presencia visible en Home, Mascotas y modo voz. Es el valor por
-///   defecto y no invade el transcript de Chat ni otras superficies de trabajo.
-/// - `full`: añade indicadores contextuales en Chat/Runs y texto de estado.
-enum CompanionPresenceLevel { off, minimal, full }
+/// - `off` ("Apagada"): nowhere.
+/// - `chat` ("Solo en el chat"): standing on the chat's island, and nowhere
+///   else.
+/// - `full` ("En toda la app"): on the chat's island and, outside chats, as
+///   the floating mascot. The default.
+///
+/// `ambient` is never chosen or stored. It is what a chat reads
+/// (`CompanionController.presenceLevel`) while the presence is on but the
+/// profile has no pet of its own: the chat's island then keeps the face it
+/// always had (the profile's own, or Hermes' sprite) instead of a stand-in.
+///
+/// Until 1.2.15 the choices were off / minimal / full. "Minimal" (the
+/// default) promised Inicio and the voice mode, surfaces that no longer host
+/// the pet, and "full" added the chat: both read as `full` now, the only
+/// choice that shows the pet outside the chat as they promised.
+enum CompanionPresenceLevel { off, ambient, chat, full }
 
 extension CompanionPresenceLevelX on CompanionPresenceLevel {
-  /// Identificador estable para persistencia (== nombre del enum).
-  String get id => name;
+  /// What is stored for a choice made now. `full` is stored as `app`: a
+  /// stored `full` is the old "Completa" (see [companionPresenceIsLegacyFull]).
+  String get id => switch (this) {
+    CompanionPresenceLevel.full => 'app',
+    _ => name,
+  };
 
-  /// La presencia es visible (no `off`).
+  /// The pet shows somewhere.
   bool get isVisible => this != CompanionPresenceLevel.off;
 
-  /// La mascota puede sustituir indicadores funcionales fuera de
-  /// Home/Mascotas. Solo el nivel completo tiene este alcance.
-  bool get showsStatusPresence => this == CompanionPresenceLevel.full;
+  /// The pet stands on the chat's island (and wherever a chat or a room
+  /// shows a profile's state with its pet).
+  bool get showsStatusPresence =>
+      this == CompanionPresenceLevel.chat ||
+      this == CompanionPresenceLevel.full;
 
-  /// Muestra texto de estado junto a la mascota.
-  bool get showsLabel => this == CompanionPresenceLevel.full;
-
-  /// Etiqueta legible para la UI de ajuste.
-  String get label {
-    switch (this) {
-      case CompanionPresenceLevel.off:
-        return 'Apagada';
-      case CompanionPresenceLevel.minimal:
-        return 'Mínima';
-      case CompanionPresenceLevel.full:
-        return 'Completa';
-    }
-  }
+  /// The pet floats on every screen that is not a chat.
+  bool get showsEverywhere => this == CompanionPresenceLevel.full;
 }
 
-/// Parse **tolerante** con default seguro: id desconocido/nulo → [fallback]
-/// (por defecto `minimal`).
+/// The user's choice stored as [id]. An unknown or missing id is [fallback]
+/// (`full`), and so is the retired `minimal`; `ambient` is never a choice.
 CompanionPresenceLevel companionPresenceLevelFromId(
   String? id, {
-  CompanionPresenceLevel fallback = CompanionPresenceLevel.minimal,
-}) {
-  final key = id?.trim();
-  if (key == null || key.isEmpty) return fallback;
-  for (final level in CompanionPresenceLevel.values) {
-    if (level.name == key) return level;
-  }
-  return fallback;
-}
+  CompanionPresenceLevel fallback = CompanionPresenceLevel.full,
+}) => switch (id?.trim()) {
+  'off' => CompanionPresenceLevel.off,
+  'chat' => CompanionPresenceLevel.chat,
+  'full' || 'app' || 'minimal' => CompanionPresenceLevel.full,
+  _ => fallback,
+};
+
+/// True for the value 1.2.14 and earlier stored for "Completa". With it the
+/// chat's island showed the pet's slot even for a profile without a pet
+/// (its own face stood in); that is kept for whoever had it.
+bool companionPresenceIsLegacyFull(String? id) => id?.trim() == 'full';

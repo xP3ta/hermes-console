@@ -364,6 +364,39 @@ void main() {
       }
     });
 
+    test('tg1215 oculta los previews de todos los estados de proceso', () {
+      for (final preview in const [
+        '[IMPORTANT: Background process proc_f4c048969c1b completed n...',
+        '[IMPORTANT: Background process proc_f4c048969c1b terminated ...',
+        '[IMPORTANT: Background process proc_f4c048969c1b marked lost...',
+        '[IMPORTANT: Background process proc_f4c048969c1b failed to s...',
+        '[IMPORTANT: Background process proc_f4c048969c1b completed normally '
+            '(exit code 0). Command: flutter test Output: ok ]',
+        '[IMPORTANT: Background process proc_f4c048969c1b terminated by process.kill '
+            '(exit code -15, SIGTERM). Command: sleep 9 Output: ]',
+      ]) {
+        final s = Session.fromJson({
+          'id': 'tg1215-preview-$preview',
+          'title': 'Título humano',
+          'preview': preview,
+          'source': 'mobile',
+        });
+        expect(s.cleanPreview, '', reason: preview);
+      }
+      for (final preview in const [
+        '[IMPORTANT: Background process proc_f4c048969c1b completed n... ¿qué?',
+        '[IMPORTANT: Background process proc_f4c048969c1b finished ha...',
+      ]) {
+        final s = Session.fromJson({
+          'id': 'tg1215-preview-keep-$preview',
+          'title': 'Título humano',
+          'preview': preview,
+          'source': 'mobile',
+        });
+        expect(s.cleanPreview, preview, reason: preview);
+      }
+    });
+
     test('preview background conserva citas e incompletos no canónicos', () {
       for (final preview in const [
         '¿Qué significa [IMPORTANT: Background process ...]?',

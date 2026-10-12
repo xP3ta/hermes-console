@@ -12,7 +12,6 @@ import 'package:hermes_android/core/screens/chat_screen.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/app_lock.dart';
 import 'package:hermes_android/core/services/approval_policy.dart';
-import 'package:hermes_android/core/services/bridge_manager.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/font_size_service.dart';
 import 'package:hermes_android/core/services/notifications/notification_service.dart';
@@ -24,6 +23,7 @@ import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:hermes_android/core/services/turn_outbox_store.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/markdown_table.dart';
+import 'package:hermes_android/core/widgets/mascot/mascot.dart';
 import 'package:hermes_android/main.dart';
 
 class _IdleGateway
@@ -282,7 +282,7 @@ void main() {
         appLock: AppLockService(prefs),
         approvalPolicy: ApprovalPolicyService(prefs),
         fontSize: FontSizeService(prefs),
-        bridgeManager: BridgeManager(secureStorage, connectionManager),
+
         sshManager: SshManager(secureStorage, connectionManager),
         sftpTransfers: SftpTransferService(
           SshManager(secureStorage, connectionManager),
@@ -337,7 +337,7 @@ void main() {
     expect(prose.fontSize, 15);
     expect(prose.height, 1.5);
     final inlineCode = _leafStyle(paragraph, 'hermes-gateway')!;
-    expect(inlineCode.fontFamily, 'monospace');
+    expect(inlineCode.fontFamily, 'JetBrainsMono');
     expect(inlineCode.fontSize, 13);
     final link = _leafStyle(paragraph, 'guía oficial')!;
     expect(link.color, colors.secondary);
@@ -425,6 +425,14 @@ void main() {
   });
 
   testWidgets('T101 baseline: golden del chat principal', (tester) async {
+    // The header mascot paints its sprite atlas only once it is decoded
+    // (real I/O, outside fake time). Decode every atlas first so the golden
+    // always shows the mascot, whatever ran earlier in the process.
+    await tester.runAsync(() async {
+      for (final kind in MascotSpriteKind.values) {
+        await MascotAtlas.load(kind);
+      }
+    });
     await pumpChat(tester);
     await expectLater(
       find.byType(ChatScreen),

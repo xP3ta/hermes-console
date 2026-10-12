@@ -23,6 +23,221 @@ enum HomeWidgetAgentState {
 
 enum HomeWidgetTheme { light, dark, oled }
 
+/// Something a chat is waiting for the owner to answer (schema 2).
+@immutable
+class HomeWidgetNeed {
+  const HomeWidgetNeed({
+    required this.requestId,
+    this.question = false,
+    this.text,
+    this.actionPayload,
+  });
+
+  /// The server's own id of the request: an answer can only ever be for it.
+  final String requestId;
+
+  /// A question to answer in words; false for a permission to grant or deny.
+  final bool question;
+
+  /// What is asked: the command, or the question. Public display text only.
+  final String? text;
+
+  /// Payload of Permitir / Rechazar (a `NotificationActionPayload`); null
+  /// when it can only be answered in the app.
+  final String? actionPayload;
+
+  Map<String, Object?> toMap() => {
+    'rid': requestId,
+    if (question) 'question': true,
+    'text': ?_safeText(text, 160),
+    'action': ?_safeText(actionPayload, 4000),
+  };
+
+  static HomeWidgetNeed? fromMap(Object? value) {
+    if (value is! Map) return null;
+    final requestId = _safeText(value['rid'], 256, opaque: true);
+    if (requestId == null) return null;
+    return HomeWidgetNeed(
+      requestId: requestId,
+      question: value['question'] == true,
+      text: _safeText(value['text'], 160),
+      actionPayload: _safeText(value['action'], 4000),
+    );
+  }
+}
+
+/// One chat that is running or waiting for the owner right now (schema 2).
+@immutable
+class HomeWidgetChatActivity {
+  const HomeWidgetChatActivity({
+    required this.sessionId,
+    required this.state,
+    this.title,
+    this.profile,
+    this.phase,
+    this.startedAtMs,
+    this.need,
+  });
+
+  final String sessionId;
+  final String? title;
+
+  /// Profile that owns the chat (null for the default one).
+  final String? profile;
+
+  /// thinking, streaming, toolExecution or waitingApproval: never idle.
+  final HomeWidgetAgentState state;
+
+  /// The running tool in plain words ("Terminal"); null when it is thinking
+  /// or answering.
+  final String? phase;
+
+  /// When this turn started: the widget's timer counts from here.
+  final int? startedAtMs;
+
+  /// Set while [state] is waitingApproval and the request is known.
+  final HomeWidgetNeed? need;
+
+  bool get needsYou => state == HomeWidgetAgentState.waitingApproval;
+
+  Map<String, Object?> toMap() => {
+    'sid': sessionId,
+    'title': ?_safeText(title, 96),
+    'profile': ?_safeText(profile, 64),
+    'state': state.name,
+    'phase': ?_safeText(phase, 48),
+    'started_ms': ?_safeNonNegativeInt(startedAtMs),
+    'need': ?need?.toMap(),
+  };
+
+  static HomeWidgetChatActivity? fromMap(Object? value) {
+    if (value is! Map) return null;
+    final sessionId = _safeText(value['sid'], 256, opaque: true);
+    final state = _enumByName(
+      HomeWidgetAgentState.values,
+      value['state'],
+      HomeWidgetAgentState.idle,
+    );
+    if (sessionId == null || !activeStates.contains(state)) return null;
+    return HomeWidgetChatActivity(
+      sessionId: sessionId,
+      title: _safeText(value['title'], 96),
+      profile: _safeText(value['profile'], 64),
+      state: state,
+      phase: _safeText(value['phase'], 48),
+      startedAtMs: _safePositiveInt(value['started_ms']),
+      need: HomeWidgetNeed.fromMap(value['need']),
+    );
+  }
+
+  /// The states that mean "this chat is doing something right now".
+  static const activeStates = {
+    HomeWidgetAgentState.thinking,
+    HomeWidgetAgentState.streaming,
+    HomeWidgetAgentState.toolExecution,
+    HomeWidgetAgentState.waitingApproval,
+  };
+}
+
+/// One window of a subscription's limits, as the widget writes it (text the
+/// app already localized).
+@immutable
+class HomeWidgetLimitWindow {
+  const HomeWidgetLimitWindow({
+    required this.label,
+    required this.usedPercent,
+    this.detail,
+  });
+
+  /// «Sesión actual», «Semana»: in the language of the app.
+  final String label;
+
+  /// 0..100 (a window over its limit reads 100).
+  final int usedPercent;
+
+  /// «Se reinicia en 2 h 13 min»; absent when there is none.
+  final String? detail;
+
+  Map<String, Object?> toMap() => {
+    'label': _safeText(label, 48),
+    'used_percent': usedPercent.clamp(0, 100),
+    'detail': ?_safeText(detail, 64),
+  };
+
+  static HomeWidgetLimitWindow? fromMap(Object? value) {
+    if (value is! Map) return null;
+    final label = _safeText(value['label'], 48);
+    final used = _safeNonNegativeInt(value['used_percent']);
+    if (label == null || used == null) return null;
+    return HomeWidgetLimitWindow(
+      label: label,
+      usedPercent: used.clamp(0, 100),
+      detail: _safeText(value['detail'], 64),
+    );
+  }
+}
+
+/// The limits of ONE subscription and whose they are: the provider as the
+/// server reports it and, when the server names one, the plan. Never a
+/// guessed plan (additive field of schema 2).
+@immutable
+class HomeWidgetLimitGroup {
+  const HomeWidgetLimitGroup({
+    required this.provider,
+    required this.providerName,
+    this.plan,
+    this.inUse = false,
+    this.windows = const [],
+  });
+
+  /// Stable provider id (Hermes' slug: `openai-codex`, `anthropic`, `nous`).
+  final String provider;
+
+  /// The provider's name for people («OpenAI Codex»).
+  final String providerName;
+
+  /// «Plus», «Max 5x»; null when the server gives none.
+  final String? plan;
+
+  /// The account behind the model of the active profile's chat.
+  final bool inUse;
+  final List<HomeWidgetLimitWindow> windows;
+
+  static final _id = RegExp(r'^[a-z0-9][a-z0-9._-]{0,39}$');
+
+  Map<String, Object?> toMap() => {
+    'provider': provider,
+    'provider_name': _safeText(providerName, 48),
+    'plan': ?_safeText(plan, 32),
+    'in_use': inUse,
+    'windows': [
+      for (final w in windows.take(HermesHomeWidgetSnapshot.maxLimitWindows))
+        w.toMap(),
+    ],
+  };
+
+  static HomeWidgetLimitGroup? fromMap(Object? value) {
+    if (value is! Map) return null;
+    final provider = value['provider'];
+    final name = _safeText(value['provider_name'], 48);
+    if (provider is! String || !_id.hasMatch(provider) || name == null) {
+      return null;
+    }
+    final raw = value['windows'];
+    return HomeWidgetLimitGroup(
+      provider: provider,
+      providerName: name,
+      plan: _safeText(value['plan'], 32),
+      inUse: _safeBool(value['in_use']),
+      windows: [
+        if (raw is List)
+          for (final w in raw.take(HermesHomeWidgetSnapshot.maxLimitWindows))
+            ?HomeWidgetLimitWindow.fromMap(w),
+      ],
+    );
+  }
+}
+
 /// Secret-free snapshot consumed by the Android Glance widget.
 ///
 /// The model intentionally owns validation and serialization so Flutter,
@@ -30,7 +245,18 @@ enum HomeWidgetTheme { light, dark, oled }
 /// URL, prompt, response, credential or reasoning field.
 @immutable
 class HermesHomeWidgetSnapshot {
-  static const schemaVersion = 1;
+  /// 2 added [active]: every chat running or waiting for the owner, with a
+  /// plain-word phase, the turn's start and the pending request. A reader of
+  /// schema 1 ignores it; a snapshot of schema 1 reads here with none.
+  static const schemaVersion = 2;
+
+  /// Snapshots this build can read (one written by 1.2.14 is schema 1).
+  static const readableSchemaVersions = {1, 2};
+
+  /// More than any widget draws; bounds the stored string.
+  static const maxActive = 6;
+  static const maxLimitGroups = 3;
+  static const maxLimitWindows = 4;
   static const storagePrefix = 'hermes_widget_';
   static const atomicStorageKey = '${storagePrefix}atomic_snapshot_v1';
   static const staleAfter = Duration(minutes: 15);
@@ -58,6 +284,8 @@ class HermesHomeWidgetSnapshot {
     this.updatedAtMs = 0,
     this.theme = HomeWidgetTheme.dark,
     this.showAdvancedMetrics = true,
+    this.active = const [],
+    this.limits = const [],
   });
 
   static const empty = HermesHomeWidgetSnapshot();
@@ -93,6 +321,14 @@ class HermesHomeWidgetSnapshot {
   final int updatedAtMs;
   final HomeWidgetTheme theme;
   final bool showAdvancedMetrics;
+
+  /// Chats of this instance running or waiting for the owner right now,
+  /// the ones that need the owner first.
+  final List<HomeWidgetChatActivity> active;
+
+  /// Plan limits by subscription, the one in use first. Empty when Home has
+  /// not read them; a widget then shows no limits (never old ones as new).
+  final List<HomeWidgetLimitGroup> limits;
 
   bool isStaleAt(int nowMs) =>
       updatedAtMs <= 0 || nowMs - updatedAtMs > staleAfter.inMilliseconds;
@@ -145,6 +381,8 @@ class HermesHomeWidgetSnapshot {
     int? updatedAtMs,
     HomeWidgetTheme? theme,
     bool? showAdvancedMetrics,
+    List<HomeWidgetChatActivity>? active,
+    List<HomeWidgetLimitGroup>? limits,
   }) => HermesHomeWidgetSnapshot(
     configured: configured ?? this.configured,
     instanceId: clearInstanceId ? null : instanceId ?? this.instanceId,
@@ -180,11 +418,14 @@ class HermesHomeWidgetSnapshot {
     updatedAtMs: updatedAtMs ?? this.updatedAtMs,
     theme: theme ?? this.theme,
     showAdvancedMetrics: showAdvancedMetrics ?? this.showAdvancedMetrics,
+    active: active ?? this.active,
+    limits: limits ?? this.limits,
   );
 
   factory HermesHomeWidgetSnapshot.fromMap(Map<Object?, Object?> map) {
     final version = _safeInt(map['schema_version']);
-    if (version != schemaVersion) return empty;
+    if (!readableSchemaVersions.contains(version)) return empty;
+    final rawActive = map['active'];
     final used = _safeNonNegativeInt(map['context_used']);
     final max = _safePositiveInt(map['context_max']);
     final suppliedPercent = _safeNonNegativeInt(map['context_percent']);
@@ -228,6 +469,16 @@ class HermesHomeWidgetSnapshot {
       showAdvancedMetrics: map.containsKey('show_advanced_metrics')
           ? _safeBool(map['show_advanced_metrics'])
           : true,
+      active: [
+        if (rawActive is List)
+          for (final entry in rawActive.take(maxActive))
+            ?HomeWidgetChatActivity.fromMap(entry),
+      ],
+      limits: [
+        if (map['limits'] case final List rawLimits)
+          for (final entry in rawLimits.take(maxLimitGroups))
+            ?HomeWidgetLimitGroup.fromMap(entry),
+      ],
     );
   }
 
@@ -255,11 +506,15 @@ class HermesHomeWidgetSnapshot {
     'updated_at_ms': _safeNonNegativeInt(updatedAtMs) ?? 0,
     'theme': theme.name,
     'show_advanced_metrics': showAdvancedMetrics,
+    'active': [for (final chat in active.take(maxActive)) chat.toMap()],
+    'limits': [for (final group in limits.take(maxLimitGroups)) group.toMap()],
   };
 
+  /// The field-by-field mirror of the snapshot: its plain values only. The
+  /// lists live in the atomic copy, which is what the widgets read.
   Map<String, Object?> toStorageMap() => <String, Object?>{
     for (final entry in toMap().entries)
-      '$storagePrefix${entry.key}': entry.value,
+      if (entry.value is! List) '$storagePrefix${entry.key}': entry.value,
   };
 
   String toAtomicStorageValue() => jsonEncode(toMap());
@@ -267,10 +522,11 @@ class HermesHomeWidgetSnapshot {
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
-      other is HermesHomeWidgetSnapshot && mapEquals(toMap(), other.toMap());
+      other is HermesHomeWidgetSnapshot &&
+          toAtomicStorageValue() == other.toAtomicStorageValue();
 
   @override
-  int get hashCode => Object.hashAll(toMap().entries);
+  int get hashCode => toAtomicStorageValue().hashCode;
 }
 
 T _enumByName<T extends Enum>(List<T> values, Object? raw, T fallback) {

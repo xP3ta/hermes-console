@@ -72,6 +72,31 @@ void main() {
       expect(paid.capabilities.reasoning, isFalse);
     });
 
+    test('un plan que Hermes aún comprueba no es un veredicto sobre los '
+        'modelos (free_tier_pending)', () {
+      final catalog = DesktopModelCatalog.fromJson(const {
+        'providers': [
+          {
+            'slug': 'nous',
+            'name': 'Nous Portal',
+            'models': ['a', 'b'],
+            'free_tier_pending': true,
+            'unavailable_models': ['a', 'b'],
+          },
+          {
+            'slug': 'openai',
+            'name': 'OpenAI',
+            'models': ['c'],
+            'unavailable_models': ['c'],
+          },
+        ],
+      });
+      expect(catalog.providerFor('nous')!.entitlementPending, isTrue);
+      expect(catalog.providerFor('openai')!.entitlementPending, isFalse);
+      // The list itself is kept as the server sent it.
+      expect(catalog.providerFor('nous')!.optionFor('a')!.unavailable, isTrue);
+    });
+
     test('capability ausente o no booleana permanece unknown', () {
       final provider = DesktopModelCatalog.fromJson({
         'providers': [

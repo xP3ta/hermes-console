@@ -248,6 +248,7 @@ Future<void> _pumpEditor(
   Size size = const Size(1000, 2600),
   double textScale = 1,
   double keyboardInset = 0,
+  bool openIdentity = true,
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
@@ -291,6 +292,10 @@ Future<void> _pumpEditor(
   // La preview Blobatar tiene motion continuo opt-in; avanzar la transición
   // de ruta de forma acotada evita esperar a que un ticker infinito termine.
   await _pumpUi(tester);
+  if (openIdentity) {
+    await _tapVisible(tester, const ValueKey('profile-editor-identity-row'));
+    await _pumpUi(tester);
+  }
 }
 
 Future<void> _pumpUi(WidgetTester tester) async {
@@ -312,7 +317,46 @@ Future<void> _save(WidgetTester tester) async {
   await _pumpUi(tester);
 }
 
+class _RecordingGenerationGateway extends _FakeAssetsGateway {
+  final generationCalls = <String>[];
+
+  Future<bool> canGenerateBotAvatar() async {
+    generationCalls.add('image.generate:probe');
+    return true;
+  }
+
+  Future<AgentProfileAvatar> generateBotAvatar(String prompt) async {
+    generationCalls.add('image.generate');
+    return AgentProfileAvatar.fromDataUri(_imageDataUri);
+  }
+}
+
 void main() {
+  testWidgets('editing a profile never probes or offers AI avatars', (
+    tester,
+  ) async {
+    final generation = _RecordingGenerationGateway();
+    await _pumpEditor(
+      tester,
+      assets: generation,
+      imagePicker: () async => null,
+    );
+    expect(generation.generationCalls, isEmpty);
+    await _tapVisible(tester, const ValueKey('profile-editor-mode-image'));
+    await _pumpUi(tester);
+    expect(generation.generationCalls, isEmpty);
+    final strings = Strings.of(
+      tester.element(find.byType(ProfileEditorScreen)),
+    );
+    expect(find.text(strings.botGenerateAvatar), findsNothing);
+    await _tapVisible(tester, const ValueKey('profile-editor-pick-image'));
+    await _tapVisible(tester, const ValueKey('profile-editor-mode-face'));
+    await _tapVisible(tester, const ValueKey('profile-editor-mode-image'));
+    await _pumpUi(tester);
+    expect(generation.generationCalls, isEmpty);
+    expect(find.text(strings.botGenerateAvatar), findsNothing);
+  });
+
   testWidgets(
     'Blobatar guardado manda sobre una mascota activa hasta elegirla',
     (tester) async {
@@ -843,6 +887,7 @@ void main() {
       size: const Size(320, 720),
       textScale: 2,
       keyboardInset: 220,
+      openIdentity: false,
     );
     await tester.enterText(find.byType(TextField).first, 'Infra Lead');
     await tester.pump();

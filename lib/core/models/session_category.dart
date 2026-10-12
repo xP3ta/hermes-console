@@ -15,6 +15,8 @@ abstract final class AutomationSessionSources {
     'hermes_flow',
     'vulcan_delegate',
     'webhook',
+    // `hermes -z` / `chat -q` one-shot runs (Desktop SIDEBAR_EXCLUDED_SOURCES).
+    'oneshot',
   ];
 
   static const Set<String> _set = <String>{
@@ -26,6 +28,7 @@ abstract final class AutomationSessionSources {
     'hermes_flow',
     'vulcan_delegate',
     'webhook',
+    'oneshot',
   };
 
   static bool contains(String source) => _set.contains(source.trim());

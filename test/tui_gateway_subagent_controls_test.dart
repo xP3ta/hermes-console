@@ -154,6 +154,68 @@ void main() {
     },
   );
 
+  test('a live row keeps its card whatever its status says', () {
+    // `subagent.list` reads the live registry only (`_active_subagents`), and
+    // the contract types `status` `SubagentStatus | null`: a record without
+    // one, or with a status added after this build, is still running.
+    for (final status in const <Object?>[null, 'absent', 'paused_for_input']) {
+      final raw = <String, dynamic>{
+        'subagent_id': 'child-live',
+        'goal': 'Auditar',
+        if (status != 'absent') 'status': status,
+      };
+      final row = DesktopSubagentSnapshot.tryParse(raw);
+      expect(row, isNotNull, reason: '$status');
+      expect(row!.subagentId, 'child-live');
+      expect(row.goal, 'Auditar');
+      expect(
+        row.status,
+        status is String && status != 'absent' ? status : 'running',
+      );
+    }
+    for (final ended in const [
+      'completed',
+      'failed',
+      'error',
+      'timeout',
+      'interrupted',
+    ]) {
+      expect(
+        DesktopSubagentSnapshot.tryParse({
+          'subagent_id': 'child-done',
+          'status': ended,
+        }),
+        isNull,
+        reason: '$ended is not a live roster row',
+      );
+    }
+  });
+
+  test('tail reads the contract defaults of omitted fields', () {
+    // SubagentTailResult: available=false, text="", truncated=false.
+    final unavailable = DesktopSubagentTailResult.fromJson(const {
+      'subagent_id': 'child-live',
+    });
+    expect(unavailable.available, isFalse);
+    expect(unavailable.content, isEmpty);
+
+    final live = DesktopSubagentTailResult.fromJson(const {
+      'subagent_id': 'child-live',
+      'available': true,
+    });
+    expect(live.available, isTrue);
+    expect(live.content, isEmpty);
+    expect(live.truncated, isFalse);
+
+    final partial = DesktopSubagentTailResult.fromJson(const {
+      'subagent_id': 'child-live',
+      'available': true,
+      'text': 'tail',
+    });
+    expect(partial.content, 'tail');
+    expect(partial.truncated, isFalse);
+  });
+
   test('tail limita localmente a 16384 y marca truncación', () async {
     final requests = <Map<String, dynamic>>[];
     final server = await _server(

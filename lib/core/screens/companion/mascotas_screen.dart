@@ -14,16 +14,18 @@ import '../../companion/models/companion_animation_state.dart';
 import '../../companion/models/companion_display_settings.dart';
 import '../../companion/models/companion_presence_level.dart';
 import '../../companion/render/companion_preview.dart';
-import '../../widgets/hermes_notice.dart';
 import 'companion_playground_screen.dart';
 import 'petdex_gallery_screen.dart';
 import '../../companion/render/spritesheet_renderer.dart';
 import '../../companion/state/companion_controller.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/hermes_app_bar.dart';
+import '../../widgets/mascot/float/mascot_prefs.dart';
 import '../../widgets/hermes_ui.dart';
 import '../../design/hermes_design.dart'
     show HermesDialogAction, HermesDialogActionStyle, showHermesDialog;
+import '../../feedback/feedback_policy.dart';
+import '../../feedback/screen_help.dart';
 
 /// Función de apertura de enlaces externos (inyectable para tests). Devuelve
 /// `true` si el sistema aceptó abrir la URL.
@@ -43,7 +45,8 @@ typedef ZipPicker = Future<Uint8List?> Function();
 /// Reutiliza por completo el stack de Fase A: [CompanionController] (estado +
 /// persistencia), [CompanionPreview] (render del sprite propio de cada mascota)
 /// y los modelos existentes. El logo Hermes NUNCA aparece aquí como mascota: la
-/// opción por defecto es el Spark ([CompanionPreview] con `companion: null`).
+/// opción por defecto es la cara original del perfil ([CompanionPreview] con
+/// `companion: null`).
 class MascotasScreen extends StatelessWidget {
   /// Controller inyectable (tests). En producción es `null` y se resuelve desde
   /// el [HermesAppState] ancestro (patrón de Fase A).
@@ -60,12 +63,16 @@ class MascotasScreen extends StatelessWidget {
   /// Selector de ZIP inyectable (tests). En producción usa `file_picker`.
   final ZipPicker? picker;
 
+  /// Where this device keeps the floating pet (tests inject their own).
+  final MascotPrefs? mascotPrefs;
+
   const MascotasScreen({
     super.key,
     this.controller,
     this.launcher,
     this.petdexVerified,
     this.picker,
+    this.mascotPrefs,
   });
 
   static Future<bool> _defaultLauncher(Uri uri) =>
@@ -88,9 +95,20 @@ class MascotasScreen extends StatelessWidget {
     final colors = Theme.of(context).hermes;
     final controller =
         this.controller ??
-        context.findAncestorStateOfType<HermesAppState>()?.companion;
+        context.findAncestorStateOfType<HermesAppState>()?.appCompanion;
     return Scaffold(
-      appBar: HermesAppBar(title: Text(Strings.of(context).petScreenTitle)),
+      appBar: HermesAppBar(
+        title: Text(Strings.of(context).petScreenTitle),
+        actions: [
+          ScreenHelpButton(
+            title: Strings.of(context).petScreenTitle,
+            paragraphs: [
+              Strings.of(context).petImportHint,
+              Strings.of(context).petBrowserHint,
+            ],
+          ),
+        ],
+      ),
       body: controller == null
           ? _UnavailableState(colors: colors)
           : AnimatedBuilder(
@@ -101,6 +119,7 @@ class MascotasScreen extends StatelessWidget {
                 launcher: launcher ?? _defaultLauncher,
                 petdexVerified: petdexVerified ?? kPetdexUrlVerified,
                 picker: picker ?? _defaultPicker,
+                mascotPrefs: mascotPrefs ?? MascotPrefs.instance,
               ),
             ),
     );
@@ -114,6 +133,7 @@ class _MascotasBody extends StatefulWidget {
     required this.launcher,
     required this.petdexVerified,
     required this.picker,
+    required this.mascotPrefs,
   });
 
   final CompanionController controller;
@@ -121,6 +141,7 @@ class _MascotasBody extends StatefulWidget {
   final UrlLauncher launcher;
   final bool petdexVerified;
   final ZipPicker picker;
+  final MascotPrefs mascotPrefs;
 
   @override
   State<_MascotasBody> createState() => _MascotasBodyState();
@@ -154,6 +175,7 @@ class _MascotasBodyState extends State<_MascotasBody> {
   static const double _previewBox = 150;
 
   CompanionController get controller => widget.controller;
+  MascotPrefs get _mascotPrefs => widget.mascotPrefs;
   HermesThemeColors get colors => widget.colors;
 
   @override
@@ -287,14 +309,14 @@ class _MascotasBodyState extends State<_MascotasBody> {
       if (c.slug == selectedSlug) selectedCompanion = c;
     }
     final selectedName =
-        selectedCompanion?.name ?? Strings.of(context).petDefaultName;
+        selectedCompanion?.name ?? Strings.of(context).petAppFaceName;
     final sizeMultiplier = _sizeDraft ?? controller.sizeMultiplier;
     final animationSpeed = _speedDraftSlug == selectedCompanion?.slug
         ? (_speedDraft ?? controller.animationSpeed)
         : controller.animationSpeed;
     final previewSize = _previewBase * sizeMultiplier;
     final visiblePresence = controller.enabled
-        ? controller.presenceLevel
+        ? controller.presence
         : CompanionPresenceLevel.off;
 
     return ListView(
@@ -342,26 +364,51 @@ class _MascotasBodyState extends State<_MascotasBody> {
         ),
         const SizedBox(height: 20),
         _sectionLabel(Strings.of(context).petSectionPresence),
-        _PresenceLevelSelector(
-          colors: colors,
-          current: visiblePresence,
-          onSelect: controller.setVisibilityLevel,
-        ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(4, 9, 4, 0),
-          child: Text(
-            _presenceDescription(Strings.of(context), visiblePresence),
-            style: TextStyle(color: colors.textSecondary, fontSize: 12),
+        if (controller.appPet)
+          HermesPanel(
+            child: HermesSwitchTile(
+              controlKey: const ValueKey('pet-app-presence'),
+              secondary: Icon(
+                Icons.pets_outlined,
+                size: 20,
+                color: colors.accent,
+              ),
+              title: Strings.of(context).petAppFloating,
+              value: visiblePresence.showsEverywhere,
+              onChanged: (value) => controller.setVisibilityLevel(
+                value
+                    ? CompanionPresenceLevel.full
+                    : CompanionPresenceLevel.off,
+              ),
+            ),
+          )
+        else
+          _PresenceChoices(
+            colors: colors,
+            current: visiblePresence,
+            onSelect: controller.setVisibilityLevel,
           ),
-        ),
-        HermesSwitchTile(
-          controlKey: const ValueKey('pet-show-on-home'),
-          value: controller.showOnHome,
-          onChanged: controller.setShowOnHome,
-          contentPadding: const EdgeInsets.symmetric(horizontal: 4),
-          secondary: Icon(Icons.home_outlined, color: colors.textSecondary),
-          title: Strings.of(context).petShowOnHomeTitle,
-          subtitle: Strings.of(context).petShowOnHomeSubtitle,
+        // Wherever the floating pet was dragged to, one tap takes it home.
+        ListenableBuilder(
+          listenable: _mascotPrefs,
+          builder: (context, _) =>
+              visiblePresence.showsEverywhere && _mascotPrefs.moved
+              ? Align(
+                  alignment: Alignment.centerLeft,
+                  child: Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: TextButton.icon(
+                      key: const ValueKey('pet-back-to-dock'),
+                      onPressed: () => _mascotPrefs.placeOnDock(),
+                      icon: const Icon(
+                        Icons.vertical_align_bottom_rounded,
+                        size: 18,
+                      ),
+                      label: Text(Strings.of(context).mascotMenuDock),
+                    ),
+                  ),
+                )
+              : const SizedBox.shrink(),
         ),
         const SizedBox(height: 20),
         _sectionLabel(Strings.of(context).petSectionSize),
@@ -435,21 +482,6 @@ class _MascotasBodyState extends State<_MascotasBody> {
                 ),
                 const SizedBox(height: 8),
               ],
-              HermesSwitchTile(
-                value: controller.roamingEnabled,
-                onChanged: visiblePresence == CompanionPresenceLevel.off
-                    ? null
-                    : controller.setRoamingEnabled,
-                contentPadding: EdgeInsets.zero,
-                secondary: Icon(
-                  Icons.directions_walk_rounded,
-                  color: visiblePresence == CompanionPresenceLevel.off
-                      ? colors.textDisabled
-                      : colors.accent,
-                ),
-                title: Strings.of(context).petRoamingTitle,
-                subtitle: Strings.of(context).petRoamingSubtitle,
-              ),
               Align(
                 alignment: Alignment.centerLeft,
                 child: TextButton.icon(
@@ -474,11 +506,12 @@ class _MascotasBodyState extends State<_MascotasBody> {
         ),
         const SizedBox(height: 20),
         _sectionLabel(Strings.of(context).petSectionChoose),
-        // Opción por defecto (Spark) + cada mascota instalada.
+        // Opción por defecto (cara del perfil) + cada mascota instalada.
         _MascotaTile(
           colors: colors,
           companion: null,
-          name: Strings.of(context).petDefaultName,
+          controller: controller,
+          name: Strings.of(context).petAppFaceName,
           subtitle: Strings.of(context).petDefaultSubtitle,
           selected: selectedSlug == null,
           onTap: () => _select(null),
@@ -503,13 +536,6 @@ class _MascotasBodyState extends State<_MascotasBody> {
         // vive en CompanionImportService.
         _sectionLabel(Strings.of(context).petSectionImport),
         _ImportButton(colors: colors, onTap: _importPet),
-        Padding(
-          padding: const EdgeInsets.only(left: 4, top: 8),
-          child: Text(
-            Strings.of(context).petImportHint,
-            style: TextStyle(color: colors.textSecondary, fontSize: 12),
-          ),
-        ),
         const SizedBox(height: 20),
         // Enlace a la galería externa Petdex (abre el navegador). No descarga
         // nada. Mientras la URL no esté verificada, queda pendiente.
@@ -522,13 +548,6 @@ class _MascotasBodyState extends State<_MascotasBody> {
           colors: colors,
           verified: widget.petdexVerified,
           onTap: _openPetdex,
-        ),
-        Padding(
-          padding: const EdgeInsets.only(left: 4, top: 8),
-          child: Text(
-            Strings.of(context).petBrowserHint,
-            style: TextStyle(color: colors.textSecondary, fontSize: 12),
-          ),
         ),
       ],
     );
@@ -557,7 +576,7 @@ class _MascotasBodyState extends State<_MascotasBody> {
   /// [CompanionImportService]). No hay red ni subida; ante datos inválidos
   /// muestra un aviso claro y no instala nada.
   Future<void> _importPet() async {
-    final messenger = HermesNotice.maybeOf(context);
+    final messenger = AppFeedback.of(context);
     final str = Strings.of(context);
     Uint8List? bytes;
     try {
@@ -569,21 +588,12 @@ class _MascotasBodyState extends State<_MascotasBody> {
     if (bytes == null) return; // cancelado por el usuario
     try {
       final pet = await controller.importFromZipBytes(bytes);
-      messenger?.showSnackBar(
-        SnackBar(content: Text(str.petImportedSnack(pet.name))),
-        kind: HermesNoticeKind.success,
-      );
+      messenger.notify(FeedbackKind.routine, str.petImportedSnack(pet.name));
     } on CompanionImportException catch (e) {
-      messenger?.showSnackBar(
-        SnackBar(content: Text(str.petImportFailed(e.message))),
-        kind: HermesNoticeKind.error,
-      );
+      messenger.notify(FeedbackKind.error, str.petImportFailed(e.message));
     } catch (e) {
       debugPrint('[mascotas] fallo inesperado al importar mascota: $e');
-      messenger?.showSnackBar(
-        SnackBar(content: Text(str.petImportFailedGeneric)),
-        kind: HermesNoticeKind.error,
-      );
+      messenger.notify(FeedbackKind.error, str.petImportFailedGeneric);
     }
   }
 
@@ -591,12 +601,13 @@ class _MascotasBodyState extends State<_MascotasBody> {
   /// ([kPetdexUrlVerified] == false), NO abre nada y avisa de que está
   /// pendiente. Nunca descarga ni hace peticiones propias.
   Future<void> _openPetdex() async {
-    final messenger = HermesNotice.maybeOf(context);
+    final messenger = AppFeedback.of(context);
     final strCantOpen = Strings.of(context).petdexCantOpen;
     if (!widget.petdexVerified) {
-      messenger?.showSnackBar(
-        SnackBar(content: Text(Strings.of(context).petdexLinkPending)),
-        kind: HermesNoticeKind.warning,
+      messenger.notify(
+        FeedbackKind.error,
+        Strings.of(context).petdexLinkPending,
+        warning: true,
       );
       return;
     }
@@ -608,10 +619,7 @@ class _MascotasBodyState extends State<_MascotasBody> {
       ok = false;
     }
     if (!ok) {
-      messenger?.showSnackBar(
-        SnackBar(content: Text(strCantOpen)),
-        kind: HermesNoticeKind.warning,
-      );
+      messenger.notify(FeedbackKind.error, strCantOpen, warning: true);
     }
   }
 
@@ -643,7 +651,8 @@ class _MascotasBodyState extends State<_MascotasBody> {
   }
 
   /// Preview del sprite: usa el estado de prueba si la mascota lo declara; en
-  /// caso contrario reposo (`idle`). Para la opción por defecto, el Spark.
+  /// caso contrario reposo (`idle`). Para la opción por defecto, la cara del
+  /// perfil.
   Widget _buildPreviewSprite(
     Companion? companion,
     double size,
@@ -652,6 +661,7 @@ class _MascotasBodyState extends State<_MascotasBody> {
     if (companion == null) {
       return CompanionPreview(
         companion: null,
+        controller: controller,
         size: size,
         accent: colors.accent,
       );
@@ -667,14 +677,6 @@ class _MascotasBodyState extends State<_MascotasBody> {
       overrideRow: _testRow,
       speedMultiplier: animationSpeed,
     );
-  }
-
-  String _presenceDescription(Strings strings, CompanionPresenceLevel level) {
-    return switch (level) {
-      CompanionPresenceLevel.off => strings.petPresenceOffDescription,
-      CompanionPresenceLevel.minimal => strings.petPresenceMinimalDescription,
-      CompanionPresenceLevel.full => strings.petPresenceFullDescription,
-    };
   }
 
   // Header de sección canónico del design system; se conserva el padding
@@ -769,8 +771,8 @@ class _CompanionSlider extends StatelessWidget {
 }
 
 /// Selector del nivel de presencia (006): Apagada / Mínima / Completa.
-class _PresenceLevelSelector extends StatelessWidget {
-  const _PresenceLevelSelector({
+class _PresenceChoices extends StatelessWidget {
+  const _PresenceChoices({
     required this.colors,
     required this.current,
     required this.onSelect,
@@ -780,91 +782,109 @@ class _PresenceLevelSelector extends StatelessWidget {
   final CompanionPresenceLevel current;
   final ValueChanged<CompanionPresenceLevel> onSelect;
 
+  /// The three places the pet can be, in the order they are offered.
+  static const List<CompanionPresenceLevel> choices = [
+    CompanionPresenceLevel.off,
+    CompanionPresenceLevel.chat,
+    CompanionPresenceLevel.full,
+  ];
+
   String _labelFor(Strings strings, CompanionPresenceLevel level) {
     return switch (level) {
       CompanionPresenceLevel.off => strings.petPresenceOff,
-      CompanionPresenceLevel.minimal => strings.petPresenceMinimal,
-      CompanionPresenceLevel.full => strings.petPresenceFull,
+      CompanionPresenceLevel.chat => strings.petPresenceChat,
+      CompanionPresenceLevel.ambient ||
+      CompanionPresenceLevel.full => strings.petPresenceEverywhere,
     };
   }
 
   @override
   Widget build(BuildContext context) {
     final strings = Strings.of(context);
-    return Row(
-      children: [
-        for (final level in CompanionPresenceLevel.values) ...[
-          Expanded(
-            child: _SegmentPill(
-              colors: colors,
-              label: _labelFor(strings, level),
-              semanticsLabel: strings.petPresenceSemantics(
-                _labelFor(strings, level),
+    return Material(
+      key: const ValueKey('pet-presence-choices'),
+      color: colors.surfaceVariant,
+      borderRadius: BorderRadius.circular(16),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (final level in choices) ...[
+            if (level != choices.first)
+              Divider(
+                height: 1,
+                thickness: 1,
+                color: colors.divider.withValues(alpha: 0.5),
               ),
-              selected: level == current,
-              onTap: () => onSelect(level),
+            Semantics(
+              button: true,
+              inMutuallyExclusiveGroup: true,
+              checked: level == current,
+              label: strings.petPresenceSemantics(_labelFor(strings, level)),
+              excludeSemantics: true,
+              child: InkWell(
+                key: ValueKey('pet-presence-${level.name}'),
+                onTap: () => onSelect(level),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(minHeight: 52),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: Row(
+                      children: [
+                        _RadioMark(colors: colors, selected: level == current),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Text(
+                            _labelFor(strings, level),
+                            style: TextStyle(
+                              color: colors.textPrimary,
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
             ),
-          ),
-          if (level != CompanionPresenceLevel.values.last)
-            const SizedBox(width: 8),
+          ],
         ],
-      ],
+      ),
     );
   }
 }
 
-class _SegmentPill extends StatelessWidget {
-  const _SegmentPill({
-    required this.colors,
-    required this.label,
-    required this.semanticsLabel,
-    required this.selected,
-    required this.onTap,
-  });
+class _RadioMark extends StatelessWidget {
+  const _RadioMark({required this.colors, required this.selected});
 
   final HermesThemeColors colors;
-  final String label;
-  final String semanticsLabel;
   final bool selected;
-  final VoidCallback onTap;
 
   @override
-  Widget build(BuildContext context) {
-    return Semantics(
-      button: true,
-      selected: selected,
-      label: semanticsLabel,
-      child: Material(
-        color: selected
-            ? colors.accent.withValues(alpha: 0.16)
-            : colors.surface,
-        clipBehavior: Clip.antiAlias,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
-          side: BorderSide(
-            color: selected ? colors.accent : colors.divider,
-            width: selected ? 1.5 : 1,
-          ),
-        ),
-        child: InkWell(
-          onTap: onTap,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 12),
-            child: Center(
-              child: Text(
-                label,
-                style: TextStyle(
-                  color: selected ? colors.accent : colors.textPrimary,
-                  fontWeight: FontWeight.w700,
-                  fontSize: 15,
-                ),
-              ),
-            ),
-          ),
-        ),
+  Widget build(BuildContext context) => Container(
+    width: 22,
+    height: 22,
+    alignment: Alignment.center,
+    decoration: BoxDecoration(
+      shape: BoxShape.circle,
+      border: Border.all(
+        color: selected ? colors.accent : colors.textSecondary,
+        width: 2,
       ),
-    );
-  }
+    ),
+    child: selected
+        ? Container(
+            width: 11,
+            height: 11,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: colors.accent,
+            ),
+          )
+        : null,
+  );
 }
 
 /// Probador de animaciones: un botón por estado. Los estados que la mascota
@@ -1101,10 +1121,14 @@ class _MascotaTile extends StatelessWidget {
     required this.selected,
     required this.onTap,
     this.onDelete,
+    this.controller,
   });
 
   final HermesThemeColors colors;
   final Companion? companion;
+
+  /// Ámbito cuya cara previsualiza la opción por defecto.
+  final CompanionController? controller;
   final String name;
   final String subtitle;
   final bool selected;
@@ -1139,6 +1163,7 @@ class _MascotaTile extends StatelessWidget {
             // Preview del sprite PROPIO de esta mascota (no de la activa, no logo).
             child: CompanionPreview(
               companion: companion,
+              controller: controller,
               size: 44,
               accent: colors.accent,
             ),

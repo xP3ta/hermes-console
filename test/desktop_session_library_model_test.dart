@@ -13,6 +13,7 @@ void main() {
       'hermes_flow',
       'vulcan_delegate',
       'webhook',
+      'oneshot',
     ]);
 
     for (final source in AutomationSessionSources.values) {
@@ -27,6 +28,23 @@ void main() {
         reason: '$source no debe consumir una página de Chats',
       );
       expect(SessionCategory.all.includesSource(source), isTrue);
+    }
+  });
+
+  test('Chats leaves out every local automation source Desktop excludes', () {
+    // Desktop use-session-list-actions.ts SIDEBAR_EXCLUDED_SOURCES (local
+    // part): `hermes -z` / `chat -q` one-shot runs are not chats.
+    for (final source in const [
+      'acp',
+      'cron',
+      'kanban',
+      'oneshot',
+      'subagent',
+      'tool',
+    ]) {
+      expect(SessionCategory.chats.excludeSources, contains(source));
+      expect(SessionCategory.chats.includesSource(source), isFalse);
+      expect(SessionCategory.automation.includesSource(source), isTrue);
     }
   });
 

@@ -87,30 +87,23 @@ void main() {
 
   test('Models reachable copy is localized in English and Spanish', () {
     const en = {
-      'mdlNoActiveModelTitle': 'No model configured',
-      'mdlNoActiveModelBody':
-          'This server does not have credentials for an AI provider yet. Configure one below to start using it.',
-      'mdlEditProvider': 'Edit provider',
-      'mdlConfigNeedsDashboard': 'Requires the Dashboard to configure',
-      'mdlDashboardOfflineSuffix': 'no Dashboard connection',
-      'mdlBridgeUnavailable': 'Bridge unavailable',
+      'mdlNoProviderYet': 'Connect an account or add a key to choose a model.',
+      'mdlKeyRejected':
+          'The provider rejected that key. Check it and try again.',
+      'mdlNotSaved': 'The server did not save the change. Try again.',
+      'mdlLoadError': 'Could not load models',
+
       'mdlApplyModelError': 'Could not apply the model',
-      'mdlExternalProvider': 'External provider',
-      'mdlExternalProviderSubtitle':
-          'Remote Ollama · LM Studio · OpenAI-compatible',
     };
     const es = {
-      'mdlNoActiveModelTitle': 'Sin modelo configurado',
-      'mdlNoActiveModelBody':
-          'Este servidor aún no tiene ningún proveedor de IA con credencial. Configura uno más abajo para poder usarlo.',
-      'mdlEditProvider': 'Editar proveedor',
-      'mdlConfigNeedsDashboard': 'Requiere el Dashboard para configurar',
-      'mdlDashboardOfflineSuffix': 'sin conexión al Dashboard',
-      'mdlBridgeUnavailable': 'Bridge no disponible',
+      'mdlNoProviderYet':
+          'Conecta una cuenta o añade una clave para elegir un modelo.',
+      'mdlKeyRejected':
+          'El proveedor rechazó esa clave. Revísala y vuelve a intentarlo.',
+      'mdlNotSaved': 'El servidor no guardó el cambio. Vuelve a intentarlo.',
+      'mdlLoadError': 'No se pudieron cargar los modelos',
+
       'mdlApplyModelError': 'No se pudo aplicar el modelo',
-      'mdlExternalProvider': 'Proveedor externo',
-      'mdlExternalProviderSubtitle':
-          'Ollama remoto · LM Studio · OpenAI-compatible',
     };
     _expectLocalized(en, es);
 
@@ -131,44 +124,22 @@ void main() {
     );
   });
 
-  test('local Runs copy is localized in English and Spanish', () {
-    const en = {
-      'runsLocalRunning': 'Running on the local agent…',
-      'runsLocalBridgeUnavailable':
-          'Could not connect to the local agent (Mobile Bridge). Start the agent and try again.',
-    };
-    const es = {
-      'runsLocalRunning': 'Ejecutando en el agente local…',
-      'runsLocalBridgeUnavailable':
-          'No se pudo conectar con el agente local (Mobile Bridge). Arranca el agente y reintenta.',
-    };
-    _expectLocalized(en, es);
-
-    final source = _source('lib/core/screens/runs_screen.dart');
-    for (final key in en.keys) {
-      expect(source, contains('.$key'));
+  test('Task Center carries no Mobile Bridge run copy', () {
+    // Runs go through the official gateway lifecycle on every topology; the
+    // bridge run path and its two strings were deleted with it.
+    final en = _arb('en');
+    final es = _arb('es');
+    for (final key in const [
+      'runsLocalRunning',
+      'runsLocalBridgeUnavailable',
+    ]) {
+      expect(en.containsKey(key), isFalse, reason: 'English $key');
+      expect(es.containsKey(key), isFalse, reason: 'Spanish $key');
     }
-    expect(source, isNot(contains("'Ejecutando en el agente local…'")));
-    expect(source, isNot(contains("'No se pudo conectar con el agente local")));
-  });
-
-  test('Task Center Mobile Bridge copy is localized in English and Spanish', () {
-    const en = {
-      'runsLocalRunning': 'Running on the local agent…',
-      'runsLocalBridgeUnavailable':
-          'Could not connect to the local agent (Mobile Bridge). Start the agent and try again.',
-    };
-    const es = {
-      'runsLocalRunning': 'Ejecutando en el agente local…',
-      'runsLocalBridgeUnavailable':
-          'No se pudo conectar con el agente local (Mobile Bridge). Arranca el agente y reintenta.',
-    };
-    _expectLocalized(en, es);
 
     final source = _source('lib/core/screens/task_center_screen.dart');
-    for (final key in en.keys) {
-      expect(source, contains('.$key'));
-    }
+    expect(source, isNot(contains('.runsLocal')));
+    expect(source, isNot(contains('Mobile Bridge')));
     expect(source, isNot(contains("'Ejecutando en el agente local…'")));
     expect(source, isNot(contains("'No se pudo conectar con el agente local")));
   });

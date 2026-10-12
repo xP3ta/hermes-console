@@ -1,0 +1,49 @@
+name: Core review label
+
+# Labels a pull request `needs-console-review` when its diff touches a
+# path listed in tool/review/core_paths.txt, and lists those files in
+# the job summary. The classification comes from the diff, never from
+# the pull request title or branch name.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: core-label-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  classify:
+    name: Classify core paths
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Classify and label
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          core="$(tool/review/classify_core.sh "$BASE_SHA" "$HEAD_SHA")"
+          if [ -n "$core" ]; then
+            {
+              echo "### Touches core paths"
+              echo
+              printf -- '- `%s`\n' $core
+            } >> "$GITHUB_STEP_SUMMARY"
+            gh pr edit "$PR" --repo "$GITHUB_REPOSITORY" --add-label needs-console-review
+          else
+            echo "No core paths touched." >> "$GITHUB_STEP_SUMMARY"
+            gh pr edit "$PR" --repo "$GITHUB_REPOSITORY" --remove-label needs-console-review || true
+          fi

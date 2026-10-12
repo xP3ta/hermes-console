@@ -80,7 +80,7 @@ void main() {
     final es = _readCatalog('lib/l10n/app_es.arb');
     final en = _readCatalog('lib/l10n/app_en.arb');
 
-    expect(es['voiceModeServerSub'], contains('no cambia al móvil'));
+    expect(es['voiceModeServerSub'], contains('no cambia al teléfono'));
     expect(
       es['nativeVoiceConsentBody'],
       contains('no cambiará a la voz local'),

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="646" height="250" viewBox="0 0 646 250" role="img" aria-label="Visit the website">
+  <rect x="42" y="42" width="562" height="166" rx="26" fill="#000000" stroke="#A6A6A6" stroke-width="2.5"/>
+  <g transform="translate(74 76) scale(0.143)"><g transform="translate(-118 -158)"><path d="M664.4,316.0 A275,275 0 1,0 664.4,684.0" fill="none" stroke="#D97757" stroke-width="134"/><rect x="694" y="398" width="104" height="204" fill="#D97757"/></g></g>
+  <g fill="#FFFFFF" font-family="Inter, 'Helvetica Neue', Arial, sans-serif">
+    <text x="200" y="102" font-size="27" font-weight="600" letter-spacing="0.5">VISIT THE</text>
+    <text x="198" y="172" font-size="68" font-weight="600" letter-spacing="-1">Website</text>
+  </g>
+</svg>

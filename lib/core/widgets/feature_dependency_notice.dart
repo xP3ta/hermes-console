@@ -5,7 +5,6 @@ import '../theme/app_theme.dart';
 /// Infraestructura que una función puede necesitar antes de estar disponible.
 enum FeatureDependencyKind {
   dashboard,
-  bridge,
   gateway,
   permission,
   serverVersion,
@@ -55,7 +54,6 @@ class _FeatureDependencyNoticeState extends State<FeatureDependencyNotice> {
 
   IconData get _icon => switch (widget.kind) {
     FeatureDependencyKind.dashboard => Icons.space_dashboard_outlined,
-    FeatureDependencyKind.bridge => Icons.cable_outlined,
     FeatureDependencyKind.gateway => Icons.hub_outlined,
     FeatureDependencyKind.permission => Icons.admin_panel_settings_outlined,
     FeatureDependencyKind.serverVersion => Icons.system_update_alt,

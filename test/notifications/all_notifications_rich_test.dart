@@ -61,6 +61,40 @@ void main() {
     await dir.delete(recursive: true);
   });
 
+  for (final rejection in ['false', 'missing', 'error']) {
+    test('native batch ACK $rejection retains custody', () async {
+      const native = MethodChannel(PlatformRichNotifications.channelName);
+      messenger.setMockMethodCallHandler(native, (call) async {
+        expect(call.method, 'ackPendingActions');
+        expect(call.arguments, {
+          'uids': ['synthetic-action'],
+        });
+        if (rejection == 'error') {
+          throw PlatformException(code: 'synthetic_unavailable');
+        }
+        return rejection == 'false' ? false : null;
+      });
+      addTearDown(() => messenger.setMockMethodCallHandler(native, null));
+      await expectLater(
+        PlatformRichNotifications().ackActions(['synthetic-action']),
+        throwsStateError,
+      );
+    });
+  }
+
+  test('native batch ACK explicit true completes', () async {
+    const native = MethodChannel(PlatformRichNotifications.channelName);
+    messenger.setMockMethodCallHandler(native, (call) async {
+      expect(call.method, 'ackPendingActions');
+      expect(call.arguments, {
+        'uids': ['synthetic-action'],
+      });
+      return true;
+    });
+    addTearDown(() => messenger.setMockMethodCallHandler(native, null));
+    await PlatformRichNotifications().ackActions(['synthetic-action']);
+  });
+
   Future<(NotificationService, _Sink)> service() async {
     final prefs = await SharedPreferences.getInstance();
     final sink = _Sink();
@@ -160,17 +194,23 @@ void main() {
       );
       expect(sink.posts, isNotEmpty, reason: entry.key);
       for (final card in sink.posts) {
+        expect(card['accent'], isA<int>(), reason: entry.key);
+        expect(card['publicTitle'], isNotNull, reason: entry.key);
+        if (card['style'] == 'row') {
+          // An automation result: a plain row, no conversation of its own.
+          expect(card.containsKey('conversationId'), isFalse);
+          expect(card.containsKey('messages'), isFalse);
+          continue;
+        }
         final msg = (card['messages'] as List).last as Map;
         // A face or the neutral glyph, never the app portrait.
         expect(msg['iconPath'], isA<String>(), reason: entry.key);
-        expect(card['accent'], isA<int>(), reason: entry.key);
-        expect(card['publicTitle'], isNotNull, reason: entry.key);
         expect(card['conversationId'], isNotNull, reason: entry.key);
       }
     });
   }
 
-  test('kanban with an assignee shows that Bot, else the glyph', () async {
+  test('kanban with an assignee: that Bot signs the row', () async {
     final (s, sink) = await service();
     await s.kanbanTransition(
       connId: 'c1',
@@ -179,24 +219,21 @@ void main() {
       status: 'blocked',
       assignee: 'builder',
     );
-    final withBot = sink.posts.single;
-    expect(withBot['title'], 'Subir build');
+    final row = sink.posts.single;
+    expect(row['style'], 'row');
+    expect(row['title'], 'Subir build');
+    expect(row['text'], 'Bloqueada');
+    expect(row['subText'], 'builder');
+    expect(row['largeIconPath'] as String, isNot(contains('glyph_')));
+    expect(row['accent'], RichAccent.failed);
+    expect(row['alert'], isTrue);
     expect(
-      ((withBot['messages'] as List).single as Map)['senderName'],
-      'builder',
-    );
-    expect(
-      ((withBot['messages'] as List).single as Map)['iconPath'] as String,
-      isNot(contains('glyph_')),
-    );
-    expect(withBot['accent'], RichAccent.failed);
-    expect(
-      [for (final a in withBot['actions'] as List) (a as Map)['label']],
-      ['Abrir tarea'],
+      [for (final a in row['actions'] as List) (a as Map)['label']],
+      ['Abrir tarea', 'Silenciar'],
     );
   });
 
-  test('cron ok: one human line, green, Ver resultado', () async {
+  test('cron ok: the state and what it said first, silent', () async {
     final (s, sink) = await service();
     await s.cronFinished(
       title: 'QA aviso Console 2',
@@ -205,25 +242,23 @@ void main() {
       sessionId: 'cron_q_1',
       executionId: 'eq',
       jobId: 'q',
+      preview: '**3 novedades** hoy\n- una\n- dos',
     );
-    final card = sink.posts.single;
-    // The job is the conversation; "Tareas programadas" speaks with >_.
-    expect(card['title'], 'QA aviso Console 2');
-    expect(card['conversationTitle'], 'QA aviso Console 2');
-    expect(card['text'], 'Terminada · QA aviso Console 2');
-    final msg = (card['messages'] as List).single as Map;
-    expect(msg['senderName'], 'Tareas programadas');
-    expect(msg['iconPath'] as String, contains('glyph_'));
-    expect(card['shortcutIconPath'] as String, contains('glyph_'));
-    expect(card['conversationId'], isNot('hermes-run-hermes'));
-    expect(card['accent'], RichAccent.done);
+    final row = sink.posts.single;
+    expect(row['style'], 'row');
+    expect(row['title'], 'QA aviso Console 2');
+    expect(row['text'], 'Terminó · 3 novedades hoy');
+    expect(row['subText'], 'Tareas programadas');
+    expect(row.containsKey('largeIconPath'), isFalse);
+    expect(row['accent'], RichAccent.done);
+    expect(row['alert'], isFalse);
     expect(
-      [for (final a in card['actions'] as List) (a as Map)['label']],
-      ['Ver resultado'],
+      [for (final a in row['actions'] as List) (a as Map)['label']],
+      ['Ver resultado', 'Silenciar'],
     );
   });
 
-  test('kanban done without assignee: task title, Tareas + glyph', () async {
+  test('kanban done without assignee: task title under Tareas', () async {
     final (s, sink) = await service();
     await s.kanbanTransition(
       connId: 'c1',
@@ -231,24 +266,15 @@ void main() {
       title: 'QA aviso kanban done',
       status: 'done',
     );
-    final card = sink.posts.single;
-    expect(card['title'], 'QA aviso kanban done');
-    expect(card['text'], 'Terminada · QA aviso kanban done');
-    final msg = (card['messages'] as List).single as Map;
-    expect(msg['senderName'], 'Tareas');
-    expect(msg['iconPath'] as String, contains('glyph_'));
+    final row = sink.posts.single;
+    expect(row['title'], 'QA aviso kanban done');
+    expect(row['text'], 'Terminada');
+    expect(row['subText'], 'Tareas');
+    expect(row['alert'], isFalse);
     expect(
-      [for (final a in card['actions'] as List) (a as Map)['label']],
-      ['Abrir tarea'],
+      [for (final a in row['actions'] as List) (a as Map)['label']],
+      ['Abrir tarea', 'Silenciar'],
     );
-    // One conversation per task, never one shared "Hermes" thread.
-    await s.kanbanTransition(
-      connId: 'c1',
-      taskId: 't8',
-      title: 'Otra',
-      status: 'done',
-    );
-    expect(sink.posts.last['conversationId'], isNot(card['conversationId']));
   });
 
   test('renderer unavailable → plain fallback still delivers', () async {

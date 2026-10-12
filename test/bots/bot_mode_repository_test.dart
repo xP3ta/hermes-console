@@ -129,7 +129,7 @@ void main() {
       );
     });
 
-    test('load() builds server-sourced rows, rooms and projection', () async {
+    test('load() builds server-sourced rows and hosted rooms only', () async {
       final snapshot = await repo.load();
       final byName = {for (final b in snapshot.bots) b.profile.name: b};
       expect(byName['default']!.presence, BotPresence.working);
@@ -142,9 +142,8 @@ void main() {
       );
       expect(snapshot.rooms.single.log?.events, hasLength(8));
       expect(snapshot.attentionCount, 3);
-      expect(snapshot.projectionRooms.rooms.map((r) => r.roomId), [
-        'room-desktop-1',
-      ]);
+      // Desktop's local projection rooms in ui_meta are never rooms here.
+      expect(snapshot.rooms.map((r) => r.room.roomId), ['room-devs']);
       expect(snapshot.hostedGroups.driverStatusFor('room-devs'), isNotNull);
     });
 

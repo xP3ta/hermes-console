@@ -16,7 +16,8 @@ APPLICATION = re.compile(r'^\s*applicationId\s*=\s*"([A-Za-z0-9_.]+)"\s*$', re.M
 MIN_SDK = re.compile(r"^\s*minSdk\s*=\s*([0-9]+)\s*$", re.MULTILINE)
 TARGET_SDK = re.compile(r"^\s*targetSdk\s*=\s*([0-9]+)\s*$", re.MULTILINE)
 ANDROID = "{http://schemas.android.com/apk/res/android}"
-ABIS = ("arm64-v8a", "armeabi-v7a", "x86_64")
+# Flutter's --split-per-abi stamps each APK with abiOffset * 1000 + build number.
+ABI_VERSION_CODE_OFFSETS = {"arm64-v8a": 2000, "armeabi-v7a": 1000, "x86_64": 4000}
 
 
 class SourceError(ValueError):
@@ -62,7 +63,7 @@ def main() -> int:
         if not label:
             raise SourceError
         policy = json.loads(args.policy.read_text(encoding="utf-8"))
-        expected_policy_keys = {"schema", "permissions", "forbiddenPermissions", "foregroundServices", "requiredPackageQueries"}
+        expected_policy_keys = {"schema", "permissions", "forbiddenPermissions", "foregroundServices", "packageQueries"}
         if not isinstance(policy, dict) or set(policy) != expected_policy_keys or policy["schema"] != 1:
             raise SourceError
         value = {
@@ -71,14 +72,14 @@ def main() -> int:
             "package": package,
             "versionName": version_name,
             "versionCode": int(version_code_value),
-            "abiVersionCodes": {abi: int(version_code_value) for abi in ABIS},
+            "abiVersionCodes": {abi: offset + int(version_code_value) for abi, offset in ABI_VERSION_CODE_OFFSETS.items()},
             "minSdk": min_sdk,
             "targetSdk": target_sdk,
             "label": label,
             "permissions": policy["permissions"],
             "forbiddenPermissions": policy["forbiddenPermissions"],
             "foregroundServices": policy["foregroundServices"],
-            "requiredPackageQueries": policy["requiredPackageQueries"],
+            "packageQueries": policy["packageQueries"],
         }
         content = (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode()
         descriptor = os.open(args.output, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)

@@ -195,7 +195,10 @@ usar un vídeo antiguo que solo muestre `dataSync`.
   `FOREGROUND_SERVICE_REMOTE_MESSAGING`, `FOREGROUND_SERVICE_MICROPHONE` y
   `FOREGROUND_SERVICE_MEDIA_PLAYBACK`. El servicio Flutter declara
   `dataSync|remoteMessaging|microphone|mediaPlayback`; el servicio nativo
-  separado declara solo `dataSync`.
+  separado declara solo `dataSync`. Se comprueba sobre el AAB elegido con
+  `bundletool dump manifest` y `tool/release/check_manifest_policy.py`: los dos
+  servicios y sus tipos, y los cinco permisos, tienen que ser exactamente los
+  de `tool/release/full_release_policy.json`.
 - `RECORD_AUDIO` se concede antes de crear el FGS `microphone`; la conversación
   se inicia desde una Activity visible, nunca desde background o
   `BOOT_COMPLETED`.

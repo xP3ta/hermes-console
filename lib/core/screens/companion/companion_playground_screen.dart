@@ -2,12 +2,12 @@ import 'package:flutter/material.dart';
 
 import '../../companion/render/companion_view.dart';
 import '../../companion/state/companion_controller.dart';
-import '../../widgets/hermes_spark_mascot.dart';
+import '../../companion/models/companion_mood.dart';
 
 /// Playground del Companion (006 FASE 2): muestra la mascota **equipada a gran
 /// tamaño** y permite disparar cada animación para lucirlas. Reutiliza
-/// [CompanionView] (que mapea cada [HermesSparkMood] a su estado de animación),
-/// así que funciona igual con el Spark procedural o con un spritesheet
+/// [CompanionView] (que mapea cada [CompanionMood] a su estado de animación),
+/// así que funciona igual con la cara del perfil o con un spritesheet
 /// importado. No toca voz, runtime ni red.
 class CompanionPlaygroundScreen extends StatefulWidget {
   final CompanionController controller;
@@ -21,22 +21,22 @@ class CompanionPlaygroundScreen extends StatefulWidget {
 class _CompanionPlaygroundScreenState
     extends State<CompanionPlaygroundScreen> {
   // Animaciones mostrables (etiqueta visible → mood que las dispara).
-  static const List<({String label, HermesSparkMood mood})> _moves = [
-    (label: 'Reposo', mood: HermesSparkMood.idle),
-    (label: 'Correr', mood: HermesSparkMood.thinking),
-    (label: 'Esperar', mood: HermesSparkMood.waiting),
-    (label: 'Saludar', mood: HermesSparkMood.success),
-    (label: 'Saltar', mood: HermesSparkMood.jump),
-    (label: 'Fallo', mood: HermesSparkMood.error),
+  static const List<({String label, CompanionMood mood})> _moves = [
+    (label: 'Reposo', mood: CompanionMood.idle),
+    (label: 'Correr', mood: CompanionMood.thinking),
+    (label: 'Esperar', mood: CompanionMood.waiting),
+    (label: 'Saludar', mood: CompanionMood.success),
+    (label: 'Saltar', mood: CompanionMood.jump),
+    (label: 'Fallo', mood: CompanionMood.error),
   ];
 
-  HermesSparkMood _mood = HermesSparkMood.idle;
+  CompanionMood _mood = CompanionMood.idle;
 
   /// Cambia con cada pulsación para re-disparar animaciones one-shot
   /// (saludar/saltar/fallo) aunque se repita el mismo estado.
   int _replay = 0;
 
-  void _play(HermesSparkMood mood) {
+  void _play(CompanionMood mood) {
     setState(() {
       _mood = mood;
       _replay++;

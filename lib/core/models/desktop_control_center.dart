@@ -660,12 +660,18 @@ final class ProjectSessionPreview {
   final String title;
   final String preview;
   final double lastActive;
+  final int messageCount;
+
+  /// Profile the server stamped on the row (request scope); '' when absent.
+  final String profile;
 
   const ProjectSessionPreview({
     required this.id,
     required this.title,
     required this.preview,
     required this.lastActive,
+    this.messageCount = 0,
+    this.profile = '',
   });
 
   static ProjectSessionPreview? tryParse(Map<String, dynamic> json) {
@@ -676,6 +682,8 @@ final class ProjectSessionPreview {
       title: _cleanText(json['title']),
       preview: _cleanText(json['preview']),
       lastActive: _safeDouble(json['last_active'] ?? json['started_at']),
+      messageCount: _safeInt(json['message_count']).clamp(0, 1000000),
+      profile: _cleanText(json['profile'], max: 128),
     );
   }
 }
@@ -687,12 +695,20 @@ final class ProjectLane {
   final int totalCount;
   final List<ProjectSessionPreview> sessions;
 
+  /// Trunk lane: the repository's own checkout (not a linked worktree).
+  final bool isMain;
+
+  /// Kanban-managed worktree lane; Desktop hides its "+" too.
+  final bool isKanban;
+
   const ProjectLane({
     required this.id,
     required this.label,
     required this.path,
     required this.totalCount,
     required this.sessions,
+    this.isMain = false,
+    this.isKanban = false,
   });
 
   static ProjectLane? tryParse(Map<String, dynamic> json) {
@@ -711,6 +727,8 @@ final class ProjectLane {
         fallback: sessions.length,
       ).clamp(0, 100000),
       sessions: sessions,
+      isMain: json['isMain'] == true,
+      isKanban: json['isKanban'] == true,
     );
   }
 }
@@ -821,6 +839,66 @@ final class ProjectNode {
         : detail.previewSessions,
     repositories: detail.repositories,
   );
+}
+
+/// A row of `GET /api/git/base-branches`.
+final class ProjectGitBaseBranch {
+  final String name;
+  final bool isRemote;
+  final bool isDefault;
+
+  const ProjectGitBaseBranch({
+    required this.name,
+    this.isRemote = false,
+    this.isDefault = false,
+  });
+
+  static ProjectGitBaseBranch? tryParse(Map<String, dynamic> json) {
+    final name = _cleanText(json['name'], max: 255);
+    if (name.isEmpty) return null;
+    return ProjectGitBaseBranch(
+      name: name,
+      isRemote: json['isRemote'] == true,
+      isDefault: json['isDefault'] == true,
+    );
+  }
+}
+
+/// A row of `GET /api/git/branches`.
+final class ProjectGitBranch {
+  final String name;
+  final bool checkedOut;
+  final bool isDefault;
+  final bool isRemote;
+  final String worktreePath;
+
+  const ProjectGitBranch({
+    required this.name,
+    this.checkedOut = false,
+    this.isDefault = false,
+    this.isRemote = false,
+    this.worktreePath = '',
+  });
+
+  static ProjectGitBranch? tryParse(Map<String, dynamic> json) {
+    final name = _cleanText(json['name'], max: 255);
+    if (name.isEmpty) return null;
+    return ProjectGitBranch(
+      name: name,
+      checkedOut: json['checkedOut'] == true,
+      isDefault: json['isDefault'] == true,
+      isRemote: json['isRemote'] == true,
+      worktreePath: _cleanText(json['worktreePath'], max: 4096),
+    );
+  }
+}
+
+/// Answer of `POST /api/git/worktree/add`.
+final class ProjectWorktreeResult {
+  final String path;
+  final String branch;
+
+  const ProjectWorktreeResult({required this.path, required this.branch});
 }
 
 final class ProjectTreeSnapshot {

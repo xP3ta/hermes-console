@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../l10n/app_localizations.dart';
 import '../services/ssh_manager.dart';
 import '../theme/app_theme.dart';
+import '../design/modal.dart' show showHermesDialogRoute;
 
 /// Diálogo de verificación de host key (TOFU). Se muestra solo cuando el
 /// fingerprint es nuevo (primera conexión) o ha cambiado (posible MITM).
@@ -14,18 +15,23 @@ Future<bool> showSshHostKeyDialog(
   final colors = Theme.of(context).hermes;
   final changed = prompt.changed;
   final tone = changed ? colors.error : colors.warning;
-  final ok = await showDialog<bool>(
+  final ok = await showHermesDialogRoute<bool>(
     context: context,
     barrierDismissible: false,
     builder: (ctx) => AlertDialog(
       title: Row(
         children: [
-          Icon(changed ? Icons.gpp_bad_outlined : Icons.verified_user_outlined,
-              size: 20, color: tone),
+          Icon(
+            changed ? Icons.gpp_bad_outlined : Icons.verified_user_outlined,
+            size: 20,
+            color: tone,
+          ),
           const SizedBox(width: 10),
           Expanded(
             child: Text(
-              changed ? Strings.of(ctx).sshKeyChangedTitle : Strings.of(ctx).sshNewServerTitle,
+              changed
+                  ? Strings.of(ctx).sshKeyChangedTitle
+                  : Strings.of(ctx).sshNewServerTitle,
               style: TextStyle(fontSize: 16, color: colors.textPrimary),
             ),
           ),
@@ -40,7 +46,10 @@ Future<bool> showSshHostKeyDialog(
                 ? Strings.of(ctx).sshKeyChangedBody
                 : Strings.of(ctx).sshNewServerBody,
             style: TextStyle(
-                fontSize: 13, height: 1.45, color: colors.textSecondary),
+              fontSize: 13,
+              height: 1.45,
+              color: colors.textSecondary,
+            ),
           ),
           const SizedBox(height: 14),
           Container(
@@ -54,8 +63,10 @@ Future<bool> showSshHostKeyDialog(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('${prompt.type} · fingerprint',
-                    style: TextStyle(fontSize: 11, color: colors.textDisabled)),
+                Text(
+                  '${prompt.type} · fingerprint',
+                  style: TextStyle(fontSize: 11, color: colors.textTertiary),
+                ),
                 const SizedBox(height: 4),
                 SelectableText(
                   prompt.fingerprint,
@@ -73,10 +84,11 @@ Future<bool> showSshHostKeyDialog(
             '${Strings.of(ctx).sshCheckCmd}'
             'ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub -E sha256',
             style: TextStyle(
-                fontSize: 10.5,
-                height: 1.4,
-                fontFamily: 'monospace',
-                color: colors.textDisabled),
+              fontSize: 10.5,
+              height: 1.4,
+              fontFamily: 'monospace',
+              color: colors.textTertiary,
+            ),
           ),
         ],
       ),
@@ -90,8 +102,12 @@ Future<bool> showSshHostKeyDialog(
           style: changed
               ? FilledButton.styleFrom(backgroundColor: colors.error)
               : null,
-          child: Text(changed ? Strings.of(ctx).sshTrustAnyway : Strings.of(ctx).sshTrustBtn,
-              style: TextStyle(color: colors.onAccent)),
+          child: Text(
+            changed
+                ? Strings.of(ctx).sshTrustAnyway
+                : Strings.of(ctx).sshTrustBtn,
+            style: TextStyle(color: colors.onAccent),
+          ),
         ),
       ],
     ),

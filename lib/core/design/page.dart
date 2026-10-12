@@ -13,10 +13,15 @@ class HermesPage extends StatelessWidget {
   final Future<void> Function()? onRefresh;
   final ScrollController? controller;
   final Widget? floatingActionButton;
+
   final Key? listKey;
 
   /// Extra bottom inset (for example a floating dock).
   final double bottomInset;
+
+  /// Wraps the scrolling body inside the page's scaffold, for pages that sit
+  /// on a shell of their own (the General dock).
+  final Widget Function(Widget body)? wrapBody;
 
   const HermesPage({
     super.key,
@@ -28,6 +33,7 @@ class HermesPage extends StatelessWidget {
     this.floatingActionButton,
     this.listKey,
     this.bottomInset = 0,
+    this.wrapBody,
   });
 
   @override
@@ -35,6 +41,7 @@ class HermesPage extends StatelessWidget {
     Widget list = ListView(
       key: listKey,
       controller: controller,
+      clipBehavior: hermesUnderHeader,
       padding: EdgeInsets.fromLTRB(
         HermesSpace.pageH,
         HermesSpace.pageTop,
@@ -55,7 +62,9 @@ class HermesPage extends StatelessWidget {
         actions: actions,
       ),
       floatingActionButton: floatingActionButton,
-      body: SafeArea(top: false, bottom: false, child: list),
+      body: wrapBody == null
+          ? SafeArea(top: false, bottom: false, child: list)
+          : wrapBody!(SafeArea(top: false, bottom: false, child: list)),
     );
   }
 }
@@ -158,6 +167,7 @@ class _HermesDetailScaffoldState extends State<HermesDetailScaffold> {
     Widget list = ListView(
       key: widget.listKey,
       controller: _scroll,
+      clipBehavior: hermesUnderHeader,
       padding: EdgeInsets.fromLTRB(
         HermesSpace.pageH,
         HermesSpace.x1,

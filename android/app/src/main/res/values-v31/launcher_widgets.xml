@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 12+: the launcher's own corner radius, and the card clipped to it. -->
+<resources>
+    <dimen name="lw_radius">@android:dimen/system_app_widget_background_radius</dimen>
+
+    <style name="LW.Card">
+        <item name="android:background">@drawable/lw_card</item>
+        <item name="android:clipToOutline">true</item>
+    </style>
+</resources>

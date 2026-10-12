@@ -26,6 +26,7 @@ Color botIdentityColor(
       HermesBlobatarFaceVisual.tryParse(
         shapeWire: profile.botFaceShape ?? 'blobatar',
         profileName: profile.name,
+        colorHex: profile.botFaceColorHex,
       ) ??
       HermesBlobatarFaceVisual.tryParse(
         shapeWire: 'blobatar',

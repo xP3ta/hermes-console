@@ -409,10 +409,13 @@ void main() {
     'Dashboard keeps child sessions folded without exposing a fake toggle',
     (tester) async {
       final queries = <Map<String, String>>[];
+      // A delegate run: real branches are their own rows (see
+      // session_onestore_branches_test.dart).
       final child = _sessionRow(
         1,
         id: 'child-session',
         title: 'Hidden child session',
+        source: 'subagent',
       )..['parent_session_id'] = 'session-0';
       final dashboardHttp = MockClient((request) async {
         if (request.url.path == '/api/sessions') {
@@ -541,7 +544,7 @@ void main() {
     expect(queries, hasLength(1));
     expect(
       queries.single['exclude_sources'],
-      'cron,kanban,subagent,tool,acp,hermes_flow,vulcan_delegate,webhook',
+      'cron,kanban,subagent,tool,acp,hermes_flow,vulcan_delegate,webhook,oneshot',
     );
     expect(queries.single['sources'], isNull);
     expect(queries.single['source'], isNull);
@@ -555,7 +558,7 @@ void main() {
     expect(queries, hasLength(2));
     expect(
       queries.last['sources'],
-      'cron,kanban,subagent,tool,acp,hermes_flow,vulcan_delegate,webhook',
+      'cron,kanban,subagent,tool,acp,hermes_flow,vulcan_delegate,webhook,oneshot',
     );
     expect(queries.last['exclude_sources'], isNull);
     expect(queries.last['archived'], 'exclude');
@@ -568,7 +571,7 @@ void main() {
     expect(queries, hasLength(3));
     expect(
       queries.last['sources'],
-      'cron,kanban,subagent,tool,acp,hermes_flow,vulcan_delegate,webhook',
+      'cron,kanban,subagent,tool,acp,hermes_flow,vulcan_delegate,webhook,oneshot',
     );
     expect(queries.last['exclude_sources'], isNull);
     expect(queries.last['archived'], 'only');
@@ -732,6 +735,69 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  // Hermes searches ids and FTS5 message tokens by prefix only ("9485*"
+  // never matches the token "qa9485") and never titles. Desktop merges the
+  // loaded sessions that contain the query (id, title, preview, cwd,
+  // branch, source) after the server hits (`mergeSearchResults`), so a
+  // chat titled "QA 9485" is found by "9485" there.
+  testWidgets('a loaded chat whose title contains the query is found even '
+      'when the server search has no hit (Desktop merge parity)', (
+    tester,
+  ) async {
+    var searches = 0;
+    final dashboardHttp = MockClient((request) async {
+      if (request.url.path == '/api/sessions') {
+        return _pageResponse(
+          [
+            _sessionRow(0, title: 'QA 9485'),
+            _sessionRow(1, title: 'Other conversation'),
+          ],
+          total: 2,
+          limit: 50,
+          offset: 0,
+        );
+      }
+      if (request.url.path == '/api/sessions/search') {
+        searches++;
+        return http.Response(jsonEncode({'results': <Object>[]}), 200);
+      }
+      return http.Response('{}', 404);
+    });
+    final dashboard = _dashboard(dashboardHttp);
+    final gateway = _gateway(_healthyGatewayHttp());
+    final repository = SessionRepository(dashboard, gateway);
+    addTearDown(() {
+      repository.close();
+      dashboard.close();
+    });
+
+    await tester.pumpWidget(
+      _host(
+        SessionListScreen(
+          connection: _connection(),
+          connManager: await _manager(),
+          clientOverride: gateway,
+          repositoryOverride: repository,
+        ),
+      ),
+    );
+    await _pumpUntil(tester, find.text('Other conversation'));
+
+    await tester.enterText(find.byType(TextField), '9485');
+    await tester.pump(const Duration(milliseconds: 221));
+    for (var i = 0; i < 40; i++) {
+      await tester.pump(const Duration(milliseconds: 25));
+      if (searches == 1 && find.text('Other conversation').evaluate().isEmpty) {
+        break;
+      }
+    }
+    expect(find.text('Other conversation'), findsNothing);
+
+    expect(searches, 1);
+    expect(find.text('QA 9485'), findsWidgets);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('unavailable remote search falls back with a scope notice', (
     tester,
   ) async {
@@ -843,7 +909,11 @@ void main() {
     );
     await _pumpUntil(tester, find.text('Conversation 0'));
 
-    await tester.fling(find.byType(ListView), const Offset(0, -8000), 5000);
+    await tester.fling(
+      find.byType(CustomScrollView),
+      const Offset(0, -8000),
+      5000,
+    );
     for (var attempt = 0; attempt < 40 && !offsets.contains(50); attempt++) {
       await tester.pump(const Duration(milliseconds: 25));
     }
@@ -1022,10 +1092,11 @@ void main() {
       await _pumpUntil(tester, find.text('Conversation 0'));
       rosterFails = true;
 
-      // Backoff never undercuts the 1 s base (jitter spreads above it).
+      // Backoff never undercuts the 1 s base (jitter spreads above it; the
+      // first attempt over [1 s, 1.5 s], so 0.75 → 1.375 s).
       events.addError(StateError('offline'));
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 999));
+      await tester.pump(const Duration(milliseconds: 1374));
       expect(reconnects, 0);
       await tester.pump(const Duration(milliseconds: 1));
       expect(reconnects, 1);
@@ -1047,7 +1118,7 @@ void main() {
       rosterFails = false;
       events.addError(StateError('lost after a stable interval'));
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 999));
+      await tester.pump(const Duration(milliseconds: 1374));
       expect(reconnects, 2);
       await tester.pump(const Duration(milliseconds: 1));
       expect(
@@ -1297,7 +1368,7 @@ void main() {
     final label = tester.widget<Text>(
       find.byKey(const ValueKey('session-running-session-0')),
     );
-    expect(label.data, 'background work', reason: 'never "working"');
+    expect(label.data, 'Background · 1', reason: 'never "working"');
     await tester.pumpWidget(const SizedBox());
     await tester.pump(const Duration(seconds: 61));
   });
@@ -1397,7 +1468,7 @@ void main() {
     final label = tester.widget<Text>(
       find.byKey(const ValueKey('session-running-session-0')),
     );
-    expect(label.data, startsWith('working'));
+    expect(label.data, startsWith('Working…'));
     await tester.pumpWidget(const SizedBox());
     await tester.pump(const Duration(seconds: 61));
   });
@@ -1993,6 +2064,71 @@ void main() {
         ),
         hasLength(1),
       );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'library safety refresh sleeps in background and restarts on resume',
+    (tester) async {
+      var pageRequests = 0;
+      final dashboard = _dashboard(
+        MockClient((request) async {
+          if (request.url.path != '/api/sessions') {
+            return http.Response('{}', 404);
+          }
+          pageRequests += 1;
+          return _pageResponse(
+            [_sessionRow(0, title: 'Quiet conversation')],
+            total: 1,
+            limit: 50,
+            offset: 0,
+          );
+        }),
+      );
+      final gateway = _gateway(_healthyGatewayHttp());
+      final repository = SessionRepository(dashboard, gateway);
+      addTearDown(() {
+        repository.close();
+        dashboard.close();
+      });
+      await tester.pumpWidget(
+        _host(
+          SessionListScreen(
+            connection: _connection(),
+            connManager: await _manager(),
+            clientOverride: gateway,
+            repositoryOverride: repository,
+            eventStreamOverride: const Stream<TuiGatewayEvent>.empty(),
+          ),
+        ),
+      );
+      await _pumpUntil(tester, find.text('Quiet conversation'));
+      await tester.pump(const Duration(seconds: 1));
+      final initial = pageRequests;
+
+      await tester.pump(const Duration(seconds: 30));
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      await tester.pump(const Duration(seconds: 50));
+      expect(pageRequests, initial, reason: 'no refresh in background');
+
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      for (var i = 0; i < 40 && pageRequests == initial; i++) {
+        await tester.pump(const Duration(milliseconds: 25));
+      }
+      final afterResume = pageRequests;
+      expect(afterResume, greaterThan(initial), reason: 'resume refreshes');
+
+      // The next safety refresh is a full interval after the resume, not the
+      // stale tick that the background phase would have fired 40 s later.
+      await tester.pump(const Duration(seconds: 45));
+      expect(pageRequests, afterResume);
+      await tester.pump(const Duration(seconds: 20));
+      expect(pageRequests, greaterThan(afterResume));
       expect(tester.takeException(), isNull);
     },
   );

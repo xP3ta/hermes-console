@@ -3,7 +3,6 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hermes_android/core/services/bridge_client.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/utils/api_error.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
@@ -477,26 +476,11 @@ void main() {
   });
 
   testWidgets(
-    'Bridge y validación cron no filtran literales españoles en inglés',
+    'official failures and cron validation are localized without private details',
     (tester) async {
       final errors = <Object>[
-        const BridgeException(
-          'cron_remove_unconfirmed',
-          'El bridge no confirmó la eliminación del cron.',
-        ),
-        const BridgeException(
-          'attachment_too_large',
-          'El adjunto está vacío o supera el límite permitido.',
-        ),
-        const BridgeException(
-          'image_invalid_type',
-          'El servidor no devolvió una imagen.',
-        ),
-        const BridgeException(
-          'remote_auth_copy',
-          'Token inválido',
-          kind: BridgeErrorKind.auth,
-        ),
+        const CronDeleteRejectedException(),
+        const DashboardHttpException(401, body: 'synthetic-secret-canary'),
         ArgumentError.value('../job', 'jobId'),
         ArgumentError.value('../profile', 'profile'),
       ];
@@ -504,13 +488,9 @@ void main() {
       await tester.pumpWidget(localizedFailureHost(const Locale('en'), errors));
       await tester.pumpAndSettle();
 
-      expect(find.textContaining('did not confirm'), findsOneWidget);
-      expect(
-        find.textContaining('attachment is empty or too large'),
-        findsOneWidget,
-      );
-      expect(find.textContaining('did not return an image'), findsOneWidget);
-      expect(find.textContaining('token or permissions'), findsOneWidget);
+      expect(find.textContaining('Nothing was deleted'), findsOneWidget);
+      expect(find.textContaining('credentials or permissions'), findsOneWidget);
+      expect(find.textContaining('synthetic-secret-canary'), findsNothing);
       expect(
         find.textContaining('scheduled task identifier is invalid'),
         findsOneWidget,

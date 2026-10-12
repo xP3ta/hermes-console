@@ -1,6 +1,6 @@
 # Roadmap
 
-Hermes Console follows the public contracts exposed by Hermes Agent and adapts
+Console follows the public contracts exposed by Hermes Agent and adapts
 them to Android without inventing server APIs.
 
 ## Current priorities
@@ -16,7 +16,6 @@ them to Android without inventing server APIs.
 
 - Broader automated integration coverage against supported Hermes Agent
   versions.
-- Signed GitHub releases compatible with Obtainium.
 - Continued Google Play policy and target-SDK maintenance.
 - Contributor documentation for adding server capabilities without coupling
   the app to a private deployment.

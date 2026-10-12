@@ -26,24 +26,19 @@ enum BotPresence {
     required DateTime now,
     Iterable<DesktopActiveSession> liveSessions = const [],
     Iterable<BotRoomSeat> roomSeats = const [],
+    Set<String> ambiguousSessionIds = const {},
   }) {
     var result = BotPresence.idle;
     void lift(BotPresence candidate) {
       if (candidate.priority > result.priority) result = candidate;
     }
 
-    final ownIds = _ownSessionIds(profile);
-    for (final live in liveSessions) {
-      final stored = live.storedSessionId;
-      if (stored == null || !ownIds.contains(stored)) continue;
-      switch (live.status) {
-        case 'waiting':
-          lift(BotPresence.attention);
-        case 'starting':
-          lift(BotPresence.thinking);
-        case 'working':
-          lift(BotPresence.working);
-      }
+    for (final live in _ownLiveSessions(
+      profile,
+      liveSessions,
+      ambiguousSessionIds,
+    )) {
+      lift(ofLiveStatus(live.status));
     }
     if (workerIsFresh(profile.workerSession, now)) lift(BotPresence.working);
     for (final seat in roomSeats) {
@@ -59,9 +54,124 @@ enum BotPresence {
     return result;
   }
 
+  /// Stored ids that more than one of [profiles] owns. `session.active_list`
+  /// carries no profile, so a live row with such an id cannot be attributed.
+  static Set<String> ambiguousSessionIds(Iterable<AgentProfile> profiles) {
+    final owners = <String, int>{};
+    for (final profile in profiles) {
+      for (final id in _ownSessionIds(profile)) {
+        owners[id] = (owners[id] ?? 0) + 1;
+      }
+    }
+    return {
+      for (final entry in owners.entries)
+        if (entry.value > 1) entry.key,
+    };
+  }
+
+  /// The `session.active_list` row that makes [profile] busy: the most
+  /// pressing one (attention, then working, then thinking), the most recent
+  /// among equals. Null when none of its own sessions is live.
+  static DesktopActiveSession? liveSessionFor(
+    AgentProfile profile,
+    Iterable<DesktopActiveSession> liveSessions, {
+    Set<String> ambiguousSessionIds = const {},
+  }) {
+    DesktopActiveSession? best;
+    final epoch = DateTime.fromMillisecondsSinceEpoch(0);
+    for (final live in _ownLiveSessions(
+      profile,
+      liveSessions,
+      ambiguousSessionIds,
+    )) {
+      final presence = ofLiveStatus(live.status);
+      if (presence == BotPresence.idle) continue;
+      if (best == null) {
+        best = live;
+        continue;
+      }
+      final bestPresence = ofLiveStatus(best.status);
+      final newer = (live.lastActiveAt ?? epoch).isAfter(
+        best.lastActiveAt ?? epoch,
+      );
+      if (presence.priority > bestPresence.priority ||
+          (presence == bestPresence && newer)) {
+        best = live;
+      }
+    }
+    return best;
+  }
+
+  /// What `session.active_list` says about [profile]'s canonical Bot Chat
+  /// alone (its id or lineage tip). Other chats of the profile do not count,
+  /// and an id [ambiguousSessionIds] gives to two profiles counts for none.
+  static BotPresence ofBotChat(
+    AgentProfile profile,
+    Iterable<DesktopActiveSession> liveSessions, {
+    Set<String> ambiguousSessionIds = const {},
+  }) {
+    final ids = botChatIds(profile);
+    var best = BotPresence.idle;
+    for (final live in liveSessions) {
+      final stored = live.storedSessionId;
+      if (stored == null ||
+          !ids.contains(stored) ||
+          ambiguousSessionIds.contains(stored)) {
+        continue;
+      }
+      final presence = ofLiveStatus(live.status);
+      if (presence.priority > best.priority) best = presence;
+    }
+    return best;
+  }
+
+  /// Ids of [profile]'s canonical Bot Chat: the stored row and its tip.
+  static Set<String> botChatIds(AgentProfile profile) => {
+    if (profile.canonicalSession case final summary?) ...[
+      summary.id,
+      ?summary.resolvedId,
+    ],
+  };
+
+  /// Rows of [liveSessions] that belong to [profile]. Matching is by the
+  /// profile's own stored ids only, and an id [ambiguous] between profiles
+  /// matches nobody.
+  static Iterable<DesktopActiveSession> _ownLiveSessions(
+    AgentProfile profile,
+    Iterable<DesktopActiveSession> liveSessions,
+    Set<String> ambiguous,
+  ) sync* {
+    final ownIds = _ownSessionIds(profile);
+    for (final live in liveSessions) {
+      final stored = live.storedSessionId;
+      if (stored == null ||
+          !ownIds.contains(stored) ||
+          ambiguous.contains(stored)) {
+        continue;
+      }
+      yield live;
+    }
+  }
+
+  /// Presence a `session.active_list` row status stands for (the one mapping
+  /// [derive] uses too).
+  static BotPresence ofLiveStatus(String? status) => switch (status) {
+    'waiting' => BotPresence.attention,
+    'starting' || 'resuming' => BotPresence.thinking,
+    'working' || 'streaming' => BotPresence.working,
+    _ => BotPresence.idle,
+  };
+
   static bool workerIsFresh(AgentProfileWorkerSession? worker, DateTime now) {
     if (worker == null) return false;
-    final age = now.millisecondsSinceEpoch / 1000 - worker.lastActive;
+    return isFreshActivity(worker.lastActive, now);
+  }
+
+  /// Whether server activity at [lastActiveSeconds] (epoch seconds) still
+  /// counts as ongoing work at [now]: within [workerFreshness], tolerating
+  /// [futureSkew] of clock drift.
+  static bool isFreshActivity(num lastActiveSeconds, DateTime now) {
+    final age = now.millisecondsSinceEpoch / 1000 - lastActiveSeconds;
     return age >= -futureSkew.inSeconds && age <= workerFreshness.inSeconds;
   }
 

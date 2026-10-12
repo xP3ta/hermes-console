@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
+import 'app_theme.dart';
 import 'component_profile.dart';
 import 'theme_profile.dart';
 import 'theme_profile_adapter.dart';
@@ -43,6 +44,10 @@ final class ThemeProfileStoreSnapshot {
   final bool hasFutureSchema;
   final List<ThemeProfileWarning> warnings;
 
+  /// "Auto": the active built-in family follows the system appearance
+  /// (light variant by day, dark by night). Never set for custom themes.
+  final bool followSystem;
+
   const ThemeProfileStoreSnapshot({
     required this.customProfiles,
     required this.activeProfileId,
@@ -50,6 +55,7 @@ final class ThemeProfileStoreSnapshot {
     this.quarantinedPayload,
     this.hasFutureSchema = false,
     this.warnings = const [],
+    this.followSystem = false,
   });
 
   ThemeProfile? customById(String id) {
@@ -73,6 +79,7 @@ final class ThemeProfileStore {
   static const String draftsKey = 'theme_drafts_v1';
   static const String quarantineKey = 'quarantined_theme_v1';
   static const String legacyThemeKey = 'theme_mode';
+  static const String followSystemKey = 'theme_follow_system';
 
   final SharedPreferences _prefs;
   final String Function() _newId;
@@ -80,9 +87,10 @@ final class ThemeProfileStore {
   bool _loaded = false;
   List<ThemeProfile> _profiles = const [];
   List<Object?> _futureDocuments = const [];
-  String _activeProfileId = 'amber';
+  String _activeProfileId = AppTheme.defaultThemeId;
   String _activeComponentProfileId = ComponentProfiles.minimal.id;
   bool _hasFutureSchema = false;
+  bool _followSystem = false;
   List<ThemeProfileWarning> _warnings = const [];
 
   ThemeProfileStore(this._prefs, {String Function()? idFactory})
@@ -95,6 +103,7 @@ final class ThemeProfileStore {
     _futureDocuments = const [];
     _warnings = const [];
     _hasFutureSchema = false;
+    _followSystem = _prefs.getBool(followSystemKey) ?? false;
 
     final storedEnvelopeSchema = _prefs.getInt(schemaVersionKey);
     final rawProfiles = _prefs.getString(customProfilesKey);
@@ -180,7 +189,10 @@ final class ThemeProfileStore {
         _prefs.getString(activeProfileKey) ?? _prefs.getString(legacyThemeKey);
     _activeProfileId = _resolveActive(requestedActive);
     if (_activeProfileId != requestedActive && requestedActive != null) {
+      // Migrated once: both keys carry the survivor, so the first frame of
+      // the next start reads it directly and nothing migrates again.
       await _prefs.setString(activeProfileKey, _activeProfileId);
+      await _prefs.setString(legacyThemeKey, _activeProfileId);
     }
     _activeComponentProfileId = await _readComponentProfile();
 
@@ -324,7 +336,9 @@ final class ThemeProfileStore {
     );
   }
 
-  Future<void> activate(String id) async {
+  /// Activates [id]. [followSystem] ("Auto") only applies to built-in
+  /// themes; any manual pick or custom theme turns it off.
+  Future<void> activate(String id, {bool followSystem = false}) async {
     await _ensureLoaded();
     await _useUnifiedComponentProfile();
     if (ThemeProfileAdapter.isBuiltinId(id)) {
@@ -332,6 +346,7 @@ final class ThemeProfileStore {
       await _prefs.setString(activeProfileKey, id);
       // Keep the legacy key synchronized until main.dart adopts ThemeProfile.
       await _prefs.setString(legacyThemeKey, id);
+      await _setFollowSystem(followSystem);
       return;
     }
     final profile = _profileById(id);
@@ -350,6 +365,16 @@ final class ThemeProfileStore {
     }
     _activeProfileId = id;
     await _prefs.setString(activeProfileKey, id);
+    await _setFollowSystem(false);
+  }
+
+  Future<void> _setFollowSystem(bool value) async {
+    _followSystem = value;
+    if (value) {
+      await _prefs.setBool(followSystemKey, true);
+    } else {
+      await _prefs.remove(followSystemKey);
+    }
   }
 
   Future<void> delete(String id) async {
@@ -366,7 +391,7 @@ final class ThemeProfileStore {
     if (profiles.length == before) return;
     _profiles = List.unmodifiable(profiles);
     if (_activeProfileId == id) {
-      _activeProfileId = 'amber';
+      _activeProfileId = AppTheme.defaultThemeId;
       await _prefs.setString(activeProfileKey, _activeProfileId);
       await _prefs.setString(legacyThemeKey, _activeProfileId);
     }
@@ -389,7 +414,7 @@ final class ThemeProfileStore {
         ThemeProfileValidator.validate(active).isActivatable) {
       return;
     }
-    _activeProfileId = 'amber';
+    _activeProfileId = AppTheme.defaultThemeId;
     await _prefs.setString(activeProfileKey, _activeProfileId);
     await _prefs.setString(legacyThemeKey, _activeProfileId);
   }
@@ -401,6 +426,8 @@ final class ThemeProfileStore {
     quarantinedPayload: _prefs.getString(quarantineKey),
     hasFutureSchema: _hasFutureSchema,
     warnings: List.unmodifiable(_warnings),
+    followSystem:
+        _followSystem && ThemeProfileAdapter.isBuiltinId(_activeProfileId),
   );
 
   String _resolveActive(String? requested) {
@@ -415,7 +442,7 @@ final class ThemeProfileStore {
       final migrated = ThemeProfileAdapter.resolveLegacyBuiltinId(requested);
       if (ThemeProfileAdapter.isBuiltinId(migrated)) return migrated;
     }
-    return 'amber';
+    return AppTheme.defaultThemeId;
   }
 
   Future<String> _readComponentProfile() async {

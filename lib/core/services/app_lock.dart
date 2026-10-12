@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:math';
 
+import 'app_lock_sensitive_read_fence.dart';
+
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -32,7 +34,9 @@ class AppLockService {
   final LocalAuthentication _localAuth;
 
   /// Estado observable: true mientras la app está bloqueada.
-  final ValueNotifier<bool> locked = ValueNotifier(false);
+  late final ValueNotifier<bool> locked = _DisclosureLockNotifier(
+    () => AppLockSensitiveReadFence.configurationChanged(this),
+  );
 
   int _failedAttempts = 0;
   DateTime? _cooldownUntil;
@@ -49,6 +53,7 @@ class AppLockService {
   }) : _storage = storage ?? const FlutterSecureStorage(),
        _localAuth = localAuth ?? LocalAuthentication() {
     locked.value = enabled;
+    AppLockSensitiveReadFence.bind(this, _prefs, locked);
     _loadCooldown();
   }
 
@@ -65,7 +70,8 @@ class AppLockService {
         await _storage.delete(key: _kCooldownUntil);
       }
     } catch (e) {
-      debugPrint('[app-lock] excepción silenciada (se ignora sin más): $e');}
+      debugPrint('[app-lock] excepción silenciada (se ignora sin más): $e');
+    }
   }
 
   bool get enabled => _prefs.getBool(_kEnabled) ?? false;
@@ -83,12 +89,16 @@ class AppLockService {
   /// Activa el bloqueo. El PIN debe haberse configurado antes con [setPin].
   Future<void> enable() async {
     assert(await hasPin(), 'enable() requiere un PIN configurado');
+    AppLockSensitiveReadFence.configurationChanged(this);
     await _prefs.setBool(_kEnabled, true);
+    AppLockSensitiveReadFence.configurationChanged(this);
   }
 
   /// Desactiva el bloqueo y elimina el PIN y sus flags.
   Future<void> disable() async {
+    AppLockSensitiveReadFence.configurationChanged(this);
     await _prefs.setBool(_kEnabled, false);
+    AppLockSensitiveReadFence.configurationChanged(this);
     await _prefs.setBool(_kBiometric, false);
     await _storage.delete(key: _kPinSalt);
     await _storage.delete(key: _kPinHash);
@@ -240,7 +250,10 @@ class AppLockService {
 
   // ── Ciclo de vida (llamado por AppLockGate) ───────────────────────────
 
+  void releaseDisclosure() => AppLockSensitiveReadFence.unbind(this);
+
   void onAppPaused() {
+    AppLockSensitiveReadFence.foreground(this, false);
     if (!enabled || authInProgress) return;
     _backgroundedAt ??= DateTime.now();
   }
@@ -248,8 +261,27 @@ class AppLockService {
   void onAppResumed() {
     final at = _backgroundedAt;
     _backgroundedAt = null;
-    if (!enabled || authInProgress || at == null) return;
+    if (!enabled || authInProgress || at == null) {
+      AppLockSensitiveReadFence.foreground(this, true);
+      return;
+    }
     final elapsed = DateTime.now().difference(at).inSeconds;
     if (elapsed >= timeoutSeconds) locked.value = true;
+    AppLockSensitiveReadFence.foreground(this, true);
+  }
+}
+
+class _DisclosureLockNotifier extends ValueNotifier<bool> {
+  _DisclosureLockNotifier(this._changed) : super(false);
+  final VoidCallback _changed;
+  bool _state = false;
+  @override
+  bool get value => _state;
+  @override
+  set value(bool value) {
+    if (_state == value) return;
+    _state = value;
+    _changed();
+    notifyListeners();
   }
 }

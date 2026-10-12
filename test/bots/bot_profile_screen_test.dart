@@ -25,7 +25,8 @@ final class _FakeGateway implements BotModelGateway, BotProfileGateway {
             'name': 'OpenAI',
             'is_current': true,
             'authenticated': true,
-            'models': ['gpt-5.5', 'gpt-5.5-mini'],
+            'models': ['gpt-5.5', 'gpt-5.5-mini', 'retired-model'],
+            'unavailable_models': ['retired-model'],
           },
         ],
       });
@@ -97,6 +98,7 @@ void main() {
     WidgetTester tester, {
     List<BotNowItem> now = const [],
     bool readOnly = false,
+    void Function()? onSkills,
     void Function()? onChanged,
   }) async {
     await tester.binding.setSurfaceSize(const Size(420, 1400));
@@ -118,7 +120,7 @@ void main() {
           onChat: () {},
           onRoutines: () {},
           onSoul: () {},
-          onSkills: () {},
+          onSkills: onSkills ?? () {},
           onMemory: () {},
           onRooms: () {},
           onChanged: onChanged,
@@ -150,6 +152,17 @@ void main() {
     ]) {
       expect(find.byKey(ValueKey(key)), findsOneWidget);
     }
+  });
+
+  testWidgets('Skills and tools delegates to the scoped route callback', (
+    tester,
+  ) async {
+    var opens = 0;
+    await pumpProfile(tester, onSkills: () => opens++);
+
+    await tester.tap(find.byKey(const ValueKey('bot-profile-skills')));
+
+    expect(opens, 1);
   });
 
   testWidgets('changing the model calls profiles.configure', (tester) async {
@@ -189,6 +202,32 @@ void main() {
     expect(gateway.configures, hasLength(2));
     expect(gateway.configures.last.$2['confirm_expensive_model'], isTrue);
   });
+
+  testWidgets(
+    'unavailable Bot model is visible but cannot configure the profile',
+    (tester) async {
+      final gateway = await pumpProfile(tester);
+      await tester.tap(find.byKey(const ValueKey('bot-profile-model')));
+      await tester.pumpAndSettle();
+      final retired = find.byKey(
+        const ValueKey('bot-profile-model-openai-retired-model'),
+      );
+      expect(retired, findsOneWidget);
+      expect(tester.widget<InkWell>(retired).onTap, isNull);
+      await tester.tap(retired);
+      await tester.pumpAndSettle();
+      expect(gateway.configures, isEmpty);
+      expect(
+        find.byKey(const ValueKey('bot-profile-model-picker')),
+        findsOneWidget,
+      );
+      await tester.tap(
+        find.byKey(const ValueKey('bot-profile-model-openai-gpt-5.5-mini')),
+      );
+      await tester.pumpAndSettle();
+      expect(gateway.configures.single.$2['model'], 'gpt-5.5-mini');
+    },
+  );
 
   testWidgets('reasoning is editable per bot', (tester) async {
     final gateway = await pumpProfile(tester);

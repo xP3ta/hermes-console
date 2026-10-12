@@ -16,6 +16,44 @@ import 'hermes_drawer.dart' show buildHermesToolDestinations;
 /// Reutilizan EXACTAMENTE las mismas pantallas y criterios de capacidades
 /// que ya usa [HermesDrawer] para las mismas secciones, para no duplicar
 /// navegación (ver [buildHermesToolDestinations]).
+WidgetBuilder dockCronBuilder(
+  SavedConnection connection,
+  ConnectionManager connManager,
+) =>
+    (_) => CronScreen(connection: connection, connManager: connManager);
+
+WidgetBuilder dockTasksBuilder(
+  SavedConnection connection,
+  ConnectionManager connManager,
+) =>
+    (_) => TasksScreen(connection: connection, connManager: connManager);
+
+WidgetBuilder dockSessionsBuilder(
+  SavedConnection connection,
+  ConnectionManager connManager,
+) =>
+    (_) => SessionListScreen(connection: connection, connManager: connManager);
+
+/// The hub lists what the server can do now, read when the screen opens.
+WidgetBuilder dockToolsBuilder(
+  SavedConnection? connection,
+  ConnectionManager connManager,
+) => (context) {
+  final capabilities = connection == null
+      ? const CapabilityMatrix()
+      : connManager.loadCapabilities(connection.id);
+  return ToolsHubScreen(
+    destinations: buildHermesToolDestinations(
+      context: context,
+      connection: connection,
+      connManager: connManager,
+      capabilities: capabilities,
+    ),
+    connection: connection,
+    connManager: connManager,
+  );
+};
+
 void openDockCron(
   BuildContext context,
   SavedConnection connection,
@@ -23,10 +61,7 @@ void openDockCron(
 ) {
   Navigator.push(
     context,
-    MaterialPageRoute(
-      builder: (_) =>
-          CronScreen(connection: connection, connManager: connManager),
-    ),
+    MaterialPageRoute(builder: dockCronBuilder(connection, connManager)),
   );
 }
 
@@ -37,10 +72,7 @@ void openDockTasks(
 ) {
   Navigator.push(
     context,
-    MaterialPageRoute(
-      builder: (_) =>
-          TasksScreen(connection: connection, connManager: connManager),
-    ),
+    MaterialPageRoute(builder: dockTasksBuilder(connection, connManager)),
   );
 }
 
@@ -51,10 +83,7 @@ void openDockSessions(
 ) {
   Navigator.push(
     context,
-    MaterialPageRoute(
-      builder: (_) =>
-          SessionListScreen(connection: connection, connManager: connManager),
-    ),
+    MaterialPageRoute(builder: dockSessionsBuilder(connection, connManager)),
   );
 }
 
@@ -63,23 +92,8 @@ void openDockTools(
   SavedConnection? connection,
   ConnectionManager connManager,
 ) {
-  final capabilities = connection == null
-      ? const CapabilityMatrix()
-      : connManager.loadCapabilities(connection.id);
-  final destinations = buildHermesToolDestinations(
-    context: context,
-    connection: connection,
-    connManager: connManager,
-    capabilities: capabilities,
-  );
   Navigator.push(
     context,
-    MaterialPageRoute(
-      builder: (_) => ToolsHubScreen(
-        destinations: destinations,
-        connection: connection,
-        connManager: connManager,
-      ),
-    ),
+    MaterialPageRoute(builder: dockToolsBuilder(connection, connManager)),
   );
 }

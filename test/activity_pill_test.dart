@@ -7,11 +7,9 @@ import 'package:hermes_android/core/models/session_activity.dart';
 import 'package:hermes_android/core/models/subagent_activity.dart';
 import 'package:hermes_android/core/services/session_reconciler.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
-import 'package:hermes_android/core/widgets/activity_panel.dart';
 import 'package:hermes_android/core/widgets/activity_task_linger.dart';
 import 'package:hermes_android/core/widgets/agent_task_widgets.dart'
     show latestAgentTaskStepId;
-import 'package:hermes_android/core/widgets/activity_pill.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 
 final DateTime _t0 = DateTime(2026, 9, 21, 12);
@@ -128,16 +126,10 @@ Widget _app(
 /// Réplica de la geometría del chat: transcript con «último mensaje» arriba,
 /// pila flotante anclada abajo y un compositor debajo.
 class _Harness extends StatefulWidget {
-  const _Harness({
-    required this.initial,
-    required this.clock,
-    this.actions,
-    super.key,
-  });
+  const _Harness({required this.initial, required this.clock, super.key});
 
   final ActivitySnapshot initial;
   final _Clock clock;
-  final ActivityPanelActions? actions;
 
   @override
   State<_Harness> createState() => _HarnessState();
@@ -175,7 +167,6 @@ class _HarnessState extends State<_Harness> {
                     ActivityTaskLingerHost(
                       snapshot: snapshot,
                       clock: () => widget.clock.now,
-                      actions: widget.actions ?? ActivityPanelActions.none,
                     ),
                   ],
                 ),
@@ -194,14 +185,11 @@ class _HarnessState extends State<_Harness> {
 }
 
 Finder get _pill => find.byKey(const ValueKey('activity-pill'));
-Finder get _panel => find.byKey(const ValueKey('activity-panel'));
-Finder get _frame => find.byKey(const ValueKey('activity-panel-frame'));
 
 Future<GlobalKey<_HarnessState>> _pump(
   WidgetTester tester,
   ActivitySnapshot snapshot, {
   _Clock? clock,
-  ActivityPanelActions? actions,
   bool reduceMotion = true,
   double textScale = 1,
   ThemeData? theme,
@@ -213,7 +201,6 @@ Future<GlobalKey<_HarnessState>> _pump(
         key: key,
         initial: snapshot,
         clock: clock ?? _Clock(_t0.add(const Duration(seconds: 10))),
-        actions: actions,
       ),
       reduceMotion: reduceMotion,
       textScale: textScale,
@@ -222,12 +209,6 @@ Future<GlobalKey<_HarnessState>> _pump(
   );
   await tester.pump();
   return key;
-}
-
-Future<void> _openPanel(WidgetTester tester) async {
-  await tester.tap(_pill);
-  await tester.pump();
-  await tester.pump(const Duration(milliseconds: 400));
 }
 
 void main() {
@@ -245,7 +226,7 @@ void main() {
         expect(find.byKey(ValueKey(legacy)), findsNothing, reason: legacy);
       }
       // La acción manda, las tareas van dentro y lo demás se resume.
-      expect(find.textContaining('terminal'), findsWidgets);
+      expect(find.textContaining('Ejecutando'), findsWidgets);
       expect(find.byKey(const ValueKey('activity-task-chip')), findsOneWidget);
       // La compactación NO vive en la pastilla: tiene su barra sobre el input.
       expect(find.textContaining('Compactando'), findsNothing);
@@ -271,7 +252,7 @@ void main() {
       final text = tester.widget<Text>(
         find.byKey(const ValueKey('activity-pill-text')),
       );
-      expect(text.textSpan!.toPlainText(), 'terminal · date');
+      expect(text.textSpan!.toPlainText(), 'Ejecutando · date');
       expect(find.text('1/4'), findsOneWidget);
       expect(
         tester
@@ -293,56 +274,6 @@ void main() {
     });
 
     testWidgets(
-      'el panel abierto omite snapshots iguales y actualiza cambios reales',
-      (tester) async {
-        ActivitySnapshot snapshot(String headline) => ActivitySnapshot(
-          turnActive: true,
-          turnStartedAt: _t0,
-          headline: headline,
-          schedules: const [
-            SessionActivitySchedule(
-              kind: SessionActivityScheduleKind.heartbeat,
-              status: 'running',
-              interval: Duration(minutes: 5),
-              lastRunAt: null,
-              nextDueAt: null,
-              runCount: 2,
-            ),
-          ],
-        );
-        final harness = await _pump(tester, snapshot('Conectando'));
-        await _openPanel(tester);
-
-        final panelBody = tester.widget<ActivityPanelBody>(
-          find.byType(ActivityPanelBody),
-        );
-        harness.currentState!.set(snapshot('Conectando'));
-        await tester.pump();
-        await tester.pump();
-        expect(
-          identical(
-            tester.widget<ActivityPanelBody>(find.byType(ActivityPanelBody)),
-            panelBody,
-          ),
-          isTrue,
-          reason: 'un snapshot equivalente no debe reconstruir el panel',
-        );
-
-        harness.currentState!.set(snapshot('Respondiendo'));
-        await tester.pump();
-        await tester.pump();
-        expect(
-          identical(
-            tester.widget<ActivityPanelBody>(find.byType(ActivityPanelBody)),
-            panelBody,
-          ),
-          isFalse,
-        );
-        expect(find.textContaining('Respondiendo'), findsWidgets);
-      },
-    );
-
-    testWidgets(
       'la última tarea completada permanece cuatro segundos y luego se oculta',
       (tester) async {
         final harness = await _pump(
@@ -353,7 +284,6 @@ void main() {
             tasks: _tasks([('Terminar', AgentTaskStatus.inProgress)]),
           ),
         );
-        await _openPanel(tester);
 
         harness.currentState!.set(
           ActivitySnapshot(
@@ -362,56 +292,54 @@ void main() {
         );
         await tester.pump();
         await tester.pump();
-        expect(
-          find.byKey(const ValueKey('activity-task-check-pop')),
-          findsOneWidget,
-        );
-        expect(find.text('1/1'), findsWidgets);
+        // fh1215: the turn is idle, so the linger names the outcome and
+        // carries no «1/1» counter.
+        expect(find.text('1/1'), findsNothing);
+        expect(find.textContaining('Todo completado'), findsWidgets);
 
         await tester.pump(const Duration(seconds: 3));
-        expect(
-          find.byKey(const ValueKey('activity-task-check-pop')),
-          findsOneWidget,
-        );
+        expect(_pill, findsOneWidget);
 
         await tester.pump(const Duration(seconds: 2));
         await tester.pump(const Duration(milliseconds: 400));
         expect(_pill, findsNothing);
-        expect(_panel, findsNothing);
       },
     );
 
-    testWidgets('una lista nueva sustituye el linger sin retrasar su progreso', (
-      tester,
-    ) async {
-      final harness = await _pump(
-        tester,
-        ActivitySnapshot(
-          turnActive: true,
-          tasks: _tasks([('Anterior', AgentTaskStatus.inProgress)]),
-        ),
-      );
-      harness.currentState!.set(
-        ActivitySnapshot(
-          tasks: _tasks([('Anterior', AgentTaskStatus.completed)]),
-        ),
-      );
-      await tester.pump();
-      expect(find.text('1/1'), findsOneWidget);
+    testWidgets(
+      'una lista nueva sustituye el linger sin retrasar su progreso',
+      (tester) async {
+        final harness = await _pump(
+          tester,
+          ActivitySnapshot(
+            turnActive: true,
+            tasks: _tasks([('Anterior', AgentTaskStatus.inProgress)]),
+          ),
+        );
+        harness.currentState!.set(
+          ActivitySnapshot(
+            tasks: _tasks([('Anterior', AgentTaskStatus.completed)]),
+          ),
+        );
+        await tester.pump();
+        // fh1215: the idle linger has no counter.
+        expect(find.text('1/1'), findsNothing);
+        expect(find.textContaining('Todo completado'), findsOneWidget);
 
-      harness.currentState!.set(
-        ActivitySnapshot(
-          turnActive: true,
-          tasks: _tasks([('Nueva', AgentTaskStatus.inProgress)]),
-        ),
-      );
-      await tester.pump();
-      expect(find.text('0/1'), findsOneWidget);
-      expect(
-        find.byKey(const ValueKey('activity-task-check-pop')),
-        findsNothing,
-      );
-    });
+        harness.currentState!.set(
+          ActivitySnapshot(
+            turnActive: true,
+            tasks: _tasks([('Nueva', AgentTaskStatus.inProgress)]),
+          ),
+        );
+        await tester.pump();
+        expect(find.text('0/1'), findsOneWidget);
+        expect(
+          find.byKey(const ValueKey('activity-task-check-pop')),
+          findsNothing,
+        );
+      },
+    );
 
     testWidgets(
       'un turno recién nacido no parpadea; lo demás sí es inmediato',
@@ -453,7 +381,7 @@ void main() {
       );
       await _pump(tester, base);
       expect(find.textContaining('Sigo trabajando'), findsNothing);
-      expect(find.textContaining('terminal'), findsWidgets);
+      expect(find.textContaining('Ejecutando'), findsWidgets);
       await _pump(
         tester,
         ActivitySnapshot(
@@ -464,7 +392,7 @@ void main() {
         ),
       );
       expect(find.textContaining('Sigo trabajando'), findsOneWidget);
-      expect(find.textContaining('terminal'), findsNothing);
+      expect(find.textContaining('Ejecutando'), findsNothing);
     });
 
     testWidgets('detalle acotado con elipsis y a escala 2 en 320 dp', (
@@ -526,475 +454,10 @@ void main() {
           .widget<Text>(find.byKey(const ValueKey('activity-pill-elapsed')))
           .data!;
       expect(elapsed(), '0:03');
-      // Un solo pump con el reloj avanzado actualiza el cronómetro de la
-      // pastilla y el de «Ahora» del panel (mismo `now`), sin otros relojes.
+      // Un solo pump con el reloj avanzado actualiza el cronómetro.
       clock.advance(const Duration(seconds: 12));
       await tester.pump(const Duration(seconds: 1));
       expect(elapsed(), '0:15');
-      await _openPanel(tester);
-      expect(
-        tester
-            .widgetList<Text>(
-              find.byKey(const ValueKey('activity-now-elapsed')),
-            )
-            .map((t) => t.data),
-        everyElement('0:15'),
-      );
-      expect(
-        tester
-            .widgetList<Text>(
-              find.byKey(const ValueKey('activity-pill-elapsed')),
-            )
-            .map((t) => t.data),
-        everyElement('0:15'),
-      );
-    });
-  });
-
-  group('panel', () {
-    testWidgets('crece desde el rect de la pastilla y queda anclado', (
-      tester,
-    ) async {
-      await _pump(tester, _everything(), reduceMotion: false);
-      final pillRect = tester.getRect(_pill);
-      await tester.tap(_pill);
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 16));
-      // Primer frame: prácticamente el tamaño de la pastilla, mismo borde
-      // inferior y mismo centro.
-      final start = tester.getRect(_frame);
-      expect((start.width - pillRect.width).abs(), lessThan(30));
-      expect((start.bottom - pillRect.bottom).abs(), lessThan(1));
-      expect((start.center.dx - pillRect.center.dx).abs(), lessThan(1));
-      await tester.pump(const Duration(milliseconds: 400));
-      final end = tester.getRect(_frame);
-      expect(end.width, greaterThan(pillRect.width + 20));
-      expect(end.height, greaterThan(pillRect.height + 60));
-      expect((end.bottom - pillRect.bottom).abs(), lessThan(1));
-      // La pastilla real queda oculta debajo: no hay dos a la vez.
-      expect(
-        tester
-            .widget<Opacity>(
-              find.ancestor(of: _pill, matching: find.byType(Opacity)).first,
-            )
-            .opacity,
-        0,
-      );
-    });
-
-    testWidgets('secciones con contenido y en orden', (tester) async {
-      await _pump(tester, _everything());
-      await _openPanel(tester);
-      final order = [
-        'activity-tasks-title',
-        'activity-now-title',
-        'activity-done-title',
-        'activity-background-title',
-        'activity-subagents-title',
-      ];
-      double? last;
-      for (final key in order) {
-        final finder = find.byKey(ValueKey(key));
-        expect(finder, findsOneWidget, reason: key);
-        final y = tester.getTopLeft(finder).dy;
-        if (last != null) expect(y, greaterThan(last), reason: key);
-        last = y;
-      }
-      // Sin bucles ni objetivo: sus secciones no existen.
-      expect(find.byKey(const ValueKey('activity-loops-title')), findsNothing);
-      expect(find.byKey(const ValueKey('activity-goal-title')), findsNothing);
-      expect(find.text('terminal · date', findRichText: true), findsWidgets);
-      expect(
-        find.text('read_file · a.dart', findRichText: true),
-        findsOneWidget,
-      );
-      expect(find.text('0,7 s'), findsWidgets);
-    });
-
-    testWidgets('sin tareas ni compactación esas secciones se omiten', (
-      tester,
-    ) async {
-      await _pump(
-        tester,
-        ActivitySnapshot(
-          turnActive: true,
-          turnStartedAt: _t0,
-          current: _step('terminal', status: ActivityStepStatus.running),
-        ),
-      );
-      await _openPanel(tester);
-      expect(find.byKey(const ValueKey('activity-tasks-title')), findsNothing);
-      expect(find.byKey(const ValueKey('activity-done-title')), findsNothing);
-      expect(find.byKey(const ValueKey('activity-now-title')), findsOneWidget);
-    });
-
-    testWidgets('se actualiza en vivo sin cerrarse', (tester) async {
-      final harness = await _pump(tester, _everything());
-      await _openPanel(tester);
-      expect(
-        find.byKey(const ValueKey('activity-done-web_search')),
-        findsNothing,
-      );
-      harness.currentState!.set(
-        ActivitySnapshot(
-          turnActive: true,
-          turnStartedAt: _t0,
-          current: _step(
-            'patch',
-            detail: 'main.dart',
-            status: ActivityStepStatus.running,
-          ),
-          done: [
-            _step('terminal', detail: 'date'),
-            _step('read_file', detail: 'a.dart'),
-          ],
-          tasks: _tasks([
-            ('Leer', AgentTaskStatus.completed),
-            ('Editar', AgentTaskStatus.completed),
-          ]),
-        ),
-      );
-      await tester.pump();
-      await tester.pump();
-      expect(_panel, findsOneWidget);
-      expect(find.textContaining('patch'), findsWidgets);
-      expect(
-        find.byKey(const ValueKey('activity-done-id-terminal-date')),
-        findsOneWidget,
-      );
-      expect(
-        find.byKey(const ValueKey('activity-task-row-t1')),
-        findsOneWidget,
-      );
-      // El fondo y los subagentes ya no existen.
-      expect(
-        find.byKey(const ValueKey('activity-background-title')),
-        findsNothing,
-      );
-    });
-
-    testWidgets('check animado al completarse una tarea y estilos de fila', (
-      tester,
-    ) async {
-      final harness = await _pump(
-        tester,
-        ActivitySnapshot(
-          turnActive: true,
-          turnStartedAt: _t0,
-          tasks: _tasks([
-            ('Leer', AgentTaskStatus.inProgress),
-            ('Editar', AgentTaskStatus.pending),
-            ('Borrar', AgentTaskStatus.cancelled),
-          ]),
-        ),
-        reduceMotion: false,
-      );
-      await _openPanel(tester);
-      expect(
-        find.byKey(const ValueKey('activity-task-icon-in-progress')),
-        findsOneWidget,
-      );
-      expect(
-        find.byKey(const ValueKey('activity-task-icon-pending')),
-        findsOneWidget,
-      );
-      expect(
-        find.byKey(const ValueKey('activity-task-icon-cancelled')),
-        findsOneWidget,
-      );
-      harness.currentState!.set(
-        ActivitySnapshot(
-          turnActive: true,
-          turnStartedAt: _t0,
-          tasks: _tasks([
-            ('Leer', AgentTaskStatus.completed),
-            ('Editar', AgentTaskStatus.inProgress),
-            ('Borrar', AgentTaskStatus.cancelled),
-          ]),
-        ),
-      );
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 60));
-      final pop = tester.widget<ScaleTransition>(
-        find.byKey(const ValueKey('activity-task-check-pop')),
-      );
-      expect(pop.scale.value, isNot(1.0), reason: 'a mitad del pop');
-      await tester.pump(const Duration(milliseconds: 400));
-      expect(
-        tester
-            .widget<ScaleTransition>(
-              find.byKey(const ValueKey('activity-task-check-pop')),
-            )
-            .scale
-            .value,
-        1.0,
-      );
-      final done = tester.widget<Text>(find.text('Leer'));
-      expect(done.style!.decoration, TextDecoration.lineThrough);
-      final current = tester.widget<Text>(find.text('Editar'));
-      expect(current.style!.fontWeight, FontWeight.w700);
-    });
-
-    testWidgets('más de 6 tareas: ventana de 6 y expansor «+N más»', (
-      tester,
-    ) async {
-      await _pump(
-        tester,
-        ActivitySnapshot(
-          turnActive: true,
-          turnStartedAt: _t0,
-          tasks: _tasks([
-            for (var i = 0; i < 9; i++)
-              (
-                'tarea $i',
-                i == 7 ? AgentTaskStatus.inProgress : AgentTaskStatus.pending,
-              ),
-          ]),
-        ),
-      );
-      await _openPanel(tester);
-      expect(find.textContaining('tarea '), findsNWidgets(6));
-      // La tarea en curso queda dentro de la ventana.
-      expect(find.text('tarea 7'), findsOneWidget);
-      await tester.tap(find.byKey(const ValueKey('activity-tasks-toggle')));
-      await tester.pump();
-      expect(find.textContaining('tarea '), findsNWidgets(9));
-    });
-
-    testWidgets('scroll propio y seguimiento automático del paso en curso', (
-      tester,
-    ) async {
-      tester.view.physicalSize = const Size(390, 640);
-      tester.view.devicePixelRatio = 1;
-      addTearDown(tester.view.reset);
-      final many = [for (var i = 0; i < 40; i++) _step('paso$i')];
-      ActivitySnapshot snap(int n) => ActivitySnapshot(
-        turnActive: true,
-        turnStartedAt: _t0,
-        current: _step(
-          'vivo$n',
-          status: ActivityStepStatus.running,
-          duration: null,
-        ),
-        done: many,
-        tasks: _tasks([
-          for (var i = 0; i < 6; i++) ('T$i', AgentTaskStatus.pending),
-        ]),
-      );
-      final harness = await _pump(tester, snap(0));
-      await _openPanel(tester);
-      final scroll = find.byType(SingleChildScrollView);
-      final controller = tester
-          .widget<SingleChildScrollView>(scroll)
-          .controller!;
-      // El panel no supera el 55 % de la pantalla y hay contenido de sobra.
-      expect(tester.getSize(_frame).height, lessThanOrEqualTo(640 * 0.55 + 1));
-      expect(controller.position.maxScrollExtent, greaterThan(100));
-      // El usuario baja: el seguimiento se detiene.
-      await tester.drag(scroll, const Offset(0, -300));
-      await tester.pump();
-      final userOffset = controller.offset;
-      expect(userOffset, greaterThan(0));
-      harness.currentState!.set(snap(1));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 300));
-      expect(controller.offset, userOffset);
-    });
-
-    testWidgets('sin intervención del usuario el panel mantiene a la vista el '
-        'paso en curso', (tester) async {
-      tester.view.physicalSize = const Size(390, 420);
-      tester.view.devicePixelRatio = 1;
-      addTearDown(tester.view.reset);
-      final snapshot = ActivitySnapshot(
-        turnActive: true,
-        turnStartedAt: _t0,
-        current: _step(
-          'vivo',
-          status: ActivityStepStatus.running,
-          duration: null,
-        ),
-        tasks: _tasks([
-          for (var i = 0; i < 6; i++)
-            ('Tarea larga número $i', AgentTaskStatus.pending),
-        ]),
-      );
-      await _pump(tester, snapshot);
-      await _openPanel(tester);
-      final controller = tester
-          .widget<SingleChildScrollView>(find.byType(SingleChildScrollView))
-          .controller!;
-      // «Ahora» queda bajo las tareas: nada scrolleó a mano y aun así se ve.
-      expect(controller.offset, greaterThan(0));
-      final scroll = tester.getRect(find.byType(SingleChildScrollView));
-      final now = tester.getRect(
-        find.byKey(const ValueKey('activity-now-title')),
-      );
-      expect(now.bottom, lessThanOrEqualTo(scroll.bottom + 1));
-      expect(now.top, greaterThanOrEqualTo(scroll.top - 1));
-    });
-
-    testWidgets('descartes: tocar fuera, deslizar hacia abajo y atrás', (
-      tester,
-    ) async {
-      await _pump(tester, _everything());
-      await _openPanel(tester);
-      expect(_panel, findsOneWidget);
-      // Tocar fuera.
-      await tester.tapAt(const Offset(10, 10));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 400));
-      expect(_panel, findsNothing);
-      expect(_pill, findsOneWidget);
-      // Deslizar hacia abajo desde la cabecera.
-      await _openPanel(tester);
-      await tester.drag(
-        find.byKey(const ValueKey('activity-panel-header')),
-        const Offset(0, 120),
-      );
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 400));
-      expect(_panel, findsNothing);
-      // Atrás.
-      await _openPanel(tester);
-      await tester.binding.handlePopRoute();
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 400));
-      expect(_panel, findsNothing);
-      // Tocar la cabecera también lo pliega.
-      await _openPanel(tester);
-      await tester.tap(find.byKey(const ValueKey('activity-panel-header')));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 400));
-      expect(_panel, findsNothing);
-    });
-
-    testWidgets('si deja de haber algo vivo, el panel se cierra solo', (
-      tester,
-    ) async {
-      final harness = await _pump(tester, _everything());
-      await _openPanel(tester);
-      harness.currentState!.set(ActivitySnapshot.idle);
-      await tester.pump();
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 400));
-      expect(_panel, findsNothing);
-      expect(_pill, findsNothing);
-    });
-
-    testWidgets('las acciones por elemento siguen cableadas', (tester) async {
-      final calls = <String>[];
-      const loop = SessionActivitySchedule(
-        kind: SessionActivityScheduleKind.loop,
-        status: 'active',
-        interval: Duration(minutes: 5),
-        lastRunAt: null,
-        nextDueAt: null,
-        runCount: 3,
-      );
-      await _pump(
-        tester,
-        ActivitySnapshot(
-          processes: const [_proc],
-          schedules: const [loop],
-          goal: const SessionActivityGoal(title: 'Meta', status: 'active'),
-          subagents: [_sub()],
-        ),
-        actions: ActivityPanelActions(
-          canStopProcesses: true,
-          stopProcess: (id) async => calls.add('stop:$id'),
-          canControlSchedules: true,
-          scheduleAction: (s, a) async => calls.add('sched:${a.name}'),
-          canControlGoal: true,
-          goalAction: (a) async => calls.add(a),
-          goalDetails: () => calls.add('goal-details'),
-          openSubagent: (a) => calls.add('open:${a?.key.stableId}'),
-          dismissSubagents: () => calls.add('dismiss'),
-        ),
-      );
-      await _openPanel(tester);
-      Future<void> press(String key) async {
-        final finder = find.byKey(ValueKey(key));
-        await tester.ensureVisible(finder);
-        await tester.pump();
-        await tester.tap(finder);
-        await tester.pump();
-      }
-
-      await press('background-process-stop-proc-1');
-      await press('background-loop-pause');
-      await press('background-loop-stop');
-      await press('background-goal-pause');
-      await press('background-goal-details');
-      await press('activity-subagent-child-1');
-      expect(calls, [
-        'stop:proc-1',
-        'sched:pause',
-        'sched:stop',
-        'goal.pause',
-        'goal-details',
-        'open:child-1',
-      ]);
-    });
-
-    testWidgets('sin overlap con último mensaje ni compositor; una sola '
-        'pastilla con todo activo a la vez', (tester) async {
-      tester.view.physicalSize = const Size(390, 800);
-      tester.view.devicePixelRatio = 1;
-      addTearDown(tester.view.reset);
-      await _pump(tester, _everything());
-      final pill = tester.getRect(_pill);
-      final composer = tester.getRect(find.byKey(const ValueKey('composer')));
-      final message = tester.getRect(
-        find.byKey(const ValueKey('last-message')),
-      );
-      expect(pill.bottom, lessThanOrEqualTo(composer.top));
-      expect(pill.overlaps(composer), isFalse);
-      // La pila flotante está pensada para que el transcript reserve su alto:
-      // el mensaje queda por encima de la pastilla en este montaje.
-      expect(message.bottom, lessThanOrEqualTo(pill.top + 1));
-      expect(_pill, findsOneWidget);
-      expect(find.byType(ActivityPill), findsOneWidget);
-      await _openPanel(tester);
-      final panel = tester.getRect(_frame);
-      expect(panel.bottom, lessThanOrEqualTo(composer.top));
-      expect(panel.overlaps(composer), isFalse);
-      expect(panel.top, greaterThanOrEqualTo(0));
-      // La pastilla ni se duplica ni se dibuja encima: un único ActivityPill
-      // (el plegado, oculto) y una única cabecera de panel.
-      expect(find.byType(ActivityPill), findsOneWidget);
-      expect(
-        find.byKey(const ValueKey('activity-panel-header')),
-        findsOneWidget,
-      );
-      expect(
-        find.byKey(const ValueKey('activity-pill-elapsed')),
-        findsNWidgets(2),
-      );
-    });
-
-    testWidgets('escala 2 a 320 dp sin desbordes', (tester) async {
-      tester.view.physicalSize = const Size(320, 640);
-      tester.view.devicePixelRatio = 1;
-      addTearDown(tester.view.reset);
-      await _pump(tester, _everything(), textScale: 2);
-      await _openPanel(tester);
-      expect(tester.takeException(), isNull);
-      expect(tester.getSize(_frame).width, lessThanOrEqualTo(320));
-    });
-
-    testWidgets('los 26 temas renderizan pastilla y panel', (tester) async {
-      expect(AppTheme.presets.length, 26);
-      for (final preset in AppTheme.presets) {
-        await _pump(tester, _everything(), theme: AppTheme.fromId(preset.id));
-        expect(_pill, findsOneWidget, reason: preset.id);
-        await _openPanel(tester);
-        expect(_panel, findsOneWidget, reason: preset.id);
-        expect(tester.takeException(), isNull, reason: preset.id);
-        await tester.tapAt(const Offset(5, 5));
-        await tester.pump();
-        await tester.pump(const Duration(milliseconds: 300));
-      }
     });
   });
 

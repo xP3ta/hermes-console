@@ -2,13 +2,15 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../services/action_follower.dart';
 import '../../l10n/app_localizations.dart';
 import '../services/connection_manager.dart';
 import '../services/voice/tts_toolset_config.dart';
 import '../theme/app_theme.dart';
-import 'hermes_notice.dart';
 import 'hermes_premium_ui.dart';
 import 'hermes_ui.dart';
+import '../feedback/feedback_policy.dart';
+import '../design/hermes_design.dart' show HermesOption, HermesSelectField;
 
 /// Configurador remoto de voz basado exclusivamente en los contratos que
 /// publica Hermes. Los secretos solo viven en los controladores mientras el
@@ -266,6 +268,9 @@ class _ServerVoiceControlSurfaceState extends State<ServerVoiceControlSurface> {
         response['needs_nous_auth'] == true
             ? s.voiceServerProviderNeedsAuth
             : s.voiceServerProviderChanged(provider.name!),
+        response['needs_nous_auth'] == true
+            ? FeedbackKind.critical
+            : FeedbackKind.routine,
       );
       widget.onServerChanged();
       await _load();
@@ -285,7 +290,10 @@ class _ServerVoiceControlSurfaceState extends State<ServerVoiceControlSurface> {
         section: {'provider': provider},
       }, profile: widget.profile);
       if (!mounted) return;
-      _snack(s.voiceServerProviderChanged(_providerLabel(provider)));
+      _snack(
+        s.voiceServerProviderChanged(_providerLabel(provider)),
+        FeedbackKind.routine,
+      );
       widget.onServerChanged();
       await _load();
     } catch (_) {
@@ -314,7 +322,7 @@ class _ServerVoiceControlSurfaceState extends State<ServerVoiceControlSurface> {
       if (response['ok'] == false) throw StateError('credential rejected');
       controller!.clear();
       if (!mounted) return;
-      _snack(s.voiceServerCredentialSaved);
+      _snack(s.voiceServerCredentialSaved, FeedbackKind.routine);
       widget.onServerChanged();
       await _load();
     } catch (_) {
@@ -341,23 +349,21 @@ class _ServerVoiceControlSurfaceState extends State<ServerVoiceControlSurface> {
       );
       if (started['ok'] != true) throw StateError('setup not started');
       final actionName = started['name']?.toString() ?? 'tools-post-setup';
-      for (var attempt = 0; attempt < 150 && mounted; attempt += 1) {
-        await Future<void>.delayed(const Duration(milliseconds: 1200));
-        if (!mounted) return;
-        final status = await widget.dashboard.getActionStatus(actionName);
-        final rawLines = status['lines'];
-        setState(() {
-          _setupLines = rawLines is List
-              ? rawLines.map((line) => line.toString()).toList(growable: false)
-              : const [];
-        });
-        if (status['running'] != true) {
-          ok = status['exit_code'] == 0;
-          break;
-        }
-      }
+      final outcome =
+          await ActionFollower(read: widget.dashboard.getActionStatus).follow(
+            actionName,
+            keepGoing: () => mounted,
+            onLines: (lines) {
+              if (mounted) setState(() => _setupLines = lines);
+            },
+          );
+      if (outcome.state == ActionFollowState.cancelled) return;
+      ok = outcome.succeeded;
       if (!mounted) return;
-      _snack(ok ? s.voiceServerSetupComplete : s.voiceServerSetupFailed);
+      _snack(
+        ok ? s.voiceServerSetupComplete : s.voiceServerSetupFailed,
+        ok ? FeedbackKind.routine : FeedbackKind.error,
+      );
       widget.onServerChanged();
       await _load();
     } catch (_) {
@@ -395,10 +401,8 @@ class _ServerVoiceControlSurfaceState extends State<ServerVoiceControlSurface> {
     }
   }
 
-  void _snack(String message) {
-    HermesNotice.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+  void _snack(String message, [FeedbackKind kind = FeedbackKind.error]) {
+    AppFeedback.notify(context, kind, message);
   }
 
   @override
@@ -1188,6 +1192,31 @@ class _ServerVoiceParametersEditorState
     super.initState();
     _patch = <String, dynamic>{};
     _provider = widget.provider;
+    if (widget.section == 'stt') _repairLiteralAutoSttLanguages();
+  }
+
+  /// Console 1.2.14 guardaba «Automático» como el texto `auto` (issue #65).
+  /// Hermes STT toma el primer idioma no vacío (`stt.<proveedor>.language`,
+  /// alias `language_code`, luego `stt.language`) y lo reenvía al proveedor,
+  /// que lo rechaza. Se prepara ya la reparación a "" para que Guardar quede
+  /// disponible y no dependa de volver a elegir Automático a mano.
+  void _repairLiteralAutoSttLanguages() {
+    final stt = widget.config['stt'];
+    if (stt is! Map) return;
+    bool isLiteralAuto(Object? value) =>
+        value is String && value.trim().toLowerCase() == 'auto';
+    for (final key in const ['language', 'language_code']) {
+      if (isLiteralAuto(stt[key])) _writePath(_patch, 'stt.$key', '');
+    }
+    for (final entry in stt.entries) {
+      final section = entry.value;
+      if (section is! Map) continue;
+      for (final key in const ['language', 'language_code']) {
+        if (isLiteralAuto(section[key])) {
+          _writePath(_patch, 'stt.${entry.key}.$key', '');
+        }
+      }
+    }
   }
 
   @override
@@ -1266,17 +1295,15 @@ class _ServerVoiceParametersEditorState
         profile: widget.profile,
       );
       if (!mounted) return;
-      HermesNotice.of(context).showSnackBar(
-        SnackBar(content: Text(s.voiceServerParametersSaved)),
-        kind: HermesNoticeKind.success,
-      );
+      AppFeedback.of(
+        context,
+      ).notify(FeedbackKind.routine, s.voiceServerParametersSaved);
       Navigator.pop(context, true);
     } catch (_) {
       if (!mounted) return;
-      HermesNotice.of(context).showSnackBar(
-        SnackBar(content: Text(s.voiceServerParametersFailed)),
-        kind: HermesNoticeKind.error,
-      );
+      AppFeedback.of(
+        context,
+      ).notify(FeedbackKind.error, s.voiceServerParametersFailed);
       setState(() => _saving = false);
     }
   }
@@ -1429,25 +1456,19 @@ class _ServerVoiceParametersEditorState
       label: widget.section == 'stt'
           ? s.voiceServerProviderRecognitionLabel
           : s.voiceServerProviderSpeechLabel,
-      child: DropdownButtonFormField<String>(
+      child: HermesSelectField<String>(
         key: ValueKey('server-voice-field-${widget.section}.provider'),
-        initialValue: options.contains(_provider) ? _provider : null,
-        isExpanded: true,
-        menuMaxHeight: 360,
+        value: options.contains(_provider) ? _provider : null,
         style: TextStyle(color: colors.textPrimary, fontSize: 13),
-        hint: Text(s.voiceServerChooseOption),
+        hint: s.voiceServerChooseOption,
         decoration: _controlDecoration(colors),
-        items: [
+        options: [
           for (final option in options)
-            DropdownMenuItem(
-              value: option,
-              child: Text(_providerLabel(option), softWrap: true),
-            ),
+            HermesOption(value: option, label: _providerLabel(option)),
         ],
         onChanged: widget.readOnly
             ? null
             : (next) {
-                if (next == null) return;
                 _set('${widget.section}.provider', next);
                 setState(() => _provider = next);
               },
@@ -1688,36 +1709,41 @@ class _ServerVoiceParametersEditorState
     }
     final values = _selectableValues(key, spec, value);
     if (values.isNotEmpty) {
-      final current = value?.toString().trim();
+      // Hermes STT entiende «automático» como idioma vacío (sus defaults usan
+      // `language: ""`) y reenvía cualquier otro texto al proveedor, que
+      // rechaza `auto` (issue #65). Se muestra como Automático y se guarda "".
+      final sttAutoLanguage =
+          widget.section == 'stt' &&
+          _fieldConcept(key) == 'language' &&
+          values.contains('auto');
+      final raw = value?.toString().trim();
+      final current = sttAutoLanguage && (raw == null || raw.isEmpty)
+          ? 'auto'
+          : raw;
       return _labeledControl(
         colors: colors,
         label: label,
         help: help,
-        child: DropdownButtonFormField<String>(
+        child: HermesSelectField<String>(
           key: ValueKey('server-voice-field-$key'),
-          initialValue:
+          value:
               current != null && current.isNotEmpty && values.contains(current)
               ? current
               : null,
-          isExpanded: true,
-          menuMaxHeight: 360,
           style: TextStyle(color: colors.textPrimary, fontSize: 13),
-          hint: Text(Strings.of(context).voiceServerChooseOption),
+          hint: Strings.of(context).voiceServerChooseOption,
           decoration: _controlDecoration(colors),
-          items: [
+          options: [
             for (final option in values)
-              DropdownMenuItem(
-                value: option,
-                child: Text(
-                  _choiceLabel(key, option),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
+              HermesOption(value: option, label: _choiceLabel(key, option)),
           ],
           onChanged: widget.readOnly
               ? null
               : (next) {
-                  if (next == null) return;
+                  if (sttAutoLanguage && next == 'auto') {
+                    _set(key, '');
+                    return;
+                  }
                   _set(
                     key,
                     type == 'number' ? num.tryParse(next) ?? next : next,

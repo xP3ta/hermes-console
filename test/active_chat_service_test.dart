@@ -28,7 +28,6 @@ import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/approval_policy.dart';
 import 'package:hermes_android/core/services/session_reconciler.dart';
 import 'package:hermes_android/core/services/attachment_uploader.dart';
-import 'package:hermes_android/core/services/bridge_client.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/desktop_control_gateway.dart';
 import 'package:hermes_android/core/services/compression_restore_store.dart';
@@ -37,6 +36,7 @@ import 'package:hermes_android/core/services/home_widget_publisher.dart';
 import 'package:hermes_android/core/services/notifications/notification_service.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:hermes_android/core/services/turn_outbox_store.dart';
+import 'package:hermes_android/core/utils/chat_error.dart';
 import 'package:hermes_android/core/utils/chat_turn.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
@@ -51,6 +51,15 @@ SavedConnection _conn({String id = 'conn-1'}) => SavedConnection(
   port: 8642,
   apiKey: 'test-key',
 );
+
+final class _OfflineWebSocketAuthDashboardClient extends DashboardClient {
+  _OfflineWebSocketAuthDashboardClient()
+    : super(host: '127.0.0.1', port: 1, manualToken: 'unused');
+
+  @override
+  Future<DashboardWebSocketAuth> webSocketAuth() async =>
+      throw const SocketException('Connection attempt cancelled');
+}
 
 class _CapturingRunApi extends ApiClient {
   _CapturingRunApi()
@@ -575,6 +584,34 @@ class _NativeSessionSplitGateway
   Future<void> close() => _events.close();
 }
 
+/// Hermes' own channel, there but refusing to take the turn.
+class _RefusingLifecycleGateway extends _NativeSessionSplitGateway {
+  _RefusingLifecycleGateway(this.refusal);
+
+  final Object refusal;
+
+  @override
+  bool get isConnected => false;
+
+  @override
+  Future<void> connect() async => throw refusal;
+
+  @override
+  Future<DesktopSessionSnapshot> createForFirstSubmit({
+    String profile = '',
+    List<Map<String, dynamic>> seedMessages = const [],
+    String model = '',
+  }) async => throw refusal;
+
+  @override
+  Future<DesktopSessionSnapshot> resumeExisting(
+    String storedSessionId, {
+    String profile = '',
+    bool omitMessages = false,
+    bool deferHistory = false,
+  }) async => throw refusal;
+}
+
 class _AuthWarmGateway extends _AttachmentDesktopGateway {
   Object? connectError;
   bool connected = false;
@@ -594,65 +631,6 @@ class _AuthWarmGateway extends _AttachmentDesktopGateway {
     if (error != null) throw error;
     connected = true;
   }
-}
-
-class _AttachmentBridgeClient extends BridgeClient {
-  _AttachmentBridgeClient()
-    : super(baseUrl: 'http://127.0.0.1:9131', token: 'bridge-token');
-
-  int uploadCalls = 0;
-  int streamCalls = 0;
-  int fallbackChatCalls = 0;
-  final List<String> chatProfiles = [];
-  BridgeException? nextStreamFailure;
-  Completer<void>? uploadGate;
-
-  @override
-  Future<String> uploadAttachment(
-    File file, {
-    required String filename,
-    String mimeType = 'application/octet-stream',
-    Duration timeout = const Duration(seconds: 45),
-    int maxBytes = 8 * 1024 * 1024,
-  }) async {
-    uploadCalls++;
-    await uploadGate?.future;
-    return '/bridge/$filename';
-  }
-
-  @override
-  Stream<String> chatStream(
-    String prompt, {
-    List<Map<String, dynamic>> history = const [],
-    List<String> attachmentPaths = const [],
-    Duration timeout = const Duration(minutes: 5),
-    String profile = '',
-  }) async* {
-    streamCalls++;
-    chatProfiles.add(profile);
-    final failure = nextStreamFailure;
-    if (failure != null) {
-      nextStreamFailure = null;
-      throw failure;
-    }
-    yield 'respuesta';
-  }
-
-  @override
-  Future<String> chat(
-    String prompt, {
-    List<Map<String, dynamic>> history = const [],
-    List<String> attachmentPaths = const [],
-    Duration timeout = const Duration(minutes: 5),
-    String profile = '',
-  }) async {
-    fallbackChatCalls++;
-    chatProfiles.add(profile);
-    return 'respuesta';
-  }
-
-  @override
-  void close() {}
 }
 
 PreparedTurn _attachmentTurn(AttachmentDraft attachment) {
@@ -740,6 +718,76 @@ Session _widgetSession() => const Session(
 );
 
 void main() {
+  test(
+    'image normalizer never treats basename as echo of known full source',
+    () {
+      const source = '/home/demo/.hermes/cache/generated/images/same.png';
+      final normalized = normalizeTranscriptMessageForDisplay({
+        'role': 'assistant',
+        'content': 'Otra /home/demo/.hermes/cache/images/same.png',
+        '_generatedImages': [
+          {
+            'kind': 'serverCache',
+            'source': source,
+            'basename': 'same.png',
+            'tool_call_id': 'exact-echo',
+            'echo_sources': ['same.png'],
+          },
+        ],
+      })!;
+      final ref = (normalized['_generatedImages'] as List).single as Map;
+      expect(ref['source'], source);
+      expect(ref['echo_sources'] ?? [], isEmpty);
+    },
+  );
+  test('image normalizer rejects whitespace source aliases', () {
+    final normalized = normalizeTranscriptMessageForDisplay({
+      'role': 'assistant',
+      'content': 'Lista',
+      '_generatedImages': [
+        {
+          'kind': 'serverCache',
+          'source': '/home/demo/.hermes/cache/images/same.png\n',
+          'basename': 'same.png',
+          'tool_call_id': 'alias',
+        },
+      ],
+    })!;
+    expect(normalized['_generatedImages'] ?? [], isEmpty);
+  });
+  test(
+    'image normalizer rejects sensitive legacy basename before publication',
+    () {
+      final normalized = normalizeTranscriptMessageForDisplay({
+        'role': 'assistant',
+        'content': 'Lista',
+        '_generatedImages': [
+          {'basename': 'id_ed25519.png', 'tool_call_id': 'secret'},
+        ],
+      })!;
+      expect(normalized['_generatedImages'] ?? [], isEmpty);
+    },
+  );
+  test('image normalizer preserves full producer and echo source identity', () {
+    const source =
+        '/home/demo/.hermes/profiles/work_bot/cache/generated/images/same.png';
+    final normalized = normalizeTranscriptMessageForDisplay({
+      'role': 'assistant',
+      'content': 'Lista',
+      '_generatedImages': [
+        {
+          'kind': 'serverCache',
+          'source': source,
+          'basename': 'same.png',
+          'tool_call_id': 'producer',
+          'echo_sources': [source],
+        },
+      ],
+    })!;
+    final refs = normalized['_generatedImages'] as List;
+    expect((refs.single as Map)['source'], source);
+    expect((refs.single as Map)['echo_sources'], [source]);
+  });
   group('desktop activity watchdog', () {
     testWidgets('B1 a 120 second foreground tool does not fail the turn', (
       tester,
@@ -1727,6 +1775,65 @@ void main() {
     },
   );
 
+  test('a turn that needs the live channel says what it was missing', () async {
+    // A named profile (and a Bot Chat) only runs on Hermes' own channel.
+    Future<String> failedWith(Object connectError, String id) async {
+      final gateway = _RefusingLifecycleGateway(connectError);
+      final chat = ActiveChat(
+        compressionRestoreStore: testCompressionRestoreStore(),
+        connection: _conn(id: id),
+        sessionId: 'mob-$id',
+        sessionTitle: 'Perfil',
+        sessionProfile: 'manager',
+        notifications: null,
+        onTerminal: () {},
+        desktopGateway: gateway,
+      );
+      addTearDown(chat.dispose);
+      final accepted = await chat.send(
+        fullText: 'hola',
+        model: 'hermes-agent',
+        history: const [],
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(accepted, isFalse);
+      return chat.messages.firstWhere(
+            (message) => message['role'] == 'assistant_error',
+          )['content']
+          as String;
+    }
+
+    // The Dashboard refuses this phone: a sign-in is what is missing.
+    for (final (refusal, id) in <(Object, String)>[
+      (
+        const DashboardAuthException(DashboardAuthFailureCode.loginRequired),
+        'conn-refused-login',
+      ),
+      (
+        const DashboardAuthException(
+          DashboardAuthFailureCode.invalidCredentials,
+        ),
+        'conn-refused-password',
+      ),
+      (
+        const DashboardWebSocketAuthException(
+          DashboardWebSocketAuthFailureCode.unavailable,
+          statusCode: 401,
+        ),
+        'conn-refused-ticket',
+      ),
+    ]) {
+      expect(await failedWith(refusal, id), dashboardSignInRequiredError);
+    }
+
+    // Anything else is not a sign-in problem, and is never said in English.
+    final offline = await failedWith(
+      const SocketException('offline'),
+      'conn-offline',
+    );
+    expect(offline, officialChannelUnavailableError);
+  });
+
   test(
     'Desktop warm-up publishes auth-required and clears only after recovery',
     () async {
@@ -1935,6 +2042,95 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   setUp(() => SharedPreferences.setMockInitialValues({}));
+
+  // rl1215: a Wi-Fi/cellular switch kills every chat socket at once and each
+  // client climbs its backoff ladder on the dead path. The platform's
+  // new-network signal must clear every chat's stale backoff, so recovery
+  // redials on the new path at once instead of after up to 15 s each.
+  test(
+    'rl1215 network change clears every open chat gateway backoff',
+    () async {
+      final service = ActiveChatService(
+        compressionRestoreStore: testCompressionRestoreStore(),
+      );
+      addTearDown(service.dispose);
+      final clients = <TuiGatewayClient>[];
+      for (var i = 0; i < 3; i++) {
+        final connection = _conn(id: 'conn-rl1215-$i');
+        final client = TuiGatewayClient(
+          connection,
+          dashboard: _OfflineWebSocketAuthDashboardClient(),
+          heartbeatInterval: Duration.zero,
+          reconnectBackoff: GatewayReconnectBackoff(random: () => 1),
+        );
+        addTearDown(client.close);
+        clients.add(client);
+        service.attach(
+          connection: connection,
+          sessionId: 'session-rl1215-$i',
+          sessionTitle: 'rl1215 $i',
+          desktopGateway: client,
+          disableForegroundKeepAlive: true,
+        );
+        for (var attempt = 0; attempt < 5; attempt++) {
+          await client.connect().then((_) {}, onError: (Object _) {});
+        }
+      }
+      expect(clients.every((client) => client.isBackingOff), isTrue);
+
+      service.requestImmediateTransportRecovery();
+
+      expect(
+        clients.where((client) => client.isBackingOff),
+        isEmpty,
+        reason: 'no chat keeps the dead network path backoff',
+      );
+    },
+  );
+
+  // A server update restarts only that server's gateway: the recovery
+  // re-dials the chats of that connection and leaves the others alone.
+  test(
+    'transport recovery for one connection clears only its chats backoff',
+    () async {
+      final service = ActiveChatService(
+        compressionRestoreStore: testCompressionRestoreStore(),
+      );
+      addTearDown(service.dispose);
+      final clients = <String, TuiGatewayClient>{};
+      for (final id in ['conn-upd-a', 'conn-upd-b']) {
+        final connection = _conn(id: id);
+        final client = TuiGatewayClient(
+          connection,
+          dashboard: _OfflineWebSocketAuthDashboardClient(),
+          heartbeatInterval: Duration.zero,
+          reconnectBackoff: GatewayReconnectBackoff(random: () => 1),
+        );
+        addTearDown(client.close);
+        clients[id] = client;
+        service.attach(
+          connection: connection,
+          sessionId: 'session-$id',
+          sessionTitle: id,
+          desktopGateway: client,
+          disableForegroundKeepAlive: true,
+        );
+        for (var attempt = 0; attempt < 5; attempt++) {
+          await client.connect().then((_) {}, onError: (Object _) {});
+        }
+      }
+      expect(clients.values.every((client) => client.isBackingOff), isTrue);
+
+      service.requestTransportRecoveryForConnection('conn-upd-a');
+
+      expect(clients['conn-upd-a']!.isBackingOff, isFalse);
+      expect(
+        clients['conn-upd-b']!.isBackingOff,
+        isTrue,
+        reason: 'another server was not updated: its chats keep their state',
+      );
+    },
+  );
 
   test('REST silence has no client-side terminal timeout', () async {
     final api = _CapturingRunApi();
@@ -2550,173 +2746,9 @@ void main() {
       );
     });
 
-    test(
-      'Bridge no reejecuta tras error SSE y reusa la ruta al reintentar',
-      () async {
-        final directory = await Directory.systemTemp.createTemp(
-          'hermes-attachment-bridge-',
-        );
-        addTearDown(() => directory.delete(recursive: true));
-        final attachment = await _privateTestAttachment(
-          directory,
-          localId: 'attachment-bridge',
-        );
-        final delivery = ActiveTurnDelivery(
-          prepared: _attachmentTurn(attachment),
-          store: _AttachmentMemoryOutbox(),
-        );
-        final bridge = _AttachmentBridgeClient()
-          ..nextStreamFailure = const BridgeException(
-            'chat_stream_failed',
-            'error SSE posterior al HTTP 200',
-          );
-        final connection = SavedConnection(
-          id: 'conn-attachment',
-          label: 'Local test',
-          host: '127.0.0.1',
-          port: 8642,
-          apiKey: 'test-key',
-          kind: InstanceKind.localhost,
-          onDeviceLoopback: true,
-        );
-        final chat = ActiveChat(
-          compressionRestoreStore: testCompressionRestoreStore(),
-          connection: connection,
-          sessionId: 'sess-attachment',
-          sessionTitle: 'Adjuntos Bridge',
-          notifications: null,
-          onTerminal: () {},
-          bridgeProvisioner: (_, _) async => 'bridge-token',
-          bridgeClientFactory: ({required baseUrl, required token}) => bridge,
-        );
-        addTearDown(chat.dispose);
-
-        expect(
-          await chat.send(
-            fullText: 'revisa',
-            model: 'hermes-agent',
-            history: const [],
-            nativeAttachments: [attachment],
-            delivery: delivery,
-          ),
-          isFalse,
-        );
-        expect(delivery.current.state, PreparedTurnState.ambiguous);
-        expect(bridge.uploadCalls, 1);
-
-        expect(
-          await chat.send(
-            fullText: 'revisa',
-            model: 'hermes-agent',
-            history: const [],
-            nativeAttachments: delivery.current.activeAttachments,
-            delivery: delivery,
-          ),
-          isTrue,
-        );
-
-        expect(bridge.uploadCalls, 1);
-        expect(bridge.streamCalls, 2);
-        expect(bridge.fallbackChatCalls, 0);
-        expect(
-          delivery.current.attachments.single.remoteTransport,
-          AttachmentRemoteTransport.bridgeLocal,
-        );
-      },
-    );
-
-    test('Bridge antiguo con 404 previo usa fallback una sola vez', () async {
-      final directory = await Directory.systemTemp.createTemp(
-        'hermes-attachment-bridge-legacy-',
-      );
-      addTearDown(() => directory.delete(recursive: true));
-      final attachment = await _privateTestAttachment(
-        directory,
-        localId: 'attachment-bridge-legacy',
-      );
-      final delivery = ActiveTurnDelivery(
-        prepared: _attachmentTurn(attachment),
-        store: _AttachmentMemoryOutbox(),
-      );
-      final bridge = _AttachmentBridgeClient()
-        ..nextStreamFailure = const BridgeException(
-          'http_404',
-          'stream endpoint unavailable',
-          kind: BridgeErrorKind.notFound,
-          status: 404,
-        );
-      final connection = SavedConnection(
-        id: 'conn-attachment',
-        label: 'Local test',
-        host: '127.0.0.1',
-        port: 8642,
-        apiKey: 'test-key',
-        kind: InstanceKind.localhost,
-        onDeviceLoopback: true,
-        localChatMode: LocalChatMode.agent,
-      );
-      final chat = ActiveChat(
-        compressionRestoreStore: testCompressionRestoreStore(),
-        connection: connection,
-        sessionId: 'sess-attachment',
-        sessionTitle: 'Adjuntos Bridge legacy',
-        notifications: null,
-        onTerminal: () {},
-        bridgeProvisioner: (_, _) async => 'bridge-token',
-        bridgeClientFactory: ({required baseUrl, required token}) => bridge,
-      );
-      addTearDown(chat.dispose);
-
-      expect(
-        await chat.send(
-          fullText: 'revisa',
-          model: 'hermes-agent',
-          history: const [],
-          nativeAttachments: [attachment],
-          delivery: delivery,
-        ),
-        isTrue,
-      );
-      expect(bridge.streamCalls, 1);
-      expect(bridge.fallbackChatCalls, 1);
-    });
-
-    test('Bridge local receives the sealed default manager profile', () async {
-      final bridge = _AttachmentBridgeClient();
-      final connection = SavedConnection(
-        id: 'conn-room-default-profile',
-        label: 'Local room test',
-        host: '127.0.0.1',
-        port: 8642,
-        apiKey: 'test-key',
-        kind: InstanceKind.localhost,
-        onDeviceLoopback: true,
-        localChatMode: LocalChatMode.agent,
-      );
-      final chat = ActiveChat(
-        compressionRestoreStore: testCompressionRestoreStore(),
-        connection: connection,
-        sessionId: 'mob-room-default',
-        sessionTitle: '#homelab',
-        sessionProfile: 'default',
-        notifications: null,
-        onTerminal: () {},
-        bridgeProvisioner: (_, _) async => 'bridge-token',
-        bridgeClientFactory: ({required baseUrl, required token}) => bridge,
-      );
-      addTearDown(chat.dispose);
-
-      expect(
-        await chat.send(
-          fullText: 'prepara el plan',
-          model: 'hermes-agent',
-          history: const [],
-        ),
-        isTrue,
-      );
-
-      expect(bridge.chatProfiles, ['default']);
-    });
+    // Retired: three tests required the forbidden Bridge send/attachment
+    // fallback contract. Real official transport and failure ownership are
+    // covered by active_chat_legacy_official_transport_test.dart instead.
   });
 
   test(
@@ -3532,6 +3564,88 @@ void main() {
 
   group('ActiveChat — ciclo run con streaming', () {
     test(
+      'mp1215: a live memory write lands only on the gateway success result',
+      () async {
+        final gateway = _AttachmentDesktopGateway();
+        final chat = ActiveChat(
+          compressionRestoreStore: testCompressionRestoreStore(),
+          connection: _conn(id: 'conn-desktop-memory-live'),
+          sessionId: 'sess-desktop-memory-live',
+          sessionTitle: 'Memoria en vivo',
+          notifications: null,
+          onTerminal: () {},
+          desktopGateway: gateway,
+          terminalReconcileBudget: Duration.zero,
+        )..smoothStreaming = false;
+        addTearDown(chat.dispose);
+        addTearDown(gateway.close);
+        expect(
+          await chat.send(
+            fullText: 'Recuerda mi zona horaria',
+            model: 'hermes-agent',
+            history: const [],
+          ),
+          isTrue,
+        );
+        final done = chat.changes.firstWhere(
+          (event) => event == ActiveChatEvent.done,
+        );
+        Map<String, dynamic> memoryStep(String id) =>
+            (chat.messages.firstWhere(
+                      (m) => m['role'] == 'assistant',
+                    )[assistantActivityTraceKey]
+                    as List)
+                .cast<Map<String, dynamic>>()
+                .singleWhere((step) => step['id'] == id);
+
+        const args = {
+          'action': 'add',
+          'target': 'user',
+          'content': 'Vive en Lisboa (WEST).',
+        };
+        gateway.emit('tool.start', const {
+          'tool_id': 'mem-1',
+          'name': 'memory',
+          'args': args,
+        });
+        await Future<void>.delayed(Duration.zero);
+        expect(memoryStep('mem-1')['memory'], {
+          'action': 'add',
+          'target': 'user',
+          'landed': false,
+          'preview': 'Vive en Lisboa (WEST).',
+        }, reason: 'running is never marked as saved');
+        gateway.emit('tool.complete', const {
+          'tool_id': 'mem-1',
+          'name': 'memory',
+          'args': args,
+          'result': {'success': true, 'target': 'user', 'entry_count': 3},
+        });
+        gateway.emit('tool.start', const {
+          'tool_id': 'mem-2',
+          'name': 'memory',
+          'args': {'action': 'add', 'content': 'Demasiado largo'},
+        });
+        gateway.emit('tool.complete', const {
+          'tool_id': 'mem-2',
+          'name': 'memory',
+          'args': {'action': 'add', 'content': 'Demasiado largo'},
+          'result': {'success': false, 'error': 'Memory is full.'},
+        });
+        gateway.emit('message.complete', const {'text': 'Hecho.'});
+        await done.timeout(const Duration(seconds: 1));
+
+        expect(memoryStep('mem-1')['memory'], {
+          'action': 'add',
+          'target': 'user',
+          'landed': true,
+          'preview': 'Vive en Lisboa (WEST).',
+        });
+        expect(memoryStep('mem-2')['memory']['landed'], isFalse);
+      },
+    );
+
+    test(
       'reasoning, tools y respuesta final comparten un solo mensaje assistant',
       () async {
         final gateway = _AttachmentDesktopGateway();
@@ -3617,6 +3731,40 @@ void main() {
         );
       },
     );
+
+    test('a run thinking.delta spinner phrase is not reasoning', () async {
+      final client = _ApprovalRaceClient();
+      addTearDown(client.close);
+      final chat = ActiveChat(
+        compressionRestoreStore: testCompressionRestoreStore(),
+        connection: _conn(id: 'conn-run-thinking'),
+        sessionId: 'sess-run-thinking',
+        sessionTitle: 'Run thinking',
+        notifications: null,
+        onTerminal: () {},
+        api: ApiClient(
+          baseUrl: 'http://hermes.local:8642',
+          apiKey: 'test-key',
+          httpClient: client,
+        ),
+      )..smoothStreaming = false;
+      addTearDown(chat.dispose);
+      String reasoning() => chat.messages
+          .map(
+            (m) =>
+                '${m['reasoning'] ?? ''} ${m[assistantActivityTraceKey] ?? ''}',
+          )
+          .join(' ');
+
+      await chat.send(fullText: 'go', model: 'hermes-agent', history: const []);
+      client.emit({'event': 'reasoning.delta', 'text': 'Checking the files. '});
+      await _waitFor(() => reasoning().contains('Checking the files.'));
+      client.emit({'event': 'thinking.delta', 'text': '(¬_¬) pondering...'});
+      client.emit({'event': 'reasoning.delta', 'text': 'Then I edit.'});
+      await _waitFor(() => reasoning().contains('Then I edit.'));
+
+      expect(reasoning(), isNot(contains('pondering')));
+    });
 
     test(
       'colecciona intermedios y final una vez sin narrar tools ni logs',
@@ -3801,7 +3949,14 @@ void main() {
         expect(warning, contains('History changed'));
         expect(terminalCalls, 1);
         expect(requests, isNotEmpty);
-        expect(requests.first.queryParameters, containsPair('limit', '500'));
+        // re1215: the terminal reads the newest page, never the whole session.
+        expect(
+          requests.first.queryParameters,
+          containsPair(
+            'limit',
+            '${ActiveChat.authoritativeTranscriptPageSize}',
+          ),
+        );
         expect(
           requests.first.queryParameters,
           containsPair('include_compacted', 'true'),
@@ -5410,7 +5565,7 @@ void main() {
         );
         expect(
           activeChatSteerFailureIsSafeToQueue(
-            StateError('steer_not_available_for_local_bridge'),
+            StateError('steer_not_available_for_local_agent'),
           ),
           isTrue,
         );

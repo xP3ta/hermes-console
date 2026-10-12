@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/models/bot_visual_identity.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 
@@ -227,6 +228,66 @@ void main() {
       },
     });
   });
+
+  test(
+    'a silhouette colour uses profile ui_meta; title edits preserve it and other identities clear it',
+    () async {
+      for (final identity in <BotVisualIdentity?>[
+        ProceduralFaceIdentity(
+          shapeWire: 'blobatar::sun',
+          dormantColorHex: '#ef4444',
+          useShapeColor: true,
+        ),
+        null,
+        ClassicFaceIdentity(shape: 'circle', colorHex: '#14b8a6'),
+        ProceduralFaceIdentity(
+          shapeWire: 'blobatar::sun',
+          dormantColorHex: '#ef4444',
+        ),
+      ]) {
+        final (:server, :requests) = await _bindGateway(
+          profiles: [
+            {
+              'name': 'infra',
+              'ui_meta': {
+                'hermes-bots': {
+                  'shape': 'blobatar::sun',
+                  'color': '#ef4444',
+                  'useShapeColor': true,
+                  'imageKind': 'shape',
+                  'chat': 'stored-infra',
+                  'futureDesktopField': 7,
+                },
+              },
+            },
+          ],
+        );
+        addTearDown(server.close);
+        final client = _clientFor(server);
+        addTearDown(client.close);
+        await client.saveProfileBotMeta(
+          profile: 'infra',
+          title: 'Infra',
+          identity: identity,
+        );
+        final configure = requests.singleWhere(
+          (r) => r['method'] == 'profiles.configure',
+        );
+        final params = configure['params'] as Map;
+        final meta = (params['ui_meta'] as Map)['hermes-bots'] as Map;
+        expect(meta['chat'], 'stored-infra');
+        expect(meta['futureDesktopField'], 7);
+        expect(meta['title'], 'Infra');
+        if (identity == null ||
+            (identity is ProceduralFaceIdentity && identity.useShapeColor)) {
+          expect(meta['useShapeColor'], isTrue);
+          expect(meta['color'], '#ef4444');
+        } else {
+          expect(meta, isNot(contains('useShapeColor')));
+        }
+      }
+    },
+  );
 
   test(
     'saveProfileBotMeta preserva metadata desconocida sin interpretarla',

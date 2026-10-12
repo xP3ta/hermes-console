@@ -11,12 +11,18 @@ datos con terceros" sin matices. Eso era incompleto: hay flujos funcionales y
 opt-in hacia terceros que deben declararse. Omitirlos es una infracción de
 política detectable por el revisor.
 
+**Actualizado 2026-10-12 (1.2.15)**: la app ya no permite configurar servicios de
+voz propios (ElevenLabs, endpoint compatible con OpenAI, STT/TTS personalizados)
+desde el móvil; la voz va por el servidor Hermes o por el propio móvil. Se añade
+el flujo opt-in de GPT-Live. Repetir la comprobación de este formulario sobre el
+AAB firmado final.
+
 ## Flujos hacia terceros
 
 | Dato | Tercero | Cuándo |
 |---|---|---|
 | Mensajes, transcripciones y adjuntos | Instancia Hermes elegida por el usuario y los proveedores de modelo/herramientas que configure su operador | Al enviar un turno. Es la función principal; XPeta Lab no recibe los datos ni decide los proveedores del servidor |
-| Texto de las respuestas del chat | ElevenLabs (`api.elevenlabs.io`) o endpoint OpenAI-compatible (`api.openai.com` por defecto) | Solo si el usuario elige TTS «ElevenLabs» o «Compatible con OpenAI» en Ajustes → Voz, con su propia API key |
+| Audio de una conversación GPT-Live | Proveedor de voz en tiempo real que usa el servidor Hermes del usuario (sesión WebRTC creada por ese servidor) | Solo si el servidor lo activa y el usuario activa y empieza GPT-Live (apagado por defecto). La clave del proveedor está en el servidor, no en el móvil |
 | Audio de dictado o conversación | Reconocedor de voz del sistema o servidor STT configurado por el usuario | Solo con esos motores. Sherpa/Whisper procesan en el dispositivo. La continuidad bloqueada está apagada por defecto y exige opt-in independiente |
 | Texto de búsqueda de skills | skills.sh | Solo al buscar en el catálogo de skills |
 

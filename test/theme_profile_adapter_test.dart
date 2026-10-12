@@ -84,8 +84,8 @@ void main() {
         expect(duplicate.source, ThemeProfileSource.custom);
         expect(duplicate.isEditable, isTrue);
         expect(duplicate.palette.accent, preset.colors.accent);
-        expect(preset.id, 'amber');
-        expect(preset.name, 'Amber');
+        expect(preset.id, 'console');
+        expect(preset.name, 'Console');
       },
     );
 

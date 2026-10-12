@@ -17,7 +17,9 @@ import '../../l10n/app_localizations.dart';
 import '../models/run_template.dart';
 import '../services/run_template_store.dart';
 import '../theme/app_theme.dart';
+import 'form_page.dart';
 import 'hermes_premium_ui.dart';
+import 'hermes_ui.dart' show HermesField;
 
 /// Plantillas predefinidas, construidas localizadas (es/en) a partir de los
 /// Strings de la app. Las que dejan el prompt "abierto" (terminan en ':')
@@ -272,11 +274,6 @@ class _RunComposerState extends State<_RunComposer> {
                 ),
               ),
             ),
-            const SizedBox(height: 8),
-            Text(
-              s.runComposerNote,
-              style: TextStyle(fontSize: 11, color: colors.textSecondary),
-            ),
             const SizedBox(height: 14),
             Row(
               children: [
@@ -310,11 +307,9 @@ class _RunComposerState extends State<_RunComposer> {
   /// Crea ([existing]==null) o edita una plantilla propia en una ruta con foco
   /// seguro. Persiste y refresca la lista.
   Future<void> _editTemplate(RunTemplate? existing) async {
-    final result = await showHermesFloatingSurface<RunTemplate>(
-      context: context,
-      surfaceKey: const ValueKey('run-template-editor-surface'),
-      maxWidth: 560,
-      maxHeightFactor: 0.88,
+    final result = await pushHermesFormPage<RunTemplate>(
+      context,
+      name: 'run-template-editor',
       builder: (_) => _TemplateEditor(existing: existing),
     );
     if (result == null) return;
@@ -456,6 +451,8 @@ class _TemplateEditorState extends State<_TemplateEditor> {
     super.initState();
     _nameCtrl = TextEditingController(text: widget.existing?.name ?? '');
     _promptCtrl = TextEditingController(text: widget.existing?.prompt ?? '');
+    _nameCtrl.addListener(_changed);
+    _promptCtrl.addListener(_changed);
   }
 
   @override
@@ -465,78 +462,78 @@ class _TemplateEditorState extends State<_TemplateEditor> {
     super.dispose();
   }
 
+  void _changed() {
+    if (mounted) setState(() {});
+  }
+
+  bool get _canSave =>
+      _nameCtrl.text.trim().isNotEmpty && _promptCtrl.text.trim().isNotEmpty;
+
+  void _save() {
+    final name = _nameCtrl.text.trim();
+    final prompt = _promptCtrl.text;
+    if (name.isEmpty || prompt.trim().isEmpty) return;
+    Navigator.of(context).pop(
+      (widget.existing ??
+              RunTemplate(
+                id: RunTemplateStore.newId(),
+                name: name,
+                prompt: prompt,
+                iconKey: 'bolt',
+              ))
+          .copyWith(name: name, prompt: prompt),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
     final s = Strings.of(context);
     final editing = widget.existing != null;
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text(
-            editing ? s.runTplEditTitle : s.runTplNewTitle,
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.w700,
-              color: colors.textPrimary,
-            ),
-          ),
-          const SizedBox(height: 14),
-          TextField(
-            controller: _nameCtrl,
-            autofocus: true,
-            decoration: InputDecoration(labelText: s.runTplNameLabel),
-          ),
-          const SizedBox(height: 10),
-          TextField(
-            controller: _promptCtrl,
-            maxLines: 5,
-            minLines: 3,
-            decoration: InputDecoration(
-              labelText: s.runTplBodyLabel,
-              alignLabelWithHint: true,
-            ),
-          ),
-          const SizedBox(height: 18),
-          Row(
-            children: [
-              if (editing)
-                TextButton.icon(
-                  onPressed: () => Navigator.of(context).pop(
-                    const RunTemplate(
-                        id: '', name: _kDeleteSentinel, prompt: ''),
-                  ),
-                  icon: Icon(Icons.delete_outline, size: 16, color: colors.error),
-                  label: Text(s.runTplDelete, style: TextStyle(color: colors.error)),
-                ),
-              const Spacer(),
-              FilledButton(
-                style: FilledButton.styleFrom(backgroundColor: colors.accent),
-                onPressed: () {
-                  final name = _nameCtrl.text.trim();
-                  final prompt = _promptCtrl.text;
-                  if (name.isEmpty || prompt.trim().isEmpty) return;
-                  Navigator.of(context).pop(
-                    (widget.existing ??
-                            RunTemplate(
-                              id: RunTemplateStore.newId(),
-                              name: name,
-                              prompt: prompt,
-                              iconKey: 'bolt',
-                            ))
-                        .copyWith(name: name, prompt: prompt),
-                  );
-                },
-                child: Text(s.runTplSave,
-                    style: const TextStyle(color: Colors.black)),
+    return HermesFormPage(
+      bodyKey: const ValueKey('run-template-editor-surface'),
+      title: editing ? s.runTplEditTitle : s.runTplNewTitle,
+      submitLabel: s.runTplSave,
+      submitKey: const ValueKey('run-template-editor-save'),
+      onSubmit: _canSave ? _save : null,
+      dirty:
+          _nameCtrl.text != (widget.existing?.name ?? '') ||
+          _promptCtrl.text != (widget.existing?.prompt ?? ''),
+      children: [
+        const SizedBox(height: 4),
+        HermesField(
+          fieldKey: const ValueKey('run-template-editor-name'),
+          controller: _nameCtrl,
+          label: s.runTplNameLabel,
+          autofocus: !editing,
+        ),
+        const SizedBox(height: 16),
+        HermesField(
+          fieldKey: const ValueKey('run-template-editor-prompt'),
+          controller: _promptCtrl,
+          label: s.runTplBodyLabel,
+          keyboardType: TextInputType.multiline,
+          minLines: 6,
+          maxLines: null,
+        ),
+        if (editing) ...[
+          const SizedBox(height: 24),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              key: const ValueKey('run-template-editor-delete'),
+              onPressed: () => Navigator.of(context).pop(
+                const RunTemplate(id: '', name: _kDeleteSentinel, prompt: ''),
               ),
-            ],
+              icon: Icon(Icons.delete_outline, size: 18, color: colors.error),
+              label: Text(
+                s.runTplDelete,
+                style: TextStyle(color: colors.error),
+              ),
+            ),
           ),
         ],
-      ),
+      ],
     );
   }
 }

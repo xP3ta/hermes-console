@@ -104,6 +104,31 @@ void main() {
       );
     });
 
+    test('sin red el error dice que no se llegó a Petdex; con respuesta '
+        'inservible, no', () async {
+      Future<PetdexRemoteException> failure(http.Client client) async {
+        try {
+          await PetdexRemoteService(client: client).fetchManifest();
+        } on PetdexRemoteException catch (error) {
+          return error;
+        }
+        throw StateError('fetchManifest did not fail');
+      }
+
+      final unreachable = await failure(
+        MockClient((req) async => throw http.ClientException('no route')),
+      );
+      expect(unreachable.offline, isTrue);
+      final refused = await failure(
+        MockClient((req) async => http.Response('nope', 503)),
+      );
+      expect(refused.offline, isFalse);
+      final garbled = await failure(
+        MockClient((req) async => http.Response('no-json{', 200)),
+      );
+      expect(garbled.offline, isFalse);
+    });
+
     test('todas las entradas inválidas → excepción (lista vacía)', () async {
       final client = _json({
         'pets': [

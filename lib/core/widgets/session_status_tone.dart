@@ -102,6 +102,25 @@ Color readableActivityTone(Color tone, Color background) {
   return candidate;
 }
 
+/// Contrast a bold name label needs to read (WCAG AA for large/bold text).
+const double _kMinLabelContrast = 3.0;
+
+/// A coloured label (a profile's or bot's own colour used as text) made
+/// legible on [background]: kept as it is when it already reads, otherwise
+/// moved towards white (dark themes) or black (light ones) until it does.
+Color readableLabelColor(Color tone, Color background) {
+  if (_contrastRatio(tone, background) >= _kMinLabelContrast) return tone;
+  final target = background.computeLuminance() < 0.5
+      ? Colors.white
+      : Colors.black;
+  var candidate = tone;
+  for (var step = 1; step <= 10; step++) {
+    candidate = Color.lerp(tone, target, step / 10)!;
+    if (_contrastRatio(candidate, background) >= _kMinLabelContrast) break;
+  }
+  return candidate;
+}
+
 /// Tono de "compactando"/actividad calma para un tema concreto: el
 /// `secondary` del tema (o su `accent`), legible y separado del título.
 ///

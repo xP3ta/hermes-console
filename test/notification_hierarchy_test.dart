@@ -212,7 +212,7 @@ void main() {
       final locked = shown.last;
       final android = androidOf(locked);
       expect(locked['title'], 'Hermes necesita tu atención');
-      expect(locked['body'], 'Abre la aplicación para ver los detalles.');
+      expect(locked['body'], 'Toca para verla');
       expect(android['visibility'], NotificationVisibility.secret.index);
       expect(actionIdsOf(locked), ['open']);
     },
@@ -243,8 +243,8 @@ void main() {
 
     final shown = shownArgs(groupSummary: false);
     expect(shown, hasLength(2));
-    expect(shown.first['title'], 'Tarea programada completada');
-    expect(shown.last['title'], 'Tarea programada fallida');
+    expect(shown.first['title'], 'Tarea programada terminada');
+    expect(shown.last['title'], 'Falló una tarea programada');
     expect(shown.first['id'], isNot(shown.last['id']));
   });
 
@@ -262,7 +262,7 @@ void main() {
     final shown = shownArgs(groupSummary: false);
     expect(shown, hasLength(1));
     final android = androidOf(shown.single);
-    expect(shown.single['title'], 'Tarea de Kanban bloqueada');
+    expect(shown.single['title'], 'Tarea bloqueada');
     expect(shown.single['body'], 'Preparar publicación');
     expect(android['subText'], 'Kanban · task-42');
     final payload = Map<String, dynamic>.from(
@@ -318,7 +318,7 @@ void main() {
 
     final shown = shownArgs(groupSummary: false);
     expect(shown, hasLength(2));
-    expect(shown.last['title'], 'Tarea de Kanban completada');
+    expect(shown.last['title'], 'Tarea terminada');
   });
 
   test(

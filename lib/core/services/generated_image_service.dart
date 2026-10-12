@@ -1,12 +1,13 @@
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
+import 'dart:ui' as ui;
+
+import 'generated_media_service.dart';
 
 import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
-
-import 'bridge_version.dart';
 
 /// Detección y descarga de imágenes GENERADAS por el agente (spec 030).
 ///
@@ -16,9 +17,9 @@ import 'bridge_version.dart';
 ///  1. segmenta el texto de un mensaje del asistente en trozos de texto e
 ///     imágenes detectadas (al RENDERIZAR, no al recibir: el historial viejo
 ///     también gana render);
-///  2. descarga los bytes vía `GET /bridge/image` (token del bridge, guard de
-///     basename en ambos lados) y los cachea en el almacenamiento privado de
-///     la app, idempotente.
+///  2. cachea en el almacenamiento privado de la app, de forma idempotente,
+///     los bytes que el llamante obtiene del Dashboard (`/api/media`, ver
+///     `GeneratedImageFetch`; guard de basename en ambos lados).
 ///
 /// Los resultados estructurados de Desktop también pueden entregar una URL
 /// HTTPS. En ese caso se descarga con redirects y límites estrictos y se
@@ -32,25 +33,15 @@ class GeneratedImageService {
   static const int maxHttpsRedirects = 5;
   static final Map<String, Future<File>> _inFlight = {};
 
-  /// Ruta de imagen generada del servidor: home del usuario del agente +
-  /// `.hermes/cache/images/` + basename con charset estricto y extensión de
-  /// imagen. El basename capturado es lo ÚNICO que viaja al bridge.
+  /// Producer cache path, retaining its full source identity through rows and
+  /// downloads. Basenames are presentation only; authenticated resolution in
+  /// GeneratedImageFetch checks the exact profile root before a host read.
   static final RegExp pathRe = RegExp(
-    r'(?:/home/[A-Za-z0-9._-]+|/root|~)/\.hermes/cache/images/'
+    r'(?:/(?:[^/\s\\`"<>()[\]{}]+/)+|~/\.hermes/)'
+    r'cache/(?:generated/)?images/'
     r'([A-Za-z0-9._-]+\.(?:png|jpe?g|webp))',
     caseSensitive: false,
   );
-
-  /// Versión mínima del bridge que sirve `GET /bridge/image`.
-  static const String minBridgeVersion = '1.12.0';
-
-  /// True si un bridge con [runningVersion] puede servir imágenes generadas.
-  /// Null/vacío (sin bridge o versión desconocida) → false.
-  static bool bridgeSupportsImages(String? runningVersion) {
-    final v = (runningVersion ?? '').trim();
-    if (v.isEmpty) return false;
-    return BridgeVersion.compare(v, minBridgeVersion) >= 0;
-  }
 
   /// Segmenta [text] en texto e imágenes generadas, en orden. Sin matches
   /// devuelve un único [TextSegment] con el texto íntegro — el fallo de
@@ -59,6 +50,13 @@ class GeneratedImageService {
     final out = <ChatSegment>[];
     var cursor = 0;
     for (final m in pathRe.allMatches(text)) {
+      if (!GeneratedMediaService.isSafeGeneratedImageSource(m.group(0)!) ||
+          (m.start > 0 &&
+              RegExp(r'[/A-Za-z0-9_%:]').hasMatch(text[m.start - 1])) ||
+          (m.end < text.length &&
+              RegExp(r'[/A-Za-z0-9_%]').hasMatch(text[m.end]))) {
+        continue;
+      }
       var start = m.start;
       var end = m.end;
       // Envolturas comunes alrededor de la ruta (backticks de código inline,
@@ -75,7 +73,7 @@ class GeneratedImageService {
       if (start > cursor) {
         out.add(TextSegment(text.substring(cursor, start)));
       }
-      out.add(ImageSegment(m.group(1)!));
+      out.add(ImageSegment(m.group(1)!, source: m.group(0)!));
       cursor = end;
     }
     if (cursor < text.length) out.add(TextSegment(text.substring(cursor)));
@@ -107,6 +105,7 @@ class GeneratedImageService {
       if (candidate == null) continue;
       final candidateMatch = pathRe.firstMatch(candidate);
       if (candidateMatch != null &&
+          GeneratedMediaService.isSafeGeneratedImageSource(candidate) &&
           candidateMatch.start == 0 &&
           candidateMatch.end == candidate.length) {
         source = candidate;
@@ -187,7 +186,9 @@ class GeneratedImageService {
   static String? _nonEmptyString(Object? value) {
     if (value is! String) return null;
     final trimmed = value.trim();
-    return trimmed.isEmpty || trimmed.length > 4096 ? null : trimmed;
+    return trimmed.isEmpty || trimmed.length > 4096 || trimmed != value
+        ? null
+        : value;
   }
 
   static Uri? _safeHttpsUri(String source) {
@@ -209,7 +210,7 @@ class GeneratedImageService {
   /// ella; el historial no sale del dispositivo.
   static Future<Directory> imagesDir({Directory? baseDir}) async {
     final base = baseDir ?? await getApplicationSupportDirectory();
-    final dir = Directory('${base.path}/generated_images');
+    final dir = Directory('${base.path}/generated_images_v2');
     if (!dir.existsSync()) dir.createSync(recursive: true);
     return dir;
   }
@@ -236,15 +237,26 @@ class GeneratedImageService {
     String basename, {
     required Future<Uint8List> Function(String basename) fetch,
     Directory? baseDir,
+    bool Function()? isCurrent,
   }) async {
+    if (!GeneratedMediaService.isSafeGeneratedImageSource(basename) ||
+        basename.contains('/')) {
+      throw const FormatException('unsafe generated image cache name');
+    }
+    _checkOwner(isCurrent);
     final key = '$connectionId::$basename';
     final existing = _inFlight[key];
-    if (existing != null) return existing;
+    if (existing != null) {
+      final file = await existing;
+      _checkOwner(isCurrent);
+      return file;
+    }
     final future = _ensureDownloadedOnce(
       connectionId,
       basename,
       fetch: fetch,
       baseDir: baseDir,
+      isCurrent: isCurrent,
     );
     _inFlight[key] = future;
     try {
@@ -259,7 +271,9 @@ class GeneratedImageService {
     String basename, {
     required Future<Uint8List> Function(String basename) fetch,
     Directory? baseDir,
+    bool Function()? isCurrent,
   }) async {
+    _checkOwner(isCurrent);
     final dir = await imagesDir(baseDir: baseDir);
     final connectionHash = _shortHash(connectionId);
     final prefix = '${connectionHash}_';
@@ -269,10 +283,14 @@ class GeneratedImageService {
       final name = entity.uri.pathSegments.last;
       if (!name.startsWith(prefix) || !name.endsWith(suffix)) continue;
       try {
-        final bytes = await entity
-            .openRead(0, 16)
-            .fold<List<int>>(<int>[], (all, chunk) => all..addAll(chunk));
-        if (_imageFormat(bytes) != null) return entity;
+        if (await entity.length() > maxDownloadBytes) {
+          throw const FormatException('oversized cache');
+        }
+        await validateImageBytes(await entity.readAsBytes());
+        _checkOwner(isCurrent);
+        return entity;
+      } on StateError {
+        rethrow;
       } catch (_) {}
       try {
         await entity.delete();
@@ -280,6 +298,9 @@ class GeneratedImageService {
     }
 
     final bytes = await fetch(basename);
+    _checkOwner(isCurrent);
+    await validateImageBytes(bytes);
+    _checkOwner(isCurrent);
     if (bytes.isEmpty || bytes.length > maxDownloadBytes) {
       throw const FormatException('imagen vacía o demasiado grande');
     }
@@ -297,6 +318,7 @@ class GeneratedImageService {
     final tmp = File('${file.path}.part.$unique');
     try {
       await tmp.writeAsBytes(bytes, flush: true);
+      _checkOwner(isCurrent);
       await tmp.rename(file.path);
     } finally {
       if (await tmp.exists()) await tmp.delete();
@@ -314,15 +336,21 @@ class GeneratedImageService {
     Directory? baseDir,
     Duration connectTimeout = httpsConnectTimeout,
     Duration readTimeout = httpsReadTimeout,
+    bool Function()? isCurrent,
   }) async {
     final uri = _safeHttpsUri(source);
     if (uri == null) {
       throw const FormatException('la fuente de imagen HTTPS no es válida');
     }
     final sourceHash = sha256.convert(utf8.encode(uri.toString())).toString();
+    _checkOwner(isCurrent);
     final key = '${_shortHash(connectionId)}::https::$sourceHash';
     final existing = _inFlight[key];
-    if (existing != null) return existing;
+    if (existing != null) {
+      final file = await existing;
+      _checkOwner(isCurrent);
+      return file;
+    }
     final future = _ensureHttpsDownloadedOnce(
       connectionId,
       uri,
@@ -331,6 +359,7 @@ class GeneratedImageService {
       baseDir: baseDir,
       connectTimeout: connectTimeout,
       readTimeout: readTimeout,
+      isCurrent: isCurrent,
     );
     _inFlight[key] = future;
     try {
@@ -348,7 +377,9 @@ class GeneratedImageService {
     required Directory? baseDir,
     required Duration connectTimeout,
     required Duration readTimeout,
+    bool Function()? isCurrent,
   }) async {
+    _checkOwner(isCurrent);
     final dir = await imagesDir(baseDir: baseDir);
     final connectionHash = _shortHash(connectionId);
     final prefix = '${connectionHash}_https_${sourceHash}_';
@@ -357,10 +388,14 @@ class GeneratedImageService {
       final name = entity.uri.pathSegments.last;
       if (!name.startsWith(prefix)) continue;
       try {
-        final bytes = await entity
-            .openRead(0, 16)
-            .fold<List<int>>(<int>[], (all, chunk) => all..addAll(chunk));
-        if (_imageFormat(bytes) != null) return entity;
+        if (await entity.length() > maxDownloadBytes) {
+          throw const FormatException('oversized cache');
+        }
+        await validateImageBytes(await entity.readAsBytes());
+        _checkOwner(isCurrent);
+        return entity;
+      } on StateError {
+        rethrow;
       } catch (_) {}
       try {
         await entity.delete();
@@ -376,6 +411,9 @@ class GeneratedImageService {
         connectTimeout: connectTimeout,
         readTimeout: readTimeout,
       );
+      _checkOwner(isCurrent);
+      await validateImageBytes(downloaded.bytes);
+      _checkOwner(isCurrent);
       final digest = sha256.convert(downloaded.bytes).toString();
       final file = File(
         '${dir.path}/$prefix$digest.${downloaded.format.extension}',
@@ -384,6 +422,7 @@ class GeneratedImageService {
       final tmp = File('${file.path}.part.$unique');
       try {
         await tmp.writeAsBytes(downloaded.bytes, flush: true);
+        _checkOwner(isCurrent);
         await tmp.rename(file.path);
       } finally {
         if (await tmp.exists()) await tmp.delete();
@@ -509,6 +548,57 @@ class GeneratedImageService {
     return null;
   }
 
+  static void _checkOwner(bool Function()? isCurrent) {
+    if (isCurrent != null && !isCurrent()) {
+      throw StateError('generated image owner revoked');
+    }
+  }
+
+  static const int maxImagePixels = 16 * 1024 * 1024;
+  static const int maxImageDimension = 8192;
+
+  /// Header inspection precedes raster allocation; MIME/signatures alone are
+  /// never accepted as decoded image evidence.
+  static Future<void> validateImageBytes(
+    Uint8List bytes, {
+    String? mime,
+  }) async {
+    final format = _imageFormat(bytes);
+    if (bytes.isEmpty ||
+        bytes.length > maxDownloadBytes ||
+        format == null ||
+        (mime != null && _formatForMime(mime) != format)) {
+      throw const FormatException('invalid image payload');
+    }
+    ui.ImmutableBuffer? buffer;
+    ui.ImageDescriptor? descriptor;
+    ui.Codec? codec;
+    ui.Image? image;
+    try {
+      buffer = await ui.ImmutableBuffer.fromUint8List(bytes);
+      descriptor = await ui.ImageDescriptor.encoded(buffer);
+      if (descriptor.width <= 0 ||
+          descriptor.height <= 0 ||
+          descriptor.width > maxImageDimension ||
+          descriptor.height > maxImageDimension ||
+          descriptor.width * descriptor.height > maxImagePixels) {
+        throw const FormatException('image dimensions exceed limit');
+      }
+      codec = await descriptor.instantiateCodec();
+      if (codec.frameCount > 256) {
+        throw const FormatException('too many image frames');
+      }
+      image = (await codec.getNextFrame()).image;
+    } catch (_) {
+      throw const FormatException('invalid or oversized image');
+    } finally {
+      image?.dispose();
+      codec?.dispose();
+      descriptor?.dispose();
+      buffer?.dispose();
+    }
+  }
+
   static String _shortHash(String value) =>
       sha256.convert(utf8.encode(value)).toString().substring(0, 16);
 
@@ -578,5 +668,7 @@ class TextSegment extends ChatSegment {
 class ImageSegment extends ChatSegment {
   /// Basename del archivo en el servidor (sin directorios; validado).
   final String basename;
-  const ImageSegment(this.basename);
+  final String source;
+  const ImageSegment(this.basename, {String? source})
+    : source = source ?? basename;
 }

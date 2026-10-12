@@ -71,7 +71,9 @@ void main() {
     final rect = tester.getRect(surface);
     expect(rect.height, lessThan(844 * 0.5));
     expect((rect.center.dx - 195).abs(), lessThan(1));
-    final material = tester.widget<Material>(surface);
+    final material = tester.widget<Material>(
+      find.descendant(of: surface, matching: find.byType(Material)).first,
+    );
     final shape = material.shape! as RoundedRectangleBorder;
     expect(shape.borderRadius, BorderRadius.circular(22));
     // Selected option shows a check; no search under the threshold.

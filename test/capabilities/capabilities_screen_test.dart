@@ -1,28 +1,32 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/capabilities/capabilities_repository.dart';
 import 'package:hermes_android/core/capabilities/capabilities_screen.dart';
 import 'package:hermes_android/core/capabilities/capability_detail_screen.dart';
+import 'package:hermes_android/core/capabilities/connector_detail_screen.dart';
 import 'package:hermes_android/core/services/connection_manager.dart'
     show DashboardHttpException;
+import 'package:hermes_android/core/services/tui_gateway_client.dart'
+    show TuiGatewayRpcError, TuiGatewayRpcFailureKind;
 
 import '../support/inter_font.dart';
 import 'capabilities_fakes.dart';
+import '../support/quiet_feedback.dart';
 
 Future<void> _pumpHub(
   WidgetTester tester,
   ScriptedRest rest, {
   bool readOnly = false,
   WidgetBuilder? advanced,
-  WidgetBuilder? classic,
+  CapabilitiesRpc? rpc,
 }) async {
   await setPhone(tester);
   await tester.pumpWidget(
     spanishApp(
       CapabilitiesScreen(
-        repository: repoOf(rest),
+        repository: repoOf(rest, rpc: rpc),
         readOnly: readOnly,
         advancedBuilder: advanced,
-        classicSkillsBuilder: classic,
         searchDebounce: Duration.zero,
       ),
     ),
@@ -129,6 +133,136 @@ void main() {
     expect(find.byTooltip('Filtrar'), findsNothing);
   });
 
+  testWidgets('MCP rows show the runtime status and tool count, asked once', (
+    tester,
+  ) async {
+    final methods = <String>[];
+    await _pumpHub(
+      tester,
+      populatedServer(),
+      rpc: (method, params) async {
+        methods.add(method);
+        if (method == 'mcp.servers.status') {
+          return {
+            'servers': [
+              {
+                'name': 'docs',
+                'transport': 'http',
+                'tools': 4,
+                'connected': true,
+                'disabled': false,
+                'status': 'connected',
+                'source': 'config',
+              },
+            ],
+            'checked_at': 1,
+          };
+        }
+        throw TuiGatewayRpcError(method, 'nope', code: -32601);
+      },
+    );
+    await tester.tap(find.byKey(const ValueKey('cph-seg-connectors')));
+    await tester.pumpAndSettle();
+
+    final row = find.byKey(const ValueKey('cph-row-mcp:server:docs'));
+    expect(
+      find.descendant(of: row, matching: find.text('Conectado')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: row, matching: find.textContaining('4 herramientas')),
+      findsOneWidget,
+    );
+    expect(find.text('Activa'), findsNothing);
+    expect(methods.where((m) => m == 'mcp.servers.status'), hasLength(1));
+  });
+
+  testWidgets('a server without mcp.servers.status keeps the static row', (
+    tester,
+  ) async {
+    await _pumpHub(
+      tester,
+      populatedServer(),
+      rpc: (method, params) async =>
+          throw TuiGatewayRpcError(method, 'nope', code: -32601),
+    );
+    await tester.tap(find.byKey(const ValueKey('cph-seg-connectors')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Activa'), findsOneWidget);
+    expect(find.textContaining('herramientas'), findsNothing);
+  });
+
+  group('hosted connector rows', () {
+    Future<Map<String, dynamic>> hosted(
+      String method,
+      Map<String, dynamic> params, {
+      required bool policy,
+    }) async {
+      switch (method) {
+        case 'connectors.list':
+          return {
+            'available': true,
+            'connectors': [
+              {'connector': 'github', 'connected': true, 'enabled': true},
+            ],
+          };
+        case 'connectors.catalog':
+          return {
+            'connectors': [
+              {'slug': 'github', 'name': 'GitHub', 'description': 'Code'},
+            ],
+          };
+        case 'connectors.accounts':
+          return {'accounts': <Object>[]};
+        case 'connectors.policy.get':
+          if (policy) {
+            return {
+              'layers': [
+                {
+                  'kind': 'member',
+                  'revision': 'R1',
+                  'body': {'mode': 'unrestricted'},
+                },
+              ],
+            };
+          }
+      }
+      throw TuiGatewayRpcError(method, 'nope', code: -32601);
+    }
+
+    testWidgets('open the detail when the policy is readable', (tester) async {
+      await _pumpHub(
+        tester,
+        populatedServer(),
+        rpc: (m, p) => hosted(m, p, policy: true),
+      );
+      await tester.tap(find.byKey(const ValueKey('cph-seg-connectors')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('cph-account-github')));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(ConnectorDetailScreen), findsOneWidget);
+    });
+
+    testWidgets('stay read-only rows without connectors.policy.get', (
+      tester,
+    ) async {
+      await _pumpHub(
+        tester,
+        populatedServer(),
+        rpc: (m, p) => hosted(m, p, policy: false),
+      );
+      await tester.tap(find.byKey(const ValueKey('cph-seg-connectors')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('cph-account-github')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('cph-account-github')));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(ConnectorDetailScreen), findsNothing);
+    });
+  });
+
   testWidgets('empty server: honest empty installed state', (tester) async {
     final rest = ScriptedRest()
       ..gets['skills'] = <Object>[]
@@ -215,21 +349,15 @@ void main() {
     expect(rest.mutations, isEmpty);
   });
 
-  testWidgets('menu opens the classic skills screen', (tester) async {
-    await _pumpHub(
-      tester,
-      populatedServer(),
-      classic: (_) => const Scaffold(body: Text('classic-screen')),
-    );
+  testWidgets('menu has no bridge-only classic skills entry', (tester) async {
+    await _pumpHub(tester, populatedServer());
     await tester.tap(find.byTooltip('Más opciones'));
     await tester.pumpAndSettle();
     expect(
       find.byKey(const ValueKey('cph-menu-update-skills')),
       findsOneWidget,
     );
-    await tester.tap(find.byKey(const ValueKey('cph-menu-classic')));
-    await tester.pumpAndSettle();
-    expect(find.text('classic-screen'), findsOneWidget);
+    expect(find.byKey(const ValueKey('cph-menu-classic')), findsNothing);
   });
 
   testWidgets('update skills runs the server action and reloads', (
@@ -252,7 +380,125 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(rest.mutations, ['POST skills/hub/update']);
-    expect(find.text('Skills actualizadas'), findsOneWidget);
+    expectRoutineFeedback(tester, 'Skills actualizadas');
     expect(find.byKey(const ValueKey('cph-progress')), findsNothing);
+  });
+
+  test('installed state of a plugin comes from the hub profile', () async {
+    // The REST catalog flags `installed` for the server's launch profile; the
+    // hub is on `work`, where plugins.manage list says nothing is installed.
+    final rest = populatedServer();
+    final repo = CapabilitiesRepository(
+      rest: rest,
+      profile: 'work',
+      rpc: (method, params) async => {'plugins': <Object>[]},
+    );
+    final snapshot = await CapabilitiesSnapshot.load(repo);
+    final weather = snapshot.catalog.firstWhere(
+      (i) => i.installId == 'weather',
+    );
+    expect(weather.installed, isFalse);
+    expect(weather.updateAvailable, isFalse);
+    expect(snapshot.installed.where((i) => i.installId == 'weather'), isEmpty);
+  });
+
+  test(
+    'plugins.manage list matches by catalog_name and carries the update',
+    () async {
+      final repo = CapabilitiesRepository(
+        rest: populatedServer(),
+        profile: 'work',
+        rpc: (method, params) async => {
+          'plugins': [
+            {
+              'name': 'wx',
+              'catalog_name': 'weather',
+              'status': 'disabled',
+              'update_available': true,
+            },
+          ],
+        },
+      );
+      final snapshot = await CapabilitiesSnapshot.load(repo);
+      final weather = snapshot.catalog.firstWhere(
+        (i) => i.installId == 'weather',
+      );
+      expect(weather.installed, isTrue);
+      expect(weather.enabled, isFalse);
+      expect(weather.updateAvailable, isTrue);
+      expect(weather.installedName, 'wx');
+    },
+  );
+
+  group('a named profile never borrows the launch profile flags', () {
+    // REST says Weather is installed (server launch profile); the hub is on
+    // `work` and plugins.manage list is down or missing.
+    for (final failure in <String, Object>{
+      'timeout': const TuiGatewayRpcError(
+        'plugins.manage',
+        'timed out',
+        failureKind: TuiGatewayRpcFailureKind.timeout,
+      ),
+      'forbidden': const TuiGatewayRpcError('plugins.manage', 'denied'),
+      'unsupported': const TuiGatewayRpcError(
+        'plugins.manage',
+        'nope',
+        code: -32601,
+      ),
+    }.entries) {
+      test('${failure.key}: not installed, and the hub says so', () async {
+        final repo = CapabilitiesRepository(
+          rest: populatedServer(),
+          profile: 'work',
+          rpc: (method, params) async => throw failure.value,
+        );
+        final snapshot = await CapabilitiesSnapshot.load(repo);
+        final weather = snapshot.catalog.firstWhere(
+          (i) => i.installId == 'weather',
+        );
+        // Unknown, not "not installed": nothing may offer an install.
+        expect(weather.stateUnknown, isTrue);
+        expect(weather.installed, isFalse);
+        expect(weather.updateAvailable, isFalse);
+        expect(snapshot.partial, isTrue);
+        expect(capabilityActions(weather, readOnly: false), isEmpty);
+      });
+    }
+
+    test('the default profile keeps the REST flags without a notice', () async {
+      final repo = CapabilitiesRepository(
+        rest: populatedServer(),
+        rpc: (method, params) async =>
+            throw const TuiGatewayRpcError('plugins.manage', 'x', code: -32601),
+      );
+      final snapshot = await CapabilitiesSnapshot.load(repo);
+      final weather = snapshot.catalog.firstWhere(
+        (i) => i.installId == 'weather',
+      );
+      expect(weather.installed, isTrue);
+      expect(weather.stateUnknown, isFalse);
+      expect(snapshot.partial, isFalse);
+    });
+  });
+
+  test('plugin rows keep the canonical key through the snapshot', () async {
+    final rest = populatedServer();
+    rest.gets['dashboard/plugins/catalog'] = {
+      'entries': [
+        {'name': 'fal', 'tier': 'official'},
+      ],
+    };
+    final repo = CapabilitiesRepository(
+      rest: rest,
+      profile: 'work',
+      rpc: (method, params) async => {
+        'plugins': [
+          {'name': 'fal', 'key': 'image_gen/fal', 'catalog_name': 'fal'},
+        ],
+      },
+    );
+    final snapshot = await CapabilitiesSnapshot.load(repo);
+    final fal = snapshot.catalog.firstWhere((i) => i.installId == 'fal');
+    expect(fal.installedKey, 'image_gen/fal');
   });
 }

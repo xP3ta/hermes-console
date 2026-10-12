@@ -6,9 +6,9 @@ import 'package:hermes_android/core/companion/data/companion_repository.dart';
 import 'package:hermes_android/core/companion/models/companion.dart';
 import 'package:hermes_android/core/companion/models/companion_animation_state.dart';
 import 'package:hermes_android/core/companion/models/companion_presence_level.dart';
-import 'package:hermes_android/core/companion/render/companion_presence.dart';
 import 'package:hermes_android/core/companion/state/companion_controller.dart';
 import 'package:hermes_android/core/screens/companion/mascotas_screen.dart';
+import 'package:hermes_android/core/widgets/mascot/float/mascot_prefs.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 Companion _pet(String slug, String name) => Companion(
@@ -66,7 +66,11 @@ Future<CompanionController> _controller(List<Companion> pets) async {
   return c;
 }
 
-Future<void> _pumpScreen(WidgetTester tester, CompanionController c) async {
+Future<void> _pumpScreen(
+  WidgetTester tester,
+  CompanionController c, {
+  MascotPrefs? mascotPrefs,
+}) async {
   // Viewport alto: el ListView construye todos los ítems (incl. la 3ª mascota).
   tester.view.physicalSize = const Size(1000, 2400);
   tester.view.devicePixelRatio = 1.0;
@@ -77,10 +81,10 @@ Future<void> _pumpScreen(WidgetTester tester, CompanionController c) async {
       locale: const Locale('es'),
       localizationsDelegates: Strings.localizationsDelegates,
       supportedLocales: Strings.supportedLocales,
-      home: MascotasScreen(controller: c),
+      home: MascotasScreen(controller: c, mascotPrefs: mascotPrefs),
     ),
   );
-  // pump() (no pumpAndSettle): los sprites/Spark tienen animaciones en bucle.
+  // pump() (no pumpAndSettle): los sprites tienen animaciones en bucle.
   await tester.pump();
 }
 
@@ -105,11 +109,10 @@ void main() {
     await _pumpScreen(tester, c);
 
     expect(find.text('Mascotas'), findsOneWidget); // AppBar
-    expect(find.text('Por defecto (Spark)'), findsWidgets);
+    expect(find.text('Cara de la app'), findsWidgets);
     expect(find.text('Nimbus'), findsOneWidget);
     expect(find.text('Pixel'), findsOneWidget);
     expect(find.text('Violet'), findsOneWidget);
-    expect(find.byType(CompanionPresence), findsNothing);
   });
 
   testWidgets('seleccionar una mascota persiste la selección', (tester) async {
@@ -124,45 +127,92 @@ void main() {
     expect(c.activeCompanion?.slug, 'nimbus');
   });
 
-  testWidgets('presencia apagada y completa controlan la visibilidad', (
+  testWidgets('Presencia: three choices that say where the pet is', (
     tester,
   ) async {
+    final handle = tester.ensureSemantics();
     final c = await _controller([_pet('nimbus', 'Nimbus')]);
     await _pumpScreen(tester, c);
 
-    expect(c.enabled, isTrue); // ON por defecto
+    // What it used to promise is gone.
+    for (final gone in [
+      'Mínima',
+      'Completa',
+      'Mostrar en Inicio',
+      'Aparece en Inicio y modo voz, sin ocupar el chat.',
+    ]) {
+      expect(find.text(gone), findsNothing);
+    }
+    expect(find.byKey(const ValueKey('pet-presence-choices')), findsOneWidget);
+    String? chosen() {
+      for (final level in ['off', 'chat', 'full']) {
+        final mark = tester.widget<Container>(
+          find
+              .descendant(
+                of: find.byKey(ValueKey('pet-presence-$level')),
+                matching: find.byType(Container),
+              )
+              .first,
+        );
+        if (mark.child != null) return level;
+      }
+      return null;
+    }
+
+    // On, everywhere, by default.
+    expect(c.enabled, isTrue);
+    expect(chosen(), 'full');
+    expect(find.bySemanticsLabel('Presencia En toda la app'), findsOneWidget);
+
     await tester.tap(find.text('Apagada'));
     await tester.pump();
-
     expect(c.enabled, isFalse);
-    expect(c.presenceLevel, CompanionPresenceLevel.off);
+    expect(c.presence, CompanionPresenceLevel.off);
+    expect(chosen(), 'off');
 
-    await tester.tap(find.text('Completa'));
+    await tester.tap(find.text('Solo en el chat'));
     await tester.pump();
-
     expect(c.enabled, isTrue);
-    expect(c.presenceLevel, CompanionPresenceLevel.full);
+    expect(c.presence, CompanionPresenceLevel.chat);
+    expect(c.presence.showsEverywhere, isFalse);
+    expect(chosen(), 'chat');
+
+    await tester.tap(find.text('En toda la app'));
+    await tester.pump();
+    expect(c.enabled, isTrue);
+    expect(c.presence, CompanionPresenceLevel.full);
+    expect(c.presence.showsEverywhere, isTrue);
+    expect(chosen(), 'full');
+    handle.dispose();
   });
 
-  testWidgets('puede ocultarse solo en Inicio sin apagar la presencia', (
+  testWidgets('"Volver al dock" shows once the floating pet was moved', (
     tester,
   ) async {
+    final mascot = MascotPrefs();
+    await mascot.ensureLoaded();
     final c = await _controller([_pet('nimbus', 'Nimbus')]);
-    await _pumpScreen(tester, c);
+    await _pumpScreen(tester, c, mascotPrefs: mascot);
+    final back = find.byKey(const ValueKey('pet-back-to-dock'));
+    expect(back, findsNothing);
 
-    final tile = find.byKey(const ValueKey('pet-show-on-home'));
-    expect(tile, findsOneWidget);
-    expect(c.showOnHome, isTrue);
+    await mascot.placeFree(const Offset(0.3, 0.4));
+    await tester.pump();
+    expect(back, findsOneWidget);
+    expect(find.text('Volver al dock'), findsOneWidget);
 
-    final toggle = tester.widget<Switch>(
-      find.descendant(of: tile, matching: find.byType(Switch)),
-    );
-    toggle.onChanged!(false);
+    // Not while the pet does not float at all.
+    await tester.tap(find.text('Solo en el chat'));
+    await tester.pump();
+    expect(back, findsNothing);
+    await tester.tap(find.text('En toda la app'));
     await tester.pump();
 
-    expect(c.showOnHome, isFalse);
-    expect(c.enabled, isTrue);
-    expect(c.presenceLevel, CompanionPresenceLevel.minimal);
+    await tester.tap(back);
+    await tester.pump();
+    expect(mascot.moved, isFalse);
+    expect(mascot.placement, MascotPlacement.dock);
+    expect(back, findsNothing);
   });
 
   testWidgets('el slider persiste un tamaño continuo', (tester) async {
@@ -207,27 +257,6 @@ void main() {
     expect(c.animationSpeed, closeTo(0.5, 0.001));
   });
 
-  testWidgets('el paseo es opt-in y se puede activar desde Mascotas', (
-    tester,
-  ) async {
-    final c = await _controller([_pet('nimbus', 'Nimbus')]);
-    await _pumpScreen(tester, c);
-
-    expect(c.roamingEnabled, isFalse);
-    await _expandAdvanced(tester);
-    final roamingTile = find.ancestor(
-      of: find.text('Mascota en movimiento'),
-      matching: find.byType(SwitchListTile),
-    );
-    final roamingSwitch = tester.widget<Switch>(
-      find.descendant(of: roamingTile, matching: find.byType(Switch)),
-    );
-    roamingSwitch.onChanged!(true);
-    await tester.pump();
-
-    expect(c.roamingEnabled, isTrue);
-  });
-
   testWidgets('no muestra el logo como mascota', (tester) async {
     final c = await _controller([_pet('nimbus', 'Nimbus')]);
     await _pumpScreen(tester, c);
@@ -247,7 +276,7 @@ void main() {
     final c = await _controller([_pet('nimbus', 'Nimbus')]);
     await _pumpScreen(tester, c);
 
-    // selectedSlug null → preview grande cae a Spark; la pantalla no peta.
+    // selectedSlug null → preview grande cae a la cara del perfil; la pantalla no peta.
     expect(c.selectedSlug, isNull);
     expect(tester.takeException(), isNull);
     expect(find.byType(MascotasScreen), findsOneWidget);

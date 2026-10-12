@@ -225,7 +225,7 @@ void main() {
           _connection(server.port),
           dashboard: _Ticket(),
           heartbeatInterval: const Duration(hours: 1),
-          heartbeatDeadline: const Duration(seconds: 35),
+          heartbeatDeadline: TuiGatewayClient.defaultHeartbeatDeadline,
           now: () => now,
         );
         addTearDown(client.close);
@@ -237,7 +237,7 @@ void main() {
         final peer = await accepted;
         now = now.add(const Duration(seconds: 20));
         await client.debugHeartbeatTick();
-        now = now.add(const Duration(seconds: 20));
+        now = now.add(const Duration(seconds: 25));
         await client.debugHeartbeatTick();
         final closed = await peer.closed.timeout(const Duration(seconds: 5));
         expect(closed.code, TuiGatewayCloseCodes.heartbeatTimeout);
@@ -290,7 +290,7 @@ void main() {
         _connection(server.port),
         dashboard: _Ticket(),
         heartbeatInterval: const Duration(hours: 1),
-        heartbeatDeadline: const Duration(seconds: 35),
+        heartbeatDeadline: TuiGatewayClient.defaultHeartbeatDeadline,
         now: () => now,
       );
       final sub = client.events.listen((_) {}, onError: (_) {});
@@ -299,14 +299,14 @@ void main() {
       await client.connect();
       now = now.add(const Duration(seconds: 20));
       await client.debugHeartbeatTick();
-      now = now.add(const Duration(seconds: 20));
+      now = now.add(const Duration(seconds: 25));
       await client.debugHeartbeatTick();
       await client.close();
 
       final closes = GatewaySocketMeter.instance.recentCloses;
       expect(closes.map((c) => c.reason), ['heartbeat_timeout']);
       expect(closes.single.code, TuiGatewayCloseCodes.heartbeatTimeout);
-      expect(closes.single.life, const Duration(seconds: 40));
+      expect(closes.single.life, const Duration(seconds: 45));
       expect(GatewaySocketMeter.instance.closeCounts, {'heartbeat_timeout': 1});
     });
 
@@ -324,11 +324,54 @@ void main() {
     });
   });
 
-  test('default heartbeat deadline undercuts the server ping window', () {
+  test('default heartbeat deadline matches Desktop (45 s)', () {
+    // apps/shared json-rpc-channel.ts DEFAULT_HEARTBEAT_DEADLINE_MS and the
+    // server's 30 s send deadline (tui_gateway/ws.py) are sized for 45 s.
     expect(
       TuiGatewayClient.defaultHeartbeatDeadline,
-      const Duration(seconds: 35),
+      const Duration(seconds: 45),
     );
+  });
+
+  test('a ping reply arriving 40 s after the last frame keeps the socket '
+      '(long model call on a busy server)', () async {
+    final server = await RawWsServer.bind();
+    addTearDown(server.close);
+    var now = DateTime(2026, 10, 1, 14);
+    server.readyPayload = const {'heartbeat': true};
+    final client = TuiGatewayClient(
+      _connection(server.port),
+      dashboard: _Ticket(),
+      heartbeatInterval: const Duration(hours: 1),
+      now: () => now,
+    );
+    addTearDown(client.close);
+    final errors = <Object>[];
+    final sub = client.events.listen((_) {}, onError: errors.add);
+    addTearDown(sub.cancel);
+    final accepted = server.accepted.first;
+    await client.connect();
+    final peer = await accepted;
+
+    // The server is busy: pings at 15 s and 30 s get no answer yet.
+    now = now.add(const Duration(seconds: 15));
+    await client.debugHeartbeatTick();
+    now = now.add(const Duration(seconds: 15));
+    await client.debugHeartbeatTick();
+    // A delayed tick lands at 40 s, before the late pong is read.
+    now = now.add(const Duration(seconds: 10));
+    await client.debugHeartbeatTick();
+    expect(client.isConnected, isTrue);
+
+    // The late reply arrives at 40 s and refreshes liveness.
+    peer.sendJson({'jsonrpc': '2.0', 'id': -1, 'result': <String, dynamic>{}});
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    now = now.add(const Duration(seconds: 15));
+    await client.debugHeartbeatTick();
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    expect(client.isConnected, isTrue);
+    expect(errors, isEmpty);
+    expect(GatewaySocketMeter.instance.closeCounts['heartbeat_timeout'], null);
   });
 
   test('one dashboard ticket per real connect, none per RPC', () async {

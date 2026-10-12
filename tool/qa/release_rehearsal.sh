@@ -15,7 +15,7 @@ Uso: tool/qa/release_rehearsal.sh <acción>
 Acciones:
   doctor       Verifica herramientas y configuración de firma sin mostrar valores.
   signing      Valida la firma configurada y el fallo seguro sin upload key.
-  manifest     Fusiona e inspecciona el manifest Play sin empaquetar un AAB.
+  manifest     Fusiona e inspecciona los manifests Play y full sin empaquetar.
   preflight    Ejecuta doctor + signing + manifest; no genera un AAB.
   build        Ejecuta preflight y construye el AAB Play local.
 
@@ -116,10 +116,12 @@ signing() {
 
 manifest() {
   assert_project
-  "$ANDROID_DIR/gradlew" -p "$ANDROID_DIR" :app:processPlayReleaseManifest \
+  require_command python3
+  "$ANDROID_DIR/gradlew" -p "$ANDROID_DIR" \
+    :app:processPlayReleaseManifest :app:processFullReleaseManifest \
     --console=plain >/dev/null
 
-  local merged forbidden_permission
+  local merged forbidden_permission flavor flavor_manifest
   merged="$ROOT/build/app/intermediates/merged_manifests/playRelease/processPlayReleaseManifest/AndroidManifest.xml"
   [[ -f "$merged" ]] || fail "no se generó el manifest Play fusionado"
   grep -q "package=\"$EXPECTED_PACKAGE\"" "$merged" ||
@@ -146,15 +148,22 @@ manifest() {
       fail "el flavor Play contiene permiso implícito no utilizado: $forbidden_permission"
     fi
   done
-  if grep -q '<uses-permission android:name="com.termux.permission.RUN_COMMAND"' "$merged" ||
-     grep -q '<uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"' "$merged" ||
-     grep -q '<package android:name="com.termux"' "$merged"; then
-    fail "el flavor Play contiene permisos o queries exclusivos de Termux"
-  fi
+  # Ningún flavor contiene nada de la instancia local retirada en 1.2.15
+  # (Termux, ignorar optimización de batería, queries de paquetes); además,
+  # el conjunto de permisos, servicios en primer plano y queries fusionado de
+  # cada flavor debe ser exactamente el de tool/release/full_release_policy.json.
+  # (Gradle solo, sin flutter build, no inyecta la versión: ésta se comprueba en el AAB.)
+  for flavor in play full; do
+    flavor_manifest="$ROOT/build/app/intermediates/merged_manifests/${flavor}Release/process${flavor^}ReleaseManifest/AndroidManifest.xml"
+    [[ -f "$flavor_manifest" ]] || fail "no se generó el manifest $flavor fusionado"
+    python3 "$ROOT/tool/release/check_manifest_policy.py" \
+      --manifest "$flavor_manifest" ||
+      fail "el manifest $flavor fusionado no coincide con tool/release/full_release_policy.json"
+  done
   grep -Rqs 'TransportPrivacy.requireAllowed' "$ROOT/lib/core" ||
     fail "no se encontró la frontera runtime de transporte"
 
-  printf 'Manifest Play OK: identidad, SDK, backup, red, voz FGS y separación Termux verificadas.\n'
+  printf 'Manifests Play y full OK: identidad, SDK, backup, red, voz FGS y política de permisos exacta.\n'
 }
 
 preflight() {

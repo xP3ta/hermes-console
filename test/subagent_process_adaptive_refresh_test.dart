@@ -10,7 +10,6 @@ import 'package:hermes_android/core/screens/chat_screen.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/app_lock.dart';
 import 'package:hermes_android/core/services/approval_policy.dart';
-import 'package:hermes_android/core/services/bridge_manager.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/desktop_control_gateway.dart';
 import 'package:hermes_android/core/services/font_size_service.dart';
@@ -20,6 +19,7 @@ import 'package:hermes_android/core/services/sftp_transfer_service.dart';
 import 'package:hermes_android/core/services/ssh_manager.dart';
 import 'package:hermes_android/core/services/ssh_session_service.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
+import 'package:hermes_android/core/widgets/island.dart';
 import 'package:hermes_android/main.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -148,10 +148,7 @@ class _AdaptiveGateway
     String subagentId,
   ) async {
     interruptedSubagents.add(subagentId);
-    return DesktopSubagentInterruptResult(
-      found: true,
-      subagentId: subagentId,
-    );
+    return DesktopSubagentInterruptResult(found: true, subagentId: subagentId);
   }
 
   @override
@@ -267,9 +264,7 @@ Future<_Fixture> _mountChat(
   final prefs = await SharedPreferences.getInstance();
   final manager = await ConnectionManager.create(prefs);
   final secure = SecureStorage();
-  final gateway = _AdaptiveGateway(
-    changeEventsAvailable: changeEventsAvailable,
-  )
+  final gateway = _AdaptiveGateway(changeEventsAvailable: changeEventsAvailable)
     ..subagents = subagents
     ..failReads = failReads
     ..resumedSessionRunning = resumedSessionRunning;
@@ -306,7 +301,7 @@ Future<_Fixture> _mountChat(
       appLock: AppLockService(prefs),
       approvalPolicy: ApprovalPolicyService(prefs),
       fontSize: FontSizeService(prefs),
-      bridgeManager: BridgeManager(secure, manager),
+
       sshManager: SshManager(secure, manager),
       sftpTransfers: SftpTransferService(
         SshManager(secure, manager),
@@ -351,6 +346,10 @@ void _expectFullReads(_AdaptiveGateway gateway, int count) {
   expect(gateway.processCalls, count, reason: 'process snapshot reads');
   expect(gateway.controlCalls, count, reason: 'session control reads');
 }
+
+/// The chat's island: what it counts as alive, and its tap.
+ChatIsland _island(WidgetTester tester) =>
+    tester.widget<ChatIsland>(find.byType(ChatIsland).first);
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -422,10 +421,7 @@ void main() {
       tester,
       changeEventsAvailable: true,
       subagents: const [
-        DesktopSubagentSnapshot(
-          subagentId: 'active-child',
-          status: 'running',
-        ),
+        DesktopSubagentSnapshot(subagentId: 'active-child', status: 'running'),
       ],
     );
     _expectFullReads(fixture.gateway, 1);
@@ -475,10 +471,18 @@ void main() {
     _expectFullReads(fixture.gateway, 1);
 
     for (final delay in const [5, 15, 30, 60]) {
-      await tester.pump(Duration(seconds: delay) - const Duration(milliseconds: 1));
-      _expectFullReads(fixture.gateway, const [1, 2, 3, 4][const [5, 15, 30, 60].indexOf(delay)]);
+      await tester.pump(
+        Duration(seconds: delay) - const Duration(milliseconds: 1),
+      );
+      _expectFullReads(
+        fixture.gateway,
+        const [1, 2, 3, 4][const [5, 15, 30, 60].indexOf(delay)],
+      );
       await tester.pump(const Duration(milliseconds: 1));
-      _expectFullReads(fixture.gateway, const [2, 3, 4, 5][const [5, 15, 30, 60].indexOf(delay)]);
+      _expectFullReads(
+        fixture.gateway,
+        const [2, 3, 4, 5][const [5, 15, 30, 60].indexOf(delay)],
+      );
     }
 
     fixture.gateway.emit('status.update', const {'kind': 'process'});
@@ -513,10 +517,7 @@ void main() {
         ],
       );
       const empty = AgentCenterSnapshot(snapshots: [], processes: []);
-      final fixture = await _mountChat(
-        tester,
-        changeEventsAvailable: true,
-      );
+      final fixture = await _mountChat(tester, changeEventsAvailable: true);
       expect(
         await fixture.chat.send(
           fullText: 'Finish this turn before background Stop',
@@ -541,7 +542,7 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 250));
       await tester.pump();
-      expect(find.byKey(const ValueKey('activity-pill')), findsOneWidget);
+      expect(_island(tester).mark, isNotNull);
       expect(find.byKey(const ValueKey('stop')), findsOneWidget);
 
       fixture.gateway.processSnapshots.addAll([running, empty, empty]);
@@ -554,24 +555,21 @@ void main() {
       expect(fixture.gateway.processStopRuntimeIds, ['runtime-adaptive']);
       expect(fixture.gateway.killedProcesses, isEmpty);
       expect(fixture.gateway.processCalls - processCallsBeforeStop, 1);
-      expect(
-        find.byKey(const ValueKey('activity-pill')),
-        findsOneWidget,
-      );
+      expect(_island(tester).mark, isNotNull);
       expect(find.byKey(const ValueKey('stop')), findsOneWidget);
       expect(find.text('Background work stopped'), findsNothing);
 
       await tester.pump(const Duration(milliseconds: 1500));
       await tester.pump();
       expect(fixture.gateway.processCalls - processCallsBeforeStop, 2);
-      expect(find.byKey(const ValueKey('activity-pill')), findsOneWidget);
+      expect(_island(tester).mark, isNotNull);
       expect(find.byKey(const ValueKey('stop')), findsOneWidget);
       expect(find.text('Background work stopped'), findsNothing);
 
       await tester.pump(const Duration(milliseconds: 2500));
       await tester.pump();
       expect(fixture.gateway.processCalls - processCallsBeforeStop, 3);
-      expect(find.byKey(const ValueKey('activity-pill')), findsNothing);
+      expect(_island(tester).mark, isNull);
       expect(fixture.chat.isStreaming, isFalse);
       expect(fixture.chat.remoteSurfaceOwnsLiveTurn, isFalse);
       expect(fixture.chat.safeActiveSubagentCount, 0);
@@ -581,7 +579,9 @@ void main() {
       expect(find.byKey(const ValueKey('stop')), findsNothing);
       expect(fixture.chat.messages.first['_cancelled'], isNot(true));
       expect(
-        fixture.chat.messages.any((message) => message['_cancelledUser'] == true),
+        fixture.chat.messages.any(
+          (message) => message['_cancelledUser'] == true,
+        ),
         isFalse,
       );
       expect(find.text('Background work stopped'), findsOneWidget);
@@ -589,9 +589,7 @@ void main() {
       expect(strip, findsOneWidget);
       expect(tester.getTopLeft(strip).dx, 14);
       expect(tester.getSize(strip).height, lessThanOrEqualTo(32));
-      final label = tester.widget<Text>(
-        find.text('Background work stopped'),
-      );
+      final label = tester.widget<Text>(find.text('Background work stopped'));
       expect(label.style?.fontSize, 12);
       expect(label.maxLines, 1);
       expect(label.overflow, TextOverflow.ellipsis);
@@ -761,26 +759,29 @@ void main() {
       ]);
       expect(fixture.chat.subagentLivenessStale, isTrue);
 
-      await tester.tap(find.byKey(const ValueKey('activity-pill')));
+      // The island's card of what is alive.
+      _island(tester).onTap!();
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 300));
-      final backgroundSection = find.byKey(
-        const ValueKey('activity-background-section'),
+      await tester.pump(const Duration(milliseconds: 500));
+      final card = find.byKey(const ValueKey('island-card'));
+      expect(card, findsOneWidget);
+      final process = find.byKey(
+        const ValueKey('running-process-process-live'),
       );
-      expect(backgroundSection, findsOneWidget);
+      expect(process, findsOneWidget);
       expect(
-        find.descendant(
-          of: backgroundSection,
-          matching: find.text('Last known state'),
-        ),
+        find.descendant(of: process, matching: find.text('Last known state')),
         findsNothing,
         reason: 'the processes were just confirmed live by process.list',
       );
-      // The subagent section keeps its own honest stale mark.
+      // The subagents keep their own honest stale mark.
       expect(
-        find.byKey(const ValueKey('activity-subagents-stale')),
+        find.descendant(of: card, matching: find.text('Last known state')),
         findsOneWidget,
       );
+      Navigator.of(tester.element(card)).pop();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
 
       listGate.complete();
       fixture.gateway.listGate = null;
@@ -922,10 +923,14 @@ void main() {
     },
   );
 
-  testWidgets('hidden and background routes perform zero reads', (tester) async {
+  testWidgets('hidden and background routes perform zero reads', (
+    tester,
+  ) async {
     final fixture = await _mountChat(tester, changeEventsAvailable: true);
     _expectFullReads(fixture.gateway, 1);
-    final navigator = tester.state<NavigatorState>(find.byType(Navigator).first);
+    final navigator = tester.state<NavigatorState>(
+      find.byType(Navigator).first,
+    );
     unawaited(
       navigator.push<void>(
         PageRouteBuilder<void>(

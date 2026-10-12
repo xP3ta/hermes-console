@@ -15,21 +15,31 @@ import 'package:flutter/services.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../services/connection_manager.dart';
+import '../design/edges.dart';
 import '../theme/app_theme.dart';
-import '../widgets/hermes_notice.dart';
+import '../utils/api_error.dart';
 import '../widgets/hermes_pill.dart';
 import '../widgets/hermes_ui.dart';
 import '../widgets/hermes_app_bar.dart';
+import '../feedback/feedback_policy.dart';
 
 class ActivityScreen extends StatelessWidget {
   final SavedConnection connection;
-  const ActivityScreen({required this.connection, super.key});
+
+  /// Test seam: replaces the Dashboard client used to read the logs.
+  final DashboardClient? clientOverride;
+
+  const ActivityScreen({
+    required this.connection,
+    @visibleForTesting this.clientOverride,
+    super.key,
+  });
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: HermesAppBar(title: Text(Strings.of(context).actTitle)),
-      body: _LogsTab(connection: connection),
+      body: _LogsTab(connection: connection, clientOverride: clientOverride),
     );
   }
 }
@@ -92,7 +102,8 @@ class _LogEntry {
 
 class _LogsTab extends StatefulWidget {
   final SavedConnection connection;
-  const _LogsTab({required this.connection});
+  final DashboardClient? clientOverride;
+  const _LogsTab({required this.connection, this.clientOverride});
 
   @override
   State<_LogsTab> createState() => _LogsTabState();
@@ -102,7 +113,7 @@ class _LogsTabState extends State<_LogsTab> with AutomaticKeepAliveClientMixin {
   late DashboardClient _client;
   List<_LogEntry> _entries = [];
   bool _loading = true;
-  String? _error;
+  Object? _error;
 
   static const _files = ['agent', 'errors', 'gateway'];
   String _file = 'agent';
@@ -125,7 +136,7 @@ class _LogsTabState extends State<_LogsTab> with AutomaticKeepAliveClientMixin {
   @override
   void initState() {
     super.initState();
-    _client = DashboardClient.lazy(widget.connection);
+    _client = widget.clientOverride ?? DashboardClient.lazy(widget.connection);
     _load();
   }
 
@@ -156,7 +167,7 @@ class _LogsTabState extends State<_LogsTab> with AutomaticKeepAliveClientMixin {
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _error = e.toString().replaceFirst('Exception: ', '');
+        _error = e;
         _loading = false;
       });
     }
@@ -174,28 +185,32 @@ class _LogsTabState extends State<_LogsTab> with AutomaticKeepAliveClientMixin {
     // Copia en orden cronológico (el inverso del de pantalla).
     final text = visible.reversed.map((e) => e.raw.trimRight()).join('\n');
     Clipboard.setData(ClipboardData(text: text));
-    HermesNotice.of(context).showSnackBar(
-      SnackBar(
-        content: Text(Strings.of(context).actLinesCopied(visible.length)),
-      ),
-      kind: HermesNoticeKind.success,
+    AppFeedback.of(context).notify(
+      FeedbackKind.routine,
+      Strings.of(context).actLinesCopied(visible.length),
     );
   }
 
   Color _levelColor(String? level, HermesThemeColors colors) => switch (level) {
     'ERROR' || 'CRITICAL' => colors.error,
     'WARNING' => colors.warning,
-    'DEBUG' => colors.textDisabled,
+    'DEBUG' => colors.textTertiary,
     'INFO' => colors.textSecondary,
-    _ => colors.textDisabled,
+    _ => colors.textTertiary,
   };
 
   @override
   Widget build(BuildContext context) {
     super.build(context);
     final colors = Theme.of(context).hermes;
-    return Column(
-      children: [
+    // One scroll: the file selector, the level chips and the filter field are
+    // its first rows and leave with the log lines, which pass under the
+    // floating header.
+    final rows = _rows(colors);
+    return HermesControlsScroll(
+      refreshColor: colors.accent,
+      onRefresh: _load,
+      controls: [
         // Selector de archivo + acciones, en una sola franja compacta.
         Padding(
           padding: const EdgeInsets.fromLTRB(12, 6, 4, 0),
@@ -309,7 +324,7 @@ class _LogsTabState extends State<_LogsTab> with AutomaticKeepAliveClientMixin {
             style: const TextStyle(fontSize: 12.5),
             decoration: InputDecoration(
               hintText: Strings.of(context).actSearchHint,
-              hintStyle: TextStyle(fontSize: 12, color: colors.textDisabled),
+              hintStyle: TextStyle(fontSize: 12, color: colors.textTertiary),
               prefixIcon: Icon(
                 Icons.search,
                 size: 16,
@@ -318,6 +333,7 @@ class _LogsTabState extends State<_LogsTab> with AutomaticKeepAliveClientMixin {
               suffixIcon: _localFilter.isEmpty
                   ? null
                   : IconButton(
+                      tooltip: Strings.of(context).slClearSearch,
                       icon: Icon(
                         Icons.clear,
                         size: 15,
@@ -341,12 +357,34 @@ class _LogsTabState extends State<_LogsTab> with AutomaticKeepAliveClientMixin {
             ),
           ),
         ),
-        Expanded(child: _buildBody(colors)),
       ],
+      slivers: [rows ?? HermesControlsScroll.fill(_state(colors))],
     );
   }
 
-  Widget _buildBody(HermesThemeColors colors) {
+  /// The log lines, or null while there is a state to show instead.
+  Widget? _rows(HermesThemeColors colors) {
+    if (_loading || _error != null) return null;
+    final visible = _visible;
+    if (visible.isEmpty) return null;
+    return HermesControlsScroll.list(
+      padding: const EdgeInsets.fromLTRB(12, 4, 12, 16),
+      itemCount: visible.length,
+      itemBuilder: (_, i) => _LogLine(
+        entry: visible[i],
+        color: _levelColor(visible[i].level, colors),
+        onLongPress: () {
+          Clipboard.setData(ClipboardData(text: visible[i].raw));
+          AppFeedback.of(
+            context,
+          ).notify(FeedbackKind.routine, Strings.of(context).actLineCopied);
+        },
+      ),
+    );
+  }
+
+  /// Loading, an error or nothing to show: what fills the page instead.
+  Widget _state(HermesThemeColors colors) {
     if (_loading) {
       return Center(
         child: TuiLoader(label: Strings.of(context).actReadingLogs),
@@ -367,7 +405,7 @@ class _LogsTabState extends State<_LogsTab> with AutomaticKeepAliveClientMixin {
               ),
               const SizedBox(height: 6),
               Text(
-                _error!,
+                localizedApiError(Strings.of(context), _error!),
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 11.5, color: colors.textSecondary),
               ),
@@ -382,49 +420,26 @@ class _LogsTabState extends State<_LogsTab> with AutomaticKeepAliveClientMixin {
         ),
       );
     }
-    final visible = _visible;
-    if (visible.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              Icons.receipt_long_outlined,
-              size: 36,
-              color: colors.textDisabled,
-            ),
-            const SizedBox(height: 12),
-            Text(
-              (_localFilter.isNotEmpty
-                      ? Strings.of(context).actNoMatchesFor(_localFilter)
-                      : Strings.of(context).actLogEmpty(_file)) +
-                  (_level != null
-                      ? Strings.of(context).actForLevel(_level!)
-                      : ''),
-              style: TextStyle(fontSize: 12.5, color: colors.textSecondary),
-            ),
-          ],
-        ),
-      );
-    }
-    return RefreshIndicator(
-      color: colors.accent,
-      onRefresh: _load,
-      child: ListView.builder(
-        physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(12, 4, 12, 16),
-        itemCount: visible.length,
-        itemBuilder: (_, i) => _LogLine(
-          entry: visible[i],
-          color: _levelColor(visible[i].level, colors),
-          onLongPress: () {
-            Clipboard.setData(ClipboardData(text: visible[i].raw));
-            HermesNotice.of(context).showSnackBar(
-              SnackBar(content: Text(Strings.of(context).actLineCopied)),
-              kind: HermesNoticeKind.success,
-            );
-          },
-        ),
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.receipt_long_outlined,
+            size: 36,
+            color: colors.textDisabled,
+          ),
+          const SizedBox(height: 12),
+          Text(
+            (_localFilter.isNotEmpty
+                    ? Strings.of(context).actNoMatchesFor(_localFilter)
+                    : Strings.of(context).actLogEmpty(_file)) +
+                (_level != null
+                    ? Strings.of(context).actForLevel(_level!)
+                    : ''),
+            style: TextStyle(fontSize: 12.5, color: colors.textSecondary),
+          ),
+        ],
       ),
     );
   }
@@ -485,7 +500,7 @@ class _LogLine extends StatelessWidget {
                           entry.time!,
                           style: TextStyle(
                             fontSize: 10,
-                            color: colors.textDisabled,
+                            color: colors.textTertiary,
                           ),
                         ),
                       if (entry.component != null) ...[
