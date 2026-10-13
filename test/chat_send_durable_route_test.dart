@@ -76,6 +76,7 @@ class _Gateway
     implements HermesDesktopGateway, HermesDesktopSessionLifecycleGateway {
   final eventsController = StreamController<TuiGatewayEvent>.broadcast();
   final submissions = <String>[];
+  final createProfiles = <String>[];
   int creates = 0;
 
   @override
@@ -116,6 +117,7 @@ class _Gateway
     String model = '',
   }) async {
     creates++;
+    createProfiles.add(profile);
     return const DesktopSessionSnapshot(
       runtimeSessionId: 'runtime-fixture',
       storedSessionId: _durableId,
@@ -174,6 +176,11 @@ Future<_Fixture> _mount(
   final service = ActiveChatService(
     attachDesktopRuntimeOnLoad: false,
     compressionRestoreStore: testCompressionRestoreStore(),
+    // A chat opened under a named profile binds under that profile and so
+    // does not find the default-keyed chat attached below: it builds its own
+    // gateway through the service. Give it the same fake so its turn rides
+    // the fixture instead of a real dashboard socket.
+    desktopGatewayFactory: (_) => gateway,
   );
   final chat = service.attach(
     connection: _connection,
@@ -512,6 +519,42 @@ void main() {
       // The button is free again for the next press.
       expect(find.byKey(const ValueKey('send')).hitTestable(), findsOneWidget);
     });
+  });
+
+  testWidgets('a new chat started under a non-default profile sends its '
+      'first message, and creates the session under that profile', (
+    tester,
+  ) async {
+    // The profile the app had active when "new chat" was pressed. The
+    // drawer's new chat offers a session without a profile stamp: the
+    // screen resolves its owner from this preference.
+    const botProfile = 'rex';
+    final gateway = _Gateway();
+    await _mount(
+      tester,
+      gateway,
+      beforeOpen: (prefs) =>
+          prefs.setString('active_profile_${_connection.id}', botProfile),
+    );
+
+    await _withLog((lines) async {
+      await _send(tester, 'Synthetic first');
+
+      expect(tester.takeException(), isNull);
+      expect(gateway.creates, 1);
+      expect(gateway.submissions, ['Synthetic first']);
+      // The turn belongs to the profile the chat was started under, not
+      // to the default one.
+      expect(gateway.createProfiles, [botProfile]);
+      expect(_composerText(tester), isEmpty);
+      expect(find.text(_strings(tester).chaSendNotSentReopen), findsNothing);
+      for (final line in lines) {
+        expect(line, isNot(contains('[composer-send] refused')));
+        expect(line, isNot(contains('[composer-send] ignored')));
+      }
+    });
+    gateway.complete('Synthetic reply');
+    await _flush(tester);
   });
 
   testWidgets('a send of blank space is logged and tells to write a '
