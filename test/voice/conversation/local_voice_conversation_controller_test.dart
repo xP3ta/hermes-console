@@ -932,6 +932,10 @@ void main() {
           await _waitFor(() => submits.isNotEmpty);
           expect(submits.single['text'], 'Spoken synthetic prompt');
           expect(submits.single.containsKey('surface'), isFalse);
+          // A rejected voice submit fails asynchronously: its rollback retires
+          // the desktop runtime. Typing before that settles races the late
+          // failure against the typed turn, so let the rejection finish first.
+          if (voiceSubmitFails) await _waitFor(() => !chat.isStreaming);
           await controller.exit();
           chat.cancel();
           await _waitFor(() => !chat.isStreaming);
