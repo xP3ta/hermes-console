@@ -3128,7 +3128,20 @@ class _ChatScreenState extends State<ChatScreen>
     _profileReady = _loadActiveProfile();
     _localConversationLifecycle = LocalConversationCleanupFence.beginLifecycle(
       connectionId: widget.connection.id,
-      profile: Session.profileOwner(widget.session.profile),
+      // Same rule the bind in didChangeDependencies applies: a session
+      // offered without a stamp (the drawer's and Home's "new chat") belongs
+      // to the profile that was active when it was opened. Without the
+      // fallback the lease is born on `default` while the chat binds the
+      // active profile, and every press of send is then refused as a
+      // sessionProfileMismatch until the chat is reopened (which does not
+      // help: the lease is born again the same way).
+      profile: Session.profileOwner(
+        widget.session.profile,
+        fallback: context
+            .findAncestorStateOfType<HermesAppState>()
+            ?.connManager
+            .activeProfileFor(widget.connection.id),
+      ),
       sessionId: widget.session.id,
       sessionAliases: {_draftRecoverySessionId, ..._draftRecoveryAliases},
     );
