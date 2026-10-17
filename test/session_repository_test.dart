@@ -45,6 +45,20 @@ Map<String, dynamic> _lineageRow({
   'pinned': pinned,
 };
 
+/// `GET /api/sessions/{id}/mutation-snapshot`: the precondition a fenced
+/// Dashboard write reads before it commits (Hermes' fencing protocol).
+String _snapshotBody({
+  required String id,
+  required int revision,
+  int? generation = 0,
+  bool exists = true,
+}) => jsonEncode({
+  'session_id': id,
+  'exists': exists,
+  'runtime_revision': revision,
+  'runtime_generation': exists ? generation : null,
+});
+
 DashboardClient _dashboard(http.Client client) => DashboardClient(
   host: '127.0.0.1',
   port: 9119,
@@ -1007,6 +1021,12 @@ void main() {
   test('archive usa solo Dashboard y valida la confirmación', () async {
     http.Request? archiveRequest;
     final dashboardHttp = MockClient((request) async {
+      if (request.url.path.endsWith('/mutation-snapshot')) {
+        return http.Response(
+          _snapshotBody(id: 'tip/branch', revision: 4, generation: 1),
+          200,
+        );
+      }
       archiveRequest = request;
       return http.Response(jsonEncode({'ok': true, 'archived': true}), 200);
     });
@@ -1035,6 +1055,9 @@ void main() {
     expect(jsonDecode(archiveRequest!.body), {
       'archived': true,
       'profile': 'coding profile',
+      'request_id': isA<String>(),
+      'expected_revision': 4,
+      'expected_generation': 1,
     });
     expect(gatewayRequests, 0);
   });
@@ -1042,6 +1065,12 @@ void main() {
   test('pin usa PATCH del lineage root y conserva el perfil', () async {
     http.Request? pinRequest;
     final dashboardHttp = MockClient((request) async {
+      if (request.url.path.endsWith('/mutation-snapshot')) {
+        return http.Response(
+          _snapshotBody(id: 'root/branch', revision: 2),
+          200,
+        );
+      }
       pinRequest = request;
       return http.Response(jsonEncode({'ok': true, 'pinned': true}), 200);
     });
@@ -1064,13 +1093,22 @@ void main() {
 
     expect(pinRequest?.method, 'PATCH');
     expect(pinRequest?.url.toString(), contains('/api/sessions/root%2Fbranch'));
-    expect(jsonDecode(pinRequest!.body), {'pinned': true, 'profile': 'coding'});
+    expect(jsonDecode(pinRequest!.body), {
+      'pinned': true,
+      'profile': 'coding',
+      'request_id': isA<String>(),
+      'expected_revision': 2,
+      'expected_generation': 0,
+    });
   });
 
   test('session state PATCH carries the profile and reports the server '
       'refusal status', () async {
     final requests = <http.Request>[];
     final dashboardHttp = MockClient((request) async {
+      if (request.url.path.endsWith('/mutation-snapshot')) {
+        return http.Response(_snapshotBody(id: 's', revision: 2), 200);
+      }
       requests.add(request);
       if (requests.length == 2) return http.Response('{"detail":"x"}', 400);
       return http.Response(
@@ -1100,6 +1138,9 @@ void main() {
     expect(jsonDecode(requests.single.body), {
       'hidden': true,
       'profile': 'coding',
+      'request_id': isA<String>(),
+      'expected_revision': 2,
+      'expected_generation': 0,
     });
 
     Object? failure;
@@ -1109,7 +1150,186 @@ void main() {
       failure = error;
     }
     expect(dashboardHttpStatusOf(failure!), 400);
-    expect(jsonDecode(requests.last.body), {'unread': true});
+    expect(jsonDecode(requests.last.body), {
+      'unread': true,
+      'request_id': isA<String>(),
+      'expected_revision': 2,
+      'expected_generation': 0,
+    });
+  });
+
+  test('a backend with no snapshot route keeps its unfenced write', () async {
+    final requests = <http.Request>[];
+    final dashboardHttp = MockClient((request) async {
+      requests.add(request);
+      if (request.url.path.endsWith('/mutation-snapshot')) {
+        return http.Response(
+          jsonEncode({
+            'detail':
+                'No such API endpoint: /api/sessions/tip%2Fbranch/'
+                'mutation-snapshot',
+          }),
+          404,
+        );
+      }
+      return http.Response(jsonEncode({'ok': true, 'archived': true}), 200);
+    });
+    final gatewayHttp = MockClient((_) async => http.Response('{}', 500));
+    final dashboard = _dashboard(dashboardHttp);
+    final gateway = _gateway(gatewayHttp);
+    final repository = SessionRepository(dashboard, gateway);
+    addTearDown(() {
+      repository.close();
+      dashboard.close();
+      gateway.close();
+    });
+    final session = Session.fromJson(_row(1)..['id'] = 'tip/branch');
+
+    await repository.setArchived(session, true, profile: 'coding');
+
+    expect(requests, hasLength(2));
+    expect(requests.first.method, 'GET');
+    expect(
+      requests.first.url.toString(),
+      contains('/api/sessions/tip%2Fbranch/mutation-snapshot'),
+    );
+    expect(requests.first.url.queryParameters['profile'], 'coding');
+    expect(jsonDecode(requests.last.body), {
+      'archived': true,
+      'profile': 'coding',
+    });
+  });
+
+  test('a session the backend does not have carries no generation', () async {
+    Map<String, dynamic>? patch;
+    final dashboardHttp = MockClient((request) async {
+      if (request.url.path.endsWith('/mutation-snapshot')) {
+        return http.Response(
+          _snapshotBody(id: 'draft', revision: 0, exists: false),
+          200,
+        );
+      }
+      patch = jsonDecode(request.body) as Map<String, dynamic>;
+      return http.Response(jsonEncode({'ok': true, 'archived': true}), 200);
+    });
+    final gatewayHttp = MockClient((_) async => http.Response('{}', 500));
+    final dashboard = _dashboard(dashboardHttp);
+    final gateway = _gateway(gatewayHttp);
+    final repository = SessionRepository(dashboard, gateway);
+    addTearDown(() {
+      repository.close();
+      dashboard.close();
+      gateway.close();
+    });
+
+    await repository.setArchived(Session.fromJson(_row(1)), true);
+
+    expect(patch, containsPair('expected_revision', 0));
+    expect(patch, isNot(contains('expected_generation')));
+  });
+
+  test(
+    'a snapshot read that carries no counter keeps the base write',
+    () async {
+      http.Request? patch;
+      final dashboardHttp = MockClient((request) async {
+        if (request.url.path.endsWith('/mutation-snapshot')) {
+          return http.Response(jsonEncode({'unread': false}), 200);
+        }
+        patch = request;
+        return http.Response(jsonEncode({'ok': true, 'archived': true}), 200);
+      });
+      final gatewayHttp = MockClient((_) async => http.Response('{}', 500));
+      final dashboard = _dashboard(dashboardHttp);
+      final gateway = _gateway(gatewayHttp);
+      final repository = SessionRepository(dashboard, gateway);
+      addTearDown(() {
+        repository.close();
+        dashboard.close();
+        gateway.close();
+      });
+
+      await repository.setArchived(Session.fromJson(_row(1)), true);
+
+      expect(jsonDecode(patch!.body), {'archived': true});
+    },
+  );
+
+  test('a stale precondition is re-read once and retried', () async {
+    var snapshots = 0;
+    final patches = <Map<String, dynamic>>[];
+    final dashboardHttp = MockClient((request) async {
+      if (request.url.path.endsWith('/mutation-snapshot')) {
+        snapshots += 1;
+        return http.Response(
+          _snapshotBody(id: 's', revision: snapshots == 1 ? 4 : 9),
+          200,
+        );
+      }
+      patches.add(jsonDecode(request.body) as Map<String, dynamic>);
+      if (patches.length == 1) {
+        return http.Response(jsonEncode({'detail': 'revision_conflict'}), 409);
+      }
+      return http.Response(jsonEncode({'ok': true, 'archived': true}), 200);
+    });
+    final gatewayHttp = MockClient((_) async => http.Response('{}', 500));
+    final dashboard = _dashboard(dashboardHttp);
+    final gateway = _gateway(gatewayHttp);
+    final repository = SessionRepository(dashboard, gateway);
+    addTearDown(() {
+      repository.close();
+      dashboard.close();
+      gateway.close();
+    });
+
+    await repository.setArchived(Session.fromJson(_row(1)), true);
+
+    expect(snapshots, 2);
+    expect(patches, hasLength(2));
+    expect(patches.first['expected_revision'], 4);
+    expect(patches.last['expected_revision'], 9);
+    expect(patches.last['request_id'], isNot(patches.first['request_id']));
+  });
+
+  test('a refusal that is not a stale precondition is never retried', () async {
+    var snapshots = 0;
+    var patches = 0;
+    final dashboardHttp = MockClient((request) async {
+      if (request.url.path.endsWith('/mutation-snapshot')) {
+        snapshots += 1;
+        return http.Response(_snapshotBody(id: 's', revision: 1), 200);
+      }
+      patches += 1;
+      return http.Response(
+        jsonEncode({
+          'detail':
+              'client_upgrade_required: this app is out of sync (different '
+              'versions) with the Hermes backend; update the app to edit '
+              'sessions',
+        }),
+        409,
+      );
+    });
+    final gatewayHttp = MockClient((_) async => http.Response('{}', 500));
+    final dashboard = _dashboard(dashboardHttp);
+    final gateway = _gateway(gatewayHttp);
+    final repository = SessionRepository(dashboard, gateway);
+    addTearDown(() {
+      repository.close();
+      dashboard.close();
+      gateway.close();
+    });
+
+    Object? failure;
+    try {
+      await repository.setArchived(Session.fromJson(_row(1)), true);
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(dashboardHttpStatusOf(failure!), 409);
+    expect(snapshots, 1);
+    expect(patches, 1);
   });
 
   test(

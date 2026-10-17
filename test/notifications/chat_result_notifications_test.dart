@@ -534,6 +534,14 @@ void main() {
       final seen = <String>[];
       client = _ClosingClient((request) async {
         seen.add('${request.method} ${request.url.path} ${request.body}');
+        if (request.url.path.endsWith('/mutation-snapshot')) {
+          return http.Response(
+            '{"session_id":"sess-1","exists":true,"runtime_revision":3,'
+            '"runtime_generation":0}',
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }
         return http.Response(
           '{"unread": false}',
           200,
@@ -557,11 +565,18 @@ void main() {
           sessionId: 'sess-1',
         ),
       );
-      expect(seen, hasLength(1));
-      expect(seen.single, startsWith('PATCH /api/sessions/sess-1 '));
-      expect(jsonDecode(seen.single.split(' ').skip(2).join(' ')), {
+      expect(seen, hasLength(2));
+      expect(
+        seen.first,
+        startsWith('GET /api/sessions/sess-1/mutation-snapshot'),
+      );
+      expect(seen.last, startsWith('PATCH /api/sessions/sess-1 '));
+      expect(jsonDecode(seen.last.split(' ').skip(2).join(' ')), {
         'unread': false,
         'profile': 'work',
+        'request_id': isA<String>(),
+        'expected_revision': 3,
+        'expected_generation': 0,
       });
       expect(client.closeCalls, 1);
     });
