@@ -366,7 +366,7 @@ void main() {
 
       test('keeps a mixed title when the first message also has CJK', () {
         const title = '修复 login 按钮';
-        expect(make(title, '登录按钮坏了，请修复').displayTitle, title);
+        expect(make(title, 'The 登录 button is broken').displayTitle, title);
       });
     });
 
