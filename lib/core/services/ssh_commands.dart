@@ -35,7 +35,10 @@ class SshCommandsStore {
     SshQuickCommand('Disco', 'df -h'),
     SshQuickCommand('Memoria', 'free -h'),
     SshQuickCommand('Top CPU', 'ps aux --sort=-%cpu | head -n 12'),
-    SshQuickCommand('Estado Hermes', 'systemctl --user status hermes --no-pager || true'),
+    SshQuickCommand(
+      'Estado Hermes',
+      'systemctl --user status hermes-dashboard hermes-gateway --no-pager || true',
+    ),
   ];
 
   List<SshQuickCommand> load(String connectionId) {
