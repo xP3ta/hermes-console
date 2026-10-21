@@ -1,5 +1,5 @@
 {
-  "@@locale": "pt_BR",
+  "@@locale": "pt",
   "o2FirstChat": "Conversar com Hermes",
   "sInvalidPort": "A porta deve ser um número de 1 a 65535; corrija em Avançado.",
   "sBackToConnection": "Voltar à conexão",

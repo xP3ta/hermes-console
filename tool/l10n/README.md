@@ -11,10 +11,12 @@ Italian and Korean. Do not add Russian or change store listings here.
    Never reuse an older draft based only on its total message count. Check
    missing and extra keys and review shared messages for changed meanings.
 2. Write UTF-8 `lib/l10n/app_<locale>.arb`, including `@@locale`. For Brazilian
-   Portuguese use `app_pt_BR.arb` and `"@@locale": "pt_BR"`; Flutter uses an
-   underscore in ARB locale IDs. Use `zh`, `de`, `fr`, `ja`, `it` and `ko` for
-   the other approved catalogs. The original template supplies placeholder
-   types; translated catalogs need not duplicate its metadata.
+   Portuguese use the single base catalog `app_pt.arb` and `"@@locale": "pt"`.
+   Its content remains Brazilian Portuguese. Flutter requires a language-level
+   fallback catalog; keep the selector on `Locale('pt')`. Use `zh`, `de`, `fr`,
+   `ja`, `it` and `ko` for the other approved catalogs. The original template
+   supplies placeholder types; translated catalogs need not duplicate its
+   metadata.
 3. Translate complete messages in small batches. Keep terminology consistent,
    preserve placeholders exactly, and retain the ICU argument types and all
    `select` cases. Every plural needs `other`. Chinese, Japanese and Korean
@@ -34,7 +36,7 @@ Run from the repository root (Python standard library only):
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tool/l10n -p 'test_translate_check.py'
 PYTHONDONTWRITEBYTECODE=1 python3 tool/l10n/mutation_check.py
 PYTHONDONTWRITEBYTECODE=1 python3 tool/l10n/translate_check.py lib/l10n/app_zh.arb
-PYTHONDONTWRITEBYTECODE=1 python3 tool/l10n/translate_check.py lib/l10n/app_pt_BR.arb lib/l10n/app_de.arb lib/l10n/app_fr.arb lib/l10n/app_ja.arb lib/l10n/app_it.arb lib/l10n/app_ko.arb
+PYTHONDONTWRITEBYTECODE=1 python3 tool/l10n/translate_check.py lib/l10n/app_pt.arb lib/l10n/app_de.arb lib/l10n/app_fr.arb lib/l10n/app_ja.arb lib/l10n/app_it.arb lib/l10n/app_ko.arb
 ```
 
 The checker rejects duplicate JSON keys, non-object catalogs, locale/filename
@@ -72,7 +74,8 @@ Do not install Flutter if absent. Record checks as not verified and hand off
 the local commit. Generated `app_localizations*.dart` files are not committed.
 The coordinator owns full suites, builds and device checks. Verify the native
 language label in Settings, manual selection, persistence, system language,
-English fallback and regional matching, especially `pt_BR` and Chinese.
+English fallback and regional matching, especially `pt_PT` resolving to `pt`
+(Brazilian Portuguese content), and Chinese.
 
 ## Text outside ARB
 

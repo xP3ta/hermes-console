@@ -545,7 +545,7 @@ class AppLocales {
     AppLocaleOption('es', 'Español', Locale('es')),
     AppLocaleOption('en', 'English', Locale('en')),
     AppLocaleOption('zh', '中文', Locale('zh')),
-    AppLocaleOption('pt_BR', 'Português (Brasil)', Locale('pt', 'BR')),
+    AppLocaleOption('pt', 'Português (Brasil)', Locale('pt')),
     AppLocaleOption('de', 'Deutsch', Locale('de')),
     AppLocaleOption('fr', 'Français', Locale('fr')),
     AppLocaleOption('ja', '日本語', Locale('ja')),

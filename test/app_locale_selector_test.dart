@@ -15,7 +15,7 @@ void main() {
       'es': 'Español',
       'en': 'English',
       'zh': '中文',
-      'pt_BR': 'Português (Brasil)',
+      'pt': 'Português (Brasil)',
       'de': 'Deutsch',
       'fr': 'Français',
       'ja': '日本語',
@@ -43,7 +43,7 @@ void main() {
     expect(AppLocales.byId(null).locale, isNull);
   });
 
-  test('all approved choices persist including the Brazilian region', () async {
+  test('all approved choices persist including Brazilian Portuguese', () async {
     SharedPreferences.setMockInitialValues({});
     final prefs = await SharedPreferences.getInstance();
     for (final option in AppLocales.all) {
@@ -63,7 +63,11 @@ void main() {
     );
     expect(
       AppLocales.resolve(const Locale('pt', 'PT'), Strings.supportedLocales),
-      const Locale('pt', 'BR'),
+      const Locale('pt'),
+    );
+    expect(
+      AppLocales.resolve(const Locale('pt', 'BR'), Strings.supportedLocales),
+      const Locale('pt'),
     );
     expect(
       AppLocales.resolve(const Locale('de', 'AT'), Strings.supportedLocales),
@@ -79,14 +83,14 @@ void main() {
   test('resolution preserves an exact regional or script match', () {
     const supported = [
       Locale('en'),
-      Locale('pt', 'BR'),
-      Locale('pt', 'PT'),
+      Locale('en', 'US'),
+      Locale('en', 'GB'),
       Locale.fromSubtags(languageCode: 'zh', scriptCode: 'Hant'),
       Locale.fromSubtags(languageCode: 'zh', scriptCode: 'Hans'),
     ];
     expect(
-      AppLocales.resolve(const Locale('pt', 'PT'), supported),
-      const Locale('pt', 'PT'),
+      AppLocales.resolve(const Locale('en', 'GB'), supported),
+      const Locale('en', 'GB'),
     );
     expect(
       AppLocales.resolve(
