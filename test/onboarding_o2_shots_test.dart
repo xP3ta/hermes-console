@@ -5,16 +5,26 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/screens/onboarding/manual_connect_page.dart';
 import 'package:hermes_android/core/screens/onboarding_screen.dart';
 import 'package:hermes_android/core/screens/onboarding/onboarding_motion.dart';
 import 'package:hermes_android/core/screens/qr_scan_screen.dart';
 import 'package:hermes_android/core/services/connection_diagnostics.dart';
-import 'package:hermes_android/core/services/pairing_link.dart';
 
 import 'support/design_shots.dart';
 import 'support/onboarding_fakes.dart';
 
 const _root = ValueKey('o2-shot-root');
+
+String _v2(String url, {String? pass}) =>
+    'hermes://pair?v=2&url=${Uri.encodeQueryComponent(url)}&user=admin'
+    '${pass == null ? '' : '&pass=${Uri.encodeQueryComponent(pass)}'}';
+
+ValueChanged<String>? _detect;
+Widget _scanner(ValueChanged<String> detect, ValueChanged<bool> permission) {
+  _detect = detect;
+  return _camera(detect, permission);
+}
 
 Future<void> _shot(WidgetTester tester, String name) async {
   expect(tester.takeException(), isNull);
@@ -59,6 +69,8 @@ Widget _camera(ValueChanged<String> scan, ValueChanged<bool> permission) =>
     );
 
 void main() {
+  // Every screen runs with the flag as the APK is built (on by default): no
+  // simpleConnectEnabled argument anywhere in this file.
   testWidgets('O2 opening, as a film strip', (tester) async {
     await loadDesignFonts();
     _phone(tester);
@@ -90,33 +102,56 @@ void main() {
   });
 
   for (final theme in ['dark', 'light']) {
-    testWidgets('O2 screens · $theme', (tester) async {
+    testWidgets('ONB4 screens · $theme', (tester) async {
       await loadDesignFonts();
-      _phone(tester);
+      // Tall enough to see the whole help page.
+      _phone(tester, const Size(390, 1200));
       final manager = await onboardingManager();
-      final gate = Completer<void>();
-      final diagnostics = OnboardingDiagnostics()..gate = gate;
       await tester.pumpWidget(
         _host(
           OnboardingScreen(
             connManager: manager,
             onDone: () {},
-            diagnostics: diagnostics,
-            cameraBuilder: _camera,
+            diagnostics: OnboardingDiagnostics(),
+            cameraBuilder: _scanner,
           ),
           theme: theme,
         ),
       );
       await tester.pumpAndSettle();
-      await _shot(tester, 'o2_welcome_$theme');
+      await _shot(tester, 'onb4_welcome_$theme');
       await tapOnboarding(tester, 'onboarding-help');
-      await _shot(tester, 'o2_help_$theme');
-      await tapOnboarding(tester, 'onboarding-code-visible');
-      await _shot(tester, 'o2_scan_$theme');
+      await _shot(tester, 'onb4_help_unix_$theme');
+      await tapOnboarding(tester, 'pairing-helper-windows');
+      await _shot(tester, 'onb4_help_windows_$theme');
       await tapOnboarding(tester, 'onboarding-back');
-      await tapOnboarding(tester, 'onboarding-back');
-      // A scanned code: the confirmation.
-      await tester.pumpWidget(const SizedBox.shrink());
+      await tapOnboarding(tester, 'onboarding-manual');
+      await _shot(tester, 'onb4_manual_$theme');
+      Navigator.of(tester.element(find.byType(ManualConnectPage))).pop();
+      await tester.pumpAndSettle();
+      await tapOnboarding(tester, 'onboarding-scan');
+      await _shot(tester, 'onb4_scan_$theme');
+      await tapOnboarding(tester, 'pairing-helper-windows');
+      await _shot(tester, 'onb4_scan_windows_$theme');
+      _permission = null;
+      // A code from the setup, without its password: asks it once.
+      _detect!(_v2('http://192.168.1.20:9119'));
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pumpAndSettle();
+      await _shot(tester, 'onb4_connect_v2_no_password_$theme');
+      await tapOnboarding(tester, 'onboarding-other');
+      _detect!(_v2('http://192.168.1.20:9119', pass: 'synthetic-pass'));
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pumpAndSettle();
+      await _shot(tester, 'onb4_connect_v2_with_password_$theme');
+    });
+
+    testWidgets('O2 flow of a saved code · $theme', (tester) async {
+      await loadDesignFonts();
+      _phone(tester);
+      final manager = await onboardingManager();
+      final gate = Completer<void>();
+      final diagnostics = OnboardingDiagnostics()..gate = gate;
       await tester.pumpWidget(
         _host(
           OnboardingScreen(
@@ -167,7 +202,7 @@ void main() {
             connManager: other,
             onDone: () {},
             diagnostics: OnboardingDiagnostics(
-              gatewayStatus: ProbeStatus.timeout,
+              reachStatus: ProbeStatus.timeout,
             ),
             initialLink: fakeFullPairing,
           ),
@@ -197,6 +232,25 @@ void main() {
       await tester.pumpAndSettle();
       await _shot(tester, 'o2_duplicate_$theme');
 
+      // The camera of the first-run flow when the permission is refused.
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpWidget(
+        _host(
+          OnboardingScreen(
+            connManager: await onboardingManager(),
+            onDone: () {},
+            cameraBuilder: _denied,
+          ),
+          theme: theme,
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tapOnboarding(tester, 'onboarding-scan');
+      _permission!(false);
+      await tester.pumpAndSettle();
+      await _shot(tester, 'onb4_camera_denied_$theme');
+
+      // The camera of Settings: no panel.
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pumpWidget(
         _host(const QrScanScreen(cameraBuilder: _denied), theme: theme),
@@ -208,7 +262,7 @@ void main() {
     });
   }
 
-  testWidgets('O2 welcome at 320 dp and at 2x text', (tester) async {
+  testWidgets('ONB4 welcome at 320 dp and at 2x text', (tester) async {
     await loadDesignFonts();
     final manager = await onboardingManager();
     _phone(tester, const Size(320, 640));
@@ -216,21 +270,21 @@ void main() {
       _host(OnboardingScreen(connManager: manager, onDone: () {})),
     );
     await tester.pumpAndSettle();
-    await _shot(tester, 'o2_welcome_320');
+    await _shot(tester, 'onb4_welcome_320');
     await tester.pumpWidget(
       _host(OnboardingScreen(connManager: manager, onDone: () {}), scale: 2),
     );
     await tester.pumpAndSettle();
-    await _shot(tester, 'o2_welcome_320_2x');
+    await _shot(tester, 'onb4_welcome_320_2x');
     await tapOnboarding(tester, 'onboarding-help');
-    await _shot(tester, 'o2_help_320_2x');
+    await _shot(tester, 'onb4_help_320_2x');
   });
 
   for (final (name, size, scale) in [
     ('320', const Size(320, 640), 1.0),
     ('320_2x', const Size(320, 640), 2.0),
   ]) {
-    testWidgets('O2 where-it-lives chooser at $name', (tester) async {
+    testWidgets('O2 confirmation and success at $name', (tester) async {
       await loadDesignFonts();
       final manager = await onboardingManager();
       _phone(tester, size);
@@ -240,16 +294,7 @@ void main() {
             connManager: manager,
             onDone: () {},
             diagnostics: OnboardingDiagnostics(),
-            initialLink: PairingLink(
-              host: 'nas.local',
-              port: 8642,
-              token: 'synthetic-chat-key',
-              useHttps: true,
-              label: 'Casa',
-              dashboardUrl: 'https://nas.local:9119',
-              dashboardUser: 'synthetic-owner',
-              dashboardPassword: 'synthetic-panel-password',
-            ),
+            initialLink: fakeFullPairing,
           ),
           scale: scale,
         ),

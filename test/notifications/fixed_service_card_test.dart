@@ -74,7 +74,7 @@ void main() {
       final poll = _between(
         listener,
         'Future<void> _poll() async {',
-        'final WatchedRunLiveRows _runRows',
+        '/// A-302/U-11 (spec 028)',
       );
       expect(poll, isNot(contains('notificationTitle:')));
       expect(poll, isNot(contains('notificationText:')));

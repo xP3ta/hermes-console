@@ -94,12 +94,17 @@ class HermesField extends StatelessWidget {
     final fieldRadius = components.shape.fieldRadius;
     final terminal = components.id == ComponentProfiles.terminal.id;
     final restingBorder = components.border.outlinesRestingControls
-        ? BorderSide(color: colors.divider, width: components.border.width)
+        ? BorderSide(
+            color: colors.controlBorder,
+            width: components.border.width,
+          )
+        : colors.isLightPalette
+        ? BorderSide(color: colors.controlBorder)
         : BorderSide.none;
     final InputBorder enabledInputBorder = terminal
         ? UnderlineInputBorder(
             borderSide: BorderSide(
-              color: colors.divider,
+              color: colors.controlBorder,
               width: components.border.width,
             ),
           )

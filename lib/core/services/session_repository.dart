@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:uuid/uuid.dart';
+
 import '../utils/fts_snippet.dart';
 import '../utils/session_timestamp.dart';
 import 'connection_manager.dart';
@@ -385,14 +387,12 @@ final class SessionRepository {
     bool archived, {
     String? profile,
   }) async {
-    final id = Uri.encodeComponent(session.id);
-    final response = await _dashboard.apiPatch(
-      'sessions/$id',
-      body: {
-        'archived': archived,
-        if (profile?.trim().isNotEmpty == true) 'profile': profile!.trim(),
-      },
-    );
+    // Desktop `setSessionArchived` (sessions.ts:424): archiving also clears the
+    // pin in the same write, so the server never keeps an archived pinned row.
+    final response = await patchDashboardSessionState(_dashboard, session.id, {
+      'archived': archived,
+      if (archived) 'pinned': false,
+    }, profile);
     if (response['ok'] != true || response['archived'] != archived) {
       throw const FormatException('Invalid Dashboard archive response');
     }
@@ -407,14 +407,9 @@ final class SessionRepository {
     bool pinned, {
     String? profile,
   }) async {
-    final id = Uri.encodeComponent(sessionId);
-    final response = await _dashboard.apiPatch(
-      'sessions/$id',
-      body: {
-        'pinned': pinned,
-        if (profile?.trim().isNotEmpty == true) 'profile': profile!.trim(),
-      },
-    );
+    final response = await patchDashboardSessionState(_dashboard, sessionId, {
+      'pinned': pinned,
+    }, profile);
     if (response['ok'] != true || response['pinned'] != pinned) {
       throw const FormatException('Invalid Dashboard pin response');
     }
@@ -756,20 +751,150 @@ String _canonicalSourceFingerprint(Iterable<String> values) {
   return canonical.join(',');
 }
 
+/// The identity a fenced session write carries: the request it is, and the
+/// precondition it commits against.
+final class _SessionMutationIdentity {
+  const _SessionMutationIdentity({
+    required this.requestId,
+    required this.expectedRevision,
+    required this.expectedGeneration,
+  });
+
+  final String requestId;
+  final int expectedRevision;
+  final int? expectedGeneration;
+
+  /// The snapshot said `exists:false` (a generation exists only with a row).
+  bool get rowAbsent => expectedGeneration == null;
+
+  Map<String, Object> toJson() => {
+    'request_id': requestId,
+    'expected_revision': expectedRevision,
+    'expected_generation': ?expectedGeneration,
+  };
+}
+
+/// `GET /api/sessions/{id}/mutation-snapshot`: the read half of a fenced edit,
+/// as Desktop's `mutateSessionHttp` (`apps/desktop/src/api/sessions.ts`).
+///
+/// Answers null when there is no fence to read — an older runtime with no such
+/// route (404/405, the same verdict a session write already uses to stay local)
+/// or a body without the counter. The base write then goes out unchanged, and a
+/// backend that does require the fence refuses it by name instead of committing.
+Future<_SessionMutationIdentity?> _readMutationIdentity(
+  DashboardClient dashboard,
+  String sessionId,
+  String? profile,
+) async {
+  final cleanProfile = profile?.trim() ?? '';
+  final suffix = cleanProfile.isEmpty || cleanProfile == 'default'
+      ? ''
+      : '?profile=${Uri.encodeQueryComponent(cleanProfile)}';
+  final Map<String, dynamic> snapshot;
+  try {
+    snapshot = await dashboard.apiGet(
+      'sessions/${Uri.encodeComponent(sessionId)}/mutation-snapshot$suffix',
+    );
+  } on DashboardHttpException catch (error) {
+    if (error.statusCode == 404 || error.statusCode == 405) return null;
+    rethrow;
+  }
+  final exists = snapshot['exists'];
+  final revision = _nonNegativeInt(snapshot['runtime_revision']);
+  final generation = _nonNegativeInt(snapshot['runtime_generation']);
+  if (exists is! bool || revision == null || (exists && generation == null)) {
+    return null;
+  }
+  return _SessionMutationIdentity(
+    requestId: const Uuid().v4(),
+    expectedRevision: revision,
+    expectedGeneration: exists ? generation : null,
+  );
+}
+
+/// A fenced backend refuses a stale precondition instead of guessing a new one.
+/// Re-reading once inside the same user action is what Desktop's live pick
+/// does; the write carries one sidebar field, so the concurrent writer that
+/// bumped the revision cannot be overwritten by it.
+bool _isStaleMutation(DashboardHttpException error) {
+  if (error.statusCode != 409) return false;
+  final body = error.body.toLowerCase();
+  return body.contains('revision_conflict') ||
+      body.contains('stale_generation');
+}
+
 /// PATCH /api/sessions/{id} on the Dashboard with [fields] (Desktop's
 /// per-session flags); the owning profile rides in the body, as Desktop.
+///
+/// A Hermes backend that owns the session store commits only fenced writes: the
+/// same call without [request_id] and [expected_revision] answers `409
+/// client_upgrade_required` and nothing is written — which is what made archive,
+/// pin and rename read as a server sync failure on the phone.
 Future<Map<String, Object?>> patchDashboardSessionState(
   DashboardClient dashboard,
   String sessionId,
   Map<String, Object> fields,
   String? profile,
-) => dashboard.apiPatch(
-  'sessions/${Uri.encodeComponent(sessionId)}',
-  body: {
-    ...fields,
-    if (profile?.trim().isNotEmpty == true) 'profile': profile!.trim(),
-  },
-);
+) {
+  final endpoint = 'sessions/${Uri.encodeComponent(sessionId)}';
+  return _fencedSessionWrite(
+    dashboard,
+    sessionId,
+    profile,
+    (identity) => dashboard.apiPatch(
+      endpoint,
+      body: {
+        ...fields,
+        ...?identity?.toJson(),
+        if (profile?.trim().isNotEmpty == true) 'profile': profile!.trim(),
+      },
+    ),
+  );
+}
+
+/// DELETE /api/sessions/{id} with the same fence, as Desktop's `deleteSession`
+/// (sessions.ts:716 through `mutateSessionHttp`): the identity travels in the
+/// query, not in a body. Answers the handler's JSON (`{ok}` or
+/// `{ok, already_absent}`); a refusal that is not a stale precondition
+/// (`session_busy`, ...) is rethrown for the caller to read.
+Future<Map<String, dynamic>> deleteDashboardSession(
+  DashboardClient dashboard,
+  String sessionId,
+  String? profile,
+) => _fencedSessionWrite(dashboard, sessionId, profile, (identity) async {
+  // A session its own snapshot calls absent is already deleted; the fenced
+  // DELETE would answer 400 invalid_params (no generation). Desktop never
+  // sends it either (session-http-mutations.ts).
+  if (identity != null && identity.rowAbsent) {
+    return <String, dynamic>{'ok': true, 'already_absent': true};
+  }
+  return dashboard.deleteSession(
+    sessionId,
+    profile: profile,
+    identity: identity?.toJson(),
+  );
+});
+
+/// One fenced session write: read the precondition, send, and on a stale
+/// precondition re-read once. With no fence to read the write goes out as it
+/// always did.
+Future<T> _fencedSessionWrite<T>(
+  DashboardClient dashboard,
+  String sessionId,
+  String? profile,
+  Future<T> Function(_SessionMutationIdentity? identity) send,
+) async {
+  final identity = await _readMutationIdentity(dashboard, sessionId, profile);
+  if (identity == null) return send(null);
+  try {
+    return await send(identity);
+  } on DashboardHttpException catch (error) {
+    if (!_isStaleMutation(error)) rethrow;
+    final retried = await _readMutationIdentity(dashboard, sessionId, profile);
+    if (retried == null) rethrow;
+    return send(retried);
+  }
+}
 
 /// The HTTP status of a Dashboard failure, for
 /// [SessionArchive.attachRemoteState].

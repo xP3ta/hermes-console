@@ -111,12 +111,6 @@ const runtimeMutationReleaseAudit =
         releaseBlocker: 'reconciliation/ownership/origin',
       ),
       (
-        mutation: 'legacy applyReasoningEffort run creation',
-        admissionGuard: 'ownership/release fence',
-        inFlightAuthority: 'mutation counter through startRun settlement',
-        releaseBlocker: 'mutation',
-      ),
-      (
         mutation: 'artifact mutations',
         admissionGuard: 'none exposed by ActiveChat',
         inFlightAuthority: 'artifact index is projection-only',
@@ -152,7 +146,6 @@ void main() {
       'active attachment remove/detach',
       'slash.exec/command.dispatch',
       'runtime attach/activate/resume/recheck',
-      'legacy applyReasoningEffort run creation',
       'artifact mutations',
       'session.close release',
     ]) {

@@ -2,7 +2,7 @@
 
 Console is a Flutter app for Android that connects to a self-hosted Hermes
 Agent. This page is a map of the repository, not a specification: Hermes' own
-Gateway and Dashboard are the protocol contract, and
+Dashboard is the protocol contract, and
 [`UPSTREAM_CONTRACT.md`](UPSTREAM_CONTRACT.md) lists exactly what the app
 depends on.
 
@@ -14,8 +14,8 @@ depends on.
    HTTPS, or a private network (LAN / Tailscale)
         |
 [Hermes Agent - your computer or server]
-   |- Gateway    :8642  OpenAI-compatible API, Bearer API_SERVER_KEY
-   '- Dashboard  :9119  admin API and the /api/ws JSON-RPC channel
+   '- Dashboard  :9119  admin API and the /api/ws JSON-RPC channel,
+                        behind a sign-in when it listens on the network
 ```
 
 There is no Console backend. The phone talks only to the Hermes servers the
@@ -58,9 +58,10 @@ package). A flavor is a distribution lane, not a feature switch.
 
 ## Connections and secrets
 
-- A saved connection is the Gateway address and key, plus the Dashboard address
-  and sign-in. Keys and sign-ins live in the Android Keystore through
-  `flutter_secure_storage`; addresses and labels are not secret.
+- A saved connection is the computer's address plus the Dashboard sign-in
+  (older saved connections may still hold a Gateway key). Keys and sign-ins
+  live in the Android Keystore through `flutter_secure_storage`; addresses and
+  labels are not secret.
 - Plain HTTP is allowed only toward loopback, private networks, Tailscale and
   local names; HTTP to a public address is blocked before any request. See
   [`SECURITY_POLICY.md`](SECURITY_POLICY.md).

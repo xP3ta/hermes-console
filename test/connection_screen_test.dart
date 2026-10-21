@@ -36,6 +36,7 @@ void main() {
         await tester.pumpWidget(
           onboardingHost(
             InstanceEditScreen(
+              simpleConnect: false,
               connManager: manager,
               initial: connection,
               diagnostics: diagnostics,
@@ -57,11 +58,14 @@ void main() {
         expect(diagnostics.calls, 1);
         expect(tester.takeException(), isNull);
         await openEditorAdvanced(tester);
+        // The Gateway key is not asked for any more.
+        expect(
+          find.byKey(const ValueKey('instance-gateway-token')),
+          findsNothing,
+        );
         for (final key in [
-          'instance-chat-port',
           'instance-dashboard-port',
           'instance-dashboard-url',
-          'instance-gateway-token',
           'instance-note',
           'instance-read-only',
           'instance-oauth',
@@ -144,9 +148,17 @@ void main() {
           await tester.pumpWidget(
             host(
               InstanceEditScreen(
+                simpleConnect: false,
                 connManager: manager,
                 initial: connection,
-                diagnostics: OnboardingDiagnostics(gatewayStatus: status),
+                diagnostics: OnboardingDiagnostics(
+                  reachStatus: status == ProbeStatus.authInvalid
+                      ? ProbeStatus.ok
+                      : status,
+                  dashboardStatus: status == ProbeStatus.authInvalid
+                      ? ProbeStatus.authInvalid
+                      : ProbeStatus.ok,
+                ),
               ),
             ),
           );
@@ -160,7 +172,7 @@ void main() {
                 )
                 .data,
             status == ProbeStatus.authInvalid
-                ? s.sChatKeyRejected
+                ? s.o2MissingDashboard
                 : status == ProbeStatus.tlsError
                 ? s.sCertificate
                 : s.o2Unreachable,
@@ -185,6 +197,7 @@ void main() {
         await tester.pumpWidget(
           host(
             InstanceEditScreen(
+              simpleConnect: false,
               connManager: manager,
               initial: connection,
               diagnostics: OnboardingDiagnostics(
@@ -221,6 +234,7 @@ void main() {
         await tester.pumpWidget(
           host(
             InstanceEditScreen(
+              simpleConnect: false,
               connManager: manager,
               initial: initial,
               diagnostics: OnboardingDiagnostics(),
@@ -264,7 +278,13 @@ void main() {
         await manager.upsertConnection(first);
         await manager.upsertConnection(second);
         await tester.pumpWidget(
-          host(InstanceEditScreen(connManager: manager, initial: first)),
+          host(
+            InstanceEditScreen(
+              simpleConnect: false,
+              connManager: manager,
+              initial: first,
+            ),
+          ),
         );
         await tester.pumpAndSettle();
         await tapOnboarding(tester, 'instance-delete');
@@ -287,6 +307,7 @@ void main() {
         await tester.pumpWidget(
           host(
             InstanceEditScreen(
+              simpleConnect: false,
               connManager: manager,
               diagnostics: diagnostics,
               prefill: SavedConnection(
@@ -302,7 +323,6 @@ void main() {
         await tester.pumpAndSettle();
         await openEditorAdvanced(tester);
         for (final (key, value) in [
-          ('instance-gateway-token', 'synthetic-key'),
           ('dashboard-manual-user', 'synthetic-owner'),
           ('dashboard-manual-password', 'synthetic-password'),
         ]) {
@@ -326,6 +346,7 @@ void main() {
       await tester.pumpWidget(
         host(
           InstanceEditScreen(
+            simpleConnect: false,
             connManager: manager,
             diagnostics: OnboardingDiagnostics(),
           ),
@@ -375,6 +396,7 @@ void main() {
         await tester.pumpWidget(
           host(
             InstanceEditScreen(
+              simpleConnect: false,
               connManager: manager,
               initialLink: fakeFullPairing,
               diagnostics: OnboardingDiagnostics(),
@@ -434,6 +456,7 @@ void main() {
         await tester.pumpWidget(
           host(
             InstanceEditScreen(
+              simpleConnect: false,
               connManager: manager,
               initial: connection,
               diagnostics: _PrivateDiagnostic(),
@@ -461,6 +484,7 @@ void main() {
         await tester.pumpWidget(
           host(
             InstanceEditScreen(
+              simpleConnect: false,
               connManager: manager,
               prefill: fakeFullPairing.toDraftConnection().copyWith(
                 id: '',
@@ -471,15 +495,11 @@ void main() {
           ),
         );
         await tester.pumpAndSettle();
-        final key = find.byKey(const ValueKey('instance-gateway-token'));
-        await revealEditorControl(tester, key);
-        await tester.enterText(key, 'synthetic-manual-key');
-        FocusManager.instance.primaryFocus?.unfocus();
-        await tester.pumpAndSettle();
         await openEditorAdvanced(tester);
-        final chatPort = find.byKey(const ValueKey('instance-chat-port'));
+        // The chat port field is gone: the computer address carries the port.
+        final chatPort = find.byKey(const ValueKey('instance-gateway-url'));
         await revealEditorControl(tester, chatPort);
-        await tester.enterText(chatPort, '18642');
+        await tester.enterText(chatPort, 'https://fixture.invalid:18642');
         final dashboardPort = find.byKey(
           const ValueKey('instance-dashboard-port'),
         );
@@ -495,7 +515,7 @@ void main() {
           'https://fixture.invalid:19119',
         );
         await revealEditorControl(tester, chatPort);
-        await tester.enterText(chatPort, '70000');
+        await tester.enterText(chatPort, 'https://fixture.invalid:70000');
         FocusManager.instance.primaryFocus?.unfocus();
         await tester.pumpAndSettle();
         await tapOnboarding(tester, 'instance-test');
@@ -505,7 +525,7 @@ void main() {
         await tapOnboarding(tester, 'instance-save');
         expect(manager.getConnections(), isEmpty);
         await revealEditorControl(tester, chatPort);
-        await tester.enterText(chatPort, '18643');
+        await tester.enterText(chatPort, 'https://fixture.invalid:18643');
         FocusManager.instance.primaryFocus?.unfocus();
         await tester.pumpAndSettle();
         expect(
@@ -535,6 +555,7 @@ void main() {
         await tester.pumpWidget(
           host(
             InstanceEditScreen(
+              simpleConnect: false,
               connManager: manager,
               initial: initial,
               diagnostics: held,
@@ -577,7 +598,11 @@ void main() {
       await manager.upsertConnection(initial);
       await tester.pumpWidget(
         onboardingHost(
-          InstanceEditScreen(connManager: manager, initial: initial),
+          InstanceEditScreen(
+            simpleConnect: false,
+            connManager: manager,
+            initial: initial,
+          ),
           language: language,
         ),
       );
@@ -632,7 +657,6 @@ class _PrivateDiagnostic extends OnboardingDiagnostics {
     dashboard: const [],
     matrix: const CapabilityMatrix(),
     suggestions: const ['private.invalid'],
-    serverCapabilities: const ServerCapabilities(model: 'private.invalid'),
     ranAt: DateTime(2026),
   );
 }

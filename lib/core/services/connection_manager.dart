@@ -11,27 +11,29 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'origin_bound_http_client.dart';
+import 'transcript_rehydrate_cost.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
 import 'mobile_oauth.dart';
+import 'native_session_store.dart';
 import '../models/agent_profile.dart';
 import '../models/capability_matrix.dart';
 import '../models/connection.dart';
 import '../models/cron_job.dart';
 import '../models/core_read.dart';
-import '../services/sse_frame_buffer.dart';
 import '../utils/transport_privacy.dart';
 import '../models/memory_info.dart';
 import '../models/model_active_info.dart';
-import '../models/model_info.dart';
 import '../models/model_provider.dart';
+import '../config/flavor.dart';
 import '../models/moa_config.dart';
 import '../models/session.dart';
 import 'chat_draft_store.dart';
 import 'local_transcript_store.dart';
 import 'mission_bot_chat_store.dart';
 import 'secure_storage.dart';
+import 'session_repository.dart' show deleteDashboardSession;
 import 'server_restart_signal.dart';
 import 'turn_outbox_store.dart';
 import '../utils/byte_bounded_lru_cache.dart';
@@ -41,7 +43,6 @@ export '../models/capability_matrix.dart';
 export '../models/connection.dart';
 export '../models/memory_info.dart';
 export '../models/model_active_info.dart';
-export '../models/model_info.dart';
 export '../models/model_provider.dart';
 export '../models/session.dart';
 
@@ -479,6 +480,25 @@ class ConnectionManager {
     return null;
   }
 
+  /// The one Gateway-era connection (a key, or port 8642 with no Dashboard)
+  /// whose host is [host]; null when none or several match.
+  SavedConnection? findGatewayEraByHost(String host) {
+    final wanted = host.trim().toLowerCase();
+    final found = getConnections().where(
+      (c) =>
+          c.host.trim().toLowerCase() == wanted &&
+          (c.apiKey.trim().isNotEmpty ||
+              (c.port == 8642 && (c.dashboardUrl ?? '').trim().isEmpty)),
+    );
+    return found.length == 1 ? found.first : null;
+  }
+
+  /// Forgets the Gateway key of [id] on this phone (the server is untouched).
+  Future<void> dropGatewayKey(String id) async {
+    await _secure.deleteApiKey(id);
+    _apiKeyCache.remove(id);
+  }
+
   Future<void> saveConnection(
     String label,
     String host,
@@ -637,9 +657,18 @@ class ConnectionManager {
       if (password != null && password.isNotEmpty) 'pass': password,
     };
     if (edits.isEmpty) return Future<void>.value();
+    final replacesPassword =
+        MobileOAuthSession.carriesRefresh(edits['token']) &&
+        !edits.containsKey('user') &&
+        !edits.containsKey('pass');
     // Fence pending authenticated writes synchronously, before queueing any
     // storage access (the settings debounce relies on this boundary).
     _publishConnectionWillChange(connId);
+    // A login or manual token replaces the stored session: a renewal that
+    // began earlier must not store or publish anything over it.
+    if (edits.containsKey('token')) {
+      NativeSessionCoordinator.instance.invalidate(connId);
+    }
     final saving = _dashboardAccessTail.then((_) async {
       final previous = <String, String?>{};
       for (final field in edits.keys) {
@@ -649,7 +678,24 @@ class ConnectionManager {
       try {
         for (final edit in edits.entries) {
           written.add(edit.key);
-          await _secure.writeDashboardSecret(connId, edit.key, edit.value);
+          if (edit.key == 'token' &&
+              MobileOAuthSession.carriesRefresh(edit.value)) {
+            await _secure.writeDashboardSecretDurable(
+              connId,
+              edit.key,
+              edit.value,
+            );
+          } else {
+            await _secure.writeDashboardSecret(connId, edit.key, edit.value);
+          }
+        }
+        // Browser sign-in that kept a refresh token: the v2 envelope must read
+        // back intact before the typed password is dropped (write → verify →
+        // delete; a failed write leaves the password where it was).
+        if (replacesPassword &&
+            await _secure.readDashboardSecret(connId, 'token') !=
+                edits['token']) {
+          throw StateError('Dashboard session envelope did not persist');
         }
       } catch (_) {
         var restored = true;
@@ -670,6 +716,16 @@ class ConnectionManager {
         connectionsRevision.value += 1;
         if (!restored) throw StateError('Dashboard credential rollback failed');
         rethrow;
+      }
+      if (replacesPassword) {
+        for (final field in const ['user', 'pass']) {
+          try {
+            await _secure.deleteDashboardSecret(connId, field);
+          } catch (_) {
+            // The session is saved and the mode is sessionToken: a stale
+            // password is unused, so a failed delete must not fail the login.
+          }
+        }
       }
       _publishConnectionRevision(connId);
       connectionsRevision.value += 1;
@@ -929,6 +985,7 @@ class ConnectionManager {
     );
     // Credenciales (Keystore).
     await _secure.deleteApiKey(id);
+    NativeSessionCoordinator.instance.invalidate(id);
     await _secure.deleteDashboardSecrets(id);
     await _secure.deleteBridge(id);
     // Todos los datos con ámbito de esta conexión (caps, perfil activo, runs,
@@ -1191,7 +1248,7 @@ final class SessionTranscriptTooLargeException implements Exception {
 
 class ApiClient {
   static const Duration _requestTimeout = Duration(seconds: 15);
-  final http.Client _http;
+  final OriginBoundHttpClient _http;
   final String baseUrl;
   final String _apiKey;
   final String? _connectionId;
@@ -1215,7 +1272,28 @@ class ApiClient {
              ? baseUrl.substring(0, baseUrl.length - 1)
              : baseUrl,
        ),
-       _http = OriginBoundHttpClient(httpClient);
+       _http = OriginBoundHttpClient(httpClient, _requestTimeout);
+
+  /// A client for [connection] with its Dashboard attached, so the reads
+  /// Desktop makes against the Dashboard (session list, detail, transcript,
+  /// reachability) never go to the Gateway port.
+  factory ApiClient.forConnection(
+    SavedConnection connection, {
+    http.Client? httpClient,
+  }) => ApiClient(
+    baseUrl: connection.baseUrl,
+    apiKey: connection.apiKey,
+    connectionId: connection.id,
+    httpClient: httpClient,
+    profileDashboard: DashboardClient.lazy(
+      connection,
+      httpClientOverride: httpClient,
+    ),
+  );
+
+  /// Whether this client has the Dashboard attached. With one, session reads
+  /// and deletes go to it and never to the Gateway, as in Desktop.
+  bool get hasDashboard => _profileDashboard != null;
 
   Map<String, String> get _headers => {
     'Authorization': 'Bearer $_apiKey',
@@ -1243,9 +1321,9 @@ class ApiClient {
   /// which `enough(sessionsSoFar)` is true, or after [maxPages] pages. Without
   /// them every page is read, as cleanup and lineage resolution require.
   ///
-  /// A named profile is read from the Dashboard when this client has one
-  /// ([profileDashboard]), as Desktop does: `listSessions()` sends
-  /// `/api/sessions?profile=<name>` to the Dashboard. The API server's
+  /// With a Dashboard attached ([profileDashboard]) every list is read from
+  /// it, as Desktop does: `listSessions()` sends `/api/sessions` (plus
+  /// `?profile=<name>` for a named profile) to the Dashboard. The API server's
   /// `/p/<name>/` mirror only accepts that profile's own `API_SERVER_KEY`
   /// and answers 401 when it has none, so the connection's key cannot read it.
   Future<List<Session>> getSessions({
@@ -1257,7 +1335,12 @@ class ApiClient {
   }) async {
     var pagesRead = 0;
     final owner = validateCronProfile(profile);
-    final dashboard = owner == null ? null : _profileDashboard;
+    // The Dashboard list never returns continuation rows and has no
+    // `include_children`; the lineage delete order needs them, so that read
+    // of the default profile stays on the Gateway.
+    final dashboard = includeChildren && owner == null
+        ? null
+        : _profileDashboard;
     // The Dashboard caps `limit` at 100 (422 above it).
     final pageLimit = pageSize.clamp(1, dashboard == null ? 200 : 100);
     final endpoint = profileEndpoint('api/sessions', profile: owner);
@@ -1288,13 +1371,16 @@ class ApiClient {
             'min_messages': '0',
             'archived': 'exclude',
             'order': 'recent',
-            'profile': owner!,
+            'profile': ?owner,
           },
         ).query;
         try {
           data = await dashboard.apiGet('sessions?$query');
         } on DashboardHttpException catch (error) {
           throw readFailure(error.statusCode);
+        } on DashboardAuthException {
+          if (owner != null) rethrow;
+          throw readFailure(401);
         }
       } else {
         final query = <String, String>{
@@ -1306,8 +1392,8 @@ class ApiClient {
           '$baseUrl/$endpoint',
         ).replace(queryParameters: query);
         final res = await _http
-            .get(uri, headers: _headers)
-            .timeout(_requestTimeout);
+            .within(_requestTimeout)
+            .get(uri, headers: _headers);
         if (res.statusCode != 200) throw readFailure(res.statusCode);
         data = jsonDecode(res.body) as Map<String, dynamic>;
       }
@@ -1503,21 +1589,39 @@ class ApiClient {
       '?limit=$boundedLimit&order=latest&offset=$offset'
       '&include_compacted=true',
     );
-    final res = maxBodyBytes == null
-        ? await _http.get(uri, headers: _headers).timeout(_requestTimeout)
-        : await _getBounded(uri, maxBodyBytes);
-    if (res.statusCode != 200) {
-      throw CoreReadException(switch (res.statusCode) {
-        400 => CoreReadErrorKind.malformed,
-        401 => CoreReadErrorKind.auth,
-        403 => CoreReadErrorKind.forbidden,
-        404 when owner != null => CoreReadErrorKind.profileUnavailable,
-        404 => CoreReadErrorKind.notFound,
-        503 => CoreReadErrorKind.temporarilyUnavailable,
-        _ => CoreReadErrorKind.temporarilyUnavailable,
-      }, statusCode: res.statusCode);
+    CoreReadException failure(int status) => CoreReadException(switch (status) {
+      400 => CoreReadErrorKind.malformed,
+      401 => CoreReadErrorKind.auth,
+      403 => CoreReadErrorKind.forbidden,
+      404 when owner != null => CoreReadErrorKind.profileUnavailable,
+      404 => CoreReadErrorKind.notFound,
+      503 => CoreReadErrorKind.temporarilyUnavailable,
+      _ => CoreReadErrorKind.temporarilyUnavailable,
+    }, statusCode: status);
+    final Map<String, dynamic> data;
+    final dashboard = owner == null ? _profileDashboard : null;
+    if (dashboard != null) {
+      // Desktop `getSessionMessages`: the Dashboard serves the default
+      // profile's transcript too. Its pages are capped at 500 rows, so the
+      // body size is bounded without the streaming read below.
+      try {
+        data = await dashboard.apiGet(
+          'sessions/${Uri.encodeComponent(sessionId)}/messages'
+          '?limit=$boundedLimit&order=latest&offset=$offset'
+          '&include_compacted=true',
+        );
+      } on DashboardHttpException catch (error) {
+        throw failure(error.statusCode);
+      } on DashboardAuthException {
+        throw failure(401);
+      }
+    } else {
+      final res = maxBodyBytes == null
+          ? await _http.within(_requestTimeout).get(uri, headers: _headers)
+          : await _getBounded(uri, maxBodyBytes);
+      if (res.statusCode != 200) throw failure(res.statusCode);
+      data = jsonDecode(res.body) as Map<String, dynamic>;
     }
-    final data = jsonDecode(res.body) as Map<String, dynamic>;
     final resolved = data['session_id'];
     final rawMessages = data.containsKey('messages')
         ? data['messages']
@@ -1547,84 +1651,19 @@ class ApiClient {
     );
   }
 
-  // ── Models ───────────────────────────────────────────────────────────
-
-  /// Fetches available models from GET /v1/models (OpenAI-compatible).
-  /// Returns a fallback list with 'hermes-agent' when the endpoint is
-  /// unreachable or returns a non-200 status.
-  Future<List<ModelInfo>> getModelInfoList() async {
-    try {
-      final res = await _http
-          .get(Uri.parse('$baseUrl/v1/models'), headers: _headers)
-          .timeout(const Duration(seconds: 10));
-      if (res.statusCode != 200) {
-        return [const ModelInfo(id: 'hermes-agent')];
-      }
-      final data = jsonDecode(res.body) as Map<String, dynamic>;
-      final list = data['data'] as List? ?? [];
-      final models = list
-          .whereType<Map<String, dynamic>>()
-          .map(ModelInfo.fromJson)
-          .toList();
-      return models.isEmpty ? [const ModelInfo(id: 'hermes-agent')] : models;
-    } catch (e) {
-      debugPrint(
-        '[connection] excepción silenciada (se continúa sin propagar): $e',
-      );
-      return [const ModelInfo(id: 'hermes-agent')];
-    }
-  }
-
-  /// Convenience wrapper: returns just model IDs. Use [getModelInfoList] for
-  /// richer metadata (created, owned_by).
-  Future<List<String>> getModels() async {
-    final models = await getModelInfoList();
-    return models.map((m) => m.id).toList();
-  }
-
-  /// Sonda best-effort de los modelos del backend Ollama del MISMO host, vía
-  /// `GET http://<host>:<port>/api/tags`. Hermes solo anuncia el alias
-  /// `hermes-agent` en `/v1/models`, así que esto es lo que permite elegir el
-  /// "cerebro" real (p.ej. `gemma4:e4b`) para el modo voz. Devuelve [] en
-  /// silencio si no hay Ollama o no es alcanzable (usuarios sin Ollama no se
-  /// ven afectados). El puerto por defecto es el estándar de Ollama (11434).
-  Future<List<String>> getBackendModels({int port = 11434}) async {
-    try {
-      final base = Uri.parse(baseUrl);
-      final uri = Uri(
-        scheme: base.scheme.isEmpty ? 'http' : base.scheme,
-        host: base.host,
-        port: port,
-        path: '/api/tags',
-      );
-      final res = await _http.get(uri).timeout(const Duration(seconds: 4));
-      if (res.statusCode != 200) return const [];
-      final data = jsonDecode(res.body) as Map<String, dynamic>;
-      final list = data['models'] as List? ?? const [];
-      return list
-          .whereType<Map<String, dynamic>>()
-          .map((m) => (m['name'] ?? '').toString())
-          .where((n) => n.isNotEmpty)
-          .toList();
-    } catch (e) {
-      debugPrint(
-        '[connection] excepción silenciada (se devuelve lista vacía): $e',
-      );
-      return const [];
-    }
-  }
-
   // ── Health check ─────────────────────────────────────────────────────
 
-  /// `/health` alone, for callers whose next request is itself an
+  /// The health endpoint alone, for callers whose next request is itself an
   /// authenticated read (Home's paged session list): that read is the auth
   /// proof, so [healthCheck]'s extra `/api/sessions` fetch would only repeat
   /// it in series.
   Future<bool> healthReachable() async {
+    final dashboard = _profileDashboard;
+    if (dashboard != null) return _dashboardReachable(dashboard);
     try {
       final health = await _http
-          .get(Uri.parse('$baseUrl/health'), headers: _headers)
-          .timeout(const Duration(seconds: 10));
+          .within(const Duration(seconds: 10))
+          .get(Uri.parse('$baseUrl/health'), headers: _headers); // U6b
       return health.statusCode == 200;
     } catch (e) {
       debugPrint('[connection] excepción silenciada (se asume false): $e');
@@ -1633,24 +1672,28 @@ class ApiClient {
   }
 
   Future<bool> healthCheck() async {
+    // The Dashboard's public `/api/status` is Desktop's liveness probe; the
+    // list read that follows is the authentication proof.
+    final dashboard = _profileDashboard;
+    if (dashboard != null) return _dashboardReachable(dashboard);
     try {
       final health = await _http
-          .get(Uri.parse('$baseUrl/health'), headers: _headers)
-          .timeout(const Duration(seconds: 10));
+          .within(const Duration(seconds: 10))
+          .get(Uri.parse('$baseUrl/health'), headers: _headers); // U6b
       if (health.statusCode == 401 || health.statusCode == 403) return false;
       if (health.statusCode != 200) return false;
     } catch (e) {
       debugPrint('[connection] excepción silenciada (se asume false): $e');
       return false;
     }
-    // /health may be intentionally public on some deployments. Confirm that
+    // The health endpoint may be intentionally public on some deployments. Confirm that
     // the saved API key can also reach an authenticated endpoint. Only an
     // answer refutes it: a timeout, reset or 408/429/5xx from a server that
-    // just answered /health is load, not an outage (#1215).
+    // just answered it is load, not an outage (#1215).
     try {
       final sessions = await _http
-          .get(Uri.parse('$baseUrl/api/sessions'), headers: _headers)
-          .timeout(const Duration(seconds: 10));
+          .within(const Duration(seconds: 10))
+          .get(Uri.parse('$baseUrl/api/sessions'), headers: _headers);
       final status = sessions.statusCode;
       return status == 200 || status == 408 || status == 429 || status >= 500;
     } on TimeoutException {
@@ -1665,16 +1708,37 @@ class ApiClient {
     }
   }
 
+  /// True when the Dashboard answered, even to refuse: a 401/403 means the
+  /// server is there and the login is what is missing, never an outage.
+  Future<bool> _dashboardReachable(DashboardClient dashboard) async {
+    try {
+      await dashboard.getServerStatus().timeout(const Duration(seconds: 10));
+      return true;
+    } on DashboardAuthException {
+      return true;
+    } on DashboardHttpException catch (error) {
+      return error.statusCode == 401 || error.statusCode == 403;
+    } catch (e) {
+      debugPrint('[connection] excepción silenciada (se asume false): $e');
+      return false;
+    }
+  }
+
   /// Calienta la conexión keep-alive al gateway (Fase 0 HCR). Un GET ligero a
-  /// `/health` abre el socket TCP + handshake TLS y deja la conexión en el pool
+  /// el endpoint de salud abre el socket TCP + handshake TLS y deja la conexión en el pool
   /// del `http.Client` compartido, para que el PRIMER turno de voz no arranque
   /// en frío (DNS/TLS) — que es justo cuando "se queda pensando" más. Es
   /// best-effort: traga cualquier error y no bloquea (fire-and-forget).
   Future<void> warmUp() async {
     try {
+      final dashboard = _profileDashboard;
+      if (dashboard != null) {
+        await dashboard.getServerStatus().timeout(const Duration(seconds: 4));
+        return;
+      }
       await _http
-          .get(Uri.parse('$baseUrl/health'), headers: _headers)
-          .timeout(const Duration(seconds: 4));
+          .within(const Duration(seconds: 4))
+          .get(Uri.parse('$baseUrl/health'), headers: _headers); // U6b
     } catch (_) {
       // Calentamiento opcional: si falla, el turno real reportará el error.
     }
@@ -1684,16 +1748,16 @@ class ApiClient {
 
   Future<Map<String, dynamic>> apiGet(String endpoint) async {
     final res = await _http
-        .get(Uri.parse('$baseUrl/$endpoint'), headers: _headers)
-        .timeout(_requestTimeout);
+        .within(_requestTimeout)
+        .get(Uri.parse('$baseUrl/$endpoint'), headers: _headers);
     if (res.statusCode != 200) throw Exception('HTTP ${res.statusCode}');
     return jsonDecode(res.body) as Map<String, dynamic>;
   }
 
   Future<List<dynamic>> apiGetList(String endpoint) async {
     final res = await _http
-        .get(Uri.parse('$baseUrl/$endpoint'), headers: _headers)
-        .timeout(_requestTimeout);
+        .within(_requestTimeout)
+        .get(Uri.parse('$baseUrl/$endpoint'), headers: _headers);
     if (res.statusCode != 200) throw Exception('HTTP ${res.statusCode}');
     return jsonDecode(res.body) as List<dynamic>;
   }
@@ -1703,12 +1767,12 @@ class ApiClient {
     Map<String, dynamic>? body,
   }) async {
     final res = await _http
+        .within(_requestTimeout)
         .post(
           Uri.parse('$baseUrl/$endpoint'),
           headers: _headers,
           body: body != null ? jsonEncode(body) : null,
-        )
-        .timeout(_requestTimeout);
+        );
     if (res.statusCode < 200 || res.statusCode >= 300) {
       throw Exception('HTTP ${res.statusCode}');
     }
@@ -1717,8 +1781,8 @@ class ApiClient {
 
   Future<void> apiDelete(String endpoint) async {
     final res = await _http
-        .delete(Uri.parse('$baseUrl/$endpoint'), headers: _headers)
-        .timeout(_requestTimeout);
+        .within(_requestTimeout)
+        .delete(Uri.parse('$baseUrl/$endpoint'), headers: _headers);
     if (res.statusCode < 200 || res.statusCode >= 300) {
       throw Exception('HTTP ${res.statusCode}');
     }
@@ -1732,13 +1796,35 @@ class ApiClient {
   /// la sesión ya no existe y se puede retirar su recuperación local. Lanza en
   /// los demás errores HTTP.
   Future<bool> deleteSession(String sessionId, {String? profile}) async {
+    final dashboard = _profileDashboard;
+    if (dashboard != null) {
+      // Desktop `deleteSession` (sessions.ts:709): one DELETE to the Dashboard,
+      // which removes the whole compression chain and delegated children. A
+      // failure is never retried on the Gateway: a partly deleted chain would
+      // come back as a new root.
+      final Map<String, dynamic> body;
+      try {
+        body = await deleteDashboardSession(
+          dashboard,
+          sessionId,
+          validateCronProfile(profile),
+        );
+      } on DashboardHttpException catch (error) {
+        // 409: a turn or a compression is running, the row stays.
+        if (error.statusCode == 409) return false;
+        rethrow;
+      }
+      final deleted = body['ok'] == true;
+      if (deleted) await _clearSessionRecovery(sessionId, profile: profile);
+      return deleted;
+    }
     final endpoint = profileEndpoint(
       'api/sessions/${Uri.encodeComponent(sessionId)}',
       profile: profile,
     );
     final res = await _http
-        .delete(Uri.parse('$baseUrl/$endpoint'), headers: _headers)
-        .timeout(_requestTimeout);
+        .within(_requestTimeout)
+        .delete(Uri.parse('$baseUrl/$endpoint'), headers: _headers);
     if (res.statusCode == 404) {
       await _clearSessionRecovery(sessionId, profile: profile);
       return true;
@@ -1791,6 +1877,10 @@ class ApiClient {
 
   /// GET /api/sessions/{id} — detalle con métricas (tokens, coste, lineage).
   Future<Session> getSession(String sessionId, {String? profile}) async {
+    final dashboard = _profileDashboard;
+    if (dashboard != null && validateCronProfile(profile) == null) {
+      return dashboard.getSessionDetail(sessionId);
+    }
     final data = await apiGet(
       profileEndpoint(
         'api/sessions/${Uri.encodeComponent(sessionId)}',
@@ -1800,460 +1890,9 @@ class ApiClient {
     return Session.fromJson((data['session'] as Map<String, dynamic>?) ?? data);
   }
 
-  /// POST /api/sessions/{id}/fork — ramifica una sesión (semántica /branch
-  /// del CLI: la original queda end_reason="branched" y la hija hereda el
-  /// transcript con parent_session_id). Verificado en vivo (api_server.py).
-  Future<Session> forkSession(
-    String sessionId, {
-    String? title,
-    String? profile,
-  }) async {
-    final data = await apiPost(
-      profileEndpoint(
-        'api/sessions/${Uri.encodeComponent(sessionId)}/fork',
-        profile: profile,
-      ),
-      body: {if (title != null && title.isNotEmpty) 'title': title},
-    );
-    return Session.fromJson((data['session'] as Map<String, dynamic>?) ?? data);
-  }
-
-  // ── Runs (/v1/runs — ejecuciones de agente con aprobaciones) ──────────
-  //
-  // Contrato verificado contra api_server.py del upstream y el servidor
-  // vivo: el gateway NO expone listado de runs (GET /v1/runs → 405) y los
-  // estados viven en memoria (tras completar/reiniciar → 404 run_not_found).
-
-  /// POST /v1/runs — lanza una ejecución; devuelve el run_id (HTTP 202).
-  ///
-  /// [history] es la conversación previa (turnos anteriores) en formato
-  /// OpenAI `[{role, content}]`, orden cronológico (más antiguo primero), SIN
-  /// el turno actual (que va en [input]).
-  ///
-  /// IMPORTANTE (verificado en api_server.py del upstream): `/v1/runs` es
-  /// STATELESS respecto a la conversación. El campo [sessionId] solo etiqueta el
-  /// run (se usa como `task_id`/clave de aprobación), pero el gateway NO carga el
-  /// transcript de la sesión ni reinyecta los turnos previos en el contexto del
-  /// LLM. El ÚNICO modo de mantener el hilo es enviar [history] en el campo
-  /// **`conversation_history`** (es lo que el handler pasa a
-  /// `agent.run_conversation(conversation_history=...)`). Un campo `messages`
-  /// NO se lee aquí (eso es del endpoint chat/completions): mandarlo como único
-  /// contexto = el agente responde sin memoria del turno anterior ("no sé").
-  /// Lo mandamos también como alias inofensivo por compatibilidad con gateways
-  /// antiguos (los campos desconocidos se ignoran sin error). (El único contexto
-  /// que sobrevive vía [sessionId] es lo que el agente haya guardado en su
-  /// memoria de largo plazo con la tool de memoria — no es continuidad
-  /// conversacional.)
-  ///
-  /// Alternativa nativa con contexto server-side automático: el endpoint
-  /// `POST /api/sessions/{id}/chat[/stream]` carga el transcript de la sesión
-  /// por sí mismo (sin reenviar `messages`), pero no expone el ciclo de run con
-  /// `approval.request` del que depende la tarjeta de aprobación del chat.
-  Future<String> startRun({
-    required String input,
-    String? sessionId,
-    String? model,
-    List<Map<String, dynamic>>? history,
-    String? profile,
-  }) async {
-    Map<String, dynamic> buildBody({required bool withHistory}) => {
-      'input': input,
-      if (sessionId != null && sessionId.isNotEmpty) 'session_id': sessionId,
-      if (model != null && model.isNotEmpty) 'model': model,
-      if (withHistory && history != null && history.isNotEmpty) ...{
-        // `conversation_history` es el campo que el gateway lee de verdad para
-        // reinyectar el hilo; `messages` se manda solo como alias compatible.
-        'conversation_history': history,
-        'messages': history,
-      },
-    };
-
-    final hasHistory = history != null && history.isNotEmpty;
-    Map<String, dynamic> data;
-    // 30 s es suficiente para que el gateway procese el POST inicial. Sin este
-    // timeout la petición puede colgar indefinidamente si el servidor está caído
-    // o sobrecargado (el SSE subsiguiente no llega a iniciarse y la UI no avanza).
-    const runStartTimeout = Duration(seconds: 30);
-    try {
-      data = await apiPost(
-        profileEndpoint('v1/runs', profile: profile),
-        body: buildBody(withHistory: true),
-      ).timeout(runStartTimeout);
-    } catch (e) {
-      // Si un gateway estricto/antiguo rechaza el cuerpo con historial
-      // (400/422), NO reintentamos sin contexto (eso = el agente olvida el
-      // turno previo y "se vuelve tonto"). En su lugar inyectamos el historial
-      // como transcript dentro del propio `input`, que siempre se respeta —
-      // mismo principio que el bridge local con `hermes -z`.
-      final s = e.toString();
-      if (hasHistory && (s.contains('400') || s.contains('422'))) {
-        data = await apiPost(
-          profileEndpoint('v1/runs', profile: profile),
-          body: _buildContextInjectedBody(input, history, sessionId, model),
-        ).timeout(runStartTimeout);
-      } else {
-        rethrow;
-      }
-    }
-    final runId = data['run_id'] as String?;
-    if (runId == null || runId.isEmpty) {
-      throw Exception('Gateway did not return run_id');
-    }
-    return runId;
-  }
-
-  /// Cuerpo de `/v1/runs` con el contexto inyectado dentro de `input` (fallback
-  /// cuando el gateway rechaza los campos de historial). El transcript previo va
-  /// envuelto para que el agente lo distinga del turno actual y responda solo al
-  /// último mensaje, sin perder el hilo.
-  static Map<String, dynamic> _buildContextInjectedBody(
-    String input,
-    List<Map<String, dynamic>> history,
-    String? sessionId,
-    String? model,
-  ) {
-    final transcript = history
-        .map((m) {
-          final who = (m['role'] == 'user') ? 'User' : 'Assistant';
-          return '$who: ${(m['content'] ?? '').toString()}';
-        })
-        .join('\n');
-    final contextualInput =
-        'Continue this conversation maintaining context. Reply only to the '
-        'LAST user message, without repeating the history.\n\n'
-        '<previous_conversation>\n$transcript\n</previous_conversation>\n\n'
-        'User: $input';
-    return {
-      'input': contextualInput,
-      if (sessionId != null && sessionId.isNotEmpty) 'session_id': sessionId,
-      if (model != null && model.isNotEmpty) 'model': model,
-    };
-  }
-
-  /// GET /v1/runs/{id} — estado pollable. Lanza con el código HTTP en el
-  /// mensaje (404 = el gateway ya no conserva esta ejecución).
-  Future<Map<String, dynamic>> getRun(String runId, {String? profile}) =>
-      apiGet(
-        profileEndpoint(
-          'v1/runs/${Uri.encodeComponent(runId)}',
-          profile: profile,
-        ),
-      );
-
-  /// POST /v1/runs/{id}/approval — resuelve una aprobación pendiente.
-  /// [choice]: once | session | always | deny.
-  Future<Map<String, dynamic>> resolveRunApproval(
-    String runId,
-    String choice, {
-    bool resolveAll = false,
-    String? requestId,
-    String? profile,
-  }) => apiPost(
-    profileEndpoint(
-      'v1/runs/${Uri.encodeComponent(runId)}/approval',
-      profile: profile,
-    ),
-    body: {
-      'choice': choice,
-      if (resolveAll) 'resolve_all': true,
-      if (requestId != null && requestId.isNotEmpty) 'request_id': requestId,
-    },
-  );
-
-  /// POST /v1/runs/{id}/stop — interrumpe la ejecución.
-  Future<Map<String, dynamic>> stopRun(String runId, {String? profile}) =>
-      apiPost(
-        profileEndpoint(
-          'v1/runs/${Uri.encodeComponent(runId)}/stop',
-          profile: profile,
-        ),
-      );
-
-  /// GET /v1/runs/{id}/events — SSE de eventos estructurados del run
-  /// (message.delta, tool.started/completed, approval.request,
-  /// run.completed/failed/cancelled). Devuelve cuando el stream cierra.
-  Future<void> streamRunEvents(
-    String runId, {
-    String? profile,
-    required void Function(Map<String, dynamic> event) onEvent,
-    required void Function() onDone,
-    required void Function(String error) onError,
-    Duration? idleTimeout = const Duration(seconds: 90),
-  }) async {
-    try {
-      final request = http.Request(
-        'GET',
-        Uri.parse(
-          '$baseUrl/${profileEndpoint('v1/runs/${Uri.encodeComponent(runId)}/events', profile: profile)}',
-        ),
-      );
-      request.headers.addAll(_headers);
-      final response = await _http.send(request).timeout(_requestTimeout);
-      if (response.statusCode != 200) {
-        onError('HTTP ${response.statusCode}');
-        return;
-      }
-      final sseBuffer = SseFrameBuffer();
-      // A-010 (spec 028): callers that need transport expiry retain the
-      // mid-stream timeout. Active chat passes null because model silence is not
-      // terminal; its server remains the liveness authority.
-      var events = response.stream.transform(utf8.decoder);
-      if (idleTimeout != null) {
-        events = events.timeout(
-          idleTimeout,
-          onTimeout: (sink) {
-            sink.addError(
-              TimeoutException(
-                'SSE run events idle timeout (${idleTimeout.inSeconds}s)',
-              ),
-            );
-            sink.close();
-          },
-        );
-      }
-      await events.forEach((chunk) {
-        for (final frame in sseBuffer.addChunk(chunk)) {
-          for (final line in frame.split('\n')) {
-            if (!line.startsWith('data:')) continue;
-            final data = line.substring(5).trim();
-            if (data.isEmpty) continue;
-            try {
-              final parsed = jsonDecode(data);
-              if (parsed is Map<String, dynamic>) onEvent(parsed);
-            } catch (_) {
-              // Frame no-JSON (keepalive/comentario): ignorar.
-            }
-          }
-        }
-      });
-      onDone();
-    } catch (e) {
-      onError(e.toString());
-    }
-  }
-
-  /// GET /v1/skills — catálogo de skills vía Gateway (Bearer). Fallback
-  /// cuando el Dashboard (9119) no está accesible; devuelve name,
-  /// description y category.
-  Future<List<Map<String, dynamic>>> getGatewaySkills() async {
-    final data = await apiGet('v1/skills');
-    final list = data['data'] as List? ?? [];
-    return list.whereType<Map<String, dynamic>>().toList();
-  }
-
-  // ── Dashboard-compatible helpers (port 9119 endpoints, may not work on API server) ──
-
-  Future<Map<String, dynamic>> getModelInfo() => apiGet('api/model/info');
-  Future<Map<String, dynamic>> getModelOptions() => apiGet('api/model/options');
-  Future<List<Map<String, dynamic>>> getSkills() async {
-    final data = await apiGetList('api/skills');
-    return data.whereType<Map<String, dynamic>>().toList();
-  }
-
-  Future<Map<String, dynamic>> setModel(
-    String scope,
-    String provider,
-    String model,
-  ) => apiPost(
-    'api/model/set',
-    body: {'scope': scope, 'provider': provider, 'model': model},
-  );
-
   void close() {
     _http.close();
     _profileDashboard?.close();
-  }
-}
-
-typedef ToolProgressCallback = void Function(Map<String, dynamic> progress);
-
-/// SSE streaming chat client for the Gateway API Server.
-class GatewayChatClient {
-  final ApiClient _api;
-  final String _baseUrl;
-
-  GatewayChatClient(this._api) : _baseUrl = _api.baseUrl;
-
-  /// Generate a client-side session ID: `mob-<timestamp>-<uuid>`.
-  static String generateSessionId() {
-    return 'mob-${DateTime.now().millisecondsSinceEpoch}-${const Uuid().v4()}';
-  }
-
-  /// Build OpenAI chat-completions messages, preserving prior history and
-  /// ensuring the newly typed user message is present exactly once at the end.
-  static List<Map<String, dynamic>> buildChatCompletionMessages({
-    required String message,
-    List<Map<String, dynamic>>? history,
-  }) {
-    final messages = <Map<String, dynamic>>[];
-    if (history != null && history.isNotEmpty) {
-      for (final msg in history) {
-        final role = (msg['role'] == 'agent' || msg['role'] == 'assistant')
-            ? 'assistant'
-            : 'user';
-        final content = msg['content']?.toString() ?? '';
-        if (content.isEmpty) continue;
-        messages.add({'role': role, 'content': content});
-      }
-    }
-
-    final latest = message.trim();
-    final alreadyLast =
-        messages.isNotEmpty &&
-        messages.last['role'] == 'user' &&
-        messages.last['content'] == latest;
-    if (latest.isNotEmpty && !alreadyLast) {
-      messages.add({'role': 'user', 'content': latest});
-    }
-    return messages;
-  }
-
-  /// Parse one SSE frame. Returns streamed text token, or null for non-token
-  /// frames. Hermes tool progress frames are delivered via [onToolProgress].
-  static String? parseSseFrame(
-    String frame, {
-    ToolProgressCallback? onToolProgress,
-  }) {
-    String eventType = '';
-    final dataLines = <String>[];
-
-    for (final rawLine in frame.split('\n')) {
-      final line = rawLine.trimRight();
-      if (line.isEmpty || line.startsWith(':')) continue;
-      if (line.startsWith('event:')) {
-        eventType = line.substring(6).trim();
-      } else if (line.startsWith('data:')) {
-        dataLines.add(line.substring(5).trimLeft());
-      }
-    }
-
-    if (dataLines.isEmpty) return null;
-    final data = dataLines.join('\n').trim();
-    if (data.isEmpty || data == '[DONE]') return null;
-
-    try {
-      final parsed = jsonDecode(data);
-      if (eventType == 'hermes.tool.progress') {
-        if (parsed is Map<String, dynamic>) onToolProgress?.call(parsed);
-        return null;
-      }
-
-      if (parsed is Map<String, dynamic>) {
-        final choices = parsed['choices'] as List?;
-        if (choices != null && choices.isNotEmpty && choices.first is Map) {
-          final first = choices.first as Map;
-          final delta = first['delta'];
-          if (delta is Map) {
-            final content = delta['content'];
-            if (content != null && content.toString().isNotEmpty) {
-              return content.toString();
-            }
-          }
-        }
-      }
-    } catch (e) {
-      debugPrint('[connection] excepción silenciada (se devuelve null): $e');
-      return null;
-    }
-    return null;
-  }
-
-  /// Send a message and stream the assistant response token-by-token.
-  ///
-  /// [onConnected] fires once when the server returns HTTP 200 and the SSE
-  /// stream is open but no content has arrived yet (the "waiting" state).
-  Future<void> sendMessageStreaming({
-    required String message,
-    required String sessionId,
-    String? model,
-    List<Map<String, dynamic>>? history,
-    Map<String, String>? extraHeaders,
-    int? maxTokens,
-    required void Function(String token) onToken,
-    ToolProgressCallback? onToolProgress,
-    void Function()? onConnected,
-    required void Function() onDone,
-    required void Function(String error) onError,
-  }) async {
-    final messages = buildChatCompletionMessages(
-      message: message,
-      history: history,
-    );
-
-    final body = {
-      'model': model ?? 'hermes-agent',
-      'messages': messages,
-      'stream': true,
-      // Techo duro opcional de generación para consumidores del cliente HTTP.
-      'max_tokens': ?maxTokens,
-    };
-
-    final headers = {
-      ..._api._headers,
-      'X-Hermes-Session-Id': sessionId,
-      ...?extraHeaders,
-    };
-
-    try {
-      final request = http.Request(
-        'POST',
-        Uri.parse('$_baseUrl/v1/chat/completions'),
-      );
-      request.headers.addAll(headers);
-      request.body = jsonEncode(body);
-
-      final response = await _api._http.send(request);
-
-      if (response.statusCode != 200) {
-        final errorBody = await response.stream.bytesToString();
-        String errorMsg;
-        try {
-          final err = jsonDecode(errorBody);
-          errorMsg =
-              err['error']?['message'] ??
-              err['message'] ??
-              'HTTP ${response.statusCode}';
-        } catch (e) {
-          debugPrint(
-            '[connection] no se pudo parsear el error del servidor, se usa el código HTTP: $e',
-          );
-          errorMsg = 'HTTP ${response.statusCode}';
-        }
-        onError(errorMsg);
-        return;
-      }
-
-      // HTTP 200 — stream is open, server is processing (waiting state).
-      onConnected?.call();
-
-      final sseBuffer = SseFrameBuffer();
-      await response.stream
-          .transform(utf8.decoder)
-          .timeout(
-            const Duration(seconds: 90),
-            onTimeout: (sink) {
-              sink.addError(TimeoutException('SSE stream idle timeout (90s)'));
-              sink.close();
-            },
-          )
-          .forEach((chunk) {
-            for (final frame in sseBuffer.addChunk(chunk)) {
-              final token = parseSseFrame(
-                frame,
-                onToolProgress: onToolProgress,
-              );
-              if (token != null && token.isNotEmpty) onToken(token);
-            }
-          });
-
-      onDone();
-    } catch (e) {
-      onError(e.toString());
-    }
-  }
-
-  void abort() {
-    _api.close();
   }
 }
 
@@ -2361,6 +2000,14 @@ class DashboardHttpException implements Exception {
 
   @override
   String toString() => 'HTTP $statusCode';
+}
+
+/// A 2xx answer to a file download that is an HTML page rather than the file
+/// (the Dashboard's SPA catch-all answers unknown non-`/api` paths with
+/// `index.html`). It is reported as a 404 so callers treat the file as
+/// missing; nothing is written to disk.
+class DashboardNotAFileException extends DashboardHttpException {
+  const DashboardNotAFileException() : super(404, body: 'not a file');
 }
 
 /// A guarded Dashboard write whose authority (connection, write access or
@@ -2485,8 +2132,11 @@ class DashboardClient {
   }
 
   String _nativeOwner = '';
-  MobileOAuthSession? get _nativeSession =>
-      MobileOAuthSession.decode(_manualToken, _nativeOwner, _baseUrl);
+
+  /// True when the Dashboard slot holds a native envelope. Only a probe: the
+  /// envelope in memory is never used for authority, the store is (S1).
+  bool get _hasNativeEnvelope =>
+      _manualToken?.startsWith(MobileOAuthSession.prefix) == true;
   static final Map<String, _DashboardSharedPasswordSession>
   _sharedPasswordSessions = {};
 
@@ -2501,7 +2151,7 @@ class DashboardClient {
     _sharedPageTokens.clear();
   }
 
-  final http.Client _http;
+  final OriginBoundHttpClient _http;
   final String _baseUrl;
   final DateTime Function() _now;
   String? _manualToken;
@@ -2566,14 +2216,20 @@ class DashboardClient {
     String? basicPass,
     http.Client? httpClientOverride,
     @visibleForTesting DateTime Function()? nowOverride,
+    @visibleForTesting bool? simpleConnectOverride,
   }) : _baseUrl = TransportPrivacy.requireAllowed(
          '${useHttps ? 'https' : 'http'}://$host:$port',
        ),
        _manualToken = manualToken,
        _basicUser = basicUser,
        _basicPass = basicPass,
-       _http = OriginBoundHttpClient(httpClientOverride),
-       _now = nowOverride ?? DateTime.now;
+       _http = OriginBoundHttpClient(httpClientOverride, _kTimeout),
+       _now = nowOverride ?? DateTime.now,
+       simpleConnect = simpleConnectOverride ?? kSimpleConnectEnabled;
+
+  /// S2 behaviour (retry after a 401, socket latch, sign-in banner) is behind
+  /// the simple-connect flag; only the expired-session mapping is not.
+  final bool simpleConnect;
 
   /// Cliente que respeta el modo de auth de la instancia, leyendo los
   /// secretos del Keystore en el primer uso. Para pantallas que solo tienen
@@ -2636,8 +2292,9 @@ class DashboardClient {
     SavedConnection conn, {
     DashboardSecrets? secrets,
     http.Client? httpClientOverride,
+    @visibleForTesting bool? simpleConnectOverride,
   }) {
-    return DashboardClient(
+    final client = DashboardClient(
       host: conn.dashboardHost,
       port: conn.dashboardPort,
       useHttps: conn.dashboardUseHttps,
@@ -2651,7 +2308,22 @@ class DashboardClient {
           ? secrets?.password
           : null,
       httpClientOverride: httpClientOverride,
+      simpleConnectOverride: simpleConnectOverride,
     ).._nativeOwner = conn.id;
+    client._draftNative = client._draftOf(client._manualToken);
+    return client;
+  }
+
+  /// The sign-in the editor just obtained for a connection that is not saved
+  /// yet: it exists only in the form, so the store has nothing under its id.
+  /// Null when it is not an envelope of THIS connection and server.
+  MobileOAuthSession? _draftNative;
+  MobileOAuthSession? _draftOf(String? raw) {
+    try {
+      return MobileOAuthSession.decode(raw, _nativeOwner, _baseUrl);
+    } on MobileOAuthException {
+      return null;
+    }
   }
 
   String? get _basicAuthHeader {
@@ -2693,20 +2365,20 @@ class DashboardClient {
       return _token = shared;
     }
     final basic = _basicAuthHeader;
-    final res = await _http
-        .get(
-          Uri.parse('$_baseUrl/'),
-          headers: basic != null ? {'Authorization': basic} : null,
-        )
-        .timeout(
-          _kTimeout,
-          onTimeout: () {
-            throw Exception(
-              'Dashboard timeout — $_baseUrl is not responding. Check that the '
-              'Dashboard/Admin URL points to port 9119.',
-            );
-          },
-        );
+    final http.Response res;
+    try {
+      res = await _http
+          .within(_kTimeout)
+          .get(
+            Uri.parse('$_baseUrl/'),
+            headers: basic != null ? {'Authorization': basic} : null,
+          );
+    } on TimeoutException {
+      throw Exception(
+        'Dashboard timeout — $_baseUrl is not responding. Check that the '
+        'Dashboard/Admin URL points to port 9119.',
+      );
+    }
     if (res.statusCode == 401 || res.statusCode == 403) {
       if (basic == null) {
         throw DashboardAuthException(
@@ -2716,6 +2388,14 @@ class DashboardClient {
       }
       throw DashboardAuthException(
         DashboardAuthFailureCode.invalidCredentials,
+        statusCode: res.statusCode,
+      );
+    }
+    // A Dashboard with auth answers `GET /` with 302 -> /login. The redirect is
+    // not followed (origin-bound), but it does say a login is in front.
+    if (res.statusCode >= 300 && res.statusCode < 400) {
+      throw DashboardAuthException(
+        DashboardAuthFailureCode.loginRequired,
         statusCode: res.statusCode,
       );
     }
@@ -2857,6 +2537,7 @@ class DashboardClient {
   /// el endpoint) para que el llamante caiga al camino heredado.
   Future<void> _passwordLogin() async {
     final res = await _http
+        .within(_kTimeout)
         .post(
           Uri.parse('$_baseUrl/auth/password-login'),
           headers: {'Content-Type': 'application/json'},
@@ -2865,8 +2546,7 @@ class DashboardClient {
             'username': _basicUser,
             'password': _basicPass,
           }),
-        )
-        .timeout(_kTimeout);
+        );
     if (res.statusCode == 404) {
       _passwordLoginUnsupported = true;
       throw Exception('password-login unsupported');
@@ -2984,11 +2664,11 @@ class DashboardClient {
     _requireOpen();
     await _ensureSecrets();
     _requireOpen();
-    final native = _nativeSession;
-    if (native != null) {
-      if (native.expiresAt <= _now().millisecondsSinceEpoch ~/ 1000) {
-        throw const MobileOAuthException();
-      }
+    if (_hasNativeEnvelope) {
+      // One renewal at a time for the whole process; the store, not this
+      // client's memory, decides what is current.
+      final native = await _nativeAccess();
+      _requireOpen();
       return {
         'Authorization': 'Bearer ${native.accessToken}',
         'Content-Type': 'application/json',
@@ -3048,10 +2728,79 @@ class DashboardClient {
     _passwordLoginFuture = null;
   }
 
+  /// Access tokens the server refused, so the next request renews instead of
+  /// resending them (one renewal for however many requests were rejected).
+  final Set<String> _rejectedNativeAccess = <String>{};
+
+  /// Refused even after a renewal: the session is over until a new login.
+  final Set<String> _deadNativeAccess = <String>{};
+
+  /// Increments on every login/logout of this connection: a socket that
+  /// stopped on "sign in again" resumes only when it changes.
+  int get credentialEpoch =>
+      NativeSessionCoordinator.instance.epochOf(_nativeOwner);
+
+  /// An explicit Retry asks the server again instead of trusting what it
+  /// refused a moment ago.
+  void forgetRejectedAccess() {
+    _rejectedNativeAccess.clear();
+    _deadNativeAccess.clear();
+  }
+
+  Future<NativeAccess> _nativeAccess() async {
+    final coordinator = NativeSessionCoordinator.instance;
+    try {
+      var access = await coordinator.ensureAccess(_nativeOwner, _baseUrl);
+      if (_deadNativeAccess.contains(access.accessToken)) {
+        throw const DashboardAuthException(
+          DashboardAuthFailureCode.loginRequired,
+        );
+      }
+      if (_rejectedNativeAccess.contains(access.accessToken)) {
+        access = await coordinator.ensureAccess(
+          _nativeOwner,
+          _baseUrl,
+          forceRefresh: true,
+          rejectedAccess: access.accessToken,
+        );
+      }
+      return access;
+    } on NativeSessionExpired {
+      // Only when the store has no usable session: a draft sign-in that has
+      // not expired (never refreshed, never written) stands in for the probe.
+      final draft = _draftNative;
+      if (draft != null &&
+          !_deadNativeAccess.contains(draft.accessToken) &&
+          !_rejectedNativeAccess.contains(draft.accessToken) &&
+          _now().millisecondsSinceEpoch ~/ 1000 < draft.expiresAt) {
+        return NativeAccess(draft.accessToken, draft.expiresAt, draft.rev);
+      }
+      // Same signal as a rejected login: the user has to sign in again.
+      throw const DashboardAuthException(
+        DashboardAuthFailureCode.loginRequired,
+      );
+    }
+  }
+
   bool? _unauthorizedRetry({
     required String? sentCookie,
     required bool retried,
+    String? sentAuthorization,
   }) {
+    if (simpleConnect && _hasNativeEnvelope) {
+      // Desktop's single retry after a 401 (portal-session, main.ts:8189).
+      final sent = sentAuthorization?.startsWith('Bearer ') == true
+          ? sentAuthorization!.substring(7)
+          : null;
+      if (retried) {
+        if (sent != null) _deadNativeAccess.add(sent);
+        throw const DashboardAuthException(
+          DashboardAuthFailureCode.loginRequired,
+        );
+      }
+      if (sent != null) _rejectedNativeAccess.add(sent);
+      return true;
+    }
     if (retried) return null;
     if (_hasPasswordCreds) {
       final shared = _sharedPasswordSession;
@@ -3168,7 +2917,7 @@ class DashboardClient {
           headers: headers,
         );
       }
-      if (_nativeSession != null) {
+      if (_hasNativeEnvelope) {
         throw const DashboardWebSocketAuthException(
           DashboardWebSocketAuthFailureCode.unavailable,
         );
@@ -3189,10 +2938,11 @@ class DashboardClient {
     }
   }
 
-  Map<String, dynamic> _decodeMapResponse(http.Response res) {
+  Future<Map<String, dynamic>> _decodeMapResponse(http.Response res) async {
     final trimmed = res.body.trim();
     if (trimmed.isEmpty) return <String, dynamic>{};
-    final decoded = jsonDecode(trimmed);
+    // N10g: a large transcript page must not block the main isolate.
+    final decoded = await decodeJsonOffMain(trimmed);
     if (decoded is Map<String, dynamic>) return decoded;
     return {'data': decoded};
   }
@@ -3204,12 +2954,13 @@ class DashboardClient {
     final headers = await _authHeaders();
     _requireOpen();
     final res = await _http
-        .get(Uri.parse('$_baseUrl/api/$endpoint'), headers: headers)
-        .timeout(_kTimeout);
+        .within(_kTimeout)
+        .get(Uri.parse('$_baseUrl/api/$endpoint'), headers: headers);
     _ingestSetCookie(res, sentCookie: headers['Cookie']);
     if (res.statusCode == 401) {
       final nextRetried = _unauthorizedRetry(
         sentCookie: headers['Cookie'],
+        sentAuthorization: headers['Authorization'],
         retried: retried,
       );
       if (nextRetried != null) {
@@ -3219,7 +2970,7 @@ class DashboardClient {
     if (res.statusCode != 200) {
       throw DashboardHttpException(res.statusCode, body: res.body);
     }
-    return _decodeMapResponse(res);
+    return await _decodeMapResponse(res);
   }
 
   Future<List<dynamic>> apiGetList(
@@ -3228,12 +2979,13 @@ class DashboardClient {
   }) async {
     final headers = await _authHeaders();
     final res = await _http
-        .get(Uri.parse('$_baseUrl/api/$endpoint'), headers: headers)
-        .timeout(_kTimeout);
+        .within(_kTimeout)
+        .get(Uri.parse('$_baseUrl/api/$endpoint'), headers: headers);
     _ingestSetCookie(res, sentCookie: headers['Cookie']);
     if (res.statusCode == 401) {
       final nextRetried = _unauthorizedRetry(
         sentCookie: headers['Cookie'],
+        sentAuthorization: headers['Authorization'],
         retried: retried,
       );
       if (nextRetried != null) {
@@ -3260,16 +3012,17 @@ class DashboardClient {
     final headers = await _authHeaders();
     _requireWriteAuthority();
     final res = await _http
+        .within(timeout)
         .post(
           Uri.parse('$_baseUrl/api/$endpoint'),
           headers: headers,
           body: body != null ? jsonEncode(body) : null,
-        )
-        .timeout(timeout);
+        );
     _ingestSetCookie(res, sentCookie: headers['Cookie']);
     if (res.statusCode == 401) {
       final nextRetried = _unauthorizedRetry(
         sentCookie: headers['Cookie'],
+        sentAuthorization: headers['Authorization'],
         retried: retried,
       );
       if (nextRetried != null) {
@@ -3284,7 +3037,7 @@ class DashboardClient {
     if (res.statusCode < 200 || res.statusCode >= 300) {
       throw DashboardHttpException(res.statusCode, body: res.body);
     }
-    return _decodeMapResponse(res);
+    return await _decodeMapResponse(res);
   }
 
   /// Envía un único fichero mediante multipart conservando exactamente la
@@ -3326,6 +3079,7 @@ class DashboardClient {
     if (streamed.statusCode == 401) {
       final nextRetried = _unauthorizedRetry(
         sentCookie: request.headers['Cookie'],
+        sentAuthorization: request.headers['Authorization'],
         retried: retried,
       );
       if (nextRetried != null) {
@@ -3364,7 +3118,7 @@ class DashboardClient {
       streamed.statusCode,
       headers: streamed.headers,
     );
-    return _decodeMapResponse(res);
+    return await _decodeMapResponse(res);
   }
 
   /// Descarga autenticada y acotada. Se valida Content-Length cuando existe y
@@ -3392,6 +3146,7 @@ class DashboardClient {
     if (streamed.statusCode == 401) {
       final nextRetried = _unauthorizedRetry(
         sentCookie: request.headers['Cookie'],
+        sentAuthorization: request.headers['Authorization'],
         retried: retried,
       );
       if (nextRetried != null) {
@@ -3430,6 +3185,24 @@ class DashboardClient {
     );
   }
 
+  static bool _isInlineHtml(Map<String, String> headers) {
+    String? header(String name) {
+      for (final e in headers.entries) {
+        if (e.key.toLowerCase() == name) return e.value;
+      }
+      return null;
+    }
+
+    final type = (header('content-type') ?? '').toLowerCase();
+    if (!type.startsWith('text/html') &&
+        !type.startsWith('application/xhtml')) {
+      return false;
+    }
+    return !(header('content-disposition') ?? '').toLowerCase().contains(
+      'attachment',
+    );
+  }
+
   /// Streams an authenticated download directly to [target]. Unlike
   /// [apiDownload], this keeps memory bounded for generated videos while
   /// preserving the same auth retry and response-size limits.
@@ -3449,11 +3222,16 @@ class DashboardClient {
     if (isCancelled?.call() ?? false) {
       throw const DashboardDownloadCancelled();
     }
-    final scopedEndpoint = ApiClient.profileEndpoint(
-      'api/$endpoint',
-      profile: profile,
-    );
-    final request = http.Request('GET', Uri.parse('$_baseUrl/$scopedEndpoint'));
+    // The Dashboard has no `/p/<profile>/` prefix (Gateway only): the named
+    // profile travels as `profile=`, which routes that accept it honour.
+    final owner = validateCronProfile(profile);
+    var uri = Uri.parse('$_baseUrl/api/$endpoint');
+    if (owner != null) {
+      uri = uri.replace(
+        queryParameters: {...uri.queryParameters, 'profile': owner},
+      );
+    }
+    final request = http.Request('GET', uri);
     request.followRedirects = false;
     request.headers.addAll(await _authHeaders());
     final streamed = await _http.send(request).timeout(timeout);
@@ -3466,6 +3244,7 @@ class DashboardClient {
     if (streamed.statusCode == 401) {
       final nextRetried = _unauthorizedRetry(
         sentCookie: request.headers['Cookie'],
+        sentAuthorization: request.headers['Authorization'],
         retried: retried,
       );
       if (nextRetried != null) {
@@ -3497,6 +3276,13 @@ class DashboardClient {
     if (declaredLength != null && declaredLength > maxBytes) {
       await _cancelResponseStream(streamed.stream);
       throw StateError('Dashboard download exceeds $maxBytes bytes');
+    }
+    // A file route answers with the file as an attachment. An HTML page
+    // without that disposition is the SPA catch-all (it can carry the session
+    // token): never write it as the requested file.
+    if (_isInlineHtml(streamed.headers)) {
+      await _cancelResponseStream(streamed.stream);
+      throw const DashboardNotAFileException();
     }
 
     final iterator = StreamIterator<List<int>>(streamed.stream);
@@ -3588,18 +3374,19 @@ class DashboardClient {
     final headers = await _authHeaders();
     _requireWriteAuthority();
     final res = await _http
+        .within(_kTimeout)
         .delete(
           Uri.parse('$_baseUrl/api/$endpoint'),
           headers: body != null
               ? {...headers, 'Content-Type': 'application/json'}
               : headers,
           body: body != null ? jsonEncode(body) : null,
-        )
-        .timeout(_kTimeout);
+        );
     _ingestSetCookie(res, sentCookie: headers['Cookie']);
     if (res.statusCode == 401) {
       final nextRetried = _unauthorizedRetry(
         sentCookie: headers['Cookie'],
+        sentAuthorization: headers['Authorization'],
         retried: retried,
       );
       if (nextRetried != null) {
@@ -3611,6 +3398,54 @@ class DashboardClient {
     }
   }
 
+  /// DELETE /api/sessions/{id}[?profile=]: unlike [apiDelete] it returns the
+  /// JSON body (`{ok: true[, already_absent: true]}`). A body that is not a
+  /// JSON object comes back empty, which callers read as "not deleted".
+  Future<Map<String, dynamic>> deleteSession(
+    String sessionId, {
+    String? profile,
+    Map<String, Object>? identity,
+    bool retried = false,
+  }) async {
+    final headers = await _authHeaders();
+    _requireWriteAuthority();
+    final res = await _http
+        .within(_kTimeout)
+        .delete(
+          Uri.parse(
+            '$_baseUrl/api/sessions/${Uri.encodeComponent(sessionId)}'
+            '${_profileQuery(profile)}'
+            '${_identityQuery(identity, first: _profileQuery(profile).isEmpty)}',
+          ),
+          headers: headers,
+        );
+    _ingestSetCookie(res, sentCookie: headers['Cookie']);
+    if (res.statusCode == 401) {
+      final nextRetried = _unauthorizedRetry(
+        sentCookie: headers['Cookie'],
+        sentAuthorization: headers['Authorization'],
+        retried: retried,
+      );
+      if (nextRetried != null) {
+        return deleteSession(
+          sessionId,
+          profile: profile,
+          identity: identity,
+          retried: nextRetried,
+        );
+      }
+    }
+    if (res.statusCode < 200 || res.statusCode >= 300) {
+      throw DashboardHttpException(res.statusCode, body: res.body);
+    }
+    try {
+      final data = jsonDecode(res.body);
+      return data is Map<String, dynamic> ? data : const {};
+    } on FormatException {
+      return const {};
+    }
+  }
+
   Future<Map<String, dynamic>> apiPut(
     String endpoint, {
     Map<String, dynamic>? body,
@@ -3619,16 +3454,17 @@ class DashboardClient {
     final headers = await _authHeaders();
     _requireWriteAuthority();
     final res = await _http
+        .within(_kTimeout)
         .put(
           Uri.parse('$_baseUrl/api/$endpoint'),
           headers: headers,
           body: body != null ? jsonEncode(body) : null,
-        )
-        .timeout(_kTimeout);
+        );
     _ingestSetCookie(res, sentCookie: headers['Cookie']);
     if (res.statusCode == 401) {
       final nextRetried = _unauthorizedRetry(
         sentCookie: headers['Cookie'],
+        sentAuthorization: headers['Authorization'],
         retried: retried,
       );
       if (nextRetried != null) {
@@ -3638,7 +3474,7 @@ class DashboardClient {
     if (res.statusCode < 200 || res.statusCode >= 300) {
       throw DashboardHttpException(res.statusCode, body: res.body);
     }
-    return _decodeMapResponse(res);
+    return await _decodeMapResponse(res);
   }
 
   Future<Map<String, dynamic>> apiPatch(
@@ -3649,16 +3485,17 @@ class DashboardClient {
     final headers = await _authHeaders();
     _requireWriteAuthority();
     final res = await _http
+        .within(_kTimeout)
         .patch(
           Uri.parse('$_baseUrl/api/$endpoint'),
           headers: headers,
           body: body != null ? jsonEncode(body) : null,
-        )
-        .timeout(_kTimeout);
+        );
     _ingestSetCookie(res, sentCookie: headers['Cookie']);
     if (res.statusCode == 401) {
       final nextRetried = _unauthorizedRetry(
         sentCookie: headers['Cookie'],
+        sentAuthorization: headers['Authorization'],
         retried: retried,
       );
       if (nextRetried != null) {
@@ -3668,7 +3505,7 @@ class DashboardClient {
     if (res.statusCode < 200 || res.statusCode >= 300) {
       throw DashboardHttpException(res.statusCode, body: res.body);
     }
-    return _decodeMapResponse(res);
+    return await _decodeMapResponse(res);
   }
 
   Future<MemoryInfo> getMemoryInfo({
@@ -3677,15 +3514,16 @@ class DashboardClient {
   }) async {
     final headers = await _authHeaders();
     final res = await _http
+        .within(_kTimeout)
         .get(
           Uri.parse('$_baseUrl/api/memory${_profileQuery(profile)}'),
           headers: headers,
-        )
-        .timeout(_kTimeout);
+        );
     _ingestSetCookie(res, sentCookie: headers['Cookie']);
     if (res.statusCode == 401) {
       final nextRetried = _unauthorizedRetry(
         sentCookie: headers['Cookie'],
+        sentAuthorization: headers['Authorization'],
         retried: retried,
       );
       if (nextRetried != null) {
@@ -3696,6 +3534,19 @@ class DashboardClient {
       throw DashboardHttpException(res.statusCode, body: res.body);
     }
     return MemoryInfo.fromJson(jsonDecode(res.body) as Map<String, dynamic>);
+  }
+
+  /// The fence of a session DELETE rides in the query (Desktop sessions.ts).
+  static String _identityQuery(
+    Map<String, Object>? identity, {
+    required bool first,
+  }) {
+    if (identity == null || identity.isEmpty) return '';
+    final pairs = [
+      for (final e in identity.entries)
+        '${e.key}=${Uri.encodeQueryComponent('${e.value}')}',
+    ].join('&');
+    return '${first ? '?' : '&'}$pairs';
   }
 
   /// Sufijo `?profile=<name>` para escalar una llamada a un perfil concreto.
@@ -3714,15 +3565,16 @@ class DashboardClient {
   }) async {
     final headers = await _authHeaders();
     final res = await _http
+        .within(_kTimeout)
         .get(
           Uri.parse('$_baseUrl/api/model/info${_profileQuery(profile)}'),
           headers: headers,
-        )
-        .timeout(_kTimeout);
+        );
     _ingestSetCookie(res, sentCookie: headers['Cookie']);
     if (res.statusCode == 401) {
       final nextRetried = _unauthorizedRetry(
         sentCookie: headers['Cookie'],
+        sentAuthorization: headers['Authorization'],
         retried: retried,
       );
       if (nextRetried != null) {
@@ -4029,8 +3881,8 @@ class DashboardClient {
     late final http.Response res;
     try {
       res = await _http
-          .post(Uri.parse('$_baseUrl/api/hermes/update'), headers: headers)
-          .timeout(timeout);
+          .within(timeout)
+          .post(Uri.parse('$_baseUrl/api/hermes/update'), headers: headers);
     } on TimeoutException {
       return const DashboardUpdateApplyResult.transportUncertain();
     } on SocketException {
@@ -4042,6 +3894,7 @@ class DashboardClient {
     if (res.statusCode == 401) {
       final nextRetried = _unauthorizedRetry(
         sentCookie: headers['Cookie'],
+        sentAuthorization: headers['Authorization'],
         retried: retried,
       );
       if (nextRetried != null) {
@@ -4053,7 +3906,7 @@ class DashboardClient {
     }
     Map<String, dynamic> body = const {};
     try {
-      body = _decodeMapResponse(res);
+      body = await _decodeMapResponse(res);
     } on FormatException {
       body = const {};
     }
@@ -4222,16 +4075,17 @@ class DashboardClient {
     _requireOpen();
     _requireWriteAuthority();
     final res = await _http
+        .within(_kTimeout)
         .put(
           Uri.parse('$_baseUrl/api/config${_profileQuery(profile)}'),
           headers: headers,
           body: jsonEncode({'config': config}),
-        )
-        .timeout(_kTimeout);
+        );
     _ingestSetCookie(res, sentCookie: headers['Cookie']);
     if (res.statusCode == 401) {
       final nextRetried = _unauthorizedRetry(
         sentCookie: headers['Cookie'],
+        sentAuthorization: headers['Authorization'],
         retried: retried,
       );
       if (nextRetried != null) {
@@ -4241,7 +4095,7 @@ class DashboardClient {
     if (res.statusCode < 200 || res.statusCode >= 300) {
       throw DashboardHttpException(res.statusCode, body: res.body);
     }
-    return _decodeMapResponse(res);
+    return await _decodeMapResponse(res);
   }
 
   /// POST /api/audio/speak — sintetiza mediante el proveedor TTS ya configurado
@@ -4528,12 +4382,13 @@ class DashboardClient {
   }) async {
     final headers = await _authHeaders();
     final res = await _http
-        .delete(Uri.parse('$_baseUrl/api/$endpoint'), headers: headers)
-        .timeout(_kTimeout);
+        .within(_kTimeout)
+        .delete(Uri.parse('$_baseUrl/api/$endpoint'), headers: headers);
     _ingestSetCookie(res, sentCookie: headers['Cookie']);
     if (res.statusCode == 401) {
       final nextRetried = _unauthorizedRetry(
         sentCookie: headers['Cookie'],
+        sentAuthorization: headers['Authorization'],
         retried: retried,
       );
       if (nextRetried != null) {
@@ -4590,16 +4445,17 @@ class DashboardClient {
   }) async {
     final headers = await _authHeaders();
     final res = await _http
+        .within(_kTimeout)
         .put(
           Uri.parse('$_baseUrl/api/cron/jobs/$jobId${_profileQuery(profile)}'),
           headers: headers,
           body: jsonEncode(buildCronUpdateBody(updates)),
-        )
-        .timeout(_kTimeout);
+        );
     _ingestSetCookie(res, sentCookie: headers['Cookie']);
     if (res.statusCode == 401) {
       final nextRetried = _unauthorizedRetry(
         sentCookie: headers['Cookie'],
+        sentAuthorization: headers['Authorization'],
         retried: retried,
       );
       if (nextRetried != null) {
@@ -4626,4 +4482,14 @@ class DashboardClient {
     _closed = true;
     _http.close();
   }
+}
+
+/// `timeout | transport | auth | http(code) | other`; never a URL or a body.
+String classifyRestFailure(Object error) {
+  if (error is DashboardAuthException) return 'auth';
+  if (error is DashboardHttpException) {
+    final code = error.statusCode;
+    return code == 401 || code == 403 ? 'auth' : 'http($code)';
+  }
+  return classifyTransportFailure(error);
 }

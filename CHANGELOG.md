@@ -3,6 +3,102 @@
 All notable public changes are documented here. Internal QA/profile artifacts
 are not releases.
 
+## Unreleased
+
+Console 1.3.0 talks only to the Dashboard. The first start is two clear options
+and a code to scan, the connection is steadier, and several chat and file
+problems are fixed.
+
+### New
+
+- *Two doors on the welcome screen.* **I already have Hermes** opens the camera,
+  with the setup command shown under it; **I don't have Hermes yet** opens the
+  **Install Hermes** help. The command prints the address, username, password and
+  a QR code, and scanning the code connects Console.
+- *Connect manually.* Type the address, the username and the password the setup
+  command printed. Nothing else is asked.
+- *Recover your access.* Run the setup command with `--new-access` to get a new
+  password and code; Console's sign-in page shows the exact command for your
+  system.
+- *A clear finish.* The **Connected** screen stays on for a moment (a shorter
+  one with reduced motion) and then the first chat opens by itself. A tap on a
+  button or going back there stops the wait.
+- *A logo on Home and in the side menu.* The Console logo sits next to the Home and side-menu titles. From
+  25 October to 2 November it is a pumpkin, and from 20 December to 6 January
+  it wears Rudolph's nose and antlers.
+
+### Changed
+
+- *Console needs the Dashboard.* Console 1.3.0 talks only to the Dashboard. A
+  connection that only had the Gateway shows as offline until the Dashboard is
+  running. Console tells you and takes you to the same guided page: paste one
+  setup command on the computer and scan the code. The existing connection is
+  updated, not duplicated, chats and settings on the phone are kept, and the
+  Gateway and the things that use it are not touched.
+- *No network search.* Console no longer looks for Hermes on your Wi-Fi.
+- *First-start polish.* Calmer, smoother animations on the welcome and Connected
+  screens (still when the phone asks to reduce motion), and a clearer outline on
+  controls in the light themes.
+- *A connection that recovers.* One state (connected, reconnecting, offline,
+  sign-in needed) is shown the same way on Home, Conversations and chats. A chat
+  whose connection dropped reconnects by itself when its wait ends, and the
+  notice offers **Retry**. An expired Dashboard sign-in is told in plain words
+  with a **Sign in** button instead of a technical error.
+- *Less waiting and less background work.* Settings no longer waits for the Hermes
+  update check, the voice recogniser loads on first use of the microphone, and a
+  Conversations list covered by another screen stops polling.
+- *Chat details.* Sending while Hermes is working is a live correction, as in
+  Hermes Desktop. A very long thought is capped to part of the screen and scrolls
+  inside its own box. A queued message no longer reappears as a draft in the
+  message box.
+
+### Fixed
+
+- A brand-new chat no longer shows a false "missing messages" warning.
+- Images and files from named profiles load again, and a web page is never
+  saved as a file.
+- A message that cannot be drawn shows a short notice with a button to copy its
+  text, instead of turning the whole chat grey; a file link with non-English
+  letters in its path no longer turns it grey either (#208).
+- Archive, pin, rename, the hidden/unread switches and delete send the
+  preconditions that newer Hermes servers require, so they are no longer
+  rejected (#204, #205).
+- A new chat under a profile other than the default sends again (#200, #201).
+- A live conversation of another profile no longer shows up as activity in the
+  profile you are looking at.
+
+### Documentation
+
+- *Connecting needs only the Dashboard.* The README and the docs now describe
+  the Dashboard-only flow: run one command from the published
+  [hermes-setup](https://github.com/xP3ta/hermes-setup) on the computer (it
+  installs the official Hermes only if it is missing, keeps the Dashboard on
+  behind a password at a private address and starts it with the computer), then
+  scan the QR code it shows in Console, or choose **Connect manually** with the
+  address, username and password it prints. Tailscale is recommended for a
+  server on the internet. No pairing code, Gateway or `API_SERVER_KEY` is
+  needed.
+- *Cleaning up an older install.* The docs say how to remove the Mobile Bridge
+  and how to close the Gateway port an older helper opened to the network.
+- *Setup options now documented.* The docs name the setup command's
+  `--new-access` option (a new password; exact command in the README) and the
+  `--retire-gateway-exposure` option that removes only the Gateway exposure an
+  older helper left.
+
+### Thanks
+
+- **Luke Manning** ([@ManningWorks](https://github.com/ManningWorks)): a new chat
+  under a non-default profile sends again
+  ([#200](https://github.com/xP3ta/hermes-console/issues/200),
+  [#201](https://github.com/xP3ta/hermes-console/issues/201)).
+- **Rafael Telles** ([@rafael-telles](https://github.com/rafael-telles)): session
+  writes (archive, pin, rename) carry the mutation fence that current Hermes
+  versions require
+  ([#204](https://github.com/xP3ta/hermes-console/issues/204),
+  [#205](https://github.com/xP3ta/hermes-console/issues/205)).
+- **@oeyhaga**: the grey screen on a file link with a non-English path
+  ([#208](https://github.com/xP3ta/hermes-console/issues/208)).
+
 ## 1.2.15 (9540) — 2026-10-12
 
 Console no longer needs the Mobile Bridge: it talks to Hermes' own Gateway and

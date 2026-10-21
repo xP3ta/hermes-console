@@ -1,5 +1,7 @@
 import 'dart:async';
+import '../bots/data/gateway_socket_meter.dart';
 import '../services/app_lock_sensitive_read_fence.dart';
+import '../services/connection_status.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
@@ -9,6 +11,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../l10n/app_localizations.dart';
 import '../../main.dart';
 import '../models/calendar_bucket.dart';
+import 'recover_access_page.dart';
 import '../models/project_move_targets.dart';
 import '../models/session_category.dart';
 import '../models/session_list_sort.dart';
@@ -19,7 +22,10 @@ import '../navigation/chat_route.dart';
 import '../navigation/enclosing_route.dart';
 import '../services/active_profile_scope.dart';
 import '../services/active_chat_service.dart';
+import '../models/core_read.dart';
 import '../services/connection_manager.dart';
+import 'dashboard_sign_in.dart';
+import '../services/new_session_factory.dart';
 import '../services/connection_health_tracker.dart';
 import '../services/desktop_control_gateway.dart'
     show DesktopControlFailure, DesktopControlFailureKind;
@@ -28,6 +34,7 @@ import '../services/global_activity_aggregate.dart';
 import '../services/launcher_widget_chats.dart';
 import '../services/chat_draft_store.dart';
 import '../services/drawer_gesture_exclusion.dart';
+import '../services/roster_known_filter.dart';
 import '../services/session_archive.dart';
 import '../services/session_export_service.dart';
 import '../services/session_deletion.dart';
@@ -74,6 +81,10 @@ import '../design/hermes_design.dart'
 import '../feedback/feedback_policy.dart';
 
 const sessionLibraryRefreshGap = Duration(seconds: 10);
+
+/// Roster refreshes driven by events of runtimes the aggregate does not route
+/// are coalesced to one per 30 s, like Desktop's event-driven `active_list`.
+const sessionLibraryActivityRefreshGap = Duration(seconds: 30);
 const sessionLibrarySafetyRefreshInterval = Duration(seconds: 60);
 
 bool isSessionLibraryRefreshEvent(TuiGatewayEvent event) =>
@@ -298,6 +309,30 @@ class _SessionListScreenState extends State<SessionListScreen>
   StreamSubscription<HistoryCleanupInvalidation>? _historyCleanupSubscription;
   StreamSubscription<ChatDraftChange>? _draftSubscription;
   Timer? _eventRefreshTimer;
+  Timer? _activityRefreshTimer;
+  DateTime? _lastActivityRefreshAt;
+
+  /// A roster read dropped rows the list had not loaded yet; the next list
+  /// load re-reads it so those rows are coloured at once, not 30 s later.
+  bool _rosterRowsDeferred = false;
+
+  void _replayDeferredRoster() {
+    if (!_rosterRowsDeferred) return;
+    _rosterRowsDeferred = false;
+    unawaited(_refreshRemoteActivity());
+  }
+
+  /// A roster refresh was skipped while the list sat under another route; it
+  /// runs once in [didPopNext].
+  bool _remoteActivityDirty = false;
+
+  /// Runtimes whose first unrouted event already forced a discovery read; the
+  /// rest of their events wait for the coalesced refresh.
+  final Set<String> _discoveredRuntimes = <String>{};
+
+  /// Durable ids where a probe saw live background processes: those rows are
+  /// still probed after the turn ends (Desktop's hollow dot).
+  final Set<String> _rowsWithLiveProcesses = <String>{};
   Timer? _eventReconnectTimer;
   Timer? _eventStableTimer;
   Timer? _sessionSafetyTimer;
@@ -311,7 +346,7 @@ class _SessionListScreenState extends State<SessionListScreen>
   bool _foreground = true;
   List<Session> _sessions = [];
   bool _loading = true;
-  String? _error;
+  Object? _error;
   final ConnectionHealthTracker _health = ConnectionHealthTracker();
   Timer? _retryTimer;
   Timer? _searchTimer;
@@ -415,7 +450,12 @@ class _SessionListScreenState extends State<SessionListScreen>
     unawaited(DrawerGestureExclusion.setEnabled(true));
     // After the back transition, not inside it (see [runWhenUncovered]).
     runWhenUncovered(context, _route, () {
-      if (mounted) unawaited(_fetchSessions(showLoader: false));
+      if (!mounted) return;
+      unawaited(_fetchSessions(showLoader: false));
+      if (_remoteActivityDirty) {
+        _remoteActivityDirty = false;
+        unawaited(_refreshRemoteActivity());
+      }
     });
   }
 
@@ -451,6 +491,10 @@ class _SessionListScreenState extends State<SessionListScreen>
   void initState() {
     super.initState();
     AppLockSensitiveReadFence.changes.addListener(_onDraftDisclosureChanged);
+    ConnectionStatusRegistry.instance.changes.addListener(_onLinkChanged);
+    _health.link = ConnectionStatusRegistry.instance.current(
+      widget.connection.id,
+    );
     WidgetsBinding.instance.addObserver(this);
     _eventReconnectBackoff = GatewayReconnectBackoff(
       random: widget.eventReconnectRandomOverride,
@@ -459,12 +503,7 @@ class _SessionListScreenState extends State<SessionListScreen>
     _activeChats = widget.activeChatsOverride;
     _globalActivity = widget.globalActivityOverride;
     _client =
-        widget.clientOverride ??
-        ApiClient(
-          baseUrl: widget.connection.baseUrl,
-          apiKey: widget.connection.apiKey,
-          connectionId: widget.connection.id,
-        );
+        widget.clientOverride ?? ApiClient.forConnection(widget.connection);
     _ownsRepository =
         widget.repositoryOverride == null && widget.clientOverride == null;
     _repository =
@@ -592,6 +631,15 @@ class _SessionListScreenState extends State<SessionListScreen>
     }
   }
 
+  void _onLinkChanged() {
+    if (!mounted) return;
+    setState(
+      () => _health.link = ConnectionStatusRegistry.instance.current(
+        widget.connection.id,
+      ),
+    );
+  }
+
   Future<void> _checkHealth() async {
     _retryTimer?.cancel();
     _retryTimer = null;
@@ -600,6 +648,10 @@ class _SessionListScreenState extends State<SessionListScreen>
     setState(() {});
     final ok = await _client.healthCheck();
     if (!mounted || !_health.recordResult(generation, healthy: ok)) return;
+    ConnectionStatusRegistry.instance.reportRest(
+      widget.connection.id,
+      reachable: ok,
+    );
     setState(() {});
     if (ok) {
       _fetchSessions();
@@ -689,6 +741,7 @@ class _SessionListScreenState extends State<SessionListScreen>
 
   @override
   void dispose() {
+    ConnectionStatusRegistry.instance.changes.removeListener(_onLinkChanged);
     AppLockSensitiveReadFence.changes.removeListener(_onDraftDisclosureChanged);
     _profileScope.removeListener(_onActiveProfileChanged);
     _archive?.removeListener(_onArchiveChanged);
@@ -702,6 +755,7 @@ class _SessionListScreenState extends State<SessionListScreen>
     _retryTimer?.cancel();
     _searchTimer?.cancel();
     _eventRefreshTimer?.cancel();
+    _activityRefreshTimer?.cancel();
     _eventReconnectTimer?.cancel();
     _eventStableTimer?.cancel();
     _sessionSafetyTimer?.cancel();
@@ -759,7 +813,7 @@ class _SessionListScreenState extends State<SessionListScreen>
         if (mounted && _foreground) _eventReconnectBackoff.markHealthy();
       });
       // Only 30 s of stable connection resets the backoff, never one read.
-      await _refreshRemoteActivity();
+      await _refreshRemoteActivityIfVisible();
     } catch (_) {
       _eventStableTimer?.cancel();
       _eventStableTimer = null;
@@ -803,13 +857,17 @@ class _SessionListScreenState extends State<SessionListScreen>
         ) ??
         true;
     if (event.sessionId.isNotEmpty && !routed && _foreground) {
-      unawaited(_refreshRemoteActivity());
+      _requestEventActivityRefresh(event.sessionId);
     } else if (routed) {
       _recoveringTransport = false;
     }
     if (!isSessionLibraryRefreshEvent(event)) return;
     _sessionChangeEpoch += 1;
     if (!_foreground) return;
+    if (!_listVisible) {
+      _remoteActivityDirty = true;
+      return;
+    }
     final now = DateTime.now();
     final last = _lastEventRefreshAt;
     final elapsed = last == null
@@ -825,8 +883,59 @@ class _SessionListScreenState extends State<SessionListScreen>
     _eventRefreshTimer ??= Timer(sessionLibraryRefreshGap - elapsed, () {
       _eventRefreshTimer = null;
       _lastEventRefreshAt = DateTime.now();
-      if (mounted && _foreground) unawaited(_refreshFromSessionEvent());
+      if (!mounted || !_foreground) return;
+      if (!_listVisible) {
+        _remoteActivityDirty = true;
+        return;
+      }
+      unawaited(_refreshFromSessionEvent());
     });
+  }
+
+  /// False while another route covers the list (a chat pushed over it keeps
+  /// the list mounted). Without a route (tests, embedding) it counts visible.
+  bool get _listVisible => _route?.isCurrent != false;
+
+  Future<void> _refreshRemoteActivityIfVisible() async {
+    if (!_listVisible) {
+      _remoteActivityDirty = true;
+      return;
+    }
+    await _refreshRemoteActivity();
+  }
+
+  /// An event of a runtime the aggregate does not route: coalesce to one
+  /// roster read per [sessionLibraryActivityRefreshGap]. A covered list reads
+  /// nothing and refreshes once when it is uncovered.
+  void _requestEventActivityRefresh(String runtimeSessionId) {
+    if (!_listVisible) {
+      _remoteActivityDirty = true;
+      _activityRefreshTimer?.cancel();
+      _activityRefreshTimer = null;
+      return;
+    }
+    if (_activityRefreshTimer != null) return;
+    if (_discoveredRuntimes.length >= 64) _discoveredRuntimes.clear();
+    if (_discoveredRuntimes.add(runtimeSessionId)) {
+      unawaited(_refreshRemoteActivity());
+      return;
+    }
+    final last = _lastActivityRefreshAt;
+    final elapsed = last == null
+        ? sessionLibraryActivityRefreshGap
+        : DateTime.now().difference(last);
+    if (elapsed >= sessionLibraryActivityRefreshGap) {
+      unawaited(_refreshRemoteActivity());
+      return;
+    }
+    _activityRefreshTimer = Timer(
+      sessionLibraryActivityRefreshGap - elapsed,
+      () {
+        _activityRefreshTimer = null;
+        if (!mounted || !_foreground) return;
+        unawaited(_refreshRemoteActivityIfVisible());
+      },
+    );
   }
 
   Future<bool> _refreshRemoteActivity() async {
@@ -835,16 +944,34 @@ class _SessionListScreenState extends State<SessionListScreen>
         widget.activeSessionListLoader ??
         (_ownedActivityClient == null
             ? null
-            : () => _ownedActivityClient!.listActiveSessions());
+            : () => GatewaySocketMeter.origin(
+                'list.activity',
+                () => _ownedActivityClient!.listActiveSessions(),
+              ));
     if (aggregate == null || loader == null) return false;
+    _lastActivityRefreshAt = DateTime.now();
     final profile = Session.profileOwner(_libraryQuery.profile);
     final generation = aggregate.beginRosterRequest(
       widget.connection.id,
       profile,
     );
     try {
-      final roster = await loader();
+      final fullRoster = await loader();
       if (!mounted) return false;
+      // The roster has no profile field: only rows this profile knows may
+      // become activity (Desktop never builds rows from the roster).
+      final roster = filterRosterToKnown(
+        fullRoster,
+        knownSessionIds(
+          sessions: _sessions,
+          pinnedIds: _archive?.pinnedIds ?? const [],
+          roster: fullRoster,
+          hasLocalChat: (id) =>
+              _activeChats?.of(widget.connection.id, id, profile: profile) !=
+              null,
+        ),
+      );
+      _rosterRowsDeferred = roster.sessions.length < fullRoster.sessions.length;
       aggregate.applyRoster(
         connectionId: widget.connection.id,
         profile: profile,
@@ -859,8 +986,11 @@ class _SessionListScreenState extends State<SessionListScreen>
           widget.agentCenterSnapshotLoader ??
           (client == null
               ? null
-              : (String runtimeSessionId) => client.agentCenterSnapshot(
-                  runtimeSessionId: runtimeSessionId,
+              : (String runtimeSessionId) => GatewaySocketMeter.origin(
+                  'list.agentCenter',
+                  () => client.agentCenterSnapshot(
+                    runtimeSessionId: runtimeSessionId,
+                  ),
                 ));
       // Solo una fila busy del roster prueba un turno vivo (igual que el
       // sidebar de Desktop). Una fila idle —turno terminado, sin lease— se
@@ -871,6 +1001,13 @@ class _SessionListScreenState extends State<SessionListScreen>
         for (final row in roster.sessions) {
           final durable = row.storedSessionId;
           if (durable == null) continue;
+          // Only a busy row or one with live processes already known can
+          // change; probing every idle row was most of the list's traffic.
+          if (!rosterStatusIsBusy(row.status) &&
+              !_rowsWithLiveProcesses.contains(durable) &&
+              !aggregate.isActive(widget.connection.id, profile, durable)) {
+            continue;
+          }
           unawaited(
             _refreshProcessContinuity(
               aggregate: aggregate,
@@ -939,6 +1076,11 @@ class _SessionListScreenState extends State<SessionListScreen>
       final activeProcessCount = snapshot.processes
           .where((process) => !terminal.contains(process.status))
           .length;
+      if (activeProcessCount > 0) {
+        _rowsWithLiveProcesses.add(scope.durableSessionId);
+      } else {
+        _rowsWithLiveProcesses.remove(scope.durableSessionId);
+      }
       if (!rosterBusy) {
         // Turno terminado: solo los procesos vivos justifican el indicador
         // (fase backgroundWork, nunca «trabajando»). process.list es la
@@ -994,7 +1136,7 @@ class _SessionListScreenState extends State<SessionListScreen>
         _foreground &&
         _appliedSessionChangeEpoch < _sessionChangeEpoch) {
       await _fetchSessions(showLoader: false);
-      await _refreshRemoteActivity();
+      await _refreshRemoteActivityIfVisible();
     }
   }
 
@@ -1101,6 +1243,7 @@ class _SessionListScreenState extends State<SessionListScreen>
         _librarySource = snapshot.source;
         _libraryExhaustive = snapshot.exhaustive;
       });
+      _replayDeferredRoster();
       listRead.end(rows: snapshot.sessions);
     } catch (_) {
       // Mantén la página visible y permite reintentar al volver a hacer scroll.
@@ -1404,6 +1547,7 @@ class _SessionListScreenState extends State<SessionListScreen>
         _libraryExhaustive = library?.exhaustive ?? false;
         _loading = false;
       });
+      _replayDeferredRoster();
       // Every page of the gateway's default listing for this profile: what
       // a deletion tombstone may be confirmed against. A Dashboard page or
       // filtered scope is not complete and only reports the rows it saw.
@@ -1443,7 +1587,7 @@ class _SessionListScreenState extends State<SessionListScreen>
       if (!mounted || fetchEpoch != _sessionFetchEpoch) return false;
       if (_sessions.isEmpty) {
         setState(() {
-          _error = e.toString();
+          _error = e;
           _loading = false;
         });
       } else {
@@ -1452,6 +1596,27 @@ class _SessionListScreenState extends State<SessionListScreen>
       await _showLocalDrafts();
       return false;
     }
+  }
+
+  /// The Dashboard refused the saved login (an expired browser session
+  /// included), as opposed to any other way the list can fail.
+  static bool _isLoginRefusal(Object error) => switch (error) {
+    CoreReadException(:final kind) =>
+      kind == CoreReadErrorKind.auth || kind == CoreReadErrorKind.forbidden,
+    DashboardAuthException(:final code) =>
+      code == DashboardAuthFailureCode.loginRequired,
+    DashboardHttpException(:final statusCode) =>
+      statusCode == 401 || statusCode == 403,
+    _ => false,
+  };
+
+  Future<void> _signIn() async {
+    final signedIn = await signInToDashboard(
+      Navigator.of(context),
+      widget.connManager,
+      widget.connection,
+    );
+    if (signedIn && mounted) unawaited(_fetchSessions());
   }
 
   // ── Archive helpers ──────────────────────────────────────────────────────
@@ -1688,6 +1853,7 @@ class _SessionListScreenState extends State<SessionListScreen>
       ),
       deleteSession: (sessionId) =>
           _client.deleteSession(sessionId, profile: ownerProfile),
+      serverDeletesChain: _client.hasDashboard,
       cronDeletion: cronDeletion,
       deleteCronJob:
           !session.isJob || cronDeletion == LinkedCronDeletionMode.keepSchedule
@@ -1838,7 +2004,7 @@ class _SessionListScreenState extends State<SessionListScreen>
   }
 
   void _createNewSession() {
-    final sessionId = GatewayChatClient.generateSessionId();
+    final sessionId = generateSessionId();
     final session = Session(
       id: sessionId,
       title: Strings.of(context).drawerNewChat,
@@ -2683,8 +2849,9 @@ class _SessionListScreenState extends State<SessionListScreen>
           mainAxisSize: MainAxisSize.min,
           children: [
             _ConnectionDot(
-              connected: _health.healthy,
+              connected: _health.online,
               checking: _health.showsChecking,
+              link: _health.link?.kind,
             ),
             if (widget.connection.readOnly) ...[
               const SizedBox(width: 6),
@@ -2757,8 +2924,9 @@ class _SessionListScreenState extends State<SessionListScreen>
         connection: widget.connection,
         connManager: widget.connManager,
         current: DrawerSection.sessions,
-        connected: _health.healthy,
+        connected: _health.online,
         checking: _health.showsChecking,
+        link: _health.link?.kind,
         onSectionReturn: _fetchSessions,
       ),
       // "Ver todas" es alcanzable en 1 salto desde Inicio: sin el dock aquí
@@ -2804,6 +2972,7 @@ class _SessionListScreenState extends State<SessionListScreen>
     }
 
     if (_error != null) {
+      final loginRefused = _isLoginRefusal(_error!);
       return Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -2811,24 +2980,33 @@ class _SessionListScreenState extends State<SessionListScreen>
             Icon(Icons.error_outline, size: 48, color: colors.warning),
             const SizedBox(height: 16),
             Text(
-              s.slConnectionError,
+              loginRefused ? s.s2SessionExpiredLine : s.slConnectionError,
               style: Theme.of(context).textTheme.titleLarge,
             ),
             const SizedBox(height: 8),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 32),
               child: Text(
-                _error!,
+                loginRefused ? s.s2SessionExpiredBody : s.slListNotLoaded,
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.bodyMedium,
               ),
             ),
             const SizedBox(height: 24),
             FilledButton.icon(
-              onPressed: _fetchSessions,
-              icon: const Icon(Icons.refresh_rounded, size: 18),
-              label: Text(s.slRetry),
+              onPressed: loginRefused ? _signIn : _fetchSessions,
+              icon: Icon(
+                loginRefused ? Icons.login_rounded : Icons.refresh_rounded,
+                size: 18,
+              ),
+              label: Text(loginRefused ? s.s2SessionExpiredSignIn : s.slRetry),
             ),
+            if (loginRefused)
+              TextButton(
+                key: const ValueKey('session-list-recover-access'),
+                onPressed: () => unawaited(openRecoverAccess(context)),
+                child: Text(s.dashboardSetupForgotPassword),
+              ),
           ],
         ),
       );
@@ -3484,13 +3662,25 @@ class _FilteredEmptyState extends StatelessWidget {
 class _ConnectionDot extends StatelessWidget {
   final bool connected;
   final bool checking;
+  final ConnectionStatusKind? link;
 
-  const _ConnectionDot({required this.connected, required this.checking});
+  const _ConnectionDot({
+    required this.connected,
+    required this.checking,
+    this.link,
+  });
 
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
-    final color = checking
+    // A down socket names its state and overrides what REST said.
+    final linkDown = link != null && link != ConnectionStatusKind.connected;
+    final color = linkDown
+        ? ((link == ConnectionStatusKind.reconnecting ||
+                  link == ConnectionStatusKind.starting)
+              ? colors.accent
+              : colors.error)
+        : checking
         ? colors.accent
         : connected
         ? colors.success
@@ -3499,7 +3689,9 @@ class _ConnectionDot extends StatelessWidget {
     // The dot is all that is left of the connection's line: it is said in
     // words to a screen reader.
     return Semantics(
-      label: checking
+      label: linkDown
+          ? connectionStatusWord(s, link!)
+          : checking
           ? s.hwServerChecking
           : connected
           ? s.hwServerOnline

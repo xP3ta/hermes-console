@@ -967,10 +967,13 @@ Future<SessionDeletionContext> resolveSessionDeletionContext(
   required LoadSessionsForDeletion loadSessions,
   String? remoteSessionId,
   String? localRecoverySessionId,
+  bool serverDeletesChain = false,
 }) async {
   var target = selected;
   List<Session> lineage = const <Session>[];
-  if (selected.isJob) {
+  // The Dashboard deletes the whole chain from any id, so there is nothing to
+  // read and the selected row is the one DELETE.
+  if (selected.isJob && !serverDeletesChain) {
     lineage = List<Session>.unmodifiable(
       await loadSessions(includeChildren: true),
     );
@@ -1246,6 +1249,7 @@ Future<LinkedSessionDeleteResult> deleteSessionWithResolvedLineage(
   String? localRecoverySessionId,
   ClearLocalSessionRecovery? clearLocalRecovery,
   void Function()? onRemoteDeleted,
+  bool serverDeletesChain = false,
 }) async {
   late final SessionDeletionContext context;
   try {
@@ -1254,6 +1258,7 @@ Future<LinkedSessionDeleteResult> deleteSessionWithResolvedLineage(
       loadSessions: loadSessions,
       remoteSessionId: remoteSessionId,
       localRecoverySessionId: localRecoverySessionId,
+      serverDeletesChain: serverDeletesChain,
     );
   } catch (error) {
     return LinkedSessionDeleteResult.sessionDeleteFailed(

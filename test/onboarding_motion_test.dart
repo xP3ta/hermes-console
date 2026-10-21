@@ -49,7 +49,11 @@ void main() {
     final manager = await onboardingManager();
     await tester.pumpWidget(
       onboardingHost(
-        OnboardingScreen(connManager: manager, onDone: () {}),
+        OnboardingScreen(
+          simpleConnectEnabled: false,
+          connManager: manager,
+          onDone: () {},
+        ),
         motion: true,
       ),
     );
@@ -78,6 +82,7 @@ void main() {
     await tester.pumpWidget(
       onboardingHost(
         OnboardingScreen(
+          simpleConnectEnabled: false,
           connManager: manager,
           onDone: () {},
           scanCode: (_) async {
@@ -101,7 +106,11 @@ void main() {
     Future<void> mount() async {
       await tester.pumpWidget(
         onboardingHost(
-          OnboardingScreen(connManager: manager, onDone: () {}),
+          OnboardingScreen(
+            simpleConnectEnabled: false,
+            connManager: manager,
+            onDone: () {},
+          ),
           motion: true,
         ),
       );
@@ -126,7 +135,13 @@ void main() {
   ) async {
     final manager = await onboardingManager();
     await tester.pumpWidget(
-      onboardingHost(OnboardingScreen(connManager: manager, onDone: () {})),
+      onboardingHost(
+        OnboardingScreen(
+          simpleConnectEnabled: false,
+          connManager: manager,
+          onDone: () {},
+        ),
+      ),
     );
     await tester.pump();
     expect(_opacityOf(tester, find.text('Conecta con tu Hermes')).value, 1);
@@ -217,6 +232,7 @@ void main() {
     await tester.pumpWidget(
       onboardingHost(
         OnboardingScreen(
+          simpleConnectEnabled: false,
           connManager: manager,
           onDone: () {},
           diagnostics: diagnostics,
@@ -227,8 +243,8 @@ void main() {
     await tester.pumpAndSettle();
     await tapOnboarding(tester, 'onboarding-confirm');
     await tester.pump(const Duration(milliseconds: 300));
-    // The address and the chat key are accepted; the Dashboard is not asked yet.
-    expect(ring(tester).progress, closeTo(2 / 3, 0.001));
+    // The Dashboard is the only thing asked, and it has not answered yet.
+    expect(ring(tester).progress, closeTo(0.06, 0.001));
     expect(manager.getConnections(), isEmpty);
     gate.complete();
     await tester.pumpAndSettle();
@@ -247,6 +263,7 @@ void main() {
       await tester.pumpWidget(
         onboardingHost(
           OnboardingScreen(
+            simpleConnectEnabled: false,
             connManager: manager,
             onDone: () {},
             diagnostics: diagnostics,
@@ -267,7 +284,8 @@ void main() {
       final warning = Theme.of(
         tester.element(find.byKey(const ValueKey('onboarding-ring'))),
       ).hermes.warning;
-      expect(painter.progress, closeTo(2 / 3, 0.001));
+      // Reachable, but the login read did not go through.
+      expect(painter.progress, closeTo(1 / 3, 0.001));
       expect(painter.color, warning);
       // Never a success: the screen moves on to what is missing.
       await tester.pump(const Duration(milliseconds: 700));
@@ -283,6 +301,7 @@ void main() {
     await tester.pumpWidget(
       onboardingHost(
         OnboardingScreen(
+          simpleConnectEnabled: false,
           connManager: manager,
           onDone: () {},
           diagnostics: OnboardingDiagnostics(),

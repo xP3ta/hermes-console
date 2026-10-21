@@ -5,8 +5,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/screens/onboarding/onboarding_widgets.dart';
 import 'package:hermes_android/core/screens/onboarding_screen.dart';
 import 'package:hermes_android/core/services/pairing_link.dart';
-import 'package:hermes_android/core/services/hermes_setup_commands.dart';
 import 'support/onboarding_fakes.dart';
+
+const _unixSetup =
+    'curl -fsSL https://raw.githubusercontent.com/xP3ta/hermes-setup/main/'
+    'hermes-dashboard-setup.sh | sh';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -17,7 +20,6 @@ void main() {
       'lib/core/screens/onboarding/onboarding_widgets.dart',
       'lib/core/screens/onboarding/onboarding_motion.dart',
       'lib/core/screens/onboarding_screen.dart',
-      'lib/core/widgets/platform_setup_commands.dart',
     ]) {
       final source = File(file).readAsStringSync();
       for (final forbidden in [
@@ -83,48 +85,44 @@ void main() {
     );
     expect(result?.token, 'official-key');
   });
-  testWidgets(
-    'QR help uses the approved shared command and keeps manual entry',
-    (tester) async {
-      final manager = await onboardingManager();
-      await tester.pumpWidget(
-        onboardingHost(
-          OnboardingScreen(connManager: manager, onDone: () {}),
-          language: 'en',
+  testWidgets('help uses the one official command and keeps manual entry', (
+    tester,
+  ) async {
+    final manager = await onboardingManager();
+    await tester.pumpWidget(
+      onboardingHost(
+        OnboardingScreen(
+          simpleConnectEnabled: false,
+          connManager: manager,
+          onDone: () {},
         ),
-      );
-      await tester.pumpAndSettle();
-      await tapOnboarding(tester, 'onboarding-help');
-      expect(
-        tester.widget<OnbCodeBlock>(find.byType(OnbCodeBlock)).command,
-        HermesSetupCommands.setup(SetupHostSystem.unix),
-      );
-      // Whatever the help lets a person copy is a line of the setup helper,
-      // taken from its one place; nothing else, and no word of the retired
-      // Mobile Bridge anywhere on the screen.
-      final approved = {
-        for (final system in SetupHostSystem.values) ...[
-          HermesSetupCommands.setup(system),
-          HermesSetupCommands.showCodeAgain(system),
-        ],
-      };
-      for (final block in tester.widgetList<OnbCodeBlock>(
-        find.byType(OnbCodeBlock),
-      )) {
-        expect(approved, contains(block.command));
-      }
-      for (final text in tester.widgetList<Text>(find.byType(Text))) {
-        expect((text.data ?? '').toLowerCase(), isNot(contains('bridge')));
-      }
-      await tapOnboarding(tester, 'onboarding-back');
-      await tapOnboarding(tester, 'onboarding-manual');
-      expect(find.byType(InstanceEditScreen), findsOneWidget);
-      expect(manager.getConnections(), isEmpty);
-      await tester.binding.handlePopRoute();
-      await tester.pumpAndSettle();
-      expect(find.byType(OnboardingScreen), findsOneWidget);
-      expect(manager.prefs.getBool('onboarding_done'), isNull);
-      expect(tester.takeException(), isNull);
-    },
-  );
+        language: 'en',
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tapOnboarding(tester, 'onboarding-help');
+    expect(
+      tester.widget<OnbCodeBlock>(find.byType(OnbCodeBlock)).command,
+      _unixSetup,
+    );
+    // Whatever the help lets a person copy is that one line, taken from
+    // its one place; and no word of the retired Mobile Bridge anywhere on
+    // the screen.
+    for (final block in tester.widgetList<OnbCodeBlock>(
+      find.byType(OnbCodeBlock),
+    )) {
+      expect(block.command, _unixSetup);
+    }
+    for (final text in tester.widgetList<Text>(find.byType(Text))) {
+      expect((text.data ?? '').toLowerCase(), isNot(contains('bridge')));
+    }
+    await tapOnboarding(tester, 'onboarding-help-manual');
+    expect(find.byType(InstanceEditScreen), findsOneWidget);
+    expect(manager.getConnections(), isEmpty);
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    expect(find.byType(OnboardingScreen), findsOneWidget);
+    expect(manager.prefs.getBool('onboarding_done'), isNull);
+    expect(tester.takeException(), isNull);
+  });
 }

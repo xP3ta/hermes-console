@@ -166,14 +166,16 @@ void main() {
                 case 'gateway':
                   await gateway.getMessagesPage('synthetic-session');
                 case 'diagnostics':
-                  await diagnostics.probeGateway(
+                  await diagnostics.probeDashboard(
                     SavedConnection(
                       id: 'synthetic',
                       label: 'synthetic',
                       host: '127.0.0.1',
                       port: origin.port,
                       apiKey: 'synthetic-gateway-key',
+                      dashboardUrl: 'http://127.0.0.1:${origin.port}',
                     ),
+                    const DashboardSecrets(),
                   );
                 default:
                   await dashboard.apiGet('profiles');

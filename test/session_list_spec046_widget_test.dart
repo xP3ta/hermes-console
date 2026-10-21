@@ -971,6 +971,50 @@ void main() {
     );
   });
 
+  testWidgets('a live session of another profile never becomes activity', (
+    tester,
+  ) async {
+    final aggregate = GlobalActivityAggregate.inMemory();
+    addTearDown(aggregate.dispose);
+    final gateway = _gateway(
+      MockClient((request) async {
+        if (request.url.path == '/health') return http.Response('{}', 200);
+        if (request.url.path == '/api/sessions') {
+          return http.Response(
+            jsonEncode({
+              'data': [_sessionRow(0)],
+              'has_more': false,
+            }),
+            200,
+          );
+        }
+        return http.Response('{}', 404);
+      }),
+    );
+    await tester.pumpWidget(
+      _host(
+        SessionListScreen(
+          connection: _connection(),
+          connManager: await _manager(),
+          clientOverride: gateway,
+          globalActivityOverride: aggregate,
+          activeSessionListLoader: () async => const DesktopActiveSessionList(
+            sessions: [
+              DesktopActiveSession(
+                runtimeSessionId: 'rt-other',
+                storedSessionId: 'other-profile-session',
+                status: 'working',
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    await _pumpUntil(tester, find.text('Conversation 0'));
+    await tester.pump();
+    expect(aggregate.activities, isEmpty);
+  });
+
   testWidgets('unknown runtime event triggers bounded roster discovery', (
     tester,
   ) async {
@@ -1092,11 +1136,11 @@ void main() {
       await _pumpUntil(tester, find.text('Conversation 0'));
       rosterFails = true;
 
-      // Backoff never undercuts the 1 s base (jitter spreads above it; the
-      // first attempt over [1 s, 1.5 s], so 0.75 → 1.375 s).
+      // Desktop's full-jitter ladder (base 300 ms): the first attempt is
+      // random·300 ms, so 0.75 → 225 ms.
       events.addError(StateError('offline'));
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 1374));
+      await tester.pump(const Duration(milliseconds: 224));
       expect(reconnects, 0);
       await tester.pump(const Duration(milliseconds: 1));
       expect(reconnects, 1);
@@ -1104,7 +1148,7 @@ void main() {
 
       events.addError(StateError('flapped'));
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 1749));
+      await tester.pump(const Duration(milliseconds: 449));
       expect(
         reconnects,
         1,
@@ -1118,7 +1162,7 @@ void main() {
       rosterFails = false;
       events.addError(StateError('lost after a stable interval'));
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 1374));
+      await tester.pump(const Duration(milliseconds: 224));
       expect(reconnects, 2);
       await tester.pump(const Duration(milliseconds: 1));
       expect(
@@ -1135,7 +1179,7 @@ void main() {
         isTrue,
         reason: 'transport recovery preserves known work as stale',
       );
-      await tester.pump(const Duration(milliseconds: 1749));
+      await tester.pump(const Duration(milliseconds: 449));
       expect(
         reconnects,
         3,
@@ -2156,7 +2200,7 @@ void main() {
       if (request.method == 'PATCH' &&
           request.url.path == '/api/sessions/session-0') {
         archiveRequests += 1;
-        expect(jsonDecode(request.body), {'archived': true});
+        expect(jsonDecode(request.body), {'archived': true, 'pinned': false});
         return archiveResponse.future;
       }
       return http.Response('{}', 404);

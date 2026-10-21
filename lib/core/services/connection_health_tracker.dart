@@ -1,3 +1,5 @@
+import 'connection_status.dart';
+
 /// Estado estable para los sondeos de salud de una conexión.
 ///
 /// Un único fallo breve no convierte una conexión sana en offline. Además,
@@ -17,6 +19,15 @@ class ConnectionHealthTracker {
   int get consecutiveFailures => _consecutiveFailures;
   bool get healthy => _healthy;
   bool get checking => _checking;
+
+  /// The chat-lane socket's status. REST stays auxiliary: while the socket is
+  /// down the connection is never [online], whatever REST answered.
+  ConnectionStatus? link;
+
+  bool get socketDown => link?.isConnected == false;
+
+  /// Healthy by REST and not contradicted by a down socket.
+  bool get online => _healthy && !socketDown;
 
   /// What a status label shows: «checking» only while no healthy state is
   /// known. A re-probe of a healthy connection keeps it «online».

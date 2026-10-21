@@ -510,7 +510,7 @@ void main() {
     expect(RegExp(r'allowWifiLock:\s*false').allMatches(source), hasLength(2));
   });
 
-  test('las notificaciones solo se inicializan si hay runs o cron', () {
+  test('las notificaciones solo se inicializan si hay cron', () {
     final source = File(
       'lib/core/services/notifications/background_listener.dart',
     ).readAsStringSync();
@@ -526,7 +526,7 @@ void main() {
 
     expect(onStart, contains('_notif = NotificationService(prefs)'));
     expect(onStart, isNot(contains('.init()')));
-    final emptyGuard = poll.indexOf('if (runs.isEmpty && cronTargets.isEmpty)');
+    final emptyGuard = poll.indexOf('if (cronTargets.isEmpty)');
     expect(emptyGuard, greaterThanOrEqualTo(0));
     expect(poll.indexOf('await notif.init()'), greaterThan(emptyGuard));
   });

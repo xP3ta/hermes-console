@@ -1,6 +1,7 @@
 // Tests de integración end-to-end del flujo de chat completo, ejercitando el
 // camino crítico de la app: enviar mensaje → recibir la respuesta del gateway
-// (SSE de /v1/runs) → refrescar/persistir → reabrir y reconstruir el transcript.
+// (socket del Dashboard) → refrescar/persistir → reabrir y reconstruir el
+// transcript.
 //
 // Patrón de mocking idéntico al resto del proyecto (ver
 // active_chat_service_test.dart y connection_manager_test.dart): un MockClient
@@ -8,15 +9,15 @@
 // flutter_secure_storage se mockean por canal en memoria.
 //
 // Cobertura:
-//   1. Flujo completo REMOTO: send → SSE (delta + run.completed) → refetch de
+//   1. Flujo completo REMOTO: send → socket (delta + complete) → refetch de
 //      mensajes; verifica que NO se toca el transcript local (es instancia
 //      remota, el gateway ya guarda el historial server-side).
 //   2. Persistencia y carga LOCAL (bridge): el contrato real de /bridge/chat y
 //      la ida/vuelta por LocalTranscriptStore + ActiveChat.loadMessages.
-//   3. Error del servidor: 503 en startRun no deja el pipeline colgado y no
-//      pierde el turno previo de la conversación.
+//   3. Error del servidor: un turno que acaba en error no deja el pipeline
+//      colgado y no pierde el turno previo de la conversación.
 //   4. Steering por el protocolo oficial de Desktop: prompt y complementos
-//      comparten la misma sesión JSON-RPC, sin `/v1/runs/{id}/steer`.
+//      comparten la misma sesión JSON-RPC, sin REST de runs.
 //
 // Nota sobre el escenario 2: la orquestación de _sendViaBridge no es
 // directamente accionable en un test unitario porque BridgeClient.provision
@@ -43,10 +44,12 @@ import 'package:hermes_android/core/services/desktop_gateway_capabilities.dart';
 import 'package:hermes_android/core/services/local_transcript_store.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 
+import 'support/desktop_chat_socket.dart';
+
 const _kWatchKey = 'bg_watch_runs'; // BackgroundWatch._key (privado)
 
 /// Instancia REMOTA (host privado → InstanceKind.homelab, no localhost): el
-/// chat va por el motor /v1/runs y el historial lo guarda el gateway.
+/// chat va por el socket del Dashboard y el historial lo guarda el servidor.
 SavedConnection _remoteConn() => SavedConnection(
   id: 'conn-remote',
   label: 'Remoto',
@@ -81,44 +84,6 @@ ApiClient _restOnlyLocalApi(SavedConnection connection, List<Uri> requests) =>
       }),
     );
 
-String _sse(List<Map<String, dynamic>> frames) =>
-    frames.map((f) => 'data: ${jsonEncode(f)}\n\n').join();
-
-/// MockClient del gateway: POST /v1/runs, el SSE de eventos del run y el
-/// refetch de mensajes. [postBodies] (si se pasa) acumula el cuerpo JSON de
-/// cada POST /v1/runs para inspeccionar el contexto enviado.
-MockClient _gateway({
-  required String events,
-  required List<Map<String, dynamic>> finalMessages,
-  int runStatus = 200,
-  List<Map<String, dynamic>>? postBodies,
-}) {
-  return MockClient((request) async {
-    final path = request.url.path;
-    if (request.method == 'POST' && path == '/v1/runs') {
-      postBodies?.add(jsonDecode(request.body) as Map<String, dynamic>);
-      if (runStatus != 200) {
-        return http.Response('{"error":"unavailable"}', runStatus);
-      }
-      return http.Response(jsonEncode({'run_id': 'run_1'}), 200);
-    }
-    if (request.method == 'GET' && path == '/v1/runs/run_1/events') {
-      return http.Response(
-        events,
-        200,
-        headers: {'content-type': 'text/event-stream'},
-      );
-    }
-    if (request.method == 'POST' && path == '/v1/runs/run_1/approval') {
-      return http.Response(jsonEncode({'ok': true}), 200);
-    }
-    if (request.method == 'GET' && path == '/api/sessions/sess-1/messages') {
-      return http.Response(jsonEncode({'data': finalMessages}), 200);
-    }
-    return http.Response('not found', 404);
-  });
-}
-
 /// Espera activa hasta que [cond] se cumple o salta el timeout. Evita depender
 /// de delays fijos en los pasos asíncronos (SSE, refetch, etc.).
 Future<void> _waitUntil(
@@ -129,6 +94,31 @@ Future<void> _waitUntil(
   while (!cond() && DateTime.now().isBefore(deadline)) {
     await Future<void>.delayed(const Duration(milliseconds: 20));
   }
+}
+
+/// Chat of the default remote profile on the Dashboard socket only, as Hermes
+/// Desktop does: [socket] carries the turn and [HostCounter] fails the test at
+/// tear down if anything asks the REST run API.
+ActiveChat _socketChat(
+  ActiveChatService service,
+  DesktopChatSocket socket, {
+  required String sessionId,
+  required String title,
+  StoredSessionMessageLoader? loader,
+}) {
+  addTearDown(socket.close);
+  return service.attach(
+    connection: _remoteConn(),
+    sessionId: sessionId,
+    sessionTitle: title,
+    api: ApiClient(
+      baseUrl: _remoteConn().baseUrl,
+      apiKey: 'test-key',
+      httpClient: HostCounter(),
+    ),
+    desktopGateway: socket,
+    storedMessageLoader: loader ?? (_, _) async => const [],
+  );
 }
 
 List<Map<String, dynamic>> _generatedImageRefs(Map<String, dynamic> message) {
@@ -1110,66 +1100,68 @@ void main() {
   });
 
   // ── Escenario 1 ─────────────────────────────────────────────────────────
-  group('E2E 1 — flujo completo remoto (send → SSE → refetch)', () {
-    test('los mensajes incluyen el turno del usuario y la respuesta del agente, '
-        'y NO se persiste transcript local', () async {
-      final api = ApiClient(
-        baseUrl: _remoteConn().baseUrl,
-        apiKey: 'test-key',
-        // La secuencia running→completed del run se materializa en el SSE como
-        // un message.delta parcial ("Hola") seguido de run.completed ("Hola
-        // mundo"): es el contrato real del gateway (/v1/runs/{id}/events).
-        httpClient: _gateway(
-          events: _sse([
-            {'event': 'message.delta', 'delta': 'Hola'},
-            {'event': 'run.completed', 'output': 'Hola mundo'},
-          ]),
-          finalMessages: [
+  group('E2E 1 — flujo completo remoto (send → socket → refetch)', () {
+    test(
+      'los mensajes incluyen el turno del usuario y la respuesta del agente, '
+      'y NO se persiste transcript local',
+      () async {
+        // El servidor entrega un message.delta parcial ("Hola") y cierra el
+        // turno con message.complete ("Hola mundo"): el chat habla solo por el
+        // socket del Dashboard, como Desktop, y el historial se relee del
+        // servidor al terminar.
+        final socket = DesktopChatSocket();
+        final service = ActiveChatService();
+        final chat = _socketChat(
+          service,
+          socket,
+          sessionId: 'sess-1',
+          title: 'Saludo',
+          loader: (_, _) async => const [
             {'role': 'user', 'content': 'di hola'},
             {'role': 'assistant', 'content': 'Hola mundo'},
           ],
-        ),
-      );
+        );
+        final done = chat.changes.firstWhere((e) => e == ActiveChatEvent.done);
 
-      final service = ActiveChatService();
-      final chat = service.attach(
-        connection: _remoteConn(),
-        sessionId: 'sess-1',
-        sessionTitle: 'Saludo',
-        api: api,
-      );
-      final done = chat.changes.firstWhere((e) => e == ActiveChatEvent.done);
+        await chat.send(
+          fullText: 'di hola',
+          model: 'hermes-agent',
+          history: const [],
+        );
+        expect(socket.submitTexts, ['di hola']);
+        socket.token(1, 'Hola');
+        socket.complete(1, 'Hola mundo');
+        await done.timeout(const Duration(seconds: 5));
 
-      chat.send(fullText: 'di hola', model: 'hermes-agent', history: const []);
-      await done.timeout(const Duration(seconds: 5));
+        // Estado terminal correcto y transcript refrescado desde el servidor.
+        expect(chat.state, ChatPipelineState.completed);
+        final roles = chat.messages.map((m) => m['role']).toList();
+        expect(roles, contains('user'));
+        expect(roles, contains('assistant'));
+        expect(
+          chat.messages.firstWhere((m) => m['role'] == 'user')['content'],
+          'di hola',
+        );
+        expect(
+          chat.messages.firstWhere((m) => m['role'] == 'assistant')['content'],
+          'Hola mundo',
+        );
 
-      // Estado terminal correcto y transcript refrescado desde el servidor.
-      expect(chat.state, ChatPipelineState.completed);
-      final roles = chat.messages.map((m) => m['role']).toList();
-      expect(roles, contains('user'));
-      expect(roles, contains('assistant'));
-      expect(
-        chat.messages.firstWhere((m) => m['role'] == 'user')['content'],
-        'di hola',
-      );
-      expect(
-        chat.messages.firstWhere((m) => m['role'] == 'assistant')['content'],
-        'Hola mundo',
-      );
+        // Instancia remota: el historial vive server-side, así que la app NO
+        // debe escribir nada en el almacén local cifrado.
+        final localSaved = await LocalTranscriptStore.load(
+          _remoteConn().id,
+          'sess-1',
+        );
+        expect(localSaved, isEmpty);
 
-      // Instancia remota: el historial vive server-side, así que la app NO
-      // debe escribir nada en el almacén local cifrado.
-      final localSaved = await LocalTranscriptStore.load(
-        _remoteConn().id,
-        'sess-1',
-      );
-      expect(localSaved, isEmpty);
-
-      // Espera a que el cierre diferido (~800ms) del run corra antes de liberar
-      // el servicio: así no se toca el ValueNotifier de activeIds ya dispuesto.
-      await _waitUntil(() => chat.state == ChatPipelineState.idle);
-      service.dispose();
-    });
+        // Espera a que el cierre diferido (~800ms) del turno corra antes de
+        // liberar el servicio: así no se toca el ValueNotifier de activeIds ya
+        // dispuesto.
+        await _waitUntil(() => chat.state == ChatPipelineState.idle);
+        service.dispose();
+      },
+    );
   });
 
   // ── Escenario 2 ─────────────────────────────────────────────────────────
@@ -1329,26 +1321,17 @@ void main() {
     });
   });
 
-  group('E2E 3 — error del servidor (503 en startRun)', () {
+  group('E2E 3 — error del servidor en el turno', () {
     test(
       'el fallo deja el pipeline en estado terminal y conserva el turno previo',
       () async {
-        final api = ApiClient(
-          baseUrl: _remoteConn().baseUrl,
-          apiKey: 'test-key',
-          httpClient: _gateway(
-            events: '',
-            finalMessages: const [],
-            runStatus: 503,
-          ),
-        );
-
+        final socket = DesktopChatSocket();
         final service = ActiveChatService();
-        final chat = service.attach(
-          connection: _remoteConn(),
+        final chat = _socketChat(
+          service,
+          socket,
           sessionId: 'sess-1',
-          sessionTitle: 'Con error',
-          api: api,
+          title: 'Con error',
         );
         // Conversación previa ya completada (no debe perderse por el fallo).
         chat.internalMessagesForTesting = [
@@ -1360,11 +1343,12 @@ void main() {
         final errored = chat.changes.firstWhere(
           (e) => e == ActiveChatEvent.error,
         );
-        chat.send(
+        await chat.send(
           fullText: 'nuevo intento',
           model: 'hermes-agent',
           history: const [],
         );
+        socket.fail(1, 'upstream unavailable');
         await errored.timeout(const Duration(seconds: 5));
 
         // No queda colgado en connecting/streaming: estado terminal failed.
@@ -1376,7 +1360,7 @@ void main() {
           (m) => m['role'] == 'assistant_error',
           orElse: () => <String, dynamic>{},
         );
-        expect(errEntry['content']?.toString(), contains('503'));
+        expect(errEntry['content']?.toString(), isNotEmpty);
         expect(errEntry['_prompt'], 'nuevo intento');
 
         // El turno previo sigue intacto: el fallo no corrompe la conversación.
@@ -1394,10 +1378,10 @@ void main() {
           isTrue,
         );
 
-        // El run fallido no quedó vigilado en 2º plano.
+        // El turno fallido no quedó vigilado en 2º plano.
         final prefs = await SharedPreferences.getInstance();
         await prefs.reload();
-        expect(prefs.getString(_kWatchKey) ?? '[]', isNot(contains('run_1')));
+        expect(prefs.getString(_kWatchKey) ?? '[]', isNot(contains('sess-1')));
 
         service.dispose();
       },
@@ -1408,27 +1392,6 @@ void main() {
   group('E2E 4 — correcciones mientras hay una respuesta', () {
     test('barge-in conserva el settle oficial de Desktop', () {
       expect(activeChatVoiceBargeSettleTimeout, const Duration(seconds: 5));
-      expect(
-        activeChatVoiceBargeRunIsTerminal({'status': 'stopping'}),
-        isFalse,
-      );
-      expect(
-        activeChatVoiceBargeRunIsTerminal({'status': 'cancelled'}),
-        isTrue,
-      );
-    });
-
-    test('REST espera stopping hasta el terminal real', () async {
-      final statuses = <String>['stopping', 'running', 'cancelled'];
-      var reads = 0;
-
-      await waitForActiveChatVoiceBargeTerminal(
-        readStatus: () async => {'status': statuses[reads++]},
-        timeout: const Duration(seconds: 1),
-        pollInterval: Duration.zero,
-      );
-
-      expect(reads, 3);
     });
 
     test(
@@ -2237,7 +2200,7 @@ void main() {
           api: ApiClient(
             baseUrl: _remoteConn().baseUrl,
             apiKey: 'test-key',
-            httpClient: _gateway(events: '', finalMessages: const []),
+            httpClient: HostCounter(),
           ),
           desktopGateway: desktop,
         );
@@ -2310,7 +2273,7 @@ void main() {
           api: ApiClient(
             baseUrl: _remoteConn().baseUrl,
             apiKey: 'test-key',
-            httpClient: _gateway(events: '', finalMessages: const []),
+            httpClient: HostCounter(),
           ),
           desktopGateway: desktop,
         );
@@ -2374,7 +2337,7 @@ void main() {
           api: ApiClient(
             baseUrl: _remoteConn().baseUrl,
             apiKey: 'k',
-            httpClient: _gateway(events: '', finalMessages: const []),
+            httpClient: HostCounter(),
           ),
           desktopGateway: desktop,
         );
@@ -2424,7 +2387,7 @@ void main() {
           api: ApiClient(
             baseUrl: _remoteConn().baseUrl,
             apiKey: 'test-key',
-            httpClient: _gateway(events: '', finalMessages: const []),
+            httpClient: HostCounter(),
           ),
           desktopGateway: desktop,
         );
@@ -2475,7 +2438,7 @@ void main() {
         api: ApiClient(
           baseUrl: _remoteConn().baseUrl,
           apiKey: 'test-key',
-          httpClient: _gateway(events: '', finalMessages: const []),
+          httpClient: HostCounter(),
         ),
         desktopGateway: desktop,
       );
@@ -2600,42 +2563,32 @@ void main() {
 
   group('E2E 6 — fallback universal cuando steering no está disponible', () {
     test('conserva el seguimiento y lo envía al terminar el turno', () async {
-      final bodies = <Map<String, dynamic>>[];
-      final api = ApiClient(
-        baseUrl: _remoteConn().baseUrl,
-        apiKey: 'test-key',
-        httpClient: _gateway(
-          postBodies: bodies,
-          events: _sse([
-            {'event': 'run.completed', 'output': 'respuesta uno'},
-          ]),
-          finalMessages: [
-            {'role': 'user', 'content': 'uno'},
-            {'role': 'assistant', 'content': 'respuesta uno'},
-          ],
-        ),
-      );
-
+      final socket = DesktopChatSocket();
       final service = ActiveChatService();
-      final chat = service.attach(
-        connection: _remoteConn(),
+      final chat = _socketChat(
+        service,
+        socket,
         sessionId: 'sess-queue',
-        sessionTitle: 'Fallback',
-        api: api,
+        title: 'Fallback',
+        loader: (_, _) async => const [
+          {'role': 'user', 'content': 'uno'},
+          {'role': 'assistant', 'content': 'respuesta uno'},
+        ],
       );
 
-      chat.send(fullText: 'uno', model: 'hermes-agent', history: const []);
+      await chat.send(
+        fullText: 'uno',
+        model: 'hermes-agent',
+        history: const [],
+      );
       chat.enqueue('y añade ejemplos');
 
       expect(chat.queuedMessages, ['y añade ejemplos']);
-      await _waitUntil(() => bodies.length >= 2);
+      socket.complete(1, 'respuesta uno');
+      await _waitUntil(() => socket.submitTexts.length >= 2);
 
       expect(chat.queuedMessages, isEmpty);
-      expect(bodies[1]['input'], 'y añade ejemplos');
-      expect(bodies[1]['conversation_history'], [
-        {'role': 'user', 'content': 'uno'},
-        {'role': 'assistant', 'content': 'respuesta uno'},
-      ]);
+      expect(socket.submitTexts, ['uno', 'y añade ejemplos']);
 
       await _waitUntil(() => chat.state == ChatPipelineState.idle);
       service.dispose();

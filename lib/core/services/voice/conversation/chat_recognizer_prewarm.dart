@@ -1,10 +1,10 @@
-// The first voice start of a chat, without its wait.
+// The first voice start of a chat, with less of its wait.
 //
-// Opening this phone's recognition model takes seconds, and the first
-// "Voz" tap of a chat used to wait for all of them. While a chat is on
-// screen the model is loaded ahead, in the background — for somebody who
-// talks to this phone, and for nobody else: it costs memory and battery, so
-// who never uses voice must not pay anything for it.
+// Opening this phone's recognition model takes seconds. It is loaded the
+// moment a finger lands on the dictation or voice button, not when a chat
+// opens or the app resumes: opening a chat costs nothing, and the gesture's
+// own 100-300 ms already go to the model. Only for somebody who talks to
+// this phone: it costs memory and battery.
 import 'dart:async';
 
 import 'package:flutter/widgets.dart';
@@ -17,13 +17,11 @@ import '../live/voice_chat_mode_store.dart';
 import '../voice_service.dart';
 import 'native_voice.dart';
 
-/// Has this phone's recogniser loaded while a chat is on screen.
+/// Has this phone's recogniser loaded when the microphone is first touched.
 ///
 /// The chat attaches it once its first frame is out and detaches it when it
-/// goes away; nothing here runs before that frame or holds it back, and the
-/// load itself waits [settleTime] more so the chat's entrance and its
-/// transcript are painted first. The recogniser is loaded then, and again
-/// whenever the app comes back to the chat, only if all of this holds:
+/// goes away. Attaching, and the app coming back to the chat, load nothing:
+/// only [armOnMicPressDown] does, and only if all of this holds:
 ///
 /// - a voice conversation or a dictation ran on this phone's recogniser in
 ///   the last [VoiceService.recentVoiceUseDays] days;
@@ -35,7 +33,7 @@ import 'native_voice.dart';
 ///
 /// The microphone is never opened. What is loaded is released by the rules
 /// of [VoiceService.loadRecognizerAhead], by the app leaving the screen and
-/// by the last chat going away.
+/// by the last chat going away: the three paths of the lifecycle are kept.
 class ChatRecognizerPrewarm with WidgetsBindingObserver {
   ChatRecognizerPrewarm._(
     this._voice,
@@ -44,12 +42,7 @@ class ChatRecognizerPrewarm with WidgetsBindingObserver {
     this._profile,
     this._deviceConstrained,
     this._dashboardIdentity,
-    this._settle,
   );
-
-  /// The chat's entrance (its route animation, the first frames of the
-  /// transcript) is left alone: nothing is decided or loaded during it.
-  static const Duration settleTime = Duration(milliseconds: 600);
 
   final VoiceService _voice;
   final SharedPreferences _preferences;
@@ -57,16 +50,13 @@ class ChatRecognizerPrewarm with WidgetsBindingObserver {
   final Future<String> Function() _profile;
   final Future<bool> Function() _deviceConstrained;
   final String Function(SavedConnection connection) _dashboardIdentity;
-  final Duration _settle;
 
   bool _detached = false;
   int _epoch = 0;
-  Timer? _settling;
 
   /// Call once the chat's first frame is out. [profile] resolves the Hermes
-  /// profile the chat talks to. [deviceConstrained], [dashboardIdentity] and
-  /// [settle] replace the platform probe, the Dashboard client and
-  /// [settleTime] in tests.
+  /// profile the chat talks to. [deviceConstrained] and [dashboardIdentity]
+  /// replace the platform probe and the Dashboard client in tests.
   static ChatRecognizerPrewarm attach({
     required VoiceService voice,
     required SharedPreferences preferences,
@@ -74,7 +64,6 @@ class ChatRecognizerPrewarm with WidgetsBindingObserver {
     required Future<String> Function() profile,
     Future<bool> Function()? deviceConstrained,
     String Function(SavedConnection connection)? dashboardIdentity,
-    Duration settle = settleTime,
   }) {
     final prewarm = ChatRecognizerPrewarm._(
       voice,
@@ -83,12 +72,19 @@ class ChatRecognizerPrewarm with WidgetsBindingObserver {
       profile,
       deviceConstrained ?? _platformSaysConstrained,
       dashboardIdentity ?? _dashboardIdentityOf,
-      settle,
     );
     WidgetsBinding.instance.addObserver(prewarm);
     voice.chatShown();
-    prewarm._considerSoon();
     return prewarm;
+  }
+
+  /// Call the moment a finger lands on the dictation or voice button (the
+  /// pointer-down, not the whole tap) and when a local voice conversation
+  /// starts. Loads the recogniser behind the gesture; a second call while it
+  /// loads or once it is loaded does not load another.
+  void armOnMicPressDown() {
+    if (!kVoiceRuntimeEnabled || _detached || _blocked()) return;
+    unawaited(_consider());
   }
 
   /// Call when the chat goes away.
@@ -96,8 +92,6 @@ class ChatRecognizerPrewarm with WidgetsBindingObserver {
     if (_detached) return;
     _detached = true;
     _epoch++;
-    _settling?.cancel();
-    _settling = null;
     WidgetsBinding.instance.removeObserver(this);
     _voice.chatLeft();
   }
@@ -105,10 +99,9 @@ class ChatRecognizerPrewarm with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     switch (state) {
-      case AppLifecycleState.resumed:
-        _considerSoon();
-      case AppLifecycleState.inactive:
-        // A system dialog or the notification shade: still on screen.
+      case AppLifecycleState.resumed || AppLifecycleState.inactive:
+        // Back on screen, or a system dialog or the notification shade over
+        // it: nothing is loaded until the microphone is touched.
         break;
       case AppLifecycleState.hidden ||
           AppLifecycleState.paused ||
@@ -116,8 +109,6 @@ class ChatRecognizerPrewarm with WidgetsBindingObserver {
         // Nobody can press the voice button from here: a load that was
         // being decided is dropped and one that is only waiting is released.
         _epoch++;
-        _settling?.cancel();
-        _settling = null;
         unawaited(_voice.releaseWaitingRecognizer(reason: 'app_hidden'));
     }
   }
@@ -161,16 +152,6 @@ class ChatRecognizerPrewarm with WidgetsBindingObserver {
     if (blocker == null) return false;
     if (blocker != 'no_recent_use') _skipped(blocker);
     return true;
-  }
-
-  void _considerSoon() {
-    _settling?.cancel();
-    _settling = null;
-    if (!kVoiceRuntimeEnabled || _detached || _blocked()) return;
-    _settling = Timer(_settle, () {
-      _settling = null;
-      unawaited(_consider());
-    });
   }
 
   Future<void> _consider() async {

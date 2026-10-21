@@ -18,31 +18,6 @@ void main() {
     );
   });
 
-  test('Task Center status refresh preserves profile authority', () async {
-    SharedPreferences.setMockInitialValues({});
-    final prefs = await SharedPreferences.getInstance();
-    final registry = await RunRegistry.load(prefs, 'conn-a');
-    await registry.add(
-      const RunRecord(
-        runId: 'shared-run',
-        prompt: 'owned',
-        createdAt: 1,
-        lastStatus: 'running',
-        connId: 'conn-a',
-        profile: 'room-alpha',
-      ),
-    );
-    final owners = <String>[];
-
-    await refreshTaskCenterRunStatuses(registry, (runId, profile) async {
-      owners.add('$profile::$runId');
-      return {'status': 'completed'};
-    });
-
-    expect(owners, ['room-alpha::shared-run']);
-    expect(registry.records.single.lastStatus, 'completed');
-  });
-
   group('RunRecord — campos nuevos y JSON', () {
     test('toJson incluye campos opcionales cuando están presentes', () {
       const r = RunRecord(

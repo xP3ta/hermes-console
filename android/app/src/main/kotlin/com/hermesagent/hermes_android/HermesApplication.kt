@@ -23,6 +23,7 @@ class HermesApplication : Application() {
 
                 override fun onEngineCreate(flutterEngine: FlutterEngine?) {
                     val engine = flutterEngine ?: return
+                    DurableSecretWriter.attach(this@HermesApplication, engine.dartExecutor.binaryMessenger)
                     channel?.let { HermesRichNotifications.detach(it) }
                     channel =
                         MethodChannel(

@@ -6,14 +6,18 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
 import '../../l10n/app_localizations.dart';
+import '../config/flavor.dart';
 import '../services/connection_manager.dart';
 import '../services/mobile_oauth.dart';
+import '../services/native_password_login.dart';
+import '../services/server_warmup.dart';
 import '../utils/api_error.dart';
 import '../utils/transport_privacy.dart';
 import '../widgets/console_loader.dart';
-import '../widgets/dashboard_password_help.dart';
 import '../design/hermes_design.dart';
 import '../widgets/hermes_ui.dart' show HermesField, HermesPrimaryButton;
+import 'onboarding/manual_setup_page.dart';
+import 'recover_access_page.dart';
 
 /// Existing client authority only: never creates or rotates server credentials.
 class DashboardCredsResult {
@@ -47,27 +51,54 @@ class DashboardSetupScreen extends StatefulWidget {
     required this.connection,
     required this.authorityCurrent,
     this.openOAuthBrowser,
+    this.browserFirst = kSimpleConnectEnabled,
+    this.warmupClock,
   });
   final SavedConnection connection;
 
   /// Immutable editor lease, including endpoint, profile and credential epochs.
   final bool Function() authorityCurrent;
   final Future<bool> Function(Uri)? openOAuthBrowser;
+
+  /// Simple connect (QA flag): the system browser is the primary way in, also
+  /// for `basic`; the password form stays behind a secondary link.
+  final bool browserFirst;
+
+  final ServerWarmupClock? warmupClock;
   @override
   State<DashboardSetupScreen> createState() => _DashboardSetupScreenState();
 }
 
-class _DashboardSetupScreenState extends State<DashboardSetupScreen> {
+class _DashboardSetupScreenState extends State<DashboardSetupScreen>
+    with WidgetsBindingObserver {
   final _user = TextEditingController();
   final _secret = TextEditingController();
   final _http = http.Client();
   bool? _authRequired;
   bool _passwordSupported = false;
   bool _nativeSupported = false;
+  bool _showPasswordForm = false;
   MobileOAuthLogin? _oauth;
+  NativePasswordLogin? _pwLogin;
+  bool _reveal = false;
+  bool _noPasswordRoute = false;
   bool _loading = true;
   bool _busy = false;
   bool _consent = false;
+
+  /// S3: the Dashboard answered 502/503/504 (or refused right after a good
+  /// answer) and Console waits, bounded, for it to boot.
+  bool _starting = false;
+  bool _gaveUp = false;
+  bool _answered = false;
+  ServerWarmup? _warmup;
+
+  bool get _foreground {
+    final state = WidgetsBinding.instance.lifecycleState;
+    return state != AppLifecycleState.paused &&
+        state != AppLifecycleState.hidden &&
+        state != AppLifecycleState.detached;
+  }
 
   /// Resolved against the current [Strings] at build time: failures can land
   /// while [initState] is still running, before inherited lookups are legal.
@@ -89,28 +120,72 @@ class _DashboardSetupScreenState extends State<DashboardSetupScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _probe();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _warmup?.cancel();
     _epoch++;
     _oauth?.cancel();
+    _pwLogin?.cancel();
     _http.close();
     _user.dispose();
     _secret.dispose();
     super.dispose();
   }
 
-  Future<void> _probe() async {
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _warmup?.setForeground(_foreground); // hidden: no probes until it returns
+  }
+
+  /// Waits (bounded) for a booting Dashboard, then repeats the read ONCE.
+  Future<void> _waitForServer(int epoch, String base) async {
+    final warmup = ServerWarmup(
+      probe: () => dashboardHealthOk(_http, base),
+      now: widget.warmupClock?.now,
+      delay: widget.warmupClock?.delay,
+      foreground: _foreground,
+    );
+    _warmup = warmup;
+    setState(() {
+      _loading = false;
+      _starting = true;
+      _gaveUp = false;
+      _error = null;
+    });
+    final ready = await warmup.run();
+    if (!_valid(epoch)) {
+      _expireAuthority(epoch);
+      return;
+    }
+    if (ready) {
+      await _probe(afterWarmup: true);
+    } else {
+      setState(() {
+        _starting = false;
+        _gaveUp = true;
+      });
+    }
+  }
+
+  Future<void> _probe({bool afterWarmup = false}) async {
     final epoch = ++_epoch;
     _oauth?.cancel();
+    _warmup?.cancel();
     setState(() {
+      _starting = false;
+      _gaveUp = false;
       _loading = true;
       _error = null;
       _authRequired = null;
       _passwordSupported = false;
       _nativeSupported = false;
+      _noPasswordRoute = false;
+      _showPasswordForm = false;
     });
     final url = widget.connection.effectiveDashboardUrl;
     if (TransportPrivacy.classify(url) ==
@@ -138,6 +213,7 @@ class _DashboardSetupScreenState extends State<DashboardSetupScreen> {
         // Status only: the body is never presented.
         throw DashboardHttpException(response.statusCode);
       }
+      _answered = true;
       final payload = jsonDecode(response.body);
       if (payload is! Map || payload['auth_required'] is! bool) {
         throw const FormatException('Dashboard authentication status unknown');
@@ -192,8 +268,9 @@ class _DashboardSetupScreenState extends State<DashboardSetupScreen> {
                 (p) =>
                     p is Map &&
                     p['supports_session'] != false &&
-                    p['supports_password'] != true &&
+                    (widget.browserFirst || (p['supports_password'] != true)) &&
                     p['name'] is String &&
+                    p['name'] != 'drain' &&
                     (p['name'] as String).isNotEmpty,
               );
         }
@@ -213,12 +290,21 @@ class _DashboardSetupScreenState extends State<DashboardSetupScreen> {
         _expireAuthority(epoch);
         return;
       }
+      if (widget.browserFirst &&
+          !afterWarmup &&
+          (isServerStartingError(error) ||
+              (_answered && isConnectionRefused(error)))) {
+        unawaited(_waitForServer(epoch, TransportPrivacy.requireAllowed(url)));
+        return;
+      }
       setState(() {
         _loading = false;
         _error = _hasTypedPresentation(error)
             ? (s) =>
                   s.dashboardSetupProbeFailedReason(localizedApiError(s, error))
-            : (s) => s.dashboardSetupProbeFailed;
+            : (s) => widget.browserFirst
+                  ? s.walkProbeFailed
+                  : s.dashboardSetupProbeFailed;
       });
     }
   }
@@ -304,6 +390,116 @@ class _DashboardSetupScreenState extends State<DashboardSetupScreen> {
     }
   }
 
+  /// Desktop's connection: user name + password typed here and sent to the
+  /// Dashboard's own native routes, no browser. Only the session is kept.
+  bool get _credentialsFirst =>
+      widget.browserFirst &&
+      _passwordSupported &&
+      _nativeSupported &&
+      !_noPasswordRoute;
+
+  Future<void> _loginPassword() async {
+    final epoch = _epoch;
+    final user = _user.text.trim(), secret = _secret.text;
+    if (!_valid(epoch) ||
+        _busy ||
+        user.isEmpty ||
+        secret.isEmpty ||
+        (_requiresConsent && !_consent)) {
+      return;
+    }
+    final attempt = NativePasswordLogin();
+    _pwLogin = attempt;
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      final session = await attempt.run(
+        connectionId: widget.connection.id,
+        baseUrl: widget.connection.effectiveDashboardUrl,
+        username: user,
+        password: secret,
+        authorityCurrent: () => _valid(epoch),
+        allowPrivateHttp: _consent,
+      );
+      if (!_valid(epoch)) {
+        _expireAuthority(epoch);
+        return;
+      }
+      if (!mounted) return;
+      Navigator.of(context).pop(
+        DashboardCredsResult(
+          mode: AuthMode.sessionToken,
+          sessionToken: session.encode(),
+        ),
+      );
+    } catch (error) {
+      if (!_valid(epoch)) {
+        _expireAuthority(epoch);
+        return;
+      }
+      final failure = error is NativePasswordLoginException
+          ? error.failure
+          : NativePasswordFailure.failed;
+      setState(() {
+        _noPasswordRoute = failure == NativePasswordFailure.unsupported;
+        if (_noPasswordRoute) _secret.clear();
+        _error = switch (failure) {
+          NativePasswordFailure.invalidCredentials =>
+            (s) => s.onb2WrongPassword,
+          NativePasswordFailure.rateLimited => (s) => s.onb2TooManyTries,
+          NativePasswordFailure.unsupported => (s) => s.onb2PasswordUnsupported,
+          _ => (s) => s.dashboardSetupLoginFailed,
+        };
+      });
+    } finally {
+      if (identical(_pwLogin, attempt)) _pwLogin = null;
+      if (_valid(epoch)) setState(() => _busy = false);
+    }
+  }
+
+  List<Widget> _credentialsForm(Strings s) => [
+    Text(s.onb2CredentialsIntro, key: const ValueKey('onb2-credentials-intro')),
+    const SizedBox(height: HermesSpace.x3),
+    HermesField(
+      fieldKey: const ValueKey('onb2-user'),
+      controller: _user,
+      label: s.commonUser,
+      autocorrect: false,
+      enableSuggestions: false,
+      enabled: !_busy,
+      textInputAction: TextInputAction.next,
+    ),
+    const SizedBox(height: HermesSpace.x4),
+    HermesField(
+      fieldKey: const ValueKey('onb2-password'),
+      controller: _secret,
+      obscure: !_reveal,
+      autocorrect: false,
+      enableSuggestions: false,
+      enableIMEPersonalizedLearning: false,
+      enabled: !_busy,
+      label: s.commonPassword,
+      textInputAction: TextInputAction.go,
+      onSubmitted: (_) => unawaited(_loginPassword()),
+      suffix: IconButton(
+        key: const ValueKey('onb2-password-reveal'),
+        tooltip: _reveal ? s.onb2HidePassword : s.onb2ShowPassword,
+        icon: Icon(
+          _reveal ? Icons.visibility_off_rounded : Icons.visibility_rounded,
+        ),
+        onPressed: () => setState(() => _reveal = !_reveal),
+      ),
+    ),
+    const SizedBox(height: HermesSpace.x6),
+    HermesPrimaryButton(
+      key: const ValueKey('onb2-password-submit'),
+      label: _busy ? s.commonLoading : s.dashboardSetupSignIn,
+      onTap: _busy || (_requiresConsent && !_consent) ? null : _loginPassword,
+    ),
+  ];
+
   Future<void> _loginOAuth() async {
     final epoch = _epoch;
     if (!_valid(epoch) ||
@@ -312,7 +508,10 @@ class _DashboardSetupScreenState extends State<DashboardSetupScreen> {
         (_requiresConsent && !_consent)) {
       return;
     }
-    final attempt = MobileOAuthLogin(openBrowser: widget.openOAuthBrowser);
+    final attempt = MobileOAuthLogin(
+      openBrowser: widget.openOAuthBrowser,
+      retainRefresh: widget.browserFirst,
+    );
     _oauth = attempt;
     setState(() {
       _busy = true;
@@ -343,7 +542,11 @@ class _DashboardSetupScreenState extends State<DashboardSetupScreen> {
       }
       // Not localizedApiError: MobileOAuthLogin folds refusal, user cancel and
       // expiry into one opaque MobileOAuthException on purpose.
-      setState(() => _error = (s) => s.dashboardSetupOAuthFailed);
+      setState(
+        () => _error = (s) => widget.browserFirst
+            ? s.dashboardSetupBrowserIncomplete
+            : s.dashboardSetupOAuthFailed,
+      );
     } finally {
       attempt.cancel();
       if (identical(_oauth, attempt)) _oauth = null;
@@ -355,6 +558,12 @@ class _DashboardSetupScreenState extends State<DashboardSetupScreen> {
   Widget build(BuildContext context) {
     final s = Strings.of(context);
     final oauthOnly = _authRequired == true && !_passwordSupported;
+    final browserFirst = widget.browserFirst && _nativeSupported;
+    final credFirst = _credentialsFirst;
+    final showForm =
+        _authRequired != null &&
+        !oauthOnly &&
+        (!browserFirst || _showPasswordForm);
     return PopScope(
       canPop: !_busy,
       child: HermesPage(
@@ -362,6 +571,28 @@ class _DashboardSetupScreenState extends State<DashboardSetupScreen> {
         children: [
           if (_loading) const Center(child: ConsoleLoader.large()),
           if (!_loading) ...[
+            if (_starting || _gaveUp)
+              Semantics(
+                liveRegion: true,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _starting
+                          ? s.serverStartingTitle
+                          : s.serverStartingGaveUp,
+                      key: const ValueKey('server-warmup-title'),
+                    ),
+                    if (_starting) Text(s.serverStartingWait),
+                    if (_gaveUp && widget.browserFirst) Text(s.walkStartHint),
+                    if (isNousCloudHost(
+                      Uri.parse(widget.connection.effectiveDashboardUrl).host,
+                    ))
+                      Text(s.serverStartingCloudHint),
+                  ],
+                ),
+              ),
+            if (_starting) const Center(child: ConsoleLoader.large()),
             if (_error != null)
               Semantics(
                 liveRegion: true,
@@ -370,11 +601,25 @@ class _DashboardSetupScreenState extends State<DashboardSetupScreen> {
                   key: const ValueKey('dashboard-login-error'),
                 ),
               ),
-            if (_authRequired == null)
+            if (_authRequired == null && !_starting)
               HermesPrimaryButton(
                 key: const ValueKey('dashboard-probe-retry'),
                 label: s.commonRetry,
                 onTap: _probe,
+              ),
+            // A dead end gets its way out: the official command page.
+            if (widget.browserFirst && _authRequired == null && !_starting)
+              TextButton.icon(
+                key: const ValueKey('dashboard-setup-help'),
+                onPressed: () => unawaited(
+                  Navigator.of(context).push<void>(
+                    MaterialPageRoute<void>(
+                      builder: (_) => const ManualSetupPage(),
+                    ),
+                  ),
+                ),
+                icon: const Icon(Icons.terminal_rounded, size: 18),
+                label: Text(s.homeOfflineDashboardSetup),
               ),
             if (_requiresConsent && _authRequired != null)
               CheckboxListTile(
@@ -390,18 +635,72 @@ class _DashboardSetupScreenState extends State<DashboardSetupScreen> {
                       : s.dashboardSetupCredentialConsent,
                 ),
               ),
-            if (_nativeSupported)
+            if (credFirst && _authRequired != null) ..._credentialsForm(s),
+            if (_nativeSupported && credFirst)
+              HermesListRow(
+                key: const ValueKey('dashboard-oauth-browser'),
+                title: s.dashboardSetupBrowserSignIn,
+                onTap: _busy || (_requiresConsent && !_consent)
+                    ? null
+                    : _loginOAuth,
+              )
+            else if (_nativeSupported)
               HermesPrimaryButton(
                 key: const ValueKey('dashboard-oauth-browser'),
-                label: s.dashboardSetupOAuthBrowser,
+                label: browserFirst
+                    ? s.dashboardSetupBrowserSignIn
+                    : s.dashboardSetupOAuthBrowser,
                 onTap: _busy || (_requiresConsent && !_consent)
                     ? null
                     : _loginOAuth,
               ),
+            if (browserFirst && !credFirst && !_noPasswordRoute)
+              Padding(
+                padding: const EdgeInsets.only(top: HermesSpace.x2),
+                child: Text(
+                  s.dashboardSetupBrowserHandlesPassword,
+                  key: const ValueKey('dashboard-browser-handles-password'),
+                ),
+              ),
+            if (browserFirst &&
+                !credFirst &&
+                !_noPasswordRoute &&
+                _passwordSupported &&
+                !_showPasswordForm &&
+                !_busy)
+              HermesListRow(
+                key: const ValueKey('dashboard-use-password-here'),
+                title: s.dashboardSetupUsePasswordHere,
+                onTap: () => setState(() => _showPasswordForm = true),
+              ),
+            if (_authRequired == true &&
+                _passwordSupported &&
+                !showForm &&
+                !_busy)
+              HermesListRow(
+                key: const ValueKey('dashboard-forgot-password'),
+                title: s.dashboardSetupForgotPassword,
+                onTap: () => unawaited(openRecoverAccess(context)),
+              ),
+            if (_busy && _oauth != null && browserFirst)
+              Semantics(
+                liveRegion: true,
+                child: Padding(
+                  padding: const EdgeInsets.only(top: HermesSpace.x2),
+                  child: Text(
+                    '${s.dashboardSetupBrowserOpening} '
+                    '${s.dashboardSetupBrowserComeBack}',
+                    key: const ValueKey('dashboard-browser-opening'),
+                  ),
+                ),
+              ),
             if (_busy && _nativeSupported)
               HermesListRow(
                 title: s.commonCancel,
-                onTap: () => _oauth?.cancel(),
+                onTap: () {
+                  _oauth?.cancel();
+                  _pwLogin?.cancel();
+                },
               ),
             if (oauthOnly && !_nativeSupported)
               Semantics(
@@ -417,7 +716,7 @@ class _DashboardSetupScreenState extends State<DashboardSetupScreen> {
                 label: s.sBackToConnection,
                 onTap: () => Navigator.of(context).pop(),
               ),
-            if (_authRequired != null && !oauthOnly) ...[
+            if (showForm) ...[
               if (_authRequired!)
                 HermesField(
                   controller: _user,
@@ -448,7 +747,7 @@ class _DashboardSetupScreenState extends State<DashboardSetupScreen> {
                 HermesListRow(
                   key: const ValueKey('dashboard-forgot-password'),
                   title: s.dashboardSetupForgotPassword,
-                  onTap: () => showDashboardPasswordHelp(context),
+                  onTap: () => unawaited(openRecoverAccess(context)),
                 ),
             ],
           ],

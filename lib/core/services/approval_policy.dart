@@ -9,8 +9,8 @@ import 'command_risk.dart';
 /// ApprovalRequestCard, Activity y (a futuro) las acciones del Mobile Bridge.
 /// No debe existir un segundo sistema de aprobaciones en la app.
 ///
-/// Integra con el contrato real del Gateway (`/v1/runs` + `approval.request` /
-/// `approval.responded`, choices: once|session|always|deny). El "modo" decide
+/// Integra con el contrato del socket de Desktop (`approval.request` /
+/// `approval.respond`, choices: once|session|always|deny). El "modo" decide
 /// si la app pide permiso, lo auto-resuelve (YOLO) o lo bloquea (solo lectura).
 
 /// Cómo pide permisos el agente.
@@ -52,7 +52,7 @@ extension ApprovalModeLabel on ApprovalMode {
 enum ApprovalScope { once, session, always, deny }
 
 extension ApprovalScopeWire on ApprovalScope {
-  /// Valor que entiende `POST /v1/runs/{id}/approval {choice}`.
+  /// Valor `choice` que entiende `approval.respond` en el socket de Desktop.
   String get wire => name; // once|session|always|deny
 }
 

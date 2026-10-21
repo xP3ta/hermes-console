@@ -625,7 +625,7 @@ void main() {
       // Mitad remota: sin ella las sesiones seguían en el servidor y volvían
       // a la lista al refrescar ("no se borran todas").
       expect(normalCleanup, contains('.getSessions('));
-      expect(normalCleanup, contains('includeChildren: true'));
+      expect(normalCleanup, contains('includeChildren: !client.hasDashboard'));
       expect(normalCleanup, contains('historyCleanupDeleteOrder('));
       expect(normalCleanup, contains('clearRemoteConversations('));
       expect(normalCleanup, contains('.deleteSession('));

@@ -298,7 +298,9 @@ void main() {
     await Future<void>.delayed(const Duration(milliseconds: 500));
 
     expect(h.rehydrationRpcs, before);
-    expect(h.chat.state, ChatPipelineState.streaming);
+    // N10h-1: the replay after the reconnect was contiguous, so the stream is
+    // live again: the tool frame is projected (it used to be held).
+    expect(h.chat.state, ChatPipelineState.executing);
 
     // Positive control on the same socket: the terminal frame still lands.
     h.finishTurn();
@@ -308,7 +310,7 @@ void main() {
     );
   });
 
-  test('repeated terminal frames rehydrate once', () async {
+  test('repeated terminal frames complete once, no rehydration', () async {
     final h = await open();
     await h.cutMidAnswerAndReconnect();
     final lease = pool.acquireChat(
@@ -338,6 +340,12 @@ void main() {
     );
     await Future<void>.delayed(const Duration(milliseconds: 500));
 
-    expect(rehydrations, 1);
+    // N10h-1: with a contiguous replay the terminal frame is projected live
+    // and nothing asks for a rehydration (it used to ask once).
+    expect(rehydrations, 0);
+    expect(
+      h.chat.messages.any((m) => m['content'] == 'respuesta final'),
+      isTrue,
+    );
   });
 }

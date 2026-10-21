@@ -57,11 +57,6 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      final gateway = find.byKey(const ValueKey('instance-gateway-token'));
-      await revealEditorControl(tester, gateway);
-      await tester.enterText(gateway, 'synthetic-gateway');
-      FocusManager.instance.primaryFocus?.unfocus();
-      await tester.pumpAndSettle();
       Future<String> openLogin() async {
         final action = find.byKey(const ValueKey('instance-dashboard-sign-in'));
         await revealEditorControl(tester, action);

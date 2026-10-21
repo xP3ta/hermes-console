@@ -7,6 +7,15 @@ const String kHermesFlavor = String.fromEnvironment(
   defaultValue: 'full',
 );
 
+/// The simple connect («Connect by hand» / Dashboard): part of the product in every variant.
+/// The negative define builds a rollback candidate without a second branch:
+///   --dart-define=HERMES_DISABLE_SIMPLE_CONNECT=true
+/// Tests force either state through the screens' own constructor arguments.
+const bool kSimpleConnectEnabled = !bool.fromEnvironment(
+  'HERMES_DISABLE_SIMPLE_CONNECT',
+  defaultValue: false,
+);
+
 /// ¿Está habilitado el modo conversación por voz (VoiceStatusLine/sesión continua)?
 ///
 /// Forma parte del producto en todas las variantes. El define negativo permite

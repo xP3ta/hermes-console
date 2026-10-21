@@ -708,6 +708,30 @@ class DesktopSessionReconciler {
     chronological.removeAt(optimisticIndex);
   }
 
+  /// Desktop (`use-session-actions/utils.ts`) adds no `user-inflight` row when
+  /// the last user run already holds the inflight prompt. Walks back from the
+  /// end to the last durable terminal assistant; true when that run has exactly
+  /// one real prompt, it is the run's first user entry and its text matches.
+  static bool _lastUserRunOpensWithPrompt(
+    List<Map<String, dynamic>> chronological,
+    String inflightUser,
+  ) {
+    Map<String, dynamic>? first;
+    var prompts = 0;
+    for (var index = chronological.length - 1; index >= 0; index--) {
+      final message = chronological[index];
+      if (_isDurableTerminalAssistant(message)) break;
+      if (message['role'] != 'user') continue;
+      if (isRealUserTurn(message)) prompts++;
+      if (isRealUserTurn(message) || _isSteerInput(message)) first = message;
+    }
+    return prompts == 1 &&
+        first != null &&
+        isRealUserTurn(first) &&
+        _whitespaceNormalizedPrompt(first['content']?.toString() ?? '') ==
+            _whitespaceNormalizedPrompt(inflightUser);
+  }
+
   static String _whitespaceNormalizedPrompt(String text) =>
       text.trim().replaceAll(RegExp(r'\s+'), ' ');
 
@@ -1165,7 +1189,9 @@ class DesktopSessionReconciler {
     if (inflightUser != null &&
         inflightUser.trim().isNotEmpty &&
         liveUserPlan.emits(0) &&
-        !durableStructuredInflight) {
+        !durableStructuredInflight &&
+        !(bridgeOwnedLiveUser &&
+            _lastUserRunOpensWithPrompt(chronological, inflightUser))) {
       chronological.add(
         Map<String, dynamic>.unmodifiable({
           'role': 'user',

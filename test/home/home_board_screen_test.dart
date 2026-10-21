@@ -37,6 +37,7 @@ import 'package:hermes_android/core/screens/lock_screen.dart';
 import 'package:hermes_android/core/services/app_lock.dart';
 import 'package:hermes_android/core/services/bot_roster_store.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
+import 'package:hermes_android/core/services/connection_status.dart';
 import 'package:hermes_android/core/services/global_activity_aggregate.dart';
 import 'package:hermes_android/core/services/mission_snapshot_cache.dart';
 import 'package:hermes_android/core/services/session_archive.dart';
@@ -52,7 +53,9 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../support/fake_connection_link.dart';
 import '../support/account_usage_fixtures.dart';
+import '../support/desktop_chat_socket.dart';
 import '../support/in_memory_compression_restore_storage.dart';
 import '../support/spec070_fixtures.dart';
 
@@ -118,29 +121,6 @@ class _HomeClient extends ApiClient {
 
   @override
   void close() {}
-}
-
-class _ApprovalApi extends ApiClient {
-  _ApprovalApi()
-    : super(
-        baseUrl: 'http://127.0.0.1:8642',
-        apiKey: 'k',
-        httpClient: MockClient((_) async => http.Response('{}', 404)),
-      );
-
-  final List<(String runId, String choice, String? requestId)> answers = [];
-
-  @override
-  Future<Map<String, dynamic>> resolveRunApproval(
-    String runId,
-    String choice, {
-    bool resolveAll = false,
-    String? requestId,
-    String? profile,
-  }) async {
-    answers.add((runId, choice, requestId));
-    return const {'ok': true};
-  }
 }
 
 final class _Harness {
@@ -462,30 +442,37 @@ void main() {
     await tester.pump(const Duration(seconds: 1));
   }
 
-  ActiveChat attachApproval(
+  /// A chat of the default profile with a Hermes approval waiting: the turn
+  /// goes through the Dashboard socket, which then asks for the approval.
+  Future<({ActiveChat chat, DesktopChatSocket socket})> attachApproval(
+    WidgetTester tester,
     _Harness h,
     String sessionId,
     String title, {
-    required _ApprovalApi api,
     List<String> choices = const ['once', 'session', 'deny'],
-  }) {
+  }) async {
+    final socket = DesktopChatSocket();
+    addTearDown(socket.close);
     final chat = h.chats.attach(
       connection: h.connection,
       sessionId: sessionId,
       sessionTitle: title,
       sessionProfile: 'default',
-      api: api,
+      desktopGateway: socket,
+      storedMessageLoader: (_, _) async => const [],
       disableForegroundKeepAlive: true,
     );
-    chat
-      ..currentRunId = 'run-1'
-      ..state = ChatPipelineState.executing
-      ..pendingApproval = {
-        'request_id': 'req-1',
-        'command': 'git push origin fix/dock',
-        'choices': choices,
-      };
-    return chat;
+    await tester.runAsync(
+      () => chat.send(fullText: 'deploy', model: 'hermes-agent', history: []),
+    );
+    socket.approval(
+      1,
+      requestId: 'req-1',
+      command: 'git push origin fix/dock',
+      choices: choices,
+    );
+    await tester.pump();
+    return (chat: chat, socket: socket);
   }
 
   Finder tileOf(HomeWidgetKind kind) => find.byWidgetPredicate(
@@ -1117,12 +1104,7 @@ void main() {
                   loadedAt: _clock,
                 ),
               );
-              attachApproval(
-                h,
-                'w1',
-                'Revisar la PR del login',
-                api: _ApprovalApi(),
-              );
+              await attachApproval(tester, h, 'w1', 'Revisar la PR del login');
               await pumpHome(
                 tester,
                 h,
@@ -1415,8 +1397,12 @@ void main() {
     testWidgets('an approval marks the card, shows the command and answers '
         'through the chat itself; Home is calm again', (tester) async {
       final h = await harness(tester);
-      final api = _ApprovalApi();
-      final chat = attachApproval(h, 's-approve', 'Despliegue', api: api);
+      final (:chat, :socket) = await attachApproval(
+        tester,
+        h,
+        's-approve',
+        'Despliegue',
+      );
       await pumpHome(
         tester,
         h,
@@ -1437,7 +1423,9 @@ void main() {
       );
       await tester.tap(find.byKey(const ValueKey('home-now-allow-$key')));
       await settle(tester);
-      expect(api.answers, [('run-1', 'once', 'req-1')]);
+      expect(socket.approvals, [
+        (requestId: 'req-1', choice: 'once', all: false),
+      ]);
       expect(chat.pendingApproval, isNull);
       expect(find.byKey(const ValueKey('home-now-ask-$key')), findsNothing);
       expect(find.text('git push origin fix/dock'), findsNothing);
@@ -1451,8 +1439,12 @@ void main() {
       final h = await harness(tester);
       await h.prefs.setBool('app_lock_enabled', true);
       final lock = AppLockService(h.prefs)..locked.value = false;
-      final api = _ApprovalApi();
-      attachApproval(h, 's-approve', 'Despliegue', api: api);
+      final (:socket, chat: _) = await attachApproval(
+        tester,
+        h,
+        's-approve',
+        'Despliegue',
+      );
       await pumpHome(
         tester,
         h,
@@ -1462,7 +1454,9 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('home-now-deny-$key')));
       await settle(tester);
       expect(find.byType(LockScreen), findsNothing);
-      expect(api.answers, [('run-1', 'deny', 'req-1')]);
+      expect(socket.approvals, [
+        (requestId: 'req-1', choice: 'deny', all: false),
+      ]);
       h.chats.dispose();
       await unmount(tester);
     });
@@ -1472,8 +1466,12 @@ void main() {
       final h = await harness(tester);
       await h.prefs.setBool('app_lock_enabled', true);
       final lock = AppLockService(h.prefs)..locked.value = false;
-      final api = _ApprovalApi();
-      attachApproval(h, 's-approve', 'Despliegue', api: api);
+      final (:socket, chat: _) = await attachApproval(
+        tester,
+        h,
+        's-approve',
+        'Despliegue',
+      );
       await pumpHome(
         tester,
         h,
@@ -1483,11 +1481,11 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('home-now-allow-$key')));
       await settle(tester);
       expect(find.byType(LockScreen), findsOneWidget);
-      expect(api.answers, isEmpty);
+      expect(socket.approvals, isEmpty);
       await tester.tap(find.text('Cancelar'));
       await settle(tester);
       expect(find.byType(LockScreen), findsNothing);
-      expect(api.answers, isEmpty);
+      expect(socket.approvals, isEmpty);
       h.chats.dispose();
       await unmount(tester);
     });
@@ -1495,11 +1493,11 @@ void main() {
     testWidgets('no Permitir when the request does not offer it; Ver opens '
         'the chat', (tester) async {
       final h = await harness(tester);
-      attachApproval(
+      await attachApproval(
+        tester,
         h,
         's-approve',
         'Despliegue',
-        api: _ApprovalApi(),
         choices: const ['deny'],
       );
       await pumpHome(
@@ -1563,7 +1561,7 @@ void main() {
     testWidgets('App Lock locked: nothing of Home is painted', (tester) async {
       final h = await harness(tester);
       final lock = AppLockService(h.prefs)..locked.value = true;
-      attachApproval(h, 's-approve', 'Nómina de marzo', api: _ApprovalApi());
+      await attachApproval(tester, h, 's-approve', 'Nómina de marzo');
       await pumpHome(
         tester,
         h,
@@ -2648,6 +2646,33 @@ void main() {
       expect(find.byKey(const ValueKey('home-server')), findsOneWidget);
       expect(find.text('Conectado'), findsOneWidget);
       expect(find.text('Actualización disponible'), findsOneWidget);
+      await unmount(tester);
+    });
+
+    testWidgets('Servidor never says Conectado while the chat socket is down '
+        '(REST answers)', (tester) async {
+      final registry = ConnectionStatusRegistry.instance;
+      addTearDown(registry.reset);
+      final h = await harness(tester);
+      await h.seed(
+        HomeBoardLayout([
+          _w('s', HomeWidgetKind.server, size: HomeWidgetSize.wide),
+        ]),
+      );
+      await pumpHome(tester, h);
+      expect(find.text('Conectado'), findsOneWidget);
+
+      final id = h.manager.getConnections().single.id;
+      final link = FakeConnectionLink();
+      registry.bind(id, link);
+      link.change(() => link.linkReconnectAt = DateTime(2026));
+      await tester.pump();
+      expect(find.text('Conectado'), findsNothing);
+      expect(find.text('Reconectando…'), findsOneWidget);
+
+      link.change(() => link.isConnected = true);
+      await tester.pump();
+      expect(find.text('Conectado'), findsOneWidget);
       await unmount(tester);
     });
   });

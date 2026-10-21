@@ -67,6 +67,9 @@ class PairingLink {
       final uri = Uri.parse(text);
       if (uri.scheme.toLowerCase() != scheme) return null;
       if (uri.host.toLowerCase() != authority) return null;
+      // A versioned link is never a Gateway link, whatever else it carries.
+      final v = _versionValues(uri.query);
+      if (v.isNotEmpty && !(v.length == 1 && v.single == '1')) return null;
       // Decode only the surviving fields. Unknown legacy values never become
       // object credentials, even when their encoding is malformed.
       const fields = {
@@ -125,6 +128,42 @@ class PairingLink {
     }
   }
 
+  /// Raw values of every `v` key in [query] (none for legacy links).
+  static List<String> _versionValues(String query) => [
+    for (final part in query.split('&'))
+      if (part == 'v' || part.startsWith('v='))
+        part.length > 2 ? part.substring(2) : '',
+  ];
+
+  /// Central parse: tells v1 (Gateway), v2 (Dashboard only) or invalid.
+  static PairingLinkParse parse(String raw) {
+    try {
+      final text = raw.trim();
+      final uri = Uri.parse(text);
+      if (uri.scheme.toLowerCase() != scheme ||
+          uri.host.toLowerCase() != authority) {
+        return const PairingLinkParse.invalid();
+      }
+      final v = _versionValues(uri.query);
+      if (v.isEmpty || (v.length == 1 && v.single == '1')) {
+        final link = tryParse(text);
+        return link == null
+            ? const PairingLinkParse.invalid()
+            : PairingLinkParse._(PairingLinkVersion.v1, v1: link);
+      }
+      final link = v.length == 1 && v.single == '2'
+          ? DashboardPairingLink._parse(
+              text.substring(text.indexOf('?') + 1).split('#').first,
+            )
+          : null;
+      return link == null
+          ? const PairingLinkParse.invalid()
+          : PairingLinkParse._(PairingLinkVersion.v2, v2: link);
+    } catch (_) {
+      return const PairingLinkParse.invalid();
+    }
+  }
+
   /// Borrador de instancia a precargar en el editor (el usuario revisa y guarda).
   SavedConnection toDraftConnection() {
     final lbl = (label != null && label!.trim().isNotEmpty)
@@ -142,4 +181,81 @@ class PairingLink {
           : null,
     );
   }
+}
+
+enum PairingLinkVersion { v1, v2, invalid }
+
+/// Result of [PairingLink.parse]: exactly one of [v1] / [v2] when valid.
+class PairingLinkParse {
+  final PairingLinkVersion version;
+  final PairingLink? v1;
+  final DashboardPairingLink? v2;
+  const PairingLinkParse._(this.version, {this.v1, this.v2});
+  const PairingLinkParse.invalid() : this._(PairingLinkVersion.invalid);
+}
+
+/// `hermes://pair?v=2&url=…&user=…[&pass=…][&label=…]`: a Dashboard-only
+/// link. It never carries Gateway data: any other key (token, host, port…) is
+/// ignored. The password lives in memory only and is excluded from
+/// [toString], [==] and [hashCode].
+class DashboardPairingLink {
+  final String url;
+  final String user;
+  final String? label;
+  final String? _password;
+
+  const DashboardPairingLink._(this.url, this.user, this.label, this._password);
+
+  /// Only for the in-memory sign-in; never persist or log it.
+  String? get password => _password;
+  bool get hasPassword => _password != null;
+
+  static DashboardPairingLink? _parse(String query) {
+    final q = <String, String>{};
+    for (final part in query.split('&')) {
+      final i = part.indexOf('=');
+      final key = i < 0 ? part : part.substring(0, i);
+      if (!const {'url', 'user', 'pass', 'label'}.contains(key)) continue;
+      if (q.containsKey(key)) return null;
+      try {
+        q[key] = Uri.decodeQueryComponent(i < 0 ? '' : part.substring(i + 1));
+      } catch (_) {
+        return null; // Malformed encoding: refuse, never guess.
+      }
+    }
+    final url = (q['url'] ?? '').trim();
+    final target = Uri.tryParse(url);
+    final scheme = target?.scheme.toLowerCase();
+    if (target == null ||
+        (scheme != 'http' && scheme != 'https') ||
+        target.host.isEmpty) {
+      return null;
+    }
+    final user = (q['user'] ?? '').trim();
+    if (user.isEmpty) return null;
+    final pass = q['pass'];
+    if (pass != null && pass.isEmpty) return null;
+    final label = (q['label'] ?? '').trim();
+    return DashboardPairingLink._(
+      url,
+      user,
+      label.isEmpty ? null : label,
+      pass,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      other is DashboardPairingLink &&
+      other.url == url &&
+      other.user == user &&
+      other.label == label &&
+      other.hasPassword == hasPassword;
+
+  @override
+  int get hashCode => Object.hash(url, user, label, hasPassword);
+
+  @override
+  String toString() =>
+      'DashboardPairingLink(url: $url, user: $user, hasPassword: $hasPassword)';
 }

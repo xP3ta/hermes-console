@@ -46,6 +46,7 @@ import '../models/provider_exclusions.dart';
 import '../models/provider_key_groups.dart';
 import '../services/custom_endpoints_api.dart';
 import '../services/local_models_client.dart';
+import '../services/model_readiness.dart';
 import '../services/model_catalog_cache.dart';
 import '../services/model_picker_loader.dart';
 import '../services/models_snapshot.dart';
@@ -2166,22 +2167,8 @@ class _ModelsScreenState extends State<ModelsScreen>
 
   /// A connected provider is behind the default the server reports (by id,
   /// alias, or because it lists the model).
-  bool _activeModelUsable(ModelActiveInfo info) {
-    final provider = info.provider.trim().toLowerCase();
-    final model = info.model.trim().toLowerCase();
-    for (final p in _providers) {
-      if (!p.authenticated) continue;
-      if (provider.isNotEmpty &&
-          (p.slug.toLowerCase() == provider ||
-              modelProviderMatches(p, provider))) {
-        return true;
-      }
-      if (model.isNotEmpty && p.models.any((m) => m.toLowerCase() == model)) {
-        return true;
-      }
-    }
-    return false;
-  }
+  bool _activeModelUsable(ModelActiveInfo info) =>
+      activeModelUsable(info, _providers);
 
   Widget _buildNoActiveModelCard(Strings s, HermesThemeColors colors) =>
       ModelsTonalGroup(

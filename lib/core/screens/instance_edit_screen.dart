@@ -11,6 +11,7 @@ import 'package:flutter/services.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../l10n/app_localizations.dart';
+import '../config/flavor.dart';
 import '../design/content.dart' show HermesSelectRow;
 import '../design/hermes_design.dart' as design;
 import '../design/modal.dart' show HermesOption, showHermesOptions;
@@ -22,7 +23,6 @@ import '../utils/api_error.dart';
 import '../services/pairing_link.dart';
 import '../theme/app_theme.dart';
 import '../utils/transport_privacy.dart';
-import '../widgets/api_key_help.dart';
 import 'onboarding/manual_setup_page.dart';
 import '../companion/models/companion_mood.dart';
 import '../widgets/hermes_status_indicator.dart';
@@ -99,6 +99,14 @@ class InstanceEditScreen extends StatefulWidget {
   /// en ConnectionManager y Keystore (spec 028 A-005).
   final SavedConnection? prefill;
 
+  /// New connection from «Connect by hand» or the Dashboard: opens the Dashboard sign-in once
+  /// on entry and saves after a good sign-in, like Desktop's one-step connect.
+  final bool signInFirst;
+
+  /// Simple-connect wording: the status line, Save and the sign-in action say
+  /// the Dashboard sign-in is what chat needs.
+  final bool simpleConnect;
+
   const InstanceEditScreen({
     required this.connManager,
     this.initial,
@@ -109,6 +117,8 @@ class InstanceEditScreen extends StatefulWidget {
     this.diagnostics,
     this.scanCode,
     this.verifyChatBeforeSave = false,
+    this.signInFirst = false,
+    this.simpleConnect = kSimpleConnectEnabled,
     super.key,
   });
 
@@ -142,13 +152,11 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
 
   // Diagnóstico
   ConnectionDiagnostics? _diag;
-  List<ProbeResult>? _gatewayResults;
   List<ProbeResult>? _dashboardResults;
 
   bool _autoDashBusy = false;
   List<String> _suggestions = const [];
   CapabilityMatrix? _detectedMatrix;
-  ServerCapabilities? _serverCaps;
   DiagnosticsReport? _lastReport;
   bool _probing = false;
   String? _diagnosticError;
@@ -183,11 +191,26 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
   TransportPrivacyClass _gatewayTransport = TransportPrivacyClass.secure;
 
   bool get _isNew => widget.initial == null;
+  bool _signInFirstStarted = false;
+
+  /// Sign-in, then the usual verified save. A cancelled or failed sign-in
+  /// leaves the form as it is.
+  Future<void> _signInThenSave() async {
+    await _setupDashboardLogin();
+    if (mounted && _dashboardLoginVerified) await _save();
+  }
 
   @override
   void initState() {
     super.initState();
     _releaseSetup = ConnectionSetupActivity.instance.hold();
+    if (widget.signInFirst && _isNew) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || _signInFirstStarted) return;
+        _signInFirstStarted = true;
+        unawaited(_signInThenSave());
+      });
+    }
     _diag = widget.diagnostics;
     final init = widget.initial;
     _nameCtrl = TextEditingController(text: init?.label ?? '');
@@ -483,11 +506,7 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
 
     final automation = () async {
       if (!mounted) return;
-      await _runProbe(
-        gateway: true,
-        dashboard:
-            _dashboardUrlCtrl.text.trim().isNotEmpty || link.hasDashboardLogin,
-      );
+      await _runProbe();
     }();
     _pairingAutomationFuture = automation;
     unawaited(automation);
@@ -573,6 +592,7 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
         MaterialPageRoute(
           builder: (_) => DashboardSetupScreen(
             connection: draft.$1,
+            browserFirst: widget.simpleConnect,
             authorityCurrent: current,
           ),
         ),
@@ -740,20 +760,16 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
   }
 
   _DiagnosticsSnapshot get _diagnosticsSnapshot => _DiagnosticsSnapshot(
-    gateway: _gatewayResults,
     dashboard: _dashboardResults,
 
     suggestions: _suggestions,
     matrix: _detectedMatrix,
-    serverCapabilities: _serverCaps,
     report: _lastReport,
     error: _diagnosticError,
   );
 
-  Future<_DiagnosticsSnapshot> _runProbe({
-    bool gateway = false,
-    bool dashboard = false,
-  }) async {
+  /// The whole check, or only the Dashboard probes: Desktop reads one origin.
+  Future<_DiagnosticsSnapshot> _runProbe({bool dashboardOnly = false}) async {
     if (_gatewayUrlCtrl.text.trim().isEmpty) {
       setState(
         () => _diagnosticError = Strings.of(context).ieGatewayUrlBeforeTest,
@@ -800,8 +816,7 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
               _dashUserCtrl.text.trim() != (storedSecrets?.username ?? ''));
       _diag ??= ConnectionDiagnostics();
 
-      // Complete diagnostics observes only the configured official surfaces.
-      if (gateway && dashboard) {
+      if (!dashboardOnly) {
         final report = await _diag!.run(s, conn, secrets);
         if (!mounted) return _diagnosticsSnapshot;
         if (!current()) {
@@ -830,12 +845,10 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
           return _diagnosticsSnapshot;
         }
         setState(() {
-          _gatewayResults = report.gateway;
           _dashboardResults = report.dashboard;
 
           _suggestions = report.suggestions;
           _detectedMatrix = report.matrix;
-          _serverCaps = report.serverCapabilities;
           _lastReport = report;
           if (!report.matrix.dashboardAuthValid.isYes) {
             _dashboardLoginVerified = false;
@@ -844,20 +857,8 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
         return _diagnosticsSnapshot;
       }
 
-      // Comprobaciones parciales: cada parte por separado, de forma
-      // independiente, sin que una desactive a las otras.
-      List<ProbeResult>? gwResults;
-      ServerCapabilities? gwCaps;
-      List<ProbeResult>? dashResults;
-
-      if (gateway) {
-        final (results, _, serverCaps) = await _diag!.probeGateway(conn);
-        gwResults = results;
-        gwCaps = serverCaps;
-      }
-      if (dashboard) {
-        dashResults = await _diag!.probeDashboard(conn, secrets);
-      }
+      // Dashboard-only recheck: no matrix, it never claims more than it read.
+      final dashResults = await _diag!.probeDashboard(conn, secrets);
 
       if (!mounted) return _diagnosticsSnapshot;
       if (!current()) {
@@ -865,20 +866,8 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
         return _diagnosticsSnapshot;
       }
       setState(() {
-        if (gwResults != null) {
-          _gatewayResults = gwResults;
-          _serverCaps = gwCaps;
-        }
-        if (dashResults != null) _dashboardResults = dashResults;
-
-        if (gateway || dashboard) {
-          _suggestions = _diag!.buildSuggestions(
-            s,
-            conn,
-            gwResults ?? const [],
-            dashResults ?? const [],
-          );
-        }
+        _dashboardResults = dashResults;
+        _suggestions = _diag!.buildSuggestions(s, conn, const [], dashResults);
       });
     } catch (e) {
       // Mensaje legible; el detalle técnico va al log y a "copiar diagnóstico"
@@ -901,7 +890,9 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
         ? CompanionMood.success
         : label == s.sUnchecked
         ? CompanionMood.idle
-        : label == s.o2MissingDashboard || label == s.o2ReadOnly
+        : label == s.o2MissingDashboard ||
+              label == s.sDashboardSignInMissing ||
+              label == s.o2ReadOnly
         ? CompanionMood.waiting
         : label == s.o2Unreachable
         ? CompanionMood.offline
@@ -924,9 +915,8 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
         builder: (_) => _InstanceDiagnosticsScreen(
           initial: _diagnosticsSnapshot,
           onRun: (scope) => switch (scope) {
-            _DiagnosticScope.all => _runProbe(gateway: true, dashboard: true),
-            _DiagnosticScope.gateway => _runProbe(gateway: true),
-            _DiagnosticScope.dashboard => _runProbe(dashboard: true),
+            _DiagnosticScope.all => _runProbe(),
+            _DiagnosticScope.dashboard => _runProbe(dashboardOnly: true),
           },
         ),
       ),
@@ -945,19 +935,22 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
       setState(() => _error = Strings.of(context).ieGatewayUrlRequired);
       return;
     }
-    if (_isNew && _gatewayTokenCtrl.text.trim().isEmpty) {
-      setState(() => _error = Strings.of(context).ieGatewayTokenRequired);
-      return;
-    }
     if (widget.verifyChatBeforeSave) {
-      await _runProbe(gateway: true, dashboard: true);
+      await _runProbe();
       if (!mounted) return;
-      if (_diagnosticError != null ||
-          !(_lastReport?.gateway.any(
-                (p) => p.name == 'sessions' && p.status.isOk,
-              ) ??
-              false)) {
-        setState(() => _error = _statusSentence(Strings.of(context)));
+      // The Dashboard login and its `/api/sessions` read are the proof.
+      bool read(String name) =>
+          _lastReport?.dashboard.any((p) => p.name == name && p.status.isOk) ??
+          false;
+      if (_diagnosticError != null || !read('auth') || !read('sessions')) {
+        final s = Strings.of(context);
+        final sentence = _statusSentence(s);
+        setState(
+          () => _error =
+              widget.simpleConnect && sentence == s.sDashboardSignInMissing
+              ? s.ieSignInExpired
+              : sentence,
+        );
         return;
       }
     }
@@ -1039,7 +1032,6 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
 
   void _invalidateDiagnosis() {
     _error = null;
-    _gatewayResults = null;
     _dashboardResults = null;
     _lastReport = null;
     _detectedMatrix = null;
@@ -1202,22 +1194,6 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
     }
   }
 
-  void _setGatewayPort(String value) {
-    final port = int.tryParse(value);
-    if (port == null || port < 1 || port > 65535) return;
-    final old = SavedConnection.normalizeHostAndPort(
-      _gatewayUrlCtrl.text.trim(),
-      8642,
-    );
-    if (old.host.isEmpty) return;
-    _gatewayUrlCtrl.text = Uri(
-      scheme: old.useHttps ? 'https' : 'http',
-      host: old.host,
-      port: port,
-    ).toString();
-    _onGatewayUrlChanged(_gatewayUrlCtrl.text);
-  }
-
   void _setDashboardPort(String value) {
     final port = int.tryParse(value);
     if (port == null || port < 1 || port > 65535) return;
@@ -1331,48 +1307,33 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
   String _statusSentence(Strings s) {
     if (_probing) return s.sChecking;
     if (_diagnosticError != null) return _diagnosticError!;
-    final gateway = _gatewayResults;
-    if (gateway == null) return s.sUnchecked;
-    if (gateway.any(
-      (r) =>
-          r.status == ProbeStatus.authInvalid ||
-          r.status == ProbeStatus.authRequired,
-    )) {
-      return s.sChatKeyRejected;
-    }
-    if (gateway.any((r) => r.status == ProbeStatus.tlsError)) {
+    final dashboard = _dashboardResults;
+    if (dashboard == null) return s.sUnchecked;
+    if (dashboard.any((r) => r.status == ProbeStatus.tlsError)) {
       return s.sCertificate;
     }
-    if (gateway.any(
-      (r) =>
-          (r.name == 'health' || r.name == 'sessions') &&
-          {
-            ProbeStatus.timeout,
-            ProbeStatus.dnsError,
-            ProbeStatus.refused,
-            ProbeStatus.error,
-          }.contains(r.status),
-    )) {
+    final life = dashboard.where((r) => r.name == 'status').firstOrNull;
+    if (life != null &&
+        const {
+          ProbeStatus.timeout,
+          ProbeStatus.dnsError,
+          ProbeStatus.refused,
+          ProbeStatus.error,
+        }.contains(life.status)) {
       return s.o2Unreachable;
     }
-    if (!gateway.any((r) => r.name == 'sessions' && r.status.isOk)) {
-      return s.sWrongChatAddress;
-    }
-    final dashboard = _dashboardResults;
-    if (dashboard?.any((r) => r.status == ProbeStatus.tlsError) == true) {
-      return s.sCertificate;
-    }
-    if (dashboard?.any((r) => r.name == 'status' && !r.status.isOk) == true) {
-      return s.sDashboardUnreachable;
-    }
-    if (dashboard == null ||
-        !dashboard.any((r) => r.name == 'auth' && r.status.isOk) ||
+    if (life != null && !life.status.isOk) return s.sDashboardUnreachable;
+    if (!dashboard.any((r) => r.name == 'auth' && r.status.isOk) ||
+        !dashboard.any((r) => r.name == 'sessions' && r.status.isOk) ||
         dashboard.any(
           (r) =>
               r.status == ProbeStatus.authInvalid ||
               r.status == ProbeStatus.authRequired,
         )) {
-      return s.o2MissingDashboard;
+      // Chat needs the Dashboard, so "chat is connected" would be false here.
+      return widget.simpleConnect
+          ? s.sDashboardSignInMissing
+          : s.o2MissingDashboard;
     }
     if (_readOnly ||
         (_detectedMatrix?.chatSupported.isNo == true &&
@@ -1470,7 +1431,11 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
             ),
             child: HermesPrimaryButton(
               key: const ValueKey('instance-save'),
-              label: _saving ? s.ieSaving : s.commonSave,
+              label: _saving
+                  ? s.ieSaving
+                  : widget.simpleConnect && _probing
+                  ? s.ieChecking
+                  : s.commonSave,
               icon: Icons.save_outlined,
               onTap: _saving || _probing ? null : _save,
             ),
@@ -1487,6 +1452,21 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
               tone: colors.error,
             ),
           ),
+        if (widget.simpleConnect && _error == s.ieSignInExpired)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Semantics(
+              button: true,
+              label: s.ieSignInAgain,
+              excludeSemantics: true,
+              child: HermesSecondaryButton(
+                key: const ValueKey('instance-sign-in-again'),
+                label: s.ieSignInAgain,
+                icon: Icons.login,
+                onTap: _saving || _probing ? null : _signInThenSave,
+              ),
+            ),
+          ),
         if (_appliedLink != null)
           HermesInfoBanner(
             pairingLinkSummary(s, _appliedLink!),
@@ -1500,9 +1480,7 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
               key: const ValueKey('instance-test'),
               icon: Icons.wifi_tethering,
               trailing: _diagIndicator(),
-              onTap: _probing
-                  ? null
-                  : () => _runProbe(gateway: true, dashboard: true),
+              onTap: _probing ? null : _runProbe,
             ),
             Padding(
               padding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
@@ -1566,15 +1544,6 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
         design.HermesListGroup(
           dividerIndent: 14,
           children: [
-            if (_isNew)
-              _field(
-                key: const ValueKey('instance-gateway-token'),
-                controller: _gatewayTokenCtrl,
-                label: s.ieGatewayToken,
-                obscure: true,
-                autocorrect: false,
-                paste: true,
-              ),
             design.HermesListRow(
               title: s.o2SignIn,
               key: const ValueKey('instance-dashboard-sign-in'),
@@ -1641,28 +1610,12 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
             dividerIndent: 14,
             children: [
               _field(
-                key: const ValueKey('instance-chat-port'),
-                controller: _gatewayPortCtrl,
-                label: s.sChatPort,
-                keyboardType: TextInputType.number,
-                onChanged: _setGatewayPort,
-              ),
-              _field(
                 key: const ValueKey('instance-dashboard-port'),
                 controller: _dashboardPortCtrl,
                 label: s.sDashboardPort,
                 keyboardType: TextInputType.number,
                 onChanged: _setDashboardPort,
               ),
-              if (!_isNew)
-                _field(
-                  key: const ValueKey('instance-gateway-token'),
-                  controller: _gatewayTokenCtrl,
-                  label: s.ieGatewayTokenEmpty,
-                  obscure: true,
-                  autocorrect: false,
-                  paste: true,
-                ),
               design.HermesListRow(
                 title: s.sEncrypted,
                 subtitle: 'HTTPS',
@@ -1781,7 +1734,6 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
                 ),
             ],
           ),
-          const ApiKeyHelpLink(),
           design.HermesListRow(
             title: s.o2SetupByHand,
             icon: Icons.terminal,
@@ -1824,7 +1776,7 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
   }
 }
 
-enum _DiagnosticScope { all, gateway, dashboard }
+enum _DiagnosticScope { all, dashboard }
 
 typedef _DiagnosticsRunner =
     Future<_DiagnosticsSnapshot> Function(_DiagnosticScope scope);
@@ -1859,34 +1811,25 @@ _DiagnosticSurfaceState _surfaceState(List<ProbeResult>? results) {
 }
 
 class _DiagnosticsSnapshot {
-  final List<ProbeResult>? gateway;
   final List<ProbeResult>? dashboard;
 
   final List<String> suggestions;
   final CapabilityMatrix? matrix;
-  final ServerCapabilities? serverCapabilities;
   final DiagnosticsReport? report;
   final String? error;
 
   const _DiagnosticsSnapshot({
-    required this.gateway,
     required this.dashboard,
 
     required this.suggestions,
     required this.matrix,
-    required this.serverCapabilities,
     required this.report,
     required this.error,
   });
 
-  bool get hasAnyResults => gateway != null || dashboard != null;
+  bool get hasAnyResults => dashboard != null;
 
-  bool get hasAllSurfaces => gateway != null && dashboard != null;
-
-  List<_DiagnosticSurfaceState> get surfaceStates => [
-    _surfaceState(gateway),
-    _surfaceState(dashboard),
-  ];
+  List<_DiagnosticSurfaceState> get surfaceStates => [_surfaceState(dashboard)];
 
   CompanionMood mood({bool probing = false}) {
     if (probing) return CompanionMood.connecting;
@@ -2000,11 +1943,6 @@ class _InstanceDiagnosticsScreenState
           HermesSectionHeader(s.ieConnectionServices),
           HermesGroup(
             children: [
-              _DiagnosticServiceRow(
-                title: s.ieSecGateway,
-                icon: Icons.dns_outlined,
-                results: _snapshot.gateway,
-              ),
               _DiagnosticServiceRow(
                 title: s.ieSecDashboard,
                 icon: Icons.admin_panel_settings_outlined,
@@ -2154,7 +2092,6 @@ class _DiagnosticsOverviewCard extends StatelessWidget {
   }
 
   String _scopeLabel(_DiagnosticScope scope) => switch (scope) {
-    _DiagnosticScope.gateway => 'Gateway',
     _DiagnosticScope.dashboard => 'Dashboard',
 
     _DiagnosticScope.all => '',
@@ -2276,15 +2213,6 @@ class _TechnicalDiagnosticsDisclosure extends StatelessWidget {
           children: [
             Expanded(
               child: HermesSecondaryButton(
-                key: const ValueKey('diagnostics-run-gateway'),
-                label: 'Gateway',
-                icon: Icons.dns_outlined,
-                onTap: running ? null : () => onRun(_DiagnosticScope.gateway),
-              ),
-            ),
-            const SizedBox(width: 6),
-            Expanded(
-              child: HermesSecondaryButton(
                 key: const ValueKey('diagnostics-run-dashboard'),
                 label: 'Dashboard',
                 icon: Icons.admin_panel_settings_outlined,
@@ -2293,22 +2221,14 @@ class _TechnicalDiagnosticsDisclosure extends StatelessWidget {
             ),
           ],
         ),
-        if (snapshot.gateway != null) ...[
-          const SizedBox(height: 12),
-          _ProbeResultCard(title: s.ieSecGateway, results: snapshot.gateway!),
-        ],
         if (snapshot.dashboard != null) ...[
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
           _ProbeResultCard(
             title: s.ieSecDashboard,
             results: snapshot.dashboard!,
           ),
         ],
 
-        if (snapshot.serverCapabilities != null) ...[
-          const SizedBox(height: 10),
-          _ServerCapsCard(caps: snapshot.serverCapabilities!),
-        ],
         if (snapshot.matrix?.checkedAtMs != null) ...[
           const SizedBox(height: 10),
           _CapabilitySummaryCard(matrix: snapshot.matrix!),
@@ -2431,85 +2351,7 @@ class _ProbeResultCard extends StatelessWidget {
   };
 }
 
-/// Resumen de lo declarado por GET /v1/capabilities, expandible al detalle.
-class _ServerCapsCard extends StatefulWidget {
-  final ServerCapabilities caps;
-
-  const _ServerCapsCard({required this.caps});
-
-  @override
-  State<_ServerCapsCard> createState() => _ServerCapsCardState();
-}
-
-class _ServerCapsCardState extends State<_ServerCapsCard> {
-  bool _expanded = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
-    final caps = widget.caps;
-    return HermesCard(
-      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-      onTap: () => setState(() => _expanded = !_expanded),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  Strings.of(context).ieDeclaredByCapabilities,
-                  style: TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 1.8,
-                    color: colors.accentHover,
-                  ),
-                ),
-              ),
-              if (caps.model != null)
-                Padding(
-                  padding: const EdgeInsets.only(right: 8),
-                  child: Text(
-                    caps.model!,
-                    style: TextStyle(fontSize: 10, color: colors.textSecondary),
-                  ),
-                ),
-              AnimatedRotation(
-                turns: _expanded ? 0.5 : 0,
-                duration: const Duration(milliseconds: 160),
-                child: Icon(
-                  Icons.expand_more,
-                  size: 15,
-                  color: colors.textDisabled,
-                ),
-              ),
-            ],
-          ),
-          AnimatedSize(
-            duration: const Duration(milliseconds: 200),
-            curve: Curves.easeOut,
-            alignment: Alignment.topCenter,
-            child: _expanded
-                ? Padding(
-                    padding: const EdgeInsets.only(top: 8),
-                    child: Text(
-                      caps.summary,
-                      style: TextStyle(
-                        fontSize: 10.5,
-                        height: 1.5,
-                        color: colors.textSecondary,
-                      ),
-                    ),
-                  )
-                : const SizedBox.shrink(),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
+/// Resumen de las capacidades comprobadas, expandible al detalle.
 class _CapabilitySummaryCard extends StatelessWidget {
   final CapabilityMatrix matrix;
 
@@ -2573,7 +2415,7 @@ class _CapabilitySummaryCard extends StatelessWidget {
                   ? colors.textTertiary
                   : colors.warning;
               return HermesBadge(
-                // '·srv' = lo declaró /v1/capabilities; sin marca = probe.
+                // '·srv' = lo declaró el servidor; sin marca = probe.
                 '$label: ${state.isYes
                     ? s.capYes
                     : state.isNo

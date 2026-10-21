@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/services/connection_health_tracker.dart';
+import 'package:hermes_android/core/services/connection_status.dart';
 
 void main() {
   group('ConnectionHealthTracker', () {
@@ -69,4 +70,20 @@ void main() {
       expect(tracker.showsChecking, isTrue);
     },
   );
+
+  test('N4: REST healthy never reads online over a down chat socket', () {
+    final tracker = ConnectionHealthTracker();
+    tracker.recordResult(tracker.beginProbe(), healthy: true);
+    expect(tracker.online, isTrue);
+
+    tracker.link = ConnectionStatus(
+      ConnectionStatusKind.reconnecting,
+      since: DateTime(2026),
+    );
+    expect(tracker.healthy, isTrue, reason: 'REST stays what it measured');
+    expect(tracker.online, isFalse);
+
+    tracker.link = const ConnectionStatus(ConnectionStatusKind.connected);
+    expect(tracker.online, isTrue);
+  });
 }

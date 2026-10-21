@@ -133,6 +133,7 @@ import 'package:hermes_android/core/services/desktop_gateway_capabilities.dart';
 import 'package:hermes_android/core/services/font_size_service.dart';
 import 'package:hermes_android/core/services/local_transcript_store.dart';
 import 'package:hermes_android/core/services/mission_bot_chat_store.dart';
+import 'package:hermes_android/core/services/notifications/notification_delivery_store.dart';
 import 'package:hermes_android/core/services/notifications/notification_service.dart';
 import 'package:hermes_android/core/services/secure_storage.dart';
 import 'package:hermes_android/core/services/session_deletion.dart';
@@ -1677,11 +1678,34 @@ final class _Mk1215WarmTicket extends DashboardClient {
       const DashboardWebSocketAuth(queryName: 'ticket', credential: 'mk1215');
 }
 
+/// Records the `host:port` of every HTTP request and refuses it.
+class _AskedHosts extends HttpOverrides {
+  _AskedHosts(this.hosts);
+  final List<String> hosts;
+
+  @override
+  HttpClient createHttpClient(SecurityContext? context) =>
+      _RefusingClient(hosts);
+}
+
+class _RefusingClient implements HttpClient {
+  _RefusingClient(this.hosts);
+  final List<String> hosts;
+
+  @override
+  Future<HttpClientRequest> openUrl(String method, Uri url) async {
+    hosts.add('${url.host}:${url.port}');
+    throw const SocketException('refused by the fixture');
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => null;
+}
+
 /// mk1215: counting fakes for the picker's HTTP fallbacks, with the costs the
 /// audit measured (Bridge 500 after ~60 ms, Dashboard ~300 ms).
 class _PickerFallbacks {
   final calls = <ModelPickerSource, int>{};
-  bool bridgeFails = true;
 
   Future<(ModelActiveInfo, List<ModelProvider>)?> _answer(
     ModelPickerSource source,
@@ -1689,9 +1713,6 @@ class _PickerFallbacks {
   ) async {
     calls[source] = (calls[source] ?? 0) + 1;
     await Future<void>.delayed(delay);
-    if (source == ModelPickerSource.officialGateway && bridgeFails) {
-      throw Exception('server 500');
-    }
     return (
       const ModelActiveInfo(
         model: 'disk-model',
@@ -1715,14 +1736,8 @@ class _PickerFallbacks {
   }
 
   Map<ModelPickerSource, ModelPickerFallback> get map => {
-    ModelPickerSource.officialGateway: () => _answer(
-      ModelPickerSource.officialGateway,
-      const Duration(milliseconds: 60),
-    ),
     ModelPickerSource.dashboard: () =>
         _answer(ModelPickerSource.dashboard, const Duration(milliseconds: 300)),
-    ModelPickerSource.gateway: () =>
-        _answer(ModelPickerSource.gateway, const Duration(milliseconds: 150)),
   };
 
   int of(ModelPickerSource source) => calls[source] ?? 0;
@@ -2645,6 +2660,13 @@ Companion _islandPet(String slug) => Companion(
   },
 );
 
+/// Every app of this file mounts the same ledger file (the suite's temp
+/// directory), and nothing closes it before the process ends. One shared handle
+/// keeps the file at two descriptors; one per test reached the 1024-descriptor
+/// limit near test 500 and failed every later test with EMFILE, so which ones
+/// failed depended on how many tests the file had.
+final _sharedDeliveryStore = NotificationDeliveryStore();
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   var secureStore = <String, String>{};
@@ -3071,6 +3093,10 @@ void main() {
       }
     }
 
+    final notifications = NotificationService(
+      prefs,
+      deliveryStore: _sharedDeliveryStore,
+    );
     await tester.pumpWidget(
       HermesApp(
         connManager: connManager,
@@ -3084,7 +3110,7 @@ void main() {
           NotificationService(prefs),
         ),
         sshSessions: SshSessionService(SshManager(sec, connManager)),
-        notifications: NotificationService(prefs),
+        notifications: notifications,
         activeChats: activeChats,
       ),
     );
@@ -10334,6 +10360,36 @@ void main() {
     },
   );
 
+  for (final (path, showsCard) in const [
+    ('/workspace/Askøy/informe.pdf', true),
+    ('/workspace/a%2/informe.pdf', false),
+  ]) {
+    testWidgets(
+      'I208: respuesta larga con MEDIA no decodificable ($path) no rompe el chat',
+      (tester) async {
+        final filler = List.filled(
+          160,
+          'Resultado del análisis de la sesión.',
+        ).join('\n\n');
+        expect(filler.length, greaterThan(5200));
+        await pumpChat(
+          tester,
+          messages: [
+            {'role': 'assistant', 'content': '$filler\nMEDIA:$path'},
+            {'role': 'user', 'content': 'Envía el informe'},
+          ],
+        );
+
+        expect(tester.takeException(), isNull);
+        expect(find.text('Resultado del análisis de la sesión.'), findsWidgets);
+        expect(
+          find.byType(AttachmentCard),
+          showsCard ? findsOneWidget : findsNothing,
+        );
+      },
+    );
+  }
+
   testWidgets('MEDIA de audio inicia carga sin filtrar la ruta ni reproducir', (
     tester,
   ) async {
@@ -12530,7 +12586,7 @@ void main() {
         await tester.pump(const Duration(milliseconds: 400));
         final outboxGate = Completer<String?>();
         delayedOutboxRead = outboxGate;
-        await tester.tap(find.byKey(const ValueKey('send')));
+        await tester.longPress(find.byKey(const ValueKey('send')));
         await tester.pump();
         Navigator.of(tester.element(find.byType(ChatScreen))).pop();
         await tester.pump();
@@ -12593,7 +12649,7 @@ void main() {
       // enqueue reports success.
       final writeGate = Completer<void>();
       delayedOutboxWrite = writeGate;
-      await tester.tap(find.byKey(const ValueKey('send')));
+      await tester.longPress(find.byKey(const ValueKey('send')));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 50));
       Navigator.of(tester.element(find.byType(ChatScreen))).pop();
@@ -12616,6 +12672,69 @@ void main() {
       gateway.emitComplete('dos');
       await tester.pump(const Duration(milliseconds: 500));
       // Let queue drain/retry timers of the background chat settle.
+      await tester.pump(const Duration(seconds: 5));
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('queued turn: a refused drain never refills the composer on '
+        'reattach', (tester) async {
+      final gateway = _SubmissionGateway()..submitGate = Completer<void>();
+      final connection = _remoteConn('draft-queued-refused-drain');
+      final session = _session().copyWith(
+        id: 'saved-draft-queued-refused',
+        messageCount: 2,
+        profile: 'default',
+      );
+      final chat = await pumpChat(
+        tester,
+        session: session,
+        connection: connection,
+        desktopGateway: gateway,
+      );
+      await tester.enterText(find.byType(TextField).first, 'turno en vuelo');
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.tap(find.byKey(const ValueKey('send')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      gateway.submitGate!.complete();
+      await tester.pump(const Duration(milliseconds: 500));
+
+      await tester.enterText(find.byType(TextField).first, 'turno encolado');
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.longPress(find.byKey(const ValueKey('send')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(chat.queuedMessages, ['turno encolado']);
+
+      // The long turn ends and the gateway refuses the drained queued turn
+      // (another client owns the session): it never reaches acceptance.
+      gateway.submitError = StateError('rejected before acceptance');
+      gateway.emitComplete('uno');
+      await tester.pump(const Duration(milliseconds: 1200));
+
+      // Reattach: the same chat is opened again.
+      final shown = tester.widget<ChatScreen>(find.byType(ChatScreen));
+      Navigator.of(tester.element(find.byType(ChatScreen))).pushReplacement(
+        MaterialPageRoute<void>(
+          builder: (_) => ChatScreen(
+            connection: shown.connection,
+            session: shown.session,
+            initialStoredSessionId: shown.initialStoredSessionId,
+          ),
+        ),
+      );
+      for (var frame = 0; frame < 10; frame++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+
+      expect(
+        tester.widget<TextField>(find.byType(TextField).first).controller!.text,
+        isEmpty,
+        reason: 'a queued turn belongs to the queue, not to the composer',
+      );
+      final store = await readStore();
+      expect((await store.load(connection.id, session.id)).text, isEmpty);
+      gateway.submitError = null;
       await tester.pump(const Duration(seconds: 5));
       expect(tester.takeException(), isNull);
     });
@@ -12645,7 +12764,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 500));
       await tester.enterText(find.byType(TextField).first, 'turno encolado');
       await tester.pump(const Duration(milliseconds: 400));
-      await tester.tap(find.byKey(const ValueKey('send')));
+      await tester.longPress(find.byKey(const ValueKey('send')));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
 
@@ -16987,16 +17106,24 @@ void main() {
     Future<void> Function()? afterConfirm,
   }) async {
     final deletes = <String>[];
+    // Answers like the Dashboard handlers (sessions.py): the page token on
+    // `GET /`, `DELETE /api/sessions/{id}` -> `{"ok": true}` and the list shape
+    // `{sessions, total, limit, offset}`.
     final server = MockClient((request) async {
+      if (request.url.path == '/') {
+        return http.Response(
+          '<script>window.__HERMES_SESSION_TOKEN__="t";</script>',
+          200,
+        );
+      }
       if (request.method == 'DELETE') {
         deletes.add(request.url.pathSegments.last);
-        return http.Response('{"deleted": true}', 200);
+        return http.Response('{"ok": true}', 200);
       }
       if (request.url.path.endsWith('/sessions')) {
         return http.Response(
           jsonEncode({
-            'object': 'list',
-            'data': [
+            'sessions': [
               {
                 'id': 'sess-test',
                 'title': 'Conversación de prueba',
@@ -17004,6 +17131,9 @@ void main() {
                 'message_count': 2,
               },
             ],
+            'total': 1,
+            'limit': 20,
+            'offset': 0,
           }),
           200,
         );
@@ -17063,7 +17193,11 @@ void main() {
     var notified = 0;
     shared.addListener(() => notified++);
     // The local recovery cleanup after the server's 200 never finishes.
-    cleanup = Completer<void>();
+    final held = cleanup = Completer<void>();
+    // A failing expect must not leave it pending for the tests after this one.
+    addTearDown(() {
+      if (!held.isCompleted) held.complete();
+    });
 
     final deletes = await deleteFromChatMenu(
       tester,
@@ -24014,15 +24148,10 @@ void main() {
           connection: connection,
           attachDesktopRuntimeOnLoad: false,
           modelPickerFallbacks: {
-            for (final source in [
-              ModelPickerSource.officialGateway,
-              ModelPickerSource.dashboard,
-              ModelPickerSource.gateway,
-            ])
-              source: () async {
-                failedSources.add(source);
-                return null;
-              },
+            ModelPickerSource.dashboard: () async {
+              failedSources.add(ModelPickerSource.dashboard);
+              return null;
+            },
           },
         );
         await tester.pump(const Duration(seconds: 1));
@@ -24060,15 +24189,8 @@ void main() {
         await tester.pump();
         await tester.pump(const Duration(seconds: 1));
         await tester.pump();
-        expect(
-          failedSources,
-          containsAll([
-            ModelPickerSource.officialGateway,
-            ModelPickerSource.dashboard,
-            ModelPickerSource.gateway,
-          ]),
-        );
-        expect(failedSources, hasLength(3));
+        expect(failedSources, contains(ModelPickerSource.dashboard));
+        expect(failedSources, hasLength(1));
         expect(find.text('Lista anterior sin confirmar.'), findsOneWidget);
         expect(find.text('unconfirmed-catalog-model'), findsWidgets);
         final pill = find.byKey(const ValueKey('status-pill-model'));
@@ -24110,15 +24232,10 @@ void main() {
           desktopGateway: gateway,
           messagesLoaded: false,
           modelPickerFallbacks: {
-            for (final source in [
-              ModelPickerSource.officialGateway,
-              ModelPickerSource.dashboard,
-              ModelPickerSource.gateway,
-            ])
-              source: () async {
-                failedSources.add(source);
-                return null;
-              },
+            ModelPickerSource.dashboard: () async {
+              failedSources.add(ModelPickerSource.dashboard);
+              return null;
+            },
           },
         );
         for (var frame = 0; !chat.hasDesktopRuntime && frame < 10; frame++) {
@@ -24174,14 +24291,7 @@ void main() {
         await tester.pump(const Duration(seconds: 1));
         await tester.pump();
         expect(gateway.modelOptionsCalls, reads + 1);
-        expect(
-          failedSources,
-          containsAll([
-            ModelPickerSource.officialGateway,
-            ModelPickerSource.dashboard,
-            ModelPickerSource.gateway,
-          ]),
-        );
+        expect(failedSources, contains(ModelPickerSource.dashboard));
         expect(find.text('Lista anterior sin confirmar.'), findsOneWidget);
         expect(find.text('unconfirmed-catalog-model'), findsWidgets);
         expect(chat.desktopRuntimeInfo.model, 'confirmed-session-model');
@@ -24223,15 +24333,10 @@ void main() {
           desktopGateway: gateway,
           messagesLoaded: false,
           modelPickerFallbacks: {
-            for (final source in [
-              ModelPickerSource.officialGateway,
-              ModelPickerSource.dashboard,
-              ModelPickerSource.gateway,
-            ])
-              source: () async {
-                failedSources.add(source);
-                return null;
-              },
+            ModelPickerSource.dashboard: () async {
+              failedSources.add(ModelPickerSource.dashboard);
+              return null;
+            },
           },
         );
         for (var frame = 0; !chat.hasDesktopRuntime && frame < 10; frame++) {
@@ -24288,14 +24393,7 @@ void main() {
         await tester.pump(const Duration(seconds: 1));
         await tester.pump();
         expect(gateway.modelOptionsCalls, reads + 1);
-        expect(
-          failedSources,
-          containsAll([
-            ModelPickerSource.officialGateway,
-            ModelPickerSource.dashboard,
-            ModelPickerSource.gateway,
-          ]),
-        );
+        expect(failedSources, contains(ModelPickerSource.dashboard));
         expect(
           find.byKey(const ValueKey('model-catalog-retry')),
           findsOneWidget,
@@ -24342,42 +24440,30 @@ void main() {
           desktopGateway: gateway,
           messagesLoaded: false,
           modelPickerFallbacks: {
-            for (final source in [
-              ModelPickerSource.officialGateway,
-              ModelPickerSource.dashboard,
-              ModelPickerSource.gateway,
-            ])
-              source: () async {
-                failedSources.add(source);
-                if (source == ModelPickerSource.gateway ||
-                    (recovered && source == ModelPickerSource.dashboard)) {
-                  return (
-                    ModelActiveInfo(
-                      model: recovered
-                          ? 'confirmed-session-model'
-                          : 'gateway-alias',
-                      provider: 'provider-a',
-                      effectiveContextLength: 0,
-                    ),
-                    [
-                      ModelProvider(
-                        slug: 'provider-a',
-                        name: 'Provider A',
-                        isCurrent: true,
-                        authenticated: true,
-                        authType: '',
-                        oauthProviderId: '',
-                        keyEnv: '',
-                        warning: '',
-                        models: [
-                          recovered ? 'recovered-model' : 'gateway-alias',
-                        ],
-                      ),
-                    ],
-                  );
-                }
-                return null;
-              },
+            ModelPickerSource.dashboard: () async {
+              failedSources.add(ModelPickerSource.dashboard);
+              if (!recovered) return null;
+              return (
+                const ModelActiveInfo(
+                  model: 'confirmed-session-model',
+                  provider: 'provider-a',
+                  effectiveContextLength: 0,
+                ),
+                const [
+                  ModelProvider(
+                    slug: 'provider-a',
+                    name: 'Provider A',
+                    isCurrent: true,
+                    authenticated: true,
+                    authType: '',
+                    oauthProviderId: '',
+                    keyEnv: '',
+                    warning: '',
+                    models: ['recovered-model'],
+                  ),
+                ],
+              );
+            },
           },
         );
         for (var frame = 0; !chat.hasDesktopRuntime && frame < 10; frame++) {
@@ -24433,19 +24519,11 @@ void main() {
         await tester.pump(const Duration(seconds: 1));
         await tester.pump();
         expect(gateway.modelOptionsCalls, reads + 1);
-        expect(
-          failedSources,
-          containsAll([
-            ModelPickerSource.officialGateway,
-            ModelPickerSource.dashboard,
-            ModelPickerSource.gateway,
-          ]),
-        );
+        expect(failedSources, contains(ModelPickerSource.dashboard));
         expect(find.text('Lista anterior sin confirmar.'), findsOneWidget);
         expect(find.text('unconfirmed-catalog-model'), findsWidgets);
         expect(chat.desktopRuntimeInfo.model, 'confirmed-session-model');
         expect(chat.sessionProfile, 'profile-b');
-        expect(find.text('gateway-alias'), findsNothing);
         recovered = true;
         await tester.tap(find.byKey(const ValueKey('model-catalog-retry')));
         await tester.pump(const Duration(seconds: 1));
@@ -24591,8 +24669,27 @@ void main() {
                   bridgeCalls++;
                   return null;
                 },
-                ModelPickerSource.dashboard: () async => null,
-                ModelPickerSource.gateway: () async => null,
+                ModelPickerSource.dashboard: () async => (
+                  const ModelActiveInfo(
+                    model: 'official-model',
+                    provider: 'official-provider',
+                    effectiveContextLength: 0,
+                  ),
+                  const [
+                    ModelProvider(
+                      slug: 'official-provider',
+                      name: 'Official Provider',
+                      isCurrent: false,
+                      authenticated: true,
+                      authType: '',
+                      oauthProviderId: '',
+                      keyEnv: '',
+                      warning: 'Synthetic provider metadata',
+                      models: ['official-model'],
+                      aliases: {'custom:official-provider'},
+                    ),
+                  ],
+                ),
               },
             );
             await tester.pump(const Duration(seconds: 1));
@@ -24608,7 +24705,7 @@ void main() {
               ModelPickerCache.key('row55-picker', chat.sessionProfile),
             );
             expect(entry?.result.providers.single.name, 'Official Provider');
-            expect(entry?.result.source, ModelPickerSource.officialGateway);
+            expect(entry?.result.source, ModelPickerSource.dashboard);
             expect(
               entry?.result.providers.single.aliases,
               contains('custom:official-provider'),
@@ -24624,7 +24721,7 @@ void main() {
             );
             expect(
               requests.where((r) => r.url.path.endsWith('/api/model/options')),
-              isNotEmpty,
+              isEmpty,
             );
             if (attached) {
               await tester.tap(find.text('official-model').last);
@@ -24690,43 +24787,19 @@ void main() {
       (tester) async {
         var recovered = false;
         var dashboardCalls = 0;
-        var gatewayCalls = 0;
         final fallbacks = _PickerFallbacks();
         final chat = await pumpChat(
           tester,
           connection: _remoteConn('conn-picker-degraded'),
           attachDesktopRuntimeOnLoad: false,
           modelPickerFallbacks: {
-            ModelPickerSource.officialGateway: () async => null,
             ModelPickerSource.dashboard: () async {
               dashboardCalls++;
               if (!recovered) {
                 await Future<void>.delayed(const Duration(seconds: 5));
+                return null;
               }
               return fallbacks.map[ModelPickerSource.dashboard]!();
-            },
-            ModelPickerSource.gateway: () async {
-              gatewayCalls++;
-              return (
-                const ModelActiveInfo(
-                  model: 'hermes-agent',
-                  provider: 'gateway',
-                  effectiveContextLength: 0,
-                ),
-                const [
-                  ModelProvider(
-                    slug: 'gateway',
-                    name: 'Gateway',
-                    isCurrent: true,
-                    authenticated: true,
-                    authType: '',
-                    oauthProviderId: '',
-                    keyEnv: '',
-                    warning: '',
-                    models: ['hermes-agent'],
-                  ),
-                ],
-              );
             },
           },
         );
@@ -24735,47 +24808,22 @@ void main() {
         await tester.pump();
         await tester.pump(const Duration(seconds: 6));
         await tester.pump();
-        expect(find.text('hermes-agent'), findsWidgets);
+        expect(find.text('hermes-agent'), findsNothing);
         expect(find.textContaining('Instalar Mobile Bridge'), findsNothing);
         expect(
-          find.text(
-            'Catálogo limitado: no se pudo cargar la lista de modelos.',
-          ),
+          find.byKey(const ValueKey('model-catalog-retry')),
           findsOneWidget,
-        );
-        final card = find.byKey(
-          const ValueKey('model-card-gateway-hermes-agent'),
-        );
-        expect(card, findsOneWidget);
-        expect(
-          tester
-              .widget<Semantics>(
-                find
-                    .descendant(of: card, matching: find.byType(Semantics))
-                    .first,
-              )
-              .properties
-              .enabled,
-          isFalse,
         );
         final before = dashboardCalls;
         recovered = true;
         await tester.tap(find.byKey(const ValueKey('model-catalog-retry')));
         await tester.pump();
-        expect(
-          tester
-              .widget<TextButton>(
-                find.byKey(const ValueKey('model-catalog-retry')),
-              )
-              .onPressed,
-          isNull,
-        );
+        expect(find.byKey(const ValueKey('model-catalog-retry')), findsNothing);
         await tester.pump(const Duration(seconds: 1));
         await tester.pump();
         expect(find.text('other-model'), findsWidgets);
         expect(find.byKey(const ValueKey('model-catalog-retry')), findsNothing);
         expect(dashboardCalls, before + 1);
-        expect(gatewayCalls, 1);
         expect(chat.hasDesktopRuntime, isFalse);
         expect(tester.takeException(), isNull);
       },
@@ -24973,11 +25021,39 @@ void main() {
         );
         expect(cold, lessThan(400));
         expect(warm, 0, reason: 'painted on the first frame from cache');
-        expect(fallbacks.of(ModelPickerSource.officialGateway), 1);
         expect(fallbacks.of(ModelPickerSource.dashboard), 1);
         expect(tester.takeException(), isNull);
       },
     );
+
+    for (final dashboardUp in [true, false]) {
+      testWidgets('u2: the picker never asks the Gateway or Ollama '
+          '(Dashboard ${dashboardUp ? "up" : "down"})', (tester) async {
+        final asked = <String>[];
+        final previous = HttpOverrides.current;
+        HttpOverrides.global = _AskedHosts(asked);
+        addTearDown(() => HttpOverrides.global = previous);
+        await pumpChat(
+          tester,
+          connection: _remoteConn('conn-u2-picker-$dashboardUp'),
+          modelPickerFallbacks: {
+            ModelPickerSource.dashboard: dashboardUp
+                ? _PickerFallbacks().map.values.single
+                : () async => null,
+          },
+        );
+        await openModelSheet(tester);
+        await tester.pump(const Duration(seconds: 1));
+        expect(
+          find.text('other-model'),
+          dashboardUp ? findsWidgets : findsNothing,
+        );
+        expect(
+          asked.where((h) => h.endsWith(':8642') || h.endsWith(':11434')),
+          isEmpty,
+        );
+      });
+    }
 
     testWidgets(
       'md1215: un proveedor custom:<clave> se reconoce por sus alias',
@@ -33203,13 +33279,13 @@ void main() {
   });
 
   testWidgets(
-    'envío normal durante turno vivo conserva FIFO durable sin mutarlo',
+    'envío normal durante turno vivo corrige en vivo con session.redirect',
     (tester) async {
       final gateway = _NoLiveMutationGateway();
       final chat = await pumpChat(
         tester,
         desktopGateway: gateway,
-        connection: _remoteConn('conn-live-normal-fifo'),
+        connection: _remoteConn('conn-live-normal-correction'),
         messagesLoaded: false,
       );
       final screen = tester.widget<ChatScreen>(find.byType(ChatScreen));
@@ -33220,20 +33296,19 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
       expect(gateway.submissions, ['Primera petición']);
       expect(chat.isStreaming, isTrue);
-      final writesBeforeQueue = outboxWriteCalls;
-      const nextTurns = ['Siguiente turno', 'Tercer turno'];
+      final writesBeforeCorrection = outboxWriteCalls;
+      const corrections = ['Siguiente turno', 'Tercer turno'];
 
-      for (final text in nextTurns) {
+      for (final text in corrections) {
         await tester.enterText(find.byType(TextField), text);
         await tester.pump(const Duration(milliseconds: 250));
-        if (text == nextTurns.first) {
+        if (text == corrections.first) {
           await tester.tap(find.byKey(const ValueKey('send')));
         } else {
           await submitComposerFromKeyboard(tester);
         }
         await tester.pump(const Duration(milliseconds: 100));
 
-        expect(gateway.redirects, isEmpty);
         expect(gateway.steers, isEmpty);
         expect(gateway.interruptCalls, 0);
         expect(gateway.rewinds, isEmpty);
@@ -33252,51 +33327,23 @@ void main() {
         );
       }
 
-      expect(chat.queuedMessages, nextTurns);
-      expect(outboxWriteCalls, writesBeforeQueue + nextTurns.length);
-      // Read the durable backing store, not the in-memory queue: both turns
-      // must be independently recoverable exactly once in admission order.
-      final stored = jsonDecode(secureStore['chat_turn_outbox_v1']!) as Map;
-      final queued =
-          stored.values
-              .map(
-                (value) => PreparedTurn.fromJson(
-                  Map<String, dynamic>.from(value as Map),
-                ),
-              )
-              .where((turn) => turn.queued)
-              .toList()
-            ..sort(
-              (left, right) => left.queueOrder!.compareTo(right.queueOrder!),
-            );
-      expect(queued.map((turn) => turn.text), nextTurns);
-      expect(queued.map((turn) => turn.clientTurnId).toSet(), hasLength(2));
-      expect(queued.map((turn) => turn.queueOrder).toSet(), hasLength(2));
-      expect(
-        queued.every((turn) => turn.state == PreparedTurnState.prepared),
-        isTrue,
-      );
-      expect(
-        chat.messages.where(
+      expect(gateway.redirects, corrections);
+      expect(chat.queuedMessages, isEmpty);
+      expect(outboxWriteCalls, writesBeforeCorrection);
+      for (final text in corrections) {
+        final rows = chat.messages.where(
           (message) =>
               message['role'] == 'user' &&
-              nextTurns.contains(message['content']),
-        ),
-        isEmpty,
-      );
+              message['content'] == text &&
+              message['_steer'] == true,
+        );
+        expect(rows, hasLength(1));
+      }
 
       gateway.emit('message.complete', {'text': 'primera terminada'});
       await tester.pump(const Duration(milliseconds: 1200));
-      expect(gateway.submissions, ['Primera petición', nextTurns.first]);
-      expect(chat.queuedMessages, [nextTurns.last]);
-      gateway.emit('message.complete', {'text': 'segunda terminada'});
-      await tester.pump(const Duration(milliseconds: 1200));
-      expect(gateway.submissions, ['Primera petición', ...nextTurns]);
+      expect(gateway.submissions, ['Primera petición']);
       expect(chat.queuedMessages, isEmpty);
-      gateway.emit('message.complete', {'text': 'tercera terminada'});
-      await tester.pump(const Duration(milliseconds: 1200));
-      expect(gateway.submissions, ['Primera petición', ...nextTurns]);
-      expect(gateway.redirects, isEmpty);
       expect(gateway.steers, isEmpty);
       expect(gateway.interruptCalls, 0);
       expect(gateway.rewinds, isEmpty);
@@ -33304,7 +33351,7 @@ void main() {
     },
   );
 
-  testWidgets('envío normal encola sin consultar redirect que rechazaría', (
+  testWidgets('envío normal con redirect rechazado cae a la cola y drena', (
     tester,
   ) async {
     final gateway = _NoLiveMutationGateway()
@@ -33326,7 +33373,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('send')));
     await tester.pump(const Duration(milliseconds: 100));
 
-    expect(gateway.redirects, isEmpty);
+    expect(gateway.redirects, ['Siguiente turno']);
     expect(gateway.steers, isEmpty);
     expect(gateway.interruptCalls, 0);
     expect(gateway.submissions, ['Primera petición']);
@@ -33341,52 +33388,57 @@ void main() {
     );
     gateway.emit('message.complete', {'text': 'terminado'});
     await tester.pump(const Duration(milliseconds: 1200));
+    expect(gateway.submissions, ['Primera petición', 'Siguiente turno']);
     gateway.emit('message.complete', {'text': 'segundo terminado'});
     await tester.pump(const Duration(milliseconds: 350));
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('envío normal encola sin consultar redirect que fallaría', (
-    tester,
-  ) async {
-    final gateway = _NoLiveMutationGateway()
-      ..redirectError = StateError('redirect unavailable');
-    final chat = await pumpChat(
-      tester,
-      desktopGateway: gateway,
-      connection: _remoteConn('conn-live-redirect-error'),
-      messagesLoaded: false,
-    );
+  testWidgets(
+    'envío normal con redirect ambiguo no encola y conserva el borrador',
+    (tester) async {
+      final gateway = _NoLiveMutationGateway()
+        ..redirectError = StateError('redirect unavailable');
+      final chat = await pumpChat(
+        tester,
+        desktopGateway: gateway,
+        connection: _remoteConn('conn-live-redirect-error'),
+        messagesLoaded: false,
+      );
 
-    await tester.enterText(find.byType(TextField), 'Primera petición');
-    await tester.pump(const Duration(milliseconds: 250));
-    await tester.tap(find.byKey(const ValueKey('send')));
-    await tester.pump(const Duration(milliseconds: 100));
+      await tester.enterText(find.byType(TextField), 'Primera petición');
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.tap(find.byKey(const ValueKey('send')));
+      await tester.pump(const Duration(milliseconds: 100));
 
-    await tester.enterText(find.byType(TextField), 'Siguiente turno');
-    await tester.pump(const Duration(milliseconds: 250));
-    await tester.tap(find.byKey(const ValueKey('send')));
-    await tester.pump(const Duration(milliseconds: 100));
+      await tester.enterText(find.byType(TextField), 'Siguiente turno');
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.tap(find.byKey(const ValueKey('send')));
+      await tester.pump(const Duration(milliseconds: 100));
 
-    expect(gateway.redirects, isEmpty);
-    expect(gateway.steers, isEmpty);
-    expect(gateway.interruptCalls, 0);
-    expect(gateway.submissions, ['Primera petición']);
-    expect(chat.queuedMessages, ['Siguiente turno']);
-    expect(
-      chat.messages.where(
-        (message) =>
-            message['role'] == 'user' &&
-            message['content'] == 'Siguiente turno',
-      ),
-      isEmpty,
-    );
-    gateway.emit('message.complete', {'text': 'terminado'});
-    await tester.pump(const Duration(milliseconds: 1200));
-    gateway.emit('message.complete', {'text': 'segundo terminado'});
-    await tester.pump(const Duration(milliseconds: 350));
-    expect(tester.takeException(), isNull);
-  });
+      expect(gateway.redirects, ['Siguiente turno']);
+      expect(gateway.steers, isEmpty);
+      expect(gateway.interruptCalls, 0);
+      expect(gateway.submissions, ['Primera petición']);
+      expect(chat.queuedMessages, isEmpty);
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).controller?.text,
+        'Siguiente turno',
+      );
+      expect(
+        chat.messages.where(
+          (message) =>
+              message['role'] == 'user' &&
+              message['content'] == 'Siguiente turno',
+        ),
+        isEmpty,
+      );
+      gateway.emit('message.complete', {'text': 'terminado'});
+      await tester.pump(const Duration(milliseconds: 1200));
+      expect(gateway.submissions, ['Primera petición']);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('aprobación pendiente mantiene Enter en la cola', (tester) async {
     final gateway = _NoLiveMutationGateway();
@@ -35519,8 +35571,10 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('voice: the recogniser loads ahead once the chat is painted, '
-      'never before, and without the microphone', (tester) async {
+  testWidgets('voice: the recogniser loads when a finger lands on the voice '
+      'button, never on opening the chat, and without the microphone', (
+    tester,
+  ) async {
     final recognizer = _AheadRecognizer();
     bool? paintedWhenLoaded;
     String? phaseWhenLoaded;
@@ -35560,14 +35614,24 @@ void main() {
         };
       },
     );
+    for (var turn = 0; turn < 30; turn++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
     expect(
       recognizer.prewarmCalls,
       0,
-      reason: 'the chat comes in first: nothing is loaded during its entrance',
+      reason: 'opening the chat loads nothing, however long it stays open',
+    );
+
+    // The finger landing is enough: it never completes the tap.
+    final touch = await tester.startGesture(
+      tester.getCenter(find.byKey(const ValueKey('voice'))),
     );
     for (var turn = 0; turn < 20 && recognizer.prewarmCalls == 0; turn++) {
       await tester.pump(const Duration(milliseconds: 50));
     }
+    await touch.cancel();
+    await tester.pump();
 
     expect(recognizer.prewarmCalls, 1);
     expect(

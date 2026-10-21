@@ -99,7 +99,12 @@ class GatewayMutationFenceSourceTest(unittest.TestCase):
         return self.gateway[start:end]
 
     def test_normal_chat_and_voice_cannot_implicitly_steer(self):
-        self.assertEqual(self.chat.count("_chat.steer("), 0)
+        # 1.3.0: sending while Hermes works is a live correction, as in
+        # Desktop. It happens in one place only: the explicit send path.
+        self.assertEqual(self.chat.count("_chat.steer("), 1)
+        start = self.chat.index("Future<bool?> _steerLiveCorrection(")
+        end = self.chat.index("\n  }\n", start)
+        self.assertIn("_chat.steer(", self.chat[start:end])
         self.assertEqual(self.chat.count("_chat.steerQueuedTurnWithOutcome("), 1)
         self.assertNotIn("chat.steer(", self.voice)
         self.assertNotIn("_chat.redirect(", self.chat)

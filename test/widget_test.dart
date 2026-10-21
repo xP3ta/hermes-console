@@ -338,24 +338,24 @@ void main() {
   });
 
   group('OnboardingScreen', () {
-    testWidgets(
-      'the welcome has one primary action and the real Console mark',
-      (tester) async {
-        final manager = await emptyManager();
-        await tester.pumpWidget(
-          _host(OnboardingScreen(connManager: manager, onDone: () {})),
-        );
-        // The opening plays here (the ambient light never settles).
-        await tester.pump(const Duration(milliseconds: 3000));
-        expect(find.text('Conecta con tu Hermes'), findsOneWidget);
-        expect(find.text('Escanear código'), findsOneWidget);
-        expect(find.text('No tengo código'), findsOneWidget);
-        expect(find.text('Conectar a mano'), findsOneWidget);
-        expect(find.byKey(const ValueKey('console-mark')), findsOneWidget);
-        expect(find.text('Saltar'), findsNothing);
-        expect(find.byType(PageView), findsNothing);
-        expect(tester.takeException(), isNull);
-      },
-    );
+    testWidgets('the welcome has two doors and the real Console mark', (
+      tester,
+    ) async {
+      final manager = await emptyManager();
+      await tester.pumpWidget(
+        _host(OnboardingScreen(connManager: manager, onDone: () {})),
+      );
+      // The opening plays here (the ambient light never settles).
+      await tester.pump(const Duration(milliseconds: 3000));
+      expect(find.text('Conecta con tu Hermes'), findsOneWidget);
+      expect(find.text('Ya tengo Hermes'), findsOneWidget);
+      expect(find.text('Aún no tengo Hermes'), findsOneWidget);
+      expect(find.text('Conectar a mano'), findsOneWidget);
+      expect(find.text('Buscar mi Hermes'), findsNothing);
+      expect(find.byKey(const ValueKey('console-mark')), findsOneWidget);
+      expect(find.text('Saltar'), findsNothing);
+      expect(find.byType(PageView), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
   });
 }

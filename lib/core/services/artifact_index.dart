@@ -1043,7 +1043,7 @@ String? _normalizeAbsolutePath(String raw) {
     if (segment.isEmpty || segment == '.') continue;
     late final String decoded;
     try {
-      decoded = Uri.decodeComponent(segment);
+      decoded = GeneratedMediaService.decodeMediaSegment(segment);
     } on FormatException {
       return null;
     }

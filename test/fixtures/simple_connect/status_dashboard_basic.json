@@ -1,0 +1,9 @@
+{
+  "version": "0.21.6",
+  "gateway_running": true,
+  "auth_required": true,
+  "auth_providers": ["basic"],
+  "auth_flows": ["cookie", "native_pkce"],
+  "install_id": "0123456789abcdef0123456789abcdef",
+  "profiles": ["default", "work"]
+}

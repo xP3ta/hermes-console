@@ -10,6 +10,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'core/guide/guide_layer.dart';
 import 'core/widgets/artifact_viewer/code_view_prefs.dart';
+import 'core/widgets/chat_row_boundary.dart';
 import 'core/widgets/floating_chat_header.dart';
 import 'core/widgets/instance_kind_picker.dart';
 import 'core/widgets/mascot/header_mascot.dart';
@@ -56,6 +57,7 @@ import 'core/screens/runs_screen.dart';
 
 import 'core/screens/tasks_screen.dart';
 import 'core/screens/cron_screen.dart';
+import 'core/services/connection_status.dart';
 import 'core/services/app_error_log.dart';
 import 'core/services/startup_destination.dart';
 import 'core/services/notifications/notification_permission_moment.dart';
@@ -81,6 +83,7 @@ import 'core/services/media_prefetcher.dart';
 import 'core/services/approval_policy.dart';
 import 'core/services/chat_draft_store.dart';
 import 'core/services/connection_manager.dart';
+import 'core/services/new_session_factory.dart';
 import 'core/services/font_size_service.dart';
 import 'core/services/home_widget_publisher.dart';
 import 'core/services/notifications/background_listener.dart';
@@ -277,6 +280,7 @@ Future<T?> pushNotificationOwnerRoute<T>(
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   AppErrorLog.install();
+  installChatRowErrorWidget();
   PerformanceTrace.qa.start();
   if (kVoiceRuntimeEnabled) {
     FlutterForegroundTask.initCommunicationPort();
@@ -1279,7 +1283,7 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
       final nav = _navigatorKey.currentState;
       if (connection == null || nav == null) return;
       final session = Session(
-        id: GatewayChatClient.generateSessionId(),
+        id: generateSessionId(),
         title: Strings.of(nav.context).drawerNewChat,
         model: 'hermes-agent',
         source: 'mobile',
@@ -1473,12 +1477,17 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
       _networkAvailabilityListener = NetworkAvailabilityRecoveryListener(
         events: _networkAvailabilityEvents.receiveBroadcastStream(),
         onAvailable: () {
+          GatewaySocketMeter.instance.recordNetworkAvailable();
+          ConnectionStatusRegistry.instance.setNetworkLost(false);
           widget.activeChats.requestImmediateTransportRecovery();
           // Pooled observers (Home, library, rooms, pet) are probed too, so a
           // half-open socket from the old network fails now, not in 45 s.
           unawaited(SharedGatewayPool.instance.probeAll());
         },
-        onLost: () => GatewaySocketMeter.instance.recordNetworkLost(),
+        onLost: () {
+          GatewaySocketMeter.instance.recordNetworkLost();
+          ConnectionStatusRegistry.instance.setNetworkLost(true);
+        },
       );
     }
     // `didHaveMemoryPressure` no lleva nivel y también se dispara al pasar a
@@ -2675,11 +2684,7 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     if (lookup != null) {
       session = await lookup(connection, sessionId, profile);
     } else {
-      final client = ApiClient(
-        baseUrl: connection.baseUrl,
-        apiKey: connection.apiKey,
-        connectionId: connection.id,
-      );
+      final client = ApiClient.forConnection(connection);
       try {
         session = await client.getSession(sessionId, profile: profile);
       } catch (_) {
@@ -2953,7 +2958,7 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
         return;
       }
 
-      final sessionId = GatewayChatClient.generateSessionId();
+      final sessionId = generateSessionId();
       await ChatDraftStore(
         widget.connManager.prefs,
       ).save(connection.id, sessionId, content.text, content.attachments);

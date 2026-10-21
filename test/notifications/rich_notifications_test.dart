@@ -643,9 +643,6 @@ final class _Ops implements NotificationActionOps {
   Future<void> roomSend(NotificationActionPayload p, String text, String id) =>
       _record('roomSend:$text:$id');
   @override
-  Future<void> runApprove(NotificationActionPayload p, String choice) =>
-      _record('runApprove:$choice');
-  @override
   Future<void> chatApprove(NotificationActionPayload p, String choice) =>
       _record('chatApprove:$choice');
   @override

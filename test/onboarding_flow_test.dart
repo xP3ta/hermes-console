@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/screens/dashboard_setup_screen.dart';
 import 'package:hermes_android/core/screens/home_dashboard_screen.dart';
@@ -52,6 +51,7 @@ void main() {
         await tester.pumpWidget(
           onboardingHost(
             OnboardingScreen(
+              simpleConnectEnabled: false,
               connManager: manager,
               onDone: () => done = true,
               diagnostics: diagnostics,
@@ -62,7 +62,6 @@ void main() {
         await tapOnboarding(tester, 'onboarding-manual');
         for (final (key, value) in [
           ('instance-gateway-url', 'https://fixture.invalid:8642'),
-          ('instance-gateway-token', 'synthetic-manual-key'),
         ]) {
           await revealEditorControl(tester, find.byKey(ValueKey(key)));
           await tester.enterText(find.byKey(ValueKey(key)), value);
@@ -82,7 +81,8 @@ void main() {
         expect(diagnostics.calls, 1);
         expect(find.byKey(const ValueKey('onboarding-sign-in')), findsNothing);
         expect(find.text('Conectado'), findsOneWidget);
-        expect(manager.getConnections().single.apiKey, 'synthetic-manual-key');
+        // No Gateway key was asked for, so none is stored.
+        expect(manager.getConnections().single.apiKey, '');
         expect(done, isFalse);
         await tapOnboarding(tester, 'onboarding-done');
         expect(done, isTrue);
@@ -102,6 +102,7 @@ void main() {
         await tester.pumpWidget(
           onboardingHost(
             OnboardingScreen(
+              simpleConnectEnabled: false,
               connManager: manager,
               onDone: () => done++,
               diagnostics: diagnostics,
@@ -116,7 +117,7 @@ void main() {
         await tester.pumpAndSettle();
         final s = onboardingStrings(tester);
         expect(find.text(s.o2WelcomeTitle), findsOneWidget);
-        expect(find.text(s.o2WelcomeBody), findsOneWidget);
+        expect(find.text(s.onb4WelcomeBody), findsOneWidget);
         expect(find.byKey(const ValueKey('console-mark')), findsOneWidget);
         expect(find.byType(PageView), findsNothing);
         expect(find.text('Saltar'), findsNothing);
@@ -160,7 +161,11 @@ void main() {
         var done = false;
         await tester.pumpWidget(
           onboardingHost(
-            OnboardingScreen(connManager: manager, onDone: () => done = true),
+            OnboardingScreen(
+              simpleConnectEnabled: false,
+              connManager: manager,
+              onDone: () => done = true,
+            ),
             language: language,
           ),
         );
@@ -184,6 +189,7 @@ void main() {
         await tester.pumpWidget(
           onboardingHost(
             OnboardingScreen(
+              simpleConnectEnabled: false,
               connManager: manager,
               onDone: () {},
               diagnostics: OnboardingDiagnostics(),
@@ -207,79 +213,6 @@ void main() {
   for (final language in ['es', 'en']) {
     Widget host(Widget child) => onboardingHost(child, language: language);
 
-    for (final clipboardFailed in [false, true]) {
-      testWidgets(
-        '$language: invalid or unavailable pasted code ($clipboardFailed) can retry safely',
-        (tester) async {
-          var valid = false;
-          var reads = 0;
-          tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
-            SystemChannels.platform,
-            (call) async {
-              if (call.method != 'Clipboard.getData') {
-                return null;
-              }
-              reads++;
-              if (valid) {
-                return {'text': fakeFullPairing.build()};
-              }
-              if (clipboardFailed) {
-                throw PlatformException(code: 'synthetic-clipboard-failure');
-              }
-              return {'text': 'https://example.invalid/not-a-console-code'};
-            },
-          );
-          addTearDown(
-            () => tester.binding.defaultBinaryMessenger
-                .setMockMethodCallHandler(SystemChannels.platform, null),
-          );
-          final manager = await onboardingManager();
-          final diagnostics = OnboardingDiagnostics();
-          await tester.pumpWidget(
-            host(
-              OnboardingScreen(
-                connManager: manager,
-                onDone: () {},
-                diagnostics: diagnostics,
-              ),
-            ),
-          );
-          await tester.pumpAndSettle();
-          expect(reads, 0);
-          await tapOnboarding(tester, 'onboarding-help');
-          await tapOnboarding(tester, 'onboarding-paste');
-          final s = onboardingStrings(tester);
-          final message = find.text(
-            clipboardFailed ? s.o2ClipboardFailed : s.o2InvalidCode,
-          );
-          expect(message, findsOneWidget);
-          expect(
-            find.ancestor(
-              of: message,
-              matching: find.byWidgetPredicate(
-                (widget) =>
-                    widget is Semantics && widget.properties.liveRegion == true,
-              ),
-            ),
-            findsOneWidget,
-          );
-          expect(
-            find.byKey(const ValueKey('onboarding-retry')),
-            findsOneWidget,
-          );
-          expect(diagnostics.calls, 0);
-          expect(manager.getConnections(), isEmpty);
-          valid = true;
-          await tapOnboarding(tester, 'onboarding-retry');
-          expect(reads, 2);
-          expect(find.text(s.o2ConfirmFull), findsOneWidget);
-          expect(diagnostics.calls, 0);
-          expect(manager.getConnections(), isEmpty);
-          await tester.pumpWidget(const SizedBox.shrink());
-        },
-      );
-    }
-
     testWidgets('$language: a public HTTP code sends no credentials', (
       tester,
     ) async {
@@ -288,6 +221,7 @@ void main() {
       await tester.pumpWidget(
         host(
           OnboardingScreen(
+            simpleConnectEnabled: false,
             connManager: manager,
             onDone: () {},
             diagnostics: diagnostics,
@@ -312,54 +246,8 @@ void main() {
       await tester.pumpWidget(const SizedBox.shrink());
     });
 
-    testWidgets(
-      '$language: paste reads only on a tap and goes through the same confirmation',
-      (tester) async {
-        var reads = 0;
-        tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
-          SystemChannels.platform,
-          (call) async {
-            if (call.method == 'Clipboard.getData') {
-              reads++;
-              return {'text': fakeFullPairing.build()};
-            }
-            return null;
-          },
-        );
-        addTearDown(
-          () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
-            SystemChannels.platform,
-            null,
-          ),
-        );
-        final manager = await onboardingManager();
-        final diagnostics = OnboardingDiagnostics();
-        await tester.pumpWidget(
-          host(
-            OnboardingScreen(
-              connManager: manager,
-              onDone: () {},
-              diagnostics: diagnostics,
-            ),
-          ),
-        );
-        await tester.pumpAndSettle();
-        expect(reads, 0);
-        await tapOnboarding(tester, 'onboarding-help');
-        await tapOnboarding(tester, 'onboarding-paste');
-        expect(reads, 1);
-        expect(
-          find.text(onboardingStrings(tester).o2ConfirmFull),
-          findsOneWidget,
-        );
-        expect(diagnostics.calls, 0);
-        await tapOnboarding(tester, 'onboarding-confirm');
-        expect(manager.getConnections(), hasLength(1));
-      },
-    );
-
+    // A Dashboard that does not answer: the Gateway key is no part of it.
     for (final status in [
-      ProbeStatus.authInvalid,
       ProbeStatus.timeout,
       ProbeStatus.dnsError,
       ProbeStatus.refused,
@@ -369,10 +257,11 @@ void main() {
         '$language: $status: one sentence, one retry and no saved connection',
         (tester) async {
           final manager = await onboardingManager();
-          final diagnostics = OnboardingDiagnostics(gatewayStatus: status);
+          final diagnostics = OnboardingDiagnostics(reachStatus: status);
           await tester.pumpWidget(
             host(
               OnboardingScreen(
+                simpleConnectEnabled: false,
                 connManager: manager,
                 onDone: () {},
                 diagnostics: diagnostics,
@@ -383,14 +272,7 @@ void main() {
           await tester.pumpAndSettle();
           await tapOnboarding(tester, 'onboarding-confirm');
           final s = onboardingStrings(tester);
-          expect(
-            find.text(
-              status == ProbeStatus.authInvalid
-                  ? s.o2KeyRejected
-                  : s.o2Unreachable,
-            ),
-            findsOneWidget,
-          );
+          expect(find.text(s.o2Unreachable), findsOneWidget);
           expect(
             find.byKey(const ValueKey('onboarding-retry')),
             findsOneWidget,
@@ -420,6 +302,7 @@ void main() {
             await tester.pumpWidget(
               host(
                 OnboardingScreen(
+                  simpleConnectEnabled: false,
                   connManager: manager,
                   onDone: () {},
                   initialLink: link,
@@ -476,6 +359,7 @@ void main() {
           await tester.pumpWidget(
             host(
               OnboardingScreen(
+                simpleConnectEnabled: false,
                 connManager: manager,
                 onDone: () {},
                 diagnostics: OnboardingDiagnostics(),
@@ -545,6 +429,7 @@ void main() {
         await tester.pumpWidget(
           host(
             OnboardingScreen(
+              simpleConnectEnabled: false,
               connManager: manager,
               onDone: () {},
               initialLink: fakeFullPairing,
@@ -578,6 +463,7 @@ void main() {
         await tester.pumpWidget(
           host(
             OnboardingScreen(
+              simpleConnectEnabled: false,
               connManager: manager,
               onDone: () {},
               diagnostics: diagnostics,
@@ -615,6 +501,7 @@ void main() {
         await tester.pumpWidget(
           host(
             OnboardingScreen(
+              simpleConnectEnabled: false,
               connManager: manager,
               onDone: () => completed = true,
               initialLink: fakeFullPairing,
@@ -651,6 +538,7 @@ void main() {
         await tester.pumpWidget(
           host(
             OnboardingScreen(
+              simpleConnectEnabled: false,
               connManager: manager,
               onDone: () => completed = true,
               initialLink: fakeFullPairing,
@@ -675,6 +563,7 @@ void main() {
         await tester.pumpWidget(
           host(
             OnboardingScreen(
+              simpleConnectEnabled: false,
               connManager: manager,
               onDone: () {},
               diagnostics: OnboardingDiagnostics(readOnly: true),
@@ -714,6 +603,7 @@ void main() {
         await tester.pumpWidget(
           host(
             OnboardingScreen(
+              simpleConnectEnabled: false,
               connManager: manager,
               onDone: () {},
               diagnostics: held,

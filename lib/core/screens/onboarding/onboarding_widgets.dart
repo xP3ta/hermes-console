@@ -103,6 +103,45 @@ class OnbPrimary extends StatelessWidget {
   }
 }
 
+/// The second door beside [OnbPrimary]: same pill, tonal with a hairline.
+class OnbSecondary extends StatelessWidget {
+  const OnbSecondary({required this.label, required this.onTap, super.key});
+  final String label;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = Theme.of(context).hermes;
+    return Semantics(
+      button: true,
+      label: label,
+      excludeSemantics: true,
+      child: PressableScale(
+        onTap: onTap,
+        child: Container(
+          constraints: const BoxConstraints(minHeight: kOnbPillHeight),
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+          decoration: BoxDecoration(
+            color: c.surfaceVariant,
+            border: Border.all(color: c.controlBorder),
+            borderRadius: BorderRadius.circular(kOnbPillHeight / 2),
+          ),
+          child: Text(
+            label,
+            maxLines: 2,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+              color: c.textPrimary,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// A compact pill: filled in the accent, or tonal.
 class OnbSmallPill extends StatelessWidget {
   const OnbSmallPill({
@@ -191,6 +230,7 @@ class OnbTextButton extends StatelessWidget {
       excludeSemantics: true,
       child: InkResponse(
         onTap: onTap,
+        containedInkWell: true,
         highlightShape: BoxShape.rectangle,
         borderRadius: BorderRadius.circular(23),
         child: Container(
@@ -537,6 +577,9 @@ class OnbSegmented<T> extends StatelessWidget {
                     child: InkResponse(
                       key: key,
                       onTap: () => onChanged(v),
+                      containedInkWell: true,
+                      highlightShape: BoxShape.rectangle,
+                      borderRadius: BorderRadius.circular(20),
                       child: Container(
                         constraints: const BoxConstraints(minHeight: 40),
                         alignment: Alignment.center,
@@ -568,7 +611,7 @@ class OnbSegmented<T> extends StatelessWidget {
 }
 
 /// The command in a rounded code block. It types itself in once (about 18 ms a
-/// character, never more than 1.2 s) and is complete at once on a tap, with
+/// character, never more than 0.6 s) and is complete at once on a tap, with
 /// reduced motion or with a screen reader.
 class OnbCodeBlock extends StatefulWidget {
   const OnbCodeBlock({required this.command, super.key});
@@ -592,7 +635,7 @@ class _OnbCodeBlockState extends State<OnbCodeBlock>
         MediaQuery.accessibleNavigationOf(context)) {
       return;
     }
-    final ms = (widget.command.length * 18).clamp(0, 1200);
+    final ms = (widget.command.length * 18).clamp(0, 600);
     _c = AnimationController(
       vsync: this,
       duration: Duration(milliseconds: ms),
@@ -624,7 +667,9 @@ class _OnbCodeBlockState extends State<OnbCodeBlock>
         width: double.infinity,
         padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
         decoration: BoxDecoration(
-          color: Color.lerp(c.background, Colors.black, .22),
+          color: Theme.of(context).brightness == Brightness.dark
+              ? Color.lerp(c.background, Colors.black, .22)
+              : c.surfaceVariant,
           borderRadius: BorderRadius.circular(16),
           border: Border.all(color: c.divider.withValues(alpha: .8)),
         ),
@@ -658,4 +703,96 @@ Future<void> onbCopy(String text) async {
   try {
     await Clipboard.setData(ClipboardData(text: text));
   } catch (_) {}
+}
+
+/// The largest size at most [style]'s that keeps the longest word of [text]
+/// on one line in [maxWidth] (never under 18), so an address does not break.
+double onbFitSize(
+  BuildContext context,
+  String text,
+  TextStyle style,
+  double maxWidth,
+) {
+  final size = style.fontSize ?? 28;
+  final painter = TextPainter(
+    text: TextSpan(
+      text: text.split(' ').reduce((a, b) => b.length > a.length ? b : a),
+      style: style,
+    ),
+    textDirection: TextDirection.ltr,
+    textScaler: onbTitleScaler(context),
+  )..layout();
+  final width = painter.width;
+  painter.dispose();
+  return width <= maxWidth ? size : (size * maxWidth / width).clamp(18, size);
+}
+
+/// A consent line in the onboarding family: a round tick and the text.
+class OnbConsent extends StatelessWidget {
+  const OnbConsent({
+    required this.value,
+    required this.label,
+    required this.onChanged,
+    super.key,
+  });
+  final bool value;
+  final String label;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = Theme.of(context).hermes;
+    final still = OnboardingMotion.reduced(context);
+    return Semantics(
+      container: true,
+      checked: value,
+      label: label,
+      onTap: () => onChanged(!value),
+      excludeSemantics: true,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () => onChanged(!value),
+        child: Container(
+          constraints: const BoxConstraints(minHeight: 48),
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          alignment: Alignment.centerLeft,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              AnimatedContainer(
+                duration: Duration(milliseconds: still ? 0 : 180),
+                curve: Curves.easeOutCubic,
+                width: 22,
+                height: 22,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: value ? c.accent : Colors.transparent,
+                  border: value
+                      ? null
+                      : Border.all(
+                          color: c.textSecondary.withValues(alpha: .6),
+                          width: 1.6,
+                        ),
+                ),
+                child: value
+                    ? DrawnCheck(size: 22, color: c.onAccent, width: 2.2)
+                    : null,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 13.5,
+                    height: 1.35,
+                    color: c.textSecondary,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }

@@ -36,7 +36,7 @@ void main() {
     await http.runWithClient(() async {
       await tester.pumpWidget(_app(_panel(_remote())));
       await tester.pumpAndSettle();
-      expect(find.text('Gateway'), findsOneWidget);
+      expect(find.text('Gateway'), findsNothing);
       expect(find.text('Dashboard'), findsOneWidget);
       expect(find.text('Mobile Bridge'), findsNothing);
       expect(find.text('Repair bridge'), findsNothing);
@@ -84,7 +84,6 @@ void main() {
 
                 connManager: manager,
                 reachable: (_) async => true,
-                gatewayKey: (_) async => GatewayKeyCheck.ok,
               ),
             ),
           );
@@ -122,47 +121,8 @@ void main() {
     );
   }
 
-  for (final code in [401, 403, 404, 500, null]) {
-    testWidgets('official Gateway rejection $code never claims connected', (
-      tester,
-    ) async {
-      final requests = <String>[];
-      final client = MockClient((request) async {
-        requests.add(request.url.path);
-        if (request.url.path == '/api/sessions') {
-          expect(request.headers['Authorization'], isNotEmpty);
-          if (code == null) throw TimeoutException('synthetic timeout');
-          return http.Response('{}', code);
-        }
-        return http.Response('{}', 200);
-      });
-      await http.runWithClient(() async {
-        await tester.pumpWidget(_app(_panel(_remote())));
-        await tester.pumpAndSettle();
-        final row = find.byKey(const ValueKey('instance-status-row-gateway'));
-        expect(
-          find.descendant(of: row, matching: find.text('connected')),
-          findsNothing,
-        );
-        expect(
-          find.descendant(
-            of: row,
-            matching: find.text(
-              code == 401 || code == 403
-                  ? 'API key rejected'
-                  : 'Status unavailable',
-            ),
-          ),
-          findsOneWidget,
-        );
-        expect(requests, contains('/api/sessions'));
-        expect(requests.where((path) => path.contains('bridge')), isEmpty);
-      }, () => client);
-    });
-  }
-
   for (final auth in DashboardAuthCheck.values) {
-    testWidgets('Dashboard $auth remains distinct from Gateway health', (
+    testWidgets('Dashboard $auth is read from the Dashboard login', (
       tester,
     ) async {
       await tester.pumpWidget(
@@ -171,7 +131,6 @@ void main() {
             connection: _remote(),
 
             reachable: (_) async => true,
-            gatewayKey: (_) async => GatewayKeyCheck.ok,
             dashboardAuth: (_) async => auth,
           ),
         ),
@@ -202,7 +161,7 @@ void main() {
       );
       final conn = _remote();
       await manager.upsertConnection(conn);
-      final gate = Completer<GatewayKeyCheck>();
+      final gate = Completer<DashboardAuthCheck>();
       var reads = 0;
       await tester.pumpWidget(
         _app(
@@ -211,10 +170,9 @@ void main() {
 
             connManager: manager,
             reachable: (_) async => true,
-            dashboardAuth: (_) async => DashboardAuthCheck.ok,
-            gatewayKey: (_) => ++reads == 1
+            dashboardAuth: (_) => ++reads == 1
                 ? gate.future
-                : Future.value(GatewayKeyCheck.rejected),
+                : Future.value(DashboardAuthCheck.loginRequired),
           ),
         ),
       );
@@ -228,12 +186,12 @@ void main() {
         await manager.setActiveProfile(conn.id, 'fixture-profile');
       }
       await tester.pump();
-      gate.complete(GatewayKeyCheck.ok);
+      gate.complete(DashboardAuthCheck.ok);
       await tester.pumpAndSettle();
       expect(reads, greaterThanOrEqualTo(2));
-      final row = find.byKey(const ValueKey('instance-status-row-gateway'));
+      final row = find.byKey(const ValueKey('instance-status-row-dashboard'));
       expect(
-        find.descendant(of: row, matching: find.text('API key rejected')),
+        find.descendant(of: row, matching: find.text('login required')),
         findsOneWidget,
       );
       expect(
@@ -246,18 +204,17 @@ void main() {
   testWidgets('same-state A B A change fences late authenticated success', (
     tester,
   ) async {
-    final gate = Completer<GatewayKeyCheck>();
+    final gate = Completer<DashboardAuthCheck>();
     var reads = 0;
     Widget panel(SavedConnection connection) => InstanceStatusPanel(
       connection: connection,
 
       reachable: (_) async => true,
-      dashboardAuth: (_) async => DashboardAuthCheck.ok,
-      gatewayKey: (_) {
+      dashboardAuth: (_) {
         reads++;
         return reads == 1
             ? gate.future
-            : Future.value(GatewayKeyCheck.rejected);
+            : Future.value(DashboardAuthCheck.loginRequired);
       },
     );
     final a = _remote();
@@ -267,11 +224,11 @@ void main() {
     await tester.pump();
     await tester.pumpWidget(_app(panel(a)));
     await tester.pump();
-    gate.complete(GatewayKeyCheck.ok);
+    gate.complete(DashboardAuthCheck.ok);
     await tester.pumpAndSettle();
-    final row = find.byKey(const ValueKey('instance-status-row-gateway'));
+    final row = find.byKey(const ValueKey('instance-status-row-dashboard'));
     expect(
-      find.descendant(of: row, matching: find.text('API key rejected')),
+      find.descendant(of: row, matching: find.text('login required')),
       findsOneWidget,
     );
     expect(

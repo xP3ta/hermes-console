@@ -68,6 +68,7 @@ void main() {
                       .push<DashboardCredsResult>(
                         MaterialPageRoute(
                           builder: (_) => DashboardSetupScreen(
+                            browserFirst: false,
                             connection: SavedConnection(
                               id: 'route-owner',
                               label: 'Existing',
@@ -171,6 +172,7 @@ void main() {
             localizationsDelegates: Strings.localizationsDelegates,
             supportedLocales: Strings.supportedLocales,
             home: DashboardSetupScreen(
+              browserFirst: false,
               connection: SavedConnection(
                 id: 'owner',
                 label: 'Existing',

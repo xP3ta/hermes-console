@@ -665,10 +665,23 @@ class GeneratedMediaService {
     }
   }
 
+  /// Percent-decodes one path segment of a MEDIA reference. A segment with
+  /// no `%` is already literal (raw Unicode included) and is returned as is;
+  /// [Uri.decodeComponent] would throw an [ArgumentError] on it. A malformed
+  /// escape surfaces as [FormatException] so callers withhold the directive.
+  static String decodeMediaSegment(String raw) {
+    if (!raw.contains('%')) return raw;
+    try {
+      return Uri.decodeComponent(raw);
+    } on ArgumentError catch (error) {
+      throw FormatException(error.message?.toString() ?? 'Invalid encoding');
+    }
+  }
+
   static String _decodedBasename(String path) {
     final raw = path.replaceAll('\\', '/').split('/').last;
     try {
-      return Uri.decodeComponent(raw);
+      return decodeMediaSegment(raw);
     } on FormatException {
       return raw;
     }
@@ -763,7 +776,7 @@ class GeneratedMediaService {
     for (final raw in path.replaceAll('\\', '/').split('/')) {
       if (raw.isEmpty) continue;
       try {
-        final decoded = Uri.decodeComponent(raw);
+        final decoded = decodeMediaSegment(raw);
         if (decoded.isEmpty ||
             decoded.contains('/') ||
             decoded.contains('\\')) {
@@ -842,7 +855,7 @@ class GeneratedMediaService {
       if (raw.isEmpty || raw == '.' || raw == '..') return false;
       String decoded;
       try {
-        decoded = Uri.decodeComponent(raw);
+        decoded = decodeMediaSegment(raw);
       } on FormatException {
         return false;
       }

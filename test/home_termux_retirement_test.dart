@@ -72,16 +72,21 @@ void main() {
             final origin = StackTrace.current.toString();
             if (origin.contains('local_termux_agent_provider.dart')) {
               termuxOrigins.add('${request.method} ${request.url}\n$origin');
-            } else if (request.url.host == '127.0.0.1' &&
-                request.url.port == port) {
+            } else if (request.url.host == '127.0.0.1') {
               official.add(request.url);
             }
-            if (request.url.path == '/health') {
-              return http.Response('{"status":"ok"}', 200);
+            if (request.url.path == '/') {
+              return http.Response(
+                '<script>window.__HERMES_SESSION_TOKEN__="t";</script>',
+                200,
+              );
+            }
+            if (request.url.path == '/api/status') {
+              return http.Response('{"version":"0.22"}', 200);
             }
             if (request.url.path == '/api/sessions') {
               return http.Response(
-                jsonEncode({'data': [], 'has_more': false}),
+                jsonEncode({'sessions': [], 'total': 0}),
                 200,
               );
             }
@@ -126,7 +131,7 @@ void main() {
             );
             expect(nativeTermux, isEmpty);
             expect(
-              official.where((uri) => uri.path == '/health').length,
+              official.where((uri) => uri.path == '/api/status').length,
               greaterThanOrEqualTo(2),
             );
             expect(

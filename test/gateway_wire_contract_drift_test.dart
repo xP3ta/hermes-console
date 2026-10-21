@@ -67,11 +67,6 @@ final _knownEventDrift = <String, String>{
   'session.closed': 'legacy terminal event of pre-0.19 gateways',
   'tool.progress': 'legacy progress event of pre-0.19 gateways',
   'subagent.text': 'legacy child text event of pre-0.19 gateways',
-  'tool.started': 'Runs API (/v1/runs SSE), not the gateway socket',
-  'tool.completed': 'Runs API (/v1/runs SSE), not the gateway socket',
-  'run.completed': 'Runs API (/v1/runs SSE), not the gateway socket',
-  'run.failed': 'Runs API (/v1/runs SSE), not the gateway socket',
-  'run.cancelled': 'Runs API (/v1/runs SSE), not the gateway socket',
 };
 
 /// Files whose event switches read the gateway event stream.

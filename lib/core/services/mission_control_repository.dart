@@ -383,12 +383,11 @@ Future<List<AgentProfile>> loadSharedMissionProfiles({
 }
 
 /// Loads the same aggregate, profile-owned session surface used by Hermes
-/// Desktop. Legacy Gateways are consulted only when the aggregate route is
-/// structurally unsupported; auth, network and malformed responses fail
-/// closed so a partial default-profile list cannot masquerade as complete.
+/// Desktop (`listAllProfileSessions`, apps/desktop/src/api/sessions.ts). A
+/// missing route, auth, network or malformed response fails closed so a
+/// partial default-profile list cannot masquerade as complete.
 Future<List<Session>> loadMissionControlSessions({
   required MissionDashboardGet dashboardGet,
-  required MissionSessionsLoader legacyGatewayLoader,
 }) async {
   final query = Uri(
     queryParameters: const {
@@ -402,13 +401,7 @@ Future<List<Session>> loadMissionControlSessions({
       'include_children': 'true',
     },
   ).query;
-  late final Map<String, dynamic> data;
-  try {
-    data = await dashboardGet('profiles/sessions?$query');
-  } on DashboardHttpException catch (error) {
-    if (error.statusCode != 404 && error.statusCode != 405) rethrow;
-    return legacyGatewayLoader();
-  }
+  final data = await dashboardGet('profiles/sessions?$query');
   final errors = data['errors'];
   final hasPartialErrors = switch (errors) {
     null => false,
@@ -600,11 +593,6 @@ final class MissionControlRepository
 
   factory MissionControlRepository.forConnection(SavedConnection connection) {
     final dashboard = DashboardClient.lazy(connection);
-    final gateway = ApiClient(
-      baseUrl: connection.baseUrl,
-      apiKey: connection.apiKey,
-      connectionId: connection.id,
-    );
     final kanban = KanbanClient(connection, dashboardClient: dashboard);
     // One pooled Desktop socket per connection, shared with every Bot Mode
     // surface (spec 070 T202); released (close frame) with the last lease.
@@ -620,10 +608,8 @@ final class MissionControlRepository
         desktopLoader: () => desktop.listProfiles(includeSessions: true),
         legacyDashboardLoader: dashboard.getProfiles,
       ),
-      sessionsLoader: () => loadMissionControlSessions(
-        dashboardGet: dashboard.apiGet,
-        legacyGatewayLoader: () => gateway.getSessions(includeChildren: true),
-      ),
+      sessionsLoader: () =>
+          loadMissionControlSessions(dashboardGet: dashboard.apiGet),
       boardLoader: kanban.getCurrentBoard,
       // The same pooled socket: no extra connection for the live sessions.
       activeSessionsLoader: desktop.listActiveSessions,
@@ -636,7 +622,6 @@ final class MissionControlRepository
       onClose: () {
         lease.release();
         kanban.close();
-        gateway.close();
       },
     );
   }
@@ -870,11 +855,9 @@ final class MissionControlRepository
     final driverStatuses = <String, RoomDriverStatus>{};
     final listedIds = {for (final room in listed) room.roomId};
     _logCursors.removeWhere((roomId, _) => !listedIds.contains(roomId));
-    final reads = await _readRooms(
-      gateway,
-      [for (final room in listed) room.roomId],
-      generation: capabilities.generation,
-    );
+    final reads = await _readRooms(gateway, [
+      for (final room in listed) room.roomId,
+    ], generation: capabilities.generation);
     for (var i = 0; i < listed.length; i++) {
       final listedRoom = listed[i];
       final read = reads[i];

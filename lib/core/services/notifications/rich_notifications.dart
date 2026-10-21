@@ -310,7 +310,7 @@ enum NotificationActionRoute {
   /// Hosted room: `groups.approve` / `groups.stop` / `groups.send`.
   room,
 
-  /// `/v1/runs/{id}/approval` (REST watched runs).
+  /// Old notifications of a REST run: decoded, answered by opening the app.
   run,
 
   /// Live chat approval owned by the UI `ActiveChatService`.
@@ -1301,7 +1301,6 @@ abstract interface class NotificationActionOps {
     String text,
     String clientEventId,
   );
-  Future<void> runApprove(NotificationActionPayload p, String choice);
   Future<void> chatApprove(NotificationActionPayload p, String choice);
   Future<void> botChatReply(
     NotificationActionPayload p,
@@ -1496,11 +1495,10 @@ class NotificationActionRouter {
             case NotificationActionRoute.room:
               if (!p.isRoomApproval) return await _fail(a, key, checkpoint);
               await ops.roomApprove(p, choice);
-            case NotificationActionRoute.run:
-              await ops.runApprove(p, choice);
             case NotificationActionRoute.chat:
               await ops.chatApprove(p, choice);
-            case NotificationActionRoute.botChat ||
+            case NotificationActionRoute.run ||
+                NotificationActionRoute.botChat ||
                 NotificationActionRoute.cron ||
                 NotificationActionRoute.session ||
                 NotificationActionRoute.kanban:

@@ -1008,8 +1008,8 @@ class LocalVoiceConversationController extends ChangeNotifier
 
   void _markFirstBackendLifecycle(ActiveChat chat) {
     // `started` is an optimistic local UI event. Desktop is acknowledged only
-    // after message.start/session.info running; REST only after a real run id.
-    if (chat.desktopTurnStartedAt == null && chat.currentRunId == null) return;
+    // after message.start/session.info running.
+    if (chat.desktopTurnStartedAt == null) return;
     _latencyTurn?.mark(VoiceLatencyPoint.backendAccepted);
     _latencyTurn?.mark(VoiceLatencyPoint.backendLifecycleAck);
   }

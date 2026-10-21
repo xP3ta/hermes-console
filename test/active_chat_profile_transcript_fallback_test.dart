@@ -861,7 +861,9 @@ void main() {
                   ? h.chat.loadMessages(profile: 'research', passiveOnly: true)
                   : h.chat.loadChildTranscript('child-1'),
             );
-            final first = read();
+            // Passive paged reads share one flight, so the refusal comes from
+            // a Child transcript read and the older read is the paged one.
+            final first = settle(h.chat.loadChildTranscript('child-1'));
             final old = read();
             await pumpEventQueue();
             expect(pending, hasLength(2));
@@ -1000,7 +1002,7 @@ void main() {
             await pumpEventQueue();
             Future<Object?>? current;
             if (afterRetry) {
-              final refused = read();
+              final refused = settle(h.chat.loadChildTranscript('child-1'));
               await pumpEventQueue();
               pending[1].complete(http.Response('{}', 403));
               expect(await refused, isA<ProfileTranscriptAccessRequired>());

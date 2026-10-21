@@ -13,7 +13,6 @@ import '../models/tool_label.dart';
 import '../models/tool_output.dart';
 import '../services/approval_policy.dart';
 import '../services/command_risk.dart';
-import '../services/connection_manager.dart';
 import '../theme/app_theme.dart';
 import 'activity_sections.dart';
 import 'agent_task_widgets.dart';
@@ -946,7 +945,7 @@ class _ApprovalCommandBoxState extends State<ApprovalCommandBox> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ChatApprovalCard — aprobación inline en el chat (motor /v1/runs). Tarjeta
+// ChatApprovalCard — aprobación inline en el chat (socket de Desktop). Tarjeta
 // limpia con el código a ejecutar y los 4 botones: permitir / denegar /
 // esta sesión / siempre. Pensada para vivir encima de la barra de entrada.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1174,13 +1173,10 @@ class _ScopeChip extends StatelessWidget {
 // ApprovalRequestCard — aprobación pendiente con resolución inline
 // ─────────────────────────────────────────────────────────────────────────────
 //
-// El flujo /v1/runs/{id}/approval del Gateway soporta resolver una aprobación
-// pendiente. Cuando el chat tiene el [ApiClient] de la instancia y la tarjeta
-// llega con run_id + estado pendiente, se ofrecen botones Permitir/Denegar que
-// llaman a resolveRunApproval y actualizan el estado local SIN esperar a que el
-// servidor reenvíe un mensaje. Si no hay ApiClient (p. ej. rehidratación pura)
-// se cae al enlace "Abrir en Ejecuciones". Nunca se renderiza el JSON crudo ni
-// se finge un approve/deny que el backend no soporta.
+// Tarjeta de aprobación del chat: muestra el estado de la aprobación. La
+// aprobación se resuelve por el socket de Desktop (ChatApprovalCard); aquí solo
+// se ofrece abrir el registro antiguo en Tareas. Nunca se renderiza el JSON
+// crudo ni se finge un approve/deny que el backend no soporta.
 
 class ApprovalRequestCard extends StatefulWidget {
   final ChatEventInfo info;
@@ -1188,14 +1184,9 @@ class ApprovalRequestCard extends StatefulWidget {
   /// Abrir el run asociado en Ejecuciones (si hay runId y sigue pendiente).
   final void Function(String runId)? onOpenInRuns;
 
-  /// Cliente del Gateway de la instancia activa. Si está presente y hay runId,
-  /// la tarjeta resuelve la aprobación inline (Permitir/Denegar).
-  final ApiClient? apiClient;
-
   const ApprovalRequestCard({
     required this.info,
     this.onOpenInRuns,
-    this.apiClient,
     super.key,
   });
 
@@ -1204,66 +1195,20 @@ class ApprovalRequestCard extends StatefulWidget {
 }
 
 class _ApprovalRequestCardState extends State<ApprovalRequestCard> {
-  /// null = sin resolver inline; 'once' (permitido) | 'deny' (denegado).
-  String? _resolvedChoice;
-  bool _busy = false;
-  String? _actionError;
-
-  bool get _serverPending => widget.info.approvalPending;
-  bool get _pending => _serverPending && _resolvedChoice == null;
-  bool get _canResolveInline =>
-      widget.apiClient != null && widget.info.runId != null;
-
-  Future<void> _resolve(String choice) async {
-    final api = widget.apiClient;
-    final runId = widget.info.runId;
-    if (api == null || runId == null || _busy) return;
-    final s = Strings.of(context);
-    setState(() {
-      _busy = true;
-      _actionError = null;
-    });
-    try {
-      await api.resolveRunApproval(runId, choice);
-      if (!mounted) return;
-      HapticFeedback.selectionClick();
-      setState(() {
-        _resolvedChoice = choice;
-        _busy = false;
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _busy = false;
-        _actionError = s.cevSendError(e);
-      });
-    }
-  }
+  bool get _pending => widget.info.approvalPending;
 
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
     final info = widget.info;
 
-    // Color de acento según el estado efectivo (resuelto inline > servidor).
-    final Color accent;
-    if (_resolvedChoice != null) {
-      accent = _resolvedChoice == 'deny' ? colors.error : colors.success;
-    } else if (_pending) {
-      accent = colors.warning;
-    } else {
-      accent = colors.textSecondary;
-    }
+    // Color de acento según el estado del servidor.
+    final accent = _pending ? colors.warning : colors.textSecondary;
 
     final s = Strings.of(context);
     final String title;
     final String pillLabel;
-    if (_resolvedChoice != null) {
-      title = s.cevApprovalResolved;
-      pillLabel = _resolvedChoice == 'deny'
-          ? s.cevApprovalDenied
-          : s.cevApprovalGranted;
-    } else if (_pending) {
+    if (_pending) {
       title = s.cevApprovalRequired;
       pillLabel = s.cevApprovalPending;
     } else {
@@ -1327,13 +1272,6 @@ class _ApprovalRequestCardState extends State<ApprovalRequestCard> {
             ],
             const SizedBox(height: 10),
             _buildAction(colors, accent),
-            if (_actionError != null) ...[
-              const SizedBox(height: 6),
-              Text(
-                _actionError!,
-                style: TextStyle(fontSize: 11, color: colors.error),
-              ),
-            ],
           ],
         ),
       ),
@@ -1344,60 +1282,7 @@ class _ApprovalRequestCardState extends State<ApprovalRequestCard> {
     final info = widget.info;
     final s = Strings.of(context);
 
-    // Resuelta inline: chip de confirmación local.
-    if (_resolvedChoice != null) {
-      final denied = _resolvedChoice == 'deny';
-      final color = denied ? colors.error : colors.success;
-      return Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            denied ? Icons.block : Icons.check_circle,
-            size: 15,
-            color: color,
-          ),
-          const SizedBox(width: 7),
-          Text(
-            denied ? s.cevApprovalDenied : s.cevApprovalGranted,
-            style: TextStyle(
-              fontSize: 12.5,
-              fontWeight: FontWeight.w700,
-              color: color,
-            ),
-          ),
-        ],
-      );
-    }
-
-    // Pendiente + ApiClient + runId: botones de resolución inline.
-    if (_pending && _canResolveInline) {
-      return Row(
-        children: [
-          Expanded(
-            child: _ApprovalButton(
-              label: s.cevAllow,
-              icon: Icons.check,
-              color: colors.accent,
-              busy: _busy,
-              filled: true,
-              onTap: () => _resolve('once'),
-            ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: _ApprovalButton(
-              label: s.cevDeny,
-              icon: Icons.close,
-              color: colors.error,
-              busy: _busy,
-              onTap: () => _resolve('deny'),
-            ),
-          ),
-        ],
-      );
-    }
-
-    // Pendiente sin ApiClient pero con runId: abrir en Ejecuciones.
+    // Pendiente con runId: abrir el registro en Tareas.
     if (_pending && info.runId != null && widget.onOpenInRuns != null) {
       return TextButton.icon(
         onPressed: () => widget.onOpenInRuns!(info.runId!),
@@ -1416,69 +1301,6 @@ class _ApprovalRequestCardState extends State<ApprovalRequestCard> {
         color: colors.textTertiary,
       ),
     );
-  }
-}
-
-/// Botón de resolución de aprobación (Permitir verde / Denegar rojo).
-class _ApprovalButton extends StatelessWidget {
-  final String label;
-  final IconData icon;
-  final Color color;
-  final bool busy;
-  final bool filled;
-  final VoidCallback onTap;
-
-  const _ApprovalButton({
-    required this.label,
-    required this.icon,
-    required this.color,
-    required this.busy,
-    required this.onTap,
-    this.filled = false,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final onFilled = color.computeLuminance() > 0.5
-        ? const Color(0xFF0A0A0A)
-        : Colors.white;
-    final style = filled
-        ? FilledButton.styleFrom(
-            backgroundColor: color,
-            foregroundColor: onFilled,
-            minimumSize: const Size.fromHeight(44),
-            shape: const StadiumBorder(),
-          )
-        : TextButton.styleFrom(
-            foregroundColor: color,
-            minimumSize: const Size.fromHeight(44),
-            shape: const StadiumBorder(),
-          );
-    return filled
-        ? FilledButton.icon(
-            onPressed: busy ? null : onTap,
-            style: style,
-            icon: Icon(icon, size: 15),
-            label: Text(
-              label,
-              style: const TextStyle(
-                fontSize: 12.5,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          )
-        : TextButton.icon(
-            onPressed: busy ? null : onTap,
-            style: style,
-            icon: Icon(icon, size: 15),
-            label: Text(
-              label,
-              style: const TextStyle(
-                fontSize: 12.5,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          );
   }
 }
 

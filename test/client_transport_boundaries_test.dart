@@ -1,7 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/screens/external_provider_screen.dart';
 import 'package:hermes_android/core/services/litert_engine.dart';
-import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/voice/stt_remote.dart';
 import 'package:hermes_android/core/services/voice/tts_engine.dart';
 
@@ -9,20 +8,6 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   group('fronteras de transporte de proveedores del cliente', () {
-    test(
-      'el fallback no expone rutas Android ni manda el alias como modelo',
-      () {
-        expect(explicitRunModel('hermes-agent'), isNull);
-        expect(explicitRunModel('  gpt-5.3-codex  '), 'gpt-5.3-codex');
-        expect(
-          sanitizeRemoteChatText(
-            'Mira esto\n⟦img:0:/data/user/0/app/files/private.png⟧\nfin',
-          ),
-          'Mira esto\nfin',
-        );
-      },
-    );
-
     test('proveedor OpenAI-compatible bloquea HTTP público', () {
       expect(
         () => normalizeExternalProviderUrl('http://provider.example.com:11434'),

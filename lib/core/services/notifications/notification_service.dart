@@ -73,7 +73,7 @@ class NotificationOpen {
   /// Tarjeta Kanban exacta que debe abrirse al tocar el aviso.
   final String? taskId;
 
-  /// ID de la ejecución (v1/runs).
+  /// ID de la ejecución (notificaciones antiguas de runs).
   final String? runId;
 
   /// Cron job fallback when no terminal session exists yet.

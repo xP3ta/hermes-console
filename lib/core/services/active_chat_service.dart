@@ -1,7 +1,9 @@
+import '../bots/data/gateway_socket_meter.dart';
 import '../models/account_usage_limits.dart';
 import '../models/bot_mention.dart';
 import '../models/connection_request.dart';
 import 'connection_request_gateway.dart';
+import 'transcript_rehydrate_cost.dart';
 import '../models/message_reaction.dart';
 import 'message_reaction_prefs.dart';
 import 'bot_mention_roster.dart';
@@ -77,7 +79,6 @@ import '../utils/chat_turn.dart';
 import '../utils/turn_control.dart';
 import 'approval_policy.dart';
 import 'artifact_index.dart';
-import 'attachment_uploader.dart';
 import 'capability_payload_sanitizer.dart';
 import 'command_risk.dart';
 import 'compression_dispatcher.dart';
@@ -98,7 +99,6 @@ import 'recovery_proof.dart';
 import 'notifications/background_listener.dart';
 import 'notifications/live_turn_notifications.dart';
 import 'notifications/notification_service.dart';
-import 'run_registry.dart';
 import 'model_catalog_cache.dart';
 import 'model_picker_loader.dart';
 import 'session_config_reducer.dart';
@@ -456,62 +456,6 @@ List<Map<String, dynamic>> _sanitizeDesktopFailureProjection(
       });
     })
     .toList(growable: true);
-
-@visibleForTesting
-bool activeChatVoiceBargeRunIsTerminal(Map<String, dynamic> snapshot) =>
-    const <String>{
-      'completed',
-      'failed',
-      'cancelled',
-    }.contains((snapshot['status'] ?? '').toString().trim().toLowerCase());
-
-/// Espera pollable para el transporte REST, cuyo `/stop` oficial responde
-/// `stopping` antes de que el run sea realmente terminal.
-@visibleForTesting
-Future<void> waitForActiveChatVoiceBargeTerminal({
-  required Future<Map<String, dynamic>> Function() readStatus,
-  Duration timeout = activeChatVoiceBargeSettleTimeout,
-  Duration pollInterval = const Duration(milliseconds: 100),
-}) async {
-  final deadline = DateTime.now().add(timeout);
-  while (true) {
-    final remaining = deadline.difference(DateTime.now());
-    if (remaining <= Duration.zero) return;
-    Map<String, dynamic> snapshot;
-    try {
-      snapshot = await readStatus().timeout(remaining);
-    } catch (_) {
-      // 404 significa que el run ya salió del registro; red/gateway antiguo
-      // degradan al mismo timeout best-effort que Desktop.
-      return;
-    }
-    if (activeChatVoiceBargeRunIsTerminal(snapshot)) return;
-    final afterRead = deadline.difference(DateTime.now());
-    if (afterRead <= Duration.zero) return;
-    final delay = pollInterval < afterRead ? pollInterval : afterRead;
-    if (delay > Duration.zero) await Future<void>.delayed(delay);
-  }
-}
-
-/// Los marcadores `⟦img:…⟧` solo sirven para reconstruir miniaturas locales.
-/// Nunca deben cruzar al servidor: contienen rutas privadas de Android que el
-/// agente no puede leer y que pueden reaparecer desde el historial.
-@visibleForTesting
-String sanitizeRemoteChatText(String text) => text
-    .split('\n')
-    .where((line) => !RegExp(r'^\s*⟦img:[^⟧]+⟧\s*$').hasMatch(line))
-    .join('\n')
-    .trimRight();
-
-/// `hermes-agent` es el alias del endpoint OpenAI-compatible, no un modelo de
-/// proveedor válido para `/v1/runs`. Omitirlo deja que Hermes use su modelo
-/// activo real.
-@visibleForTesting
-String? explicitRunModel(String model) {
-  final value = model.trim();
-  if (value.isEmpty || value.toLowerCase() == 'hermes-agent') return null;
-  return value;
-}
 
 const _artifactContainerKeys = <String>{
   'attachment',
@@ -4046,9 +3990,12 @@ final class _SessionMessagesPageReadContext {
     required this.nextOffset,
     required this.extent,
     required this.earlierMessagesAvailable,
+    this.passive = false,
   });
 
   final _SessionMessagesPageConsumer consumer;
+  // A passive background reload (may share one in-flight tail GET).
+  final bool passive;
   final String profile;
   final String requestedStoredSessionId;
   final int loadEpoch;
@@ -4077,6 +4024,8 @@ final class _StoredMessagesRestRequestKey {
     required this.limit,
     required this.offset,
     required this.loadEpoch,
+    this.accessEpoch = 0,
+    this.changeRevision = 0,
   });
 
   final String connectionId;
@@ -4089,9 +4038,17 @@ final class _StoredMessagesRestRequestKey {
   final int offset;
   final int loadEpoch;
 
+  /// Retry of the profile Dashboard access: earlier flights stay unjoinable.
+  final int accessEpoch;
+
+  /// Store changes + compaction ends at GET start: never join an older one.
+  final int changeRevision;
+
   @override
   bool operator ==(Object other) =>
       other is _StoredMessagesRestRequestKey &&
+      accessEpoch == other.accessEpoch &&
+      changeRevision == other.changeRevision &&
       connectionId == other.connectionId &&
       logicalSessionId == other.logicalSessionId &&
       storedSessionId == other.storedSessionId &&
@@ -4113,6 +4070,8 @@ final class _StoredMessagesRestRequestKey {
     limit,
     offset,
     loadEpoch,
+    accessEpoch,
+    changeRevision,
   );
 }
 
@@ -4786,11 +4745,6 @@ class ActiveChat {
   Future<void> Function()? beforeSendAdmissionForTesting;
   final Future<bool> Function()? _historyHydrationAwaiter;
 
-  /// Se invoca cuando el run obtiene su id. La capa de servicio lo usa para
-  /// arrancar el foreground service y registrar la vigilancia en 2º plano, de
-  /// modo que el proceso (y con él el SSE) siga vivo aunque la app pase atrás.
-  final void Function(String runId)? _onRunStarted;
-
   /// Solo arranca el foreground service (sin vigilancia de runs). Lo usa el chat
   /// LOCAL por el bridge: su turno es una llamada HTTP larga a `hermes -z`, no un
   /// run pollable, pero el proceso debe seguir vivo si la app pasa a 2º plano.
@@ -4857,11 +4811,6 @@ class ActiveChat {
   final CompressionRestoreStore _compressionRestoreStore;
   final int Function() _wallClockMs;
   final List<Duration> _backgroundStopRecheckDelays;
-  final Future<AttachmentUploadResult> Function(
-    SavedConnection,
-    AttachmentDraft,
-  )
-  _attachmentUploader;
   final Future<bool> Function() _turnIdempotencyCapability;
   bool? _turnIdempotencySupported;
   bool _turnIdempotencyInvalid = false;
@@ -4912,6 +4861,69 @@ class ActiveChat {
   int _desktopAutomaticReattachGeneration = 0;
   _ClosedViewerRecoveryScope? _closedViewerRecoveryScope;
   Future<bool>? _resumeReconcileFlight;
+
+  /// N6b: one `GET …/messages` per recovery generation. The generation is
+  /// the turn epoch plus the number of resume snapshots this recovery has
+  /// received, so a read that predates a snapshot never answers a consumer
+  /// that judges that snapshot. Failures are never kept.
+  ({String key, DateTime at, Future<List<Map<String, dynamic>>> read})?
+  _sharedRecoveryRead;
+  int _recoverySnapshotSeq = 0;
+  int _recoveryLoopsActive = 0;
+  int _recoveryRuns = 0;
+  int _recoveryConvergedRun = -1;
+  DateTime? _recoveryConvergedAt;
+  static const Duration _recoveryReadReuse = Duration(seconds: 5);
+
+  /// N6b: true while a snapshot recovery owns the transcript reads for this
+  /// chat, and for [_recoveryReadReuse] after it converged. Automatic
+  /// callers (`sessions.changed`, the passive refresh, the foreground
+  /// reconciliation) skip their own read then; the user's Retry does not.
+  bool get recoveryReadsQuiet {
+    if (_recoveryLoopsActive > 0) return true;
+    final at = _recoveryConvergedAt;
+    return at != null &&
+        _recoveryConvergedRun == _recoveryRuns &&
+        DateTime.now().difference(at) < _recoveryReadReuse;
+  }
+
+  @visibleForTesting
+  Future<List<Map<String, dynamic>>> loadRecoveryTranscriptSharedForTesting(
+    String storedId,
+    String profile,
+  ) => _loadRecoveryTranscriptShared(storedId, profile);
+
+  void _markRecoveryConverged() {
+    _recoveryConvergedRun = _recoveryRuns;
+    _recoveryConvergedAt = DateTime.now();
+  }
+
+  Future<List<Map<String, dynamic>>> _loadRecoveryTranscriptShared(
+    String storedId,
+    String profile,
+  ) async {
+    final key =
+        '$_turnEpoch|$_recoveryRuns|$_recoverySnapshotSeq|$storedId|$profile';
+    final shared = _sharedRecoveryRead;
+    if (shared != null &&
+        shared.key == key &&
+        DateTime.now().difference(shared.at) < _recoveryReadReuse) {
+      return List<Map<String, dynamic>>.of(await shared.read);
+    }
+    final read = _loadRecoveryTranscript(storedId, profile);
+    final entry = (key: key, at: DateTime.now(), read: read);
+    _sharedRecoveryRead = entry;
+    unawaited(
+      read.then<void>(
+        (_) {},
+        onError: (Object _, StackTrace _) {
+          if (identical(_sharedRecoveryRead, entry)) _sharedRecoveryRead = null;
+        },
+      ),
+    );
+    return List<Map<String, dynamic>>.of(await read);
+  }
+
   int _resumeReconcileReservations = 0;
   int _messageLoadEpoch = 0;
   int _desktopBindEpoch = 0;
@@ -5094,6 +5106,7 @@ class ActiveChat {
   // signal through `ForegroundConversationReader.notifySessionsChanged`
   // (durable-chat-id-scoped, already wired but never fed a real signal).
   int _durableSessionsChangeRevision = 0;
+  int _compactionEndCount = 0;
   ArtifactIndexSnapshot? _artifactIndex;
   ArtifactIndexScope? _artifactScope;
   List<ArtifactTranscriptEntry> _pendingArtifactTranscript = const [];
@@ -7303,8 +7316,9 @@ class ActiveChat {
     final mutationGeneration = _backgroundProcessMutationGeneration;
     late final AgentCenterSnapshot snapshot;
     try {
-      snapshot = await processGateway.agentCenterSnapshot(
-        runtimeSessionId: runtimeId,
+      snapshot = await GatewaySocketMeter.origin(
+        'chat.snapshot',
+        () => processGateway.agentCenterSnapshot(runtimeSessionId: runtimeId),
       );
     } catch (_) {
       if (_backgroundProcessRequestStillCurrent(
@@ -8800,10 +8814,6 @@ class ActiveChat {
   int _transcriptRevision = 0;
   _RewriteReservation? _activeRewrite;
 
-  /// Run en curso (motor /v1/runs). Necesario para resolver aprobaciones y
-  /// para cancelar.
-  String? currentRunId;
-
   /// Override de la sesión server-side para el turno en curso (lo fija [send]).
   /// null = usar [sessionId]. El modo voz lo usa para rotar su sesión al cancelar.
   String? _serverSessionOverride;
@@ -9079,14 +9089,7 @@ class ActiveChat {
   }
 
   static bool _isDashboardAuthRequired(Object error) =>
-      (error is DashboardAuthException &&
-          const {
-            DashboardAuthFailureCode.loginRequired,
-            DashboardAuthFailureCode.invalidCredentials,
-            DashboardAuthFailureCode.sessionCookieMissing,
-          }.contains(error.code)) ||
-      (error is DashboardWebSocketAuthException &&
-          (error.statusCode == 401 || error.statusCode == 403));
+      TuiGatewayClient.isDashboardAuthRejection(error);
 
   /// La pantalla consume esta señal para explicar que la edición falló pero la
   /// línea temporal original ya fue restaurada.
@@ -9134,7 +9137,6 @@ class ActiveChat {
     @visibleForTesting Future<void> Function()? beforePrivacySnapshotLoad,
     @visibleForTesting Future<bool> Function()? historyHydrationAwaiter,
     ApprovalPolicyService? policy,
-    void Function(String runId)? onRunStarted,
     Future<void> Function()? onForegroundKeepAlive,
     ValueChanged<int?>? onObservedFirstTokenLatency,
     ValueChanged<ActiveChatEvent>? onEvent,
@@ -9146,8 +9148,6 @@ class ActiveChat {
     VoidCallback? releaseSharedDesktopGateway,
     CompressionRestoreStore? compressionRestoreStore,
     int Function()? wallClockMs,
-    Future<AttachmentUploadResult> Function(SavedConnection, AttachmentDraft)?
-    attachmentUploader,
     String? sessionProfile,
     String? initialStoredSessionId,
     StoredSessionMessageLoader? storedMessageLoader,
@@ -9195,7 +9195,6 @@ class ActiveChat {
        _beforePrivacyCheckpointSave = beforePrivacyCheckpointSave,
        _beforePrivacySnapshotLoad = beforePrivacySnapshotLoad,
        _historyHydrationAwaiter = historyHydrationAwaiter,
-       _onRunStarted = onRunStarted,
        _onForegroundKeepAlive = onForegroundKeepAlive,
        _onObservedFirstTokenLatency = onObservedFirstTokenLatency,
        _onEvent = onEvent,
@@ -9245,15 +9244,12 @@ class ActiveChat {
        ),
        _desktopGateway =
            desktopGateway ??
-           (api == null ? TuiGatewayClient(connection) : null),
-       _attachmentUploader = attachmentUploader ?? AttachmentUploader.upload {
+           (api == null ? TuiGatewayClient(connection) : null) {
     _steerRecords.addAll(initialSteerProjections);
     _changes = StreamController<ActiveChatEvent>.broadcast(
       onCancel: _handleLastListenerCancelled,
     );
-    _api =
-        api ??
-        ApiClient(baseUrl: connection.baseUrl, apiKey: connection.apiKey);
+    _api = api ?? ApiClient.forConnection(connection);
     _coreReadIdentity = SessionIdentity(
       logicalRootId: logicalSessionId ?? sessionId,
       storedId: initialStoredSessionId ?? sessionId,
@@ -9264,6 +9260,17 @@ class ActiveChat {
     _reactionsWereEnabled = MessageReactionPrefs.shared.enabled;
     _watchedReactionPrefs = MessageReactionPrefs.shared
       ..addListener(_onReactionPrefChanged);
+    final gateway = _desktopGateway;
+    if (gateway is TuiGatewayClient) {
+      gateway.linkListenable.addListener(_onDesktopLinkChanged);
+    }
+  }
+
+  /// PX5D: the socket that comes back by itself (PX5A redial) also clears a
+  /// loss no recovery loop owns any more.
+  void _onDesktopLinkChanged() {
+    final gateway = _desktopGateway;
+    if (gateway != null) _settleOrphanedTransport(gateway, 'link');
   }
 
   MessageReactionPrefs? _watchedReactionPrefs;
@@ -10012,6 +10019,10 @@ class ActiveChat {
   }
 
   @visibleForTesting
+  void deliverDesktopEventForTesting(TuiGatewayEvent event) =>
+      _onDesktopEvent(event);
+
+  @visibleForTesting
   void markCurrentTurnClientSubmittedForTesting() {
     if (!isStreaming || _runTerminal) {
       throw StateError('A live turn is required before marking its owner');
@@ -10480,6 +10491,29 @@ class ActiveChat {
   }
 
   Future<void> loadMessages({
+    int? expectedMessageCount,
+    String profile = '',
+    VoidCallback? onMessagesPublished,
+    bool passiveOnly = false,
+    bool observePassiveActivity = true,
+    bool Function()? stillOwningVisible,
+    bool Function()? stillCurrentRead,
+  }) {
+    Future<void> load() => _loadMessagesUnlabelled(
+      expectedMessageCount: expectedMessageCount,
+      profile: profile,
+      onMessagesPublished: onMessagesPublished,
+      passiveOnly: passiveOnly,
+      observePassiveActivity: observePassiveActivity,
+      stillOwningVisible: stillOwningVisible,
+      stillCurrentRead: stillCurrentRead,
+    );
+    return passiveOnly
+        ? GatewaySocketMeter.originIfNone('chat.passive', load)
+        : load();
+  }
+
+  Future<void> _loadMessagesUnlabelled({
     int? expectedMessageCount,
     String profile = '',
     VoidCallback? onMessagesPublished,
@@ -11435,6 +11469,7 @@ class ActiveChat {
 
     final context = _captureSessionMessagesPageRead(
       consumer: _SessionMessagesPageConsumer.directLoad,
+      passive: passiveOnly,
       loadEpoch: loadEpoch,
       profile: _storedSessionProfile,
       hardExpectedMessageCount: expectedMessageCount,
@@ -11595,7 +11630,9 @@ class ActiveChat {
     int offset = 0,
     int? hardExpectedMessageCount,
     bool fenceCoverageState = false,
+    bool passive = false,
   }) => _SessionMessagesPageReadContext(
+    passive: passive,
     consumer: consumer,
     profile: profile.trim(),
     requestedStoredSessionId: serverSessionId,
@@ -12146,7 +12183,11 @@ class ActiveChat {
             _SessionMessagesPageConsumer.resumeProgressRetry ||
         readContext?.consumer ==
             _SessionMessagesPageConsumer.scheduledHydration;
-    if (readContext == null || !openingRead) {
+    final directRead =
+        readContext?.consumer == _SessionMessagesPageConsumer.directLoad &&
+        readContext!.passive &&
+        readContext.hardExpectedMessageCount == null;
+    if (readContext == null || !(openingRead || directRead)) {
       return _readStoredMessagesRestPage(
         storedSessionId,
         profile: profile,
@@ -12165,14 +12206,19 @@ class ActiveChat {
       includeCompacted: true,
       limit: limit,
       offset: offset,
-      loadEpoch: readContext.loadEpoch,
+      // N10i: every loadMessages bumps the epoch, so a direct read keys on
+      // none; each caller still applies its own epoch and view fences.
+      loadEpoch: directRead ? -1 : readContext.loadEpoch,
+      accessEpoch: _profileTranscriptAccessEpoch,
+      changeRevision: _durableSessionsChangeRevision + _compactionEndCount,
     );
     final existing = _storedMessagesRestFlights[key];
     if (existing != null) return existing;
 
     // Do not coalesce independent hydration/refresh reads after opening.
-    if (readContext.consumer !=
-        _SessionMessagesPageConsumer.lifecyclePrefetch) {
+    if (!directRead &&
+        readContext.consumer !=
+            _SessionMessagesPageConsumer.lifecyclePrefetch) {
       return _readStoredMessagesRestPage(
         storedSessionId,
         profile: profile,
@@ -14325,6 +14371,19 @@ class ActiveChat {
         '[active-chat] earlier transcript page unavailable '
         '(${error.runtimeType})',
       );
+      if (_storeHasNoEarlierRows(
+        error,
+        tailRead: requestedTailHydration && requestedNextOffset == 0,
+      )) {
+        // The Dashboard answers 404 for a session its store has not written
+        // yet (sessions.py get_session_messages). That is «nothing earlier»,
+        // not a lost page.
+        _earlierMessagesAvailable = false;
+        _needsTranscriptTailHydration = false;
+        _earlierMessagesLoadFailed = false;
+        _emit(ActiveChatEvent.earlierMessagesLoaded);
+        return false;
+      }
       _earlierMessagesLoadFailed = true;
       _emit(ActiveChatEvent.earlierMessagesLoaded);
       return false;
@@ -14332,6 +14391,16 @@ class ActiveChat {
       _earlierMessagesInFlight = false;
     }
   }
+
+  /// A 404 on the opening tail read (offset 0) of a chat whose open announced
+  /// no stored history: the session is not in the store yet, so no earlier
+  /// page exists. Any other failure (network, 5xx, a 404 where history was
+  /// announced or earlier pages were already read) stays a real failure.
+  bool _storeHasNoEarlierRows(Object error, {required bool tailRead}) =>
+      tailRead &&
+      _hardExpectedStoredMessageCount == null &&
+      error is CoreReadException &&
+      error.kind == CoreReadErrorKind.notFound;
 
   /// Espera el desenlace de una hidratación diferida del historial
   /// (`session.resume_progress`), con un tope para no colgar la apertura del
@@ -15358,7 +15427,6 @@ class ActiveChat {
     _pendingDesktopInterimKey = null;
     _assistantNarration.reset();
     _assistantStream.clear();
-    currentRunId = null;
     _terminalTimer?.cancel();
     _terminalTimer = null;
     _runTerminal = false;
@@ -15773,7 +15841,7 @@ class ActiveChat {
   /// and the runtime the edit was planned against.
   Future<bool> _proveRewriteAdmission(HermesDesktopGateway gateway) async {
     try {
-      await gateway.connect().timeout(const Duration(seconds: 5));
+      await gateway.connectForeground().timeout(const Duration(seconds: 5));
     } catch (_) {
       return false;
     }
@@ -16161,6 +16229,22 @@ class ActiveChat {
   Future<void> warmDesktopGatewayForAutomaticBootstrap() {
     if (!_attachDesktopRuntimeOnLoad) return Future<void>.value();
     return warmDesktopGateway();
+  }
+
+  /// The notice's «Retry»: a user action, so it dials now whatever the
+  /// backoff (Desktop `store/gateway.ts` foreground reconnect) and wakes the
+  /// recovery loop so the chat rejoins its session.
+  Future<void> retryConnectionNow() async {
+    if (_disposed) return;
+    final gateway = _desktopGateway;
+    if (gateway == null) return warmDesktopGateway();
+    try {
+      await gateway.connectForeground();
+    } catch (error) {
+      debugPrint('[active-chat] Retry connect failed (${error.runtimeType})');
+    }
+    requestImmediateTransportRecovery();
+    _settleOrphanedTransport(gateway, 'retry');
   }
 
   Future<void> warmDesktopGateway() async {
@@ -17416,7 +17500,7 @@ class ActiveChat {
               failure.code != null) {
             rethrow;
           }
-          await _desktopGateway?.connect();
+          await _desktopGateway?.connectForeground();
           result = await once();
         }
         _branchKeys.remove(signature);
@@ -17581,6 +17665,7 @@ class ActiveChat {
     if (_disposed) return;
     _restoredCompressionFinished = true;
     _emit(ActiveChatEvent.sessionInfo);
+    _compactionEndCount += 1;
     if (!isStreaming) {
       try {
         await loadMessages(profile: _storedSessionProfile, passiveOnly: true);
@@ -19069,20 +19154,9 @@ class ActiveChat {
     LocalConversationOperation? transcriptOperation,
   }) {
     final gateway = _desktopGateway;
-    final officialLifecycleRequired =
-        connection.kind == InstanceKind.localhost || profileRoutes(profile);
     if (gateway == null) {
-      if (officialLifecycleRequired || !sessionConfig.allowTransportFallback) {
-        _failRun(officialChannelUnavailableError);
-        return Future<bool>.value(false);
-      }
-      return _startRestFallbackWithAttachments(
-        fullText,
-        model,
-        history,
-        turnEpoch,
-        nativeAttachments,
-      );
+      _failRun(officialChannelUnavailableError);
+      return Future<bool>.value(false);
     }
     // The default client awaits its capability proof inside submit. Its
     // existing async-local mutation gate checks this same original admission
@@ -19116,26 +19190,14 @@ class ActiveChat {
         transcriptOperation: transcriptOperation,
         onPromptDispatchStarted: onPromptDispatchStarted,
         fallback: () {
-          if (officialLifecycleRequired) {
-            // What is missing decides what the chat offers: a Dashboard that
-            // refused this phone needs a sign-in; anything else, a retry.
-            _failRun(
-              _desktopStartRefusedByDashboard
-                  ? dashboardSignInRequiredError
-                  : officialChannelUnavailableError,
-            );
-            return Future<bool>.value(false);
-          }
-          _rewindRollbackMessages = null;
-          _rewindRollbackState = null;
-          _rewind4018FallbackOrdinal = null;
-          return _startRestFallbackWithAttachments(
-            fullText,
-            model,
-            history,
-            turnEpoch,
-            nativeAttachments,
+          // What is missing decides what the chat offers: a Dashboard that
+          // refused this phone needs a sign-in; anything else, a retry.
+          _failRun(
+            _desktopStartRefusedByDashboard
+                ? dashboardSignInRequiredError
+                : officialChannelUnavailableError,
           );
+          return Future<bool>.value(false);
         },
       ),
     );
@@ -19260,7 +19322,8 @@ class ActiveChat {
 
     try {
       _listenToDesktopGateway(gateway);
-      await gateway.connect();
+      // A send is a user action: it dials now, whatever the backoff.
+      await gateway.connectForeground();
       if (_turnEpoch != turnEpoch || _runTerminal) return false;
       ensurePromptAdmission();
       // rc1215: this turn just proved the socket. An automatic reattach that
@@ -19370,7 +19433,6 @@ class ActiveChat {
       }
       captureRuntimeAttempt(runtimeId);
       _usingDesktopGateway = true;
-      currentRunId = null;
       state = ChatPipelineState.waiting;
       await _onForegroundKeepAlive?.call();
       _emit(ActiveChatEvent.connected);
@@ -20124,6 +20186,7 @@ class ActiveChat {
       _onDesktopEvent,
       onError: (Object error, StackTrace stackTrace) {
         if (_isOtherRuntimesSubscriptionError(gateway, error)) return;
+        if (_rehydrateOwnRuntimeInPlace(gateway, error)) return;
         _desktopTransportLosses += 1;
         final interruptedActiveTurn =
             _usingDesktopGateway && isStreaming && !_runTerminal;
@@ -20170,7 +20233,14 @@ class ActiveChat {
         if (_hasQueuedWork) _armQueuedTransportWait();
         if (viewerRecoveryClosed) _closeViewerRecovery(gateway);
         if (interruptedActiveTurn && clientSubmittedTurn) {
-          _scheduleDesktopTurnRecovery(gateway, _turnEpoch, error);
+          _scheduleDesktopTurnRecovery(
+            gateway,
+            _turnEpoch,
+            error,
+            meterReason: _isRuntimeRehydration(error)
+                ? GatewaySocketMeter.instance.takeRehydrationReason()
+                : 'transport',
+          );
         } else if (!viewerRecoveryClosed) {
           if (interruptedActiveTurn) {
             _viewerTurnConvergenceEpoch = _turnEpoch;
@@ -20183,6 +20253,122 @@ class ActiveChat {
         }
       },
     );
+  }
+
+  int _inPlaceRehydrationEpoch = -1;
+  int _inPlaceRehydrationStep = 0;
+  bool _inPlaceRehydrationInFlight = false;
+  int _inPlaceTurnEndedEpoch = -1;
+  int _inPlaceUnprovenWindows = 0;
+
+  /// N10b: a runtime-named `connectionLost` from the fanout watchdog or a
+  /// withheld turn end on a socket that is still connected asks this chat to
+  /// re-read authoritative state; it is not a lost transport. Nothing is
+  /// retired, no `offline`/`connecting` is published and no `session.resume`
+  /// is sent: one coalesced transcript read per turn settles the turn when
+  /// Hermes already finished it, and the watchdog is re-armed with a window
+  /// that doubles (cap 120 s) for the next one. A cut socket, another
+  /// runtime or a turn this client did not submit keep the loss path.
+  bool _rehydrateOwnRuntimeInPlace(HermesDesktopGateway gateway, Object error) {
+    if (gateway is! TuiGatewayClient ||
+        !gateway.isConnected ||
+        !_isRuntimeRehydration(error) ||
+        (error as TuiGatewayRpcError).data['session_id'] !=
+            _desktopRuntimeSessionId ||
+        !(_usingDesktopGateway && isStreaming && !_runTerminal) ||
+        !_clientSubmittedCurrentTurn ||
+        _desktopTurnRecovery != null ||
+        _recoveringDesktopTurnEpoch != null) {
+      return false;
+    }
+    final turnEpoch = _turnEpoch;
+    if (!_canRecoverTurn(turnEpoch)) return false;
+    if (_inPlaceRehydrationInFlight && _inPlaceRehydrationEpoch == turnEpoch) {
+      return true;
+    }
+    if (_inPlaceRehydrationEpoch != turnEpoch) {
+      _inPlaceRehydrationEpoch = turnEpoch;
+      _inPlaceRehydrationStep = 0;
+      _inPlaceUnprovenWindows = 0;
+    }
+    // A withheld end frame of a turn nobody redirected: Hermes is idle, so
+    // later windows that still cannot prove an answer are bounded below. A
+    // corrected turn keeps running after the old turn's end (not idle).
+    if (error.data['turn_ended'] == true && !_newestUserRowIsLiveCorrection) {
+      _inPlaceTurnEndedEpoch = turnEpoch;
+    }
+    _inPlaceRehydrationInFlight = true;
+    unawaited(
+      _runInPlaceRehydration(
+        gateway,
+        error,
+        turnEpoch,
+        ++_inPlaceRehydrationStep,
+      ),
+    );
+    return true;
+  }
+
+  Future<void> _runInPlaceRehydration(
+    TuiGatewayClient gateway,
+    TuiGatewayRpcError error,
+    int turnEpoch,
+    int step,
+  ) async {
+    final runtime = error.data['session_id'] as String;
+    // QA/debug diagnostics only; never printed by a release build.
+    if (!kReleaseMode) {
+      debugPrint(
+        '[active-chat] rehydrate in place '
+        'reason=${GatewaySocketMeter.instance.takeRehydrationReason()}',
+      );
+    }
+    _recoveryLoopsActive += 1;
+    // A new silence window never reuses the previous window's read.
+    _recoverySnapshotSeq += 1;
+    var settled = false;
+    var unproven = false;
+    try {
+      final read = await _readDurableTranscriptForRecoveringTurn(turnEpoch);
+      settled = read == _RecoveryTranscriptRead.adopted;
+      unproven = read == _RecoveryTranscriptRead.inconclusive;
+    } catch (_) {
+      // A failed read observed nothing: the next silence window retries.
+    } finally {
+      _recoveryLoopsActive -= 1;
+      _inPlaceRehydrationInFlight = false;
+    }
+    if (settled ||
+        _disposed ||
+        !_canRecoverTurn(turnEpoch) ||
+        !identical(gateway, _desktopGateway) ||
+        _desktopRuntimeSessionId != runtime) {
+      return;
+    }
+    if (unproven && _inPlaceTurnEndedEpoch == turnEpoch) {
+      // rl1215: an idle server is authoritative; after the same few complete
+      // reads that cannot prove the turn, settle it as "not confirmed"
+      // instead of reading /messages for as long as the chat lives.
+      _inPlaceUnprovenWindows += 1;
+      if (_inPlaceUnprovenWindows >= _desktopIdleRecoveryProofAttempts) {
+        debugPrint(
+          '[active-chat] snapshot recovery gave up '
+          'kind=idle_unproven attempts=$_inPlaceUnprovenWindows',
+        );
+        _degradeLegacyTurnRecovery(turnEpoch, error);
+        return;
+      }
+    }
+    gateway.rearmRuntimeWatchdog(runtime, step: step);
+  }
+
+  /// The newest user row is a live correction (`session.redirect`) of the
+  /// turn in flight.
+  bool get _newestUserRowIsLiveCorrection {
+    for (final message in _messages) {
+      if (message['role'] == 'user') return message['_steer'] == true;
+    }
+    return false;
   }
 
   /// On a socket shared by many chats a live-subscription error that names a
@@ -20232,6 +20418,7 @@ class ActiveChat {
     recovery = _reattachDesktopRuntime(gateway, generation).whenComplete(() {
       if (identical(_desktopAutomaticReattach, recovery)) {
         _desktopAutomaticReattach = null;
+        _settleOrphanedTransport(gateway, 'reattach');
       }
     });
     _desktopAutomaticReattach = recovery;
@@ -20402,13 +20589,47 @@ class ActiveChat {
           _publishTransportState(ChatTransportState.connected);
           return;
         }
+        final stops =
+            _viewerAttachmentDisposition(error) !=
+            _ViewerAttachmentDisposition.retryTransient;
+        // Hermes advertised the session yet cannot resume it (4007) on an
+        // empty chat with a healthy socket. Only when the durable row and
+        // transcript answer 404 too (the check chat_screen's
+        // _storedSessionIsGone makes) is there nothing to wait for: the chat
+        // becomes a draft whose next send creates its session. Any other
+        // code, or a row that is alive or unreadable, stays reconnecting so
+        // the next send never forks a live session.
+        var settles = false;
+        if (stops &&
+            error is TuiGatewayRpcError &&
+            error.code == 4007 &&
+            gateway.isConnected &&
+            _desktopRuntimeSessionId == null &&
+            _messages.isEmpty) {
+          try {
+            await loadPersistedSessionSnapshot();
+          } catch (probe) {
+            final text = probe.toString();
+            settles =
+                text.contains('404') ||
+                text.toLowerCase().contains('not found');
+          }
+          if (!isCurrent()) return;
+          settles =
+              settles &&
+              gateway.isConnected &&
+              _desktopRuntimeSessionId == null &&
+              _messages.isEmpty;
+          if (settles) markStoredSessionGone();
+        }
         _publishTransportState(
-          gateway.isConnected
-              ? ChatTransportState.reconnecting
-              : ChatTransportState.offline,
+          !gateway.isConnected
+              ? ChatTransportState.offline
+              : settles
+              ? ChatTransportState.connected
+              : ChatTransportState.reconnecting,
         );
-        if (_viewerAttachmentDisposition(error) !=
-            _ViewerAttachmentDisposition.retryTransient) {
+        if (stops) {
           _closeViewerRecovery(gateway);
           return;
         }
@@ -20626,19 +20847,40 @@ class ActiveChat {
     return error.code != 5001;
   }
 
+  /// `[QA-NET]` label only: a runtime-named `connectionLost` on a healthy
+  /// socket is the fanout watchdog / withheld turn end asking to rehydrate.
+  int _meterApplyMs = 0;
+  int _meterApplyMsgs = 0;
+
+  bool _isRuntimeRehydration(Object error) =>
+      error is TuiGatewayRpcError &&
+      error.failureKind == TuiGatewayRpcFailureKind.connectionLost &&
+      error.data['session_id'] != null;
+
   void _scheduleDesktopTurnRecovery(
     HermesDesktopGateway gateway,
     int turnEpoch,
-    Object originalError,
-  ) {
+    Object originalError, {
+    String meterReason = 'other',
+  }) {
     if (!_canRecoverTurn(turnEpoch) ||
         _recoveringDesktopTurnEpoch == turnEpoch) {
       return;
     }
-    debugPrint('[active-chat] recovery scheduled');
+    debugPrint('[active-chat] recovery scheduled reason=$meterReason');
+    GatewaySocketMeter.instance.recordRecovery(meterReason);
+    final recoveryWatch = Stopwatch()..start();
     late final Future<void> recovery;
     recovery = _recoverDesktopTurn(gateway, turnEpoch, originalError)
         .whenComplete(() {
+          GatewaySocketMeter.instance.recordRecoveryDone(
+            meterReason,
+            recoveryWatch.elapsedMilliseconds,
+            _meterApplyMs,
+            _meterApplyMsgs,
+          );
+          _meterApplyMs = 0;
+          _meterApplyMsgs = 0;
           if (identical(_desktopTurnRecovery, recovery)) {
             _desktopTurnRecovery = null;
           }
@@ -20892,6 +21134,27 @@ class ActiveChat {
     }
   }
 
+  /// PX5D: a loss published by a recovery or reattach loop that has since
+  /// ended (Stop, a new epoch) stayed latched: a healthy link alone never
+  /// published `connected` again. Settle it only on this chat's own live
+  /// socket, never while a loop still owns the transport, Dashboard sign-in
+  /// is pending, or a closed viewer recovery holds its verdict (PX5B).
+  void _settleOrphanedTransport(HermesDesktopGateway gateway, String site) {
+    final from = _transportStatus.state;
+    if (from == ChatTransportState.connected ||
+        _disposed ||
+        !identical(gateway, _desktopGateway) ||
+        !gateway.isConnected ||
+        _recoveringDesktopTurnEpoch != null ||
+        _desktopAutomaticReattach != null ||
+        _dashboardAuthRequired ||
+        _closedViewerRecoveryBlocks(gateway)) {
+      return;
+    }
+    GatewaySocketMeter.instance.recordTransportSettle(from.name, site);
+    _publishTransportState(ChatTransportState.connected);
+  }
+
   Future<void> _restoreTransportAfterTurnRecovery(
     HermesDesktopGateway gateway,
   ) async {
@@ -20911,6 +21174,25 @@ class ActiveChat {
   }
 
   Future<void> _recoverDesktopTurnFromSnapshot(
+    HermesDesktopGateway gateway,
+    int turnEpoch,
+    Object originalError,
+  ) async {
+    _recoveryRuns += 1;
+    _recoverySnapshotSeq = 0;
+    _recoveryLoopsActive += 1;
+    try {
+      await _recoverDesktopTurnFromSnapshotLoop(
+        gateway,
+        turnEpoch,
+        originalError,
+      );
+    } finally {
+      _recoveryLoopsActive -= 1;
+    }
+  }
+
+  Future<void> _recoverDesktopTurnFromSnapshotLoop(
     HermesDesktopGateway gateway,
     int turnEpoch,
     Object originalError,
@@ -20941,6 +21223,7 @@ class ActiveChat {
           debugPrint(
             '[active-chat] snapshot recovery converged kind=durable_transcript',
           );
+          _markRecoveryConverged();
           return;
         }
         if (!_canRecoverTurn(turnEpoch)) return;
@@ -20983,6 +21266,7 @@ class ActiveChat {
           epochInvalidated,
         );
         if (snapshot == null || !_canRecoverTurn(turnEpoch)) return;
+        _recoverySnapshotSeq += 1;
         // rl1215: the server answered on a live socket. What follows is a
         // transcript re-sync, not a lost connection: the chat must not keep
         // saying "connection lost" while it runs.
@@ -21010,6 +21294,7 @@ class ActiveChat {
             debugPrint(
               '[active-chat] snapshot recovery converged kind=durable_transcript',
             );
+            _markRecoveryConverged();
             return;
           }
           if (!_canRecoverTurn(turnEpoch)) return;
@@ -21042,9 +21327,13 @@ class ActiveChat {
         }
         // ms1215: prove from the durable transcript, before binding the
         // snapshot, that its inflight is still the turn streamed here.
+        final provenSnapshot = snapshot;
         final ownedTurnStillOpen =
             await _desktopRecoveryOperationBeforeDeadline(
-              _durableTranscriptKeepsOwnedTurnOpen(snapshot),
+              GatewaySocketMeter.origin(
+                'chat.recovery',
+                () => _durableTranscriptKeepsOwnedTurnOpen(provenSnapshot),
+              ),
               epochInvalidated,
             ).catchError((Object _) => false) ??
             false;
@@ -21063,12 +21352,16 @@ class ActiveChat {
         debugPrint(
           '[active-chat] snapshot recovery converged kind=$resultKind',
         );
+        _markRecoveryConverged();
+        final applyWatch = Stopwatch()..start();
         _applyDesktopRecoverySnapshot(
           snapshot,
           turnEpoch,
           connectionRequestAtResumeStart: connectionRequestAtResumeStart,
           ownedTurnStillOpen: ownedTurnStillOpen,
         );
+        _meterApplyMs = applyWatch.elapsedMilliseconds;
+        _meterApplyMsgs = snapshot.messages.length;
         return;
       } catch (error) {
         if (!_canRecoverTurn(turnEpoch)) return;
@@ -21245,7 +21538,7 @@ class ActiveChat {
     }
     final List<Map<String, dynamic>> transcript;
     try {
-      transcript = await _loadRecoveryTranscript(
+      transcript = await _loadRecoveryTranscriptShared(
         serverSessionId,
         _storedSessionProfile,
       );
@@ -21457,17 +21750,23 @@ class ActiveChat {
     final incomingTranscriptComplete = preferFallback
         ? _transcriptIsComplete
         : snapshotTranscriptComplete;
-    _messages = _applyCancelledTurnTombstonesForDisplay(
-      _associateGeneratedImagesNewestFirst(
-        _carryLiveTurnActivity(
-          previousMessagesNewestFirst,
-          _sanitizeDesktopFailureProjection(
-            projection.messagesNewestFirst.map(Map<String, dynamic>.from),
+    // N10g: a recovery that changed nothing must not replace every row's Map:
+    // the chat caches (list entries, sticky index, anchors, fingerprints) are
+    // keyed by identity and would be rebuilt for the whole transcript.
+    _messages = reuseUnchangedRowIdentities(
+      _messages,
+      _applyCancelledTurnTombstonesForDisplay(
+        _associateGeneratedImagesNewestFirst(
+          _carryLiveTurnActivity(
+            previousMessagesNewestFirst,
+            _sanitizeDesktopFailureProjection(
+              projection.messagesNewestFirst.map(Map<String, dynamic>.from),
+            ),
+            running: projection.running,
           ),
-          running: projection.running,
         ),
+        incomingTranscriptComplete: incomingTranscriptComplete,
       ),
-      incomingTranscriptComplete: incomingTranscriptComplete,
     );
     if (!projection.running) {
       _sealRecoveredLiveActivity(completed: !projection.failed);
@@ -21695,6 +21994,14 @@ class ActiveChat {
   Future<_RecoveryTranscriptRead> _readDurableTranscriptForRecoveringTurn(
     int turnEpoch, {
     bool serverIdle = false,
+  }) => GatewaySocketMeter.origin(
+    'chat.recovery',
+    () => _readDurableTranscriptLabelled(turnEpoch, serverIdle: serverIdle),
+  );
+
+  Future<_RecoveryTranscriptRead> _readDurableTranscriptLabelled(
+    int turnEpoch, {
+    bool serverIdle = false,
   }) async {
     if (!_canRecoverTurn(turnEpoch)) return _RecoveryTranscriptRead.unread;
     final loadEpoch = _messageLoadEpoch;
@@ -21705,7 +22012,7 @@ class ActiveChat {
     final List<Map<String, dynamic>> transcript;
     try {
       final read = await _desktopRecoveryOperationBeforeDeadline(
-        _loadRecoveryTranscript(storedId, profile),
+        _loadRecoveryTranscriptShared(storedId, profile),
         _turnEpochInvalidated.future,
       );
       if (read == null ||
@@ -21816,56 +22123,6 @@ class ActiveChat {
     }
     if (awaitingEventReply) return null;
     return removed ? view : null;
-  }
-
-  Future<void> _recoverRestTurnFromTranscript(
-    int turnEpoch,
-    Object originalError,
-  ) async {
-    final messageLoadEpoch = _messageLoadEpoch;
-    final expectedUsers = _messages.where(isRealUserTurn).length;
-    final epochInvalidated = _turnEpochInvalidated.future;
-    const delays = <Duration>[
-      Duration.zero,
-      Duration(seconds: 1),
-      Duration(seconds: 2),
-      Duration(seconds: 4),
-      Duration(seconds: 6),
-      Duration(seconds: 8),
-      Duration(seconds: 8),
-    ];
-    bool stillCurrent() =>
-        _canRecoverTurn(turnEpoch) && messageLoadEpoch == _messageLoadEpoch;
-    for (final delay in delays) {
-      if (!stillCurrent()) return;
-      if (delay > Duration.zero) {
-        final elapsed = await _waitForTerminalReconcileDelay(
-          delay,
-          epochInvalidated,
-        );
-        if (!elapsed || !stillCurrent()) return;
-      }
-      try {
-        final transcript = await _loadStoredMessages(_storedSessionProfile);
-        if (!stillCurrent()) return;
-        final authority = _terminalAuthority(transcript, expectedUsers);
-        if (authority.reason == TerminalAuthorityReason.finalAssistant) {
-          await _completeRun(
-            finalOutput: authority.assistantText,
-            authoritativeTranscript: transcript,
-          );
-          return;
-        }
-      } catch (error) {
-        if (RegExp(r'HTTP 4\d\d').hasMatch(error.toString())) break;
-      }
-    }
-    if (stillCurrent()) {
-      _failRun(
-        activeChatDesktopRecoveryUiMessage(originalError),
-        failureMetadata: const {_awaitingDurableTurnRecoveryKey: true},
-      );
-    }
   }
 
   /// Texto del asistente del TURNO ACTUAL (tras el último mensaje de usuario
@@ -22075,138 +22332,6 @@ class ActiveChat {
     }
   }
 
-  Future<bool> _startRestFallbackWithAttachments(
-    String fullText,
-    String model,
-    List<Map<String, dynamic>> history,
-    int turnEpoch,
-    List<AttachmentDraft> attachments,
-  ) async {
-    final mentionAnnotation = botMentionNote(fullText);
-    var fallbackText = sanitizeRemoteChatText(stripBotMentionNote(fullText));
-    final refs = <String>[];
-    final delivery = _activeTurnDelivery;
-    final binaryAttachments =
-        (delivery?.current.activeAttachments ??
-                attachments
-                    .where(
-                      (item) =>
-                          item.uploadState != AttachmentUploadState.removed,
-                    )
-                    .toList(growable: false))
-            .where((item) => !AttachmentUploader.isTextEmbeddable(item))
-            .toList(growable: false);
-    if (binaryAttachments.isNotEmpty) {
-      if (!await _beginTurnTransport(turnEpoch, PreparedTurnTransport.rest)) {
-        return false;
-      }
-      final attachmentOwner = connection.id;
-      for (final initialAttachment in binaryAttachments) {
-        var attachment = initialAttachment;
-        if (delivery != null && attachment.localId.isNotEmpty) {
-          final staged = await delivery.beginAttachmentUpload(
-            attachment.localId,
-            remoteSessionId: attachmentOwner,
-            transport: AttachmentRemoteTransport.rest,
-          );
-          if (staged == null) {
-            _failRun(
-              delivery.persistenceFailed
-                  ? 'No se pudo conservar el estado de un adjunto.'
-                  : 'El lote de adjuntos cambió durante la subida.',
-            );
-            return false;
-          }
-          attachment = staged;
-          if (attachment.isAttachedTo(
-            attachmentOwner,
-            transport: AttachmentRemoteTransport.rest,
-          )) {
-            continue;
-          }
-        }
-        AttachmentUploadResult result;
-        try {
-          result = await _attachmentUploader(connection, attachment);
-        } catch (_) {
-          result = const AttachmentUploadResult.failure(
-            AttachmentErrorKind.transport,
-          );
-        }
-        if (_turnEpoch != turnEpoch || _runTerminal) return false;
-        final managedPath = result.managedPath;
-        if (!result.ok || managedPath == null || managedPath.isEmpty) {
-          if (delivery != null && attachment.localId.isNotEmpty) {
-            await delivery.markAttachmentFailed(
-              attachment.localId,
-              attempt: attachment.attempt,
-              errorKind: result.errorKind ?? AttachmentErrorKind.transport,
-            );
-          }
-          _failRun('No se pudo preparar un adjunto para esta instancia.');
-          return false;
-        }
-        if (delivery == null || attachment.localId.isEmpty) {
-          refs.add('[Archivo adjunto disponible en $managedPath]');
-          continue;
-        }
-        final persisted = await delivery.markAttachmentAttached(
-          attachment.localId,
-          attempt: attachment.attempt,
-          remoteSessionId: attachmentOwner,
-          transport: AttachmentRemoteTransport.rest,
-          remoteRef: managedPath,
-        );
-        if (!persisted) {
-          _failRun(
-            delivery.persistenceFailed
-                ? 'No se pudo conservar el estado de un adjunto.'
-                : 'El lote de adjuntos cambió durante la subida.',
-          );
-          return false;
-        }
-      }
-      await delivery?.waitForAttachmentMutations();
-      if (delivery != null) {
-        final expectedIds = binaryAttachments
-            .map((item) => item.localId)
-            .where((id) => id.isNotEmpty)
-            .toSet();
-        final completed = delivery.current.activeAttachments
-            .where(
-              (item) =>
-                  expectedIds.contains(item.localId) &&
-                  item.isAttachedTo(
-                    attachmentOwner,
-                    transport: AttachmentRemoteTransport.rest,
-                  ),
-            )
-            .toList(growable: false);
-        if (completed.length != expectedIds.length) {
-          _failRun('El lote de adjuntos cambió durante la subida.');
-          return false;
-        }
-        refs.addAll(
-          completed.map(
-            (item) => '[Archivo adjunto disponible en ${item.remoteRef}]',
-          ),
-        );
-      }
-    }
-    if (refs.isNotEmpty) {
-      final separator = fallbackText.contains('⟦adjunto⟧')
-          ? '\n'
-          : '\n⟦adjunto⟧\n';
-      fallbackText = '$fallbackText$separator${refs.join('\n')}';
-    }
-    return _startRemoteRun(
-      appendBotMentionNote(fallbackText, mentionAnnotation),
-      model,
-      history,
-      turnEpoch,
-    );
-  }
-
   void _onDesktopEvent(TuiGatewayEvent event) {
     final runtimeId = _desktopRuntimeSessionId;
     if (runtimeId == null) return;
@@ -22217,7 +22342,11 @@ class ActiveChat {
       // the same class of signal Desktop already reconciles an open pane on.
       _durableSessionsChangeRevision += 1;
       if (desktopChangeEventsAvailable) {
-        _signalAdaptiveRefresh(full: true);
+        // N6a: the broadcast names no change to this chat's subagents,
+        // processes or controls and reaches every client for any session, so
+        // it must not relaunch the full snapshot with its +1.5 s/+4 s repair.
+        // Only a user control action does that (_requestPostControlRepair).
+        _signalAdaptiveRefresh();
         _emit(ActiveChatEvent.sessionInfo);
       } else {
         unawaited(refreshBackgroundProcesses());
@@ -22886,6 +23015,7 @@ class ActiveChat {
       );
     }
     _emit(ActiveChatEvent.sessionInfo);
+    _compactionEndCount += 1;
     if (!isStreaming) {
       unawaited(
         loadMessages(
@@ -22935,6 +23065,7 @@ class ActiveChat {
     _suppressTerminalHydrationAfterCompaction = false;
     _compactionSuppressedTurnEpoch = null;
     if (!wasSuppressed || isStreaming || _disposed) return;
+    _compactionEndCount += 1;
     unawaited(
       loadMessages(
         profile: _storedSessionProfile,
@@ -24494,81 +24625,6 @@ class ActiveChat {
     return settledText;
   }
 
-  /// Lanza el turno remoto vía `/v1/runs` (motor de runs con aprobaciones
-  /// once/session/always/deny). Extraído sin cambios de comportamiento para poder
-  /// reutilizarlo con el `history` original o con el SOUL del perfil inyectado.
-  Future<bool> _startRemoteRun(
-    String fullText,
-    String model,
-    List<Map<String, dynamic>> history,
-    int turnEpoch,
-  ) async {
-    try {
-      if (!await _beginTurnTransport(turnEpoch, PreparedTurnTransport.rest)) {
-        return false;
-      }
-      final runId = await _api.startRun(
-        input: sanitizeRemoteChatText(fullText),
-        sessionId: serverSessionId,
-        model: explicitRunModel(model),
-        profile: sessionProfile,
-        history: history
-            .map(
-              (message) => <String, dynamic>{
-                ...message,
-                if (message['content'] is String)
-                  'content': sanitizeRemoteChatText(
-                    message['content'] as String,
-                  ),
-              },
-            )
-            .toList(),
-      );
-      if (_turnEpoch != turnEpoch || _queueAdmissionFrozen) {
-        // El POST pudo crear el run justo después de que el usuario pulsase Stop.
-        // Su id identifica de forma inequívoca el turno viejo: detenlo y nunca lo
-        // adoptes como currentRunId del epoch siguiente.
-        try {
-          await _api.stopRun(runId, profile: sessionProfile);
-        } catch (_) {}
-        return false;
-      }
-      currentRunId = runId;
-      state = ChatPipelineState.waiting;
-      // Arranca el foreground service / vigilancia en 2º plano para este run
-      // (la app está en primer plano aquí, así que iniciarlo está permitido).
-      _onRunStarted?.call(runId);
-      _emit(ActiveChatEvent.connected);
-      // El reloj de silencio solo gobierna la pista visual; el terminal sigue
-      // viniendo del servidor o de la recuperación del transporte.
-      _armActivityWatchdog();
-      _api.streamRunEvents(
-        runId,
-        profile: sessionProfile,
-        onEvent: (event) {
-          if (_turnEpoch == turnEpoch) _onRunEvent(event);
-        },
-        onDone: () {
-          if (_turnEpoch == turnEpoch) _onRunStreamDone();
-        },
-        onError: (e) {
-          if (_turnEpoch != turnEpoch) return;
-          // Esta ruta pertenece al transporte REST, no al socket Desktop
-          // retirado. Conserva la reconciliación histórica de runs REST.
-          unawaited(_recoverRestTurnFromTranscript(turnEpoch, e));
-        },
-        idleTimeout: null,
-      );
-      return true;
-    } catch (e) {
-      if (_turnEpoch != turnEpoch) return false;
-      _activityWatchdogTimer?.cancel();
-      _activityWatchdogTimer = null;
-      _failRun(e.toString());
-      return false;
-    }
-  }
-
   /// Retained UI compatibility flag. Official session lifecycle owns profile
   /// isolation; missing capabilities fail rather than silently using default.
   bool profileNotIsolated = false;
@@ -24586,41 +24642,6 @@ class ActiveChat {
       {'role': 'system', 'content': soul},
       ...history,
     ];
-  }
-
-  /// LEGACY (TASK-014): SIN USO. El modo voz ya no envía ningún comando
-  /// `/reasoning` automático (era frágil y podía ensuciar la sesión remota si el
-  /// servidor no lo interpretaba). Se conserva el método por si una integración
-  /// futura lo necesita de forma explícita; candidato a eliminar en una TASK
-  /// posterior. No lo llames desde el flujo de voz.
-  ///
-  /// Aplica el esfuerzo de razonamiento a ESTA sesión vía el comando
-  /// `/reasoning <nivel>` del gateway. No inserta mensajes ni emite eventos. Solo
-  /// aplica a instancias remotas (`/v1/runs`). Best-effort: si falla, se ignora.
-  void applyReasoningEffort(String level, {required String model}) {
-    if (connection.kind == InstanceKind.localhost ||
-        level.trim().isEmpty ||
-        mutationsBlockedByOwnershipConflict) {
-      return;
-    }
-    unawaited(
-      _trackRuntimeMutation<void>(() async {
-        final runId = await _api.startRun(
-          input: '/reasoning $level',
-          sessionId: sessionId,
-          profile: sessionProfile,
-          model: explicitRunModel(model),
-          history: const [],
-        );
-        _api.streamRunEvents(
-          runId,
-          profile: sessionProfile,
-          onEvent: (_) {},
-          onDone: () {},
-          onError: (_) {},
-        );
-      }).catchError((Object _) {}),
-    );
   }
 
   /// Conserva una indicación que no pudo entrar en el turno vivo. Se enviará
@@ -26152,80 +26173,6 @@ class ActiveChat {
     _armActivityWatchdog();
   }
 
-  void _onRunEvent(Map<String, dynamic> event) {
-    // El run ya cerró localmente (el usuario tocó parar, o llegó un terminal):
-    // ignora los frames rezagados que el gateway siga emitiendo hasta que el
-    // SSE se cierre del todo. Si no, un `message.delta` tardío reprogramaría el
-    // flush que hace `state = streaming` y resucitaría el estado "respondiendo"
-    // (STOP + spinner) pese a estar ya cancelado/fallado.
-    if (_runTerminal) return;
-    final type = (event['event'] ?? '').toString();
-    _observeRuntimeActivity();
-    switch (type) {
-      case 'message.delta':
-        if (!_streamingConfirmed) {
-          _streamingConfirmed = true;
-          ConnectionManager.markStreamingSupported(connection.id);
-        }
-        _enqueueToken((event['delta'] ?? '').toString());
-      // `thinking.delta` is a spinner phrase, never reasoning (as Desktop).
-      case 'reasoning.delta':
-        final delta = event['text'] ?? event['delta'];
-        if (delta is String && delta.isNotEmpty) {
-          _appendAssistantReasoningActivity(delta);
-          _emit(ActiveChatEvent.toolProgress);
-        }
-      case 'reasoning.available':
-        final reasoning = event['text'] ?? event['reasoning'];
-        if (reasoning is String && reasoning.trim().isNotEmpty) {
-          _appendAssistantReasoningActivity(reasoning, authoritative: true);
-          _emit(ActiveChatEvent.toolProgress);
-        }
-      case 'tool.started':
-        _flushTokenBuffer();
-        state = ChatPipelineState.executing;
-        _trackVoiceToolEvent(event, running: true, startsNew: true);
-        _upsertRunTool(event, running: true);
-        _upsertAssistantToolActivity(event, running: true, startsNew: true);
-        _emit(ActiveChatEvent.toolProgress);
-      case 'tool.completed':
-        _flushTokenBuffer();
-        _trackVoiceToolEvent(event, running: false, startsNew: false);
-        _upsertRunTool(event, running: false);
-        _upsertAssistantToolActivity(event, running: false, startsNew: false);
-        _emit(ActiveChatEvent.toolProgress);
-      case 'approval.request':
-        _flushTokenBuffer();
-        _handleApprovalRequest(event);
-      case 'approval.responded':
-        final respondedId = _approvalRequestId(event);
-        final pendingId = _approvalRequestId(pendingApproval);
-        if (respondedId == null ||
-            pendingId == null ||
-            respondedId != pendingId) {
-          return;
-        }
-        _cancelApprovalNotification(pendingApproval!, terminal: false);
-        pendingApproval = null;
-        state = ChatPipelineState.executing;
-        _emit(ActiveChatEvent.toolProgress);
-      case 'run.completed':
-        final out = (event['output'] ?? '').toString();
-        _completeRun(finalOutput: out.isNotEmpty ? out : null);
-      case 'run.failed':
-        _failRun((event['error'] ?? 'La ejecución falló').toString());
-      case 'run.cancelled':
-        _cancelRunState();
-    }
-  }
-
-  /// El SSE del run cerró. Si no llegó un evento terminal explícito, asume que
-  /// el turno completó y refresca.
-  void _onRunStreamDone() {
-    if (_runTerminal) return;
-    _completeRun();
-  }
-
   /// Adapta un evento tool.started/tool.completed del run a una línea de trace.
   ///
   /// [startsNew]: the tool's own start, a new invocation. [draft]: a
@@ -26490,7 +26437,7 @@ class ActiveChat {
     return value == null || value.isEmpty ? null : value;
   }
 
-  String? get _approvalRunOwner => currentRunId ?? _desktopRuntimeSessionId;
+  String? get _approvalRunOwner => _desktopRuntimeSessionId;
 
   void _cancelApprovalNotification(
     Map<String, dynamic> approval, {
@@ -26526,7 +26473,7 @@ class ActiveChat {
         _approvalRequestId(pendingApproval) == approvalId;
     final desktop = _desktopGateway;
     final runtimeId = _desktopRuntimeSessionId;
-    if (currentRunId == null && desktop != null && runtimeId != null) {
+    if (desktop != null && runtimeId != null) {
       final requestBindEpoch = _desktopBindEpoch;
       final requestSessionEpoch = _desktopSessionEpoch;
       final requestTurnEpoch = _turnEpoch;
@@ -26580,25 +26527,6 @@ class ActiveChat {
       _emit(ActiveChatEvent.toolProgress);
       return;
     }
-    if (runId == null) return;
-    await _api.resolveRunApproval(
-      runId,
-      choice,
-      requestId: approvalId,
-      profile: sessionProfile,
-    );
-    if (!requestStillCurrent()) return;
-    await _notifications?.cancelApproval(
-      connId: connection.id,
-      profile: sessionProfile,
-      runId: runId,
-      approvalId: approvalId,
-    );
-    if (!requestStillCurrent()) return;
-    pendingApproval = null;
-    state = ChatPipelineState.executing;
-    if (!_streamingConfirmed) _armActivityWatchdog();
-    _emit(ActiveChatEvent.toolProgress);
   }
 
   Future<DesktopPromptResponse> respondToClarify(
@@ -27139,7 +27067,6 @@ class ActiveChat {
     _pendingDesktopInterimKey = null;
     _assistantNarration.reset();
     _assistantStream.clear();
-    currentRunId = null;
     _runTerminal = false;
     _streamingConfirmed =
         snapshot.inflight?.assistant?.trim().isNotEmpty == true;
@@ -27217,7 +27144,6 @@ class ActiveChat {
     _pendingDesktopInterimKey = null;
     _assistantNarration.reset();
     _assistantStream.clear();
-    currentRunId = null;
     _terminalTimer?.cancel();
     _terminalTimer = null;
     _runTerminal = false;
@@ -28143,12 +28069,14 @@ class ActiveChat {
 
   /// rl1215: a new default network voids the gateway's backoff ladder, so
   /// the recovery loop (which never undercuts it) redials at once.
-  void _forgetReconnectBackoffAfterNetworkChange() {
-    if (_disposed) return;
+  /// True when a backoff was running (only then the holdoff is sealed).
+  bool _forgetReconnectBackoffAfterNetworkChange() {
+    if (_disposed) return false;
     final gateway = _desktopGateway;
-    if (gateway is TuiGatewayClient) {
-      gateway.resetReconnectBackoffForNetworkChange();
-    }
+    if (gateway is! TuiGatewayClient) return false;
+    final wasBackingOff = gateway.isBackingOff;
+    gateway.resetReconnectBackoffForNetworkChange();
+    return wasBackingOff;
   }
 
   /// Acortar el backoff no basta con un socket medio abierto en la red
@@ -29515,7 +29443,7 @@ class ActiveChat {
       try {
         final connected = await _stopOperationBeforeDeadline(
           stop,
-          gateway.connect().then((_) => true),
+          gateway.connectForeground().then((_) => true),
         );
         if (connected == null || !_stopIsCurrent(stop)) return false;
         final snapshot = await _stopOperationBeforeDeadline(
@@ -29720,7 +29648,6 @@ class ActiveChat {
     _beginVoiceBargeHandoff();
     final runtimeId = _desktopRuntimeSessionId;
     final desktop = _desktopGateway;
-    final runId = currentRunId;
 
     if (_usingDesktopGateway && runtimeId != null && desktop != null) {
       final durableId = _desktopStoredSessionId ?? serverSessionId;
@@ -29800,26 +29727,6 @@ class ActiveChat {
     }
 
     _cancelCurrent(requestServerStop: false);
-    if (runId != null) {
-      try {
-        var remaining = remainingSettle();
-        if (remaining <= Duration.zero) return;
-        final stopped = await _api
-            .stopRun(runId, profile: sessionProfile)
-            .timeout(remaining);
-        remaining = remainingSettle();
-        if (!activeChatVoiceBargeRunIsTerminal(stopped) &&
-            remaining > Duration.zero) {
-          await waitForActiveChatVoiceBargeTerminal(
-            readStatus: () => _api.getRun(runId, profile: sessionProfile),
-            timeout: remaining,
-          );
-        }
-      } catch (_) {
-        // Compatibilidad REST best-effort; el turno siguiente sigue llevando
-        // el historial local con la marca de interrupción.
-      }
-    }
   }
 
   void _cancelCurrent({
@@ -29840,15 +29747,6 @@ class ActiveChat {
     _activityWatchdogTimer = null;
     _setNoActivityHint(false);
     _flushTokenBuffer();
-    // Pide al servidor detener el run; el SSE cerrará (o emitirá run.cancelled),
-    // pero ya marcamos terminal para no procesarlo dos veces.
-    final runId = currentRunId;
-    final cancelProfile = _turnProfile;
-    if (requestServerStop && runId != null) {
-      _api
-          .stopRun(runId, profile: cancelProfile)
-          .catchError((_) => <String, dynamic>{});
-    }
     // Stop significa detener el trabajo completo solicitado desde el composer,
     // no solo el run que está delante. Ningún seguimiento pendiente debe
     // arrancar después de una cancelación explícita del usuario.
@@ -29933,7 +29831,7 @@ class ActiveChat {
     var runtimeId = _desktopRuntimeSessionId;
     for (
       var attempt = 0;
-      attempt < 100 && runtimeId == null && currentRunId == null && isStreaming;
+      attempt < 100 && runtimeId == null && isStreaming;
       attempt++
     ) {
       await Future<void>.delayed(const Duration(milliseconds: 50));
@@ -30515,6 +30413,10 @@ class ActiveChat {
     _tokenFlushTimer?.cancel();
     _terminalTimer?.cancel();
     _desktopEventSubscription?.cancel();
+    final gateway = _desktopGateway;
+    if (gateway is TuiGatewayClient) {
+      gateway.linkListenable.removeListener(_onDesktopLinkChanged);
+    }
     _interactivePrompts = InteractivePromptReducer.reduce(
       _interactivePrompts,
       const InteractivePromptDisposed(),
@@ -30615,7 +30517,9 @@ class ActiveChatService {
     @visibleForTesting
     TuiGatewayClient Function(SavedConnection connection)?
     sharedChatGatewayFactory,
+    @visibleForTesting Duration networkBackoffHoldoff = wakeReconnectHoldoff,
   }) : _prefs = prefs,
+       _networkBackoffHoldoffDuration = networkBackoffHoldoff,
        _connectionCredentialsRevision = connectionCredentialsRevision,
        _desktopGatewayFactory = desktopGatewayFactory,
        _chatGatewayPool = chatGatewayPool ?? SharedGatewayPool.instance,
@@ -32114,6 +32018,11 @@ class ActiveChatService {
         sharedLease?.client ??
         _takeWarmGateway(key, connection) ??
         _createChatGateway(connection, api: chatApi);
+    // A chat at rest has nobody waiting on connect(): its socket redials
+    // alone after a loss (PX5A, Desktop use-gateway-boot.ts reconnect timer).
+    if (resolvedDesktopGateway is TuiGatewayClient) {
+      resolvedDesktopGateway.redialWhenIdle = true;
+    }
     late final ActiveChat chat;
     chat = ActiveChat(
       connection: connection,
@@ -32130,7 +32039,6 @@ class ActiveChatService {
       onTerminal: () => _onChatTerminal(key),
       onUnused: () => _onChatUnused(key),
       beforeTerminalNotification: _maybeStopForeground,
-      onRunStarted: (runId) => _onRunStarted(key, runId),
       onForegroundKeepAlive: disableForegroundKeepAlive
           ? null
           : () async {
@@ -32254,73 +32162,43 @@ class ActiveChatService {
     return chat;
   }
 
-  /// Un run arrancó: registra la vigilancia en 2º plano y levanta el foreground
-  /// service. Esto mantiene vivo el proceso (y con él el isolate de UI que
-  /// corre el SSE) mientras el agente responde, aunque el usuario salga de la
-  /// app, bloquee o apague la pantalla. Si el SO matase el proceso igualmente,
-  /// el isolate del servicio sigue sondeando el run y avisa al terminar.
-  Future<void> _onRunStarted(String key, String runId) async {
-    final chat = _chats[key];
-    if (chat == null) return;
-    // Registrar en RunRegistry para que Task Center (Ejecuciones) vea los runs
-    // lanzados desde el chat, no solo los de RunsTab. Es un añadido puro:
-    // si prefs es null (tests) se omite sin efecto. RunRegistry.add es idempotente.
-    final prefs = _prefs;
-    if (prefs != null) {
-      try {
-        final registry = await RunRegistry.load(prefs, chat.connection.id);
-        await registry.add(
-          RunRecord(
-            runId: runId,
-            prompt: chat.lastPrompt,
-            sessionId: chat.sessionId,
-            createdAt: DateTime.now().millisecondsSinceEpoch / 1000,
-            lastStatus: 'queued',
-            connId: chat.connection.id,
-            profile: chat.sessionProfile,
-          ),
-        );
-      } catch (error) {
-        if (kDebugMode) {
-          debugPrint(
-            '[active-chat] run registry add unavailable '
-            '(${error.runtimeType})',
-          );
-        }
-      }
-    }
-    try {
-      await BackgroundWatch.add(
-        SavedRunWatch(
-          connId: chat.connection.id,
-          profile: chat.sessionProfile,
-          base: chat.connection.baseUrl,
-          runId: runId,
-          prompt: chat.lastPrompt,
-          sessionId: chat.sessionId,
+  /// Desktop's `WAKE_RECONNECT_HOLDOFF_MS` (use-gateway-boot.ts): one
+  /// destructive reconnect per window.
+  static const wakeReconnectHoldoff = Duration(seconds: 15);
+  final Duration _networkBackoffHoldoffDuration;
+  Timer? _networkBackoffHoldoff;
+
+  /// Validated-network signal (`available`): probes every live socket and
+  /// wakes each chat. Like Desktop's `forceReconnectNow`, only the
+  /// backoff reset is grouped, once per holdoff window, and it seals the
+  /// window only when it cleared a running backoff. Parked sockets stay
+  /// open; they are probed here and still close on memory pressure or
+  /// background idling.
+  void requestImmediateTransportRecovery() {
+    final resetBackoff = _networkBackoffHoldoff == null;
+    var sealed = false;
+    for (final parked in _warmGateways.values.toList()) {
+      final gateway = parked.gateway;
+      if (!gateway.isConnected) continue;
+      if (gateway is! HermesDesktopTransportProbeGateway) continue;
+      unawaited(
+        (gateway as HermesDesktopTransportProbeGateway).probeNow().then<void>(
+          (_) {},
+          onError: (_, _) {},
         ),
       );
-      await BackgroundListener.ensureAutomationForeground();
-    } catch (error) {
-      if (kDebugMode) {
-        debugPrint(
-          '[active-chat] foreground start unavailable '
-          '(${error.runtimeType})',
-        );
-      }
     }
-    _refreshActiveIds();
-  }
-
-  /// Señal de red de la plataforma (`onAvailable`): sondea el socket actual
-  /// y acorta el backoff de cada chat.
-  void requestImmediateTransportRecovery() {
-    // co1215: a parked socket may be half-open on the old network.
-    closeWarmGateways();
     for (final chat in _chats.values) {
-      chat._forgetReconnectBackoffAfterNetworkChange();
+      if (resetBackoff && chat._forgetReconnectBackoffAfterNetworkChange()) {
+        sealed = true;
+      }
       chat.probeTransportNow();
       chat.requestImmediateTransportRecovery();
+    }
+    if (sealed) {
+      _networkBackoffHoldoff = Timer(_networkBackoffHoldoffDuration, () {
+        _networkBackoffHoldoff = null;
+      });
     }
   }
 
@@ -32346,20 +32224,45 @@ class ActiveChatService {
     for (final chat in chats) {
       chat.probeTransportNow();
     }
+    // N6b: the chat on screen first, then the ones with a turn, then the
+    // rest, two at a time. A chat whose snapshot recovery just read the
+    // transcript is not read again for the same generation.
+    int rank(ActiveChat chat) => chat.hasListeners
+        ? 0
+        : (chat.isStreaming || chat.sessionActivity.active)
+        ? 1
+        : 2;
+    final pending = [
+      for (final chat in chats)
+        if (!chat.recoveryReadsQuiet) chat,
+    ];
+    final queue = [
+      for (var r = 0; r < 3; r++)
+        for (final chat in pending)
+          if (rank(chat) == r) chat,
+    ];
     final reserved = <ActiveChat>{};
-    for (final chat in chats) {
+    for (final chat in queue) {
       chat._reserveResumeReconciliation();
       reserved.add(chat);
     }
     try {
-      for (final chat in chats) {
-        try {
-          await chat.reconcileAfterResume();
-        } finally {
-          chat._releaseResumeReconciliation();
-          reserved.remove(chat);
+      Future<void> worker() async {
+        while (queue.isNotEmpty) {
+          final chat = queue.removeAt(0);
+          try {
+            await GatewaySocketMeter.origin(
+              'chat.foreground',
+              chat.reconcileAfterResume,
+            );
+          } finally {
+            chat._releaseResumeReconciliation();
+            reserved.remove(chat);
+          }
         }
       }
+
+      await Future.wait([worker(), worker()]);
     } finally {
       for (final chat in reserved) {
         chat._releaseResumeReconciliation();
@@ -32402,7 +32305,13 @@ class ActiveChatService {
       }
       match = chat;
     }
-    return match?.reconcileAfterResume() ?? Future<bool>.value(false);
+    if (match == null || match.recoveryReadsQuiet) {
+      return Future<bool>.value(false);
+    }
+    return GatewaySocketMeter.origin(
+      'chat.changed',
+      match.reconcileAfterResume,
+    );
   }
 
   Future<void> suspendIdleConnections() async {
@@ -32460,16 +32369,7 @@ class ActiveChatService {
       );
     }
     _refreshActiveIds();
-    // El run terminó: deja de vigilarlo en 2º plano y, si ya no queda ningún
-    // run activo, baja el foreground service.
-    final runId = chat?.currentRunId;
-    if (runId != null && chat != null) {
-      BackgroundWatch.remove(
-        runId,
-        connId: chat.connection.id,
-        profile: chat.sessionProfile,
-      );
-    }
+    // Si ya no queda ningún chat activo, baja el foreground service.
     _maybeStopForeground();
     if (chat == null) return;
     final processRefresh = chat.refreshBackgroundProcesses();
@@ -32812,7 +32712,6 @@ class ActiveChatService {
       tool: status.toolLabel,
       toolIsSkill: status.toolIsSkill,
       startedAtMs: chat.turnClockOrigin?.millisecondsSinceEpoch,
-      runId: chat.currentRunId,
       readOnly: chat.connection.readOnly,
     );
   }
@@ -32968,6 +32867,8 @@ class ActiveChatService {
       notifications?.liveTurnSource = null;
     }
     _connectionCredentialsRevision?.removeListener(_onCredentialsRevision);
+    _networkBackoffHoldoff?.cancel();
+    _networkBackoffHoldoff = null;
     closeWarmGateways();
     _reopenTranscriptCache.clear();
     _reopenTranscriptCacheBytes = 0;

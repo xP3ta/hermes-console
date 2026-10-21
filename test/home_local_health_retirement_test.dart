@@ -61,7 +61,13 @@ void main() {
               indirectProvision++;
             }
           }
-          if (request.url.path == '/health') {
+          if (request.url.path == '/') {
+            return http.Response(
+              '<script>window.__HERMES_SESSION_TOKEN__="t";</script>',
+              200,
+            );
+          }
+          if (request.url.path == '/api/status') {
             if (code == -1) {
               throw const SocketException(
                 'synthetic refusal',
@@ -72,7 +78,7 @@ void main() {
             return http.Response('{}', code);
           }
           if (request.url.path == '/api/sessions') {
-            return http.Response('{"data":[],"has_more":false}', 200);
+            return http.Response('{"sessions":[],"total":0}', 200);
           }
           return http.Response('{}', 404);
         });
@@ -106,11 +112,11 @@ void main() {
             await future;
           }
           expect(
-            paths.where((path) => path == '/health').length,
+            paths.where((path) => path == '/api/status').length,
             greaterThanOrEqualTo(4),
           );
           await tester.pumpWidget(const SizedBox.shrink());
-          await tester.pump(const Duration(seconds: 30));
+          await tester.pump(const Duration(seconds: 90));
           expect(tester.takeException(), isNull);
         }, () => client);
       },

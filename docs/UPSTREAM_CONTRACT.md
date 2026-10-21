@@ -13,9 +13,9 @@ does not invent endpoints. The adaptation and its limits are described in
 [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
 Sources of truth for the contract (do not invent endpoints): Hermes Agent's own
-source and the behaviour of a live Hermes server. Console talks to the Gateway
-and the Dashboard of Hermes itself and to nothing else; the Mobile Bridge was
-retired in 1.2.15 (section 4).
+source and the behaviour of a live Hermes server. Console talks to the Dashboard
+of Hermes itself and to nothing else; the Mobile Bridge was retired in 1.2.15
+(section 4) and the Gateway is no longer used (section 3).
 
 ---
 
@@ -23,13 +23,15 @@ retired in 1.2.15 (section 4).
 
 | What | Default | Where in the code |
 |---|---|---|
-| Gateway (API server, Bearer `API_SERVER_KEY`) | `:8642` | `SavedConnection` (port field of a connection) |
+| Gateway (API server, Bearer `API_SERVER_KEY`) | `:8642` | Not used by the app (section 3); the port field of `SavedConnection` only remains for older saved connections |
 | Dashboard / admin API | `:9119` | `SavedConnection` (`dashboardPort`) |
 
 If Hermes changes a default port, update the constants in `SavedConnection` and
 the connection screen (`instance_edit_screen.dart`). The setup helper
 ([xP3ta/hermes-setup](https://github.com/xP3ta/hermes-setup)) uses the same
-defaults and lets them be moved.
+defaults and lets them be moved. The official command that opens the Dashboard
+to the network is `hermes dashboard --host 0.0.0.0`; on a non-loopback bind
+Hermes always requires a Dashboard sign-in.
 
 ## 2. Dashboard (what the app uses)
 
@@ -56,11 +58,15 @@ The main model is **not isolated per profile**: `POST /api/model/set?profile=X`
 changes the model of the running gateway (there is a single gateway). The app
 asks for confirmation first. That is Hermes' semantics, not an app bug.
 
-## 3. Gateway (Bearer = `API_SERVER_KEY`)
+## 3. Gateway (retired from the app)
 
-`/health`, `/v1/capabilities`, `/v1/runs` (and `/{id}`, `/{id}/approval`) and
-`/v1/chat/completions`. The Gateway does not list runs and does not keep them
-after completion, so the app keeps its own local record (`RunRegistry`).
+The app no longer calls the Gateway REST API (`/v1/runs`, `/v1/models`,
+`/v1/capabilities`, `/v1/skills`, `/v1/toolsets`, `/health` on the Gateway
+port). Chat, history, approvals and every other read go through the Dashboard.
+The only Gateway requests left are three liveness lines for a saved connection
+that has no Dashboard; a CI test
+(`test/u6_gateway_retirement/gateway_gate_test.dart`) pins that list. No
+`API_SERVER_KEY` is asked for when adding a connection.
 
 ## 4. Mobile Bridge (retired in 1.2.15)
 
@@ -83,8 +89,10 @@ What remains of an earlier install:
   `-RetireBridge` line); it does not remove it itself.
 
 The Dashboard should run as a **service** (systemd user unit, LaunchAgent or
-Scheduled Task, which the setup helper creates), not as a manual process, or
-`hermes update` will take it down.
+Scheduled Task), not as a manual process, or `hermes update` will take it down.
+Hermes ships no service for the Dashboard itself; the published setup command
+(`hermes-dashboard-setup`) creates one (systemd user unit, launchd job or
+Scheduled Task).
 
 ## 5. Setup helper
 
@@ -93,9 +101,10 @@ The app ships no setup scripts. `HermesSetupCommands`
 per system (set up, show the code again, a new Dashboard sign-in, retire the
 bridge); a test pins them so the app and the helper cannot drift apart. If the
 helper's URL or arguments change, change them there. The pairing link
-(`hermes://pair`) carries the Gateway address and key and, when known, the
-Dashboard sign-in (`dash_user`, `dash_pass`); the app shows what a link sets up
-before saving anything.
+(`hermes://pair`) is the format of the older helper: it carries the address and
+a key and, when known, the Dashboard sign-in (`dash_user`, `dash_pass`); the app
+shows what a link sets up before saving anything. The Dashboard-only flow needs
+no helper and no link: see [server configuration](CONFIGURATION.md).
 
 ## 6. On-device neural voice (TTS, models from GitHub releases)
 
@@ -124,7 +133,7 @@ never a universal APK.
 - A Dashboard endpoint -> `connection_manager.dart` and the typed client that
   uses it.
 - A JSON-RPC method of `/api/ws` -> `tui_gateway_client.dart`.
-- A port -> `SavedConnection` and `instance_edit_screen.dart` (8642 Gateway,
-  9119 Dashboard).
+- A port -> `SavedConnection` and `instance_edit_screen.dart` (9119 Dashboard;
+  8642 is the retired Gateway).
 - The helper's lines -> `hermes_setup_commands.dart` (and its test).
 - The shape of a payload -> the matching `*.fromJson` (parse defensively).

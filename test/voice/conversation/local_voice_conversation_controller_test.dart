@@ -22,6 +22,7 @@ import 'package:hermes_android/core/services/voice/voice_settings.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../support/desktop_chat_socket.dart';
 import '../../support/in_memory_compression_restore_storage.dart';
 
 class _FakeVoice extends VoiceService {
@@ -399,100 +400,56 @@ void _enableStreamingVoice(
   );
 }
 
-class _FakeGateway extends http.BaseClient {
-  _FakeGateway({this.rejectRuns = false});
+/// The chat of the voice controller goes through the Dashboard socket only, as
+/// Hermes Desktop does. [counter] answers the stored transcript read and fails the
+/// test at tear down if anything asks for the REST run API.
+class _FakeGateway {
+  _FakeGateway() {
+    counter = HostCounter(
+      handler: (request) async {
+        if (request.method == 'GET' && request.url.path.endsWith('/messages')) {
+          return http.Response(
+            jsonEncode({
+              'data': [
+                if (finalText.isNotEmpty)
+                  {'role': 'assistant', 'content': finalText},
+              ],
+            }),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }
+        return http.Response('not found', 404);
+      },
+    );
+    addTearDown(socket.close);
+  }
 
-  final bool rejectRuns;
-  final List<Map<String, dynamic>> runBodies = [];
-  final List<String> hits = [];
-  final Map<String, StreamController<List<int>>> _events = {};
+  final DesktopChatSocket socket = DesktopChatSocket();
+  late final HostCounter counter;
   String finalText = '';
 
-  @override
-  Future<http.StreamedResponse> send(http.BaseRequest request) async {
-    final path = request.url.path;
-    hits.add('${request.method} $path');
-    if (request.method == 'POST' && path == '/v1/runs') {
-      final body =
-          jsonDecode(await request.finalize().bytesToString())
-              as Map<String, dynamic>;
-      runBodies.add(body);
-      if (rejectRuns) {
-        return http.StreamedResponse(
-          Stream.value(utf8.encode('unavailable')),
-          503,
-        );
-      }
-      final id = 'run_${runBodies.length}';
-      return _json({'run_id': id});
-    }
-    final eventMatch = RegExp(r'^/v1/runs/([^/]+)/events$').firstMatch(path);
-    if (request.method == 'GET' && eventMatch != null) {
-      final id = eventMatch.group(1)!;
-      final controller = StreamController<List<int>>();
-      _events[id] = controller;
-      return http.StreamedResponse(
-        controller.stream,
-        200,
-        headers: {'content-type': 'text/event-stream'},
-      );
-    }
-    if (request.method == 'POST' && path.endsWith('/stop')) {
-      return _json({'ok': true});
-    }
-    if (request.method == 'POST' && path.endsWith('/approval')) {
-      return _json({'ok': true});
-    }
-    if (request.method == 'GET' && path.endsWith('/messages')) {
-      return _json({
-        'data': [
-          if (finalText.isNotEmpty) {'role': 'assistant', 'content': finalText},
-        ],
-      });
-    }
-    return http.StreamedResponse(Stream.value(utf8.encode('not found')), 404);
-  }
+  /// Texts handed to `prompt.submit`, one per turn.
+  List<String> get submitTexts => socket.submitTexts;
 
-  http.StreamedResponse _json(Map<String, dynamic> value) =>
-      http.StreamedResponse(
-        Stream.value(utf8.encode(jsonEncode(value))),
-        200,
-        headers: {'content-type': 'application/json'},
+  /// Number of `session.interrupt` frames.
+  int get interrupts => socket.interrupts;
+
+  void token(int turn, String text) => socket.token(turn, text);
+
+  void toolStarted(int turn, String tool, String preview) =>
+      socket.toolStarted(turn, tool, context: preview);
+
+  void approval(int turn, {String command = 'rm archivo', String? requestId}) =>
+      socket.approval(
+        turn,
+        requestId: requestId ?? 'approval-$turn',
+        command: command,
       );
 
-  void token(int run, String text) {
-    _events['run_$run']?.add(
-      utf8.encode(
-        'data: ${jsonEncode({'event': 'message.delta', 'delta': text})}\n\n',
-      ),
-    );
-  }
-
-  void toolStarted(int run, String tool, String preview) {
-    _events['run_$run']?.add(
-      utf8.encode(
-        'data: ${jsonEncode({'event': 'tool.started', 'tool': tool, 'preview': preview})}\n\n',
-      ),
-    );
-  }
-
-  void approval(int run, {String command = 'rm archivo', String? requestId}) {
-    _events['run_$run']?.add(
-      utf8.encode(
-        'data: ${jsonEncode({'event': 'approval.request', 'request_id': requestId ?? 'approval-$run', 'command': command, 'pattern_key': 'rm'})}\n\n',
-      ),
-    );
-  }
-
-  Future<void> complete(int run, String text) async {
+  Future<void> complete(int turn, String text) async {
     finalText = text;
-    final controller = _events['run_$run'];
-    controller?.add(
-      utf8.encode(
-        'data: ${jsonEncode({'event': 'run.completed', 'output': text})}\n\n',
-      ),
-    );
-    await controller?.close();
+    socket.complete(turn, text);
   }
 }
 
@@ -739,7 +696,6 @@ Future<_Harness> _harness({
   Future<void> Function(Duration delay)? playbackTailDelay,
   bool bargeInEnabled = true,
   bool continueWhenLocked = false,
-  bool rejectRuns = false,
   bool captureReadyAutomatically = true,
   bool allowTransportFallback = false,
 }) async {
@@ -749,7 +705,7 @@ Future<_Harness> _harness({
   if (continueWhenLocked) {
     await voice.acceptVoiceDisclosure(continueWhenLocked: true);
   }
-  final gateway = _FakeGateway(rejectRuns: rejectRuns);
+  final gateway = _FakeGateway();
   final service = ActiveChatService(
     compressionRestoreStore: testCompressionRestoreStore(),
   );
@@ -760,8 +716,9 @@ Future<_Harness> _harness({
     api: ApiClient(
       baseUrl: 'http://hermes.test:8642',
       apiKey: 'test-key',
-      httpClient: gateway,
+      httpClient: gateway.counter,
     ),
+    desktopGateway: gateway.socket,
   );
   final controller = LocalVoiceConversationController(
     voice,
@@ -902,7 +859,7 @@ void main() {
             api: ApiClient(
               baseUrl: 'http://hermes.test:8642',
               apiKey: '',
-              httpClient: _FakeGateway(),
+              httpClient: HostCounter(),
             ),
             desktopGateway: desktop,
             allowUnownedDesktopSnapshotForTesting: true,
@@ -958,7 +915,7 @@ void main() {
     () async {
       final prefs = await SharedPreferences.getInstance();
       final voice = _FakeVoice(prefs);
-      final rest = _FakeGateway();
+      final rest = HostCounter();
       final desktop = _NoLiveMutationVoiceGateway();
       final service = ActiveChatService(
         compressionRestoreStore: testCompressionRestoreStore(),
@@ -1006,7 +963,7 @@ void main() {
       expect(desktop.redirectCalls, 0);
       expect(desktop.steerCalls, 0);
       expect(chat.queuedMessages, ['Segundo turno de voz']);
-      expect(rest.runBodies, isEmpty);
+      expect(rest.runsRequests, isEmpty);
 
       desktop.complete('primero hecho');
       await _waitFor(
@@ -1024,7 +981,7 @@ void main() {
       ]);
       expect(desktop.redirectCalls, 0);
       expect(desktop.steerCalls, 0);
-      expect(rest.runBodies, isEmpty);
+      expect(rest.runsRequests, isEmpty);
 
       desktop.complete('segundo hecho');
       await controller.exit();
@@ -1039,7 +996,7 @@ void main() {
     () async {
       final prefs = await SharedPreferences.getInstance();
       final voice = _FakeVoice(prefs);
-      final httpGateway = _FakeGateway();
+      final httpGateway = HostCounter();
       final desktop = _FailingVoiceDesktopGateway();
       final service = ActiveChatService(
         compressionRestoreStore: testCompressionRestoreStore(),
@@ -1072,7 +1029,7 @@ void main() {
       await beforeSend.future.timeout(const Duration(seconds: 2));
       await Future<void>.delayed(const Duration(milliseconds: 100));
 
-      expect(httpGateway.runBodies, isEmpty);
+      expect(httpGateway.runsRequests, isEmpty);
       await controller.exit();
       controller.dispose();
       service.dispose();
@@ -1085,7 +1042,7 @@ void main() {
     () async {
       final prefs = await SharedPreferences.getInstance();
       final voice = _FakeVoice(prefs);
-      final httpGateway = _FakeGateway();
+      final httpGateway = HostCounter();
       final desktop = _FailingVoiceDesktopGateway();
       final service = ActiveChatService(
         compressionRestoreStore: testCompressionRestoreStore(),
@@ -1120,7 +1077,7 @@ void main() {
       await beforeSend.future.timeout(const Duration(seconds: 2));
       await Future<void>.delayed(const Duration(milliseconds: 100));
 
-      expect(httpGateway.runBodies, isEmpty);
+      expect(httpGateway.runsRequests, isEmpty);
       await controller.exit();
       expect(controller.debugAllowTransportFallback, isFalse);
       controller.dispose();
@@ -1318,7 +1275,7 @@ void main() {
     h.voice.captures.single.add(const SttResult('Stop.', true));
     await _waitFor(() => !h.controller.active);
 
-    expect(h.gateway.runBodies, isEmpty);
+    expect(h.gateway.submitTexts, isEmpty);
     expect(h.voice.prepareNarrationCalls, 0);
     expect(h.controller.userTranscript, isEmpty);
     await h.close();
@@ -1330,13 +1287,13 @@ void main() {
     h.voice.captures.single.add(const SttResult('Y.', true));
     await _waitFor(() => h.voice.captures.length == 2);
 
-    expect(h.gateway.runBodies, isEmpty);
+    expect(h.gateway.submitTexts, isEmpty);
     expect(h.controller.phase, VoicePhase.listening);
 
     h.voice.captures[1].add(const SttResult('sí', true));
-    await _waitFor(() => h.gateway.runBodies.length == 1);
+    await _waitFor(() => h.gateway.submitTexts.length == 1);
 
-    expect(h.gateway.runBodies.single['input'], 'sí');
+    expect(h.gateway.submitTexts.single, 'sí');
     h.chat.cancel();
     await h.close();
   });
@@ -1347,7 +1304,7 @@ void main() {
     h.voice.captures.single.add(const SttResult('Cállate.', true));
     await _waitFor(() => !h.controller.active);
 
-    expect(h.gateway.runBodies, isEmpty);
+    expect(h.gateway.submitTexts, isEmpty);
     expect(h.service.of(h.chat.connection.id, h.chat.sessionId), same(h.chat));
     expect(h.controller.userTranscript, isEmpty);
     await h.close();
@@ -1374,10 +1331,9 @@ void main() {
     final h = await _harness();
 
     h.voice.captures.single.add(const SttResult('stop the container', true));
-    await _waitFor(() => h.gateway.runBodies.length == 1);
+    await _waitFor(() => h.gateway.submitTexts.length == 1);
 
-    final body = h.gateway.runBodies.single;
-    expect(body['input'], 'stop the container');
+    expect(h.gateway.submitTexts.single, 'stop the container');
     await h.close();
   });
 
@@ -1392,7 +1348,7 @@ void main() {
       expect(h.controller.partialTranscript, 'hola par');
 
       h.voice.captures.single.add(const SttResult('hola Hermes', true));
-      await _waitFor(() => h.gateway.runBodies.length == 1);
+      await _waitFor(() => h.gateway.submitTexts.length == 1);
       expect(h.controller.userTranscript, 'hola Hermes');
 
       h.gateway.token(1, 'Hola, estoy aquí.');
@@ -1402,8 +1358,11 @@ void main() {
 
       expect(h.voice.spoken, ['Hola, estoy aquí.']);
       expect(h.controller.assistantResponse, 'Hola, estoy aquí.');
-      expect(h.gateway.runBodies, hasLength(1));
-      final evidence = jsonEncode([h.gateway.hits, h.gateway.runBodies]);
+      expect(h.gateway.submitTexts, hasLength(1));
+      final evidence = jsonEncode([
+        h.gateway.counter.requests,
+        h.gateway.submitTexts,
+      ]);
       expect(evidence, isNot(contains('mob-aux-')));
       expect(evidence, isNot(contains('/v1/chat/completions')));
 
@@ -1491,7 +1450,7 @@ void main() {
     () async {
       final h = await _harness();
       h.voice.captures.single.add(const SttResult('hola Hermes', true));
-      await _waitFor(() => h.gateway.runBodies.length == 1);
+      await _waitFor(() => h.gateway.submitTexts.length == 1);
       await Future<void>.delayed(const Duration(milliseconds: 40));
 
       var notifications = 0;
@@ -1521,7 +1480,7 @@ void main() {
       h.voice.waitSpeechError = const VoiceRouteUnavailableException();
 
       h.voice.captures.single.add(const SttResult('hola Hermes', true));
-      await _waitFor(() => h.gateway.runBodies.length == 1);
+      await _waitFor(() => h.gateway.submitTexts.length == 1);
       h.gateway.token(1, 'Respuesta del servidor.');
       await _waitFor(() => h.controller.userPaused);
 
@@ -1538,7 +1497,7 @@ void main() {
       final h = await _harness();
 
       h.voice.captures.single.add(const SttResult('hola Hermes', true));
-      await _waitFor(() => h.gateway.runBodies.length == 1);
+      await _waitFor(() => h.gateway.submitTexts.length == 1);
       h.gateway.token(1, 'Te escucho.');
       await h.gateway.complete(1, 'Te escucho.');
       await _waitFor(() => h.voice.captures.length == 2);
@@ -1567,7 +1526,7 @@ void main() {
       );
 
       h.voice.captures.single.add(const SttResult('hola Hermes', true));
-      await _waitFor(() => h.gateway.runBodies.length == 1);
+      await _waitFor(() => h.gateway.submitTexts.length == 1);
       await h.gateway.complete(1, 'Te escucho.');
       await _waitFor(() => requestedDelay != null);
 
@@ -1597,7 +1556,7 @@ void main() {
     );
 
     h.voice.captures.single.add(const SttResult('hola Hermes', true));
-    await _waitFor(() => h.gateway.runBodies.length == 1);
+    await _waitFor(() => h.gateway.submitTexts.length == 1);
     await h.gateway.complete(1, 'Te escucho.');
     await _waitFor(() => guardStarted);
 
@@ -1643,10 +1602,10 @@ void main() {
     final h = await _harness(onBeforeSend: (_) => metadataGate.future);
 
     h.voice.captures.single.add(const SttResult('envía sin esperar', true));
-    await _waitFor(() => h.gateway.runBodies.length == 1);
+    await _waitFor(() => h.gateway.submitTexts.length == 1);
 
     expect(metadataGate.isCompleted, isFalse);
-    expect(h.gateway.runBodies.single['input'], 'envía sin esperar');
+    expect(h.gateway.submitTexts.single, 'envía sin esperar');
     metadataGate.complete();
     await h.close();
   });
@@ -1655,7 +1614,7 @@ void main() {
     final h = await _harness();
     h.voice.holdSpeech = true;
     h.voice.captures.single.add(const SttResult('cuéntame algo', true));
-    await _waitFor(() => h.gateway.runBodies.isNotEmpty);
+    await _waitFor(() => h.gateway.submitTexts.isNotEmpty);
     h.gateway.token(1, 'Primera frase.');
     await _waitFor(() => h.voice.spoken.length == 1);
     expect(h.controller.debugNarrationCursor, 0);
@@ -1719,7 +1678,7 @@ void main() {
       expect(response.length, greaterThan(480));
 
       h.voice.captures.single.add(const SttResult('respuesta larga', true));
-      await _waitFor(() => h.gateway.runBodies.isNotEmpty);
+      await _waitFor(() => h.gateway.submitTexts.isNotEmpty);
       await h.gateway.complete(1, response);
       await _waitFor(() => h.voice.spoken.isNotEmpty);
 
@@ -1736,7 +1695,7 @@ void main() {
           'Primera frase. Segunda frase. Una última frase sin puntuación';
 
       h.voice.captures.single.add(const SttResult('lee los párrafos', true));
-      await _waitFor(() => h.gateway.runBodies.isNotEmpty);
+      await _waitFor(() => h.gateway.submitTexts.isNotEmpty);
       h.gateway.token(1, 'Primera frase. ');
       await _waitFor(() => h.voice.spoken.length == 1);
       expect(h.voice.spoken, ['Primera frase.']);
@@ -1769,7 +1728,7 @@ void main() {
       h.voice.holdSpeech = true;
       h.voice.holdStopSpeaking = true;
       h.voice.captures.single.add(const SttResult('respuesta con pausa', true));
-      await _waitFor(() => h.gateway.runBodies.isNotEmpty);
+      await _waitFor(() => h.gateway.submitTexts.isNotEmpty);
       h.gateway.token(1, 'Frase interrumpida.');
       await _waitFor(() => h.voice.spoken.length == 1);
 
@@ -1799,7 +1758,7 @@ void main() {
 
     expect(h.controller.partialTranscript, isNot('texto tardío'));
     expect(h.controller.userTranscript, isEmpty);
-    expect(h.gateway.runBodies, isEmpty);
+    expect(h.gateway.submitTexts, isEmpty);
     await h.close();
   });
 
@@ -1810,7 +1769,7 @@ void main() {
       h.voice.captures.single.add(
         const SttResult('haz una acción sensible', true),
       );
-      await _waitFor(() => h.gateway.runBodies.length == 1);
+      await _waitFor(() => h.gateway.submitTexts.length == 1);
 
       h.gateway.toolStarted(1, 'web_search', 'noticias de hoy');
       await _waitFor(() => h.controller.phase == VoicePhase.toolCall);
@@ -1848,6 +1807,7 @@ void main() {
       // una transcripción que contenga "sí" o "aprobar".
       await h.chat.resolveApproval('once');
       await _waitFor(() => h.chat.pendingApproval == null);
+      expect(h.gateway.socket.approvals.single.requestId, 'approval-1');
       expect(h.controller.phase, isNot(VoicePhase.waitingPermission));
 
       await h.gateway.complete(1, 'Acción completada.');
@@ -1861,7 +1821,7 @@ void main() {
     () async {
       final h = await _harness();
       h.voice.captures.single.add(const SttResult('haz una tarea', true));
-      await _waitFor(() => h.gateway.runBodies.length == 1);
+      await _waitFor(() => h.gateway.submitTexts.length == 1);
 
       h.controller.stopAndTalk();
       await _waitFor(() => h.voice.captures.length == 2);
@@ -1870,10 +1830,10 @@ void main() {
 
       expect(h.chat.isStreaming, isTrue);
       expect(h.chat.queuedMessages, ['corrige el enfoque']);
-      expect(h.gateway.runBodies, hasLength(1));
+      expect(h.gateway.submitTexts, hasLength(1));
       await h.gateway.complete(1, 'Parcial conservado.');
-      await _waitFor(() => h.gateway.runBodies.length == 2);
-      expect(jsonEncode(h.gateway.runBodies), isNot(contains('mob-aux-')));
+      await _waitFor(() => h.gateway.submitTexts.length == 2);
+      expect(jsonEncode(h.gateway.submitTexts), isNot(contains('mob-aux-')));
 
       h.chat.cancel();
       await h.close();
@@ -1884,7 +1844,7 @@ void main() {
     SharedPreferences.setMockInitialValues({'app_locale': 'en'});
     final h = await _harness();
     h.voice.captures.single.add(const SttResult('cancellable task', true));
-    await _waitFor(() => h.gateway.runBodies.isNotEmpty);
+    await _waitFor(() => h.gateway.submitTexts.isNotEmpty);
     h.voice.stopSpeakingError = StateError('audio driver failed');
 
     h.controller.cancelBackend();
@@ -1900,11 +1860,9 @@ void main() {
     cancelHarness.voice.captures.single.add(
       const SttResult('tarea cancelable', true),
     );
-    await _waitFor(() => cancelHarness.gateway.runBodies.isNotEmpty);
+    await _waitFor(() => cancelHarness.gateway.submitTexts.isNotEmpty);
     cancelHarness.controller.cancelBackend();
-    await _waitFor(
-      () => cancelHarness.gateway.hits.any((hit) => hit.endsWith('/stop')),
-    );
+    await _waitFor(() => cancelHarness.gateway.interrupts == 1);
     expect(cancelHarness.chat.isStreaming, isFalse);
     await cancelHarness.close();
 
@@ -1912,7 +1870,7 @@ void main() {
     exitHarness.voice.captures.single.add(
       const SttResult('tarea que sigue', true),
     );
-    await _waitFor(() => exitHarness.gateway.runBodies.isNotEmpty);
+    await _waitFor(() => exitHarness.gateway.submitTexts.isNotEmpty);
     exitHarness.voice.enableNativeVoice(
       speak: (text) async => {'ok': true},
       transcribe: (dataUrl, mimeType) async => {'ok': true},
@@ -1921,10 +1879,7 @@ void main() {
     await exitHarness.controller.exit();
 
     expect(exitHarness.chat.isStreaming, isTrue);
-    expect(
-      exitHarness.gateway.hits.where((hit) => hit.endsWith('/stop')),
-      isEmpty,
-    );
+    expect(exitHarness.gateway.interrupts, 0);
     expect(exitHarness.voice.disposeSttCalls, 1);
     expect(exitHarness.voice.disposeTtsCalls, 1);
     expect(
@@ -1952,7 +1907,7 @@ void main() {
         api: ApiClient(
           baseUrl: 'http://hermes.test:8642',
           apiKey: 'test-key',
-          httpClient: h.gateway,
+          httpClient: h.gateway.counter,
         ),
       );
 
@@ -2019,7 +1974,7 @@ void main() {
       _enableStreamingVoice(h.voice, socket, sink, onOpen: () => streamOpens++);
 
       h.voice.captures.single.add(const SttResult('respuesta inmediata', true));
-      await _waitFor(() => h.gateway.runBodies.length == 1);
+      await _waitFor(() => h.gateway.submitTexts.length == 1);
 
       h.gateway.token(1, 'Respuesta ');
       await _waitFor(
@@ -2059,7 +2014,7 @@ void main() {
       _enableStreamingVoice(h.voice, socket, sink);
 
       h.voice.captures.single.add(const SttResult('respuesta eficiente', true));
-      await _waitFor(() => h.gateway.runBodies.length == 1);
+      await _waitFor(() => h.gateway.submitTexts.length == 1);
       h.gateway.token(1, 'Uno');
       await _waitFor(
         () => socket.sent.where((frame) => frame['text'] != null).length == 1,
@@ -2097,7 +2052,7 @@ void main() {
     _enableStreamingVoice(h.voice, socket, sink);
 
     h.voice.captures.single.add(const SttResult('respuesta cortable', true));
-    await _waitFor(() => h.gateway.runBodies.length == 1);
+    await _waitFor(() => h.gateway.submitTexts.length == 1);
     h.gateway.token(1, 'Primero');
     await _waitFor(
       () => socket.sent.where((frame) => frame['text'] != null).length == 1,
@@ -2141,7 +2096,7 @@ void main() {
       );
 
       h.voice.captures.single.add(const SttResult('continúa después', true));
-      await _waitFor(() => h.gateway.runBodies.length == 1);
+      await _waitFor(() => h.gateway.submitTexts.length == 1);
       h.gateway.token(1, 'Texto retenido.');
       await _waitFor(
         () => socket.sent.any((frame) => frame['text'] == 'Texto retenido.'),
@@ -2196,7 +2151,7 @@ void main() {
       );
 
       h.voice.captures.single.add(const SttResult('respuesta con pausa', true));
-      await _waitFor(() => h.gateway.runBodies.length == 1);
+      await _waitFor(() => h.gateway.submitTexts.length == 1);
       h.gateway.token(1, 'Primera parte.');
       await _waitFor(
         () => socket.sent.any((frame) => frame['text'] == 'Primera parte.'),
@@ -2306,7 +2261,7 @@ void main() {
       _enableStreamingVoice(h.voice, socket, sink);
 
       h.voice.captures.single.add(const SttResult('respuesta privada', true));
-      await _waitFor(() => h.gateway.runBodies.length == 1);
+      await _waitFor(() => h.gateway.submitTexts.length == 1);
       await _waitFor(() => monitor.armed);
       h.gateway.token(1, 'Audio privado.');
       await _waitFor(
@@ -2394,7 +2349,7 @@ void main() {
 
         if (expectedStage != VoicePhase.listening) {
           staleCapture.add(SttResult('turno privado $cycle', true));
-          await _waitFor(() => h.gateway.runBodies.length == 1);
+          await _waitFor(() => h.gateway.submitTexts.length == 1);
           await _waitFor(() => h.controller.phase == VoicePhase.thinking);
           await _waitFor(() => monitor.armed);
         }
@@ -2421,7 +2376,7 @@ void main() {
         final capturesBeforeLock = h.voice.captures.length;
         final startsBeforeLock = source.starts;
         final stopsBeforeLock = source.stops;
-        final runsBeforeLock = h.gateway.runBodies.length;
+        final runsBeforeLock = h.gateway.submitTexts.length;
         final spokenBeforeLock = h.voice.spoken.length;
         final localSpokenBeforeLock = h.voice.localSpoken.length;
         final stopSpeakingBeforeLock = h.voice.stopSpeakingCalls;
@@ -2487,7 +2442,7 @@ void main() {
         expect(h.voice.captures, hasLength(capturesBeforeLock));
         expect(source.starts, startsBeforeLock, reason: 'ciclo ${cycle + 1}');
         expect(monitor.active, isFalse, reason: 'ciclo ${cycle + 1}');
-        expect(h.gateway.runBodies, hasLength(runsBeforeLock));
+        expect(h.gateway.submitTexts, hasLength(runsBeforeLock));
         expect(h.voice.spoken, hasLength(spokenBeforeLock));
         expect(h.voice.localSpoken, hasLength(localSpokenBeforeLock));
         expect(sink.writes, hasLength(writesBeforeLock));
@@ -2512,7 +2467,7 @@ void main() {
         '${List.filled(HermesSpeechStreamSession.maxTextDeltaChars - 1, 'a').join()}🙂final.';
 
     h.voice.captures.single.add(const SttResult('respuesta larga', true));
-    await _waitFor(() => h.gateway.runBodies.length == 1);
+    await _waitFor(() => h.gateway.submitTexts.length == 1);
     h.gateway.token(1, text);
     await _waitFor(
       () => socket.sent.where((frame) => frame['text'] != null).length == 2,
@@ -2548,7 +2503,9 @@ void main() {
         _enableStreamingVoice(h.voice, socket, sink);
 
         h.voice.captures.single.add(const SttResult('mide este turno', true));
-        await _waitFor(() => h.gateway.runBodies.length == 1);
+        await _waitFor(() => h.gateway.submitTexts.length == 1);
+        // Desktop acknowledges the turn with `message.start` (prompt_turn.py).
+        h.gateway.socket.emit('message.start');
         await _waitFor(
           () => records.any(
             (record) => record.point == VoiceLatencyPoint.backendLifecycleAck,
@@ -2703,7 +2660,7 @@ void main() {
     await trace.runScoped(() async {
       h = await _harness();
       h.voice.captures.single.add(const SttResult('respuesta local', true));
-      await _waitFor(() => h.gateway.runBodies.length == 1);
+      await _waitFor(() => h.gateway.submitTexts.length == 1);
 
       h.gateway.token(1, 'Respuesta local.');
       await _waitFor(() => h.voice.spoken.singleOrNull == 'Respuesta local.');
@@ -2744,7 +2701,7 @@ void main() {
       h.voice.captures.single.add(
         const SttResult('prueba un feed rechazado', true),
       );
-      await _waitFor(() => h.gateway.runBodies.length == 1);
+      await _waitFor(() => h.gateway.submitTexts.length == 1);
       h.gateway.token(1, 'Respuesta que ningún TTS aceptará.');
       await Future<void>.delayed(const Duration(milliseconds: 20));
       expect(h.voice.spoken, isEmpty);
@@ -2801,9 +2758,9 @@ void main() {
     );
     late _Harness h;
     await trace.runScoped(() async {
-      h = await _harness(rejectRuns: true);
+      h = await _harness();
+      h.gateway.socket.submitError = StateError('socket lost');
       h.voice.captures.single.add(const SttResult('fallo remoto', true));
-      await _waitFor(() => h.gateway.runBodies.length == 1);
       await _waitFor(() => h.controller.phase == VoicePhase.listening);
     });
     addTearDown(h.close);
@@ -2833,7 +2790,7 @@ void main() {
       h.voice.captures.single.add(
         const SttResult('Dame las noticias de hoy', true),
       );
-      await _waitFor(() => h.gateway.runBodies.length == 1);
+      await _waitFor(() => h.gateway.submitTexts.length == 1);
       await _waitFor(() => monitor.armed);
       h.gateway.token(1, 'Respuesta antigua visible.');
       await Future<void>.delayed(const Duration(milliseconds: 30));
@@ -2858,7 +2815,7 @@ void main() {
 
       await _emitBargeFrames(source, 0, 60);
       source.transcriptionGate!.complete('Y también las de ayer');
-      await _waitFor(() => h.gateway.runBodies.length == 2);
+      await _waitFor(() => h.gateway.submitTexts.length == 2);
       await _waitFor(
         () => records.any(
           (record) =>
@@ -2913,7 +2870,7 @@ void main() {
     h.voice.captures.single.add(
       const SttResult('respuesta en streaming', true),
     );
-    await _waitFor(() => h.gateway.runBodies.length == 1);
+    await _waitFor(() => h.gateway.submitTexts.length == 1);
     h.gateway.token(1, 'Respuesta fluida.');
     await _waitFor(() => socket.sent.any((frame) => frame['text'] != null));
 
@@ -2949,7 +2906,7 @@ void main() {
       h.voice.holdSpeech = true;
 
       h.voice.captures.single.add(const SttResult('usa el fallback', true));
-      await _waitFor(() => h.gateway.runBodies.length == 1);
+      await _waitFor(() => h.gateway.submitTexts.length == 1);
       h.gateway.token(1, 'Primera frase.');
       await _waitFor(() => socket.sent.any((frame) => frame['text'] != null));
 
@@ -2996,7 +2953,7 @@ void main() {
       h.voice.captures.single.add(
         const SttResult('corrige el final sin repetir', true),
       );
-      await _waitFor(() => h.gateway.runBodies.length == 1);
+      await _waitFor(() => h.gateway.submitTexts.length == 1);
       h.gateway.token(1, accepted);
       await _waitFor(() => socket.sent.any((frame) => frame['text'] != null));
       await socket.emit(jsonEncode({'type': 'fallback'}));
@@ -3030,7 +2987,7 @@ void main() {
       h.voice.captures.single.add(
         const SttResult('interrumpe el fallback', true),
       );
-      await _waitFor(() => h.gateway.runBodies.length == 1);
+      await _waitFor(() => h.gateway.submitTexts.length == 1);
       h.gateway.token(1, 'Primera frase. Esta cola forma un único fallback.');
       await _waitFor(() => socket.sent.any((frame) => frame['text'] != null));
       await socket.emit(jsonEncode({'type': 'fallback'}));
@@ -3078,7 +3035,7 @@ void main() {
       h.voice.captures.single.add(
         const SttResult('respuesta con drain protegido', true),
       );
-      await _waitFor(() => h.gateway.runBodies.length == 1);
+      await _waitFor(() => h.gateway.submitTexts.length == 1);
       h.gateway.token(1, 'Audio que debe terminar completo.');
       await _waitFor(() => socket.sent.any((frame) => frame['text'] != null));
       await socket.emit(
@@ -3140,7 +3097,7 @@ void main() {
       _enableStreamingVoice(h.voice, socket, sink);
 
       h.voice.captures.single.add(const SttResult('prueba server', true));
-      await _waitFor(() => h.gateway.runBodies.length == 1);
+      await _waitFor(() => h.gateway.submitTexts.length == 1);
       h.gateway.token(1, 'Audio server con cola física.');
       await _waitFor(() => socket.sent.any((frame) => frame['text'] != null));
       await socket.emit(
@@ -3181,7 +3138,7 @@ void main() {
       h.voice.captures.single.add(
         const SttResult('respuesta inmune a su propio eco', true),
       );
-      await _waitFor(() => h.gateway.runBodies.length == 1);
+      await _waitFor(() => h.gateway.submitTexts.length == 1);
       await _waitFor(() => monitor.armed);
       h.gateway.token(1, 'Hermes debe terminar esta respuesta.');
       await _waitFor(() => socket.sent.any((frame) => frame['text'] != null));
@@ -3196,7 +3153,7 @@ void main() {
       // ya está cerrada, por lo que ni se transcriben ni cortan el AudioTrack.
       await _emitBargeFrames(source, 7381, 10);
       await _emitBargeFrames(source, 3064, 10);
-      expect(h.gateway.runBodies, hasLength(1));
+      expect(h.gateway.submitTexts, hasLength(1));
       expect(sink.stopped, isFalse);
       expect(h.controller.debugBargeCaptureInFlight, isFalse);
 
@@ -3205,7 +3162,7 @@ void main() {
       await socket.emit(jsonEncode({'type': 'end'}));
       await _waitFor(() => h.controller.phase == VoicePhase.listening);
 
-      expect(h.gateway.runBodies, hasLength(1));
+      expect(h.gateway.submitTexts, hasLength(1));
       expect(source.playbackActive, isFalse);
       expect(h.voice.captures, hasLength(2));
 
@@ -3224,7 +3181,7 @@ void main() {
       h.voice.captures.single.add(
         const SttResult('usa el fallback inmediato', true),
       );
-      await _waitFor(() => h.gateway.runBodies.length == 1);
+      await _waitFor(() => h.gateway.submitTexts.length == 1);
       h.gateway.token(1, 'Primera inmediata.');
       await Future<void>.delayed(const Duration(milliseconds: 20));
       expect(h.voice.spoken, isEmpty);
@@ -3262,7 +3219,7 @@ void main() {
       h.voice.captures.single.add(
         const SttResult('usa el fallback compatible', true),
       );
-      await _waitFor(() => h.gateway.runBodies.length == 1);
+      await _waitFor(() => h.gateway.submitTexts.length == 1);
       h.gateway.token(1, 'Primera parte.');
       h.gateway.token(1, ' Segunda parte.');
       await Future<void>.delayed(const Duration(milliseconds: 20));
@@ -3289,7 +3246,7 @@ void main() {
       _enableStreamingVoice(h.voice, socket, sink);
 
       h.voice.captures.single.add(const SttResult('respuesta parcial', true));
-      await _waitFor(() => h.gateway.runBodies.length == 1);
+      await _waitFor(() => h.gateway.submitTexts.length == 1);
       h.gateway.token(1, 'Audio ya audible. Cola remota pendiente.');
       await _waitFor(() => socket.sent.any((frame) => frame['text'] != null));
 
@@ -3321,11 +3278,11 @@ void main() {
       _enableStreamingVoice(h.voice, socket, sink);
 
       h.voice.captures.single.add(const SttResult('envía ya', true));
-      await _waitFor(() => h.gateway.runBodies.length == 1);
+      await _waitFor(() => h.gateway.submitTexts.length == 1);
 
       expect(source.starts, 1);
       expect(source.startGate!.isCompleted, isFalse);
-      expect(h.gateway.runBodies.single['input'], 'envía ya');
+      expect(h.gateway.submitTexts.single, 'envía ya');
 
       source.startGate!.complete();
       await _waitFor(() => monitor.armed);
@@ -3348,7 +3305,7 @@ void main() {
     _enableStreamingVoice(h.voice, socket, sink);
 
     h.voice.captures.single.add(const SttResult('sin interrupciones', true));
-    await _waitFor(() => h.gateway.runBodies.length == 1);
+    await _waitFor(() => h.gateway.submitTexts.length == 1);
     h.gateway.token(1, 'La respuesta continúa sin abrir otro micrófono.');
     await Future<void>.delayed(const Duration(milliseconds: 30));
 
@@ -3368,7 +3325,7 @@ void main() {
     _enableStreamingVoice(h.voice, socket, sink);
 
     h.voice.captures.single.add(const SttResult('turno interrumpible', true));
-    await _waitFor(() => h.gateway.runBodies.length == 1);
+    await _waitFor(() => h.gateway.submitTexts.length == 1);
     await _waitFor(() => monitor.armed);
 
     await h.voice.saveSettings(
@@ -3395,7 +3352,7 @@ void main() {
       h.voice.captures.single.add(
         const SttResult('Dime las noticias de hoy', true),
       );
-      await _waitFor(() => h.gateway.runBodies.length == 1);
+      await _waitFor(() => h.gateway.submitTexts.length == 1);
       await _waitFor(() => monitor.armed);
       h.gateway.token(1, 'Estas son las noticias de hoy.');
       await _waitFor(() => h.voice.spoken.length == 1);
@@ -3406,7 +3363,7 @@ void main() {
       await _waitFor(() => h.controller.debugBargeCaptureInFlight);
       await _waitFor(() => h.voice.stopSpeakingCalls == 1);
       await _emitBargeFrames(source, 0, 60);
-      await _waitFor(() => h.gateway.runBodies.length == 2);
+      await _waitFor(() => h.gateway.submitTexts.length == 2);
 
       h.gateway.token(2, 'Ahora mismo hay veintidós grados.');
       await Future<void>.delayed(const Duration(milliseconds: 40));
@@ -3440,7 +3397,7 @@ void main() {
       h.voice.captures.single.add(
         const SttResult('Dame las noticias de hoy', true),
       );
-      await _waitFor(() => h.gateway.runBodies.length == 1);
+      await _waitFor(() => h.gateway.submitTexts.length == 1);
       await _waitFor(() => monitor.armed);
 
       await _emitBargeFrames(source, 80, 42);
@@ -3454,24 +3411,20 @@ void main() {
       );
       await _emitBargeFrames(source, 0, 60);
       await _waitFor(() => h.controller.phase == VoicePhase.transcribing);
-      await _waitFor(() => h.gateway.hits.any((hit) => hit.endsWith('/stop')));
+      await _waitFor(() => h.gateway.interrupts == 1);
 
       // La respuesta antigua puede terminar mientras Whisper sigue
       // transcribiendo; sus callbacks ya están invalidados por el barge-in.
       await h.gateway.complete(1, 'Noticias de hoy que el usuario no oyó.');
       source.transcriptionGate!.complete('Y también las de ayer');
-      await _waitFor(() => h.gateway.runBodies.length == 2);
+      await _waitFor(() => h.gateway.submitTexts.length == 2);
 
       expect(h.chat.queuedMessages, isEmpty);
-      expect(h.gateway.runBodies[1]['input'], 'Y también las de ayer');
-      expect(
-        jsonEncode(h.gateway.runBodies[1]['conversation_history']),
-        contains('Dame las noticias de hoy'),
-      );
-      expect(
-        h.gateway.hits.where((hit) => hit.endsWith('/stop')),
-        hasLength(1),
-      );
+      expect(h.gateway.submitTexts, [
+        'Dame las noticias de hoy',
+        'Y también las de ayer',
+      ]);
+      expect(h.gateway.interrupts, 1);
 
       h.chat.cancel();
       await h.close();
@@ -3489,7 +3442,7 @@ void main() {
       _enableStreamingVoice(h.voice, socket, sink);
 
       h.voice.captures.single.add(const SttResult('cuéntame algo', true));
-      await _waitFor(() => h.gateway.runBodies.length == 1);
+      await _waitFor(() => h.gateway.submitTexts.length == 1);
       await _waitFor(() => monitor.armed);
 
       await _emitBargeFrames(source, 80, 42);
@@ -3501,11 +3454,8 @@ void main() {
 
       expect(h.chat.isStreaming, isFalse);
       expect(h.chat.queuedMessages, isEmpty);
-      expect(h.gateway.runBodies, hasLength(1));
-      expect(
-        h.gateway.hits.where((hit) => hit.endsWith('/stop')),
-        hasLength(1),
-      );
+      expect(h.gateway.submitTexts, hasLength(1));
+      expect(h.gateway.interrupts, 1);
 
       await h.close();
     },
@@ -3524,7 +3474,7 @@ void main() {
       h.voice.captures.single.add(
         const SttResult('Dame una respuesta breve', true),
       );
-      await _waitFor(() => h.gateway.runBodies.length == 1);
+      await _waitFor(() => h.gateway.submitTexts.length == 1);
       await _waitFor(() => monitor.armed);
       h.gateway.token(1, 'Respuesta ya generada.');
       await _waitFor(() => socket.sent.any((frame) => frame['text'] != null));
@@ -3541,8 +3491,8 @@ void main() {
       await _emitBargeFrames(source, 0, 60);
       await _waitFor(() => !h.controller.active);
 
-      expect(h.gateway.runBodies, hasLength(1));
-      expect(h.gateway.hits.where((hit) => hit.endsWith('/stop')), isEmpty);
+      expect(h.gateway.submitTexts, hasLength(1));
+      expect(h.gateway.interrupts, 0);
       await h.close();
     },
   );
@@ -3558,7 +3508,7 @@ void main() {
       _enableStreamingVoice(h.voice, socket, sink);
 
       h.voice.captures.single.add(const SttResult('turno privado', true));
-      await _waitFor(() => h.gateway.runBodies.length == 1);
+      await _waitFor(() => h.gateway.submitTexts.length == 1);
       expect(source.starts, 1);
 
       await h.controller.suspendFullDuplexCapture();
@@ -3596,7 +3546,7 @@ void main() {
     );
 
     h.voice.captures.single.add(const SttResult('turno manual', true));
-    await _waitFor(() => h.gateway.runBodies.length == 1);
+    await _waitFor(() => h.gateway.submitTexts.length == 1);
     await _waitFor(() => monitor.armed);
 
     await h.controller.suspendFullDuplexForAppBackground();
@@ -3628,7 +3578,7 @@ void main() {
       );
 
       h.voice.captures.single.add(const SttResult('turno manual', true));
-      await _waitFor(() => h.gateway.runBodies.length == 1);
+      await _waitFor(() => h.gateway.submitTexts.length == 1);
       await _waitFor(() => monitor.armed);
       final stopsBeforeBackground = source.stops;
 
@@ -3656,7 +3606,7 @@ void main() {
     _enableStreamingVoice(h.voice, socket, sink);
 
     h.voice.captures.single.add(const SttResult('trabajo importante', true));
-    await _waitFor(() => h.gateway.runBodies.length == 1);
+    await _waitFor(() => h.gateway.submitTexts.length == 1);
     expect(h.chat.isStreaming, isTrue);
 
     await _emitBargeFrames(source, 497, 42);
@@ -3682,30 +3632,26 @@ void main() {
       h.voice.captures.single.add(
         const SttResult('Dame las noticias de hoy', true),
       );
-      await _waitFor(() => h.gateway.runBodies.length == 1);
+      await _waitFor(() => h.gateway.submitTexts.length == 1);
       await _waitFor(() => monitor.armed);
 
       await _emitBargeFrames(source, 80, 42);
       await _emitBargeFrames(source, 2600, 10);
       await _waitFor(() => h.controller.debugBargeCaptureInFlight);
-      await _waitFor(() => h.gateway.hits.any((hit) => hit.endsWith('/stop')));
+      await _waitFor(() => h.gateway.interrupts == 1);
       expect(h.chat.isStreaming, isFalse);
 
       // Desktop corta el turno en speech_start, sigue capturando y envía la
       // frase como turno normal cuando llega el endpoint de ~1,25 s.
       await _emitBargeFrames(source, 0, 42);
-      await _waitFor(() => h.gateway.runBodies.length == 2);
+      await _waitFor(() => h.gateway.submitTexts.length == 2);
 
       expect(h.chat.queuedMessages, isEmpty);
-      expect(h.gateway.runBodies[1]['input'], 'Y también las de ayer');
-      expect(
-        jsonEncode(h.gateway.runBodies[1]['conversation_history']),
-        contains('Dame las noticias de hoy'),
-      );
-      expect(
-        h.gateway.hits.where((hit) => hit.endsWith('/stop')),
-        hasLength(1),
-      );
+      expect(h.gateway.submitTexts, [
+        'Dame las noticias de hoy',
+        'Y también las de ayer',
+      ]);
+      expect(h.gateway.interrupts, 1);
 
       h.chat.cancel();
       await h.close();
@@ -3721,7 +3667,7 @@ void main() {
     _enableStreamingVoice(h.voice, socket, sink);
 
     h.voice.captures.single.add(const SttResult('respuesta protegida', true));
-    await _waitFor(() => h.gateway.runBodies.length == 1);
+    await _waitFor(() => h.gateway.submitTexts.length == 1);
     expect(monitor.armed, isTrue);
 
     source.playbackGate = Completer<void>();

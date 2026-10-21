@@ -407,7 +407,7 @@ void main() {
     expect(cleanup, greaterThan(voiceGuard));
     expect(optOutReturn, greaterThan(cleanup));
 
-    final discovery = poll.indexOf('BackgroundWatch.snapshot()');
+    final discovery = poll.indexOf('BackgroundCronWatch.snapshotTargetState()');
     expect(discovery, greaterThan(optOutReturn));
   });
 

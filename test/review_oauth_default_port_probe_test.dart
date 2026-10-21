@@ -6,7 +6,10 @@ import 'package:http/testing.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/mobile_oauth.dart';
 
+import 's1/s1_fixtures.dart';
+
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
   for (final scheme in ['https', 'http']) {
     for (final explicitPort in [true, false]) {
       test('$scheme OAuth reuse explicitPort=$explicitPort', () async {
@@ -24,6 +27,9 @@ void main() {
           provider: 'fixture-provider',
           userId: 'fixture-user',
         );
+        // S1: the store, not the client's memory, is the authority.
+        final secure = SecureChannelFake()..install();
+        secure.storage['dash_token_fixture-owner'] = session.encode();
         final conn = SavedConnection(
           id: 'fixture-owner',
           label: 'Fixture',

@@ -9,6 +9,7 @@
 // Solo se muestran métricas que el servidor informa; nada derivado se
 // presenta como dato del servidor.
 import 'dart:async';
+import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
@@ -20,6 +21,8 @@ import '../../l10n/app_localizations.dart';
 import '../design/hermes_design.dart';
 import '../navigation/chat_route.dart';
 import '../services/connection_manager.dart';
+import '../services/desktop_control_gateway.dart';
+import '../services/profile_chat_mode.dart';
 import '../services/session_archive.dart';
 import '../services/session_deletion.dart';
 import '../services/session_repository.dart';
@@ -83,13 +86,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
   void initState() {
     super.initState();
     _session = widget.session;
-    _client =
-        widget.client ??
-        ApiClient(
-          baseUrl: widget.connection.baseUrl,
-          apiKey: widget.connection.apiKey,
-          connectionId: widget.connection.id,
-        );
+    _client = widget.client ?? ApiClient.forConnection(widget.connection);
     _repository = SessionRepository.forConnection(
       widget.connection,
       gateway: _client,
@@ -303,6 +300,9 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     ).notify(FeedbackKind.error, Strings.of(context).slArchiveSyncFailed);
   }
 
+  /// Key of the duplicate attempt in progress; cleared once its child opens.
+  String? _forkAttemptKey;
+
   Future<void> _fork() async {
     if (widget.connection.readOnly) {
       showReadOnlyNotice(context);
@@ -329,10 +329,28 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     if (confirm != true || !mounted) return;
 
     try {
-      final fork = await _client.forkSession(
-        _session.id,
+      // Desktop `forkBranch`: one stable key per attempt, so a retry after a
+      // lost response returns the same child instead of a second copy.
+      final key = _forkAttemptKey ??=
+          'branch-${DateTime.now().millisecondsSinceEpoch}-'
+          '${Random().nextInt(1 << 32).toRadixString(36)}';
+      final owner = _session.profile?.trim() ?? '';
+      final lease = SharedGatewayPool.instance.acquire(widget.connection);
+      final DesktopBranchResult branched;
+      try {
+        branched = await lease.client.branchStoredSession(
+          _session.id,
+          profile: profileRoutes(owner) ? owner : null,
+          idempotencyKey: key,
+        );
+      } finally {
+        lease.release();
+      }
+      final fork = await _client.getSession(
+        branched.storedSessionId,
         profile: _session.profile,
       );
+      _forkAttemptKey = null;
       if (!mounted) return;
       AppFeedback.of(context).notify(
         FeedbackKind.routine,
@@ -403,6 +421,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
         ),
         deleteSession: (sessionId) =>
             _client.deleteSession(sessionId, profile: ownerProfile),
+        serverDeletesChain: _client.hasDashboard,
         cronDeletion: cronDeletion,
         deleteCronJob:
             !_session.isJob ||

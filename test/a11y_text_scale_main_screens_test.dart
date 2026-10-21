@@ -168,7 +168,8 @@ void main() {
       tester,
       {
         'welcome': find.text('Connect to your Hermes'),
-        'scan': find.text('Scan code'),
+        'scan': find.text('I already have Hermes'),
+        'no Hermes yet': find.text("I don't have Hermes yet"),
         // The headline follows the system size up to 1.35x: at 2x it would break
         // words on a 320 dp phone.
       },

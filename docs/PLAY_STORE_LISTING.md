@@ -1,6 +1,7 @@
 # Google Play listing — Hermes Console
 
-Listing text and assets for `1.2.15 (9540)`. Default language: **English
+Listing text and assets for `1.3.0` (build number to be assigned; the
+1.2.15 texts are kept in [`release/1.2.15/`](release/1.2.15/)). Default language: **English
 (United States)**, followed by the Spanish (Spain) translation. The listing is
 not authorised for submission until the signed AAB, the deployed privacy policy,
 Data Safety, the foreground-service videos, the screenshots and the emulator QA
@@ -39,12 +40,16 @@ Console is a private Android app for your own self-hosted Hermes Agent. Chat wit
 your agent, see what it is doing, talk to it, and run your bots, scheduled jobs
 and tasks from your phone.
 
-It talks straight to the Gateway and Dashboard of the Hermes you run. There is no
-Console account and no server of ours in between.
+It talks straight to the Dashboard of the Hermes you run. There is no Console
+account and no server of ours in between.
 
-CONNECT IN A MINUTE
-Run one line on the computer where Hermes lives, scan the code it shows, and you
-are on Home. The setup helper and its guide are linked from hermes.xpetalab.dev.
+CONNECT IN A FEW STEPS
+On the computer where Hermes lives, paste one command in Terminal or PowerShell
+(or in the SSH window for a server). It installs the official Hermes only if it
+is missing, leaves the Dashboard on behind a password on a private address (your
+home network or Tailscale) and shows a QR code. Open Console, choose I already
+have Hermes and scan it. Connect manually is there too. The step-by-step guide
+is in the project README on GitHub (xP3ta/hermes-console).
 
 WHAT YOU GET
 • A chat that shows the work: reasoning, tools and tasks appear in the
@@ -71,8 +76,8 @@ WHAT YOU GET
 PRIVATE BY DESIGN
 • No ads, no analytics SDK, no Console account.
 • Credentials are kept in the Android Keystore.
-• QR codes are read on the device.
-• Plain HTTP is accepted only for private networks; HTTPS everywhere else.
+• Plain HTTP is accepted only for private networks; HTTPS everywhere else. Plain
+  HTTP is not encrypted, so prefer Tailscale or HTTPS.
 
 Console is a client, not an AI service, and it does not host your conversations.
 You need a compatible Hermes Agent that you run. Your messages and attachments go
@@ -95,13 +100,16 @@ Console es una app de Android privada para tu propio Hermes Agent autoalojado.
 Conversa con tu agente, mira qué está haciendo, háblale y gestiona desde el móvil
 tus bots, tareas programadas y tareas.
 
-Habla directamente con el Gateway y el Dashboard del Hermes que ejecutas tú. No
-hay cuenta de Console ni un servidor nuestro por medio.
+Habla directamente con el Dashboard del Hermes que ejecutas tú. No hay cuenta de
+Console ni un servidor nuestro por medio.
 
-CONECTA EN UN MINUTO
-Ejecuta una línea en el ordenador donde vive Hermes, escanea el código que
-muestra y llegas a Inicio. El asistente de instalación y su guía están enlazados
-desde hermes.xpetalab.dev.
+CONECTA EN POCOS PASOS
+En el ordenador donde vive Hermes, pega un comando en la Terminal o PowerShell
+(o en la ventana SSH si es un servidor). Instala el Hermes oficial solo si
+falta, deja el Dashboard encendido con contraseña en una dirección privada (tu
+red de casa o Tailscale) y muestra un código QR. Abre Console, elige Ya tengo
+Hermes y escanéalo. También puedes elegir Conectar a mano. La guía paso a paso
+está en el README del proyecto en GitHub (xP3ta/hermes-console).
 
 QUÉ OBTIENES
 • Un chat que muestra el trabajo: el razonamiento, las herramientas y las tareas
@@ -130,9 +138,8 @@ QUÉ OBTIENES
 PRIVADA POR DISEÑO
 • Sin anuncios, sin SDK de analítica, sin cuenta de Console.
 • Las credenciales se guardan en el Keystore de Android.
-• Los códigos QR se leen en el dispositivo.
 • El HTTP sin cifrar solo se acepta en redes privadas; HTTPS en cualquier otro
-  caso.
+  caso. El HTTP no va cifrado, así que mejor Tailscale o HTTPS.
 
 Console es un cliente, no un servicio de IA, y no aloja tus conversaciones.
 Necesitas un Hermes Agent compatible que ejecutes tú. Tus mensajes y adjuntos van
@@ -144,20 +151,22 @@ implicados; Console explica esos flujos.
 Console es una aplicación independiente y no oficial. No está afiliada,
 patrocinada ni mantenida por Nous Research ni por los autores de Hermes Agent.
 
-## What's new — `1.2.15 (9540)`
+## What's new — `1.3.0`
 
-The same texts are kept as files in [`release/1.2.15/`](release/1.2.15/).
+The same texts are kept as files in [`release/1.3.0/`](release/1.3.0/). Every
+statement below is taken from the commits between the previous release and this
+one; nothing promises automatic setup, discovery or Cloud.
 
 ### English (United States), maximum 500 characters
 
 ```text
-No more Mobile Bridge: scan one code and you are on Home. The chat shows Hermes' work in plain words, like Desktop, and voice now lives inside the chat. New Home board that never scrolls, a plain tap dock, one identity per profile, calmer notifications and launcher widgets that stay current. Models: remove a provider for real. Coming from a bridge install? The app tells you how to clean up.
+Console now talks only to the Hermes Dashboard: no Gateway, API key or pairing code. Choose "I already have Hermes" or "I don't have Hermes yet", run one command on your computer and scan the code. Only had the Gateway? Console guides you and updates your connection; your chats stay. Steadier after network cuts. New chats and named-profile images and files work again. Thanks to Rafael Telles, Luke Manning and oeyhaga for their fixes.
 ```
 
 ### Español (España), máximo 500 caracteres
 
 ```text
-Adiós al Mobile Bridge: escanea un código y estás en Inicio. El chat muestra el trabajo de Hermes con palabras normales, como en Desktop, y la voz vive dentro del chat. Nuevo Inicio que no se desplaza, dock de un toque, una identidad por perfil, notificaciones más tranquilas y widgets que se mantienen al día. Modelos: quitar un proveedor de verdad. ¿Vienes de un bridge? La app te dice cómo limpiarlo.
+Console ahora habla solo con el Dashboard de Hermes: sin Gateway, clave de API ni código de emparejado. Elige «Ya tengo Hermes» o «Aún no tengo Hermes», ejecuta un comando en tu ordenador y escanea el código. ¿Solo tenías el Gateway? Console te guía y actualiza tu conexión; tus chats se conservan. Más estable tras cortes de red. Los chats nuevos y las imágenes y archivos de perfiles con nombre vuelven a funcionar. Gracias a Rafael Telles, Luke Manning y oeyhaga por sus arreglos.
 ```
 
 ## Graphic assets

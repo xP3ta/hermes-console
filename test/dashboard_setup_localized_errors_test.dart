@@ -39,6 +39,7 @@ Widget _host(
   localizationsDelegates: Strings.localizationsDelegates,
   supportedLocales: Strings.supportedLocales,
   home: DashboardSetupScreen(
+    browserFirst: false,
     connection: connection ?? _conn(),
     authorityCurrent: authorityCurrent ?? () => true,
     openOAuthBrowser: openOAuthBrowser,

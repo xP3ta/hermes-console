@@ -9,13 +9,12 @@ different package name.
 ## Requirements
 
 - Android 7.0 (API 24) or newer.
-- A Hermes Agent you run, with its **Gateway** (default port 8642, with an
-  `API_SERVER_KEY`) and **Dashboard** (default port 9119) reachable from the
-  phone. The setup helper prepares both.
+- A Hermes Agent you run, with its **Dashboard** (default port 9119, always
+  behind a username and password when it listens on the network) reachable from
+  the phone. Console does not need the Gateway or an `API_SERVER_KEY`.
 - There is no fixed minimum Hermes version: a feature appears when your server
   offers what it needs, and older servers simply show less. A few things, such
   as per-session settings, need a recent Hermes (0.19 or newer).
-- Console 1.2.15 or newer to use the current setup helper.
 
 More in [server configuration](CONFIGURATION.md) and the
 [upstream contract](UPSTREAM_CONTRACT.md).
@@ -89,20 +88,25 @@ kept outside this repository and all gates in
 
 ## First launch
 
-1. Open Console. The first screen offers one action, **Scan code**.
-2. On the computer where Hermes lives, run the setup helper's one line (see the
-   [README](../README.md#connect)); it shows a code. Scan it,
-   or paste its `hermes://pair` link. If you cannot, choose **I don't have a code** for the
-   numbered recipe, or add the connection by hand as described in
-   [server configuration](CONFIGURATION.md).
-3. Console says in plain words what it is about to connect, then checks the
-   address, the chat key and the Dashboard sign-in before saving anything.
-4. Grant camera access only on the scan screen (pasting the code works without
-   it) and microphone access only when you use voice. Notifications are asked for
-   once, after the first connection is saved, never on opening the app.
+1. On the computer where Hermes lives, paste the one-line setup command in
+   Terminal or PowerShell (or in the SSH window for a server); it shows the
+   address, username, password and a QR code when it finishes (see the
+   [README](../README.md#connect) and [server configuration](CONFIGURATION.md)).
+2. Open Console and choose **I already have Hermes**, then scan the code. Or
+   choose **Connect manually**. If you do not have Hermes yet, choose **I don't
+   have Hermes yet**.
+3. With manual connection, type the computer's address, then sign in with the
+   username and password the setup showed. Console checks the Dashboard sign-in
+   and reads the session list before it saves the connection.
+4. Grant microphone access only when you use voice. Camera access is asked for
+   only on the code-scan screen. Notifications
+   are asked for once, after the first connection is saved, never on opening the
+   app.
 
-A pairing code or link carries access details. Treat it as a secret: do not share
-it, include it in an issue, or expose it in screenshots or media.
+Console still accepts a `hermes://pair` code or link made by an older setup
+helper. That kind of link carries access details: treat it as a secret, do not
+share it, include it in an issue, or expose it in screenshots or media.
 
-Coming from a Mobile Bridge install? See "Coming from a Mobile Bridge install" in
+Coming from an older install (Mobile Bridge, or a Gateway opened to the network
+by an older helper)? See "Coming from an older install" in
 [server configuration](CONFIGURATION.md).

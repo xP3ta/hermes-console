@@ -132,10 +132,8 @@ const _alertDialogAllowed = <String, int>{
   'lib/core/screens/notification_settings_screen.dart': 1,
   'lib/core/screens/profile_flows.dart': 1,
   'lib/core/screens/recovery_center_screen.dart': 1,
-  'lib/core/screens/runs_screen.dart': 1,
   'lib/core/screens/settings_screen.dart': 1,
   'lib/core/widgets/action_approval.dart': 1,
-  'lib/core/widgets/api_key_help.dart': 1,
   'lib/core/widgets/diagnostic_bundle_tile.dart': 1,
   'lib/core/widgets/room_member_status.dart': 2,
   'lib/core/widgets/session_deletion_dialogs.dart': 1,
@@ -155,7 +153,6 @@ const _popupMenuButtonAllowed = <String, int>{};
 const _hermesPillAllowed = <String, int>{
   'lib/core/screens/litert_store_screen.dart': 4,
   'lib/core/screens/permissions_screen.dart': 3,
-  'lib/core/screens/runs_screen.dart': 2,
   'lib/core/screens/task_center_screen.dart': 1,
   'lib/core/widgets/chat_event_cards.dart': 2,
 };

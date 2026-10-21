@@ -5,21 +5,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/models/kanban.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:http/http.dart' as http;
-import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite/sqflite.dart' as sqflite;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import 'package:hermes_android/core/services/notifications/background_listener.dart';
 import 'package:hermes_android/core/services/notifications/notification_service.dart';
-
-WatchedRun _run(String id, {bool approvalNotified = false}) => WatchedRun(
-  connId: 'conn',
-  base: 'https://hermes.example',
-  runId: id,
-  prompt: id,
-  approvalNotified: approvalNotified,
-);
 
 KanbanTask _kanbanTask(String id, String status) =>
     KanbanTask(id: id, title: 'Task $id', body: '', status: status);
@@ -202,7 +193,7 @@ void main() {
     },
   );
 
-  test('1.2.9 persists opted-in background work', () async {
+  test('opted-in background work persists cron targets, never runs', () async {
     expect(NotificationService.automationNotificationsAvailable, isTrue);
     SharedPreferences.setMockInitialValues({BackgroundListener.prefKey: true});
     await BackgroundWatch.add(
@@ -213,7 +204,7 @@ void main() {
         prompt: 'safe',
       ),
     );
-    expect(await BackgroundWatch.snapshot(), hasLength(1));
+    expect(await BackgroundWatch.snapshot(), isEmpty);
     await BackgroundCronWatch.syncConnections([_dashboardConnection()]);
     expect(await BackgroundCronWatch.snapshotTargets(), hasLength(1));
   });
@@ -320,34 +311,6 @@ void main() {
     expect(replacement.copyWith(clearApproval: true).approvalRequestId, isNull);
   });
 
-  test('FGS run polling uses the watched profile URL namespace', () {
-    expect(
-      backgroundRunStatusUri(
-        'https://hermes.example',
-        const WatchedRun(
-          connId: 'conn-a',
-          profile: 'team_alpha',
-          base: 'https://hermes.example',
-          runId: 'run/1',
-          prompt: '',
-        ),
-      ).toString(),
-      'https://hermes.example/p/team_alpha/v1/runs/run%2F1',
-    );
-    expect(
-      backgroundRunStatusUri(
-        'https://hermes.example',
-        const WatchedRun(
-          connId: 'conn-a',
-          base: 'https://hermes.example',
-          runId: 'run-1',
-          prompt: '',
-        ),
-      ).path,
-      '/v1/runs/run-1',
-    );
-  });
-
   test('FGS notification owner preserves exact profile route', () {
     const watched = WatchedRun(
       connId: 'conn-a',
@@ -364,106 +327,17 @@ void main() {
     ));
   });
 
-  test('same run id survives and is removed by exact owner', () async {
-    SharedPreferences.setMockInitialValues({});
-    for (final profile in ['room-alpha', 'room-beta']) {
-      await BackgroundWatch.add(
-        SavedRunWatch(
-          connId: 'conn-a',
-          profile: profile,
-          base: 'https://hermes.example',
-          runId: 'shared-run',
-          prompt: profile,
-        ),
-      );
-    }
-
-    final before = await BackgroundWatch.snapshot();
-    expect(before.map((run) => run.profile).toSet(), {
-      'room-alpha',
-      'room-beta',
-    });
-
-    await BackgroundWatch.remove(
-      'shared-run',
-      connId: 'conn-a',
-      profile: 'room-alpha',
-    );
-    final after = await BackgroundWatch.snapshot();
-    expect(after, hasLength(1));
-    expect(after.single.profile, 'room-beta');
-  });
-
-  test('merge del poll conserva runs añadidos mientras había red en curso', () {
-    final original = _run('a');
-    final addedDuringPoll = _run('b');
-
-    final merged = BackgroundWatch.mergeForTest(
-      latest: [original, addedDuringPoll],
-      snapshot: [original],
-      keep: [original.copyWith(approvalNotified: true)],
-    );
-
-    expect(merged.map((run) => run.runId), ['a', 'b']);
-    expect(merged.first.approvalNotified, isTrue);
-  });
-
-  test('poll merge fences the same run id by connection and profile', () {
-    const alpha = WatchedRun(
-      connId: 'conn-a',
-      profile: 'room-alpha',
-      base: 'https://hermes.example',
-      runId: 'shared-run',
-      prompt: 'alpha',
-    );
-    const beta = WatchedRun(
-      connId: 'conn-a',
-      profile: 'room-beta',
-      base: 'https://hermes.example',
-      runId: 'shared-run',
-      prompt: 'beta',
-    );
-
-    final merged = BackgroundWatch.mergeForTest(
-      latest: const [alpha, beta],
-      snapshot: const [alpha],
-      keep: [alpha.copyWith(approvalRequestId: 'approval-alpha')],
-    );
-
-    expect(merged, hasLength(2));
-    expect(
-      merged
-          .singleWhere((run) => run.profile == 'room-alpha')
-          .approvalRequestId,
-      'approval-alpha',
-    );
-    expect(
-      merged.singleWhere((run) => run.profile == 'room-beta').prompt,
-      'beta',
-    );
-  });
-
-  test('merge del poll no resucita runs eliminados por la UI', () {
-    final original = _run('a');
-    final merged = BackgroundWatch.mergeForTest(
-      latest: const [],
-      snapshot: [original],
-      keep: [original],
-    );
-
-    expect(merged, isEmpty);
-  });
-
-  test('merge elimina únicamente terminales presentes en el snapshot', () {
-    final terminal = _run('a');
-    final newRun = _run('b');
-    final merged = BackgroundWatch.mergeForTest(
-      latest: [terminal, newRun],
-      snapshot: [terminal],
-      keep: const [],
-    );
-
-    expect(merged.map((run) => run.runId), ['b']);
+  test('remove and clearAll drop the legacy watch list', () async {
+    const legacy =
+        '[{"connId":"conn-a","profile":"room-alpha","base":"https://hermes.example",'
+        '"runId":"shared-run"}]';
+    SharedPreferences.setMockInitialValues({'bg_watch_runs': legacy});
+    expect(await BackgroundWatch.snapshot(), hasLength(1));
+    await BackgroundWatch.remove('shared-run', connId: 'conn-a');
+    expect(await BackgroundWatch.snapshot(), isEmpty);
+    SharedPreferences.setMockInitialValues({'bg_watch_runs': legacy});
+    await BackgroundWatch.clearAll();
+    expect(await BackgroundWatch.snapshot(), isEmpty);
   });
 
   test('FGS cierra la autoridad SQLite al destruir el isolate', () {
@@ -667,12 +541,6 @@ void main() {
       ),
       isTrue,
     );
-  });
-
-  test('HTTP 404 no permite inferir que un run terminó correctamente', () {
-    expect(BackgroundListener.canInferRunOutcomeFromHttpStatus(404), isFalse);
-    expect(BackgroundListener.canInferRunOutcomeFromHttpStatus(500), isFalse);
-    expect(BackgroundListener.canInferRunOutcomeFromHttpStatus(200), isTrue);
   });
 
   test('cron job ledger is not replaced without matching execution proof', () {
@@ -1557,68 +1425,5 @@ void main() {
     );
     expect(calls, 1);
     expect(executions, isEmpty);
-  });
-
-  group('background run poll backoff', () {
-    const run = WatchedRun(
-      connId: 'c1',
-      base: 'http://127.0.0.1:8642',
-      runId: 'run-1',
-      prompt: '',
-    );
-
-    Future<({int requests, List<int?> seen})> drive(
-      int? Function(int index) status, {
-      required int ticks,
-      Duration tick = const Duration(seconds: 30),
-    }) async {
-      var now = DateTime.utc(2026, 10, 1);
-      var requests = 0;
-      final seen = <int?>[];
-      final backoff = BackgroundRunPollBackoff(now: () => now);
-      final client = MockClient((_) async {
-        final code = status(requests++);
-        if (code == null) throw http.ClientException('offline');
-        return http.Response('{"status":"running"}', code);
-      });
-      for (var i = 0; i < ticks; i++) {
-        try {
-          final res = await fetchWatchedRunStatus(
-            client: client,
-            backoff: backoff,
-            run: run,
-            safeBase: run.base,
-            readToken: () async => null,
-          );
-          seen.add(res?.statusCode);
-        } on http.ClientException {
-          seen.add(-1);
-        }
-        now = now.add(tick);
-      }
-      return (requests: requests, seen: seen);
-    }
-
-    test('401/403/404 back off instead of polling every tick', () async {
-      for (final code in [401, 403, 404]) {
-        // One hour of 30 s ticks.
-        final result = await drive((_) => code, ticks: 120);
-        // 2, 4, 8, 15, 15, 15 min gaps: 7 requests instead of 120.
-        expect(result.requests, 7, reason: 'HTTP $code');
-      }
-    });
-
-    test('a backed-off run is kept and polled again after the gate', () async {
-      final result = await drive((i) => i == 0 ? 404 : 200, ticks: 6);
-      // Tick 0 answers 404; ticks 1-3 are skipped (null); tick 4 at +2 min
-      // is asked again and answers 200, which clears the gate.
-      expect(result.seen, [404, null, null, null, 200, 200]);
-      expect(result.requests, 3);
-    });
-
-    test('transient failures keep the normal cadence', () async {
-      final result = await drive((i) => i.isEven ? 503 : null, ticks: 10);
-      expect(result.requests, 10);
-    });
   });
 }

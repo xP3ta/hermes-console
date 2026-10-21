@@ -923,6 +923,47 @@ void main() {
     },
   );
 
+  testWidgets(
+    'N6a: sessions.changed broadcasts do not relaunch the full snapshot',
+    (tester) async {
+      final fixture = await _mountChat(tester, changeEventsAvailable: true);
+      _expectFullReads(fixture.gateway, 1);
+      fixture.gateway.resetCounts();
+
+      // An idle visible chat on a busy server: another session changes every
+      // 10 s and the server broadcasts sessions.changed to every client.
+      for (var second = 0; second < 120; second += 10) {
+        fixture.gateway.emit('sessions.changed');
+        await tester.pump(const Duration(seconds: 10));
+      }
+
+      // A full snapshot is subagent.list + spawn_tree.list + process.list +
+      // session.control.read = 4 RPC; budget 6 RPC/min over 120 s.
+      final rpc =
+          fixture.gateway.listCalls +
+          2 * fixture.gateway.processCalls +
+          fixture.gateway.controlCalls;
+      expect(rpc, lessThanOrEqualTo(12), reason: 'polling RPC in 120 s');
+      // The 60 s backstop is not starved by the broadcasts.
+      expect(fixture.gateway.listCalls, greaterThanOrEqualTo(1));
+      expect(fixture.gateway.controlCalls, greaterThanOrEqualTo(1));
+
+      // Freshness: a subagent event still reaches its snapshot within 1 s.
+      final listBefore = fixture.gateway.listCalls;
+      fixture.gateway.emit('subagent.start', const {
+        'subagent_id': 'unknown-child',
+        'event_id': 'event-n6a',
+        'event_revision': 1,
+        'status': 'running',
+      });
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(fixture.gateway.listCalls, listBefore + 1);
+
+      await _disposeFixture(tester, fixture);
+    },
+  );
+
   testWidgets('hidden and background routes perform zero reads', (
     tester,
   ) async {

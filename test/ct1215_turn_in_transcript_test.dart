@@ -481,11 +481,8 @@ void main() {
       await pumpThought('PRIMERA_FRASE. $body');
       final medium = height();
       await pumpThought('PRIMERA_FRASE. $body\n\n$body\n\n$body ULTIMA_FRASE.');
-      expect(
-        height(),
-        greaterThan(medium * 2),
-        reason: 'the block grows with the thought',
-      );
+      expect(medium, lessThan(height() + 1));
+      expect(height(), 288, reason: 'a long thought stops at the cap');
       expect(
         find.textContaining('PRIMERA_FRASE', findRichText: true),
         findsOneWidget,

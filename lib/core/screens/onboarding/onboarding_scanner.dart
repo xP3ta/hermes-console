@@ -20,16 +20,29 @@ import 'onboarding_widgets.dart';
 class QrScanView extends StatefulWidget {
   const QrScanView({
     required this.onLink,
+    this.onDashboardLink,
     required this.onBack,
     this.cameraBuilder,
+    this.aimHint,
+    this.help,
+    this.onManual,
     super.key,
   });
 
   /// Called once, after the lock-on has played, with the code that was read.
   final ValueChanged<PairingLink> onLink;
+
+  /// v2 Dashboard links; without it only v1 codes are accepted.
+  final ValueChanged<DashboardPairingLink>? onDashboardLink;
   final VoidCallback onBack;
   final Widget Function(ValueChanged<String>, ValueChanged<bool>)?
   cameraBuilder;
+
+  /// First run only: the hint, the panel under the viewfinder and the way to
+  /// type the address. With [onManual] there is no pasted link.
+  final String? aimHint;
+  final Widget? help;
+  final VoidCallback? onManual;
 
   @override
   State<QrScanView> createState() => _QrScanViewState();
@@ -37,6 +50,7 @@ class QrScanView extends StatefulWidget {
 
 class _QrScanViewState extends State<QrScanView> with TickerProviderStateMixin {
   static const double _frame = 244;
+  static const double _helpFrameTop = 64;
   final GlobalKey _qrKey = GlobalKey(debugLabel: 'hermesQrScanner');
   QRViewController? _controller;
   StreamSubscription<Barcode>? _sub;
@@ -100,8 +114,9 @@ class _QrScanViewState extends State<QrScanView> with TickerProviderStateMixin {
 
   Future<void> _read(String raw) async {
     if (_handled || _invalid || !mounted) return;
-    final link = PairingLink.tryParse(raw.trim());
-    if (link == null) {
+    final parsed = PairingLink.parse(raw);
+    final v1 = parsed.v1, v2 = parsed.v2;
+    if (v1 == null && (v2 == null || widget.onDashboardLink == null)) {
       setState(() => _invalid = true);
       return;
     }
@@ -111,7 +126,12 @@ class _QrScanViewState extends State<QrScanView> with TickerProviderStateMixin {
       unawaited(_ring.forward(from: 0));
       await _lock.forward();
     }
-    if (mounted) widget.onLink(link);
+    if (!mounted) return;
+    if (v1 != null) {
+      widget.onLink(v1);
+    } else {
+      widget.onDashboardLink!(v2!);
+    }
   }
 
   Future<void> _paste() async {
@@ -144,19 +164,32 @@ class _QrScanViewState extends State<QrScanView> with TickerProviderStateMixin {
     final s = Strings.of(context);
     final c = Theme.of(context).hermes;
     final size = MediaQuery.sizeOf(context);
-    final frame = (size.shortestSide * 0.62).clamp(150.0, _frame);
+    final withHelp = widget.help != null;
+    final frame = (size.shortestSide * (withHelp ? 0.5 : 0.62)).clamp(
+      150.0,
+      withHelp ? 200.0 : _frame,
+    );
+    final frameTop = MediaQuery.paddingOf(context).top + _helpFrameTop;
+    Widget alt(String key) => widget.onManual == null
+        ? OnbSmallPill(
+            key: ValueKey(key),
+            label: s.qrPasteLink,
+            icon: Icons.content_paste,
+            onDark: true,
+            onTap: _paste,
+          )
+        : OnbSmallPill(
+            key: const ValueKey('qr-manual'),
+            label: s.o2Manual,
+            onDark: true,
+            onTap: widget.onManual,
+          );
     final body = _denied
         ? _stateBody(
             icon: Icons.no_photography_outlined,
             text: s.qrCameraError,
             actions: [
-              OnbSmallPill(
-                key: const ValueKey('qr-denied-paste'),
-                label: s.qrPasteLink,
-                icon: Icons.content_paste,
-                onDark: true,
-                onTap: _paste,
-              ),
+              alt('qr-denied-paste'),
               OnbSmallPill(
                 key: const ValueKey('qr-open-settings'),
                 label: s.o2OpenSettings,
@@ -176,15 +209,11 @@ class _QrScanViewState extends State<QrScanView> with TickerProviderStateMixin {
                 filled: true,
                 onTap: () => setState(() => _invalid = false),
               ),
-              OnbSmallPill(
-                key: const ValueKey('qr-paste'),
-                label: s.qrPasteLink,
-                icon: Icons.content_paste,
-                onDark: true,
-                onTap: _paste,
-              ),
+              alt('qr-paste'),
             ],
           )
+        : withHelp
+        ? _helpBody(s, frame, frameTop)
         : _scanBody(s, frame);
     return ColoredBox(
       color: const Color(0xFF15151B),
@@ -208,7 +237,10 @@ class _QrScanViewState extends State<QrScanView> with TickerProviderStateMixin {
                         borderWidth: 0.1,
                         overlayColor: const Color(0x99101015),
                         cutOutSize: frame,
-                        borderRadius: 30,
+                        cutOutBottomOffset: withHelp
+                            ? size.height / 2 - (frameTop + frame / 2)
+                            : 0,
+                        borderRadius: frame * 0.12,
                       ),
                     ),
             ),
@@ -224,7 +256,12 @@ class _QrScanViewState extends State<QrScanView> with TickerProviderStateMixin {
                 ),
               ),
             ),
-          Positioned.fill(child: SafeArea(child: body)),
+          Positioned.fill(
+            child: SafeArea(
+              bottom: !(withHelp && !_denied && !_invalid),
+              child: body,
+            ),
+          ),
           SafeArea(
             child: Padding(
               padding: const EdgeInsets.only(left: kOnbGutter - 8, top: 8),
@@ -253,6 +290,95 @@ class _QrScanViewState extends State<QrScanView> with TickerProviderStateMixin {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _helpBody(Strings s, double frame, double frameTop) {
+    final c = Theme.of(context).hermes;
+    final size = MediaQuery.sizeOf(context);
+    return Column(
+      children: [
+        const SizedBox(height: _helpFrameTop),
+        SizedBox.square(
+          dimension: frame,
+          child: RepaintBoundary(
+            child: CustomPaint(
+              key: const ValueKey('qr-frame'),
+              painter: ScanFramePainter(
+                color: c.accent,
+                fly: () => _fly.value,
+                lock: () => _lock.value,
+                line: () => (_loop.value * 25) % 1,
+                pulse: () => (_loop.value * 25) % 1,
+                screen: size,
+                repaint: Listenable.merge([_fly, _lock, _loop]),
+              ),
+            ),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(kOnbGutter, 12, kOnbGutter, 12),
+          child: Wrap(
+            alignment: WrapAlignment.center,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 10,
+            runSpacing: 8,
+            children: [
+              Text(
+                widget.aimHint ?? s.qrAimHint,
+                textAlign: TextAlign.center,
+                textScaler: onbTitleScaler(context),
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  color: Color(0xFFF1EFE6),
+                ),
+              ),
+              OnbSmallPill(
+                key: const ValueKey('qr-torch'),
+                label: s.qrTorch,
+                icon: Icons.flash_on_rounded,
+                onDark: true,
+                onTap: _torch,
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: AnimatedBuilder(
+            animation: _fly,
+            builder: (_, child) {
+              final t = ivl(_fly.value, .2, 1, Curves.easeOutCubic);
+              return Opacity(
+                opacity: t,
+                child: Transform.translate(
+                  offset: Offset(0, 48 * (1 - t)),
+                  child: child,
+                ),
+              );
+            },
+            child: Container(
+              width: double.infinity,
+              decoration: BoxDecoration(
+                color: c.background,
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(28),
+                ),
+              ),
+              child: SingleChildScrollView(
+                key: const ValueKey('qr-help-panel'),
+                padding: EdgeInsets.fromLTRB(
+                  kOnbGutter,
+                  kOnbGutter,
+                  kOnbGutter,
+                  kOnbGutter + MediaQuery.paddingOf(context).bottom,
+                ),
+                child: widget.help,
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 

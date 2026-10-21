@@ -36,7 +36,6 @@
   "sAddressHint": "casa-pc o una dirección copiada",
   "sScanNewCode": "Escanear un código nuevo",
   "sAdvanced": "Avanzado",
-  "sChatPort": "Puerto del chat",
   "sDashboardPort": "Puerto del Dashboard",
   "sEncrypted": "Conexión cifrada del chat",
   "sIconTerminal": "Terminal",
@@ -47,9 +46,7 @@
   "sRemove": "Quitar",
   "sChecking": "Estoy comprobando el chat y el acceso al Dashboard.",
   "sUnchecked": "Prueba la conexión para comprobar el chat y el Dashboard.",
-  "sChatKeyRejected": "Hermes no acepta la clave del chat; pega la correcta o escanea un código nuevo.",
-  "sWrongChatAddress": "La dirección no responde como Hermes; revisa la dirección y el puerto del chat.",
-  "sDashboardUnreachable": "El chat funciona, pero no llego al Dashboard; revisa su dirección en Avanzado.",
+  "sDashboardUnreachable": "No llego al Dashboard del ordenador; revisa su dirección en Avanzado.",
   "sCertificate": "No puedo verificar la conexión cifrada; revisa el certificado en el ordenador.",
   "sReady": "La conexión y el acceso al Dashboard funcionan; ya puedes usar tu Hermes.",
   "sSignInFailed": "No pude abrir el acceso al Dashboard; revisa su dirección y reintenta.",
@@ -65,38 +62,33 @@
     }
   },
   "o2WelcomeTitle": "Conecta con tu Hermes",
-  "o2WelcomeBody": "Escanea el código que te enseña tu ordenador.",
   "o2Scan": "Escanear código",
   "o2Connect": "Conectar",
-  "o2HaveLink": "Tengo un enlace",
   "o2Manual": "Conectar a mano",
-  "o2NoCode": "No tengo código",
   "o2ConfirmTitle": "Conectar con {name}",
   "o2ConfirmFull": "Este código guarda la dirección y los accesos para hablar con Hermes y usar su Dashboard.",
-  "o2ConfirmChat": "Este código guarda la dirección y la clave para el chat; después tendrás que entrar en el Dashboard.",
+  "o2ConfirmChat": "Este código guarda la dirección y la clave de acceso que lleva; después tendrás que entrar en el Dashboard.",
   "o2OtherCode": "Escanear otro código",
   "o2Connecting": "Conectando con tu Hermes",
   "o2InvalidCode": "Este código no es de Console; escanea uno de conexión.",
   "o2ClipboardFailed": "No pude leer el enlace; vuelve a copiarlo y pégalo aquí.",
-  "o2KeyRejected": "Hermes no acepta esta clave; saca un código nuevo en el ordenador.",
   "o2Unreachable": "El móvil no ve tu ordenador; usa la misma wifi o enciende Tailscale y reintenta.",
   "o2ConnectionFailed": "No pude completar la conexión; comprueba tu red y reintenta.",
   "o2Duplicate": "Este Hermes ya está guardado; abre su conexión para revisarla.",
   "o2OpenConnection": "Abrir conexión",
   "o2MissingStep": "Falta un paso",
-  "o2MissingDashboard": "El chat está conectado; entra en el Dashboard para usar tareas, perfiles y memoria.",
+  "o2MissingDashboard": "Falta entrar en el Dashboard para usar el chat, las tareas, los perfiles y la memoria.",
   "o2SignIn": "Entrar en el Dashboard",
   "o2SaveFailed": "No pude guardar el acceso; vuelve a entrar en el Dashboard.",
   "o2SuccessTitle": "Conectado",
   "o2SuccessBody": "Tu Hermes está listo para hablar contigo.",
   "o2ReadOnly": "Puedes mirar tu Hermes, pero esta conexión no permite hacer cambios.",
   "o2GoHome": "Ir a Inicio",
-  "o2HelpTitle": "Saca el código en tu ordenador",
+  "o2OpenChat": "Abrir chat",
+  "o2NeedsModelBody": "Falta elegir un modelo para que Hermes pueda contestar",
+  "o2ChooseModel": "Elegir modelo",
   "o2MacLinux": "Mac o Linux",
   "o2Windows": "Windows",
-  "o2AlreadyPrepared": "Ya había preparado este ordenador",
-  "o2PrepareComputer": "Preparar este ordenador",
-  "o2CodeVisible": "Ya veo el código",
   "o2IssueTitle": "No ha salido bien",
   "o2DuplicateTitle": "Ya lo tienes guardado",
   "o2OtherShort": "Escanear otro",
@@ -106,14 +98,13 @@
   "o2StepTerminal": "Abre la Terminal",
   "o2StepPowerShell": "Abre PowerShell",
   "o2StepPaste": "Pega esta línea y pulsa Intro",
-  "o2StepCode": "Sale un código en la pantalla",
+  "dashPasswordHelpEnvNote": "Si el archivo .env de Hermes define HERMES_DASHBOARD_BASIC_AUTH_PASSWORD o HERMES_DASHBOARD_BASIC_AUTH_PASSWORD_HASH, o config.yaml tiene dashboard.basic_auth.password, quítalo antes: cualquiera de ellos mantiene activa la contraseña anterior.",
   "o2CheckFind": "Encontrar tu Hermes",
   "o2CheckChat": "Entrar en el chat",
   "o2CheckDashboard": "Entrar en el Dashboard",
   "o2SummaryChat": "Hablar con Hermes",
   "o2SummaryDashboard": "Tareas, perfiles y memoria",
   "o2SummaryDashboardLater": "Entrarás en el Dashboard después",
-  "o2KindTitle": "¿Dónde vive este Hermes?",
   "o2KindHome": "En casa",
   "o2KindServer": "Servidor",
   "o2KindPrivate": "Red privada",
@@ -123,6 +114,7 @@
   "o2ChatOnly": "Seguir solo con el chat",
   "o2OpenSettings": "Abrir ajustes",
   "o2SetupByHand": "Preparar el ordenador a mano",
+  "homeOfflineDashboardSetup": "Encender el Dashboard",
   "@o2ConfirmTitle": {
     "placeholders": {
       "name": {
@@ -350,7 +342,6 @@
   "statusOffline": "sin conexión",
   "statusWrongPassword": "contraseña incorrecta",
   "statusLoginRequired": "falta iniciar sesión",
-  "statusKeyRejected": "API key rechazada",
   "statusRunning": "corriendo",
   "statusEnabled": "activas",
   "statusDisabled": "desactivadas",
@@ -1128,7 +1119,7 @@
   "soulEditorHint": "# Identidad\n\nDescribe la personalidad, el estilo y los valores del agente…",
   "soulApplying": "aplicando…",
   "soulReload": "recargar",
-  "soulLocalDocNote": "Documento local. Hermes no expone SOUL por HTTP (verificado: /api/soul no existe en Gateway ni Dashboard) — edítalo aquí y aplícalo en el servidor via CLI.",
+  "soulLocalDocNote": "Documento local. Hermes no expone SOUL por HTTP — edítalo aquí y aplícalo en el servidor via CLI.",
   "soulPickTemplateReplaces": "Seleccionar una plantilla reemplazará el borrador actual.",
   "actCopyVisibleLines": "Copiar líneas visibles",
   "actLogsReadError": "No se pudieron leer los logs",
@@ -1172,7 +1163,7 @@
   "memOpenDraft": "Abrir borrador local",
   "aboutScreenTitle": "Acerca de",
   "aboutReleaseStatus": "cliente no oficial · XPeta Lab",
-  "aboutTagline": "Cliente Android remoto y privado para Hermes Agent self-hosted. Pensado para acceder a tu gateway por Tailscale o LAN, sin telemetría de XPeta Lab; los servicios externos son siempre opcionales.",
+  "aboutTagline": "Cliente Android remoto y privado para Hermes Agent self-hosted. Pensado para acceder a tu Hermes por Tailscale o LAN, sin telemetría de XPeta Lab; los servicios externos son siempre opcionales.",
   "aboutLicensesTitle": "Licencias open source",
   "aboutThirdParty": "Bibliotecas de terceros incluidas en la app",
   "aboutBaseProject": "Código de terceros",
@@ -1219,17 +1210,6 @@
   "cevAlways": "Siempre",
   "cevPermissionHeadline": "Hermes pide tu permiso",
   "cevRemember": "Recordar",
-  "cevSendError": "No se pudo enviar: {error}",
-  "@cevSendError": {
-    "placeholders": {
-      "error": {
-        "type": "Object"
-      }
-    }
-  },
-  "cevApprovalResolved": "Aprobación resuelta",
-  "cevApprovalDenied": "denegada",
-  "cevApprovalGranted": "aprobada",
   "cevApprovalRequired": "Aprobación requerida",
   "cevApprovalPending": "pendiente",
   "cevApprovalHistorical": "Aprobación (histórica)",
@@ -1356,33 +1336,22 @@
     }
   },
   "ieGatewayUrlBeforeTest": "Escribe la dirección del ordenador antes de probar.",
-  "apiKeyHelpTitle": "API key del gateway",
-  "apiKeyHelpBody1": "Es la clave del API Server de tu Hermes Agent (variable API_SERVER_KEY). No es una key de OpenAI ni de OpenRouter: esas se configuran en el propio gateway.",
-  "apiKeyHelpGatewayLabel": "En la máquina donde corre el gateway:",
-  "apiKeyHelpBody2": "Si no existe, añade API_SERVER_KEY=<valor> a ese .env y reinicia el gateway. La key se guarda cifrada en Android Keystore y solo viaja hacia tu gateway.",
-  "apiKeyHelpCopied": "comando copiado",
-  "apiKeyHelpOk": "entendido",
   "ieGatewayUrlRequired": "Falta la dirección del ordenador.",
-  "ieGatewayTokenRequired": "Pega la clave del servidor o escanea un código.",
   "ieName": "Nombre",
   "ieNote": "Nota (opcional)",
   "ieReadOnly": "Solo lectura",
   "ieReadOnlySub": "Mirar sin cambiar nada",
   "ieGatewayUrl": "Dirección del ordenador",
-  "ieGatewayToken": "Clave del servidor",
-  "ieGatewayTokenEmpty": "Nueva clave del servidor (opcional)",
   "ieDashboardUrl": "Otra dirección del Dashboard (opcional)",
   "ieDashboardAuth": "Forma de entrar",
   "ieDashboardAuthAuto": "Acceso guardado",
   "ieDashboardAuthSession": "Token de sesión",
   "ieDashboardAuthBasic": "Usuario y contraseña",
   "iePasswordEmpty": "Contraseña del Dashboard (en blanco para conservarla)",
-  "ieSecGateway": "GATEWAY",
   "ieSecDashboard": "DASHBOARD / ADMIN",
   "ieDiagCopied": "Diagnóstico copiado (sin tokens)",
   "ieNetworkNote": "La app usa la red del sistema Android. Si usas VPN/Tailscale/WireGuard, actívala antes de probar la conexión.",
   "ieCapabilitiesDetected": "CAPACIDADES DETECTADAS",
-  "ieDeclaredByCapabilities": "DECLARADO POR /v1/capabilities",
   "setTitle": "Ajustes",
   "setSecurity": "Seguridad",
   "setSecuritySub": "Bloqueo, privacidad y protección de credenciales",
@@ -1540,6 +1509,7 @@
   },
   "setGatewayNotRunning": "El gateway no está en ejecución.",
   "setCheckingStatus": "Comprobando estado…",
+  "setCheckingUpdate": "Comprobando actualización…",
   "setStatusUnavailable": "Estado no disponible",
   "setAllGood": "Todo en orden",
   "setReloadStatus": "Recargar estado",
@@ -1711,15 +1681,6 @@
   "permRevoke": "Revocar",
   "permNoActivity": "Sin actividad de permisos todavía.",
   "runsNewRun": "Nueva ejecución",
-  "runsLaunchError": "No se pudo lanzar la ejecución: {error}",
-  "@runsLaunchError": {
-    "placeholders": {
-      "error": {
-        "type": "String"
-      }
-    }
-  },
-  "runsRefreshStates": "Actualizar estados",
   "runsEmpty": "Sin ejecuciones todavía",
   "runsEmptySub": "Lanza una tarea al agente con el botón +",
   "runsDelete": "Eliminar",
@@ -1733,51 +1694,9 @@
     }
   },
   "runsCleared": "Lista limpia",
-  "runsAgentTask": "Tarea del agente",
-  "runsApprovalRequested": "Aprobación solicitada",
-  "runsAutoApproved": "Auto-aprobado · {reason}",
-  "@runsAutoApproved": {
-    "placeholders": {
-      "reason": {
-        "type": "String"
-      }
-    }
-  },
-  "runsAutoApproveError": "No se pudo auto-aprobar: {error}",
-  "@runsAutoApproveError": {
-    "placeholders": {
-      "error": {
-        "type": "String"
-      }
-    }
-  },
-  "runsAllowAlwaysThis": "Permitir siempre esta acción del agente",
-  "runsApproveHighRisk": "Aprobar una acción de riesgo alto",
-  "runsApproveAction": "Aprobar una acción del agente",
-  "runsApprovalSent": "Aprobación enviada",
-  "runsResolveError": "No se pudo resolver la aprobación: {error}",
-  "@runsResolveError": {
-    "placeholders": {
-      "error": {
-        "type": "String"
-      }
-    }
-  },
-  "runsAllowAlwaysQ": "¿Permitir SIEMPRE?",
-  "runsAllowAlwaysBody": "El servidor recordará esta decisión y el agente podrá repetir esta acción sin preguntar.",
-  "runsHighRiskWarn": "Riesgo alto: este patrón parece destructivo. Evita «siempre» salvo que estés muy seguro.",
   "runsAllowAlways": "Permitir siempre",
-  "runsStopError": "No se pudo detener: {error}",
-  "@runsStopError": {
-    "placeholders": {
-      "error": {
-        "type": "String"
-      }
-    }
-  },
-  "runsStop": "Detener",
-  "runsRefreshState": "Actualizar estado",
-  "runsExpired": "El gateway ya no conserva esta ejecución (los estados de runs no persisten tras reiniciar).",
+  "runsHistoryHeader": "Histórico",
+  "runsHistoryReadOnly": "Histórico de solo lectura: esta ejecución ya no se puede seguir, aprobar ni parar.",
   "runsReplyCopied": "Respuesta copiada",
   "runsError": "Error: {error}",
   "@runsError": {
@@ -1799,36 +1718,7 @@
   "runsStatusExpired": "expirada",
   "runsDetailTitle": "ejecución",
   "runsRunIdCopied": "run_id copiado",
-  "runsAgentBusy": "el agente trabaja…",
-  "runsActivitySection": "actividad del agente",
   "runsReplySection": "respuesta",
-  "runsToolCompleted": "completado",
-  "runsToolFailed": "falló",
-  "runsApprovalResolved": "aprobación resuelta: {choice}",
-  "@runsApprovalResolved": {
-    "placeholders": {
-      "choice": {
-        "type": "String"
-      }
-    }
-  },
-  "runsAutoApprovedScope": "auto-aprobado ({scope})",
-  "@runsAutoApprovedScope": {
-    "placeholders": {
-      "scope": {
-        "type": "String"
-      }
-    }
-  },
-  "runsApprovalSummary": "aprobación solicitada",
-  "runsAllowedOnce": "Permitido una vez",
-  "runsAllowedSession": "Permitido esta sesión",
-  "runsAllowedAlways": "Permitido siempre",
-  "runsDenied": "Denegado",
-  "runsApprovedOnce": "Aprobado (una vez)",
-  "runsApprovedSession": "Aprobado para toda la sesión",
-  "runsApprovedAlways": "Aprobado siempre para este patrón",
-  "runsDeniedAction": "Acción denegada",
   "runsApproveOnce": "una vez",
   "runsApproveSession": "esta sesión",
   "voiceTitle": "Voz",
@@ -2398,13 +2288,13 @@
     }
   },
   "secCredentialStorageTitle": "Almacenamiento de credenciales",
-  "secCredentialStorageSub": "Las API keys y contraseñas se guardan en Android Keystore, fuera de las preferencias normales.",
+  "secCredentialStorageSub": "Las contraseñas, sesiones y claves se guardan en Android Keystore, fuera de las preferencias normales.",
   "secStatusProtected": "protegido",
   "secStatusReview": "revisar",
   "secLockStatusOn": "El PIN protege la apertura de la app y las acciones sensibles.",
   "secLockStatusOff": "Activa el bloqueo si otras personas pueden acceder a este dispositivo.",
-  "secWipeKeysTitle": "Borrar todas las API keys",
-  "secWipeKeysSubtitle": "Elimina las claves del Keystore. Las instancias se conservan.",
+  "secWipeKeysTitle": "Borrar contraseñas y claves guardadas",
+  "secWipeKeysSubtitle": "Elimina contraseñas, sesiones y claves del Keystore. Las instancias se conservan.",
   "secOrphanTitle": "Limpiar datos huérfanos",
   "secOrphanSubtitle": "Quita restos de instancias ya borradas (capacidades, perfil, aprobaciones, sesiones…). No toca instancias ni ajustes vivos.",
   "secVerifyDisableLock": "Verifica para desactivar el bloqueo",
@@ -2413,7 +2303,7 @@
   "secVerifyBiometrics": "Confirma tu biometría para activarla",
   "secPinUpdated": "PIN actualizado",
   "secWipeTitle": "Borrar credenciales",
-  "secWipeContent": "Se eliminarán las API keys de {count} instancia(s) del almacenamiento cifrado. Las instancias seguirán configuradas pero pedirán la clave de nuevo. Esta acción no se puede deshacer.",
+  "secWipeContent": "Se eliminarán las contraseñas, sesiones y claves de {count} instancia(s) del almacenamiento cifrado. Las instancias seguirán configuradas pero pedirán entrar de nuevo. Esta acción no se puede deshacer.",
   "@secWipeContent": {
     "placeholders": {
       "count": {
@@ -2702,7 +2592,8 @@
   "slEmptyAutomationTitle": "Sin sesiones de automatización",
   "slEmptyAutomationSubtitle": "Aquí aparecerán cron, herramientas, API, ACP, flujos, delegaciones y webhooks.",
   "slConnectionError": "error de conexión",
-  "slNoGateway": "sin conexión con el gateway",
+  "slListNotLoaded": "No se pudo cargar la lista. Comprueba la conexión y reinténtalo.",
+  "slNoGateway": "No llego a tu Hermes",
   "slGatewayHelp": "Verifica que el servidor Hermes esté activo.",
   "slNoTitle": "Sin título",
   "slashDescHelp": "Muestra los comandos disponibles",
@@ -2894,7 +2785,6 @@
   "prfLoadErrorToken": "El Dashboard pide token. Configúralo en la instancia (puerto 9119).",
   "prfNameRequired": "Escribe un nombre",
   "prfNamePatternError": "Solo minúsculas, dígitos, _ y - (máx 64, empieza por letra/dígito)",
-  "apiKeyHelpLinkLabel": "¿de dónde sale esta key?",
   "actLinesCopied": "{count} líneas copiadas",
   "@actLinesCopied": {
     "placeholders": {
@@ -2976,8 +2866,8 @@
     }
   },
   "ieConnectionCheckTitle": "Estado de conexión",
-  "ieConnectionCheckSubtitle": "Comprueba que el Gateway y el Dashboard responden.",
-  "ieConnectionCheckRunning": "Comprobando Gateway y Dashboard…",
+  "ieConnectionCheckSubtitle": "Comprueba que el Dashboard responde y te deja entrar.",
+  "ieConnectionCheckRunning": "Comprobando el Dashboard…",
   "ieConnectionCheckReadySummary": "Los dos servicios responden correctamente.",
   "ieConnectionCheckOfflineSummary": "Uno o más servicios no responden desde esta red.",
   "ieConnectionCheckIssuesSummary": "La instancia responde, pero hay accesos o funciones que revisar.",
@@ -3024,6 +2914,10 @@
   "ieLocalModeSimple": "Chat simple",
   "ieLocalModeAgent": "Agente completo",
   "ieSaving": "guardando…",
+  "ieChecking": "Comprobando…",
+  "ieSignInExpired": "No se pudo comprobar el acceso al Dashboard. Entra de nuevo para guardar.",
+  "ieSignInAgain": "Entrar de nuevo",
+  "sDashboardSignInMissing": "Falta entrar en el Dashboard. Sin eso Console no puede abrir el chat ni tus conversaciones.",
   "ieProbeOnline": "online",
   "ieProbeAuth": "auth",
   "ieProbeSessions": "sesiones",
@@ -3058,7 +2952,7 @@
   "ieExternalPairingTitle": "Revisar este enlace",
   "ieExternalPairingReview": "Solo revisar",
   "ieExternalPairingContinue": "Probar conexión",
-  "pairLinkSetsGateway": "Este enlace guarda la dirección y la clave del chat de {host}.",
+  "pairLinkSetsGateway": "Este enlace guarda la dirección y la clave de acceso de {host}.",
   "@pairLinkSetsGateway": {
     "placeholders": {
       "host": {
@@ -3066,7 +2960,7 @@
       }
     }
   },
-  "pairLinkSetsGatewayAndDashboard": "Este enlace guarda la dirección y la clave del chat de {host}, y el usuario y la contraseña de su Dashboard.",
+  "pairLinkSetsGatewayAndDashboard": "Este enlace guarda la dirección y la clave de acceso de {host}, y el usuario y la contraseña de su Dashboard.",
   "@pairLinkSetsGatewayAndDashboard": {
     "placeholders": {
       "host": {
@@ -3085,11 +2979,24 @@
     }
   },
   "legacyBridgeStepAction": "Entrar",
+  "gatewayEraTitle": "Console ha cambiado",
+  "gatewayEraAction": "Ver cómo",
+  "leg3SetupTitle": "Conecta tu Hermes",
+  "leg3SetupBody": "Console ahora usa el Dashboard de Hermes. Pega esta línea en el ordenador donde está Hermes; al terminar te saldrá un código: escanéalo. Tus chats se quedan.",
+  "leg3EraBody": "Console ahora usa el Dashboard de Hermes. Te guiamos en un paso: pega una línea en tu ordenador y escanea el código. Tus chats se quedan.",
+  "leg3UpdatesExisting": "Actualiza tu conexión «{name}»: tus chats se quedan.",
+  "@leg3UpdatesExisting": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "dashboardSetupForgotPassword": "No sé la contraseña",
   "dashPasswordHelpTitle": "Poner una contraseña nueva",
   "dashPasswordHelpIntro": "La contraseña del Dashboard no se puede ver ni recuperar: se cambia por una nueva en el ordenador donde vive Hermes.",
-  "dashPasswordHelpCommand": "Pega esta línea allí. Crea un acceso nuevo y te enseña el usuario y la contraseña: escríbelos aquí.",
-  "dashPasswordHelpOthers": "Los otros móviles y navegadores tendrán que volver a entrar.",
+  "dashPasswordHelpCommand": "Pega estas tres líneas en la Terminal de ese ordenador. Te pedirá un usuario y una contraseña nuevos; después úsalos aquí, en Console.",
+  "dashPasswordHelpOthers": "Los otros móviles y navegadores siguen con la sesión abierta: cambiar la contraseña no la cierra.",
   "dashPasswordHelpStep1": "1. Añade estas dos líneas al archivo .env de Hermes (en Linux y macOS, ~/.hermes/.env).",
   "dashPasswordHelpPlaceholder": "tu-contrasena-nueva",
   "dashPasswordHelpStep2": "2. Reinicia el Dashboard de Hermes y entra aquí con ese usuario y esa contraseña.",
@@ -3350,16 +3257,7 @@
   "chatActivityRunningSkill": "Ejecutando skill…",
   "chatActivityReasoning": "Razonamiento",
   "connectInstallHelp": "Documentación oficial de Hermes",
-  "diagGwRefused": "El Gateway rechaza la conexión. Comprueba que la URL apunte al puerto 8642 y que el firewall lo permita.",
-  "diagGwTimeout": "El Gateway no responde. Si usas VPN/Tailscale/WireGuard, asegúrate de que esté activa en Android antes de probar.",
-  "diagGwDns": "No se resuelve el host del Gateway. Revisa el nombre o usa una IP (con Tailscale, comprueba MagicDNS).",
-  "diagGwTls": "Certificado TLS inválido en el Gateway. Si usas un certificado autofirmado, valora usar HTTP dentro de la VPN.",
-  "diagCapsAuthInvalid": "/v1/capabilities devolvió 401: el token del Gateway es inválido o falta. La matriz de capacidades se inferirá con probes hasta que la autenticación sea válida.",
-  "diagCapsNotFound": "Esta versión de hermes-agent no expone /v1/capabilities; la matriz se inferirá con probes adicionales.",
-  "diagTokenMissing": "Falta el token del Gateway — añade la API_SERVER_KEY de ~/.hermes/.env en los ajustes de la instancia.",
-  "diagTokenInvalid": "Token del Gateway inválido — la clave no coincide con la API_SERVER_KEY del servidor.",
-  "diagDashDownGwOk": "El Gateway funciona, pero el Dashboard/Admin no está disponible. Comprueba que su URL apunte al puerto 9119 y que el firewall lo permita.",
-  "diagDashDownBoth": "El Dashboard/Admin tampoco responde. Revisa la red y los puertos (9119).",
+  "diagDashDownBoth": "El Dashboard no responde. Revisa la dirección, la red y el firewall.",
   "diagDashNotFound": "Esa URL responde pero no parece el Dashboard de Hermes (/api/status no existe). Revisa la URL del Dashboard/Admin.",
   "diagDashAuthRequired": "El Dashboard requiere inicio de sesión (Basic Auth). Configura usuario y contraseña en los ajustes de la instancia.",
   "diagDashAuthInvalid": "El Dashboard responde, pero el usuario o la contraseña son incorrectos. Revisa sus propias credenciales en los ajustes de la instancia.",
@@ -3771,15 +3669,6 @@
   "voiceErrorPreviewTimeout": "La voz no produjo audio a tiempo. Comprueba que el modelo esté descargado y vuelve a probar.",
   "voiceErrorUnexpected": "No se pudo completar la operación de voz. Revisa la configuración e inténtalo de nuevo.",
   "voiceExtracting": "Extrayendo…",
-  "setupStepsDashboardTitle": "1 · El Dashboard, con usuario y contraseña",
-  "setupStepsDashboardEnv": "Añade estas dos líneas al archivo .env de Hermes (en Linux y macOS, ~/.hermes/.env).",
-  "setupStepsDashboardRun": "Arráncalo abierto a tu red.",
-  "setupStepsGatewayTitle": "2 · El Gateway, con su clave",
-  "setupStepsGatewayKey": "Genera una clave larga: Hermes rechaza una corta.",
-  "setupStepsGatewayEnv": "Ponla en el mismo archivo .env con estas líneas.",
-  "setupStepsKeyPlaceholder": "pega-aqui-la-clave",
-  "setupStepsGatewayRun": "Arráncalo.",
-  "setupStepsPrivateOnly": "Solo en tu red privada o por Tailscale: no abras estos puertos a internet.",
   "commonCleartextPublic": "Por internet el acceso y las conversaciones necesitan una conexión cifrada; usa https:// o una red privada.",
   "commonCleartextPrivate": "Conexión sin cifrar dentro de una red privada (LAN o Tailscale).",
   "ieLocalChatMode": "Modo de chat local",
@@ -3879,7 +3768,6 @@
   "homeEditInstance": "Editar instancia",
   "drawerNoActiveInstance": "sin instancia activa",
   "chaLinkSchemeBlocked": "Enlace bloqueado: esquema no permitido",
-  "apiKeyHelpCopy": "Copiar comando",
   "chaUploadingAttachment": "Subiendo adjunto…",
   "chaAttachmentUploadInProgress": "Subiendo {name}. Espera a que termine.",
   "@chaAttachmentUploadInProgress": {
@@ -6707,7 +6595,7 @@
   "hr1215CompactionAuthTitle": "La compactación no puede usar {provider}; el chat sigue funcionando",
   "@hr1215CompactionAuthTitle": {"placeholders": {"provider": {"type": "String"}}},
   "hr1215CompactionAuthTitleGeneric": "La compactación no puede usar el proveedor; el chat sigue funcionando",
-  "hr1215CompactionOnlyAuthBody": "Solo ha fallado el resumen automático de la conversación: no se ha perdido nada y puedes seguir escribiendo. Vuelve a iniciar sesión para que la compactación funcione otra vez.",
+  "hr1215CompactionOnlyAuthBody": "Solo ha fallado el resumen automático de la conversación: no se ha perdido nada y puedes seguir escribiendo. Vuelve a iniciar sesión para que la compactación funcione otra vez. Si ya has vuelto a iniciar sesión y sigue igual, reinicia el servidor de Hermes.",
   "hr1215CheckingSignIn": "Comprobando la sesión de {provider}…",
   "@hr1215CheckingSignIn": {"placeholders": {"provider": {"type": "String"}}},
   "hr1215SignInCheckFailed": "No se pudo comprobar la sesión de {provider}: {error}",
@@ -8646,6 +8534,12 @@
   "dashboardSetupSessionToken": "Token de sesión del Dashboard",
   "dashboardSetupCredentialConsent": "Acepto enviar el acceso sin cifrar por mi red privada.",
   "dashboardSetupSignIn": "Acceder",
+  "dashboardSetupBrowserSignIn": "Entrar con el navegador",
+  "dashboardSetupUsePasswordHere": "Usar usuario y contraseña aquí",
+  "dashboardSetupBrowserHandlesPassword": "Tu contraseña la escribe el navegador; Console no la guarda.",
+  "dashboardSetupBrowserOpening": "Abriendo el navegador…",
+  "dashboardSetupBrowserComeBack": "Vuelve aquí cuando hayas entrado.",
+  "dashboardSetupBrowserIncomplete": "No se completó el inicio de sesión. Vuelve a intentarlo.",
   "voiceBlockConversation": "Conversación por voz",
   "voiceBlockTranscription": "Voz a texto",
   "voiceBlockAdvanced": "Avanzado",
@@ -8844,5 +8738,102 @@
   "mascotSuggestOpenSettings": "Abrir ajustes",
   "@mascotSuggestOpenSettings": {
     "description": "Floating mascot suggestion: the action that opens the notification settings."
-  }
+  },
+  "connStatusNoNetwork": "Sin red",
+  "@connStatusNoNetwork": {
+    "description": "Connection status: the phone has no network."
+  },
+  "connStatusAuthRequired": "Requiere iniciar sesión",
+  "@connStatusAuthRequired": {
+    "description": "Connection status: the Dashboard refused the saved login."
+  },
+  "connStatusNoServer": "Sin servidor",
+  "@connStatusNoServer": {
+    "description": "Connection status: the network works but the server does not answer."
+  },
+  "serverStartingTitle": "Tu Hermes está arrancando…",
+  "@serverStartingTitle": {
+    "description": "Server warm-up: the Dashboard answered 502/503/504 and is expected back shortly (Desktop backend-health.ts)."
+  },
+  "serverStartingWait": "Esperando hasta 3 minutos. Puedes seguir usando Console.",
+  "@serverStartingWait": {
+    "description": "Server warm-up: how long Console waits and that the app stays usable."
+  },
+  "serverStartingGaveUp": "El servidor no termina de arrancar.",
+  "@serverStartingGaveUp": {
+    "description": "Server warm-up: the 3 minute wait ended without a healthy answer."
+  },
+  "serverStartingCloudHint": "Si sigue así, mira el estado en el Portal de Nous.",
+  "@serverStartingCloudHint": {
+    "description": "Server warm-up on a Nous Cloud host: where to look next."
+  },
+  "connStatusPersistent": "Sigue sin conexión · reintentando",
+  "@connStatusPersistent": {
+    "description": "Notice shown once the connection has been failing for 5 minutes."
+  },
+  "onb4AddressLabel": "Dirección",
+  "s2SessionExpiredLine": "Sesión caducada · Iniciar sesión",
+  "s2SessionExpiredBody": "Tu sesión en este Hermes ha caducado. Entra de nuevo con el navegador.",
+  "s2SessionExpiredSignIn": "Iniciar sesión",
+  "walkIslandNoServerLine": "Tu Hermes no responde",
+  "@walkIslandNoServerLine": {
+    "description": "Chat notice when the server cannot be reached (simple-connect flag on)."
+  },
+  "walkIslandWhatToDo": "Qué hago",
+  "@walkIslandWhatToDo": {
+    "description": "Action of the no-server notice: opens the official Dashboard command page."
+  },
+  "walkStartHint": "Si no arranca, ciérralo en tu ordenador y vuelve a abrirlo con esta línea.",
+  "@walkStartHint": {
+    "description": "Sign-in screen after the start-up wait gave up: what to do, above the command button."
+  },
+  "walkProbeFailed": "No consigo hablar con tu Hermes. Comprueba que está encendido.",
+  "@walkProbeFailed": {
+    "description": "Sign-in screen when the Dashboard check failed without a typed reason (simple-connect flag on)."
+  },
+  "chatRowFailedTitle": "Este mensaje no se pudo mostrar",
+  "@chatRowFailedTitle": {
+    "description": "Chat row that failed to render: title of the replacement card."
+  },
+  "chatRowCopyPlain": "Copiar texto sin formato",
+  "@chatRowCopyPlain": {
+    "description": "Action on the failed-row card: copies the message text unformatted."
+  },
+  "chatRowCopied": "Texto copiado",
+  "@chatRowCopied": {
+    "description": "Inline confirmation after copying the plain text of a failed row."
+  },
+  "onb2CredentialsIntro": "Escribe el usuario y la contraseña que te mostró el instalador en tu ordenador.",
+  "onb2ShowPassword": "Mostrar contraseña",
+  "onb2HidePassword": "Ocultar contraseña",
+  "onb2WrongPassword": "Usuario o contraseña incorrectos. Revisa lo que mostró el instalador.",
+  "onb2TooManyTries": "Demasiados intentos. Espera un minuto e inténtalo de nuevo.",
+  "onb2PasswordUnsupported": "Este servidor no deja entrar con contraseña desde aquí. Entra con el navegador.",
+  "onb2RecoverTitle": "Recuperar el acceso",
+  "leg3RecoverBody": "El usuario y la contraseña solo están en el ordenador donde corre Hermes. Pega esta línea allí: crea un acceso nuevo, te muestra el usuario y la contraseña y saca un código para escanear.",
+  "onb2RecoverAfter": "Después vuelve a Console e inicia sesión con la contraseña nueva. Las sesiones abiertas con la antigua se cierran.",
+  "onb2RecoverOther": "Otra forma, con el comando de Hermes",
+  "onb3ConfirmDashboard": "Este código guarda la dirección y el acceso al Dashboard de tu Hermes.",
+  "onb3AddressHint": "https://mi-servidor.com",
+  "onb3Checking": "Comprobando la dirección…",
+  "onb3Found": "Hermes encontrado",
+  "onb3Unreachable": "No llego a esa dirección",
+  "onb3DontKnow": "No sé estos datos",
+  "onb3HelpStepScan": "Te saldrá un código en la pantalla: escanéalo.",
+  "onb4WelcomeBody": "Console es el mando de tu Hermes, el que tienes en tu ordenador o en un servidor.",
+  "onb4HaveHermes": "Ya tengo Hermes",
+  "onb4NoHermes": "Aún no tengo Hermes",
+  "onb4ScanHint": "Apunta al código de la pantalla de tu ordenador",
+  "onb4NoCodeTitle": "¿No te sale ningún código?",
+  "onb4NoCodeBody": "Pega esta línea en el ordenador donde está Hermes: en la Terminal, en PowerShell si es Windows, o en la ventana SSH si es un servidor. Al terminar te saldrá el código.",
+  "onb4HelpTitle": "Instala Hermes",
+  "onb4HelpIntro": "Hermes vive en un ordenador o servidor tuyo. Console se conecta a su Dashboard, el panel de Hermes protegido con contraseña.",
+  "onb4StepOpenTerminal": "Abre la Terminal de ese ordenador",
+  "onb4StepOpenPowerShell": "Abre PowerShell en ese ordenador",
+  "onb4StepWhere": "En un servidor, la ventana SSH.",
+  "onb4HelpSafeTitle": "¿Es seguro?",
+  "onb4HelpSafe": "Usa el instalador oficial de Hermes. Si ya tienes Hermes, no lo toca, y tampoco Telegram ni el Gateway. Tarda unos minutos.",
+  "onb4HelpVps": "¿Hermes en un servidor de internet? Instala Tailscale en el servidor y en este móvil, y después pega la línea.",
+  "onb4HadPassword": "Este Hermes ya tenía contraseña. Escríbela una vez y Console no la guarda.",
+  "onb4ManualBody": "Escribe la dirección, el usuario y la contraseña que te mostró la instalación al terminar."
 }
