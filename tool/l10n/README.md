@@ -51,6 +51,11 @@ commands/URLs/code semantics, correctness of security claims, every brand,
 or whether a shared key's source meaning changed. A passing catalog still
 needs source review, native review and Flutter checks.
 
+The current only-`other` CJK rule can lose count-specific meaning from the
+source, such as the incomplete-team qualifier in `roomAvatarMembers` for one
+member. Flag such cases for an explicit source/ICU decision; do not turn a
+conditional warning into an unconditional statement to make a check pass.
+
 The base English catalog predates the stricter ICU-type rule: twelve existing
 messages use plain arguments where Spanish uses plurals. This lane leaves the
 template and English unchanged. Validate the new catalogs explicitly rather
