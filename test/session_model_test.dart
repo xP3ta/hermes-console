@@ -327,6 +327,49 @@ void main() {
       expect(s.displayTitle, 'Uso 50% de CPU');
     });
 
+    group('stray CJK titles', () {
+      Session make(String title, String preview) => Session.fromJson({
+        'id': 'session-cjk',
+        'title': title,
+        'model': 'm',
+        'source': 'desktop',
+        'preview': preview,
+      });
+
+      test('hides a stray ideogram standing in for an accented letter', () {
+        final s = make(
+          'Buscar qu\u8305 es drama 3 TTS',
+          'Oye, ¿qué es el drama 3 TTS? Me puedes buscar sobre eso.',
+        );
+        expect(s.displayTitle, isNot(contains('\u8305')));
+        expect(s.displayTitle, 'Oye qué es el drama 3');
+      });
+
+      test('keeps a Latin title without CJK characters', () {
+        const title = 'Buscar qué es drama 3 TTS';
+        expect(
+          make(title, 'Oye, ¿qué es el drama 3 TTS?').displayTitle,
+          title,
+        );
+      });
+
+      for (final title in const [
+        '修复登录按钮',
+        'ひらがな',
+        'カタカナ',
+        '로그인수정',
+      ]) {
+        test('keeps an entirely CJK title: $title', () {
+          expect(make(title, 'the login button is broken').displayTitle, title);
+        });
+      }
+
+      test('keeps a mixed title when the first message also has CJK', () {
+        const title = '修复 login 按钮';
+        expect(make(title, '登录按钮坏了，请修复').displayTitle, title);
+      });
+    });
+
     test('displayTitle no expone el título sintético de tareas', () {
       final s = Session.fromJson({
         'id': '20260828_todo',
