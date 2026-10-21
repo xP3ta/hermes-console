@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -8,18 +7,30 @@ import 'package:share_plus/share_plus.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../l10n/app_localizations.dart';
+import '../config/flavor.dart';
+import '../services/active_profile_scope.dart';
 import '../services/connection_diagnostics.dart';
 import '../services/connection_manager.dart';
 import '../services/connection_setup_activity.dart';
+import '../services/dashboard_address.dart';
 import '../services/dashboard_login_capabilities.dart';
 import '../services/hermes_setup_commands.dart';
+import '../services/official_dashboard_command.dart';
+import '../services/model_readiness.dart';
+import '../services/native_password_login.dart';
+import '../services/onboarding_arrival.dart';
 import '../services/pairing_link.dart';
 import '../theme/app_theme.dart';
 import '../utils/transport_privacy.dart';
-import '../widgets/instance_kind_picker.dart';
 import '../widgets/dashboard_password_help.dart';
+import '../widgets/instance_kind_picker.dart';
+import '../widgets/hermes_ui.dart' show HermesField;
 import 'dashboard_setup_screen.dart';
+import 'recover_access_page.dart';
 import 'instance_edit_screen.dart';
+import 'models_screen.dart';
+import 'onboarding/halloween.dart';
+import 'onboarding/manual_connect_page.dart';
 import 'onboarding/onboarding_motion.dart';
 import 'onboarding/onboarding_scanner.dart';
 import 'onboarding/onboarding_widgets.dart';
@@ -40,6 +51,11 @@ enum _Hero { none, mark, ring, check }
 
 double _wave(double turns) => math.sin(turns * 2 * math.pi);
 
+/// How long «Conectado» stays before the chat opens by itself, with and
+/// without motion. Buttons on it still work at once.
+const kOnbSuccessDwell = Duration(milliseconds: 1800);
+const kOnbSuccessDwellReduced = Duration(milliseconds: 1000);
+
 /// One entrance for first launch, empty Home and Add another Hermes.
 ///
 /// It is a short film more than a form: the logo draws itself out of the dark,
@@ -59,6 +75,9 @@ class OnboardingScreen extends StatefulWidget {
     this.scanCode,
     this.cameraBuilder,
     this.playOpening,
+    this.simpleConnectEnabled = kSimpleConnectEnabled,
+    this.probe,
+    this.guided = false,
     super.key,
   });
   final ConnectionManager connManager;
@@ -73,6 +92,15 @@ class OnboardingScreen extends StatefulWidget {
   /// flow is shown in a process.
   final bool? playOpening;
 
+  /// Dashboard-only semantics; the welcome and the guides ignore it.
+  final bool simpleConnectEnabled;
+
+  final Future<HostProbeResult> Function(DiscoveryTarget)? probe;
+
+  /// For a connection that already exists and cannot reach its Dashboard:
+  /// opens on the setup help (no opening, no welcome) and leaves on «back».
+  final bool guided;
+
   @override
   State<OnboardingScreen> createState() => _OnboardingScreenState();
 }
@@ -85,8 +113,17 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   bool _forward = true;
   final List<_Step> _history = [];
   PairingLink? _link;
+
+  /// v2 Dashboard-only link; its password lives here, in memory, until the
+  /// sign-in ends. [_v2Pass] is the one typed field when the link has none.
+  DashboardPairingLink? _v2;
+  final _v2Pass = TextEditingController();
+  bool _v2Rejected = false, _v2Reveal = false;
   SavedConnection? _saved;
   SavedConnection? _duplicate;
+
+  /// The Gateway-era connection a scanned v2 code replaces, when exactly one.
+  SavedConnection? _updating;
   late final ConnectionDiagnostics _diagnostics;
   late final VoidCallback _releaseSetup;
   bool _consent = false;
@@ -94,7 +131,6 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   String Function(Strings)? _issue;
   VoidCallback? _retry;
   SetupHostSystem _system = SetupHostSystem.unix;
-  bool _prepared = false;
   bool _fromScan = false;
 
   // Where this Hermes lives: preselected from the code's address, changed on
@@ -106,6 +142,18 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   double _ringTarget = 0;
   bool _verifyFailed = false;
   bool _exiting = false;
+
+  /// A button on «Conectado» was used: the automatic opening stands down.
+  bool _successTapped = false;
+
+  // «Connected» with the simple connect on: whether the Dashboard can answer
+  // a first message. Null while the one check runs.
+  ModelReadiness? _readiness;
+  bool _readinessStarted = false;
+
+  /// A connection by hand with a good sign-in: the chat opens by itself, as in
+  /// Desktop, once the model state allows it.
+  bool _autoOpen = false;
 
   // Motion.
   late final AnimationController _open = AnimationController(
@@ -147,6 +195,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   final ValueNotifier<int> _tick = ValueNotifier(0);
   bool _opening = false;
   bool _motionReady = false;
+  final Season _season = seasonOf(seasonClock());
 
   // The hero's place: measured from the current screen's slot, tweened when
   // the screen changes, followed while it scrolls.
@@ -163,6 +212,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     super.initState();
     _releaseSetup = ConnectionSetupActivity.instance.hold();
     _diagnostics = widget.diagnostics ?? ConnectionDiagnostics();
+    if (widget.guided) _step = _Step.help;
     if (widget.initialLink != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _receive(widget.initialLink!);
@@ -184,7 +234,9 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     }
     _opening =
         widget.playOpening ??
-        (!OnboardingMotion.openingPlayed && widget.initialLink == null);
+        (!OnboardingMotion.openingPlayed &&
+            widget.initialLink == null &&
+            !widget.guided);
     if (_opening) {
       if (OnboardingMotion.lowPower) {
         _open.duration = const Duration(milliseconds: 1500);
@@ -216,6 +268,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       c.dispose();
     }
     _tick.dispose();
+    _v2Pass.dispose();
     _diagnostics.close();
     _releaseSetup();
     super.dispose();
@@ -228,7 +281,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     if (!back && (_step == _Step.welcome || _step == _Step.help)) {
       _history.add(_step);
     }
-    _from = _displayRect();
+    _from = _kind == _Hero.none ? null : _displayRect();
     if (_reduced) {
       _move.value = 1;
     } else {
@@ -244,6 +297,17 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   void _back() {
     if (_busy || _exiting) return;
     if (_step == _Step.welcome) return;
+    // The connection is saved: back on «Conectado» is «Go home», never the
+    // welcome again.
+    if (_step == _Step.success) {
+      _successTapped = true;
+      unawaited(_finish());
+      return;
+    }
+    if (widget.guided && _history.isEmpty) {
+      unawaited(Navigator.of(context).maybePop());
+      return;
+    }
     _go(_history.isEmpty ? _Step.welcome : _history.removeLast(), back: true);
   }
 
@@ -298,21 +362,6 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     _go(_Step.issue);
   }
 
-  Future<void> _paste() async {
-    try {
-      final data = await Clipboard.getData(Clipboard.kTextPlain);
-      if (!mounted) return;
-      final link = PairingLink.tryParse(data?.text ?? '');
-      if (link == null) {
-        _showIssue((s) => s.o2InvalidCode, _paste);
-      } else {
-        _receive(link);
-      }
-    } catch (_) {
-      _showIssue((s) => s.o2ClipboardFailed, _paste);
-    }
-  }
-
   Future<void> _scan() async {
     if (widget.scanCode != null) {
       final link = await widget.scanCode!(context);
@@ -329,6 +378,8 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       useHttps: link.useHttps,
     );
     _link = link;
+    _v2 = null;
+    _updating = null;
     _where = suggestInstanceKind(link.host);
     _consent = false;
     _duplicate = duplicate;
@@ -337,11 +388,227 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     _go(duplicate == null ? _Step.confirm : _Step.duplicate);
   }
 
-  bool _needsConsent(SavedConnection connection) {
-    final uri = Uri.tryParse(connection.effectiveDashboardUrl);
-    if (uri == null || uri.scheme == 'https') return false;
-    return uri.host != 'localhost' &&
-        !(InternetAddress.tryParse(uri.host)?.isLoopback ?? false);
+  void _receiveV2(DashboardPairingLink v2, {bool fromScan = false}) {
+    final draft = _dashboardDraft(v2.url, v2.label);
+    final duplicate = widget.connManager.findConnectionByEndpoint(
+      host: draft.host,
+      port: draft.port,
+      useHttps: draft.useHttps,
+    );
+    _link = null;
+    _v2 = v2;
+    _updating = duplicate == null
+        ? widget.connManager.findGatewayEraByHost(draft.host)
+        : null;
+    _v2Pass.clear();
+    _v2Rejected = false;
+    _where = _updating?.kind ?? suggestInstanceKind(draft.host);
+    _consent = false;
+    _duplicate = duplicate;
+    _fromScan = fromScan || _step == _Step.scan;
+    if (_fromScan && !_reduced) _pulse.forward(from: 0);
+    _go(duplicate == null ? _Step.confirm : _Step.duplicate);
+  }
+
+  /// Dashboard alone, like «Escribir una dirección»: one address, no Gateway.
+  /// With one Gateway-era connection of the same host it is that connection,
+  /// same id, name and kind, now Dashboard-only (no key).
+  SavedConnection _v2Draft(DashboardPairingLink link) {
+    final draft = _dashboardDraft(link.url, link.label);
+    return _updating?.copyWith(
+          host: draft.host,
+          port: draft.port,
+          useHttps: draft.useHttps,
+          apiKey: '',
+          dashboardUrl: link.url,
+        ) ??
+        draft;
+  }
+
+  SavedConnection _dashboardDraft(String url, String? label) {
+    final uri = Uri.parse(url);
+    final https = uri.scheme.toLowerCase() == 'https';
+    return SavedConnection(
+      id: const Uuid().v4(),
+      label: label ?? uri.host,
+      host: uri.host,
+      port: uri.hasPort ? uri.port : (https ? 443 : 80),
+      apiKey: '',
+      useHttps: https,
+      dashboardUrl: url,
+      kind: _where,
+    );
+  }
+
+  bool _v2Public(SavedConnection draft) =>
+      TransportPrivacy.classify(draft.effectiveDashboardUrl) ==
+      TransportPrivacyClass.publicCleartext;
+
+  bool get _v2NeedsField => _v2 != null && (!_v2!.hasPassword || _v2Rejected);
+
+  Future<void> _connectV2() async {
+    final link = _v2;
+    if (_busy || link == null) return;
+    final secret = _v2NeedsField ? _v2Pass.text : link.password!;
+    final draft = _v2Draft(link);
+    if (secret.isEmpty) return;
+    // Cleartext to a public host: nothing leaves the phone.
+    if (_v2Public(draft)) {
+      _showIssue((s) => s.commonCleartextPublic, _goScan);
+      return;
+    }
+    if (_needsConsent(draft) && !_consent) return;
+    _busy = true;
+    setState(() {
+      _checks = [OnbCheck.spin, OnbCheck.wait, OnbCheck.wait];
+      _ringTarget = 0.06;
+      _verifyFailed = false;
+    });
+    _go(_Step.connecting);
+    NativePasswordFailure? failure;
+    try {
+      final connection = await _signInAndSave(
+        draft,
+        link.user,
+        secret,
+        _consent,
+      );
+      if (connection == null) return;
+      await _signedIn(connection);
+      return;
+    } on NativePasswordLoginException catch (e) {
+      failure = e.failure;
+    } catch (_) {
+      failure = NativePasswordFailure.failed;
+    } finally {
+      _busy = false;
+    }
+    if (!mounted) return;
+    switch (failure) {
+      case NativePasswordFailure.invalidCredentials:
+        // Only a rejected password is dropped; transient failures keep it so
+        // the retry button can resend it.
+        _v2Pass.clear();
+        _v2Rejected = true;
+        _go(_Step.confirm);
+      case NativePasswordFailure.unsupported:
+        // No password route: keep the Dashboard and sign in with the browser.
+        final connection = draft;
+        await _saveForBrowser(connection);
+        if (!mounted) return;
+        _saved = connection;
+        _v2 = null;
+        _v2Pass.clear();
+        _checks = const [OnbCheck.ok, OnbCheck.wait, OnbCheck.wait];
+        await _signIn();
+      case NativePasswordFailure.rateLimited:
+        _showIssue((s) => s.onb2TooManyTries, _connectV2);
+      case NativePasswordFailure.network:
+        _showIssue((s) => s.o2Unreachable, _connectV2);
+      case _:
+        _showIssue((s) => s.o2ConnectionFailed, _connectV2);
+    }
+  }
+
+  /// Native sign-in, then the Dashboard-only connection: the one path for a
+  /// v2 link and for Connect by hand. Null when the screen went away.
+  Future<SavedConnection?> _signInAndSave(
+    SavedConnection draft,
+    String user,
+    String secret,
+    bool consent,
+  ) async {
+    final session = await NativePasswordLogin().run(
+      connectionId: draft.id,
+      baseUrl: draft.effectiveDashboardUrl,
+      username: user,
+      password: secret,
+      authorityCurrent: () => mounted,
+      allowPrivateHttp: consent,
+    );
+    if (!mounted) return null;
+    final connection = draft.copyWith(dashboardAuthMode: AuthMode.sessionToken);
+    await widget.connManager.setDashboardSecrets(
+      connection.id,
+      sessionToken: session.encode(),
+    );
+    await _saveForBrowser(connection);
+    await widget.connManager.saveCapabilities(
+      connection.id,
+      capabilitiesAfterDashboardLogin(
+        widget.connManager.loadCapabilities(connection.id),
+      ),
+    );
+    return mounted ? connection : null;
+  }
+
+  Future<void> _saveForBrowser(SavedConnection connection) async {
+    await widget.connManager.upsertConnection(connection);
+    if (_updating?.id == connection.id) {
+      await widget.connManager.dropGatewayKey(connection.id);
+    }
+    await widget.connManager.setActiveConnection(connection.id);
+  }
+
+  Future<void> _signedIn(SavedConnection connection) async {
+    _saved = connection;
+    _v2 = null;
+    _v2Pass.clear();
+    setState(() => _checks = const [OnbCheck.ok, OnbCheck.ok, OnbCheck.ok]);
+    _autoOpen = true;
+    _readinessStarted = true;
+    await _pause();
+    if (!mounted) return;
+    _celebrate();
+    _go(_Step.success);
+    unawaited(_openWhenReady());
+  }
+
+  bool _needsConsent(SavedConnection connection) =>
+      needsCleartextConsent(connection.effectiveDashboardUrl);
+
+  /// Connect by hand: one address, user and password, Dashboard alone.
+  Future<void> _manualConnect() async {
+    SavedConnection? done;
+    var browser = false;
+    final connected = await Navigator.of(context).push<bool>(
+      OnbRoute<bool>(
+        builder: (_) => ManualConnectPage(
+          probe: widget.probe,
+          onHelp: () {
+            Navigator.of(context).pop();
+            if (_step != _Step.help) _go(_Step.help);
+          },
+          connect: (url, user, pass, consent) async {
+            final draft = _dashboardDraft(
+              url,
+              null,
+            ).copyWith(kind: suggestInstanceKind(Uri.parse(url).host));
+            if (_v2Public(draft)) return NativePasswordFailure.failed;
+            try {
+              done = await _signInAndSave(draft, user, pass, consent);
+              return null;
+            } on NativePasswordLoginException catch (e) {
+              if (e.failure != NativePasswordFailure.unsupported) {
+                return e.failure;
+              }
+              await _saveForBrowser(draft);
+              done = draft;
+              browser = true;
+              return null;
+            } catch (_) {
+              return NativePasswordFailure.failed;
+            }
+          },
+        ),
+      ),
+    );
+    final saved = done;
+    if (!mounted || connected != true || saved == null) return;
+    if (!browser) return _signedIn(saved);
+    _saved = saved;
+    setState(() => _checks = const [OnbCheck.ok, OnbCheck.wait, OnbCheck.wait]);
+    await _signIn();
   }
 
   SavedConnection _draft(PairingLink link) => link.toDraftConnection().copyWith(
@@ -360,32 +627,32 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     ProbeStatus.tlsError,
   };
 
-  /// What the first surface's probes say about the first two checks.
-  void _gatewayChecks(List<ProbeResult> results, bool hasDashboard) {
-    final reach = !results.every((r) => _unreachable.contains(r.status));
-    final key = results.any((r) => r.name == 'sessions' && r.status.isOk);
-    _checks = [
-      reach ? OnbCheck.ok : OnbCheck.no,
-      !reach ? OnbCheck.wait : (key ? OnbCheck.ok : OnbCheck.no),
-      key && hasDashboard ? OnbCheck.spin : OnbCheck.wait,
-    ];
-    _verifyFailed = !(reach && key);
-    _ringTarget =
-        (_checks.where((c) => c == OnbCheck.ok).length) /
-        (hasDashboard ? 3 : 2);
-  }
-
-  void _dashboardCheck(List<ProbeResult> results) {
-    final ok =
+  /// The three rows, all read from the Dashboard (Desktop's single origin):
+  /// it is reachable, the authenticated `/api/sessions` read works, and the
+  /// login was accepted. Without a login the second row waits for it.
+  void _dashboardChecks(List<ProbeResult> results, bool hasLogin) {
+    final life = results.where((r) => r.name == 'status').firstOrNull;
+    final reach = life != null && !_unreachable.contains(life.status);
+    final read = results.any((r) => r.name == 'sessions' && r.status.isOk);
+    final login =
         results.any((r) => r.name == 'auth' && r.status.isOk) &&
         !results.any(
           (r) =>
               r.status == ProbeStatus.authInvalid ||
               r.status == ProbeStatus.authRequired,
         );
-    _checks = [..._checks.take(2), ok ? OnbCheck.ok : OnbCheck.no];
-    _verifyFailed = !ok;
-    _ringTarget = ok ? 1 : 2 / 3;
+    _checks = [
+      reach ? OnbCheck.ok : OnbCheck.no,
+      !reach
+          ? OnbCheck.wait
+          : read
+          ? OnbCheck.ok
+          : (hasLogin ? OnbCheck.no : OnbCheck.wait),
+      !reach || !hasLogin ? OnbCheck.wait : (login ? OnbCheck.ok : OnbCheck.no),
+    ];
+    _verifyFailed = !(reach && read);
+    _ringTarget =
+        (_checks.where((c) => c == OnbCheck.ok).length) / (hasLogin ? 3 : 2);
   }
 
   Future<void> _pause() async {
@@ -422,37 +689,35 @@ class _OnboardingScreenState extends State<OnboardingScreen>
           password: link.dashboardPassword,
         ),
         onStage: (stage, results) {
-          if (!mounted) return;
-          setState(() {
-            if (stage == DiagnosticsStage.gateway) {
-              _gatewayChecks(results, link.hasDashboardLogin);
-            } else if (link.hasDashboardLogin) {
-              _dashboardCheck(results);
-            }
-          });
+          if (!mounted || stage != DiagnosticsStage.dashboard) return;
+          setState(() => _dashboardChecks(results, link.hasDashboardLogin));
         },
       );
       if (!mounted) return;
       // The report is the truth: settle the rows on it.
-      setState(() {
-        _gatewayChecks(report.gateway, link.hasDashboardLogin);
-        if (link.hasDashboardLogin &&
-            _checks[1] == OnbCheck.ok &&
-            report.dashboard.isNotEmpty) {
-          _dashboardCheck(report.dashboard);
-        }
-      });
-      if (!report.gateway.any((r) => r.name == 'sessions' && r.status.isOk)) {
-        final authFailed = report.gateway.any(
-          (r) =>
-              r.status == ProbeStatus.authInvalid ||
-              r.status == ProbeStatus.authRequired,
-        );
+      setState(
+        () => _dashboardChecks(report.dashboard, link.hasDashboardLogin),
+      );
+      final life = report.dashboard
+          .where((r) => r.name == 'status')
+          .firstOrNull;
+      final authFailed = report.dashboard.any(
+        (r) =>
+            r.status == ProbeStatus.authInvalid ||
+            r.status == ProbeStatus.authRequired,
+      );
+      final read = report.dashboard.any(
+        (r) => r.name == 'sessions' && r.status.isOk,
+      );
+      // A Dashboard that wants a login is not a dead connection: it is saved
+      // and the person is taken to sign in, never shown as disconnected.
+      if (!read && !authFailed) {
+        final up = life != null && !_unreachable.contains(life.status);
         await _pause();
         if (!mounted) return;
         _showIssue(
-          (s) => authFailed ? s.o2KeyRejected : s.o2Unreachable,
-          authFailed ? _goScan : _connect,
+          (s) => up ? s.o2ConnectionFailed : s.o2Unreachable,
+          _connect,
         );
         return;
       }
@@ -473,8 +738,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       await widget.connManager.setActiveConnection(connection.id);
       await widget.connManager.saveCapabilities(connection.id, report.matrix);
       if (!mounted) return;
-      final dashboardReady =
-          link.hasDashboardLogin && _checks[2] == OnbCheck.ok;
+      final dashboardReady = link.hasDashboardLogin && read;
       _saved = connection;
       await _pause();
       if (!mounted) return;
@@ -521,6 +785,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     final result = await Navigator.of(context).push<DashboardCredsResult>(
       MaterialPageRoute(
         builder: (_) => DashboardSetupScreen(
+          browserFirst: widget.simpleConnectEnabled,
           connection: connection,
           authorityCurrent: current,
         ),
@@ -556,6 +821,9 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   }
 
   Future<void> _manual({SavedConnection? initial}) async {
+    if (widget.simpleConnectEnabled && initial == null) {
+      return _manualConnect();
+    }
     final saved = await Navigator.of(context).push<bool>(
       MaterialPageRoute(
         builder: (_) => InstanceEditScreen(
@@ -593,7 +861,25 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     _go(ready ? _Step.success : _Step.signIn);
   }
 
-  Future<void> _finish() async {
+  /// One model check, then the new chat; the model screen first when none is
+  /// set. What the check could not tell opens the chat too (C3c).
+  Future<void> _openWhenReady() async {
+    // «Conectado» stays long enough to be seen: its check, burst and rows
+    // take about 1.5 s, and a fast model check would otherwise leave first.
+    final shown = Future<void>.delayed(
+      _reduced ? kOnbSuccessDwellReduced : kOnbSuccessDwell,
+    );
+    final readiness = await _checkModel();
+    await shown;
+    // A tap or back during the wait (Choose model, Go home) already decided.
+    if (!mounted || _exiting || _successTapped) {
+      return;
+    }
+    if (readiness == ModelReadiness.needsModel) return _chooseModel();
+    if (readiness != null) await _finish(openChat: true);
+  }
+
+  Future<void> _finish({bool openChat = false}) async {
     if (_saved == null ||
         !widget.connManager.getConnections().any((c) => c.id == _saved!.id)) {
       return;
@@ -604,7 +890,56 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       setState(() {});
       await _exit.forward();
     }
-    if (mounted) widget.onDone();
+    if (!mounted) return;
+    // Home reads the request on its next reload, whichever host pops to it.
+    if (openChat && widget.simpleConnectEnabled) {
+      OnboardingArrival.request(_saved!.id);
+    }
+    widget.onDone();
+  }
+
+  /// One read of the model state of the new connection's own profile.
+  Future<ModelReadiness?> _checkModel() async {
+    final connection = _saved;
+    if (connection == null || !mounted) return null;
+    final profile = ActiveProfileScope.of(
+      widget.connManager,
+      connection.id,
+    ).name;
+    final client = DashboardClient.lazy(connection);
+    final ModelReadiness result;
+    try {
+      result = await checkModelReadiness(client, profile: profile);
+    } finally {
+      client.close();
+    }
+    if (!mounted || _saved?.id != connection.id) return null;
+    setState(() => _readiness = result);
+    return result;
+  }
+
+  /// Opens the model settings over the onboarding and checks again on return.
+  Future<void> _chooseModel() async {
+    final connection = _saved;
+    if (connection == null) return;
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => ModelsScreen(
+          connection: connection,
+          profileScope: ActiveProfileScope.of(
+            widget.connManager,
+            connection.id,
+          ),
+        ),
+      ),
+    );
+    if (!mounted) return;
+    final readiness = await _checkModel();
+    if (_autoOpen &&
+        readiness != null &&
+        readiness != ModelReadiness.needsModel) {
+      await _finish(openChat: true);
+    }
   }
 
   Future<void> _copy(String command) async {
@@ -649,7 +984,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
             child: Stack(
               fit: StackFit.expand,
               children: [
-                if (_step != _Step.scan) _ambientLayer(c),
+                _ambientLayer(c),
                 NotificationListener<ScrollNotification>(
                   onNotification: (_) {
                     _queueMeasure();
@@ -687,7 +1022,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                     ),
                   ),
                 ),
-                if (_step != _Step.scan) _heroLayer(c),
+                _heroLayer(c),
                 _openingVeil(c),
               ],
             ),
@@ -698,6 +1033,14 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   }
 
   // ── Ambient light, hero, veil ──────────────────────────────────────────
+
+  /// The glow and the logo fade out under the camera instead of being cut.
+  Widget _scanFade(Widget child) => AnimatedOpacity(
+    opacity: _step == _Step.scan ? 0 : 1,
+    duration: Duration(milliseconds: _reduced ? 0 : 200),
+    curve: Curves.easeOut,
+    child: child,
+  );
 
   Widget _ambientLayer(HermesThemeColors c) {
     final reduced = _reduced;
@@ -713,97 +1056,117 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       _ => 0.4,
     };
     final merged = Listenable.merge([_ambient, _move, _open, _tick, _burst]);
+    final glow = seasonGlow(_season);
+    final fx =
+        !reduced &&
+        !OnboardingMotion.lowPower &&
+        _season != Season.none &&
+        (_step == _Step.welcome || _step == _Step.success);
     return Positioned.fill(
-      child: IgnorePointer(
-        child: RepaintBoundary(
-          child: LayoutBuilder(
-            builder: (context, box) {
-              final size = box.biggest;
-              Offset center() =>
-                  _displayRect()?.center.translate(0, _parallax()) ??
-                  Offset(size.width / 2, size.height * 0.34);
-              double radius() {
-                final r = _displayRect();
-                final base = r == null ? 150.0 : (r.shortestSide * 1.1 + 60);
-                final openScale = _opening
-                    ? 0.15 +
-                          0.85 * ivl(_open.value, 0, 0.4 / 2.6, Curves.easeOut)
-                    : 1.0;
-                return base.clamp(110.0, 230.0) * openScale;
-              }
+      child: _scanFade(
+        IgnorePointer(
+          child: RepaintBoundary(
+            child: LayoutBuilder(
+              builder: (context, box) {
+                final size = box.biggest;
+                Offset center() =>
+                    _displayRect()?.center.translate(0, _parallax()) ??
+                    Offset(size.width / 2, size.height * 0.34);
+                double radius() {
+                  final r = _displayRect();
+                  final base = r == null ? 150.0 : (r.shortestSide * 1.1 + 60);
+                  final openScale = _opening
+                      ? 0.15 +
+                            0.85 *
+                                ivl(_open.value, 0, 0.4 / 2.6, Curves.easeOut)
+                      : 1.0;
+                  return base.clamp(110.0, 230.0) * openScale;
+                }
 
-              double strength() {
-                final breath = reduced || _ambient.isDismissed
-                    ? 1.0
-                    : 0.8 +
-                          0.2 *
-                              (0.5 +
-                                  0.5 *
-                                      _wave(
-                                        _ambient.value *
-                                            OnboardingMotion
-                                                .ambientSpan
-                                                .inMilliseconds /
-                                            4500,
-                                      ));
-                final fadeIn = _opening
-                    ? ivl(_open.value, 0, 0.4 / 2.6, Curves.easeOut)
-                    : 1.0;
-                return breath * fadeIn * rest;
-              }
+                double strength() {
+                  final breath = reduced || _ambient.isDismissed
+                      ? 1.0
+                      : 0.8 +
+                            0.2 *
+                                (0.5 +
+                                    0.5 *
+                                        _wave(
+                                          _ambient.value *
+                                              OnboardingMotion
+                                                  .ambientSpan
+                                                  .inMilliseconds /
+                                              4500,
+                                        ));
+                  final fadeIn = _opening
+                      ? ivl(_open.value, 0, 0.4 / 2.6, Curves.easeOut)
+                      : 1.0;
+                  final soft = Theme.of(context).brightness == Brightness.light
+                      ? .55
+                      : 1;
+                  return breath * fadeIn * rest * soft;
+                }
 
-              double motesT() =>
-                  _ambient.value * OnboardingMotion.ambientSpan.inSeconds / 36;
-              double motesStrength() {
-                if (reduced || OnboardingMotion.lowPower) return 0;
-                // Fade out when the run ends.
-                final end = 1 - ivl(_ambient.value, 0.94, 1);
-                final start = _opening ? ivl(_open.value, 0.45, 0.8) : 1.0;
-                return rest * end * start;
-              }
+                double motesT() =>
+                    _ambient.value *
+                    OnboardingMotion.ambientSpan.inSeconds /
+                    36;
+                double motesStrength() {
+                  if (reduced || OnboardingMotion.lowPower) return 0;
+                  // Fade out when the run ends.
+                  final end = 1 - ivl(_ambient.value, 0.94, 1);
+                  final start = _opening ? ivl(_open.value, 0.45, 0.8) : 1.0;
+                  return rest * end * start;
+                }
 
-              return Stack(
-                fit: StackFit.expand,
-                children: [
-                  CustomPaint(
-                    painter: GlowPainter(
-                      center: center,
-                      radius: radius,
-                      color: tint,
-                      strength: strength,
-                      repaint: merged,
+                return Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    CustomPaint(
+                      painter: GlowPainter(
+                        center: center,
+                        radius: radius,
+                        color: glow?.$1 ?? tint,
+                        peak: glow?.$2 ?? 0.22,
+                        strength: strength,
+                        repaint: merged,
+                      ),
                     ),
-                  ),
-                  CustomPaint(
-                    painter: MotesPainter(
-                      t: motesT,
-                      color: tint,
-                      strength: motesStrength,
-                      repaint: _ambient,
+                    if (fx)
+                      CustomPaint(
+                        key: const ValueKey('season-fx'),
+                        painter: SeasonFxPainter(_season, _ambient),
+                      ),
+                    CustomPaint(
+                      painter: MotesPainter(
+                        t: motesT,
+                        color: tint,
+                        strength: motesStrength,
+                        repaint: _ambient,
+                      ),
                     ),
-                  ),
-                  CustomPaint(
-                    painter: BurstPainter(
-                      t: () => _burst.value,
-                      center: () => center(),
-                      color: tint,
-                      radius: 80,
-                      repaint: _burst,
+                    CustomPaint(
+                      painter: BurstPainter(
+                        t: () => _burst.value,
+                        center: () => center(),
+                        color: tint,
+                        radius: 80,
+                        repaint: _burst,
+                      ),
                     ),
-                  ),
-                  CustomPaint(
-                    painter: PulseRingPainter(
-                      t: () => _pulse.value,
-                      center: () => center(),
-                      color: tint,
-                      from: 40,
-                      to: size.shortestSide * 0.8,
-                      repaint: _pulse,
+                    CustomPaint(
+                      painter: PulseRingPainter(
+                        t: () => _pulse.value,
+                        center: () => center(),
+                        color: tint,
+                        from: 40,
+                        to: size.shortestSide * 0.8,
+                        repaint: _pulse,
+                      ),
                     ),
-                  ),
-                ],
-              );
-            },
+                  ],
+                );
+              },
+            ),
           ),
         ),
       ),
@@ -827,44 +1190,46 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   Widget _heroLayer(HermesThemeColors c) {
     final merged = Listenable.merge([_move, _open, _tick]);
     return Positioned.fill(
-      child: IgnorePointer(
-        child: AnimatedBuilder(
-          animation: merged,
-          builder: (context, _) {
-            if (_move.isAnimating) _queueMeasure();
-            final rect = _displayRect();
-            final kind = _kind;
-            Widget? hero;
-            if (rect != null && kind != _Hero.none) {
-              hero = switch (kind) {
-                _Hero.mark => _markHero(rect, c),
-                _Hero.ring => _ringHero(rect, c),
-                _Hero.check => _checkHero(rect, c),
-                _Hero.none => null,
-              };
-            }
-            return Stack(
-              clipBehavior: Clip.none,
-              children: [
-                if (rect != null)
-                  Positioned.fromRect(
-                    rect: rect,
-                    child: AnimatedSwitcher(
-                      duration: Duration(milliseconds: _reduced ? 150 : 320),
-                      child: hero == null
-                          ? const SizedBox.shrink(key: ValueKey('none'))
-                          : KeyedSubtree(key: ValueKey(kind), child: hero),
+      child: _scanFade(
+        IgnorePointer(
+          child: AnimatedBuilder(
+            animation: merged,
+            builder: (context, _) {
+              if (_move.isAnimating) _queueMeasure();
+              final rect = _displayRect();
+              final kind = _kind;
+              Widget? hero;
+              if (rect != null && kind != _Hero.none) {
+                hero = switch (kind) {
+                  _Hero.mark => _markHero(rect, c),
+                  _Hero.ring => _ringHero(rect, c),
+                  _Hero.check => _checkHero(rect, c),
+                  _Hero.none => null,
+                };
+              }
+              return Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  if (rect != null)
+                    Positioned.fromRect(
+                      rect: rect,
+                      child: AnimatedSwitcher(
+                        duration: Duration(milliseconds: _reduced ? 150 : 320),
+                        child: hero == null
+                            ? const SizedBox.shrink(key: ValueKey('none'))
+                            : KeyedSubtree(key: ValueKey(kind), child: hero),
+                      ),
                     ),
-                  ),
-                if (rect != null &&
-                    _opening &&
-                    _open.value < 1 &&
-                    _step == _Step.welcome &&
-                    kind == _Hero.mark)
-                  _wordmark(rect, c),
-              ],
-            );
-          },
+                  if (rect != null &&
+                      _opening &&
+                      _open.value < 1 &&
+                      _step == _Step.welcome &&
+                      kind == _Hero.mark)
+                    _wordmark(rect, c),
+                ],
+              );
+            },
+          ),
         ),
       ),
     );
@@ -873,7 +1238,9 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   Widget _markHero(Rect rect, HermesThemeColors c) {
     final size = rect.shortestSide;
     if (!(_opening && _step == _Step.welcome)) {
-      return Center(child: ConsoleMark(size: size));
+      return Center(
+        child: ConsoleMark(size: size, season: _season, ambient: _ambient),
+      );
     }
     final t = _open.value;
     final arc = ivl(t, 300 / _openMs, 900 / _openMs, Curves.easeInOutCubic);
@@ -890,7 +1257,14 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       child: Transform.scale(
         scale: (1 + 0.15 * (1 - cam)) * overshoot,
         child: Center(
-          child: ConsoleMark(size: size, arc: arc, bar: bar, glint: glint),
+          child: ConsoleMark(
+            size: size,
+            arc: arc,
+            bar: bar,
+            glint: glint,
+            season: _season,
+            ambient: _ambient,
+          ),
         ),
       ),
     );
@@ -944,7 +1318,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                 ),
               ),
             ),
-            ConsoleMark(size: size * 0.5),
+            ConsoleMark(size: size * 0.5, season: _season, ambient: _ambient),
           ],
         ),
       ),
@@ -997,6 +1371,10 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       cameraBuilder: widget.cameraBuilder,
       onBack: _back,
       onLink: (link) => _receive(link, fromScan: true),
+      onDashboardLink: (link) => _receiveV2(link, fromScan: true),
+      aimHint: Strings.of(context).onb4ScanHint,
+      help: _scanPanel(context),
+      onManual: _manual,
     ),
     _Step.confirm => _confirm(context),
     _Step.connecting => _connecting(context),
@@ -1009,41 +1387,60 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   /// The frame every screen shares: one gutter, safe areas, a scroll that only
   /// matters at 320 dp and 2x text, and a column that fills the screen so the
   /// actions sit at its foot.
-  Widget _frame({required List<Widget> children, bool back = false}) {
+  Widget _frame({
+    required List<Widget> children,
+    bool back = false,
+    List<Widget> footer = const [],
+  }) {
     return SafeArea(
-      child: LayoutBuilder(
-        builder: (context, box) => SingleChildScrollView(
-          padding: EdgeInsets.fromLTRB(
-            kOnbGutter,
-            0,
-            kOnbGutter,
-            MediaQuery.viewInsetsOf(context).bottom,
-          ),
-          child: ConstrainedBox(
-            constraints: BoxConstraints(minHeight: box.maxHeight),
-            child: IntrinsicHeight(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  SizedBox(
-                    height: 56,
-                    child: back
-                        ? Align(
-                            alignment: Alignment.centerLeft,
-                            child: Transform.translate(
-                              offset: const Offset(-8, 0),
-                              child: OnbBack(onTap: _back),
-                            ),
-                          )
-                        : null,
+      child: Column(
+        children: [
+          Expanded(
+            child: LayoutBuilder(
+              builder: (context, box) => SingleChildScrollView(
+                padding: EdgeInsets.fromLTRB(
+                  kOnbGutter,
+                  0,
+                  kOnbGutter,
+                  footer.isEmpty ? MediaQuery.viewInsetsOf(context).bottom : 0,
+                ),
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(minHeight: box.maxHeight),
+                  child: IntrinsicHeight(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        SizedBox(
+                          height: 56,
+                          child: back
+                              ? Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: Transform.translate(
+                                    offset: const Offset(-8, 0),
+                                    child: OnbBack(onTap: _back),
+                                  ),
+                                )
+                              : null,
+                        ),
+                        ...children,
+                        if (footer.isEmpty) const SizedBox(height: 20),
+                      ],
+                    ),
                   ),
-                  ...children,
-                  const SizedBox(height: 20),
-                ],
+                ),
               ),
             ),
           ),
-        ),
+          if (footer.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(kOnbGutter, 8, kOnbGutter, 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                mainAxisSize: MainAxisSize.min,
+                children: footer,
+              ),
+            ),
+        ],
       ),
     );
   }
@@ -1096,7 +1493,8 @@ class _OnboardingScreenState extends State<OnboardingScreen>
         Expanded(
           child: ConstrainedBox(
             constraints: BoxConstraints(minHeight: heroSize + 16),
-            child: Center(
+            child: Align(
+              alignment: const Alignment(0, 0.3),
               child: SizedBox.square(
                 key: _slots[_Step.welcome],
                 dimension: heroSize,
@@ -1122,7 +1520,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Text(
-              s.o2WelcomeBody,
+              s.onb4WelcomeBody,
               textAlign: TextAlign.center,
               style: onbBody(c),
             ),
@@ -1142,7 +1540,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
               opacity: shown,
               child: OnbPrimary(
                 key: const ValueKey('onboarding-scan'),
-                label: s.o2Scan,
+                label: s.onb4HaveHermes,
                 icon: Icons.qr_code_scanner_rounded,
                 expand: e,
                 onTap: _scan,
@@ -1150,17 +1548,18 @@ class _OnboardingScreenState extends State<OnboardingScreen>
             );
           },
         ),
-        const SizedBox(height: 6),
+        const SizedBox(height: 12),
         _rise(
-          3,
-          OnbTextButton(
+          2,
+          OnbSecondary(
             key: const ValueKey('onboarding-help'),
-            label: s.o2NoCode,
+            label: s.onb4NoHermes,
             onTap: () => _go(_Step.help),
           ),
         ),
+        const SizedBox(height: 6),
         _rise(
-          4,
+          3,
           OnbTextButton(
             key: const ValueKey('onboarding-manual'),
             label: s.o2Manual,
@@ -1171,13 +1570,84 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     );
   }
 
+  /// The setup line with Copy and Send, shared by the help and the camera.
+  List<Widget> _commandBlock(Strings s, String command) => [
+    KeyedSubtree(
+      key: const ValueKey('pairing-helper-command'),
+      child: OnbCodeBlock(command: command),
+    ),
+    const SizedBox(height: 10),
+    Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        AnimatedBuilder(
+          animation: _copied,
+          builder: (_, _) {
+            final done = _copied.isAnimating;
+            return OnbSmallPill(
+              key: const ValueKey('pairing-helper-copy'),
+              label: done ? s.o2Copied : s.o2Copy,
+              icon: done ? Icons.check_rounded : Icons.copy_rounded,
+              filled: true,
+              onTap: () => unawaited(_copy(command)),
+            );
+          },
+        ),
+        OnbSmallPill(
+          key: const ValueKey('pairing-helper-send'),
+          label: s.o2SendToComputer,
+          icon: Icons.ios_share_rounded,
+          onTap: () => unawaited(_send(command)),
+        ),
+      ],
+    ),
+  ];
+
+  Widget _systemTabs(Strings s) => OnbSegmented<SetupHostSystem>(
+    value: _system,
+    onChanged: (v) => setState(() => _system = v),
+    options: [
+      for (final (v, label) in [
+        (SetupHostSystem.unix, s.o2MacLinux),
+        (SetupHostSystem.windows, s.o2Windows),
+      ])
+        (v, label, ValueKey('pairing-helper-${v.name}')),
+    ],
+  );
+
+  Widget _scanPanel(BuildContext context) {
+    final s = Strings.of(context);
+    final c = Theme.of(context).hermes;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          s.onb4NoCodeTitle,
+          textScaler: onbTitleScaler(context),
+          style: onbTitle(c, size: 19),
+        ),
+        const SizedBox(height: 6),
+        Text(s.onb4NoCodeBody, style: onbBody(c)),
+        const SizedBox(height: 14),
+        _systemTabs(s),
+        const SizedBox(height: 14),
+        ..._commandBlock(s, dashboardSetupCommand(_system)),
+        const SizedBox(height: 4),
+        OnbTextButton(
+          key: const ValueKey('qr-panel-manual'),
+          label: s.o2Manual,
+          onTap: _manual,
+        ),
+      ],
+    );
+  }
+
   Widget _help(BuildContext context) {
     final s = Strings.of(context);
     final c = Theme.of(context).hermes;
     final windows = _system == SetupHostSystem.windows;
-    final command = _prepared
-        ? HermesSetupCommands.showCodeAgain(_system)
-        : HermesSetupCommands.setup(_system);
+    final command = dashboardSetupCommand(_system);
     Widget step(int n, Widget body, {bool last = false}) {
       final delay = Duration(milliseconds: 160 + 140 * n);
       return IntrinsicHeight(
@@ -1236,17 +1706,22 @@ class _OnboardingScreenState extends State<OnboardingScreen>
         color: c.textPrimary,
       ),
     );
+    final small = TextStyle(
+      fontSize: 13.5,
+      height: 1.35,
+      color: c.textSecondary,
+    );
     return _frame(
       back: true,
       children: [
         Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             Expanded(
               child: Semantics(
                 header: true,
                 child: Text(
-                  s.o2HelpTitle,
+                  widget.guided ? s.leg3SetupTitle : s.onb4HelpTitle,
                   textScaler: onbTitleScaler(context),
                   style: onbTitle(c, size: 26),
                 ),
@@ -1256,25 +1731,25 @@ class _OnboardingScreenState extends State<OnboardingScreen>
             SizedBox.square(key: _slots[_Step.help], dimension: 44),
           ],
         ),
-        const SizedBox(height: 20),
-        OnbSegmented<SetupHostSystem>(
-          value: _system,
-          onChanged: (v) => setState(() => _system = v),
-          options: [
-            (
-              SetupHostSystem.unix,
-              s.o2MacLinux,
-              const ValueKey('pairing-helper-unix'),
-            ),
-            (
-              SetupHostSystem.windows,
-              s.o2Windows,
-              const ValueKey('pairing-helper-windows'),
-            ),
-          ],
+        const SizedBox(height: 10),
+        Text(
+          widget.guided ? s.leg3SetupBody : s.onb4HelpIntro,
+          style: TextStyle(fontSize: 15, height: 1.4, color: c.textSecondary),
         ),
+        const SizedBox(height: 18),
+        _systemTabs(s),
         const SizedBox(height: 22),
-        step(1, line(windows ? s.o2StepPowerShell : s.o2StepTerminal)),
+        step(
+          1,
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              line(windows ? s.onb4StepOpenPowerShell : s.onb4StepOpenTerminal),
+              const SizedBox(height: 3),
+              Text(s.onb4StepWhere, style: small),
+            ],
+          ),
+        ),
         step(
           2,
           Column(
@@ -1282,67 +1757,126 @@ class _OnboardingScreenState extends State<OnboardingScreen>
             children: [
               line(s.o2StepPaste),
               const SizedBox(height: 10),
-              KeyedSubtree(
-                key: const ValueKey('pairing-helper-command'),
-                child: OnbCodeBlock(command: command),
-              ),
-              const SizedBox(height: 10),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  AnimatedBuilder(
-                    animation: _copied,
-                    builder: (_, _) {
-                      final done = _copied.isAnimating;
-                      return OnbSmallPill(
-                        key: const ValueKey('pairing-helper-copy'),
-                        label: done ? s.o2Copied : s.o2Copy,
-                        icon: done ? Icons.check_rounded : Icons.copy_rounded,
-                        filled: true,
-                        onTap: () => unawaited(_copy(command)),
-                      );
-                    },
-                  ),
-                  OnbSmallPill(
-                    key: const ValueKey('pairing-helper-send'),
-                    label: s.o2SendToComputer,
-                    icon: Icons.ios_share_rounded,
-                    onTap: () => unawaited(_send(command)),
-                  ),
-                ],
-              ),
+              ..._commandBlock(s, command),
             ],
           ),
         ),
-        step(3, line(s.o2StepCode), last: true),
-        const Expanded(child: SizedBox(height: 24)),
+        step(3, line(s.onb3HelpStepScan), last: true),
+        const SizedBox(height: 18),
+        OnbCard(
+          key: const ValueKey('onboarding-help-safe'),
+          padding: const EdgeInsets.fromLTRB(16, 13, 16, 14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              line(s.onb4HelpSafeTitle),
+              const SizedBox(height: 3),
+              Text(s.onb4HelpSafe, style: small),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        Text(
+          s.onb4HelpVps,
+          key: const ValueKey('onboarding-help-vps'),
+          style: small,
+        ),
+      ],
+      footer: [
         OnbPrimary(
-          key: const ValueKey('onboarding-code-visible'),
-          label: s.o2CodeVisible,
+          key: const ValueKey('onboarding-help-scan'),
+          label: s.o2Scan,
           icon: Icons.qr_code_scanner_rounded,
           onTap: _scan,
         ),
         const SizedBox(height: 6),
         OnbTextButton(
-          key: const ValueKey('pairing-helper-prepared'),
-          label: _prepared ? s.o2PrepareComputer : s.o2AlreadyPrepared,
-          onTap: () => setState(() => _prepared = !_prepared),
-        ),
-        OnbTextButton(
-          key: const ValueKey('onboarding-paste'),
-          label: s.o2HaveLink,
-          onTap: _paste,
+          key: const ValueKey('onboarding-help-manual'),
+          label: s.o2Manual,
+          onTap: _manual,
         ),
       ],
     );
   }
 
+  /// The password, asked once: Q1's field. After a refusal the same field
+  /// says so and offers the recovery page (Q2).
+  List<Widget> _v2PasswordField(Strings s, TextStyle? note) {
+    final c = Theme.of(context).hermes;
+    return [
+      const SizedBox(height: 22),
+      RiseIn(
+        delay: const Duration(milliseconds: 210),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (!_v2!.hasPassword)
+              Text(s.onb4HadPassword, textAlign: TextAlign.center, style: note),
+            const SizedBox(height: 12),
+            HermesField(
+              fieldKey: const ValueKey('onb3-password'),
+              controller: _v2Pass,
+              obscure: !_v2Reveal,
+              autocorrect: false,
+              enableSuggestions: false,
+              enableIMEPersonalizedLearning: false,
+              label: s.commonPassword,
+              textInputAction: TextInputAction.go,
+              onChanged: (_) => setState(() {}),
+              onSubmitted: (_) => unawaited(_connectV2()),
+              suffix: IconButton(
+                tooltip: _v2Reveal ? s.onb2HidePassword : s.onb2ShowPassword,
+                icon: Icon(
+                  _v2Reveal
+                      ? Icons.visibility_off_rounded
+                      : Icons.visibility_rounded,
+                ),
+                onPressed: () => setState(() => _v2Reveal = !_v2Reveal),
+              ),
+            ),
+            if (_v2Rejected)
+              RiseIn(
+                child: Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text(
+                    s.onb2WrongPassword,
+                    key: const ValueKey('onb3-wrong-password'),
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 13.5,
+                      height: 1.35,
+                      fontWeight: FontWeight.w600,
+                      color: c.error,
+                    ),
+                  ),
+                ),
+              ),
+            OnbTextButton(
+              key: const ValueKey('onb3-recover'),
+              label: s.dashboardSetupForgotPassword,
+              onTap: () => unawaited(openRecoverAccess(context)),
+            ),
+          ],
+        ),
+      ),
+    ];
+  }
+
   Widget _confirm(BuildContext context) {
     final s = Strings.of(context);
     final c = Theme.of(context).hermes;
-    final link = _link!;
-    final needsConsent = link.hasDashboardLogin && _needsConsent(_draft(link));
+    final v2 = _v2;
+    final link = _link;
+    final shown = v2 == null ? link!.host : Uri.parse(v2.url).authority;
+    final label = v2 == null ? link!.label : v2.label;
+    final hasLogin = v2 != null || link!.hasDashboardLogin;
+    final v2Draft = v2 == null ? null : _v2Draft(v2);
+    final needsConsent =
+        hasLogin &&
+        (v2Draft == null
+            ? _needsConsent(_draft(link!))
+            : _needsConsent(v2Draft) && !_v2Public(v2Draft));
+    final needsField = _v2NeedsField;
     return _frame(
       back: true,
       children: [
@@ -1350,19 +1884,43 @@ class _OnboardingScreenState extends State<OnboardingScreen>
         RiseIn(
           child: Semantics(
             header: true,
-            child: Text(
-              s.o2ConfirmTitle(link.label ?? link.host),
-              textAlign: TextAlign.center,
-              textScaler: onbTitleScaler(context),
-              style: onbTitle(c, size: 26),
+            child: Builder(
+              builder: (context) {
+                final title = s.o2ConfirmTitle(label ?? shown);
+                final base = onbTitle(c, size: 26);
+                final width = MediaQuery.sizeOf(context).width - 2 * kOnbGutter;
+                return Text(
+                  title,
+                  textAlign: TextAlign.center,
+                  textScaler: onbTitleScaler(context),
+                  style: onbTitle(
+                    c,
+                    size: onbFitSize(context, title, base, width),
+                  ),
+                );
+              },
             ),
           ),
         ),
         const SizedBox(height: 10),
+        if (v2 != null && _updating != null)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: Text(
+              s.leg3UpdatesExisting(_updating!.label),
+              key: const ValueKey('leg3-updates-existing'),
+              textAlign: TextAlign.center,
+              style: onbBody(c),
+            ),
+          ),
         RiseIn(
           delay: const Duration(milliseconds: 70),
           child: Text(
-            link.hasDashboardLogin ? s.o2ConfirmFull : s.o2ConfirmChat,
+            v2 != null
+                ? s.onb3ConfirmDashboard
+                : hasLogin
+                ? s.o2ConfirmFull
+                : s.o2ConfirmChat,
             textAlign: TextAlign.center,
             style: onbBody(c),
           ),
@@ -1376,44 +1934,40 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                 OnbCheckRow(
                   state: OnbCheck.ok,
                   title: s.o2SummaryChat,
-                  note: link.host,
+                  note: shown,
                 ),
                 OnbCheckRow(
-                  state: link.hasDashboardLogin ? OnbCheck.ok : OnbCheck.wait,
+                  state: hasLogin ? OnbCheck.ok : OnbCheck.wait,
                   title: s.o2SummaryDashboard,
-                  note: link.hasDashboardLogin
-                      ? null
-                      : s.o2SummaryDashboardLater,
+                  note: hasLogin ? null : s.o2SummaryDashboardLater,
                   last: true,
                 ),
               ],
             ),
           ),
         ),
-        const SizedBox(height: 22),
-        InstanceKindPicker(
-          title: s.o2KindTitle,
-          value: _where,
-          onChanged: (kind) => setState(() => _where = kind),
-          entrance: (i, child) => RiseIn(
-            delay: Duration(milliseconds: 210 + 50 * (i + 1)),
-            child: child,
-          ),
-        ),
+        if (needsField) ..._v2PasswordField(s, onbBody(c)),
         if (needsConsent)
-          CheckboxListTile(
-            key: const ValueKey('pairing-http-consent'),
-            contentPadding: EdgeInsets.zero,
-            controlAffinity: ListTileControlAffinity.leading,
-            value: _consent,
-            onChanged: (v) => setState(() => _consent = v == true),
-            title: Text(s.dashboardSetupCredentialConsent),
+          RiseIn(
+            delay: const Duration(milliseconds: 280),
+            child: OnbConsent(
+              key: const ValueKey('pairing-http-consent'),
+              value: _consent,
+              label: s.dashboardSetupCredentialConsent,
+              onChanged: (v) => setState(() => _consent = v),
+            ),
           ),
         const Expanded(child: SizedBox(height: 24)),
+      ],
+      footer: [
         OnbPrimary(
           key: const ValueKey('onboarding-confirm'),
           label: s.o2Connect,
-          onTap: needsConsent && !_consent ? null : _connect,
+          onTap:
+              (needsConsent && !_consent) ||
+                  (needsField && _v2Pass.text.isEmpty)
+              ? null
+              : (v2 == null ? _connect : _connectV2),
         ),
         const SizedBox(height: 6),
         OnbTextButton(
@@ -1646,6 +2200,12 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     final s = Strings.of(context);
     final c = Theme.of(context).hermes;
     final readOnly = _saved?.readOnly ?? false;
+    final simple = widget.simpleConnectEnabled && !readOnly;
+    if (simple && !_readinessStarted) {
+      _readinessStarted = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) => _checkModel());
+    }
+    final needsModel = simple && _readiness == ModelReadiness.needsModel;
     return _frame(
       children: [
         _slot(_Step.success, min: 84, max: 120),
@@ -1666,7 +2226,11 @@ class _OnboardingScreenState extends State<OnboardingScreen>
         RiseIn(
           delay: const Duration(milliseconds: 450),
           child: Text(
-            readOnly ? s.o2ReadOnly : s.o2SuccessBody,
+            readOnly
+                ? s.o2ReadOnly
+                : needsModel
+                ? s.o2NeedsModelBody
+                : s.o2SuccessBody,
             textAlign: TextAlign.center,
             style: onbBody(c),
           ),
@@ -1674,12 +2238,48 @@ class _OnboardingScreenState extends State<OnboardingScreen>
         const SizedBox(height: 24),
         _checkCard(s, staggered: true, identity: true),
         const Expanded(child: SizedBox(height: 24)),
-        OnbPrimary(
-          key: const ValueKey('onboarding-done'),
-          label: s.o2GoHome,
-          icon: Icons.home_outlined,
-          onTap: _finish,
-        ),
+        if (simple && _autoOpen && _readiness != ModelReadiness.needsModel)
+          const SizedBox.shrink()
+        else
+          RiseIn(
+            delay: const Duration(milliseconds: 560),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (simple) ...[
+                  OnbPrimary(
+                    key: const ValueKey('onboarding-open-chat'),
+                    label: needsModel ? s.o2ChooseModel : s.o2OpenChat,
+                    icon: needsModel
+                        ? Icons.tune_outlined
+                        : Icons.chat_bubble_outline,
+                    onTap: () {
+                      _successTapped = true;
+                      unawaited(
+                        needsModel ? _chooseModel() : _finish(openChat: true),
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 6),
+                  OnbTextButton(
+                    key: const ValueKey('onboarding-done'),
+                    label: s.o2GoHome,
+                    onTap: () {
+                      _successTapped = true;
+                      unawaited(_finish());
+                    },
+                  ),
+                ] else
+                  OnbPrimary(
+                    key: const ValueKey('onboarding-done'),
+                    label: s.o2GoHome,
+                    icon: Icons.home_outlined,
+                    onTap: _finish,
+                  ),
+              ],
+            ),
+          ),
       ],
     );
   }
@@ -1726,22 +2326,40 @@ class _ConnectorState extends State<_Connector>
     final begin =
         (widget.delay + const Duration(milliseconds: 160)).inMicroseconds /
         _c.duration!.inMicroseconds;
+    // Painted, not sized: a FractionallySizedBox at factor 0 has an infinite
+    // intrinsic height, which the IntrinsicHeight of each step cannot take.
     return AnimatedBuilder(
       animation: _c,
-      builder: (_, _) => Align(
-        alignment: Alignment.topCenter,
-        child: FractionallySizedBox(
-          heightFactor: ivl(_c.value, begin.clamp(0.0, 0.95), 1),
-          child: Container(
-            width: 2,
-            margin: const EdgeInsets.symmetric(vertical: 4),
-            decoration: BoxDecoration(
-              color: widget.color,
-              borderRadius: BorderRadius.circular(1),
-            ),
-          ),
+      builder: (_, _) => CustomPaint(
+        painter: _ConnectorPainter(
+          widget.color,
+          ivl(_c.value, begin.clamp(0.0, 0.95), 1),
         ),
       ),
     );
   }
+}
+
+class _ConnectorPainter extends CustomPainter {
+  const _ConnectorPainter(this.color, this.progress);
+
+  final Color color;
+  final double progress;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final length = (size.height - 8) * progress;
+    if (length <= 0) return;
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTWH(size.width / 2 - 1, 4, 2, length),
+        const Radius.circular(1),
+      ),
+      Paint()..color = color,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_ConnectorPainter old) =>
+      old.color != color || old.progress != progress;
 }

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/main.dart';
+import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:hermes_android/core/screens/soul_screen.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/app_lock.dart';
@@ -121,11 +122,12 @@ void main() {
     tester,
   ) async {
     await pumpApp(tester, () => const SoulScreen());
+    final en = lookupStrings(const Locale('en'));
 
     expect(find.byType(SoulScreen), findsOneWidget);
     expect(find.text('Apply'), findsNothing);
     // Quiet UI: the note moved from a banner to the (?) help.
-    expect(find.textContaining('/api/soul'), findsNothing);
+    expect(find.text(en.soulLocalDocNote), findsNothing);
     // The header keeps saving and the templates in its pill; the help is
     // behind its "more".
     expect(find.byKey(const ValueKey('screen-help-button')), findsNothing);
@@ -133,6 +135,6 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byIcon(Icons.help_outline_rounded));
     await tester.pumpAndSettle();
-    expect(find.textContaining('/api/soul'), findsOneWidget);
+    expect(find.text(en.soulLocalDocNote), findsOneWidget);
   });
 }

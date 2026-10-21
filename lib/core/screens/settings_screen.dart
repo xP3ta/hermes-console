@@ -1872,13 +1872,7 @@ class _HistoryCleanupSectionState extends State<HistoryCleanupSection> {
       _cancelRequested = false;
     });
     final override = widget.remoteClientOverride;
-    final client =
-        override ??
-        ApiClient(
-          baseUrl: targetConnection.baseUrl,
-          apiKey: targetConnection.apiKey,
-          connectionId: targetConnection.id,
-        );
+    final client = override ?? ApiClient.forConnection(targetConnection);
 
     try {
       if (!await _authorizeHistoryCleanup(
@@ -1894,7 +1888,7 @@ class _HistoryCleanupSectionState extends State<HistoryCleanupSection> {
       // `includeChildren`: the server folds continuations into their parent
       // and, unseen, they were left orphaned and came back as new rows.
       final sessions = await client.getSessions(
-        includeChildren: true,
+        includeChildren: !client.hasDashboard,
         profile: targetProfile,
       );
       if (!mounted) return;
@@ -2586,6 +2580,11 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
   Map<String, dynamic>? _status; // /api/status
   Map<String, dynamic>? _update; // /api/hermes/update/check
   HermesUpdatePresentation? _updateFailure;
+  // The update check runs beside the server status, never in front of it.
+  bool _updateChecking = true;
+  int _refreshGeneration = 0;
+  int _updateGeneration = 0;
+  Timer? _updateCap;
   bool _hermesAutoUpdate = false; // toggle de auto-actualización de Hermes
   bool _waitingGateway = false; // esperando que el gateway vuelva tras reinicio
   HermesUpdateProgress? _updateProgress; // progreso real de "Actualizar Hermes"
@@ -2632,6 +2631,7 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
 
   @override
   void dispose() {
+    _updateCap?.cancel();
     _client.close();
     super.dispose();
   }
@@ -2658,13 +2658,15 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
   }
 
   Future<void> _refresh({bool forceUpdate = false}) async {
+    final generation = ++_refreshGeneration;
     setState(() {
       _loading = true;
       _error = null;
-      _updateFailure = null;
     });
+    // Both reads start now. The panel paints on the status; the update row
+    // keeps its own state (Desktop: `checkHermesUpdate` is independent).
+    unawaited(_checkUpdate(force: forceUpdate));
     try {
-      // El estado es lo crítico; el check de update es best-effort.
       Map<String, dynamic> status;
       try {
         status = await _client.getServerStatus();
@@ -2677,36 +2679,13 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
         if (pub == null) rethrow;
         status = pub;
       }
-      Map<String, dynamic>? update;
-      HermesUpdatePresentation? updateFailure;
-      try {
-        update = await _client.checkUpdate(force: forceUpdate);
-      } catch (e) {
-        debugPrint(
-          '[settings] no se pudo comprobar actualización de Hermes: $e',
-        );
-        update = null;
-        final fallbackVersion = (status['version'] ?? '—').toString();
-        if (_requiresDashboardAccess(e)) {
-          updateFailure = HermesUpdatePresentation.dashboardAccessRequired(
-            fallbackVersion: fallbackVersion,
-          );
-        } else if (e is! DashboardHttpException || e.statusCode != 404) {
-          updateFailure = HermesUpdatePresentation.checkFailed(
-            fallbackVersion: fallbackVersion,
-          );
-        }
-      }
-      if (!mounted) return;
+      if (!mounted || generation != _refreshGeneration) return;
       setState(() {
         _status = status;
-        _update = update;
-        _updateFailure = updateFailure;
         _loading = false;
       });
-      _maybeAutoUpdateHermes();
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || generation != _refreshGeneration) return;
       final s = e.toString();
       setState(() {
         _error = s.contains('401')
@@ -2717,6 +2696,57 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
         _loading = false;
       });
     }
+  }
+
+  /// Visible cap for the update row: past it the row reads "unavailable" with
+  /// a retry, but an answer of the same generation may still replace it.
+  static const _updateVisibleCap = Duration(seconds: 6);
+
+  Future<void> _checkUpdate({required bool force}) async {
+    final generation = ++_updateGeneration;
+    _updateCap?.cancel();
+    setState(() {
+      _updateChecking = true;
+      _update = null;
+      _updateFailure = null;
+    });
+    _updateCap = Timer(_updateVisibleCap, () {
+      if (!mounted || generation != _updateGeneration || !_updateChecking) {
+        return;
+      }
+      setState(() {
+        _updateChecking = false;
+        _updateFailure = HermesUpdatePresentation.checkFailed(
+          fallbackVersion: (_status?['version'] ?? '—').toString(),
+        );
+      });
+    });
+    Map<String, dynamic>? update;
+    HermesUpdatePresentation? failure;
+    try {
+      update = await _client.checkUpdate(force: force);
+    } catch (e) {
+      debugPrint('[settings] no se pudo comprobar actualización de Hermes: $e');
+      final fallbackVersion = (_status?['version'] ?? '—').toString();
+      if (_requiresDashboardAccess(e)) {
+        failure = HermesUpdatePresentation.dashboardAccessRequired(
+          fallbackVersion: fallbackVersion,
+        );
+      } else if (e is! DashboardHttpException || e.statusCode != 404) {
+        failure = HermesUpdatePresentation.checkFailed(
+          fallbackVersion: fallbackVersion,
+        );
+      }
+    }
+    if (!mounted || generation != _updateGeneration) return;
+    _updateCap?.cancel();
+    setState(() {
+      _update = update;
+      _updateFailure = failure;
+      _updateChecking = false;
+    });
+    // Only a confirmed `update_available == true` can start the auto-update.
+    if (update != null) _maybeAutoUpdateHermes();
   }
 
   Future<void> _configureDashboardAccess() async {
@@ -3593,13 +3623,16 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
   }
 
   Widget _updateCard() {
+    final fallbackVersion = (_status?['version'] ?? '—').toString();
     return HermesUpdateCard(
-      presentation:
-          _updateFailure ??
-          HermesUpdatePresentation.fromPayload(
-            _update,
-            fallbackVersion: (_status?['version'] ?? '—').toString(),
-          ),
+      onRetry: () => _checkUpdate(force: true),
+      presentation: _updateChecking
+          ? HermesUpdatePresentation.checking(fallbackVersion: fallbackVersion)
+          : _updateFailure ??
+                HermesUpdatePresentation.fromPayload(
+                  _update,
+                  fallbackVersion: fallbackVersion,
+                ),
       isLocal: _connection.onDeviceLoopback,
       busy: _busy,
       onApply: _applyUpdate,

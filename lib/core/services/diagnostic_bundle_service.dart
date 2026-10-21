@@ -105,7 +105,7 @@ class DiagnosticConnectionSnapshot {
     required CapabilityMatrix matrix,
     List<DiagnosticHealthSample> health = const [],
   }) {
-    final privacy = TransportPrivacy.classify(connection.gatewayUrl);
+    final privacy = TransportPrivacy.classify(connection.effectiveDashboardUrl);
     final transportClass = switch (privacy) {
       TransportPrivacyClass.secure => DiagnosticTransportClass.https,
       TransportPrivacyClass.privateCleartext =>

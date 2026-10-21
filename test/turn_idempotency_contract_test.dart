@@ -17,7 +17,6 @@ import 'package:hermes_android/core/models/prepared_turn.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/approval_policy.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
-import 'package:hermes_android/core/services/connection_diagnostics.dart';
 import 'package:hermes_android/core/services/compression_restore_store.dart';
 import 'package:hermes_android/core/services/desktop_gateway_capabilities.dart';
 import 'package:hermes_android/core/services/recovery_proof.dart';
@@ -1246,40 +1245,6 @@ void main() {
     expect(status.state, isNull);
     expect(status.serverTurnId, isNull);
   });
-
-  test(
-    'capability autenticada se deriva y persiste sin probe mutante',
-    () async {
-      final caps = ServerCapabilities.tryParse(
-        jsonEncode({
-          'object': 'hermes.api_server.capabilities',
-          'features': {'turn_idempotency_v1': true},
-          'endpoints': <String, Object?>{},
-        }),
-      );
-      final diagnostics = ConnectionDiagnostics(
-        httpClient: MockClient((_) async => http.Response('unused', 500)),
-      );
-      addTearDown(diagnostics.close);
-
-      final matrix = diagnostics.buildMatrix(
-        const [],
-        const [],
-        null,
-        serverCaps: caps,
-      );
-
-      expect(matrix.turnIdempotency, CapState.yes);
-      expect(matrix.isServerSourced('turnIdempotency'), isTrue);
-      SharedPreferences.setMockInitialValues({
-        'capabilities_conn-modern': jsonEncode(matrix.toJson()),
-      });
-      expect(
-        await ConnectionManager.isTurnIdempotencySupported('conn-modern'),
-        isTrue,
-      );
-    },
-  );
 
   test('capability ausente o corrupta conserva contrato heredado', () async {
     SharedPreferences.setMockInitialValues({

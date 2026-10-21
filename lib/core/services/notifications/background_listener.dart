@@ -1,11 +1,9 @@
 // Servicio en primer plano (foreground service) que mantiene a Hermes Console
 // "escuchando" eventos del agente AUNQUE la app esté cerrada — sin FCM/Google.
 //
-// Cómo funciona: un isolate del servicio (independiente de la UI) sondea por
-// REST el estado de las ejecuciones (/v1/runs/{id}) que la app está vigilando y
-// dispara notificaciones locales cuando terminan o piden aprobación. El token
-// del gateway se lee del Keystore (flutter_secure_storage), nunca se guarda en
-// claro. Sigue vivo aunque deslices la app fuera de recientes.
+// Cómo funciona: un isolate del servicio, independiente de la UI, escucha Cron,
+// Kanban y salas por el Dashboard y dispara avisos locales; no sondea runs REST
+// (las sesiones entran por `SessionAttentionSink`). Sigue vivo con la app cerrada.
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -16,7 +14,6 @@ import 'package:flutter/services.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite/sqflite.dart' as sqflite;
 
@@ -26,7 +23,6 @@ import '../connection_manager.dart';
 import '../kanban_watch_board.dart';
 import '../launcher_widget_cron.dart';
 import '../launcher_widget_tasks.dart';
-import '../secure_storage.dart';
 import '../shared_gateway_pool.dart';
 import '../tui_gateway_client.dart';
 import '../../utils/transport_privacy.dart';
@@ -34,8 +30,6 @@ import 'bot_mode_background.dart';
 import 'notification_delivery_store.dart';
 import 'notification_mute_store.dart';
 import 'notification_service.dart';
-import 'bot_notification_presenter.dart' show humanizeBotHandle;
-import 'live_turn_notifications.dart';
 import 'rich_notifications.dart';
 import 'notification_strings.dart';
 import 'voice_notification_card_adapter.dart';
@@ -322,65 +316,16 @@ class BackgroundWatch {
     }
   }
 
-  static Future<void> _write(
-    SharedPreferences prefs,
-    List<WatchedRun> runs,
-  ) async {
-    await prefs.setString(
-      _key,
-      jsonEncode(runs.map((r) => r.toJson()).toList()),
-    );
-  }
-
-  /// Empieza a vigilar una ejecución (idempotente por dueño exacto).
+  /// Shim: runs are no longer polled, so nothing is persisted or started.
   static Future<void> add(SavedRunWatch w) async {
-    final safeBase = TransportPrivacy.requireAllowed(w.base);
-    if (!NotificationService.automationNotificationsEnabled) return;
-    final profile = _normalizeRunOwnerProfile(w.profile);
-    await _locked((prefs) async {
-      final runs = _read(prefs)
-        ..removeWhere(
-          (r) =>
-              r.connId == w.connId &&
-              r.profile == profile &&
-              r.runId == w.runId,
-        );
-      runs.add(
-        WatchedRun(
-          connId: w.connId,
-          profile: profile,
-          base: safeBase,
-          runId: w.runId,
-          // Presentation text never crosses the durable watch boundary.
-          prompt: '',
-          sessionId: w.sessionId,
-        ),
-      );
-      // Cota de seguridad: no acumular indefinidamente.
-      while (runs.length > 20) {
-        runs.removeAt(0);
-      }
-      await _write(prefs, runs);
-    });
+    TransportPrivacy.requireAllowed(w.base);
   }
 
   static Future<void> remove(
     String runId, {
     required String connId,
     String profile = 'default',
-  }) async {
-    final ownerProfile = _normalizeRunOwnerProfile(profile);
-    await _locked((prefs) async {
-      final runs = _read(prefs)
-        ..removeWhere(
-          (r) =>
-              r.connId == connId &&
-              r.profile == ownerProfile &&
-              r.runId == runId,
-        );
-      await _write(prefs, runs);
-    });
-  }
+  }) => clearAll();
 
   static Future<void> clearAll() => _locked((prefs) async {
     await prefs.remove(_key);
@@ -388,51 +333,6 @@ class BackgroundWatch {
 
   static Future<List<WatchedRun>> snapshot() =>
       _locked((prefs) async => _read(prefs));
-
-  /// Aplica el resultado de un sondeo sobre la lista más reciente. Los runs
-  /// añadidos por la UI mientras había HTTP en curso no estaban en [snapshot]
-  /// y se conservan; los eliminados por la UI tampoco resucitan.
-  static Future<List<WatchedRun>> mergePollResults({
-    required List<WatchedRun> snapshot,
-    required List<WatchedRun> keep,
-  }) => _locked((prefs) async {
-    final latest = _read(prefs);
-    final polledOwners = snapshot.map(_watchedRunOwner).toSet();
-    final keptByOwner = {for (final run in keep) _watchedRunOwner(run): run};
-    final merged = <WatchedRun>[];
-    for (final current in latest) {
-      final owner = _watchedRunOwner(current);
-      if (!polledOwners.contains(owner)) {
-        merged.add(current);
-        continue;
-      }
-      final updated = keptByOwner[owner];
-      if (updated != null) merged.add(updated);
-    }
-    await _write(prefs, merged);
-    return merged;
-  });
-
-  @visibleForTesting
-  static List<WatchedRun> mergeForTest({
-    required List<WatchedRun> latest,
-    required List<WatchedRun> snapshot,
-    required List<WatchedRun> keep,
-  }) {
-    final polledOwners = snapshot.map(_watchedRunOwner).toSet();
-    final keptByOwner = {for (final run in keep) _watchedRunOwner(run): run};
-    final merged = <WatchedRun>[];
-    for (final current in latest) {
-      final owner = _watchedRunOwner(current);
-      if (!polledOwners.contains(owner)) {
-        merged.add(current);
-        continue;
-      }
-      final updated = keptByOwner[owner];
-      if (updated != null) merged.add(updated);
-    }
-    return merged;
-  }
 }
 
 /// Datos mínimos para vigilar una run (los pasa el isolate de UI).
@@ -465,103 +365,6 @@ String _normalizeRunOwnerProfile(String value) {
   profile: _normalizeRunOwnerProfile(run.profile),
   runId: run.runId,
 );
-
-@visibleForTesting
-Uri backgroundRunStatusUri(String safeBase, WatchedRun run) => Uri.parse(
-  '$safeBase/${ApiClient.profileEndpoint('v1/runs/${Uri.encodeComponent(run.runId)}', profile: run.profile)}',
-);
-
-/// Per-run retry gate for the background `/v1/runs/{id}` poller.
-///
-/// A non-200 answer never proves the run ended, so the run is always kept.
-/// What changes is how often it is asked again: 401/403/404 are stable
-/// answers (revoked key, expired ledger) and back off from [stableBase] up to
-/// [maxDelay]. Timeouts, transport errors and 5xx keep the normal cadence so
-/// a completion is still noticed on the next tick once the link recovers.
-/// Any other answer clears the state. State is in memory only.
-class BackgroundRunPollBackoff {
-  BackgroundRunPollBackoff({
-    DateTime Function()? now,
-    this.stableBase = const Duration(minutes: 2),
-    this.maxDelay = const Duration(minutes: 15),
-  }) : _now = now ?? DateTime.now;
-
-  final DateTime Function() _now;
-  final Duration stableBase;
-  final Duration maxDelay;
-  final Map<
-    ({String connId, String profile, String runId}),
-    ({int failures, DateTime retryAt})
-  >
-  _states = {};
-
-  static bool isStableRejection(int statusCode) =>
-      statusCode == 401 || statusCode == 403 || statusCode == 404;
-
-  bool allows(WatchedRun run) {
-    final state = _states[_watchedRunOwner(run)];
-    return state == null || !_now().isBefore(state.retryAt);
-  }
-
-  /// [statusCode] null means the request did not produce an HTTP answer.
-  void record(WatchedRun run, int? statusCode) {
-    final owner = _watchedRunOwner(run);
-    if (statusCode == null || !isStableRejection(statusCode)) {
-      _states.remove(owner);
-      return;
-    }
-    final failures = (_states[owner]?.failures ?? 0) + 1;
-    var delayMs = stableBase.inMilliseconds;
-    for (var i = 1; i < failures && delayMs < maxDelay.inMilliseconds; i++) {
-      delayMs *= 2;
-    }
-    if (delayMs > maxDelay.inMilliseconds) delayMs = maxDelay.inMilliseconds;
-    _states[owner] = (
-      failures: failures,
-      retryAt: _now().add(Duration(milliseconds: delayMs)),
-    );
-  }
-
-  /// Drops state for runs no longer watched.
-  void retain(Iterable<WatchedRun> runs) {
-    final live = runs.map(_watchedRunOwner).toSet();
-    _states.removeWhere((owner, _) => !live.contains(owner));
-  }
-}
-
-/// Reads one watched run's status through [backoff]. Returns null without
-/// touching the network while the run is backing off; otherwise the HTTP
-/// response (any status). Transport failures are recorded and rethrown.
-@visibleForTesting
-Future<http.Response?> fetchWatchedRunStatus({
-  required http.Client client,
-  required BackgroundRunPollBackoff backoff,
-  required WatchedRun run,
-  required String safeBase,
-  required Future<String?> Function() readToken,
-  Duration timeout = const Duration(seconds: 12),
-}) async {
-  if (!backoff.allows(run)) return null;
-  final http.Response res;
-  try {
-    final token = await readToken();
-    res = await client
-        .get(
-          backgroundRunStatusUri(safeBase, run),
-          headers: {
-            if (token != null && token.isNotEmpty)
-              'Authorization': 'Bearer $token',
-            'Accept': 'application/json',
-          },
-        )
-        .timeout(timeout);
-  } catch (_) {
-    backoff.record(run, null);
-    rethrow;
-  }
-  backoff.record(run, res.statusCode);
-  return res;
-}
 
 /// QA-only delivery trace (`--dart-define=HERMES_NOTIF_TRACE=true`). Off by
 /// default and compiled out of normal builds. Prints only opaque ids, states
@@ -1683,8 +1486,8 @@ class _DiscoveryBackoffState {
 
 class _HermesTaskHandler extends TaskHandler {
   NotificationService? _notif;
-  final SecureStorage _secure = SecureStorage();
   bool _polling = false;
+  bool _legacyWatchCleared = false;
 
   int _emptyPolls = 0;
 
@@ -1692,13 +1495,8 @@ class _HermesTaskHandler extends TaskHandler {
   /// and nothing changed; drives the idle backoff of the listener cadence.
   int _quietTicks = 0;
 
-  /// Cliente HTTP REUTILIZADO entre ticks: sin él, cada sondeo abría una
-  /// conexión TCP nueva por run vigilada cada 30 s (handshake con la radio
-  /// despierta). Se cierra en [onDestroy].
-  final http.Client _http = http.Client();
   final BackgroundDashboardClientCache _dashboardClients =
       BackgroundDashboardClientCache();
-  final BackgroundRunPollBackoff _runPollBackoff = BackgroundRunPollBackoff();
   final BackgroundDiscoveryBackoff _discoveryBackoff =
       BackgroundDiscoveryBackoff();
   late final BackgroundAutomationDiscovery _discovery =
@@ -1825,6 +1623,11 @@ class _HermesTaskHandler extends TaskHandler {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.reload();
+      // Older builds persisted watched runs: drop them once, never poll.
+      if (!_legacyWatchCleared) {
+        _legacyWatchCleared = true;
+        await BackgroundWatch.clearAll();
+      }
       final automationOptIn = prefs.getBool(BackgroundListener.prefKey) == true;
       // Stop/toggles pueden venir del isolate principal entre ticks. La pref
       // durable es la única autoridad compartida y debe refrescar el estático
@@ -1852,7 +1655,6 @@ class _HermesTaskHandler extends TaskHandler {
         return;
       }
       if (!NotificationService.automationNotificationsEnabled) return;
-      final runs = await BackgroundWatch.snapshot();
       final targetState = await BackgroundCronWatch.snapshotTargetState();
       final cronTargets = targetState.connections;
       if (_targetRevision != targetState.revision) {
@@ -1864,7 +1666,7 @@ class _HermesTaskHandler extends TaskHandler {
       }
       _dashboardClients.retainConnections(cronTargets);
       _discoveryBackoff.retainConnections(cronTargets);
-      if (runs.isEmpty && cronTargets.isEmpty) {
+      if (cronTargets.isEmpty) {
         if (!_stopFence.allowsUpdate) return;
         if (!audioCardActive) {
           _setPollInterval(_kIdleIntervalMs, persistentAutomation: true);
@@ -1903,52 +1705,28 @@ class _HermesTaskHandler extends TaskHandler {
         }
       }
       final discoveryActive = _discovery.takeObservedActivity();
-      _quietTicks = roomsWorking || discoveryActive || runs.isNotEmpty
-          ? 0
-          : _quietTicks + 1;
-      if (runs.isEmpty) {
-        if (!_stopFence.allowsUpdate) return;
-        // Con opt-in de escucha permanente y NADA que vigilar, baja el ritmo
-        // a 3 min: cada tick despierta CPU con wakelock retenido, y a 30s el
-        // coste de batería no compra nada (spec 028). Vuelve a 30s en cuanto
-        // entra una run vigilada.
-        if (!audioCardActive) {
-          _setPollInterval(
-            listenerIdleIntervalMs(
-              roomsActive: roomsWorking,
-              watchesCron: watchesCron,
-              watchesKanban: watchesKanban,
-              quietTicks: _quietTicks,
-            ),
-            persistentAutomation: true,
-          );
-        }
-        if (audioCardActive) {
-          _emptyPolls = 0;
-          return;
-        }
-        await _maybeAutoStop(prefs);
+      _quietTicks = roomsWorking || discoveryActive ? 0 : _quietTicks + 1;
+      if (!_stopFence.allowsUpdate) return;
+      // Con opt-in de escucha permanente y NADA que vigilar, baja el ritmo
+      // a 3 min: cada tick despierta CPU con wakelock retenido, y a 30s el
+      // coste de batería no compra nada (spec 028). Vuelve a 30s en cuanto
+      // se activa una sala.
+      if (!audioCardActive) {
+        _setPollInterval(
+          listenerIdleIntervalMs(
+            roomsActive: roomsWorking,
+            watchesCron: watchesCron,
+            watchesKanban: watchesKanban,
+            quietTicks: _quietTicks,
+          ),
+          persistentAutomation: true,
+        );
+      }
+      if (audioCardActive) {
+        _emptyPolls = 0;
         return;
       }
-      _emptyPolls = 0;
-      if (!audioCardActive) {
-        if (!_stopFence.allowsUpdate) return;
-        _setPollInterval(_kActiveIntervalMs, persistentAutomation: true);
-      }
-
-      final pollKeep = <WatchedRun>[];
-      for (final r in runs) {
-        final result = await _checkRun(notif, r);
-        if (result != null) pollKeep.add(result);
-      }
-      final keep = await BackgroundWatch.mergePollResults(
-        snapshot: runs,
-        keep: pollKeep,
-      );
-      _runPollBackoff.retain(keep);
-      // What runs is told by its own live row. The fixed card says one
-      // thing and is not posted again on every poll.
-      await _syncWatchedRunRows(prefs, notif, keep);
+      await _maybeAutoStop(prefs);
     } catch (error) {
       if (kDebugMode) {
         debugPrint('[hermes-notif] BG poll error (${error.runtimeType})');
@@ -1960,39 +1738,6 @@ class _HermesTaskHandler extends TaskHandler {
         unawaited(_poll());
       }
     }
-  }
-
-  final WatchedRunLiveRows _runRows = WatchedRunLiveRows(
-    sink: PlatformRichNotifications(),
-    whoFor: humanizeBotHandle,
-  );
-
-  /// Live rows of the watched runs no chat of the app can show any more
-  /// (the app was closed mid-turn): this isolate only knows they run. While
-  /// the app is in front it shows its own state, so none is posted.
-  Future<void> _syncWatchedRunRows(
-    SharedPreferences prefs,
-    NotificationService notif,
-    List<WatchedRun> running,
-  ) async {
-    try {
-      await _runRows.sync(
-        NotifL10n.of(prefs),
-        [
-          for (final run in running)
-            (
-              connId: run.connId,
-              profile: run.profile,
-              sessionId: run.sessionId,
-              runId: run.runId,
-            ),
-        ],
-        show:
-            notif.enabled &&
-            notif.notifyReplies &&
-            prefs.getBool(BackgroundListener.uiForegroundKey) != true,
-      );
-    } catch (_) {}
   }
 
   /// A-302/U-11 (spec 028): el servicio no debe quedarse vivo sin trabajo.
@@ -2129,115 +1874,6 @@ class _HermesTaskHandler extends TaskHandler {
     );
   }
 
-  /// Sondea una run. Devuelve la entrada actualizada para seguir vigilando, o
-  /// `null` si ya terminó (dejar de vigilar).
-  Future<WatchedRun?> _checkRun(NotificationService notif, WatchedRun r) async {
-    final owner = r.notificationOwner;
-    late final String safeBase;
-    try {
-      safeBase = TransportPrivacy.requireAllowed(r.base);
-    } on ArgumentError {
-      // Entrada antigua/corrupta: se elimina sin leer la API key ni tocar red.
-      debugPrint('[hermes-notif] unsafe watch discarded');
-      return null;
-    }
-    try {
-      final res = await fetchWatchedRunStatus(
-        client: _http,
-        backoff: _runPollBackoff,
-        run: r,
-        safeBase: safeBase,
-        readToken: () => _secure.readApiKey(r.connId),
-      );
-      // Backing off after a stable 401/403/404: keep the run, skip the call.
-      if (res == null) return r;
-      if (kDebugMode) {
-        debugPrint('[hermes-notif] run poll HTTP ${res.statusCode}');
-      }
-
-      // Solo un 200 aporta estado autoritativo. Un 404 también puede significar
-      // expiración o pérdida del ledger: nunca se convierte en éxito inventado.
-      if (!BackgroundListener.canInferRunOutcomeFromHttpStatus(
-        res.statusCode,
-      )) {
-        return r; // reintentar luego
-      }
-
-      final body = jsonDecode(res.body) as Map<String, dynamic>;
-      final status = (body['status'] ?? '').toString();
-      final title = r.prompt.trim().isEmpty ? 'Agent task' : r.prompt.trim();
-
-      if (status == 'waiting_for_approval') {
-        final approvalId =
-            (body['approval_request_id'] ??
-                    body['approval_id'] ??
-                    body['request_id'])
-                ?.toString()
-                .trim();
-        if (approvalId == null || approvalId.isEmpty) {
-          // Polling sin identidad autoritativa no puede crear una alerta durable.
-          return r;
-        }
-        if (r.approvalRequestId == approvalId) return r;
-        if (r.approvalRequestId != null) {
-          await notif.cancelApproval(
-            connId: owner.connId,
-            profile: owner.profile,
-            runId: owner.runId,
-            approvalId: r.approvalRequestId,
-          );
-        }
-        await notif.approvalPending(
-          tool: title,
-          connId: r.connId,
-          sessionId: r.sessionId,
-          runId: r.runId,
-          approvalId: approvalId,
-          base: r.base,
-          profile: owner.profile,
-        );
-        return r.copyWith(
-          approvalNotified: true,
-          approvalRequestId: approvalId,
-        );
-      }
-      if (status == 'completed' ||
-          status == 'failed' ||
-          status == 'cancelled') {
-        await notif.cancelApproval(
-          connId: owner.connId,
-          profile: owner.profile,
-          runId: owner.runId,
-          terminal: true,
-        );
-        await notif.runFinished(
-          title: title,
-          ok: status == 'completed',
-          connId: r.connId,
-          sessionId: r.sessionId,
-          runId: r.runId,
-          profile: owner.profile,
-        );
-        return null; // dejar de vigilar
-      }
-      if (r.approvalRequestId != null) {
-        await notif.cancelApproval(
-          connId: owner.connId,
-          profile: owner.profile,
-          runId: owner.runId,
-          approvalId: r.approvalRequestId,
-        );
-        return r.copyWith(clearApproval: true);
-      }
-      return r; // queued/running
-    } catch (error) {
-      if (kDebugMode) {
-        debugPrint('[hermes-notif] run poll transient (${error.runtimeType})');
-      }
-      return r; // error transitorio → reintentar en el próximo ciclo
-    }
-  }
-
   @override
   Future<void> onDestroy(DateTime timestamp, bool isTimeout) async {
     _stopFence.requestStop();
@@ -2247,7 +1883,6 @@ class _HermesTaskHandler extends TaskHandler {
     await _botMode.close();
     await SharedGatewayPool.instance.closeAll();
     _dashboardClients.close();
-    _http.close();
   }
 }
 
@@ -2904,11 +2539,10 @@ class OrderedForegroundStateWriter {
   }
 }
 
-class BackgroundListener {
-  @visibleForTesting
-  static bool canInferRunOutcomeFromHttpStatus(int statusCode) =>
-      statusCode == 200;
+@visibleForTesting
+Future<void> Function() backgroundTickForTest() => _HermesTaskHandler()._poll;
 
+class BackgroundListener {
   /// Margen para que el port entre isolates entregue `end` antes de destruir
   /// el engine del foreground task. Sin él, el servicio podía cortar el
   /// micrófono pero perder la orden destinada a cerrar la UI principal.

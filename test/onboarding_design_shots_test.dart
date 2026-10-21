@@ -190,7 +190,7 @@ void main() {
       await openEditorAdvanced(tester);
       await revealEditorControl(
         tester,
-        find.byKey(const ValueKey('instance-chat-port')),
+        find.byKey(const ValueKey('instance-dashboard-port')),
       );
       await _shot(tester, 's_advanced_$theme');
       await tester.pumpWidget(

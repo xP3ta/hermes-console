@@ -37,6 +37,7 @@ final class _Hermes {
           200,
         );
       }
+      if (url.path == '/api/status') return http.Response('{}', 200);
       if (url.path != '/api/sessions') return http.Response('{}', 404);
       dashboardQueries.add(url.queryParameters);
       final gate = dashboardGates[url.queryParameters['profile']];
@@ -218,7 +219,7 @@ void main() {
       client.close();
     });
 
-    test('the default profile keeps the API server route', () async {
+    test('the default profile is read from the Dashboard, unscoped', () async {
       final hermes = _Hermes();
       final conn = SavedConnection(
         id: 'c',
@@ -231,8 +232,8 @@ void main() {
       final client = clientFor(conn, hermes);
       await client.getSessions(profile: 'default', pageSize: 40);
       client.close();
-      expect(hermes.dashboardQueries, isEmpty);
-      expect(hermes.gatewayPaths, ['/api/sessions']);
+      expect(hermes.dashboardQueries.single.containsKey('profile'), isFalse);
+      expect(hermes.gatewayPaths, isEmpty);
     });
   });
 
@@ -297,7 +298,9 @@ void main() {
     await pumpHome(tester, hermes);
     expect(find.text('Builder chat'), findsWidgets);
     expect(find.byKey(const ValueKey('home-profile-list-error')), findsNothing);
-    hermes.dashboardStatus = 401;
+    // An outage keeps the Retry; a refused login now offers Sign in instead
+    // (test/px6).
+    hermes.dashboardStatus = 503;
     final reads = hermes.dashboardQueries.length;
     unawaited(
       tester
@@ -345,9 +348,8 @@ void main() {
     await unmount(tester);
   });
 
-  testWidgets('a 401 on the default profile list still means offline', (
-    tester,
-  ) async {
+  testWidgets('a 401 on the default profile list is a login problem, not '
+      'offline', (tester) async {
     final hermes = _Hermes();
     await pumpHome(
       tester,
@@ -364,8 +366,11 @@ void main() {
         }),
       ),
     );
-    expect(find.byKey(const ValueKey('home-offline-retry')), findsOneWidget);
-    expect(find.byKey(const ValueKey('home-profile-list-error')), findsNothing);
+    expect(find.byKey(const ValueKey('home-offline-retry')), findsNothing);
+    expect(
+      find.byKey(const ValueKey('home-profile-list-error')),
+      findsOneWidget,
+    );
     await unmount(tester);
   });
 }

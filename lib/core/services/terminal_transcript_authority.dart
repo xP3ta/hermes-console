@@ -163,6 +163,10 @@ TerminalAuthorityDecision decideTerminalAuthority({
   // Structural integrity is global and precedes every terminal interpretation.
   for (final message in tail) {
     final role = message['role'];
+    // A live correction (`session.redirect`) is persisted as a user row with
+    // `display_kind=steer`; it belongs to the turn it redirected, so it
+    // neither starts a new turn nor makes the tail malformed.
+    if (role == 'user' && message['display_kind'] == 'steer') continue;
     if (role is! String ||
         !const {'assistant', 'assistant_error', 'tool'}.contains(role)) {
       return decision(

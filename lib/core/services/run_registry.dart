@@ -3,13 +3,10 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// Registro local de ejecuciones (/v1/runs) lanzadas desde esta app.
-///
-/// El gateway NO expone listado de runs (GET /v1/runs → 405, verificado
-/// contra api_server.py del upstream): los estados viven en memoria del
-/// servidor indexados por run_id y se barren al terminar. La única forma
-/// honesta de tener una lista en el móvil es recordar los run_id que esta
-/// app creó. Clave: `runs_<connectionId>`.
+/// Histórico local de solo lectura de las ejecuciones que esta app lanzó con
+/// versiones anteriores. Ya no se crean ni se siguen runs (la tarea nueva abre
+/// un chat normal); Tareas solo muestra los registros guardados.
+/// Clave: `runs_<connectionId>`.
 class RunRecord {
   final String runId;
   final String prompt;

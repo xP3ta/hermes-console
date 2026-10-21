@@ -13,6 +13,7 @@ import 'package:flutter/material.dart';
 import '../../../l10n/app_localizations.dart';
 import '../../bots/ui/roster/living_bot_face.dart';
 import '../../design/schedule_model.dart' show HermesSchedule;
+import '../../services/connection_status.dart';
 import '../../theme/soft_tokens.dart';
 import '../../utils/relative_time.dart';
 import '../../widgets/provider_logo.dart';
@@ -2339,14 +2340,23 @@ class _RoomsTile extends StatelessWidget {
     final p = SoftPalette.ofContext(context);
     final rooms = t.data.roomsFor(t.item);
     if (rooms.isEmpty) {
-      if (!t.data.botsLoaded) {
-        return t.data.offline
-            ? _quiet(t, context, s.hwServerOffline)
-            : _loading(t, context);
+      // «No rooms» is a fact only after an answer that says so; the roster
+      // being live proves nothing about the rooms read.
+      switch (t.data.roomsState) {
+        case HomeRoomsState.unknown:
+          return _loading(t, context);
+        case HomeRoomsState.unavailable:
+          // The read failed and nothing is cached: skeleton, then the read
+          // again offered once a second read has failed.
+          return t.data.roomsFailedReads >= 2
+              ? _unread(t, context)
+              : _loading(t, context);
+        case HomeRoomsState.unsupported:
+        case HomeRoomsState.known:
+          // Rooms were chosen and none of them is there any more.
+          if (t.item.roomKeys.isNotEmpty) return _Missing(t);
+          return _quiet(t, context, s.hwRoomsEmpty);
       }
-      // Rooms were chosen and none of them is there any more.
-      if (t.item.roomKeys.isNotEmpty) return _Missing(t);
-      return _quiet(t, context, s.hwRoomsEmpty);
     }
     final live = rooms.where((r) => r.live).length;
     final trailing = live == 0

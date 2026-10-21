@@ -16,19 +16,6 @@ SavedConnection _publicConn({String? dashboardUrl}) => SavedConnection(
 
 void main() {
   group('ConnectionDiagnostics transport boundary', () {
-    test('bloquea gateway HTTP público antes de tocar la red', () async {
-      var hits = 0;
-      final diag = ConnectionDiagnostics(
-        httpClient: MockClient((_) async {
-          hits++;
-          return http.Response('{}', 200);
-        }),
-      );
-
-      await expectLater(diag.probeGateway(_publicConn()), throwsArgumentError);
-      expect(hits, 0);
-    });
-
     test('bloquea dashboard HTTP público antes de tocar la red', () async {
       var hits = 0;
       final diag = ConnectionDiagnostics(

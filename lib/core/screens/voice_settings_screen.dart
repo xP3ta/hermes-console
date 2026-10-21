@@ -33,6 +33,7 @@ import 'chat_screen.dart';
 import 'instance_edit_screen.dart';
 import '../navigation/chat_route.dart';
 import '../services/connection_manager.dart';
+import '../services/new_session_factory.dart';
 import '../services/voice/conversation/native_voice.dart';
 import '../services/voice/hermes_speech_stream.dart';
 import '../services/voice/live/voice_chat_mode_store.dart';
@@ -2176,7 +2177,7 @@ class _VoiceSettingsScreenState extends State<VoiceSettingsScreen>
     final connection = _nativeVoiceConnection;
     if (connection == null || !_liveInUse) return;
     final session = Session(
-      id: GatewayChatClient.generateSessionId(),
+      id: generateSessionId(),
       title: Strings.of(context).drawerNewChat,
       model: 'hermes-agent',
       source: 'mobile',

@@ -4,6 +4,8 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 
 import '../../widgets/frosted_backdrop.dart' show FrostedBackdropPolicy;
+import '../../theme/motion.dart' show CoveredRouteMediaQueryFreeze;
+import 'halloween.dart';
 
 /// Motion for the first-run flow: the logo that draws itself, the light
 /// behind it, the scanner frame, the verifying ring and the check. Every
@@ -59,10 +61,20 @@ final ui.PathMetric _arcMetric = _arcPath.computeMetrics().first;
 /// Paints the Console mark. [arc] and [bar] reveal it (1 is complete);
 /// [glint] sweeps a narrow highlight across it (null or outside 0..1: none).
 class ConsoleMarkPainter extends CustomPainter {
-  const ConsoleMarkPainter({this.arc = 1, this.bar = 1, this.glint});
+  ConsoleMarkPainter({
+    this.arc = 1,
+    this.bar = 1,
+    this.glint,
+    this.season = Season.none,
+    this.ambient,
+  }) : super(repaint: ambient);
   final double arc;
   final double bar;
   final double? glint;
+  final Season season;
+
+  /// Drives the flicker / nose pulse of a seasonal mark; still when idle.
+  final Animation<double>? ambient;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -77,11 +89,15 @@ class ConsoleMarkPainter extends CustomPainter {
       )
       ..scale(scale)
       ..translate(-kMarkViewBox.left, -kMarkViewBox.top);
+    final shown = _arcMetric.extractPath(0, _arcMetric.length * arc);
+    if (season != Season.none) {
+      paintSeasonMark(canvas, season, shown, arc, bar, ambientSeconds(ambient));
+      return;
+    }
     final fill = Paint()
       ..color = kMarkColor
       ..style = PaintingStyle.stroke
       ..strokeWidth = kMarkStroke;
-    final shown = _arcMetric.extractPath(0, _arcMetric.length * arc);
     if (arc > 0) canvas.drawPath(shown, fill);
     final barRect = Rect.fromCenter(
       center: kMarkBar.center,
@@ -124,7 +140,10 @@ class ConsoleMarkPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(ConsoleMarkPainter old) =>
-      old.arc != arc || old.bar != bar || old.glint != glint;
+      old.arc != arc ||
+      old.bar != bar ||
+      old.glint != glint ||
+      old.season != season;
 }
 
 /// The mark at rest, or part-way through its drawing.
@@ -134,19 +153,29 @@ class ConsoleMark extends StatelessWidget {
     this.arc = 1,
     this.bar = 1,
     this.glint,
+    this.season = Season.none,
+    this.ambient,
     super.key,
   });
   final double size;
   final double arc;
   final double bar;
   final double? glint;
+  final Season season;
+  final Animation<double>? ambient;
 
   @override
   Widget build(BuildContext context) => RepaintBoundary(
     child: CustomPaint(
       key: const ValueKey('console-mark'),
       size: Size.square(size),
-      painter: ConsoleMarkPainter(arc: arc, bar: bar, glint: glint),
+      painter: ConsoleMarkPainter(
+        arc: arc,
+        bar: bar,
+        glint: glint,
+        season: season,
+        ambient: ambient,
+      ),
     ),
   );
 }
@@ -160,8 +189,10 @@ class GlowPainter extends CustomPainter {
     required this.radius,
     required this.color,
     required this.strength,
+    this.peak = 0.22,
     super.repaint,
   });
+  final double peak;
   final Offset Function() center;
   final double Function() radius;
   final Color color;
@@ -177,7 +208,7 @@ class GlowPainter extends CustomPainter {
       c,
       r,
       [
-        color.withValues(alpha: 0.22 * a),
+        color.withValues(alpha: peak * a),
         color.withValues(alpha: 0.05 * a),
         color.withValues(alpha: 0),
       ],
@@ -188,7 +219,7 @@ class GlowPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(GlowPainter old) =>
-      old.color != color || old.center != center;
+      old.color != color || old.center != center || old.peak != peak;
 }
 
 /// A dozen faint motes drifting upward at their own speeds.
@@ -220,8 +251,7 @@ class MotesPainter extends CustomPainter {
       final alpha = 0.18 + rnd.nextDouble() * 0.3;
       final life = (time * speed + phase) % 1;
       final y = size.height * (1.02 - life * 1.04);
-      final x =
-          size.width * x0 + math.sin((life + phase) * math.pi * 2) * 14;
+      final x = size.width * x0 + math.sin((life + phase) * math.pi * 2) * 14;
       final fade = math.sin(life * math.pi);
       paint.color = color.withValues(alpha: alpha * fade * s);
       canvas.drawCircle(Offset(x, y), radius, paint);
@@ -650,4 +680,32 @@ class _PopInState extends State<PopIn> with SingleTickerProviderStateMixin {
       child: Transform.scale(scale: 0.6 + 0.4 * _a.value, child: child),
     ),
   );
+}
+
+/// The route to «Connect by hand»: the same fade and 1.04 -> 1 scale as the
+/// onboarding's own steps, and the page below stays still.
+class OnbRoute<T> extends PageRouteBuilder<T> {
+  OnbRoute({required WidgetBuilder builder})
+    : super(
+        transitionDuration: const Duration(milliseconds: 260),
+        reverseTransitionDuration: const Duration(milliseconds: 220),
+        pageBuilder: (context, _, _) =>
+            CoveredRouteMediaQueryFreeze(child: builder(context)),
+        transitionsBuilder: (context, animation, _, child) {
+          final curved = CurvedAnimation(
+            parent: animation,
+            curve: Curves.easeOutCubic,
+            reverseCurve: Curves.easeInCubic,
+          );
+          final fade = FadeTransition(opacity: curved, child: child);
+          if (OnboardingMotion.reduced(context)) return fade;
+          return ScaleTransition(
+            scale: Tween<double>(begin: 1.04, end: 1).animate(curved),
+            child: fade,
+          );
+        },
+      );
+
+  @override
+  bool canTransitionFrom(TransitionRoute<dynamic> _) => false;
 }

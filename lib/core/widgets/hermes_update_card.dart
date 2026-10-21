@@ -5,6 +5,7 @@ import '../theme/app_theme.dart';
 import 'hermes_ui.dart';
 
 enum HermesUpdateKind {
+  checking,
   apiUnavailable,
   dashboardAccessRequired,
   checkFailed,
@@ -102,6 +103,20 @@ final class HermesUpdatePresentation {
     hasUpdate: false,
   );
 
+  /// The check is still in flight; the rest of the panel is already usable.
+  factory HermesUpdatePresentation.checking({
+    required String fallbackVersion,
+  }) => HermesUpdatePresentation(
+    kind: HermesUpdateKind.checking,
+    currentVersion: fallbackVersion,
+    behind: null,
+    installMethod: '',
+    canApply: false,
+    updateCommand: '',
+    message: '',
+    hasUpdate: false,
+  );
+
   factory HermesUpdatePresentation.checkFailed({
     required String fallbackVersion,
   }) => HermesUpdatePresentation(
@@ -134,6 +149,7 @@ class HermesUpdateCard extends StatelessWidget {
     required this.busy,
     required this.onApply,
     this.onConfigureDashboard,
+    this.onRetry,
     super.key,
   });
 
@@ -143,6 +159,9 @@ class HermesUpdateCard extends StatelessWidget {
   final VoidCallback onApply;
   final VoidCallback? onConfigureDashboard;
 
+  /// Re-asks the server (forced) from the `checkFailed` row.
+  final VoidCallback? onRetry;
+
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
@@ -150,6 +169,10 @@ class HermesUpdateCard extends StatelessWidget {
     final actionable =
         presentation.hasUpdate && (presentation.canApply || isLocal);
     final (icon, iconColor) = switch (presentation.kind) {
+      HermesUpdateKind.checking => (
+        Icons.system_update_alt,
+        colors.textSecondary,
+      ),
       HermesUpdateKind.current => (Icons.verified_outlined, colors.success),
       HermesUpdateKind.available => (Icons.system_update_alt, colors.accent),
       HermesUpdateKind.external => (Icons.terminal_rounded, colors.warning),
@@ -240,12 +263,13 @@ class HermesUpdateCard extends StatelessWidget {
                 ),
                 child: Text(isLocal ? strings.setUpdate : strings.setApply),
               )
-            : _statusIcon(colors),
+            : _statusIcon(context, colors),
       ),
     );
   }
 
   String _summary(Strings strings) => switch (presentation.kind) {
+    HermesUpdateKind.checking => strings.setCheckingUpdate,
     HermesUpdateKind.apiUnavailable => strings.setNoRemoteUpdate,
     HermesUpdateKind.dashboardAccessRequired =>
       strings.setUpdateDashboardAccessRequired,
@@ -270,27 +294,38 @@ class HermesUpdateCard extends StatelessWidget {
     ),
   };
 
-  Widget _statusIcon(HermesThemeColors colors) => switch (presentation.kind) {
-    HermesUpdateKind.current => Icon(Icons.check, color: colors.success),
-    HermesUpdateKind.external => Icon(
-      Icons.open_in_new_rounded,
-      color: colors.warning,
-    ),
-    HermesUpdateKind.dashboardAccessRequired => Icon(
-      Icons.lock_open_rounded,
-      color: colors.warning,
-    ),
-    HermesUpdateKind.checkFailed => Icon(
-      Icons.refresh_rounded,
-      color: colors.warning,
-    ),
-    HermesUpdateKind.apiUnavailable => Icon(
-      Icons.remove_rounded,
-      color: colors.textDisabled,
-    ),
-    HermesUpdateKind.available => Icon(
-      Icons.system_update_alt,
-      color: colors.accent,
-    ),
-  };
+  Widget _statusIcon(BuildContext context, HermesThemeColors colors) =>
+      switch (presentation.kind) {
+        HermesUpdateKind.current => Icon(Icons.check, color: colors.success),
+        HermesUpdateKind.external => Icon(
+          Icons.open_in_new_rounded,
+          color: colors.warning,
+        ),
+        HermesUpdateKind.dashboardAccessRequired => Icon(
+          Icons.lock_open_rounded,
+          color: colors.warning,
+        ),
+        HermesUpdateKind.checkFailed =>
+          onRetry == null
+              ? Icon(Icons.refresh_rounded, color: colors.warning)
+              : IconButton(
+                  key: const Key('hermes_update_retry'),
+                  icon: Icon(Icons.refresh_rounded, color: colors.warning),
+                  tooltip: Strings.of(context).commonRetry,
+                  onPressed: busy ? null : onRetry,
+                ),
+        HermesUpdateKind.checking => const SizedBox(
+          width: 18,
+          height: 18,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+        HermesUpdateKind.apiUnavailable => Icon(
+          Icons.remove_rounded,
+          color: colors.textDisabled,
+        ),
+        HermesUpdateKind.available => Icon(
+          Icons.system_update_alt,
+          color: colors.accent,
+        ),
+      };
 }

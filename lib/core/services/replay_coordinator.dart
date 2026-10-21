@@ -320,7 +320,13 @@ final class ReplayCoordinator {
     transaction.held.clear();
     transaction.closed = true;
     _transactions.remove(runtime);
-    quarantine(runtime);
+    // N10h-1: only a proven contiguous batch resumes the live stream (Hermes
+    // Desktop flushReplayHold). Every other answer keeps the quarantine.
+    if (decision is ReplayBatchCommit) {
+      _recordWatermark(runtime, decision.newWatermark);
+    } else {
+      quarantine(runtime);
+    }
     return decision;
   }
 
@@ -419,6 +425,36 @@ final class ReplayCoordinator {
       recovery.held.clear();
       recovery.poisoned = true;
     }
+  }
+
+  /// N10c: a turn the user just started on [runtime] is a turn boundary. The
+  /// quarantine of a past cut (or live correction) guards that older turn,
+  /// which its durable history already closes; keeping it would withhold every
+  /// later turn of this runtime (no reasoning, no streaming) until the app
+  /// restarts. Lifts it and drops the frames held for the old turn, so the
+  /// first live frame of the new turn is the base. Refuses while a recovery
+  /// proof is outstanding or a reconnect replay is open: that recovery decides
+  /// by itself. Returns whether the quarantine was lifted.
+  bool releaseForNewTurn(String runtime) {
+    if (_resourceOverflowed || _quarantineAll) return false;
+    if (!_quarantine.contains(runtime)) return false;
+    if (_transactions.containsKey(runtime)) return false;
+    if (_outstandingRecoveryProofs.any(
+      (proof) => proof.runtimeSessionId == runtime,
+    )) {
+      return false;
+    }
+    final recovery = _recoveryTransactions.remove(runtime);
+    if (recovery != null) {
+      if (!recovery.poisoned) _totalHeldEvents -= recovery.held.length;
+      recovery.held.clear();
+      recovery.poisoned = true;
+    }
+    _quarantine.remove(runtime);
+    _watermarks.remove(runtime);
+    _committedRecoveryEvents.remove(runtime);
+    _committedRecoveryAuthorities.remove(runtime);
+    return true;
   }
 
   void quarantine(String runtime) {

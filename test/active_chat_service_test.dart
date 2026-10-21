@@ -27,7 +27,6 @@ import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/approval_policy.dart';
 import 'package:hermes_android/core/services/session_reconciler.dart';
-import 'package:hermes_android/core/services/attachment_uploader.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/desktop_control_gateway.dart';
 import 'package:hermes_android/core/services/compression_restore_store.dart';
@@ -39,6 +38,7 @@ import 'package:hermes_android/core/services/turn_outbox_store.dart';
 import 'package:hermes_android/core/utils/chat_error.dart';
 import 'package:hermes_android/core/utils/chat_turn.dart';
 
+import 'support/desktop_chat_socket.dart';
 import 'support/in_memory_compression_restore_storage.dart';
 
 const _kWatchKey = 'bg_watch_runs'; // BackgroundWatch._key (privado)
@@ -59,38 +59,6 @@ final class _OfflineWebSocketAuthDashboardClient extends DashboardClient {
   @override
   Future<DashboardWebSocketAuth> webSocketAuth() async =>
       throw const SocketException('Connection attempt cancelled');
-}
-
-class _CapturingRunApi extends ApiClient {
-  _CapturingRunApi()
-    : super(
-        baseUrl: 'http://hermes.local:8642',
-        apiKey: 'test-key',
-        httpClient: MockClient((_) async => http.Response('', 500)),
-      );
-
-  Duration? streamIdleTimeout;
-
-  @override
-  Future<String> startRun({
-    required String input,
-    String? sessionId,
-    String? model,
-    List<Map<String, dynamic>>? history,
-    String? profile,
-  }) async => 'run-watchdog';
-
-  @override
-  Future<void> streamRunEvents(
-    String runId, {
-    String? profile,
-    required void Function(Map<String, dynamic> event) onEvent,
-    required void Function() onDone,
-    required void Function(String error) onError,
-    Duration? idleTimeout = const Duration(seconds: 90),
-  }) async {
-    streamIdleTimeout = idleTimeout;
-  }
 }
 
 class _StaticWebSocketAuthDashboardClient extends DashboardClient {
@@ -190,31 +158,15 @@ class _TeardownTestWebSocketChannel implements WebSocketChannel {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
-/// MockClient que simula el gateway: POST /v1/runs, el SSE de eventos y el
-/// refetch de mensajes. [events] es el cuerpo SSE servido en /events.
-MockClient _gateway({
-  required String events,
+/// Transcript read double; [HostCounter] fails the test at tear down if the
+/// REST run API is asked. [hitLog] records every other request.
+http.Client _gateway({
   required List<Map<String, dynamic>> finalMessages,
   List<String>? hitLog,
-  void Function()? beforeEvents,
-}) {
-  return MockClient((request) async {
+}) => HostCounter(
+  handler: (request) async {
     final path = request.url.path;
     hitLog?.add('${request.method} $path');
-    if (request.method == 'POST' && path == '/v1/runs') {
-      return http.Response(jsonEncode({'run_id': 'run_1'}), 200);
-    }
-    if (request.method == 'GET' && path == '/v1/runs/run_1/events') {
-      beforeEvents?.call();
-      return http.Response(
-        events,
-        200,
-        headers: {'content-type': 'text/event-stream'},
-      );
-    }
-    if (request.method == 'POST' && path == '/v1/runs/run_1/approval') {
-      return http.Response(jsonEncode({'ok': true}), 200);
-    }
     if (request.method == 'GET' && path == '/api/sessions/sess-1/messages') {
       return http.Response(
         jsonEncode({'data': finalMessages}),
@@ -223,11 +175,47 @@ MockClient _gateway({
       );
     }
     return http.Response('not found', 404);
-  });
-}
+  },
+);
 
-String _sse(List<Map<String, dynamic>> frames) =>
-    frames.map((f) => 'data: ${jsonEncode(f)}\n\n').join();
+ApiClient _socketApi({List<Map<String, dynamic>> messages = const []}) =>
+    ApiClient(
+      baseUrl: 'http://hermes.local:8642',
+      apiKey: 'test-key',
+      httpClient: _gateway(finalMessages: messages),
+    );
+
+/// Chat on the Dashboard socket only, as Desktop; [messages] is the stored
+/// transcript read once the turn ends.
+ActiveChat _socketChat(
+  DesktopChatSocket socket, {
+  String connectionId = 'conn-1',
+  String sessionId = 'sess-1',
+  ApprovalPolicyService? policy,
+  NotificationService? notifications,
+  List<Map<String, dynamic>> messages = const [],
+  int Function()? monotonicMicros,
+  void Function(int?)? onObservedFirstTokenLatency,
+}) {
+  addTearDown(socket.close);
+  final chat = ActiveChat(
+    compressionRestoreStore: testCompressionRestoreStore(),
+    connection: _conn(id: connectionId),
+    sessionId: sessionId,
+    sessionTitle: 'X',
+    notifications: notifications,
+    onTerminal: () {},
+    policy: policy,
+    api: _socketApi(),
+    desktopGateway: socket,
+    storedMessageLoader: (_, _) async => messages,
+    terminalReconcileBudget: Duration.zero,
+    monotonicMicros: monotonicMicros,
+    onObservedFirstTokenLatency: onObservedFirstTokenLatency,
+  );
+  addTearDown(chat.dispose);
+  return chat;
+}
 
 Future<void> _waitFor(bool Function() condition) async {
   final deadline = DateTime.now().add(const Duration(seconds: 3));
@@ -237,53 +225,28 @@ Future<void> _waitFor(bool Function() condition) async {
   expect(condition(), isTrue);
 }
 
-class _ApprovalRaceClient extends http.BaseClient {
-  final events = StreamController<List<int>>();
-  final releaseA = Completer<void>();
-  final releaseB = Completer<void>();
-  final approvalBodies = <Map<String, dynamic>>[];
+/// Socket that holds `approval.respond` of A and B until the test releases
+/// them: an answer in flight must never clear the next request.
+class _GatedApprovalSocket extends DesktopChatSocket {
+  final gates = {
+    'request-a': Completer<void>(),
+    'request-b': Completer<void>(),
+  };
 
   @override
-  Future<http.StreamedResponse> send(http.BaseRequest request) async {
-    final path = request.url.path;
-    if (request.method == 'POST' && path == '/v1/runs') {
-      return _response({'run_id': 'run_1'});
-    }
-    if (request.method == 'GET' && path == '/v1/runs/run_1/events') {
-      return http.StreamedResponse(
-        events.stream,
-        200,
-        headers: {'content-type': 'text/event-stream'},
-      );
-    }
-    if (request.method == 'POST' && path == '/v1/runs/run_1/approval') {
-      final body =
-          jsonDecode((request as http.Request).body) as Map<String, dynamic>;
-      approvalBodies.add(body);
-      if (body['request_id'] == 'request-a') await releaseA.future;
-      if (body['request_id'] == 'request-b') await releaseB.future;
-      return _response({'ok': true});
-    }
-    return _response({}, statusCode: 404);
-  }
-
-  http.StreamedResponse _response(
-    Map<String, dynamic> body, {
-    int statusCode = 200,
-  }) => http.StreamedResponse(
-    Stream<List<int>>.value(utf8.encode(jsonEncode(body))),
-    statusCode,
-    headers: {'content-type': 'application/json'},
-  );
-
-  void emit(Map<String, dynamic> event) {
-    events.add(utf8.encode('data: ${jsonEncode(event)}\n\n'));
-  }
-
-  @override
-  void close() {
-    events.close();
-    super.close();
+  Future<void> resolveApproval(
+    String runtimeSessionId,
+    String choice, {
+    bool resolveAll = false,
+    String? requestId,
+  }) async {
+    await super.resolveApproval(
+      runtimeSessionId,
+      choice,
+      resolveAll: resolveAll,
+      requestId: requestId,
+    );
+    await gates[requestId]?.future;
   }
 }
 
@@ -2073,7 +2036,7 @@ void main() {
           disableForegroundKeepAlive: true,
         );
         for (var attempt = 0; attempt < 5; attempt++) {
-          await client.connect().then((_) {}, onError: (Object _) {});
+          await client.connectForeground().then((_) {}, onError: (Object _) {});
         }
       }
       expect(clients.every((client) => client.isBackingOff), isTrue);
@@ -2116,7 +2079,7 @@ void main() {
           disableForegroundKeepAlive: true,
         );
         for (var attempt = 0; attempt < 5; attempt++) {
-          await client.connect().then((_) {}, onError: (Object _) {});
+          await client.connectForeground().then((_) {}, onError: (Object _) {});
         }
       }
       expect(clients.values.every((client) => client.isBackingOff), isTrue);
@@ -2131,36 +2094,6 @@ void main() {
       );
     },
   );
-
-  test('REST silence has no client-side terminal timeout', () async {
-    final api = _CapturingRunApi();
-    final service = ActiveChatService(
-      compressionRestoreStore: testCompressionRestoreStore(),
-    );
-    addTearDown(service.dispose);
-    final chat = service.attach(
-      connection: _conn(id: 'conn-rest-watchdog'),
-      sessionId: 'session-rest-watchdog',
-      sessionTitle: 'REST watchdog',
-      api: api,
-    );
-
-    expect(
-      await chat
-          .send(
-            fullText: 'trabaja en silencio',
-            model: 'hermes-agent',
-            history: const [],
-          )
-          .timeout(const Duration(seconds: 2)),
-      isTrue,
-    );
-
-    expect(api.streamIdleTimeout, isNull);
-    expect(chat.isStreaming, isTrue);
-    expect(chat.state, isNot(ChatPipelineState.failed));
-    expect(_hasAssistantError(chat), isFalse);
-  });
 
   group('ActiveTurnDelivery — FSM de adjuntos', () {
     const pending = AttachmentDraft(
@@ -2590,61 +2523,24 @@ void main() {
     );
 
     test(
-      'REST persiste managedPath y lo reusa tras un startRun fallido',
+      'persiste la ref remota y la reusa tras un prompt.submit fallido',
       () async {
         final directory = await Directory.systemTemp.createTemp(
-          'hermes-attachment-rest-',
+          'hermes-attachment-reuse-',
         );
         addTearDown(() => directory.delete(recursive: true));
         final attachment = await _privateTestAttachment(
           directory,
-          localId: 'attachment-rest',
+          localId: 'attachment-reuse',
         );
         final events = <String>[];
-        var uploadCalls = 0;
-        var runCalls = 0;
-        final client = MockClient((request) async {
-          if (request.method == 'POST' && request.url.path == '/v1/runs') {
-            runCalls++;
-            events.add('rpc:runs');
-            expect(request.body, contains('/managed/attachment-rest.pdf'));
-            if (runCalls == 1) return http.Response('test failure', 500);
-            return http.Response(jsonEncode({'run_id': 'run-rest'}), 200);
-          }
-          if (request.method == 'GET' &&
-              request.url.path == '/v1/runs/run-rest/events') {
-            return http.Response(
-              '',
-              200,
-              headers: {'content-type': 'text/event-stream'},
-            );
-          }
-          return http.Response('not found', 404);
-        });
-        final connection = _conn(id: 'conn-attachment');
-        final api = ApiClient(
-          baseUrl: connection.baseUrl,
-          apiKey: connection.apiKey,
-          httpClient: client,
-        );
         final delivery = ActiveTurnDelivery(
           prepared: _attachmentTurn(attachment),
           store: _AttachmentMemoryOutbox(eventLog: events),
         );
-        final chat = ActiveChat(
-          compressionRestoreStore: testCompressionRestoreStore(),
-          connection: connection,
-          sessionId: 'sess-attachment',
-          sessionTitle: 'Adjuntos REST',
-          notifications: null,
-          onTerminal: () {},
-          api: api,
-          attachmentUploader: (_, item) async {
-            uploadCalls++;
-            events.add('upload:rest');
-            return AttachmentUploadResult.success('/managed/${item.name}');
-          },
-        );
+        final gateway = _AttachmentDesktopGateway(eventLog: events)
+          ..failNextSubmit = true;
+        final chat = _attachmentChat(gateway);
         addTearDown(chat.dispose);
 
         expect(
@@ -2658,13 +2554,13 @@ void main() {
           isFalse,
         );
         expect(delivery.current.state, PreparedTurnState.ambiguous);
-        expect(uploadCalls, 1);
+        expect(gateway.fileAttachCalls, 1);
         expect(events.take(5), [
           'persist:submitting:pending',
           'persist:submitting:uploading',
-          'upload:rest',
+          'rpc:file.attach',
           'persist:submitting:attached',
-          'rpc:runs',
+          'rpc:prompt.submit',
         ]);
 
         expect(
@@ -2677,74 +2573,14 @@ void main() {
           ),
           isTrue,
         );
-        expect(uploadCalls, 1);
-        expect(runCalls, 2);
+        expect(gateway.fileAttachCalls, 1);
+        expect(gateway.submitCalls, 2);
         expect(
           delivery.current.attachments.single.remoteTransport,
-          AttachmentRemoteTransport.rest,
+          AttachmentRemoteTransport.desktop,
         );
       },
     );
-
-    test('REST no inicia el run si retiran el item durante upload', () async {
-      final directory = await Directory.systemTemp.createTemp(
-        'hermes-attachment-rest-remove-',
-      );
-      addTearDown(() => directory.delete(recursive: true));
-      final attachment = await _privateTestAttachment(
-        directory,
-        localId: 'attachment-rest-remove',
-      );
-      var runCalls = 0;
-      final api = ApiClient(
-        baseUrl: 'http://hermes.local:8642',
-        apiKey: 'test-key',
-        httpClient: MockClient((request) async {
-          if (request.url.path == '/v1/runs') runCalls++;
-          return http.Response(jsonEncode({'run_id': 'unexpected'}), 200);
-        }),
-      );
-      final uploadGate = Completer<AttachmentUploadResult>();
-      var uploadCalls = 0;
-      final delivery = ActiveTurnDelivery(
-        prepared: _attachmentTurn(attachment),
-        store: _AttachmentMemoryOutbox(),
-      );
-      final chat = ActiveChat(
-        compressionRestoreStore: testCompressionRestoreStore(),
-        connection: _conn(id: 'conn-attachment'),
-        sessionId: 'sess-attachment',
-        sessionTitle: 'Adjuntos REST',
-        notifications: null,
-        onTerminal: () {},
-        api: api,
-        attachmentUploader: (_, _) {
-          uploadCalls++;
-          return uploadGate.future;
-        },
-      );
-      addTearDown(chat.dispose);
-
-      final send = chat.send(
-        fullText: 'revisa',
-        model: 'hermes-agent',
-        history: const [],
-        nativeAttachments: [attachment],
-        delivery: delivery,
-      );
-      await _waitFor(() => uploadCalls == 1);
-      await delivery.removeAttachment('attachment-rest-remove');
-      uploadGate.complete(
-        const AttachmentUploadResult.success('/managed/removed.pdf'),
-      );
-
-      expect(await send, isFalse);
-      expect(runCalls, 0);
-      expect(
-        delivery.current.attachments.single.uploadState,
-        AttachmentUploadState.removed,
-      );
-    });
 
     // Retired: three tests required the forbidden Bridge send/attachment
     // fallback contract. Real official transport and failure ownership are
@@ -2853,7 +2689,7 @@ void main() {
       api: ApiClient(
         baseUrl: 'http://hermes.local:8642',
         apiKey: 'test-key',
-        httpClient: _gateway(events: '', finalMessages: const []),
+        httpClient: _gateway(finalMessages: const []),
       ),
     );
     addTearDown(chat.dispose);
@@ -2879,7 +2715,7 @@ void main() {
     ApiClient api() => ApiClient(
       baseUrl: 'http://hermes.local:8642',
       apiKey: 'test-key',
-      httpClient: _gateway(events: '', finalMessages: const []),
+      httpClient: _gateway(finalMessages: const []),
     );
 
     final first = service.attach(
@@ -2961,7 +2797,7 @@ void main() {
         api: ApiClient(
           baseUrl: 'http://hermes.local:8642',
           apiKey: 'test-key',
-          httpClient: _gateway(events: '', finalMessages: const []),
+          httpClient: _gateway(finalMessages: const []),
         ),
         storedMessageLoader: (_, _) async => const [
           {'id': 1, 'role': 'user', 'content': 'cuento cancelado'},
@@ -3287,7 +3123,7 @@ void main() {
       api: ApiClient(
         baseUrl: 'http://hermes.local:8642',
         apiKey: 'test-key',
-        httpClient: _gateway(events: '', finalMessages: const []),
+        httpClient: _gateway(finalMessages: const []),
       ),
     );
 
@@ -3334,7 +3170,7 @@ void main() {
         api: ApiClient(
           baseUrl: 'http://hermes.local:8642',
           apiKey: 'test-key',
-          httpClient: _gateway(events: '', finalMessages: const []),
+          httpClient: _gateway(finalMessages: const []),
         ),
       );
       await publisher.flush();
@@ -3382,7 +3218,7 @@ void main() {
           api: ApiClient(
             baseUrl: 'http://hermes.local:8642',
             apiKey: 'test-key',
-            httpClient: _gateway(events: '', finalMessages: const []),
+            httpClient: _gateway(finalMessages: const []),
           ),
         );
         await publisher.flush();
@@ -3394,7 +3230,7 @@ void main() {
       },
     );
 
-    test('reduce estados del run y no publica por cada token', () async {
+    test('reduce estados del turno y no publica por cada token', () async {
       final prefs = await SharedPreferences.getInstance();
       final store = _WidgetRecordingStore();
       final publisher = HermesHomeWidgetPublisher(
@@ -3413,38 +3249,30 @@ void main() {
         compressionRestoreStore: testCompressionRestoreStore(),
         prefs: prefs,
       )..bindHomeWidgetPublisher(publisher, activeConnectionId: 'conn-1');
+      final socket = DesktopChatSocket();
+      addTearDown(socket.close);
       final chat = service.attach(
         connection: _conn(),
         sessionId: 'sess-1',
         sessionTitle: 'Estados',
         sessionSnapshot: _widgetSession(),
-        api: ApiClient(
-          baseUrl: 'http://hermes.local:8642',
-          apiKey: 'test-key',
-          httpClient: _gateway(
-            events: _sse([
-              {'event': 'tool.started', 'tool': 'shell'},
-              {
-                'event': 'approval.request',
-                'request_id': 'approval-1',
-                'command': 'echo ok',
-              },
-              {'event': 'message.delta', 'delta': 'Hola'},
-              {'event': 'message.delta', 'delta': ' mundo'},
-              {'event': 'run.completed', 'output': 'Hola mundo'},
-            ]),
-            finalMessages: const [
-              {'role': 'user', 'content': 'di hola'},
-              {'role': 'assistant', 'content': 'Hola mundo'},
-            ],
-          ),
-        ),
+        api: _socketApi(),
+        desktopGateway: socket,
+        storedMessageLoader: (_, _) async => const [
+          {'role': 'user', 'content': 'di hola'},
+          {'role': 'assistant', 'content': 'Hola mundo'},
+        ],
       );
       final done = chat.changes.firstWhere(
         (event) => event == ActiveChatEvent.done,
       );
 
       await chat.send(fullText: 'di hola', model: 'gpt-5.5', history: const []);
+      socket.toolStarted(1, 'shell');
+      socket.approval(1, requestId: 'approval-1', command: 'echo ok');
+      socket.token(1, 'Hola');
+      socket.token(1, ' mundo');
+      socket.complete(1, 'Hola mundo');
       await done.timeout(const Duration(seconds: 5));
       await publisher.flush();
 
@@ -3502,7 +3330,7 @@ void main() {
           api: ApiClient(
             baseUrl: 'http://hermes.local:8642',
             apiKey: 'test-key',
-            httpClient: _gateway(events: '', finalMessages: const []),
+            httpClient: _gateway(finalMessages: const []),
           ),
         );
         await publisher.flush();
@@ -3529,27 +3357,23 @@ void main() {
       final service = ActiveChatService(
         compressionRestoreStore: testCompressionRestoreStore(),
       )..bindHomeWidgetPublisher(publisher, activeConnectionId: 'conn-1');
+      final socket = DesktopChatSocket();
+      addTearDown(socket.close);
       final chat = service.attach(
         connection: _conn(),
         sessionId: 'sess-1',
         sessionTitle: 'Error',
         sessionSnapshot: _widgetSession(),
-        api: ApiClient(
-          baseUrl: 'http://hermes.local:8642',
-          apiKey: 'test-key',
-          httpClient: _gateway(
-            events: _sse([
-              {'event': 'run.failed', 'error': 'provider unavailable'},
-            ]),
-            finalMessages: const [],
-          ),
-        ),
+        api: _socketApi(),
+        desktopGateway: socket,
+        storedMessageLoader: (_, _) async => const [],
       );
       final failed = chat.changes.firstWhere(
         (event) => event == ActiveChatEvent.error,
       );
 
       await chat.send(fullText: 'hola', model: 'gpt-5.5', history: const []);
+      socket.fail(1, 'provider unavailable');
       await failed.timeout(const Duration(seconds: 5));
       await publisher.flush();
 
@@ -3732,23 +3556,10 @@ void main() {
       },
     );
 
-    test('a run thinking.delta spinner phrase is not reasoning', () async {
-      final client = _ApprovalRaceClient();
-      addTearDown(client.close);
-      final chat = ActiveChat(
-        compressionRestoreStore: testCompressionRestoreStore(),
-        connection: _conn(id: 'conn-run-thinking'),
-        sessionId: 'sess-run-thinking',
-        sessionTitle: 'Run thinking',
-        notifications: null,
-        onTerminal: () {},
-        api: ApiClient(
-          baseUrl: 'http://hermes.local:8642',
-          apiKey: 'test-key',
-          httpClient: client,
-        ),
-      )..smoothStreaming = false;
-      addTearDown(chat.dispose);
+    test('a thinking.delta spinner phrase is not reasoning', () async {
+      final socket = DesktopChatSocket();
+      final chat = _socketChat(socket, connectionId: 'conn-run-thinking')
+        ..smoothStreaming = false;
       String reasoning() => chat.messages
           .map(
             (m) =>
@@ -3757,10 +3568,10 @@ void main() {
           .join(' ');
 
       await chat.send(fullText: 'go', model: 'hermes-agent', history: const []);
-      client.emit({'event': 'reasoning.delta', 'text': 'Checking the files. '});
+      socket.emit('reasoning.delta', {'text': 'Checking the files. '});
       await _waitFor(() => reasoning().contains('Checking the files.'));
-      client.emit({'event': 'thinking.delta', 'text': '(¬_¬) pondering...'});
-      client.emit({'event': 'reasoning.delta', 'text': 'Then I edit.'});
+      socket.emit('thinking.delta', {'text': '(¬_¬) pondering...'});
+      socket.emit('reasoning.delta', {'text': 'Then I edit.'});
       await _waitFor(() => reasoning().contains('Then I edit.'));
 
       expect(reasoning(), isNot(contains('pondering')));
@@ -4035,39 +3846,8 @@ void main() {
     );
 
     test(
-      'handshake Desktop rechazado libera el canal y cae a /v1/runs',
+      'handshake Desktop rechazado libera el canal y no queda conectando',
       () async {
-        final hits = <String>[];
-        final httpClient = MockClient((request) async {
-          hits.add('${request.method} ${request.url.path}');
-          if (request.method == 'POST' && request.url.path == '/v1/runs') {
-            return http.Response(jsonEncode({'run_id': 'run-fallback'}), 202);
-          }
-          if (request.method == 'GET' &&
-              request.url.path == '/v1/runs/run-fallback/events') {
-            return http.Response(
-              _sse([
-                {'event': 'message.delta', 'delta': 'Fallback listo'},
-                {'event': 'run.completed', 'output': 'Fallback listo'},
-              ]),
-              200,
-              headers: {'content-type': 'text/event-stream'},
-            );
-          }
-          if (request.method == 'GET' &&
-              request.url.path == '/api/sessions/sess-legacy/messages') {
-            return http.Response(
-              jsonEncode({
-                'data': [
-                  {'role': 'user', 'content': 'hola'},
-                  {'role': 'assistant', 'content': 'Fallback listo'},
-                ],
-              }),
-              200,
-            );
-          }
-          return http.Response('not found', 404);
-        });
         final connection = _conn(id: 'conn-legacy');
         final blockedChannel = _TeardownTestWebSocketChannel(
           readyError: StateError('HTTP 401'),
@@ -4100,27 +3880,20 @@ void main() {
           api: ApiClient(
             baseUrl: connection.baseUrl,
             apiKey: connection.apiKey,
-            httpClient: httpClient,
+            httpClient: MockClient(
+              (_) async => http.Response('not found', 404),
+            ),
           ),
           desktopGateway: desktop,
         );
         addTearDown(chat.dispose);
-        final done = Completer<void>();
-        final changes = chat.changes.listen((event) {
-          if (event == ActiveChatEvent.done && !done.isCompleted) {
-            done.complete();
-          }
-        });
-        addTearDown(changes.cancel);
 
         final accepted = await chat
             .send(fullText: 'hola', model: 'hermes-demo', history: const [])
             .timeout(const Duration(milliseconds: 1500));
-        await done.future.timeout(const Duration(seconds: 3));
 
-        expect(accepted, isTrue);
-        expect(hits, contains('POST /v1/runs'));
-        expect(chat.assistantContent, 'Fallback listo');
+        expect(accepted, isFalse);
+        expect(chat.assistantContent, isEmpty);
         expect(blockedChannel._sink.closeStarted.isCompleted, isTrue);
         expect(blockedChannel.cancelStarted.isCompleted, isTrue);
 
@@ -4142,30 +3915,13 @@ void main() {
     test('mide submit hasta el primer contenido una sola vez', () async {
       var nowMicros = 1000000;
       final observed = <int?>[];
-      final api = ApiClient(
-        baseUrl: 'http://hermes.local:8642',
-        apiKey: 'test-key',
-        httpClient: _gateway(
-          beforeEvents: () => nowMicros = 1840000,
-          events: _sse([
-            {'event': 'message.delta', 'delta': 'Hola'},
-            {'event': 'message.delta', 'delta': ' mundo'},
-            {'event': 'run.completed', 'output': 'Hola mundo'},
-          ]),
-          finalMessages: const [
-            {'role': 'user', 'content': 'di hola'},
-            {'role': 'assistant', 'content': 'Hola mundo'},
-          ],
-        ),
-      );
-      final chat = ActiveChat(
-        compressionRestoreStore: testCompressionRestoreStore(),
-        connection: _conn(),
-        sessionId: 'sess-1',
-        sessionTitle: 'TTFT',
-        notifications: null,
-        onTerminal: () {},
-        api: api,
+      final socket = DesktopChatSocket();
+      final chat = _socketChat(
+        socket,
+        messages: const [
+          {'role': 'user', 'content': 'di hola'},
+          {'role': 'assistant', 'content': 'Hola mundo'},
+        ],
         monotonicMicros: () => nowMicros,
         onObservedFirstTokenLatency: observed.add,
       );
@@ -4174,13 +3930,16 @@ void main() {
         (e) => e == ActiveChatEvent.responseMetrics,
       );
 
-      chat.send(fullText: 'di hola', model: 'm', history: const []);
+      await chat.send(fullText: 'di hola', model: 'm', history: const []);
+      nowMicros = 1840000;
+      socket.token(1, 'Hola');
+      socket.token(1, ' mundo');
+      socket.complete(1, 'Hola mundo');
       await metricsChanged.timeout(const Duration(seconds: 5));
       await done.timeout(const Duration(seconds: 5));
 
       expect(chat.observedFirstTokenLatencyMs, 840);
       expect(observed, [null, 840]);
-      chat.dispose();
     });
 
     test('una ráfaga grande se publica completa en un único batch', () async {
@@ -4188,28 +3947,14 @@ void main() {
           '## Título **importante**\n\n'
           '- lista estable\n'
           '- café e\u0301 👩‍💻';
-      final api = ApiClient(
-        baseUrl: 'http://hermes.local:8642',
-        apiKey: 'test-key',
-        httpClient: _gateway(
-          events: _sse([
-            {'event': 'message.delta', 'delta': response},
-            {'event': 'run.completed', 'output': response},
-          ]),
-          finalMessages: [
-            {'role': 'user', 'content': 'responde'},
-            {'role': 'assistant', 'content': response},
-          ],
-        ),
-      );
-      final service = ActiveChatService(
-        compressionRestoreStore: testCompressionRestoreStore(),
-      );
-      final chat = service.attach(
-        connection: _conn(id: 'conn-smooth'),
-        sessionId: 'sess-1',
-        sessionTitle: 'Suave',
-        api: api,
+      final socket = DesktopChatSocket();
+      final chat = _socketChat(
+        socket,
+        connectionId: 'conn-smooth',
+        messages: [
+          {'role': 'user', 'content': 'responde'},
+          {'role': 'assistant', 'content': response},
+        ],
       );
       chat.smoothStreaming = true;
       final revealedLengths = <int>[];
@@ -4223,49 +3968,40 @@ void main() {
         }
       });
 
-      chat.send(fullText: 'responde', model: 'hermes-agent', history: const []);
+      await chat.send(
+        fullText: 'responde',
+        model: 'hermes-agent',
+        history: const [],
+      );
+      socket.token(1, response);
+      socket.complete(1, response);
       await completed.future.timeout(const Duration(seconds: 5));
 
       expect(
         revealedLengths.every((length) => length == response.length),
         isTrue,
         reason:
-            'si el mock entrega delta y terminal en la misma microtarea puede '
-            'colapsarlos; cualquier batch visible debe ser el delta completo',
+            'si el servidor entrega delta y terminal en la misma microtarea '
+            'puede colapsarlos; cualquier batch visible debe ser el delta '
+            'completo',
       );
       expect(chat.assistantContent, response);
       await sub.cancel();
-      service.dispose();
     });
 
     test(
       'reduce-motion vuelca cada delta sin animación de caracteres',
       () async {
         const response = 'Respuesta sin animacion';
-        final api = ApiClient(
-          baseUrl: 'http://hermes.local:8642',
-          apiKey: 'test-key',
-          httpClient: _gateway(
-            events: _sse([
-              {'event': 'message.delta', 'delta': response},
-              {'event': 'run.completed', 'output': response},
-            ]),
-            finalMessages: const [
-              {'role': 'user', 'content': 'responde'},
-              {'role': 'assistant', 'content': response},
-            ],
-          ),
-        );
-        final service = ActiveChatService(
-          compressionRestoreStore: testCompressionRestoreStore(),
-        );
-        final chat = service.attach(
-          connection: _conn(id: 'conn-reduce-motion'),
-          sessionId: 'sess-1',
-          sessionTitle: 'Sin animación',
-          api: api,
-        );
-        chat.smoothStreaming = false;
+        final socket = DesktopChatSocket();
+        final chat = _socketChat(
+          socket,
+          connectionId: 'conn-reduce-motion',
+          messages: const [
+            {'role': 'user', 'content': 'responde'},
+            {'role': 'assistant', 'content': response},
+          ],
+        )..smoothStreaming = false;
         final lengths = <int>[];
         final sub = chat.changes.listen((event) {
           if (event == ActiveChatEvent.token) {
@@ -4274,57 +4010,54 @@ void main() {
         });
         final done = chat.changes.firstWhere((e) => e == ActiveChatEvent.done);
 
-        chat.send(
+        await chat.send(
           fullText: 'responde',
           model: 'hermes-agent',
           history: const [],
         );
+        socket.token(1, response);
+        socket.complete(1, response);
         await done.timeout(const Duration(seconds: 5));
 
         expect(lengths, [response.length]);
         await sub.cancel();
-        service.dispose();
       },
     );
 
     test(
-      'send → tokens → run.completed refresca mensajes sin vigilancia diferida',
+      'send → tokens → message.complete refresca mensajes sin vigilancia diferida',
       () async {
         final hits = <String>[];
-        final api = ApiClient(
-          baseUrl: 'http://hermes.local:8642',
-          apiKey: 'test-key',
-          httpClient: _gateway(
-            hitLog: hits,
-            events: _sse([
-              {'event': 'message.delta', 'delta': 'Hola'},
-              {'event': 'message.delta', 'delta': ' mundo'},
-              {'event': 'run.completed', 'output': 'Hola mundo'},
-            ]),
-            finalMessages: [
-              {'role': 'user', 'content': 'di hola'},
-              {'role': 'assistant', 'content': 'Hola mundo'},
-            ],
-          ),
-        );
-
+        final socket = DesktopChatSocket();
         final service = ActiveChatService(
           compressionRestoreStore: testCompressionRestoreStore(),
         );
+        addTearDown(socket.close);
         final chat = service.attach(
           connection: _conn(),
           sessionId: 'sess-1',
           sessionTitle: 'Saludo',
-          api: api,
+          api: _socketApi(),
+          desktopGateway: socket,
+          storedMessageLoader: (sessionId, _) async {
+            hits.add('GET /api/sessions/$sessionId/messages');
+            return const [
+              {'role': 'user', 'content': 'di hola'},
+              {'role': 'assistant', 'content': 'Hola mundo'},
+            ];
+          },
         );
 
         final done = chat.changes.firstWhere((e) => e == ActiveChatEvent.done);
 
-        chat.send(
+        await chat.send(
           fullText: 'di hola',
           model: 'hermes-agent',
           history: const [],
         );
+        socket.token(1, 'Hola');
+        socket.token(1, ' mundo');
+        socket.complete(1, 'Hola mundo');
 
         // En la candidata conservadora no se persiste vigilancia automática.
         await Future<void>.delayed(const Duration(milliseconds: 30));
@@ -4345,15 +4078,15 @@ void main() {
         expect(hits, contains('GET /api/sessions/sess-1/messages'));
 
         // La limpieza terminal (_onTerminal) ocurre ~800ms tras `done`; esperamos
-        // a que la vigilancia en 2º plano se retire (no debe acumular runs).
+        // a que la vigilancia en 2º plano se retire (no debe acumular turnos).
         await Future<void>.delayed(const Duration(milliseconds: 1100));
         final prefsEnd = await SharedPreferences.getInstance();
         await prefsEnd.reload();
         final raw = prefsEnd.getString(_kWatchKey) ?? '[]';
         expect(
-          raw.contains('run_1'),
+          raw.contains('sess-1'),
           isFalse,
-          reason: 'al terminar debe dejar de vigilarse el run',
+          reason: 'al terminar debe dejar de vigilarse el turno',
         );
 
         service.dispose();
@@ -4361,60 +4094,36 @@ void main() {
     );
 
     test(
-      'un 404 terminal transitorio conserva el chat y reconcilia después',
+      'un fallo transitorio de la relectura terminal conserva el chat y reconcilia después',
       () async {
         var messageReads = 0;
         final firstReadStarted = Completer<void>();
         final releaseFirstRead = Completer<void>();
         final secondReadStarted = Completer<void>();
-        final httpClient = MockClient((request) async {
-          final path = request.url.path;
-          if (request.method == 'POST' && path == '/v1/runs') {
-            return http.Response(jsonEncode({'run_id': 'run_1'}), 200);
-          }
-          if (request.method == 'GET' && path == '/v1/runs/run_1/events') {
-            return http.Response(
-              _sse([
-                {'event': 'message.delta', 'delta': 'Respuesta por streaming'},
-                {'event': 'run.completed', 'output': 'Respuesta por streaming'},
-              ]),
-              200,
-              headers: {'content-type': 'text/event-stream'},
-            );
-          }
-          if (request.method == 'GET' &&
-              path == '/api/sessions/sess-1/messages') {
-            messageReads++;
-            if (messageReads == 1) {
-              firstReadStarted.complete();
-              await releaseFirstRead.future;
-              return http.Response('not found', 404);
-            }
-            if (!secondReadStarted.isCompleted) secondReadStarted.complete();
-            return http.Response(
-              jsonEncode({
-                'data': [
-                  {'role': 'user', 'content': 'consulta'},
-                  {'role': 'assistant', 'content': 'Respuesta persistida'},
-                ],
-              }),
-              200,
-            );
-          }
-          return http.Response('not found', 404);
-        });
+        final socket = DesktopChatSocket();
         final service = ActiveChatService(
           compressionRestoreStore: testCompressionRestoreStore(),
         );
+        addTearDown(socket.close);
         final chat = service.attach(
           connection: _conn(id: 'conn-terminal-race'),
           sessionId: 'sess-1',
           sessionTitle: 'Carrera terminal',
-          api: ApiClient(
-            baseUrl: 'http://hermes.local:8642',
-            apiKey: 'test-key',
-            httpClient: httpClient,
-          ),
+          api: _socketApi(),
+          desktopGateway: socket,
+          storedMessageLoader: (_, _) async {
+            messageReads++;
+            if (messageReads == 1) {
+              firstReadStarted.complete();
+              await releaseFirstRead.future;
+              throw const SocketException('transcript not ready');
+            }
+            if (!secondReadStarted.isCompleted) secondReadStarted.complete();
+            return const [
+              {'role': 'user', 'content': 'consulta'},
+              {'role': 'assistant', 'content': 'Respuesta persistida'},
+            ];
+          },
         );
         final firstDone = chat.changes.firstWhere(
           (event) => event == ActiveChatEvent.done,
@@ -4425,6 +4134,8 @@ void main() {
           model: 'hermes-agent',
           history: const [],
         );
+        socket.token(1, 'Respuesta por streaming');
+        socket.complete(1, 'Respuesta por streaming');
         await firstDone.timeout(const Duration(seconds: 3));
         expect(chat.assistantContent, 'Respuesta por streaming');
         await firstReadStarted.future;
@@ -4447,205 +4158,92 @@ void main() {
       return policy;
     }
 
-    ActiveChat chatWithPolicy(
-      ApprovalPolicyService policy, {
-      required String events,
-      List<String>? hits,
-    }) {
-      final api = ApiClient(
-        baseUrl: 'http://hermes.local:8642',
-        apiKey: 'k',
-        httpClient: _gateway(
-          hitLog: hits,
-          events: events,
-          finalMessages: const [
-            {'role': 'assistant', 'content': 'ok'},
-          ],
-        ),
-      );
-      return ActiveChat(
-        compressionRestoreStore: testCompressionRestoreStore(),
-        connection: _conn(),
-        sessionId: 'sess-1',
-        sessionTitle: 'X',
-        notifications: null,
-        onTerminal: () {},
-        policy: policy,
-        api: api,
-      );
-    }
-
     test('YOLO auto-aprueba sin tarjeta ni notificación', () async {
       final policy = await policyWith(ApprovalMode.yolo);
-      final hits = <String>[];
-      final chat = chatWithPolicy(
-        policy,
-        hits: hits,
-        events: _sse([
-          {
-            'event': 'approval.request',
-            'request_id': 'request-yolo',
-            'command': 'ls -la',
-            'pattern_key': 'ls',
-          },
-          {'event': 'run.completed', 'output': 'ok'},
-        ]),
-      );
+      final socket = DesktopChatSocket();
+      final chat = _socketChat(socket, policy: policy);
       final events = <ActiveChatEvent>[];
       chat.changes.listen(events.add);
 
-      chat.send(fullText: 'lista', model: 'm', history: const []);
+      await chat.send(fullText: 'lista', model: 'm', history: const []);
+      socket.approval(1, requestId: 'request-yolo', command: 'ls -la');
+      await _waitFor(() => socket.approvals.isNotEmpty);
+      socket.complete(1, 'ok');
       await chat.changes
           .firstWhere((e) => e == ActiveChatEvent.done)
           .timeout(const Duration(seconds: 5));
       await Future<void>.delayed(const Duration(milliseconds: 20));
 
-      expect(
-        hits,
-        contains('POST /v1/runs/run_1/approval'),
-        reason: 'YOLO debe resolver la aprobación automáticamente',
-      );
+      expect(socket.approvals.map((a) => a.requestId), [
+        'request-yolo',
+      ], reason: 'YOLO debe resolver la aprobación automáticamente');
       expect(
         events.contains(ActiveChatEvent.approvalRequest),
         isFalse,
         reason: 'YOLO no debe mostrar la tarjeta de aprobación',
       );
       expect(chat.pendingApproval, isNull);
-      chat.dispose();
     });
 
     test(
       'YOLO resuelve A por request_id sin borrar B que llega durante el await',
       () async {
         final policy = await policyWith(ApprovalMode.yolo);
-        final race = _ApprovalRaceClient();
-        final api = ApiClient(
-          baseUrl: 'http://hermes.local:8642',
-          apiKey: 'k',
-          httpClient: race,
-        );
-        final chat = ActiveChat(
-          compressionRestoreStore: testCompressionRestoreStore(),
-          connection: _conn(),
-          sessionId: 'sess-1',
-          sessionTitle: 'X',
-          notifications: null,
-          onTerminal: () {},
-          policy: policy,
-          api: api,
-        );
-        addTearDown(chat.dispose);
+        final socket = _GatedApprovalSocket();
+        final chat = _socketChat(socket, policy: policy);
 
-        chat.send(fullText: 'lista', model: 'm', history: const []);
-        await _waitFor(() => chat.currentRunId == 'run_1');
-        race.emit(const {
-          'event': 'approval.request',
-          'request_id': 'request-a',
-          'command': 'ls a',
-        });
-        race.emit(const {
-          'event': 'approval.request',
-          'request_id': 'request-b',
-          'command': 'ls b',
-        });
-        await _waitFor(() => race.approvalBodies.length == 2);
-        expect(race.approvalBodies.map((body) => body['request_id']), [
+        await chat.send(fullText: 'lista', model: 'm', history: const []);
+        socket.approval(1, requestId: 'request-a', command: 'ls a');
+        socket.approval(1, requestId: 'request-b', command: 'ls b');
+        await _waitFor(() => socket.approvals.length == 2);
+        expect(socket.approvals.map((a) => a.requestId), [
           'request-a',
           'request-b',
         ]);
         expect(chat.pendingApproval?['request_id'], 'request-b');
 
-        race.releaseA.complete();
+        socket.gates['request-a']!.complete();
         await Future<void>.delayed(const Duration(milliseconds: 20));
         expect(chat.pendingApproval?['request_id'], 'request-b');
-        race.releaseB.complete();
+        socket.gates['request-b']!.complete();
       },
     );
 
     test('solo lectura resuelve exactamente el request recibido', () async {
       final policy = await policyWith(ApprovalMode.readOnly);
-      Map<String, dynamic>? approvalBody;
-      final api = ApiClient(
-        baseUrl: 'http://hermes.local:8642',
-        apiKey: 'k',
-        httpClient: MockClient((request) async {
-          if (request.method == 'POST' && request.url.path == '/v1/runs') {
-            return http.Response(jsonEncode({'run_id': 'run_1'}), 200);
-          }
-          if (request.method == 'GET' &&
-              request.url.path == '/v1/runs/run_1/events') {
-            return http.Response(
-              _sse(const [
-                {
-                  'event': 'approval.request',
-                  'request_id': 'request-read-only',
-                  'command': 'rm x',
-                },
-              ]),
-              200,
-              headers: {'content-type': 'text/event-stream'},
-            );
-          }
-          if (request.method == 'POST' &&
-              request.url.path == '/v1/runs/run_1/approval') {
-            approvalBody = jsonDecode(request.body) as Map<String, dynamic>;
-            return http.Response(jsonEncode({'ok': true}), 200);
-          }
-          return http.Response('{}', 404);
-        }),
-      );
-      final chat = ActiveChat(
-        compressionRestoreStore: testCompressionRestoreStore(),
-        connection: _conn(),
-        sessionId: 'sess-1',
-        sessionTitle: 'X',
-        notifications: null,
-        onTerminal: () {},
-        policy: policy,
-        api: api,
-      );
-      addTearDown(chat.dispose);
+      final socket = DesktopChatSocket();
+      final chat = _socketChat(socket, policy: policy);
 
-      chat.send(fullText: 'borra', model: 'm', history: const []);
-      await _waitFor(() => approvalBody != null);
-      expect(approvalBody, {
-        'choice': 'deny',
-        'request_id': 'request-read-only',
-      });
+      await chat.send(fullText: 'borra', model: 'm', history: const []);
+      socket.approval(1, requestId: 'request-read-only', command: 'rm x');
+      await _waitFor(() => socket.approvals.isNotEmpty);
+      expect(socket.approvals, [
+        (requestId: 'request-read-only', choice: 'deny', all: false),
+      ]);
     });
 
     test(
       'Preguntar (interactive) muestra la tarjeta y NO auto-resuelve',
       () async {
         final policy = await policyWith(ApprovalMode.interactive);
-        final hits = <String>[];
-        final chat = chatWithPolicy(
-          policy,
-          hits: hits,
-          events: _sse([
-            {
-              'event': 'approval.request',
-              'request_id': 'request-interactive',
-              'command': 'rm archivo',
-              'pattern_key': 'rm',
-            },
-          ]),
-        );
+        final socket = DesktopChatSocket();
+        final chat = _socketChat(socket, policy: policy);
         final events = <ActiveChatEvent>[];
         chat.changes.listen(events.add);
 
-        chat.send(fullText: 'borra', model: 'm', history: const []);
-        await chat.changes
-            .firstWhere((e) => e == ActiveChatEvent.approvalRequest)
-            .timeout(const Duration(seconds: 5));
+        await chat.send(fullText: 'borra', model: 'm', history: const []);
+        final shown = chat.changes.firstWhere(
+          (e) => e == ActiveChatEvent.approvalRequest,
+        );
+        socket.approval(1, requestId: 'request-interactive', command: 'rm a');
+        await shown.timeout(const Duration(seconds: 5));
 
         expect(
-          hits.any((h) => h.contains('/approval')),
-          isFalse,
+          socket.approvals,
+          isEmpty,
           reason: 'modo Preguntar no debe auto-resolver',
         );
         expect(chat.pendingApproval, isNotNull);
-        chat.dispose();
       },
     );
 
@@ -4657,47 +4255,34 @@ void main() {
         await policy.setGlobalMode(ApprovalMode.interactive);
         final notifications = NotificationService(prefs)
           ..appInForeground = true
-          ..visibleSessionId = 'sess-persistida';
+          ..visibleSessionId = 'session-live';
         final inAppNotices = <InAppNotice>[];
         final noticeSub = notifications.inAppNotices.listen(inAppNotices.add);
-        final api = ApiClient(
-          baseUrl: 'http://hermes.local:8642',
-          apiKey: 'k',
-          httpClient: _gateway(
-            events: _sse([
-              {
-                'event': 'approval.request',
-                'request_id': 'request-visible',
-                'command': 'curl ejemplo.test',
-                'pattern_key': 'curl',
-              },
-            ]),
-            finalMessages: const [],
-          ),
-        );
-        final chat = ActiveChat(
-          compressionRestoreStore: testCompressionRestoreStore(),
-          connection: _conn(),
+        final socket = DesktopChatSocket();
+        final chat = _socketChat(
+          socket,
           sessionId: 'mob-provisional',
-          sessionTitle: 'Noticias',
-          notifications: notifications,
-          onTerminal: () {},
           policy: policy,
-          api: api,
+          notifications: notifications,
         );
 
-        chat.send(
+        await chat.send(
           fullText: 'busca noticias',
           model: 'm',
           history: const [],
-          serverSessionId: 'sess-persistida',
         );
-        await chat.changes
-            .firstWhere((e) => e == ActiveChatEvent.approvalRequest)
-            .timeout(const Duration(seconds: 5));
+        final shown = chat.changes.firstWhere(
+          (e) => e == ActiveChatEvent.approvalRequest,
+        );
+        socket.approval(
+          1,
+          requestId: 'request-visible',
+          command: 'curl ejemplo.test',
+        );
+        await shown.timeout(const Duration(seconds: 5));
         await Future<void>.delayed(const Duration(milliseconds: 30));
 
-        expect(chat.serverSessionId, 'sess-persistida');
+        expect(chat.serverSessionId, 'session-live');
         expect(
           inAppNotices,
           isEmpty,
@@ -4706,39 +4291,30 @@ void main() {
               'de "otro chat"',
         );
         await noticeSub.cancel();
-        chat.dispose();
       },
     );
 
     test('Solo lectura deniega automáticamente', () async {
       final policy = await policyWith(ApprovalMode.readOnly);
-      final hits = <String>[];
-      final chat = chatWithPolicy(
-        policy,
-        hits: hits,
-        events: _sse([
-          {
-            'event': 'approval.request',
-            'request_id': 'request-read-only-old',
-            'command': 'rm x',
-            'pattern_key': 'rm',
-          },
-          {'event': 'run.completed', 'output': 'ok'},
-        ]),
-      );
+      final socket = DesktopChatSocket();
+      final chat = _socketChat(socket, policy: policy);
       final events = <ActiveChatEvent>[];
       chat.changes.listen(events.add);
 
-      chat.send(fullText: 'borra', model: 'm', history: const []);
+      await chat.send(fullText: 'borra', model: 'm', history: const []);
+      socket.approval(1, requestId: 'request-read-only-old', command: 'rm x');
+      await _waitFor(() => socket.approvals.isNotEmpty);
+      socket.complete(1, 'ok');
       await chat.changes
           .firstWhere((e) => e == ActiveChatEvent.done)
           .timeout(const Duration(seconds: 5));
       await Future<void>.delayed(const Duration(milliseconds: 20));
 
-      expect(hits, contains('POST /v1/runs/run_1/approval'));
+      expect(socket.approvals.map((a) => a.requestId), [
+        'request-read-only-old',
+      ]);
       expect(events.contains(ActiveChatEvent.approvalRequest), isFalse);
       expect(chat.pendingApproval, isNull);
-      chat.dispose();
     });
   });
 
@@ -4747,7 +4323,7 @@ void main() {
       final api = ApiClient(
         baseUrl: 'http://hermes.local:8642',
         apiKey: 'k',
-        httpClient: _gateway(events: '', finalMessages: serverMessages),
+        httpClient: _gateway(finalMessages: serverMessages),
       );
       return ActiveChat(
         compressionRestoreStore: testCompressionRestoreStore(),
@@ -5122,26 +4698,21 @@ void main() {
     test('GET de resume obsoleto no borra un turno enviado después', () async {
       final getStarted = Completer<void>();
       final oldGet = Completer<http.Response>();
-      final streamGate = Completer<http.Response>();
+      final socket = DesktopChatSocket();
+      addTearDown(socket.close);
       final api = ApiClient(
         baseUrl: 'http://hermes.local:8642',
-        apiKey: 'k',
-        httpClient: MockClient((request) async {
-          if (request.method == 'GET' &&
-              request.url.path.endsWith('/messages')) {
-            if (!getStarted.isCompleted) getStarted.complete();
-            return oldGet.future;
-          }
-          if (request.method == 'POST' && request.url.path == '/v1/runs') {
-            return http.Response(
-              jsonEncode({'run_id': 'run-after-resume'}),
-              200,
-              headers: {'content-type': 'application/json'},
-            );
-          }
-          if (request.url.path.endsWith('/events')) return streamGate.future;
-          return http.Response('not found', 404);
-        }),
+        apiKey: 'test-key',
+        httpClient: HostCounter(
+          handler: (request) async {
+            if (request.method == 'GET' &&
+                request.url.path.endsWith('/messages')) {
+              if (!getStarted.isCompleted) getStarted.complete();
+              return oldGet.future;
+            }
+            return http.Response('not found', 404);
+          },
+        ),
       );
       final chat = ActiveChat(
         compressionRestoreStore: testCompressionRestoreStore(),
@@ -5151,13 +4722,9 @@ void main() {
         notifications: null,
         onTerminal: () {},
         api: api,
+        desktopGateway: socket,
       );
-      addTearDown(() {
-        if (!streamGate.isCompleted) {
-          streamGate.complete(http.Response('', 200));
-        }
-        chat.dispose();
-      });
+      addTearDown(chat.dispose);
       chat.internalMessagesForTesting = [
         {'role': 'assistant', 'content': '', '_pipeline': true},
         {'role': 'user', 'content': 'turno anterior'},

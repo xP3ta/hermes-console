@@ -7,7 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/screens/legacy_bridge_notices.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
-import 'package:hermes_android/core/services/hermes_setup_commands.dart';
+import 'package:hermes_android/core/services/official_dashboard_command.dart';
 import 'package:hermes_android/core/services/legacy_bridge_retirement.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/dashboard_password_help.dart';
@@ -116,32 +116,28 @@ void main() {
     return work;
   }
 
-  test('the recommended way is the installer taking back its own bridge', () {
-    expect(
-      bridgeRetireCommand(BridgeHost.linux),
-      HermesSetupCommands.retireBridge(SetupHostSystem.unix),
-    );
-    expect(
-      bridgeRetireCommand(BridgeHost.macos),
-      HermesSetupCommands.retireBridge(SetupHostSystem.unix),
-    );
-    expect(
-      bridgeRetireCommand(BridgeHost.windows),
-      HermesSetupCommands.retireBridge(SetupHostSystem.windows),
-    );
-    for (final host in BridgeHost.values) {
-      final command = bridgeRetireCommand(host);
-      expect(command, isNot(contains('\n')));
-      expect(command, isNot(contains('sudo')));
-      expect(command.toLowerCase(), contains('retire'));
-      // The flag is what keeps it from being a plain (re)install.
-      expect(command, isNot(HermesSetupCommands.setup(SetupHostSystem.unix)));
+  test(
+    'the recommended way is the old assistant taking back its own bridge',
+    () {
+      const raw = 'https://raw.githubusercontent.com/xP3ta/hermes-setup/main';
+      const unix =
+          'curl -fsSL $raw/hermes-mobile-setup.sh | sh -s -- --retire-bridge';
+      expect(bridgeRetireCommand(BridgeHost.linux), unix);
+      expect(bridgeRetireCommand(BridgeHost.macos), unix);
       expect(
-        command,
-        isNot(HermesSetupCommands.setup(SetupHostSystem.windows)),
+        bridgeRetireCommand(BridgeHost.windows),
+        '& ([scriptblock]::Create((irm $raw/hermes-mobile-setup.ps1))) '
+        '-RetireBridge',
       );
-    }
-  });
+      for (final host in BridgeHost.values) {
+        final command = bridgeRetireCommand(host);
+        expect(command, isNot(contains('\n')));
+        expect(command, isNot(contains('sudo')));
+        // The flag is what keeps it from being a plain (re)install.
+        expect(command.toLowerCase(), matches(RegExp(r'retire-?bridge$')));
+      }
+    },
+  );
 
   test('the steps by hand name the bridge and nothing else it created', () {
     expect(bridgeRemovalCommands.keys, BridgeHost.values);
@@ -347,8 +343,8 @@ void main() {
     );
   });
 
-  testWidgets('"I don\'t know the password": the installer\'s one line per '
-      'system, and the two lines by hand behind a tap', (tester) async {
+  testWidgets('"I don\'t know the password": Hermes\' own two commands, and '
+      'the two lines by hand behind a tap', (tester) async {
     await pumpApp(tester);
     showDashboardPasswordHelp(navigatorKey.currentContext!);
     await settle(tester);
@@ -356,20 +352,24 @@ void main() {
     final sheet = find.byKey(const ValueKey('dashboard-password-help'));
     expect(sheet, findsOneWidget);
     expect(find.text('Poner una contraseña nueva'), findsOneWidget);
-    expect(find.text('Mac o Linux'), findsOneWidget);
-    expect(
-      find.text(HermesSetupCommands.newAccess(SetupHostSystem.unix)),
-      findsOneWidget,
-    );
+    // One recipe, no per-system tabs and no installer line.
+    expect(find.text('Mac o Linux'), findsNothing);
+    expect(find.text(kOfficialDashboardResetCommand), findsOneWidget);
+    expect(kOfficialDashboardResetCommand, endsWith(kOfficialDashboardCommand));
     expect(
       find.text(
-        'Pega esta línea allí. Crea un acceso nuevo y te enseña el usuario '
-        'y la contraseña: escríbelos aquí.',
+        'Pega estas tres líneas en la Terminal de ese ordenador. Te pedirá un '
+        'usuario y una contraseña nuevos; después úsalos aquí, en Console.',
       ),
       findsOneWidget,
     );
+    // It says the other devices keep their session (D-C3-4).
     expect(
-      find.text('Los otros móviles y navegadores tendrán que volver a entrar.'),
+      find.text(
+        'Los otros móviles y navegadores siguen con la sesión abierta: '
+        'cambiar la contraseña no la cierra.',
+        skipOffstage: false,
+      ),
       findsOneWidget,
     );
     // By hand stays folded: no .env lines until asked for.
@@ -379,31 +379,32 @@ void main() {
     );
     await tester.tap(find.text('Copiar'));
     await settle(tester);
-    expect(copied, HermesSetupCommands.newAccess(SetupHostSystem.unix));
-    expect(copied, endsWith('| sh -s -- --new-access'));
+    expect(copied, kOfficialDashboardResetCommand);
 
-    await tester.tap(find.byKey(const ValueKey('dashboard-password-windows')));
-    await settle(tester);
-    expect(
-      find.text(HermesSetupCommands.newAccess(SetupHostSystem.windows)),
-      findsOneWidget,
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('dashboard-password-by-hand')),
+      200,
+      scrollable: find
+          .descendant(of: sheet, matching: find.byType(Scrollable))
+          .first,
     );
-    await tester.tap(find.text('Copiar'));
-    await settle(tester);
-    expect(copied, endsWith(' -NewAccess'));
-
     await tester.ensureVisible(
       find.byKey(const ValueKey('dashboard-password-by-hand')),
     );
+    await settle(tester);
     await tester.tap(find.byKey(const ValueKey('dashboard-password-by-hand')));
     await settle(tester);
     await tester.pump(const Duration(milliseconds: 300));
     final manual = find.byKey(
       const ValueKey('dashboard-password-manual-command'),
+      skipOffstage: false,
     );
     expect(manual, findsOneWidget);
     expect(
-      find.textContaining('HERMES_DASHBOARD_BASIC_AUTH_PASSWORD='),
+      find.textContaining(
+        'HERMES_DASHBOARD_BASIC_AUTH_PASSWORD=',
+        skipOffstage: false,
+      ),
       findsOneWidget,
     );
     final manualCopy = find.descendant(

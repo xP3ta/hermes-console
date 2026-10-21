@@ -8,10 +8,9 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../l10n/app_localizations.dart';
 import '../design/modal.dart';
 import '../design/tokens.dart';
-import '../services/hermes_setup_commands.dart';
+import '../services/official_dashboard_command.dart';
 import '../theme/app_theme.dart';
 import 'command_block.dart';
-import 'hermes_premium_ui.dart';
 
 /// Official recipe for the Dashboard's username and password provider.
 const _dashboardPasswordDocs =
@@ -37,8 +36,9 @@ String dashboardPasswordEnvLines(Strings s) =>
 
 /// What the app can truthfully offer to someone who does not know the
 /// Dashboard password: it cannot be read back from anywhere, only replaced
-/// on the computer that runs Hermes. One line of the setup helper does it
-/// (a new sign-in, shown there to type here); the two `.env` lines remain
+/// on the computer that runs Hermes. Hermes' own commands do it: clear the
+/// stored password and start the Dashboard from a terminal, which asks for a
+/// new one ([kOfficialDashboardResetCommand]); the two `.env` lines remain
 /// for whoever prefers to do it by hand.
 Future<void> showDashboardPasswordHelp(BuildContext context) {
   return showHermesSurface<void>(
@@ -56,7 +56,6 @@ class _DashboardPasswordHelp extends StatefulWidget {
 }
 
 class _DashboardPasswordHelpState extends State<_DashboardPasswordHelp> {
-  SetupHostSystem _system = SetupHostSystem.unix;
   bool _byHand = false;
   final _byHandKey = GlobalKey();
 
@@ -89,30 +88,14 @@ class _DashboardPasswordHelpState extends State<_DashboardPasswordHelp> {
             children: [
               Text(s.dashPasswordHelpIntro, style: support),
               const SizedBox(height: HermesSpace.x4),
-              HermesSegmentedControl<SetupHostSystem>(
-                value: _system,
-                semanticLabel: s.dashPasswordHelpTitle,
-                segments: [
-                  HermesSegment(
-                    value: SetupHostSystem.unix,
-                    label: s.setupHostUnix,
-                    key: const ValueKey('dashboard-password-unix'),
-                  ),
-                  const HermesSegment(
-                    value: SetupHostSystem.windows,
-                    label: 'Windows',
-                    key: ValueKey('dashboard-password-windows'),
-                  ),
-                ],
-                onChanged: (system) => setState(() => _system = system),
-              ),
-              const SizedBox(height: HermesSpace.x3),
               CommandBlock(
-                HermesSetupCommands.newAccess(_system),
+                kOfficialDashboardResetCommand,
                 key: const ValueKey('dashboard-password-command'),
               ),
               const SizedBox(height: HermesSpace.x3),
               Text(s.dashPasswordHelpCommand, style: text),
+              const SizedBox(height: HermesSpace.x2),
+              Text(s.dashPasswordHelpEnvNote, style: support),
               const SizedBox(height: HermesSpace.x2),
               Text(s.dashPasswordHelpOthers, style: support),
               Align(

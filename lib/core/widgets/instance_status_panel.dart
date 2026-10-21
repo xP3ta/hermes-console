@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import '../services/origin_bound_http_client.dart';
+import '../screens/dashboard_sign_in.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../../main.dart';
@@ -54,12 +55,6 @@ Future<DashboardAuthCheck> checkSavedDashboardLogin(
   }
 }
 
-/// Outcome of calling the Gateway API with the saved key.
-enum GatewayKeyCheck { ok, rejected, unknown }
-
-typedef GatewayKeyProbe =
-    Future<GatewayKeyCheck> Function(SavedConnection connection);
-
 Future<void> showInstanceStatusSheet(
   BuildContext context,
   SavedConnection connection,
@@ -80,7 +75,7 @@ Future<void> showInstanceStatusSheet(
 
 enum _Health { ok, warn, bad, unknown }
 
-enum _LabelKind { gateway, dashboard, notifications }
+enum _LabelKind { dashboard, notifications }
 
 enum _DetailKind {
   connected,
@@ -88,7 +83,6 @@ enum _DetailKind {
   unavailable,
   wrongPassword,
   loginRequired,
-  keyRejected,
   enabled,
   disabled,
 }
@@ -106,7 +100,6 @@ class InstanceStatusPanel extends StatefulWidget {
   final ConnectionManager? connManager;
   final StatusReachabilityProbe? reachable;
   final DashboardAuthProbe? dashboardAuth;
-  final GatewayKeyProbe? gatewayKey;
 
   const InstanceStatusPanel({
     super.key,
@@ -115,7 +108,6 @@ class InstanceStatusPanel extends StatefulWidget {
     this.connManager,
     this.reachable,
     this.dashboardAuth,
-    this.gatewayKey,
   });
 
   @override
@@ -193,18 +185,11 @@ class _InstanceStatusPanelState extends State<InstanceStatusPanel> {
     setState(() => _loading = true);
     final conn = widget.connection;
 
-    final firstFuture = _reachable('${conn.gatewayUrl}/health');
     final dashboardFuture = _reachable(
       '${conn.effectiveDashboardUrl}/api/status',
     );
     final notificationFuture = widget.notifications?.permissionGranted();
 
-    final first = await firstFuture;
-    if (!_current(generation)) return;
-    // /health answers without the key; the chat API needs it, so a reachable
-    // remote Gateway is only "connected" once the saved key is accepted.
-    final key = first ? await _gatewayKey(conn) : GatewayKeyCheck.unknown;
-    if (!_current(generation)) return;
     final dashboard = await dashboardFuture;
     if (!_current(generation)) return;
     // A public /api/status only proves the Dashboard is up; chat and Bot Mode
@@ -216,23 +201,6 @@ class _InstanceStatusPanelState extends State<InstanceStatusPanel> {
     if (!_current(generation)) return;
 
     final rows = <_RawRow>[];
-    rows.add(
-      !first
-          ? const _RawRow(_LabelKind.gateway, _Health.bad, _DetailKind.offline)
-          : key == GatewayKeyCheck.rejected
-          ? const _RawRow(
-              _LabelKind.gateway,
-              _Health.warn,
-              _DetailKind.keyRejected,
-            )
-          : key == GatewayKeyCheck.ok
-          ? const _RawRow(_LabelKind.gateway, _Health.ok, _DetailKind.connected)
-          : const _RawRow(
-              _LabelKind.gateway,
-              _Health.unknown,
-              _DetailKind.unavailable,
-            ),
-    );
     rows.add(switch ((dashboard == true, auth)) {
       (false, _) => const _RawRow(
         _LabelKind.dashboard,
@@ -283,31 +251,6 @@ class _InstanceStatusPanelState extends State<InstanceStatusPanel> {
     return checkSavedDashboardLogin(manager, conn);
   }
 
-  Future<GatewayKeyCheck> _gatewayKey(SavedConnection conn) async {
-    final injected = widget.gatewayKey;
-    if (injected != null) return injected(conn);
-    final client = OriginBoundHttpClient();
-    try {
-      final base = TransportPrivacy.requireAllowed(conn.gatewayUrl);
-      final res = await client
-          .get(
-            Uri.parse('$base/api/sessions'),
-            headers: {'Authorization': 'Bearer ${conn.apiKey}'},
-          )
-          .timeout(const Duration(seconds: 6));
-      if (res.statusCode == 401 || res.statusCode == 403) {
-        return GatewayKeyCheck.rejected;
-      }
-      return res.statusCode == 200
-          ? GatewayKeyCheck.ok
-          : GatewayKeyCheck.unknown;
-    } catch (_) {
-      return GatewayKeyCheck.unknown;
-    } finally {
-      client.close();
-    }
-  }
-
   Future<bool> _reachable(String url) async {
     final injected = widget.reachable;
     if (injected != null) return injected(url);
@@ -325,8 +268,15 @@ class _InstanceStatusPanelState extends State<InstanceStatusPanel> {
     }
   }
 
+  /// Closes the sheet and opens the same sign-in the chat uses.
+  void _signIn() {
+    final navigator = Navigator.of(context);
+    final manager = widget.connManager!;
+    if (navigator.canPop()) navigator.pop();
+    unawaited(signInToDashboard(navigator, manager, widget.connection));
+  }
+
   String _label(_LabelKind kind, Strings s) => switch (kind) {
-    _LabelKind.gateway => 'Gateway',
     _LabelKind.dashboard => 'Dashboard',
     _LabelKind.notifications => s.statusNotifications,
   };
@@ -336,7 +286,6 @@ class _InstanceStatusPanelState extends State<InstanceStatusPanel> {
     _DetailKind.offline => s.statusOffline,
     _DetailKind.wrongPassword => s.statusWrongPassword,
     _DetailKind.loginRequired => s.statusLoginRequired,
-    _DetailKind.keyRejected => s.statusKeyRejected,
     _DetailKind.unavailable => s.setStatusUnavailable,
     _DetailKind.enabled => s.statusEnabled,
     _DetailKind.disabled => s.statusDisabled,
@@ -431,6 +380,13 @@ class _InstanceStatusPanelState extends State<InstanceStatusPanel> {
                   _detail(row.detail, s),
                   style: TextStyle(fontSize: 12, color: colors.textSecondary),
                 ),
+                if (row.detail == _DetailKind.loginRequired &&
+                    widget.connManager != null)
+                  TextButton(
+                    key: const ValueKey('instance-status-sign-in'),
+                    onPressed: _signIn,
+                    child: Text(s.s2SessionExpiredSignIn),
+                  ),
               ],
             ),
           ),

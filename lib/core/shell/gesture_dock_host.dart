@@ -10,6 +10,7 @@ import '../screens/mission_control_screen.dart';
 import '../screens/projects_center_screen.dart';
 import '../screens/settings_screen.dart';
 import '../services/connection_manager.dart';
+import '../services/new_session_factory.dart';
 import '../services/dock_preferences_store.dart';
 import '../services/global_activity_aggregate.dart';
 import '../services/tui_gateway_client.dart';
@@ -235,7 +236,7 @@ class _GestureDockHostState extends State<GestureDockHost> {
     if (conn == null) return null;
     return () {
       final session = Session(
-        id: GatewayChatClient.generateSessionId(),
+        id: generateSessionId(),
         title: Strings.of(context).drawerNewChat,
         model: 'hermes-agent',
         source: 'mobile',

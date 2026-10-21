@@ -16,7 +16,7 @@ reaching it from one all give something up:
 ## The solution
 
 Console is a native Android client (Flutter) that connects remotely to the
-Gateway and Dashboard of the user's own Hermes Agent:
+Dashboard of the user's own Hermes Agent:
 
 - **Remote.** Hermes runs on a computer, homelab or VPS, not on the phone. The
   app never runs a model locally on behalf of Hermes.
@@ -49,7 +49,7 @@ Gateway and Dashboard of the user's own Hermes Agent:
 ## Stack
 
 - **App:** Flutter (Dart), Android 7.0+ (API 24).
-- **Server side:** Hermes Agent's Gateway and Dashboard (self-hosted).
+- **Server side:** Hermes Agent's Dashboard (self-hosted).
 - **Connectivity:** HTTPS, LAN or a private network such as Tailscale.
 - **Security:** Android Keystore through `flutter_secure_storage`; see
   [`SECURITY_POLICY.md`](SECURITY_POLICY.md).

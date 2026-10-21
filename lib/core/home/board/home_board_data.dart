@@ -7,7 +7,10 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 
 import '../../models/account_usage_limits.dart';
+import '../../services/connection_status.dart';
 import '../../models/agent_profile.dart';
+import '../../models/mission_control.dart'
+    show MissionBackendSnapshot, MissionCapabilityState;
 import '../../widgets/mission_profile_avatar.dart';
 import '../home_now.dart';
 import 'home_board_model.dart' show HomeWidgetInstance;
@@ -140,6 +143,9 @@ final class HomeBoardServer {
   final bool online;
   final bool checking;
 
+  /// What the chat-lane socket says (null: nothing dialled; REST decides).
+  final ConnectionStatusKind? link;
+
   /// Round trip of the last health check Home already made.
   final int? latencyMs;
   final String? version;
@@ -151,6 +157,7 @@ final class HomeBoardServer {
     required this.label,
     required this.online,
     this.checking = false,
+    this.link,
     this.latencyMs,
     this.version,
     this.updateAvailable,
@@ -776,6 +783,41 @@ final class HomeNow {
   }
 }
 
+/// What is known about the rooms, apart from whether the roster loaded.
+enum HomeRoomsState { unknown, known, unavailable, unsupported }
+
+/// Folds each Mission snapshot into [HomeRoomsState] and counts the failed
+/// rooms reads in a row (one per snapshot, however often the board repaints).
+final class HomeRoomsReads {
+  String? _scope;
+  DateTime? _seen;
+  int _failed = 0;
+
+  int get failedReads => _failed;
+
+  HomeRoomsState observe(String scope, MissionBackendSnapshot? snapshot) {
+    if (scope != _scope) {
+      _scope = scope;
+      _seen = null;
+      _failed = 0;
+    }
+    if (snapshot == null) return HomeRoomsState.unknown;
+    final capability = snapshot.hostedGroupsCapability;
+    if (capability != MissionCapabilityState.unavailable) {
+      _failed = 0;
+      _seen = null;
+    } else if (_seen != snapshot.loadedAt) {
+      _seen = snapshot.loadedAt;
+      _failed++;
+    }
+    return switch (capability) {
+      MissionCapabilityState.available => HomeRoomsState.known,
+      MissionCapabilityState.unavailable => HomeRoomsState.unavailable,
+      MissionCapabilityState.unsupported => HomeRoomsState.unsupported,
+    };
+  }
+}
+
 /// Everything the board paints, one immutable snapshot per change.
 @immutable
 final class HomeBoardData {
@@ -811,6 +853,13 @@ final class HomeBoardData {
   /// Whether Bots data (rooms, bots) has been read at least once.
   final bool botsLoaded;
 
+  /// What the rooms read said. Only [HomeRoomsState.known] makes an empty
+  /// list a fact: «no rooms yet» must never show before the first answer.
+  final HomeRoomsState roomsState;
+
+  /// Reads in a row that failed (the second one stops the skeleton).
+  final int roomsFailedReads;
+
   /// Whether the list of bots is the server's own (a roster read landed):
   /// only then is «no bots» a fact and not something still unread.
   final bool botsKnown;
@@ -843,6 +892,8 @@ final class HomeBoardData {
     this.nowBoard = HomeNow.empty,
     this.botsLoaded = false,
     this.botsKnown = false,
+    this.roomsState = HomeRoomsState.unknown,
+    this.roomsFailedReads = 0,
     this.chatsLoaded = true,
     this.mainName = '',
   });
@@ -881,6 +932,8 @@ final class HomeBoardData {
       today: today,
       botsLoaded: botsLoaded,
       botsKnown: botsKnown,
+      roomsState: roomsState,
+      roomsFailedReads: roomsFailedReads,
       chatsLoaded: chatsLoaded,
       mainName: mainName,
       // The dock's summary keeps its own rows: a room that replies is the

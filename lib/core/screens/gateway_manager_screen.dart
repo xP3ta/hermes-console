@@ -16,6 +16,8 @@ import '../theme/app_theme.dart';
 import '../widgets/general_dock_shell.dart';
 import '../widgets/hermes_ui.dart' show HermesIconTile, HermesPrimaryButton;
 import '../widgets/instance_kind_picker.dart';
+import '../widgets/instance_status_panel.dart'
+    show DashboardAuthCheck, checkSavedDashboardLogin;
 import '../widgets/status_pill.dart';
 import 'instance_edit_screen.dart';
 import 'onboarding_screen.dart';
@@ -49,6 +51,9 @@ class _GatewayManagerScreenState extends State<GatewayManagerScreen> {
 
   /// Per-connection health status. Keyed by connection id.
   final Map<String, InstanceStatus> _statuses = {};
+
+  /// Ids whose Dashboard answered but wants a login.
+  final Set<String> _loginRequired = {};
 
   @override
   void initState() {
@@ -92,77 +97,49 @@ class _GatewayManagerScreenState extends State<GatewayManagerScreen> {
   Future<void> _checkSingle(SavedConnection conn) async {
     if (!mounted) return;
     setState(() => _statuses[conn.id] = InstanceStatus.checking);
-    final status = await _fetchStatus(conn);
+    final (status, loginRequired) = await _fetchStatus(conn);
     if (!mounted) return;
-    setState(() => _statuses[conn.id] = status);
+    setState(() {
+      _statuses[conn.id] = status;
+      if (loginRequired) {
+        _loginRequired.add(conn.id);
+      } else {
+        _loginRequired.remove(conn.id);
+      }
+    });
   }
 
-  /// Fetches /health and maps the response to an [InstanceStatus].
-  ///
-  /// The current Hermes Gateway /health endpoint returns HTTP 200 when
-  /// the server is up and the API key is valid (checked via /api/sessions).
-  /// It does not currently expose a `mode` or `readOnly` field in its body,
-  /// so [InstanceStatus.readOnly] and [InstanceStatus.syncing] are supported
-  /// by the widget but are not sourced from live data. If a future version of
-  /// the health endpoint adds e.g. `{"status":"read_only"}` or
-  /// `{"status":"syncing"}`, extend the body-parsing block below.
-  static Future<InstanceStatus> _fetchStatus(SavedConnection conn) async {
+  /// Reads the state of the Dashboard, the only origin Desktop talks to:
+  /// `/api/status` says it is up and the authenticated `/api/sessions` read
+  /// (the same login check as the status panel) says the login is accepted.
+  /// A 401/403 is a login problem, never an offline server.
+  Future<(InstanceStatus, bool)> _fetchStatus(SavedConnection conn) async {
     try {
-      final base = TransportPrivacy.requireAllowed(conn.baseUrl);
+      final base = TransportPrivacy.requireAllowed(conn.effectiveDashboardUrl);
       final client = OriginBoundHttpClient();
       try {
         final res = await client
-            .get(
-              Uri.parse('$base/health'),
-              headers: {
-                'Authorization': 'Bearer ${conn.apiKey}',
-                'Content-Type': 'application/json',
-              },
-            )
+            .get(Uri.parse('$base/api/status'))
             .timeout(const Duration(seconds: 8));
-
-        if (res.statusCode == 401 || res.statusCode == 403) {
-          return InstanceStatus.error;
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          return (InstanceStatus.offline, false);
         }
-        if (res.statusCode != 200) return InstanceStatus.offline;
-
-        // Future-proof: if /health body carries a status field, map it.
-        // Currently this block never fires because Hermes /health
-        // returns a plain `{"ok":true}` or similar without a `status` key.
-        // Uncomment and extend when/if the backend adds it.
-        // try {
-        //   final body = jsonDecode(res.body) as Map<String, dynamic>?;
-        //   final mode = body?['status'] as String?;
-        //   if (mode == 'read_only') return InstanceStatus.readOnly;
-        //   if (mode == 'syncing') return InstanceStatus.syncing;
-        // } catch (_) {}
-
-        // Confirm auth with sessions endpoint (same logic as ApiClient.healthCheck)
-        final sessions = await client
-            .get(
-              Uri.parse('$base/api/sessions'),
-              headers: {
-                'Authorization': 'Bearer ${conn.apiKey}',
-                'Content-Type': 'application/json',
-              },
-            )
-            .timeout(const Duration(seconds: 8));
-
-        if (sessions.statusCode == 200) return InstanceStatus.online;
-        if (sessions.statusCode == 401 || sessions.statusCode == 403) {
-          return InstanceStatus.error;
-        }
-        return InstanceStatus.offline;
       } finally {
         client.close();
       }
+      return switch (await checkSavedDashboardLogin(widget.connManager, conn)) {
+        DashboardAuthCheck.ok => (InstanceStatus.online, false),
+        DashboardAuthCheck.loginRequired ||
+        DashboardAuthCheck.invalidCredentials => (InstanceStatus.error, true),
+        DashboardAuthCheck.unknown => (InstanceStatus.offline, false),
+      };
     } on TimeoutException {
-      return InstanceStatus.offline;
+      return (InstanceStatus.offline, false);
     } catch (e) {
       debugPrint(
-        '[gateway-manager] health check unavailable (${e.runtimeType})',
+        '[gateway-manager] status check unavailable (${e.runtimeType})',
       );
-      return InstanceStatus.offline;
+      return (InstanceStatus.offline, false);
     }
   }
 
@@ -356,7 +333,9 @@ class _GatewayManagerScreenState extends State<GatewayManagerScreen> {
     final active = conn.id == _activeId;
     final isDefault = conn.id == _defaultId;
     final status = _statuses[conn.id] ?? InstanceStatus.unknown;
-    final statusLabel = status == InstanceStatus.online
+    final statusLabel = _loginRequired.contains(conn.id)
+        ? s.statusLoginRequired
+        : status == InstanceStatus.online
         ? s.sChatConnected
         : status.labelFor(context);
     return HermesListRow(

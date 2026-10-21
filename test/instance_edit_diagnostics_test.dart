@@ -378,16 +378,16 @@ void main() {
     final manager = await managerWith(savedConnection());
     final fake = _FakeDiagnostics(
       DiagnosticsReport(
-        gateway: const [
+        gateway: const [],
+        dashboard: const [
           ProbeResult(
-            name: 'health',
+            name: 'status',
             status: ProbeStatus.timeout,
             detail: 'synthetic',
           ),
         ],
-        dashboard: const [],
         matrix: const CapabilityMatrix(
-          gatewayOnline: CapState.no,
+          dashboardOnline: CapState.no,
           checkedAtMs: 1784062800000,
         ),
         suggestions: const [],
@@ -419,16 +419,16 @@ void main() {
     final manager = await managerWith(savedConnection());
     final fake = _FakeDiagnostics(
       DiagnosticsReport(
-        gateway: const [
+        gateway: const [],
+        dashboard: const [
           ProbeResult(
-            name: 'health',
+            name: 'status',
             status: ProbeStatus.timeout,
             detail: 'sin respuesta en 8s',
           ),
         ],
-        dashboard: const [],
         matrix: const CapabilityMatrix(
-          gatewayOnline: CapState.no,
+          dashboardOnline: CapState.no,
           checkedAtMs: 1784062800000,
         ),
         suggestions: const [],

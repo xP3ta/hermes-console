@@ -30,29 +30,21 @@ void main() {
         if (request.url.path.startsWith('/bridge/')) {
           return http.Response('{}', 404);
         }
-        if (request.url.path == '/health') {
+        // The Gateway is not part of the run any more (Desktop talks to the
+        // Dashboard only): any request to its port fails the test.
+        expect(request.url.port, 19119);
+        if (request.url.path == '/api/health') {
           return http.Response('{"status":"ok","version":"fixture"}', 200);
         }
         if (request.url.path == '/api/status') {
           return http.Response('{"status":"ok"}', 200);
         }
-        if (request.url.port == 9131) {
-          expect(request.headers['Authorization'], 'Bearer synthetic-key');
-        } else {
-          expect(request.url.port, 19119);
-          expect(
-            request.headers['X-Hermes-Session-Token'],
-            'synthetic-dashboard-session',
-          );
-        }
+        expect(
+          request.headers['X-Hermes-Session-Token'],
+          'synthetic-dashboard-session',
+        );
         if (failure == 'timeout') throw TimeoutException('synthetic timeout');
         if (failure is int) return http.Response('{}', failure);
-        if (request.url.path == '/v1/capabilities') {
-          return http.Response(
-            '{"object":"hermes.api_server.capabilities","features":{"runs":true},"endpoints":{}}',
-            200,
-          );
-        }
         return http.Response('{}', 200);
       });
       final diagnostics = ConnectionDiagnostics(httpClient: client);
@@ -75,12 +67,12 @@ void main() {
       expect(connection.toMap(), before);
       expect(secrets.sessionToken, 'synthetic-dashboard-session');
       if (failure == null) {
-        expect(report.gateway.every((r) => r.status == ProbeStatus.ok), isTrue);
+        expect(report.gateway, isEmpty);
         expect(
           report.dashboard.every((r) => r.status == ProbeStatus.ok),
           isTrue,
         );
-        expect(report.matrix.gatewayAuthValid, CapState.yes);
+        expect(report.matrix.gatewayVersion, 'fixture');
         expect(report.matrix.dashboardAuthValid, CapState.yes);
       } else {
         final status = failure == 401
@@ -91,14 +83,14 @@ void main() {
             ? ProbeStatus.timeout
             : ProbeStatus.httpError;
         expect(
-          report.gateway.firstWhere((r) => r.name == 'sessions').status,
+          report.dashboard.firstWhere((r) => r.name == 'sessions').status,
           status,
         );
         expect(
           report.dashboard.firstWhere((r) => r.name == 'config').status,
           status,
         );
-        expect(report.matrix.gatewayAuthValid, isNot(CapState.yes));
+        expect(report.matrix.sessionsRead, isNot(CapState.yes));
       }
     });
   }

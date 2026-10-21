@@ -9,6 +9,7 @@ import android.content.IntentFilter
 import android.graphics.Rect
 import android.net.ConnectivityManager
 import android.net.Network
+import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -66,9 +67,25 @@ class MainActivity : FlutterFragmentActivity() {
     private var externalDataSyncStopReceiverRegistered = false
     private var networkAvailabilitySink: EventChannel.EventSink? = null
     private var networkCallbackRegistered = false
+    private var validatedNetwork: Network? = null
     private val networkCallback =
         object : ConnectivityManager.NetworkCallback() {
-            override fun onAvailable(network: Network) {
+            // Wi-Fi can call onAvailable before validation and a captive portal
+            // has INTERNET without VALIDATED: only a validated network counts
+            // (developer.android.com "Read network state").
+            override fun onCapabilitiesChanged(
+                network: Network,
+                caps: NetworkCapabilities,
+            ) {
+                val validated =
+                    caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                        caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+                if (!validated) {
+                    if (validatedNetwork == network) validatedNetwork = null
+                    return
+                }
+                if (validatedNetwork == network) return
+                validatedNetwork = network
                 val sink = networkAvailabilitySink ?: return
                 runOnUiThread {
                     if (networkAvailabilitySink === sink) sink.success("available")
@@ -76,6 +93,7 @@ class MainActivity : FlutterFragmentActivity() {
             }
 
             override fun onLost(network: Network) {
+                if (validatedNetwork == network) validatedNetwork = null
                 val sink = networkAvailabilitySink ?: return
                 runOnUiThread {
                     if (networkAvailabilitySink === sink) sink.success("lost")
@@ -138,6 +156,7 @@ class MainActivity : FlutterFragmentActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        DurableSecretWriter.attach(applicationContext, flutterEngine.dartExecutor.binaryMessenger)
         clipboardImageHandler?.close()
         clipboardImageHandler = HermesClipboardImageHandler(applicationContext).also { handler ->
             MethodChannel(
@@ -481,6 +500,7 @@ class MainActivity : FlutterFragmentActivity() {
 
     private fun stopNetworkAvailabilityEvents() {
         networkAvailabilitySink = null
+        validatedNetwork = null
         if (!networkCallbackRegistered) return
         val connectivityManager =
             getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager

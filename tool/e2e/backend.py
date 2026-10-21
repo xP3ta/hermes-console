@@ -110,6 +110,11 @@ def make_responder(fake, work_dir: Path):
             # Enough chunks, slow enough, that the client sees several deltas.
             return fake.Text(f"streamed reply {tag} " + "lorem ipsum " * 20,
                              chunk_chars=12, delay_per_chunk=0.02)
+        if kind == "SLEEP":
+            # A turn that outlives a network cut: one `sleep` tool call, then a reply.
+            if after_tool:
+                return fake.Text(f"slept {tag}")
+            return fake.ToolCall("terminal", {"command": "sleep 25"})
         if kind == "SLOW":
             # A long stream so a test can cut the socket mid-turn.
             return fake.Text(f"slow reply {tag} " + "dolor sit amet " * 60,

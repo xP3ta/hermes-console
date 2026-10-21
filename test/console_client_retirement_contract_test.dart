@@ -113,12 +113,14 @@ void main() {
         );
         await tester.pumpAndSettle();
         expect(find.text('Legacy existing server'), findsOneWidget);
+        // The manager reads the Dashboard origin, as Desktop does.
+        final origin = Uri.parse(before.effectiveDashboardUrl);
         expect(
           requests.where(
             (uri) =>
-                uri.host == '127.0.0.1' &&
-                uri.port == 9119 &&
-                uri.path == '/health',
+                uri.host == origin.host &&
+                uri.port == origin.port &&
+                uri.path == '/api/status',
           ),
           isNotEmpty,
         );

@@ -64,7 +64,7 @@ void main() {
                     'manager-sessions' ||
                     'panel-key' => r.uri.path == '/api/sessions',
                     'manager-health' ||
-                    'panel-discovery' => r.uri.path == '/health',
+                    'panel-discovery' => r.uri.path == '/api/status',
                     _ => true,
                   };
               if (r.headers.value('authorization') != null) {
@@ -94,6 +94,9 @@ void main() {
             port: a.port,
             apiKey: 'synthetic-widget-key',
             kind: InstanceKind.localhost,
+            // Desktop's single origin: the Dashboard the screens now read.
+            dashboardUrl: 'http://127.0.0.1:${a.port}',
+            dashboardAuthMode: AuthMode.sessionToken,
           );
           SharedPreferences.setMockInitialValues({});
           FlutterSecureStorage.setMockInitialValues({});
@@ -101,6 +104,10 @@ void main() {
             await SharedPreferences.getInstance(),
           );
           await manager.upsertConnection(connection);
+          await manager.setDashboardSecrets(
+            connection.id,
+            sessionToken: 'synthetic-session',
+          );
           final dashboard = DashboardClient(
             host: '127.0.0.1',
             manualToken: 'synthetic-token',
@@ -118,8 +125,11 @@ void main() {
                 app(
                   InstanceStatusPanel(
                     connection: connection,
+                    connManager: route == 'panel-key' ? manager : null,
                     reachable: route == 'panel-key' ? (_) async => true : null,
-                    dashboardAuth: (_) async => DashboardAuthCheck.ok,
+                    dashboardAuth: route == 'panel-key'
+                        ? null
+                        : (_) async => DashboardAuthCheck.ok,
                   ),
                 ),
               );

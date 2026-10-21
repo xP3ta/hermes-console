@@ -503,7 +503,7 @@ void main() {
       expect(
         find.descendant(
           of: find.byKey(const ValueKey('hermes-dialog')),
-          matching: find.textContaining('la dirección y la clave del chat'),
+          matching: find.textContaining('la dirección y la clave de acceso'),
         ),
         findsOneWidget,
       );
@@ -590,33 +590,34 @@ void main() {
   );
 
   for (final port in [8643, 9131]) {
-    testWidgets('manual official localhost port $port is preserved', (
-      tester,
-    ) async {
-      final manager = await ConnectionManager.create(
-        await SharedPreferences.getInstance(),
-      );
-      await pumpEditor(tester, manager);
-      await tester.enterText(
-        find.byKey(const ValueKey('instance-gateway-url')),
-        'http://127.0.0.1:$port',
-      );
-      // The private-network note appears under the address and moves the rows
-      // below it: let that frame pass before typing into the next field.
-      await tester.pump();
-      await tester.enterText(
-        find.byKey(const ValueKey('instance-gateway-token')),
-        'synthetic-local-canary',
-      );
-      await revealAndTapSave(tester);
-      final saved = manager.getConnections().single;
-      expect(saved.gatewayUrl, 'http://127.0.0.1:$port');
-      expect(saved.apiKey, 'synthetic-local-canary');
-      expect(
-        secureStore.keys.where((key) => key.startsWith('bridge_')),
-        isEmpty,
-      );
-    });
+    testWidgets(
+      'manual official localhost port $port is preserved without a Gateway key',
+      (tester) async {
+        final manager = await ConnectionManager.create(
+          await SharedPreferences.getInstance(),
+        );
+        await pumpEditor(tester, manager);
+        await tester.enterText(
+          find.byKey(const ValueKey('instance-gateway-url')),
+          'http://127.0.0.1:$port',
+        );
+        // The private-network note appears under the address and moves the rows
+        // below it: let that frame pass before typing into the next field.
+        await tester.pump();
+        expect(
+          find.byKey(const ValueKey('instance-gateway-token')),
+          findsNothing,
+        );
+        await revealAndTapSave(tester);
+        final saved = manager.getConnections().single;
+        expect(saved.gatewayUrl, 'http://127.0.0.1:$port');
+        expect(saved.apiKey, '');
+        expect(
+          secureStore.keys.where((key) => key.startsWith('bridge_')),
+          isEmpty,
+        );
+      },
+    );
   }
 
   testWidgets(

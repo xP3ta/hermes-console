@@ -8,8 +8,8 @@
 // El filtrado de nivel/búsqueda se delega al servidor; el parsing local es
 // defensivo: una línea que no matchea el formato se muestra cruda.
 //
-// Las ejecuciones (/v1/runs) viven ahora en Ejecuciones (TaskCenterScreen),
-// la pantalla principal de runs; esta pantalla es solo el registro.
+// Las tareas viven en Tareas (TaskCenterScreen); esta pantalla es solo el
+// registro.
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 

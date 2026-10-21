@@ -35,14 +35,35 @@ Future<bool> signInToDashboard(
     if (saved.id == id) latest = saved;
   }
   if (latest == null) return false;
+  await storeDashboardSignIn(manager, latest, result);
+  return true;
+}
+
+/// Mode first, then secrets. When the secrets cannot be stored the previous
+/// mode comes back, so an instance that still holds its password is not left
+/// in session-token mode with nothing to use.
+@visibleForTesting
+Future<void> storeDashboardSignIn(
+  ConnectionManager manager,
+  SavedConnection latest,
+  DashboardCredsResult result,
+) async {
   await manager.upsertConnection(
     latest.copyWith(dashboardAuthMode: result.mode),
   );
-  await manager.setDashboardSecrets(
-    id,
-    sessionToken: result.sessionToken.isEmpty ? null : result.sessionToken,
-    username: result.username.isEmpty ? null : result.username,
-    password: result.password.isEmpty ? null : result.password,
-  );
-  return true;
+  try {
+    await manager.setDashboardSecrets(
+      latest.id,
+      sessionToken: result.sessionToken.isEmpty ? null : result.sessionToken,
+      username: result.username.isEmpty ? null : result.username,
+      password: result.password.isEmpty ? null : result.password,
+    );
+  } catch (_) {
+    try {
+      await manager.upsertConnection(latest);
+    } catch (_) {
+      // Keep the original failure; the revision bump already refreshed readers.
+    }
+    rethrow;
+  }
 }

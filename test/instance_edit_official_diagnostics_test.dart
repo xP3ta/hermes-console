@@ -55,28 +55,20 @@ void main() {
           if (r.url.path.startsWith('/bridge/')) {
             return http.Response('{}', 200);
           }
-          if (r.url.path == '/health') {
+          // The Gateway port is never asked: Desktop reads the Dashboard only.
+          expect(r.url.port, 19119);
+          if (r.url.path == '/api/health') {
             return http.Response('{"version":"synthetic"}', 200);
           }
           if (r.url.path == '/api/status') {
             return http.Response('{"auth_required":false}', 200);
           }
-          if (r.url.port == 9131) {
-            expect(r.headers['Authorization'], 'Bearer synthetic-gateway');
-          } else {
-            expect(r.url.port, 19119);
-            expect(
-              r.headers['X-Hermes-Session-Token'],
-              'synthetic-dashboard-token',
-            );
-          }
-          if (failure == 'timeout') throw TimeoutException('synthetic');
-          return http.Response(
-            r.url.path == '/v1/capabilities'
-                ? '{"object":"hermes.api_server.capabilities","features":{},"endpoints":{}}'
-                : '{}',
-            failure is int ? failure : 200,
+          expect(
+            r.headers['X-Hermes-Session-Token'],
+            'synthetic-dashboard-token',
           );
+          if (failure == 'timeout') throw TimeoutException('synthetic');
+          return http.Response('{}', failure is int ? failure : 200);
         });
         tester.view.physicalSize = const Size(1000, 2600);
         tester.view.devicePixelRatio = 1;
@@ -118,7 +110,7 @@ void main() {
           );
           expect(legacyBridge, findsNothing);
           expect(find.text('Mobile Bridge'), findsNothing);
-          for (final scope in ['gateway', 'dashboard']) {
+          for (final scope in ['dashboard']) {
             final action = find.byKey(ValueKey('diagnostics-run-$scope'));
             if (action.evaluate().isEmpty) {
               await tester.ensureVisible(technical);
@@ -138,10 +130,13 @@ void main() {
             isNotEmpty,
           );
           expect(
-            requests.where(
-              (r) => r.url.path == '/api/sessions' && r.url.port == 9131,
-            ),
+            requests.where((r) => r.url.path == '/api/sessions'),
             isNotEmpty,
+          );
+          expect(requests.where((r) => r.url.port == 9131), isEmpty);
+          expect(
+            find.byKey(const ValueKey('diagnostics-run-gateway')),
+            findsNothing,
           );
           expect(requests.every((r) => r.method == 'GET'), isTrue);
           expect(manager.getConnections().single.apiKey, 'synthetic-gateway');

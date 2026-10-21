@@ -5,80 +5,100 @@ Lab does not proxy conversations or operate a conversation backend.
 
 ## Before you start
 
-- Install Hermes Agent and make its Gateway reachable from Android.
-- Prefer HTTPS for remote access or a private network such as Tailscale/LAN.
-- Do not expose the Gateway or the Dashboard directly to the public internet
-  without TLS, authentication, and an appropriate network policy.
-- Have the Gateway `API_SERVER_KEY` available. It is not a model-provider API
-  key.
+- Install Hermes Agent on the computer or server you want to reach (see the
+  [Hermes Agent](https://github.com/NousResearch/hermes-agent) page).
+- Console connects to the Hermes **Dashboard**. It does not need the Gateway,
+  an `API_SERVER_KEY` or a pairing code.
+- Prefer a private network such as Tailscale (recommended) or your home LAN,
+  or HTTPS for remote access. Console only allows plain HTTP toward private
+  addresses.
+- Do not expose port 9119 to the public internet without TLS, authentication
+  and a network policy.
 
-## The quick way: the setup helper
+## The way to connect
 
-On the computer that runs Hermes, run one line (Linux, macOS and other Unix):
+1. **Run the setup command on the computer that runs Hermes.** Paste it in
+   Terminal (Linux, macOS), in PowerShell (Windows) or in the SSH window if
+   Hermes is on a server:
 
-```sh
-curl -fsSL https://raw.githubusercontent.com/xP3ta/hermes-setup/main/hermes-mobile-setup.sh | sh
-```
-
-or, in Windows PowerShell 5.1+ opened as administrator (also for WSL2, from
-outside WSL):
-
-```powershell
-irm https://raw.githubusercontent.com/xP3ta/hermes-setup/main/hermes-mobile-setup.ps1 | iex
-```
-
-It installs Hermes if it is missing, starts the Gateway and the Dashboard as
-background services, makes sure both have a key and a sign-in, checks them
-through the address the phone will use, and shows a code to scan. Console 1.2.15
-or newer is needed. The helper's other lines (show the code again, make a new
-Dashboard sign-in, remove an old bridge) are in
-[its README](https://github.com/xP3ta/hermes-setup).
-
-## What the server needs
-
-Console talks to two services of Hermes itself. Both are prepared on the
-computer that runs Hermes; none of it can be done from the phone. If you prefer
-not to use the helper, or it cannot run on your system, set them up by hand. In
-the app, the help behind **I don't have a code** shows the same lines ready to copy.
-
-1. **The Dashboard, with a username and password.** Add to the Hermes `.env`
-   file (`~/.hermes/.env` on Linux and macOS):
-
-   ```
-   HERMES_DASHBOARD_BASIC_AUTH_USERNAME=admin
-   HERMES_DASHBOARD_BASIC_AUTH_PASSWORD=your-new-password
+   ```sh
+   curl -fsSL https://raw.githubusercontent.com/xP3ta/hermes-setup/main/hermes-dashboard-setup.sh | sh
    ```
 
-   and start it open to your network:
-
-   ```
-   hermes dashboard --no-open --host 0.0.0.0 --port 9119
+   ```powershell
+   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/xP3ta/hermes-setup/main/hermes-dashboard-setup.ps1)))
    ```
 
-2. **The Gateway, with its key.** Make a long key (`openssl rand -hex 32`;
-   Hermes refuses a short one), add to the same `.env` file:
+   It installs the official Hermes only if it is missing (it does not touch
+   Telegram or the Gateway if Hermes is already there), leaves the Dashboard on
+   behind a password at a private address (home network or Tailscale), starts
+   it with the computer and, when it finishes, shows the address, the username,
+   the password and a QR code. By default Hermes listens only on the computer
+   itself (`127.0.0.1`, port 9119) and refuses to listen on the network without
+   a sign-in; the command takes care of both. The password is saved as a hash,
+   not in plain text.
 
+   Forgot the password? Run the command below; it makes a new one and ends the
+   old sessions. Console shows it under **Get access back**.
+
+   ```sh
+   curl -fsSL https://raw.githubusercontent.com/xP3ta/hermes-setup/main/hermes-dashboard-setup.sh | sh -s -- --new-access
    ```
-   API_SERVER_ENABLED=true
-   API_SERVER_HOST=0.0.0.0
-   API_SERVER_KEY=paste-the-key-here
+
+   ```powershell
+   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/xP3ta/hermes-setup/main/hermes-dashboard-setup.ps1))) -NewAccess
    ```
 
-   and start it with `hermes gateway`.
+2. **Join the phone and the computer on one private network.** The command
+   already picks a private address. Tailscale is the recommended option: install
+   it on both devices and sign in to the same account. Do not open port 9119 on
+   your router.
 
-3. **On the phone**, choose **Connect server**, enter the computer's address
-   and the Gateway key, and sign in to the Dashboard.
+   Hermes itself serves plain HTTP. Over a home network, the Dashboard username
+   and password therefore travel unencrypted, and Hermes counts private
+   addresses as public: it treats a hostile device on the LAN as the threat.
+   Prefer Tailscale (which encrypts the traffic) or HTTPS. Console asks you to
+   consent before it sends a sign-in unencrypted over a private network.
 
-**Check connection**, in the connection's screen, probes the Gateway and the
-Dashboard and says which of the two does not answer. Hermes itself prints no
-pairing code.
+   On a server or VPS with a public IP address, install Tailscale on the
+   server and on the phone first, and then run the same command. Do not publish
+   port 9119 to the internet. Use the address the setup shows in Console, not
+   the MagicDNS name, because with a specific bind Hermes only accepts requests
+   made to exactly that address.
 
-## Pairing links
+3. **Check it in a browser.** On the phone, open
+   `http://<computer-address>:9119`. The Dashboard sign-in page should appear.
 
-A `hermes://pair` link, or the QR code that carries one, fills the same form:
-the Gateway address and key and, when the link includes them (`dash_user`,
-`dash_pass`), the Dashboard sign-in. The app shows which of the two a link
-sets up before anything is saved.
+4. **In Console**, choose **I already have Hermes** and scan the code. Or
+   choose **Connect manually**, type the computer's address in
+   **Computer address** and sign in with the Dashboard username and password
+   the setup showed.
+   Console reads the Dashboard at port 9119 of that address; if you moved it to
+   another port, or it lives at a different address, open **Advanced** and set
+   **Dashboard port** or **Separate Dashboard address**.
+
+**Test connection**, in the connection's screen, checks the Dashboard and says
+what does not answer.
+
+Tips and limits:
+
+- With `--host 0.0.0.0` Hermes accepts requests made to any name or address of
+  the computer. If you instead bind it to one address (`--host <address>`),
+  Hermes only accepts requests made to exactly that address, so use that same
+  address in Console.
+- The setup command starts the Dashboard with the computer and restarts it by
+  itself. A Dashboard started by hand only works while its command is running
+  and does not come back after a restart.
+- Windows and WSL2: this page does not cover how to make a Dashboard that runs
+  inside WSL2 reachable from the phone.
+
+## Pairing links (older helpers)
+
+A `hermes://pair` link, or the QR code that carries one, was made by the older
+setup helper. Console still accepts it: it fills the same form with the address
+and, when the link includes them (`dash_user`, `dash_pass`), the Dashboard
+sign-in. The app shows what a link sets up before anything is saved. Hermes
+itself prints no pairing code, and the Dashboard-only flow above needs none.
 
 A pairing link contains reusable credentials. Treat it as a secret: scan it or
 paste it only into Console, and never put it in a model prompt or
@@ -86,46 +106,52 @@ transcript, publish it, attach it to an issue, or include it in a screenshot.
 
 ## The fields of a connection
 
-- **Gateway URL**: the address reachable from the phone, preferably over HTTPS.
-- **Gateway token**: the `API_SERVER_KEY` for this Hermes instance.
-- **Dashboard/Admin URL**: optional (by default, port 9119 of the same host,
-  or the Gateway's own origin when that is HTTPS); the Dashboard carries live
-  chat with profiles and Bot Chats, and the administrative features of the
-  server.
-- **Dashboard authentication**: automatic, session token, or Basic Auth,
-  according to the real server configuration.
+- **Computer address**: the address reachable from the phone, preferably over
+  HTTPS or a private network.
+- **Dashboard port** and **Separate Dashboard address** (under **Advanced**,
+  optional): by default, port 9119 of the same host, or the same port when the
+  address is HTTPS. The Dashboard carries live chat with profiles and Bot Chats,
+  and the administrative features of the server.
+- **Sign-in method** (Dashboard authentication): shown as **Saved sign-in**,
+  **Session token** or **Username and password**, according to the real server
+  configuration. You choose between **Session token** and **Username and
+  password**; **Saved sign-in** appears once a sign-in is stored.
 
-Credentials are stored through Android Keystore. Do not reuse sample tokens or
-paste OpenAI, OpenRouter, or other provider keys into the Gateway token field.
+Credentials are stored through Android Keystore. Do not paste OpenAI,
+OpenRouter, or other provider keys into the sign-in fields.
 
 ## Verify the connection
 
 After saving the instance:
 
 1. Open it and run the connection/capability check.
-2. Confirm that Gateway responds and that the expected profile and model are
-   shown.
-3. Verify the Gateway and the Dashboard separately.
-4. Enable read-only mode when the phone must not make remote changes.
-5. Configure App Lock before storing additional credentials or using
+2. Confirm that the Dashboard responds and that the expected profile and model
+   are shown.
+3. Enable read-only mode when the phone must not make remote changes.
+4. Configure App Lock before storing additional credentials or using
    administrative actions.
 
 ## Common failures
 
-- **Connection refused**: Gateway is stopped, listens only on loopback, or its
-  port is blocked.
+- **Connection refused**: the Dashboard is stopped, listens only on loopback
+  (it was started without `--host 0.0.0.0`), or its port is blocked.
 - **Timeout**: the phone has no route to the server; check Wi-Fi, VPN, or
   Tailscale.
 - **Host not found**: check DNS or MagicDNS.
 - **Invalid TLS**: use a trusted certificate or a private network; do not turn
   off device-wide security.
-- **401/403**: the `API_SERVER_KEY` does not match, or Dashboard requires its
-  own authentication.
+- **401/403**: the Dashboard username or password is wrong, or the Dashboard
+  needs another kind of sign-in.
 - **Dashboard password unknown**: it cannot be read back. Set a new one with
   the two `HERMES_DASHBOARD_BASIC_AUTH_*` lines above and restart the
   Dashboard.
 
-## Coming from a Mobile Bridge install
+## Coming from an older install
+
+Console no longer uses the Mobile Bridge or the Gateway. What an older setup may
+have left on the computer is harmless to leave, but you can remove it.
+
+### Mobile Bridge
 
 Up to 1.2.14 the app could talk to Hermes through a Mobile Bridge helper on
 port 9131. It no longer does: on the first launch after updating, the app
@@ -147,6 +173,40 @@ curl -fsSL https://raw.githubusercontent.com/xP3ta/hermes-setup/main/hermes-mobi
 
 ```powershell
 & ([scriptblock]::Create((irm https://raw.githubusercontent.com/xP3ta/hermes-setup/main/hermes-mobile-setup.ps1))) -RetireBridge
+```
+
+### Gateway opened to the network
+
+The older setup helper started Hermes' Gateway (API server) on your network. It
+saved an `API_SERVER_KEY` in the `.env` file (`~/.hermes/.env` on Linux and
+macOS) and set the listening address and port (`API_SERVER_HOST`,
+`API_SERVER_PORT`) in the settings of the service it created, not in `.env`.
+The old manual guide asked for these lines in `.env` instead:
+
+```
+API_SERVER_ENABLED=true
+API_SERVER_HOST=0.0.0.0
+API_SERVER_KEY=...
+```
+
+Console does not need any of it. Hermes only starts that API server when
+`API_SERVER_KEY` holds a usable key (at least 16 characters), and it listens on
+`API_SERVER_HOST` (default `127.0.0.1`) and port 8642. If you do not use the API
+server for anything else, delete the `API_SERVER_KEY` line (and
+`API_SERVER_ENABLED` and `API_SERVER_HOST` if you added them by hand) and
+restart the Gateway, for example with `hermes gateway restart`. Without a usable
+key Hermes does not start the API server, so an address left in the service
+settings exposes nothing. The Gateway itself (the part that runs your messaging
+platforms) is a separate thing and can keep running. The setup helper has an
+option that undoes only this exposure (it keeps your `API_SERVER_KEY` unless you
+add `--also-remove-api-key`); run it only when every phone uses Console 1.3:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/xP3ta/hermes-setup/main/hermes-dashboard-setup.sh | sh -s -- --retire-gateway-exposure
+```
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/xP3ta/hermes-setup/main/hermes-dashboard-setup.ps1))) -RetireGatewayExposure
 ```
 
 For data destinations and optional services, read the

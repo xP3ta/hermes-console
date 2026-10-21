@@ -23,19 +23,22 @@ const fakeFullPairing = PairingLink(
   dashboardPassword: 'synthetic-panel-password',
 );
 
+/// A Dashboard-only run, like the real one: [reachStatus] is its liveness
+/// probe (`/api/status`), [dashboardStatus] the login and the authenticated
+/// `/api/sessions` read behind it.
 class OnboardingDiagnostics extends ConnectionDiagnostics {
   OnboardingDiagnostics({
-    this.gatewayStatus = ProbeStatus.ok,
+    this.reachStatus = ProbeStatus.ok,
     this.dashboardStatus = ProbeStatus.ok,
     this.readOnly = false,
   });
-  final ProbeStatus gatewayStatus;
+  final ProbeStatus reachStatus;
   final ProbeStatus dashboardStatus;
   final bool readOnly;
   int calls = 0;
 
-  /// Holds the run between the two surfaces, so a test can look at the
-  /// screen with only the first one checked.
+  /// Holds the run before the Dashboard answers, so a test can look at the
+  /// screen while the first row is still spinning.
   Completer<void>? gate;
   SavedConnection? target;
   DashboardSecrets? sentSecrets;
@@ -50,18 +53,29 @@ class OnboardingDiagnostics extends ConnectionDiagnostics {
     calls++;
     target = conn;
     sentSecrets = secrets;
-    final gateway = [ProbeResult(name: 'sessions', status: gatewayStatus)];
-    final dashboard = [ProbeResult(name: 'auth', status: dashboardStatus)];
-    onStage?.call(DiagnosticsStage.gateway, gateway);
+    const down = {
+      ProbeStatus.timeout,
+      ProbeStatus.dnsError,
+      ProbeStatus.refused,
+      ProbeStatus.error,
+      ProbeStatus.tlsError,
+    };
+    final up = !down.contains(reachStatus);
+    final dashboard = [
+      ProbeResult(name: 'status', status: reachStatus),
+      if (up) ProbeResult(name: 'auth', status: dashboardStatus),
+      if (up && dashboardStatus.isOk)
+        const ProbeResult(name: 'sessions', status: ProbeStatus.ok),
+    ];
     await gate?.future;
     onStage?.call(DiagnosticsStage.dashboard, dashboard);
     return DiagnosticsReport(
-      gateway: gateway,
+      gateway: const [],
       dashboard: dashboard,
       matrix: CapabilityMatrix(
-        gatewayAuthValid: gatewayStatus.isOk ? CapState.yes : CapState.no,
         dashboardAuthValid: dashboardStatus.isOk ? CapState.yes : CapState.no,
-        chatSupported: readOnly ? CapState.no : CapState.yes,
+        sessionsRead: dashboardStatus.isOk ? CapState.yes : CapState.unknown,
+        chatSupported: readOnly ? CapState.no : CapState.unknown,
         sessionsWrite: readOnly ? CapState.no : CapState.yes,
         checkedAtMs: 1,
       ),

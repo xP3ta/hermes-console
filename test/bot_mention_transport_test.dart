@@ -1,10 +1,7 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:http/http.dart' as http;
-import 'package:http/testing.dart';
 import 'package:hermes_android/core/models/agent_profile.dart';
 import 'package:hermes_android/core/models/attachment_draft.dart';
 import 'package:hermes_android/core/models/bot_mention.dart';
@@ -14,6 +11,7 @@ import 'package:hermes_android/core/services/bot_mention_roster.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/turn_outbox_store.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
+import 'support/desktop_chat_socket.dart';
 import 'support/in_memory_compression_restore_storage.dart';
 
 class _Store implements TurnOutboxPersistence {
@@ -255,22 +253,18 @@ void main() {
   }
 
   test(
-    'REST fallback uses full attachment text and exactly one frozen note',
+    'WS send carries the desktop text and exactly one frozen note, no REST',
     () async {
-      final inputs = <String>[];
+      final socket = DesktopChatSocket();
+      final counter = HostCounter();
       final api = ApiClient(
         baseUrl: 'https://example.invalid',
         apiKey: 'fixture',
-        httpClient: MockClient((request) async {
-          if (request.method == 'POST' && request.url.path == '/v1/runs') {
-            inputs.add((jsonDecode(request.body) as Map)['input'] as String);
-            return http.Response('{"run_id":"run"}', 200);
-          }
-          return http.Response('{}', 404);
-        }),
+        httpClient: counter,
       );
-      final subject = chat(api: api);
+      final subject = chat(gateway: socket, api: api);
       addTearDown(subject.dispose);
+      addTearDown(socket.close);
       final prepared = turn(
         fullText: '@ops\n⟦adjunto⟧\n```txt\nbody\n```',
         desktopText: '@ops',
@@ -284,8 +278,11 @@ void main() {
         ),
         isTrue,
       );
-      expect(inputs, ['${prepared.fullText}${prepared.mentionAnnotation}']);
-      expect('@mentions resolved'.allMatches(inputs.single).length, 1);
+      expect(socket.submitTexts, ['@ops${prepared.mentionAnnotation}']);
+      expect(
+        '@mentions resolved'.allMatches(socket.submitTexts.single).length,
+        1,
+      );
     },
   );
 }

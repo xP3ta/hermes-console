@@ -6,7 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/screens/dashboard_password_screen.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
-import 'package:hermes_android/core/services/hermes_setup_commands.dart';
+import 'package:hermes_android/core/services/official_dashboard_command.dart';
 import 'package:hermes_android/core/widgets/command_block.dart';
 import 'package:hermes_android/core/widgets/hermes_ui.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
@@ -200,7 +200,7 @@ void main() {
         final command = tester
             .widget<CommandBlock>(find.byType(CommandBlock))
             .command;
-        expect(command, HermesSetupCommands.newAccess(SetupHostSystem.unix));
+        expect(command, kOfficialDashboardResetCommand);
         Navigator.of(
           tester.element(find.byType(DashboardPasswordScreen)),
         ).pop();

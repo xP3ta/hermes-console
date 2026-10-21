@@ -62,6 +62,21 @@ void main() {
         disableForegroundKeepAlive: true,
       );
 
+      final releaseThirdResume = Completer<List<Map<String, dynamic>>>();
+      var thirdReads = 0;
+      final third = service.attach(
+        connection: connection('conn-resume-order'),
+        sessionId: 'third',
+        sessionTitle: 'third',
+        api: api(),
+        storedMessageLoader: (_, _) {
+          thirdReads += 1;
+          if (thirdReads == 1) return Future.value([user('third-user')]);
+          return releaseThirdResume.future;
+        },
+        disableForegroundKeepAlive: true,
+      );
+
       var visibleReads = 0;
       final visible = service.attach(
         connection: connection('conn-resume-order'),
@@ -85,8 +100,10 @@ void main() {
       );
 
       await earlier.loadMessages();
+      await third.loadMessages();
       await visible.loadMessages();
       earlier.state = ChatPipelineState.completed;
+      third.state = ChatPipelineState.completed;
       visible.state = ChatPipelineState.completed;
 
       final globalResume = service.reconcileAfterResume();
@@ -95,7 +112,9 @@ void main() {
       expect(
         visible.resumeReconciliationInFlight,
         isTrue,
-        reason: 'el chat visible debe quedar reservado antes del await serial',
+        reason:
+            'el chat visible debe quedar reservado antes de su turno '
+            '(N6b: dos lecturas a la vez, los otros dos ocupan los puestos)',
       );
 
       final reader = ForegroundConversationReader(
@@ -118,6 +137,7 @@ void main() {
       );
 
       releaseEarlierResume.complete([user('earlier-user')]);
+      releaseThirdResume.complete([user('third-user')]);
       await globalResume;
       expect(visibleReads, 2);
       expect(

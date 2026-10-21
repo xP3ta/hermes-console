@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../../l10n/app_localizations.dart';
 import '../guide/guided_tour.dart';
 import '../services/connection_manager.dart';
+import '../services/new_session_factory.dart';
 import '../theme/app_theme.dart';
 import '../widgets/hermes_app_bar.dart';
 import '../widgets/hermes_ui.dart';
@@ -50,7 +51,7 @@ class GuidedToursScreen extends StatelessWidget {
                 : (_) => ChatScreen(
                     connection: conn,
                     session: Session(
-                      id: GatewayChatClient.generateSessionId(),
+                      id: generateSessionId(),
                       title: strings.drawerNewChat,
                       model: 'hermes-agent',
                       source: 'mobile',

@@ -30,8 +30,8 @@ class _TicketDashboardClient extends DashboardClient {
 }
 
 void main() {
-  test('reconnect backoff never undercuts the base and caps at 15/60 s', () {
-    final samples = <double>[0, 0.5, 1, 1, 1, 1, 1, 1].iterator;
+  test('reconnect backoff is Desktop full jitter (base 300 ms), caps 15/60 s', () {
+    final samples = <double>[0, 0.5, 1, 1, 1, 1, 1, 1, 1, 1].iterator;
     final backoff = GatewayReconnectBackoff(
       random: () {
         samples.moveNext();
@@ -39,10 +39,12 @@ void main() {
       },
     );
 
-    expect(backoff.nextDelay(), const Duration(seconds: 1));
-    expect(backoff.nextDelay(), const Duration(milliseconds: 1500));
-    expect(backoff.nextDelay(), const Duration(seconds: 4));
-    expect(backoff.nextDelay(), const Duration(seconds: 8));
+    expect(backoff.nextDelay(), Duration.zero);
+    expect(backoff.nextDelay(), const Duration(milliseconds: 300));
+    expect(backoff.nextDelay(), const Duration(milliseconds: 1200));
+    expect(backoff.nextDelay(), const Duration(milliseconds: 2400));
+    expect(backoff.nextDelay(), const Duration(milliseconds: 4800));
+    expect(backoff.nextDelay(), const Duration(milliseconds: 9600));
     expect(backoff.nextDelay(), const Duration(seconds: 15));
     expect(backoff.nextDelay(), const Duration(seconds: 15));
     addTearDown(() => GatewayReconnectBackoff.backgroundCadence = false);
@@ -54,8 +56,8 @@ void main() {
     reset.nextDelay();
     reset.nextDelay();
     reset.markHealthy();
-    // Back to attempt 0: its jitter window is [1 s, 1.5 s].
-    expect(reset.nextDelay(), const Duration(milliseconds: 1500));
+    // Back to attempt 0: its window is [0, 300 ms).
+    expect(reset.nextDelay(), const Duration(milliseconds: 300));
   });
 
   test(

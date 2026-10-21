@@ -2,6 +2,7 @@ export '../widgets/session_status_tone.dart'
     show readableActivityTone, resolveActivityTone;
 
 import 'dart:async';
+import '../bots/data/gateway_socket_meter.dart';
 import '../services/app_lock_sensitive_read_fence.dart';
 import 'dart:io';
 
@@ -30,6 +31,7 @@ import '../models/hosted_groups.dart';
 import '../models/kanban.dart';
 import '../models/mission_control.dart';
 import '../services/approval_policy.dart';
+import '../services/connection_status.dart';
 import '../services/cron_repository.dart';
 import '../services/kanban_client.dart';
 import '../services/kanban_watch_board.dart';
@@ -51,11 +53,14 @@ import '../services/bot_roster_store.dart';
 import '../services/active_chat_service.dart';
 import '../services/app_lock.dart';
 import '../services/connection_manager.dart';
+import 'dashboard_sign_in.dart';
+import '../services/new_session_factory.dart';
 import '../services/chat_draft_store.dart';
 import '../services/drawer_gesture_exclusion.dart';
 import '../services/global_activity_aggregate.dart';
 import '../services/home_widget_publisher.dart';
 import '../services/cold_start_store.dart';
+import '../services/roster_known_filter.dart';
 import '../services/session_archive.dart';
 import '../services/session_repository.dart';
 import '../services/session_deletion.dart';
@@ -64,9 +69,11 @@ import '../services/shared_gateway_pool.dart';
 import '../services/mission_snapshot_prewarm.dart';
 import '../services/model_picker_prewarm.dart';
 import '../services/models_snapshot.dart';
+import '../services/onboarding_arrival.dart';
 import '../theme/app_theme.dart';
 import '../utils/home_recent_sessions.dart';
 import '../utils/session_title.dart';
+import '../widgets/seasonal_mark.dart';
 import '../widgets/onstage_gate.dart';
 import '../widgets/attachment_source_sheet.dart';
 import '../shell/gesture_dock.dart' show gestureDockFootprint;
@@ -92,6 +99,7 @@ import '../widgets/hermes_update_card.dart' show HermesUpdatePresentation;
 import 'chat_screen.dart';
 import 'gateway_manager_screen.dart';
 import 'mission_control_screen.dart';
+import 'onboarding/manual_setup_page.dart';
 import 'onboarding_screen.dart';
 import 'session_list_screen.dart';
 import 'settings_screen.dart';
@@ -243,6 +251,19 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
       !(_healthOk && _active != null && _healthOkConnectionId == _active!.id);
   bool _checking = false;
 
+  /// The chat-lane socket's status (single source). While it is down Home never
+  /// says «connected», whatever the REST probe answered.
+  ConnectionStatus? get _link {
+    final id = _active?.id;
+    return id == null ? null : ConnectionStatusRegistry.instance.current(id);
+  }
+
+  bool get _socketDown => _link?.isConnected == false;
+
+  void _onLinkChanged() {
+    if (mounted) setState(() {});
+  }
+
   /// Saved Dashboard login of a healthy remote instance; a rejected or
   /// missing login keeps the header pill from claiming the agent is online.
   DashboardAuthCheck _dashboardAuth = DashboardAuthCheck.unknown;
@@ -251,6 +272,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   /// The last read of the active profile's list failed while the connection
   /// answered: Home stays online and says so next to the list.
   bool _recentListFailed = false;
+  bool _recentListLoginRefused = false;
   SessionArchive? _archive;
   SessionListRead? _statusListRead;
   StreamSubscription<HistoryCleanupInvalidation>? _historyCleanupSubscription;
@@ -359,6 +381,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
 
   @override
   void dispose() {
+    ConnectionStatusRegistry.instance.changes.removeListener(_onLinkChanged);
     AppLockSensitiveReadFence.changes.removeListener(_onDraftDisclosureChanged);
     DockActivityFeed.instance.clear(this);
     _missionPrewarm.cancel();
@@ -579,6 +602,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   void initState() {
     super.initState();
     AppLockSensitiveReadFence.changes.addListener(_onDraftDisclosureChanged);
+    ConnectionStatusRegistry.instance.changes.addListener(_onLinkChanged);
     _activeIdsGate.addListener(_onActivityChanged);
     _liveStatusGate.addListener(_onActivityChanged);
     _homeSourcesGate.addListener(_onActivityChanged);
@@ -874,7 +898,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   }
 
   void _markActivityTransportStale(String connectionId) {
-    if (_activityConnectionId != connectionId) return;
+    if (!mounted || _activityConnectionId != connectionId) return;
     _activityStableTimer?.cancel();
     _activityStableTimer = null;
     final profile = Session.profileOwner(
@@ -955,7 +979,18 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
         profile: profile,
         replayEpoch: _ownedActivityClient?.currentReplayEpoch ?? 'current',
         requestGeneration: generation,
-        roster: roster,
+        // Only rows this profile knows become its activity; the team faces
+        // below keep the whole roster.
+        roster: filterRosterToKnown(
+          roster,
+          knownSessionIds(
+            sessions: _recentSessions,
+            pinnedIds: _archive?.pinnedIds ?? const [],
+            roster: roster,
+            hasLocalChat: (id) =>
+                _activeChats?.of(connection.id, id, profile: profile) != null,
+          ),
+        ),
       );
       // The same read feeds the team faces (every live session of the
       // gateway process, whichever profile).
@@ -1033,6 +1068,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
       });
       _followProfileScope(active);
       _configureActivitySource(active);
+      _openArrivalChat(active);
       // cs1215: the last known recents paint while the network read runs;
       // neither waits for the other.
       final refresh = _refreshStatus();
@@ -1041,6 +1077,16 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     } finally {
       if (epoch == _reloadEpoch) _completeInitialLoad();
     }
+  }
+
+  /// The onboarding's «Open chat» left a one-shot request for this
+  /// connection: open one new chat, once, if this Home is the screen in view.
+  void _openArrivalChat(SavedConnection? active) {
+    if (active == null || !OnboardingArrival.take(active.id)) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !(ModalRoute.of(context)?.isCurrent ?? false)) return;
+      _newChat();
+    });
   }
 
   /// Ends the initial loading state once (the recents placeholder goes).
@@ -1188,7 +1234,23 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
       _active?.id == connectionId &&
       (_statusTicket?.isCurrent ?? true);
 
-  Future<void> _refreshStatus() async {
+  /// The list failed because the Dashboard refused the saved login: the same
+  /// sign-in the chat offers, then a fresh read.
+  Future<void> _signInFromList() async {
+    final conn = _active;
+    if (conn == null) return;
+    final signedIn = await signInToDashboard(
+      Navigator.of(context),
+      widget.connManager,
+      conn,
+    );
+    if (signedIn && mounted) unawaited(_refreshStatus());
+  }
+
+  Future<void> _refreshStatus() =>
+      GatewaySocketMeter.origin('home.observer', _refreshStatusLabelled);
+
+  Future<void> _refreshStatusLabelled() async {
     final refreshEpoch = ++_refreshStatusEpoch;
     final conn = _active;
     final connectionId = conn?.id;
@@ -1257,10 +1319,11 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     final listRead = _statusListRead = archive.beginListRead();
     if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
     bool ok = false;
-    // /health answered but the paged list did not (timeout, 5xx, reset).
+    // The Dashboard liveness answered but the paged list did not (timeout, 5xx, reset).
     // The server is reachable: keep the last known list instead of flipping
     // Home to offline on every slow refresh (#1215).
     var listReadUnavailable = false;
+    var listLoginRefused = false;
     Future<DashboardAuthCheck>? dashboardAuthFuture;
     List<Session> sessions = [];
     final draftTicket = AppLockSensitiveReadFence.capture(
@@ -1320,13 +1383,22 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
                 wanted,
           );
         } on CoreReadException catch (error) {
-          // A rejected key is a real outage of this connection. A named
-          // profile's list has its own credentials (its Dashboard scope):
-          // its refusal leaves the connection online with a list error.
-          if ((error.kind == CoreReadErrorKind.auth ||
-                  error.kind == CoreReadErrorKind.forbidden) &&
-              ownerProfile == 'default') {
-            rethrow;
+          // The list comes from the Dashboard, which answered: a refused
+          // login is «login required», never an outage of the connection.
+          final refused =
+              error.kind == CoreReadErrorKind.auth ||
+              error.kind == CoreReadErrorKind.forbidden;
+          // The session belongs to the connection, so any profile's card
+          // offers the sign-in; only the default's header is corrected.
+          listLoginRefused = refused;
+          if (refused && ownerProfile == 'default') {
+            dashboardAuthFuture = dashboardAuthFuture
+                .catchError((_) => DashboardAuthCheck.unknown)
+                .then(
+                  (auth) => auth == DashboardAuthCheck.invalidCredentials
+                      ? auth
+                      : DashboardAuthCheck.loginRequired,
+                );
           }
           listReadUnavailable = true;
         } on TimeoutException {
@@ -1406,6 +1478,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     }
     setState(() {
       _healthOk = ok;
+      ConnectionStatusRegistry.instance.reportRest(conn.id, reachable: ok);
       _healthOkConnectionId = ok ? conn.id : null;
       if (!ok) _dashboardAuth = DashboardAuthCheck.unknown;
       _checking = false;
@@ -1419,6 +1492,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
         _showingColdStartRecents = false;
       }
       _recentListFailed = ok && listReadUnavailable;
+      _recentListLoginRefused = _recentListFailed && listLoginRefused;
     });
     listRead.end(rows: listReadUnavailable ? const [] : sessions);
     if (ok && !listReadUnavailable) {
@@ -1590,7 +1664,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   }) {
     _openChat(
       Session(
-        id: GatewayChatClient.generateSessionId(),
+        id: generateSessionId(),
         // Título inicial localizado: 'New Chat' hardcodeado se veía en inglés
         // en recientes/appbar hasta que el servidor renombraba (spec 028 A-028).
         title: Strings.of(context).drawerNewChat,
@@ -1663,6 +1737,8 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   }
 
   DateTime _clock() => (widget.clockOverride ?? DateTime.now)();
+
+  final _roomsReads = HomeRoomsReads();
 
   MissionSnapshotCache get _missionCache =>
       widget.missionSnapshotCacheOverride ?? MissionSnapshotCache.shared;
@@ -1837,6 +1913,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
       now.millisecondsSinceEpoch ~/ Duration.millisecondsPerMinute,
       Localizations.localeOf(context),
       _healthOk,
+      _link?.kind,
       _statusChecking,
       _latencyMs,
       _serverInfo,
@@ -2005,6 +2082,10 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
           : null,
     );
     final groups = snapshot?.hostedGroups ?? HostedGroupsSnapshot.empty;
+    final roomsState = _roomsReads.observe(
+      MissionSnapshotCache.keyOf(conn),
+      snapshot,
+    );
     String roomTitle(HostedGroupRoom room) =>
         snapshot?.roomIdentity(room)?.name ?? room.name;
     final roomPrefs = SharedPreferencesRoomPrefs(widget.connManager.prefs);
@@ -2068,6 +2149,8 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
         attention: attention,
       ),
       botsLoaded: snapshot != null || store.isLive,
+      roomsState: roomsState,
+      roomsFailedReads: _roomsReads.failedReads,
       botsKnown:
           store.isLive ||
           snapshot?.profilesCapability == MissionCapabilityState.available,
@@ -2081,8 +2164,9 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
       server: HomeBoardServer(
         label: conn.label,
         online: _healthOk,
+        link: _link?.kind,
         checking: _statusChecking,
-        latencyMs: _healthOk ? _latencyMs : null,
+        latencyMs: _healthOk && !_socketDown ? _latencyMs : null,
         version: serverInfo?.version,
         updateAvailable: serverInfo?.update,
       ),
@@ -2684,17 +2768,26 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
                   // el notifier global lo refleja al instante al volver de Ajustes.
                   ValueListenableBuilder<String>(
                     valueListenable: headerTitleNotifier,
-                    builder: (context, title, _) => Text(
-                      title,
-                      key: const ValueKey('home-header-title'),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontWeight: FontWeight.w600,
-                        letterSpacing: -0.2,
-                        fontSize: 18,
-                        color: colors.textPrimary,
-                      ),
+                    builder: (context, title, _) => Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const SeasonalMark(key: ValueKey('home-header-mark')),
+                        const SizedBox(width: 8),
+                        Flexible(
+                          child: Text(
+                            title,
+                            key: const ValueKey('home-header-title'),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontWeight: FontWeight.w600,
+                              letterSpacing: -0.2,
+                              fontSize: 18,
+                              color: colors.textPrimary,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                   const SizedBox(height: 1),
@@ -2781,7 +2874,8 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
         connection: _active,
         connManager: widget.connManager,
         current: DrawerSection.home,
-        connected: _healthOk,
+        connected: _healthOk && !_socketDown,
+        link: _link?.kind,
         checking: _statusChecking,
         onSectionReturn: _reload,
       ),
@@ -2820,6 +2914,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
                       widget.connManager.activeProfileFor(active.id),
                     ),
                     onRetry: _refreshStatus,
+                    onSignIn: _recentListLoginRefused ? _signInFromList : null,
                   ),
                 if (isRemoteAndOffline)
                   _RemoteInstanceOfflineCard(
@@ -2932,8 +3027,13 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
 class _ProfileListErrorCard extends StatelessWidget {
   final String profile;
   final VoidCallback onRetry;
+  final VoidCallback? onSignIn;
 
-  const _ProfileListErrorCard({required this.profile, required this.onRetry});
+  const _ProfileListErrorCard({
+    required this.profile,
+    required this.onRetry,
+    this.onSignIn,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -2942,10 +3042,14 @@ class _ProfileListErrorCard extends StatelessWidget {
       key: const ValueKey('home-profile-list-error'),
       compact: true,
       title: s.homeProfileListErrorTitle(profile),
-      body: s.homeProfileListErrorBody,
-      primaryLabel: s.commonRetry,
-      primaryIcon: Icons.refresh_rounded,
-      onPrimary: onRetry,
+      body: onSignIn != null
+          ? s.s2SessionExpiredBody
+          : s.homeProfileListErrorBody,
+      primaryLabel: onSignIn != null ? s.s2SessionExpiredSignIn : s.commonRetry,
+      primaryIcon: onSignIn != null
+          ? Icons.login_rounded
+          : Icons.refresh_rounded,
+      onPrimary: onSignIn ?? onRetry,
       padding: const EdgeInsets.fromLTRB(18, 18, 18, 22),
     );
   }
@@ -3035,6 +3139,29 @@ class _RemoteInstanceOfflineCardState
                         onPressed: widget.onRetry,
                         icon: const Icon(Icons.refresh_rounded, size: 18),
                         label: Text(s.commonRetry),
+                        style: TextButton.styleFrom(
+                          minimumSize: const Size(48, 48),
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                          foregroundColor: colors.accentHover,
+                        ),
+                      ),
+                      // A connection that only had the Gateway meets the
+                      // Dashboard here: the official command, one tap away.
+                      TextButton.icon(
+                        key: const ValueKey('home-offline-dashboard-setup'),
+                        onPressed: () => Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) => ManualSetupPage(
+                              connManager: context
+                                  .findAncestorWidgetOfExactType<
+                                    HomeDashboardScreen
+                                  >()
+                                  ?.connManager,
+                            ),
+                          ),
+                        ),
+                        icon: const Icon(Icons.terminal_rounded, size: 18),
+                        label: Text(s.homeOfflineDashboardSetup),
                         style: TextButton.styleFrom(
                           minimumSize: const Size(48, 48),
                           padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -3210,5 +3337,6 @@ class _EmptyHomeState extends StatelessWidget {
   }
 }
 
-/// Add-gateway dialog with live validation against /health before saving.
+/// Add-instance dialog with live validation against the Dashboard before
+/// saving.
 /// Kept public so onboarding flows elsewhere can reuse it.

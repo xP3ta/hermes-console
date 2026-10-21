@@ -175,10 +175,12 @@ void main() {
     }
   }
 
-  /// A chat whose first frame is out.
+  /// A chat whose first frame is out, and — unless [press] is false — a
+  /// finger landing on its microphone button.
   Future<ChatRecognizerPrewarm> openChat(
     _Rig rig, {
     String profile = '',
+    bool press = true,
   }) async {
     final prewarm = ChatRecognizerPrewarm.attach(
       voice: rig.voice,
@@ -193,9 +195,9 @@ void main() {
         return rig.deviceConstrained;
       },
       dashboardIdentity: (_) => _dashboard,
-      settle: Duration.zero,
     );
     addTearDown(prewarm.detach);
+    if (press) prewarm.armOnMicPressDown();
     await settle();
     return prewarm;
   }
@@ -283,10 +285,14 @@ void main() {
       expect(phone.deviceAsked, 1);
       expect(phone.engines, isEmpty);
 
-      // Battery saver goes off while the app is away: coming back loads it.
+      // Battery saver goes off while the app is away: coming back loads
+      // nothing, the next touch of the microphone does.
       phone.deviceConstrained = false;
       chat.didChangeAppLifecycleState(AppLifecycleState.hidden);
       chat.didChangeAppLifecycleState(AppLifecycleState.resumed);
+      await settle();
+      expect(phone.engines, isEmpty);
+      chat.armOnMicPressDown();
       await settle();
       expect(phone.engines.single.prewarmCalls, 1);
     });
@@ -378,37 +384,76 @@ void main() {
     });
   });
 
-  testWidgets('the chat comes in first: nothing is asked or loaded while it '
-      'settles, and leaving meanwhile loads nothing', (tester) async {
+  testWidgets('the first touch of the microphone loads it once, even '
+      'pressed twice while it loads', (tester) async {
     final phone = (await tester.runAsync(rig))!;
-    ChatRecognizerPrewarm open() => ChatRecognizerPrewarm.attach(
+    final profile = Completer<String>();
+    final chat = ChatRecognizerPrewarm.attach(
       voice: phone.voice,
       preferences: phone.preferences,
       connection: connection,
-      profile: () async {
+      profile: () {
         phone.profileAsked++;
-        return '';
+        return profile.future;
       },
       deviceConstrained: () async => false,
       dashboardIdentity: (_) => _dashboard,
     );
-
-    final gone = open();
-    await tester.pump(
-      ChatRecognizerPrewarm.settleTime - const Duration(milliseconds: 1),
-    );
-    expect(phone.profileAsked, 0);
-    expect(phone.engines, isEmpty);
-    gone.detach();
     await tester.pump(const Duration(seconds: 1));
-    expect(phone.profileAsked, 0);
     expect(phone.engines, isEmpty);
 
-    final stays = open();
-    await tester.pump(ChatRecognizerPrewarm.settleTime);
+    chat.armOnMicPressDown();
+    chat.armOnMicPressDown();
+    profile.complete('');
     await tester.pump();
+    await tester.pump();
+    expect(phone.engines, hasLength(1));
     expect(phone.engines.single.prewarmCalls, 1);
-    stays.detach();
+
+    chat.armOnMicPressDown();
+    await tester.pump();
+    expect(phone.engines, hasLength(1));
+    chat.detach();
+  });
+
+  group('opening a chat loads nothing', () {
+    testWidgets('not when it comes up, however long it stays', (tester) async {
+      final phone = (await tester.runAsync(rig))!;
+      final chat = ChatRecognizerPrewarm.attach(
+        voice: phone.voice,
+        preferences: phone.preferences,
+        connection: connection,
+        profile: () async {
+          phone.profileAsked++;
+          return '';
+        },
+        deviceConstrained: () async => false,
+        dashboardIdentity: (_) => _dashboard,
+      );
+      await tester.pump(const Duration(milliseconds: 600));
+      await tester.pump(const Duration(seconds: 1));
+      expect(phone.engines, isEmpty);
+      expect(phone.profileAsked, 0);
+      chat.detach();
+    });
+
+    testWidgets('not when the app comes back to the chat', (tester) async {
+      final phone = (await tester.runAsync(rig))!;
+      final chat = ChatRecognizerPrewarm.attach(
+        voice: phone.voice,
+        preferences: phone.preferences,
+        connection: connection,
+        profile: () async => '',
+        deviceConstrained: () async => false,
+        dashboardIdentity: (_) => _dashboard,
+      );
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump(const Duration(milliseconds: 600));
+      await tester.pump(const Duration(seconds: 1));
+      expect(phone.engines, isEmpty);
+      chat.detach();
+    });
   });
 
   group('the voice start that follows', () {
@@ -479,7 +524,7 @@ void main() {
     });
 
     test(
-      'the app leaving the screen, and coming back loads it again',
+      'the app leaving the screen, and the next touch loads it again',
       () async {
         final phone = await rig();
         final chat = await openChat(phone);
@@ -498,6 +543,9 @@ void main() {
         expect(phone.engines.single.disposeCalls, 1);
 
         chat.didChangeAppLifecycleState(AppLifecycleState.resumed);
+        await settle();
+        expect(phone.engines, hasLength(1), reason: 'coming back loads none');
+        chat.armOnMicPressDown();
         await settle();
         expect(phone.engines, hasLength(2));
         expect(phone.engines.last.prewarmCalls, 1);

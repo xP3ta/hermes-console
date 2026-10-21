@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import '../models/connection.dart';
+import 'connection_status.dart';
 import 'tui_gateway_client.dart';
 
 /// Conexión Desktop compartida para observadores de solo lectura (inicio,
@@ -61,7 +62,12 @@ class SharedGatewayPool {
   SharedGatewayLease acquire(
     SavedConnection connection, {
     TuiGatewayClient Function(SavedConnection connection)? factory,
-  }) => _acquire(_keyFor(connection), connection, factory: factory);
+  }) => _acquire(
+    _keyFor(connection),
+    connection,
+    factory: factory,
+    meterLane: 'observer',
+  );
 
   /// The chat socket of ([connection], [profile]): one WebSocket that every
   /// open chat of that profile multiplexes its session over. After the last
@@ -77,6 +83,8 @@ class SharedGatewayPool {
     connection,
     factory: factory,
     chatLinger: chatLinger,
+    meterLane: 'chat',
+    meterProfile: profile.trim(),
   );
 
   static const String _chatLane = '|chat';
@@ -86,7 +94,8 @@ class SharedGatewayPool {
 
   /// Another chat may not join the chat socket of ([connection], [profile]):
   /// chats already ride it and it has not proven per-session replay (a
-  /// connected `gateway.ready` with `replay_epoch`). Before that frame the
+  /// `gateway.ready` with `replay_epoch`, remembered through a cut: chats
+  /// opened meanwhile wait for the one redial). Before that frame the
   /// transport is unknown (several chats opened at once would otherwise all
   /// ride a socket that may turn out legacy), and a legacy server cannot
   /// re-attach each chat from its own watermark after a drop. Such chats keep
@@ -112,6 +121,8 @@ class SharedGatewayPool {
     SavedConnection connection, {
     TuiGatewayClient Function(SavedConnection connection)? factory,
     Duration? chatLinger,
+    required String meterLane,
+    String meterProfile = '',
   }) {
     var entry = _entries[key];
     if (entry == null || entry.client.isClosed) {
@@ -119,7 +130,13 @@ class SharedGatewayPool {
       final client = (factory ?? this.factory ?? TuiGatewayClient.new)(
         connection,
       );
+      client.meterLane = meterLane;
+      client.meterProfile = meterProfile;
       if (chatLinger != null) client.enableSessionMultiplexing();
+      // The chat lane's socket is the source of the connection status.
+      if (chatLinger != null) {
+        ConnectionStatusRegistry.instance.bind(connection.id, client);
+      }
       entry = _PoolEntry(client, connection.id, linger: chatLinger);
       _entries[key] = entry;
     }
@@ -208,19 +225,45 @@ class SharedGatewayPool {
   /// Sondea cada socket vivo del pool (cambio de red). Un socket medio
   /// abierto cae por la ruta normal y su dueño aplica el backoff. Los ya
   /// caídos olvidan el backoff de la red anterior (rl1215).
-  Future<void> probeAll() => _probe(_entries.values.toList());
+  ///
+  /// Like Desktop's `forceReconnectNow` (use-gateway-boot.ts), the backoff
+  /// reset is grouped once per holdoff window and seals it only when it
+  /// cleared a running backoff; the probe is cheap and always runs.
+  Future<void> probeAll() {
+    final entries = _entries.values.toList();
+    var resetBackoff = false;
+    if (_networkBackoffHoldoff == null) {
+      resetBackoff = true;
+      if (entries.any((e) => !e.client.isClosed && e.client.isBackingOff)) {
+        _networkBackoffHoldoff = Timer(networkBackoffHoldoff, () {
+          _networkBackoffHoldoff = null;
+        });
+      }
+    }
+    return _probe(entries, resetBackoff: resetBackoff);
+  }
+
+  /// Desktop's `WAKE_RECONNECT_HOLDOFF_MS`.
+  @visibleForTesting
+  Duration networkBackoffHoldoff = const Duration(seconds: 15);
+  Timer? _networkBackoffHoldoff;
 
   /// [probeAll] for the sockets of one connection only: its server just
   /// restarted the gateway (a finished `hermes update`).
   Future<void> probeConnection(String connectionId) => _probe([
     for (final entry in _entries.values)
       if (entry.connectionId == connectionId) entry,
-  ]);
+  ], resetBackoff: true);
 
-  Future<void> _probe(List<_PoolEntry> entries) async {
-    for (final entry in entries) {
-      if (!entry.client.isClosed) {
-        entry.client.resetReconnectBackoffForNetworkChange();
+  Future<void> _probe(
+    List<_PoolEntry> entries, {
+    required bool resetBackoff,
+  }) async {
+    if (resetBackoff) {
+      for (final entry in entries) {
+        if (!entry.client.isClosed) {
+          entry.client.resetReconnectBackoffForNetworkChange();
+        }
       }
     }
     await Future.wait([
@@ -232,6 +275,8 @@ class SharedGatewayPool {
 
   /// Cierra todo (fin del isolate o tests).
   Future<void> closeAll() async {
+    _networkBackoffHoldoff?.cancel();
+    _networkBackoffHoldoff = null;
     final entries = _entries.values.toList();
     _entries.clear();
     for (final entry in entries) {

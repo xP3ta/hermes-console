@@ -296,4 +296,23 @@ void main() {
     expect(bundle.preview, isNot(contains('health-private-id')));
     expect(bundle.preview, isNot(contains('private-file-name.txt')));
   });
+
+  test('transport class follows the Dashboard origin, as Desktop does', () {
+    final proxied = SavedConnection(
+      id: 'u5',
+      label: 'Proxy',
+      host: 'hermes.example.test',
+      port: 8642,
+      apiKey: '',
+      dashboardUrl: 'https://hermes.example.test',
+    );
+    expect(
+      DiagnosticConnectionSnapshot.fromConnection(
+        ordinal: 1,
+        connection: proxied,
+        matrix: const CapabilityMatrix(),
+      ).transportClass,
+      DiagnosticTransportClass.https,
+    );
+  });
 }

@@ -50,14 +50,16 @@ class CapabilityMatrix {
   final CapState logsRead;
   final CapState pluginsSupported;
 
-  /// Versión de hermes-agent reportada por /health, si se obtuvo.
+  /// Versión de hermes-agent reportada por el Dashboard (su endpoint de salud, o el de estado si falta).
   final String? gatewayVersion;
 
-  /// Modelo activo reportado por /v1/capabilities, si se obtuvo.
+  /// Modelo activo declarado por el servidor. Ninguna sonda actual lo rellena;
+  /// el campo se conserva para no cambiar el JSON guardado.
   final String? serverModel;
 
   /// Nombres de campos de esta matriz cuyo valor vino declarado por el
-  /// servidor via /v1/capabilities (el resto se infiere con probes).
+  /// servidor. Ninguna sonda actual lo rellena (el resto se infiere con
+  /// probes del Dashboard); se conserva para no cambiar el JSON guardado.
   final List<String> serverSourced;
 
   /// Cuándo se ejecutó la detección (ms epoch).

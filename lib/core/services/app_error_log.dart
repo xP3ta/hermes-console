@@ -10,15 +10,18 @@ final class AppErrorRecord {
   final String source;
   final String errorType;
   final DateTime at;
+  final String? rowId;
 
   const AppErrorRecord({
     required this.source,
     required this.errorType,
     required this.at,
+    this.rowId,
   });
 
   @override
-  String toString() => '$source $errorType ${at.toIso8601String()}';
+  String toString() =>
+      '$source $errorType ${at.toIso8601String()}${rowId == null ? '' : ' $rowId'}';
 }
 
 /// Local-only log of uncaught errors. It chains to the handlers that were
@@ -50,13 +53,15 @@ abstract final class AppErrorLog {
 
   /// Records an error that was caught and handled, e.g. a startup step that
   /// failed and was degraded or surfaced on a recovery screen.
-  static void record(String source, Object error) => _record(source, error);
+  static void record(String source, Object error, {String? rowId}) =>
+      _record(source, error, rowId: rowId);
 
-  static void _record(String source, Object error) {
+  static void _record(String source, Object error, {String? rowId}) {
     final record = AppErrorRecord(
       source: source,
       errorType: error.runtimeType.toString(),
       at: DateTime.now(),
+      rowId: rowId,
     );
     _recent.addLast(record);
     while (_recent.length > capacity) {

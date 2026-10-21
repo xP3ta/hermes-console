@@ -842,7 +842,7 @@ void main() {
           tester,
           kind: HomeWidgetKind.room,
           size: size,
-          data: homeData(botsLoaded: false),
+          data: homeData(botsLoaded: false, roomsState: HomeRoomsState.unknown),
         );
         expect(_key('home-widget-skeleton'), findsOneWidget, reason: '$size');
         expect(tester.takeException(), isNull);

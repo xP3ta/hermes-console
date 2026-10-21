@@ -12,6 +12,7 @@ import 'package:hermes_android/core/services/voice/voice_settings.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../support/desktop_chat_socket.dart';
 import '../../support/in_memory_compression_restore_storage.dart';
 
 /// Spec 048 / US1 — corte selectivo en el controlador
@@ -117,78 +118,48 @@ class _FenceVoice extends VoiceService {
   Future<void> disposeTtsForVoiceExit() async {}
 }
 
-class _FenceGateway extends http.BaseClient {
-  final List<Map<String, dynamic>> runBodies = [];
-  final Map<String, StreamController<List<int>>> _events = {};
+/// The chat goes through the Dashboard socket only, as Hermes Desktop does;
+/// [counter] answers the stored transcript read and fails the test at tear
+/// down if anything asks for the REST run API.
+class _FenceGateway {
+  _FenceGateway() {
+    counter = HostCounter(
+      handler: (request) async {
+        if (request.method == 'GET' && request.url.path.endsWith('/messages')) {
+          return http.Response(
+            jsonEncode({
+              'data': [
+                if (finalText.isNotEmpty)
+                  {'role': 'assistant', 'content': finalText},
+              ],
+            }),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }
+        return http.Response('not found', 404);
+      },
+    );
+    addTearDown(socket.close);
+  }
+
+  final DesktopChatSocket socket = DesktopChatSocket();
+  late final HostCounter counter;
   String finalText = '';
 
-  @override
-  Future<http.StreamedResponse> send(http.BaseRequest request) async {
-    final path = request.url.path;
-    if (request.method == 'POST' && path == '/v1/runs') {
-      final body =
-          jsonDecode(await request.finalize().bytesToString())
-              as Map<String, dynamic>;
-      runBodies.add(body);
-      return _json({'run_id': 'run_${runBodies.length}'});
-    }
-    final eventMatch = RegExp(r'^/v1/runs/([^/]+)/events$').firstMatch(path);
-    if (request.method == 'GET' && eventMatch != null) {
-      final controller = StreamController<List<int>>();
-      _events[eventMatch.group(1)!] = controller;
-      return http.StreamedResponse(
-        controller.stream,
-        200,
-        headers: {'content-type': 'text/event-stream'},
-      );
-    }
-    if (request.method == 'POST' && path.endsWith('/stop')) {
-      return _json({'ok': true});
-    }
-    if (request.method == 'GET' && path.endsWith('/messages')) {
-      return _json({
-        'data': [
-          if (finalText.isNotEmpty) {'role': 'assistant', 'content': finalText},
-        ],
-      });
-    }
-    return http.StreamedResponse(Stream.value(utf8.encode('not found')), 404);
-  }
+  /// Texts handed to `prompt.submit`, one per turn.
+  List<String> get submitTexts => socket.submitTexts;
 
-  http.StreamedResponse _json(Map<String, dynamic> value) =>
-      http.StreamedResponse(
-        Stream.value(utf8.encode(jsonEncode(value))),
-        200,
-        headers: {'content-type': 'application/json'},
-      );
+  void token(int turn, String text) => socket.token(turn, text);
 
-  void token(int run, String text) {
-    _events['run_$run']?.add(
-      utf8.encode(
-        'data: ${jsonEncode({'event': 'message.delta', 'delta': text})}\n\n',
-      ),
-    );
-  }
+  void toolStarted(int turn, String tool, String preview) =>
+      socket.toolStarted(turn, tool, context: preview);
 
-  void toolStarted(int run, String tool, String preview) {
-    _events['run_$run']?.add(
-      utf8.encode(
-        'data: ${jsonEncode({'event': 'tool.started', 'tool': tool, 'preview': preview})}\n\n',
-      ),
-    );
-  }
-
-  /// `run.completed` con un output que puede diferir de los deltas: es la
-  /// reconciliación Markdown que dispara el re-render observado en producción.
-  Future<void> complete(int run, String text) async {
+  /// `message.complete` with a text that can differ from the deltas: it is the
+  /// Markdown reconciliation that triggers the re-render seen in production.
+  Future<void> complete(int turn, String text) async {
     finalText = text;
-    final controller = _events['run_$run'];
-    controller?.add(
-      utf8.encode(
-        'data: ${jsonEncode({'event': 'run.completed', 'output': text})}\n\n',
-      ),
-    );
-    await controller?.close();
+    socket.complete(turn, text);
   }
 }
 
@@ -232,8 +203,9 @@ Future<_Harness> _harness() async {
     api: ApiClient(
       baseUrl: 'http://hermes.test:8642',
       apiKey: 'test-key',
-      httpClient: gateway,
+      httpClient: gateway.counter,
     ),
+    desktopGateway: gateway.socket,
   );
   final controller = LocalVoiceConversationController(voice);
   chat.changes.listen(
@@ -263,7 +235,7 @@ void main() {
     final h = await _harness();
     h.voice.holdSpeech = true;
     h.voice.captures.single.add(const SttResult('cuéntame', true));
-    await _waitFor(() => h.gateway.runBodies.isNotEmpty);
+    await _waitFor(() => h.gateway.submitTexts.isNotEmpty);
 
     h.gateway.token(1, 'Uno. ');
     await _waitFor(() => h.voice.spoken.isNotEmpty);
@@ -303,19 +275,10 @@ void main() {
     () async {
       final h = await _harness();
       h.voice.captures.single.add(const SttResult('qué tal el servidor', true));
-      await _waitFor(() => h.gateway.runBodies.isNotEmpty);
+      await _waitFor(() => h.gateway.submitTexts.isNotEmpty);
 
-      final history =
-          (h.gateway.runBodies.single['conversation_history'] as List?)
-              ?.whereType<Map<String, dynamic>>()
-              .toList() ??
-          const <Map<String, dynamic>>[];
-      final serialized = history.map((item) => item['content']).join('\n');
-      expect(serialized, isNot(contains('POR VOZ')));
-      expect(serialized, isNot(contains('BY VOICE')));
-      expect(serialized, isNot(contains('2-4 frases')));
-      expect(serialized, isNot(contains('2-4 sentences')));
-      expect(h.gateway.runBodies.single['input'], 'qué tal el servidor');
+      // The history belongs to the server; the prompt is the spoken text only.
+      expect(h.gateway.submitTexts.single, 'qué tal el servidor');
       await h.close();
     },
   );
@@ -324,7 +287,7 @@ void main() {
     final h = await _harness();
     h.voice.holdSpeech = true;
     h.voice.captures.single.add(const SttResult('cuéntame', true));
-    await _waitFor(() => h.gateway.runBodies.isNotEmpty);
+    await _waitFor(() => h.gateway.submitTexts.isNotEmpty);
 
     // El fallback POST publica la primera oración estable y pre-sintetiza la
     // siguiente mientras aún suena la actual.
@@ -357,7 +320,7 @@ void main() {
       final h = await _harness();
       h.voice.holdSpeech = true;
       h.voice.captures.single.add(const SttResult('cuéntame', true));
-      await _waitFor(() => h.gateway.runBodies.isNotEmpty);
+      await _waitFor(() => h.gateway.submitTexts.isNotEmpty);
 
       String paragraph(String label) =>
           '$label ${List.filled(15, 'detalle').join(' ')}.';
@@ -390,7 +353,7 @@ void main() {
       final h = await _harness();
       h.voice.holdSpeech = true;
       h.voice.captures.single.add(const SttResult('cuéntame', true));
-      await _waitFor(() => h.gateway.runBodies.isNotEmpty);
+      await _waitFor(() => h.gateway.submitTexts.isNotEmpty);
 
       String paragraph(String label) =>
           '$label ${List.filled(15, 'detalle').join(' ')}.';
@@ -429,7 +392,7 @@ void main() {
       addTearDown(h.close);
       h.voice.holdSpeech = true;
       h.voice.captures.single.add(const SttResult('dame las noticias', true));
-      await _waitFor(() => h.gateway.runBodies.isNotEmpty);
+      await _waitFor(() => h.gateway.submitTexts.isNotEmpty);
 
       const preview = 'Voy a buscar las noticias de ayer antes de responder.';
       h.gateway.token(1, '$preview ');
@@ -469,7 +432,7 @@ void main() {
       addTearDown(h.close);
       h.voice.holdSpeech = true;
       h.voice.captures.single.add(const SttResult('dame las noticias', true));
-      await _waitFor(() => h.gateway.runBodies.isNotEmpty);
+      await _waitFor(() => h.gateway.submitTexts.isNotEmpty);
 
       const preview = 'Voy a buscar las noticias antes de responder.';
       const authoritative =
@@ -501,7 +464,7 @@ void main() {
       addTearDown(h.close);
       h.voice.holdSpeech = true;
       h.voice.captures.single.add(const SttResult('dame las noticias', true));
-      await _waitFor(() => h.gateway.runBodies.isNotEmpty);
+      await _waitFor(() => h.gateway.submitTexts.isNotEmpty);
 
       const accepted =
           'Aquí van las noticias verificadas con todos los datos necesarios.';
@@ -531,7 +494,7 @@ void main() {
       addTearDown(h.close);
       h.voice.holdSpeech = true;
       h.voice.captures.single.add(const SttResult('cuéntame', true));
-      await _waitFor(() => h.gateway.runBodies.isNotEmpty);
+      await _waitFor(() => h.gateway.submitTexts.isNotEmpty);
 
       h.gateway.token(1, 'Uno. ');
       await _waitFor(() => h.voice.spoken.isNotEmpty);

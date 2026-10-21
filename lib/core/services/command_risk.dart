@@ -1,5 +1,5 @@
 /// Heurística local de riesgo para comandos que el agente quiere ejecutar
-/// (aprobaciones de /v1/runs). NO es un sandbox: solo ayuda al usuario a
+/// (aprobaciones del agente). NO es un sandbox: solo ayuda al usuario a
 /// decidir resaltando patrones peligrosos conocidos. La decisión final
 /// siempre es del usuario.
 ///

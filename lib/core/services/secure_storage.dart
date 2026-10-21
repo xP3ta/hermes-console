@@ -1,3 +1,6 @@
+import 'dart:io' show Platform;
+
+import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 /// Wraps flutter_secure_storage for API key storage using Android Keystore.
@@ -31,6 +34,28 @@ class SecureStorage {
     String field,
     String value,
   ) => _storage.write(key: _dashKey(connectionId, field), value: value);
+
+  /// Android flushes through `DurableSecretWriter` (flutter_secure_storage
+  /// returns from `write` before the bytes are on disk, so a kill could lose a
+  /// rotated refresh token). Other platforms have no such channel.
+  static const _durable = MethodChannel('hermes/durable_secrets');
+
+  /// Like [writeDashboardSecret], but returns only once the value is on disk.
+  /// Throws when the flush cannot be confirmed.
+  Future<void> writeDashboardSecretDurable(
+    String connectionId,
+    String field,
+    String value,
+  ) async {
+    await _storage.write(key: _dashKey(connectionId, field), value: value);
+    try {
+      if (await _durable.invokeMethod<bool>('flush') != true) {
+        throw StateError('secure storage flush failed');
+      }
+    } on MissingPluginException {
+      if (Platform.isAndroid) rethrow;
+    }
+  }
 
   Future<void> deleteDashboardSecret(String connectionId, String field) =>
       _storage.delete(key: _dashKey(connectionId, field));

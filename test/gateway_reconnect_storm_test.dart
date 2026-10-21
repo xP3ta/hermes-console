@@ -146,11 +146,12 @@ void main() {
       async.flushMicrotasks();
       async.elapse(const Duration(seconds: 2));
 
-      // Before the fix every tick (12 in 60 s) opened a new socket. With the
-      // Desktop 15 s ceiling the ladder tops out sooner than with 30 s.
+      // Before the fix every tick (12 in 60 s) opened a new socket. With
+      // Desktop's 300 ms base the first steps are shorter than a tick; only
+      // the later steps (a 7.5 s draw at the 15 s ceiling) skip ticks.
       expect(
         opens.length,
-        lessThanOrEqualTo(8),
+        lessThanOrEqualTo(9),
         reason: 'opens at ${opens.map((d) => d.inMilliseconds).toList()}',
       );
       for (var i = 1; i < opens.length; i++) {
@@ -299,11 +300,9 @@ void main() {
         reason: 'first-attempt delays $delays must not coincide',
       );
       for (final delay in delays) {
-        expect(delay, greaterThanOrEqualTo(GatewayReconnectBackoff.baseDelay));
-        expect(
-          delay,
-          lessThanOrEqualTo(GatewayReconnectBackoff.baseDelay * 1.5),
-        );
+        // Full jitter: the first attempt is random·base, never above base.
+        expect(delay, greaterThan(Duration.zero));
+        expect(delay, lessThanOrEqualTo(GatewayReconnectBackoff.baseDelay));
       }
       for (final client in clients) {
         unawaited(client.close());

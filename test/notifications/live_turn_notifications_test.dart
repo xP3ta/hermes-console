@@ -482,56 +482,6 @@ void main() {
     });
   });
 
-  group('the listener alone', () {
-    const run = (
-      connId: 'conn-a',
-      profile: 'default',
-      sessionId: 'sess-1',
-      runId: 'run-1',
-    );
-
-    test(
-      'says only that it runs, and yields to a chat that knows more',
-      () async {
-        final sink = _Sink();
-        final rows = WatchedRunLiveRows(sink: sink);
-        await rows.sync(es, const [run], show: true);
-        final args = sink.live.single;
-        expect(args['title'], 'Hermes');
-        expect(args['text'], 'Trabajando');
-        expect(args['yieldToOwner'], isTrue);
-        expect(args['timeoutMs'], 90000);
-        expect(
-          args['tag'],
-          RichNotificationIds.chatTag('conn-a', 'default', 'sess-1'),
-        );
-        // Renewed on every tick.
-        await rows.sync(es, const [run], show: true);
-        expect(sink.live, hasLength(2));
-      },
-    );
-
-    test('the run ended, or the app is in front: the row leaves', () async {
-      final sink = _Sink();
-      final rows = WatchedRunLiveRows(sink: sink);
-      await rows.sync(es, const [run], show: true);
-      await rows.sync(es, const [], show: true);
-      expect(sink.cancelled, hasLength(1));
-      await rows.sync(es, const [run], show: true);
-      await rows.sync(es, const [run], show: false);
-      expect(sink.cancelled, hasLength(2));
-      expect(rows.shownTags, isEmpty);
-    });
-
-    test('a run without a chat has no row', () async {
-      final sink = _Sink();
-      await WatchedRunLiveRows(sink: sink).sync(es, const [
-        (connId: 'conn-a', profile: 'default', sessionId: '', runId: 'run-2'),
-      ], show: true);
-      expect(sink.live, isEmpty);
-    });
-  });
-
   group('tray policy', () {
     late SharedPreferences prefs;
     late _Sink sink;
@@ -637,8 +587,6 @@ base class _PlainOps implements NotificationActionOps {
     String text,
     String id,
   ) async {}
-  @override
-  Future<void> runApprove(NotificationActionPayload p, String choice) async {}
   @override
   Future<void> chatApprove(NotificationActionPayload p, String choice) async {}
   @override

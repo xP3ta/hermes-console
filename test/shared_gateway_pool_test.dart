@@ -125,7 +125,7 @@ void main() {
       final other = pool.acquire(_conn('upd-b'));
       for (var i = 0; i < 5; i++) {
         for (final lease in [updated, other]) {
-          lease.client.connect().then((_) {}, onError: (Object _) {});
+          lease.client.connectForeground().then((_) {}, onError: (Object _) {});
         }
         async.flushMicrotasks();
         async.elapse(const Duration(milliseconds: 1));
@@ -162,7 +162,7 @@ void main() {
       ];
       for (var i = 0; i < 5; i++) {
         for (final lease in leases) {
-          lease.client.connect().then((_) {}, onError: (Object _) {});
+          lease.client.connectForeground().then((_) {}, onError: (Object _) {});
         }
         async.flushMicrotasks();
         async.elapse(const Duration(milliseconds: 1));

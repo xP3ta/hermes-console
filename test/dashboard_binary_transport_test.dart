@@ -164,7 +164,8 @@ void main() {
       final target = File('${temp.path}/generated.mp4');
       final transport = _StreamingClient((request, _) async {
         expect(request.headers['X-Hermes-Session-Token'], 'session-token');
-        expect(request.url.path, '/p/media-qa/api/files/download');
+        expect(request.url.path, '/api/files/download');
+        expect(request.url.queryParameters['profile'], 'media-qa');
         expect(request.url.queryParameters['path'], '/tmp/generated.mp4');
         return http.StreamedResponse(
           Stream.fromIterable(<List<int>>[

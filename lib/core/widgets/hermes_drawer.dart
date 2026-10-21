@@ -25,6 +25,8 @@ import '../screens/tasks_screen.dart';
 import '../screens/tools_hub_screen.dart';
 import '../services/active_profile_scope.dart';
 import '../services/connection_manager.dart';
+import '../services/connection_status.dart';
+import '../services/new_session_factory.dart';
 import '../services/session_archive.dart';
 import '../services/tui_gateway_client.dart';
 import '../navigation/chat_route.dart';
@@ -40,6 +42,7 @@ import 'mission_profile_avatar.dart';
 import 'owned_resource_host.dart';
 import 'profile_switcher.dart';
 import '../feedback/feedback_policy.dart';
+import 'seasonal_mark.dart';
 
 /// Top-level app sections reachable from [HermesDrawer].
 enum DrawerSection {
@@ -263,6 +266,9 @@ class HermesDrawer extends StatelessWidget {
   final DrawerSection current;
   final bool connected;
   final bool checking;
+
+  /// The chat-lane socket's status; names the state when it is not connected.
+  final ConnectionStatusKind? link;
   final ApiClient Function(SavedConnection connection)?
   recentSessionsClientFactory;
 
@@ -287,6 +293,7 @@ class HermesDrawer extends StatelessWidget {
     required this.current,
     this.connected = false,
     this.checking = false,
+    this.link,
     this.onSectionReturn,
     this.recentSessionsClientFactory,
     this.gatewayFactory = TuiGatewayClient.new,
@@ -332,7 +339,7 @@ class HermesDrawer extends StatelessWidget {
     if (conn == null) return;
     Navigator.pop(context);
     final session = Session(
-      id: GatewayChatClient.generateSessionId(),
+      id: generateSessionId(),
       // Título inicial localizado: 'New Chat' hardcodeado se veía en inglés
       // en recientes/appbar hasta que el servidor renombraba (spec 028 A-028).
       title: Strings.of(context).drawerNewChat,
@@ -456,6 +463,7 @@ class HermesDrawer extends StatelessWidget {
                     connectionLabel: conn?.label,
                     connected: connected,
                     checking: checking,
+                    link: link,
                     connections: savedConnections,
                     activeConnectionId:
                         connManager.activeConnectionId.value ?? conn?.id,
@@ -883,6 +891,7 @@ class _DrawerHeader extends StatelessWidget {
   final String? connectionLabel;
   final bool connected;
   final bool checking;
+  final ConnectionStatusKind? link;
   final List<SavedConnection> connections;
   final String? activeConnectionId;
   final ValueChanged<String> onSelected;
@@ -891,6 +900,7 @@ class _DrawerHeader extends StatelessWidget {
     required this.connectionLabel,
     required this.connected,
     required this.checking,
+    this.link,
     required this.connections,
     required this.activeConnectionId,
     required this.onSelected,
@@ -899,12 +909,20 @@ class _DrawerHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
-    final dotColor = checking
+    final linkDown = link != null && link != ConnectionStatusKind.connected;
+    final dotColor = linkDown
+        ? ((link == ConnectionStatusKind.reconnecting ||
+                  link == ConnectionStatusKind.starting)
+              ? colors.warning
+              : colors.textDisabled)
+        : checking
         ? colors.warning
         : connected
         ? colors.success
         : colors.textDisabled;
-    final statusWord = checking
+    final statusWord = linkDown
+        ? connectionStatusWord(Strings.of(context), link!).toLowerCase()
+        : checking
         ? Strings.of(context).statusChecking
         : connected
         ? Strings.of(context).i18n1215StatusOnline
@@ -1010,14 +1028,29 @@ class _DrawerHeader extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text(
-                      'Console',
-                      style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: -0.3,
-                        color: colors.textPrimary,
-                      ),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // The same logo as Home's title, seasons included.
+                        const SeasonalMark(
+                          size: 23,
+                          key: ValueKey('drawer-header-mark'),
+                        ),
+                        const SizedBox(width: 8),
+                        Flexible(
+                          child: Text(
+                            'Console',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: -0.3,
+                              color: colors.textPrimary,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 8),
                     Row(

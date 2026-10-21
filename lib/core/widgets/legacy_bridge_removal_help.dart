@@ -5,7 +5,6 @@ import 'package:flutter/material.dart';
 import '../../l10n/app_localizations.dart';
 import '../design/modal.dart';
 import '../design/tokens.dart';
-import '../services/hermes_setup_commands.dart';
 import '../theme/app_theme.dart';
 import 'command_block.dart';
 import 'hermes_premium_ui.dart';
@@ -13,12 +12,18 @@ import 'hermes_premium_ui.dart';
 /// The system of the computer that still runs the Mobile Bridge.
 enum BridgeHost { linux, macos, windows }
 
-/// The recommended way: the installer's own `--retire-bridge`, which stops,
-/// disables and removes only the bridge, is safe to run twice and refuses
-/// when the service is not its own.
-String bridgeRetireCommand(BridgeHost host) => HermesSetupCommands.retireBridge(
-  host == BridgeHost.windows ? SetupHostSystem.windows : SetupHostSystem.unix,
-);
+const _setupRaw = 'https://raw.githubusercontent.com/xP3ta/hermes-setup/main';
+const _setupUnix = 'curl -fsSL $_setupRaw/hermes-mobile-setup.sh | sh';
+const _setupWindows =
+    '& ([scriptblock]::Create((irm $_setupRaw/hermes-mobile-setup.ps1)))';
+
+/// The recommended way: the old assistant's own `--retire-bridge`, which
+/// stops, disables and removes only the bridge, is safe to run twice and
+/// refuses when the service is not its own. This is the only place the app
+/// still names that assistant (nothing else can remove what it installed).
+String bridgeRetireCommand(BridgeHost host) => host == BridgeHost.windows
+    ? '$_setupWindows -RetireBridge'
+    : '$_setupUnix -s -- --retire-bridge';
 
 /// The same by hand, for whoever prefers not to run the installer: stops and
 /// removes ONLY the Mobile Bridge that the Console installer

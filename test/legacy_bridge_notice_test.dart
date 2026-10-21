@@ -18,7 +18,10 @@ void main() {
   final secureStore = <String, String>{};
 
   setUp(() {
-    SharedPreferences.setMockInitialValues({});
+    // Not about the Gateway era: its photo is already taken, and empty.
+    SharedPreferences.setMockInitialValues({
+      'gateway_era_notice_v1': '{"snapshot":[]}',
+    });
     secureStore.clear();
     TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(

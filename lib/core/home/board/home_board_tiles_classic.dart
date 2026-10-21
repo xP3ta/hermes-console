@@ -411,19 +411,30 @@ class _ServerTile extends StatelessWidget {
     final p = SoftPalette.ofContext(context);
     final server = t.data.server;
     if (server == null) return _loading(t, context);
-    final color = server.checking
+    // A socket that is down overrides a REST answer: never «Connected».
+    final linkDown =
+        server.link != null && server.link != ConnectionStatusKind.connected;
+    final color = linkDown
+        ? ((server.link == ConnectionStatusKind.reconnecting ||
+                  server.link == ConnectionStatusKind.starting)
+              ? p.textMuted
+              : p.failure)
+        : server.checking
         ? p.textMuted
         : server.online
         ? p.ok
         : p.failure;
-    final status = server.checking
+    final status = linkDown
+        ? connectionStatusWord(s, server.link!)
+        : server.checking
         ? s.hwServerChecking
         : server.online
         ? s.hwServerOnline
         : s.hwServerOffline;
     final facts = [
       if (server.version case final v?) 'Hermes $v',
-      if (server.latencyMs case final ms? when server.online && ms > 0)
+      if (server.latencyMs case final ms?
+          when server.online && !linkDown && ms > 0)
         s.hwServerLatency(ms),
     ];
     final update = server.updateAvailable;

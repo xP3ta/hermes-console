@@ -9,6 +9,7 @@ import '../screens/chat_screen.dart';
 import '../screens/mission_control_screen.dart';
 import '../screens/settings_screen.dart';
 import '../services/connection_manager.dart';
+import '../services/new_session_factory.dart';
 import '../services/dock_preferences_store.dart';
 import '../shell/dock_screen.dart';
 import '../shell/gesture_dock.dart' show gestureDockFootprint;
@@ -124,7 +125,7 @@ class _GeneralDockShellState extends State<GeneralDockShell> {
 
   void _defaultCreate() {
     final session = Session(
-      id: GatewayChatClient.generateSessionId(),
+      id: generateSessionId(),
       title: Strings.of(context).drawerNewChat,
       model: 'hermes-agent',
       source: 'mobile',

@@ -737,9 +737,16 @@ void main() {
                 .then((_) {}, onError: (Object _) {}),
           );
         }
+        // The redial delay is a full jitter in [0, 300 ms): a draw near zero
+        // lets the whole cut → redial → resume cycle finish between two 5 ms
+        // polls, and the "down" state is never seen. A new `session.resume`
+        // is the same proof that the cut was observed.
+        final resumesBeforeCut = gateway.rpcCalls('session.resume').length;
         proxy.severAll();
         await _eventually(
-          () => !client.isConnected && chat.desktopRuntimeSessionId == null,
+          () =>
+              (!client.isConnected && chat.desktopRuntimeSessionId == null) ||
+              gateway.rpcCalls('session.resume').length > resumesBeforeCut,
         );
         client.resetReconnectBackoffForNetworkChange();
         unawaited(client.probeNow().then((_) {}, onError: (Object _) {}));

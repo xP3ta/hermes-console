@@ -17,6 +17,9 @@
 #   HERMES_SRC   reuse an existing Hermes checkout instead of cloning
 #                (copied, never modified)
 #   KEEP_E2E=1   keep the temp dir (logs) after the run
+#   E2E_FLAP=1   put tool/e2e/flap_proxy.py in front of the Dashboard and the
+#                API server (HERMES_E2E_PROXY_URL, _API_URL, _CONTROL) for
+#                net1_flap_test.dart: E2E_FLAP=1 tool/e2e/run_local.sh --plain-name net1
 set -Eeuo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -37,6 +40,7 @@ done
 
 work="$(mktemp -d "${TMPDIR:-/tmp}/hermes-ci-e2e.XXXXXX")"
 backend_pid=""
+proxy_pid=""
 # Every process of this lane carries this marker in its environment (backend.py
 # keeps it in the children's allowlist); tool/e2e/reap.py kills them by it.
 lane_id="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
@@ -47,6 +51,10 @@ cleanup() {
   # The backend tears its children down in KILL_BUDGET_S (8 s); give it 10 s,
   # then reap whatever is left of the lane (its process groups included, also
   # after an abnormal backend exit) in at most 10 s more.
+  if [[ -n "$proxy_pid" ]]; then
+    kill -TERM "$proxy_pid" 2>/dev/null || true
+    wait "$proxy_pid" 2>/dev/null || true
+  fi
   if [[ -n "$backend_pid" ]] && kill -0 "$backend_pid" 2>/dev/null; then
     kill -TERM "$backend_pid" 2>/dev/null || true
     for _ in $(seq 1 20); do
@@ -63,7 +71,7 @@ cleanup() {
     wait "$backend_pid" 2>/dev/null || true
   fi
   if [[ $status -ne 0 && -d "$work/run" ]]; then
-    for log in backend.log serve.stderr.log gateway.log; do
+    for log in backend.log serve.stderr.log gateway.log flap.log; do
       [[ -f "$work/run/$log" ]] || continue
       echo "──── $log (tail) ────"
       tail -n 40 "$work/run/$log" | sed -E 's/(TOKEN|KEY|PASSWORD|SECRET)=[^ ]+/\1=***/g'
@@ -87,6 +95,13 @@ else
 fi
 git -C "$src" -c advice.detachedHead=false checkout --quiet "$hermes_ref"
 test "$(git -C "$src" rev-parse HEAD)" == "$hermes_ref"
+# The mutation fence (409 client_upgrade) exists from Hermes 22063fc0 on; select
+# by ancestry of the checked-out ref, never by comparing strings. An explicit
+# HERMES_E2E_FENCE in the caller's env is kept (forces the fence test to run).
+if [[ -z "${HERMES_E2E_FENCE:-}" ]] \
+  && git -C "$src" merge-base --is-ancestor 22063fc099ec9ad8357d7f8f6e6248a0400680d3 HEAD 2>/dev/null; then
+  export HERMES_E2E_FENCE=1
+fi
 
 echo "▶ locked Hermes venv (python $python_version)"
 export UV_CACHE_DIR="${UV_CACHE_DIR:-$work/uv-cache}"
@@ -110,14 +125,40 @@ set -a
 . "$work/run/backend.env"
 set +a
 
+if [[ "${E2E_FLAP:-0}" == "1" ]]; then
+  echo "▶ flap proxy"
+  # The socket lives in $work (not $work/run): sun_path holds ~108 bytes.
+  python3 tool/e2e/flap_proxy.py --control "$work/flap.sock" \
+    --ports-file "$work/flap.env" \
+    --target "HERMES_E2E_PROXY_URL=${HERMES_E2E_URL#http://}" \
+    --target "HERMES_E2E_PROXY_API_URL=${HERMES_E2E_API_URL#http://}" \
+    >"$work/run/flap.log" 2>&1 &
+  proxy_pid=$!
+  for _ in $(seq 1 100); do
+    [[ -f "$work/flap.env" ]] && break
+    sleep 0.1
+  done
+  [[ -f "$work/flap.env" ]] || { echo "flap proxy not ready" >&2; exit 1; }
+  echo "HERMES_E2E_PROXY_CONTROL=$work/flap.sock" >>"$work/flap.env"
+  set -a
+  # shellcheck disable=SC1091
+  . "$work/flap.env"
+  set +a
+fi
+
 echo "▶ flutter test test/e2e_real_gateway"
 set +e
 flutter test --concurrency=1 --reporter=expanded test/e2e_real_gateway "$@" \
   2>&1 | tee "$work/flutter.log"
 status="${PIPESTATUS[0]}"
 set -e
+if [[ -n "$proxy_pid" ]]; then
+  kill -TERM "$proxy_pid" 2>/dev/null || true
+  wait "$proxy_pid" 2>/dev/null || proxy_pid=""
+fi
 echo "▶ budgets"
 grep -h '^\[e2e-budget\]' "$work/flutter.log" || true
+grep -h '^\[e2e-net\]' "$work/run/flap.log" 2>/dev/null || true
 if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
   {
     echo "### Real-gateway E2E (Hermes \`${hermes_ref:0:12}\`)"

@@ -627,8 +627,6 @@ final class _Ops implements NotificationActionOps {
     String id,
   ) async {}
   @override
-  Future<void> runApprove(NotificationActionPayload p, String choice) async {}
-  @override
   Future<void> chatApprove(NotificationActionPayload p, String choice) async {}
   @override
   Future<void> botChatReply(

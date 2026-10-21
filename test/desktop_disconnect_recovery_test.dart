@@ -1317,38 +1317,6 @@ class _RestFallbackApiClient extends ApiClient {
         apiKey: 'test-key',
         httpClient: MockClient((_) async => http.Response('not found', 404)),
       );
-
-  int startCalls = 0;
-  int stopCalls = 0;
-  Completer<String>? startGate;
-
-  @override
-  Future<String> startRun({
-    required String input,
-    String? sessionId,
-    String? model,
-    List<Map<String, dynamic>>? history,
-    String? profile,
-  }) async {
-    startCalls++;
-    return startGate == null ? 'rest-run' : await startGate!.future;
-  }
-
-  @override
-  Future<Map<String, dynamic>> stopRun(String runId, {String? profile}) async {
-    stopCalls++;
-    return <String, dynamic>{};
-  }
-
-  @override
-  Future<void> streamRunEvents(
-    String runId, {
-    String? profile,
-    required void Function(Map<String, dynamic> event) onEvent,
-    required void Function() onDone,
-    required void Function(String error) onError,
-    Duration? idleTimeout = const Duration(seconds: 90),
-  }) => Completer<void>().future;
 }
 
 class _ControlledApiClient extends ApiClient {
@@ -1763,8 +1731,6 @@ void _expectNoViewerAttachmentMutations(
   expect(gateway.activateCalls, expectedActivateCalls);
   expect(gateway.interruptCalls, 0);
   expect(gateway.resumeCalls, 0);
-  expect(api.startCalls, 0);
-  expect(api.stopCalls, 0);
 }
 
 // Mirrors `chatConnectionActiveGrace` (connection row, active turn).
@@ -12137,67 +12103,6 @@ void main() {
 
     expect(chat.assistantContent, 'no me borres');
     expect(chat.messages, hasLength(2));
-  });
-
-  test('Stop de fallback REST usa stopRun y no reanuda Desktop', () async {
-    final gateway = _LifecycleRecoverableGateway()
-      ..resumeSessionError = StateError('desktop unavailable')
-      ..resumeExistingError = StateError('desktop unavailable')
-      ..createForFirstSubmitError = StateError('desktop unavailable');
-    final api = _RestFallbackApiClient();
-    final chat = _recoverableChat('rest-fallback-cancel', gateway, api: api);
-    addTearDown(chat.dispose);
-    final delivery = _delivery('rest-fallback-cancel', _NoopOutbox());
-
-    final accepted = await chat.send(
-      fullText: 'turno REST',
-      model: 'hermes-agent',
-      history: const [],
-      delivery: delivery,
-    );
-    expect(accepted, isTrue);
-    expect(api.startCalls, 1);
-    expect(chat.currentRunId, 'rest-run');
-    final resumesBeforeCancel = gateway.resumeExistingCalls;
-
-    chat.cancel();
-    await Future<void>.delayed(Duration.zero);
-
-    expect(api.stopCalls, 1);
-    expect(gateway.resumeExistingCalls, resumesBeforeCancel);
-    expect(gateway.interruptCalls, 0);
-  });
-
-  test('Stop durante startRun REST espera el id y no toca Desktop', () async {
-    final gateway = _LifecycleRecoverableGateway()
-      ..resumeSessionError = StateError('desktop unavailable')
-      ..resumeExistingError = StateError('desktop unavailable')
-      ..createForFirstSubmitError = StateError('desktop unavailable');
-    final api = _RestFallbackApiClient()..startGate = Completer<String>();
-    final chat = _recoverableChat('rest-start-cancel', gateway, api: api);
-    addTearDown(chat.dispose);
-    final delivery = _delivery('rest-start-cancel', _NoopOutbox());
-
-    final send = chat.send(
-      fullText: 'turno REST lento',
-      model: 'hermes-agent',
-      history: const [],
-      delivery: delivery,
-    );
-    await _waitUntil(() => api.startCalls == 1);
-    expect(delivery.current.transport, PreparedTurnTransport.rest);
-    expect(chat.currentRunId, isNull);
-    final resumesBeforeCancel = gateway.resumeExistingCalls;
-
-    final stop = chat.cancel();
-    api.startGate!.complete('rest-run-late');
-    await stop;
-    expect(await send, isFalse);
-    await Future<void>.delayed(Duration.zero);
-
-    expect(api.stopCalls, 1);
-    expect(gateway.resumeExistingCalls, resumesBeforeCancel);
-    expect(gateway.interruptCalls, 0);
   });
 
   test('cancel offline legacy no usa resumeSession que puede crear', () async {

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../services/active_chat_service.dart';
+import '../services/connection_status.dart';
 import '../theme/app_theme.dart';
 import 'hermes_notice.dart';
 
@@ -14,6 +15,32 @@ const chatConnectionIdleGrace = Duration(minutes: 5);
 
 @visibleForTesting
 const chatConnectionHealthyHysteresis = Duration(seconds: 2);
+
+/// «Reconnected» at most once per this long, however often the link flaps.
+@visibleForTesting
+const chatConnectionRecoveredNoticeSpacing = Duration(seconds: 60);
+
+/// The transport the chat shows: its own state, overridden by the connection
+/// supervisor when that knows the socket is down (an idle chat has not
+/// noticed yet). Never connected over a down socket.
+ChatTransportStatus chatTransportWithLink(
+  ChatTransportStatus chat,
+  ConnectionStatus? link,
+) {
+  if (link == null || link.isConnected) return chat;
+  final since = chat.disconnectedSince == null
+      ? link.since
+      : link.since == null || chat.disconnectedSince!.isBefore(link.since!)
+      ? chat.disconnectedSince
+      : link.since;
+  return ChatTransportStatus(
+    link.kind == ConnectionStatusKind.reconnecting ||
+        link.kind == ConnectionStatusKind.starting
+        ? ChatTransportState.reconnecting
+        : ChatTransportState.offline,
+    disconnectedSince: since,
+  );
+}
 
 /// Activity headline for the live turn. [transportLossVisible] must come from
 /// [ChatTransportVisibility] so the pill only says "reconnecting" once the
@@ -40,21 +67,36 @@ class ChatTransportVisibility extends ChangeNotifier {
     this.activeGrace = chatConnectionActiveGrace,
     this.idleGrace = chatConnectionIdleGrace,
     this.healthyHysteresis = chatConnectionHealthyHysteresis,
+    this.noticeSpacing = chatConnectionRecoveredNoticeSpacing,
+    this.persistentAfter = connectionPersistentNoticeAfter,
     DateTime Function()? clock,
   }) : _clock = clock ?? DateTime.now;
 
   final Duration activeGrace;
   final Duration idleGrace;
   final Duration healthyHysteresis;
+  final Duration noticeSpacing;
+  final Duration persistentAfter;
   final DateTime Function() _clock;
 
   Timer? _enterTimer;
   Timer? _leaveTimer;
+  Timer? _persistentTimer;
   bool _visible = false;
+  bool _persistent = false;
   bool _disposed = false;
   int _recoveries = 0;
+  int _lossEpoch = 0;
+  DateTime? _lastRecoveryNoticeAt;
+  ConnectionStatusKind? _linkKind;
   ChatTransportState _displayState = ChatTransportState.offline;
-  ({ChatTransportStatus status, bool activeTurn, bool auth, bool foreground})?
+  ({
+    ChatTransportStatus status,
+    bool activeTurn,
+    bool auth,
+    bool foreground,
+    ConnectionStatus? link,
+  })?
   _inputs;
 
   /// Whether a transport loss is currently shown to the user.
@@ -63,15 +105,27 @@ class ChatTransportVisibility extends ChangeNotifier {
   /// Last disconnected state, for the row's offline/reconnecting label.
   ChatTransportState get displayState => _displayState;
 
-  /// Incremented each time a shown loss clears because the transport
-  /// recovered (not for auth or background). Drives the "Reconnected" notice.
+  /// The connection has been failing for [persistentAfter]: one persistent
+  /// notice instead of the transient state (Desktop `use-gateway-boot.ts`).
+  bool get persistent => _persistent;
+
+  /// Why the supervisor says the link is down (null: it says nothing).
+  ConnectionStatusKind? get linkKind => _linkKind;
+
+  /// Incremented when a shown loss clears because the transport recovered
+  /// (not for auth or background) and the last notice is older than
+  /// [noticeSpacing]: five flaps in a minute say "Reconnected" once.
   int get recoveries => _recoveries;
+
+  /// Incremented on every shown loss that clears, notice or not.
+  int get lossEpoch => _lossEpoch;
 
   void update({
     required ChatTransportStatus status,
     required bool activeTurn,
     required bool authRequired,
     required bool appForeground,
+    ConnectionStatus? link,
   }) {
     if (_disposed) return;
     final previous = _inputs;
@@ -80,7 +134,8 @@ class ChatTransportVisibility extends ChangeNotifier {
         previous.status.disconnectedSince == status.disconnectedSince &&
         previous.activeTurn == activeTurn &&
         previous.auth == authRequired &&
-        previous.foreground == appForeground) {
+        previous.foreground == appForeground &&
+        previous.link == link) {
       return;
     }
     _inputs = (
@@ -88,6 +143,7 @@ class ChatTransportVisibility extends ChangeNotifier {
       activeTurn: activeTurn,
       auth: authRequired,
       foreground: appForeground,
+      link: link,
     );
     _sync();
   }
@@ -99,6 +155,7 @@ class ChatTransportVisibility extends ChangeNotifier {
     _enterTimer = null;
     _leaveTimer?.cancel();
     _leaveTimer = null;
+    _linkKind = inputs.link?.isConnected == false ? inputs.link!.kind : null;
 
     if (inputs.auth) {
       _setVisible(false);
@@ -112,7 +169,9 @@ class ChatTransportVisibility extends ChangeNotifier {
         return;
       }
       if (!inputs.foreground) return;
-      final grace = inputs.activeTurn ? activeGrace : idleGrace;
+      // A supervisor that knows the socket is down needs no 5 min wait.
+      final linkDown = inputs.link?.isConnected == false;
+      final grace = inputs.activeTurn || linkDown ? activeGrace : idleGrace;
       final since = inputs.status.disconnectedSince ?? _clock();
       final remaining = grace - _clock().difference(since);
       if (remaining <= Duration.zero) {
@@ -142,7 +201,13 @@ class ChatTransportVisibility extends ChangeNotifier {
           !current.status.isConnected) {
         return;
       }
-      _recoveries += 1;
+      _lossEpoch += 1;
+      final now = _clock();
+      final last = _lastRecoveryNoticeAt;
+      if (last == null || now.difference(last) >= noticeSpacing) {
+        _lastRecoveryNoticeAt = now;
+        _recoveries += 1;
+      }
       _setVisible(false);
     });
   }
@@ -150,6 +215,23 @@ class ChatTransportVisibility extends ChangeNotifier {
   void _setVisible(bool value) {
     if (_visible == value || _disposed) return;
     _visible = value;
+    _persistentTimer?.cancel();
+    _persistentTimer = null;
+    if (value) {
+      final since = _inputs?.status.disconnectedSince ?? _clock();
+      final remaining = persistentAfter - _clock().difference(since);
+      if (remaining <= Duration.zero) {
+        _persistent = true;
+      } else {
+        _persistentTimer = Timer(remaining, () {
+          if (_disposed || !_visible) return;
+          _persistent = true;
+          notifyListeners();
+        });
+      }
+    } else {
+      _persistent = false;
+    }
     notifyListeners();
   }
 
@@ -158,6 +240,7 @@ class ChatTransportVisibility extends ChangeNotifier {
     _disposed = true;
     _enterTimer?.cancel();
     _leaveTimer?.cancel();
+    _persistentTimer?.cancel();
     super.dispose();
   }
 }

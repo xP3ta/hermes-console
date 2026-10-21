@@ -7,12 +7,15 @@ export '../widgets/chat/chat_markdown_body.dart'
         validateRemoteChatImageTransport;
 export '../widgets/chat/chat_message_selection_area.dart';
 
+import '../bots/data/gateway_socket_meter.dart';
 import '../models/bot_mention.dart';
+import '../services/app_error_log.dart';
 import '../services/app_lock_sensitive_read_fence.dart';
 import '../models/composer_reference.dart';
 import '../models/reference_directive.dart';
 import '../utils/large_paste.dart';
 import '../widgets/chat_mention_palette.dart';
+import '../widgets/chat_row_boundary.dart';
 import '../widgets/chat/composer_reference_palette.dart';
 import '../widgets/chat/user_message_text.dart';
 import '../widgets/chat/pasted_text_editor.dart';
@@ -71,6 +74,9 @@ import 'package:uuid/uuid.dart';
 
 import '../../main.dart';
 import '../models/profile_identity.dart';
+import '../widgets/connection_help_action.dart';
+import '../widgets/dashboard_sign_in_event.dart';
+import 'onboarding/manual_setup_page.dart';
 import '../widgets/profile_pet_avatar.dart';
 import '../companion/models/companion_presence_level.dart';
 import '../config/flavor.dart';
@@ -99,6 +105,7 @@ import '../models/desktop_control_center.dart' show SessionGoalSnapshot;
 import '../services/hermes_update_monitor.dart';
 import '../services/account_limits_controller.dart';
 import '../services/active_chat_service.dart';
+import '../services/connection_status.dart';
 import '../services/cold_start_store.dart';
 import '../services/approval_policy.dart';
 import 'chat_content_screen.dart';
@@ -127,6 +134,7 @@ import '../services/media_prefetcher.dart';
 import '../services/generated_artifact_registry.dart';
 import '../services/active_profile_scope.dart';
 import '../services/connection_manager.dart';
+import '../services/new_session_factory.dart';
 import '../services/dashboard_session_timeline.dart';
 import '../services/session_archive.dart';
 import '../services/session_artifact_download_service.dart';
@@ -138,7 +146,7 @@ import '../services/shared_gateway_pool.dart';
 import '../services/subagent_live_watch.dart';
 import '../services/subagent_transcript_projection.dart';
 import '../services/tui_gateway_client.dart'
-    show TuiGatewayClient, TuiGatewayRpcError;
+    show DesktopRedirectDisposition, TuiGatewayClient, TuiGatewayRpcError;
 import '../widgets/chat_connection_recovery_row.dart';
 import '../widgets/hermes_notice.dart';
 import '../widgets/inline_message_editor.dart';
@@ -193,6 +201,7 @@ import '../models/provider_auth_failure.dart';
 import '../widgets/provider_reauth.dart';
 import '../widgets/turn_error_copy.dart';
 import '../models/turn_error_surface.dart';
+import 'recover_access_page.dart';
 import 'recovery_center_screen.dart';
 import 'soul_screen.dart';
 import 'tasks_screen.dart';
@@ -928,8 +937,13 @@ final class _AssistantRenderPlan {
 
 final class _CachedAssistantRenderPlan {
   final _AssistantRenderPlan? plan;
+  final bool failed;
 
-  const _CachedAssistantRenderPlan(this.plan);
+  const _CachedAssistantRenderPlan(this.plan, {this.failed = false});
+}
+
+final class _RowPlanFailed implements Exception {
+  const _RowPlanFailed();
 }
 
 final class _AssistantRenderSlice {
@@ -1075,6 +1089,13 @@ final class _WholeChatListEntry extends _ChatListEntry {
   final ChatRenderUnitPlan sourcePlan;
 
   _WholeChatListEntry(this.sourcePlan);
+}
+
+final class _FailedChatListEntry extends _ChatListEntry {
+  @override
+  final ChatRenderUnitPlan sourcePlan;
+
+  _FailedChatListEntry(this.sourcePlan);
 }
 
 final class _AssistantSliceChatListEntry extends _ChatListEntry {
@@ -2806,6 +2827,7 @@ class _ChatScreenState extends State<ChatScreen>
   ChatRenderProjection? _renderProjection;
   ChatRenderProjection? _listEntriesProjection;
   List<_ChatListEntry>? _listEntries;
+  final _loggedRowFailures = <String>{};
   // Estática (proceso): el plan es puro por contenido. Con caché por State,
   // cada ChatScreen nuevo (volver de la lista, reabrir) repetía el troceado
   // verificado de todas las respuestas largas dentro del frame que aplica la
@@ -3258,6 +3280,7 @@ class _ChatScreenState extends State<ChatScreen>
       await WidgetsBinding.instance.endOfFrame;
       if (!mounted) return;
       if (widget.initialVoiceMode) {
+        _recognizerPrewarm?.armOnMicPressDown();
         await _enterVoiceMode();
       } else {
         await _startDictation();
@@ -3680,7 +3703,10 @@ class _ChatScreenState extends State<ChatScreen>
       _showHiddenRecoveredTurn(prepared);
       return;
     }
-    final recoverPrepared = liveOwnsRestoredDraft
+    // A queued turn belongs to the queue, never to the composer: the service
+    // keeps retrying it (even as failedBeforeAcceptance), so restoring it here
+    // would hand an already-sent message back as a draft on every reattach.
+    final recoverPrepared = liveOwnsRestoredDraft || prepared.queued
         ? false
         : switch (prepared.state) {
             PreparedTurnState.prepared ||
@@ -6140,17 +6166,9 @@ class _ChatScreenState extends State<ChatScreen>
       sources: {
         ModelPickerSource.socket: () =>
             _socketModelPickerResult(isCurrent: admitted),
-        ModelPickerSource.officialGateway: fallback(
-          ModelPickerSource.officialGateway,
-          _officialGatewayModelOptions,
-        ),
         ModelPickerSource.dashboard: fallback(
           ModelPickerSource.dashboard,
           _dashboardModelOptions,
-        ),
-        ModelPickerSource.gateway: fallback(
-          ModelPickerSource.gateway,
-          _gatewayModelOptions,
         ),
       },
     );
@@ -6245,94 +6263,6 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
-  /// Official provider inventory, scoped to the selected Gateway owner.
-  Future<(ModelActiveInfo, List<ModelProvider>)?>
-  _officialGatewayModelOptions() async {
-    final fake =
-        widget.modelPickerFallbacks?[ModelPickerSource.officialGateway];
-    if (fake != null) return fake();
-    final api = ApiClient(
-      baseUrl: widget.connection.gatewayUrl,
-      apiKey: widget.connection.apiKey,
-    );
-    try {
-      final data = await api.apiGet(
-        ApiClient.profileEndpoint(
-          'api/model/options',
-          profile: _chat.sessionProfile,
-        ),
-      );
-      final raw = data['providers'];
-      final maps = <Map<String, dynamic>>[];
-      if (raw is List) {
-        for (final row in raw) {
-          if (row is Map) maps.add(row.cast<String, dynamic>());
-        }
-      } else if (raw is Map) {
-        raw.forEach((slug, row) {
-          if (row is Map) {
-            maps.add({'slug': slug.toString(), ...row.cast<String, dynamic>()});
-          }
-        });
-      }
-      return (
-        ModelActiveInfo(
-          model: (data['model'] ?? '').toString(),
-          provider: (data['provider'] ?? '').toString(),
-          effectiveContextLength: 0,
-        ),
-        maps
-            .map(ModelProvider.fromJson)
-            .where((p) => p.models.isNotEmpty)
-            .toList(),
-      );
-    } finally {
-      api.close();
-    }
-  }
-
-  /// Opciones de modelo a partir SOLO del gateway (con el token de la conexión).
-  /// Devuelve null si el gateway tampoco da modelos.
-  Future<(ModelActiveInfo, List<ModelProvider>)?> _gatewayModelOptions() async {
-    final fake = widget.modelPickerFallbacks?[ModelPickerSource.gateway];
-    if (fake != null) return fake().then((r) => r, onError: (Object _) => null);
-    try {
-      final api = ApiClient(
-        baseUrl: widget.connection.gatewayUrl,
-        apiKey: widget.connection.apiKey,
-      );
-      final results = await Future.wait([
-        api.getModels(),
-        api.getBackendModels(),
-      ]);
-      final seen = <String>{};
-      final models = <String>[
-        for (final m in [...results[0], ...results[1]])
-          if (m.isNotEmpty && seen.add(m)) m,
-      ];
-      if (models.isEmpty) return null;
-      final provider = ModelProvider(
-        slug: 'gateway',
-        name: 'Gateway',
-        isCurrent: true,
-        authenticated: true,
-        authType: '',
-        oauthProviderId: '',
-        keyEnv: '',
-        warning: '',
-        models: models,
-      );
-      final info = ModelActiveInfo(
-        model: _selectedModel,
-        provider: 'gateway',
-        effectiveContextLength: 0,
-      );
-      return (info, [provider]);
-    } catch (_) {
-      return null;
-    }
-  }
-
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -6405,6 +6335,9 @@ class _ChatScreenState extends State<ChatScreen>
       _chat.stageFirstSubmitConfig(_firstSubmitConfig);
       _chatSub = _chat.changes.listen(_onChatEvent);
       _chat.transportStatusListenable.addListener(_syncTransportVisibility);
+      ConnectionStatusRegistry.instance.changes.addListener(
+        _syncTransportVisibility,
+      );
       _lastObservesRemoteTurnAfterReconnect =
           _chat.observesRemoteTurnAfterReconnect;
       _syncTransportVisibility();
@@ -6449,8 +6382,9 @@ class _ChatScreenState extends State<ChatScreen>
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         _onVoiceState();
-        // The chat's first frame is out: from here on, and only for somebody
-        // who talks to this phone, its recogniser may load ahead of the tap.
+        // The chat's first frame is out. Nothing loads now: the recogniser
+        // loads when the microphone is first touched (see
+        // `ChatRecognizerPrewarm.armOnMicPressDown`).
         _recognizerPrewarm = ChatRecognizerPrewarm.attach(
           voice: app.voice,
           preferences: app.connManager.prefs,
@@ -6805,8 +6739,13 @@ class _ChatScreenState extends State<ChatScreen>
     final eventRevision = _chat.adaptiveRefreshEventRevision;
     if (eventRevision != _seenAdaptiveEventRevision) {
       _seenAdaptiveEventRevision = eventRevision;
+      // N6a: a frequent signal must not keep pushing an armed backstop back
+      // (it would never fire); only a failure backoff is shortened by it.
+      final backingOff = _adaptiveRefreshFailureIndex > 0;
       _adaptiveRefreshFailureIndex = 0;
-      _scheduleAdaptiveSnapshot(_adaptiveBackstopDelay());
+      if (backingOff || _subagentPollTimer == null) {
+        _scheduleAdaptiveSnapshot(_adaptiveBackstopDelay());
+      }
     }
 
     final fullRevision = _chat.adaptiveFullRefreshRevision;
@@ -6896,11 +6835,14 @@ class _ChatScreenState extends State<ChatScreen>
     }
     _adaptiveSnapshotInFlight = true;
     final failureRevision = _chat.adaptiveSnapshotFailureRevision;
-    await Future.wait<void>([
-      if (subagents) _chat.refreshSubagents(),
-      if (processes) _chat.refreshBackgroundProcesses(),
-      if (control) _chat.refreshSessionControl(),
-    ]);
+    await GatewaySocketMeter.origin(
+      'chat.snapshot',
+      () => Future.wait<void>([
+        if (subagents) _chat.refreshSubagents(),
+        if (processes) _chat.refreshBackgroundProcesses(),
+        if (control) _chat.refreshSessionControl(),
+      ]),
+    );
     final failed = _chat.adaptiveSnapshotFailureRevision != failureRevision;
     _adaptiveSnapshotInFlight = false;
     if (_disposed ||
@@ -7028,6 +6970,10 @@ class _ChatScreenState extends State<ChatScreen>
     // El sondeo ya cumplió su parte; el transcript durable no se lee mientras
     // el turno siga vivo (una lectura así reaparece como burbuja duplicada).
     if (_chat.isStreaming) return true;
+    // N6b: a snapshot recovery owns the transcript reads of this chat until
+    // it converges (and for a few seconds after, same generation). The
+    // pending-change flag stays set, so the next quiet read still happens.
+    if (_chat.recoveryReadsQuiet) return true;
     // Another surface's assistant is not in REST until the turn ends. The
     // busy poll therefore never sees the reply; fetch once more on idle.
     final remoteTurnSettled = ownedLiveTurn && !_chat.remoteSurfaceOwnsLiveTurn;
@@ -7776,14 +7722,11 @@ class _ChatScreenState extends State<ChatScreen>
     }
     if (_chat.dashboardAuthNoticeVisible) {
       events.add(
-        IslandEvent(
-          id: 'dashboard-sign-in',
-          key: const ValueKey('chat-dashboard-auth-required'),
-          tone: IslandTone.warning,
-          icon: Icons.lock_outline_rounded,
-          sticky: true,
-          line: str.islandSignIn,
-          more: str.chaDesktopAuthRequiredBanner,
+        dashboardSignInEvent(
+          str: str,
+          browserSession: _nativeSessionForBanner(),
+          onSignIn: () => unawaited(_signInDashboardAndReconnect()),
+          onRecover: () => unawaited(openRecoverAccess(context)),
           onDismissed: () => setState(_chat.dismissDashboardAuthNotice),
         ),
       );
@@ -7796,7 +7739,7 @@ class _ChatScreenState extends State<ChatScreen>
         IslandEvent(
           id: 'connection',
           // One per loss: dismissed, it stays away until the next one.
-          revision: _transportVisibility.recoveries,
+          revision: _transportVisibility.lossEpoch,
           key: const ValueKey('chat-connection-recovery-row'),
           tone: reconnecting ? IslandTone.warning : IslandTone.error,
           // Red, as a connection that is gone; but it waits its turn behind
@@ -7805,7 +7748,34 @@ class _ChatScreenState extends State<ChatScreen>
           icon: Icons.cloud_off_outlined,
           busy: reconnecting,
           sticky: true,
-          line: reconnecting ? str.islandReconnecting : str.fh1215Offline,
+          action: connectionIslandAction(
+            str: str,
+            kind: _transportVisibility.linkKind,
+            simpleConnect: kSimpleConnectEnabled,
+            onOpenHelp: () => unawaited(
+              Navigator.of(context).push<void>(
+                MaterialPageRoute<void>(
+                  builder: (_) => const ManualSetupPage(),
+                ),
+              ),
+            ),
+            onRetry: () => unawaited(_chat.retryConnectionNow()),
+          ),
+          line: _transportVisibility.persistent
+              ? str.connStatusPersistent
+              : switch (_transportVisibility.linkKind) {
+                  ConnectionStatusKind.noNetwork => str.connStatusNoNetwork,
+                  ConnectionStatusKind.noServer => connectionIslandLine(
+                    str: str,
+                    kind: ConnectionStatusKind.noServer,
+                    simpleConnect: kSimpleConnectEnabled,
+                  )!,
+                  ConnectionStatusKind.starting => str.serverStartingTitle,
+                  ConnectionStatusKind.authRequired =>
+                    str.connStatusAuthRequired,
+                  _ =>
+                    reconnecting ? str.islandReconnecting : str.fh1215Offline,
+                },
         ),
       );
     }
@@ -8388,8 +8358,13 @@ class _ChatScreenState extends State<ChatScreen>
 
   void _syncTransportVisibility() {
     if (_disposed) return;
+    // The connection supervisor sees a dead socket the chat has not noticed.
+    final link = ConnectionStatusRegistry.instance.current(
+      widget.connection.id,
+    );
     _transportVisibility.update(
-      status: _chat.transportStatus,
+      link: link,
+      status: chatTransportWithLink(_chat.transportStatus, link),
       activeTurn: _chat.isStreaming,
       authRequired: _chat.dashboardAuthRequired,
       appForeground: _appInForeground,
@@ -9236,6 +9211,9 @@ class _ChatScreenState extends State<ChatScreen>
     _chatSub = null;
     if (_chatBound) {
       _chat.transportStatusListenable.removeListener(_syncTransportVisibility);
+      ConnectionStatusRegistry.instance.changes.removeListener(
+        _syncTransportVisibility,
+      );
     }
     _transportVisibility.removeListener(_onTransportVisibilityChanged);
     _transportVisibility.dispose();
@@ -9916,7 +9894,20 @@ class _ChatScreenState extends State<ChatScreen>
       }
       if (sourcePlan is ChatMessageUnitPlan) {
         final message = messages[sourcePlan.messageIndex];
-        final plan = _assistantRenderPlanFor(message);
+        _AssistantRenderPlan? plan;
+        try {
+          plan = _assistantRenderPlanFor(message);
+        } catch (error) {
+          if (error is! _RowPlanFailed) {
+            _chatRowFailure(
+              sourcePlan,
+              error,
+              'index:${sourcePlan.messageIndex}',
+            );
+          }
+          entries.add(_FailedChatListEntry(sourcePlan));
+          continue;
+        }
         if (plan != null) {
           // La lista es reverse:true: la última parte debe tener el índice más
           // bajo para quedar visualmente debajo de la primera.
@@ -9959,8 +9950,18 @@ class _ChatScreenState extends State<ChatScreen>
     // del streaming sustituye el mapa de cabeza) reutiliza el plan, así el
     // split con verificación CommonMark se ejecuta UNA vez por respuesta.
     final cached = _assistantRenderPlans.lookup(content);
-    if (cached != null) return cached.value.plan;
+    if (cached != null) {
+      if (cached.value.failed) throw const _RowPlanFailed();
+      return cached.value.plan;
+    }
     widget.performanceProbe?.assistantRenderPlanComputations++;
+    // Pessimistic marker: a throw below leaves the failure cached, so streaming
+    // flushes do not re-parse (and re-throw) the same content. Success replaces it.
+    _assistantRenderPlans.put(
+      content,
+      const _CachedAssistantRenderPlan(null, failed: true),
+    );
+    ChatRowFaults.debugPlanFault?.call(message);
 
     final split = ReasoningSplit(
       reasoning: '',
@@ -10688,6 +10689,64 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
+  /// The composer text now lives elsewhere (queue or live correction): empty
+  /// the composer and its saved draft, unless the user already edited it.
+  Future<void> _clearComposerAfterHandoff(
+    String composerTextAtSubmit,
+    List<AttachmentDraft> attachments,
+    bool usesComposerState,
+  ) async {
+    if (usesComposerState &&
+        _textController.text == composerTextAtSubmit &&
+        _sameAttachmentDrafts(_pendingAttachments, attachments)) {
+      _draftTimer?.cancel();
+      _restoringDraft = true;
+      setState(() {
+        _textController.clear();
+        _pendingAttachments.clear();
+      });
+      _restoringDraft = false;
+      await _clearDraft();
+    } else {
+      _scheduleDraftSave();
+    }
+  }
+
+  /// Live correction (`session.redirect`, as Desktop); null = use the queue.
+  Future<bool?> _steerLiveCorrection(
+    String text,
+    String atSubmit,
+    bool uses,
+  ) async {
+    final failed = Strings.of(context).chaSteerFailed;
+    final DesktopRedirectDisposition disposition;
+    try {
+      disposition = await _chat.steer(text);
+    } catch (error) {
+      if ((error is StateError && error.message.startsWith('run_not_')) ||
+          _chat.mutationsBlockedByOwnershipConflict ||
+          activeChatSteerFailureIsSafeToQueue(error)) {
+        return null;
+      }
+      // Ambiguous after the RPC left: queueing could duplicate an accepted
+      // correction, so the text stays in the composer as a draft.
+      if (uses) _scheduleDraftSave();
+      return _sendRefused('liveCorrectionUnconfirmed', notice: failed);
+    }
+    if (disposition == DesktopRedirectDisposition.rejected) return null;
+    if (!mounted) {
+      if (uses) await _clearQueuedDraftAfterLeaving(atSubmit, const []);
+      return true;
+    }
+    await _clearComposerAfterHandoff(atSubmit, const [], uses);
+    if (disposition == DesktopRedirectDisposition.queued && mounted) {
+      HermesNotice.of(context).showSnackBar(
+        SnackBar(content: Text(Strings.of(context).chaSteerQueued)),
+      );
+    }
+    return true;
+  }
+
   Future<bool> _sendMessageOnce({
     bool skipSlashRouting = false,
     String? textOverride,
@@ -11034,6 +11093,27 @@ class _ChatScreenState extends State<ChatScreen>
     }
     final waitsForExternalOwner = _chat.hasAuthoritativePassiveRemoteActivity;
     final waitsForCompression = _compressingSession;
+    // Desktop parity (use-composer-submit.ts submitWhileBusy): plain text sent
+    // during this chat's own live turn is a correction; the rest queues
+    // (a `textOverride` is a program-made send, e.g. a slash handoff).
+    final liveCorrection =
+        !queueOnly &&
+        textOverride == null &&
+        _sending &&
+        !waitsForExternalOwner &&
+        !waitsForCompression &&
+        attachments.isEmpty &&
+        !text.startsWith('/') &&
+        !_chat.needsInput &&
+        text.trim().isNotEmpty;
+    if (liveCorrection) {
+      final corrected = await _steerLiveCorrection(
+        fullText,
+        composerTextAtSubmit,
+        usesComposerState,
+      );
+      if (corrected != null) return corrected;
+    }
     // Every queued composer turn is written to the encrypted outbox before the
     // composer is cleared. This preserves FIFO across process death and keeps a
     // rejected head visible for explicit retry instead of dropping it.
@@ -11079,20 +11159,11 @@ class _ChatScreenState extends State<ChatScreen>
         }
         return true;
       }
-      if (usesComposerState &&
-          _textController.text == composerTextAtSubmit &&
-          _sameAttachmentDrafts(_pendingAttachments, attachments)) {
-        _draftTimer?.cancel();
-        _restoringDraft = true;
-        setState(() {
-          _textController.clear();
-          _pendingAttachments.clear();
-        });
-        _restoringDraft = false;
-        await _clearDraft();
-      } else {
-        _scheduleDraftSave();
-      }
+      await _clearComposerAfterHandoff(
+        composerTextAtSubmit,
+        attachments,
+        usesComposerState,
+      );
       if (mounted) {
         HermesNotice.of(context)
           ..hideCurrentSnackBar()
@@ -11528,6 +11599,31 @@ class _ChatScreenState extends State<ChatScreen>
   /// "Volver a iniciar sesión" / "Revisar la clave" on a provider credential
   /// failure. After a successful sign-in the turn can be retried in place.
   bool _dashboardSignInRunning = false;
+  bool _nativeSessionProbed = false;
+  bool _nativeSession = false;
+
+  /// Whether the connection holds a browser-login session (the stored envelope),
+  /// read once when the notice first shows; false until then and when the
+  /// simple-connect flag is off.
+  bool _nativeSessionForBanner() {
+    if (!kSimpleConnectEnabled) return false;
+    if (!_nativeSessionProbed) {
+      _nativeSessionProbed = true;
+      final app = context.findAncestorStateOfType<HermesAppState>();
+      if (app != null) {
+        unawaited(
+          app.connManager.getDashboardSecrets(widget.connection.id).then((s) {
+            final native = dashboardBrowserSession(
+              simpleConnect: kSimpleConnectEnabled,
+              storedSession: s.sessionToken,
+            );
+            if (native && mounted) setState(() => _nativeSession = true);
+          }, onError: (_) {}),
+        );
+      }
+    }
+    return _nativeSession;
+  }
 
   /// A turn failed because this instance's Dashboard has no working sign-in:
   /// open the existing sign-in and, once it works, send that turn again.
@@ -11557,6 +11653,29 @@ class _ChatScreenState extends State<ChatScreen>
       return;
     }
     onRetry();
+  }
+
+  /// The banner's sign-in: the same Dashboard sign-in, opened over this chat
+  /// (draft and transcript untouched); once it works the socket dials again.
+  Future<void> _signInDashboardAndReconnect() async {
+    if (_dashboardSignInRunning) return;
+    final app = context.findAncestorStateOfType<HermesAppState>();
+    if (app == null) return;
+    _dashboardSignInRunning = true;
+    final chat = _chat;
+    var signedIn = false;
+    try {
+      signedIn = await signInToDashboard(
+        Navigator.of(context),
+        app.connManager,
+        widget.connection,
+      );
+    } finally {
+      _dashboardSignInRunning = false;
+    }
+    if (signedIn && mounted && identical(_chat, chat)) {
+      unawaited(chat.warmDesktopGateway());
+    }
   }
 
   Future<void> _reauthProvider(
@@ -12307,7 +12426,7 @@ class _ChatScreenState extends State<ChatScreen>
   /// lista. El stream en curso (si lo hay) no se interrumpe.
   void _newChat() {
     final session = Session(
-      id: GatewayChatClient.generateSessionId(),
+      id: generateSessionId(),
       title: Strings.of(context).drawerNewChat,
       model: 'hermes-agent',
       source: 'mobile',
@@ -13482,10 +13601,7 @@ class _ChatScreenState extends State<ChatScreen>
   /// the brief slide feedback after its light haptic.
   Future<void> _moveToRecentChat(int direction) async {
     if (direction == 0) return;
-    final client = ApiClient(
-      baseUrl: widget.connection.gatewayUrl,
-      apiKey: widget.connection.apiKey,
-    );
+    final client = ApiClient.forConnection(widget.connection);
     try {
       final profile = Session.profileOwner(widget.session.profile);
       final sessions = await client.getSessions(profile: profile);
@@ -14268,11 +14384,7 @@ class _ChatScreenState extends State<ChatScreen>
               ? strings.subagentUiTranscriptTitle
               : goal.split('\n').first,
           load: () async {
-            final client = ApiClient(
-              baseUrl: readOnlyConnection.baseUrl,
-              apiKey: readOnlyConnection.apiKey,
-              connectionId: readOnlyConnection.id,
-            );
+            final client = ApiClient.forConnection(readOnlyConnection);
             try {
               // Opening (or retrying) the page is an explicit action: it may
               // try the Dashboard once more for a blocked named profile.
@@ -14421,11 +14533,7 @@ class _ChatScreenState extends State<ChatScreen>
       showReadOnlyNotice(context);
       return;
     }
-    final client = ApiClient(
-      baseUrl: widget.connection.baseUrl,
-      apiKey: widget.connection.apiKey,
-      connectionId: widget.connection.id,
-    );
+    final client = ApiClient.forConnection(widget.connection);
     final dashboard =
         widget.session.isJob &&
             cronDeletion == LinkedCronDeletionMode.deleteSchedule &&
@@ -14442,6 +14550,7 @@ class _ChatScreenState extends State<ChatScreen>
         ),
         deleteSession: (sessionId) =>
             client.deleteSession(sessionId, profile: ownerProfile),
+        serverDeletesChain: client.hasDashboard,
         remoteSessionId: _chat.serverSessionId,
         localRecoverySessionId: widget.session.id,
         clearLocalRecovery: _clearDeletedChatRecovery,
@@ -15651,7 +15760,7 @@ class _ChatScreenState extends State<ChatScreen>
                                     ? _buildRuntimeOwnershipBanner()
                                     : _buildRuntimeOwnershipCompactIndicator(),
                               // Aprobación inline: aparece justo encima del composer cuando el
-                              // agente pide permiso (motor /v1/runs).
+                              // agente pide permiso (socket de Desktop).
                               if (_chat.pendingApproval != null)
                                 ChatApprovalCard(
                                   approval: _chat.pendingApproval!,
@@ -16260,6 +16369,10 @@ class _ChatScreenState extends State<ChatScreen>
   String _dictationOriginal = '';
   bool _dictationSendInFlight = false;
   bool _dictationStarting = false;
+
+  /// The first dictation of this run of the app reports how long it took to
+  /// be ready; the ones after it find the recogniser waiting.
+  static bool _firstDictationReadyLogged = false;
   Completer<void>? _dictationCompletion;
 
   /// Plazo máximo para recibir el final tras pulsar parar. Los motores que
@@ -16288,6 +16401,7 @@ class _ChatScreenState extends State<ChatScreen>
   Future<void> _startDictationGuarded(VoiceService voice) async {
     final perf = Stopwatch()..start();
     debugPrint('[VOICE-PERF] dictation.button.tap');
+    _recognizerPrewarm?.armOnMicPressDown();
     // Cancela cualquier red de seguridad pendiente del dictado ANTERIOR: si no,
     // su _stopFallback (4s) podía dispararse a mitad de este nuevo dictado y
     // resetearlo (el 2º dictado "se paraba solo"). También cierra una sesión STT
@@ -16342,6 +16456,12 @@ class _ChatScreenState extends State<ChatScreen>
     if (!check.ready) {
       if (mounted) await _showVoiceUnavailable(check);
       return;
+    }
+    if (!_firstDictationReadyLogged) {
+      _firstDictationReadyLogged = true;
+      debugPrint(
+        '[VOICE-PERF] voice.first_dictation.ready_ms=${perf.elapsedMilliseconds}',
+      );
     }
     if (!await voice.prepareForMicrophoneCapture()) return;
     // The STT check can wait on the runtime permission prompt. If the chat
@@ -17792,15 +17912,23 @@ class _ChatScreenState extends State<ChatScreen>
 
   Widget? _composerVoiceModeAction(HermesThemeColors colors, bool showStop) {
     if (!_voiceSlotFree(showStop)) return null;
-    return HermesTactileAction(
-      icon: Icons.graphic_eq_rounded,
-      semanticLabel: Strings.of(context).chaVoiceModeTooltip,
-      onPressed: widget.connection.readOnly ? null : _enterVoiceMode,
-      backgroundColor: colors.secondary,
-      foregroundColor: colors.onAccent,
-      enabled: !widget.connection.readOnly,
-      size: 42,
-      iconSize: 23,
+    // The finger landing is the first contact with the microphone: the
+    // recogniser starts loading then, behind the rest of the tap.
+    return Listener(
+      behavior: HitTestBehavior.translucent,
+      onPointerDown: widget.connection.readOnly
+          ? null
+          : (_) => _recognizerPrewarm?.armOnMicPressDown(),
+      child: HermesTactileAction(
+        icon: Icons.graphic_eq_rounded,
+        semanticLabel: Strings.of(context).chaVoiceModeTooltip,
+        onPressed: widget.connection.readOnly ? null : _enterVoiceMode,
+        backgroundColor: colors.secondary,
+        foregroundColor: colors.onAccent,
+        enabled: !widget.connection.readOnly,
+        size: 42,
+        iconSize: 23,
+      ),
     );
   }
 
@@ -18482,174 +18610,193 @@ class _ChatScreenState extends State<ChatScreen>
     // Overlay extents (activity pill, arrow) only change the list
     // padding. Reusing the same delegate lets the sliver skip rebuilding
     // every cached row when the ListenableBuilder below re-runs.
+    Widget buildRow(BuildContext context, int index) {
+      final entry = entries[index];
+      if (entry is _RetainedTerminalErrorChatListEntry) {
+        return _buildRetainedTerminalErrorEntry(entry);
+      }
+      final plan = entry.sourcePlan;
+      if (entry is _FailedChatListEntry) {
+        return _chatRowFailure(plan, null, 'index:$index');
+      }
+      final assistantSlice = entry is _AssistantSliceChatListEntry
+          ? entry.slice
+          : null;
+      final sourceMessages = _sourceMessagesForRenderPlan(plan);
+      final reportsPreservedTurnInsertion = sourceMessages.any(
+        _readerPreservedTurnInsertions.contains,
+      );
+      final unit = _materializeRenderUnit(plan);
+      Widget child = _wrapFindHighlight(
+        ChatRowFaults.debugRowChild?.call(unit) ??
+            _buildRenderUnit(unit, assistantSlice: assistantSlice),
+        unit: unit,
+        sourceMessages: sourceMessages,
+      );
+      child = _wrapReactions(child, unit: unit, assistantSlice: assistantSlice);
+      // Inside every other wrapper: the outermost widget types of a row must
+      // stay as they were so a live row keeps its slot when it turns terminal.
+      child = ChatRowScope(
+        rowId: _rowLogId(plan, 'index:$index'),
+        raw: _planRawText(plan),
+        child: child,
+      );
+      if (_newSinceFirstUnread != null &&
+          (assistantSlice?.showHeader ?? true) &&
+          sourceMessages.any(_isNewSinceFirstUnread)) {
+        // Inside the row (not a list entry of its own): indices and
+        // the reader anchors keep their slots, and the landing jump
+        // aligns the divider with the top of the screen.
+        child = Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            RoomSeparator(
+              key: const ValueKey('chat-new-since-divider'),
+              label: Strings.of(context).sc1215NewSinceYouLeft,
+              highlight: true,
+            ),
+            child,
+          ],
+        );
+      }
+      final assistantMessage =
+          unit is Map<String, dynamic> &&
+              unit['role'] == 'assistant' &&
+              unit['_pipeline'] != true
+          ? unit
+          : null;
+      final ownsAnchor = assistantSlice?.showHeader ?? true;
+      Widget result = child;
+      if (ownsAnchor) {
+        result = ChatAnswerAnchor(
+          onLayout: (anchor) {
+            var added = false;
+            for (final message in sourceMessages) {
+              if (!identical(_messageAnchors[message], anchor)) {
+                _messageAnchors[message] = anchor;
+                added = true;
+              }
+            }
+            if (added) _scheduleStickyPromptUpdate();
+          },
+          onDetach: (anchor) {
+            for (final message in sourceMessages) {
+              if (identical(_messageAnchors[message], anchor)) {
+                _messageAnchors.remove(message);
+              }
+            }
+          },
+          child: child,
+        );
+      } else if (sourceMessages.isNotEmpty) {
+        // A later slice of a long reply: it has no reader anchor of
+        // its own, but when it spans the viewport top the sticky
+        // prompt needs to know which reply it belongs to.
+        final replyMessage = sourceMessages.first;
+        result = ChatAnswerAnchor(
+          onLayout: (anchor) {
+            if (identical(_stickySliceAnchors[anchor], replyMessage)) {
+              return;
+            }
+            _stickySliceAnchors[anchor] = replyMessage;
+            _scheduleStickyPromptUpdate();
+          },
+          onDetach: (anchor) => _stickySliceAnchors.remove(anchor),
+          child: child,
+        );
+      }
+      if (assistantSlice != null && assistantMessage != null) {
+        result = KeyedSubtree(
+          key: ValueKey((assistantMessage, assistantSlice.index)),
+          child: result,
+        );
+      }
+      // Entrada suave del mensaje NUEVO: solo el más reciente (índice 0, la
+      // lista es reverse). El turno que esta superficie ya presentó queda
+      // fuera: su host crece por streaming y un translate adicional de 8 px
+      // se percibe como un pequeño tirón si el usuario empieza a leer o
+      // arrastrar. La guarda sobrevive al terminal para que cancelación,
+      // error o una reconciliación tardía tampoco animen de nuevo la fila.
+      // A response group grows at its newest row; its oldest row is
+      // the stable identity, so a joining row never replays the
+      // entrance nor remounts the bubble.
+      final groupStart =
+          plan is ChatMessageUnitPlan && sourceMessages.length > 1
+          ? sourceMessages.last
+          : null;
+      final key = _entranceKey(groupStart ?? unit);
+      final belongsToSurfaceTurn =
+          _surfaceTurnSerial == _assistantEntranceSerial &&
+          (_chat.isStreaming || _surfaceTurnTerminal);
+      if (index == 0 && key != null && !belongsToSurfaceTurn) {
+        result = MotionEntrance(key: ValueKey<Object>(key), child: result);
+      }
+      if (reportsPreservedTurnInsertion) {
+        result = _SurfaceTurnInitialExtentReporter(
+          onInitialExtent: _streamingViewportLock.record,
+          child: result,
+        );
+      }
+      // Cada mensaje repinta en su propia capa: el host vivo a 30 Hz (y el
+      // reveal gradual) no invalida la rasterización del historial visible.
+      // El host vivo/retenido queda fuera: su geometría la mide el lock del
+      // viewport y una capa intermedia rompe esa medición.
+      final keepsLiveHost =
+          assistantMessage != null && _messageKeepsLiveHost(assistantMessage);
+      final isLiveHead =
+          _chat.isStreaming &&
+          _messages.isNotEmpty &&
+          identical(unit, _messages.first);
+      if (!keepsLiveHost && !isLiveHead) {
+        result = RepaintBoundary(child: result);
+      }
+      // ct1215: the live turn before its reply has text; from the first
+      // token on, the live host measures itself.
+      if (isLiveHead &&
+          !_liveAssistantMaterialized &&
+          unit is Map<String, dynamic> &&
+          unit['role'] == 'assistant') {
+        result = _ExtentReporter(onExtent: _recordLiveTurnRow, child: result);
+      }
+      final durableEntryIds =
+          (groupStart == null ? sourceMessages : [groupStart])
+              .map((message) {
+                final messageId = canonicalTranscriptMessageId(message);
+                if (messageId != null) return 'message:$messageId';
+                final rowId = canonicalTranscriptRowId(message);
+                return rowId == null ? null : 'row:$rowId';
+              })
+              .whereType<String>()
+              .toList(growable: false);
+      if (durableEntryIds.length ==
+          (groupStart == null ? sourceMessages.length : 1)) {
+        // This must remain the outermost list child. Sliver reconciliation
+        // can then retain the complete bubble subtree even when refresh
+        // replaces its source Map or runtime presentation wrappers change.
+        result = KeyedSubtree(
+          key: ValueKey<Object>((
+            'chat-render-entry',
+            durableEntryIds.join('\u0000'),
+            assistantSlice?.index,
+          )),
+          child: result,
+        );
+      }
+      return result;
+    }
+
     final rowDelegate = SliverChildBuilderDelegate(
       (context, index) {
-        final entry = entries[index];
-        if (entry is _RetainedTerminalErrorChatListEntry) {
-          return _buildRetainedTerminalErrorEntry(entry);
-        }
-        final plan = entry.sourcePlan;
-        final assistantSlice = entry is _AssistantSliceChatListEntry
-            ? entry.slice
-            : null;
-        final sourceMessages = _sourceMessagesForRenderPlan(plan);
-        final reportsPreservedTurnInsertion = sourceMessages.any(
-          _readerPreservedTurnInsertions.contains,
-        );
-        final unit = _materializeRenderUnit(plan);
-        Widget child = _wrapFindHighlight(
-          _buildRenderUnit(unit, assistantSlice: assistantSlice),
-          unit: unit,
-          sourceMessages: sourceMessages,
-        );
-        child = _wrapReactions(
-          child,
-          unit: unit,
-          assistantSlice: assistantSlice,
-        );
-        if (_newSinceFirstUnread != null &&
-            (assistantSlice?.showHeader ?? true) &&
-            sourceMessages.any(_isNewSinceFirstUnread)) {
-          // Inside the row (not a list entry of its own): indices and
-          // the reader anchors keep their slots, and the landing jump
-          // aligns the divider with the top of the screen.
-          child = Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              RoomSeparator(
-                key: const ValueKey('chat-new-since-divider'),
-                label: Strings.of(context).sc1215NewSinceYouLeft,
-                highlight: true,
-              ),
-              child,
-            ],
+        try {
+          return buildRow(context, index);
+        } catch (error) {
+          return _chatRowFailure(
+            entries[index].sourcePlan,
+            error,
+            'index:$index',
           );
         }
-        final assistantMessage =
-            unit is Map<String, dynamic> &&
-                unit['role'] == 'assistant' &&
-                unit['_pipeline'] != true
-            ? unit
-            : null;
-        final ownsAnchor = assistantSlice?.showHeader ?? true;
-        Widget result = child;
-        if (ownsAnchor) {
-          result = ChatAnswerAnchor(
-            onLayout: (anchor) {
-              var added = false;
-              for (final message in sourceMessages) {
-                if (!identical(_messageAnchors[message], anchor)) {
-                  _messageAnchors[message] = anchor;
-                  added = true;
-                }
-              }
-              if (added) _scheduleStickyPromptUpdate();
-            },
-            onDetach: (anchor) {
-              for (final message in sourceMessages) {
-                if (identical(_messageAnchors[message], anchor)) {
-                  _messageAnchors.remove(message);
-                }
-              }
-            },
-            child: child,
-          );
-        } else if (sourceMessages.isNotEmpty) {
-          // A later slice of a long reply: it has no reader anchor of
-          // its own, but when it spans the viewport top the sticky
-          // prompt needs to know which reply it belongs to.
-          final replyMessage = sourceMessages.first;
-          result = ChatAnswerAnchor(
-            onLayout: (anchor) {
-              if (identical(_stickySliceAnchors[anchor], replyMessage)) {
-                return;
-              }
-              _stickySliceAnchors[anchor] = replyMessage;
-              _scheduleStickyPromptUpdate();
-            },
-            onDetach: (anchor) => _stickySliceAnchors.remove(anchor),
-            child: child,
-          );
-        }
-        if (assistantSlice != null && assistantMessage != null) {
-          result = KeyedSubtree(
-            key: ValueKey((assistantMessage, assistantSlice.index)),
-            child: result,
-          );
-        }
-        // Entrada suave del mensaje NUEVO: solo el más reciente (índice 0, la
-        // lista es reverse). El turno que esta superficie ya presentó queda
-        // fuera: su host crece por streaming y un translate adicional de 8 px
-        // se percibe como un pequeño tirón si el usuario empieza a leer o
-        // arrastrar. La guarda sobrevive al terminal para que cancelación,
-        // error o una reconciliación tardía tampoco animen de nuevo la fila.
-        // A response group grows at its newest row; its oldest row is
-        // the stable identity, so a joining row never replays the
-        // entrance nor remounts the bubble.
-        final groupStart =
-            plan is ChatMessageUnitPlan && sourceMessages.length > 1
-            ? sourceMessages.last
-            : null;
-        final key = _entranceKey(groupStart ?? unit);
-        final belongsToSurfaceTurn =
-            _surfaceTurnSerial == _assistantEntranceSerial &&
-            (_chat.isStreaming || _surfaceTurnTerminal);
-        if (index == 0 && key != null && !belongsToSurfaceTurn) {
-          result = MotionEntrance(key: ValueKey<Object>(key), child: result);
-        }
-        if (reportsPreservedTurnInsertion) {
-          result = _SurfaceTurnInitialExtentReporter(
-            onInitialExtent: _streamingViewportLock.record,
-            child: result,
-          );
-        }
-        // Cada mensaje repinta en su propia capa: el host vivo a 30 Hz (y el
-        // reveal gradual) no invalida la rasterización del historial visible.
-        // El host vivo/retenido queda fuera: su geometría la mide el lock del
-        // viewport y una capa intermedia rompe esa medición.
-        final keepsLiveHost =
-            assistantMessage != null && _messageKeepsLiveHost(assistantMessage);
-        final isLiveHead =
-            _chat.isStreaming &&
-            _messages.isNotEmpty &&
-            identical(unit, _messages.first);
-        if (!keepsLiveHost && !isLiveHead) {
-          result = RepaintBoundary(child: result);
-        }
-        // ct1215: the live turn before its reply has text; from the first
-        // token on, the live host measures itself.
-        if (isLiveHead &&
-            !_liveAssistantMaterialized &&
-            unit is Map<String, dynamic> &&
-            unit['role'] == 'assistant') {
-          result = _ExtentReporter(onExtent: _recordLiveTurnRow, child: result);
-        }
-        final durableEntryIds =
-            (groupStart == null ? sourceMessages : [groupStart])
-                .map((message) {
-                  final messageId = canonicalTranscriptMessageId(message);
-                  if (messageId != null) return 'message:$messageId';
-                  final rowId = canonicalTranscriptRowId(message);
-                  return rowId == null ? null : 'row:$rowId';
-                })
-                .whereType<String>()
-                .toList(growable: false);
-        if (durableEntryIds.length ==
-            (groupStart == null ? sourceMessages.length : 1)) {
-          // This must remain the outermost list child. Sliver reconciliation
-          // can then retain the complete bubble subtree even when refresh
-          // replaces its source Map or runtime presentation wrappers change.
-          result = KeyedSubtree(
-            key: ValueKey<Object>((
-              'chat-render-entry',
-              durableEntryIds.join('\u0000'),
-              assistantSlice?.index,
-            )),
-            child: result,
-          );
-        }
-        return result;
       },
       childCount: entries.length,
       addAutomaticKeepAlives: false,
@@ -18896,7 +19043,71 @@ class _ChatScreenState extends State<ChatScreen>
           _messageAnchors.remove(assistant);
         }
       },
-      child: child,
+      // Same slot as the scope in a regular row, so a live row keeps its
+      // elements when it turns into this retained entry.
+      child: ChatRowScope(
+        rowId: _rowLogId(entry.assistantPlan, 'index:0'),
+        raw: _planRawText(entry.assistantPlan),
+        child: child,
+      ),
+    );
+  }
+
+  /// Raw message text for "Copy plain text"; null for tool activity.
+  String? _planRawText(ChatRenderUnitPlan plan) {
+    final index = switch (plan) {
+      ChatMessageUnitPlan(:final messageIndex) => messageIndex,
+      ChatUserTurnUnitPlan(:final primaryMessageIndex) => primaryMessageIndex,
+      ChatToolActivityUnitPlan() => null,
+    };
+    final content = index == null ? null : _messages[index]['content'];
+    return content is String && content.isNotEmpty ? content : null;
+  }
+
+  /// Durable ids (`message:ID` / `row:ID`) of a plan's source rows, or null
+  /// when any of them has none.
+  List<String>? _durableRowIds(ChatRenderUnitPlan plan) {
+    try {
+      final ids = [
+        for (final message in _sourceMessagesForRenderPlan(plan))
+          switch ((
+            canonicalTranscriptMessageId(message),
+            canonicalTranscriptRowId(message),
+          )) {
+            (final String id, _) => 'message:$id',
+            (_, final int id) => 'row:$id',
+            _ => '',
+          },
+      ];
+      return ids.isEmpty || ids.contains('') ? null : ids;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  String _rowLogId(ChatRenderUnitPlan plan, String fallback) =>
+      _durableRowIds(plan)?.join(',') ?? fallback;
+
+  /// Replacement for a row that could not be planned or built. A non-null
+  /// [error] is logged by type and row id only (never content).
+  Widget _chatRowFailure(ChatRenderUnitPlan plan, Object? error, String id) {
+    final ids = _durableRowIds(plan);
+    final rowId = ids?.join(',') ?? id;
+    // One record per failing row and type: a failed row is rebuilt on every
+    // flush and must not flood the bounded log.
+    if (error != null &&
+        _loggedRowFailures.add('$rowId ${error.runtimeType}')) {
+      AppErrorLog.record('chat-row', error, rowId: rowId);
+    }
+    String? raw;
+    try {
+      raw = _planRawText(plan);
+    } catch (_) {}
+    final card = ChatRowFailureCard(raw: raw);
+    if (ids == null) return card;
+    return KeyedSubtree(
+      key: ValueKey<Object>(('chat-render-entry', ids.join('\u0000'), null)),
+      child: card,
     );
   }
 

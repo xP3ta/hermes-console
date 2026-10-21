@@ -732,7 +732,6 @@ void main() {
 
   group('MissionControlRepository', () {
     test('loads Desktop aggregate sessions with every profile owner', () async {
-      var fallbackCalls = 0;
       String? endpoint;
       final sessions = await loadMissionControlSessions(
         dashboardGet: (value) async {
@@ -744,68 +743,49 @@ void main() {
             ],
           };
         },
-        legacyGatewayLoader: () async {
-          fallbackCalls++;
-          return const [];
-        },
       );
 
       expect(endpoint, startsWith('profiles/sessions?'));
       expect(Uri.splitQueryString(endpoint!.split('?').last)['profile'], 'all');
       expect(sessions.map((session) => session.profile), ['infra', 'security']);
       expect(sessions.map((session) => session.id), ['shared-id', 'shared-id']);
-      expect(fallbackCalls, 0);
     });
 
-    test('falls back to Gateway sessions only for a legacy route', () async {
-      var fallbackCalls = 0;
-      final sessions = await loadMissionControlSessions(
-        dashboardGet: (_) async => throw const DashboardHttpException(404),
-        legacyGatewayLoader: () async {
-          fallbackCalls++;
-          return [_session(id: 'legacy', profile: 'default')];
+    test('a missing aggregate route is an error, as in Desktop', () async {
+      for (final code in [404, 405]) {
+        await expectLater(
+          loadMissionControlSessions(
+            dashboardGet: (_) async => throw DashboardHttpException(code),
+          ),
+          throwsA(isA<DashboardHttpException>()),
+        );
+      }
+    });
+
+    test('aggregate auth, network and malformed failures are errors', () async {
+      final failures = <Future<Map<String, dynamic>> Function()>[
+        () async => throw const DashboardHttpException(401),
+        () async => throw StateError('offline'),
+        () async => {'sessions': 'not-a-list'},
+        () async => {
+          'sessions': [
+            {'id': 'ownerless'},
+          ],
         },
-      );
-
-      expect(fallbackCalls, 1);
-      expect(sessions.single.id, 'legacy');
+        () async => {
+          'sessions': [
+            {'id': 'partial', 'profile': 'infra'},
+          ],
+          'errors': ['security unavailable'],
+        },
+      ];
+      for (final failure in failures) {
+        await expectLater(
+          loadMissionControlSessions(dashboardGet: (_) => failure()),
+          throwsA(anything),
+        );
+      }
     });
-
-    test(
-      'aggregate auth, network and malformed failures never fall back',
-      () async {
-        final failures = <Future<Map<String, dynamic>> Function()>[
-          () async => throw const DashboardHttpException(401),
-          () async => throw StateError('offline'),
-          () async => {'sessions': 'not-a-list'},
-          () async => {
-            'sessions': [
-              {'id': 'ownerless'},
-            ],
-          },
-          () async => {
-            'sessions': [
-              {'id': 'partial', 'profile': 'infra'},
-            ],
-            'errors': ['security unavailable'],
-          },
-        ];
-        for (final failure in failures) {
-          var fallbackCalls = 0;
-          await expectLater(
-            loadMissionControlSessions(
-              dashboardGet: (_) => failure(),
-              legacyGatewayLoader: () async {
-                fallbackCalls++;
-                return [_session(id: 'must-not-leak')];
-              },
-            ),
-            throwsA(anything),
-          );
-          expect(fallbackCalls, 0);
-        }
-      },
-    );
 
     test('profile fallback is limited to an unsupported Desktop RPC', () async {
       var fallbackCalls = 0;

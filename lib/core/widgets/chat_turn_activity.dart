@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart' show SchedulerPhase;
 
 import '../../l10n/app_localizations.dart';
 import '../models/activity_snapshot.dart';
@@ -472,6 +473,100 @@ class _LiveThoughtState extends State<_LiveThought> {
   }
 }
 
+/// A long thought scrolls in its own box (at most 35% of the screen).
+class _CappedThought extends StatefulWidget {
+  const _CappedThought({required this.follow, required this.child});
+
+  final bool follow; // streaming: keeps the end in view until scrolled up
+  final Widget child;
+
+  @override
+  State<_CappedThought> createState() => _CappedThoughtState();
+}
+
+class _CappedThoughtState extends State<_CappedThought> {
+  final ScrollController _scroll = ScrollController();
+  bool _following = true;
+  bool _overflows = false;
+  bool _atTop = true;
+  bool _atEnd = true;
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  bool _onScroll(ScrollNotification note) {
+    if (note.depth == 0) {
+      final atEnd = note.metrics.extentAfter < 1;
+      if (note is ScrollUpdateNotification && note.dragDetails != null) {
+        _following = atEnd;
+      } else if (note is ScrollEndNotification && atEnd) {
+        _following = true;
+      }
+      _sync(note.metrics);
+    }
+    return true; // the chat list never hears of this scroll
+  }
+
+  void _sync(ScrollMetrics m) {
+    final overflows = m.maxScrollExtent > 0;
+    final atTop = m.extentBefore < 1;
+    final atEnd = m.extentAfter < 1;
+    if (overflows == _overflows && atTop == _atTop && atEnd == _atEnd) return;
+    void apply() => mounted
+        ? setState(() {
+            _overflows = overflows;
+            _atTop = atTop;
+            _atEnd = atEnd;
+          })
+        : null;
+    final binding = WidgetsBinding.instance;
+    if (binding.schedulerPhase == SchedulerPhase.persistentCallbacks) {
+      binding.addPostFrameCallback((_) => apply());
+    } else {
+      apply();
+    }
+  }
+
+  void _afterLayout() {
+    if (!mounted || !_scroll.hasClients) return;
+    final position = _scroll.position;
+    if (widget.follow && _following && position.extentAfter >= 1) {
+      position.jumpTo(position.maxScrollExtent);
+    }
+    _sync(position);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final height =
+        MediaQuery.sizeOf(context).height -
+        MediaQuery.viewInsetsOf(context).bottom;
+    WidgetsBinding.instance.addPostFrameCallback((_) => _afterLayout());
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxHeight: (height * 0.35).clamp(160, 320)),
+      child: NotificationListener<ScrollNotification>(
+        onNotification: _onScroll,
+        child: EdgeFade(
+          top: _overflows && !_atTop,
+          bottom: _overflows && !_atEnd,
+          child: Scrollbar(
+            controller: _scroll,
+            thumbVisibility: _overflows,
+            child: SingleChildScrollView(
+              controller: _scroll,
+              physics: const ClampingScrollPhysics(),
+              child: widget.child,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// The model's thinking as a quoted block: a rule on the left, no surface,
 /// at a size meant to be read.
 ///
@@ -524,7 +619,10 @@ class TurnReasoningQuote extends StatelessWidget {
           ),
           child: Padding(
             padding: const EdgeInsetsDirectional.only(start: 12),
-            child: SizedBox(width: double.infinity, child: body),
+            child: SizedBox(
+              width: double.infinity,
+              child: _CappedThought(follow: live, child: body),
+            ),
           ),
         ),
       ),

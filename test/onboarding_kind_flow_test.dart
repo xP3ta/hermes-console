@@ -41,7 +41,7 @@ void main() {
 
   for (final language in ['es', 'en']) {
     testWidgets(
-      '$language: the confirmation preselects from the address, the choice is '
+      '$language: the confirmation asks no kind, the one from the address is '
       'saved, shown on success and in the list of Hermes',
       (tester) async {
         final handle = tester.ensureSemantics();
@@ -61,23 +61,18 @@ void main() {
         await tapOnboarding(tester, 'onboarding-scan');
         final s = onboardingStrings(tester);
         expect(find.text(s.o2ConfirmFull), findsOneWidget);
-        expect(find.text(s.o2KindTitle), findsOneWidget);
-        // Four tiles, none of them the retired on-device one.
-        for (final kind in kOfferedInstanceKinds) {
-          expect(_tile(kind), findsOneWidget);
+        // ONB4: nobody is asked where the Hermes lives; the kind comes from
+        // the address (a .local name lives at home) and the editor keeps
+        // the picker.
+        for (final kind in [...kOfferedInstanceKinds, InstanceKind.localhost]) {
+          expect(_tile(kind), findsNothing);
         }
-        expect(_tile(InstanceKind.localhost), findsNothing);
-        // A .local name lives at home.
-        expect(_selected(tester), {InstanceKind.homelab});
-        await tester.tap(_tile(InstanceKind.pc));
-        await tester.pumpAndSettle();
-        expect(_selected(tester), {InstanceKind.pc});
         expect(manager.getConnections(), isEmpty);
 
         await tapOnboarding(tester, 'onboarding-confirm');
         expect(find.text(s.o2SuccessTitle), findsOneWidget);
         final saved = manager.getConnections().single;
-        expect(saved.kind, InstanceKind.pc);
+        expect(saved.kind, InstanceKind.homelab);
 
         // Success: the chosen icon beside the Hermes' name.
         final identity = find.byKey(const ValueKey('onboarding-identity'));
@@ -85,7 +80,7 @@ void main() {
         expect(
           find.descendant(
             of: identity,
-            matching: find.byIcon(instanceKindIcon(InstanceKind.pc)),
+            matching: find.byIcon(instanceKindIcon(InstanceKind.homelab)),
           ),
           findsOneWidget,
         );
@@ -94,7 +89,10 @@ void main() {
           findsOneWidget,
         );
         expect(
-          find.descendant(of: identity, matching: find.text(s.o2KindComputer)),
+          find.descendant(
+            of: identity,
+            matching: find.text(instanceKindLabel(s, InstanceKind.homelab)),
+          ),
           findsOneWidget,
         );
 
@@ -113,7 +111,7 @@ void main() {
         expect(
           find.descendant(
             of: row,
-            matching: find.byIcon(instanceKindIcon(InstanceKind.pc)),
+            matching: find.byIcon(instanceKindIcon(InstanceKind.homelab)),
           ),
           findsOneWidget,
         );
@@ -140,7 +138,7 @@ void main() {
     );
     await tester.pumpAndSettle();
     await tapOnboarding(tester, 'onboarding-scan');
-    expect(_selected(tester), {InstanceKind.vps});
+    expect(_tile(InstanceKind.vps), findsNothing);
     await tapOnboarding(tester, 'onboarding-confirm');
     expect(manager.getConnections().single.kind, InstanceKind.vps);
     expect(
@@ -160,7 +158,7 @@ void main() {
     ('host.tail1234.ts.net', InstanceKind.tailscale),
     ('hermes.example.com', InstanceKind.vps),
   ]) {
-    testWidgets('a code for $host preselects ${expected.name}', (tester) async {
+    testWidgets('a code for $host saves ${expected.name}', (tester) async {
       final handle = tester.ensureSemantics();
       final manager = await onboardingManager();
       await tester.pumpWidget(
@@ -175,7 +173,8 @@ void main() {
       );
       await tester.pumpAndSettle();
       await tapOnboarding(tester, 'onboarding-scan');
-      expect(_selected(tester), {expected});
+      await tapOnboarding(tester, 'onboarding-confirm');
+      expect(manager.getConnections().single.kind, expected);
       await tester.pumpWidget(const SizedBox.shrink());
       handle.dispose();
     });
@@ -204,14 +203,9 @@ void main() {
         );
         await tester.pumpAndSettle();
         await tapOnboarding(tester, 'onboarding-scan');
-        await revealEditorControl(tester, _tile(InstanceKind.pc));
         expect(tester.takeException(), isNull);
-        expect(find.text('Este ordenador'), findsOneWidget);
-        expect(find.text('Red privada'), findsOneWidget);
-        await tester.tap(_tile(InstanceKind.vps));
-        await tester.pumpAndSettle();
         await tapOnboarding(tester, 'onboarding-confirm');
-        expect(manager.getConnections().single.kind, InstanceKind.vps);
+        expect(manager.getConnections().single.kind, InstanceKind.homelab);
         await tester.pumpWidget(const SizedBox.shrink());
       },
     );

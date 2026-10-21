@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../utils/transport_privacy.dart';
 import 'connection_manager.dart';
 import 'mobile_oauth.dart';
+import 'native_session_store.dart';
 import 'secure_storage.dart';
 
 /// What one silent probe learned about an instance's Dashboard.
@@ -74,8 +75,13 @@ Future<DashboardAccess> probeDashboardAccess(
     return error.code == DashboardAuthFailureCode.rateLimited
         ? DashboardAccess.unknown
         : DashboardAccess.needsSignIn;
-  } on MobileOAuthException {
-    return DashboardAccess.needsSignIn;
+  } on MobileOAuthException catch (error) {
+    // Only a session that is over needs a sign-in; a refresh that could not
+    // be tried (provider down, no network, storage busy) says nothing.
+    return error is NativeSessionExpired ||
+            error.runtimeType == MobileOAuthException
+        ? DashboardAccess.needsSignIn
+        : DashboardAccess.unknown;
   } on DashboardHttpException catch (error) {
     return error.statusCode == 401 || error.statusCode == 403
         ? DashboardAccess.needsSignIn

@@ -72,6 +72,7 @@ internal class HermesActionDrainWorker(
                     loader.startInitialization(context)
                     loader.ensureInitializationComplete(context, null)
                     val engine = FlutterEngine(context)
+                    DurableSecretWriter.attach(context, engine.dartExecutor.binaryMessenger)
                     val channel =
                         MethodChannel(engine.dartExecutor.binaryMessenger, HermesRichNotifications.CHANNEL_NAME)
                     HermesRichNotifications.attach(context, channel) { finished.complete(Unit) }

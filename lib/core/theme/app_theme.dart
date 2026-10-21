@@ -112,6 +112,30 @@ class HermesThemeColors extends ThemeExtension<HermesThemeColors> {
         surfaceVariant: surfaceVariant,
       ));
 
+  /// True for a light palette (the background is closer to white).
+  bool get isLightPalette => ThemeContrast.luminance(background) > 0.5;
+
+  static final Expando<Color> _derivedControlBorder = Expando<Color>(
+    'controlBorder',
+  );
+
+  /// ONB6: resting outline of a control (text field, secondary pill). On a
+  /// light palette [divider] is a hairline made for separators and sits near
+  /// 1.1:1 on the page (WCAG 1.4.11 asks 3:1 for a control's boundary), so it
+  /// is darkened, same hue and smallest step, until it reads at 3:1 on the
+  /// background, the surface and the surface variant. Dark palettes keep
+  /// [divider] untouched. Light palettes whose component profile draws no
+  /// resting outline still get a 1 dp one on text fields (their fill alone
+  /// is ~1.0:1 on the page).
+  Color get controlBorder {
+    if (!isLightPalette) return divider;
+    return _derivedControlBorder[this] ??= ThemeContrast.adjustForContrast(
+      divider,
+      [background, surface, surfaceVariant],
+      minimum: 3.05,
+    );
+  }
+
   /// Smallest lift of [disabled] that reads at AA on all three surfaces.
   static Color readableTertiary(
     Color disabled, {

@@ -6,11 +6,13 @@ import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../services/connection_manager.dart';
+import '../services/gateway_era_notice.dart';
 import '../services/legacy_bridge_retirement.dart';
 import '../theme/app_theme.dart';
 import '../widgets/legacy_bridge_removal_help.dart';
 import '../widgets/hermes_notice.dart';
 import 'dashboard_sign_in.dart';
+import 'onboarding/manual_setup_page.dart';
 
 typedef DashboardSignIn =
     Future<bool> Function(
@@ -36,10 +38,17 @@ abstract final class LegacyBridgeNotices {
     required NavigatorState? Function() navigator,
     required bool Function() quiet,
     LegacyBridgeRetirement? retirement,
+    GatewayEraNotice? gatewayEra,
     DashboardSignIn signIn = signInToDashboard,
     Duration retryEvery = const Duration(seconds: 2),
     int maxWaits = 90,
   }) async {
+    final era = gatewayEra ?? GatewayEraNotice(prefs: connManager.prefs);
+    try {
+      await era.snapshotIfNeeded(connManager.getConnections());
+    } catch (error) {
+      debugPrint('[gateway-era] snapshot skipped (${error.runtimeType})');
+    }
     final work = retirement ?? LegacyBridgeRetirement(prefs: connManager.prefs);
     try {
       await work.run(connManager.getConnections());
@@ -47,11 +56,27 @@ abstract final class LegacyBridgeNotices {
       debugPrint('[legacy-bridge] retirement skipped (${error.runtimeType})');
       return;
     }
-    if (work.legacyInstall != true) return;
+    if (work.legacyInstall != true &&
+        !era.hasPending(connManager.getConnections())) {
+      return;
+    }
     for (var waited = 0; waited < maxWaits; waited++) {
       final nav = navigator();
       if (nav != null && nav.mounted && !quiet()) {
-        present(nav, connManager, work, signIn: signIn);
+        // One notice per launch: the bridge's first, then the Gateway era's.
+        if (present(nav, connManager, work, signIn: signIn) == null) {
+          await presentGatewayEra(
+            nav,
+            connManager,
+            era,
+            resolved: {
+              ...work.signInNoticeDone,
+              for (final e in work.access.entries)
+                if (e.value == DashboardAccess.ready) e.key,
+            },
+            signIn: signIn,
+          );
+        }
         return;
       }
       await Future<void>.delayed(retryEvery);
@@ -145,5 +170,60 @@ abstract final class LegacyBridgeNotices {
       );
     }
     return null;
+  }
+
+  /// The Gateway-era notice: at most one, after probing one connection.
+  @visibleForTesting
+  static Future<HermesNoticeHandle?> presentGatewayEra(
+    NavigatorState nav,
+    ConnectionManager manager,
+    GatewayEraNotice era, {
+    Set<String> resolved = const {},
+    DashboardSignIn signIn = signInToDashboard,
+  }) async {
+    final notices = HermesNotice.ofNavigator(nav);
+    final connections = manager.getConnections();
+    final found = notices == null
+        ? null
+        : await era.candidate(
+            connections,
+            manager.activeConnectionId.value,
+            resolved: resolved,
+          );
+    if (notices == null || found == null || !nav.mounted) return null;
+    final c = found.connection;
+    final s = Strings.of(nav.context);
+    final signInOnly = found.access == DashboardAccess.needsSignIn;
+    void enter() =>
+        unawaited(signIn(nav, manager, c).then((_) {}, onError: (Object _) {}));
+    void done() => unawaited(era.markDone(c.id));
+    return notices.show(
+      id: 'gateway-era-${c.id}',
+      noticeKey: const ValueKey('gateway-era-notice'),
+      icon: Icons.login_rounded,
+      tint: Theme.of(nav.context).hermes.accent,
+      title: signInOnly ? s.legacyBridgeStepTitle : s.gatewayEraTitle,
+      message: connections.length > 1 && signInOnly
+          ? s.legacyBridgeStepBodyNamed(c.label)
+          : (signInOnly ? s.legacyBridgeStepBody : s.leg3EraBody),
+      priority: HermesNoticePriority.high,
+      sticky: true,
+      showDismiss: true,
+      action: HermesNoticeAction(
+        label: signInOnly ? s.legacyBridgeStepAction : s.gatewayEraAction,
+        onPressed: () {
+          done();
+          if (signInOnly) return enter();
+          unawaited(
+            nav.push<void>(
+              MaterialPageRoute<void>(
+                builder: (_) => ManualSetupPage(connManager: manager),
+              ),
+            ),
+          );
+        },
+      ),
+      onClosed: done,
+    );
   }
 }

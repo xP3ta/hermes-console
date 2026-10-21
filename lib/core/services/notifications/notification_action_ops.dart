@@ -3,7 +3,6 @@
 //  * room approve → `groups.approve` with the server `request_id` (idempotent)
 //  * room stop    → `groups.stop`
 //  * room reply   → `groups.send` (client event id = inbox uid, idempotent)
-//  * run approve  → `POST /v1/runs/{id}/approval` with `request_id`
 //  * chat approve → the live `ActiveChat.resolveApproval` when the UI has it,
 //    else `approval.respond {session_id: <stored id>, request_id, choice}`
 //    (upstream resolves a stale/stored id by the durable identity, #91684)
@@ -15,8 +14,8 @@
 //  * question     → the live `ActiveChat.respondToClarify` when the UI has
 //    the chat, else `clarify.respond` / `request.answer` by request id
 //  * turn stop    → the live `ActiveChat.cancel` when the UI has the chat,
-//    else `POST /v1/runs/{id}/stop` for a REST run or `session.interrupt` on
-//    the runtime `session.active_list` shows for the stored id
+//    else `session.interrupt` on the runtime `session.active_list` shows for
+//    the stored id
 //  * chat reply   → the Bot Chat reply's calls, on a normal chat's stored id
 //  * mark read    → `PATCH /api/sessions/{id} {unread: false}` (Desktop's
 //    row toggle)
@@ -31,7 +30,6 @@ import '../../models/desktop_compression_outcome.dart';
 import '../../models/hosted_groups.dart';
 import '../connection_manager.dart';
 import '../cron_repository.dart';
-import '../secure_storage.dart';
 import '../session_repository.dart';
 import '../shared_gateway_pool.dart';
 import '../tui_gateway_client.dart';
@@ -82,12 +80,10 @@ class GatewayNotificationActionOps
     this.chatAnswer,
     TurnIdempotencyGate? turnIdempotency,
     SharedGatewayPool? pool,
-    SecureStorage? secure,
     this.clientFactory,
     this.dashboardFactory,
     this.prefsForMute,
   }) : _pool = pool ?? SharedGatewayPool.instance,
-       _secure = secure ?? SecureStorage(),
        _turnIdempotency =
            turnIdempotency ?? ConnectionManager.isTurnIdempotencySupported;
 
@@ -102,7 +98,6 @@ class GatewayNotificationActionOps
   /// The preferences the per-item mutes live in (tests).
   final Future<SharedPreferences> Function()? prefsForMute;
   final SharedGatewayPool _pool;
-  final SecureStorage _secure;
 
   Future<SavedConnection> _connection(NotificationActionPayload p) async {
     final connection = await resolveConnection(p.connId);
@@ -171,23 +166,6 @@ class GatewayNotificationActionOps
   });
 
   @override
-  Future<void> runApprove(NotificationActionPayload p, String choice) async {
-    final connection = await _connection(p);
-    final token = await _secure.readApiKey(connection.id) ?? connection.apiKey;
-    final api = ApiClient(
-      baseUrl: connection.baseUrl,
-      apiKey: token,
-      connectionId: connection.id,
-    );
-    await api.resolveRunApproval(
-      p.runId!,
-      choice,
-      requestId: p.requestId,
-      profile: p.profile,
-    );
-  }
-
-  @override
   Future<void> chatApprove(NotificationActionPayload p, String choice) async {
     final executor = chatApproval;
     if (executor != null && await executor(p, choice)) return;
@@ -211,22 +189,14 @@ class GatewayNotificationActionOps
     if (executor != null && await executor(p)) return;
     // No attached chat (UI gone): stop it on the server, like another
     // surface would.
-    final runId = p.runId;
-    if (runId != null) {
-      final connection = await _connection(p);
-      final token =
-          await _secure.readApiKey(connection.id) ?? connection.apiKey;
-      await ApiClient(
-        baseUrl: connection.baseUrl,
-        apiKey: token,
-        connectionId: connection.id,
-      ).stopRun(runId, profile: p.profile);
-      return;
+    final sessionId = p.sessionId;
+    if (sessionId == null || sessionId.isEmpty) {
+      throw StateError('no session to stop');
     }
     await _withClient(p, (client) async {
       final live = await client.listActiveSessions();
       for (final row in live.sessions) {
-        if (row.storedSessionId == p.sessionId) {
+        if (row.storedSessionId == sessionId) {
           await client.interrupt(row.runtimeSessionId);
           return;
         }
