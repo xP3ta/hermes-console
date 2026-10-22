@@ -4429,175 +4429,175 @@
   "recoveryCenterFailedDeletes": "{count, plural, other{有 {count} 个文件无法删除。}}",
   "cphPluginBlockedByScan": "安全扫描已拦截此插件，未做任何更改。",
   "dashboardAuthSessionTokenWithheld": "此 Dashboard 不向 Console 提供会话令牌：它由 Hermes 0.22.3 或更高版本的网关托管，且未启用登录。请使用独立的 Dashboard，或为其启用登录。",
-  "connDiagTimeout": "no response in {seconds}s",
+  "connDiagTimeout": "{seconds}秒内未收到响应",
   "@connDiagTimeout": {
-    "description": "i18n131: English draft pending Phase 2 translation.",
+    "description": "i18n131: Translated into Chinese.",
     "placeholders": {
       "seconds": {
         "type": "int"
       }
     }
   },
-  "connDiagTlsInvalid": "invalid TLS certificate: {message}",
+  "connDiagTlsInvalid": "TLS证书无效：{message}",
   "@connDiagTlsInvalid": {
-    "description": "i18n131: English draft pending Phase 2 translation.",
+    "description": "i18n131: Translated into Chinese.",
     "placeholders": {
       "message": {
         "type": "String"
       }
     }
   },
-  "connDiagDnsFailed": "the host does not resolve",
+  "connDiagDnsFailed": "无法解析主机名",
   "@connDiagDnsFailed": {
-    "description": "i18n131: English draft pending Phase 2 translation."
+    "description": "i18n131: Translated into Chinese."
   },
-  "connDiagRefused": "connection refused (wrong port?)",
+  "connDiagRefused": "连接被拒绝（端口有误？）",
   "@connDiagRefused": {
-    "description": "i18n131: English draft pending Phase 2 translation."
+    "description": "i18n131: Translated into Chinese."
   },
-  "connDiagAuthHint": "check the username and password",
+  "connDiagAuthHint": "请检查用户名和密码",
   "@connDiagAuthHint": {
-    "description": "i18n131: English draft pending Phase 2 translation."
+    "description": "i18n131: Translated into Chinese."
   },
-  "transportPublicBlocked": "Public HTTP/WS is blocked: configure HTTPS/WSS or use a private/Tailscale address.",
+  "transportPublicBlocked": "已阻止公共HTTP/WS连接：请配置HTTPS/WSS，或使用私有地址或Tailscale地址。",
   "@transportPublicBlocked": {
-    "description": "i18n131: English draft pending Phase 2 translation."
+    "description": "i18n131: Translated into Chinese."
   },
-  "i18n131ThemeExportFailed": "Could not export.",
+  "i18n131ThemeExportFailed": "无法导出。",
   "@i18n131ThemeExportFailed": {
-    "description": "i18n131: English draft pending Phase 2 translation."
+    "description": "i18n131: Translated into Chinese."
   },
-  "i18n131DurationSeconds": "{value} s",
+  "i18n131DurationSeconds": "{value}秒",
   "@i18n131DurationSeconds": {
-    "description": "i18n131: English draft pending Phase 2 translation.",
+    "description": "i18n131: Translated into Chinese.",
     "placeholders": {
       "value": {
         "type": "String"
       }
     }
   },
-  "i18n131SpanDays": "{count}d",
+  "i18n131SpanDays": "{count}天",
   "@i18n131SpanDays": {
-    "description": "i18n131: English draft pending Phase 2 translation.",
+    "description": "i18n131: Translated into Chinese.",
     "placeholders": {
       "count": {
         "type": "int"
       }
     }
   },
-  "i18n131SpanHours": "{count}h",
+  "i18n131SpanHours": "{count}小时",
   "@i18n131SpanHours": {
-    "description": "i18n131: English draft pending Phase 2 translation.",
+    "description": "i18n131: Translated into Chinese.",
     "placeholders": {
       "count": {
         "type": "int"
       }
     }
   },
-  "i18n131SpanMinutes": "{count}m",
+  "i18n131SpanMinutes": "{count}分钟",
   "@i18n131SpanMinutes": {
-    "description": "i18n131: English draft pending Phase 2 translation.",
+    "description": "i18n131: Translated into Chinese.",
     "placeholders": {
       "count": {
         "type": "int"
       }
     }
   },
-  "i18n131RelativeNow": "just now",
+  "i18n131RelativeNow": "刚刚",
   "@i18n131RelativeNow": {
-    "description": "i18n131: English draft pending Phase 2 translation."
+    "description": "i18n131: Translated into Chinese."
   },
-  "i18n131RelativeMinutes": "{count}m ago",
+  "i18n131RelativeMinutes": "{count}分钟前",
   "@i18n131RelativeMinutes": {
-    "description": "i18n131: English draft pending Phase 2 translation.",
+    "description": "i18n131: Translated into Chinese.",
     "placeholders": {
       "count": {
         "type": "int"
       }
     }
   },
-  "i18n131RelativeHours": "{count}h ago",
+  "i18n131RelativeHours": "{count}小时前",
   "@i18n131RelativeHours": {
-    "description": "i18n131: English draft pending Phase 2 translation.",
+    "description": "i18n131: Translated into Chinese.",
     "placeholders": {
       "count": {
         "type": "int"
       }
     }
   },
-  "i18n131RelativeDays": "{count}d ago",
+  "i18n131RelativeDays": "{count}天前",
   "@i18n131RelativeDays": {
-    "description": "i18n131: English draft pending Phase 2 translation.",
+    "description": "i18n131: Translated into Chinese.",
     "placeholders": {
       "count": {
         "type": "int"
       }
     }
   },
-  "i18n131SinceMinutes": "{count}m ago",
+  "i18n131SinceMinutes": "{count}分钟前",
   "@i18n131SinceMinutes": {
-    "description": "i18n131: English draft pending Phase 2 translation.",
+    "description": "i18n131: Translated into Chinese.",
     "placeholders": {
       "count": {
         "type": "int"
       }
     }
   },
-  "i18n131SinceHours": "{count}h ago",
+  "i18n131SinceHours": "{count}小时前",
   "@i18n131SinceHours": {
-    "description": "i18n131: English draft pending Phase 2 translation.",
+    "description": "i18n131: Translated into Chinese.",
     "placeholders": {
       "count": {
         "type": "int"
       }
     }
   },
-  "i18n131SinceDays": "{count}d ago",
+  "i18n131SinceDays": "{count}天前",
   "@i18n131SinceDays": {
-    "description": "i18n131: English draft pending Phase 2 translation.",
+    "description": "i18n131: Translated into Chinese.",
     "placeholders": {
       "count": {
         "type": "int"
       }
     }
   },
-  "i18n131InMinutes": "in {count} min",
+  "i18n131InMinutes": "{count}分钟后",
   "@i18n131InMinutes": {
-    "description": "i18n131: English draft pending Phase 2 translation.",
+    "description": "i18n131: Translated into Chinese.",
     "placeholders": {
       "count": {
         "type": "int"
       }
     }
   },
-  "i18n131InHours": "in {count} h",
+  "i18n131InHours": "{count}小时后",
   "@i18n131InHours": {
-    "description": "i18n131: English draft pending Phase 2 translation.",
+    "description": "i18n131: Translated into Chinese.",
     "placeholders": {
       "count": {
         "type": "int"
       }
     }
   },
-  "i18n131InDays": "in {count} d",
+  "i18n131InDays": "{count}天后",
   "@i18n131InDays": {
-    "description": "i18n131: English draft pending Phase 2 translation.",
+    "description": "i18n131: Translated into Chinese.",
     "placeholders": {
       "count": {
         "type": "int"
       }
     }
   },
-  "i18n131ApprovalTool": "a tool",
+  "i18n131ApprovalTool": "一个工具",
   "@i18n131ApprovalTool": {
-    "description": "i18n131: English draft pending Phase 2 translation."
+    "description": "i18n131: Translated into Chinese."
   },
-  "i18n131RecoveredTurnActive": "Hermes could not reattach a turn that may still be running. Send retries the check; discard only after verifying Hermes because this does not cancel the remote turn.",
+  "i18n131RecoveredTurnActive": "Hermes无法重新关联一个可能仍在运行的回合。点击发送可重新检查；请先在Hermes中核实情况，再丢弃恢复记录，因为丢弃不会取消远程回合。",
   "@i18n131RecoveredTurnActive": {
-    "description": "i18n131: English draft pending Phase 2 translation."
+    "description": "i18n131: Translated into Chinese."
   },
-  "i18n131RecoveredTurnPending": "A pending turn was recovered. Discard the recovery to continue.",
+  "i18n131RecoveredTurnPending": "已恢复一个待处理回合。丢弃恢复记录后可继续。",
   "@i18n131RecoveredTurnPending": {
-    "description": "i18n131: English draft pending Phase 2 translation."
+    "description": "i18n131: Translated into Chinese."
   }
 }

@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="voice_notification_title">Hermes语音</string>
+    <string name="voice_notification_active">正在聆听</string>
+    <string name="voice_notification_paused">已暂停</string>
+    <string name="voice_notification_mic_active">麦克风已启用</string>
+    <string name="voice_notification_mic_paused">麦克风已暂停</string>
+    <string name="voice_notification_orb">Hermes语音状态</string>
+    <string name="voice_notification_duration">对话时长</string>
+    <string name="voice_notification_open_hint">点按打开Hermes</string>
+    <string name="voice_notification_primary_action">暂停</string>
+    <string name="voice_notification_end_action">结束对话</string>
+    <string name="external_data_sync_channel">安全传输</string>
+    <string name="external_data_sync_active">安全传输或终端正在运行</string>
+    <string name="external_data_sync_stop">停止</string>
+    <string name="rich_channel_conversations">机器人和房间</string>
+    <string name="rich_channel_conversations_desc">机器人的消息、提及和轮次摘要</string>
+    <string name="rich_channel_live">进行中的活动</string>
+    <string name="rich_channel_live_desc">机器人或房间处理任务时的进度</string>
+    <string name="rich_channel_approvals">审批</string>
+    <string name="rich_brand">Hermes</string>
+    <string name="rich_you">你</string>
+    <string name="rich_thinking">正在思考…</string>
+    <string name="rich_done">已完成</string>
+    <string name="rich_sending">正在发送…</string>
+    <string name="rich_unlock_to_answer">解锁Hermes以回应</string>
+    <string name="rich_reply_failed">未能发送 · 打开重试</string>
+    <string name="rich_action_failed">未能发送 · 打开Hermes</string>
+    <plurals name="rich_quiet_more">
+        <item quantity="other">另有%d条</item>
+    </plurals>
+    <plurals name="rich_auto_summary">
+        <item quantity="other">%d项自动化</item>
+    </plurals>
+</resources>
