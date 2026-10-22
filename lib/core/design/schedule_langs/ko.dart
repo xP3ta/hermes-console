@@ -11,7 +11,7 @@ class _Ko extends _ScheduleLang {
   String get custom => '사용자 지정 일정';
 
   String _duration(int minutes) {
-    if (minutes < 60) return '${minutes}분';
+    if (minutes < 60) return '$minutes분';
     if (minutes % 1440 == 0) return '${minutes ~/ 1440}일';
     if (minutes % 60 == 0) return '${minutes ~/ 60}시간';
     return '${minutes ~/ 60}시간 ${minutes % 60}분';
@@ -26,11 +26,11 @@ class _Ko extends _ScheduleLang {
   }
 
   @override
-  String everyHourAt(int minute) => minute == 0 ? '매시간' : '매시간 ${minute}분';
+  String everyHourAt(int minute) => minute == 0 ? '매시간' : '매시간 $minute분';
 
   @override
   String everyHourAtMinutes(List<int> minutes) =>
-      '매시간 ${joinAnd([for (final m in minutes) '${m}분'])}';
+      '매시간 ${joinAnd([for (final m in minutes) '$m분'])}';
 
   @override
   String onceIn(int minutes) => '${_duration(minutes)} 후 한 번';
@@ -72,7 +72,7 @@ class _Ko extends _ScheduleLang {
     if (runs.length == 1 && months.length >= 3) {
       return '${months.first}월부터 ${months.last}월까지';
     }
-    return joinAnd([for (final m in months) '${m}월']);
+    return joinAnd([for (final m in months) '$m월']);
   }
 
   @override
@@ -112,7 +112,7 @@ class _Ko extends _ScheduleLang {
       final runs = _runs(doms);
       day = runs.length == 1 && doms.length >= 3
           ? '${doms.first}일부터 ${doms.last}일까지'
-          : joinAnd([for (final d in doms) '${d}일']);
+          : joinAnd([for (final d in doms) '$d일']);
     }
     final phrase = '$monthPrefix $day';
     return _Days(phrase, phrase);

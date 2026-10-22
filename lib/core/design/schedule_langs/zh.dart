@@ -9,7 +9,7 @@ class _Zh extends _ScheduleLang {
   String get custom => '自定义计划';
 
   String _duration(int minutes) {
-    if (minutes < 60) return '${minutes}分钟';
+    if (minutes < 60) return '$minutes分钟';
     if (minutes % 1440 == 0) return '${minutes ~/ 1440}天';
     if (minutes % 60 == 0) return '${minutes ~/ 60}小时';
     return '${minutes ~/ 60}小时${minutes % 60}分钟';
@@ -25,7 +25,7 @@ class _Zh extends _ScheduleLang {
 
   @override
   String everyHourAt(int minute) =>
-      minute == 0 ? '每小时' : '每小时的${minute}分';
+      minute == 0 ? '每小时' : '每小时的$minute分';
 
   @override
   String everyHourAtMinutes(List<int> minutes) =>
@@ -69,7 +69,7 @@ class _Zh extends _ScheduleLang {
     if (runs.length == 1 && months.length >= 3) {
       return '每年${runs.single.$1}月至${runs.single.$2}月';
     }
-    return '每年${joinAnd([for (final m in months) '${m}月'])}';
+    return '每年${joinAnd([for (final m in months) '$m月'])}';
   }
 
   @override
@@ -115,7 +115,7 @@ class _Zh extends _ScheduleLang {
       final runs = _runs(doms);
       dates = runs.length == 1 && doms.length >= 3
           ? '${doms.first}日至${doms.last}日'
-          : joinAnd([for (final d in doms) '${d}日']);
+          : joinAnd([for (final d in doms) '$d日']);
     }
     final phrase = months == null
         ? '每月$dates'
