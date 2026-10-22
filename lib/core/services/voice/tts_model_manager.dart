@@ -45,10 +45,10 @@ class NeuralVoice {
   });
 }
 
-/// Catálogo de voces en español e inglés empaquetadas para sherpa-onnx
-/// (origen Piper, de HuggingFace/rhasspy; las distribuye el proyecto
-/// sherpa-onnx en un único archivo con todo lo necesario). Añadir una
-/// voz = una entrada más aquí.
+/// Catálogo de voces en español, inglés y portugués de Brasil empaquetadas
+/// para sherpa-onnx (origen Piper, de HuggingFace/rhasspy; las distribuye el
+/// proyecto sherpa-onnx en un único archivo con todo lo necesario). Añadir
+/// una voz = una entrada más aquí.
 const String _ttsRelease =
     'https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models';
 
@@ -132,6 +132,19 @@ const List<NeuralVoice> kNeuralVoices = [
         'a48d4017da0f77668b27bed63fe6e04dd64c6397e1fadad4f460efb0ef7c9012',
     dirName: 'vits-piper-en_GB-alan-medium',
     onnxFile: 'en_GB-alan-medium.onnx',
+  ),
+  NeuralVoice(
+    id: 'pt_BR-faber-medium',
+    displayName: 'Faber (Brazil)',
+    locale: 'pt-BR',
+    quality: 'media',
+    sizeMb: 64,
+    url: '$_ttsRelease/vits-piper-pt_BR-faber-medium.tar.bz2',
+    archiveBytes: 67183065,
+    archiveSha256:
+        '7add3f923ad6bc25ca8a192805fd1a64d1b3893e4611c4a9719545a825039a83',
+    dirName: 'vits-piper-pt_BR-faber-medium',
+    onnxFile: 'pt_BR-faber-medium.onnx',
   ),
 ];
 

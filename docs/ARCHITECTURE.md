@@ -28,7 +28,7 @@ push service.
 ```text
 lib/
   main.dart            App start, routing, cold-start cache and prewarm
-  l10n/                English and Spanish strings (ARB)
+  l10n/                English, Spanish and Brazilian Portuguese strings (ARB)
   core/
     services/          Clients and engines: connection manager, the JSON-RPC
                        client for /api/ws, chat, notifications, voice, SSH/SFTP,

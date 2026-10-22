@@ -11,7 +11,7 @@ String formatCompactionDuration(Duration value, {String languageCode = 'en'}) {
   final ms = value.inMilliseconds;
   if (ms < 10000) {
     final text = (ms / 1000).toStringAsFixed(1);
-    return '${languageCode == 'es' ? text.replaceAll('.', ',') : text} s';
+    return '${languageCode == 'es' || languageCode == 'pt' ? text.replaceAll('.', ',') : text} s';
   }
   if (ms < 180000) return '${value.inSeconds} s';
   return formatTurnElapsed(value);

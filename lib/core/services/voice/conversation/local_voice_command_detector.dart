@@ -26,6 +26,7 @@ class LocalVoiceCommandDetector {
     final grammar = switch (languageCode) {
       'es' => _spanish,
       'en' => _english,
+      'pt' => _portuguese,
       _ => null,
     };
     if (grammar == null) return null;
@@ -44,9 +45,11 @@ class LocalVoiceCommandDetector {
     if (_isCommandSequence(text, grammar.silence, grammar.connectors)) {
       return LocalVoiceCommand.silenceCurrent;
     }
-    return languageCode == 'es'
-        ? _semanticSpanish(text)
-        : _semanticEnglish(text);
+    return switch (languageCode) {
+      'es' => _semanticSpanish(text),
+      'pt' => _semanticPortuguese(text),
+      _ => _semanticEnglish(text),
+    };
   }
 
   static LocalVoiceCommand? _semanticSpanish(String text) {
@@ -275,6 +278,139 @@ class LocalVoiceCommandDetector {
     return null;
   }
 
+  static LocalVoiceCommand? _semanticPortuguese(String text) {
+    final words = text.split(' ');
+    // Perguntas e pedidos de conteúdo nunca são controles.
+    if (_containsAny(text, const [
+      'por que',
+      'como posso',
+      'o que significa',
+      'me conta',
+      'me explica',
+      'me fala',
+      'fale sobre',
+      'fala sobre',
+      'mais sobre',
+    ])) {
+      return null;
+    }
+    if (_hasStem(words, const ['explic', 'descrev', 'traduz'])) {
+      return null;
+    }
+
+    final conversation = _hasStem(words, const [
+      'conversa',
+      'sessa',
+      'modo',
+    ]);
+    final endAction = _hasStem(words, const [
+      'termin',
+      'encerr',
+      'finaliz',
+      'acab',
+    ]);
+    final rejectsContinuation =
+        words.contains('nao') &&
+        _hasStem(words, const ['continu', 'segu']) &&
+        conversation;
+    if (conversation && (endAction || rejectsContinuation)) {
+      return LocalVoiceCommand.end;
+    }
+
+    final pauseAction = _hasStem(words, const ['paus', 'esper', 'aguard']);
+    if (pauseAction &&
+        (conversation ||
+            words.contains('momento') ||
+            words.contains('instante') ||
+            _hasStem(words, const ['paus']))) {
+      return LocalVoiceCommand.pause;
+    }
+
+    // Estas palavras costumam modificar COMO Hermes deve falar, não pedir
+    // silêncio.
+    if (_hasStem(words, const [
+      'rapido',
+      'devagar',
+      'lent',
+      'alto',
+      'baixo',
+      'clar',
+      'velocidade',
+      'volume',
+    ])) {
+      return null;
+    }
+
+    if (words.any(
+      const {
+        'cala',
+        'cale',
+        'silencio',
+        'chega',
+        'basta',
+        'quieto',
+        'quieta',
+        'sh',
+        'shh',
+        'shhh',
+      }.contains,
+    )) {
+      return LocalVoiceCommand.silenceCurrent;
+    }
+
+    final stopAction = _hasStem(words, const [
+      'cort',
+      'deix',
+      'deslig',
+      'silenci',
+      'cal',
+      'mud',
+    ]);
+    final explicitStop = words.any(
+      const {'parar', 'pare', 'para'}.contains,
+    );
+    final speechTarget = _hasStem(words, const [
+      'fal',
+      'ler',
+      'lendo',
+      'voz',
+      'audio',
+      'sonando',
+      'tocando',
+      'escut',
+      'ouv',
+      'ouc',
+    ]);
+    if ((stopAction || explicitStop) && speechTarget) {
+      return LocalVoiceCommand.silenceCurrent;
+    }
+
+    final negative =
+        words.contains('nao') ||
+        words.contains('nunca') ||
+        _containsAny(text, const ['ja nao', 'nao quero', 'nao preciso']);
+    if (negative &&
+        speechTarget &&
+        (_hasStem(words, const ['continu', 'segu']) ||
+            words.contains('mais') ||
+            words.contains('quero') ||
+            words.contains('preciso'))) {
+      return LocalVoiceCommand.silenceCurrent;
+    }
+
+    // Em fase speaking, «pode parar já?» tem um referente inequívoco: a
+    // locução atual. Não aceitamos «para» isolado nem a preposição «para mim».
+    if (explicitStop &&
+        (words.contains('pode') ||
+            words.contains('poderia') ||
+            words.contains('ja') ||
+            words.contains('agora')) &&
+        words.length <= 10) {
+      return LocalVoiceCommand.silenceCurrent;
+    }
+    return null;
+  }
+
   static bool _hasStem(List<String> words, List<String> stems) =>
       words.any((word) => stems.any(word.startsWith));
 
@@ -350,6 +486,7 @@ class LocalVoiceCommandDetector {
       'à': 'a',
       'ä': 'a',
       'â': 'a',
+      'ã': 'a',
       'é': 'e',
       'è': 'e',
       'ë': 'e',
@@ -362,6 +499,7 @@ class LocalVoiceCommandDetector {
       'ò': 'o',
       'ö': 'o',
       'ô': 'o',
+      'õ': 'o',
       'ú': 'u',
       'ù': 'u',
       'ü': 'u',
@@ -513,4 +651,78 @@ const _english = _CommandGrammar(
   ],
   trailing: ['please', 'thank you', 'thanks', 'okay', 'ok'],
   connectors: ['and also', 'and now', 'and', 'okay', 'please'],
+);
+
+// Formas normalizadas (sem acentos: _normalize remove-os antes de comparar),
+// das mais longas para as mais curtas, igual às outras gramáticas.
+const _portuguese = _CommandGrammar(
+  silence: [
+    'nao quero que voce continue falando',
+    'nao quero que voce fale mais',
+    'nao quero te ouvir mais',
+    'quero que voce pare de falar',
+    'quero que voce cale a boca',
+    'pode parar de falar',
+    'nao continue falando',
+    'pare de falar',
+    'para de falar',
+    'nao fale mais',
+    'nao fala mais',
+    'cala a boca',
+    'fica quieto',
+    'fica quieta',
+    'ja chega',
+    'silencio',
+    'chega',
+    'basta',
+  ],
+  pause: [
+    'coloca a conversa em pausa',
+    'pausa a conversa',
+    'vamos pausar',
+    'faz uma pausa',
+    'da uma pausa',
+    'pausa isso',
+    'pausa',
+  ],
+  end: [
+    'quero terminar a conversa',
+    'quero encerrar a conversa',
+    'quero fechar a conversa',
+    'termina a conversa',
+    'encerra a conversa',
+    'finaliza a conversa',
+    'fecha a conversa',
+    'vamos encerrar por aqui',
+    'vamos parar por aqui',
+  ],
+  leading: [
+    'por favor hermes',
+    'oi hermes',
+    'alo hermes',
+    'hermes',
+    'por favor',
+    'escuta',
+    'olha',
+    'entao',
+    'beleza',
+    'ta bom',
+    'okay',
+    'ok',
+    'oi',
+    'alo',
+  ],
+  trailing: [
+    'por favor',
+    'muito obrigado',
+    'muito obrigada',
+    'obrigado',
+    'obrigada',
+    'valeu',
+    'ta bom',
+    'beleza',
+    'ok',
+    'okay',
+  ],
+  connectors: ['e tambem', 'e agora', 'e', 'ok', 'okay', 'por favor', 'valeu'],
 );
