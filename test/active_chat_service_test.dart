@@ -1991,7 +1991,7 @@ void main() {
         'already has a live owner (desktop, pid 1234)';
     const ordinary = 'No se pudo conectar con Hermes.';
 
-    final safe = activeChatStoredErrorUiMessage(legacy);
+    final safe = activeChatStoredErrorUiMessage(legacy, languageCode: 'es');
     expect(
       safe,
       'No se puede continuar esta conversación en directo. '
@@ -5086,7 +5086,7 @@ void main() {
         'ClientException with SocketException: Connection failed '
         '(OS Error: Network is unreachable, errno = 101)';
     expect(
-      activeChatStoredErrorUiMessage(raw),
+      activeChatStoredErrorUiMessage(raw, languageCode: 'es'),
       'Se perdió la conexión con Hermes. El mensaje no se confirmó; revisa el borrador y reintenta.',
     );
   });

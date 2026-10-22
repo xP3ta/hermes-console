@@ -371,7 +371,7 @@ DesktopPassiveActivityState activeChatPassiveRowsState(
 @visibleForTesting
 String activeChatPromptFailureUiMessage(
   Object error, {
-  String languageCode = 'es',
+  String languageCode = 'en',
 }) {
   final strings = lookupStrings(Locale(resolveNotificationLang(languageCode)));
   // 4009 "session busy": the server is still busy with this conversation
@@ -401,7 +401,7 @@ String activeChatPromptFailureUiMessage(
 /// Redacta únicamente el formato técnico que builds antiguas pudieron guardar
 /// en el transcript local. No se usa para decidir entrega ni reintentos: esas
 /// decisiones dependen del código y `error.data.reason` estructurados.
-String activeChatStoredErrorUiMessage(String error, {String languageCode = 'es'}) {
+String activeChatStoredErrorUiMessage(String error, {String languageCode = 'en'}) {
   final strings = lookupStrings(Locale(resolveNotificationLang(languageCode)));
   final normalized = error.trimLeft();
   if (normalized.startsWith('TuiGatewayRpcError(prompt.submit, 4090):')) {
@@ -20242,7 +20242,7 @@ class ActiveChat {
         _failRun(
           _desktopStartRefusedByDashboard
               ? dashboardSignInRequiredError
-              : activeChatPromptFailureUiMessage(error),
+              : activeChatPromptFailureUiMessage(error, languageCode: 'es'),
         );
         return false;
       }
