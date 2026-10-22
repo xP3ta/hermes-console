@@ -916,7 +916,7 @@
   "setSecData": "Daten",
   "setSecAbout": "Über",
   "setUpdateBody": "Auf dem Server wird „hermes update“ ausgeführt:\n\n• Lädt den neuen Code herunter{behind} ({method})\n• Installiert Abhängigkeiten neu\n• Startet laufende Gateways neu\n\nDies kann mehrere Minuten dauern und aktive Sitzungen unterbrechen. Fortfahren?",
-  "setRestartGatewayBody": "Startet den Gateway-Prozess ohne Aktualisierung neu. Hilfreich, um die Verbindung mit Console wiederherzustellen oder Konfigurationsänderungen anzuwenden.\n\nUnterbricht aktive Sitzungen kurzzeitig. Fortfahren?",
+  "setRestartGatewayBody": "Startet den Gateway-Prozess ohne Aktualisierung neu. Hilfreich, um die Verbindung mit Console wiederherzustellen oder Konfigurationsänderungen anzuwenden.\n\nLaufende Antworten werden unterbrochen, auch die in diesem Chat; du kannst sie danach erneut senden. Fortfahren?",
   "setMigrateBody": "Migriert config.yaml von v{cur} auf v{latest}.\n\nDies ist eine ADDITIVE Migration: Sie fügt nur neue Optionen mit ihren Standardwerten hinzu und erhöht die Versionsnummer. Deine aktuelle Konfiguration wird weder gelöscht noch geändert.",
   "setUpdateSchemaShort": "Schema aktualisieren (v{from} → v{to})",
   "setAddsNewOptions": "Fügt nur neue Optionen hinzu; deine aktuelle Konfiguration bleibt unverändert.",

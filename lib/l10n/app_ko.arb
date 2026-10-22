@@ -916,7 +916,7 @@
   "setSecData": "데이터",
   "setSecAbout": "정보",
   "setUpdateBody": "서버에서 ‘hermes update’를 실행합니다:\n\n• 새 코드를 다운로드합니다{behind} ({method})\n• 종속 항목을 다시 설치합니다\n• 실행 중인 게이트웨이를 재시작합니다\n\n몇 분 정도 걸릴 수 있으며 사용 중인 세션이 끊길 수 있습니다. 계속하시겠어요?",
-  "setRestartGatewayBody": "업데이트 없이 게이트웨이 프로세스를 재시작합니다. Console 연결을 복구하거나 설정 변경을 적용할 때 유용합니다.\n\n사용 중인 세션이 잠시 끊깁니다. 계속하시겠어요?",
+  "setRestartGatewayBody": "업데이트 없이 게이트웨이 프로세스를 재시작합니다. Console 연결을 복구하거나 설정 변경을 적용할 때 유용합니다.\n\n진행 중인 턴이 중단됩니다(이 채팅 포함). 나중에 다시 보낼 수 있습니다. 계속하시겠어요?",
   "setMigrateBody": "config.yaml을 v{cur}에서 v{latest}로 마이그레이션합니다.\n\n추가 방식의 마이그레이션입니다. 새 옵션을 기본값으로 추가하고 버전 번호만 올립니다. 기존 설정은 삭제하거나 변경하지 않습니다.",
   "setUpdateSchemaShort": "스키마 업데이트(v{from} → v{to})",
   "setAddsNewOptions": "새 옵션만 추가하며 현재 설정은 변경하지 않습니다.",

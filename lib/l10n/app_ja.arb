@@ -916,7 +916,7 @@
   "setSecData": "データ",
   "setSecAbout": "このアプリについて",
   "setUpdateBody": "サーバーで「hermes update」を実行します:\n\n• 新しいコードをダウンロード{behind}（{method}）\n• 依存関係を再インストール\n• 実行中のゲートウェイを再起動\n\n数分かかり、使用中のセッションが切れることがあります。続行しますか？",
-  "setRestartGatewayBody": "更新せずにゲートウェイのプロセスを再起動します。Consoleとの接続の復旧や設定変更の適用に役立ちます。\n\n使用中のセッションが一時的に切れます。続行しますか？",
+  "setRestartGatewayBody": "更新せずにゲートウェイのプロセスを再起動します。Consoleとの接続の復旧や設定変更の適用に役立ちます。\n\n実行中のターンは中断されます（このチャットも含む）。後で再送できます。続行しますか？",
   "setMigrateBody": "config.yamlをv{cur}からv{latest}へ移行します。\n\n追加のみの移行です。新しいオプションを既定値で追加し、バージョン番号を上げます。現在の設定は削除も変更もしません。",
   "setUpdateSchemaShort": "スキーマを更新（v{from} → v{to}）",
   "setAddsNewOptions": "新しいオプションのみ追加し、現在の設定は変更しません。",
