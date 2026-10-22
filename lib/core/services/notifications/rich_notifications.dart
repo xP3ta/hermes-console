@@ -74,8 +74,14 @@ extension BotNotificationCopy on NotifL10n {
     final unique = names.toSet().toList();
     if (unique.length == 1) return unique.first;
     final and = message('_joinNames');
-    if (unique.length == 2) return '${unique[0]} $and ${unique[1]}';
-    final head = unique.take(2).join(', ');
+    if (unique.length == 2) {
+      return message('joinNamesPair', {
+        'first': unique[0], 'conjunction': and, 'second': unique[1],
+      });
+    }
+    final head = unique.length < 2
+        ? unique.join()
+        : message('joinNamesHead', {'first': unique[0], 'second': unique[1]});
     final rest = unique.length - 2;
     return message('_joinNames2', {'head': head, 'rest': rest});
   }
