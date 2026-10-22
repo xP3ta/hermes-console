@@ -12613,6 +12613,9 @@ class ActiveChat {
     _transcriptExtent = nextExtent;
     _transcriptCoverageHasParseGap = nextParseGap;
     _earlierMessagesAvailable = nextEarlierAvailable;
+    if (nextExtent == _TranscriptExtent.complete) {
+      _earlierMessagesLoadFailed = false;
+    }
     _earlierMessagesNextOffset = nextOffset;
     _needsTranscriptTailHydration = nextTailHydration;
     _desktopHistoryNeedsHydration = nextDesktopHydration;
@@ -12635,6 +12638,7 @@ class ActiveChat {
     _transcriptCoverageHasParseGap = false;
     _transcriptExtent = _TranscriptExtent.complete;
     _earlierMessagesAvailable = false;
+    _earlierMessagesLoadFailed = false;
     _earlierMessagesNextOffset = visibleCount;
     _needsTranscriptTailHydration = false;
     _desktopHydrationExpectedMessageCount = null;
@@ -13178,7 +13182,36 @@ class ActiveChat {
     List<Map<String, dynamic>> candidateNewestFirst, {
     required bool candidateTranscriptComplete,
   }) {
-    final fences = _terminalReconciliationFences(previous);
+    // Resolve local fences with the same causal evidence as the page graft.
+    // Otherwise a confirmed first turn leaves an unbound fence behind and a
+    // later refresh incorrectly reopens history that is already complete.
+    final represented = <int>{
+      ..._liveUserProjectionIndexesRepresentedByRefreshedTail(
+        candidateNewestFirst,
+        previous,
+        refreshedTranscriptComplete: candidateTranscriptComplete,
+        currentTransportTerminalObserved: false,
+      ),
+      ..._liveUserProjectionIndexesRepresentedAfterActiveTurnBoundary(
+        candidateNewestFirst,
+        previous,
+      ),
+    };
+    final fences = _bindFenceChain(
+      [
+        for (final fence in _terminalReconciliationFences(previous))
+          _bindKnownMissingFirstTurnFence(
+            fence,
+            previous,
+            candidateNewestFirst,
+            represented,
+            refreshedTranscriptComplete: candidateTranscriptComplete,
+          ),
+      ],
+      previous,
+      candidateNewestFirst,
+      refreshedTranscriptComplete: candidateTranscriptComplete,
+    );
     if (fences.isEmpty ||
         !_terminalFencesAreCovered(
           candidateNewestFirst,
