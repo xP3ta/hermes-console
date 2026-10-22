@@ -24,6 +24,7 @@ import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
+import 'support/test_api_client.dart';
 
 const _storedId = 'stored-pinned-jump';
 
@@ -117,15 +118,15 @@ Future<(ActiveChat, ActiveChatService)> _open(
     sessionTitle: _session.title,
     sessionSnapshot: _session,
     initialStoredSessionId: _storedId,
-    api: ApiClient(
+    api: testApiClient(
       baseUrl: 'http://127.0.0.1:8642',
-      apiKey: 'test-key',
       httpClient: server.client(),
     ),
     attachDesktopRuntimeOnLoad: false,
     disableForegroundKeepAlive: true,
   );
-  await chat.loadMessages(expectedMessageCount: 400);
+  // Its pages (~280 KB) decode in an isolate: give them real time.
+  await tester.runAsync(() => chat.loadMessages(expectedMessageCount: 400));
   await tester.pumpWidget(
     HermesApp(
       connManager: manager,
@@ -160,7 +161,23 @@ Future<(ActiveChat, ActiveChatService)> _open(
   for (var frame = 0; frame < 60; frame++) {
     await tester.pump(const Duration(milliseconds: 16));
   }
+  // A read the screen started lands now, as it did when pages decoded inline.
+  await _settleOffMainDecode(tester);
   return (chat, activeChats);
+}
+
+/// Pages over 64 KB decode in an isolate (`decodeJsonOffMain`), which only
+/// runs in real time: gives it some, then delivers the result.
+Future<void> _settleOffMainDecode(
+  WidgetTester tester, {
+  bool Function()? until,
+}) async {
+  for (var i = 0; i < 50 && !(until?.call() ?? false); i++) {
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 20)),
+    );
+    await tester.pump();
+  }
 }
 
 Finder _transcript() => find.descendant(
@@ -253,8 +270,9 @@ void main() {
         const Offset(0, 400),
         const Duration(milliseconds: 300),
       );
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 5)),
+      await _settleOffMainDecode(
+        tester,
+        until: () => chat.messages.length > firstPage,
       );
       await _frames(tester, 20);
     }

@@ -15,7 +15,6 @@ const _stillWithoutDashboard = {
   'test/active_chat_profile_transcript_fallback_test.dart',
   'test/active_chat_transcript_pagination_test.dart',
   'test/chat_screen_profile_dashboard_access_test.dart',
-  'test/chat_screen_test.dart',
   'test/connection_manager_test.dart',
   'test/core_read_contract_test.dart',
   'test/dashboard_redirect_origin_test.dart',
@@ -24,8 +23,11 @@ const _stillWithoutDashboard = {
   'test/home_status_requests_test.dart',
   'test/lc1215_long_session_projection_test.dart',
   'test/n10i_connect_timeout_test.dart',
+  // Kept until C13 on purpose: its ~210 KB pages would decode off the main
+  // isolate through the Dashboard, and the reads it measures happen inside
+  // fake-time pumps, where that decode never completes. C13 ports it with a
+  // test-only inline-decode hook next to `debugJsonDecodePathObserver`.
   'test/passive_transcript_bandwidth_test.dart',
-  'test/pinned_prompt_jump_test.dart',
   'test/profile_named_session_read_test.dart',
   'test/session_deletion_surface_test.dart',
   'test/session_deletion_test.dart',
