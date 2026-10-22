@@ -8,12 +8,12 @@ void main() {
       'es': 'Nueva rutina',
       'en': 'New routine',
       'pt': 'Nova rotina',
-      'de': 'New routine',
-      'fr': 'New routine',
-      'it': 'New routine',
-      'ja': 'New routine',
-      'ko': 'New routine',
-      'zh': 'New routine',
+      'de': "Neue Routine",
+      'fr': "Nouvelle routine",
+      'it': "Nuova routine",
+      'ja': "新しいルーチン",
+      'ko': "새 루틴",
+      'zh': "新建例行任务",
       'xx': 'New routine',
     };
     for (final entry in titles.entries) {

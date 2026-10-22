@@ -192,6 +192,12 @@ void main() {
       ));
       await tester.pumpAndSettle();
       final tools = switch (lang) {
+        "de" => ["0 Werkzeuge verfügbar", "1 Werkzeug verfügbar", "2 Werkzeuge verfügbar"],
+        "fr" => ["0 outils disponibles", "1 outil disponible", "2 outils disponibles"],
+        "it" => ["0 strumenti disponibili", "1 strumento disponibile", "2 strumenti disponibili"],
+        "ja" => ["ツール0個を利用可能", "ツール1個を利用可能", "ツール2個を利用可能"],
+        "ko" => ["도구 0개 사용 가능", "도구 1개 사용 가능", "도구 2개 사용 가능"],
+        "zh" => ["0个可用工具", "1个可用工具", "2个可用工具"],
         'es' => ['0 herramientas disponibles', '1 herramienta disponible',
                  '2 herramientas disponibles'],
         'pt' => ['0 ferramentas disponíveis', '1 ferramenta disponível',
@@ -203,18 +209,54 @@ void main() {
       }
       expect(copy.deliveryLabel('custom_channel'), 'custom_channel');
       final expectedTitle = switch (lang) {
+        "de" => "Serverintegrationen",
+        "fr" => "Intégrations du serveur",
+        "it" => "Integrazioni del server",
+        "ja" => "サーバー連携",
+        "ko" => "서버 연동",
+        "zh" => "服务器集成",
         'es' => 'Integraciones del servidor',
         'pt' => 'Integrações do servidor',
         _ => 'Server integrations',
       };
       expect(copy.screenTitle, expectedTitle);
       final events = switch (lang) {
+        "de" => "alle Ereignisse",
+        "fr" => "tous les événements",
+        "it" => "tutti gli eventi",
+        "ja" => "すべてのイベント",
+        "ko" => "모든 이벤트",
+        "zh" => "所有事件",
         'es' => 'todos los eventos', 'pt' => 'todos os eventos', _ => 'all events',
       };
-      expect(copy.webhookSubtitle('custom_channel', []), 'custom_channel · $events');
+      final expectedAllEvents = switch (lang) {
+        "de" => "custom_channel · alle Ereignisse",
+        "fr" => "custom_channel · tous les événements",
+        "it" => "custom_channel · tutti gli eventi",
+        "ja" => "custom_channel・すべてのイベント",
+        "ko" => "custom_channel · 모든 이벤트",
+        "zh" => "custom_channel · 所有事件",
+        _ => 'custom_channel · $events',
+      };
+      final expectedSelectedEvents = switch (lang) {
+        "de" => "custom_channel · event.one, event.two",
+        "fr" => "custom_channel · event.one, event.two",
+        "it" => "custom_channel · event.one, event.two",
+        "ja" => "custom_channel・event.one, event.two",
+        "ko" => "custom_channel · event.one, event.two",
+        "zh" => "custom_channel · event.one, event.two",
+        _ => 'custom_channel · event.one, event.two',
+      };
+      expect(copy.webhookSubtitle('custom_channel', []), expectedAllEvents);
       expect(copy.webhookSubtitle('custom_channel', ['event.one', 'event.two']),
-          'custom_channel · event.one, event.two');
+          expectedSelectedEvents);
       final expectedUnavailable = switch (lang) {
+        "de" => "Status nicht verfügbar",
+        "fr" => "État indisponible",
+        "it" => "Stato non disponibile",
+        "ja" => "状態を取得できません",
+        "ko" => "상태 확인 불가",
+        "zh" => "状态不可用",
         'es' => 'Estado no disponible', 'pt' => 'Status indisponível',
         _ => 'Status unavailable',
       };
