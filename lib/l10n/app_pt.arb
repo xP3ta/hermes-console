@@ -9589,5 +9589,431 @@
   "i18n131RecoveredTurnPending": "Uma resposta pendente foi recuperada. Descarte a recuperação para continuar.",
   "@i18n131RecoveredTurnPending": {
     "description": "Manual UI copy migrated to the shared catalog."
+  },
+  "i18n131McAllAgents": "Todos os perfis",
+  "@i18n131McAllAgents": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McWorkspaces": "Espaços de trabalho",
+  "@i18n131McWorkspaces": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McWorkspaceAgentCountOne": "{count} perfil",
+  "@i18n131McWorkspaceAgentCountOne": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "i18n131McWorkspaceAgentCountOther": "{count} perfis",
+  "@i18n131McWorkspaceAgentCountOther": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "i18n131McCreateOrganization": "Criar espaço de trabalho",
+  "@i18n131McCreateOrganization": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McEditOrganization": "Editar espaço de trabalho",
+  "@i18n131McEditOrganization": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McOrganizationName": "Nome do espaço de trabalho",
+  "@i18n131McOrganizationName": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McOrganizationHint": "ex.: Homelab",
+  "@i18n131McOrganizationHint": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McChooseProfiles": "Escolher perfis",
+  "@i18n131McChooseProfiles": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McDelete": "Excluir",
+  "@i18n131McDelete": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McDeleteOrganizationTitle": "Excluir espaço de trabalho?",
+  "@i18n131McDeleteOrganizationTitle": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McDeleteOrganizationBody": "Apenas este espaço de trabalho local é removido. Seus perfis do Hermes não mudam.",
+  "@i18n131McDeleteOrganizationBody": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McLoading": "Carregando perfis…",
+  "@i18n131McLoading": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McRetry": "Tentar novamente",
+  "@i18n131McRetry": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McRefresh": "Atualizar",
+  "@i18n131McRefresh": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McTasks": "Tarefas",
+  "@i18n131McTasks": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McActivity": "Atividade",
+  "@i18n131McActivity": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McShowLess": "Mostrar menos",
+  "@i18n131McShowLess": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McSharedRoomName": "Nome da sala",
+  "@i18n131McSharedRoomName": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McChooseSharedMembers": "Escolher membros oficiais",
+  "@i18n131McChooseSharedMembers": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McRoomRefreshFailed": "Não foi possível atualizar esta sala. Reabra-a para reconectar.",
+  "@i18n131McRoomRefreshFailed": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McNewAgent": "Novo perfil",
+  "@i18n131McNewAgent": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McNoBots": "Um perfil tem nome, memória, skills e chat próprios. Crie o primeiro para começar.",
+  "@i18n131McNoBots": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McSearchAgents": "Buscar perfis",
+  "@i18n131McSearchAgents": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McClearSearch": "Limpar busca",
+  "@i18n131McClearSearch": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McActiveNow": "Ativos agora",
+  "@i18n131McActiveNow": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McBotRosterUpdateFailed": "O Hermes não atualizou este perfil.",
+  "@i18n131McBotRosterUpdateFailed": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McNoMatchingAgents": "Nenhum perfil correspondente",
+  "@i18n131McNoMatchingAgents": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McAttentionSummaryOne": "{approvals} aprovação · {blocked} bloqueados",
+  "@i18n131McAttentionSummaryOne": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy.",
+    "placeholders": {
+      "approvals": {
+        "type": "int"
+      },
+      "blocked": {
+        "type": "int"
+      }
+    }
+  },
+  "i18n131McAttentionSummaryOther": "{approvals} aprovações · {blocked} bloqueados",
+  "@i18n131McAttentionSummaryOther": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy.",
+    "placeholders": {
+      "approvals": {
+        "type": "int"
+      },
+      "blocked": {
+        "type": "int"
+      }
+    }
+  },
+  "i18n131McNeedsYou": "Precisa de você",
+  "@i18n131McNeedsYou": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McUsage": "Uso",
+  "@i18n131McUsage": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McProfilesUnavailable": "Esta instalação do Hermes não publica perfis.",
+  "@i18n131McProfilesUnavailable": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McReview": "Revisar",
+  "@i18n131McReview": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McMemory": "Memória",
+  "@i18n131McMemory": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McStaleProfiles": "Alguns perfis salvos não existem mais. Edite o espaço de trabalho para atualizá-lo.",
+  "@i18n131McStaleProfiles": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McUnattributedSessionsOne": "{count} sessão não publicou o perfil proprietário. Elas são incluídas apenas no uso geral.",
+  "@i18n131McUnattributedSessionsOne": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "i18n131McUnattributedSessionsOther": "{count} sessões não publicaram o perfil proprietário. Elas são incluídas apenas no uso geral.",
+  "@i18n131McUnattributedSessionsOther": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "i18n131McWorking": "trabalhando",
+  "@i18n131McWorking": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McApprovals": "aprovações",
+  "@i18n131McApprovals": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McBlocked": "bloqueados",
+  "@i18n131McBlocked": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McTokens": "tokens",
+  "@i18n131McTokens": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McUnknown": "Desconhecido",
+  "@i18n131McUnknown": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McModelLabel": "Modelo",
+  "@i18n131McModelLabel": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McEditBotTitle": "Editar perfil",
+  "@i18n131McEditBotTitle": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McBotDisplayName": "Nome de exibição",
+  "@i18n131McBotDisplayName": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McBotDisplayNameHint": "ex.: Pesquisador",
+  "@i18n131McBotDisplayNameHint": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McBotSpriteHint": "O sprite se torna a imagem deste perfil.",
+  "@i18n131McBotSpriteHint": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McBotSpriteSearchHint": "Buscar sprites…",
+  "@i18n131McBotSpriteSearchHint": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McBotSpriteEmpty": "Nenhum sprite disponível.",
+  "@i18n131McBotSpriteEmpty": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McBotSpriteLoadFailed": "Não foi possível carregar a lista.",
+  "@i18n131McBotSpriteLoadFailed": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McBotSpriteUnsupported": "Esta instalação do Hermes não oferece suporte a sprites por perfil.",
+  "@i18n131McBotSpriteUnsupported": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McBotEditorSaved": "Perfil atualizado",
+  "@i18n131McBotEditorSaved": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McBotEditorSaveFailed": "O Hermes não aplicou as alterações.",
+  "@i18n131McBotEditorSaveFailed": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McCreateAgentSubtitle": "Um perfil tem nome, memória, skills e chat próprios. Ele pode enviar mensagens aos seus outros perfis.",
+  "@i18n131McCreateAgentSubtitle": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McAgentNameLabel": "Nome",
+  "@i18n131McAgentNameLabel": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McAgentNameInvalid": "Use letras minúsculas, números, hífens e sublinhados.",
+  "@i18n131McAgentNameInvalid": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McAgentNameTaken": "Já existe um perfil com este nome.",
+  "@i18n131McAgentNameTaken": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McAgentTitleLabel": "Título",
+  "@i18n131McAgentTitleLabel": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McAgentDescriptionLabel": "Descrição",
+  "@i18n131McAgentDescriptionLabel": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McAgentDescriptionHint": "Com o que este perfil deve ajudar?",
+  "@i18n131McAgentDescriptionHint": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McModelInherited": "Herdado do perfil de inicialização",
+  "@i18n131McModelInherited": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McProviderLabel": "Provedor",
+  "@i18n131McProviderLabel": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McAdvanced": "Avançado",
+  "@i18n131McAdvanced": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McCloneFromLabel": "Clonar de",
+  "@i18n131McCloneFromLabel": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McCloneFresh": "Perfil novo (skills incluídas)",
+  "@i18n131McCloneFresh": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McShareAuthLabel": "Compartilhar chaves e contas com o perfil principal",
+  "@i18n131McShareAuthLabel": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McShareAuthHint": "Assinaturas, logins OAuth e API keys ficam compartilhados (não copiados), então as renovações de token nunca se invalidam entre si. Desmarque para uma cópia isolada.",
+  "@i18n131McShareAuthHint": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McNoSkillsLabel": "Criar vazio (sem skills incluídas)",
+  "@i18n131McNoSkillsLabel": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McSoulOptionalLabel": "SOUL.md (opcional)",
+  "@i18n131McSoulOptionalLabel": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McSoulOptionalHint": "Deixe em branco para gerar automaticamente a partir de nome, título e descrição.",
+  "@i18n131McSoulOptionalHint": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McCreateAgentSubmit": "Criar perfil",
+  "@i18n131McCreateAgentSubmit": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McCreateAgentError": "Não foi possível criar o perfil: {detail}",
+  "@i18n131McCreateAgentError": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy.",
+    "placeholders": {
+      "detail": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131McAgentCreated": "Perfil @{name} criado. Adicione-o a uma sala quando quiser.",
+  "@i18n131McAgentCreated": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131McStatusIdle": "Ocioso",
+  "@i18n131McStatusIdle": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McStatusThinking": "Pensando",
+  "@i18n131McStatusThinking": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McStatusWorking": "Trabalhando",
+  "@i18n131McStatusWorking": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McStatusResponding": "Respondendo",
+  "@i18n131McStatusResponding": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McStatusBlocked": "Bloqueado",
+  "@i18n131McStatusBlocked": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McStatusApprovalRequired": "Aprovação necessária",
+  "@i18n131McStatusApprovalRequired": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McActivityLabelSessionUpdated": "Sessão ativa",
+  "@i18n131McActivityLabelSessionUpdated": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McActivityLabelTaskCreated": "Tarefa criada",
+  "@i18n131McActivityLabelTaskCreated": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McActivityLabelTaskStarted": "Tarefa iniciada",
+  "@i18n131McActivityLabelTaskStarted": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McActivityLabelTaskCompleted": "Tarefa concluída",
+  "@i18n131McActivityLabelTaskCompleted": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McActivityLabelTaskBlocked": "Tarefa bloqueada",
+  "@i18n131McActivityLabelTaskBlocked": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McBotChat": "Bot Chat",
+  "@i18n131McBotChat": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McSkills": "Skills",
+  "@i18n131McSkills": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McSoul": "SOUL",
+  "@i18n131McSoul": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McInput": "input",
+  "@i18n131McInput": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McOutput": "output",
+  "@i18n131McOutput": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McReasoning": "reasoning",
+  "@i18n131McReasoning": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McManagerLabel": "Manager",
+  "@i18n131McManagerLabel": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McAgentNameHint": "inbox-triage",
+  "@i18n131McAgentNameHint": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McAgentTitleHint": "Inbox Triage",
+  "@i18n131McAgentTitleHint": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McStatusError": "Error",
+  "@i18n131McStatusError": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
   }
 }
