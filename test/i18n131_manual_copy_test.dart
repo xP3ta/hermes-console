@@ -14,7 +14,7 @@ void main() {
   test('duration helpers keep Spanish and Portuguese decimal conventions', () {
     for (final entry in {'es': '0,7 s', 'pt': '0,7 s', 'en': '0.7 s',
       'de': '0,7 s', 'fr': '0,7 s', 'it': '0,7 s', 'ja': '0.7秒',
-      'ko': '0.7 s', 'zh': '0.7 s', 'unknown': '0.7 s'}.entries) {
+      'ko': '0.7초', 'zh': '0.7 s', 'unknown': '0.7 s'}.entries) {
       const duration = Duration(milliseconds: 700);
       expect(formatStepDuration(duration, languageCode: entry.key), entry.value);
       expect(formatCompactionDuration(duration, languageCode: entry.key), entry.value);
