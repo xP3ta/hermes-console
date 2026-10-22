@@ -43,10 +43,14 @@ class SpeechRenderer {
   const SpeechRenderer({required this.language});
 
   bool get _isEnglish => language.toLowerCase().startsWith('en');
+  bool get _isPortuguese => language.toLowerCase().startsWith('pt');
 
-  String get _linkWord => _isEnglish ? 'link' : 'enlace';
-  String get _codeNotice =>
-      _isEnglish ? 'Code block omitted.' : 'Bloque de código omitido.';
+  String get _linkWord => _isEnglish || _isPortuguese ? 'link' : 'enlace';
+  String get _codeNotice => switch (language.toLowerCase()) {
+    _ when _isEnglish => 'Code block omitted.',
+    _ when _isPortuguese => 'Bloco de código omitido.',
+    _ => 'Bloque de código omitido.',
+  };
 
   List<NarrationSegment> render(String markdown) {
     var source = markdown
@@ -205,7 +209,7 @@ class SpeechRenderer {
     line = line.replaceAll(RegExp(r'[*_~`]'), '').trim();
     if (line.isEmpty) return false;
     if (RegExp(
-      r'^(?:fuentes?|sources?|referencias?|references?|bibliograf[ií]a|bibliography)(?:\s*:|\s*$)',
+      r'^(?:fuentes?|sources?|referencias?|references?|fontes?|bibliograf[ií]a|bibliography)(?:\s*:|\s*$)',
       caseSensitive: false,
     ).hasMatch(line)) {
       return true;
@@ -302,6 +306,11 @@ class SpeechRenderer {
             ? "$hour o'clock"
             : '$hour ${int.parse(minutes)}';
       }
+      if (_isPortuguese) {
+        return minutes == '00'
+            ? '$hour em ponto'
+            : '$hour e ${int.parse(minutes)}';
+      }
       return minutes == '00'
           ? '$hour en punto'
           : '$hour y ${int.parse(minutes)}';
@@ -310,9 +319,13 @@ class SpeechRenderer {
       RegExp(r'\b(\d{1,3})/(\d{1,3})\b'),
       _speakFraction,
     );
-    text = text.replaceAllMapped(RegExp(r'\b([\w.+-]+)@([\w.-]+)\b'), (match) {
+    text = text.replaceAllMapped(RegExp(r'\b([\w.+-]+)@([\w.-]+\b)'), (match) {
       final at = _isEnglish ? ' at ' : ' arroba ';
-      final dot = _isEnglish ? ' dot ' : ' punto ';
+      final dot = _isEnglish
+          ? ' dot '
+          : _isPortuguese
+          ? ' ponto '
+          : ' punto ';
       return '${match.group(1)}$at${match.group(2)!.replaceAll('.', dot)}';
     });
 
@@ -325,8 +338,18 @@ class SpeechRenderer {
         // todas horas, decir "o" por cada barra suena a máquina rota: ahí la
         // barra es un simple separador → espacio.
         .replaceAllMapped(
-          RegExp(r'(?<=\b[yeo])\s*/\s*(?=[oaui]\b)', caseSensitive: false),
-          (_) => _isEnglish ? ' or ' : ' o ',
+          // Español "y/o" / "y/u", inglés "e/o"… y portugués "e/ou" (la
+          // conjunción "ou" tiene dos letras; sin esto caería en la regla de
+          // caminos y se perdería la "e").
+          RegExp(
+            r'(?<=\b[yeo])\s*/\s*(?=(?:ou|[oaui])\b)',
+            caseSensitive: false,
+          ),
+          (_) => _isEnglish
+              ? ' or '
+              : _isPortuguese
+              ? ' ou '
+              : ' o ',
         )
         // Un slug o ruta relativa ("rusty4444/omniroute", "src/lib/main.dart")
         // se dice por su ÚLTIMO tramo: al oído importa el nombre del repo o
@@ -410,13 +433,16 @@ class SpeechRenderer {
       'GBP' => '£',
       _ => currency,
     };
-    final names = switch ((normalizedCurrency, _isEnglish)) {
-      ('€', false) => ('euro', 'euros', 'céntimo', 'céntimos'),
-      ('€', true) => ('euro', 'euros', 'cent', 'cents'),
-      (r'$', false) => ('dólar', 'dólares', 'centavo', 'centavos'),
-      (r'$', true) => ('dollar', 'dollars', 'cent', 'cents'),
-      ('£', false) => ('libra', 'libras', 'penique', 'peniques'),
-      ('£', true) => ('pound', 'pounds', 'penny', 'pence'),
+    final names = switch ((normalizedCurrency, _isEnglish, _isPortuguese)) {
+      ('€', false, false) => ('euro', 'euros', 'céntimo', 'céntimos'),
+      ('€', false, true) => ('euro', 'euros', 'centavo', 'centavos'),
+      ('€', true, _) => ('euro', 'euros', 'cent', 'cents'),
+      (r'$', false, false) => ('dólar', 'dólares', 'centavo', 'centavos'),
+      (r'$', false, true) => ('dólar', 'dólares', 'centavo', 'centavos'),
+      (r'$', true, _) => ('dollar', 'dollars', 'cent', 'cents'),
+      ('£', false, false) => ('libra', 'libras', 'penique', 'peniques'),
+      ('£', false, true) => ('libra', 'libras', 'centavo', 'centavos'),
+      ('£', true, _) => ('pound', 'pounds', 'penny', 'pence'),
       _ => null,
     };
     if (names == null) return null;
@@ -425,13 +451,22 @@ class SpeechRenderer {
     final base = '$major $unit';
     if (minor == null || minor == 0) return base;
     final subunit = minor == 1 ? subunitOne : subunitMany;
-    final joiner = _isEnglish ? ' and ' : ' con ';
+    final joiner = _isEnglish ? ' and ' : _isPortuguese ? ' com ' : ' con ';
     return '$base$joiner$minor $subunit';
   }
 
   String _speakPercentages(String input) {
-    final separator = _isEnglish ? 'point' : 'coma';
-    final unit = _isEnglish ? 'percent' : 'por ciento';
+    // Portugués: separador decimal "vírgula" y "por cento" (dos palabras).
+    final separator = _isEnglish
+        ? 'point'
+        : _isPortuguese
+        ? 'vírgula'
+        : 'coma';
+    final unit = _isEnglish
+        ? 'percent'
+        : _isPortuguese
+        ? 'por cento'
+        : 'por ciento';
     return input.replaceAllMapped(RegExp(r'\b(\d+)(?:[.,](\d+))?\s*%'), (
       match,
     ) {
@@ -446,7 +481,11 @@ class SpeechRenderer {
     final decimal = _isEnglish
         ? RegExp(r'\b(\d+)\.(\d+)\b')
         : RegExp(r'\b(\d+),(\d+)\b');
-    final separator = _isEnglish ? 'point' : 'coma';
+    final separator = _isEnglish
+        ? 'point'
+        : _isPortuguese
+        ? 'vírgula'
+        : 'coma';
     return input.replaceAllMapped(
       decimal,
       (match) => '${match.group(1)} $separator ${match.group(2)}',
@@ -501,6 +540,20 @@ class SpeechRenderer {
       'noviembre',
       'diciembre',
     ];
+    const monthsPt = [
+      'janeiro',
+      'fevereiro',
+      'março',
+      'abril',
+      'maio',
+      'junho',
+      'julho',
+      'agosto',
+      'setembro',
+      'outubro',
+      'novembro',
+      'dezembro',
+    ];
     const monthsEn = [
       'January',
       'February',
@@ -515,23 +568,27 @@ class SpeechRenderer {
       'November',
       'December',
     ];
-    return _isEnglish
-        ? '${monthsEn[month - 1]} $day, $year'
-        : '$day de ${monthsEs[month - 1]} de $year';
+    if (_isEnglish) return '${monthsEn[month - 1]} $day, $year';
+    if (_isPortuguese) return '$day de ${monthsPt[month - 1]} de $year';
+    return '$day de ${monthsEs[month - 1]} de $year';
   }
 
   String _speakFraction(Match match) {
     final numerator = match.group(1) ?? '';
     final denominator = match.group(2) ?? '';
     if (numerator == '1' && denominator == '2') {
-      return _isEnglish ? 'one half' : 'un medio';
+      if (_isEnglish) return 'one half';
+      if (_isPortuguese) return 'um meio';
+      return 'un medio';
     }
     if (numerator == '3' && denominator == '4') {
-      return _isEnglish ? 'three quarters' : 'tres cuartos';
+      if (_isEnglish) return 'three quarters';
+      if (_isPortuguese) return 'três quartos';
+      return 'tres cuartos';
     }
-    return _isEnglish
-        ? '$numerator over $denominator'
-        : '$numerator entre $denominator';
+    if (_isEnglish) return '$numerator over $denominator';
+    // "entre" sirve igual en español y en portugués ("3 entre 4").
+    return '$numerator entre $denominator';
   }
 
   static String _withTerminalPunctuation(String text) {

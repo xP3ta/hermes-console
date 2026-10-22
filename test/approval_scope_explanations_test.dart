@@ -105,7 +105,11 @@ void main() {
       'apx1215ScopeSessionHint',
       'apx1215ScopeAlwaysHint',
     ];
-    for (final file in ['lib/l10n/app_es.arb', 'lib/l10n/app_en.arb']) {
+    for (final file in [
+      'lib/l10n/app_es.arb',
+      'lib/l10n/app_en.arb',
+      'lib/l10n/app_pt.arb',
+    ]) {
       final arb = jsonDecode(File(file).readAsStringSync()) as Map;
       for (final key in keys) {
         expect(arb[key], isA<String>(), reason: '$key in $file');

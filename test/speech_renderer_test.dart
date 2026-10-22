@@ -57,6 +57,34 @@ Después.
       expect(spoken, isNot(contains('/tmp')));
     });
 
+    test('habla portugués: horas, porcentajes, decimales y código', () {
+      final spoken = const SpeechRenderer(language: 'pt')
+          .render('''
+Reunião às 15:00. Desconto de 50%. Versão 1,5.
+```
+code
+```
+Fim.
+''')
+          .map((item) => item.text)
+          .join(' ');
+
+      expect(spoken, contains('15 em ponto'));
+      expect(spoken, contains('50 por cento'));
+      expect(spoken, contains('1 vírgula 5'));
+      expect(spoken, contains('Bloco de código omitido.'));
+      expect('Bloco de código omitido.'.allMatches(spoken).length, 1);
+      expect(spoken, isNot(contains('code')));
+    });
+
+    test('habla fechas en portugués', () {
+      final spoken = const SpeechRenderer(language: 'pt')
+          .render('Entrega em 5/6/2026.')
+          .map((item) => item.text)
+          .join(' ');
+      expect(spoken, contains('5 de junho de 2026'));
+    });
+
     test('humaniza fechas, fracciones, identificadores y rutas', () {
       final spoken = const SpeechRenderer(language: 'es')
           .render(

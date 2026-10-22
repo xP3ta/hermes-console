@@ -6985,5 +6985,11 @@
     }
   },
   "cphPluginBlockedByScan": "The security scan blocked this plugin. Nothing was changed.",
-  "dashboardAuthSessionTokenWithheld": "This Dashboard does not give Console its session token: it is hosted by the Hermes 0.22.3+ gateway without a sign-in. Use a standalone Dashboard or enable its sign-in."
+  "dashboardAuthSessionTokenWithheld": "This Dashboard does not give Console its session token: it is hosted by the Hermes 0.22.3+ gateway without a sign-in. Use a standalone Dashboard or enable its sign-in.",
+  "connDiagTimeout": "no response in {seconds}s",
+  "connDiagTlsInvalid": "invalid TLS certificate: {message}",
+  "connDiagDnsFailed": "the host does not resolve",
+  "connDiagRefused": "connection refused (wrong port?)",
+  "connDiagAuthHint": "check the username and password",
+  "transportPublicBlocked": "Public HTTP/WS is blocked: configure HTTPS/WSS or use a private/Tailscale address."
 }

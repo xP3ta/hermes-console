@@ -204,4 +204,19 @@ void main() {
     expect(find.text('Normal'), findsOneWidget);
     expect(find.text('High'), findsOneWidget);
   });
+
+  testWidgets('publishes the same simple labels in Brazilian Portuguese', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _host(onSubmit: (_) async {}, locale: const Locale('pt')),
+    );
+
+    expect(find.text('Atribuir tarefa'), findsNWidgets(2));
+    expect(find.text('O quê'), findsOneWidget);
+    expect(find.text('Por quê (opcional)'), findsOneWidget);
+    expect(find.text('Baixa'), findsOneWidget);
+    expect(find.text('Normal'), findsOneWidget);
+    expect(find.text('Alta'), findsOneWidget);
+  });
 }
