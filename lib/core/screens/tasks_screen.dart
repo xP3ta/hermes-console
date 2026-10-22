@@ -3702,13 +3702,13 @@ class _Kanban020Copy {
   String get reasoningEffort => _strings.i18n131TasksReasoningEffort;
   String get inheritEffort => _strings.i18n131TasksInheritEffort;
   String effortLabel(String value) {
-    if (value == 'none') return _strings.i18n131TasksEffortLabel_none;
-    if (value == 'minimal') return _strings.i18n131TasksEffortLabel_minimal;
-    if (value == 'low') return _strings.i18n131TasksEffortLabel_low;
-    if (value == 'medium') return _strings.i18n131TasksEffortLabel_medium;
-    if (value == 'high') return _strings.i18n131TasksEffortLabel_high;
-    if (value == 'xhigh') return _strings.i18n131TasksEffortLabel_xhigh;
-    if (value == 'max') return _strings.i18n131TasksEffortLabel_max;
+    if (value == 'none') return _strings.i18n131TasksEffortLabelNone;
+    if (value == 'minimal') return _strings.i18n131TasksEffortLabelMinimal;
+    if (value == 'low') return _strings.i18n131TasksEffortLabelLow;
+    if (value == 'medium') return _strings.i18n131TasksEffortLabelMedium;
+    if (value == 'high') return _strings.i18n131TasksEffortLabelHigh;
+    if (value == 'xhigh') return _strings.i18n131TasksEffortLabelXhigh;
+    if (value == 'max') return _strings.i18n131TasksEffortLabelMax;
     return _strings.i18n131TasksEffortLabelUltra;
   }
 

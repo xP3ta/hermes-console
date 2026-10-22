@@ -8338,32 +8338,32 @@
   "@i18n131TasksInheritEffort": {
     "description": "i18n131: Preserved ES/EN/PT; tasks."
   },
-  "i18n131TasksEffortLabel_none": "Off",
-  "@i18n131TasksEffortLabel_none": {
+  "i18n131TasksEffortLabelNone": "Off",
+  "@i18n131TasksEffortLabelNone": {
     "description": "i18n131: Preserved ES/EN/PT; tasks."
   },
-  "i18n131TasksEffortLabel_minimal": "Minimal",
-  "@i18n131TasksEffortLabel_minimal": {
+  "i18n131TasksEffortLabelMinimal": "Minimal",
+  "@i18n131TasksEffortLabelMinimal": {
     "description": "i18n131: Preserved ES/EN/PT; tasks."
   },
-  "i18n131TasksEffortLabel_low": "Low",
-  "@i18n131TasksEffortLabel_low": {
+  "i18n131TasksEffortLabelLow": "Low",
+  "@i18n131TasksEffortLabelLow": {
     "description": "i18n131: Preserved ES/EN/PT; tasks."
   },
-  "i18n131TasksEffortLabel_medium": "Medium",
-  "@i18n131TasksEffortLabel_medium": {
+  "i18n131TasksEffortLabelMedium": "Medium",
+  "@i18n131TasksEffortLabelMedium": {
     "description": "i18n131: Preserved ES/EN/PT; tasks."
   },
-  "i18n131TasksEffortLabel_high": "High",
-  "@i18n131TasksEffortLabel_high": {
+  "i18n131TasksEffortLabelHigh": "High",
+  "@i18n131TasksEffortLabelHigh": {
     "description": "i18n131: Preserved ES/EN/PT; tasks."
   },
-  "i18n131TasksEffortLabel_xhigh": "XHigh",
-  "@i18n131TasksEffortLabel_xhigh": {
+  "i18n131TasksEffortLabelXhigh": "XHigh",
+  "@i18n131TasksEffortLabelXhigh": {
     "description": "i18n131: Preserved ES/EN/PT; tasks."
   },
-  "i18n131TasksEffortLabel_max": "Max",
-  "@i18n131TasksEffortLabel_max": {
+  "i18n131TasksEffortLabelMax": "Max",
+  "@i18n131TasksEffortLabelMax": {
     "description": "i18n131: Preserved ES/EN/PT; tasks."
   },
   "i18n131TasksApplyModelTitle": "Apply model configuration",
@@ -8924,43 +8924,43 @@
   },
   "i18n131ChatBusy": "Hermes is busy (for example, compacting this conversation). Your message is still in the composer; try again in a moment.",
   "@i18n131ChatBusy": {
-    "description": "i18n131: Preserved ES/EN/PT; chat."
+    "description": "i18n131: Canned chat display text; Spanish preserved, English and Portuguese added where absent."
   },
   "i18n131ChatNotOwned": "This conversation can’t continue live because it belongs to another gateway or process. Its history remains available, and you can still start a new chat.",
   "@i18n131ChatNotOwned": {
-    "description": "i18n131: Preserved ES/EN/PT; chat."
+    "description": "i18n131: Canned chat display text; Spanish preserved, English and Portuguese added where absent."
   },
   "i18n131ChatLimit": "Hermes reached the configured active-session limit. Wait for a session to finish or adjust the limit.",
   "@i18n131ChatLimit": {
-    "description": "i18n131: Preserved ES/EN/PT; chat."
+    "description": "i18n131: Canned chat display text; Spanish preserved, English and Portuguese added where absent."
   },
   "i18n131ChatCoordination": "Hermes could not safely reserve this conversation. Check the server and try again.",
   "@i18n131ChatCoordination": {
-    "description": "i18n131: Preserved ES/EN/PT; chat."
+    "description": "i18n131: Canned chat display text; Spanish preserved, English and Portuguese added where absent."
   },
   "i18n131ChatSendFailed": "The message could not be sent. Try again.",
   "@i18n131ChatSendFailed": {
-    "description": "i18n131: Preserved ES/EN/PT; chat."
+    "description": "i18n131: Canned chat display text; Spanish preserved, English and Portuguese added where absent."
   },
   "i18n131ChatStoredNotOwned": "This conversation cannot continue live. Its history remains available and you can start a new chat.",
   "@i18n131ChatStoredNotOwned": {
-    "description": "i18n131: Preserved ES/EN/PT; chat."
+    "description": "i18n131: Canned chat display text; Spanish preserved, English and Portuguese added where absent."
   },
   "i18n131ChatStoredFailed": "The response could not be completed. Try again.",
   "@i18n131ChatStoredFailed": {
-    "description": "i18n131: Preserved ES/EN/PT; chat."
+    "description": "i18n131: Canned chat display text; Spanish preserved, English and Portuguese added where absent."
   },
   "i18n131ChatStoredDisconnected": "The connection with Hermes was lost. The message was not confirmed; review the draft and try again.",
   "@i18n131ChatStoredDisconnected": {
-    "description": "i18n131: Preserved ES/EN/PT; chat."
+    "description": "i18n131: Canned chat display text; Spanish preserved, English and Portuguese added where absent."
   },
   "i18n131ChatRecoveryFailed": "The turn could not be recovered. Try again.",
   "@i18n131ChatRecoveryFailed": {
-    "description": "i18n131: Preserved ES/EN/PT; chat."
+    "description": "i18n131: Canned chat display text; Spanish preserved, English and Portuguese added where absent."
   },
   "i18n131ChatFailureCause": "The response could not be completed: {cause}",
   "@i18n131ChatFailureCause": {
-    "description": "i18n131: Preserved ES/EN/PT; chat.",
+    "description": "i18n131: Canned chat display text; Spanish preserved, English and Portuguese added where absent.",
     "placeholders": {
       "cause": {
         "type": "String"

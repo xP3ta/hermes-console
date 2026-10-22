@@ -56,13 +56,13 @@ void main() {
     'i18n131TasksInheritModel',
     'i18n131TasksReasoningEffort',
     'i18n131TasksInheritEffort',
-    'i18n131TasksEffortLabel_none',
-    'i18n131TasksEffortLabel_minimal',
-    'i18n131TasksEffortLabel_low',
-    'i18n131TasksEffortLabel_medium',
-    'i18n131TasksEffortLabel_high',
-    'i18n131TasksEffortLabel_xhigh',
-    'i18n131TasksEffortLabel_max',
+    'i18n131TasksEffortLabelNone',
+    'i18n131TasksEffortLabelMinimal',
+    'i18n131TasksEffortLabelLow',
+    'i18n131TasksEffortLabelMedium',
+    'i18n131TasksEffortLabelHigh',
+    'i18n131TasksEffortLabelXhigh',
+    'i18n131TasksEffortLabelMax',
     'i18n131TasksApplyModelTitle',
     'i18n131TasksApplyModelBody',
     'i18n131TasksApply',
@@ -534,69 +534,69 @@ void main() {
     expect(lookupStrings(const Locale('ja')).i18n131TasksInheritEffort, "Inherit effort from profile");
     expect(lookupStrings(const Locale('ko')).i18n131TasksInheritEffort, "Inherit effort from profile");
     expect(lookupStrings(const Locale('zh')).i18n131TasksInheritEffort, "Inherit effort from profile");
-    expect(lookupStrings(const Locale('es')).i18n131TasksEffortLabel_none, "Desactivado");
-    expect(lookupStrings(const Locale('en')).i18n131TasksEffortLabel_none, "Off");
-    expect(lookupStrings(const Locale('pt')).i18n131TasksEffortLabel_none, "Desativado");
-    expect(lookupStrings(const Locale('de')).i18n131TasksEffortLabel_none, "Off");
-    expect(lookupStrings(const Locale('fr')).i18n131TasksEffortLabel_none, "Off");
-    expect(lookupStrings(const Locale('it')).i18n131TasksEffortLabel_none, "Off");
-    expect(lookupStrings(const Locale('ja')).i18n131TasksEffortLabel_none, "Off");
-    expect(lookupStrings(const Locale('ko')).i18n131TasksEffortLabel_none, "Off");
-    expect(lookupStrings(const Locale('zh')).i18n131TasksEffortLabel_none, "Off");
-    expect(lookupStrings(const Locale('es')).i18n131TasksEffortLabel_minimal, "Mínimo");
-    expect(lookupStrings(const Locale('en')).i18n131TasksEffortLabel_minimal, "Minimal");
-    expect(lookupStrings(const Locale('pt')).i18n131TasksEffortLabel_minimal, "Mínimo");
-    expect(lookupStrings(const Locale('de')).i18n131TasksEffortLabel_minimal, "Minimal");
-    expect(lookupStrings(const Locale('fr')).i18n131TasksEffortLabel_minimal, "Minimal");
-    expect(lookupStrings(const Locale('it')).i18n131TasksEffortLabel_minimal, "Minimal");
-    expect(lookupStrings(const Locale('ja')).i18n131TasksEffortLabel_minimal, "Minimal");
-    expect(lookupStrings(const Locale('ko')).i18n131TasksEffortLabel_minimal, "Minimal");
-    expect(lookupStrings(const Locale('zh')).i18n131TasksEffortLabel_minimal, "Minimal");
-    expect(lookupStrings(const Locale('es')).i18n131TasksEffortLabel_low, "Bajo");
-    expect(lookupStrings(const Locale('en')).i18n131TasksEffortLabel_low, "Low");
-    expect(lookupStrings(const Locale('pt')).i18n131TasksEffortLabel_low, "Baixo");
-    expect(lookupStrings(const Locale('de')).i18n131TasksEffortLabel_low, "Low");
-    expect(lookupStrings(const Locale('fr')).i18n131TasksEffortLabel_low, "Low");
-    expect(lookupStrings(const Locale('it')).i18n131TasksEffortLabel_low, "Low");
-    expect(lookupStrings(const Locale('ja')).i18n131TasksEffortLabel_low, "Low");
-    expect(lookupStrings(const Locale('ko')).i18n131TasksEffortLabel_low, "Low");
-    expect(lookupStrings(const Locale('zh')).i18n131TasksEffortLabel_low, "Low");
-    expect(lookupStrings(const Locale('es')).i18n131TasksEffortLabel_medium, "Medio");
-    expect(lookupStrings(const Locale('en')).i18n131TasksEffortLabel_medium, "Medium");
-    expect(lookupStrings(const Locale('pt')).i18n131TasksEffortLabel_medium, "Médio");
-    expect(lookupStrings(const Locale('de')).i18n131TasksEffortLabel_medium, "Medium");
-    expect(lookupStrings(const Locale('fr')).i18n131TasksEffortLabel_medium, "Medium");
-    expect(lookupStrings(const Locale('it')).i18n131TasksEffortLabel_medium, "Medium");
-    expect(lookupStrings(const Locale('ja')).i18n131TasksEffortLabel_medium, "Medium");
-    expect(lookupStrings(const Locale('ko')).i18n131TasksEffortLabel_medium, "Medium");
-    expect(lookupStrings(const Locale('zh')).i18n131TasksEffortLabel_medium, "Medium");
-    expect(lookupStrings(const Locale('es')).i18n131TasksEffortLabel_high, "Alto");
-    expect(lookupStrings(const Locale('en')).i18n131TasksEffortLabel_high, "High");
-    expect(lookupStrings(const Locale('pt')).i18n131TasksEffortLabel_high, "Alto");
-    expect(lookupStrings(const Locale('de')).i18n131TasksEffortLabel_high, "High");
-    expect(lookupStrings(const Locale('fr')).i18n131TasksEffortLabel_high, "High");
-    expect(lookupStrings(const Locale('it')).i18n131TasksEffortLabel_high, "High");
-    expect(lookupStrings(const Locale('ja')).i18n131TasksEffortLabel_high, "High");
-    expect(lookupStrings(const Locale('ko')).i18n131TasksEffortLabel_high, "High");
-    expect(lookupStrings(const Locale('zh')).i18n131TasksEffortLabel_high, "High");
-    expect(lookupStrings(const Locale('es')).i18n131TasksEffortLabel_xhigh, "Muy alto");
-    expect(lookupStrings(const Locale('en')).i18n131TasksEffortLabel_xhigh, "XHigh");
-    expect(lookupStrings(const Locale('pt')).i18n131TasksEffortLabel_xhigh, "Muito alto");
-    expect(lookupStrings(const Locale('de')).i18n131TasksEffortLabel_xhigh, "XHigh");
-    expect(lookupStrings(const Locale('fr')).i18n131TasksEffortLabel_xhigh, "XHigh");
-    expect(lookupStrings(const Locale('it')).i18n131TasksEffortLabel_xhigh, "XHigh");
-    expect(lookupStrings(const Locale('ja')).i18n131TasksEffortLabel_xhigh, "XHigh");
-    expect(lookupStrings(const Locale('ko')).i18n131TasksEffortLabel_xhigh, "XHigh");
-    expect(lookupStrings(const Locale('zh')).i18n131TasksEffortLabel_xhigh, "XHigh");
-    expect(lookupStrings(const Locale('es')).i18n131TasksEffortLabel_max, "Máximo");
-    expect(lookupStrings(const Locale('en')).i18n131TasksEffortLabel_max, "Max");
-    expect(lookupStrings(const Locale('pt')).i18n131TasksEffortLabel_max, "Máximo");
-    expect(lookupStrings(const Locale('de')).i18n131TasksEffortLabel_max, "Max");
-    expect(lookupStrings(const Locale('fr')).i18n131TasksEffortLabel_max, "Max");
-    expect(lookupStrings(const Locale('it')).i18n131TasksEffortLabel_max, "Max");
-    expect(lookupStrings(const Locale('ja')).i18n131TasksEffortLabel_max, "Max");
-    expect(lookupStrings(const Locale('ko')).i18n131TasksEffortLabel_max, "Max");
-    expect(lookupStrings(const Locale('zh')).i18n131TasksEffortLabel_max, "Max");
+    expect(lookupStrings(const Locale('es')).i18n131TasksEffortLabelNone, "Desactivado");
+    expect(lookupStrings(const Locale('en')).i18n131TasksEffortLabelNone, "Off");
+    expect(lookupStrings(const Locale('pt')).i18n131TasksEffortLabelNone, "Desativado");
+    expect(lookupStrings(const Locale('de')).i18n131TasksEffortLabelNone, "Off");
+    expect(lookupStrings(const Locale('fr')).i18n131TasksEffortLabelNone, "Off");
+    expect(lookupStrings(const Locale('it')).i18n131TasksEffortLabelNone, "Off");
+    expect(lookupStrings(const Locale('ja')).i18n131TasksEffortLabelNone, "Off");
+    expect(lookupStrings(const Locale('ko')).i18n131TasksEffortLabelNone, "Off");
+    expect(lookupStrings(const Locale('zh')).i18n131TasksEffortLabelNone, "Off");
+    expect(lookupStrings(const Locale('es')).i18n131TasksEffortLabelMinimal, "Mínimo");
+    expect(lookupStrings(const Locale('en')).i18n131TasksEffortLabelMinimal, "Minimal");
+    expect(lookupStrings(const Locale('pt')).i18n131TasksEffortLabelMinimal, "Mínimo");
+    expect(lookupStrings(const Locale('de')).i18n131TasksEffortLabelMinimal, "Minimal");
+    expect(lookupStrings(const Locale('fr')).i18n131TasksEffortLabelMinimal, "Minimal");
+    expect(lookupStrings(const Locale('it')).i18n131TasksEffortLabelMinimal, "Minimal");
+    expect(lookupStrings(const Locale('ja')).i18n131TasksEffortLabelMinimal, "Minimal");
+    expect(lookupStrings(const Locale('ko')).i18n131TasksEffortLabelMinimal, "Minimal");
+    expect(lookupStrings(const Locale('zh')).i18n131TasksEffortLabelMinimal, "Minimal");
+    expect(lookupStrings(const Locale('es')).i18n131TasksEffortLabelLow, "Bajo");
+    expect(lookupStrings(const Locale('en')).i18n131TasksEffortLabelLow, "Low");
+    expect(lookupStrings(const Locale('pt')).i18n131TasksEffortLabelLow, "Baixo");
+    expect(lookupStrings(const Locale('de')).i18n131TasksEffortLabelLow, "Low");
+    expect(lookupStrings(const Locale('fr')).i18n131TasksEffortLabelLow, "Low");
+    expect(lookupStrings(const Locale('it')).i18n131TasksEffortLabelLow, "Low");
+    expect(lookupStrings(const Locale('ja')).i18n131TasksEffortLabelLow, "Low");
+    expect(lookupStrings(const Locale('ko')).i18n131TasksEffortLabelLow, "Low");
+    expect(lookupStrings(const Locale('zh')).i18n131TasksEffortLabelLow, "Low");
+    expect(lookupStrings(const Locale('es')).i18n131TasksEffortLabelMedium, "Medio");
+    expect(lookupStrings(const Locale('en')).i18n131TasksEffortLabelMedium, "Medium");
+    expect(lookupStrings(const Locale('pt')).i18n131TasksEffortLabelMedium, "Médio");
+    expect(lookupStrings(const Locale('de')).i18n131TasksEffortLabelMedium, "Medium");
+    expect(lookupStrings(const Locale('fr')).i18n131TasksEffortLabelMedium, "Medium");
+    expect(lookupStrings(const Locale('it')).i18n131TasksEffortLabelMedium, "Medium");
+    expect(lookupStrings(const Locale('ja')).i18n131TasksEffortLabelMedium, "Medium");
+    expect(lookupStrings(const Locale('ko')).i18n131TasksEffortLabelMedium, "Medium");
+    expect(lookupStrings(const Locale('zh')).i18n131TasksEffortLabelMedium, "Medium");
+    expect(lookupStrings(const Locale('es')).i18n131TasksEffortLabelHigh, "Alto");
+    expect(lookupStrings(const Locale('en')).i18n131TasksEffortLabelHigh, "High");
+    expect(lookupStrings(const Locale('pt')).i18n131TasksEffortLabelHigh, "Alto");
+    expect(lookupStrings(const Locale('de')).i18n131TasksEffortLabelHigh, "High");
+    expect(lookupStrings(const Locale('fr')).i18n131TasksEffortLabelHigh, "High");
+    expect(lookupStrings(const Locale('it')).i18n131TasksEffortLabelHigh, "High");
+    expect(lookupStrings(const Locale('ja')).i18n131TasksEffortLabelHigh, "High");
+    expect(lookupStrings(const Locale('ko')).i18n131TasksEffortLabelHigh, "High");
+    expect(lookupStrings(const Locale('zh')).i18n131TasksEffortLabelHigh, "High");
+    expect(lookupStrings(const Locale('es')).i18n131TasksEffortLabelXhigh, "Muy alto");
+    expect(lookupStrings(const Locale('en')).i18n131TasksEffortLabelXhigh, "XHigh");
+    expect(lookupStrings(const Locale('pt')).i18n131TasksEffortLabelXhigh, "Muito alto");
+    expect(lookupStrings(const Locale('de')).i18n131TasksEffortLabelXhigh, "XHigh");
+    expect(lookupStrings(const Locale('fr')).i18n131TasksEffortLabelXhigh, "XHigh");
+    expect(lookupStrings(const Locale('it')).i18n131TasksEffortLabelXhigh, "XHigh");
+    expect(lookupStrings(const Locale('ja')).i18n131TasksEffortLabelXhigh, "XHigh");
+    expect(lookupStrings(const Locale('ko')).i18n131TasksEffortLabelXhigh, "XHigh");
+    expect(lookupStrings(const Locale('zh')).i18n131TasksEffortLabelXhigh, "XHigh");
+    expect(lookupStrings(const Locale('es')).i18n131TasksEffortLabelMax, "Máximo");
+    expect(lookupStrings(const Locale('en')).i18n131TasksEffortLabelMax, "Max");
+    expect(lookupStrings(const Locale('pt')).i18n131TasksEffortLabelMax, "Máximo");
+    expect(lookupStrings(const Locale('de')).i18n131TasksEffortLabelMax, "Max");
+    expect(lookupStrings(const Locale('fr')).i18n131TasksEffortLabelMax, "Max");
+    expect(lookupStrings(const Locale('it')).i18n131TasksEffortLabelMax, "Max");
+    expect(lookupStrings(const Locale('ja')).i18n131TasksEffortLabelMax, "Max");
+    expect(lookupStrings(const Locale('ko')).i18n131TasksEffortLabelMax, "Max");
+    expect(lookupStrings(const Locale('zh')).i18n131TasksEffortLabelMax, "Max");
     expect(lookupStrings(const Locale('es')).i18n131TasksApplyModelTitle, "Aplicar configuración de modelo");
     expect(lookupStrings(const Locale('en')).i18n131TasksApplyModelTitle, "Apply model configuration");
     expect(lookupStrings(const Locale('pt')).i18n131TasksApplyModelTitle, "Aplicar configuração de modelo");
