@@ -3959,6 +3959,7 @@
   "plv1215Rollover": "Gesamt",
   "plv1215RenewsLabel": "Wird erneuert",
   "plv1215Unavailable": "Nicht verfügbar",
+  "plv1215StateUnknown": "Nutzung noch nicht gemeldet",
   "plv1215ResetsNow": "Wird jetzt zurückgesetzt",
   "plv1215Depleted": "Kein Guthaben: Zum Fortfahren aufladen",
   "plv1215Details": "Anbieterdetails",

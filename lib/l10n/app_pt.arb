@@ -3959,6 +3959,7 @@
   "plv1215Rollover": "Acumulado",
   "plv1215RenewsLabel": "Renovação",
   "plv1215Unavailable": "Indisponível",
+  "plv1215StateUnknown": "Uso ainda não informado",
   "plv1215ResetsNow": "Reinicia agora",
   "plv1215Depleted": "Sem saldo: recarregue para continuar",
   "plv1215Details": "Detalhes do provedor",

@@ -6241,6 +6241,7 @@
   "plv1215Rollover": "Rollover",
   "plv1215RenewsLabel": "Renews",
   "plv1215Unavailable": "Unavailable",
+  "plv1215StateUnknown": "Usage not reported yet",
   "plv1215ResetsNow": "Resets now",
   "plv1215Depleted": "Out of credit: top up to continue",
   "plv1215Details": "Provider details",

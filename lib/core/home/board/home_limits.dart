@@ -161,6 +161,9 @@ List<HomeLimitRow> homeLimitRows(
     s,
     languageCode: languageCode,
   ).rows) {
+    // Other providers' windows are not the session's account: Home shows
+    // the account in use only.
+    if (!row.inUse) continue;
     if (row.heading) {
       inCredits = row.label == s.plv1215Credits;
       continue;

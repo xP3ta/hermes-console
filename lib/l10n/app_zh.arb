@@ -3959,6 +3959,7 @@
   "plv1215Rollover": "结转",
   "plv1215RenewsLabel": "续订",
   "plv1215Unavailable": "不可用",
+  "plv1215StateUnknown": "尚未报告用量",
   "plv1215ResetsNow": "即将重置",
   "plv1215Depleted": "点数已用完：请充值以继续",
   "plv1215Details": "提供商详情",

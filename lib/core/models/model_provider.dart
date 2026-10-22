@@ -1,3 +1,5 @@
+import 'provider_usage.dart';
+
 /// Proveedor de modelos retornado por GET /api/model/options (Dashboard).
 class ModelProvider {
   final String slug;
@@ -34,6 +36,10 @@ class ModelProvider {
   /// `local-runtime`, `virtual`…
   final String source;
 
+  /// Subscription windows of this provider (`usage` in
+  /// `/api/model/options`, Hermes >= 0.22.3), null when it reports none.
+  final ProviderUsage? usage;
+
   /// The profile's provider exclusion list takes this row out of the
   /// catalog. Hermes applies it to the providers it ships; a user endpoint,
   /// the local runtime and Mixture of Agents are added past it.
@@ -57,6 +63,7 @@ class ModelProvider {
     this.aliases = const {},
     this.isUserDefined = false,
     this.source = '',
+    this.usage,
   });
 
   ModelProvider copyWith({List<String>? models}) => ModelProvider(
@@ -76,6 +83,7 @@ class ModelProvider {
     aliases: aliases,
     isUserDefined: isUserDefined,
     source: source,
+    usage: usage,
   );
 
   factory ModelProvider.fromJson(Map<String, dynamic> json) => ModelProvider(
@@ -118,6 +126,7 @@ class ModelProvider {
     aliases: _parseAliases(json['aliases']),
     isUserDefined: json['is_user_defined'] == true,
     source: _string(json['source']),
+    usage: ProviderUsage.tryParse(json['usage']),
   );
 
   static Map<String, ModelCapabilities> _parseCapabilities(Object? value) {

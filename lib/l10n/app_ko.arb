@@ -3959,6 +3959,7 @@
   "plv1215Rollover": "이월",
   "plv1215RenewsLabel": "갱신",
   "plv1215Unavailable": "사용 불가",
+  "plv1215StateUnknown": "아직 사용량이 보고되지 않았습니다",
   "plv1215ResetsNow": "지금 초기화",
   "plv1215Depleted": "잔액 없음: 계속하려면 충전하세요",
   "plv1215Details": "공급자 상세 정보",
