@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="new_session_shortcut_short_label">Nuova conversazione</string>
+    <string name="new_session_shortcut_long_label">Avvia una nuova conversazione con Hermes</string>
+    <string name="hermes_widget_not_configured">Non configurato</string>
+    <string name="hermes_widget_setup_action">Configura Hermes</string>
+</resources>
