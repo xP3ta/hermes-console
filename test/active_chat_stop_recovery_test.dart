@@ -12,6 +12,7 @@ import 'package:hermes_android/core/services/desktop_gateway_capabilities.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
+import 'support/test_api_client.dart';
 
 /// Doble de gateway mínimo: sólo necesita aceptar el turno vivo, dejar
 /// controlar el ACK de `session.interrupt` y publicar eventos de terminal.
@@ -180,9 +181,9 @@ ActiveChat _chat(
   Future<void> Function(CancelledTurnTombstone)? onCancelledTurn,
   bool attachDesktopRuntimeOnLoad = false,
 }) {
-  final api = ApiClient(
+  final api = testApiClient(
     baseUrl: 'https://example.invalid',
-    apiKey: 'test-only',
+    answerAfterClose: true,
     httpClient: MockClient((_) async => http.Response('unused', 500)),
   );
   return ActiveChat(

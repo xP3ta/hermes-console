@@ -14,7 +14,6 @@ import 'package:flutter_test/flutter_test.dart';
 const _stillWithoutDashboard = {
   'test/active_chat_profile_transcript_fallback_test.dart',
   'test/active_chat_resume_snapshot_test.dart',
-  'test/active_chat_stop_recovery_test.dart',
   'test/active_chat_transcript_pagination_test.dart',
   'test/chat_screen_profile_dashboard_access_test.dart',
   'test/chat_screen_test.dart',
@@ -60,7 +59,6 @@ const _stillWithoutDashboard = {
   'test/settings_history_cleanup_test.dart',
   'test/tablet_chats_list_detail_test.dart',
   'test/tablet_single_active_chat_test.dart',
-  'test/turn_recovery_test.dart',
   'test/u6_gateway_retirement/ids_and_constructors_test.dart',
   'test/u6_gateway_retirement/test_api_client_harness_test.dart',
   'test/voice/conversation/local_voice_conversation_controller_test.dart',
