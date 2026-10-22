@@ -10015,5 +10015,559 @@
   "i18n131McStatusError": "Error",
   "@i18n131McStatusError": {
     "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131AiScreenTitle": "Integrações do servidor",
+  "@i18n131AiScreenTitle": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiEntryTitle": "Integrações do servidor",
+  "@i18n131AiEntryTitle": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiEntryBody": "MCP manual, OAuth, webhooks e estado A2A do servidor.",
+  "@i18n131AiEntryBody": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiSectionLabel": "Seções de integrações",
+  "@i18n131AiSectionLabel": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiServerTab": "Servidor",
+  "@i18n131AiServerTab": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiReadOnly": "Esta instância é somente leitura. Você pode consultar o estado, mas as alterações do servidor estão desativadas.",
+  "@i18n131AiReadOnly": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiRefresh": "Atualizar",
+  "@i18n131AiRefresh": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiRetry": "Tentar novamente",
+  "@i18n131AiRetry": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiCancel": "Cancelar",
+  "@i18n131AiCancel": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiClose": "Fechar",
+  "@i18n131AiClose": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiDone": "Concluído",
+  "@i18n131AiDone": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiCopy": "Copiar",
+  "@i18n131AiCopy": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiCopied": "Copiado.",
+  "@i18n131AiCopied": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiDelete": "Excluir",
+  "@i18n131AiDelete": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiMoreOptions": "Mais opções",
+  "@i18n131AiMoreOptions": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiMcpIntro": "Adicione um servidor com o mesmo contrato de cadastro individual do Hermes Desktop. Os valores informados são enviados uma única vez e não são salvos pelo app.",
+  "@i18n131AiMcpIntro": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiAddMcp": "Adicionar servidor MCP manualmente",
+  "@i18n131AiAddMcp": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiAddMcpBody": "Configuração guiada para um comando local ou um endpoint HTTP.",
+  "@i18n131AiAddMcpBody": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiNoMcpPut": "Servidores existentes nunca são editados substituindo o mapa MCP completo, porque credenciais mascaradas poderiam ser perdidas.",
+  "@i18n131AiNoMcpPut": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiManualMcpUnavailable": "Esta versão do Hermes não publica o provisionamento individual de MCP.",
+  "@i18n131AiManualMcpUnavailable": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiMcpFormTitle": "Novo servidor MCP",
+  "@i18n131AiMcpFormTitle": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiTransport": "Transporte",
+  "@i18n131AiTransport": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiStdio": "Comando local",
+  "@i18n131AiStdio": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiName": "Nome",
+  "@i18n131AiName": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiNameHint": "ex.: reports",
+  "@i18n131AiNameHint": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiCommand": "Comando",
+  "@i18n131AiCommand": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiCommandHint": "ex.: npx",
+  "@i18n131AiCommandHint": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiArguments": "Argumentos",
+  "@i18n131AiArguments": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiArgumentsHint": "Um argumento por linha. Nada é interpretado por shell.",
+  "@i18n131AiArgumentsHint": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiEnvironment": "Variáveis de ambiente",
+  "@i18n131AiEnvironment": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiEnvironmentHint": "Os valores permanecem na memória apenas até enviar ou fechar este formulário.",
+  "@i18n131AiEnvironmentHint": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiVariableName": "Variável",
+  "@i18n131AiVariableName": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiVariableValue": "Valor",
+  "@i18n131AiVariableValue": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiAddVariable": "Adicionar variável",
+  "@i18n131AiAddVariable": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiRemoveVariable": "Remover variável",
+  "@i18n131AiRemoveVariable": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiEndpointUrl": "URL do MCP",
+  "@i18n131AiEndpointUrl": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiEndpointHint": "HTTPS, ou HTTP somente em um endereço privado de LAN/Tailscale.",
+  "@i18n131AiEndpointHint": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiAuthentication": "Autenticação",
+  "@i18n131AiAuthentication": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiAuthNone": "Nenhuma",
+  "@i18n131AiAuthNone": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiAuthHeader": "Cabeçalho Bearer",
+  "@i18n131AiAuthHeader": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiAuthOauth": "OAuth no navegador",
+  "@i18n131AiAuthOauth": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiBearerToken": "Token Bearer",
+  "@i18n131AiBearerToken": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiBearerHint": "Enviado uma vez ao Hermes e nunca armazenado pelo app.",
+  "@i18n131AiBearerHint": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiCreateMcp": "Adicionar servidor",
+  "@i18n131AiCreateMcp": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiMcpCreated": "Servidor MCP adicionado.",
+  "@i18n131AiMcpCreated": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiInvalidForm": "Verifique os campos destacados e seus exemplos.",
+  "@i18n131AiInvalidForm": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiIncompleteEnvironment": "Cada linha de ambiente precisa de uma variável e de um valor.",
+  "@i18n131AiIncompleteEnvironment": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiAuthorize": "Autorizar OAuth",
+  "@i18n131AiAuthorize": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiOauthTitle": "Autorizar servidor MCP",
+  "@i18n131AiOauthTitle": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiOauthBody": "O Hermes recebe o callback. Este app apenas abre a página de autorização e verifica o fluxo temporário enquanto esta janela estiver visível.",
+  "@i18n131AiOauthBody": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiOpenBrowser": "Abrir página de autorização",
+  "@i18n131AiOpenBrowser": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiOpeningBrowserFailed": "O Android não conseguiu abrir a página de autorização.",
+  "@i18n131AiOpeningBrowserFailed": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiOauthWaiting": "Aguardando autorização…",
+  "@i18n131AiOauthWaiting": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiOauthApproved": "Autorização concluída.",
+  "@i18n131AiOauthApproved": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiOauthError": "O Hermes indicou um erro de autorização.",
+  "@i18n131AiOauthError": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiOauthExpired": "Este fluxo de autorização expirou. Inicie-o novamente.",
+  "@i18n131AiOauthExpired": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiOauthUnknown": "O Hermes retornou um estado de autorização desconhecido.",
+  "@i18n131AiOauthUnknown": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiOauthToolsOne": "{count} ferramenta disponível",
+  "@i18n131AiOauthToolsOne": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "i18n131AiOauthToolsOther": "{count} ferramentas disponíveis",
+  "@i18n131AiOauthToolsOther": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "i18n131AiWebhooksIntro": "Webhooks é uma plataforma oficial do Gateway do Hermes. As assinaturas são recarregadas automaticamente quando o receptor está ativo.",
+  "@i18n131AiWebhooksIntro": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiWebhooksUnavailable": "Esta versão do Hermes não publica a administração de webhooks.",
+  "@i18n131AiWebhooksUnavailable": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiWebhookLoadFailed": "Não foi possível carregar os webhooks.",
+  "@i18n131AiWebhookLoadFailed": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiWebhooksDisabled": "Receptor de webhooks desativado",
+  "@i18n131AiWebhooksDisabled": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiWebhooksDisabledBody": "Ative-o para aceitar eventos HTTP de entrada. O Hermes pode precisar reiniciar o Gateway.",
+  "@i18n131AiWebhooksDisabledBody": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiEnableWebhooks": "Ativar webhooks",
+  "@i18n131AiEnableWebhooks": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiEnableWarningTitle": "Ativar o receptor de webhooks?",
+  "@i18n131AiEnableWarningTitle": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiEnableWarningBody": "O Hermes pode reiniciar o Gateway. Chats ativos poderão se reconectar enquanto o receptor inicializa.",
+  "@i18n131AiEnableWarningBody": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiEnable": "Ativar",
+  "@i18n131AiEnable": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiDisable": "Desativar",
+  "@i18n131AiDisable": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiWebhooksEnabledRestarting": "Webhooks ativados; o Gateway está reiniciando.",
+  "@i18n131AiWebhooksEnabledRestarting": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiWebhooksEnabled": "Webhooks ativados.",
+  "@i18n131AiWebhooksEnabled": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiWebhooksNeedRestart": "Os webhooks estão ativados, mas o Gateway ainda precisa ser reiniciado.",
+  "@i18n131AiWebhooksNeedRestart": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiAddWebhook": "Nova assinatura",
+  "@i18n131AiAddWebhook": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiAddWebhookBody": "Crie uma rota autenticada e copie o segredo de uso único.",
+  "@i18n131AiAddWebhookBody": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiNoWebhooks": "Ainda não há assinaturas de webhook.",
+  "@i18n131AiNoWebhooks": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiWebhookFormTitle": "Nova assinatura de webhook",
+  "@i18n131AiWebhookFormTitle": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiDescription": "Descrição",
+  "@i18n131AiDescription": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiDescriptionHint": "O que esta rota faz (opcional)",
+  "@i18n131AiDescriptionHint": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiPrompt": "Instruções",
+  "@i18n131AiPrompt": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiPromptHint": "Instruções para o Hermes quando este evento chegar (opcional)",
+  "@i18n131AiPromptHint": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiEvents": "Eventos",
+  "@i18n131AiEvents": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiEventsHint": "Separados por vírgula; vazio aceita todos os eventos",
+  "@i18n131AiEventsHint": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiSkills": "Skills",
+  "@i18n131AiSkills": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiSkillsHint": "Opcional, nomes de skills separados por vírgulas",
+  "@i18n131AiSkillsHint": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiDelivery": "Entregar em",
+  "@i18n131AiDelivery": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiDeliverOnly": "Entregar somente o payload",
+  "@i18n131AiDeliverOnly": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiDeliverOnlyHint": "Omite a resposta do agente ao entregar em um canal.",
+  "@i18n131AiDeliverOnlyHint": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiDeliveryLabelLog": "Somente log",
+  "@i18n131AiDeliveryLabelLog": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiDeliveryLabelEmail": "E-mail",
+  "@i18n131AiDeliveryLabelEmail": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiDeliveryLabelGithubComment": "Comentário do GitHub",
+  "@i18n131AiDeliveryLabelGithubComment": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiCreateWebhook": "Criar",
+  "@i18n131AiCreateWebhook": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiWebhookCreated": "Assinatura criada.",
+  "@i18n131AiWebhookCreated": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiDuplicateWebhook": "Já existe um webhook com esse nome. Exclua-o explicitamente antes de criar outro.",
+  "@i18n131AiDuplicateWebhook": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiSecretTitle": "Copie agora o segredo do webhook",
+  "@i18n131AiSecretTitle": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiSecretBody": "O Hermes mostra este segredo apenas uma vez. Ao fechar este recibo, ele é removido do app e não poderá ser recuperado aqui.",
+  "@i18n131AiSecretBody": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiWebhookUrl": "URL do webhook",
+  "@i18n131AiWebhookUrl": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiWebhookSecret": "Segredo de uso único",
+  "@i18n131AiWebhookSecret": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiDeleteWebhookTitle": "Excluir webhook?",
+  "@i18n131AiDeleteWebhookTitle": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiDeleteWebhookBody": "Isso exclui a assinatura de forma permanente. As integrações existentes deixarão de funcionar.",
+  "@i18n131AiDeleteWebhookBody": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiWebhookDeleted": "Webhook excluído.",
+  "@i18n131AiWebhookDeleted": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiWebhookSubtitleAllEvents": "todos os eventos",
+  "@i18n131AiWebhookSubtitleAllEvents": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiA2aIntro": "O A2A funciona inteiramente no host do Hermes. O Android apenas mostra o estado oficial da plataforma e não adiciona outro cliente de protocolo.",
+  "@i18n131AiA2aIntro": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiA2aUnavailable": "Este servidor não publica o catálogo de plataformas.",
+  "@i18n131AiA2aUnavailable": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiA2aNotPublished": "Esta instalação do Hermes não publica A2A.",
+  "@i18n131AiA2aNotPublished": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiConfigured": "Configurado",
+  "@i18n131AiConfigured": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiNotConfigured": "Não configurado",
+  "@i18n131AiNotConfigured": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiRunning": "Gateway em execução",
+  "@i18n131AiRunning": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiStopped": "Gateway parado",
+  "@i18n131AiStopped": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiActive": "Ativo",
+  "@i18n131AiActive": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiInactive": "Desativado",
+  "@i18n131AiInactive": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiA2aStateConnected": "Conectado",
+  "@i18n131AiA2aStateConnected": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiA2aStateConnecting": "Conectando",
+  "@i18n131AiA2aStateConnecting": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiA2aStateRetrying": "Tentando novamente",
+  "@i18n131AiA2aStateRetrying": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiA2aStatePendingRestart": "Reinício pendente",
+  "@i18n131AiA2aStatePendingRestart": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiA2aStateNotConfigured": "Não configurado",
+  "@i18n131AiA2aStateNotConfigured": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiA2aStateGatewayStopped": "Gateway parado",
+  "@i18n131AiA2aStateGatewayStopped": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiA2aStateStartupFailed": "Falha ao iniciar",
+  "@i18n131AiA2aStateStartupFailed": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiA2aStateDisconnected": "Desconectado",
+  "@i18n131AiA2aStateDisconnected": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiA2aStateFatal": "Erro fatal",
+  "@i18n131AiA2aStateFatal": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiA2aStateDisabled": "Desativado",
+  "@i18n131AiA2aStateDisabled": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiA2aStateOther": "Status indisponível",
+  "@i18n131AiA2aStateOther": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiUnsupported": "Esta operação não está disponível na versão do Hermes conectada.",
+  "@i18n131AiUnsupported": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiForbidden": "As credenciais atuais do Dashboard não permitem esta operação.",
+  "@i18n131AiForbidden": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiUnavailable": "O Hermes não pôde concluir a operação neste momento.",
+  "@i18n131AiUnavailable": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiInvalidResponse": "O Hermes retornou uma resposta de integração inválida.",
+  "@i18n131AiInvalidResponse": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiRejected": "O Hermes rejeitou os valores ou o estado do servidor mudou.",
+  "@i18n131AiRejected": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiMcpTab": "MCP",
+  "@i18n131AiMcpTab": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiWebhooksTab": "Webhooks",
+  "@i18n131AiWebhooksTab": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiHttp": "HTTP",
+  "@i18n131AiHttp": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiA2aTitle": "A2A",
+  "@i18n131AiA2aTitle": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiDeliveryLabelTelegram": "Telegram",
+  "@i18n131AiDeliveryLabelTelegram": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiDeliveryLabelDiscord": "Discord",
+  "@i18n131AiDeliveryLabelDiscord": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiDeliveryLabelSlack": "Slack",
+  "@i18n131AiDeliveryLabelSlack": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiWebhookSubtitleFormat": "{deliver} · {events}",
+  "@i18n131AiWebhookSubtitleFormat": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy.",
+    "placeholders": {
+      "deliver": {
+        "type": "String"
+      },
+      "events": {
+        "type": "String"
+      }
+    }
   }
 }
