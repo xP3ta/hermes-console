@@ -35,7 +35,7 @@ DashboardClient testDashboardClient({
 /// (`/api/status`), named profiles (`?profile=`, never `/p/<profile>/`),
 /// deletes (a `mutation-snapshot` read, then `DELETE` answering `{ok}`), the
 /// `X-Hermes-Session-Token` header instead of an API-key bearer, a single
-/// retry after a 401, a 10 s deadline and no bounded streaming read.
+/// retry after a 401 and a 10 s deadline.
 ApiClient testApiClient({
   String baseUrl = 'http://127.0.0.1:9119',
   String? dashboardBaseUrl,

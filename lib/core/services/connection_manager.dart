@@ -1603,18 +1603,20 @@ class ApiClient {
     if (dashboard != null) {
       // Desktop `getSessionMessages`: the Dashboard serves every profile's
       // transcript, a named one selected by `?profile=`. A Dashboard-only
-      // connection has no API server behind `/p/<profile>/`. Its pages are
-      // capped at 500 rows, so the body size is bounded without the
-      // streaming read below.
+      // connection has no API server behind `/p/<profile>/`. A page holds
+      // at most 500 rows, but the Dashboard inlines images, so a caller
+      // with a byte budget still reads it bounded.
       final profileQuery = owner == null
           ? ''
           : '&${Uri(queryParameters: {'profile': owner}).query}';
-      try {
-        data = await dashboard.apiGet(
+      final endpoint =
           'sessions/${Uri.encodeComponent(sessionId)}/messages'
           '?limit=$boundedLimit&order=latest&offset=$offset'
-          '&include_compacted=true$profileQuery',
-        );
+          '&include_compacted=true$profileQuery';
+      try {
+        data = maxBodyBytes == null
+            ? await dashboard.apiGet(endpoint)
+            : await dashboard.apiGetBounded(endpoint, maxBytes: maxBodyBytes);
       } on DashboardHttpException catch (error) {
         throw failure(error.statusCode);
       } on DashboardAuthException {
@@ -2918,6 +2920,60 @@ class DashboardClient {
       throw DashboardHttpException(res.statusCode, body: res.body);
     }
     return await _decodeMapResponse(res);
+  }
+
+  /// [apiGet] for a caller with a byte budget (a capped transcript read): it
+  /// gives up with [SessionTranscriptTooLargeException] as soon as the body
+  /// passes [maxBytes], by the declared length or by what has arrived,
+  /// without buffering the rest. Same session, deadline, retry and errors as
+  /// [apiGet]; a rotated cookie is kept even when the body is refused.
+  Future<Map<String, dynamic>> apiGetBounded(
+    String endpoint, {
+    required int maxBytes,
+    bool retried = false,
+  }) async {
+    final headers = await _authHeaders();
+    _requireOpen();
+    final request = http.Request('GET', Uri.parse('$_baseUrl/api/$endpoint'))
+      ..headers.addAll(headers);
+    final streamed = await _http.within(_kTimeout).send(request);
+    _ingestSetCookie(
+      http.Response('', streamed.statusCode, headers: streamed.headers),
+      sentCookie: headers['Cookie'],
+    );
+    if (streamed.statusCode != 200) {
+      final res = await http.Response.fromStream(streamed);
+      if (res.statusCode == 401) {
+        final nextRetried = _unauthorizedRetry(
+          sentCookie: headers['Cookie'],
+          sentAuthorization: headers['Authorization'],
+          retried: retried,
+        );
+        if (nextRetried != null) {
+          return apiGetBounded(
+            endpoint,
+            maxBytes: maxBytes,
+            retried: nextRetried,
+          );
+        }
+      }
+      throw DashboardHttpException(res.statusCode, body: res.body);
+    }
+    final declared = streamed.contentLength;
+    if (declared != null && declared > maxBytes) {
+      await _cancelResponseStream(streamed.stream);
+      throw const SessionTranscriptTooLargeException();
+    }
+    final bytes = <int>[];
+    await for (final chunk in streamed.stream) {
+      bytes.addAll(chunk);
+      if (bytes.length > maxBytes) {
+        throw const SessionTranscriptTooLargeException();
+      }
+    }
+    return await _decodeMapResponse(
+      http.Response.bytes(bytes, 200, headers: streamed.headers),
+    );
   }
 
   Future<List<dynamic>> apiGetList(
