@@ -8862,5 +8862,6 @@
       }
     }
   },
-  "cphPluginBlockedByScan": "El escaneo de seguridad bloqueó este plugin. No se cambió nada."
+  "cphPluginBlockedByScan": "El escaneo de seguridad bloqueó este plugin. No se cambió nada.",
+  "dashboardAuthSessionTokenWithheld": "Este Dashboard no entrega a Console su token de sesión: lo aloja el gateway de Hermes 0.22.3 o posterior sin inicio de sesión. Usa un Dashboard independiente o activa su inicio de sesión."
 }

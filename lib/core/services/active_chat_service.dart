@@ -304,7 +304,8 @@ bool isDashboardAccessRefusal(Object error) => switch (error) {
   DashboardAuthException(:final code) => switch (code) {
     DashboardAuthFailureCode.loginRequired ||
     DashboardAuthFailureCode.invalidCredentials ||
-    DashboardAuthFailureCode.sessionCookieMissing => true,
+    DashboardAuthFailureCode.sessionCookieMissing ||
+    DashboardAuthFailureCode.sessionTokenWithheld => true,
     DashboardAuthFailureCode.rateLimited ||
     DashboardAuthFailureCode.loginFailed => false,
   },

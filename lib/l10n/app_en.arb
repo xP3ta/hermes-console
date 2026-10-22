@@ -6984,5 +6984,6 @@
       }
     }
   },
-  "cphPluginBlockedByScan": "The security scan blocked this plugin. Nothing was changed."
+  "cphPluginBlockedByScan": "The security scan blocked this plugin. Nothing was changed.",
+  "dashboardAuthSessionTokenWithheld": "This Dashboard does not give Console its session token: it is hosted by the Hermes 0.22.3+ gateway without a sign-in. Use a standalone Dashboard or enable its sign-in."
 }

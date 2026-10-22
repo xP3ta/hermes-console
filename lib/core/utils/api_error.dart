@@ -61,6 +61,8 @@ String localizedApiError(Strings strings, Object error) {
       ),
       DashboardAuthFailureCode.sessionCookieMissing =>
         strings.dashboardAuthSessionCookieMissing,
+      DashboardAuthFailureCode.sessionTokenWithheld =>
+        strings.dashboardAuthSessionTokenWithheld,
     };
   }
   if (error is DashboardHttpException) {

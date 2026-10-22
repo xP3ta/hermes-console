@@ -4427,5 +4427,6 @@
   "recoveryCenterSkippedUserEdits": "{count, plural, =1{1 file mantenuto perché l'hai modificato dopo il checkpoint.} other{{count} file mantenuti perché li hai modificati dopo il checkpoint.}}",
   "recoveryCenterSkippedOversize": "{count, plural, =1{1 file troppo grande non è stato ripristinato.} other{{count} file troppo grandi non sono stati ripristinati.}}",
   "recoveryCenterFailedDeletes": "{count, plural, =1{1 file non è stato possibile eliminarlo.} other{{count} file non è stato possibile eliminarli.}}",
-  "cphPluginBlockedByScan": "La scansione di sicurezza ha bloccato questo plugin. Non è stato modificato nulla."
+  "cphPluginBlockedByScan": "La scansione di sicurezza ha bloccato questo plugin. Non è stato modificato nulla.",
+  "dashboardAuthSessionTokenWithheld": "Questa Dashboard non fornisce a Console il token di sessione: è ospitata dal gateway Hermes 0.22.3 o successivo senza accesso. Usa una Dashboard indipendente o attiva il suo accesso."
 }
