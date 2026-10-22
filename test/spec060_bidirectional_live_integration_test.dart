@@ -14,6 +14,7 @@ import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:hermes_android/core/services/turn_outbox_store.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
+import 'support/test_api_client.dart';
 
 class _FixtureDashboard extends DashboardClient {
   _FixtureDashboard()
@@ -248,9 +249,8 @@ SavedConnection _connection(int port) => SavedConnection(
   dashboardUrl: 'http://127.0.0.1:$port',
 );
 
-ApiClient _emptyRestClient(SavedConnection connection) => ApiClient(
+ApiClient _emptyRestClient(SavedConnection connection) => testApiClient(
   baseUrl: connection.baseUrl,
-  apiKey: connection.apiKey,
   httpClient: MockClient(
     (_) async => http.Response(
       jsonEncode({
