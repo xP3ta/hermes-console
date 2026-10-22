@@ -22337,7 +22337,7 @@ void main() {
         await tester.pump(const Duration(milliseconds: 50));
       }
       expect(chat.hasDesktopRuntime, isTrue);
-      gateway.emit('session.info', const {
+      gateway.emit('session.info', {
         'info': {'model': 'old-model', 'provider': provider},
       });
       await tester.pump();

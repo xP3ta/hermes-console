@@ -125,7 +125,7 @@ class ProviderUsage {
     if (raw is! List) return const [];
     return List.unmodifiable([
       for (final item in raw.take(_maxWindows))
-        if (ProviderUsageWindow.tryParse(item) case final window?) window,
+        ?ProviderUsageWindow.tryParse(item),
     ]);
   }
 }
