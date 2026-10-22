@@ -25,6 +25,7 @@ import 'package:hermes_android/core/services/ssh_session_service.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:hermes_android/core/services/turn_outbox_store.dart';
 import 'package:hermes_android/main.dart';
+import 'support/test_api_client.dart';
 
 ScrollPosition _primaryVerticalScrollPosition(
   WidgetTester tester,
@@ -145,9 +146,8 @@ Session _session() => Session(
   startedAt: 0,
 );
 
-ApiClient _safeApi() => ApiClient(
+ApiClient _safeApi() => testApiClient(
   baseUrl: 'http://192.168.255.254:8642',
-  apiKey: 'test-key',
   httpClient: MockClient((_) async => http.Response('not found', 404)),
 );
 

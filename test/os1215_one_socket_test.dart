@@ -12,6 +12,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
+import 'support/test_api_client.dart';
 
 /// os1215: every open chat of a (connection, profile) rides ONE gateway
 /// WebSocket, like Desktop's single JsonRpcGatewayClient. This fake speaks
@@ -242,9 +243,8 @@ void main() {
       sessionId: 'stored-$id',
       sessionTitle: 'Chat $id',
       sessionProfile: profile,
-      api: ApiClient(
+      api: testApiClient(
         baseUrl: 'http://127.0.0.1:1',
-        apiKey: 'key',
         httpClient: MockClient((_) async => http.Response('unused', 500)),
       ),
       storedMessageLoader: (_, _) async => const [],
