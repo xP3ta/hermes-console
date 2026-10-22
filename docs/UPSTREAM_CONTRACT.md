@@ -23,7 +23,7 @@ of Hermes itself and to nothing else; the Mobile Bridge was retired in 1.2.15
 
 | What | Default | Where in the code |
 |---|---|---|
-| Gateway (API server, Bearer `API_SERVER_KEY`) | `:8642` | Not used by the app (section 3); the port field of `SavedConnection` only remains for older saved connections |
+| Gateway (API server, Bearer `API_SERVER_KEY`) | `:8642` | Not used by the app (section 3); the port field of `SavedConnection` only remains for older saved connections, and since 1.3.0 holds the Dashboard port |
 | Dashboard / admin API | `:9119` | `SavedConnection` (`dashboardPort`) |
 
 If Hermes changes a default port, update the constants in `SavedConnection` and
@@ -60,13 +60,28 @@ asks for confirmation first. That is Hermes' semantics, not an app bug.
 
 ## 3. Gateway (retired from the app)
 
-The app no longer calls the Gateway REST API (`/v1/runs`, `/v1/models`,
-`/v1/capabilities`, `/v1/skills`, `/v1/toolsets`, `/health` on the Gateway
-port). Chat, history, approvals and every other read go through the Dashboard.
-The only Gateway requests left are three liveness lines for a saved connection
-that has no Dashboard; a CI test
-(`test/u6_gateway_retirement/gateway_gate_test.dart`) pins that list. No
-`API_SERVER_KEY` is asked for when adding a connection.
+The app no longer calls the Gateway REST API. Chat, history, approvals and
+every other read go through the Dashboard, for every profile: a named profile
+is selected with `?profile=`, never with the Gateway's `/p/<profile>/` prefix
+(a Dashboard-only connection has no Gateway behind that address; the
+Dashboard answers it with its web app, not with a session).
+
+Every `ApiClient` built in `lib` carries its Dashboard
+(`test/u6_gateway_retirement/ids_and_constructors_test.dart`). What is left of
+the Gateway REST code are the branches of an `ApiClient` built *without* one,
+which only tests do:
+
+- two liveness lines (`/health`), marked `// U6b`;
+- ten session, message and profile lines (`profileEndpoint`, `p/<profile>/`,
+  URLs joined to the Gateway `baseUrl`), marked `// U6c`.
+
+`test/u6_gateway_retirement/gateway_gate_test.dart` pins both lists: a new
+`v1/...` or `/health` call, or a new URL built on the Gateway origin, outside
+them fails CI. The same file checks behaviour as well: an `ApiClient` for a
+Dashboard-only connection sends no Gateway-shaped request (outside `/api/`, or
+an API-key bearer without a Dashboard session) for sessions, messages or
+liveness, default or named profile. No `API_SERVER_KEY` is asked for when
+adding a connection.
 
 ## 4. Mobile Bridge (retired in 1.2.15)
 

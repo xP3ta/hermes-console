@@ -715,18 +715,21 @@ void main() {
       expect(harness.chat.profileTranscriptAccessBlocked, isFalse);
     });
 
-    test('a Dashboard refusal falls back to the profile route', () async {
+    test('a Dashboard refusal is reported, never retried on the profile '
+        'route', () async {
       final harness = build(
         gatewayStatus: 200,
         dashboardHandler: (_) async => http.Response('{}', 401),
       );
       addTearDown(harness.chat.dispose);
-      // The gateway route answers for a profile that shares the key.
-      await expectLater(harness.chat.loadPersistedSessionSnapshot(), completes);
-      expect(
-        harness.gatewayReads.single.path,
-        '/p/research/api/sessions/stored-bot',
+      // A Dashboard-only connection has no `/p/<profile>/` API server route:
+      // even one that would answer is never asked.
+      await expectLater(
+        harness.chat.loadPersistedSessionSnapshot(),
+        throwsA(predicate(isDashboardAccessRefusal)),
       );
+      expect(harness.gatewayReads, isEmpty);
+      expect(harness.chat.profileTranscriptAccessBlocked, isFalse);
     });
 
     test('a transient Dashboard failure is reported as such', () async {

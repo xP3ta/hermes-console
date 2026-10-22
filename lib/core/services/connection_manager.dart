@@ -1302,10 +1302,10 @@ class ApiClient {
 
   /// Hermes selects a non-default runtime profile from the URL namespace.
   /// Empty/default preserve the historical unprefixed API surface.
-  static String profileEndpoint(String endpoint, {String? profile}) {
+  static String profileEndpoint(String endpoint, {String? profile}) { // U6c
     final owner = validateCronProfile(profile);
     if (owner == null) return endpoint;
-    return 'p/${Uri.encodeComponent(owner)}/$endpoint';
+    return 'p/${Uri.encodeComponent(owner)}/$endpoint'; // U6c
   }
 
   // ── Session listing ──────────────────────────────────────────────────
@@ -1343,7 +1343,7 @@ class ApiClient {
         : _profileDashboard;
     // The Dashboard caps `limit` at 100 (422 above it).
     final pageLimit = pageSize.clamp(1, dashboard == null ? 200 : 100);
-    final endpoint = profileEndpoint('api/sessions', profile: owner);
+    final endpoint = profileEndpoint('api/sessions', profile: owner); // U6c
     final sessions = <Session>[];
     final observed = <String>{};
     final pageSignatures = <String>{};
@@ -1389,7 +1389,7 @@ class ApiClient {
           if (includeChildren) 'include_children': 'true',
         };
         final uri = Uri.parse(
-          '$baseUrl/$endpoint',
+          '$baseUrl/$endpoint', // U6c
         ).replace(queryParameters: query);
         final res = await _http
             .within(_requestTimeout)
@@ -1585,7 +1585,7 @@ class ApiClient {
     final owner = validateCronProfile(profile);
     final boundedLimit = limit.clamp(1, 500);
     final uri = Uri.parse(
-      '$baseUrl/${profileEndpoint('api/sessions/${Uri.encodeComponent(sessionId)}/messages', profile: owner)}'
+      '$baseUrl/${profileEndpoint('api/sessions/${Uri.encodeComponent(sessionId)}/messages', profile: owner)}' // U6c
       '?limit=$boundedLimit&order=latest&offset=$offset'
       '&include_compacted=true',
     );
@@ -1698,7 +1698,7 @@ class ApiClient {
     try {
       final sessions = await _http
           .within(const Duration(seconds: 10))
-          .get(Uri.parse('$baseUrl/api/sessions'), headers: _headers);
+          .get(Uri.parse('$baseUrl/api/sessions'), headers: _headers); // U6c
       final status = sessions.statusCode;
       return status == 200 || status == 408 || status == 429 || status >= 500;
     } on TimeoutException {
@@ -1726,70 +1726,6 @@ class ApiClient {
     } catch (e) {
       debugPrint('[connection] excepción silenciada (se asume false): $e');
       return false;
-    }
-  }
-
-  /// Calienta la conexión keep-alive al gateway (Fase 0 HCR). Un GET ligero a
-  /// el endpoint de salud abre el socket TCP + handshake TLS y deja la conexión en el pool
-  /// del `http.Client` compartido, para que el PRIMER turno de voz no arranque
-  /// en frío (DNS/TLS) — que es justo cuando "se queda pensando" más. Es
-  /// best-effort: traga cualquier error y no bloquea (fire-and-forget).
-  Future<void> warmUp() async {
-    try {
-      final dashboard = _profileDashboard;
-      if (dashboard != null) {
-        await dashboard.getServerStatus().timeout(const Duration(seconds: 4));
-        return;
-      }
-      await _http
-          .within(const Duration(seconds: 4))
-          .get(Uri.parse('$baseUrl/health'), headers: _headers); // U6b
-    } catch (_) {
-      // Calentamiento opcional: si falla, el turno real reportará el error.
-    }
-  }
-
-  // ── Generic HTTP helpers (for Dashboard API compatibility) ────────────
-
-  Future<Map<String, dynamic>> apiGet(String endpoint) async {
-    final res = await _http
-        .within(_requestTimeout)
-        .get(Uri.parse('$baseUrl/$endpoint'), headers: _headers);
-    if (res.statusCode != 200) throw Exception('HTTP ${res.statusCode}');
-    return jsonDecode(res.body) as Map<String, dynamic>;
-  }
-
-  Future<List<dynamic>> apiGetList(String endpoint) async {
-    final res = await _http
-        .within(_requestTimeout)
-        .get(Uri.parse('$baseUrl/$endpoint'), headers: _headers);
-    if (res.statusCode != 200) throw Exception('HTTP ${res.statusCode}');
-    return jsonDecode(res.body) as List<dynamic>;
-  }
-
-  Future<Map<String, dynamic>> apiPost(
-    String endpoint, {
-    Map<String, dynamic>? body,
-  }) async {
-    final res = await _http
-        .within(_requestTimeout)
-        .post(
-          Uri.parse('$baseUrl/$endpoint'),
-          headers: _headers,
-          body: body != null ? jsonEncode(body) : null,
-        );
-    if (res.statusCode < 200 || res.statusCode >= 300) {
-      throw Exception('HTTP ${res.statusCode}');
-    }
-    return jsonDecode(res.body) as Map<String, dynamic>;
-  }
-
-  Future<void> apiDelete(String endpoint) async {
-    final res = await _http
-        .within(_requestTimeout)
-        .delete(Uri.parse('$baseUrl/$endpoint'), headers: _headers);
-    if (res.statusCode < 200 || res.statusCode >= 300) {
-      throw Exception('HTTP ${res.statusCode}');
     }
   }
 
@@ -1823,13 +1759,13 @@ class ApiClient {
       if (deleted) await _clearSessionRecovery(sessionId, profile: profile);
       return deleted;
     }
-    final endpoint = profileEndpoint(
+    final endpoint = profileEndpoint( // U6c
       'api/sessions/${Uri.encodeComponent(sessionId)}',
       profile: profile,
     );
     final res = await _http
         .within(_requestTimeout)
-        .delete(Uri.parse('$baseUrl/$endpoint'), headers: _headers);
+        .delete(Uri.parse('$baseUrl/$endpoint'), headers: _headers); // U6c
     if (res.statusCode == 404) {
       await _clearSessionRecovery(sessionId, profile: profile);
       return true;
@@ -1882,16 +1818,22 @@ class ApiClient {
 
   /// GET /api/sessions/{id} — detalle con métricas (tokens, coste, lineage).
   Future<Session> getSession(String sessionId, {String? profile}) async {
+    final owner = validateCronProfile(profile);
     final dashboard = _profileDashboard;
-    if (dashboard != null && validateCronProfile(profile) == null) {
-      return dashboard.getSessionDetail(sessionId);
+    if (dashboard != null) {
+      // A named profile's row comes from the Dashboard (`?profile=`), as on
+      // Desktop: a Dashboard-only connection has no `/p/<profile>/` route.
+      return dashboard.getSessionDetail(sessionId, profile: owner ?? '');
     }
-    final data = await apiGet(
-      profileEndpoint(
-        'api/sessions/${Uri.encodeComponent(sessionId)}',
-        profile: profile,
-      ),
+    final endpoint = profileEndpoint( // U6c
+      'api/sessions/${Uri.encodeComponent(sessionId)}',
+      profile: profile,
     );
+    final res = await _http
+        .within(_requestTimeout)
+        .get(Uri.parse('$baseUrl/$endpoint'), headers: _headers); // U6c
+    if (res.statusCode != 200) throw Exception('HTTP ${res.statusCode}');
+    final data = jsonDecode(res.body) as Map<String, dynamic>;
     return Session.fromJson((data['session'] as Map<String, dynamic>?) ?? data);
   }
 
