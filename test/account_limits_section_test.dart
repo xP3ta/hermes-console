@@ -351,7 +351,13 @@ void main() {
       );
       await tester.pumpWidget(_app(AccountLimitsSection(limits: limits)));
       expect(find.text('Límites de tu plan'), findsOneWidget);
-      expect(_bars(), findsWidgets);
+      // Nous plan bars carry their own key; `_bars()` only matches the
+      // Codex/Claude account windows, which are absent here by design.
+      expect(_bars(), findsNothing);
+      expect(
+        find.byKey(const ValueKey('account-usage-bar-plan')),
+        findsOneWidget,
+      );
     });
   });
 }
