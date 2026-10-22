@@ -141,6 +141,61 @@ void main() {
       expect(b.messages, a.messages);
     });
 
+    test('a closed client refuses a later read before it reaches the '
+        'fake', () async {
+      var reads = 0;
+      final harness = testApiClient(
+        baseUrl: _base,
+        httpClient: MockClient((_) async {
+          reads += 1;
+          return http.Response('{}', 500);
+        }),
+      );
+      harness.close();
+
+      await expectLater(
+        harness.getMessagesPage('s'),
+        throwsA(isA<http.ClientException>()),
+      );
+      expect(reads, 0);
+    });
+
+    test('answerAfterClose keeps sending to the fake after close, like the '
+        'legacy transport', () async {
+      var legacyReads = 0;
+      var harnessReads = 0;
+      final legacy = ApiClient(
+        baseUrl: _base,
+        apiKey: 'k',
+        httpClient: MockClient((_) async {
+          legacyReads += 1;
+          return http.Response('{}', 500);
+        }),
+      );
+      final harness = testApiClient(
+        baseUrl: _base,
+        answerAfterClose: true,
+        httpClient: MockClient((_) async {
+          harnessReads += 1;
+          return http.Response('{}', 500);
+        }),
+      );
+      legacy.close();
+      harness.close();
+      final matcher = throwsA(
+        isA<CoreReadException>().having(
+          (e) => e.kind,
+          'kind',
+          CoreReadErrorKind.temporarilyUnavailable,
+        ),
+      );
+
+      await expectLater(legacy.getMessagesPage('s'), matcher);
+      await expectLater(harness.getMessagesPage('s'), matcher);
+      expect(legacyReads, 1);
+      expect(harnessReads, 1);
+    });
+
     test('sends the Dashboard session token, never an API-key bearer, and '
         'never scrapes the page first', () async {
       final seen = <http.Request>[];
