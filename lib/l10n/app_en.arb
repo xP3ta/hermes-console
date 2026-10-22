@@ -8561,5 +8561,265 @@
   "i18n131DetailMuteNotificationsSub": "Don't notify status changes for this task, even if Kanban results are enabled",
   "@i18n131DetailMuteNotificationsSub": {
     "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131TaskSheetTheTaskCouldNotBeAssignedTry": "The task could not be assigned. Try again.",
+  "@i18n131TaskSheetTheTaskCouldNotBeAssignedTry": {
+    "description": "i18n131: Preserved ES/EN/PT; taskSheet."
+  },
+  "i18n131TaskSheetLow": "Low",
+  "@i18n131TaskSheetLow": {
+    "description": "i18n131: Preserved ES/EN/PT; taskSheet."
+  },
+  "i18n131TaskSheetNormal": "Normal",
+  "@i18n131TaskSheetNormal": {
+    "description": "i18n131: Preserved ES/EN/PT; taskSheet."
+  },
+  "i18n131TaskSheetHigh": "High",
+  "@i18n131TaskSheetHigh": {
+    "description": "i18n131: Preserved ES/EN/PT; taskSheet."
+  },
+  "i18n131TaskSheetAssignTask": "Assign task",
+  "@i18n131TaskSheetAssignTask": {
+    "description": "i18n131: Preserved ES/EN/PT; taskSheet."
+  },
+  "i18n131TaskSheetWhat": "What",
+  "@i18n131TaskSheetWhat": {
+    "description": "i18n131: Preserved ES/EN/PT; taskSheet."
+  },
+  "i18n131TaskSheetWhatShouldThisProfileDo": "What should this profile do?",
+  "@i18n131TaskSheetWhatShouldThisProfileDo": {
+    "description": "i18n131: Preserved ES/EN/PT; taskSheet."
+  },
+  "i18n131TaskSheetDescribeTheTask": "Describe the task.",
+  "@i18n131TaskSheetDescribeTheTask": {
+    "description": "i18n131: Preserved ES/EN/PT; taskSheet."
+  },
+  "i18n131TaskSheetWhyOptional": "Why (optional)",
+  "@i18n131TaskSheetWhyOptional": {
+    "description": "i18n131: Preserved ES/EN/PT; taskSheet."
+  },
+  "i18n131TaskSheetAddContextOrTheExpectedResult": "Add context or the expected result.",
+  "@i18n131TaskSheetAddContextOrTheExpectedResult": {
+    "description": "i18n131: Preserved ES/EN/PT; taskSheet."
+  },
+  "i18n131TaskSheetPriority": "Priority",
+  "@i18n131TaskSheetPriority": {
+    "description": "i18n131: Preserved ES/EN/PT; taskSheet."
+  },
+  "i18n131ProfileUseAPngJpegWebpOrGif": "Use a PNG, JPEG, WebP, or GIF image up to 15 MB.",
+  "@i18n131ProfileUseAPngJpegWebpOrGif": {
+    "description": "i18n131: Preserved ES/EN/PT; profile."
+  },
+  "i18n131ProfileDiscardChanges": "Discard changes?",
+  "@i18n131ProfileDiscardChanges": {
+    "description": "i18n131: Preserved ES/EN/PT; profile."
+  },
+  "i18n131ProfileTheProfileIdentityHasNotBeenSaved": "The profile identity has not been saved yet.",
+  "@i18n131ProfileTheProfileIdentityHasNotBeenSaved": {
+    "description": "i18n131: Preserved ES/EN/PT; profile."
+  },
+  "i18n131ProfileKeepEditing": "Keep editing",
+  "@i18n131ProfileKeepEditing": {
+    "description": "i18n131: Preserved ES/EN/PT; profile."
+  },
+  "i18n131ProfileDiscard": "Discard",
+  "@i18n131ProfileDiscard": {
+    "description": "i18n131: Preserved ES/EN/PT; profile."
+  },
+  "i18n131ProfileUnsaved": "Unsaved",
+  "@i18n131ProfileUnsaved": {
+    "description": "i18n131: Preserved ES/EN/PT; profile."
+  },
+  "i18n131ProfileTheProfilenameIdentifierDoesNotChange": "The @$_profileName identifier does not change",
+  "@i18n131ProfileTheProfilenameIdentifierDoesNotChange": {
+    "description": "i18n131: Preserved ES/EN/PT; profile."
+  },
+  "i18n131ProfileCustomize": "Customize",
+  "@i18n131ProfileCustomize": {
+    "description": "i18n131: Preserved ES/EN/PT; profile."
+  },
+  "i18n131ProfileVisualIdentity": "Visual identity",
+  "@i18n131ProfileVisualIdentity": {
+    "description": "i18n131: Preserved ES/EN/PT; profile."
+  },
+  "i18n131ProfilePet": "Pet",
+  "@i18n131ProfilePet": {
+    "description": "i18n131: Preserved ES/EN/PT; profile."
+  },
+  "i18n131ProfileImage": "Image",
+  "@i18n131ProfileImage": {
+    "description": "i18n131: Preserved ES/EN/PT; profile."
+  },
+  "i18n131ProfileFace": "Face",
+  "@i18n131ProfileFace": {
+    "description": "i18n131: Preserved ES/EN/PT; profile."
+  },
+  "i18n131ProfileAutomatic": "Automatic",
+  "@i18n131ProfileAutomatic": {
+    "description": "i18n131: Preserved ES/EN/PT; profile."
+  },
+  "i18n131ProfileDescription": "Description",
+  "@i18n131ProfileDescription": {
+    "description": "i18n131: Preserved ES/EN/PT; profile."
+  },
+  "i18n131ProfileNoDescription": "No description",
+  "@i18n131ProfileNoDescription": {
+    "description": "i18n131: Preserved ES/EN/PT; profile."
+  },
+  "i18n131ProfileViewSkills": "View skills",
+  "@i18n131ProfileViewSkills": {
+    "description": "i18n131: Preserved ES/EN/PT; profile."
+  },
+  "i18n131ProfileProfileFace": "Profile face",
+  "@i18n131ProfileProfileFace": {
+    "description": "i18n131: Preserved ES/EN/PT; profile."
+  },
+  "i18n131ProfilePngJpegWebpOrGifCenterCropped": "PNG, JPEG, WebP, or GIF. Center-cropped and saved square.",
+  "@i18n131ProfilePngJpegWebpOrGifCenterCropped": {
+    "description": "i18n131: Preserved ES/EN/PT; profile."
+  },
+  "i18n131ProfileChooseImage": "Choose image",
+  "@i18n131ProfileChooseImage": {
+    "description": "i18n131: Preserved ES/EN/PT; profile."
+  },
+  "i18n131ProfileChangeImage": "Change image",
+  "@i18n131ProfileChangeImage": {
+    "description": "i18n131: Preserved ES/EN/PT; profile."
+  },
+  "i18n131ProfileASavedImageAlsoExistsThePet": "A saved image also exists. The pet takes priority.",
+  "@i18n131ProfileASavedImageAlsoExistsThePet": {
+    "description": "i18n131: Preserved ES/EN/PT; profile."
+  },
+  "i18n131ProfileUseImage": "Use image",
+  "@i18n131ProfileUseImage": {
+    "description": "i18n131: Preserved ES/EN/PT; profile."
+  },
+  "i18n131ProfileUncertainStateReviewAndSaveAgain": "Uncertain state: review and save again.",
+  "@i18n131ProfileUncertainStateReviewAndSaveAgain": {
+    "description": "i18n131: Preserved ES/EN/PT; profile."
+  },
+  "i18n131ProfileUnsavedChanges": "Unsaved changes",
+  "@i18n131ProfileUnsavedChanges": {
+    "description": "i18n131: Preserved ES/EN/PT; profile."
+  },
+  "i18n131ProfileNoPendingChanges": "No pending changes",
+  "@i18n131ProfileNoPendingChanges": {
+    "description": "i18n131: Preserved ES/EN/PT; profile."
+  },
+  "i18n131ProfileSaving": "Saving…",
+  "@i18n131ProfileSaving": {
+    "description": "i18n131: Preserved ES/EN/PT; profile."
+  },
+  "i18n131CreateUseAPngJpegWebpOrGif": "Use a PNG, JPEG, WebP, or GIF image up to 15 MB.",
+  "@i18n131CreateUseAPngJpegWebpOrGif": {
+    "description": "i18n131: Preserved ES/EN/PT; create."
+  },
+  "i18n131CreateTheProfileExistsButItsIdentityIs": "The profile exists, but its identity is uncertain. Review it and try again.",
+  "@i18n131CreateTheProfileExistsButItsIdentityIs": {
+    "description": "i18n131: Preserved ES/EN/PT; create."
+  },
+  "i18n131CreateTheProfileExistsButItsIdentityCould": "The profile exists, but its identity could not be applied. Fix the issue and try again.",
+  "@i18n131CreateTheProfileExistsButItsIdentityCould": {
+    "description": "i18n131: Preserved ES/EN/PT; create."
+  },
+  "i18n131CreateChooseAValidIdentityBeforeCreatingThe": "Choose a valid identity before creating the profile.",
+  "@i18n131CreateChooseAValidIdentityBeforeCreatingThe": {
+    "description": "i18n131: Preserved ES/EN/PT; create."
+  },
+  "i18n131CreateDiscardChanges": "Discard changes?",
+  "@i18n131CreateDiscardChanges": {
+    "description": "i18n131: Preserved ES/EN/PT; create."
+  },
+  "i18n131CreateTheProfileAlreadyExistsButItsVisual": "The profile already exists, but its visual setup is incomplete. Leaving will not open its automatic chat.",
+  "@i18n131CreateTheProfileAlreadyExistsButItsVisual": {
+    "description": "i18n131: Preserved ES/EN/PT; create."
+  },
+  "i18n131CreateYouWillLoseThisProfileSetup": "You will lose this profile setup.",
+  "@i18n131CreateYouWillLoseThisProfileSetup": {
+    "description": "i18n131: Preserved ES/EN/PT; create."
+  },
+  "i18n131CreateKeepEditing": "Keep editing",
+  "@i18n131CreateKeepEditing": {
+    "description": "i18n131: Preserved ES/EN/PT; create."
+  },
+  "i18n131CreateDiscard": "Discard",
+  "@i18n131CreateDiscard": {
+    "description": "i18n131: Preserved ES/EN/PT; create."
+  },
+  "i18n131CreateCustomize": "Customize",
+  "@i18n131CreateCustomize": {
+    "description": "i18n131: Preserved ES/EN/PT; create."
+  },
+  "i18n131CreateOptional": "optional",
+  "@i18n131CreateOptional": {
+    "description": "i18n131: Preserved ES/EN/PT; create."
+  },
+  "i18n131CreateVisualIdentity": "Visual identity",
+  "@i18n131CreateVisualIdentity": {
+    "description": "i18n131: Preserved ES/EN/PT; create."
+  },
+  "i18n131CreatePet": "Pet",
+  "@i18n131CreatePet": {
+    "description": "i18n131: Preserved ES/EN/PT; create."
+  },
+  "i18n131CreateImage": "Image",
+  "@i18n131CreateImage": {
+    "description": "i18n131: Preserved ES/EN/PT; create."
+  },
+  "i18n131CreateFace": "Face",
+  "@i18n131CreateFace": {
+    "description": "i18n131: Preserved ES/EN/PT; create."
+  },
+  "i18n131CreateTitleAndDescription": "Title and description",
+  "@i18n131CreateTitleAndDescription": {
+    "description": "i18n131: Preserved ES/EN/PT; create."
+  },
+  "i18n131CreateNotFilledIn": "Not filled in",
+  "@i18n131CreateNotFilledIn": {
+    "description": "i18n131: Preserved ES/EN/PT; create."
+  },
+  "i18n131CreateSoulCloneFrom": "Soul · Clone from",
+  "@i18n131CreateSoulCloneFrom": {
+    "description": "i18n131: Preserved ES/EN/PT; create."
+  },
+  "i18n131CreateProfileFace": "Profile face",
+  "@i18n131CreateProfileFace": {
+    "description": "i18n131: Preserved ES/EN/PT; create."
+  },
+  "i18n131CreatePngJpegWebpOrGifCenterCropped": "PNG, JPEG, WebP, or GIF. Center-cropped and saved square.",
+  "@i18n131CreatePngJpegWebpOrGifCenterCropped": {
+    "description": "i18n131: Preserved ES/EN/PT; create."
+  },
+  "i18n131CreateChooseImage": "Choose image",
+  "@i18n131CreateChooseImage": {
+    "description": "i18n131: Preserved ES/EN/PT; create."
+  },
+  "i18n131CreateChangeImage": "Change image",
+  "@i18n131CreateChangeImage": {
+    "description": "i18n131: Preserved ES/EN/PT; create."
+  },
+  "i18n131CreateUncertainStateReviewAndTryAgain": "Uncertain state: review and try again.",
+  "@i18n131CreateUncertainStateReviewAndTryAgain": {
+    "description": "i18n131: Preserved ES/EN/PT; create."
+  },
+  "i18n131CreateProfileCreatedIdentityConfirmationPending": "Profile created · identity confirmation pending",
+  "@i18n131CreateProfileCreatedIdentityConfirmationPending": {
+    "description": "i18n131: Preserved ES/EN/PT; create."
+  },
+  "i18n131CreateCreating": "Creating…",
+  "@i18n131CreateCreating": {
+    "description": "i18n131: Preserved ES/EN/PT; create."
+  },
+  "i18n131CreateRetryIdentity": "Retry identity",
+  "@i18n131CreateRetryIdentity": {
+    "description": "i18n131: Preserved ES/EN/PT; create."
+  },
+  "i18n131RoomsRemoveMember": "Remove",
+  "@i18n131RoomsRemoveMember": {
+    "description": "i18n131: Preserved ES/EN/PT; rooms."
+  },
+  "i18n131RoomsNoMembersChosen": "Tap a profile to add it to the room.",
+  "@i18n131RoomsNoMembersChosen": {
+    "description": "i18n131: Preserved ES/EN/PT; rooms."
   }
 }
