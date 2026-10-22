@@ -16222,6 +16222,9 @@ void main() {
   testWidgets(
     'reabrir una sesión larga compactada no retrocea sus respuestas largas',
     (tester) async {
+      // The decode settle below lets real time pass: the app's companion
+      // store then reaches path_provider, which a fake clock never let it.
+      mockCompanionStorage();
       // QA 9340 (Pixel 9 Pro): abrir una sesión de ~800 filas con 555
       // compactadas dejó frames de build de ~1,4 s. El troceado verificado
       // de cada respuesta larga (markdownToHtml por frontera) se cacheaba

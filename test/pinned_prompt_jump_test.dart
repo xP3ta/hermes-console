@@ -1,5 +1,6 @@
 // QA 9491: tapping the slim pinned prompt must open THAT prompt, also in a
 // long chat whose earlier pages were loaded while reading back.
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -125,8 +126,14 @@ Future<(ActiveChat, ActiveChatService)> _open(
     attachDesktopRuntimeOnLoad: false,
     disableForegroundKeepAlive: true,
   );
-  // Its pages (~280 KB) decode in an isolate: give them real time.
-  await tester.runAsync(() => chat.loadMessages(expectedMessageCount: 400));
+  // Its pages (~280 KB) decode in an isolate, which only runs in real time;
+  // the load itself stays on the test's fake clock, as it always was.
+  var loaded = false;
+  unawaited(
+    chat.loadMessages(expectedMessageCount: 400).then((_) => loaded = true),
+  );
+  await _settleOffMainDecode(tester, until: () => loaded);
+  expect(loaded, isTrue, reason: 'precondition: the first page loaded');
   await tester.pumpWidget(
     HermesApp(
       connManager: manager,
@@ -281,6 +288,8 @@ void main() {
       greaterThan(firstPage),
       reason: 'precondition: an earlier page was loaded while reading',
     );
+    // An earlier page a gesture started lands now, as it did inline.
+    await _settleOffMainDecode(tester);
     // Settle inside a tall reply of the earlier page, so the header pins
     // its prompt.
     position().jumpTo(position().maxScrollExtent - 5000);
@@ -291,10 +300,23 @@ void main() {
         const Offset(0, 230),
         const Duration(milliseconds: 200),
       );
+      // Each drag can start the next earlier page: let it land before the
+      // header is read, as it did when pages decoded inline.
+      await _settleOffMainDecode(
+        tester,
+        until: () => _stickyId(tester) != null,
+      );
       await _frames(tester, 20);
     }
     final id = _stickyId(tester);
-    expect(id, isNotNull, reason: 'precondition: the header pins a prompt');
+    expect(
+      id,
+      isNotNull,
+      reason:
+          'precondition: the header pins a prompt '
+          '(rows=${chat.messages.length}, '
+          'pixels=${position().pixels}, max=${position().maxScrollExtent})',
+    );
     final before = find.descendant(
       of: _transcript(),
       matching: find.text(_prompt(id!), skipOffstage: false),
