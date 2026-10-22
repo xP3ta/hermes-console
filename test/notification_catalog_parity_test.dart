@@ -39,7 +39,7 @@ void main() {
 
   test('system and absent preference use the supported device language', () async {
     for (final pref in [null, 'system']) {
-      SharedPreferences.setMockInitialValues({if (pref != null) 'app_locale': pref});
+      SharedPreferences.setMockInitialValues({'app_locale': ?pref});
       final prefs = await SharedPreferences.getInstance();
       expect(NotifL10n.of(prefs, deviceLocale: const Locale('ko')).lang, 'ko');
       expect(NotifL10n.of(prefs, deviceLocale: const Locale('xx')).lang, 'en');
