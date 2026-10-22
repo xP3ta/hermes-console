@@ -4428,5 +4428,39 @@
   "recoveryCenterSkippedOversize": "{count, plural, =1{1 fichier trop volumineux n’a pas été restauré.} other{{count} fichiers trop volumineux n’ont pas été restaurés.}}",
   "recoveryCenterFailedDeletes": "{count, plural, =1{1 fichier n’a pas pu être supprimé.} other{{count} fichiers n’ont pas pu être supprimés.}}",
   "cphPluginBlockedByScan": "L’analyse de sécurité a bloqué ce plugin. Rien n’a été modifié.",
-  "dashboardAuthSessionTokenWithheld": "Ce Dashboard ne transmet pas son jeton de session à Console : il est hébergé par la passerelle Hermes 0.22.3 ou ultérieure, sans connexion. Utilise un Dashboard autonome ou active sa connexion."
+  "dashboardAuthSessionTokenWithheld": "Ce Dashboard ne transmet pas son jeton de session à Console : il est hébergé par la passerelle Hermes 0.22.3 ou ultérieure, sans connexion. Utilise un Dashboard autonome ou active sa connexion.",
+  "connDiagTimeout": "no response in {seconds}s",
+  "@connDiagTimeout": {
+    "description": "i18n131: English draft pending Phase 2 translation.",
+    "placeholders": {
+      "seconds": {
+        "type": "int"
+      }
+    }
+  },
+  "connDiagTlsInvalid": "invalid TLS certificate: {message}",
+  "@connDiagTlsInvalid": {
+    "description": "i18n131: English draft pending Phase 2 translation.",
+    "placeholders": {
+      "message": {
+        "type": "String"
+      }
+    }
+  },
+  "connDiagDnsFailed": "the host does not resolve",
+  "@connDiagDnsFailed": {
+    "description": "i18n131: English draft pending Phase 2 translation."
+  },
+  "connDiagRefused": "connection refused (wrong port?)",
+  "@connDiagRefused": {
+    "description": "i18n131: English draft pending Phase 2 translation."
+  },
+  "connDiagAuthHint": "check the username and password",
+  "@connDiagAuthHint": {
+    "description": "i18n131: English draft pending Phase 2 translation."
+  },
+  "transportPublicBlocked": "Public HTTP/WS is blocked: configure HTTPS/WSS or use a private/Tailscale address.",
+  "@transportPublicBlocked": {
+    "description": "i18n131: English draft pending Phase 2 translation."
+  }
 }
