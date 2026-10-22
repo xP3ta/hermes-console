@@ -28,6 +28,7 @@ import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
+import 'support/test_api_client.dart';
 
 final _connection = SavedConnection(
   id: 'local-admission-fixture',
@@ -179,9 +180,8 @@ _mount(WidgetTester tester, _Gateway gateway) async {
     sessionId: _session.id,
     sessionTitle: _session.title,
     sessionSnapshot: _session,
-    api: ApiClient(
+    api: testApiClient(
       baseUrl: 'https://example.invalid',
-      apiKey: '',
       httpClient: MockClient((_) async => http.Response('{}', 200)),
     ),
     desktopGateway: gateway,

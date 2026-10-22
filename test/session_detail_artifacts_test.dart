@@ -9,6 +9,7 @@ import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'support/test_api_client.dart';
 
 Widget _host(Widget child) => MaterialApp(
   locale: const Locale('es'),
@@ -39,9 +40,8 @@ void main() {
           ],
         },
       ];
-      final api = ApiClient(
+      final api = testApiClient(
         baseUrl: 'http://127.0.0.1:8642',
-        apiKey: 'test-key',
         httpClient: MockClient((request) async {
           if (request.url.path == '/api/sessions/session-tip/messages') {
             messageRequests++;
@@ -108,9 +108,8 @@ void main() {
     'conexiones de solo lectura',
     (tester) async {
       SharedPreferences.setMockInitialValues({});
-      final api = ApiClient(
+      final api = testApiClient(
         baseUrl: 'http://127.0.0.1:8642',
-        apiKey: 'k',
         httpClient: MockClient((_) async => http.Response('{}', 404)),
       );
       Future<void> pump({required bool readOnly}) async {

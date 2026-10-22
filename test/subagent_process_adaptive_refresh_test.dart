@@ -26,6 +26,7 @@ import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
+import 'support/test_api_client.dart';
 
 class _AdaptiveGateway
     implements
@@ -277,9 +278,8 @@ Future<_Fixture> _mountChat(
     sessionId: _session.id,
     sessionTitle: _session.title,
     initialStoredSessionId: _session.id,
-    api: ApiClient(
+    api: testApiClient(
       baseUrl: 'https://example.invalid',
-      apiKey: 'test-only',
       httpClient: MockClient((_) async => http.Response('unused', 500)),
     ),
     desktopGateway: gateway,

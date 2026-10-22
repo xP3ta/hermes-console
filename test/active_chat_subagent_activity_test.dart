@@ -17,6 +17,7 @@ import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
+import 'support/test_api_client.dart';
 
 class _SubagentGateway
     implements HermesDesktopGateway, HermesDesktopSubagentGateway {
@@ -205,9 +206,8 @@ Future<ActiveChat> _start(
     notifications: notifications,
     onTerminal: () {},
     beforeTerminalNotification: beforeTerminalNotification,
-    api: ApiClient(
+    api: testApiClient(
       baseUrl: 'https://example.invalid',
-      apiKey: 'test-only',
       httpClient: MockClient((_) async => http.Response('unused', 500)),
     ),
     desktopGateway: gateway,
@@ -338,9 +338,8 @@ void main() {
         sessionTitle: 'Subagent',
         notifications: null,
         onTerminal: () {},
-        api: ApiClient(
+        api: testApiClient(
           baseUrl: 'https://example.invalid',
-          apiKey: 'test-key',
           httpClient: MockClient((_) async => http.Response('unused', 500)),
         ),
         desktopGateway: gateway,
@@ -398,9 +397,8 @@ void main() {
         sessionTitle: 'Private ingestion',
         notifications: null,
         onTerminal: () {},
-        api: ApiClient(
+        api: testApiClient(
           baseUrl: 'https://example.invalid',
-          apiKey: 'test-key',
           httpClient: MockClient((_) async => http.Response('unused', 500)),
         ),
         desktopGateway: gateway,

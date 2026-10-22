@@ -29,6 +29,7 @@ import 'package:hermes_android/core/widgets/chat_event_cards.dart';
 import 'package:hermes_android/core/widgets/chat_turn_activity.dart';
 import 'package:hermes_android/core/widgets/message_avatar_header.dart';
 import 'package:hermes_android/main.dart';
+import 'support/test_api_client.dart';
 
 class _StreamingGateway
     implements HermesDesktopGateway, HermesDesktopSessionLifecycleGateway {
@@ -131,9 +132,8 @@ Session _session() => Session(
   startedAt: 0,
 );
 
-ApiClient _safeApi() => ApiClient(
+ApiClient _safeApi() => testApiClient(
   baseUrl: 'https://example.test',
-  apiKey: 'test-key',
   httpClient: MockClient((_) async => http.Response('not found', 404)),
 );
 
