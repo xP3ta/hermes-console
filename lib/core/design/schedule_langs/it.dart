@@ -1,120 +1,124 @@
 part of '../schedule_humanizer.dart';
 
-// English grammar stub for Phase 3b.
 class _It extends _ScheduleLang {
   const _It();
 
   static const _days = [
-    'Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', //
-    'Saturday',
+    'domenica', 'lunedì', 'martedì', 'mercoledì', 'giovedì', 'venerdì',
+    'sabato',
   ];
   static const _months = [
-    '', 'January', 'February', 'March', 'April', 'May', 'June', 'July', //
-    'August', 'September', 'October', 'November', 'December',
+    '', 'gennaio', 'febbraio', 'marzo', 'aprile', 'maggio', 'giugno',
+    'luglio', 'agosto', 'settembre', 'ottobre', 'novembre', 'dicembre',
   ];
 
+  static String _day(int d) => '${d == 0 ? 'la' : 'il'} ${_days[d]}';
+  static String _dateDay(int d) => d == 1 ? '1º' : '$d';
+  static String _capital(String s) => '${s[0].toUpperCase()}${s.substring(1)}';
+  static String _at(int hour, int minute) =>
+      '${hour == 1 ? 'all’' : 'alle '}${_ScheduleLang.time(hour, minute)}';
+
   @override
-  String get custom => 'Custom schedule';
+  String get custom => 'Programmazione personalizzata';
 
   @override
   String everyDuration(int minutes) {
-    if (minutes == 1) return 'Every minute';
-    if (minutes < 60) return 'Every $minutes min';
-    if (minutes == 60) return 'Every hour';
+    if (minutes == 1) return 'Ogni minuto';
+    if (minutes < 60) return 'Ogni $minutes min';
+    if (minutes == 60) return 'Ogni ora';
     if (minutes % 1440 == 0) {
       final d = minutes ~/ 1440;
-      return d == 1 ? 'Every day' : 'Every $d days';
+      return d == 1 ? 'Ogni giorno' : 'Ogni $d giorni';
     }
-    if (minutes % 60 == 0) return 'Every ${minutes ~/ 60} hours';
-    return 'Every ${minutes ~/ 60} h ${minutes % 60} min';
+    if (minutes % 60 == 0) return 'Ogni ${minutes ~/ 60} ore';
+    return 'Ogni ${minutes ~/ 60} h ${minutes % 60} min';
   }
-
-  String _minuteMark(int minute) => ':${minute.toString().padLeft(2, '0')}';
 
   @override
   String everyHourAt(int minute) =>
-      minute == 0 ? 'Every hour' : 'Every hour at ${_minuteMark(minute)}';
+      minute == 0 ? 'Ogni ora' : 'Ogni ora, al minuto $minute';
 
   @override
   String everyHourAtMinutes(List<int> minutes) =>
-      'Every hour at ${joinAnd([for (final m in minutes) _minuteMark(m)])}';
+      'Ogni ora, ai minuti ${joinAnd([for (final m in minutes) '$m'])}';
 
   @override
-  String onceIn(int minutes) =>
-      'Once, in ${everyDuration(minutes).substring(6)}';
+  String onceIn(int minutes) {
+    String duration;
+    if (minutes < 60) {
+      duration = minutes == 1 ? '1 minuto' : '$minutes minuti';
+    } else if (minutes % 1440 == 0) {
+      final days = minutes ~/ 1440;
+      duration = days == 1 ? '1 giorno' : '$days giorni';
+    } else if (minutes % 60 == 0) {
+      final hours = minutes ~/ 60;
+      duration = hours == 1 ? '1 ora' : '$hours ore';
+    } else {
+      duration = '${minutes ~/ 60} h ${minutes % 60} min';
+    }
+    return 'Una volta, tra $duration';
+  }
 
   @override
   String once(DateTime when, DateTime now) {
-    final year = when.year == now.year ? '' : ', ${when.year}';
-    return 'Once on ${_months[when.month]} ${when.day}$year '
-        'at ${_ScheduleLang.time(when.hour, when.minute)}';
+    final year = when.year == now.year ? '' : ' ${when.year}';
+    return 'Una volta, il ${_dateDay(when.day)} ${_months[when.month]}$year '
+        '${_at(when.hour, when.minute)}';
   }
 
   @override
-  String atTimes(_Days days, List<(int, int)> times) {
-    final labels = [for (final t in times) _ScheduleLang.time(t.$1, t.$2)];
-    return '${days.prefix ?? 'Every day'} at ${joinAnd(labels)}';
-  }
+  String atTimes(_Days days, List<(int, int)> times) =>
+      '${days.prefix ?? 'Ogni giorno'} '
+      '${joinAnd([for (final t in times) _at(t.$1, t.$2)])}';
 
   @override
   String freq(String freq, String? window, _Days days) =>
-      [freq, ?window, ?days.suffix].join(' ');
+      [freq, ?window, ?days.suffix].join(', ');
 
   @override
   String fromTo((int, int) a, (int, int) b) =>
-      'from ${_ScheduleLang.time(a.$1, a.$2)} to ${_ScheduleLang.time(b.$1, b.$2)}';
+      '${a.$1 == 1 ? 'dall’' : 'dalle '}${_ScheduleLang.time(a.$1, a.$2)} '
+      '${_at(b.$1, b.$2)}';
 
   @override
   String startingAt(int hour, int minute) =>
-      'starting at ${_ScheduleLang.time(hour, minute)}';
+      'a partire ${hour == 1 ? 'dall’' : 'dalle '}'
+      '${_ScheduleLang.time(hour, minute)}';
 
   @override
   String joinAnd(List<String> items) {
     if (items.length <= 1) return items.join();
-    return '${items.sublist(0, items.length - 1).join(', ')} and ${items.last}';
+    return '${items.sublist(0, items.length - 1).join(', ')} e ${items.last}';
   }
 
-  String _monthList(List<int> months, {String lead = 'in'}) {
+  String _monthList(List<int> months) {
     final runs = _runs(months);
     if (runs.length == 1 && months.length >= 3) {
-      return 'from ${_months[runs.single.$1]} to ${_months[runs.single.$2]}';
+      final last = _months[runs.single.$2];
+      return 'da ${_months[runs.single.$1]} ${last.startsWith('a') ? 'ad' : 'a'} $last';
     }
-    return '$lead ${joinAnd([for (final m in months) _months[m]])}';
+    return 'nei mesi di ${joinAnd([for (final m in months) _months[m]])}';
   }
 
   @override
   _Days monthsOnly(List<int> months) {
     final list = _monthList(months);
-    return _Days('Every day $list', list);
+    return _Days('Ogni giorno $list', list);
   }
 
   @override
   _Days weekdays(List<int> cronDows, List<int>? months) {
     final monthSuffix = months == null ? '' : ' ${_monthList(months)}';
     final ordered = _ScheduleLang.mondayFirst(cronDows);
-    String prefix;
-    String suffix;
-    if (ordered.length == 5 && ordered.first == 1 && ordered.last == 5) {
-      prefix = 'Weekdays';
-      suffix = 'on weekdays';
-    } else if (ordered.length == 2 && ordered.first == 6 && ordered.last == 0) {
-      prefix = 'Weekends';
-      suffix = 'on weekends';
-    } else if (ordered.length == 1) {
-      prefix = 'Every ${_days[ordered.single]}';
-      suffix = 'on ${_days[ordered.single]}s';
-    } else if (ordered.length >= 3 && _ScheduleLang.contiguousWeek(ordered)) {
-      prefix = '${_days[ordered.first]} to ${_days[ordered.last]}';
-      suffix = '${_days[ordered.first]} to ${_days[ordered.last]}';
+    String phrase;
+    if (ordered.length >= 3 && _ScheduleLang.contiguousWeek(ordered)) {
+      phrase = '${ordered.first == 0 ? 'dalla' : 'dal'} ${_days[ordered.first]} '
+          '${ordered.last == 0 ? 'alla' : 'al'} ${_days[ordered.last]}';
     } else {
-      final names = joinAnd([for (final d in ordered) _days[d]]);
-      prefix = names;
-      suffix = 'on $names';
+      phrase = joinAnd([for (final d in ordered) _day(d)]);
     }
-    return _Days('$prefix$monthSuffix', '$suffix$monthSuffix');
+    return _Days('${_capital(phrase)}$monthSuffix', '$phrase$monthSuffix');
   }
-
-  String _ordinalDay(int d) => '$d';
 
   @override
   _Days monthDays(List<int>? doms, List<int>? months) {
@@ -122,22 +126,28 @@ class _It extends _ScheduleLang {
         doms.length == 1 &&
         months != null &&
         months.length == 1) {
-      final date = 'on ${_months[months.single]} ${doms.single}';
-      return _Days('On ${_months[months.single]} ${doms.single}', date);
+      final date = 'il ${_dateDay(doms.single)} ${_months[months.single]}';
+      return _Days(_capital(date), date);
     }
     String phrase;
     if (doms == null) {
-      phrase = 'on the last day of every month';
+      phrase = 'l’ultimo giorno';
     } else if (doms.length == 1) {
-      phrase = 'on day ${_ordinalDay(doms.single)} of every month';
+      phrase = 'il giorno ${doms.single}';
     } else {
       final runs = _runs(doms);
       phrase = runs.length == 1 && doms.length >= 3
-          ? 'on days ${doms.first} to ${doms.last} of every month'
-          : 'on days ${joinAnd([for (final d in doms) '$d'])} of every month';
+          ? 'dal giorno ${doms.first} al ${doms.last}'
+          : 'i giorni ${joinAnd([for (final d in doms) '$d'])}';
     }
-    final monthSuffix = months == null ? '' : ' ${_monthList(months)}';
-    final prefix = '${phrase[0].toUpperCase()}${phrase.substring(1)}';
-    return _Days('$prefix$monthSuffix', '$phrase$monthSuffix');
+    final String period;
+    if (months == null) {
+      period = 'di ogni mese';
+    } else if (_runs(months).length == 1 && months.length >= 3) {
+      period = 'di ogni mese ${_monthList(months)}';
+    } else {
+      period = 'dei mesi di ${joinAnd([for (final m in months) _months[m]])}';
+    }
+    return _Days('${_capital(phrase)} $period', '$phrase $period');
   }
 }
