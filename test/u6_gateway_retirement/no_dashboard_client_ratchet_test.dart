@@ -27,7 +27,6 @@ const _stillWithoutDashboard = {
   'test/passive_transcript_bandwidth_test.dart',
   'test/pinned_prompt_jump_test.dart',
   'test/profile_named_session_read_test.dart',
-  'test/px6/px6_expired_session_screens_test.dart',
   'test/session_deletion_surface_test.dart',
   'test/session_deletion_test.dart',
   'test/session_export_test.dart',
@@ -36,8 +35,6 @@ const _stillWithoutDashboard = {
   'test/session_recovery_cleanup_test.dart',
   'test/session_repository_test.dart',
   'test/settings_history_cleanup_test.dart',
-  'test/tablet_chats_list_detail_test.dart',
-  'test/tablet_single_active_chat_test.dart',
   'test/u6_gateway_retirement/ids_and_constructors_test.dart',
   'test/u6_gateway_retirement/test_api_client_harness_test.dart',
 };
