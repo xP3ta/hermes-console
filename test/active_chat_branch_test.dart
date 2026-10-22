@@ -12,6 +12,7 @@ import 'package:http/testing.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
 import 'support/turn_side_gateway.dart';
+import 'support/test_api_client.dart';
 
 SavedConnection _connection() => SavedConnection(
   id: 'branch',
@@ -97,9 +98,8 @@ Future<(ActiveChat, FakeTurnSideGateway, _TranscriptServer)> _openChat({
     sessionTitle: 'Branch',
     notifications: null,
     onTerminal: () {},
-    api: ApiClient(
+    api: testApiClient(
       baseUrl: 'http://127.0.0.1:8642',
-      apiKey: 'test-key',
       httpClient: server.client(),
     ),
     desktopGateway: gateway,

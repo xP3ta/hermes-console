@@ -12,6 +12,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
+import 'support/test_api_client.dart';
 
 class _ViewerGateway
     implements
@@ -199,9 +200,8 @@ ActiveChat _chat(
     sessionTitle: 'Live',
     notifications: null,
     onTerminal: () {},
-    api: ApiClient(
+    api: testApiClient(
       baseUrl: 'https://example.invalid',
-      apiKey: 'test',
       httpClient: MockClient((_) async {
         restCalls();
         return restResponse?.call() ?? http.Response('{"messages":[]}', 200);

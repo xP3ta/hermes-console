@@ -14,6 +14,7 @@ import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:hermes_android/core/widgets/chat_event_cards.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
+import 'support/test_api_client.dart';
 
 /// Gateway moderno: publica resolver durable y rewind durable, y registra por
 /// separado los `prompt.submit` planos y los que llevan dirección de recorte.
@@ -218,9 +219,8 @@ SavedConnection _connection() => SavedConnection(
     connection: connection,
     sessionId: 'sess-rewrite',
     sessionTitle: 'Rewrite',
-    api: ApiClient(
+    api: testApiClient(
       baseUrl: connection.baseUrl,
-      apiKey: 'test-key',
       httpClient: MockClient((_) async => http.Response('not found', 404)),
     ),
     desktopGateway: gateway,

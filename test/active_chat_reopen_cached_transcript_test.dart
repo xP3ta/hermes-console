@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
+import 'support/test_api_client.dart';
 
 final _connection = SavedConnection(
   id: 'reopen-cache',
@@ -18,9 +19,8 @@ final _connection = SavedConnection(
   kind: InstanceKind.vps,
 );
 
-ApiClient _unusedApi() => ApiClient(
+ApiClient _unusedApi() => testApiClient(
   baseUrl: 'https://example.invalid',
-  apiKey: 'test-key',
   httpClient: MockClient((_) async => http.Response('unused', 500)),
 );
 
