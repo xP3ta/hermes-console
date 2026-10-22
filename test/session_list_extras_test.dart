@@ -24,6 +24,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'support/quiet_feedback.dart';
+import 'support/test_api_client.dart';
 
 const _connectionId = 'conn-se1215';
 
@@ -85,12 +86,12 @@ SavedConnection _connection({bool readOnly = false}) => SavedConnection(
   readOnly: readOnly,
 );
 
-ApiClient _api() => ApiClient(
+ApiClient _api() => testApiClient(
   baseUrl: 'http://127.0.0.1:8642',
-  apiKey: 'gateway-key',
   connectionId: _connectionId,
   httpClient: MockClient((request) async {
-    if (request.url.path == '/health' || request.url.path == '/api/sessions') {
+    if (request.url.path == '/api/status' ||
+        request.url.path == '/api/sessions') {
       return http.Response('{}', 200);
     }
     return http.Response('{}', 404);
