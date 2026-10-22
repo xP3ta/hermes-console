@@ -9592,9 +9592,9 @@ class ActiveChat {
   /// Hermes publishes through REST but older `session.info` events omit.
   ///
   /// A named profile's row is read from the Dashboard (`?profile=`), as
-  /// Hermes Desktop does; its API server route is asked only when the
-  /// Dashboard refuses this client (a profile that shares the connection's
-  /// key). This read never blocks the chat or raises the access notice.
+  /// Hermes Desktop does. A Dashboard refusal is reported as is: there is no
+  /// API server route to retry. This read never blocks the chat or raises
+  /// the access notice.
   Future<Session?> loadPersistedSessionSnapshot() async {
     final requestedId = serverSessionId;
     final owner = sessionProfile.trim();
@@ -9611,16 +9611,9 @@ class ActiveChat {
   Future<Session> _readNamedProfileSessionRow(
     String storedSessionId,
     String profile,
-  ) async {
-    try {
-      return await (_transcriptDashboard ??= DashboardClient.lazy(
-        connection,
-      )).getSessionDetail(storedSessionId, profile: profile);
-    } on Object catch (error) {
-      if (!isDashboardAccessRefusal(error)) rethrow;
-    }
-    return _api.getSession(storedSessionId, profile: profile);
-  }
+  ) => (_transcriptDashboard ??= DashboardClient.lazy(
+    connection,
+  )).getSessionDetail(storedSessionId, profile: profile);
 
   ArtifactAuthorizationPolicy _artifactPolicy() {
     final host = Uri.tryParse(connection.baseUrl)?.host.trim().toLowerCase();
@@ -16249,10 +16242,6 @@ class ActiveChat {
       }
     }
   }
-
-  /// Calienta la conexión al gateway (ver [ApiClient.warmUp]). Lo llama el modo
-  /// voz al entrar para que el primer turno no pague el handshake en frío.
-  Future<void> warmUp() => _api.warmUp();
 
   /// Abre anticipadamente el canal oficial de chat. Además de reducir la
   /// latencia del primer prompt, ejecuta la reparación de credenciales del

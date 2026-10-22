@@ -164,12 +164,11 @@ void main() {
       },
     );
 
-    test('reachability and warm-up use the public status route', () async {
+    test('reachability uses the public status route', () async {
       final hermes = _Hermes();
       final client = clientFor(hermes);
       expect(await client.healthReachable(), isTrue);
       expect(await client.healthCheck(), isTrue);
-      await client.warmUp();
       expect(hermes.paths, contains('/api/status'));
       expect(hermes.gatewayHits, 0);
     });
