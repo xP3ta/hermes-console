@@ -38,6 +38,7 @@ import '../support/account_usage_fixtures.dart';
 import '../support/design_shots.dart' show loadDesignFonts;
 import '../support/in_memory_compression_restore_storage.dart';
 import '../support/spec070_fixtures.dart';
+import '../support/test_api_client.dart';
 
 final _clock = DateTime.now().copyWith(hour: 16, minute: 30, second: 0);
 double _ago(Duration d) => _clock.subtract(d).millisecondsSinceEpoch / 1000;
@@ -70,6 +71,10 @@ class _Client extends ApiClient {
         baseUrl: 'http://127.0.0.1:8642',
         apiKey: 'k',
         httpClient: MockClient((_) async => http.Response('{}', 404)),
+        profileDashboard: testDashboardClient(
+          baseUrl: 'http://127.0.0.1:8642',
+          httpClient: MockClient((_) async => http.Response('{}', 404)),
+        ),
       );
   final List<Session> sessions;
   @override
