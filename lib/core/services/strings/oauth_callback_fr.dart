@@ -1,7 +1,6 @@
-// English copy stub for Phase 3b.
 const Map<String, String> oauthCallbackFr = {
-  "successTitle": "Signed in",
-  "successBody": "You can close this tab and go back to Console.",
-  "failureTitle": "Sign-in didn't finish",
-  "failureBody": "Go back to Console and try again."
+  "successTitle": "Connexion réussie",
+  "successBody": "Tu peux fermer cet onglet et revenir à Console.",
+  "failureTitle": "La connexion n’a pas abouti",
+  "failureBody": "Reviens à Console et réessaie."
 };
