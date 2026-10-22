@@ -4,6 +4,7 @@ import 'package:hermes_android/core/models/desktop_control_center.dart';
 import 'package:hermes_android/core/screens/recovery_center_screen.dart';
 import 'package:hermes_android/core/services/desktop_control_gateway.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
+import 'package:hermes_android/core/widgets/hermes_notice.dart';
 import 'package:hermes_android/core/widgets/hermes_ui.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'support/quiet_feedback.dart';
@@ -17,6 +18,10 @@ class _RecoveryGateway implements HermesDesktopControlGateway {
   Object? listFailure;
   Object? diffFailure;
   Object? restoreFailure;
+  RecoveryRestoreResult restoreResult = const RecoveryRestoreResult(
+    success: true,
+    historyRemoved: 2,
+  );
   int listCalls = 0;
   int diffCalls = 0;
   int restoreCalls = 0;
@@ -47,7 +52,7 @@ class _RecoveryGateway implements HermesDesktopControlGateway {
     restoreCalls++;
     restoredHash = checkpointHash;
     if (restoreFailure case final failure?) throw failure;
-    return const RecoveryRestoreResult(success: true, historyRemoved: 2);
+    return restoreResult;
   }
 
   @override
@@ -152,6 +157,46 @@ void main() {
     expect(gateway.restoredHash, _hash);
     expect(gateway.listCalls, 2);
     expectRoutineFeedback(tester, 'Checkpoint restaurado.');
+  });
+
+  testWidgets('partial restore tells the user what Hermes left untouched', (
+    tester,
+  ) async {
+    final gateway = _RecoveryGateway()
+      ..timeline = _timeline()
+      ..recoveryDiff = const RecoveryDiff(stat: '', diff: '@@ -1 +1 @@\n-a\n+b')
+      ..restoreResult = RecoveryRestoreResult.fromJson(const {
+        'success': true,
+        'history_removed': 1,
+        'skipped_user_edits': ['/private/host/a.txt', 'b.txt'],
+        'skipped_oversize': ['big.bin'],
+        'failed_deletes': ['c.txt'],
+      });
+
+    await tester.pumpWidget(
+      _app(
+        RecoveryCenterScreen(gateway: gateway, runtimeSessionId: 'runtime-a'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('recovery-checkpoint-$_hash')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Restaurar checkpoint'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), _hash);
+    await tester.pump();
+    await tester.tap(find.text('Restaurar ahora'));
+    await tester.pumpAndSettle();
+
+    expect(gateway.restoreCalls, 1);
+    final notice = find.descendant(
+      of: find.byType(HermesNoticeCard),
+      matching: find.textContaining('2 archivos'),
+    );
+    expect(notice, findsOneWidget);
+    expect(find.textContaining('/private/host'), findsNothing);
+    expect(find.textContaining('1 archivo demasiado grande'), findsOneWidget);
+    expect(find.textContaining('1 archivo no se pudo borrar'), findsOneWidget);
   });
 
   testWidgets('read-only keeps restore disabled and sends no mutation', (
