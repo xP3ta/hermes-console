@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import '../../l10n/app_localizations.dart';
 import '../design/hermes_design.dart'
     show HermesSchedule, hermesFormatNextRun, showHermesScheduleBuilder;
+import '../services/notifications/notification_strings.dart'
+    show resolveNotificationLang;
 import '../theme/app_theme.dart';
 import '../widgets/hermes_ui.dart';
 import '../widgets/mission_profile_avatar.dart';
@@ -79,90 +81,46 @@ final class MissionBotRoutineSheetCopy {
     required this.custom,
   });
 
-  static const es = MissionBotRoutineSheetCopy(
-    title: 'Nueva rutina',
-    description: 'Programa algo para que este perfil lo haga por ti.',
-    botLabel: 'Perfil',
-    whatLabel: 'Qué',
-    whatHint: 'Describe qué debe hacer',
-    whatRequired: 'Escribe qué debe hacer el perfil.',
-    whenLabel: 'Cuándo',
-    customScheduleLabel: 'Expresión cron',
-    customScheduleHint: '0 9 * * *',
-    customScheduleRequired: 'Escribe una expresión cron.',
-    moreOptions: 'Más opciones',
-    optionalNameLabel: 'Nombre opcional',
-    optionalNameHint: 'Por ejemplo, Resumen de la mañana',
-    create: 'Crear rutina',
-    creating: 'Creando…',
-    genericError: 'No se pudo crear la rutina. Inténtalo de nuevo.',
-    dailyAtNine: 'Cada día · 09:00',
-    weekdaysAtNine: 'Días laborables · 09:00',
-    weeklyMondayAtNine: 'Cada lunes · 09:00',
-    monthlyAtNine: 'Cada mes · día 1, 09:00',
-    hourly: 'Cada hora',
-    everyFifteenMinutes: 'Cada 15 minutos',
-    custom: 'Personalizado',
-  );
+  /// Compatibility values for callers that inject a fixed copy object.
+  static final es = forLocale(const Locale('es'));
+  static final en = forLocale(const Locale('en'));
+  static final pt = forLocale(const Locale('pt'));
 
-  static const en = MissionBotRoutineSheetCopy(
-    title: 'New routine',
-    description: 'Schedule something for this profile to do for you.',
-    botLabel: 'Profile',
-    whatLabel: 'What',
-    whatHint: 'Describe what it should do',
-    whatRequired: 'Describe what the profile should do.',
-    whenLabel: 'When',
-    customScheduleLabel: 'Cron expression',
-    customScheduleHint: '0 9 * * *',
-    customScheduleRequired: 'Enter a cron expression.',
-    moreOptions: 'More options',
-    optionalNameLabel: 'Optional name',
-    optionalNameHint: 'For example, Morning brief',
-    create: 'Create routine',
-    creating: 'Creating…',
-    genericError: 'The routine could not be created. Try again.',
-    dailyAtNine: 'Every day · 09:00',
-    weekdaysAtNine: 'Weekdays · 09:00',
-    weeklyMondayAtNine: 'Every Monday · 09:00',
-    monthlyAtNine: 'Every month · day 1, 09:00',
-    hourly: 'Every hour',
-    everyFifteenMinutes: 'Every 15 minutes',
-    custom: 'Custom',
-  );
+  factory MissionBotRoutineSheetCopy.of(BuildContext context) =>
+      MissionBotRoutineSheetCopy.fromStrings(Strings.of(context));
 
   static MissionBotRoutineSheetCopy forLocale(Locale locale) =>
-      switch (locale.languageCode) {
-        'en' => en,
-        'pt' => pt,
-        _ => es,
-      };
+      MissionBotRoutineSheetCopy.fromStrings(
+        lookupStrings(Locale(resolveNotificationLang(locale.toLanguageTag()))),
+      );
 
-  static const pt = MissionBotRoutineSheetCopy(
-    title: 'Nova rotina',
-    description: 'Programe algo para este perfil fazer por você.',
-    botLabel: 'Perfil',
-    whatLabel: 'O quê',
-    whatHint: 'Descreva o que ele deve fazer',
-    whatRequired: 'Escreva o que o perfil deve fazer.',
-    whenLabel: 'Quando',
-    customScheduleLabel: 'Expressão cron',
-    customScheduleHint: '0 9 * * *',
-    customScheduleRequired: 'Escreva uma expressão cron.',
-    moreOptions: 'Mais opções',
-    optionalNameLabel: 'Nome opcional',
-    optionalNameHint: 'Por exemplo, Resumo da manhã',
-    create: 'Criar rotina',
-    creating: 'Criando…',
-    genericError: 'Não foi possível criar a rotina. Tente novamente.',
-    dailyAtNine: 'Todo dia · 09:00',
-    weekdaysAtNine: 'Dias úteis · 09:00',
-    weeklyMondayAtNine: 'Toda segunda-feira · 09:00',
-    monthlyAtNine: 'Todo mês · dia 1, 09:00',
-    hourly: 'A cada hora',
-    everyFifteenMinutes: 'A cada 15 minutos',
-    custom: 'Personalizado',
-  );
+  factory MissionBotRoutineSheetCopy.fromStrings(Strings strings) =>
+      MissionBotRoutineSheetCopy(
+        title: strings.i18n131RoutineTitle,
+        description: strings.i18n131RoutineDescription,
+        botLabel: strings.i18n131RoutineBotLabel,
+        whatLabel: strings.i18n131RoutineWhatLabel,
+        whatHint: strings.i18n131RoutineWhatHint,
+        whatRequired: strings.i18n131RoutineWhatRequired,
+        whenLabel: strings.i18n131RoutineWhenLabel,
+        customScheduleLabel: strings.i18n131RoutineCustomScheduleLabel,
+        customScheduleHint: strings.i18n131RoutineCustomScheduleHint,
+        customScheduleRequired: strings.i18n131RoutineCustomScheduleRequired,
+        moreOptions: strings.i18n131RoutineMoreOptions,
+        optionalNameLabel: strings.i18n131RoutineOptionalNameLabel,
+        optionalNameHint: strings.i18n131RoutineOptionalNameHint,
+        create: strings.i18n131RoutineCreate,
+        creating: strings.i18n131RoutineCreating,
+        genericError: strings.i18n131RoutineGenericError,
+        dailyAtNine: strings.i18n131RoutineDailyAtNine,
+        weekdaysAtNine: strings.i18n131RoutineWeekdaysAtNine,
+        weeklyMondayAtNine: strings.i18n131RoutineWeeklyMondayAtNine,
+        monthlyAtNine: strings.i18n131RoutineMonthlyAtNine,
+        hourly: strings.i18n131RoutineHourly,
+        everyFifteenMinutes: strings.i18n131RoutineEveryFifteenMinutes,
+        custom: strings.i18n131RoutineCustom,
+      );
+
 }
 
 class MissionBotRoutineSheet extends StatefulWidget {
@@ -210,7 +168,7 @@ class _MissionBotRoutineSheetState extends State<MissionBotRoutineSheet> {
 
   MissionBotRoutineSheetCopy get _copy =>
       widget.copy ??
-      MissionBotRoutineSheetCopy.forLocale(Localizations.localeOf(context));
+      MissionBotRoutineSheetCopy.of(context);
 
   @override
   void dispose() {

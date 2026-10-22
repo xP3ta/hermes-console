@@ -10705,5 +10705,97 @@
   "i18n131RoomsNoMembersChosen": "Toca un perfil para añadirlo a la sala.",
   "@i18n131RoomsNoMembersChosen": {
     "description": "i18n131: Preserved ES/EN/PT; rooms."
+  },
+  "i18n131RoutineTitle": "Nueva rutina",
+  "@i18n131RoutineTitle": {
+    "description": "i18n131: Preserved ES/EN/PT; routine."
+  },
+  "i18n131RoutineDescription": "Programa algo para que este perfil lo haga por ti.",
+  "@i18n131RoutineDescription": {
+    "description": "i18n131: Preserved ES/EN/PT; routine."
+  },
+  "i18n131RoutineBotLabel": "Perfil",
+  "@i18n131RoutineBotLabel": {
+    "description": "i18n131: Preserved ES/EN/PT; routine."
+  },
+  "i18n131RoutineWhatLabel": "Qué",
+  "@i18n131RoutineWhatLabel": {
+    "description": "i18n131: Preserved ES/EN/PT; routine."
+  },
+  "i18n131RoutineWhatHint": "Describe qué debe hacer",
+  "@i18n131RoutineWhatHint": {
+    "description": "i18n131: Preserved ES/EN/PT; routine."
+  },
+  "i18n131RoutineWhatRequired": "Escribe qué debe hacer el perfil.",
+  "@i18n131RoutineWhatRequired": {
+    "description": "i18n131: Preserved ES/EN/PT; routine."
+  },
+  "i18n131RoutineWhenLabel": "Cuándo",
+  "@i18n131RoutineWhenLabel": {
+    "description": "i18n131: Preserved ES/EN/PT; routine."
+  },
+  "i18n131RoutineCustomScheduleLabel": "Expresión cron",
+  "@i18n131RoutineCustomScheduleLabel": {
+    "description": "i18n131: Preserved ES/EN/PT; routine."
+  },
+  "i18n131RoutineCustomScheduleHint": "0 9 * * *",
+  "@i18n131RoutineCustomScheduleHint": {
+    "description": "i18n131: Preserved ES/EN/PT; routine."
+  },
+  "i18n131RoutineCustomScheduleRequired": "Escribe una expresión cron.",
+  "@i18n131RoutineCustomScheduleRequired": {
+    "description": "i18n131: Preserved ES/EN/PT; routine."
+  },
+  "i18n131RoutineMoreOptions": "Más opciones",
+  "@i18n131RoutineMoreOptions": {
+    "description": "i18n131: Preserved ES/EN/PT; routine."
+  },
+  "i18n131RoutineOptionalNameLabel": "Nombre opcional",
+  "@i18n131RoutineOptionalNameLabel": {
+    "description": "i18n131: Preserved ES/EN/PT; routine."
+  },
+  "i18n131RoutineOptionalNameHint": "Por ejemplo, Resumen de la mañana",
+  "@i18n131RoutineOptionalNameHint": {
+    "description": "i18n131: Preserved ES/EN/PT; routine."
+  },
+  "i18n131RoutineCreate": "Crear rutina",
+  "@i18n131RoutineCreate": {
+    "description": "i18n131: Preserved ES/EN/PT; routine."
+  },
+  "i18n131RoutineCreating": "Creando…",
+  "@i18n131RoutineCreating": {
+    "description": "i18n131: Preserved ES/EN/PT; routine."
+  },
+  "i18n131RoutineGenericError": "No se pudo crear la rutina. Inténtalo de nuevo.",
+  "@i18n131RoutineGenericError": {
+    "description": "i18n131: Preserved ES/EN/PT; routine."
+  },
+  "i18n131RoutineDailyAtNine": "Cada día · 09:00",
+  "@i18n131RoutineDailyAtNine": {
+    "description": "i18n131: Preserved ES/EN/PT; routine."
+  },
+  "i18n131RoutineWeekdaysAtNine": "Días laborables · 09:00",
+  "@i18n131RoutineWeekdaysAtNine": {
+    "description": "i18n131: Preserved ES/EN/PT; routine."
+  },
+  "i18n131RoutineWeeklyMondayAtNine": "Cada lunes · 09:00",
+  "@i18n131RoutineWeeklyMondayAtNine": {
+    "description": "i18n131: Preserved ES/EN/PT; routine."
+  },
+  "i18n131RoutineMonthlyAtNine": "Cada mes · día 1, 09:00",
+  "@i18n131RoutineMonthlyAtNine": {
+    "description": "i18n131: Preserved ES/EN/PT; routine."
+  },
+  "i18n131RoutineHourly": "Cada hora",
+  "@i18n131RoutineHourly": {
+    "description": "i18n131: Preserved ES/EN/PT; routine."
+  },
+  "i18n131RoutineEveryFifteenMinutes": "Cada 15 minutos",
+  "@i18n131RoutineEveryFifteenMinutes": {
+    "description": "i18n131: Preserved ES/EN/PT; routine."
+  },
+  "i18n131RoutineCustom": "Personalizado",
+  "@i18n131RoutineCustom": {
+    "description": "i18n131: Preserved ES/EN/PT; routine."
   }
 }
