@@ -4426,5 +4426,6 @@
   "recoveryCenterRestoredPartial": "체크포인트를 복원했습니다(일부 예외 있음).",
   "recoveryCenterSkippedUserEdits": "{count, plural, other{체크포인트 이후 직접 수정하여 파일 {count}개를 그대로 두었습니다.}}",
   "recoveryCenterSkippedOversize": "{count, plural, other{크기가 너무 커서 파일 {count}개를 복원하지 않았습니다.}}",
-  "recoveryCenterFailedDeletes": "{count, plural, other{파일 {count}개를 삭제하지 못했습니다.}}"
+  "recoveryCenterFailedDeletes": "{count, plural, other{파일 {count}개를 삭제하지 못했습니다.}}",
+  "cphPluginBlockedByScan": "보안 검사에서 이 플러그인을 차단했습니다. 변경된 내용은 없습니다."
 }

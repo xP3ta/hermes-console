@@ -8861,5 +8861,6 @@
         "type": "int"
       }
     }
-  }
+  },
+  "cphPluginBlockedByScan": "El escaneo de seguridad bloqueó este plugin. No se cambió nada."
 }
