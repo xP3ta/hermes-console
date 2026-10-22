@@ -1,7 +1,6 @@
-// English copy stub for Phase 3b.
 const Map<String, String> oauthCallbackKo = {
-  "successTitle": "Signed in",
-  "successBody": "You can close this tab and go back to Console.",
-  "failureTitle": "Sign-in didn't finish",
-  "failureBody": "Go back to Console and try again."
+  "successTitle": "로그인 완료",
+  "successBody": "이 탭을 닫고 Console로 돌아가세요.",
+  "failureTitle": "로그인을 완료하지 못했습니다",
+  "failureBody": "Console로 돌아가 다시 시도하세요."
 };
