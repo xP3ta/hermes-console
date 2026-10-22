@@ -4600,131 +4600,131 @@
   "@i18n131RecoveredTurnPending": {
     "description": "i18n131: Translated into Korean."
   },
-  "i18n131McAllAgents": "All profiles",
+  "i18n131McAllAgents": "모든 프로필",
   "@i18n131McAllAgents": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McWorkspaces": "Workspaces",
+  "i18n131McWorkspaces": "작업 공간",
   "@i18n131McWorkspaces": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McWorkspaceAgentCountOne": "{count} profile",
+  "i18n131McWorkspaceAgentCountOne": "프로필 {count}개",
   "@i18n131McWorkspaceAgentCountOne": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy.",
+    "description": "i18n131: Phase 3B translated; MissionControlCopy.",
     "placeholders": {
       "count": {
         "type": "int"
       }
     }
   },
-  "i18n131McWorkspaceAgentCountOther": "{count} profiles",
+  "i18n131McWorkspaceAgentCountOther": "프로필 {count}개",
   "@i18n131McWorkspaceAgentCountOther": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy.",
+    "description": "i18n131: Phase 3B translated; MissionControlCopy.",
     "placeholders": {
       "count": {
         "type": "int"
       }
     }
   },
-  "i18n131McCreateOrganization": "Create workspace",
+  "i18n131McCreateOrganization": "작업 공간 만들기",
   "@i18n131McCreateOrganization": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McEditOrganization": "Edit workspace",
+  "i18n131McEditOrganization": "작업 공간 편집",
   "@i18n131McEditOrganization": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McOrganizationName": "Workspace name",
+  "i18n131McOrganizationName": "작업 공간 이름",
   "@i18n131McOrganizationName": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McOrganizationHint": "e.g. Homelab",
+  "i18n131McOrganizationHint": "예: 홈랩",
   "@i18n131McOrganizationHint": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McChooseProfiles": "Choose profiles",
+  "i18n131McChooseProfiles": "프로필 선택",
   "@i18n131McChooseProfiles": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McDelete": "Delete",
+  "i18n131McDelete": "삭제",
   "@i18n131McDelete": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McDeleteOrganizationTitle": "Delete workspace?",
+  "i18n131McDeleteOrganizationTitle": "작업 공간을 삭제할까요?",
   "@i18n131McDeleteOrganizationTitle": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McDeleteOrganizationBody": "Only this local workspace is removed. Hermes profiles are not changed.",
+  "i18n131McDeleteOrganizationBody": "이 기기의 작업 공간만 삭제됩니다. Hermes 프로필은 변경되지 않습니다.",
   "@i18n131McDeleteOrganizationBody": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McLoading": "Loading profiles…",
+  "i18n131McLoading": "프로필 불러오는 중…",
   "@i18n131McLoading": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McRetry": "Retry",
+  "i18n131McRetry": "다시 시도",
   "@i18n131McRetry": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McRefresh": "Refresh",
+  "i18n131McRefresh": "새로고침",
   "@i18n131McRefresh": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McTasks": "Tasks",
+  "i18n131McTasks": "작업",
   "@i18n131McTasks": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McActivity": "Activity",
+  "i18n131McActivity": "활동",
   "@i18n131McActivity": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McShowLess": "Show less",
+  "i18n131McShowLess": "간략히 보기",
   "@i18n131McShowLess": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McSharedRoomName": "Room name",
+  "i18n131McSharedRoomName": "대화방 이름",
   "@i18n131McSharedRoomName": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McChooseSharedMembers": "Choose official members",
+  "i18n131McChooseSharedMembers": "공식 구성원 선택",
   "@i18n131McChooseSharedMembers": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McRoomRefreshFailed": "Could not refresh this room. Reopen it to reconnect.",
+  "i18n131McRoomRefreshFailed": "대화방을 새로고침하지 못했습니다. 다시 열어 연결하세요.",
   "@i18n131McRoomRefreshFailed": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McNewAgent": "New profile",
+  "i18n131McNewAgent": "새 프로필",
   "@i18n131McNewAgent": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McNoBots": "A profile has its own name, memory, skills and chat. Create the first one to get started.",
+  "i18n131McNoBots": "프로필마다 이름, 메모리, 스킬, 대화가 있습니다. 첫 프로필을 만들어 시작하세요.",
   "@i18n131McNoBots": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McSearchAgents": "Search profiles",
+  "i18n131McSearchAgents": "프로필 검색",
   "@i18n131McSearchAgents": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McClearSearch": "Clear search",
+  "i18n131McClearSearch": "검색 지우기",
   "@i18n131McClearSearch": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McActiveNow": "Active now",
+  "i18n131McActiveNow": "현재 활동 중",
   "@i18n131McActiveNow": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McBotRosterUpdateFailed": "Hermes did not update this profile.",
+  "i18n131McBotRosterUpdateFailed": "Hermes가 이 프로필을 업데이트하지 못했습니다.",
   "@i18n131McBotRosterUpdateFailed": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McNoMatchingAgents": "No matching profiles",
+  "i18n131McNoMatchingAgents": "일치하는 프로필 없음",
   "@i18n131McNoMatchingAgents": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McAttentionSummaryOne": "{approvals} approval · {blocked} blocked",
+  "i18n131McAttentionSummaryOne": "승인 {approvals}건 · 차단 {blocked}건",
   "@i18n131McAttentionSummaryOne": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy.",
+    "description": "i18n131: Phase 3B translated; MissionControlCopy.",
     "placeholders": {
       "approvals": {
         "type": "int"
@@ -4734,9 +4734,9 @@
       }
     }
   },
-  "i18n131McAttentionSummaryOther": "{approvals} approvals · {blocked} blocked",
+  "i18n131McAttentionSummaryOther": "승인 {approvals}건 · 차단 {blocked}건",
   "@i18n131McAttentionSummaryOther": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy.",
+    "description": "i18n131: Phase 3B translated; MissionControlCopy.",
     "placeholders": {
       "approvals": {
         "type": "int"
@@ -4746,831 +4746,831 @@
       }
     }
   },
-  "i18n131McNeedsYou": "Needs you",
+  "i18n131McNeedsYou": "사용자 확인 필요",
   "@i18n131McNeedsYou": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McUsage": "Usage",
+  "i18n131McUsage": "사용량",
   "@i18n131McUsage": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McProfilesUnavailable": "This Hermes installation does not publish profiles.",
+  "i18n131McProfilesUnavailable": "이 Hermes 설치에서는 프로필 정보를 제공하지 않습니다.",
   "@i18n131McProfilesUnavailable": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McReview": "Review",
+  "i18n131McReview": "검토",
   "@i18n131McReview": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McMemory": "Memory",
+  "i18n131McMemory": "메모리",
   "@i18n131McMemory": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McStaleProfiles": "Some saved profiles no longer exist. Edit the organization to update it.",
+  "i18n131McStaleProfiles": "저장된 프로필 중 일부가 더 이상 존재하지 않습니다. 작업 공간을 편집하여 업데이트하세요.",
   "@i18n131McStaleProfiles": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McUnattributedSessionsOne": "{count} session did not publish a profile owner. They are included only in overall usage.",
+  "i18n131McUnattributedSessionsOne": "세션 {count}개의 소유 프로필이 공개되지 않았습니다. 전체 사용량에만 포함됩니다.",
   "@i18n131McUnattributedSessionsOne": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy.",
+    "description": "i18n131: Phase 3B translated; MissionControlCopy.",
     "placeholders": {
       "count": {
         "type": "int"
       }
     }
   },
-  "i18n131McUnattributedSessionsOther": "{count} sessions did not publish a profile owner. They are included only in overall usage.",
+  "i18n131McUnattributedSessionsOther": "세션 {count}개의 소유 프로필이 공개되지 않았습니다. 전체 사용량에만 포함됩니다.",
   "@i18n131McUnattributedSessionsOther": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy.",
+    "description": "i18n131: Phase 3B translated; MissionControlCopy.",
     "placeholders": {
       "count": {
         "type": "int"
       }
     }
   },
-  "i18n131McWorking": "working",
+  "i18n131McWorking": "작업 중",
   "@i18n131McWorking": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McApprovals": "approvals",
+  "i18n131McApprovals": "승인",
   "@i18n131McApprovals": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McBlocked": "blocked",
+  "i18n131McBlocked": "차단됨",
   "@i18n131McBlocked": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McTokens": "tokens",
+  "i18n131McTokens": "토큰",
   "@i18n131McTokens": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McUnknown": "Unknown",
+  "i18n131McUnknown": "알 수 없음",
   "@i18n131McUnknown": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McModelLabel": "Model",
+  "i18n131McModelLabel": "모델",
   "@i18n131McModelLabel": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McEditBotTitle": "Edit profile",
+  "i18n131McEditBotTitle": "프로필 편집",
   "@i18n131McEditBotTitle": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McBotDisplayName": "Display name",
+  "i18n131McBotDisplayName": "표시 이름",
   "@i18n131McBotDisplayName": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McBotDisplayNameHint": "e.g. Researcher",
+  "i18n131McBotDisplayNameHint": "예: 연구원",
   "@i18n131McBotDisplayNameHint": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McBotSpriteHint": "The sprite becomes this profile's picture.",
+  "i18n131McBotSpriteHint": "스프라이트가 이 프로필의 사진으로 사용됩니다.",
   "@i18n131McBotSpriteHint": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McBotSpriteSearchHint": "Search sprites…",
+  "i18n131McBotSpriteSearchHint": "스프라이트 검색…",
   "@i18n131McBotSpriteSearchHint": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McBotSpriteEmpty": "No sprites available.",
+  "i18n131McBotSpriteEmpty": "사용 가능한 스프라이트가 없습니다.",
   "@i18n131McBotSpriteEmpty": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McBotSpriteLoadFailed": "Couldn't load the list.",
+  "i18n131McBotSpriteLoadFailed": "목록을 불러오지 못했습니다.",
   "@i18n131McBotSpriteLoadFailed": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McBotSpriteUnsupported": "This Hermes installation does not support profile sprites.",
+  "i18n131McBotSpriteUnsupported": "이 Hermes 설치에서는 프로필 스프라이트를 지원하지 않습니다.",
   "@i18n131McBotSpriteUnsupported": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McBotEditorSaved": "Profile updated",
+  "i18n131McBotEditorSaved": "프로필 업데이트됨",
   "@i18n131McBotEditorSaved": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McBotEditorSaveFailed": "Hermes did not apply the changes.",
+  "i18n131McBotEditorSaveFailed": "Hermes가 변경 사항을 적용하지 못했습니다.",
   "@i18n131McBotEditorSaveFailed": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McCreateAgentSubtitle": "A profile has its own name, memory, skills and chat. It can message your other profiles.",
+  "i18n131McCreateAgentSubtitle": "프로필마다 이름, 메모리, 스킬, 대화가 있으며 다른 프로필에 메시지를 보낼 수 있습니다.",
   "@i18n131McCreateAgentSubtitle": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McAgentNameLabel": "Name",
+  "i18n131McAgentNameLabel": "이름",
   "@i18n131McAgentNameLabel": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McAgentNameInvalid": "Use lowercase letters, numbers, dashes and underscores.",
+  "i18n131McAgentNameInvalid": "영문 소문자, 숫자, 하이픈, 밑줄을 사용하세요.",
   "@i18n131McAgentNameInvalid": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McAgentNameTaken": "A profile with this name already exists.",
+  "i18n131McAgentNameTaken": "이 이름의 프로필이 이미 있습니다.",
   "@i18n131McAgentNameTaken": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McAgentTitleLabel": "Title",
+  "i18n131McAgentTitleLabel": "직함",
   "@i18n131McAgentTitleLabel": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McAgentDescriptionLabel": "Description",
+  "i18n131McAgentDescriptionLabel": "설명",
   "@i18n131McAgentDescriptionLabel": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McAgentDescriptionHint": "What should this profile help with?",
+  "i18n131McAgentDescriptionHint": "이 프로필이 어떤 일을 도와줄까요?",
   "@i18n131McAgentDescriptionHint": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McModelInherited": "Inherited from the launch profile",
+  "i18n131McModelInherited": "실행 프로필에서 상속",
   "@i18n131McModelInherited": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McProviderLabel": "Provider",
+  "i18n131McProviderLabel": "제공업체",
   "@i18n131McProviderLabel": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McAdvanced": "Advanced",
+  "i18n131McAdvanced": "고급",
   "@i18n131McAdvanced": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McCloneFromLabel": "Clone from profile",
+  "i18n131McCloneFromLabel": "복제할 원본 프로필",
   "@i18n131McCloneFromLabel": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McCloneFresh": "Fresh profile (bundled skills)",
+  "i18n131McCloneFresh": "새 프로필(기본 제공 스킬)",
   "@i18n131McCloneFresh": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McShareAuthLabel": "Share keys & accounts with the main profile",
+  "i18n131McShareAuthLabel": "기본 프로필과 키 및 계정 공유",
   "@i18n131McShareAuthLabel": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McShareAuthHint": "Subscriptions, OAuth logins, and API keys stay shared (not copied), so token refreshes never invalidate each other. Uncheck for an isolated snapshot copy.",
+  "i18n131McShareAuthHint": "구독, OAuth 로그인, API 키는 복사하지 않고 공유하므로 토큰을 갱신해도 서로 무효화되지 않습니다. 별도의 스냅샷 사본을 만들려면 선택을 해제하세요.",
   "@i18n131McShareAuthHint": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McNoSkillsLabel": "Create empty (skip bundled skills)",
+  "i18n131McNoSkillsLabel": "빈 프로필 만들기(기본 제공 스킬 제외)",
   "@i18n131McNoSkillsLabel": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McSoulOptionalLabel": "SOUL.md (optional)",
+  "i18n131McSoulOptionalLabel": "SOUL.md(선택 사항)",
   "@i18n131McSoulOptionalLabel": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McSoulOptionalHint": "Leave blank to auto-generate from name/title/description.",
+  "i18n131McSoulOptionalHint": "비워 두면 이름, 직함, 설명을 바탕으로 자동 생성됩니다.",
   "@i18n131McSoulOptionalHint": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McCreateAgentSubmit": "Create profile",
+  "i18n131McCreateAgentSubmit": "프로필 만들기",
   "@i18n131McCreateAgentSubmit": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McCreateAgentError": "Could not create the profile: {detail}",
+  "i18n131McCreateAgentError": "프로필을 만들지 못했습니다: {detail}",
   "@i18n131McCreateAgentError": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy.",
+    "description": "i18n131: Phase 3B translated; MissionControlCopy.",
     "placeholders": {
       "detail": {
         "type": "String"
       }
     }
   },
-  "i18n131McAgentCreated": "Profile @{name} created. Add it to a room when you are ready.",
+  "i18n131McAgentCreated": "@{name} 프로필이 생성되었습니다. 준비되면 대화방에 추가하세요.",
   "@i18n131McAgentCreated": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy.",
+    "description": "i18n131: Phase 3B translated; MissionControlCopy.",
     "placeholders": {
       "name": {
         "type": "String"
       }
     }
   },
-  "i18n131McStatusIdle": "Idle",
+  "i18n131McStatusIdle": "대기 중",
   "@i18n131McStatusIdle": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McStatusThinking": "Thinking",
+  "i18n131McStatusThinking": "생각 중",
   "@i18n131McStatusThinking": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McStatusWorking": "Working",
+  "i18n131McStatusWorking": "작업 중",
   "@i18n131McStatusWorking": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McStatusResponding": "Responding",
+  "i18n131McStatusResponding": "응답 중",
   "@i18n131McStatusResponding": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McStatusBlocked": "Blocked",
+  "i18n131McStatusBlocked": "차단됨",
   "@i18n131McStatusBlocked": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McStatusApprovalRequired": "Approval required",
+  "i18n131McStatusApprovalRequired": "승인 필요",
   "@i18n131McStatusApprovalRequired": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McActivityLabelSessionUpdated": "Session active",
+  "i18n131McActivityLabelSessionUpdated": "세션 활동 중",
   "@i18n131McActivityLabelSessionUpdated": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McActivityLabelTaskCreated": "Task created",
+  "i18n131McActivityLabelTaskCreated": "작업 생성됨",
   "@i18n131McActivityLabelTaskCreated": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McActivityLabelTaskStarted": "Task started",
+  "i18n131McActivityLabelTaskStarted": "작업 시작됨",
   "@i18n131McActivityLabelTaskStarted": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McActivityLabelTaskCompleted": "Task completed",
+  "i18n131McActivityLabelTaskCompleted": "작업 완료됨",
   "@i18n131McActivityLabelTaskCompleted": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McActivityLabelTaskBlocked": "Task blocked",
+  "i18n131McActivityLabelTaskBlocked": "작업 차단됨",
   "@i18n131McActivityLabelTaskBlocked": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McBotChat": "Bot Chat",
+  "i18n131McBotChat": "봇 대화",
   "@i18n131McBotChat": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McSkills": "Skills",
+  "i18n131McSkills": "스킬",
   "@i18n131McSkills": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McSoul": "SOUL",
+  "i18n131McSoul": "페르소나",
   "@i18n131McSoul": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McInput": "input",
+  "i18n131McInput": "입력",
   "@i18n131McInput": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McOutput": "output",
+  "i18n131McOutput": "출력",
   "@i18n131McOutput": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McReasoning": "reasoning",
+  "i18n131McReasoning": "추론",
   "@i18n131McReasoning": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McManagerLabel": "Manager",
+  "i18n131McManagerLabel": "관리자",
   "@i18n131McManagerLabel": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
   "i18n131McAgentNameHint": "inbox-triage",
   "@i18n131McAgentNameHint": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McAgentTitleHint": "Inbox Triage",
+  "i18n131McAgentTitleHint": "받은 편지함 분류",
   "@i18n131McAgentTitleHint": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McStatusError": "Error",
+  "i18n131McStatusError": "오류",
   "@i18n131McStatusError": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131AiScreenTitle": "Server integrations",
+  "i18n131AiScreenTitle": "서버 연동",
   "@i18n131AiScreenTitle": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiEntryTitle": "Server integrations",
+  "i18n131AiEntryTitle": "서버 연동",
   "@i18n131AiEntryTitle": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiEntryBody": "Manual MCP, OAuth, webhooks and server-side A2A status.",
+  "i18n131AiEntryBody": "수동 MCP 설정, OAuth, 웹훅 및 서버 측 A2A 상태를 확인합니다.",
   "@i18n131AiEntryBody": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiSectionLabel": "Integration sections",
+  "i18n131AiSectionLabel": "연동 항목",
   "@i18n131AiSectionLabel": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiServerTab": "Server",
+  "i18n131AiServerTab": "서버",
   "@i18n131AiServerTab": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiReadOnly": "This instance is read-only. You can inspect state, but server changes are disabled.",
+  "i18n131AiReadOnly": "이 인스턴스는 읽기 전용입니다. 상태를 확인할 수 있지만 서버를 변경할 수는 없습니다.",
   "@i18n131AiReadOnly": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiRefresh": "Refresh",
+  "i18n131AiRefresh": "새로고침",
   "@i18n131AiRefresh": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiRetry": "Retry",
+  "i18n131AiRetry": "다시 시도",
   "@i18n131AiRetry": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiCancel": "Cancel",
+  "i18n131AiCancel": "취소",
   "@i18n131AiCancel": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiClose": "Close",
+  "i18n131AiClose": "닫기",
   "@i18n131AiClose": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiDone": "Done",
+  "i18n131AiDone": "완료",
   "@i18n131AiDone": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiCopy": "Copy",
+  "i18n131AiCopy": "복사",
   "@i18n131AiCopy": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiCopied": "Copied.",
+  "i18n131AiCopied": "복사되었습니다.",
   "@i18n131AiCopied": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiDelete": "Delete",
+  "i18n131AiDelete": "삭제",
   "@i18n131AiDelete": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiMoreOptions": "More options",
+  "i18n131AiMoreOptions": "추가 옵션",
   "@i18n131AiMoreOptions": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiMcpIntro": "Add a server with the same individual create contract as Hermes Desktop. Values entered here are sent once and are not saved by the app.",
+  "i18n131AiMcpIntro": "Hermes Desktop과 동일한 개별 생성 방식으로 서버를 추가합니다. 입력한 값은 한 번만 전송되며 앱에 저장되지 않습니다.",
   "@i18n131AiMcpIntro": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiAddMcp": "Add MCP server manually",
+  "i18n131AiAddMcp": "MCP 서버 수동 추가",
   "@i18n131AiAddMcp": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiAddMcpBody": "Guided setup for a local command or an HTTP endpoint.",
+  "i18n131AiAddMcpBody": "로컬 명령어나 HTTP 엔드포인트를 안내에 따라 설정합니다.",
   "@i18n131AiAddMcpBody": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiNoMcpPut": "Existing servers are never edited by replacing the full MCP map, because redacted credentials could be lost.",
+  "i18n131AiNoMcpPut": "가려진 인증 정보가 손실될 수 있으므로 전체 MCP 맵을 교체하는 방식으로 기존 서버를 수정하지 않습니다.",
   "@i18n131AiNoMcpPut": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiManualMcpUnavailable": "This Hermes version does not publish individual MCP provisioning.",
+  "i18n131AiManualMcpUnavailable": "이 Hermes 버전에서는 개별 MCP 서버 추가 기능을 제공하지 않습니다.",
   "@i18n131AiManualMcpUnavailable": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiMcpFormTitle": "New MCP server",
+  "i18n131AiMcpFormTitle": "새 MCP 서버",
   "@i18n131AiMcpFormTitle": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiTransport": "Transport",
+  "i18n131AiTransport": "전송 방식",
   "@i18n131AiTransport": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiStdio": "Local command",
+  "i18n131AiStdio": "로컬 명령어",
   "@i18n131AiStdio": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiName": "Name",
+  "i18n131AiName": "이름",
   "@i18n131AiName": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiNameHint": "e.g. reports",
+  "i18n131AiNameHint": "예: reports",
   "@i18n131AiNameHint": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiCommand": "Command",
+  "i18n131AiCommand": "명령어",
   "@i18n131AiCommand": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiCommandHint": "e.g. npx",
+  "i18n131AiCommandHint": "예: npx",
   "@i18n131AiCommandHint": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiArguments": "Arguments",
+  "i18n131AiArguments": "인수",
   "@i18n131AiArguments": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiArgumentsHint": "One argument per line. No shell parsing is applied.",
+  "i18n131AiArgumentsHint": "한 줄에 인수 하나씩 입력하세요. 셸 구문 분석은 적용되지 않습니다.",
   "@i18n131AiArgumentsHint": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiEnvironment": "Environment variables",
+  "i18n131AiEnvironment": "환경 변수",
   "@i18n131AiEnvironment": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiEnvironmentHint": "Values remain in memory only until this form is submitted or closed.",
+  "i18n131AiEnvironmentHint": "값은 이 양식을 제출하거나 닫을 때까지만 메모리에 유지됩니다.",
   "@i18n131AiEnvironmentHint": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiVariableName": "Variable",
+  "i18n131AiVariableName": "변수",
   "@i18n131AiVariableName": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiVariableValue": "Value",
+  "i18n131AiVariableValue": "값",
   "@i18n131AiVariableValue": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiAddVariable": "Add variable",
+  "i18n131AiAddVariable": "변수 추가",
   "@i18n131AiAddVariable": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiRemoveVariable": "Remove variable",
+  "i18n131AiRemoveVariable": "변수 삭제",
   "@i18n131AiRemoveVariable": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
   "i18n131AiEndpointUrl": "MCP URL",
   "@i18n131AiEndpointUrl": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiEndpointHint": "HTTPS, or HTTP only on a private LAN/Tailscale address.",
+  "i18n131AiEndpointHint": "HTTPS를 사용하세요. HTTP는 사설 LAN/Tailscale 주소에서만 허용됩니다.",
   "@i18n131AiEndpointHint": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiAuthentication": "Authentication",
+  "i18n131AiAuthentication": "인증",
   "@i18n131AiAuthentication": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiAuthNone": "None",
+  "i18n131AiAuthNone": "없음",
   "@i18n131AiAuthNone": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiAuthHeader": "Bearer header",
+  "i18n131AiAuthHeader": "Bearer 헤더",
   "@i18n131AiAuthHeader": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiAuthOauth": "OAuth in browser",
+  "i18n131AiAuthOauth": "브라우저에서 OAuth 인증",
   "@i18n131AiAuthOauth": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiBearerToken": "Bearer token",
+  "i18n131AiBearerToken": "Bearer 토큰",
   "@i18n131AiBearerToken": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiBearerHint": "Sent once to Hermes and never stored by the app.",
+  "i18n131AiBearerHint": "Hermes에 한 번만 전송되며 앱에 저장되지 않습니다.",
   "@i18n131AiBearerHint": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiCreateMcp": "Add server",
+  "i18n131AiCreateMcp": "서버 추가",
   "@i18n131AiCreateMcp": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiMcpCreated": "MCP server added.",
+  "i18n131AiMcpCreated": "MCP 서버가 추가되었습니다.",
   "@i18n131AiMcpCreated": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiInvalidForm": "Check the highlighted fields and their examples.",
+  "i18n131AiInvalidForm": "강조 표시된 항목과 입력 예시를 확인하세요.",
   "@i18n131AiInvalidForm": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiIncompleteEnvironment": "Each environment row needs both a variable and a value.",
+  "i18n131AiIncompleteEnvironment": "각 환경 변수 행에 변수와 값을 모두 입력하세요.",
   "@i18n131AiIncompleteEnvironment": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiAuthorize": "Authorize OAuth",
+  "i18n131AiAuthorize": "OAuth 인증 허용",
   "@i18n131AiAuthorize": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiOauthTitle": "Authorize MCP server",
+  "i18n131AiOauthTitle": "MCP 서버 인증 허용",
   "@i18n131AiOauthTitle": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiOauthBody": "Hermes receives the callback. This app only opens the authorization page and checks the short-lived flow while this window is visible.",
+  "i18n131AiOauthBody": "Hermes가 콜백을 수신합니다. 이 앱은 인증 페이지를 열고 이 창이 표시되는 동안에만 임시 인증 절차의 상태를 확인합니다.",
   "@i18n131AiOauthBody": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiOpenBrowser": "Open authorization page",
+  "i18n131AiOpenBrowser": "인증 페이지 열기",
   "@i18n131AiOpenBrowser": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiOpeningBrowserFailed": "Android could not open the authorization page.",
+  "i18n131AiOpeningBrowserFailed": "Android에서 인증 페이지를 열지 못했습니다.",
   "@i18n131AiOpeningBrowserFailed": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiOauthWaiting": "Waiting for authorization…",
+  "i18n131AiOauthWaiting": "인증 대기 중…",
   "@i18n131AiOauthWaiting": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiOauthApproved": "Authorization complete.",
+  "i18n131AiOauthApproved": "인증이 완료되었습니다.",
   "@i18n131AiOauthApproved": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiOauthError": "Hermes reported an authorization error.",
+  "i18n131AiOauthError": "Hermes에서 인증 오류를 보고했습니다.",
   "@i18n131AiOauthError": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiOauthExpired": "This authorization flow expired. Start it again.",
+  "i18n131AiOauthExpired": "인증 절차가 만료되었습니다. 다시 시작하세요.",
   "@i18n131AiOauthExpired": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiOauthUnknown": "Hermes returned an unknown authorization state.",
+  "i18n131AiOauthUnknown": "Hermes가 알 수 없는 인증 상태를 반환했습니다.",
   "@i18n131AiOauthUnknown": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiOauthToolsOne": "{count} tool available",
+  "i18n131AiOauthToolsOne": "도구 {count}개 사용 가능",
   "@i18n131AiOauthToolsOne": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy.",
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy.",
     "placeholders": {
       "count": {
         "type": "int"
       }
     }
   },
-  "i18n131AiOauthToolsOther": "{count} tools available",
+  "i18n131AiOauthToolsOther": "도구 {count}개 사용 가능",
   "@i18n131AiOauthToolsOther": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy.",
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy.",
     "placeholders": {
       "count": {
         "type": "int"
       }
     }
   },
-  "i18n131AiWebhooksIntro": "Webhooks are an official Hermes gateway platform. Subscriptions hot-reload after the receiver is enabled.",
+  "i18n131AiWebhooksIntro": "웹훅은 Hermes의 공식 게이트웨이 플랫폼입니다. 수신기를 활성화하면 구독 변경 사항이 즉시 반영됩니다.",
   "@i18n131AiWebhooksIntro": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiWebhooksUnavailable": "This Hermes version does not publish webhook administration.",
+  "i18n131AiWebhooksUnavailable": "이 Hermes 버전에서는 웹훅 관리 기능을 제공하지 않습니다.",
   "@i18n131AiWebhooksUnavailable": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiWebhookLoadFailed": "Webhooks could not be loaded.",
+  "i18n131AiWebhookLoadFailed": "웹훅을 불러오지 못했습니다.",
   "@i18n131AiWebhookLoadFailed": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiWebhooksDisabled": "Webhook receiver disabled",
+  "i18n131AiWebhooksDisabled": "웹훅 수신기 비활성화됨",
   "@i18n131AiWebhooksDisabled": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiWebhooksDisabledBody": "Enable it to accept incoming HTTP events. Hermes may need to restart the Gateway.",
+  "i18n131AiWebhooksDisabledBody": "수신 HTTP 이벤트를 받으려면 활성화하세요. Hermes가 게이트웨이를 다시 시작해야 할 수 있습니다.",
   "@i18n131AiWebhooksDisabledBody": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiEnableWebhooks": "Enable webhooks",
+  "i18n131AiEnableWebhooks": "웹훅 활성화",
   "@i18n131AiEnableWebhooks": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiEnableWarningTitle": "Enable webhook receiver?",
+  "i18n131AiEnableWarningTitle": "웹훅 수신기를 활성화할까요?",
   "@i18n131AiEnableWarningTitle": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiEnableWarningBody": "Hermes may restart the Gateway. Active chats can reconnect while the receiver comes online.",
+  "i18n131AiEnableWarningBody": "Hermes가 게이트웨이를 다시 시작할 수 있습니다. 수신기가 시작되는 동안 진행 중인 대화가 다시 연결될 수 있습니다.",
   "@i18n131AiEnableWarningBody": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiEnable": "Enable",
+  "i18n131AiEnable": "활성화",
   "@i18n131AiEnable": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiDisable": "Disable",
+  "i18n131AiDisable": "비활성화",
   "@i18n131AiDisable": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiWebhooksEnabledRestarting": "Webhooks enabled; the Gateway is restarting.",
+  "i18n131AiWebhooksEnabledRestarting": "웹훅이 활성화되었습니다. 게이트웨이를 다시 시작하는 중입니다.",
   "@i18n131AiWebhooksEnabledRestarting": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiWebhooksEnabled": "Webhooks enabled.",
+  "i18n131AiWebhooksEnabled": "웹훅이 활성화되었습니다.",
   "@i18n131AiWebhooksEnabled": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiWebhooksNeedRestart": "Webhooks are enabled, but the Gateway still needs a restart.",
+  "i18n131AiWebhooksNeedRestart": "웹훅이 활성화되었지만 게이트웨이를 다시 시작해야 합니다.",
   "@i18n131AiWebhooksNeedRestart": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiAddWebhook": "New subscription",
+  "i18n131AiAddWebhook": "새 구독",
   "@i18n131AiAddWebhook": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiAddWebhookBody": "Create an authenticated route and copy its one-time secret.",
+  "i18n131AiAddWebhookBody": "인증된 경로를 만들고 한 번만 표시되는 비밀 키를 복사하세요.",
   "@i18n131AiAddWebhookBody": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiNoWebhooks": "No webhook subscriptions yet.",
+  "i18n131AiNoWebhooks": "아직 웹훅 구독이 없습니다.",
   "@i18n131AiNoWebhooks": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiWebhookFormTitle": "New webhook subscription",
+  "i18n131AiWebhookFormTitle": "새 웹훅 구독",
   "@i18n131AiWebhookFormTitle": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiDescription": "Description",
+  "i18n131AiDescription": "설명",
   "@i18n131AiDescription": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiDescriptionHint": "What this route does (optional)",
+  "i18n131AiDescriptionHint": "이 경로의 역할(선택 사항)",
   "@i18n131AiDescriptionHint": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiPrompt": "Prompt",
+  "i18n131AiPrompt": "프롬프트",
   "@i18n131AiPrompt": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiPromptHint": "Instructions for Hermes when this event arrives (optional)",
+  "i18n131AiPromptHint": "이벤트 수신 시 Hermes가 따를 지침(선택 사항)",
   "@i18n131AiPromptHint": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiEvents": "Events",
+  "i18n131AiEvents": "이벤트",
   "@i18n131AiEvents": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiEventsHint": "Comma-separated; empty accepts all events",
+  "i18n131AiEventsHint": "쉼표로 구분하세요. 비워 두면 모든 이벤트를 수신합니다.",
   "@i18n131AiEventsHint": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiSkills": "Skills",
+  "i18n131AiSkills": "스킬",
   "@i18n131AiSkills": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiSkillsHint": "Optional, comma-separated skill names",
+  "i18n131AiSkillsHint": "선택 사항. 스킬 이름을 쉼표로 구분하세요.",
   "@i18n131AiSkillsHint": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiDelivery": "Deliver to",
+  "i18n131AiDelivery": "전달 대상",
   "@i18n131AiDelivery": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiDeliverOnly": "Deliver payload only",
+  "i18n131AiDeliverOnly": "페이로드만 전달",
   "@i18n131AiDeliverOnly": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiDeliverOnlyHint": "Skips the agent response for channel delivery.",
+  "i18n131AiDeliverOnlyHint": "채널로 전달할 때 에이전트 응답을 생략합니다.",
   "@i18n131AiDeliverOnlyHint": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiDeliveryLabelLog": "Log only",
+  "i18n131AiDeliveryLabelLog": "로그만 기록",
   "@i18n131AiDeliveryLabelLog": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiDeliveryLabelEmail": "Email",
+  "i18n131AiDeliveryLabelEmail": "이메일",
   "@i18n131AiDeliveryLabelEmail": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiDeliveryLabelGithubComment": "GitHub comment",
+  "i18n131AiDeliveryLabelGithubComment": "GitHub 댓글",
   "@i18n131AiDeliveryLabelGithubComment": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiCreateWebhook": "Create",
+  "i18n131AiCreateWebhook": "만들기",
   "@i18n131AiCreateWebhook": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiWebhookCreated": "Subscription created.",
+  "i18n131AiWebhookCreated": "구독이 생성되었습니다.",
   "@i18n131AiWebhookCreated": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiDuplicateWebhook": "A webhook with that name already exists. Delete it explicitly before creating a replacement.",
+  "i18n131AiDuplicateWebhook": "이 이름의 웹훅이 이미 있습니다. 기존 웹훅을 직접 삭제한 후 새로 만드세요.",
   "@i18n131AiDuplicateWebhook": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiSecretTitle": "Copy the webhook secret now",
+  "i18n131AiSecretTitle": "지금 웹훅 비밀 키를 복사하세요",
   "@i18n131AiSecretTitle": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiSecretBody": "Hermes shows this secret only once. Closing this receipt removes it from the app and it cannot be recovered here.",
+  "i18n131AiSecretBody": "Hermes는 이 비밀 키를 한 번만 표시합니다. 이 창을 닫으면 앱에서 삭제되며 여기서는 복구할 수 없습니다.",
   "@i18n131AiSecretBody": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiWebhookUrl": "Webhook URL",
+  "i18n131AiWebhookUrl": "웹훅 URL",
   "@i18n131AiWebhookUrl": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiWebhookSecret": "One-time secret",
+  "i18n131AiWebhookSecret": "한 번만 표시되는 비밀 키",
   "@i18n131AiWebhookSecret": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiDeleteWebhookTitle": "Delete webhook?",
+  "i18n131AiDeleteWebhookTitle": "웹훅을 삭제할까요?",
   "@i18n131AiDeleteWebhookTitle": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiDeleteWebhookBody": "This permanently removes the subscription. Existing integrations will stop working.",
+  "i18n131AiDeleteWebhookBody": "구독이 영구적으로 삭제됩니다. 기존 연동이 작동을 멈춥니다.",
   "@i18n131AiDeleteWebhookBody": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiWebhookDeleted": "Webhook deleted.",
+  "i18n131AiWebhookDeleted": "웹훅이 삭제되었습니다.",
   "@i18n131AiWebhookDeleted": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiWebhookSubtitleAllEvents": "all events",
+  "i18n131AiWebhookSubtitleAllEvents": "모든 이벤트",
   "@i18n131AiWebhookSubtitleAllEvents": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiA2aIntro": "A2A runs entirely on the Hermes host. Android only reports the official platform status and does not add another protocol client.",
+  "i18n131AiA2aIntro": "A2A는 전적으로 Hermes 호스트에서 실행됩니다. Android는 공식 플랫폼 상태만 표시하며 별도의 프로토콜 클라이언트를 추가하지 않습니다.",
   "@i18n131AiA2aIntro": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiA2aUnavailable": "This server does not publish its platform catalog.",
+  "i18n131AiA2aUnavailable": "이 서버에서는 플랫폼 목록을 제공하지 않습니다.",
   "@i18n131AiA2aUnavailable": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiA2aNotPublished": "A2A is not published by this Hermes installation.",
+  "i18n131AiA2aNotPublished": "이 Hermes 설치에서는 A2A를 제공하지 않습니다.",
   "@i18n131AiA2aNotPublished": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiConfigured": "Configured",
+  "i18n131AiConfigured": "설정됨",
   "@i18n131AiConfigured": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiNotConfigured": "Not configured",
+  "i18n131AiNotConfigured": "설정되지 않음",
   "@i18n131AiNotConfigured": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiRunning": "Gateway running",
+  "i18n131AiRunning": "게이트웨이 실행 중",
   "@i18n131AiRunning": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiStopped": "Gateway stopped",
+  "i18n131AiStopped": "게이트웨이 중지됨",
   "@i18n131AiStopped": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiActive": "Enabled",
+  "i18n131AiActive": "활성화됨",
   "@i18n131AiActive": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiInactive": "Disabled",
+  "i18n131AiInactive": "비활성화됨",
   "@i18n131AiInactive": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiA2aStateConnected": "Connected",
+  "i18n131AiA2aStateConnected": "연결됨",
   "@i18n131AiA2aStateConnected": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiA2aStateConnecting": "Connecting",
+  "i18n131AiA2aStateConnecting": "연결 중",
   "@i18n131AiA2aStateConnecting": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiA2aStateRetrying": "Retrying",
+  "i18n131AiA2aStateRetrying": "다시 시도 중",
   "@i18n131AiA2aStateRetrying": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiA2aStatePendingRestart": "Pending restart",
+  "i18n131AiA2aStatePendingRestart": "다시 시작 대기 중",
   "@i18n131AiA2aStatePendingRestart": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiA2aStateNotConfigured": "Not configured",
+  "i18n131AiA2aStateNotConfigured": "설정되지 않음",
   "@i18n131AiA2aStateNotConfigured": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiA2aStateGatewayStopped": "Gateway stopped",
+  "i18n131AiA2aStateGatewayStopped": "게이트웨이 중지됨",
   "@i18n131AiA2aStateGatewayStopped": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiA2aStateStartupFailed": "Startup failed",
+  "i18n131AiA2aStateStartupFailed": "시작 실패",
   "@i18n131AiA2aStateStartupFailed": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiA2aStateDisconnected": "Disconnected",
+  "i18n131AiA2aStateDisconnected": "연결 끊김",
   "@i18n131AiA2aStateDisconnected": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiA2aStateFatal": "Fatal error",
+  "i18n131AiA2aStateFatal": "치명적 오류",
   "@i18n131AiA2aStateFatal": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiA2aStateDisabled": "Disabled",
+  "i18n131AiA2aStateDisabled": "비활성화됨",
   "@i18n131AiA2aStateDisabled": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiA2aStateOther": "Status unavailable",
+  "i18n131AiA2aStateOther": "상태 확인 불가",
   "@i18n131AiA2aStateOther": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiUnsupported": "This operation is not available on the connected Hermes version.",
+  "i18n131AiUnsupported": "연결된 Hermes 버전에서는 이 작업을 지원하지 않습니다.",
   "@i18n131AiUnsupported": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiForbidden": "The current Dashboard credentials do not allow this operation.",
+  "i18n131AiForbidden": "현재 대시보드 인증 정보로는 이 작업을 수행할 수 없습니다.",
   "@i18n131AiForbidden": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiUnavailable": "Hermes could not complete the operation right now.",
+  "i18n131AiUnavailable": "Hermes가 지금 작업을 완료하지 못했습니다.",
   "@i18n131AiUnavailable": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiInvalidResponse": "Hermes returned an invalid integration response.",
+  "i18n131AiInvalidResponse": "Hermes가 잘못된 연동 응답을 반환했습니다.",
   "@i18n131AiInvalidResponse": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiRejected": "Hermes rejected the values or the server state changed.",
+  "i18n131AiRejected": "Hermes가 입력값을 거부했거나 서버 상태가 변경되었습니다.",
   "@i18n131AiRejected": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
   "i18n131AiMcpTab": "MCP",
   "@i18n131AiMcpTab": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiWebhooksTab": "Webhooks",
+  "i18n131AiWebhooksTab": "웹훅",
   "@i18n131AiWebhooksTab": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
   "i18n131AiHttp": "HTTP",
   "@i18n131AiHttp": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
   "i18n131AiA2aTitle": "A2A",
   "@i18n131AiA2aTitle": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
   "i18n131AiDeliveryLabelTelegram": "Telegram",
   "@i18n131AiDeliveryLabelTelegram": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
   "i18n131AiDeliveryLabelDiscord": "Discord",
   "@i18n131AiDeliveryLabelDiscord": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
   "i18n131AiDeliveryLabelSlack": "Slack",
   "@i18n131AiDeliveryLabelSlack": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
   "i18n131AiWebhookSubtitleFormat": "{deliver} · {events}",
   "@i18n131AiWebhookSubtitleFormat": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy.",
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy.",
     "placeholders": {
       "deliver": {
         "type": "String"
@@ -5580,13 +5580,13 @@
       }
     }
   },
-  "i18n131TasksBulkPartialTitle": "Some tasks were not changed",
+  "i18n131TasksBulkPartialTitle": "일부 작업을 변경하지 못했습니다",
   "@i18n131TasksBulkPartialTitle": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksBulkPartial": "{ok} archived; {failed} could not be changed.",
+  "i18n131TasksBulkPartial": "{ok}개 보관됨 · {failed}개 변경 실패",
   "@i18n131TasksBulkPartial": {
-    "description": "i18n131: Phase 3B English stub; tasks.",
+    "description": "i18n131: Phase 3B translated; tasks.",
     "placeholders": {
       "ok": {
         "type": "int"
@@ -5596,254 +5596,254 @@
       }
     }
   },
-  "i18n131TasksActionUnavailable": "This operation is not available on the server.",
+  "i18n131TasksActionUnavailable": "서버에서 이 작업을 지원하지 않습니다.",
   "@i18n131TasksActionUnavailable": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksSpecify": "Specify",
+  "i18n131TasksSpecify": "구체화",
   "@i18n131TasksSpecify": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksSpecifyTitle": "Specify task",
+  "i18n131TasksSpecifyTitle": "작업 구체화",
   "@i18n131TasksSpecifyTitle": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksSpecifyBody": "Hermes will use the auxiliary model to flesh out this triage task. This can take several minutes.",
+  "i18n131TasksSpecifyBody": "Hermes가 보조 모델을 사용하여 분류 단계의 작업을 구체화합니다. 몇 분 정도 걸릴 수 있습니다.",
   "@i18n131TasksSpecifyBody": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksSpecifyStarted": "The task was specified.",
+  "i18n131TasksSpecifyStarted": "작업이 구체화되었습니다.",
   "@i18n131TasksSpecifyStarted": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksDecompose": "Decompose",
+  "i18n131TasksDecompose": "분할",
   "@i18n131TasksDecompose": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksDecomposeTitle": "Decompose into child tasks",
+  "i18n131TasksDecomposeTitle": "하위 작업으로 분할",
   "@i18n131TasksDecomposeTitle": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksDecomposeBody": "Hermes will create a child-task graph and route it to compatible profiles. This can take several minutes.",
+  "i18n131TasksDecomposeBody": "Hermes가 하위 작업 그래프를 만들고 호환되는 프로필에 배정합니다. 몇 분 정도 걸릴 수 있습니다.",
   "@i18n131TasksDecomposeBody": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksDecomposeResult": "Decomposition complete: {count} child tasks.",
+  "i18n131TasksDecomposeResult": "분할 완료: 하위 작업 {count}개",
   "@i18n131TasksDecomposeResult": {
-    "description": "i18n131: Phase 3B English stub; tasks.",
+    "description": "i18n131: Phase 3B translated; tasks.",
     "placeholders": {
       "count": {
         "type": "int"
       }
     }
   },
-  "i18n131TasksAttachmentTooLarge": "The attachment exceeds the official 25 MiB limit.",
+  "i18n131TasksAttachmentTooLarge": "첨부 파일이 공식 제한인 25 MiB를 초과합니다.",
   "@i18n131TasksAttachmentTooLarge": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksAttachmentUnavailable": "Android could not provide this file.",
+  "i18n131TasksAttachmentUnavailable": "Android에서 이 파일을 제공하지 못했습니다.",
   "@i18n131TasksAttachmentUnavailable": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksAttachmentUploaded": "Attachment uploaded.",
+  "i18n131TasksAttachmentUploaded": "첨부 파일이 업로드되었습니다.",
   "@i18n131TasksAttachmentUploaded": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksSaveAttachment": "Save attachment",
+  "i18n131TasksSaveAttachment": "첨부 파일 저장",
   "@i18n131TasksSaveAttachment": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksAttachmentSaved": "Attachment saved.",
+  "i18n131TasksAttachmentSaved": "첨부 파일이 저장되었습니다.",
   "@i18n131TasksAttachmentSaved": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksDeleteAttachment": "Delete attachment",
+  "i18n131TasksDeleteAttachment": "첨부 파일 삭제",
   "@i18n131TasksDeleteAttachment": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksDeleteAttachmentBody": "Delete “{name}” from the server? This cannot be undone.",
+  "i18n131TasksDeleteAttachmentBody": "서버에서 “{name}” 파일을 삭제할까요? 되돌릴 수 없습니다.",
   "@i18n131TasksDeleteAttachmentBody": {
-    "description": "i18n131: Phase 3B English stub; tasks.",
+    "description": "i18n131: Phase 3B translated; tasks.",
     "placeholders": {
       "name": {
         "type": "String"
       }
     }
   },
-  "i18n131TasksDelete": "Delete",
+  "i18n131TasksDelete": "삭제",
   "@i18n131TasksDelete": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksAttachmentDeleted": "Attachment deleted.",
+  "i18n131TasksAttachmentDeleted": "첨부 파일이 삭제되었습니다.",
   "@i18n131TasksAttachmentDeleted": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksWorkerLog": "Worker log",
+  "i18n131TasksWorkerLog": "워커 로그",
   "@i18n131TasksWorkerLog": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksNoLog": "This task does not have a log yet.",
+  "i18n131TasksNoLog": "아직 이 작업의 로그가 없습니다.",
   "@i18n131TasksNoLog": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksLogTruncated": "Only the most recent log tail is shown.",
+  "i18n131TasksLogTruncated": "로그의 가장 최근 부분만 표시됩니다.",
   "@i18n131TasksLogTruncated": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksRunInspection": "Run inspection",
+  "i18n131TasksRunInspection": "실행 상태 점검",
   "@i18n131TasksRunInspection": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksAlive": "Alive",
+  "i18n131TasksAlive": "작동 중",
   "@i18n131TasksAlive": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksYes": "Yes",
+  "i18n131TasksYes": "예",
   "@i18n131TasksYes": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksStatus": "Status",
+  "i18n131TasksStatus": "상태",
   "@i18n131TasksStatus": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksThreads": "Threads",
+  "i18n131TasksThreads": "스레드",
   "@i18n131TasksThreads": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksReason": "Reason",
+  "i18n131TasksReason": "이유",
   "@i18n131TasksReason": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksError": "Error",
+  "i18n131TasksError": "오류",
   "@i18n131TasksError": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksTerminate": "Terminate",
+  "i18n131TasksTerminate": "종료",
   "@i18n131TasksTerminate": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksTerminateTitle": "Terminate run",
+  "i18n131TasksTerminateTitle": "실행 종료",
   "@i18n131TasksTerminateTitle": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksTerminateBody": "The worker for run #{id} will stop and the task will return to the queue. Continue?",
+  "i18n131TasksTerminateBody": "실행 #{id}의 워커가 중지되고 작업이 대기열로 돌아갑니다. 계속할까요?",
   "@i18n131TasksTerminateBody": {
-    "description": "i18n131: Phase 3B English stub; tasks.",
+    "description": "i18n131: Phase 3B translated; tasks.",
     "placeholders": {
       "id": {
         "type": "int"
       }
     }
   },
-  "i18n131TasksRunTerminated": "Run terminated and requeued.",
+  "i18n131TasksRunTerminated": "실행이 종료되고 대기열에 다시 추가되었습니다.",
   "@i18n131TasksRunTerminated": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksReclaim": "Reclaim",
+  "i18n131TasksReclaim": "회수",
   "@i18n131TasksReclaim": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksReclaimTitle": "Reclaim stuck task",
+  "i18n131TasksReclaimTitle": "멈춘 작업 회수",
   "@i18n131TasksReclaimTitle": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksReclaimBody": "The current worker will stop and the task will return to the queue. Use this only for a stuck run.",
+  "i18n131TasksReclaimBody": "현재 워커가 중지되고 작업이 대기열로 돌아갑니다. 실행이 멈춘 경우에만 사용하세요.",
   "@i18n131TasksReclaimBody": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksTaskReclaimed": "Task reclaimed and requeued.",
+  "i18n131TasksTaskReclaimed": "작업이 회수되어 대기열에 다시 추가되었습니다.",
   "@i18n131TasksTaskReclaimed": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksChooseProfile": "Choose profile",
+  "i18n131TasksChooseProfile": "프로필 선택",
   "@i18n131TasksChooseProfile": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksReassign": "Reassign",
+  "i18n131TasksReassign": "재배정",
   "@i18n131TasksReassign": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksReassignTitle": "Reassign task",
+  "i18n131TasksReassignTitle": "작업 재배정",
   "@i18n131TasksReassignTitle": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksReassignBodyReclaims": "The task will be assigned to “{profile}”. The current worker will be stopped first.",
+  "i18n131TasksReassignBodyReclaims": "작업이 “{profile}”에 배정됩니다. 먼저 현재 워커가 중지됩니다.",
   "@i18n131TasksReassignBodyReclaims": {
-    "description": "i18n131: Phase 3B English stub; tasks.",
+    "description": "i18n131: Phase 3B translated; tasks.",
     "placeholders": {
       "profile": {
         "type": "String"
       }
     }
   },
-  "i18n131TasksReassignBody": "The task will be assigned to “{profile}”.",
+  "i18n131TasksReassignBody": "작업이 “{profile}”에 배정됩니다.",
   "@i18n131TasksReassignBody": {
-    "description": "i18n131: Phase 3B English stub; tasks.",
+    "description": "i18n131: Phase 3B translated; tasks.",
     "placeholders": {
       "profile": {
         "type": "String"
       }
     }
   },
-  "i18n131TasksTaskReassigned": "Task reassigned.",
+  "i18n131TasksTaskReassigned": "작업이 재배정되었습니다.",
   "@i18n131TasksTaskReassigned": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksModelOptionsUnavailable": "This server does not publish Kanban model options.",
+  "i18n131TasksModelOptionsUnavailable": "이 서버에서는 칸반 모델 옵션을 제공하지 않습니다.",
   "@i18n131TasksModelOptionsUnavailable": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksChooseModel": "Model for this task",
+  "i18n131TasksChooseModel": "이 작업에 사용할 모델",
   "@i18n131TasksChooseModel": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksInheritModel": "Inherit model from profile",
+  "i18n131TasksInheritModel": "프로필의 모델 상속",
   "@i18n131TasksInheritModel": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksReasoningEffort": "Reasoning effort",
+  "i18n131TasksReasoningEffort": "추론 수준",
   "@i18n131TasksReasoningEffort": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksInheritEffort": "Inherit effort from profile",
+  "i18n131TasksInheritEffort": "프로필의 추론 수준 상속",
   "@i18n131TasksInheritEffort": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksEffortLabelNone": "Off",
+  "i18n131TasksEffortLabelNone": "끄기",
   "@i18n131TasksEffortLabelNone": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksEffortLabelMinimal": "Minimal",
+  "i18n131TasksEffortLabelMinimal": "최소",
   "@i18n131TasksEffortLabelMinimal": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksEffortLabelLow": "Low",
+  "i18n131TasksEffortLabelLow": "낮음",
   "@i18n131TasksEffortLabelLow": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksEffortLabelMedium": "Medium",
+  "i18n131TasksEffortLabelMedium": "보통",
   "@i18n131TasksEffortLabelMedium": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksEffortLabelHigh": "High",
+  "i18n131TasksEffortLabelHigh": "높음",
   "@i18n131TasksEffortLabelHigh": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksEffortLabelXhigh": "XHigh",
+  "i18n131TasksEffortLabelXhigh": "매우 높음",
   "@i18n131TasksEffortLabelXhigh": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksEffortLabelMax": "Max",
+  "i18n131TasksEffortLabelMax": "최대",
   "@i18n131TasksEffortLabelMax": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksApplyModelTitle": "Apply model configuration",
+  "i18n131TasksApplyModelTitle": "모델 설정 적용",
   "@i18n131TasksApplyModelTitle": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksApplyModelBody": "Model: {model}\nReasoning: {effortLabelValue}",
+  "i18n131TasksApplyModelBody": "모델: {model}\n추론: {effortLabelValue}",
   "@i18n131TasksApplyModelBody": {
-    "description": "i18n131: Phase 3B English stub; tasks.",
+    "description": "i18n131: Phase 3B translated; tasks.",
     "placeholders": {
       "model": {
         "type": "String"
@@ -5853,590 +5853,590 @@
       }
     }
   },
-  "i18n131TasksApply": "Apply",
+  "i18n131TasksApply": "적용",
   "@i18n131TasksApply": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksModelApplied": "Model configuration applied.",
+  "i18n131TasksModelApplied": "모델 설정이 적용되었습니다.",
   "@i18n131TasksModelApplied": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksNo": "No",
+  "i18n131TasksNo": "아니요",
   "@i18n131TasksNo": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
   "i18n131TasksMemory": "RAM",
   "@i18n131TasksMemory": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksEffortLabelUltra": "Ultra",
+  "i18n131TasksEffortLabelUltra": "최상",
   "@i18n131TasksEffortLabelUltra": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131DetailReadOnly": "This instance is read-only.",
+  "i18n131DetailReadOnly": "이 인스턴스는 읽기 전용입니다.",
   "@i18n131DetailReadOnly": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailObjective": "Objective · read all",
+  "i18n131DetailObjective": "목표 · 전체 보기",
   "@i18n131DetailObjective": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailResult": "Result",
+  "i18n131DetailResult": "결과",
   "@i18n131DetailResult": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailLatestSummary": "Latest summary",
+  "i18n131DetailLatestSummary": "최근 요약",
   "@i18n131DetailLatestSummary": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailDiagnostics": "Diagnostics",
+  "i18n131DetailDiagnostics": "진단",
   "@i18n131DetailDiagnostics": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailDependencies": "Dependencies",
+  "i18n131DetailDependencies": "의존 관계",
   "@i18n131DetailDependencies": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailParents": "Depends on",
+  "i18n131DetailParents": "선행 작업",
   "@i18n131DetailParents": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailChildren": "Unblocks",
+  "i18n131DetailChildren": "후속 작업",
   "@i18n131DetailChildren": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailBlockedBy": "Blocked by",
+  "i18n131DetailBlockedBy": "진행을 막는 작업",
   "@i18n131DetailBlockedBy": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailBlocks": "Blocks",
+  "i18n131DetailBlocks": "진행을 막고 있는 작업",
   "@i18n131DetailBlocks": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailChildResults": "Child tasks",
+  "i18n131DetailChildResults": "하위 작업",
   "@i18n131DetailChildResults": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailComments": "Comments",
+  "i18n131DetailComments": "댓글",
   "@i18n131DetailComments": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailNoComments": "No comments yet.",
+  "i18n131DetailNoComments": "아직 댓글이 없습니다.",
   "@i18n131DetailNoComments": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailSomeone": "Someone",
+  "i18n131DetailSomeone": "누군가",
   "@i18n131DetailSomeone": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailAddComment": "Add a comment",
+  "i18n131DetailAddComment": "댓글 추가",
   "@i18n131DetailAddComment": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailMessageWorker": "Message the worker",
+  "i18n131DetailMessageWorker": "워커에게 메시지 보내기",
   "@i18n131DetailMessageWorker": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailSend": "Send",
+  "i18n131DetailSend": "보내기",
   "@i18n131DetailSend": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailAttachments": "Attachments",
+  "i18n131DetailAttachments": "첨부 파일",
   "@i18n131DetailAttachments": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailNoAttachments": "No attachments.",
+  "i18n131DetailNoAttachments": "첨부 파일이 없습니다.",
   "@i18n131DetailNoAttachments": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailUploadAttachment": "Upload attachment",
+  "i18n131DetailUploadAttachment": "첨부 파일 업로드",
   "@i18n131DetailUploadAttachment": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailDownload": "Download",
+  "i18n131DetailDownload": "다운로드",
   "@i18n131DetailDownload": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailDeleteAttachment": "Delete attachment",
+  "i18n131DetailDeleteAttachment": "첨부 파일 삭제",
   "@i18n131DetailDeleteAttachment": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailRuns": "Runs",
+  "i18n131DetailRuns": "실행 내역",
   "@i18n131DetailRuns": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailRun": "Run",
+  "i18n131DetailRun": "실행",
   "@i18n131DetailRun": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailInspect": "Inspect",
+  "i18n131DetailInspect": "점검",
   "@i18n131DetailInspect": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailTerminate": "Terminate run",
+  "i18n131DetailTerminate": "실행 종료",
   "@i18n131DetailTerminate": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailLog": "Log",
+  "i18n131DetailLog": "로그",
   "@i18n131DetailLog": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailActivity": "Activity",
+  "i18n131DetailActivity": "활동",
   "@i18n131DetailActivity": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailShowAll": "Show all",
+  "i18n131DetailShowAll": "모두 보기",
   "@i18n131DetailShowAll": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailShowLess": "Show less",
+  "i18n131DetailShowLess": "간략히 보기",
   "@i18n131DetailShowLess": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailOperations": "Operations",
+  "i18n131DetailOperations": "작업 관리",
   "@i18n131DetailOperations": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailModel": "Task model",
+  "i18n131DetailModel": "작업 모델",
   "@i18n131DetailModel": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailInheritModel": "Inherit from profile",
+  "i18n131DetailInheritModel": "프로필에서 상속",
   "@i18n131DetailInheritModel": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailReassign": "Reassign",
+  "i18n131DetailReassign": "재배정",
   "@i18n131DetailReassign": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailReclaim": "Reclaim and requeue",
+  "i18n131DetailReclaim": "회수 후 대기열에 추가",
   "@i18n131DetailReclaim": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailSpecify": "Specify",
+  "i18n131DetailSpecify": "구체화",
   "@i18n131DetailSpecify": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailDecompose": "Decompose",
+  "i18n131DetailDecompose": "분할",
   "@i18n131DetailDecompose": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailNotifyWhenDone": "Notify me when it's done",
+  "i18n131DetailNotifyWhenDone": "완료 시 알림",
   "@i18n131DetailNotifyWhenDone": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailMuteNotifications": "Mute notifications",
+  "i18n131DetailMuteNotifications": "알림 끄기",
   "@i18n131DetailMuteNotifications": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailMuteNotificationsSub": "Don't notify status changes for this task, even if Kanban results are enabled",
+  "i18n131DetailMuteNotificationsSub": "칸반 결과 알림이 켜져 있어도 이 작업의 상태 변경은 알리지 않습니다",
   "@i18n131DetailMuteNotificationsSub": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131TaskSheetTheTaskCouldNotBeAssignedTry": "The task could not be assigned. Try again.",
+  "i18n131TaskSheetTheTaskCouldNotBeAssignedTry": "작업을 배정하지 못했습니다. 다시 시도하세요.",
   "@i18n131TaskSheetTheTaskCouldNotBeAssignedTry": {
-    "description": "i18n131: Phase 3B English stub; taskSheet."
+    "description": "i18n131: Phase 3B translated; taskSheet."
   },
-  "i18n131TaskSheetLow": "Low",
+  "i18n131TaskSheetLow": "낮음",
   "@i18n131TaskSheetLow": {
-    "description": "i18n131: Phase 3B English stub; taskSheet."
+    "description": "i18n131: Phase 3B translated; taskSheet."
   },
-  "i18n131TaskSheetNormal": "Normal",
+  "i18n131TaskSheetNormal": "보통",
   "@i18n131TaskSheetNormal": {
-    "description": "i18n131: Phase 3B English stub; taskSheet."
+    "description": "i18n131: Phase 3B translated; taskSheet."
   },
-  "i18n131TaskSheetHigh": "High",
+  "i18n131TaskSheetHigh": "높음",
   "@i18n131TaskSheetHigh": {
-    "description": "i18n131: Phase 3B English stub; taskSheet."
+    "description": "i18n131: Phase 3B translated; taskSheet."
   },
-  "i18n131TaskSheetAssignTask": "Assign task",
+  "i18n131TaskSheetAssignTask": "작업 배정",
   "@i18n131TaskSheetAssignTask": {
-    "description": "i18n131: Phase 3B English stub; taskSheet."
+    "description": "i18n131: Phase 3B translated; taskSheet."
   },
-  "i18n131TaskSheetWhat": "What",
+  "i18n131TaskSheetWhat": "할 일",
   "@i18n131TaskSheetWhat": {
-    "description": "i18n131: Phase 3B English stub; taskSheet."
+    "description": "i18n131: Phase 3B translated; taskSheet."
   },
-  "i18n131TaskSheetWhatShouldThisProfileDo": "What should this profile do?",
+  "i18n131TaskSheetWhatShouldThisProfileDo": "이 프로필이 어떤 일을 할까요?",
   "@i18n131TaskSheetWhatShouldThisProfileDo": {
-    "description": "i18n131: Phase 3B English stub; taskSheet."
+    "description": "i18n131: Phase 3B translated; taskSheet."
   },
-  "i18n131TaskSheetDescribeTheTask": "Describe the task.",
+  "i18n131TaskSheetDescribeTheTask": "작업을 설명하세요.",
   "@i18n131TaskSheetDescribeTheTask": {
-    "description": "i18n131: Phase 3B English stub; taskSheet."
+    "description": "i18n131: Phase 3B translated; taskSheet."
   },
-  "i18n131TaskSheetWhyOptional": "Why (optional)",
+  "i18n131TaskSheetWhyOptional": "이유(선택 사항)",
   "@i18n131TaskSheetWhyOptional": {
-    "description": "i18n131: Phase 3B English stub; taskSheet."
+    "description": "i18n131: Phase 3B translated; taskSheet."
   },
-  "i18n131TaskSheetAddContextOrTheExpectedResult": "Add context or the expected result.",
+  "i18n131TaskSheetAddContextOrTheExpectedResult": "배경이나 예상 결과를 추가하세요.",
   "@i18n131TaskSheetAddContextOrTheExpectedResult": {
-    "description": "i18n131: Phase 3B English stub; taskSheet."
+    "description": "i18n131: Phase 3B translated; taskSheet."
   },
-  "i18n131TaskSheetPriority": "Priority",
+  "i18n131TaskSheetPriority": "우선순위",
   "@i18n131TaskSheetPriority": {
-    "description": "i18n131: Phase 3B English stub; taskSheet."
+    "description": "i18n131: Phase 3B translated; taskSheet."
   },
-  "i18n131ProfileUseAPngJpegWebpOrGif": "Use a PNG, JPEG, WebP, or GIF image up to 15 MB.",
+  "i18n131ProfileUseAPngJpegWebpOrGif": "15 MB 이하의 PNG, JPEG, WebP 또는 GIF 이미지를 사용하세요.",
   "@i18n131ProfileUseAPngJpegWebpOrGif": {
-    "description": "i18n131: Phase 3B English stub; profile."
+    "description": "i18n131: Phase 3B translated; profile."
   },
-  "i18n131ProfileDiscardChanges": "Discard changes?",
+  "i18n131ProfileDiscardChanges": "변경 사항을 버릴까요?",
   "@i18n131ProfileDiscardChanges": {
-    "description": "i18n131: Phase 3B English stub; profile."
+    "description": "i18n131: Phase 3B translated; profile."
   },
-  "i18n131ProfileTheProfileIdentityHasNotBeenSaved": "The profile identity has not been saved yet.",
+  "i18n131ProfileTheProfileIdentityHasNotBeenSaved": "아직 프로필 정보가 저장되지 않았습니다.",
   "@i18n131ProfileTheProfileIdentityHasNotBeenSaved": {
-    "description": "i18n131: Phase 3B English stub; profile."
+    "description": "i18n131: Phase 3B translated; profile."
   },
-  "i18n131ProfileKeepEditing": "Keep editing",
+  "i18n131ProfileKeepEditing": "계속 편집",
   "@i18n131ProfileKeepEditing": {
-    "description": "i18n131: Phase 3B English stub; profile."
+    "description": "i18n131: Phase 3B translated; profile."
   },
-  "i18n131ProfileDiscard": "Discard",
+  "i18n131ProfileDiscard": "버리기",
   "@i18n131ProfileDiscard": {
-    "description": "i18n131: Phase 3B English stub; profile."
+    "description": "i18n131: Phase 3B translated; profile."
   },
-  "i18n131ProfileUnsaved": "Unsaved",
+  "i18n131ProfileUnsaved": "저장되지 않음",
   "@i18n131ProfileUnsaved": {
-    "description": "i18n131: Phase 3B English stub; profile."
+    "description": "i18n131: Phase 3B translated; profile."
   },
-  "i18n131ProfileTheProfilenameIdentifierDoesNotChange": "The @{profileName} identifier does not change",
+  "i18n131ProfileTheProfilenameIdentifierDoesNotChange": "@{profileName} 식별자는 변경되지 않습니다",
   "@i18n131ProfileTheProfilenameIdentifierDoesNotChange": {
-    "description": "i18n131: Phase 3B English stub; profile.",
+    "description": "i18n131: Phase 3B translated; profile.",
     "placeholders": {
       "profileName": {
         "type": "String"
       }
     }
   },
-  "i18n131ProfileCustomize": "Customize",
+  "i18n131ProfileCustomize": "꾸미기",
   "@i18n131ProfileCustomize": {
-    "description": "i18n131: Phase 3B English stub; profile."
+    "description": "i18n131: Phase 3B translated; profile."
   },
-  "i18n131ProfileVisualIdentity": "Visual identity",
+  "i18n131ProfileVisualIdentity": "외형 설정",
   "@i18n131ProfileVisualIdentity": {
-    "description": "i18n131: Phase 3B English stub; profile."
+    "description": "i18n131: Phase 3B translated; profile."
   },
-  "i18n131ProfilePet": "Pet",
+  "i18n131ProfilePet": "펫",
   "@i18n131ProfilePet": {
-    "description": "i18n131: Phase 3B English stub; profile."
+    "description": "i18n131: Phase 3B translated; profile."
   },
-  "i18n131ProfileImage": "Image",
+  "i18n131ProfileImage": "이미지",
   "@i18n131ProfileImage": {
-    "description": "i18n131: Phase 3B English stub; profile."
+    "description": "i18n131: Phase 3B translated; profile."
   },
-  "i18n131ProfileFace": "Face",
+  "i18n131ProfileFace": "얼굴",
   "@i18n131ProfileFace": {
-    "description": "i18n131: Phase 3B English stub; profile."
+    "description": "i18n131: Phase 3B translated; profile."
   },
-  "i18n131ProfileAutomatic": "Automatic",
+  "i18n131ProfileAutomatic": "자동",
   "@i18n131ProfileAutomatic": {
-    "description": "i18n131: Phase 3B English stub; profile."
+    "description": "i18n131: Phase 3B translated; profile."
   },
-  "i18n131ProfileDescription": "Description",
+  "i18n131ProfileDescription": "설명",
   "@i18n131ProfileDescription": {
-    "description": "i18n131: Phase 3B English stub; profile."
+    "description": "i18n131: Phase 3B translated; profile."
   },
-  "i18n131ProfileNoDescription": "No description",
+  "i18n131ProfileNoDescription": "설명 없음",
   "@i18n131ProfileNoDescription": {
-    "description": "i18n131: Phase 3B English stub; profile."
+    "description": "i18n131: Phase 3B translated; profile."
   },
-  "i18n131ProfileViewSkills": "View skills",
+  "i18n131ProfileViewSkills": "스킬 보기",
   "@i18n131ProfileViewSkills": {
-    "description": "i18n131: Phase 3B English stub; profile."
+    "description": "i18n131: Phase 3B translated; profile."
   },
-  "i18n131ProfileProfileFace": "Profile face",
+  "i18n131ProfileProfileFace": "프로필 얼굴",
   "@i18n131ProfileProfileFace": {
-    "description": "i18n131: Phase 3B English stub; profile."
+    "description": "i18n131: Phase 3B translated; profile."
   },
-  "i18n131ProfilePngJpegWebpOrGifCenterCropped": "PNG, JPEG, WebP, or GIF. Center-cropped and saved square.",
+  "i18n131ProfilePngJpegWebpOrGifCenterCropped": "PNG, JPEG, WebP 또는 GIF. 가운데를 잘라 정사각형으로 저장합니다.",
   "@i18n131ProfilePngJpegWebpOrGifCenterCropped": {
-    "description": "i18n131: Phase 3B English stub; profile."
+    "description": "i18n131: Phase 3B translated; profile."
   },
-  "i18n131ProfileChooseImage": "Choose image",
+  "i18n131ProfileChooseImage": "이미지 선택",
   "@i18n131ProfileChooseImage": {
-    "description": "i18n131: Phase 3B English stub; profile."
+    "description": "i18n131: Phase 3B translated; profile."
   },
-  "i18n131ProfileChangeImage": "Change image",
+  "i18n131ProfileChangeImage": "이미지 변경",
   "@i18n131ProfileChangeImage": {
-    "description": "i18n131: Phase 3B English stub; profile."
+    "description": "i18n131: Phase 3B translated; profile."
   },
-  "i18n131ProfileASavedImageAlsoExistsThePet": "A saved image also exists. The pet takes priority.",
+  "i18n131ProfileASavedImageAlsoExistsThePet": "저장된 이미지도 있습니다. 펫이 우선 적용됩니다.",
   "@i18n131ProfileASavedImageAlsoExistsThePet": {
-    "description": "i18n131: Phase 3B English stub; profile."
+    "description": "i18n131: Phase 3B translated; profile."
   },
-  "i18n131ProfileUseImage": "Use image",
+  "i18n131ProfileUseImage": "이미지 사용",
   "@i18n131ProfileUseImage": {
-    "description": "i18n131: Phase 3B English stub; profile."
+    "description": "i18n131: Phase 3B translated; profile."
   },
-  "i18n131ProfileUncertainStateReviewAndSaveAgain": "Uncertain state: review and save again.",
+  "i18n131ProfileUncertainStateReviewAndSaveAgain": "상태가 불확실합니다. 확인한 후 다시 저장하세요.",
   "@i18n131ProfileUncertainStateReviewAndSaveAgain": {
-    "description": "i18n131: Phase 3B English stub; profile."
+    "description": "i18n131: Phase 3B translated; profile."
   },
-  "i18n131ProfileUnsavedChanges": "Unsaved changes",
+  "i18n131ProfileUnsavedChanges": "저장하지 않은 변경 사항",
   "@i18n131ProfileUnsavedChanges": {
-    "description": "i18n131: Phase 3B English stub; profile."
+    "description": "i18n131: Phase 3B translated; profile."
   },
-  "i18n131ProfileNoPendingChanges": "No pending changes",
+  "i18n131ProfileNoPendingChanges": "변경 사항 없음",
   "@i18n131ProfileNoPendingChanges": {
-    "description": "i18n131: Phase 3B English stub; profile."
+    "description": "i18n131: Phase 3B translated; profile."
   },
-  "i18n131ProfileSaving": "Saving…",
+  "i18n131ProfileSaving": "저장 중…",
   "@i18n131ProfileSaving": {
-    "description": "i18n131: Phase 3B English stub; profile."
+    "description": "i18n131: Phase 3B translated; profile."
   },
-  "i18n131CreateUseAPngJpegWebpOrGif": "Use a PNG, JPEG, WebP, or GIF image up to 15 MB.",
+  "i18n131CreateUseAPngJpegWebpOrGif": "15 MB 이하의 PNG, JPEG, WebP 또는 GIF 이미지를 사용하세요.",
   "@i18n131CreateUseAPngJpegWebpOrGif": {
-    "description": "i18n131: Phase 3B English stub; create."
+    "description": "i18n131: Phase 3B translated; create."
   },
-  "i18n131CreateTheProfileExistsButItsIdentityIs": "The profile exists, but its identity is uncertain. Review it and try again.",
+  "i18n131CreateTheProfileExistsButItsIdentityIs": "프로필이 생성되었지만 설정 상태가 불확실합니다. 확인한 후 다시 시도하세요.",
   "@i18n131CreateTheProfileExistsButItsIdentityIs": {
-    "description": "i18n131: Phase 3B English stub; create."
+    "description": "i18n131: Phase 3B translated; create."
   },
-  "i18n131CreateTheProfileExistsButItsIdentityCould": "The profile exists, but its identity could not be applied. Fix the issue and try again.",
+  "i18n131CreateTheProfileExistsButItsIdentityCould": "프로필이 존재하지만 프로필 정보를 적용하지 못했습니다. 문제를 해결한 후 다시 시도하세요.",
   "@i18n131CreateTheProfileExistsButItsIdentityCould": {
-    "description": "i18n131: Phase 3B English stub; create."
+    "description": "i18n131: Phase 3B translated; create."
   },
-  "i18n131CreateChooseAValidIdentityBeforeCreatingThe": "Choose a valid identity before creating the profile.",
+  "i18n131CreateChooseAValidIdentityBeforeCreatingThe": "프로필을 만들기 전에 유효한 프로필 정보를 선택하세요.",
   "@i18n131CreateChooseAValidIdentityBeforeCreatingThe": {
-    "description": "i18n131: Phase 3B English stub; create."
+    "description": "i18n131: Phase 3B translated; create."
   },
-  "i18n131CreateDiscardChanges": "Discard changes?",
+  "i18n131CreateDiscardChanges": "변경 사항을 버릴까요?",
   "@i18n131CreateDiscardChanges": {
-    "description": "i18n131: Phase 3B English stub; create."
+    "description": "i18n131: Phase 3B translated; create."
   },
-  "i18n131CreateTheProfileAlreadyExistsButItsVisual": "The profile already exists, but its visual setup is incomplete. Leaving will not open its automatic chat.",
+  "i18n131CreateTheProfileAlreadyExistsButItsVisual": "프로필이 이미 존재하지만 외형 설정이 완료되지 않았습니다. 나가면 자동 대화가 열리지 않습니다.",
   "@i18n131CreateTheProfileAlreadyExistsButItsVisual": {
-    "description": "i18n131: Phase 3B English stub; create."
+    "description": "i18n131: Phase 3B translated; create."
   },
-  "i18n131CreateYouWillLoseThisProfileSetup": "You will lose this profile setup.",
+  "i18n131CreateYouWillLoseThisProfileSetup": "이 프로필 설정 내용이 사라집니다.",
   "@i18n131CreateYouWillLoseThisProfileSetup": {
-    "description": "i18n131: Phase 3B English stub; create."
+    "description": "i18n131: Phase 3B translated; create."
   },
-  "i18n131CreateKeepEditing": "Keep editing",
+  "i18n131CreateKeepEditing": "계속 편집",
   "@i18n131CreateKeepEditing": {
-    "description": "i18n131: Phase 3B English stub; create."
+    "description": "i18n131: Phase 3B translated; create."
   },
-  "i18n131CreateDiscard": "Discard",
+  "i18n131CreateDiscard": "버리기",
   "@i18n131CreateDiscard": {
-    "description": "i18n131: Phase 3B English stub; create."
+    "description": "i18n131: Phase 3B translated; create."
   },
-  "i18n131CreateCustomize": "Customize",
+  "i18n131CreateCustomize": "꾸미기",
   "@i18n131CreateCustomize": {
-    "description": "i18n131: Phase 3B English stub; create."
+    "description": "i18n131: Phase 3B translated; create."
   },
-  "i18n131CreateOptional": "optional",
+  "i18n131CreateOptional": "선택 사항",
   "@i18n131CreateOptional": {
-    "description": "i18n131: Phase 3B English stub; create."
+    "description": "i18n131: Phase 3B translated; create."
   },
-  "i18n131CreateVisualIdentity": "Visual identity",
+  "i18n131CreateVisualIdentity": "외형 설정",
   "@i18n131CreateVisualIdentity": {
-    "description": "i18n131: Phase 3B English stub; create."
+    "description": "i18n131: Phase 3B translated; create."
   },
-  "i18n131CreatePet": "Pet",
+  "i18n131CreatePet": "펫",
   "@i18n131CreatePet": {
-    "description": "i18n131: Phase 3B English stub; create."
+    "description": "i18n131: Phase 3B translated; create."
   },
-  "i18n131CreateImage": "Image",
+  "i18n131CreateImage": "이미지",
   "@i18n131CreateImage": {
-    "description": "i18n131: Phase 3B English stub; create."
+    "description": "i18n131: Phase 3B translated; create."
   },
-  "i18n131CreateFace": "Face",
+  "i18n131CreateFace": "얼굴",
   "@i18n131CreateFace": {
-    "description": "i18n131: Phase 3B English stub; create."
+    "description": "i18n131: Phase 3B translated; create."
   },
-  "i18n131CreateTitleAndDescription": "Title and description",
+  "i18n131CreateTitleAndDescription": "직함 및 설명",
   "@i18n131CreateTitleAndDescription": {
-    "description": "i18n131: Phase 3B English stub; create."
+    "description": "i18n131: Phase 3B translated; create."
   },
-  "i18n131CreateNotFilledIn": "Not filled in",
+  "i18n131CreateNotFilledIn": "입력되지 않음",
   "@i18n131CreateNotFilledIn": {
-    "description": "i18n131: Phase 3B English stub; create."
+    "description": "i18n131: Phase 3B translated; create."
   },
-  "i18n131CreateSoulCloneFrom": "Soul · Clone from",
+  "i18n131CreateSoulCloneFrom": "페르소나 · 복제 원본",
   "@i18n131CreateSoulCloneFrom": {
-    "description": "i18n131: Phase 3B English stub; create."
+    "description": "i18n131: Phase 3B translated; create."
   },
-  "i18n131CreateProfileFace": "Profile face",
+  "i18n131CreateProfileFace": "프로필 얼굴",
   "@i18n131CreateProfileFace": {
-    "description": "i18n131: Phase 3B English stub; create."
+    "description": "i18n131: Phase 3B translated; create."
   },
-  "i18n131CreatePngJpegWebpOrGifCenterCropped": "PNG, JPEG, WebP, or GIF. Center-cropped and saved square.",
+  "i18n131CreatePngJpegWebpOrGifCenterCropped": "PNG, JPEG, WebP 또는 GIF. 가운데를 잘라 정사각형으로 저장합니다.",
   "@i18n131CreatePngJpegWebpOrGifCenterCropped": {
-    "description": "i18n131: Phase 3B English stub; create."
+    "description": "i18n131: Phase 3B translated; create."
   },
-  "i18n131CreateChooseImage": "Choose image",
+  "i18n131CreateChooseImage": "이미지 선택",
   "@i18n131CreateChooseImage": {
-    "description": "i18n131: Phase 3B English stub; create."
+    "description": "i18n131: Phase 3B translated; create."
   },
-  "i18n131CreateChangeImage": "Change image",
+  "i18n131CreateChangeImage": "이미지 변경",
   "@i18n131CreateChangeImage": {
-    "description": "i18n131: Phase 3B English stub; create."
+    "description": "i18n131: Phase 3B translated; create."
   },
-  "i18n131CreateUncertainStateReviewAndTryAgain": "Uncertain state: review and try again.",
+  "i18n131CreateUncertainStateReviewAndTryAgain": "상태가 불확실합니다. 확인한 후 다시 시도하세요.",
   "@i18n131CreateUncertainStateReviewAndTryAgain": {
-    "description": "i18n131: Phase 3B English stub; create."
+    "description": "i18n131: Phase 3B translated; create."
   },
-  "i18n131CreateProfileCreatedIdentityConfirmationPending": "Profile created · identity confirmation pending",
+  "i18n131CreateProfileCreatedIdentityConfirmationPending": "프로필 생성됨 · 프로필 정보 확인 대기 중",
   "@i18n131CreateProfileCreatedIdentityConfirmationPending": {
-    "description": "i18n131: Phase 3B English stub; create."
+    "description": "i18n131: Phase 3B translated; create."
   },
-  "i18n131CreateCreating": "Creating…",
+  "i18n131CreateCreating": "생성 중…",
   "@i18n131CreateCreating": {
-    "description": "i18n131: Phase 3B English stub; create."
+    "description": "i18n131: Phase 3B translated; create."
   },
-  "i18n131CreateRetryIdentity": "Retry identity",
+  "i18n131CreateRetryIdentity": "프로필 정보 다시 적용",
   "@i18n131CreateRetryIdentity": {
-    "description": "i18n131: Phase 3B English stub; create."
+    "description": "i18n131: Phase 3B translated; create."
   },
-  "i18n131RoomsRemoveMember": "Remove",
+  "i18n131RoomsRemoveMember": "제거",
   "@i18n131RoomsRemoveMember": {
-    "description": "i18n131: Phase 3B English stub; rooms."
+    "description": "i18n131: Phase 3B translated; rooms."
   },
-  "i18n131RoomsNoMembersChosen": "Tap a profile to add it to the room.",
+  "i18n131RoomsNoMembersChosen": "프로필을 눌러 대화방에 추가하세요.",
   "@i18n131RoomsNoMembersChosen": {
-    "description": "i18n131: Phase 3B English stub; rooms."
+    "description": "i18n131: Phase 3B translated; rooms."
   },
-  "i18n131RoutineTitle": "New routine",
+  "i18n131RoutineTitle": "새 루틴",
   "@i18n131RoutineTitle": {
-    "description": "i18n131: Phase 3B English stub; routine."
+    "description": "i18n131: Phase 3B translated; routine."
   },
-  "i18n131RoutineDescription": "Schedule something for this profile to do for you.",
+  "i18n131RoutineDescription": "이 프로필이 수행할 작업을 예약하세요.",
   "@i18n131RoutineDescription": {
-    "description": "i18n131: Phase 3B English stub; routine."
+    "description": "i18n131: Phase 3B translated; routine."
   },
-  "i18n131RoutineBotLabel": "Profile",
+  "i18n131RoutineBotLabel": "프로필",
   "@i18n131RoutineBotLabel": {
-    "description": "i18n131: Phase 3B English stub; routine."
+    "description": "i18n131: Phase 3B translated; routine."
   },
-  "i18n131RoutineWhatLabel": "What",
+  "i18n131RoutineWhatLabel": "할 일",
   "@i18n131RoutineWhatLabel": {
-    "description": "i18n131: Phase 3B English stub; routine."
+    "description": "i18n131: Phase 3B translated; routine."
   },
-  "i18n131RoutineWhatHint": "Describe what it should do",
+  "i18n131RoutineWhatHint": "수행할 작업을 설명하세요",
   "@i18n131RoutineWhatHint": {
-    "description": "i18n131: Phase 3B English stub; routine."
+    "description": "i18n131: Phase 3B translated; routine."
   },
-  "i18n131RoutineWhatRequired": "Describe what the profile should do.",
+  "i18n131RoutineWhatRequired": "프로필이 수행할 작업을 설명하세요.",
   "@i18n131RoutineWhatRequired": {
-    "description": "i18n131: Phase 3B English stub; routine."
+    "description": "i18n131: Phase 3B translated; routine."
   },
-  "i18n131RoutineWhenLabel": "When",
+  "i18n131RoutineWhenLabel": "실행 시점",
   "@i18n131RoutineWhenLabel": {
-    "description": "i18n131: Phase 3B English stub; routine."
+    "description": "i18n131: Phase 3B translated; routine."
   },
-  "i18n131RoutineCustomScheduleLabel": "Cron expression",
+  "i18n131RoutineCustomScheduleLabel": "크론 표현식",
   "@i18n131RoutineCustomScheduleLabel": {
-    "description": "i18n131: Phase 3B English stub; routine."
+    "description": "i18n131: Phase 3B translated; routine."
   },
   "i18n131RoutineCustomScheduleHint": "0 9 * * *",
   "@i18n131RoutineCustomScheduleHint": {
-    "description": "i18n131: Phase 3B English stub; routine."
+    "description": "i18n131: Phase 3B translated; routine."
   },
-  "i18n131RoutineCustomScheduleRequired": "Enter a cron expression.",
+  "i18n131RoutineCustomScheduleRequired": "크론 표현식을 입력하세요.",
   "@i18n131RoutineCustomScheduleRequired": {
-    "description": "i18n131: Phase 3B English stub; routine."
+    "description": "i18n131: Phase 3B translated; routine."
   },
-  "i18n131RoutineMoreOptions": "More options",
+  "i18n131RoutineMoreOptions": "추가 옵션",
   "@i18n131RoutineMoreOptions": {
-    "description": "i18n131: Phase 3B English stub; routine."
+    "description": "i18n131: Phase 3B translated; routine."
   },
-  "i18n131RoutineOptionalNameLabel": "Optional name",
+  "i18n131RoutineOptionalNameLabel": "이름(선택 사항)",
   "@i18n131RoutineOptionalNameLabel": {
-    "description": "i18n131: Phase 3B English stub; routine."
+    "description": "i18n131: Phase 3B translated; routine."
   },
-  "i18n131RoutineOptionalNameHint": "For example, Morning brief",
+  "i18n131RoutineOptionalNameHint": "예: 아침 브리핑",
   "@i18n131RoutineOptionalNameHint": {
-    "description": "i18n131: Phase 3B English stub; routine."
+    "description": "i18n131: Phase 3B translated; routine."
   },
-  "i18n131RoutineCreate": "Create routine",
+  "i18n131RoutineCreate": "루틴 만들기",
   "@i18n131RoutineCreate": {
-    "description": "i18n131: Phase 3B English stub; routine."
+    "description": "i18n131: Phase 3B translated; routine."
   },
-  "i18n131RoutineCreating": "Creating…",
+  "i18n131RoutineCreating": "생성 중…",
   "@i18n131RoutineCreating": {
-    "description": "i18n131: Phase 3B English stub; routine."
+    "description": "i18n131: Phase 3B translated; routine."
   },
-  "i18n131RoutineGenericError": "The routine could not be created. Try again.",
+  "i18n131RoutineGenericError": "루틴을 만들지 못했습니다. 다시 시도하세요.",
   "@i18n131RoutineGenericError": {
-    "description": "i18n131: Phase 3B English stub; routine."
+    "description": "i18n131: Phase 3B translated; routine."
   },
-  "i18n131RoutineDailyAtNine": "Every day · 09:00",
+  "i18n131RoutineDailyAtNine": "매일 · 09:00",
   "@i18n131RoutineDailyAtNine": {
-    "description": "i18n131: Phase 3B English stub; routine."
+    "description": "i18n131: Phase 3B translated; routine."
   },
-  "i18n131RoutineWeekdaysAtNine": "Weekdays · 09:00",
+  "i18n131RoutineWeekdaysAtNine": "평일 · 09:00",
   "@i18n131RoutineWeekdaysAtNine": {
-    "description": "i18n131: Phase 3B English stub; routine."
+    "description": "i18n131: Phase 3B translated; routine."
   },
-  "i18n131RoutineWeeklyMondayAtNine": "Every Monday · 09:00",
+  "i18n131RoutineWeeklyMondayAtNine": "매주 월요일 · 09:00",
   "@i18n131RoutineWeeklyMondayAtNine": {
-    "description": "i18n131: Phase 3B English stub; routine."
+    "description": "i18n131: Phase 3B translated; routine."
   },
-  "i18n131RoutineMonthlyAtNine": "Every month · day 1, 09:00",
+  "i18n131RoutineMonthlyAtNine": "매월 · 1일 09:00",
   "@i18n131RoutineMonthlyAtNine": {
-    "description": "i18n131: Phase 3B English stub; routine."
+    "description": "i18n131: Phase 3B translated; routine."
   },
-  "i18n131RoutineHourly": "Every hour",
+  "i18n131RoutineHourly": "매시간",
   "@i18n131RoutineHourly": {
-    "description": "i18n131: Phase 3B English stub; routine."
+    "description": "i18n131: Phase 3B translated; routine."
   },
-  "i18n131RoutineEveryFifteenMinutes": "Every 15 minutes",
+  "i18n131RoutineEveryFifteenMinutes": "15분마다",
   "@i18n131RoutineEveryFifteenMinutes": {
-    "description": "i18n131: Phase 3B English stub; routine."
+    "description": "i18n131: Phase 3B translated; routine."
   },
-  "i18n131RoutineCustom": "Custom",
+  "i18n131RoutineCustom": "직접 설정",
   "@i18n131RoutineCustom": {
-    "description": "i18n131: Phase 3B English stub; routine."
+    "description": "i18n131: Phase 3B translated; routine."
   },
-  "i18n131RosterNow": "now",
+  "i18n131RosterNow": "지금",
   "@i18n131RosterNow": {
-    "description": "i18n131: Phase 3B English stub; roster."
+    "description": "i18n131: Phase 3B translated; roster."
   },
-  "i18n131RosterYesterday": "yesterday",
+  "i18n131RosterYesterday": "어제",
   "@i18n131RosterYesterday": {
-    "description": "i18n131: Phase 3B English stub; roster."
+    "description": "i18n131: Phase 3B translated; roster."
   },
-  "i18n131ChatBusy": "Hermes is busy (for example, compacting this conversation). Your message is still in the composer; try again in a moment.",
+  "i18n131ChatBusy": "Hermes가 다른 작업을 처리 중입니다(예: 이 대화의 컨텍스트 압축). 메시지는 입력창에 남아 있습니다. 잠시 후 다시 시도하세요.",
   "@i18n131ChatBusy": {
-    "description": "i18n131: Phase 3B English stub; chat."
+    "description": "i18n131: Phase 3B translated; chat."
   },
-  "i18n131ChatNotOwned": "This conversation can’t continue live because it belongs to another gateway or process. Its history remains available, and you can still start a new chat.",
+  "i18n131ChatNotOwned": "이 대화는 다른 게이트웨이나 프로세스에 속해 있어 실시간으로 이어갈 수 없습니다. 기록은 계속 볼 수 있으며 새 대화를 시작할 수도 있습니다.",
   "@i18n131ChatNotOwned": {
-    "description": "i18n131: Phase 3B English stub; chat."
+    "description": "i18n131: Phase 3B translated; chat."
   },
-  "i18n131ChatLimit": "Hermes reached the configured active-session limit. Wait for a session to finish or adjust the limit.",
+  "i18n131ChatLimit": "Hermes가 설정된 활성 세션 한도에 도달했습니다. 세션이 끝날 때까지 기다리거나 한도를 조정하세요.",
   "@i18n131ChatLimit": {
-    "description": "i18n131: Phase 3B English stub; chat."
+    "description": "i18n131: Phase 3B translated; chat."
   },
-  "i18n131ChatCoordination": "Hermes could not safely reserve this conversation. Check the server and try again.",
+  "i18n131ChatCoordination": "Hermes가 이 대화를 안전하게 확보하지 못했습니다. 서버를 확인한 후 다시 시도하세요.",
   "@i18n131ChatCoordination": {
-    "description": "i18n131: Phase 3B English stub; chat."
+    "description": "i18n131: Phase 3B translated; chat."
   },
-  "i18n131ChatSendFailed": "The message could not be sent. Try again.",
+  "i18n131ChatSendFailed": "메시지를 보내지 못했습니다. 다시 시도하세요.",
   "@i18n131ChatSendFailed": {
-    "description": "i18n131: Phase 3B English stub; chat."
+    "description": "i18n131: Phase 3B translated; chat."
   },
-  "i18n131ChatStoredNotOwned": "This conversation cannot continue live. Its history remains available and you can start a new chat.",
+  "i18n131ChatStoredNotOwned": "이 대화를 실시간으로 이어갈 수 없습니다. 기록은 계속 볼 수 있으며 새 대화를 시작할 수 있습니다.",
   "@i18n131ChatStoredNotOwned": {
-    "description": "i18n131: Phase 3B English stub; chat."
+    "description": "i18n131: Phase 3B translated; chat."
   },
-  "i18n131ChatStoredFailed": "The response could not be completed. Try again.",
+  "i18n131ChatStoredFailed": "응답을 완료하지 못했습니다. 다시 시도하세요.",
   "@i18n131ChatStoredFailed": {
-    "description": "i18n131: Phase 3B English stub; chat."
+    "description": "i18n131: Phase 3B translated; chat."
   },
-  "i18n131ChatStoredDisconnected": "The connection with Hermes was lost. The message was not confirmed; review the draft and try again.",
+  "i18n131ChatStoredDisconnected": "Hermes와의 연결이 끊겼습니다. 메시지 전송이 확인되지 않았습니다. 초안을 확인한 후 다시 시도하세요.",
   "@i18n131ChatStoredDisconnected": {
-    "description": "i18n131: Phase 3B English stub; chat."
+    "description": "i18n131: Phase 3B translated; chat."
   },
-  "i18n131ChatRecoveryFailed": "The turn could not be recovered. Try again.",
+  "i18n131ChatRecoveryFailed": "대화 차례를 복구하지 못했습니다. 다시 시도하세요.",
   "@i18n131ChatRecoveryFailed": {
-    "description": "i18n131: Phase 3B English stub; chat."
+    "description": "i18n131: Phase 3B translated; chat."
   },
-  "i18n131ChatFailureCause": "The response could not be completed: {cause}",
+  "i18n131ChatFailureCause": "응답을 완료하지 못했습니다: {cause}",
   "@i18n131ChatFailureCause": {
-    "description": "i18n131: Phase 3B English stub; chat.",
+    "description": "i18n131: Phase 3B translated; chat.",
     "placeholders": {
       "cause": {
         "type": "String"

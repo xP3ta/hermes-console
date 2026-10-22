@@ -210,7 +210,7 @@ const Map<String, String> notifKo = {
   "summaryState2": "실패함",
   "summaryState3": "사용자 확인 필요",
   "summaryState4": "새 항목",
-  // Punctuation templates; English stubs for Phase 3b in new languages.
+  // Korean name lists retain the localized conjunction placeholder.
   "joinNamesPair": "{first} {conjunction} {second}",
-  "joinNamesHead": "{first}, {second}",
+  "joinNamesHead": "{first} · {second}",
 };
