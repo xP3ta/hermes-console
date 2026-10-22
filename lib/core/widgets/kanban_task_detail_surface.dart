@@ -1,3 +1,6 @@
+import '../services/notifications/notification_strings.dart'
+    show resolveNotificationLang;
+
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
@@ -970,96 +973,56 @@ class _DiagnosticTile extends StatelessWidget {
 }
 
 class _KanbanDetailCopy {
-  final String lang;
+  final Strings _strings;
 
-  const _KanbanDetailCopy._(this.lang);
+  const _KanbanDetailCopy._(this._strings);
 
-  factory _KanbanDetailCopy.forLocale(String localeName) => _KanbanDetailCopy._(
-    switch (localeName.toLowerCase().split('_').first) {
-      'es' => 'es',
-      'pt' => 'pt',
-      _ => 'en',
-    },
-  );
+  factory _KanbanDetailCopy.forLocale(String localeName) =>
+      _KanbanDetailCopy._(lookupStrings(Locale(resolveNotificationLang(localeName))));
 
-  // Español, inglés y portugués; cada getter define los tres.
-  String p(String es, String en, String pt) => switch (lang) {
-    'es' => es,
-    'pt' => pt,
-    _ => en,
-  };
-
-  String get readOnly => p(
-    'Esta instancia está en modo solo lectura.',
-    'This instance is read-only.',
-    'Esta instância está em modo somente leitura.',
-  );
+  String get readOnly => _strings.i18n131DetailReadOnly;
   String get objective =>
-      p('Objetivo · leer completo', 'Objective · read all', 'Objetivo · ler tudo');
-  String get result => p('Resultado', 'Result', 'Resultado');
-  String get latestSummary => p('Último resumen', 'Latest summary', 'Último resumo');
-  String get diagnostics => p('Diagnósticos', 'Diagnostics', 'Diagnósticos');
-  String get dependencies => p('Dependencias', 'Dependencies', 'Dependências');
-  String get parents => p('Depende de', 'Depends on', 'Depende de');
-  String get children => p('Desbloquea', 'Unblocks', 'Desbloqueia');
-  String get blockedBy => p('Bloqueada por', 'Blocked by', 'Bloqueada por');
-  String get blocks => p('Bloquea', 'Blocks', 'Bloqueia');
-  String get childResults => p('Subtareas', 'Child tasks', 'Subtarefas');
-  String get comments => p('Comentarios', 'Comments', 'Comentários');
+      _strings.i18n131DetailObjective;
+  String get result => _strings.i18n131DetailResult;
+  String get latestSummary => _strings.i18n131DetailLatestSummary;
+  String get diagnostics => _strings.i18n131DetailDiagnostics;
+  String get dependencies => _strings.i18n131DetailDependencies;
+  String get parents => _strings.i18n131DetailParents;
+  String get children => _strings.i18n131DetailChildren;
+  String get blockedBy => _strings.i18n131DetailBlockedBy;
+  String get blocks => _strings.i18n131DetailBlocks;
+  String get childResults => _strings.i18n131DetailChildResults;
+  String get comments => _strings.i18n131DetailComments;
   String get noComments =>
-      p('Todavía no hay comentarios.', 'No comments yet.', 'Ainda não há comentários.');
-  String get someone => p('Alguien', 'Someone', 'Alguém');
+      _strings.i18n131DetailNoComments;
+  String get someone => _strings.i18n131DetailSomeone;
   String get addComment =>
-      p('Añadir comentario', 'Add a comment', 'Adicionar comentário');
-  String get messageWorker => p(
-    'Enviar una nota al worker',
-    'Message the worker',
-    'Enviar uma nota ao worker',
-  );
-  String get send => p('Enviar', 'Send', 'Enviar');
-  String get attachments => p('Adjuntos', 'Attachments', 'Anexos');
-  String get noAttachments => p('No hay adjuntos.', 'No attachments.', 'Não há anexos.');
-  String get uploadAttachment => p(
-    'Subir adjunto',
-    'Upload attachment',
-    'Enviar anexo',
-  );
-  String get download => p('Descargar', 'Download', 'Baixar');
+      _strings.i18n131DetailAddComment;
+  String get messageWorker => _strings.i18n131DetailMessageWorker;
+  String get send => _strings.i18n131DetailSend;
+  String get attachments => _strings.i18n131DetailAttachments;
+  String get noAttachments => _strings.i18n131DetailNoAttachments;
+  String get uploadAttachment => _strings.i18n131DetailUploadAttachment;
+  String get download => _strings.i18n131DetailDownload;
   String get deleteAttachment =>
-      p('Eliminar adjunto', 'Delete attachment', 'Excluir anexo');
-  String get runs => p('Ejecuciones', 'Runs', 'Execuções');
-  String get run => p('Ejecución', 'Run', 'Execução');
-  String get inspect => p('Inspeccionar', 'Inspect', 'Inspecionar');
-  String get terminate => p('Terminar ejecución', 'Terminate run', 'Encerrar execução');
-  String get log => p('Log', 'Log', 'Log');
-  String get activity => p('Actividad', 'Activity', 'Atividade');
-  String get showAll => p('Mostrar toda', 'Show all', 'Mostrar tudo');
-  String get showLess => p('Mostrar menos', 'Show less', 'Mostrar menos');
-  String get operations => p('Operaciones', 'Operations', 'Operações');
-  String get model => p('Modelo de esta tarea', 'Task model', 'Modelo desta tarefa');
+      _strings.i18n131DetailDeleteAttachment;
+  String get runs => _strings.i18n131DetailRuns;
+  String get run => _strings.i18n131DetailRun;
+  String get inspect => _strings.i18n131DetailInspect;
+  String get terminate => _strings.i18n131DetailTerminate;
+  String get log => _strings.i18n131DetailLog;
+  String get activity => _strings.i18n131DetailActivity;
+  String get showAll => _strings.i18n131DetailShowAll;
+  String get showLess => _strings.i18n131DetailShowLess;
+  String get operations => _strings.i18n131DetailOperations;
+  String get model => _strings.i18n131DetailModel;
   String get inheritModel =>
-      p('Heredar del perfil', 'Inherit from profile', 'Herdar do perfil');
-  String get reassign => p('Reasignar', 'Reassign', 'Reatribuir');
-  String get reclaim => p(
-    'Recuperar y reencolar',
-    'Reclaim and requeue',
-    'Recuperar e reenfileirar',
-  );
-  String get specify => p('Especificar', 'Specify', 'Especificar');
-  String get decompose => p('Descomponer', 'Decompose', 'Decompor');
-  String get notifyWhenDone => p(
-    'Avisarme cuando termine',
-    "Notify me when it's done",
-    'Avisar quando terminar',
-  );
-  String get muteNotifications => p(
-    'Silenciar notificaciones',
-    'Mute notifications',
-    'Silenciar notificações',
-  );
-  String get muteNotificationsSub => p(
-    'No avisar de cambios de estado de esta tarea, aunque los resultados de Kanban estén activados',
-    "Don't notify status changes for this task, even if Kanban results are enabled",
-    'Não avisar sobre mudanças de estado desta tarefa, mesmo com os resultados do Kanban ativados',
-  );
+      _strings.i18n131DetailInheritModel;
+  String get reassign => _strings.i18n131DetailReassign;
+  String get reclaim => _strings.i18n131DetailReclaim;
+  String get specify => _strings.i18n131DetailSpecify;
+  String get decompose => _strings.i18n131DetailDecompose;
+  String get notifyWhenDone => _strings.i18n131DetailNotifyWhenDone;
+  String get muteNotifications => _strings.i18n131DetailMuteNotifications;
+  String get muteNotificationsSub => _strings.i18n131DetailMuteNotificationsSub;
 }

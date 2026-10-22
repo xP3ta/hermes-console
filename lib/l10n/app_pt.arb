@@ -10569,5 +10569,458 @@
         "type": "String"
       }
     }
+  },
+  "i18n131TasksBulkPartialTitle": "Algumas tarefas não mudaram",
+  "@i18n131TasksBulkPartialTitle": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksBulkPartial": "{ok} arquivadas; {failed} não puderam ser alteradas.",
+  "@i18n131TasksBulkPartial": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks.",
+    "placeholders": {
+      "ok": {
+        "type": "int"
+      },
+      "failed": {
+        "type": "int"
+      }
+    }
+  },
+  "i18n131TasksActionUnavailable": "Esta operação não está disponível no servidor.",
+  "@i18n131TasksActionUnavailable": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksSpecify": "Especificar",
+  "@i18n131TasksSpecify": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksSpecifyTitle": "Especificar tarefa",
+  "@i18n131TasksSpecifyTitle": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksSpecifyBody": "O Hermes usará o modelo auxiliar para detalhar esta tarefa de triagem. Pode levar vários minutos.",
+  "@i18n131TasksSpecifyBody": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksSpecifyStarted": "A tarefa foi especificada.",
+  "@i18n131TasksSpecifyStarted": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksDecompose": "Decompor",
+  "@i18n131TasksDecompose": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksDecomposeTitle": "Decompor em subtarefas",
+  "@i18n131TasksDecomposeTitle": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksDecomposeBody": "O Hermes criará um grafo de subtarefas e as atribuirá a perfis compatíveis. Pode levar vários minutos.",
+  "@i18n131TasksDecomposeBody": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksDecomposeResult": "Decomposição concluída: {count} subtarefas.",
+  "@i18n131TasksDecomposeResult": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "i18n131TasksAttachmentTooLarge": "O anexo excede o limite oficial de 25 MiB.",
+  "@i18n131TasksAttachmentTooLarge": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksAttachmentUnavailable": "O Android não pôde fornecer este arquivo.",
+  "@i18n131TasksAttachmentUnavailable": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksAttachmentUploaded": "Anexo enviado.",
+  "@i18n131TasksAttachmentUploaded": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksSaveAttachment": "Salvar anexo",
+  "@i18n131TasksSaveAttachment": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksAttachmentSaved": "Anexo salvo.",
+  "@i18n131TasksAttachmentSaved": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksDeleteAttachment": "Excluir anexo",
+  "@i18n131TasksDeleteAttachment": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksDeleteAttachmentBody": "Excluir “{name}” do servidor? Esta ação não pode ser desfeita.",
+  "@i18n131TasksDeleteAttachmentBody": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131TasksDelete": "Excluir",
+  "@i18n131TasksDelete": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksAttachmentDeleted": "Anexo excluído.",
+  "@i18n131TasksAttachmentDeleted": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksWorkerLog": "Log do worker",
+  "@i18n131TasksWorkerLog": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksNoLog": "Esta tarefa ainda não tem log.",
+  "@i18n131TasksNoLog": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksLogTruncated": "Apenas o trecho mais recente do log é exibido.",
+  "@i18n131TasksLogTruncated": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksRunInspection": "Estado da execução",
+  "@i18n131TasksRunInspection": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksAlive": "Ativo",
+  "@i18n131TasksAlive": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksYes": "Sim",
+  "@i18n131TasksYes": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksStatus": "Estado",
+  "@i18n131TasksStatus": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksThreads": "Threads",
+  "@i18n131TasksThreads": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksReason": "Motivo",
+  "@i18n131TasksReason": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksError": "Erro",
+  "@i18n131TasksError": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksTerminate": "Encerrar",
+  "@i18n131TasksTerminate": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksTerminateTitle": "Encerrar execução",
+  "@i18n131TasksTerminateTitle": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksTerminateBody": "O worker da execução #{id} será interrompido e a tarefa voltará para a fila. Continuar?",
+  "@i18n131TasksTerminateBody": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks.",
+    "placeholders": {
+      "id": {
+        "type": "int"
+      }
+    }
+  },
+  "i18n131TasksRunTerminated": "Execução encerrada e reenfileirada.",
+  "@i18n131TasksRunTerminated": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksReclaim": "Recuperar",
+  "@i18n131TasksReclaim": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksReclaimTitle": "Recuperar tarefa travada",
+  "@i18n131TasksReclaimTitle": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksReclaimBody": "O worker atual será interrompido e a tarefa voltará para “Em fila”. Use apenas se a execução estiver travada.",
+  "@i18n131TasksReclaimBody": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksTaskReclaimed": "Tarefa recuperada e reenfileirada.",
+  "@i18n131TasksTaskReclaimed": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksChooseProfile": "Escolher perfil",
+  "@i18n131TasksChooseProfile": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksReassign": "Reatribuir",
+  "@i18n131TasksReassign": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksReassignTitle": "Reatribuir tarefa",
+  "@i18n131TasksReassignTitle": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksReassignBodyReclaims": "A tarefa será atribuída a “{profile}”. O worker atual será interrompido primeiro.",
+  "@i18n131TasksReassignBodyReclaims": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks.",
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131TasksReassignBody": "A tarefa será atribuída a “{profile}”.",
+  "@i18n131TasksReassignBody": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks.",
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131TasksTaskReassigned": "Tarefa reatribuída.",
+  "@i18n131TasksTaskReassigned": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksModelOptionsUnavailable": "Este servidor não publica opções de modelo para o Kanban.",
+  "@i18n131TasksModelOptionsUnavailable": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksChooseModel": "Modelo para esta tarefa",
+  "@i18n131TasksChooseModel": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksInheritModel": "Herdar modelo do perfil",
+  "@i18n131TasksInheritModel": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksReasoningEffort": "Esforço de raciocínio",
+  "@i18n131TasksReasoningEffort": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksInheritEffort": "Herdar esforço do perfil",
+  "@i18n131TasksInheritEffort": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksEffortLabel_none": "Desativado",
+  "@i18n131TasksEffortLabel_none": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksEffortLabel_minimal": "Mínimo",
+  "@i18n131TasksEffortLabel_minimal": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksEffortLabel_low": "Baixo",
+  "@i18n131TasksEffortLabel_low": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksEffortLabel_medium": "Médio",
+  "@i18n131TasksEffortLabel_medium": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksEffortLabel_high": "Alto",
+  "@i18n131TasksEffortLabel_high": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksEffortLabel_xhigh": "Muito alto",
+  "@i18n131TasksEffortLabel_xhigh": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksEffortLabel_max": "Máximo",
+  "@i18n131TasksEffortLabel_max": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksApplyModelTitle": "Aplicar configuração de modelo",
+  "@i18n131TasksApplyModelTitle": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksApplyModelBody": "Modelo: {model}\nRaciocínio: {effortLabelValue}",
+  "@i18n131TasksApplyModelBody": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks.",
+    "placeholders": {
+      "model": {
+        "type": "String"
+      },
+      "effortLabelValue": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131TasksApply": "Aplicar",
+  "@i18n131TasksApply": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksModelApplied": "Configuração de modelo aplicada.",
+  "@i18n131TasksModelApplied": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksNo": "No",
+  "@i18n131TasksNo": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksMemory": "RAM",
+  "@i18n131TasksMemory": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksEffortLabelUltra": "Ultra",
+  "@i18n131TasksEffortLabelUltra": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131DetailReadOnly": "Esta instância está em modo somente leitura.",
+  "@i18n131DetailReadOnly": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailObjective": "Objetivo · ler tudo",
+  "@i18n131DetailObjective": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailResult": "Resultado",
+  "@i18n131DetailResult": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailLatestSummary": "Último resumo",
+  "@i18n131DetailLatestSummary": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailDiagnostics": "Diagnósticos",
+  "@i18n131DetailDiagnostics": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailDependencies": "Dependências",
+  "@i18n131DetailDependencies": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailParents": "Depende de",
+  "@i18n131DetailParents": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailChildren": "Desbloqueia",
+  "@i18n131DetailChildren": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailBlockedBy": "Bloqueada por",
+  "@i18n131DetailBlockedBy": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailBlocks": "Bloqueia",
+  "@i18n131DetailBlocks": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailChildResults": "Subtarefas",
+  "@i18n131DetailChildResults": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailComments": "Comentários",
+  "@i18n131DetailComments": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailNoComments": "Ainda não há comentários.",
+  "@i18n131DetailNoComments": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailSomeone": "Alguém",
+  "@i18n131DetailSomeone": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailAddComment": "Adicionar comentário",
+  "@i18n131DetailAddComment": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailMessageWorker": "Enviar uma nota ao worker",
+  "@i18n131DetailMessageWorker": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailSend": "Enviar",
+  "@i18n131DetailSend": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailAttachments": "Anexos",
+  "@i18n131DetailAttachments": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailNoAttachments": "Não há anexos.",
+  "@i18n131DetailNoAttachments": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailUploadAttachment": "Enviar anexo",
+  "@i18n131DetailUploadAttachment": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailDownload": "Baixar",
+  "@i18n131DetailDownload": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailDeleteAttachment": "Excluir anexo",
+  "@i18n131DetailDeleteAttachment": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailRuns": "Execuções",
+  "@i18n131DetailRuns": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailRun": "Execução",
+  "@i18n131DetailRun": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailInspect": "Inspecionar",
+  "@i18n131DetailInspect": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailTerminate": "Encerrar execução",
+  "@i18n131DetailTerminate": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailLog": "Log",
+  "@i18n131DetailLog": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailActivity": "Atividade",
+  "@i18n131DetailActivity": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailShowAll": "Mostrar tudo",
+  "@i18n131DetailShowAll": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailShowLess": "Mostrar menos",
+  "@i18n131DetailShowLess": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailOperations": "Operações",
+  "@i18n131DetailOperations": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailModel": "Modelo desta tarefa",
+  "@i18n131DetailModel": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailInheritModel": "Herdar do perfil",
+  "@i18n131DetailInheritModel": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailReassign": "Reatribuir",
+  "@i18n131DetailReassign": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailReclaim": "Recuperar e reenfileirar",
+  "@i18n131DetailReclaim": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailSpecify": "Especificar",
+  "@i18n131DetailSpecify": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailDecompose": "Decompor",
+  "@i18n131DetailDecompose": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailNotifyWhenDone": "Avisar quando terminar",
+  "@i18n131DetailNotifyWhenDone": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailMuteNotifications": "Silenciar notificações",
+  "@i18n131DetailMuteNotifications": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailMuteNotificationsSub": "Não avisar sobre mudanças de estado desta tarefa, mesmo com os resultados do Kanban ativados",
+  "@i18n131DetailMuteNotificationsSub": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
   }
 }
