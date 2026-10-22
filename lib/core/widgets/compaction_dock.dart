@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 
 import '../../l10n/app_localizations.dart';
+import '../services/notifications/notification_strings.dart'
+    show resolveNotificationLang;
 import '../models/compaction_progress.dart';
 import '../theme/app_theme.dart';
 import 'activity_pill.dart' show ActivityTicker, formatTurnElapsed;
@@ -8,12 +11,16 @@ import 'activity_pill.dart' show ActivityTicker, formatTurnElapsed;
 /// Duración de una compactación en segundos enteros («71 s»), con un decimal por
 /// debajo de 10 s y `m:ss` pasados 3 minutos.
 String formatCompactionDuration(Duration value, {String languageCode = 'en'}) {
+  final lang = resolveNotificationLang(languageCode);
+  final strings = lookupStrings(Locale(lang));
   final ms = value.inMilliseconds;
   if (ms < 10000) {
-    final text = (ms / 1000).toStringAsFixed(1);
-    return '${languageCode == 'es' || languageCode == 'pt' ? text.replaceAll('.', ',') : text} s';
+    final text = NumberFormat('0.0', lang).format(ms / 1000);
+    return strings.i18n131DurationSeconds(text);
   }
-  if (ms < 180000) return '${value.inSeconds} s';
+  if (ms < 180000) {
+    return strings.i18n131DurationSeconds(value.inSeconds.toString());
+  }
   return formatTurnElapsed(value);
 }
 

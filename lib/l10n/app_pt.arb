@@ -9452,5 +9452,142 @@
   "recoveryCenterSkippedOversize": "{count, plural, =1{1 arquivo grande demais não foi restaurado.} other{{count} arquivos grandes demais não foram restaurados.}}",
   "recoveryCenterFailedDeletes": "{count, plural, =1{1 arquivo não pôde ser excluído.} other{{count} arquivos não puderam ser excluídos.}}",
   "cphPluginBlockedByScan": "A verificação de segurança bloqueou este plugin. Nada foi alterado.",
-  "dashboardAuthSessionTokenWithheld": "Este Dashboard não entrega a Console o token de sessão: ele é hospedado pelo gateway do Hermes 0.22.3 ou superior sem login. Use um Dashboard independente ou ative o login dele."
+  "dashboardAuthSessionTokenWithheld": "Este Dashboard não entrega a Console o token de sessão: ele é hospedado pelo gateway do Hermes 0.22.3 ou superior sem login. Use um Dashboard independente ou ative o login dele.",
+  "i18n131ThemeExportFailed": "Não foi possível exportar.",
+  "@i18n131ThemeExportFailed": {
+    "description": "Manual UI copy migrated to the shared catalog."
+  },
+  "i18n131DurationSeconds": "{value} s",
+  "@i18n131DurationSeconds": {
+    "description": "Manual UI copy migrated to the shared catalog.",
+    "placeholders": {
+      "value": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131SpanDays": "{count} d",
+  "@i18n131SpanDays": {
+    "description": "Manual UI copy migrated to the shared catalog.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "i18n131SpanHours": "{count} h",
+  "@i18n131SpanHours": {
+    "description": "Manual UI copy migrated to the shared catalog.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "i18n131SpanMinutes": "{count} min",
+  "@i18n131SpanMinutes": {
+    "description": "Manual UI copy migrated to the shared catalog.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "i18n131RelativeNow": "agora",
+  "@i18n131RelativeNow": {
+    "description": "Manual UI copy migrated to the shared catalog."
+  },
+  "i18n131RelativeMinutes": "{count} min",
+  "@i18n131RelativeMinutes": {
+    "description": "Manual UI copy migrated to the shared catalog.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "i18n131RelativeHours": "{count} h",
+  "@i18n131RelativeHours": {
+    "description": "Manual UI copy migrated to the shared catalog.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "i18n131RelativeDays": "{count} d",
+  "@i18n131RelativeDays": {
+    "description": "Manual UI copy migrated to the shared catalog.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "i18n131SinceMinutes": "há {count} min",
+  "@i18n131SinceMinutes": {
+    "description": "Manual UI copy migrated to the shared catalog.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "i18n131SinceHours": "há {count} h",
+  "@i18n131SinceHours": {
+    "description": "Manual UI copy migrated to the shared catalog.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "i18n131SinceDays": "há {count} d",
+  "@i18n131SinceDays": {
+    "description": "Manual UI copy migrated to the shared catalog.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "i18n131InMinutes": "em {count} min",
+  "@i18n131InMinutes": {
+    "description": "Manual UI copy migrated to the shared catalog.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "i18n131InHours": "em {count} h",
+  "@i18n131InHours": {
+    "description": "Manual UI copy migrated to the shared catalog.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "i18n131InDays": "em {count} d",
+  "@i18n131InDays": {
+    "description": "Manual UI copy migrated to the shared catalog.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "i18n131ApprovalTool": "uma ferramenta",
+  "@i18n131ApprovalTool": {
+    "description": "Manual UI copy migrated to the shared catalog."
+  },
+  "i18n131RecoveredTurnActive": "O Hermes não conseguiu reanexar uma resposta que ainda pode estar em andamento. Enviar repete a verificação; descarte só depois de verificar o Hermes, porque isso não cancela a resposta remota.",
+  "@i18n131RecoveredTurnActive": {
+    "description": "Manual UI copy migrated to the shared catalog."
+  },
+  "i18n131RecoveredTurnPending": "Uma resposta pendente foi recuperada. Descarte a recuperação para continuar.",
+  "@i18n131RecoveredTurnPending": {
+    "description": "Manual UI copy migrated to the shared catalog."
+  }
 }

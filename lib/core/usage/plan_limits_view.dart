@@ -100,8 +100,8 @@ PlanLimitsView planLimitsView(
       continue;
     }
     final row = line.status != null
-        ? _statusRow(line, s, languageCode)
-        : _row(line, s, languageCode);
+        ? _statusRow(line, s)
+        : _row(line, s);
     if (row != null) {
       if (block != line.source) {
         block = line.source;
@@ -176,11 +176,10 @@ String? _amountLabel(String raw, Strings s) => switch (raw.trim()) {
 PlanLimitRow _statusRow(
   AccountLimitLine line,
   Strings s,
-  String languageCode,
 ) => switch (line.status!) {
   AccountLimitStatus.limited => PlanLimitRow(
     label: s.hwLimReached,
-    detail: _tailDetail(line.text.trim(), s, languageCode),
+    detail: _tailDetail(line.text.trim(), s),
   ),
   AccountLimitStatus.unknown => PlanLimitRow(label: s.plv1215StateUnknown),
   AccountLimitStatus.unavailable => PlanLimitRow(label: s.plv1215Unavailable),
@@ -188,7 +187,7 @@ PlanLimitRow _statusRow(
 
 /// The localized text of what follows a window's ` • `: credits left or when
 /// it resets. Null when it is neither, or its timestamp is not a real date.
-String? _tailDetail(String tail, Strings s, String languageCode) {
+String? _tailDetail(String tail, Strings s) {
   final money = _moneyLeft.firstMatch(tail);
   final now = _resetsNow.firstMatch(tail);
   if (money != null &&
@@ -205,7 +204,7 @@ String? _tailDetail(String tail, Strings s, String languageCode) {
         days: int.tryParse(reset.group(1) ?? ''),
         hours: int.tryParse(reset.group(2) ?? ''),
         minutes: int.tryParse(reset.group(3) ?? ''),
-        languageCode: languageCode,
+        strings: s,
       );
       if (span != null) return s.plv1215ResetsIn(span);
     }
@@ -213,7 +212,7 @@ String? _tailDetail(String tail, Strings s, String languageCode) {
   return null;
 }
 
-PlanLimitRow? _row(AccountLimitLine line, Strings s, String languageCode) {
+PlanLimitRow? _row(AccountLimitLine line, Strings s) {
   final text = line.text.trim();
   final window = _window.firstMatch(text);
   if (window != null) {
@@ -223,7 +222,7 @@ PlanLimitRow? _row(AccountLimitLine line, Strings s, String languageCode) {
       return null;
     }
     final tail = window.group(4)?.trim();
-    final detail = tail == null ? null : _tailDetail(tail, s, languageCode);
+    final detail = tail == null ? null : _tailDetail(tail, s);
     return PlanLimitRow(
       label: _windowLabel(window.group(1)!, s) ?? s.plv1215Limit,
       value: s.plv1215Left(remaining),
@@ -305,16 +304,12 @@ String? _span({
   required int? days,
   required int? hours,
   required int? minutes,
-  required String languageCode,
+  required Strings strings,
 }) {
-  // Español y portugués comparten el formato espaciado ('2 d', '5 h',
-  // '3 min'); el inglés usa el compacto ('2d', '5h', '3m').
-  final spaced =
-      languageCode.startsWith('es') || languageCode.startsWith('pt');
   final parts = <String>[
-    if (days != null && days > 0) spaced ? '$days d' : '${days}d',
-    if (hours != null && hours > 0) spaced ? '$hours h' : '${hours}h',
-    if (minutes != null && minutes > 0) spaced ? '$minutes min' : '${minutes}m',
+    if (days != null && days > 0) strings.i18n131SpanDays(days),
+    if (hours != null && hours > 0) strings.i18n131SpanHours(hours),
+    if (minutes != null && minutes > 0) strings.i18n131SpanMinutes(minutes),
   ];
   if (parts.isEmpty) return null;
   return parts.join(' ');

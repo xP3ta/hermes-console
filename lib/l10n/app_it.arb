@@ -4462,5 +4462,142 @@
   "transportPublicBlocked": "Public HTTP/WS is blocked: configure HTTPS/WSS or use a private/Tailscale address.",
   "@transportPublicBlocked": {
     "description": "i18n131: English draft pending Phase 2 translation."
+  },
+  "i18n131ThemeExportFailed": "Could not export.",
+  "@i18n131ThemeExportFailed": {
+    "description": "i18n131: English draft pending Phase 2 translation."
+  },
+  "i18n131DurationSeconds": "{value} s",
+  "@i18n131DurationSeconds": {
+    "description": "i18n131: English draft pending Phase 2 translation.",
+    "placeholders": {
+      "value": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131SpanDays": "{count}d",
+  "@i18n131SpanDays": {
+    "description": "i18n131: English draft pending Phase 2 translation.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "i18n131SpanHours": "{count}h",
+  "@i18n131SpanHours": {
+    "description": "i18n131: English draft pending Phase 2 translation.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "i18n131SpanMinutes": "{count}m",
+  "@i18n131SpanMinutes": {
+    "description": "i18n131: English draft pending Phase 2 translation.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "i18n131RelativeNow": "just now",
+  "@i18n131RelativeNow": {
+    "description": "i18n131: English draft pending Phase 2 translation."
+  },
+  "i18n131RelativeMinutes": "{count}m ago",
+  "@i18n131RelativeMinutes": {
+    "description": "i18n131: English draft pending Phase 2 translation.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "i18n131RelativeHours": "{count}h ago",
+  "@i18n131RelativeHours": {
+    "description": "i18n131: English draft pending Phase 2 translation.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "i18n131RelativeDays": "{count}d ago",
+  "@i18n131RelativeDays": {
+    "description": "i18n131: English draft pending Phase 2 translation.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "i18n131SinceMinutes": "{count}m ago",
+  "@i18n131SinceMinutes": {
+    "description": "i18n131: English draft pending Phase 2 translation.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "i18n131SinceHours": "{count}h ago",
+  "@i18n131SinceHours": {
+    "description": "i18n131: English draft pending Phase 2 translation.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "i18n131SinceDays": "{count}d ago",
+  "@i18n131SinceDays": {
+    "description": "i18n131: English draft pending Phase 2 translation.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "i18n131InMinutes": "in {count} min",
+  "@i18n131InMinutes": {
+    "description": "i18n131: English draft pending Phase 2 translation.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "i18n131InHours": "in {count} h",
+  "@i18n131InHours": {
+    "description": "i18n131: English draft pending Phase 2 translation.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "i18n131InDays": "in {count} d",
+  "@i18n131InDays": {
+    "description": "i18n131: English draft pending Phase 2 translation.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "i18n131ApprovalTool": "a tool",
+  "@i18n131ApprovalTool": {
+    "description": "i18n131: English draft pending Phase 2 translation."
+  },
+  "i18n131RecoveredTurnActive": "Hermes could not reattach a turn that may still be running. Send retries the check; discard only after verifying Hermes because this does not cancel the remote turn.",
+  "@i18n131RecoveredTurnActive": {
+    "description": "i18n131: English draft pending Phase 2 translation."
+  },
+  "i18n131RecoveredTurnPending": "A pending turn was recovered. Discard the recovery to continue.",
+  "@i18n131RecoveredTurnPending": {
+    "description": "i18n131: English draft pending Phase 2 translation."
   }
 }

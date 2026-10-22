@@ -88,15 +88,14 @@ String homeAgo(BuildContext context, DateTime at, DateTime now) => relativeTime(
 
 /// «hace 20 min», «há 20 min», «20m ago»: [homeAgo] as a phrase.
 String homeSince(BuildContext context, DateTime at, DateTime now) {
-  final text = homeAgo(context, at, now);
-  final prefix = switch (Localizations.localeOf(context).languageCode) {
-    'es' => 'hace ',
-    'pt' => 'há ',
-    _ => null,
-  };
-  return prefix != null && RegExp(r'^\d+ (min|h|d)$').hasMatch(text)
-      ? '$prefix$text'
-      : text;
+  final diff = now.difference(at);
+  final strings = Strings.of(context);
+  if (diff.isNegative || diff.inMinutes < 1 || diff.inDays >= 7) {
+    return homeAgo(context, at, now);
+  }
+  if (diff.inHours < 1) return strings.i18n131SinceMinutes(diff.inMinutes);
+  if (diff.inDays < 1) return strings.i18n131SinceHours(diff.inHours);
+  return strings.i18n131SinceDays(diff.inDays);
 }
 
 String _hhmm(DateTime at) =>
@@ -130,18 +129,13 @@ String homeElapsed(Duration d) =>
 /// «en 2 h», «en 35 min»: to the nearest hour or day (4 h 56 min is
 /// «en 5 h»).
 String homeCountdown(BuildContext context, Duration d) {
-  final lang = Localizations.localeOf(context).languageCode;
+  final strings = Strings.of(context);
   final minutes = math.max(0, d.inMinutes);
-  final text = minutes < 60
-      ? '$minutes min'
-      : minutes < 60 * 24
-      ? '${(minutes / 60).round()} h'
-      : '${(minutes / (60 * 24)).round()} d';
-  return switch (lang) {
-    'es' => 'en $text',
-    'pt' => 'em $text',
-    _ => 'in $text',
-  };
+  if (minutes < 60) return strings.i18n131InMinutes(minutes);
+  if (minutes < 60 * 24) {
+    return strings.i18n131InHours((minutes / 60).round());
+  }
+  return strings.i18n131InDays((minutes / (60 * 24)).round());
 }
 
 /// Elapsed time that ticks once a second on its own (only this text

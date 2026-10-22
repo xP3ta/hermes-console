@@ -1,9 +1,11 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../l10n/app_localizations.dart';
 import 'app_error_log.dart';
+import 'notifications/notification_strings.dart' show resolveNotificationLang;
 
 /// Builds the root widget. Everything awaited before `runApp` lives here so a
 /// throw can be surfaced instead of leaving the native splash up forever.
@@ -22,7 +24,16 @@ Future<void> runGuardedStartup({
     app = await bootstrap();
   } catch (error) {
     AppErrorLog.record('startup', error);
-    await run(StartupFailureApp(bootstrap: bootstrap));
+    String? preference;
+    try {
+      preference = (await SharedPreferences.getInstance()).getString('app_locale');
+    } catch (_) {
+      // Storage failure must not hide the recovery surface.
+    }
+    await run(StartupFailureApp(
+      bootstrap: bootstrap,
+      locale: Locale(resolveNotificationLang(preference)),
+    ));
     return;
   }
   await run(app);
@@ -45,8 +56,9 @@ class StartupFailureApp extends StatefulWidget {
   static const retryKey = ValueKey('startup-failure-retry');
 
   final StartupBootstrap bootstrap;
+  final Locale? locale;
 
-  const StartupFailureApp({required this.bootstrap, super.key});
+  const StartupFailureApp({required this.bootstrap, this.locale, super.key});
 
   @override
   State<StartupFailureApp> createState() => _StartupFailureAppState();
@@ -81,12 +93,9 @@ class _StartupFailureAppState extends State<StartupFailureApp> {
       theme: ThemeData(brightness: Brightness.dark, useMaterial3: true),
       localizationsDelegates: Strings.localizationsDelegates,
       supportedLocales: Strings.supportedLocales,
+      locale: widget.locale,
       localeResolutionCallback: (locale, _) =>
-          switch (locale?.languageCode) {
-            'es' => const Locale('es'),
-            'pt' => const Locale('pt'),
-            _ => const Locale('en'),
-          },
+          Locale(resolveNotificationLang(locale?.languageCode)),
       home: Builder(
         builder: (context) {
           final strings = Strings.of(context);

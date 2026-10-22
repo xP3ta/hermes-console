@@ -10,6 +10,8 @@ export '../widgets/chat/chat_message_selection_area.dart';
 import '../bots/data/gateway_socket_meter.dart';
 import '../models/bot_mention.dart';
 import '../services/app_error_log.dart';
+import '../services/notifications/notification_strings.dart'
+    show resolveNotificationLang;
 import '../services/app_lock_sensitive_read_fence.dart';
 import '../models/composer_reference.dart';
 import '../models/reference_directive.dart';
@@ -3921,23 +3923,10 @@ class _ChatScreenState extends State<ChatScreen>
     final acknowledged =
         prepared.state == PreparedTurnState.accepted ||
         prepared.state == PreparedTurnState.running;
-    final lang = Localizations.localeOf(context).languageCode.toLowerCase();
+    final strings = Strings.of(context);
     if (ambiguous) return Strings.of(context).chaAmbiguousRestored;
-    if (acknowledged) {
-      return switch (lang) {
-        'en' =>
-          'Hermes could not reattach a turn that may still be running. Send retries the check; discard only after verifying Hermes because this does not cancel the remote turn.',
-        'pt' =>
-          'O Hermes não conseguiu reanexar uma resposta que ainda pode estar em andamento. Enviar repete a verificação; descarte só depois de verificar o Hermes, porque isso não cancela a resposta remota.',
-        _ =>
-          'Hermes no pudo reanexar un turno que aún podría seguir activo. Enviar repite la comprobación; descarta solo tras verificar Hermes porque esto no cancela el turno remoto.',
-      };
-    }
-    return switch (lang) {
-      'en' => 'A pending turn was recovered. Discard the recovery to continue.',
-      'pt' => 'Uma resposta pendente foi recuperada. Descarte a recuperação para continuar.',
-      _ => 'Se recuperó un turno pendiente. Descarta la recuperación para continuar.',
-    };
+    if (acknowledged) return strings.i18n131RecoveredTurnActive;
+    return strings.i18n131RecoveredTurnPending;
   }
 
   /// True cuando el composer contiene trabajo del usuario distinto del lote
@@ -22228,19 +22217,13 @@ AssistantOperationalProjection _projectOperationalArtifacts(
   BuildContext context,
   String markdown,
 ) {
-  final strings = Localizations.of<Strings>(context, Strings);
-  // Español y portugués comparten las palabras de reserva ("Subagente",
-  // "Resultado"); el resto cae a inglés.
-  final esOrPt = switch (Localizations.maybeLocaleOf(context)?.languageCode) {
-    'es' || 'pt' => true,
-    _ => false,
-  };
+  final strings = Localizations.of<Strings>(context, Strings) ??
+      lookupStrings(Locale(resolveNotificationLang(
+          Localizations.maybeLocaleOf(context)?.languageCode ?? 'en')));
   return projectAssistantOperationalArtifacts(
     markdown,
-    subagentLabel:
-        strings?.subagentActivityItem ??
-        (index) => esOrPt ? 'Subagente $index' : 'Subagent $index',
-    resultLabel: strings?.commonResult ?? (esOrPt ? 'Resultado' : 'Result'),
+    subagentLabel: strings.subagentActivityItem,
+    resultLabel: strings.commonResult,
   );
 }
 
