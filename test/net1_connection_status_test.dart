@@ -20,6 +20,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'support/fake_connection_link.dart';
+import 'support/test_api_client.dart';
 
 /// N4: one source of the connection state. The chat-lane socket decides what
 /// every screen says (connected, reconnecting, no network, sign-in required,
@@ -479,12 +480,12 @@ void main() {
               current: DrawerSection.home,
               connected: connected,
               link: link,
-              recentSessionsClientFactory: (saved) => ApiClient(
+              recentSessionsClientFactory: (saved) => testApiClient(
                 baseUrl: saved.baseUrl,
-                apiKey: 'unused',
                 httpClient: MockClient(
+                  // An empty recents list in the Dashboard's shape.
                   (_) async =>
-                      http.Response('{"object":"list","data":[]}', 200),
+                      http.Response('{"sessions":[],"total":0}', 200),
                 ),
               ),
             ),
