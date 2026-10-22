@@ -1,9 +1,16 @@
-import 'dart:ui' show Locale;
-
-import '../../l10n/app_localizations.dart';
 import '../services/notifications/notification_strings.dart'
     show resolveNotificationLang;
 import 'session_timestamp.dart';
+
+part 'relative_time_langs/es.dart';
+part 'relative_time_langs/en.dart';
+part 'relative_time_langs/pt.dart';
+part 'relative_time_langs/de.dart';
+part 'relative_time_langs/fr.dart';
+part 'relative_time_langs/it.dart';
+part 'relative_time_langs/ja.dart';
+part 'relative_time_langs/ko.dart';
+part 'relative_time_langs/zh.dart';
 
 /// Returns a human-readable relative timestamp for a Unix-seconds value.
 ///
@@ -17,18 +24,24 @@ String relativeTime(double ts, {String languageCode = 'en', DateTime? now}) {
   if (canonicalTs <= 0) return '';
   final dt = DateTime.fromMillisecondsSinceEpoch((canonicalTs * 1000).toInt());
   final diff = (now ?? DateTime.now()).difference(dt);
-  final strings = lookupStrings(Locale(resolveNotificationLang(languageCode)));
-  if (diff.isNegative || diff.inMinutes < 1) {
-    return strings.i18n131RelativeNow;
-  }
-  if (diff.inHours < 1) {
-    return strings.i18n131RelativeMinutes(diff.inMinutes);
-  }
-  if (diff.inDays < 1) {
-    return strings.i18n131RelativeHours(diff.inHours);
-  }
-  if (diff.inDays < 7) {
-    return strings.i18n131RelativeDays(diff.inDays);
-  }
-  return '${dt.day}/${dt.month}';
+  final grammar = _relativeTimeGrammars[resolveNotificationLang(languageCode)]!;
+  return grammar.format(diff, dt);
 }
+
+abstract class _RelativeTimeGrammar {
+  const _RelativeTimeGrammar();
+
+  String format(Duration age, DateTime date);
+}
+
+const _relativeTimeGrammars = <String, _RelativeTimeGrammar>{
+  'es': _RelativeEs(),
+  'en': _RelativeEn(),
+  'pt': _RelativePt(),
+  'de': _RelativeDe(),
+  'fr': _RelativeFr(),
+  'it': _RelativeIt(),
+  'ja': _RelativeJa(),
+  'ko': _RelativeKo(),
+  'zh': _RelativeZh(),
+};
