@@ -10,6 +10,7 @@ import 'package:http/testing.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
 import 'support/recording_desktop_gateway.dart';
+import 'support/test_api_client.dart';
 
 class _Gateway extends RecordingDesktopGateway {
   DesktopSessionSnapshot? snapshot;
@@ -104,9 +105,8 @@ ActiveChat _chat(_Store store, _Gateway gateway, {bool fresh = false}) {
     sessionTitle: 'Transcript regression',
     notifications: null,
     onTerminal: () {},
-    api: ApiClient(
+    api: testApiClient(
       baseUrl: 'https://example.invalid',
-      apiKey: 'test-only',
       httpClient: store.client(),
     ),
     desktopGateway: gateway,
