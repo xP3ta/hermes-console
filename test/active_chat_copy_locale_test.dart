@@ -27,7 +27,9 @@ void main() {
       expect(activeChatStoredErrorUiMessage('No se pudo completar la respuesta: SocketException private fixture', languageCode: lang), isNot(contains('private fixture')));
     });
   }
-  test('unknown language uses English', () {
+  test('absent and unknown language use English', () {
+    expect(activeChatPromptFailureUiMessage(StateError('fixture')), 'The message could not be sent. Try again.');
+    expect(activeChatStoredErrorUiMessage('Hermes reported an error'), 'The response could not be completed. Try again.');
     expect(activeChatPromptFailureUiMessage(StateError('fixture'), languageCode: 'xx'), 'The message could not be sent. Try again.');
   });
 }
