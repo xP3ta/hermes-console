@@ -35,6 +35,7 @@ import 'botmode_parity_model_test.dart' show parityRoom;
 import 'support/a11y_main_screen_harness.dart';
 import 'support/design_shots.dart';
 import 'support/in_memory_compression_restore_storage.dart';
+import 'support/test_api_client.dart';
 
 GuideController get _g => GuideController.instance;
 GestureDockController get _dock => GestureDockController.instance;
@@ -45,6 +46,10 @@ class _HomeClient extends ApiClient {
         baseUrl: 'http://127.0.0.1:8642',
         apiKey: 'test-key',
         httpClient: MockClient((_) async => http.Response('{}', 404)),
+        profileDashboard: testDashboardClient(
+          baseUrl: 'http://127.0.0.1:8642',
+          httpClient: MockClient((_) async => http.Response('{}', 404)),
+        ),
       );
 
   @override
