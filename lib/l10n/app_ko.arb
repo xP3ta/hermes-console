@@ -6101,9 +6101,14 @@
   "@i18n131ProfileUnsaved": {
     "description": "i18n131: Phase 3B English stub; profile."
   },
-  "i18n131ProfileTheProfilenameIdentifierDoesNotChange": "The @$_profileName identifier does not change",
+  "i18n131ProfileTheProfilenameIdentifierDoesNotChange": "The @{profileName} identifier does not change",
   "@i18n131ProfileTheProfilenameIdentifierDoesNotChange": {
-    "description": "i18n131: Phase 3B English stub; profile."
+    "description": "i18n131: Phase 3B English stub; profile.",
+    "placeholders": {
+      "profileName": {
+        "type": "String"
+      }
+    }
   },
   "i18n131ProfileCustomize": "Customize",
   "@i18n131ProfileCustomize": {

@@ -10514,9 +10514,14 @@
   "@i18n131ProfileUnsaved": {
     "description": "i18n131: Preserved ES/EN/PT; profile."
   },
-  "i18n131ProfileTheProfilenameIdentifierDoesNotChange": "El identificador @$_profileName no cambia",
+  "i18n131ProfileTheProfilenameIdentifierDoesNotChange": "El identificador @{profileName} no cambia",
   "@i18n131ProfileTheProfilenameIdentifierDoesNotChange": {
-    "description": "i18n131: Preserved ES/EN/PT; profile."
+    "description": "i18n131: Preserved ES/EN/PT; profile.",
+    "placeholders": {
+      "profileName": {
+        "type": "String"
+      }
+    }
   },
   "i18n131ProfileCustomize": "Personalizar",
   "@i18n131ProfileCustomize": {
