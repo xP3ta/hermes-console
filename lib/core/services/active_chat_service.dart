@@ -14420,13 +14420,23 @@ class ActiveChat {
 
   /// A 404 on the opening tail read (offset 0) of a chat whose open announced
   /// no stored history: the session is not in the store yet, so no earlier
-  /// page exists. Any other failure (network, 5xx, a 404 where history was
-  /// announced or earlier pages were already read) stays a real failure.
-  bool _storeHasNoEarlierRows(Object error, {required bool tailRead}) =>
-      tailRead &&
-      _hardExpectedStoredMessageCount == null &&
-      error is CoreReadException &&
-      error.kind == CoreReadErrorKind.notFound;
+  /// page exists. A named profile's store answers the same 404 (also for a
+  /// profile it does not know, which has nothing earlier either): the client
+  /// reports it as `profileUnavailable`, or as the Dashboard's own HTTP 404
+  /// when the transcript is read straight from the Dashboard. Only named
+  /// profiles produce those two. Any other failure (network, 5xx, a 404
+  /// where history was announced or earlier pages were already read) stays a
+  /// real failure.
+  bool _storeHasNoEarlierRows(Object error, {required bool tailRead}) {
+    if (!tailRead || _hardExpectedStoredMessageCount != null) return false;
+    return switch (error) {
+      CoreReadException(:final kind) =>
+        kind == CoreReadErrorKind.notFound ||
+            kind == CoreReadErrorKind.profileUnavailable,
+      DashboardHttpException(:final statusCode) => statusCode == 404,
+      _ => false,
+    };
+  }
 
   /// Espera el desenlace de una hidratación diferida del historial
   /// (`session.resume_progress`), con un tope para no colgar la apertura del
