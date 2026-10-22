@@ -18,7 +18,17 @@ class NotificationController {
   /// notificaciones para que el tap pueda navegar al run correcto.
   final String? _connId;
 
-  NotificationController(this._notif, {this._connId});
+  /// Texto de reserva para la herramienta en curso cuando el servidor no
+  /// envió `progressLabel`. Inyectable: quien construya este controlador con
+  /// acceso a preferencias debe pasar el fallback localizado (NotifL10n.tool)
+  /// para no fijar un solo idioma.
+  final String toolFallback;
+
+  NotificationController(
+    this._notif, {
+    this._connId,
+    this.toolFallback = 'herramienta',
+  });
 
   // ── API pública ─────────────────────────────────────────────────────────────
 
@@ -36,7 +46,7 @@ class NotificationController {
     _clearTimers(run.runId);
 
     _notif.approvalPending(
-      tool: run.progressLabel ?? 'herramienta',
+      tool: run.progressLabel ?? toolFallback,
       connId: _connId,
       sessionId: run.sessionId,
       sessionTitle: _truncate(run.prompt),

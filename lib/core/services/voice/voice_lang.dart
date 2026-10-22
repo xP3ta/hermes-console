@@ -19,17 +19,23 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// Hay un test que ancla que ambas no diverjan.
 const String kAppLocalePrefKey = 'app_locale';
 
-/// Idioma de voz efectivo: `'es'` o `'en'` (exactamente los idiomas de la UI).
+/// Idioma de voz efectivo: `'es'`, `'en'` o `'pt'` (exactamente los idiomas
+/// de la UI).
 ///
-/// - `app_locale == 'es' | 'en'` → tal cual, el dispositivo es irrelevante.
+/// - `app_locale == 'es' | 'en' | 'pt'` → tal cual, el dispositivo es
+///   irrelevante.
 /// - `'system'`, clave ausente o valor desconocido → según el idioma del
-///   dispositivo: inglés → `'en'`; cualquier otro (es, fr, de…) → `'es'`.
+///   dispositivo: inglés o portugués → ese idioma; cualquier otro
+///   (fr, de…) → `'es'`, el fallback histórico.
 ///
 /// [deviceLocale] existe solo para tests; en producción se usa el locale real
 /// del dispositivo.
 String effectiveVoiceLang(SharedPreferences prefs, {Locale? deviceLocale}) {
   final pref = prefs.getString(kAppLocalePrefKey);
-  if (pref == 'es' || pref == 'en') return pref!;
+  if (pref == 'es' || pref == 'en' || pref == 'pt') return pref!;
   final device = deviceLocale ?? PlatformDispatcher.instance.locale;
-  return device.languageCode.toLowerCase() == 'en' ? 'en' : 'es';
+  final code = device.languageCode.toLowerCase();
+  if (code == 'en') return 'en';
+  if (code == 'pt') return 'pt';
+  return 'es';
 }

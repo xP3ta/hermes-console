@@ -310,12 +310,17 @@ class TtsUserException extends FormatException {
 const Map<String, List<String>> kDeviceTtsLangPrefs = {
   'es': ['es-ES', 'es-US', 'es-MX', 'es-419', 'es-CO', 'es-AR'],
   'en': ['en-US', 'en-GB', 'en-AU', 'en-IN'],
+  'pt': ['pt-BR', 'pt-PT'],
 };
 
 /// Fallback de [DeviceTtsEngine] cuando el dispositivo no lista idiomas o no
 /// tiene ninguno del idioma efectivo (el plugin cae a la voz por defecto si
 /// el idioma pedido no existe).
-const Map<String, String> kDeviceTtsFallback = {'es': 'es-ES', 'en': 'en-US'};
+const Map<String, String> kDeviceTtsFallback = {
+  'es': 'es-ES',
+  'en': 'en-US',
+  'pt': 'pt-BR',
+};
 
 /// Voz del sistema (on-device). Privada y gratuita.
 class DeviceTtsEngine implements TtsEngine {

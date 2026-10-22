@@ -258,11 +258,14 @@ String? _span({
   required int? minutes,
   required String languageCode,
 }) {
-  final es = languageCode == 'es';
+  // Español y portugués comparten el formato espaciado ('2 d', '5 h',
+  // '3 min'); el inglés usa el compacto ('2d', '5h', '3m').
+  final spaced =
+      languageCode.startsWith('es') || languageCode.startsWith('pt');
   final parts = <String>[
-    if (days != null && days > 0) es ? '$days d' : '${days}d',
-    if (hours != null && hours > 0) es ? '$hours h' : '${hours}h',
-    if (minutes != null && minutes > 0) es ? '$minutes min' : '${minutes}m',
+    if (days != null && days > 0) spaced ? '$days d' : '${days}d',
+    if (hours != null && hours > 0) spaced ? '$hours h' : '${hours}h',
+    if (minutes != null && minutes > 0) spaced ? '$minutes min' : '${minutes}m',
   ];
   if (parts.isEmpty) return null;
   return parts.join(' ');

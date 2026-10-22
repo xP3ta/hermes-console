@@ -3644,134 +3644,188 @@ class _KanbanModelChoice {
 /// mantiene aquí hasta el próximo `gen-l10n` global para no regenerar archivos
 /// compartidos mientras otros lotes editan el catálogo en paralelo.
 class _Kanban020Copy {
-  final bool spanish;
+  final String lang;
 
-  const _Kanban020Copy._(this.spanish);
+  const _Kanban020Copy._(this.lang);
 
   factory _Kanban020Copy.forContext(BuildContext context) => _Kanban020Copy._(
-    Strings.of(context).localeName.toLowerCase().startsWith('es'),
+    switch (Strings.of(context).localeName.toLowerCase().split('_').first) {
+      'es' => 'es',
+      'pt' => 'pt',
+      _ => 'en',
+    },
   );
 
+  // Español, inglés y portugués; cada texto define los tres.
+  String p(String es, String en, String pt) => switch (lang) {
+    'es' => es,
+    'pt' => pt,
+    _ => en,
+  };
+
   String get bulkPartialTitle =>
-      spanish ? 'Algunas tareas no cambiaron' : 'Some tasks were not changed';
-  String bulkPartial(int ok, int failed) => spanish
-      ? '$ok archivadas; $failed no se pudieron cambiar.'
-      : '$ok archived; $failed could not be changed.';
-  String get actionUnavailable => spanish
-      ? 'Esta operación no está disponible en el servidor.'
-      : 'This operation is not available on the server.';
-  String get specify => spanish ? 'Especificar' : 'Specify';
-  String get specifyTitle => spanish ? 'Especificar tarea' : 'Specify task';
-  String get specifyBody => spanish
-      ? 'Hermes usará el modelo auxiliar para completar esta tarea de triage. Puede tardar varios minutos.'
-      : 'Hermes will use the auxiliary model to flesh out this triage task. This can take several minutes.';
+      p('Algunas tareas no cambiaron', 'Some tasks were not changed', 'Algumas tarefas não mudaram');
+  String bulkPartial(int ok, int failed) => p(
+    '$ok archivadas; $failed no se pudieron cambiar.',
+    '$ok archived; $failed could not be changed.',
+    '$ok arquivadas; $failed não puderam ser alteradas.',
+  );
+  String get actionUnavailable => p(
+    'Esta operación no está disponible en el servidor.',
+    'This operation is not available on the server.',
+    'Esta operação não está disponível no servidor.',
+  );
+  String get specify => p('Especificar', 'Specify', 'Especificar');
+  String get specifyTitle => p('Especificar tarea', 'Specify task', 'Especificar tarefa');
+  String get specifyBody => p(
+    'Hermes usará el modelo auxiliar para completar esta tarea de triage. Puede tardar varios minutos.',
+    'Hermes will use the auxiliary model to flesh out this triage task. This can take several minutes.',
+    'O Hermes usará o modelo auxiliar para detalhar esta tarefa de triagem. Pode levar vários minutos.',
+  );
   String get specifyStarted =>
-      spanish ? 'La tarea se ha especificado.' : 'The task was specified.';
-  String get decompose => spanish ? 'Descomponer' : 'Decompose';
-  String get decomposeTitle =>
-      spanish ? 'Descomponer en subtareas' : 'Decompose into child tasks';
-  String get decomposeBody => spanish
-      ? 'Hermes creará un grafo de subtareas y las asignará a perfiles compatibles. Puede tardar varios minutos.'
-      : 'Hermes will create a child-task graph and route it to compatible profiles. This can take several minutes.';
-  String decomposeResult(int count) => spanish
-      ? 'Descomposición completada: $count subtareas.'
-      : 'Decomposition complete: $count child tasks.';
-  String get attachmentTooLarge => spanish
-      ? 'El adjunto supera el límite oficial de 25 MiB.'
-      : 'The attachment exceeds the official 25 MiB limit.';
-  String get attachmentUnavailable => spanish
-      ? 'Android no pudo proporcionar este archivo.'
-      : 'Android could not provide this file.';
-  String get attachmentUploaded =>
-      spanish ? 'Adjunto subido.' : 'Attachment uploaded.';
-  String get saveAttachment => spanish ? 'Guardar adjunto' : 'Save attachment';
-  String get attachmentSaved =>
-      spanish ? 'Adjunto guardado.' : 'Attachment saved.';
-  String get deleteAttachment =>
-      spanish ? 'Eliminar adjunto' : 'Delete attachment';
-  String deleteAttachmentBody(String name) => spanish
-      ? '¿Eliminar «$name» del servidor? Esta acción no se puede deshacer.'
-      : 'Delete “$name” from the server? This cannot be undone.';
-  String get delete => spanish ? 'Eliminar' : 'Delete';
-  String get attachmentDeleted =>
-      spanish ? 'Adjunto eliminado.' : 'Attachment deleted.';
-  String get workerLog => spanish ? 'Log del worker' : 'Worker log';
-  String get noLog => spanish
-      ? 'Esta tarea todavía no tiene log.'
-      : 'This task does not have a log yet.';
-  String get logTruncated => spanish
-      ? 'Se muestra únicamente la cola más reciente del log.'
-      : 'Only the most recent log tail is shown.';
-  String get runInspection =>
-      spanish ? 'Estado de la ejecución' : 'Run inspection';
-  String get alive => spanish ? 'Activo' : 'Alive';
-  String get yes => spanish ? 'Sí' : 'Yes';
+      p('La tarea se ha especificado.', 'The task was specified.', 'A tarefa foi especificada.');
+  String get decompose => p('Descomponer', 'Decompose', 'Decompor');
+  String get decomposeTitle => p(
+    'Descomponer en subtareas',
+    'Decompose into child tasks',
+    'Decompor em subtarefas',
+  );
+  String get decomposeBody => p(
+    'Hermes creará un grafo de subtareas y las asignará a perfiles compatibles. Puede tardar varios minutos.',
+    'Hermes will create a child-task graph and route it to compatible profiles. This can take several minutes.',
+    'O Hermes criará um grafo de subtarefas e as atribuirá a perfis compatíveis. Pode levar vários minutos.',
+  );
+  String decomposeResult(int count) => p(
+    'Descomposición completada: $count subtareas.',
+    'Decomposition complete: $count child tasks.',
+    'Decomposição concluída: $count subtarefas.',
+  );
+  String get attachmentTooLarge => p(
+    'El adjunto supera el límite oficial de 25 MiB.',
+    'The attachment exceeds the official 25 MiB limit.',
+    'O anexo excede o limite oficial de 25 MiB.',
+  );
+  String get attachmentUnavailable => p(
+    'Android no pudo proporcionar este archivo.',
+    'Android could not provide this file.',
+    'O Android não pôde fornecer este arquivo.',
+  );
+  String get attachmentUploaded => p('Adjunto subido.', 'Attachment uploaded.', 'Anexo enviado.');
+  String get saveAttachment => p('Guardar adjunto', 'Save attachment', 'Salvar anexo');
+  String get attachmentSaved => p('Adjunto guardado.', 'Attachment saved.', 'Anexo salvo.');
+  String get deleteAttachment => p('Eliminar adjunto', 'Delete attachment', 'Excluir anexo');
+  String deleteAttachmentBody(String name) => p(
+    '¿Eliminar «$name» del servidor? Esta acción no se puede deshacer.',
+    'Delete “$name” from the server? This cannot be undone.',
+    'Excluir “$name” do servidor? Esta ação não pode ser desfeita.',
+  );
+  String get delete => p('Eliminar', 'Delete', 'Excluir');
+  String get attachmentDeleted => p('Adjunto eliminado.', 'Attachment deleted.', 'Anexo excluído.');
+  String get workerLog => p('Log del worker', 'Worker log', 'Log do worker');
+  String get noLog => p(
+    'Esta tarea todavía no tiene log.',
+    'This task does not have a log yet.',
+    'Esta tarefa ainda não tem log.',
+  );
+  String get logTruncated => p(
+    'Se muestra únicamente la cola más reciente del log.',
+    'Only the most recent log tail is shown.',
+    'Apenas o trecho mais recente do log é exibido.',
+  );
+  String get runInspection => p('Estado de la ejecución', 'Run inspection', 'Estado da execução');
+  String get alive => p('Activo', 'Alive', 'Ativo');
+  String get yes => p('Sí', 'Yes', 'Sim');
   String get no => 'No';
-  String get status => spanish ? 'Estado' : 'Status';
+  String get status => p('Estado', 'Status', 'Estado');
   String get memory => 'RAM';
-  String get threads => spanish ? 'Hilos' : 'Threads';
-  String get reason => spanish ? 'Motivo' : 'Reason';
-  String get error => 'Error';
-  String get terminate => spanish ? 'Terminar' : 'Terminate';
-  String get terminateTitle => spanish ? 'Terminar ejecución' : 'Terminate run';
-  String terminateBody(int id) => spanish
-      ? 'Se detendrá el worker de la ejecución #$id y la tarea volverá a la cola. ¿Continuar?'
-      : 'The worker for run #$id will stop and the task will return to the queue. Continue?';
-  String get runTerminated => spanish
-      ? 'Ejecución terminada y reencolada.'
-      : 'Run terminated and requeued.';
-  String get reclaim => spanish ? 'Recuperar' : 'Reclaim';
-  String get reclaimTitle =>
-      spanish ? 'Recuperar tarea atascada' : 'Reclaim stuck task';
-  String get reclaimBody => spanish
-      ? 'Se detendrá el worker actual y la tarea volverá a «En cola». Úsalo solo si la ejecución está atascada.'
-      : 'The current worker will stop and the task will return to the queue. Use this only for a stuck run.';
-  String get taskReclaimed => spanish
-      ? 'Tarea recuperada y reencolada.'
-      : 'Task reclaimed and requeued.';
-  String get chooseProfile => spanish ? 'Elegir perfil' : 'Choose profile';
-  String get reassign => spanish ? 'Reasignar' : 'Reassign';
-  String get reassignTitle => spanish ? 'Reasignar tarea' : 'Reassign task';
-  String reassignBody(String profile, bool reclaims) => spanish
-      ? 'La tarea se asignará a «$profile».${reclaims ? ' El worker actual se detendrá primero.' : ''}'
-      : 'The task will be assigned to “$profile”.${reclaims ? ' The current worker will be stopped first.' : ''}';
-  String get taskReassigned =>
-      spanish ? 'Tarea reasignada.' : 'Task reassigned.';
-  String get modelOptionsUnavailable => spanish
-      ? 'Este servidor no publica opciones de modelo para Kanban.'
-      : 'This server does not publish Kanban model options.';
-  String get chooseModel =>
-      spanish ? 'Modelo para esta tarea' : 'Model for this task';
-  String get inheritModel =>
-      spanish ? 'Heredar modelo del perfil' : 'Inherit model from profile';
-  String get reasoningEffort =>
-      spanish ? 'Esfuerzo de razonamiento' : 'Reasoning effort';
-  String get inheritEffort =>
-      spanish ? 'Heredar esfuerzo del perfil' : 'Inherit effort from profile';
+  String get threads => p('Hilos', 'Threads', 'Threads');
+  String get reason => p('Motivo', 'Reason', 'Motivo');
+  String get error => p('Error', 'Error', 'Erro');
+  String get terminate => p('Terminar', 'Terminate', 'Encerrar');
+  String get terminateTitle => p('Terminar ejecución', 'Terminate run', 'Encerrar execução');
+  String terminateBody(int id) => p(
+    'Se detendrá el worker de la ejecución #$id y la tarea volverá a la cola. ¿Continuar?',
+    'The worker for run #$id will stop and the task will return to the queue. Continue?',
+    'O worker da execução #$id será interrompido e a tarefa voltará para a fila. Continuar?',
+  );
+  String get runTerminated => p(
+    'Ejecución terminada y reencolada.',
+    'Run terminated and requeued.',
+    'Execução encerrada e reenfileirada.',
+  );
+  String get reclaim => p('Recuperar', 'Reclaim', 'Recuperar');
+  String get reclaimTitle => p(
+    'Recuperar tarea atascada',
+    'Reclaim stuck task',
+    'Recuperar tarefa travada',
+  );
+  String get reclaimBody => p(
+    'Se detendrá el worker actual y la tarea volverá a «En cola». Úsalo solo si la ejecución está atascada.',
+    'The current worker will stop and the task will return to the queue. Use this only for a stuck run.',
+    'O worker atual será interrompido e a tarefa voltará para “Em fila”. Use apenas se a execução estiver travada.',
+  );
+  String get taskReclaimed => p(
+    'Tarea recuperada y reencolada.',
+    'Task reclaimed and requeued.',
+    'Tarefa recuperada e reenfileirada.',
+  );
+  String get chooseProfile => p('Elegir perfil', 'Choose profile', 'Escolher perfil');
+  String get reassign => p('Reasignar', 'Reassign', 'Reatribuir');
+  String get reassignTitle => p('Reasignar tarea', 'Reassign task', 'Reatribuir tarefa');
+  String reassignBody(String profile, bool reclaims) => p(
+    'La tarea se asignará a «$profile».${reclaims ? ' El worker actual se detendrá primero.' : ''}',
+    'The task will be assigned to “$profile”.${reclaims ? ' The current worker will be stopped first.' : ''}',
+    'A tarefa será atribuída a “$profile”.${reclaims ? ' O worker atual será interrompido primeiro.' : ''}',
+  );
+  String get taskReassigned => p('Tarea reasignada.', 'Task reassigned.', 'Tarefa reatribuída.');
+  String get modelOptionsUnavailable => p(
+    'Este servidor no publica opciones de modelo para Kanban.',
+    'This server does not publish Kanban model options.',
+    'Este servidor não publica opções de modelo para o Kanban.',
+  );
+  String get chooseModel => p('Modelo para esta tarea', 'Model for this task', 'Modelo para esta tarefa');
+  String get inheritModel => p(
+    'Heredar modelo del perfil',
+    'Inherit model from profile',
+    'Herdar modelo do perfil',
+  );
+  String get reasoningEffort => p('Esfuerzo de razonamiento', 'Reasoning effort', 'Esforço de raciocínio');
+  String get inheritEffort => p(
+    'Heredar esfuerzo del perfil',
+    'Inherit effort from profile',
+    'Herdar esforço do perfil',
+  );
   String effortLabel(String value) {
-    if (value == 'none') return spanish ? 'Desactivado' : 'Off';
-    if (value == 'minimal') return spanish ? 'Mínimo' : 'Minimal';
-    if (value == 'low') return spanish ? 'Bajo' : 'Low';
-    if (value == 'medium') return spanish ? 'Medio' : 'Medium';
-    if (value == 'high') return spanish ? 'Alto' : 'High';
-    if (value == 'xhigh') return spanish ? 'Muy alto' : 'XHigh';
-    if (value == 'max') return spanish ? 'Máximo' : 'Max';
+    if (value == 'none') return p('Desactivado', 'Off', 'Desativado');
+    if (value == 'minimal') return p('Mínimo', 'Minimal', 'Mínimo');
+    if (value == 'low') return p('Bajo', 'Low', 'Baixo');
+    if (value == 'medium') return p('Medio', 'Medium', 'Médio');
+    if (value == 'high') return p('Alto', 'High', 'Alto');
+    if (value == 'xhigh') return p('Muy alto', 'XHigh', 'Muito alto');
+    if (value == 'max') return p('Máximo', 'Max', 'Máximo');
     return 'Ultra';
   }
 
-  String get applyModelTitle =>
-      spanish ? 'Aplicar configuración de modelo' : 'Apply model configuration';
+  String get applyModelTitle => p(
+    'Aplicar configuración de modelo',
+    'Apply model configuration',
+    'Aplicar configuração de modelo',
+  );
   String applyModelBody(String model, String effort) {
     final effortLabelValue = effort.isEmpty
         ? inheritEffort
         : effortLabel(effort);
-    return spanish
-        ? 'Modelo: $model\nRazonamiento: $effortLabelValue'
-        : 'Model: $model\nReasoning: $effortLabelValue';
+    return p(
+      'Modelo: $model\nRazonamiento: $effortLabelValue',
+      'Model: $model\nReasoning: $effortLabelValue',
+      'Modelo: $model\nRaciocínio: $effortLabelValue',
+    );
   }
 
-  String get apply => spanish ? 'Aplicar' : 'Apply';
-  String get modelApplied => spanish
-      ? 'Configuración de modelo aplicada.'
-      : 'Model configuration applied.';
+  String get apply => p('Aplicar', 'Apply', 'Aplicar');
+  String get modelApplied => p(
+    'Configuración de modelo aplicada.',
+    'Model configuration applied.',
+    'Configuração de modelo aplicada.',
+  );
 }

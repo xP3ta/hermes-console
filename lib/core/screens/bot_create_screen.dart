@@ -301,9 +301,14 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
       _useShapeColor ||
       _blobatar.wire != 'blobatar';
 
-  bool get _spanish =>
-      Localizations.localeOf(context).languageCode.toLowerCase() == 'es';
-  String _text(String es, String en) => _spanish ? es : en;
+  // Portugués opcional como red de seguridad; todos los textos lo definen.
+  String _text(String es, String en, [String? pt]) => switch (
+    Localizations.localeOf(context).languageCode.toLowerCase()
+  ) {
+    'es' => es,
+    'pt' => pt ?? en,
+    _ => en,
+  };
 
   /// Origen del catálogo (skills y modelos): el profile clonado, o el
   /// principal cuando se crea vacío — igual que `capSource` en Desktop.
@@ -549,6 +554,7 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
         _text(
           'Usa una imagen PNG, JPEG, WebP o GIF de hasta 15 MB.',
           'Use a PNG, JPEG, WebP, or GIF image up to 15 MB.',
+          'Use uma imagem PNG, JPEG, WebP ou GIF de até 15 MB.',
         ),
         warning: true,
       );
@@ -870,14 +876,17 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
           final _BotCreateIdentityFailure failure when failure.uncertain => _text(
             'El perfil existe, pero no sabemos si su identidad se guardó. Revísala y vuelve a intentarlo.',
             'The profile exists, but its identity is uncertain. Review it and try again.',
+            'O perfil existe, mas não sabemos se a identidade foi salva. Revise-a e tente novamente.',
           ),
           _BotCreateIdentityFailure() => _text(
             'El perfil existe, pero no se pudo aplicar su identidad. Corrige el problema y vuelve a intentarlo.',
             'The profile exists, but its identity could not be applied. Fix the issue and try again.',
+            'O perfil existe, mas não foi possível aplicar a identidade. Corrija o problema e tente novamente.',
           ),
           FormatException() => _text(
             'Elige una identidad válida antes de crear el perfil.',
             'Choose a valid identity before creating the profile.',
+            'Escolha uma identidade válida antes de criar o perfil.',
           ),
           _ => copy.createAgentError(humanizeApiError(error)),
         };
@@ -891,26 +900,28 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
     final discard = await showHermesDialog<bool>(
       context: context,
       surfaceKey: const ValueKey('bot-create-discard-dialog'),
-      title: _text('¿Descartar cambios?', 'Discard changes?'),
+      title: _text('¿Descartar cambios?', 'Discard changes?', 'Descartar alterações?'),
       message: _profileCreated
           ? _text(
               'El perfil ya existe, pero su configuración visual no terminó. Si sales, no se abrirá su chat automático.',
               'The profile already exists, but its visual setup is incomplete. Leaving will not open its automatic chat.',
+              'O perfil já existe, mas a configuração visual não terminou. Se você sair, o chat automático não será aberto.',
             )
           : _text(
               'Perderás la configuración de este perfil.',
               'You will lose this profile setup.',
+              'Você perderá a configuração deste perfil.',
             ),
       actions: [
         HermesDialogAction(
           key: const ValueKey('bot-create-keep-editing'),
-          label: _text('Seguir editando', 'Keep editing'),
+          label: _text('Seguir editando', 'Keep editing', 'Continuar editando'),
           value: false,
           style: HermesDialogActionStyle.cancel,
         ),
         HermesDialogAction(
           key: const ValueKey('bot-create-discard'),
-          label: _text('Descartar', 'Discard'),
+          label: _text('Descartar', 'Discard', 'Descartar'),
           value: true,
           style: HermesDialogActionStyle.destructive,
         ),
@@ -979,7 +990,7 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
                       children: [
                         Expanded(
                           child: Text(
-                            _text('Personalizar', 'Customize'),
+                            _text('Personalizar', 'Customize', 'Personalizar'),
                             style: TextStyle(
                               color: colors.textPrimary,
                               fontWeight: FontWeight.w800,
@@ -988,7 +999,7 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
                           ),
                         ),
                         Text(
-                          _text('opcional', 'optional'),
+                          _text('opcional', 'optional', 'opcional'),
                           style: TextStyle(
                             color: colors.textTertiary,
                             fontSize: 12.5,
@@ -1003,14 +1014,15 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
                         BotSettingsRow(
                           rowKey: const ValueKey('bot-create-identity-row'),
                           initiallyExpanded: false,
-                          label: _text('Identidad visual', 'Visual identity'),
+                          label: _text('Identidad visual', 'Visual identity', 'Identidade visual'),
                           summary: switch (_identityMode) {
-                            _CreateIdentityMode.pet => _text('Mascota', 'Pet'),
+                            _CreateIdentityMode.pet => _text('Mascota', 'Pet', 'Mascote'),
                             _CreateIdentityMode.image => _text(
                               'Imagen',
                               'Image',
+                              'Imagem',
                             ),
-                            _CreateIdentityMode.face => _text('Cara', 'Face'),
+                            _CreateIdentityMode.face => _text('Cara', 'Face', 'Rosto'),
                           },
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1038,11 +1050,12 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
                           label: _text(
                             'Título y descripción',
                             'Title and description',
+                            'Título e descrição',
                           ),
                           summary:
                               _titleCtrl.text.trim().isEmpty &&
                                   _descCtrl.text.trim().isEmpty
-                              ? _text('Sin rellenar', 'Not filled in')
+                              ? _text('Sin rellenar', 'Not filled in', 'Não preenchido')
                               : _titleCtrl.text.trim().isNotEmpty
                               ? _titleCtrl.text.trim()
                               : _descCtrl.text.trim(),
@@ -1131,6 +1144,7 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
                           summary: _text(
                             'Soul · Clonar de',
                             'Soul · Clone from',
+                            'Soul · Clonar de',
                           ),
                           expanded: _advanced,
                           onToggle: (value) =>
@@ -1250,7 +1264,7 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
     children: [
       _modeTile(
         key: const ValueKey('bot-create-mode-pet'),
-        label: _text('Mascota', 'Pet'),
+        label: _text('Mascota', 'Pet', 'Mascote'),
         icon: Icons.pets_outlined,
         selected: _identityMode == _CreateIdentityMode.pet,
         onTap: () => _selectIdentityMode(_CreateIdentityMode.pet),
@@ -1258,7 +1272,7 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
       ),
       _modeTile(
         key: const ValueKey('bot-create-mode-image'),
-        label: _text('Imagen', 'Image'),
+        label: _text('Imagen', 'Image', 'Imagem'),
         icon: Icons.image_outlined,
         selected: _identityMode == _CreateIdentityMode.image,
         onTap: () => _selectIdentityMode(_CreateIdentityMode.image),
@@ -1266,7 +1280,7 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
       ),
       _modeTile(
         key: const ValueKey('bot-create-mode-face'),
-        label: _text('Cara', 'Face'),
+        label: _text('Cara', 'Face', 'Rosto'),
         icon: Icons.face_outlined,
         selected: _identityMode == _CreateIdentityMode.face,
         onTap: () => _selectIdentityMode(_CreateIdentityMode.face),
@@ -1429,7 +1443,7 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
     return HermesBotFace(
       visual: visual,
       size: size,
-      semanticLabel: _text('Cara del perfil', 'Profile face'),
+      semanticLabel: _text('Cara del perfil', 'Profile face', 'Rosto do perfil'),
       animate: true,
     );
   }
@@ -1441,6 +1455,7 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
         _text(
           'PNG, JPEG, WebP o GIF. Se recorta al centro y se guarda cuadrada.',
           'PNG, JPEG, WebP, or GIF. Center-cropped and saved square.',
+          'PNG, JPEG, WebP ou GIF. Recortada no centro e salva quadrada.',
         ),
         style: TextStyle(color: colors.textSecondary, fontSize: 12.5),
       ),
@@ -1451,8 +1466,8 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
         icon: Icon(_pickingImage ? Icons.hourglass_top : Icons.photo_library),
         label: Text(
           _pickedAvatar == null
-              ? _text('Elegir imagen', 'Choose image')
-              : _text('Cambiar imagen', 'Change image'),
+              ? _text('Elegir imagen', 'Choose image', 'Escolher imagem')
+              : _text('Cambiar imagen', 'Change image', 'Alterar imagem'),
         ),
       ),
     ],
@@ -1663,11 +1678,13 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
                         ? _text(
                             'Estado incierto: revisa y vuelve a intentar.',
                             'Uncertain state: review and try again.',
+                            'Estado incerto: revise e tente novamente.',
                           )
                         : _profileCreated
                         ? _text(
                             'Perfil creado · falta confirmar la identidad',
                             'Profile created · identity confirmation pending',
+                            'Perfil criado · falta confirmar a identidade',
                           )
                         : Strings.of(context).botCreateNameRequired,
                     key: ValueKey(
@@ -1686,9 +1703,9 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
                 HermesPrimaryButton(
                   key: const ValueKey('bot-create-submit'),
                   label: _busy
-                      ? _text('Creando…', 'Creating…')
+                      ? _text('Creando…', 'Creating…', 'Criando…')
                       : _profileCreated
-                      ? _text('Reintentar identidad', 'Retry identity')
+                      ? _text('Reintentar identidad', 'Retry identity', 'Repetir identidade')
                       : copy.createAgentSubmit,
                   icon: _busy ? Icons.sync : Icons.smart_toy_outlined,
                   onTap: _valid && !_taken && !_busy ? _create : null,

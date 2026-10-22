@@ -3921,16 +3921,23 @@ class _ChatScreenState extends State<ChatScreen>
     final acknowledged =
         prepared.state == PreparedTurnState.accepted ||
         prepared.state == PreparedTurnState.running;
-    final english = Localizations.localeOf(context).languageCode == 'en';
-    return ambiguous
-        ? Strings.of(context).chaAmbiguousRestored
-        : acknowledged
-        ? english
-              ? 'Hermes could not reattach a turn that may still be running. Send retries the check; discard only after verifying Hermes because this does not cancel the remote turn.'
-              : 'Hermes no pudo reanexar un turno que aún podría seguir activo. Enviar repite la comprobación; descarta solo tras verificar Hermes porque esto no cancela el turno remoto.'
-        : english
-        ? 'A pending turn was recovered. Discard the recovery to continue.'
-        : 'Se recuperó un turno pendiente. Descarta la recuperación para continuar.';
+    final lang = Localizations.localeOf(context).languageCode.toLowerCase();
+    if (ambiguous) return Strings.of(context).chaAmbiguousRestored;
+    if (acknowledged) {
+      return switch (lang) {
+        'en' =>
+          'Hermes could not reattach a turn that may still be running. Send retries the check; discard only after verifying Hermes because this does not cancel the remote turn.',
+        'pt' =>
+          'O Hermes não conseguiu reanexar uma resposta que ainda pode estar em andamento. Enviar repete a verificação; descarte só depois de verificar o Hermes, porque isso não cancela a resposta remota.',
+        _ =>
+          'Hermes no pudo reanexar un turno que aún podría seguir activo. Enviar repite la comprobación; descarta solo tras verificar Hermes porque esto no cancela el turno remoto.',
+      };
+    }
+    return switch (lang) {
+      'en' => 'A pending turn was recovered. Discard the recovery to continue.',
+      'pt' => 'Uma resposta pendente foi recuperada. Descarte a recuperação para continuar.',
+      _ => 'Se recuperó un turno pendiente. Descarta la recuperación para continuar.',
+    };
   }
 
   /// True cuando el composer contiene trabajo del usuario distinto del lote
@@ -22222,13 +22229,18 @@ AssistantOperationalProjection _projectOperationalArtifacts(
   String markdown,
 ) {
   final strings = Localizations.of<Strings>(context, Strings);
-  final isSpanish = Localizations.maybeLocaleOf(context)?.languageCode == 'es';
+  // Español y portugués comparten las palabras de reserva ("Subagente",
+  // "Resultado"); el resto cae a inglés.
+  final esOrPt = switch (Localizations.maybeLocaleOf(context)?.languageCode) {
+    'es' || 'pt' => true,
+    _ => false,
+  };
   return projectAssistantOperationalArtifacts(
     markdown,
     subagentLabel:
         strings?.subagentActivityItem ??
-        (index) => isSpanish ? 'Subagente $index' : 'Subagent $index',
-    resultLabel: strings?.commonResult ?? (isSpanish ? 'Resultado' : 'Result'),
+        (index) => esOrPt ? 'Subagente $index' : 'Subagent $index',
+    resultLabel: strings?.commonResult ?? (esOrPt ? 'Resultado' : 'Result'),
   );
 }
 

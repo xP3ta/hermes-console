@@ -522,6 +522,20 @@ void main() {
       final (voice, _) = await open(tester, server);
       await openPage(tester, 'reply_voice');
 
+      // El catálogo ahora trae una séptima voz descargable (pt-BR) y el menú
+      // de opciones corta al 70 % de la pantalla con una lista perezosa: con
+      // una superficie alta todas las opciones quedan construidas y el test
+      // no depende de drags frágiles.
+      final view = tester.view;
+      final originalPhysicalSize = view.physicalSize;
+      final originalDevicePixelRatio = view.devicePixelRatio;
+      addTearDown(() {
+        view.physicalSize = originalPhysicalSize;
+        view.devicePixelRatio = originalDevicePixelRatio;
+      });
+      view.physicalSize = const Size(1080, 2400);
+      view.devicePixelRatio = 1.0;
+
       // The server option is one collapsed line.
       expect(
         find.byKey(const ValueKey('voice_server_summary_card')),
@@ -568,6 +582,7 @@ void main() {
           reason: noise,
         );
       }
+      // La fila de Android vuelve a estar arriba al cerrar la lectura.
       await tapKey(tester, 'voice_phone_voice_android');
       expect(voice.settings.ttsEngine, TtsEngineKind.device);
       expect(tester.takeException(), isNull);

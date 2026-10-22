@@ -32,6 +32,33 @@ void main() {
     );
   });
 
+  test('usa unidades compactas en portugués con «agora»', () {
+    expect(
+      relativeTime(
+        stamp(const Duration(seconds: 20)),
+        languageCode: 'pt',
+        now: now,
+      ),
+      'agora',
+    );
+    expect(
+      relativeTime(
+        stamp(const Duration(minutes: 36)),
+        languageCode: 'pt',
+        now: now,
+      ),
+      '36 min',
+    );
+    expect(
+      relativeTime(
+        stamp(const Duration(hours: 2)),
+        languageCode: 'pt',
+        now: now,
+      ),
+      '2 h',
+    );
+  });
+
   test('conserva el formato inglés para la locale inglesa', () {
     expect(
       relativeTime(

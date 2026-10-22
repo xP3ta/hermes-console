@@ -81,9 +81,12 @@ class _StartupFailureAppState extends State<StartupFailureApp> {
       theme: ThemeData(brightness: Brightness.dark, useMaterial3: true),
       localizationsDelegates: Strings.localizationsDelegates,
       supportedLocales: Strings.supportedLocales,
-      localeResolutionCallback: (locale, _) => locale?.languageCode == 'es'
-          ? const Locale('es')
-          : const Locale('en'),
+      localeResolutionCallback: (locale, _) =>
+          switch (locale?.languageCode) {
+            'es' => const Locale('es'),
+            'pt' => const Locale('pt'),
+            _ => const Locale('en'),
+          },
       home: Builder(
         builder: (context) {
           final strings = Strings.of(context);

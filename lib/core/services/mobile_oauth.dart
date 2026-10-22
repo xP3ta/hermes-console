@@ -334,7 +334,7 @@ class MobileOAuthLogin {
         req.response.write(
           _callbackPage(
             ok: valid,
-            spanish: _prefersSpanish(req.headers.value('accept-language')),
+            lang: _preferredLang(req.headers.value('accept-language')),
           ),
         );
         if (valid) consumed = true; // consume before ANY await/exchange
@@ -438,31 +438,42 @@ class _ResumeObserver with WidgetsBindingObserver {
 
 // Static page for the loopback callback. The listener has no BuildContext, so
 // the texts live here. Nothing from the request is echoed into the page.
-bool _prefersSpanish(String? acceptLanguage) {
+/// Idioma preferido del navegador del callback: 'es', 'pt' o 'en'.
+String _preferredLang(String? acceptLanguage) {
   final first = (acceptLanguage ?? '').split(',').first.trim().toLowerCase();
-  return first.startsWith('es');
+  if (first.startsWith('es')) return 'es';
+  if (first.startsWith('pt')) return 'pt';
+  return 'en';
 }
 
-String _callbackPage({required bool ok, required bool spanish}) {
-  final (title, body) = switch ((ok, spanish)) {
-    (true, true) => (
+String _callbackPage({required bool ok, required String lang}) {
+  final (title, body) = switch ((ok, lang)) {
+    (true, 'es') => (
       'Sesión iniciada',
       'Puedes cerrar esta pestaña y volver a Console.',
     ),
-    (true, false) => (
+    (true, 'pt') => (
+      'Sessão iniciada',
+      'Você pode fechar esta aba e voltar ao Console.',
+    ),
+    (true, _) => (
       'Signed in',
       'You can close this tab and go back to Console.',
     ),
-    (false, true) => (
+    (false, 'es') => (
       'No se pudo completar el acceso',
       'Vuelve a Console e inténtalo de nuevo.',
     ),
-    (false, false) => (
+    (false, 'pt') => (
+      'Não foi possível concluir o acesso',
+      'Volte ao Console e tente novamente.',
+    ),
+    (false, _) => (
       "Sign-in didn't finish",
       'Go back to Console and try again.',
     ),
   };
-  return '<!doctype html><html lang="${spanish ? 'es' : 'en'}"><head>'
+  return '<!doctype html><html lang="$lang"><head>'
       '<meta charset="utf-8">'
       '<meta name="viewport" content="width=device-width, initial-scale=1">'
       '<meta name="color-scheme" content="light dark">'

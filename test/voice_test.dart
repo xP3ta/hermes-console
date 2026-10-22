@@ -436,6 +436,15 @@ void main() {
       ]);
     });
 
+    test('lista de locales del sistema en portugués', () {
+      expect(kSystemSttLocalePrefs['pt'], const [
+        'pt_BR',
+        'pt_PT',
+        'pt-BR',
+        'pt',
+      ]);
+    });
+
     test('la clave del caché de recognizers incluye el idioma', () {
       final base = sherpaModelByKind(SherpaModelKind.whisperBase);
       expect(SherpaSttEngine.recognizerCacheKey(base, 'es'), '${base.id}:es');
@@ -474,6 +483,16 @@ void main() {
       expect(neuralVoiceById(s.onnxVoiceId), isNotNull);
     });
 
+    test('sin elección guardada, app en portugués → Faber y pm_santa', () async {
+      SharedPreferences.setMockInitialValues({'app_locale': 'pt'});
+      final prefs = await SharedPreferences.getInstance();
+      final s = VoiceSettings.load(prefs);
+      expect(s.onnxVoiceId, 'pt_BR-faber-medium');
+      expect(s.streamingTtsVoice, 'pm_santa');
+      // La voz propuesta debe existir de verdad en el catálogo.
+      expect(neuralVoiceById(s.onnxVoiceId), isNotNull);
+    });
+
     test('una elección guardada se respeta en ambos idiomas', () async {
       for (final locale in const ['es', 'en']) {
         SharedPreferences.setMockInitialValues({
@@ -501,6 +520,8 @@ void main() {
       expect(VoiceSettings.defaultOnnxVoiceFor('xx'), 'es_ES-davefx-medium');
       expect(VoiceSettings.defaultStreamingVoiceFor('es'), 'em_santa');
       expect(VoiceSettings.defaultStreamingVoiceFor('xx'), 'em_santa');
+      expect(VoiceSettings.defaultOnnxVoiceFor('pt'), 'pt_BR-faber-medium');
+      expect(VoiceSettings.defaultStreamingVoiceFor('pt'), 'pm_santa');
     });
   });
 
@@ -526,6 +547,11 @@ void main() {
         'en-IN',
       ]);
       expect(kDeviceTtsFallback['en'], 'en-US');
+    });
+
+    test('lista de voces del sistema en portugués', () {
+      expect(kDeviceTtsLangPrefs['pt'], const ['pt-BR', 'pt-PT']);
+      expect(kDeviceTtsFallback['pt'], 'pt-BR');
     });
   });
 }
