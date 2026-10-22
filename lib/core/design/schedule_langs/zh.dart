@@ -1,120 +1,101 @@
 part of '../schedule_humanizer.dart';
 
-// English grammar stub for Phase 3b.
 class _Zh extends _ScheduleLang {
   const _Zh();
 
-  static const _days = [
-    'Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', //
-    'Saturday',
-  ];
-  static const _months = [
-    '', 'January', 'February', 'March', 'April', 'May', 'June', 'July', //
-    'August', 'September', 'October', 'November', 'December',
-  ];
+  static const _days = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
 
   @override
-  String get custom => 'Custom schedule';
+  String get custom => '自定义计划';
+
+  String _duration(int minutes) {
+    if (minutes < 60) return '${minutes}分钟';
+    if (minutes % 1440 == 0) return '${minutes ~/ 1440}天';
+    if (minutes % 60 == 0) return '${minutes ~/ 60}小时';
+    return '${minutes ~/ 60}小时${minutes % 60}分钟';
+  }
 
   @override
   String everyDuration(int minutes) {
-    if (minutes == 1) return 'Every minute';
-    if (minutes < 60) return 'Every $minutes min';
-    if (minutes == 60) return 'Every hour';
-    if (minutes % 1440 == 0) {
-      final d = minutes ~/ 1440;
-      return d == 1 ? 'Every day' : 'Every $d days';
-    }
-    if (minutes % 60 == 0) return 'Every ${minutes ~/ 60} hours';
-    return 'Every ${minutes ~/ 60} h ${minutes % 60} min';
+    if (minutes == 1) return '每分钟';
+    if (minutes == 60) return '每小时';
+    if (minutes == 1440) return '每天';
+    return '每${_duration(minutes)}';
   }
-
-  String _minuteMark(int minute) => ':${minute.toString().padLeft(2, '0')}';
 
   @override
   String everyHourAt(int minute) =>
-      minute == 0 ? 'Every hour' : 'Every hour at ${_minuteMark(minute)}';
+      minute == 0 ? '每小时' : '每小时的${minute}分';
 
   @override
   String everyHourAtMinutes(List<int> minutes) =>
-      'Every hour at ${joinAnd([for (final m in minutes) _minuteMark(m)])}';
+      '每小时的${joinAnd([for (final m in minutes) '${m.toString().padLeft(2, '0')}分'])}';
 
   @override
-  String onceIn(int minutes) =>
-      'Once, in ${everyDuration(minutes).substring(6)}';
+  String onceIn(int minutes) => '${_duration(minutes)}后执行一次';
 
   @override
   String once(DateTime when, DateTime now) {
-    final year = when.year == now.year ? '' : ', ${when.year}';
-    return 'Once on ${_months[when.month]} ${when.day}$year '
-        'at ${_ScheduleLang.time(when.hour, when.minute)}';
+    final year = when.year == now.year ? '' : '${when.year}年';
+    return '$year${when.month}月${when.day}日'
+        '${_ScheduleLang.time(when.hour, when.minute)}执行一次';
   }
 
   @override
-  String atTimes(_Days days, List<(int, int)> times) {
-    final labels = [for (final t in times) _ScheduleLang.time(t.$1, t.$2)];
-    return '${days.prefix ?? 'Every day'} at ${joinAnd(labels)}';
-  }
+  String atTimes(_Days days, List<(int, int)> times) =>
+      '${days.prefix ?? '每天'}'
+      '${joinAnd([for (final t in times) _ScheduleLang.time(t.$1, t.$2)])}';
 
   @override
   String freq(String freq, String? window, _Days days) =>
-      [freq, ?window, ?days.suffix].join(' ');
+      '${days.suffix ?? ''}${window == null ? '' : '$window，'}$freq';
 
   @override
   String fromTo((int, int) a, (int, int) b) =>
-      'from ${_ScheduleLang.time(a.$1, a.$2)} to ${_ScheduleLang.time(b.$1, b.$2)}';
+      '${_ScheduleLang.time(a.$1, a.$2)}至${_ScheduleLang.time(b.$1, b.$2)}';
 
   @override
   String startingAt(int hour, int minute) =>
-      'starting at ${_ScheduleLang.time(hour, minute)}';
+      '从${_ScheduleLang.time(hour, minute)}开始';
 
   @override
   String joinAnd(List<String> items) {
     if (items.length <= 1) return items.join();
-    return '${items.sublist(0, items.length - 1).join(', ')} and ${items.last}';
+    return '${items.sublist(0, items.length - 1).join('、')}和${items.last}';
   }
 
-  String _monthList(List<int> months, {String lead = 'in'}) {
+  String _monthList(List<int> months) {
     final runs = _runs(months);
     if (runs.length == 1 && months.length >= 3) {
-      return 'from ${_months[runs.single.$1]} to ${_months[runs.single.$2]}';
+      return '每年${runs.single.$1}月至${runs.single.$2}月';
     }
-    return '$lead ${joinAnd([for (final m in months) _months[m]])}';
+    return '每年${joinAnd([for (final m in months) '${m}月'])}';
   }
 
   @override
   _Days monthsOnly(List<int> months) {
-    final list = _monthList(months);
-    return _Days('Every day $list', list);
+    final phrase = '${_monthList(months)}每天';
+    return _Days(phrase, phrase);
   }
 
   @override
   _Days weekdays(List<int> cronDows, List<int>? months) {
-    final monthSuffix = months == null ? '' : ' ${_monthList(months)}';
     final ordered = _ScheduleLang.mondayFirst(cronDows);
-    String prefix;
-    String suffix;
+    String phrase;
     if (ordered.length == 5 && ordered.first == 1 && ordered.last == 5) {
-      prefix = 'Weekdays';
-      suffix = 'on weekdays';
+      phrase = '每周一至周五';
     } else if (ordered.length == 2 && ordered.first == 6 && ordered.last == 0) {
-      prefix = 'Weekends';
-      suffix = 'on weekends';
+      phrase = '周末';
     } else if (ordered.length == 1) {
-      prefix = 'Every ${_days[ordered.single]}';
-      suffix = 'on ${_days[ordered.single]}s';
+      phrase = '每${_days[ordered.single]}';
     } else if (ordered.length >= 3 && _ScheduleLang.contiguousWeek(ordered)) {
-      prefix = '${_days[ordered.first]} to ${_days[ordered.last]}';
-      suffix = '${_days[ordered.first]} to ${_days[ordered.last]}';
+      phrase = '每${_days[ordered.first]}至${_days[ordered.last]}';
     } else {
-      final names = joinAnd([for (final d in ordered) _days[d]]);
-      prefix = names;
-      suffix = 'on $names';
+      phrase = '每${joinAnd([for (final d in ordered) _days[d]])}';
     }
-    return _Days('$prefix$monthSuffix', '$suffix$monthSuffix');
+    if (months != null) phrase = '${_monthList(months)}的$phrase';
+    return _Days(phrase, phrase);
   }
-
-  String _ordinalDay(int d) => '$d';
 
   @override
   _Days monthDays(List<int>? doms, List<int>? months) {
@@ -122,22 +103,23 @@ class _Zh extends _ScheduleLang {
         doms.length == 1 &&
         months != null &&
         months.length == 1) {
-      final date = 'on ${_months[months.single]} ${doms.single}';
-      return _Days('On ${_months[months.single]} ${doms.single}', date);
+      final phrase = '每年${months.single}月${doms.single}日';
+      return _Days(phrase, phrase);
     }
-    String phrase;
+    String dates;
     if (doms == null) {
-      phrase = 'on the last day of every month';
+      dates = '最后一天';
     } else if (doms.length == 1) {
-      phrase = 'on day ${_ordinalDay(doms.single)} of every month';
+      dates = '${doms.single}日';
     } else {
       final runs = _runs(doms);
-      phrase = runs.length == 1 && doms.length >= 3
-          ? 'on days ${doms.first} to ${doms.last} of every month'
-          : 'on days ${joinAnd([for (final d in doms) '$d'])} of every month';
+      dates = runs.length == 1 && doms.length >= 3
+          ? '${doms.first}日至${doms.last}日'
+          : joinAnd([for (final d in doms) '${d}日']);
     }
-    final monthSuffix = months == null ? '' : ' ${_monthList(months)}';
-    final prefix = '${phrase[0].toUpperCase()}${phrase.substring(1)}';
-    return _Days('$prefix$monthSuffix', '$phrase$monthSuffix');
+    final phrase = months == null
+        ? '每月$dates'
+        : '${_monthList(months)}的$dates';
+    return _Days(phrase, phrase);
   }
 }

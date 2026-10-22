@@ -1,7 +1,6 @@
-// English copy stub for Phase 3b.
 const Map<String, String> oauthCallbackZh = {
-  "successTitle": "Signed in",
-  "successBody": "You can close this tab and go back to Console.",
-  "failureTitle": "Sign-in didn't finish",
-  "failureBody": "Go back to Console and try again."
+  "successTitle": "已登录",
+  "successBody": "你可以关闭此标签页，返回Console。",
+  "failureTitle": "登录未完成",
+  "failureBody": "请返回Console重试。"
 };
