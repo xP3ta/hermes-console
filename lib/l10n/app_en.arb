@@ -6958,5 +6958,30 @@
   "onb4HelpSafe": "It uses the official Hermes installer. If you already have Hermes, it doesn't touch it, nor Telegram or the Gateway. It takes a few minutes.",
   "onb4HelpVps": "Hermes on an internet server? Install Tailscale on the server and on this phone, then paste the line.",
   "onb4HadPassword": "This Hermes already had a password. Type it once and Console doesn't keep it.",
-  "onb4ManualBody": "Type the address, the user and the password that the setup showed you when it finished."
+  "onb4ManualBody": "Type the address, the user and the password that the setup showed you when it finished.",
+  "recoveryCenterRestoredPartial": "Checkpoint restored, with exceptions.",
+  "recoveryCenterSkippedUserEdits": "{count, plural, =1{1 file kept because you edited it after the checkpoint.} other{{count} files kept because you edited them after the checkpoint.}}",
+  "@recoveryCenterSkippedUserEdits": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "recoveryCenterSkippedOversize": "{count, plural, =1{1 file too large was not restored.} other{{count} files too large were not restored.}}",
+  "@recoveryCenterSkippedOversize": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "recoveryCenterFailedDeletes": "{count, plural, =1{1 file could not be deleted.} other{{count} files could not be deleted.}}",
+  "@recoveryCenterFailedDeletes": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  }
 }

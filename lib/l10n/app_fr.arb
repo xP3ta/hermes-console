@@ -4422,5 +4422,9 @@
   "onb4HelpSafe": "Utilise l’installateur officiel de Hermes. Si Hermes est déjà installé, il n’y touche pas, ni à Telegram ni au Gateway. Cela prend quelques minutes.",
   "onb4HelpVps": "Hermes sur un serveur Internet ? Installe Tailscale sur le serveur et sur ce mobile, puis colle la ligne.",
   "onb4HadPassword": "Cet Hermes avait déjà un mot de passe. Saisis-le une fois ; Console ne l’enregistre pas.",
-  "onb4ManualBody": "Saisis l’adresse, l’utilisateur et le mot de passe affichés à la fin de l’installation."
+  "onb4ManualBody": "Saisis l’adresse, l’utilisateur et le mot de passe affichés à la fin de l’installation.",
+  "recoveryCenterRestoredPartial": "Point de contrôle restauré, avec des exceptions.",
+  "recoveryCenterSkippedUserEdits": "{count, plural, =1{1 fichier conservé car tu l’as modifié après le point de contrôle.} other{{count} fichiers conservés car tu les as modifiés après le point de contrôle.}}",
+  "recoveryCenterSkippedOversize": "{count, plural, =1{1 fichier trop volumineux n’a pas été restauré.} other{{count} fichiers trop volumineux n’ont pas été restaurés.}}",
+  "recoveryCenterFailedDeletes": "{count, plural, =1{1 fichier n’a pas pu être supprimé.} other{{count} fichiers n’ont pas pu être supprimés.}}"
 }

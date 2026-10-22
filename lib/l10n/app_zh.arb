@@ -4422,5 +4422,9 @@
   "onb4HelpSafe": "请使用 Hermes 官方安装程序。如果你已经安装 Hermes，它不会改动现有的 Hermes，也不会改动 Telegram 或 Gateway。安装需要几分钟。",
   "onb4HelpVps": "Hermes 运行在互联网服务器上？请先在服务器和这部手机上安装 Tailscale，然后粘贴这一行命令。",
   "onb4HadPassword": "此 Hermes 已有密码。输入一次即可，Console 不会保存密码。",
-  "onb4ManualBody": "输入安装完成后显示的地址、用户名和密码。"
+  "onb4ManualBody": "输入安装完成后显示的地址、用户名和密码。",
+  "recoveryCenterRestoredPartial": "检查点已恢复，但有例外。",
+  "recoveryCenterSkippedUserEdits": "{count, plural, other{有 {count} 个文件在检查点之后被你修改过，已保留。}}",
+  "recoveryCenterSkippedOversize": "{count, plural, other{有 {count} 个文件过大，未恢复。}}",
+  "recoveryCenterFailedDeletes": "{count, plural, other{有 {count} 个文件无法删除。}}"
 }

@@ -4422,5 +4422,9 @@
   "onb4HelpSafe": "Hermes 공식 설치 프로그램을 사용하세요. 이미 Hermes가 있으면 기존 Hermes를 변경하지 않으며, Telegram이나 Gateway도 변경하지 않습니다. 몇 분 정도 걸립니다.",
   "onb4HelpVps": "인터넷 서버에서 Hermes를 사용하나요? 서버와 이 휴대폰에 Tailscale을 설치한 후 명령줄을 붙여넣으세요.",
   "onb4HadPassword": "이 Hermes에는 이미 비밀번호가 있습니다. 한 번 입력하면 되며 Console은 저장하지 않습니다.",
-  "onb4ManualBody": "설치가 완료된 후 표시된 주소, 사용자 이름, 비밀번호를 입력하세요."
+  "onb4ManualBody": "설치가 완료된 후 표시된 주소, 사용자 이름, 비밀번호를 입력하세요.",
+  "recoveryCenterRestoredPartial": "체크포인트를 복원했습니다(일부 예외 있음).",
+  "recoveryCenterSkippedUserEdits": "{count, plural, other{체크포인트 이후 직접 수정하여 파일 {count}개를 그대로 두었습니다.}}",
+  "recoveryCenterSkippedOversize": "{count, plural, other{크기가 너무 커서 파일 {count}개를 복원하지 않았습니다.}}",
+  "recoveryCenterFailedDeletes": "{count, plural, other{파일 {count}개를 삭제하지 못했습니다.}}"
 }

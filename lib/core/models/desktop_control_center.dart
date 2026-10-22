@@ -138,16 +138,44 @@ final class RecoveryRestoreResult {
   final bool success;
   final int historyRemoved;
 
+  /// Files Hermes kept because the user edited them after its last write
+  /// (safe restore, Hermes 0.22.4+). Counts only: paths are never shown.
+  final int skippedUserEdits;
+
+  /// Files left out because they exceeded the checkpoint size cap.
+  final int skippedOversize;
+
+  /// Files the restore could not delete.
+  final int failedDeletes;
+
   const RecoveryRestoreResult({
     required this.success,
     required this.historyRemoved,
+    this.skippedUserEdits = 0,
+    this.skippedOversize = 0,
+    this.failedDeletes = 0,
   });
+
+  bool get hasOmissions =>
+      skippedUserEdits > 0 || skippedOversize > 0 || failedDeletes > 0;
 
   factory RecoveryRestoreResult.fromJson(Map<String, dynamic> json) =>
       RecoveryRestoreResult(
         success: json['success'] == true,
         historyRemoved: _safeInt(json['history_removed']).clamp(0, 100000),
+        skippedUserEdits: _pathCount(json['skipped_user_edits']),
+        skippedOversize: _pathCount(json['skipped_oversize']),
+        failedDeletes: _pathCount(json['failed_deletes']),
       );
+
+  static int _pathCount(Object? raw) {
+    if (raw is! List) return 0;
+    return raw
+        .whereType<String>()
+        .where((path) => path.trim().isNotEmpty)
+        .length
+        .clamp(0, 100000);
+  }
 }
 
 final class DesktopPluginEntry {

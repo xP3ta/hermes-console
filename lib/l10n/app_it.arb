@@ -4422,5 +4422,9 @@
   "onb4HelpSafe": "Usa l'installer ufficiale di Hermes. Se hai già Hermes, non lo tocca, né Telegram né il Gateway. Richiede qualche minuto.",
   "onb4HelpVps": "Hermes su un server internet? Installa Tailscale sul server e su questo telefono, poi incolla la riga.",
   "onb4HadPassword": "Questo Hermes aveva già una password. Inseriscila una volta e Console non la salva.",
-  "onb4ManualBody": "Inserisci l'indirizzo, il nome utente e la password mostrati al termine dell'installazione."
+  "onb4ManualBody": "Inserisci l'indirizzo, il nome utente e la password mostrati al termine dell'installazione.",
+  "recoveryCenterRestoredPartial": "Checkpoint ripristinato, con eccezioni.",
+  "recoveryCenterSkippedUserEdits": "{count, plural, =1{1 file mantenuto perché l'hai modificato dopo il checkpoint.} other{{count} file mantenuti perché li hai modificati dopo il checkpoint.}}",
+  "recoveryCenterSkippedOversize": "{count, plural, =1{1 file troppo grande non è stato ripristinato.} other{{count} file troppo grandi non sono stati ripristinati.}}",
+  "recoveryCenterFailedDeletes": "{count, plural, =1{1 file non è stato possibile eliminarlo.} other{{count} file non è stato possibile eliminarli.}}"
 }
