@@ -1599,16 +1599,21 @@ class ApiClient {
       _ => CoreReadErrorKind.temporarilyUnavailable,
     }, statusCode: status);
     final Map<String, dynamic> data;
-    final dashboard = owner == null ? _profileDashboard : null;
+    final dashboard = _profileDashboard;
     if (dashboard != null) {
-      // Desktop `getSessionMessages`: the Dashboard serves the default
-      // profile's transcript too. Its pages are capped at 500 rows, so the
-      // body size is bounded without the streaming read below.
+      // Desktop `getSessionMessages`: the Dashboard serves every profile's
+      // transcript, a named one selected by `?profile=`. A Dashboard-only
+      // connection has no API server behind `/p/<profile>/`. Its pages are
+      // capped at 500 rows, so the body size is bounded without the
+      // streaming read below.
+      final profileQuery = owner == null
+          ? ''
+          : '&${Uri(queryParameters: {'profile': owner}).query}';
       try {
         data = await dashboard.apiGet(
           'sessions/${Uri.encodeComponent(sessionId)}/messages'
           '?limit=$boundedLimit&order=latest&offset=$offset'
-          '&include_compacted=true',
+          '&include_compacted=true$profileQuery',
         );
       } on DashboardHttpException catch (error) {
         throw failure(error.statusCode);

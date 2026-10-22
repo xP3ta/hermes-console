@@ -65,6 +65,9 @@ class _Server {
     }
   }
 
+  /// Records any read the client still sends to the API server route. With
+  /// the Dashboard attached every transcript read goes to the Dashboard, so
+  /// the tests expect none.
   http.Client gateway() => MockClient((request) async {
     gatewayReads.add(request.url);
     // The gateway never routes a named profile via ?profile=.
@@ -285,7 +288,7 @@ void main() {
             expect(chat.hasEarlierMessages, isFalse);
             expect(chat.earlierMessagesLoadFailed, isFalse);
             expect(gateway.profiles, [_profile]);
-            expect(server.gatewayReads, hasLength(1));
+            expect(server.gatewayReads, isEmpty);
             expect(server.dashboardReads, isNotEmpty);
             expect(
               server.dashboardReads.first.queryParameters,
@@ -371,7 +374,7 @@ void main() {
         server.dashboardReads.map((uri) => uri.queryParameters['offset']),
         containsAllInOrder(['0', '120', '120', '240']),
       );
-      expect(server.gatewayReads, hasLength(1));
+      expect(server.gatewayReads, isEmpty);
     },
   );
 
