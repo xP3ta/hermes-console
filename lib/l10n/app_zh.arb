@@ -4426,5 +4426,6 @@
   "recoveryCenterRestoredPartial": "检查点已恢复，但有例外。",
   "recoveryCenterSkippedUserEdits": "{count, plural, other{有 {count} 个文件在检查点之后被你修改过，已保留。}}",
   "recoveryCenterSkippedOversize": "{count, plural, other{有 {count} 个文件过大，未恢复。}}",
-  "recoveryCenterFailedDeletes": "{count, plural, other{有 {count} 个文件无法删除。}}"
+  "recoveryCenterFailedDeletes": "{count, plural, other{有 {count} 个文件无法删除。}}",
+  "cphPluginBlockedByScan": "安全扫描已拦截此插件，未做任何更改。"
 }

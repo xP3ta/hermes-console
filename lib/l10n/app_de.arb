@@ -4426,5 +4426,6 @@
   "recoveryCenterRestoredPartial": "Checkpoint wiederhergestellt, mit Ausnahmen.",
   "recoveryCenterSkippedUserEdits": "{count, plural, =1{1 Datei beibehalten, weil du sie nach dem Checkpoint bearbeitet hast.} other{{count} Dateien beibehalten, weil du sie nach dem Checkpoint bearbeitet hast.}}",
   "recoveryCenterSkippedOversize": "{count, plural, =1{1 zu große Datei wurde nicht wiederhergestellt.} other{{count} zu große Dateien wurden nicht wiederhergestellt.}}",
-  "recoveryCenterFailedDeletes": "{count, plural, =1{1 Datei konnte nicht gelöscht werden.} other{{count} Dateien konnten nicht gelöscht werden.}}"
+  "recoveryCenterFailedDeletes": "{count, plural, =1{1 Datei konnte nicht gelöscht werden.} other{{count} Dateien konnten nicht gelöscht werden.}}",
+  "cphPluginBlockedByScan": "Der Sicherheitsscan hat dieses Plugin blockiert. Es wurde nichts geändert."
 }

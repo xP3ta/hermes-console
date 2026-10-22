@@ -4426,5 +4426,6 @@
   "recoveryCenterRestoredPartial": "チェックポイントを復元しました（一部例外あり）。",
   "recoveryCenterSkippedUserEdits": "{count, plural, other{チェックポイント後に編集されたため、{count}個のファイルはそのまま残しました。}}",
   "recoveryCenterSkippedOversize": "{count, plural, other{サイズが大きすぎるため、{count}個のファイルは復元されませんでした。}}",
-  "recoveryCenterFailedDeletes": "{count, plural, other{{count}個のファイルを削除できませんでした。}}"
+  "recoveryCenterFailedDeletes": "{count, plural, other{{count}個のファイルを削除できませんでした。}}",
+  "cphPluginBlockedByScan": "セキュリティスキャンによりこのプラグインはブロックされました。何も変更されていません。"
 }

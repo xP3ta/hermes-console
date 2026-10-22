@@ -290,6 +290,40 @@ void main() {
     expect(find.text('Actualización disponible'), findsNothing);
   });
 
+  testWidgets('a scan-blocked plugin update says so and never forces', (
+    tester,
+  ) async {
+    var changed = 0;
+    final rest = ScriptedRest()
+      ..posts['dashboard/agent-plugins/weather/update'] = {
+        'ok': false,
+        'scan_blocked': true,
+        'scan_verdict': 'caution',
+        'scan_findings': [
+          {
+            'severity': 'high',
+            'description': 'curl piped to shell',
+            'file': 'install.sh',
+            'line': 3,
+          },
+        ],
+      };
+    await _pump(tester, _weather, rest, onChanged: () => changed++);
+    await tester.tap(find.byKey(const ValueKey('cph-primary')));
+    await tester.pumpAndSettle();
+
+    expect(rest.mutations, ['POST dashboard/agent-plugins/weather/update']);
+    expect(rest.bodies.last, isNull);
+    expect(changed, 0);
+    expect(
+      find.textContaining('El escaneo de seguridad bloqueó este plugin'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('curl piped to shell'), findsOneWidget);
+    expect(find.text('Actualización disponible'), findsOneWidget);
+    expect(find.textContaining('force'), findsNothing);
+  });
+
   testWidgets('remove from More deletes on the server', (tester) async {
     final rest = ScriptedRest();
     await _pump(tester, _weather.copyWith(updateAvailable: false), rest);

@@ -6983,5 +6983,6 @@
         "type": "int"
       }
     }
-  }
+  },
+  "cphPluginBlockedByScan": "The security scan blocked this plugin. Nothing was changed."
 }

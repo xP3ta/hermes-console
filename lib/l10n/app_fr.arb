@@ -4426,5 +4426,6 @@
   "recoveryCenterRestoredPartial": "Point de contrôle restauré, avec des exceptions.",
   "recoveryCenterSkippedUserEdits": "{count, plural, =1{1 fichier conservé car tu l’as modifié après le point de contrôle.} other{{count} fichiers conservés car tu les as modifiés après le point de contrôle.}}",
   "recoveryCenterSkippedOversize": "{count, plural, =1{1 fichier trop volumineux n’a pas été restauré.} other{{count} fichiers trop volumineux n’ont pas été restaurés.}}",
-  "recoveryCenterFailedDeletes": "{count, plural, =1{1 fichier n’a pas pu être supprimé.} other{{count} fichiers n’ont pas pu être supprimés.}}"
+  "recoveryCenterFailedDeletes": "{count, plural, =1{1 fichier n’a pas pu être supprimé.} other{{count} fichiers n’ont pas pu être supprimés.}}",
+  "cphPluginBlockedByScan": "L’analyse de sécurité a bloqué ce plugin. Rien n’a été modifié."
 }
