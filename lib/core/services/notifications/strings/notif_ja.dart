@@ -210,7 +210,7 @@ const Map<String, String> notifJa = {
   "summaryState2": "失敗",
   "summaryState3": "要確認",
   "summaryState4": "新着",
-  // Punctuation templates; English stubs for Phase 3b in new languages.
-  "joinNamesPair": "{first} {conjunction} {second}",
-  "joinNamesHead": "{first}, {second}",
+  // Name-list templates preserve the localized conjunction.
+  "joinNamesPair": "{first}{conjunction}{second}",
+  "joinNamesHead": "{first}・{second}",
 };
