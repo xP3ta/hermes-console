@@ -7,6 +7,7 @@ import 'package:hermes_android/core/services/session_repository.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'support/test_api_client.dart';
 
 /// A Dashboard that owns the session store, after the official handlers
 /// (`web_routers/sessions.py`, `_mutate_session_request`): PATCH carries the
@@ -159,9 +160,8 @@ void main() {
         manualToken: 'dashboard-token',
         httpClientOverride: hermes.client(),
       );
-      final gateway = ApiClient(
+      final gateway = testApiClient(
         baseUrl: 'http://127.0.0.1:8642',
-        apiKey: 'test-key-1',
         httpClient: MockClient((_) async => http.Response('{}', 500)),
       );
       final repository = SessionRepository(dashboard, gateway);

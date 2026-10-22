@@ -16,6 +16,7 @@ import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../support/test_api_client.dart';
 
 Future<void> _openDrawer(WidgetTester tester, {double scale = 1}) async {
   SharedPreferences.setMockInitialValues({});
@@ -48,12 +49,12 @@ Future<void> _openDrawer(WidgetTester tester, {double scale = 1}) async {
           connection: connection,
           connManager: manager,
           current: DrawerSection.home,
-          recentSessionsClientFactory: (saved) => ApiClient(
+          // An empty recents list in the Dashboard's shape.
+          recentSessionsClientFactory: (saved) => testApiClient(
             baseUrl: saved.baseUrl,
-            apiKey: saved.apiKey,
             httpClient: MockClient(
               (_) async => http.Response(
-                jsonEncode({'object': 'list', 'data': []}),
+                jsonEncode({'sessions': [], 'total': 0}),
                 200,
               ),
             ),
