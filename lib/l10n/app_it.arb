@@ -4429,175 +4429,175 @@
   "recoveryCenterFailedDeletes": "{count, plural, =1{1 file non è stato possibile eliminarlo.} other{{count} file non è stato possibile eliminarli.}}",
   "cphPluginBlockedByScan": "La scansione di sicurezza ha bloccato questo plugin. Non è stato modificato nulla.",
   "dashboardAuthSessionTokenWithheld": "Questa Dashboard non fornisce a Console il token di sessione: è ospitata dal gateway Hermes 0.22.3 o successivo senza accesso. Usa una Dashboard indipendente o attiva il suo accesso.",
-  "connDiagTimeout": "no response in {seconds}s",
+  "connDiagTimeout": "nessuna risposta entro {seconds} s",
   "@connDiagTimeout": {
-    "description": "i18n131: English draft pending Phase 2 translation.",
+    "description": "i18n131: Translated into Italian.",
     "placeholders": {
       "seconds": {
         "type": "int"
       }
     }
   },
-  "connDiagTlsInvalid": "invalid TLS certificate: {message}",
+  "connDiagTlsInvalid": "certificato TLS non valido: {message}",
   "@connDiagTlsInvalid": {
-    "description": "i18n131: English draft pending Phase 2 translation.",
+    "description": "i18n131: Translated into Italian.",
     "placeholders": {
       "message": {
         "type": "String"
       }
     }
   },
-  "connDiagDnsFailed": "the host does not resolve",
+  "connDiagDnsFailed": "il nome host non viene risolto",
   "@connDiagDnsFailed": {
-    "description": "i18n131: English draft pending Phase 2 translation."
+    "description": "i18n131: Translated into Italian."
   },
-  "connDiagRefused": "connection refused (wrong port?)",
+  "connDiagRefused": "connessione rifiutata (porta errata?)",
   "@connDiagRefused": {
-    "description": "i18n131: English draft pending Phase 2 translation."
+    "description": "i18n131: Translated into Italian."
   },
-  "connDiagAuthHint": "check the username and password",
+  "connDiagAuthHint": "controlla il nome utente e la password",
   "@connDiagAuthHint": {
-    "description": "i18n131: English draft pending Phase 2 translation."
+    "description": "i18n131: Translated into Italian."
   },
-  "transportPublicBlocked": "Public HTTP/WS is blocked: configure HTTPS/WSS or use a private/Tailscale address.",
+  "transportPublicBlocked": "HTTP/WS su rete pubblica è bloccato: configura HTTPS/WSS o usa un indirizzo privato/Tailscale.",
   "@transportPublicBlocked": {
-    "description": "i18n131: English draft pending Phase 2 translation."
+    "description": "i18n131: Translated into Italian."
   },
-  "i18n131ThemeExportFailed": "Could not export.",
+  "i18n131ThemeExportFailed": "Impossibile esportare.",
   "@i18n131ThemeExportFailed": {
-    "description": "i18n131: English draft pending Phase 2 translation."
+    "description": "i18n131: Translated into Italian."
   },
   "i18n131DurationSeconds": "{value} s",
   "@i18n131DurationSeconds": {
-    "description": "i18n131: English draft pending Phase 2 translation.",
+    "description": "i18n131: Translated into Italian.",
     "placeholders": {
       "value": {
         "type": "String"
       }
     }
   },
-  "i18n131SpanDays": "{count}d",
+  "i18n131SpanDays": "{count} g",
   "@i18n131SpanDays": {
-    "description": "i18n131: English draft pending Phase 2 translation.",
+    "description": "i18n131: Translated into Italian.",
     "placeholders": {
       "count": {
         "type": "int"
       }
     }
   },
-  "i18n131SpanHours": "{count}h",
+  "i18n131SpanHours": "{count} h",
   "@i18n131SpanHours": {
-    "description": "i18n131: English draft pending Phase 2 translation.",
+    "description": "i18n131: Translated into Italian.",
     "placeholders": {
       "count": {
         "type": "int"
       }
     }
   },
-  "i18n131SpanMinutes": "{count}m",
+  "i18n131SpanMinutes": "{count} min",
   "@i18n131SpanMinutes": {
-    "description": "i18n131: English draft pending Phase 2 translation.",
+    "description": "i18n131: Translated into Italian.",
     "placeholders": {
       "count": {
         "type": "int"
       }
     }
   },
-  "i18n131RelativeNow": "just now",
+  "i18n131RelativeNow": "adesso",
   "@i18n131RelativeNow": {
-    "description": "i18n131: English draft pending Phase 2 translation."
+    "description": "i18n131: Translated into Italian."
   },
-  "i18n131RelativeMinutes": "{count}m ago",
+  "i18n131RelativeMinutes": "{count} min fa",
   "@i18n131RelativeMinutes": {
-    "description": "i18n131: English draft pending Phase 2 translation.",
+    "description": "i18n131: Translated into Italian.",
     "placeholders": {
       "count": {
         "type": "int"
       }
     }
   },
-  "i18n131RelativeHours": "{count}h ago",
+  "i18n131RelativeHours": "{count} h fa",
   "@i18n131RelativeHours": {
-    "description": "i18n131: English draft pending Phase 2 translation.",
+    "description": "i18n131: Translated into Italian.",
     "placeholders": {
       "count": {
         "type": "int"
       }
     }
   },
-  "i18n131RelativeDays": "{count}d ago",
+  "i18n131RelativeDays": "{count} g fa",
   "@i18n131RelativeDays": {
-    "description": "i18n131: English draft pending Phase 2 translation.",
+    "description": "i18n131: Translated into Italian.",
     "placeholders": {
       "count": {
         "type": "int"
       }
     }
   },
-  "i18n131SinceMinutes": "{count}m ago",
+  "i18n131SinceMinutes": "{count} min fa",
   "@i18n131SinceMinutes": {
-    "description": "i18n131: English draft pending Phase 2 translation.",
+    "description": "i18n131: Translated into Italian.",
     "placeholders": {
       "count": {
         "type": "int"
       }
     }
   },
-  "i18n131SinceHours": "{count}h ago",
+  "i18n131SinceHours": "{count} h fa",
   "@i18n131SinceHours": {
-    "description": "i18n131: English draft pending Phase 2 translation.",
+    "description": "i18n131: Translated into Italian.",
     "placeholders": {
       "count": {
         "type": "int"
       }
     }
   },
-  "i18n131SinceDays": "{count}d ago",
+  "i18n131SinceDays": "{count} g fa",
   "@i18n131SinceDays": {
-    "description": "i18n131: English draft pending Phase 2 translation.",
+    "description": "i18n131: Translated into Italian.",
     "placeholders": {
       "count": {
         "type": "int"
       }
     }
   },
-  "i18n131InMinutes": "in {count} min",
+  "i18n131InMinutes": "tra {count} min",
   "@i18n131InMinutes": {
-    "description": "i18n131: English draft pending Phase 2 translation.",
+    "description": "i18n131: Translated into Italian.",
     "placeholders": {
       "count": {
         "type": "int"
       }
     }
   },
-  "i18n131InHours": "in {count} h",
+  "i18n131InHours": "tra {count} h",
   "@i18n131InHours": {
-    "description": "i18n131: English draft pending Phase 2 translation.",
+    "description": "i18n131: Translated into Italian.",
     "placeholders": {
       "count": {
         "type": "int"
       }
     }
   },
-  "i18n131InDays": "in {count} d",
+  "i18n131InDays": "tra {count} g",
   "@i18n131InDays": {
-    "description": "i18n131: English draft pending Phase 2 translation.",
+    "description": "i18n131: Translated into Italian.",
     "placeholders": {
       "count": {
         "type": "int"
       }
     }
   },
-  "i18n131ApprovalTool": "a tool",
+  "i18n131ApprovalTool": "uno strumento",
   "@i18n131ApprovalTool": {
-    "description": "i18n131: English draft pending Phase 2 translation."
+    "description": "i18n131: Translated into Italian."
   },
-  "i18n131RecoveredTurnActive": "Hermes could not reattach a turn that may still be running. Send retries the check; discard only after verifying Hermes because this does not cancel the remote turn.",
+  "i18n131RecoveredTurnActive": "Hermes non ha potuto ricollegarsi a un turno che potrebbe essere ancora in corso. Premi «Invia» per ripetere la verifica; scarta solo dopo aver controllato Hermes, perché questa azione non annulla il turno remoto.",
   "@i18n131RecoveredTurnActive": {
-    "description": "i18n131: English draft pending Phase 2 translation."
+    "description": "i18n131: Translated into Italian."
   },
-  "i18n131RecoveredTurnPending": "A pending turn was recovered. Discard the recovery to continue.",
+  "i18n131RecoveredTurnPending": "È stato recuperato un turno in sospeso. Scarta il recupero per continuare.",
   "@i18n131RecoveredTurnPending": {
-    "description": "i18n131: English draft pending Phase 2 translation."
+    "description": "i18n131: Translated into Italian."
   }
 }

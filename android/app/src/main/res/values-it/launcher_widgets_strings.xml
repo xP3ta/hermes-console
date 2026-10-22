@@ -1,0 +1,154 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="lw_ahora_name">Ora</string>
+    <string name="lw_ahora_description">Chi ha bisogno di te, cosa è in corso e quando è tutto tranquillo</string>
+    <string name="lw_quick_name">Chat rapida</string>
+    <string name="lw_quick_description">Una nuova chat o chat vocale, con un tocco</string>
+    <string name="lw_quick_wide_name">Chat rapida (larga)</string>
+    <string name="lw_cron_name">Cron</string>
+    <string name="lw_cron_description">La prossima attività programmata; nel widget grande, tutte le attività con gli errori in vista</string>
+    <string name="lw_new">Nuova</string>
+    <string name="lw_ask_hint">Chiedi a Hermes…</string>
+    <string name="lw_new_description">Nuova chat</string>
+    <string name="lw_voice_description">Nuova chat vocale</string>
+    <string name="lw_camera_description">Nuova chat con la fotocamera</string>
+    <string name="lw_open_description">Apri Console</string>
+    <string name="lw_agent">Hermes</string>
+    <string name="lw_calm">Tutto tranquillo</string>
+    <string name="lw_setup">Configura Hermes</string>
+    <string name="lw_setup_hint">Apri Console per iniziare</string>
+    <string name="lw_no_connection">Nessuna connessione</string>
+    <string name="lw_since">dalle %1$s</string>
+    <string name="lw_since_one">dall’%1$s</string>
+    <string name="lw_since_yesterday">da ieri</string>
+    <string name="lw_since_day">dal %1$s</string>
+    <string name="lw_asks_permission">%1$s richiede il permesso</string>
+    <string name="lw_asks_permission_short">richiede il permesso</string>
+    <string name="lw_asks_you">%1$s ha una domanda</string>
+    <string name="lw_asks_you_short">ha una domanda</string>
+    <string name="lw_needs_you_who">%1$s ha bisogno di te</string>
+    <string name="lw_needs_you_short">ha bisogno di te</string>
+    <string name="lw_needs_you_word">Ha bisogno di te</string>
+    <string name="lw_allow">Consenti</string>
+    <string name="lw_deny">Nega</string>
+    <string name="lw_allow_short">Sì</string>
+    <string name="lw_deny_short">No</string>
+    <string name="lw_open">Apri</string>
+    <string name="lw_thinking">Pensa</string>
+    <string name="lw_responding">Risponde</string>
+    <string name="lw_working">Lavora</string>
+    <string name="lw_finished">Completato</string>
+    <string name="lw_failed">Non riuscito</string>
+    <string name="lw_finished_at">%1$s ha terminato · %2$s</string>
+    <plurals name="lw_for_you">
+        <item quantity="one">%1$d per te</item>
+        <item quantity="other">%1$d per te</item>
+    </plurals>
+    <plurals name="lw_running">
+        <item quantity="one">%1$d in corso</item>
+        <item quantity="other">%1$d in corso</item>
+    </plurals>
+    <plurals name="lw_needs_you">
+        <item quantity="one">%1$d ha bisogno di te</item>
+        <item quantity="other">%1$d hanno bisogno di te</item>
+    </plurals>
+    <string name="lw_cron">Cron</string>
+    <string name="lw_cron_empty">Nessuna attività programmata</string>
+    <string name="lw_cron_unknown">Apri Cron in Console per vederle qui</string>
+    <string name="lw_cron_unknown_short">Ancora nessun dato</string>
+    <string name="lw_cron_last">Ultima: %1$s</string>
+    <string name="lw_cron_failed_at">Non riuscita %1$s</string>
+    <string name="lw_cron_running">In corso</string>
+    <string name="lw_cron_never">Mai eseguita</string>
+    <string name="lw_cron_paused">In pausa</string>
+    <plurals name="lw_cron_failed">
+        <item quantity="one">%1$d non riuscita</item>
+        <item quantity="other">%1$d non riuscite</item>
+    </plurals>
+    <string name="lw_bots_name">Bot</string>
+    <string name="lw_bots_description">I volti dei tuoi bot e chi ti aspetta; nel widget grande, cosa fa ciascuno</string>
+    <string name="lw_bots">Bot</string>
+    <string name="lw_bot_waits">%1$s ti aspetta</string>
+    <string name="lw_bot_works">%1$s è al lavoro</string>
+    <string name="lw_bots_calm">Tutto tranquillo</string>
+    <string name="lw_bot_needs_you">Ha bisogno di te</string>
+    <string name="lw_bot_free">libero</string>
+    <string name="lw_bots_unknown">Apri Bot in Console per vederli qui</string>
+    <string name="lw_bots_unknown_short">Ancora nessun dato</string>
+    <string name="lw_bots_empty">Ancora nessun bot</string>
+    <plurals name="lw_bots_working">
+        <item quantity="one">%1$d al lavoro</item>
+        <item quantity="other">%1$d al lavoro</item>
+    </plurals>
+    <plurals name="lw_bots_waiting">
+        <item quantity="one">%1$d ti aspetta</item>
+        <item quantity="other">%1$d ti aspettano</item>
+    </plurals>
+    <string name="lw_rooms_name">Stanze</string>
+    <string name="lw_rooms_description">La stanza attiva e chi risponde; nel widget grande, più stanze con l’ultimo messaggio</string>
+    <string name="lw_rooms">Stanze</string>
+    <string name="lw_room_answers">%1$s risponde</string>
+    <string name="lw_room_needs_you">%1$s ha bisogno di te</string>
+    <string name="lw_room_then">poi, %1$s</string>
+    <string name="lw_room_said">%1$s: %2$s</string>
+    <string name="lw_room_quiet">Tutto tranquillo</string>
+    <string name="lw_rooms_empty">Ancora nessuna stanza</string>
+    <plurals name="lw_rooms_answering">
+        <item quantity="one">%1$d sta rispondendo</item>
+        <item quantity="other">%1$d stanno rispondendo</item>
+    </plurals>
+    <plurals name="lw_rooms_waiting">
+        <item quantity="one">%1$d ti aspetta</item>
+        <item quantity="other">%1$d ti aspettano</item>
+    </plurals>
+    <string name="lw_tasks_name">Attività</string>
+    <string name="lw_tasks_description">L’attività in corso; nel widget grande, prima quelle in corso e poi quelle in sospeso</string>
+    <string name="lw_tasks">Attività</string>
+    <string name="lw_task_running">in corso</string>
+    <string name="lw_task_attention">Ti aspetta</string>
+    <string name="lw_task_pending">In sospeso</string>
+    <string name="lw_tasks_empty">Nulla in sospeso</string>
+    <string name="lw_tasks_unknown">Apri Attività in Console per vederle qui</string>
+    <plurals name="lw_task_pending_more">
+        <item quantity="one">In sospeso · +%1$d</item>
+        <item quantity="other">In sospeso · +%1$d</item>
+    </plurals>
+    <plurals name="lw_tasks_running">
+        <item quantity="one">%1$d in corso</item>
+        <item quantity="other">%1$d in corso</item>
+    </plurals>
+    <plurals name="lw_tasks_attention">
+        <item quantity="one">%1$d ti aspetta</item>
+        <item quantity="other">%1$d ti aspettano</item>
+    </plurals>
+    <plurals name="lw_tasks_pending">
+        <item quantity="one">%1$d in sospeso</item>
+        <item quantity="other">%1$d in sospeso</item>
+    </plurals>
+    <string name="lw_chats_name">Chat</string>
+    <string name="lw_chats_description">La chat attiva; nel widget grande, le chat recenti con il loro stato</string>
+    <string name="lw_chats">Chat</string>
+    <string name="lw_chat_working">Al lavoro</string>
+    <string name="lw_chat_finished">Completato · %1$s</string>
+    <string name="lw_asks_permission_word">Richiede il permesso</string>
+    <string name="lw_asks_you_word">Ha una domanda</string>
+    <string name="lw_view">Vedi</string>
+    <string name="lw_chats_empty">Ancora nessuna chat</string>
+    <string name="lw_chats_unknown">Apri Chat in Console per vederle qui</string>
+    <string name="lw_today">oggi</string>
+    <string name="lw_tomorrow">domani</string>
+    <string name="lw_yesterday">ieri</string>
+    <string name="lw_day_time">%1$s %2$s</string>
+    <string name="lw_day_at_time">%1$s alle %2$s</string>
+    <string name="lw_day_at_time_one">%1$s all’%2$s</string>
+    <string name="lw_sample_cron_job">Riepilogo del giorno</string>
+    <string name="lw_sample_cron_next">oggi 21:00</string>
+    <string name="lw_sample_chat">Piano della settimana</string>
+    <string name="lw_sample_chat_line">Al lavoro · 0:42</string>
+    <string name="lw_sample_room">Squadra</string>
+    <string name="lw_sample_task">Pubblicare la versione</string>
+    <string name="lw_sample_task_line">Builder · in corso</string>
+    <string name="lw_sample_room_line">Builder risponde</string>
+    <string name="lw_sample_run_title">Hermes · Terminale</string>
+    <string name="lw_sample_run_about">Resoconto settimanale</string>
+</resources>
