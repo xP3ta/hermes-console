@@ -40,6 +40,7 @@ import 'package:hermes_android/core/utils/chat_turn.dart';
 
 import 'support/desktop_chat_socket.dart';
 import 'support/in_memory_compression_restore_storage.dart';
+import 'support/test_api_client.dart';
 
 const _kWatchKey = 'bg_watch_runs'; // BackgroundWatch._key (privado)
 const _kObservedTtftKey = 'active_chat_observed_ttft_v1';
@@ -179,9 +180,8 @@ http.Client _gateway({
 );
 
 ApiClient _socketApi({List<Map<String, dynamic>> messages = const []}) =>
-    ApiClient(
+    testApiClient(
       baseUrl: 'http://hermes.local:8642',
-      apiKey: 'test-key',
       httpClient: _gateway(finalMessages: messages),
     );
 
@@ -2686,9 +2686,8 @@ void main() {
       initialStoredSessionId: 'stored-bot-a',
       notifications: null,
       onTerminal: () {},
-      api: ApiClient(
+      api: testApiClient(
         baseUrl: 'http://hermes.local:8642',
-        apiKey: 'test-key',
         httpClient: _gateway(finalMessages: const []),
       ),
     );
@@ -2712,9 +2711,8 @@ void main() {
     );
     addTearDown(service.dispose);
     final connection = _conn(id: 'conn-repin');
-    ApiClient api() => ApiClient(
+    ApiClient api() => testApiClient(
       baseUrl: 'http://hermes.local:8642',
-      apiKey: 'test-key',
       httpClient: _gateway(finalMessages: const []),
     );
 
@@ -2794,9 +2792,8 @@ void main() {
         sessionTitle: 'Cuento',
         sessionProfile: 'default',
         initialStoredSessionId: 'stored-desktop-route',
-        api: ApiClient(
+        api: testApiClient(
           baseUrl: 'http://hermes.local:8642',
-          apiKey: 'test-key',
           httpClient: _gateway(finalMessages: const []),
         ),
         storedMessageLoader: (_, _) async => const [
@@ -3120,9 +3117,8 @@ void main() {
       connection: _conn(id: 'conn-activity'),
       sessionId: 'sess-activity',
       sessionTitle: 'Actividad',
-      api: ApiClient(
+      api: testApiClient(
         baseUrl: 'http://hermes.local:8642',
-        apiKey: 'test-key',
         httpClient: _gateway(finalMessages: const []),
       ),
     );
@@ -3167,9 +3163,8 @@ void main() {
         sessionTitle: 'Auditoría widget',
         sessionSnapshot: _widgetSession(),
         selectedProvider: 'openai-codex',
-        api: ApiClient(
+        api: testApiClient(
           baseUrl: 'http://hermes.local:8642',
-          apiKey: 'test-key',
           httpClient: _gateway(finalMessages: const []),
         ),
       );
@@ -3215,9 +3210,8 @@ void main() {
           connection: _conn(),
           sessionId: 'mob-empty-draft',
           sessionTitle: 'Nueva conversación',
-          api: ApiClient(
+          api: testApiClient(
             baseUrl: 'http://hermes.local:8642',
-            apiKey: 'test-key',
             httpClient: _gateway(finalMessages: const []),
           ),
         );
@@ -3327,9 +3321,8 @@ void main() {
           sessionId: 'sess-1',
           sessionTitle: 'Vieja',
           sessionSnapshot: _widgetSession(),
-          api: ApiClient(
+          api: testApiClient(
             baseUrl: 'http://hermes.local:8642',
-            apiKey: 'test-key',
             httpClient: _gateway(finalMessages: const []),
           ),
         );
@@ -3675,9 +3668,8 @@ void main() {
       () async {
         final gateway = _AttachmentDesktopGateway();
         final requests = <Uri>[];
-        final api = ApiClient(
+        final api = testApiClient(
           baseUrl: 'http://127.0.0.1:8642',
-          apiKey: String.fromCharCodes(const [113, 97]),
           httpClient: MockClient((request) async {
             requests.add(request.url);
             return http.Response(
@@ -3877,9 +3869,8 @@ void main() {
           sessionTitle: 'Legacy',
           notifications: null,
           onTerminal: () {},
-          api: ApiClient(
+          api: testApiClient(
             baseUrl: connection.baseUrl,
-            apiKey: connection.apiKey,
             httpClient: MockClient(
               (_) async => http.Response('not found', 404),
             ),
@@ -4320,9 +4311,8 @@ void main() {
 
   group('ActiveChat.reconcileAfterResume', () {
     ActiveChat chatWith(List<Map<String, dynamic>> serverMessages) {
-      final api = ApiClient(
+      final api = testApiClient(
         baseUrl: 'http://hermes.local:8642',
-        apiKey: 'k',
         httpClient: _gateway(finalMessages: serverMessages),
       );
       return ActiveChat(
@@ -4337,9 +4327,8 @@ void main() {
     }
 
     ActiveChat chatWithLoader(StoredSessionMessageLoader loader) {
-      final api = ApiClient(
+      final api = testApiClient(
         baseUrl: 'http://hermes.local:8642',
-        apiKey: 'k',
         httpClient: MockClient((_) async => http.Response('not found', 404)),
       );
       return ActiveChat(
@@ -4448,9 +4437,8 @@ void main() {
           sessionId: 'resume-cache-session',
           sessionTitle: 'Resume cache',
           sessionProfile: 'default',
-          api: ApiClient(
+          api: testApiClient(
             baseUrl: 'http://hermes.local:8642',
-            apiKey: 'k',
             httpClient: MockClient(
               (_) async => http.Response('not found', 404),
             ),
@@ -4700,9 +4688,8 @@ void main() {
       final oldGet = Completer<http.Response>();
       final socket = DesktopChatSocket();
       addTearDown(socket.close);
-      final api = ApiClient(
+      final api = testApiClient(
         baseUrl: 'http://hermes.local:8642',
-        apiKey: 'test-key',
         httpClient: HostCounter(
           handler: (request) async {
             if (request.method == 'GET' &&
@@ -4807,9 +4794,8 @@ void main() {
             logicalSessionId: logicalSessionId,
             sessionTitle: key,
             sessionProfile: profile,
-            api: ApiClient(
+            api: testApiClient(
               baseUrl: 'http://hermes.local:8642',
-              apiKey: 'k',
               httpClient: MockClient(
                 (_) async => http.Response('not found', 404),
               ),
@@ -4949,9 +4935,8 @@ void main() {
           logicalSessionId: 'lifecycle-root',
           sessionTitle: 'Old binding',
           sessionProfile: 'default',
-          api: ApiClient(
+          api: testApiClient(
             baseUrl: 'http://hermes.local:8642',
-            apiKey: 'k',
             httpClient: MockClient(
               (_) async => http.Response('not found', 404),
             ),
@@ -4990,9 +4975,8 @@ void main() {
           logicalSessionId: 'lifecycle-root',
           sessionTitle: 'Replacement binding',
           sessionProfile: 'default',
-          api: ApiClient(
+          api: testApiClient(
             baseUrl: 'http://hermes.local:8642',
-            apiKey: 'k',
             httpClient: MockClient(
               (_) async => http.Response('not found', 404),
             ),
@@ -5047,9 +5031,8 @@ void main() {
         logicalSessionId: 'compacting-release-root',
         sessionTitle: 'Compacting',
         sessionProfile: 'default',
-        api: ApiClient(
+        api: testApiClient(
           baseUrl: 'http://hermes.local:8642',
-          apiKey: 'k',
           httpClient: MockClient((_) async => http.Response('not found', 404)),
         ),
         storedMessageLoader: (_, _) async => <Map<String, dynamic>>[],
