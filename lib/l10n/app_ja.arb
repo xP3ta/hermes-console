@@ -4427,5 +4427,6 @@
   "recoveryCenterSkippedUserEdits": "{count, plural, other{チェックポイント後に編集されたため、{count}個のファイルはそのまま残しました。}}",
   "recoveryCenterSkippedOversize": "{count, plural, other{サイズが大きすぎるため、{count}個のファイルは復元されませんでした。}}",
   "recoveryCenterFailedDeletes": "{count, plural, other{{count}個のファイルを削除できませんでした。}}",
-  "cphPluginBlockedByScan": "セキュリティスキャンによりこのプラグインはブロックされました。何も変更されていません。"
+  "cphPluginBlockedByScan": "セキュリティスキャンによりこのプラグインはブロックされました。何も変更されていません。",
+  "dashboardAuthSessionTokenWithheld": "このダッシュボードはセッショントークンを Console に渡しません。サインインなしで Hermes 0.22.3 以降のゲートウェイがホストしています。独立したダッシュボードを使うか、サインインを有効にしてください。"
 }

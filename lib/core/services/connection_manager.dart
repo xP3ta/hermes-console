@@ -1880,7 +1880,12 @@ enum DashboardAuthFailureCode {
   invalidCredentials('dashboard_invalid_credentials'),
   rateLimited('dashboard_login_rate_limited'),
   loginFailed('dashboard_login_failed'),
-  sessionCookieMissing('dashboard_session_cookie_missing');
+  sessionCookieMissing('dashboard_session_cookie_missing'),
+
+  /// A Hermes 0.22.3+ Dashboard hosted by the gateway serves its page without
+  /// `__HERMES_SESSION_TOKEN__` (it hands tickets out on a private same-user
+  /// control socket instead). Console cannot authenticate against it.
+  sessionTokenWithheld('dashboard_session_token_withheld');
 
   const DashboardAuthFailureCode(this.stableCode);
 
@@ -2367,6 +2372,17 @@ class DashboardClient {
       if (looksLikeLogin) {
         throw const DashboardAuthException(
           DashboardAuthFailureCode.loginRequired,
+        );
+      }
+      // Hermes 0.22.3+ gateway-hosted listener: a real Dashboard page whose
+      // bootstrap script carries no token. The ticket endpoint cannot help
+      // here (it needs an OAuth session; the gateway's own tickets come from
+      // a private control socket), so say precisely what is wrong.
+      if (RegExp(
+        r'__HERMES_AUTH_REQUIRED__\s*=\s*false',
+      ).hasMatch(res.body)) {
+        throw const DashboardAuthException(
+          DashboardAuthFailureCode.sessionTokenWithheld,
         );
       }
       throw Exception(
