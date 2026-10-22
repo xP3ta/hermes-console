@@ -210,4 +210,7 @@ const Map<String, String> notifZh = {
   "summaryState2": "失败",
   "summaryState3": "需要你处理",
   "summaryState4": "新动态",
+  // Punctuation templates; English stubs for Phase 3b in new languages.
+  "joinNamesPair": "{first} {conjunction} {second}",
+  "joinNamesHead": "{first}, {second}",
 };

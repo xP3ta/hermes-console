@@ -210,4 +210,7 @@ const Map<String, String> notifEn = {
   "summaryState2": "failed",
   "summaryState3": "needs you",
   "summaryState4": "new",
+  // Punctuation templates; English stubs for Phase 3b in new languages.
+  "joinNamesPair": "{first} {conjunction} {second}",
+  "joinNamesHead": "{first}, {second}",
 };
