@@ -63,7 +63,6 @@ import '../widgets/dock_style.dart' show dockShowsBack;
 import '../widgets/chat_surface_coordinator.dart';
 import '../widgets/dock_shortcuts.dart';
 import '../widgets/mission_profile_avatar.dart';
-import '../widgets/remote_bot_roster.dart';
 import 'bot_profile_settings_screen.dart';
 import 'bot_sections_editor.dart';
 import '../services/bot_profile_client.dart';
@@ -229,8 +228,6 @@ class MissionControlScreen extends StatefulWidget {
   @visibleForTesting
   final ValueChanged<Session>? botChatOpenObserver;
   @visibleForTesting
-  final RemoteBotLoader? remoteBotLoader;
-  @visibleForTesting
   final HermesDesktopBotCreationGateway? botCreateGateway;
 
   /// Stands in for the Dashboard profile delete in tests.
@@ -266,7 +263,6 @@ class MissionControlScreen extends StatefulWidget {
     this.rosterRegistry,
     this.initialOpenTarget,
     this.botChatOpenObserver,
-    this.remoteBotLoader,
     this.botCreateGateway,
     @visibleForTesting this.profileDeleteOverride,
     this.profileAssetsGateway,
@@ -1415,80 +1411,6 @@ class _MissionControlScreenState extends State<MissionControlScreen>
         undo: undo,
       );
     }
-  }
-
-  Future<void> _openRemoteBot(
-    SavedConnection connection,
-    AgentProfile profile,
-  ) async {
-    SharedGatewayLease? lease;
-    try {
-      final loader = widget.remoteBotLoader;
-      if (loader != null) {
-        profile = (await loader(
-          connection,
-        )).singleWhere((candidate) => candidate.name == profile.name);
-      } else {
-        lease = SharedGatewayPool.instance.acquire(connection);
-        profile = (await lease.client.listProfiles(
-          includeSessions: true,
-        )).singleWhere((candidate) => candidate.name == profile.name);
-      }
-    } catch (_) {
-      if (mounted) {
-        HermesNotice.of(context).showSnackBar(
-          SnackBar(content: Text(Strings.of(context).botProfileFailed)),
-          kind: HermesNoticeKind.error,
-        );
-      }
-      return;
-    } finally {
-      lease?.release();
-    }
-    if (!mounted) return;
-    final target = resolveBotChatTarget(profile);
-    if (!target.valid) {
-      _showBotChatPinUnavailable();
-      return;
-    }
-    final session = Session(
-      id: 'mob-bot-${profile.name}',
-      lineageRootId: target.sessionId,
-      title: 'Bot Chat',
-      model: profile.model,
-      source: target.source,
-      messageCount: target.sessionId == null ? 0 : 1,
-      isActive: true,
-      preview: '',
-      startedAt: 0,
-      profile: profile.name,
-      isDefaultProfile: profile.isDefault,
-    );
-    final observer = widget.botChatOpenObserver;
-    if (observer != null) {
-      observer(session);
-      return;
-    }
-    await openChatFromSection<void>(
-      context,
-      builder: (_) => buildBotChatDestination(
-        connection: connection,
-        session: session,
-        initialStoredSessionId: target.sessionId,
-        profile: profile,
-      ),
-    );
-  }
-
-  void _remoteBotDetails(SavedConnection connection, AgentProfile profile) {
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => MissionControlScreen(
-          connection: connection,
-          connManager: widget.connManager,
-        ),
-      ),
-    );
   }
 
   Future<void> _openRecentSession(MissionAgent agent) async {
@@ -3399,13 +3321,6 @@ class _MissionControlScreenState extends State<MissionControlScreen>
             onBotActions: (entry) => unawaited(_openRosterActions(entry)),
             onOpenRoom: (entry) => unawaited(_openRosterRoom(entry)),
             onRoomActions: (entry) => unawaited(_openRoomActions(entry)),
-            otherConnections: widget.connManager
-                .getConnections()
-                .where((c) => c.id != widget.connection.id)
-                .toList(),
-            remoteBotLoader: widget.remoteBotLoader,
-            onRemoteOpen: _openRemoteBot,
-            onRemoteDetails: _remoteBotDetails,
             onAttention:
                 projection.approvals.isNotEmpty || projection.blockedCount > 0
                 ? () => unawaited(_openAttention())
@@ -4150,10 +4065,6 @@ class _BotsTab extends StatefulWidget {
   final ValueChanged<BotRosterEntry> onBotActions;
   final ValueChanged<RoomRosterEntry> onOpenRoom;
   final ValueChanged<RoomRosterEntry>? onRoomActions;
-  final List<SavedConnection> otherConnections;
-  final RemoteBotLoader? remoteBotLoader;
-  final void Function(SavedConnection, AgentProfile) onRemoteOpen;
-  final void Function(SavedConnection, AgentProfile) onRemoteDetails;
   final VoidCallback? onAttention;
   final String? attentionSummary;
   final VoidCallback? onCreateAgent;
@@ -4172,11 +4083,7 @@ class _BotsTab extends StatefulWidget {
     required this.onBotActions,
     required this.onOpenRoom,
     this.onRoomActions,
-    required this.otherConnections,
-    required this.onRemoteOpen,
-    required this.onRemoteDetails,
     required this.onRefresh,
-    this.remoteBotLoader,
     this.onAttention,
     this.attentionSummary,
     this.onCreateAgent,
@@ -4276,19 +4183,6 @@ class _BotsTabState extends State<_BotsTab> {
         actionLabel: copy.newAgent,
         onAction: widget.onCreateAgent,
       ),
-      footer: [
-        if (widget.otherConnections.isNotEmpty)
-          RemoteBotRoster(
-            connections: widget.otherConnections,
-            prefs: widget.prefs,
-            query: '',
-            showHidden: false,
-            refreshedAt: widget.snapshot.loadedAt,
-            onOpen: widget.onRemoteOpen,
-            onDetails: widget.onRemoteDetails,
-            loader: widget.remoteBotLoader,
-          ),
-      ],
     );
   }
 }

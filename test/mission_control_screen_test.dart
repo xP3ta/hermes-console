@@ -10,7 +10,6 @@ import 'package:hermes_android/core/models/agent_profile.dart';
 import 'package:hermes_android/core/design/list.dart' as design_list;
 import 'package:hermes_android/core/services/bot_profile_client.dart';
 import 'package:hermes_android/core/services/bot_roster_store.dart';
-import 'package:hermes_android/core/widgets/remote_bot_roster.dart';
 import 'package:hermes_android/core/models/bot_visual_identity.dart';
 import 'package:hermes_android/core/models/kanban.dart';
 import 'package:hermes_android/core/models/mission_control.dart';
@@ -274,7 +273,6 @@ Widget _host({
   EdgeInsets viewPadding = EdgeInsets.zero,
   SavedConnection? connection,
   ValueChanged<Session>? botChatOpenObserver,
-  RemoteBotLoader? remoteBotLoader,
   MissionControlOpenTarget? initialOpenTarget,
   HermesDesktopBotCreationGateway? botCreateGateway,
   HermesDesktopProfileAssetsGateway? profileAssetsGateway,
@@ -307,7 +305,6 @@ Widget _host({
     activeChats: activeChats,
     initialOpenTarget: initialOpenTarget,
     botChatOpenObserver: botChatOpenObserver,
-    remoteBotLoader: remoteBotLoader,
     botCreateGateway: botCreateGateway,
     profileAssetsGateway: profileAssetsGateway,
     botChatTitleLookup: botChatTitleLookup ?? FakeBotChatTitleLookup(),
@@ -1604,47 +1601,42 @@ void main() {
     },
   );
 
-  testWidgets(
-    'remote Bot Chat also opens the server-resolved canonical lineage tip',
-    (tester) async {
-      final manager = await _manager();
-      final remote = SavedConnection(
-        id: 'remote-canonical',
-        label: 'Remote Lab',
-        host: 'remote.invalid',
-        port: 8642,
-        apiKey: 'test-only',
-      );
-      await manager.upsertConnection(remote);
-      Session? opened;
-      final remoteProfile = AgentProfile.fromJson({
-        'name': 'remote-infra',
+  // Bot Mode belongs to the selected instance: another saved instance's
+  // bots are not listed under it. They show once that instance is selected.
+  testWidgets('Bot Mode lists only the selected instance bots', (tester) async {
+    final manager = await _manager();
+    final other = SavedConnection(
+      id: 'other-instance',
+      label: 'Otra Lab',
+      host: 'other.invalid',
+      port: 8642,
+      apiKey: 'test-only',
+    );
+    await manager.upsertConnection(_connection);
+    await manager.upsertConnection(other);
+    // Its roster is already known (another screen read it): a section for
+    // it would paint straight from the shared store, with no network.
+    BotRosterRegistry.shared.publish(other.id, other.label, [
+      AgentProfile.fromJson({
+        'name': 'other-bot',
         'ui_meta': {
-          'hermes-bots': {
-            'title': 'Remote Canonical',
-            'chat': 'stale-remote-pin',
-          },
+          'hermes-bots': {'title': 'Bot de la otra'},
         },
-        'canonical_session': {'id': 'remote-root', 'resolved_id': 'remote-tip'},
-      });
+      }),
+    ]);
 
-      await tester.pumpWidget(
-        _host(
-          manager: manager,
-          botChatOpenObserver: (session) => opened = session,
-          remoteBotLoader: (_) async => [remoteProfile],
-          snapshot: _snapshot(profiles: const [AgentProfile(name: 'local')]),
-        ),
-      );
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Remote Canonical'));
-      await tester.pumpAndSettle();
+    await tester.pumpWidget(
+      _host(
+        manager: manager,
+        snapshot: _snapshot(profiles: const [AgentProfile(name: 'local-bot')]),
+      ),
+    );
+    await tester.pumpAndSettle();
 
-      expect(opened?.lineageRootId, 'remote-tip');
-      expect(opened?.source, 'bot-mode-canonical');
-      expect(opened?.profile, 'remote-infra');
-    },
-  );
+    expect(find.byKey(const ValueKey('mission-bot-local-bot')), findsOneWidget);
+    expect(find.text('Bot de la otra', skipOffstage: false), findsNothing);
+    expect(find.text('Otra Lab', skipOffstage: false), findsNothing);
+  });
 
   testWidgets(
     'an explicit null official pin opens the Bot Chat instead of blocking',
