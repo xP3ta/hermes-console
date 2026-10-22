@@ -123,7 +123,7 @@ const Map<String, String> notifIt = {
   "roundDone2": "Turno completato · {names} ha risposto",
   "roundDone3": "Turno completato · {names} hanno risposto",
   "_joinNames": "e",
-  "_joinNames2": "{head} e altri {rest}",
+  "_joinNames2": "{head} e {rest} in più",
   "memberFailed": "{who} non ha potuto completare",
   "roomBlocked": "Una risposta nella stanza non è riuscita · apri per vederla",
   "isWorking": "{who} è al lavoro…",
@@ -211,7 +211,7 @@ const Map<String, String> notifIt = {
   "summaryState2": "non riuscito",
   "summaryState3": "ha bisogno di te",
   "summaryState4": "nuovo",
-  // Punctuation templates; English stubs for Phase 3b in new languages.
+  // Italian name joins use the localized conjunction supplied by the caller.
   "joinNamesPair": "{first} {conjunction} {second}",
   "joinNamesHead": "{first}, {second}",
 };
