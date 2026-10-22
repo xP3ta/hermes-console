@@ -5809,32 +5809,32 @@
   "@i18n131TasksInheritEffort": {
     "description": "i18n131: Phase 3B English stub; tasks."
   },
-  "i18n131TasksEffortLabel_none": "Off",
-  "@i18n131TasksEffortLabel_none": {
+  "i18n131TasksEffortLabelNone": "Off",
+  "@i18n131TasksEffortLabelNone": {
     "description": "i18n131: Phase 3B English stub; tasks."
   },
-  "i18n131TasksEffortLabel_minimal": "Minimal",
-  "@i18n131TasksEffortLabel_minimal": {
+  "i18n131TasksEffortLabelMinimal": "Minimal",
+  "@i18n131TasksEffortLabelMinimal": {
     "description": "i18n131: Phase 3B English stub; tasks."
   },
-  "i18n131TasksEffortLabel_low": "Low",
-  "@i18n131TasksEffortLabel_low": {
+  "i18n131TasksEffortLabelLow": "Low",
+  "@i18n131TasksEffortLabelLow": {
     "description": "i18n131: Phase 3B English stub; tasks."
   },
-  "i18n131TasksEffortLabel_medium": "Medium",
-  "@i18n131TasksEffortLabel_medium": {
+  "i18n131TasksEffortLabelMedium": "Medium",
+  "@i18n131TasksEffortLabelMedium": {
     "description": "i18n131: Phase 3B English stub; tasks."
   },
-  "i18n131TasksEffortLabel_high": "High",
-  "@i18n131TasksEffortLabel_high": {
+  "i18n131TasksEffortLabelHigh": "High",
+  "@i18n131TasksEffortLabelHigh": {
     "description": "i18n131: Phase 3B English stub; tasks."
   },
-  "i18n131TasksEffortLabel_xhigh": "XHigh",
-  "@i18n131TasksEffortLabel_xhigh": {
+  "i18n131TasksEffortLabelXhigh": "XHigh",
+  "@i18n131TasksEffortLabelXhigh": {
     "description": "i18n131: Phase 3B English stub; tasks."
   },
-  "i18n131TasksEffortLabel_max": "Max",
-  "@i18n131TasksEffortLabel_max": {
+  "i18n131TasksEffortLabelMax": "Max",
+  "@i18n131TasksEffortLabelMax": {
     "description": "i18n131: Phase 3B English stub; tasks."
   },
   "i18n131TasksApplyModelTitle": "Apply model configuration",
