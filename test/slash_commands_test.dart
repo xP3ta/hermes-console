@@ -35,6 +35,7 @@ import 'package:hermes_android/main.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'support/test_api_client.dart';
 
 class _SlashGateway
     implements
@@ -408,9 +409,8 @@ const _syntheticRpcError = TuiGatewayRpcError(
   code: 5005,
 );
 
-ApiClient _safeApi() => ApiClient(
+ApiClient _safeApi() => testApiClient(
   baseUrl: 'http://127.0.0.1:8642',
-  apiKey: 'test-only',
   httpClient: MockClient((_) async => http.Response('not found', 404)),
 );
 

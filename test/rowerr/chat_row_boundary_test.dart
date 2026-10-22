@@ -22,6 +22,7 @@ import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:hermes_android/core/widgets/chat_row_boundary.dart';
 import 'package:hermes_android/main.dart';
+import '../support/test_api_client.dart';
 
 SavedConnection _connection() => SavedConnection(
   id: 'conn-rowerr',
@@ -43,9 +44,8 @@ Session _session() => Session(
   startedAt: 0,
 );
 
-ApiClient _safeApi() => ApiClient(
+ApiClient _safeApi() => testApiClient(
   baseUrl: 'http://192.168.255.254:8642',
-  apiKey: 'test-key',
   httpClient: MockClient((_) async => http.Response('not found', 404)),
 );
 

@@ -9,15 +9,15 @@ import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'support/test_api_client.dart';
 
 void main() {
   testWidgets('el resumen separa cached tokens y Cache % reales', (
     tester,
   ) async {
     SharedPreferences.setMockInitialValues({});
-    final api = ApiClient(
+    final api = testApiClient(
       baseUrl: 'http://127.0.0.1:8642',
-      apiKey: 'test-only',
       httpClient: MockClient(
         (_) async => http.Response(jsonEncode({'data': <Object>[]}), 200),
       ),
