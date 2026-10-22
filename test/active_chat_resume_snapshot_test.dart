@@ -23,6 +23,7 @@ import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'support/test_api_client.dart';
 
 class _MemoryCompressionFenceStorage implements CompressionRestoreStorage {
   String? value;
@@ -521,9 +522,8 @@ ActiveChat _chat(
   sessionTitle: 'Snapshot',
   notifications: null,
   onTerminal: () {},
-  api: ApiClient(
+  api: testApiClient(
     baseUrl: 'http://127.0.0.1:8642',
-    apiKey: 'test-key',
     httpClient:
         client ??
         MockClient((_) async => http.Response('unexpected REST', 500)),
@@ -4179,10 +4179,33 @@ void main() {
           'running': true,
           'status': 'working',
         });
-      final client = MockClient((_) async {
+      // The REST read that races the resume, in the Dashboard's shape
+      // (sessions.py get_session_messages): the store as it was before the
+      // live turn, so it holds neither the in-flight user turn nor the live
+      // reply. The live transcript must survive it.
+      final client = MockClient((request) async {
         restReads += 1;
+        final query = request.url.queryParameters;
         return http.Response(
-          '[{"role":"assistant","content":"snapshot obsoleto"}]',
+          jsonEncode({
+            'session_id': 'stored-chat',
+            'profile': 'default',
+            'messages': [
+              {
+                'id': 1,
+                'session_id': 'stored-chat',
+                'role': 'user',
+                'content': 'turno anterior',
+                'timestamp': 1790000000.0,
+              },
+            ],
+            'pagination': {
+              'limit': int.parse(query['limit'] ?? '500'),
+              'offset': int.parse(query['offset'] ?? '0'),
+              'order': 'latest',
+              'returned': 1,
+            },
+          }),
           200,
         );
       });
