@@ -17090,10 +17090,49 @@ class ActiveChat {
         }
         if (_disposed || _desktopRuntimeSessionId != runtimeId) return null;
       }
-      return AccountUsageLimits.fromGateway(usage, usageBars: bars);
+      final limits = AccountUsageLimits.fromGateway(usage, usageBars: bars);
+      // Hermes >= 0.22.3 no longer sends `account_lines`: the provider
+      // windows come from the catalog's `usage` instead. A server that does
+      // send them is read exactly as before.
+      if (limits.lines.any((l) => l.source == AccountLimitSource.account)) {
+        return limits;
+      }
+      final fromCatalog = await _providerUsageLimits(limits);
+      if (_disposed || _desktopRuntimeSessionId != runtimeId) return null;
+      return fromCatalog == null
+          ? limits
+          : limits.withProviderLines(fromCatalog);
     } on TuiGatewayRpcError catch (error) {
       if (error.code == 4007 || error.code == -32601) return null;
       rethrow;
+    }
+  }
+
+  /// The provider windows in `GET /api/model/options` (`usage`) of this
+  /// chat's profile, or null when the server has none or cannot say (old
+  /// server, 404, timeout, a login it does not have): the block then stays
+  /// as `session.usage` left it.
+  Future<AccountUsageLimits?> _providerUsageLimits(
+    AccountUsageLimits current,
+  ) async {
+    try {
+      final dashboard = _transcriptDashboard ??= DashboardClient.lazy(
+        connection,
+      );
+      final providers = await dashboard.getModelOptions(
+        profile: sessionProfile,
+      );
+      final limits = AccountUsageLimits.fromProviderUsage(
+        providers,
+        sessionProvider: _desktopRuntimeInfo.provider,
+        skipProvider: current.creditsIdentity?.provider,
+      );
+      return limits.lines.isEmpty ? null : limits;
+    } catch (error) {
+      debugPrint(
+        '[plan-limits] catalog usage unavailable (${error.runtimeType})',
+      );
+      return null;
     }
   }
 
