@@ -61,8 +61,6 @@ const _stillWithoutDashboard = {
   'test/tablet_single_active_chat_test.dart',
   'test/u6_gateway_retirement/ids_and_constructors_test.dart',
   'test/u6_gateway_retirement/test_api_client_harness_test.dart',
-  'test/voice/conversation/local_voice_conversation_controller_test.dart',
-  'test/widget_test.dart',
 };
 
 final _constructions = RegExp(r'\bApiClient(\.new\b|\()');
