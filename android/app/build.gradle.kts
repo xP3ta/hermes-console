@@ -113,6 +113,7 @@ dependencies {
    // it here exposes the one-shot expiry API to the app without adding a new
    // binary, version or periodic background component.
    implementation("androidx.work:work-runtime-ktx:2.11.2")
+   implementation("androidx.webkit:webkit:1.15.0")
 }
 
 val validateReleaseSigning by tasks.registering {

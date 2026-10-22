@@ -68,6 +68,9 @@ class FakeWebViewController extends PlatformWebViewController {
       javaScriptModes.add(javaScriptMode);
 
   @override
+  Future<void> setBackgroundColor(Color color) async {}
+
+  @override
   Future<void> setPlatformNavigationDelegate(
     PlatformNavigationDelegate handler,
   ) async => navigationDelegate = handler as FakeNavigationDelegate;
@@ -93,10 +96,30 @@ class FakeWebViewController extends PlatformWebViewController {
   /// Every JavaScript bridge the code under test tried to expose.
   final List<String> javaScriptChannels = [];
 
+  /// Callbacks registered with [addJavaScriptChannel], keyed by channel name.
+  final Map<String, void Function(JavaScriptMessage)> channelHandlers = {};
+
+  /// Every `runJavaScript` / `runJavaScriptReturningResult` script.
+  final List<String> javaScriptCalls = [];
+
+  @override
+  Future<void> runJavaScript(String javaScript) async =>
+      javaScriptCalls.add(javaScript);
+
+  @override
+  Future<Object> runJavaScriptReturningResult(String javaScript) async {
+    javaScriptCalls.add(javaScript);
+    return '';
+  }
+
   @override
   Future<void> addJavaScriptChannel(
     JavaScriptChannelParams javaScriptChannelParams,
-  ) async => javaScriptChannels.add(javaScriptChannelParams.name);
+  ) async {
+    javaScriptChannels.add(javaScriptChannelParams.name);
+    channelHandlers[javaScriptChannelParams.name] =
+        javaScriptChannelParams.onMessageReceived;
+  }
 
   @override
   Future<void> setOnPlatformPermissionRequest(

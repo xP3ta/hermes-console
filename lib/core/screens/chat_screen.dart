@@ -203,6 +203,7 @@ import '../widgets/turn_error_copy.dart';
 import '../models/turn_error_surface.dart';
 import 'recover_access_page.dart';
 import 'recovery_center_screen.dart';
+import 'screen_peek_screen.dart';
 import 'soul_screen.dart';
 import 'tasks_screen.dart';
 import 'chat_prompt_index.dart';
@@ -7955,9 +7956,14 @@ class _ChatScreenState extends State<ChatScreen>
     } else {
       leading = null;
     }
-    // A Bot Chat continues one conversation: no new chat there.
+    // A Bot Chat continues one conversation: the desktop button replaces new chat.
     final trailing = botSurface
-        ? null
+        ? FloatingHeaderButton(
+            key: const ValueKey('bot-chat-screen'),
+            icon: Icons.desktop_windows_outlined,
+            tooltip: str.botScreenTooltip,
+            onPressed: _openBotScreen,
+          )
         : FloatingHeaderButton(
             key: const ValueKey('chat-new-session'),
             icon: Icons.add_rounded,
@@ -8072,6 +8078,26 @@ class _ChatScreenState extends State<ChatScreen>
               onTap: mark != null ? _showRunningWork : null,
             );
           },
+        ),
+      ),
+    );
+  }
+
+  void _openBotScreen() {
+    final connection = widget.connection;
+    final named = widget.missionBotProfile?.name.trim() ?? '';
+    final profile = named.isNotEmpty ? named : _effectiveSessionProfile;
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => OwnedResourceHost<TuiGatewayClient>(
+          create: () => TuiGatewayClient(connection),
+          release: (gateway) => gateway.close(),
+          builder: (_, gateway) => ScreenPeekScreen(
+            gateway: gateway,
+            readOnly: connection.readOnly,
+            profile: profile,
+            dashboardBase: Uri.parse(connection.effectiveDashboardUrl),
+          ),
         ),
       ),
     );

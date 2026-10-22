@@ -190,6 +190,24 @@ SOFTWARE.
 El escáner QR es local: no envía fotogramas, contenido, resultados ni métricas
 del escáner a XPeta Lab o a otro servicio.
 
+## Pantalla del bot (noVNC)
+
+El visor que asume el control del escritorio del bot incluye el núcleo de
+**noVNC** (https://github.com/novnc/noVNC, v1.5.0), licencia **MPL-2.0**.
+Los avisos originales de cada archivo se conservan. El texto de la licencia
+está en `assets/novnc/LICENSE.txt` y `assets/novnc/docs/LICENSE.MPL-2.0`.
+`assets/novnc/bridge.html` es código de este proyecto (GPL-3.0-only) y solo
+carga ese núcleo.
+
+`assets/novnc/core/crypto/des.js` no es MPL: conserva la concesión BSD-style
+de AT&T Laboratories Cambridge (1999), Widget Workshop (1996) y Jef Poskanzer
+(1996). El texto está en el propio archivo y en
+`LICENSES/LicenseRef-noVNC-DES.txt`.
+
+**pako** (https://github.com/nodeca/pako, Copyright (C) 2014-2016 Vitaly
+Puzrin) se incluye tal como lo vende noVNC, bajo la licencia MIT
+(`assets/novnc/vendor/pako/LICENSE`).
+
 ## Tipografías empaquetadas
 
 Inter, JetBrains Mono, Montserrat y Nunito se distribuyen bajo la SIL Open Font

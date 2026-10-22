@@ -156,6 +156,7 @@ class MainActivity : FlutterFragmentActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        ScreenAssetHost.register(this, flutterEngine)
         DurableSecretWriter.attach(applicationContext, flutterEngine.dartExecutor.binaryMessenger)
         clipboardImageHandler?.close()
         clipboardImageHandler = HermesClipboardImageHandler(applicationContext).also { handler ->

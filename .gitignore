@@ -1,4 +1,5 @@
 # Miscellaneous
+.toolchain/
 *.class
 *.log
 *.pyc
@@ -71,6 +72,7 @@ google-services.json
 
 # Salida de goldens fallidos y caché de herramientas (no versionar)
 test/failures/
+test/bots/failures/
 .understand-anything/
 releases/
 /artifacts/

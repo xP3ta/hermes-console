@@ -148,6 +148,20 @@ flutter:
     - assets/mascot/pixel.webp
     - assets/mascot/nimbus.webp
     - assets/mascot/violet.webp
+    # noVNC core (MPL-2.0) plus pako (MIT). Flutter asset directories are not
+    # recursive, so each folder is listed. Notices: THIRD_PARTY_NOTICES.md.
+    - assets/novnc/
+    - assets/novnc/core/
+    - assets/novnc/core/crypto/
+    - assets/novnc/core/decoders/
+    - assets/novnc/core/input/
+    - assets/novnc/core/util/
+    - assets/novnc/docs/
+    - assets/novnc/vendor/
+    - assets/novnc/vendor/pako/
+    - assets/novnc/vendor/pako/lib/
+    - assets/novnc/vendor/pako/lib/utils/
+    - assets/novnc/vendor/pako/lib/zlib/
   # Fuentes empaquetadas localmente bajo SIL OFL 1.1 para el selector de fuente
   # en Ajustes → apariencia. Son archivos locales: nunca se descargan en
   # runtime (no usamos google_fonts; ver docs/PRIVACY_POLICY.md).

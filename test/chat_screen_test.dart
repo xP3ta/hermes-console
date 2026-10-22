@@ -98,6 +98,7 @@ import 'package:hermes_android/core/services/session_config_reducer.dart';
 import 'package:hermes_android/core/models/interactive_prompt.dart';
 import 'package:hermes_android/core/models/prepared_turn.dart';
 import 'package:hermes_android/core/screens/chat_screen.dart';
+import 'package:hermes_android/core/screens/screen_peek_screen.dart';
 import 'package:hermes_android/core/bots/ui/bot_identity.dart';
 import 'package:hermes_android/core/bots/ui/profile/profile_model_picker.dart'
     show ProfileModelEdits;
@@ -36602,6 +36603,102 @@ void main() {
     expect(find.byKey(const ValueKey('chat-control-model')), findsOneWidget);
     expect(find.byKey(const ValueKey('chat-control-find')), findsOneWidget);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('Bot Chat opens the bot screen for that profile', (tester) async {
+    await pumpChat(
+      tester,
+      connection: _remoteConn('conn-bot-screen'),
+      session: const Session(
+        id: 'mob-bot-screen',
+        title: 'Bot Chat',
+        model: 'hermes-agent',
+        source: 'bot-mode',
+        messageCount: 0,
+        isActive: false,
+        preview: '',
+        startedAt: 1,
+        profile: 'infra',
+      ),
+      missionBotProfile: const AgentProfile(name: 'infra'),
+    );
+    await tester.pump();
+    final button = find.byKey(const ValueKey('bot-chat-screen'));
+    expect(button, findsOneWidget);
+    expect(find.byTooltip('Ver el escritorio del bot'), findsOneWidget);
+    expect(find.byIcon(Icons.desktop_windows_outlined), findsOneWidget);
+    await tester.tap(button);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    final peek = tester.widget<ScreenPeekScreen>(find.byType(ScreenPeekScreen));
+    expect(peek.profile, 'infra');
+    expect(peek.readOnly, isFalse);
+    Navigator.of(tester.element(find.byType(ScreenPeekScreen))).pop();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+  });
+
+  testWidgets('Bot Chat without a profile opens the screen of the active one', (
+    tester,
+  ) async {
+    await pumpChat(
+      tester,
+      connection: _remoteConn('conn-bot-screen-active'),
+      initialActiveProfile: 'infra',
+      session: const Session(
+        id: 'mob-bot-screen-active',
+        title: 'Bot Chat',
+        model: 'hermes-agent',
+        source: 'bot-mode',
+        messageCount: 0,
+        isActive: false,
+        preview: '',
+        startedAt: 1,
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('bot-chat-screen')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(
+      tester.widget<ScreenPeekScreen>(find.byType(ScreenPeekScreen)).profile,
+      'infra',
+    );
+    Navigator.of(tester.element(find.byType(ScreenPeekScreen))).pop();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+  });
+
+  testWidgets('a read-only Bot Chat still opens a read-only screen', (
+    tester,
+  ) async {
+    await pumpChat(
+      tester,
+      connection: _remoteConn('conn-bot-screen-ro').copyWith(readOnly: true),
+      session: const Session(
+        id: 'mob-bot-screen-ro',
+        title: 'Bot Chat',
+        model: 'hermes-agent',
+        source: 'bot-mode',
+        messageCount: 0,
+        isActive: false,
+        preview: '',
+        startedAt: 1,
+        profile: 'infra',
+      ),
+      missionBotProfile: const AgentProfile(name: 'infra'),
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('bot-chat-screen')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(
+      tester.widget<ScreenPeekScreen>(find.byType(ScreenPeekScreen)).readOnly,
+      isTrue,
+    );
+    Navigator.of(tester.element(find.byType(ScreenPeekScreen))).pop();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
   });
 
   testWidgets('Bot Chat replies carry the bot name in its colour, no face', (

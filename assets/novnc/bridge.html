@@ -1,0 +1,778 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Hermes Screen</title>
+<style>
+  html, body { margin: 0; padding: 0; width: 100%; height: 100%; background: #000; overflow: hidden; }
+  #screen {
+    width: 100%; height: 100%; position: relative; touch-action: none;
+    transform-origin: 0 0;
+  }
+  #overlay {
+    position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    background: rgba(0,0,0,.72); color: #ddd; font: 14px/1.4 system-ui, sans-serif;
+    text-align: center; padding: 24px; z-index: 10; transition: opacity .25s;
+  }
+  #overlay.hidden { opacity: 0; pointer-events: none; }
+  /* Offscreen editable that hosts the Android IME for remote typing. */
+  #kbd {
+    position: fixed; left: 0; top: 0; width: 1px; height: 1px;
+    opacity: 0; border: 0; padding: 0; caret-color: transparent;
+  }
+  /* Floating remote-keyboard toggle. Tapping it is a real page gesture, the
+     only reliable way to raise the IME on Android WebViews. */
+  #kbd-btn {
+    position: fixed; right: 16px; bottom: 16px; width: 46px; height: 46px;
+    border-radius: 23px; border: 0; z-index: 5; display: none;
+    background: rgba(32,32,32,.55); color: #eee; font-size: 22px;
+    -webkit-tap-highlight-color: transparent; touch-action: manipulation;
+  }
+  #kbd-btn.on { background: rgba(64,120,255,.75); }
+  #kbd-btn.show { display: block; }
+  /* Zoom / remote-resolution controls. */
+  #zoom-pill {
+    position: fixed; right: 12px; top: 12px; z-index: 5; display: none;
+    background: rgba(32,32,32,.55); border-radius: 18px; padding: 2px;
+  }
+  #zoom-pill.show { display: flex; }
+  #zoom-pill button {
+    width: 38px; height: 32px; border: 0; border-radius: 16px;
+    background: transparent; color: #eee; font-size: 15px;
+    -webkit-tap-highlight-color: transparent; touch-action: manipulation;
+  }
+  #zoom-pill button.on { background: rgba(64,120,255,.75); }
+  #zoom-pill #zoom-fit {
+    width: auto; min-width: 48px; padding: 0 8px; font-size: 12px;
+  }
+  /* The touchpad's own visual cursor; the remote one may be invisible. */
+  #pad-cursor {
+    position: absolute; width: 8px; height: 8px; margin: -5.5px 0 0 -5.5px;
+    border-radius: 50%; background: rgba(64,120,255,.9); border: 1.5px solid #fff;
+    box-shadow: 0 0 5px rgba(0,0,0,.8); pointer-events: none; z-index: 9;
+    display: none;
+  }
+</style>
+</head>
+<body>
+<div id="screen"></div>
+<div id="overlay">Connecting…</div>
+<button id="kbd-btn" aria-label="Keyboard">&#9000;</button>
+<div id="zoom-pill">
+  <button id="zoom-out" aria-label="Zoom out">&#8722;</button>
+  <button id="zoom-fit" aria-label="Reset zoom">100%</button>
+  <button id="zoom-in" aria-label="Zoom in">+</button>
+  <button id="zoom-resize" aria-label="Remote follows this screen size">&#8646;</button>
+</div>
+<input id="kbd" type="text" autocomplete="off" autocapitalize="none"
+       autocorrect="off" spellcheck="false" aria-hidden="true" tabindex="-1">
+<script type="module">
+import RFB from './core/rfb.js';
+import KeyTable from './core/input/keysym.js';
+import keysymdef from './core/input/keysymdef.js';
+
+const overlay = document.getElementById('overlay');
+const kbdInput = document.getElementById('kbd');
+const kbdBtn = document.getElementById('kbd-btn');
+const screenDiv = document.getElementById('screen');
+const zoomPill = document.getElementById('zoom-pill');
+const zoomIn = document.getElementById('zoom-in');
+const zoomOut = document.getElementById('zoom-out');
+const zoomFit = document.getElementById('zoom-fit');
+const zoomResize = document.getElementById('zoom-resize');
+const padCursor = document.createElement('div');
+padCursor.id = 'pad-cursor';
+screenDiv.appendChild(padCursor);
+
+const params = new URLSearchParams(location.search);
+const wsUrl = params.get('ws');
+const text = {
+  connecting: params.get('connecting') || 'Connecting…',
+  missing: params.get('missing') || 'Display URL missing',
+  closed: params.get('closed') || 'Session ended',
+  lost: params.get('lost') || 'Connection lost. Tap to reconnect.',
+  security: params.get('security') || 'Security failure',
+  credentials: params.get('credentials') || 'The display asked for credentials',
+};
+
+function post(token) {
+  try {
+    if (window.TakeoverChannel) window.TakeoverChannel.postMessage(token);
+  } catch (error) {}
+}
+
+function show(token, label) {
+  overlay.textContent = label || '';
+  overlay.classList.toggle('hidden', !label);
+  kbdBtn.classList.toggle('show', !label);
+  zoomPill.classList.toggle('show', !label);
+  if (token === 'lost') overlay.dataset.reload = '1';
+  else delete overlay.dataset.reload;
+  post(token);
+}
+
+// ---------------------------------------------------------------------------
+// Touchpad state, virtual pointer and view zoom.
+//
+// The pad keeps a virtual cursor in canvas coordinates (the space noVNC's
+// _handleMouseMove/_handleMouseButton expect: canvas client pixels before
+// any CSS transform; this vendored copy is pinned and dragViewport stays
+// off, so the private handlers are safe to call). A CSS transform on the
+// screen container zooms the view; every coordinate crossing between client
+// and canvas space goes through clientToCanvas().
+// ---------------------------------------------------------------------------
+let rfb = null;
+const padState = { on: params.get('pad') === '1' };
+const pad = { x: 0, y: 0 };
+let viewZoom = 1;
+let panX = 0;
+let panY = 0;
+// Zoom-in only: below 100% the canvas shrinks inside the viewport and the
+// empty bands read as a broken picture. "Too small remote" is solved by
+// turning the ⇔ resize off, which restores the original resolution where
+// fit already scales the picture down.
+const ZOOM_MIN = 1;
+const ZOOM_MAX = 4;
+const ZOOM_STEP = 1.25;
+
+function padCanvas() {
+  return document.querySelector('#screen canvas');
+}
+
+function centerPad() {
+  const canvas = padCanvas();
+  if (!canvas) return;
+  pad.x = canvas.clientWidth / 2;
+  pad.y = canvas.clientHeight / 2;
+  movePadCursor();
+}
+
+function clampPad() {
+  const canvas = padCanvas();
+  if (!canvas) return;
+  pad.x = Math.min(Math.max(pad.x, 0), canvas.clientWidth);
+  pad.y = Math.min(Math.max(pad.y, 0), canvas.clientHeight);
+}
+
+// Client (touch) coordinates to canvas coordinates, zoom and pan applied.
+function clientToCanvas(clientX, clientY) {
+  const canvas = padCanvas();
+  if (!canvas) return { x: 0, y: 0 };
+  const rect = canvas.getBoundingClientRect();
+  return {
+    x: (clientX - rect.left) / viewZoom,
+    y: (clientY - rect.top) / viewZoom,
+  };
+}
+
+function movePadCursor() {
+  const canvas = padCanvas();
+  if (!canvas) return;
+  const screenRect = screenDiv.getBoundingClientRect();
+  const canvasRect = canvas.getBoundingClientRect();
+  padCursor.style.left =
+    (canvasRect.left - screenRect.left) / viewZoom + pad.x + 'px';
+  padCursor.style.top =
+    (canvasRect.top - screenRect.top) / viewZoom + pad.y + 'px';
+}
+
+function movePad(dx, dy) {
+  if (!rfb) return;
+  pad.x += dx;
+  pad.y += dy;
+  clampPad();
+  rfb._handleMouseMove(pad.x, pad.y);
+  movePadCursor();
+}
+
+function padButton(mask, down) {
+  if (!rfb) return;
+  rfb._handleMouseButton(pad.x, pad.y, down, mask);
+}
+
+function padClick(mask) {
+  padButton(mask, true);
+  padButton(mask, false);
+}
+
+function applyViewTransform() {
+  screenDiv.style.transform =
+    'translate(' + panX + 'px,' + panY + 'px) scale(' + viewZoom + ')';
+  movePadCursor();
+}
+
+function clampPan() {
+  const w = screenDiv.clientWidth;
+  const h = screenDiv.clientHeight;
+  // Zoomed in the content is bigger than the view (pan range negative side);
+  // zoomed out it is smaller (pan range positive side, to recenter it).
+  const rangeX = w * (1 - viewZoom);
+  const rangeY = h * (1 - viewZoom);
+  panX = Math.min(Math.max(panX, Math.min(0, rangeX)), Math.max(0, rangeX));
+  panY = Math.min(Math.max(panY, Math.min(0, rangeY)), Math.max(0, rangeY));
+}
+
+function updateZoomLabel() {
+  zoomFit.textContent = Math.round(viewZoom * 100) + '%';
+}
+
+// Sets the zoom keeping the content point under [anchorX, anchorY] in place.
+// Blocked while remote resize (⇔) is on: noVNC measures this screen with
+// getBoundingClientRect() when asking the server for a new desktop size
+// (rfb.js _requestRemoteResize), so a scaled transform would send an
+// inflated resolution to the remote.
+function setZoom(z, anchorX, anchorY) {
+  if (rfb && rfb.resizeSession) return;
+  const rect = screenDiv.getBoundingClientRect();
+  const layoutLeft = rect.left - panX;
+  const layoutTop = rect.top - panY;
+  const contentX = (anchorX - rect.left) / viewZoom;
+  const contentY = (anchorY - rect.top) / viewZoom;
+  viewZoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z));
+  panX = anchorX - layoutLeft - contentX * viewZoom;
+  panY = anchorY - layoutTop - contentY * viewZoom;
+  clampPan();
+  applyViewTransform();
+  updateZoomLabel();
+}
+
+function resetView() {
+  viewZoom = 1;
+  panX = 0;
+  panY = 0;
+  applyViewTransform();
+  updateZoomLabel();
+}
+
+// ---------------------------------------------------------------------------
+// Touch router.
+//
+// A capture-phase listener on the screen container owns every touch in both
+// modes (it runs before noVNC's own canvas handlers, whose pinch would send
+// Ctrl+wheel to the remote instead of zooming the view). Direct mode turns
+// touches into clicks and drags at the touch position; touchpad mode feeds
+// the virtual pointer. Two fingers pinch-zoom, pan when zoomed, and scroll
+// the remote when the view fits.
+// ---------------------------------------------------------------------------
+const PAD_SENSITIVITY = 1.8;
+const TAP_SLOP = 8;
+const TAP_MAX = 300;
+const LONG_PRESS = 380;
+const DBL_WINDOW = 400;
+const WHEEL_STEP = 48;
+// A two-finger gesture decides ONCE whether it is a pinch or a pan/scroll;
+// after that jitter cannot flip it anymore.
+const PINCH_DECIDE = 12;
+const PAN_DECIDE = 10;
+
+const touch = {
+  fingers: new Map(),
+  maxFingers: 0,
+  gestureStart: 0,
+  longTimer: null,
+  kind: 'idle', // idle | padmove | drag | longdrag | two | dead
+  twoKind: null, // while kind === 'two': null | pinch | pan | scroll
+  draggingMask: 0, // remote button held by a drag
+  scrolled: false,
+  pinched: false,
+  wheelCarryX: 0,
+  wheelCarryY: 0,
+  lastDist: 0,
+  lastMidX: 0,
+  lastMidY: 0,
+  // Double-tap-and-drag: remembered from the previous gesture.
+  lastTapEnd: 0,
+  lastTapX: 0,
+  lastTapY: 0,
+  dblArmed: false,
+};
+
+const padMode = () => padState.on;
+
+function clearLongTimer() {
+  if (touch.longTimer !== null) {
+    clearTimeout(touch.longTimer);
+    touch.longTimer = null;
+  }
+}
+
+function firstTwoFingers() {
+  const it = touch.fingers.values();
+  return [it.next().value, it.next().value];
+}
+
+function twoFingerMetrics() {
+  const [a, b] = firstTwoFingers();
+  return {
+    dist: Math.hypot(a.x - b.x, a.y - b.y),
+    midX: (a.x + b.x) / 2,
+    midY: (a.y + b.y) / 2,
+  };
+}
+
+function sendDirectMove(finger) {
+  const pos = clientToCanvas(finger.x, finger.y);
+  if (rfb) rfb._handleMouseMove(pos.x, pos.y);
+}
+
+function sendDirectButton(finger, down, mask) {
+  const pos = clientToCanvas(finger.x, finger.y);
+  if (rfb) rfb._handleMouseButton(pos.x, pos.y, down, mask);
+}
+
+function onLongPress() {
+  touch.longTimer = null;
+  if (touch.fingers.size !== 1 || touch.draggingMask) return;
+  const finger = touch.fingers.values().next().value;
+  if (finger.moved) return;
+  touch.kind = 'longdrag';
+  // Touchpad holds the left button for drags; direct mode follows noVNC's
+  // own long-press convention: the right button.
+  touch.draggingMask = padMode() ? 1 : 4;
+  if (padMode()) {
+    padButton(1, true);
+  } else {
+    sendDirectButton(finger, true, 4);
+  }
+}
+
+function onTouchStart(ev) {
+  ev.stopImmediatePropagation();
+  ev.preventDefault();
+  for (const t of ev.changedTouches) {
+    touch.fingers.set(t.identifier, {
+      x: t.clientX,
+      y: t.clientY,
+      startX: t.clientX,
+      startY: t.clientY,
+      startTime: ev.timeStamp,
+      dx: 0,
+      dy: 0,
+      moved: false,
+    });
+  }
+  touch.maxFingers = Math.max(touch.maxFingers, touch.fingers.size);
+  if (touch.fingers.size === 1) {
+    touch.gestureStart = ev.timeStamp;
+    touch.kind = 'idle';
+    // Classic touchpad double-tap-and-drag: a tap that starts right after
+    // another tap and then moves begins a drag without waiting for the
+    // long press.
+    const first = ev.changedTouches[0];
+    touch.dblArmed =
+      touch.lastTapEnd !== 0 &&
+      ev.timeStamp - touch.lastTapEnd <= DBL_WINDOW &&
+      Math.hypot(first.clientX - touch.lastTapX, first.clientY - touch.lastTapY) <=
+        TAP_SLOP * 2;
+    touch.longTimer = setTimeout(onLongPress, LONG_PRESS);
+    return;
+  }
+  clearLongTimer();
+  if (touch.draggingMask) return; // a drag owns the gesture until it ends
+  if (touch.fingers.size >= 2) {
+    const m = twoFingerMetrics();
+    touch.lastDist = m.dist;
+    touch.lastMidX = m.midX;
+    touch.lastMidY = m.midY;
+    touch.wheelCarryX = 0;
+    touch.wheelCarryY = 0;
+    touch.scrolled = false;
+    touch.pinched = false;
+    touch.twoKind = null;
+    touch.kind = 'two';
+  }
+}
+
+function onTouchMove(ev) {
+  ev.stopImmediatePropagation();
+  ev.preventDefault();
+  for (const t of ev.changedTouches) {
+    const finger = touch.fingers.get(t.identifier);
+    if (!finger) continue;
+    finger.dx = t.clientX - finger.x;
+    finger.dy = t.clientY - finger.y;
+    finger.x = t.clientX;
+    finger.y = t.clientY;
+  }
+  if (touch.draggingMask) {
+    const finger = touch.fingers.values().next().value;
+    if (padMode()) {
+      movePad(finger.dx * PAD_SENSITIVITY / viewZoom, finger.dy * PAD_SENSITIVITY / viewZoom);
+    } else {
+      sendDirectMove(finger);
+    }
+    return;
+  }
+  if (touch.kind === 'two' && touch.fingers.size >= 2) {
+    handleTwoFingers();
+    return;
+  }
+  if (touch.fingers.size !== 1) return;
+  const finger = touch.fingers.values().next().value;
+  const travel = Math.hypot(finger.x - finger.startX, finger.y - finger.startY);
+  if (touch.kind === 'idle' && travel > TAP_SLOP) {
+    finger.moved = true;
+    clearLongTimer();
+    if (padMode()) {
+      if (touch.dblArmed) {
+        // Second tap of a double-tap starts the drag as it moves.
+        touch.kind = 'longdrag';
+        touch.draggingMask = 1;
+        padButton(1, true);
+        movePad(finger.dx * PAD_SENSITIVITY / viewZoom,
+          finger.dy * PAD_SENSITIVITY / viewZoom);
+        return;
+      }
+      touch.kind = 'padmove';
+      // Drop the slop dead zone so the pointer does not jump at once.
+      const overshoot = (travel - TAP_SLOP) / travel;
+      movePad(finger.dx * overshoot * PAD_SENSITIVITY / viewZoom,
+        finger.dy * overshoot * PAD_SENSITIVITY / viewZoom);
+      return;
+    }
+    touch.kind = 'drag';
+    touch.draggingMask = 1;
+    sendDirectButton(finger, true, 1);
+    return;
+  }
+  if (touch.kind === 'padmove') {
+    movePad(finger.dx * PAD_SENSITIVITY / viewZoom, finger.dy * PAD_SENSITIVITY / viewZoom);
+  } else if (touch.kind === 'drag') {
+    sendDirectMove(finger);
+  }
+}
+
+function handleTwoFingers() {
+  const m = twoFingerMetrics();
+  const dDist = m.dist - touch.lastDist;
+  const dMidX = m.midX - touch.lastMidX;
+  const dMidY = m.midY - touch.lastMidY;
+  if (touch.twoKind === null) {
+    const midTravel = Math.hypot(dMidX, dMidY);
+    if (Math.abs(dDist) > PINCH_DECIDE && Math.abs(dDist) > midTravel * 1.2) {
+      touch.twoKind = 'pinch';
+      touch.pinched = true;
+    } else if (midTravel > PAN_DECIDE) {
+      // Zoomed in two fingers move the view; zoomed out they scroll the
+      // remote content.
+      touch.twoKind = viewZoom > 1 ? 'pan' : 'scroll';
+      touch.scrolled = true;
+    }
+  }
+  if (touch.twoKind === 'pinch') {
+    setZoom(viewZoom * (m.dist / Math.max(touch.lastDist, 1)), m.midX, m.midY);
+  } else if (touch.twoKind === 'pan') {
+    panX += dMidX;
+    panY += dMidY;
+    clampPan();
+    applyViewTransform();
+  } else if (touch.twoKind === 'scroll') {
+    // Content follows the fingers: swipe up scrolls down.
+    touch.wheelCarryX += dMidX;
+    touch.wheelCarryY += dMidY;
+    takeWheelNotches(m);
+  }
+  touch.lastDist = m.dist;
+  touch.lastMidX = m.midX;
+  touch.lastMidY = m.midY;
+}
+
+function takeWheelNotches(at) {
+  let stepsX = 0;
+  let stepsY = 0;
+  while (touch.wheelCarryX >= WHEEL_STEP) {
+    stepsX += 1;
+    touch.wheelCarryX -= WHEEL_STEP;
+  }
+  while (touch.wheelCarryX <= -WHEEL_STEP) {
+    stepsX -= 1;
+    touch.wheelCarryX += WHEEL_STEP;
+  }
+  while (touch.wheelCarryY >= WHEEL_STEP) {
+    stepsY += 1;
+    touch.wheelCarryY -= WHEEL_STEP;
+  }
+  while (touch.wheelCarryY <= -WHEEL_STEP) {
+    stepsY -= 1;
+    touch.wheelCarryY += WHEEL_STEP;
+  }
+  if (!rfb || (stepsX === 0 && stepsY === 0)) return;
+  const pos = clientToCanvas(at.midX, at.midY);
+  const notch = (mask) => {
+    rfb._handleMouseButton(pos.x, pos.y, true, mask);
+    rfb._handleMouseButton(pos.x, pos.y, false, mask);
+  };
+  // Fingers down reveals content above (wheel up); fingers right reveals
+  // content to the left (wheel left).
+  for (let i = 0; i < stepsY; i++) notch(0x8);
+  for (let i = 0; i < -stepsY; i++) notch(0x10);
+  for (let i = 0; i < stepsX; i++) notch(0x20);
+  for (let i = 0; i < -stepsX; i++) notch(0x40);
+}
+
+function onTouchEnd(ev, cancelled) {
+  ev.stopImmediatePropagation();
+  ev.preventDefault();
+  const lifted = [];
+  for (const t of ev.changedTouches) {
+    const finger = touch.fingers.get(t.identifier);
+    if (finger) lifted.push(finger);
+    touch.fingers.delete(t.identifier);
+  }
+  const wasTwo = touch.kind === 'two';
+  if (touch.fingers.size <= 1) clearLongTimer();
+  if (wasTwo && touch.fingers.size === 1) {
+    touch.kind = 'dead'; // the leftover finger must not become a drag
+    return;
+  }
+  if (touch.draggingMask && touch.fingers.size === 0) {
+    if (padMode()) {
+      padButton(touch.draggingMask, false);
+    } else if (lifted.length > 0) {
+      sendDirectButton(lifted[lifted.length - 1], false, touch.draggingMask);
+    }
+    touch.draggingMask = 0;
+    touch.kind = 'idle';
+    return;
+  }
+  if (touch.fingers.size === 0 && lifted.length > 0) {
+    const finger = lifted[lifted.length - 1];
+    if (!cancelled && wasTap(finger, ev.timeStamp)) {
+      const mask = touch.maxFingers >= 2 ? 4 : 1;
+      if (padMode()) {
+        padClick(mask);
+      } else {
+        sendDirectButton(finger, true, mask);
+        sendDirectButton(finger, false, mask);
+      }
+      // Arm the double-tap-and-drag window for the next gesture.
+      touch.lastTapEnd = ev.timeStamp;
+      touch.lastTapX = finger.x;
+      touch.lastTapY = finger.y;
+    }
+    resetGesture();
+  }
+}
+
+function wasTap(finger, now) {
+  return !touch.draggingMask &&
+      !touch.scrolled &&
+      !touch.pinched &&
+      !finger.moved &&
+      touch.maxFingers <= 2 &&
+      now - finger.startTime <= TAP_MAX &&
+      now - touch.gestureStart <= TAP_MAX * 2;
+}
+
+function resetGesture() {
+  clearLongTimer();
+  touch.fingers.clear();
+  touch.maxFingers = 0;
+  touch.kind = 'idle';
+  touch.twoKind = null;
+  touch.draggingMask = 0;
+  touch.scrolled = false;
+  touch.pinched = false;
+}
+
+const touchOptions = { capture: true, passive: false };
+screenDiv.addEventListener('touchstart', onTouchStart, touchOptions);
+screenDiv.addEventListener('touchmove', onTouchMove, touchOptions);
+screenDiv.addEventListener('touchend', (ev) => onTouchEnd(ev, false), touchOptions);
+screenDiv.addEventListener('touchcancel', (ev) => onTouchEnd(ev, true), touchOptions);
+
+// ---------------------------------------------------------------------------
+// Text keyboard support.
+//
+// A hidden editable hosts the Android IME. Soft keyboards rarely emit real
+// key events: most input arrives as composition edits, so text is injected
+// through the input event (codepoint to keysym via noVNC's own table), and
+// only special keys go through the keydown handler.
+// ---------------------------------------------------------------------------
+const KBD_SPECIAL = {
+  Backspace: KeyTable.XK_BackSpace,
+  Tab: KeyTable.XK_Tab,
+  Enter: KeyTable.XK_Return,
+  Escape: KeyTable.XK_Escape,
+  Delete: KeyTable.XK_Delete,
+  Home: KeyTable.XK_Home,
+  End: KeyTable.XK_End,
+  PageUp: KeyTable.XK_Page_Up,
+  PageDown: KeyTable.XK_Page_Down,
+  ArrowLeft: KeyTable.XK_Left,
+  ArrowUp: KeyTable.XK_Up,
+  ArrowRight: KeyTable.XK_Right,
+  ArrowDown: KeyTable.XK_Down,
+};
+
+kbdInput.addEventListener('keydown', (ev) => {
+  if (ev.key.length === 1) return; // text arrives through the input event
+  const keysym = KBD_SPECIAL[ev.key];
+  if (keysym === undefined) return;
+  ev.preventDefault();
+  if (rfb) rfb.sendKey(keysym, ev.code);
+});
+
+let kbdLast = '';
+kbdInput.addEventListener('input', () => {
+  const value = kbdInput.value;
+  let prefix = 0;
+  const min = Math.min(kbdLast.length, value.length);
+  while (prefix < min && kbdLast[prefix] === value[prefix]) prefix++;
+  let suffix = 0;
+  while (suffix < kbdLast.length - prefix &&
+         suffix < value.length - prefix &&
+         kbdLast[kbdLast.length - 1 - suffix] === value[value.length - 1 - suffix]) {
+    suffix += 1;
+  }
+  const inserted = value.slice(prefix, value.length - suffix);
+  kbdLast = value;
+  for (const ch of inserted) {
+    const codepoint = ch.codePointAt(0);
+    if (!codepoint) continue;
+    if (rfb) {
+      rfb.sendKey(ch === '\n' ? KeyTable.XK_Return : keysymdef.lookup(codepoint));
+    }
+  }
+  // The field is invisible; only reset it before it grows unbounded. Mid
+  // composition this restarts the IME session, hence the generous cap.
+  if (value.length > 300) {
+    kbdInput.value = '';
+    kbdLast = '';
+  }
+});
+
+kbdInput.addEventListener('focusin', () => {
+  kbdBtn.classList.add('on');
+  post('kbd-on');
+});
+kbdInput.addEventListener('focusout', () => {
+  kbdBtn.classList.remove('on');
+  post('kbd-off');
+});
+// Keep the focus where it is when a floating button is pressed. mousedown
+// keeps click alive; pointerdown would cancel it.
+for (const btn of [kbdBtn, zoomIn, zoomOut, zoomFit, zoomResize]) {
+  btn.addEventListener('mousedown', (ev) => ev.preventDefault());
+}
+kbdBtn.addEventListener('click', () => {
+  if (document.activeElement === kbdInput) {
+    kbdInput.blur();
+    return;
+  }
+  try { window.focus(); } catch (error) {}
+  kbdInput.focus({ preventScroll: true });
+});
+
+function screenCenterClient() {
+  const rect = screenDiv.getBoundingClientRect();
+  return [rect.left + screenDiv.clientWidth / 2, rect.top + screenDiv.clientHeight / 2];
+}
+
+zoomIn.addEventListener('click', () => {
+  const [cx, cy] = screenCenterClient();
+  setZoom(viewZoom * ZOOM_STEP, cx, cy);
+});
+zoomOut.addEventListener('click', () => {
+  const [cx, cy] = screenCenterClient();
+  setZoom(viewZoom / ZOOM_STEP, cx, cy);
+});
+zoomFit.addEventListener('click', () => {
+  resetView();
+});
+// ⇔ makes the remote desktop follow this screen's size; toggling it off
+// restores the resolution the remote had before, which noVNC does not do by
+// itself (its resizeSession setter only ever asks for the viewport size).
+let savedFb = null;
+zoomResize.addEventListener('click', () => {
+  if (!rfb || rfb._rfbConnectionState !== 'connected') return;
+  if (!rfb._supportsSetDesktopSize) {
+    return;
+  }
+  if (!rfb.resizeSession) {
+    savedFb = { w: rfb._fbWidth, h: rfb._fbHeight };
+    // Drop any view zoom first: noVNC measures the screen rect (which the
+    // transform scales) to pick the resolution it requests from the server.
+    resetView();
+    rfb.resizeSession = true;
+    zoomResize.classList.add('on');
+    return;
+  }
+  rfb.resizeSession = false;
+  zoomResize.classList.remove('on');
+  if (savedFb && savedFb.w > 0 && savedFb.h > 0) {
+    RFB.messages.setDesktopSize(
+      rfb._sock, savedFb.w, savedFb.h, rfb._screenID, rfb._screenFlags,
+    );
+  }
+});
+
+window.hermesScreen = {
+  setTouchpad(on) {
+    resetGesture();
+    padState.on = !!on;
+    padCursor.style.display = padState.on ? 'block' : 'none';
+    movePadCursor();
+  },
+  showKeyboard() {
+    try { window.focus(); } catch (error) {}
+    kbdInput.focus({ preventScroll: true });
+  },
+  hideKeyboard() {
+    kbdInput.blur();
+  },
+};
+
+// The viewport (rotation, IME) and noVNC (canvas resize) change geometry
+// behind our back; stale pan values would leave the view mispositioned
+// until the next gesture. Re-clamp and repaint after each geometry change.
+function onViewGeometryChange() {
+  clampPan();
+  applyViewTransform();
+  clampPad();
+  movePadCursor();
+}
+
+let canvasObserver = null;
+function observeCanvasGeometry() {
+  const canvas = padCanvas();
+  if (!canvas || canvasObserver) return;
+  // Runs after noVNC resizes the canvas in its own resize handling.
+  canvasObserver = new ResizeObserver(onViewGeometryChange);
+  canvasObserver.observe(canvas);
+}
+
+window.addEventListener('resize', () => setTimeout(onViewGeometryChange, 60));
+
+if (!wsUrl) {
+  show('missing', text.missing);
+} else {
+  overlay.textContent = text.connecting;
+  rfb = new RFB(document.getElementById('screen'), wsUrl, {});
+  rfb.scaleViewport = true;
+  rfb.resizeSession = false;
+  rfb.clipViewport = true;
+  // The remote cursor shape may be invisible or stale; a local dot always
+  // helps when a mouse is attached.
+  rfb.showDotCursor = true;
+  rfb.addEventListener('connect', () => {
+    resetView();
+    centerPad();
+    observeCanvasGeometry();
+    padCursor.style.display = padState.on ? 'block' : 'none';
+    show('connected', '');
+  });
+  rfb.addEventListener('disconnect', (event) => {
+    if (event.detail.clean) show('closed', text.closed);
+    else show('lost', text.lost);
+  });
+  rfb.addEventListener('securityfailure', () => show('security', text.security));
+  rfb.addEventListener('credentialsrequired', () => show('credentials', text.credentials));
+  overlay.addEventListener('click', () => {
+    if (overlay.dataset.reload === '1') post('reconnect');
+  });
+}
+</script>
+</body>
+</html>

@@ -8,8 +8,10 @@ import 'package:hermes_android/core/screens/cron_screen.dart';
 import 'package:hermes_android/core/screens/tools_hub_screen.dart';
 import 'package:hermes_android/core/screens/voice_settings_screen.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
+import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/hermes_drawer.dart';
+import 'package:hermes_android/core/widgets/owned_resource_host.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -146,13 +148,14 @@ void main() {
         'soul',
         'task-center',
         'activity',
+        'bot-screen',
       }),
     );
     // 'agents' (AgentCenterScreen) se retiró: siempre se abría sin
     // runtimeSessionId desde este catálogo genérico, así que nunca podía
     // mostrar nada útil — confirmado leyendo agent_center_screen.dart, que
     // solo tiene este único call site en todo el código.
-    expect(hub.destinations.map((destination) => destination.id).length, 12);
+    expect(hub.destinations.map((destination) => destination.id).length, 13);
   });
 
   testWidgets('Capacidades sustituye a Skills y Extensiones', (tester) async {
@@ -307,4 +310,22 @@ void main() {
       handle.dispose();
     }
   });
+
+  testWidgets(
+    'la pantalla del bot entra en Herramientas sin montar el socket',
+    (tester) async {
+      final manager = await _manager();
+      await _pumpDrawer(tester, manager: manager, connection: _connection);
+      await _revealDrawerItem(tester, 'Herramientas');
+      await tester.tap(find.text('Herramientas'));
+      await tester.pumpAndSettle();
+
+      final hub = tester.widget<ToolsHubScreen>(find.byType(ToolsHubScreen));
+      final entry = hub.destinations.singleWhere((d) => d.id == 'bot-screen');
+      expect(entry.label, 'Pantalla del bot');
+      expect(entry.enabled, isTrue);
+      final built = entry.builder(tester.element(find.byType(ToolsHubScreen)));
+      expect(built, isA<OwnedResourceHost<TuiGatewayClient>>());
+    },
+  );
 }

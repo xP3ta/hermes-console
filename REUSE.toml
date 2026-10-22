@@ -138,3 +138,49 @@ precedence = "override"
 SPDX-FileCopyrightText = "Copyright (c) Obtainium contributors"
 SPDX-License-Identifier = "GPL-3.0-only"
 
+# noVNC core (vendored for the bot-screen viewer). The library default is
+# MPL-2.0; see assets/novnc/LICENSE.txt and assets/novnc/docs/LICENSE.MPL-2.0.
+# core/crypto/des.js keeps its own BSD-style grant and is annotated apart.
+[[annotations]]
+path = [
+  "assets/novnc/core/*.js",
+  "assets/novnc/core/decoders/**",
+  "assets/novnc/core/input/**",
+  "assets/novnc/core/util/**",
+  "assets/novnc/core/crypto/aes.js",
+  "assets/novnc/core/crypto/bigint.js",
+  "assets/novnc/core/crypto/crypto.js",
+  "assets/novnc/core/crypto/dh.js",
+  "assets/novnc/core/crypto/md5.js",
+  "assets/novnc/core/crypto/rsa.js",
+  "assets/novnc/LICENSE.txt",
+  "assets/novnc/docs/LICENSE.MPL-2.0",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "Copyright (C) The noVNC Authors"
+SPDX-License-Identifier = "MPL-2.0"
+
+[[annotations]]
+path = "assets/novnc/core/crypto/des.js"
+precedence = "override"
+SPDX-FileCopyrightText = [
+  "Copyright (C) 1999 AT&T Laboratories Cambridge",
+  "Copyright (c) 1996 Widget Workshop, Inc.",
+  "Copyright (C) 1996 Jef Poskanzer",
+]
+SPDX-License-Identifier = "LicenseRef-noVNC-DES"
+
+# pako, bundled by noVNC for zlib in the browser.
+[[annotations]]
+path = "assets/novnc/vendor/pako/**"
+precedence = "override"
+SPDX-FileCopyrightText = "Copyright (C) 2014-2016 Vitaly Puzrin"
+SPDX-License-Identifier = "MIT"
+
+# Project-authored page that loads the vendored noVNC core.
+[[annotations]]
+path = "assets/novnc/bridge.html"
+precedence = "override"
+SPDX-FileCopyrightText = "Copyright (c) 2026 XPeta Lab"
+SPDX-License-Identifier = "GPL-3.0-only"
+
