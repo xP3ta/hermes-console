@@ -4599,5 +4599,431 @@
   "i18n131RecoveredTurnPending": "대기 중인 턴을 복구했습니다. 계속하려면 복구 내용을 버리세요.",
   "@i18n131RecoveredTurnPending": {
     "description": "i18n131: Translated into Korean."
+  },
+  "i18n131McAllAgents": "All profiles",
+  "@i18n131McAllAgents": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McWorkspaces": "Workspaces",
+  "@i18n131McWorkspaces": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McWorkspaceAgentCountOne": "{count} profile",
+  "@i18n131McWorkspaceAgentCountOne": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "i18n131McWorkspaceAgentCountOther": "{count} profiles",
+  "@i18n131McWorkspaceAgentCountOther": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "i18n131McCreateOrganization": "Create workspace",
+  "@i18n131McCreateOrganization": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McEditOrganization": "Edit workspace",
+  "@i18n131McEditOrganization": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McOrganizationName": "Workspace name",
+  "@i18n131McOrganizationName": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McOrganizationHint": "e.g. Homelab",
+  "@i18n131McOrganizationHint": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McChooseProfiles": "Choose profiles",
+  "@i18n131McChooseProfiles": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McDelete": "Delete",
+  "@i18n131McDelete": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McDeleteOrganizationTitle": "Delete workspace?",
+  "@i18n131McDeleteOrganizationTitle": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McDeleteOrganizationBody": "Only this local workspace is removed. Hermes profiles are not changed.",
+  "@i18n131McDeleteOrganizationBody": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McLoading": "Loading profiles…",
+  "@i18n131McLoading": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McRetry": "Retry",
+  "@i18n131McRetry": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McRefresh": "Refresh",
+  "@i18n131McRefresh": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McTasks": "Tasks",
+  "@i18n131McTasks": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McActivity": "Activity",
+  "@i18n131McActivity": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McShowLess": "Show less",
+  "@i18n131McShowLess": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McSharedRoomName": "Room name",
+  "@i18n131McSharedRoomName": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McChooseSharedMembers": "Choose official members",
+  "@i18n131McChooseSharedMembers": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McRoomRefreshFailed": "Could not refresh this room. Reopen it to reconnect.",
+  "@i18n131McRoomRefreshFailed": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McNewAgent": "New profile",
+  "@i18n131McNewAgent": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McNoBots": "A profile has its own name, memory, skills and chat. Create the first one to get started.",
+  "@i18n131McNoBots": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McSearchAgents": "Search profiles",
+  "@i18n131McSearchAgents": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McClearSearch": "Clear search",
+  "@i18n131McClearSearch": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McActiveNow": "Active now",
+  "@i18n131McActiveNow": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McBotRosterUpdateFailed": "Hermes did not update this profile.",
+  "@i18n131McBotRosterUpdateFailed": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McNoMatchingAgents": "No matching profiles",
+  "@i18n131McNoMatchingAgents": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McAttentionSummaryOne": "{approvals} approval · {blocked} blocked",
+  "@i18n131McAttentionSummaryOne": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy.",
+    "placeholders": {
+      "approvals": {
+        "type": "int"
+      },
+      "blocked": {
+        "type": "int"
+      }
+    }
+  },
+  "i18n131McAttentionSummaryOther": "{approvals} approvals · {blocked} blocked",
+  "@i18n131McAttentionSummaryOther": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy.",
+    "placeholders": {
+      "approvals": {
+        "type": "int"
+      },
+      "blocked": {
+        "type": "int"
+      }
+    }
+  },
+  "i18n131McNeedsYou": "Needs you",
+  "@i18n131McNeedsYou": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McUsage": "Usage",
+  "@i18n131McUsage": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McProfilesUnavailable": "This Hermes installation does not publish profiles.",
+  "@i18n131McProfilesUnavailable": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McReview": "Review",
+  "@i18n131McReview": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McMemory": "Memory",
+  "@i18n131McMemory": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McStaleProfiles": "Some saved profiles no longer exist. Edit the organization to update it.",
+  "@i18n131McStaleProfiles": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McUnattributedSessionsOne": "{count} session did not publish a profile owner. They are included only in overall usage.",
+  "@i18n131McUnattributedSessionsOne": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "i18n131McUnattributedSessionsOther": "{count} sessions did not publish a profile owner. They are included only in overall usage.",
+  "@i18n131McUnattributedSessionsOther": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "i18n131McWorking": "working",
+  "@i18n131McWorking": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McApprovals": "approvals",
+  "@i18n131McApprovals": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McBlocked": "blocked",
+  "@i18n131McBlocked": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McTokens": "tokens",
+  "@i18n131McTokens": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McUnknown": "Unknown",
+  "@i18n131McUnknown": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McModelLabel": "Model",
+  "@i18n131McModelLabel": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McEditBotTitle": "Edit profile",
+  "@i18n131McEditBotTitle": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McBotDisplayName": "Display name",
+  "@i18n131McBotDisplayName": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McBotDisplayNameHint": "e.g. Researcher",
+  "@i18n131McBotDisplayNameHint": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McBotSpriteHint": "The sprite becomes this profile's picture.",
+  "@i18n131McBotSpriteHint": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McBotSpriteSearchHint": "Search sprites…",
+  "@i18n131McBotSpriteSearchHint": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McBotSpriteEmpty": "No sprites available.",
+  "@i18n131McBotSpriteEmpty": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McBotSpriteLoadFailed": "Couldn't load the list.",
+  "@i18n131McBotSpriteLoadFailed": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McBotSpriteUnsupported": "This Hermes installation does not support profile sprites.",
+  "@i18n131McBotSpriteUnsupported": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McBotEditorSaved": "Profile updated",
+  "@i18n131McBotEditorSaved": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McBotEditorSaveFailed": "Hermes did not apply the changes.",
+  "@i18n131McBotEditorSaveFailed": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McCreateAgentSubtitle": "A profile has its own name, memory, skills and chat. It can message your other profiles.",
+  "@i18n131McCreateAgentSubtitle": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McAgentNameLabel": "Name",
+  "@i18n131McAgentNameLabel": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McAgentNameInvalid": "Use lowercase letters, numbers, dashes and underscores.",
+  "@i18n131McAgentNameInvalid": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McAgentNameTaken": "A profile with this name already exists.",
+  "@i18n131McAgentNameTaken": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McAgentTitleLabel": "Title",
+  "@i18n131McAgentTitleLabel": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McAgentDescriptionLabel": "Description",
+  "@i18n131McAgentDescriptionLabel": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McAgentDescriptionHint": "What should this profile help with?",
+  "@i18n131McAgentDescriptionHint": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McModelInherited": "Inherited from the launch profile",
+  "@i18n131McModelInherited": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McProviderLabel": "Provider",
+  "@i18n131McProviderLabel": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McAdvanced": "Advanced",
+  "@i18n131McAdvanced": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McCloneFromLabel": "Clone from profile",
+  "@i18n131McCloneFromLabel": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McCloneFresh": "Fresh profile (bundled skills)",
+  "@i18n131McCloneFresh": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McShareAuthLabel": "Share keys & accounts with the main profile",
+  "@i18n131McShareAuthLabel": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McShareAuthHint": "Subscriptions, OAuth logins, and API keys stay shared (not copied), so token refreshes never invalidate each other. Uncheck for an isolated snapshot copy.",
+  "@i18n131McShareAuthHint": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McNoSkillsLabel": "Create empty (skip bundled skills)",
+  "@i18n131McNoSkillsLabel": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McSoulOptionalLabel": "SOUL.md (optional)",
+  "@i18n131McSoulOptionalLabel": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McSoulOptionalHint": "Leave blank to auto-generate from name/title/description.",
+  "@i18n131McSoulOptionalHint": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McCreateAgentSubmit": "Create profile",
+  "@i18n131McCreateAgentSubmit": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McCreateAgentError": "Could not create the profile: {detail}",
+  "@i18n131McCreateAgentError": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy.",
+    "placeholders": {
+      "detail": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131McAgentCreated": "Profile @{name} created. Add it to a room when you are ready.",
+  "@i18n131McAgentCreated": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131McStatusIdle": "Idle",
+  "@i18n131McStatusIdle": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McStatusThinking": "Thinking",
+  "@i18n131McStatusThinking": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McStatusWorking": "Working",
+  "@i18n131McStatusWorking": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McStatusResponding": "Responding",
+  "@i18n131McStatusResponding": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McStatusBlocked": "Blocked",
+  "@i18n131McStatusBlocked": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McStatusApprovalRequired": "Approval required",
+  "@i18n131McStatusApprovalRequired": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McActivityLabelSessionUpdated": "Session active",
+  "@i18n131McActivityLabelSessionUpdated": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McActivityLabelTaskCreated": "Task created",
+  "@i18n131McActivityLabelTaskCreated": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McActivityLabelTaskStarted": "Task started",
+  "@i18n131McActivityLabelTaskStarted": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McActivityLabelTaskCompleted": "Task completed",
+  "@i18n131McActivityLabelTaskCompleted": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McActivityLabelTaskBlocked": "Task blocked",
+  "@i18n131McActivityLabelTaskBlocked": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McBotChat": "Bot Chat",
+  "@i18n131McBotChat": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McSkills": "Skills",
+  "@i18n131McSkills": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McSoul": "SOUL",
+  "@i18n131McSoul": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McInput": "input",
+  "@i18n131McInput": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McOutput": "output",
+  "@i18n131McOutput": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McReasoning": "reasoning",
+  "@i18n131McReasoning": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McManagerLabel": "Manager",
+  "@i18n131McManagerLabel": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McAgentNameHint": "inbox-triage",
+  "@i18n131McAgentNameHint": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McAgentTitleHint": "Inbox Triage",
+  "@i18n131McAgentTitleHint": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+  },
+  "i18n131McStatusError": "Error",
+  "@i18n131McStatusError": {
+    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
   }
 }

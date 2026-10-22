@@ -2,91 +2,49 @@ import 'package:flutter/widgets.dart';
 
 import '../../l10n/app_localizations.dart';
 
+/// Typed facade over the i18n131Mc ARB family.
 final class MissionControlCopy {
-  final String _lang;
   final Strings _strings;
 
-  const MissionControlCopy._(this._lang, this._strings);
+  const MissionControlCopy._(this._strings);
 
-  factory MissionControlCopy.of(BuildContext context) => MissionControlCopy._(
-    switch (Localizations.localeOf(context).languageCode.toLowerCase()) {
-      'es' => 'es',
-      'pt' => 'pt',
-      _ => 'en',
-    },
-    Strings.of(context),
-  );
-
-  String _t(String en, String es, String pt) => switch (_lang) {
-    'es' => es,
-    'pt' => pt,
-    _ => en,
-  };
+  factory MissionControlCopy.of(BuildContext context) =>
+      MissionControlCopy._(Strings.of(context));
 
   String get title => _strings.missionTitle;
   String get allAgents =>
-      _t('All profiles', 'Todos los perfiles', 'Todos os perfis');
+      _strings.i18n131McAllAgents;
   String get workspaces =>
-      _t('Workspaces', 'Espacios de trabajo', 'Espaços de trabalho');
-  String workspaceAgentCount(int count) => _t(
-    '$count ${count == 1 ? 'profile' : 'profiles'}',
-    '$count ${count == 1 ? 'perfil' : 'perfiles'}',
-    '$count ${count == 1 ? 'perfil' : 'perfis'}',
-  );
-  String get createOrganization => _t(
-    'Create workspace',
-    'Crear espacio de trabajo',
-    'Criar espaço de trabalho',
-  );
-  String get editOrganization => _t(
-    'Edit workspace',
-    'Editar espacio de trabajo',
-    'Editar espaço de trabalho',
-  );
-  String get organizationName => _t(
-    'Workspace name',
-    'Nombre del espacio de trabajo',
-    'Nome do espaço de trabalho',
-  );
+      _strings.i18n131McWorkspaces;
+  String workspaceAgentCount(int count) => count == 1
+      ? _strings.i18n131McWorkspaceAgentCountOne(count)
+      : _strings.i18n131McWorkspaceAgentCountOther(count);
+  String get createOrganization => _strings.i18n131McCreateOrganization;
+  String get editOrganization => _strings.i18n131McEditOrganization;
+  String get organizationName => _strings.i18n131McOrganizationName;
   String get organizationHint =>
-      _t('e.g. Homelab', 'p. ej. Homelab', 'ex.: Homelab');
+      _strings.i18n131McOrganizationHint;
   String get chooseProfiles =>
-      _t('Choose profiles', 'Elige perfiles', 'Escolher perfis');
+      _strings.i18n131McChooseProfiles;
   String get save => _strings.missionHostedSave;
   String get cancel => _strings.missionHostedCancel;
-  String get delete => _t('Delete', 'Eliminar', 'Excluir');
-  String get deleteOrganizationTitle => _t(
-    'Delete workspace?',
-    '¿Eliminar espacio de trabajo?',
-    'Excluir espaço de trabalho?',
-  );
-  String get deleteOrganizationBody => _t(
-    'Only this local workspace is removed. Hermes profiles are not changed.',
-    'Solo se elimina este espacio local. Tus perfiles de Hermes no cambian.',
-    'Apenas este espaço de trabalho local é removido. Seus perfis do Hermes não mudam.',
-  );
+  String get delete => _strings.i18n131McDelete;
+  String get deleteOrganizationTitle => _strings.i18n131McDeleteOrganizationTitle;
+  String get deleteOrganizationBody => _strings.i18n131McDeleteOrganizationBody;
   String get loading =>
-      _t('Loading profiles…', 'Cargando perfiles…', 'Carregando perfis…');
-  String get retry => _t('Retry', 'Reintentar', 'Tentar novamente');
-  String get refresh => _t('Refresh', 'Actualizar', 'Atualizar');
-  String get tasks => _t('Tasks', 'Tareas', 'Tarefas');
-  String get activity => _t('Activity', 'Actividad', 'Atividade');
-  String get showLess => _t('Show less', 'Mostrar menos', 'Mostrar menos');
+      _strings.i18n131McLoading;
+  String get retry => _strings.i18n131McRetry;
+  String get refresh => _strings.i18n131McRefresh;
+  String get tasks => _strings.i18n131McTasks;
+  String get activity => _strings.i18n131McActivity;
+  String get showLess => _strings.i18n131McShowLess;
   String get bots => _strings.missionBotsLabel;
   String get sharedRoomName =>
-      _t('Room name', 'Nombre de la sala', 'Nome da sala');
-  String get chooseSharedMembers => _t(
-    'Choose official members',
-    'Elige miembros oficiales',
-    'Escolher membros oficiais',
-  );
+      _strings.i18n131McSharedRoomName;
+  String get chooseSharedMembers => _strings.i18n131McChooseSharedMembers;
 
   String get createSharedRoom => _strings.missionCreateSharedRoom;
-  String get roomRefreshFailed => _t(
-    'Could not refresh this room. Reopen it to reconnect.',
-    'No se pudo actualizar esta sala. Vuelve a abrirla para reconectar.',
-    'Não foi possível atualizar esta sala. Reabra-a para reconectar.',
-  );
+  String get roomRefreshFailed => _strings.i18n131McRoomRefreshFailed;
   String get renameSharedRoom => _strings.missionRenameSharedRoom;
   // "¿Detener/Disolver la sala compartida?" es el título del diálogo de
   // confirmación (pregunta, tiene sentido ahí) — reutilizado tal cual como
@@ -102,208 +60,108 @@ final class MissionControlCopy {
   String get confirm => _strings.missionConfirm;
   String get hostedActionFailed => _strings.missionHostedActionFailed;
 
-  String get newAgent => _t('New profile', 'Nuevo perfil', 'Novo perfil');
-  String get botChat => 'Bot Chat';
-  String get noBots => _t(
-    'A profile has its own name, memory, skills and chat. Create the first one to get started.',
-    'Un perfil tiene nombre, memoria, skills y chat propios. Crea el primero para empezar.',
-    'Um perfil tem nome, memória, skills e chat próprios. Crie o primeiro para começar.',
-  );
+  String get newAgent => _strings.i18n131McNewAgent;
+  String get botChat => _strings.i18n131McBotChat;
+  String get noBots => _strings.i18n131McNoBots;
   String get searchAgents =>
-      _t('Search profiles', 'Buscar perfiles', 'Buscar perfis');
+      _strings.i18n131McSearchAgents;
   String get clearSearch =>
-      _t('Clear search', 'Borrar búsqueda', 'Limpar busca');
-  String get activeNow => _t('Active now', 'Activos ahora', 'Ativos agora');
-  String get botRosterUpdateFailed => _t(
-    'Hermes did not update this profile.',
-    'Hermes no pudo actualizar este perfil.',
-    'O Hermes não atualizou este perfil.',
-  );
-  String get noMatchingAgents => _t(
-    'No matching profiles',
-    'No hay perfiles que coincidan',
-    'Nenhum perfil correspondente',
-  );
+      _strings.i18n131McClearSearch;
+  String get activeNow => _strings.i18n131McActiveNow;
+  String get botRosterUpdateFailed => _strings.i18n131McBotRosterUpdateFailed;
+  String get noMatchingAgents => _strings.i18n131McNoMatchingAgents;
   String roomMemberCount(int count) => _strings.missionHostedMemberCount(count);
   String roomCount(int count) => _strings.missionHostedRoomCount(count);
-  String attentionSummary(int approvals, int blocked) => _t(
-    '$approvals ${approvals == 1 ? 'approval' : 'approvals'} · $blocked blocked',
-    '$approvals ${approvals == 1 ? 'aprobación' : 'aprobaciones'} · $blocked bloqueados',
-    '$approvals ${approvals == 1 ? 'aprovação' : 'aprovações'} · $blocked bloqueados',
-  );
+  String attentionSummary(int approvals, int blocked) => approvals == 1
+      ? _strings.i18n131McAttentionSummaryOne(approvals, blocked)
+      : _strings.i18n131McAttentionSummaryOther(approvals, blocked);
   String get needsYou =>
-      _t('Needs you', 'Necesita tu atención', 'Precisa de você');
-  String get usage => _t('Usage', 'Uso', 'Uso');
-  String get profilesUnavailable => _t(
-    'This Hermes installation does not publish profiles.',
-    'Esta instalación de Hermes no publica perfiles.',
-    'Esta instalação do Hermes não publica perfis.',
-  );
+      _strings.i18n131McNeedsYou;
+  String get usage => _strings.i18n131McUsage;
+  String get profilesUnavailable => _strings.i18n131McProfilesUnavailable;
   String get offline => _strings.missionOffline;
   String get staleData => _strings.missionStaleData;
-  String get review => _t('Review', 'Revisar', 'Revisar');
-  String get memory => _t('Memory', 'Memoria', 'Memória');
-  String get skills => 'Skills';
-  String get soul => 'SOUL';
-  String get staleProfiles => _t(
-    'Some saved profiles no longer exist. Edit the organization to update it.',
-    'Algunos perfiles guardados ya no existen. Edita la organización para actualizarla.',
-    'Alguns perfis salvos não existem mais. Edite o espaço de trabalho para atualizá-lo.',
-  );
-  String unattributedSessions(int count) => _t(
-    '$count session${count == 1 ? '' : 's'} did not publish a profile owner. They are included only in overall usage.',
-    '$count ${count == 1 ? 'sesión no publicó' : 'sesiones no publicaron'} su perfil propietario. Solo se incluyen en el uso global.',
-    '$count ${count == 1 ? 'sessão não publicou' : 'sessões não publicaram'} o perfil proprietário. Elas são incluídas apenas no uso geral.',
-  );
-  String get working => _t('working', 'trabajando', 'trabalhando');
-  String get approvals => _t('approvals', 'aprobaciones', 'aprovações');
-  String get blocked => _t('blocked', 'bloqueados', 'bloqueados');
-  String get tokens => _t('tokens', 'tokens', 'tokens');
-  String get input => 'input';
-  String get output => 'output';
-  String get reasoning => 'reasoning';
-  String get unknown => _t('Unknown', 'Desconocido', 'Desconhecido');
-  String get modelLabel => _t('Model', 'Modelo', 'Modelo');
-  String get managerLabel => 'Manager';
+  String get review => _strings.i18n131McReview;
+  String get memory => _strings.i18n131McMemory;
+  String get skills => _strings.i18n131McSkills;
+  String get soul => _strings.i18n131McSoul;
+  String get staleProfiles => _strings.i18n131McStaleProfiles;
+  String unattributedSessions(int count) => count == 1
+      ? _strings.i18n131McUnattributedSessionsOne(count)
+      : _strings.i18n131McUnattributedSessionsOther(count);
+  String get working => _strings.i18n131McWorking;
+  String get approvals => _strings.i18n131McApprovals;
+  String get blocked => _strings.i18n131McBlocked;
+  String get tokens => _strings.i18n131McTokens;
+  String get input => _strings.i18n131McInput;
+  String get output => _strings.i18n131McOutput;
+  String get reasoning => _strings.i18n131McReasoning;
+  String get unknown => _strings.i18n131McUnknown;
+  String get modelLabel => _strings.i18n131McModelLabel;
+  String get managerLabel => _strings.i18n131McManagerLabel;
 
   // Editor del bot (identidad visible del profile: nombre, cara y sprite).
   String get editBotTitle =>
-      _t('Edit profile', 'Editar perfil', 'Editar perfil');
+      _strings.i18n131McEditBotTitle;
   String get botDisplayName =>
-      _t('Display name', 'Nombre visible', 'Nome de exibição');
+      _strings.i18n131McBotDisplayName;
   String get botDisplayNameHint =>
-      _t('e.g. Researcher', 'p. ej. Investigador', 'ex.: Pesquisador');
-  String get botSpriteHint => _t(
-    'The sprite becomes this profile\'s picture.',
-    'El sprite se convierte en la imagen de este perfil.',
-    'O sprite se torna a imagem deste perfil.',
-  );
+      _strings.i18n131McBotDisplayNameHint;
+  String get botSpriteHint => _strings.i18n131McBotSpriteHint;
   String get botSpriteSearchHint =>
-      _t('Search sprites…', 'Buscar sprites…', 'Buscar sprites…');
-  String get botSpriteEmpty => _t(
-    'No sprites available.',
-    'No hay sprites disponibles.',
-    'Nenhum sprite disponível.',
-  );
-  String get botSpriteLoadFailed => _t(
-    'Couldn\'t load the list.',
-    'No se pudo cargar la lista.',
-    'Não foi possível carregar a lista.',
-  );
-  String get botSpriteUnsupported => _t(
-    'This Hermes installation does not support profile sprites.',
-    'Esta instalación de Hermes no admite sprites por perfil.',
-    'Esta instalação do Hermes não oferece suporte a sprites por perfil.',
-  );
+      _strings.i18n131McBotSpriteSearchHint;
+  String get botSpriteEmpty => _strings.i18n131McBotSpriteEmpty;
+  String get botSpriteLoadFailed => _strings.i18n131McBotSpriteLoadFailed;
+  String get botSpriteUnsupported => _strings.i18n131McBotSpriteUnsupported;
   String get botEditorSaved =>
-      _t('Profile updated', 'Perfil actualizado', 'Perfil atualizado');
-  String get botEditorSaveFailed => _t(
-    'Hermes did not apply the changes.',
-    'Hermes no aplicó los cambios.',
-    'O Hermes não aplicou as alterações.',
-  );
+      _strings.i18n131McBotEditorSaved;
+  String get botEditorSaveFailed => _strings.i18n131McBotEditorSaveFailed;
 
   // Creación de bots (paridad con CreateAgentDialog de Hermes Desktop).
-  String get createAgentSubtitle => _t(
-    'A profile has its own name, memory, skills and chat. It can message your other profiles.',
-    'Un perfil tiene nombre, memoria, skills y chat propios. Puede escribir a tus otros perfiles.',
-    'Um perfil tem nome, memória, skills e chat próprios. Ele pode enviar mensagens aos seus outros perfis.',
-  );
-  String get agentNameLabel => _t('Name', 'Nombre', 'Nome');
-  String get agentNameHint => 'inbox-triage';
-  String get agentNameInvalid => _t(
-    'Use lowercase letters, numbers, dashes and underscores.',
-    'Usa minúsculas, números, guiones y guiones bajos.',
-    'Use letras minúsculas, números, hífens e sublinhados.',
-  );
-  String get agentNameTaken => _t(
-    'A profile with this name already exists.',
-    'Ya existe un perfil con este nombre.',
-    'Já existe um perfil com este nome.',
-  );
-  String get agentTitleLabel => _t('Title', 'Título', 'Título');
-  String get agentTitleHint => 'Inbox Triage';
+  String get createAgentSubtitle => _strings.i18n131McCreateAgentSubtitle;
+  String get agentNameLabel => _strings.i18n131McAgentNameLabel;
+  String get agentNameHint => _strings.i18n131McAgentNameHint;
+  String get agentNameInvalid => _strings.i18n131McAgentNameInvalid;
+  String get agentNameTaken => _strings.i18n131McAgentNameTaken;
+  String get agentTitleLabel => _strings.i18n131McAgentTitleLabel;
+  String get agentTitleHint => _strings.i18n131McAgentTitleHint;
   String get agentDescriptionLabel =>
-      _t('Description', 'Descripción', 'Descrição');
-  String get agentDescriptionHint => _t(
-    'What should this profile help with?',
-    '¿En qué debería ayudar este perfil?',
-    'Com o que este perfil deve ajudar?',
-  );
-  String get modelInherited => _t(
-    'Inherited from the launch profile',
-    'Heredado del perfil de arranque',
-    'Herdado do perfil de inicialização',
-  );
-  String get providerLabel => _t('Provider', 'Proveedor', 'Provedor');
-  String get advanced => _t('Advanced', 'Avanzado', 'Avançado');
+      _strings.i18n131McAgentDescriptionLabel;
+  String get agentDescriptionHint => _strings.i18n131McAgentDescriptionHint;
+  String get modelInherited => _strings.i18n131McModelInherited;
+  String get providerLabel => _strings.i18n131McProviderLabel;
+  String get advanced => _strings.i18n131McAdvanced;
   String get cloneFromLabel =>
-      _t('Clone from profile', 'Clonar de', 'Clonar de');
-  String get cloneFresh => _t(
-    'Fresh profile (bundled skills)',
-    'Perfil nuevo (skills incluidas)',
-    'Perfil novo (skills incluídas)',
-  );
-  String get shareAuthLabel => _t(
-    'Share keys & accounts with the main profile',
-    'Compartir claves y cuentas con el perfil principal',
-    'Compartilhar chaves e contas com o perfil principal',
-  );
-  String get shareAuthHint => _t(
-    'Subscriptions, OAuth logins, and API keys stay shared (not copied), so token refreshes never invalidate each other. Uncheck for an isolated snapshot copy.',
-    'Suscripciones, logins OAuth y API keys quedan compartidos (no copiados), así que los refrescos de token nunca se invalidan entre sí. Desmárcalo para una copia aislada.',
-    'Assinaturas, logins OAuth e API keys ficam compartilhados (não copiados), então as renovações de token nunca se invalidam entre si. Desmarque para uma cópia isolada.',
-  );
-  String get noSkillsLabel => _t(
-    'Create empty (skip bundled skills)',
-    'Crear vacío (sin skills incluidas)',
-    'Criar vazio (sem skills incluídas)',
-  );
+      _strings.i18n131McCloneFromLabel;
+  String get cloneFresh => _strings.i18n131McCloneFresh;
+  String get shareAuthLabel => _strings.i18n131McShareAuthLabel;
+  String get shareAuthHint => _strings.i18n131McShareAuthHint;
+  String get noSkillsLabel => _strings.i18n131McNoSkillsLabel;
   String get soulOptionalLabel =>
-      _t('SOUL.md (optional)', 'SOUL.md (opcional)', 'SOUL.md (opcional)');
-  String get soulOptionalHint => _t(
-    'Leave blank to auto-generate from name/title/description.',
-    'Déjalo en blanco para autogenerarla a partir de nombre, título y descripción.',
-    'Deixe em branco para gerar automaticamente a partir de nome, título e descrição.',
-  );
+      _strings.i18n131McSoulOptionalLabel;
+  String get soulOptionalHint => _strings.i18n131McSoulOptionalHint;
   String get createAgentSubmit =>
-      _t('Create profile', 'Crear perfil', 'Criar perfil');
-  String createAgentError(String detail) => _t(
-    'Could not create the profile: $detail',
-    'No se pudo crear el perfil: $detail',
-    'Não foi possível criar o perfil: $detail',
-  );
-  String agentCreated(String name) => _t(
-    'Profile @$name created. Add it to a room when you are ready.',
-    'Perfil @$name creado. Añádelo a una sala cuando quieras.',
-    'Perfil @$name criado. Adicione-o a uma sala quando quiser.',
-  );
+      _strings.i18n131McCreateAgentSubmit;
+  String createAgentError(String detail) => _strings.i18n131McCreateAgentError(detail);
+  String agentCreated(String name) => _strings.i18n131McAgentCreated(name);
 
   String status(String value) => switch (value) {
-    'idle' => _t('Idle', 'Inactivo', 'Ocioso'),
-    'thinking' => _t('Thinking', 'Pensando', 'Pensando'),
-    'working' => _t('Working', 'Trabajando', 'Trabalhando'),
-    'responding' => _t('Responding', 'Respondiendo', 'Respondendo'),
-    'blocked' => _t('Blocked', 'Bloqueado', 'Bloqueado'),
-    'approvalRequired' => _t(
-      'Approval required',
-      'Aprobación requerida',
-      'Aprovação necessária',
-    ),
-    'error' => 'Error',
+    'idle' => _strings.i18n131McStatusIdle,
+    'thinking' => _strings.i18n131McStatusThinking,
+    'working' => _strings.i18n131McStatusWorking,
+    'responding' => _strings.i18n131McStatusResponding,
+    'blocked' => _strings.i18n131McStatusBlocked,
+    'approvalRequired' => _strings.i18n131McStatusApprovalRequired,
+    'error' => _strings.i18n131McStatusError,
     _ => unknown,
   };
 
   String activityLabel(String value) => switch (value) {
-    'sessionUpdated' => _t('Session active', 'Sesión activa', 'Sessão ativa'),
-    'taskCreated' => _t('Task created', 'Tarea creada', 'Tarefa criada'),
-    'taskStarted' => _t('Task started', 'Tarea iniciada', 'Tarefa iniciada'),
-    'taskCompleted' => _t(
-      'Task completed',
-      'Tarea completada',
-      'Tarefa concluída',
-    ),
-    'taskBlocked' => _t('Task blocked', 'Tarea bloqueada', 'Tarefa bloqueada'),
+    'sessionUpdated' => _strings.i18n131McActivityLabelSessionUpdated,
+    'taskCreated' => _strings.i18n131McActivityLabelTaskCreated,
+    'taskStarted' => _strings.i18n131McActivityLabelTaskStarted,
+    'taskCompleted' => _strings.i18n131McActivityLabelTaskCompleted,
+    'taskBlocked' => _strings.i18n131McActivityLabelTaskBlocked,
     _ => value,
   };
 }
