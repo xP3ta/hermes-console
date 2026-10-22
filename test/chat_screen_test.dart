@@ -3009,6 +3009,7 @@ void main() {
     String? newChatWorkspace,
     Map<ModelPickerSource, ModelPickerFallback>? modelPickerFallbacks,
     DashboardClient Function(SavedConnection)? providerReauthClientFactory,
+    DashboardClient? transcriptDashboard,
   }) async {
     // Forzar locale español para que las cadenas i18n de ChatScreen coincidan
     // con las expectativas del test (el test fue escrito en español).
@@ -3077,6 +3078,7 @@ void main() {
         disableForegroundKeepAlive: desktopGateway != null,
         transcriptPageSizeForTesting: transcriptPageSizeForTesting,
         wallClockMsForTesting: wallClockMs,
+        transcriptDashboard: transcriptDashboard,
       );
       chat.internalMessagesForTesting = List<Map<String, dynamic>>.from(
         messages,
@@ -22319,21 +22321,24 @@ void main() {
 
     Future<(ActiveChat, _AccountUsageGateway)> open(
       WidgetTester tester,
-      String id,
-    ) async {
+      String id, {
+      String provider = 'provider-a',
+      DashboardClient? dashboard,
+    }) async {
       final gateway = _AccountUsageGateway();
       final chat = await pumpChat(
         tester,
         desktopGateway: gateway,
         connection: _remoteConn(id),
         messagesLoaded: false,
+        transcriptDashboard: dashboard,
       );
       for (var frame = 0; !chat.hasDesktopRuntime && frame < 10; frame++) {
         await tester.pump(const Duration(milliseconds: 50));
       }
       expect(chat.hasDesktopRuntime, isTrue);
       gateway.emit('session.info', const {
-        'info': {'model': 'old-model', 'provider': 'provider-a'},
+        'info': {'model': 'old-model', 'provider': provider},
       });
       await tester.pump();
       return (chat, gateway);
@@ -22374,6 +22379,100 @@ void main() {
       );
       expect(tester.takeException(), isNull);
     });
+
+    // Hermes >= 0.22.3: `session.usage` has no `account_lines`; the windows
+    // come from `usage` in GET /api/model/options.
+    DashboardClient catalogDashboard(
+      List<Uri> reads, {
+      int status = 200,
+      Object? providers,
+    }) => DashboardClient(
+      host: '127.0.0.1',
+      manualToken: 'dashboard-token',
+      httpClientOverride: MockClient((request) async {
+        reads.add(request.url);
+        if (status != 200 || request.url.path != '/api/model/options') {
+          return http.Response('{}', status == 200 ? 404 : status);
+        }
+        return http.Response(
+          jsonEncode({
+            'providers':
+                providers ??
+                [
+                  {
+                    'slug': 'openai-codex',
+                    'name': 'OpenAI Codex',
+                    'authenticated': true,
+                    'usage': {
+                      'windows': [
+                        {
+                          'label': 'Session',
+                          'used_percent': 28.0,
+                          'resets_at': null,
+                          'scope': 'account',
+                        },
+                      ],
+                    },
+                  },
+                ],
+          }),
+          200,
+        );
+      }),
+    );
+
+    testWidgets('without account_lines the session provider usage shows', (
+      tester,
+    ) async {
+      final reads = <Uri>[];
+      final (_, gateway) = await open(
+        tester,
+        'conn-plan-limits-catalog',
+        provider: 'openai-codex',
+        dashboard: catalogDashboard(reads),
+      );
+      gateway.usagePayload = acct.usage();
+      await openSheet(tester);
+      expect(reads.map((u) => u.path), ['/api/model/options']);
+      expect(find.text('Límites de tu plan'), findsOneWidget);
+      expect(find.text('OpenAI Codex'), findsWidgets);
+      expect(find.text('Sesión actual'), findsOneWidget);
+      expect(find.text('Quedan 72 %'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('with account_lines the catalog is not read', (tester) async {
+      final reads = <Uri>[];
+      final (_, gateway) = await open(
+        tester,
+        'conn-plan-limits-legacy',
+        provider: 'openai-codex',
+        dashboard: catalogDashboard(reads),
+      );
+      expect(gateway.usagePayload['account_lines'], isNotEmpty);
+      await openSheet(tester);
+      expect(reads, isEmpty);
+      expect(find.text('Quedan 72 %'), findsOneWidget);
+    });
+
+    for (final status in const [404, 500]) {
+      testWidgets('a catalog that fails ($status) leaves the block hidden', (
+        tester,
+      ) async {
+        final reads = <Uri>[];
+        final (_, gateway) = await open(
+          tester,
+          'conn-plan-limits-down-$status',
+          provider: 'openai-codex',
+          dashboard: catalogDashboard(reads, status: status),
+        );
+        gateway.usagePayload = acct.usage();
+        await openSheet(tester);
+        expect(reads, isNotEmpty);
+        expect(find.text('Límites de tu plan'), findsNothing);
+        expect(tester.takeException(), isNull);
+      });
+    }
 
     testWidgets('Nous credits also read usage.bars', (tester) async {
       final (_, gateway) = await open(tester, 'conn-plan-limits-nous');
