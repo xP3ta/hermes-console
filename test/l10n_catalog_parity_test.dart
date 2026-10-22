@@ -17,6 +17,26 @@ Set<String> _placeholders(Object? message) => RegExp(
 ).allMatches(message as String).map((match) => match.group(1)!).toSet();
 
 void main() {
+  final rawDartInterpolation = RegExp(r'\$\{|\$[A-Za-z_]');
+
+  test('no catalog message contains unexpanded Dart interpolation', () {
+    for (final file in Directory('lib/l10n').listSync().whereType<File>()) {
+      if (!file.path.endsWith('.arb')) continue;
+      final catalog = _readCatalog(file.path);
+      for (final key in _messageKeys(catalog)) {
+        expect(rawDartInterpolation.hasMatch(catalog[key] as String), isFalse,
+            reason: '${file.path}:$key must use ICU placeholders');
+      }
+    }
+  });
+
+  test('raw Dart interpolation guard rejects both syntax mutants', () {
+    expect(rawDartInterpolation.hasMatch(r'Identifier @$_profileName'), isTrue);
+    expect(rawDartInterpolation.hasMatch(r'Identifier @${profileName}'), isTrue);
+    expect(rawDartInterpolation.hasMatch('Identifier @{profileName}'), isFalse);
+    expect(rawDartInterpolation.hasMatch(r'Price: $5'), isFalse);
+  });
+
   test('all nine catalogs have matching message keys and placeholders', () {
     final es = _readCatalog('lib/l10n/app_es.arb');
     final keys = _messageKeys(es);

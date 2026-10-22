@@ -614,7 +614,7 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
                     Padding(
                       padding: const EdgeInsets.only(left: 4, top: 4),
                       child: Text(
-                        _strings.i18n131ProfileTheProfilenameIdentifierDoesNotChange,
+                        _strings.i18n131ProfileTheProfilenameIdentifierDoesNotChange(_profileName),
                         style: TextStyle(
                           color: colors.textTertiary,
                           fontSize: 12,
