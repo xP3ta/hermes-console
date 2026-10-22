@@ -7,6 +7,12 @@ void main() {
     test('$lang local errors use UI language and keep arbitrary content intact', () {
       const unknown = TuiGatewayRpcError('prompt.submit', 'private provider detail', code: 5001);
       final expected = switch (lang) {
+        "de" => "Die Nachricht konnte nicht gesendet werden. Versuche es erneut.",
+        "fr" => "Impossible d’envoyer le message. Réessaie.",
+        "it" => "Impossibile inviare il messaggio. Riprova.",
+        "ja" => "メッセージを送信できませんでした。再試行してください。",
+        "ko" => "메시지를 보내지 못했습니다. 다시 시도하세요.",
+        "zh" => "消息发送失败，请重试。",
         'es' => 'No se pudo enviar el mensaje. Inténtalo de nuevo.',
         'pt' => 'Não foi possível enviar a mensagem. Tente novamente.',
         _ => 'The message could not be sent. Try again.',

@@ -153,11 +153,23 @@ void main() {
       ));
       await tester.pumpAndSettle();
       final profiles = switch (lang) {
+        "de" => ["0 Profile", "1 Profil", "2 Profile"],
+        "fr" => ["0 profils", "1 profil", "2 profils"],
+        "it" => ["0 profili", "1 profilo", "2 profili"],
+        "ja" => ["プロフィール0件", "プロフィール1件", "プロフィール2件"],
+        "ko" => ["프로필 0개", "프로필 1개", "프로필 2개"],
+        "zh" => ["0个配置档", "1个配置档", "2个配置档"],
         'es' => ['0 perfiles', '1 perfil', '2 perfiles'],
         'pt' => ['0 perfis', '1 perfil', '2 perfis'],
         _ => ['0 profiles', '1 profile', '2 profiles'],
       };
       final approvals = switch (lang) {
+        "de" => ["0 Genehmigungen · 2 blockiert", "1 Genehmigung · 2 blockiert", "2 Genehmigungen · 2 blockiert"],
+        "fr" => ["0 autorisations · blocages : 2", "1 autorisation · blocages : 2", "2 autorisations · blocages : 2"],
+        "it" => ["0 approvazioni · 2 bloccati", "1 approvazione · 2 bloccati", "2 approvazioni · 2 bloccati"],
+        "ja" => ["承認0件・進行不可2件", "承認1件・進行不可2件", "承認2件・進行不可2件"],
+        "ko" => ["승인 0건 · 차단 2건", "승인 1건 · 차단 2건", "승인 2건 · 차단 2건"],
+        "zh" => ["0项待审批 · 2项受阻", "1项待审批 · 2项受阻", "2项待审批 · 2项受阻"],
         'es' => ['0 aprobaciones · 2 bloqueados', '1 aprobación · 2 bloqueados',
                  '2 aprobaciones · 2 bloqueados'],
         'pt' => ['0 aprovações · 2 bloqueados', '1 aprovação · 2 bloqueados',
@@ -171,17 +183,35 @@ void main() {
       }
       expect(copy.activityLabel('unrecognized_event'), 'unrecognized_event');
       final expectedUnknown = switch (lang) {
+        "de" => "Unbekannt",
+        "fr" => "Inconnu",
+        "it" => "Sconosciuto",
+        "ja" => "不明",
+        "ko" => "알 수 없음",
+        "zh" => "未知",
         'es' => 'Desconocido', 'pt' => 'Desconhecido', _ => 'Unknown',
       };
       expect(copy.status('unrecognized_status'), expectedUnknown);
       final detail = "literal {name}\n'quoted'";
       final error = switch (lang) {
+        "de" => "Das Profil konnte nicht erstellt werden: $detail",
+        "fr" => "Impossible de créer le profil : $detail",
+        "it" => "Impossibile creare il profilo: $detail",
+        "ja" => "プロフィールを作成できませんでした：$detail",
+        "ko" => "프로필을 만들지 못했습니다: $detail",
+        "zh" => "无法创建配置档：$detail",
         'es' => 'No se pudo crear el perfil: $detail',
         'pt' => 'Não foi possível criar o perfil: $detail',
         _ => 'Could not create the profile: $detail',
       };
       expect(copy.createAgentError(detail), error);
       final sessions = switch (lang) {
+        "de" => ["Bei 1 Sitzung wurde kein zugehöriges Profil angegeben. Sie zählt nur zur Gesamtnutzung.", "Bei 2 Sitzungen wurde kein zugehöriges Profil angegeben. Sie zählen nur zur Gesamtnutzung."],
+        "fr" => ["1 session n’indique aucun profil propriétaire. Elle est comptabilisée uniquement dans l’utilisation globale.", "2 sessions n’indiquent aucun profil propriétaire. Elles sont comptabilisées uniquement dans l’utilisation globale."],
+        "it" => ["1 sessione non ha indicato il profilo proprietario. È inclusa solo nell’utilizzo complessivo.", "2 sessioni non hanno indicato il profilo proprietario. Sono incluse solo nell’utilizzo complessivo."],
+        "ja" => ["1件のセッションで所有プロフィールが公開されていません。全体の使用量にのみ含まれます。", "2件のセッションで所有プロフィールが公開されていません。全体の使用量にのみ含まれます。"],
+        "ko" => ["세션 1개의 소유 프로필이 공개되지 않았습니다. 전체 사용량에만 포함됩니다.", "세션 2개의 소유 프로필이 공개되지 않았습니다. 전체 사용량에만 포함됩니다."],
+        "zh" => ["1个会话未提供所属配置档，仅计入总用量。", "2个会话未提供所属配置档，仅计入总用量。"],
         'es' => ["1 sesión no publicó su perfil propietario. Solo se incluyen en el uso global.", "2 sesiones no publicaron su perfil propietario. Solo se incluyen en el uso global."],
         'pt' => ["1 sessão não publicou o perfil proprietário. Elas são incluídas apenas no uso geral.", "2 sessões não publicaram o perfil proprietário. Elas são incluídas apenas no uso geral."],
         _ => ["1 session did not publish a profile owner. They are included only in overall usage.", "2 sessions did not publish a profile owner. They are included only in overall usage."],

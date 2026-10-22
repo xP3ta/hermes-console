@@ -23,6 +23,12 @@ void main() {
   for (final lang in ['es', 'en', 'pt', 'de', 'fr', 'it', 'ja', 'ko', 'zh']) {
     test('$lang callback renders success and failure without request data', () {
       final (success, body, failure) = switch (lang) {
+        "de" => ("Angemeldet", "Du kannst diesen Tab schließen und zu Console zurückkehren.", "Anmeldung nicht abgeschlossen"),
+        "fr" => ("Connexion réussie", "Tu peux fermer cet onglet et revenir à Console.", "La connexion n’a pas abouti"),
+        "it" => ("Accesso effettuato", "Puoi chiudere questa scheda e tornare a Console.", "Accesso non completato"),
+        "ja" => ("ログインしました", "このタブを閉じてConsoleに戻ってください。", "ログインが完了しませんでした"),
+        "ko" => ("로그인 완료", "이 탭을 닫고 Console로 돌아가세요.", "로그인을 완료하지 못했습니다"),
+        "zh" => ("已登录", "你可以关闭此标签页，返回Console。", "登录未完成"),
         'es' => ('Sesión iniciada', 'Puedes cerrar esta pestaña y volver a Console.', 'No se pudo completar el acceso'),
         'pt' => ('Sessão iniciada', 'Você pode fechar esta aba e voltar ao Console.', 'Não foi possível concluir o acesso'),
         _ => ('Signed in', 'You can close this tab and go back to Console.', "Sign-in didn't finish"),

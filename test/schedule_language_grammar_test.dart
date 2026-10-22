@@ -7,6 +7,8 @@ import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:hermes_android/l10n/app_localizations_en.dart';
 import 'package:hermes_android/l10n/app_localizations_pt.dart';
 
+import 'support/i18n131_grammar_expectations.dart';
+
 void main() {
   const cases = <(String, String, String)>[
     // Typical working-hours jobs.
@@ -189,6 +191,12 @@ void main() {
       String describe(String raw) =>
           describeHermesSchedule(strings, raw, now: now);
       final (minute, day, days, window, custom) = switch (lang) {
+        "de" => ("Jede Minute", "Jeden Tag", "Alle 2 Tage", "Alle 5 Minuten von 14:00 bis 17:55 Uhr montags bis freitags", "Benutzerdefinierter Zeitplan"),
+        "fr" => ("Toutes les minutes", "Tous les jours", "Tous les 2 jours", "Toutes les 5 min, de 14:00 à 17:55, du lundi au vendredi", "Horaire personnalisé"),
+        "it" => ("Ogni minuto", "Ogni giorno", "Ogni 2 giorni", "Ogni 5 min, dalle 14:00 alle 17:55, dal lunedì al venerdì", "Programmazione personalizzata"),
+        "ja" => ("1分ごと", "1日ごと", "2日ごと", "毎週月曜日から金曜日、14:00から17:55まで、5分ごと", "カスタムスケジュール"),
+        "ko" => ("매분", "매일", "2일마다", "평일 14:00부터 17:55까지 5분마다", "사용자 지정 일정"),
+        "zh" => ("每分钟", "每天", "每2天", "每周一至周五14:00至17:55，每5分钟", "自定义计划"),
         'es' => ('Cada minuto', 'Cada día', 'Cada 2 días',
           'Cada 5 min, de 14:00 a 17:55, laborables', 'Horario personalizado'),
         'pt' => ('A cada minuto', 'Todos os dias', 'A cada 2 dias',
@@ -210,7 +218,9 @@ void main() {
         expect(text, isNotEmpty, reason: raw);
         expect(text, isNot(custom), reason: raw);
         if (!['es', 'pt'].contains(lang)) {
-          expect(text, describeHermesSchedule(lookupStrings(const Locale('en')), raw, now: now), reason: raw);
+          expect(text, lang == 'en'
+              ? describeHermesSchedule(lookupStrings(const Locale('en')), raw, now: now)
+              : phase3bSchedules[lang]![raw]!, reason: raw);
         }
       }
       if (lang == 'pt') {
@@ -229,7 +239,8 @@ void main() {
       final now = DateTime(2026, 9, 26, 21, 40);
       for (final (raw, spanish, english) in cases) {
         expect(describeHermesSchedule(strings, raw, now: now),
-            lang == 'es' ? spanish : english, reason: raw);
+            lang == 'es' ? spanish : lang == 'en' ? english
+                : phase3bSchedules[lang]![raw]!, reason: raw);
       }
     });
   }
@@ -251,5 +262,16 @@ void main() {
     expect(describeHermesSchedule(StringsPt('pt_PT'), 'every 60m'), 'A cada hora');
     expect(describeHermesSchedule(StringsEn('xx'), 'every 60m'), 'Every hour');
   });
+
+  for (final lang in phase3bSchedules.keys) {
+    test('$lang complete native grammar including units, articles and dates', () {
+      final strings = lookupStrings(Locale(lang));
+      final now = DateTime(2026, 7, 26, 21);
+      for (final entry in phase3bSchedules[lang]!.entries) {
+        expect(describeHermesSchedule(strings, entry.key, now: now), entry.value,
+            reason: '$lang:${entry.key}');
+      }
+    });
+  }
 
 }

@@ -22,6 +22,12 @@ void main() {
       ));
       await tester.pumpAndSettle();
       final (current, yesterday) = switch (lang) {
+        "de" => ("jetzt", "gestern"),
+        "fr" => ("à l’instant", "hier"),
+        "it" => ("ora", "ieri"),
+        "ja" => ("今", "昨日"),
+        "ko" => ("지금", "어제"),
+        "zh" => ("现在", "昨天"),
         'es' => ('ahora', 'ayer'),
         'pt' => ('agora', 'ontem'),
         _ => ('now', 'yesterday'),
