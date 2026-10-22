@@ -17,6 +17,7 @@ import '../services/interactive_prompt_reducer.dart';
 import '../bots/state/bot_presence.dart';
 import '../bots/ui/room/room_models.dart';
 import '../utils/home_recent_sessions.dart' show humanReadableSessionPreview;
+import '../utils/session_title.dart';
 import '../../l10n/app_localizations.dart';
 import 'board/home_board_data.dart';
 import 'home_now.dart';
@@ -276,6 +277,11 @@ DateTime _eventTime(num raw) {
 ///
 /// [sessions] (the Bots read's own list, when Home has one) tells the last
 /// chat each bot worked on and when.
+///
+/// [strings] localizes the title of that last chat: a session the server
+/// leaves untitled (a cron run, a Kanban worker) falls back to a generic
+/// name, and [Session.displayTitle] spells it in Spanish — an English or
+/// Portuguese screen would show «Tarea programada».
 List<HomeBoardBot> homeBoardBots({
   required List<AgentProfile> profiles,
   required List<DesktopActiveSession> activeSessions,
@@ -284,6 +290,7 @@ List<HomeBoardBot> homeBoardBots({
   DateTime? observedAt,
   List<Session> sessions = const [],
   DateTime? Function(String sessionId, String profile)? turnStartedAtOf,
+  Strings? strings,
 }) {
   if (profiles.isEmpty) return const [];
   final projection = MissionProjector.build(
@@ -317,7 +324,7 @@ List<HomeBoardBot> homeBoardBots({
         if (since != null) break;
       }
     }
-    final last = _lastWork(profile, sessions);
+    final last = _lastWork(profile, sessions, strings);
     bots.add(
       HomeBoardBot(
         profileName: profile.name,
@@ -338,7 +345,11 @@ List<HomeBoardBot> homeBoardBots({
 /// The last thing [profile] worked on and when, from the Bots read's own
 /// list: its newest chat. A task chat goes by its title; its one Bot Chat,
 /// whose title never changes, by the last thing it said.
-(String, DateTime)? _lastWork(AgentProfile profile, List<Session> sessions) {
+(String, DateTime)? _lastWork(
+  AgentProfile profile,
+  List<Session> sessions, [
+  Strings? strings,
+]) {
   Session? newest;
   for (final session in sessions) {
     if (session.profile?.trim() != profile.name) continue;
@@ -350,7 +361,11 @@ List<HomeBoardBot> homeBoardBots({
   final ids = BotPresence.botChatIds(profile);
   final botChat = ids.contains(newest.id) || ids.contains(newest.logicalId);
   final said = humanReadableSessionPreview(newest.lastAssistantPreview);
-  final title = newest.displayTitle.trim();
+  final title =
+      (strings == null
+              ? newest.displayTitle
+              : localizedSessionTitle(strings, newest))
+          .trim();
   final text = botChat ? (said ?? title) : (title.isEmpty ? said : title);
   if (text == null || text.isEmpty) return null;
   return (
