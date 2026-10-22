@@ -17,33 +17,23 @@ Set<String> _placeholders(Object? message) => RegExp(
 ).allMatches(message as String).map((match) => match.group(1)!).toSet();
 
 void main() {
-  test(
-    'los catálogos español, inglés y portugués tienen las mismas claves y variables',
-    () {
-      final es = _readCatalog('lib/l10n/app_es.arb');
-      final en = _readCatalog('lib/l10n/app_en.arb');
-      final pt = _readCatalog('lib/l10n/app_pt.arb');
-
-      // app_es.arb es la plantilla de gen-l10n y por eso conserva más
-      // entradas @metadata. El contrato traducible son las claves de mensaje
-      // sin @.
-      expect(_messageKeys(en), _messageKeys(es));
-      expect(_messageKeys(pt), _messageKeys(es));
-
-      for (final key in _messageKeys(es)) {
-        expect(
-          _placeholders(en[key]),
-          _placeholders(es[key]),
-          reason: 'Los placeholders de $key deben coincidir en ES/EN',
-        );
-        expect(
-          _placeholders(pt[key]),
-          _placeholders(es[key]),
-          reason: 'Los placeholders de $key deben coincidir en ES/PT',
-        );
+  test('all nine catalogs have matching message keys and placeholders', () {
+    final es = _readCatalog('lib/l10n/app_es.arb');
+    final keys = _messageKeys(es);
+    // Spanish is the gen-l10n template; metadata is not a message key.
+    for (final lang in ['es', 'en', 'pt', 'de', 'fr', 'it', 'ja', 'ko', 'zh']) {
+      final catalog = _readCatalog('lib/l10n/app_$lang.arb');
+      expect(catalog['@@locale'], lang);
+      expect(_messageKeys(catalog), keys, reason: lang);
+      for (final key in keys) {
+        expect(catalog[key], isA<String>(), reason: '$lang:$key');
+        expect((catalog[key] as String).trim(), isNotEmpty,
+            reason: '$lang:$key');
+        expect(_placeholders(catalog[key]), _placeholders(es[key]),
+            reason: '$lang:$key placeholders must match the template');
       }
-    },
-  );
+    }
+  });
 
   test(
     'Notificaciones conserva la misma mayúscula inicial que cada pantalla',
