@@ -32,7 +32,9 @@ void main() {
   final internal = Session.fromJson({
     'id': '20260828_todo',
     'title': '[Your active task list was preserved across context compression]',
-    'preview': '[Your active task list was preserved across context compression]',
+    'preview':
+        '[Your active task list was preserved across context compression]\n'
+        '- [>] verify. Run tests (in_progress)',
     'source': 'mobile',
   });
   final named = Session.fromJson({
