@@ -312,4 +312,46 @@ void main() {
     await tester.pumpWidget(_app(_sheet(null)));
     expect(find.byType(AccountLimitsSection), findsNothing);
   });
+
+  // Hermes >= 0.22.3 dropped `account_lines` from `session.usage`.
+  group('session.usage without account_lines', () {
+    testWidgets('empty block takes no space in the model sheet', (
+      tester,
+    ) async {
+      await tester.pumpWidget(_app(_sheet(null)));
+      final without = tester.getSize(find.byType(SessionModelSheetBody));
+      final notifier = ValueNotifier<AccountUsageLimits?>(
+        AccountUsageLimits.fromGateway(fx.usage()),
+      );
+      addTearDown(notifier.dispose);
+      await tester.pumpWidget(_app(_sheet(notifier)));
+      expect(find.byType(AccountLimitsSection), findsNothing);
+      expect(find.byKey(const ValueKey('account-limits-section')), findsNothing);
+      expect(tester.getSize(find.byType(SessionModelSheetBody)), without);
+    });
+
+    testWidgets('Nous credits lines still render without account_lines', (
+      tester,
+    ) async {
+      final data = fx.usage(credits: fx.nousLines);
+      expect(data.containsKey('account_lines'), isFalse);
+      final limits = AccountUsageLimits.fromGateway(data);
+      expect(limits.isEmpty, isFalse);
+      await tester.pumpWidget(_app(AccountLimitsSection(limits: limits)));
+      expect(find.byType(AccountLimitsSection), findsOneWidget);
+      expect(find.text('Límites de tu plan'), findsOneWidget);
+    });
+
+    testWidgets('Nous bars still render without account_lines', (
+      tester,
+    ) async {
+      final limits = AccountUsageLimits.fromGateway(
+        fx.usage(credits: fx.nousLines),
+        usageBars: fx.barsAvailable,
+      );
+      await tester.pumpWidget(_app(AccountLimitsSection(limits: limits)));
+      expect(find.text('Límites de tu plan'), findsOneWidget);
+      expect(_bars(), findsWidgets);
+    });
+  });
 }
