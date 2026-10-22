@@ -16241,9 +16241,8 @@ void main() {
           'returned': page.length,
         },
       });
-      final api = ApiClient(
+      final api = testApiClient(
         baseUrl: 'http://192.168.255.254:8642',
-        apiKey: 'test-key',
         connectionId: 'conn-long-compacted',
         httpClient: MockClient(
           (_) async => http.Response(
@@ -16265,6 +16264,17 @@ void main() {
         preview: '',
         startedAt: 0,
       );
+      // The 500-row page is over 64 KB, so the Dashboard decodes it in an
+      // isolate (decodeJsonOffMain), which only runs in real time.
+      Future<void> settleOffMainDecode({bool Function()? until}) async {
+        for (var i = 0; i < 50 && !(until?.call() ?? false); i++) {
+          await tester.runAsync(
+            () => Future<void>.delayed(const Duration(milliseconds: 20)),
+          );
+          await tester.pump();
+        }
+      }
+
       final probe = ChatPerformanceProbe();
       final chat = await pumpChat(
         tester,
@@ -16276,6 +16286,7 @@ void main() {
         performanceProbe: probe,
         transcriptPageSizeForTesting: 500,
       );
+      await settleOffMainDecode(until: () => chat.messagesLoaded);
       await tester.pump(const Duration(milliseconds: 400));
       expect(chat.messagesLoaded, isTrue);
       final firstOpenPlans = probe.assistantRenderPlanComputations;
@@ -16305,7 +16316,12 @@ void main() {
         ),
       );
       await tester.pump();
+      // Any read the reopen starts lands before the counts, as it did when
+      // the page decoded inline.
+      await settleOffMainDecode();
       await tester.pump(const Duration(milliseconds: 400));
+      await settleOffMainDecode();
+      await tester.pump();
 
       expect(reopenProbe.screenBuilds, greaterThan(0));
       expect(
