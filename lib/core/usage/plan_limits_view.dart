@@ -14,6 +14,7 @@ class PlanLimitRow {
     this.detail,
     this.usedPercent,
     this.heading = false,
+    this.inUse = true,
   });
 
   /// A localized label («Sesión actual», «Semana», «Créditos»…).
@@ -30,6 +31,18 @@ class PlanLimitRow {
 
   /// A block title (the account's limits, the credits).
   final bool heading;
+
+  /// False for the rows of a provider other than the session's route.
+  final bool inUse;
+
+  PlanLimitRow notInUse() => PlanLimitRow(
+    label: label,
+    value: value,
+    detail: detail,
+    usedPercent: usedPercent,
+    heading: heading,
+    inUse: false,
+  );
 }
 
 /// What the plan limits block shows, built ONLY from what Hermes structures
@@ -71,8 +84,24 @@ PlanLimitsView planLimitsView(
   final details = <String>[];
   AccountLimitSource? block;
   for (final line in limits.lines) {
-    if (line.heading) continue;
-    final row = _row(line, s, languageCode);
+    if (line.heading) {
+      if (!line.groupHeading) continue;
+      // A group heading names whose the rows below are; it stands in for
+      // the generic «Account» heading.
+      block = line.source;
+      final number = line.accountNumber;
+      final heading = PlanLimitRow(
+        label: number == null
+            ? line.text
+            : '${line.text} · ${s.plv1215Account} $number',
+        heading: true,
+      );
+      rows.add(line.inUse ? heading : heading.notInUse());
+      continue;
+    }
+    final row = line.status != null
+        ? _statusRow(line, s, languageCode)
+        : _row(line, s, languageCode);
     if (row != null) {
       if (block != line.source) {
         block = line.source;
@@ -85,7 +114,7 @@ PlanLimitsView planLimitsView(
           ),
         );
       }
-      rows.add(row);
+      rows.add(line.inUse ? row : row.notInUse());
       continue;
     }
     final note = _note(line.text, s);
@@ -143,6 +172,47 @@ String? _amountLabel(String raw, Strings s) => switch (raw.trim()) {
   _ => null,
 };
 
+/// A pooled account's state row: no gauge, never a number Hermes did not send.
+PlanLimitRow _statusRow(
+  AccountLimitLine line,
+  Strings s,
+  String languageCode,
+) => switch (line.status!) {
+  AccountLimitStatus.limited => PlanLimitRow(
+    label: s.hwLimReached,
+    detail: _tailDetail(line.text.trim(), s, languageCode),
+  ),
+  AccountLimitStatus.unknown => PlanLimitRow(label: s.plv1215StateUnknown),
+  AccountLimitStatus.unavailable => PlanLimitRow(label: s.plv1215Unavailable),
+};
+
+/// The localized text of what follows a window's ` • `: credits left or when
+/// it resets. Null when it is neither, or its timestamp is not a real date.
+String? _tailDetail(String tail, Strings s, String languageCode) {
+  final money = _moneyLeft.firstMatch(tail);
+  final now = _resetsNow.firstMatch(tail);
+  if (money != null &&
+      validatedMoney(money.group(1)) != null &&
+      validatedMoney(money.group(2)) != null) {
+    return s.plv1215Of(money.group(1)!, money.group(2)!);
+  }
+  if (now != null && validResetTimestamp(now.group(1))) {
+    return s.plv1215ResetsNow;
+  }
+  if (_resetsIn.firstMatch(tail) case final reset?) {
+    if (validResetTimestamp(reset.group(4))) {
+      final span = _span(
+        days: int.tryParse(reset.group(1) ?? ''),
+        hours: int.tryParse(reset.group(2) ?? ''),
+        minutes: int.tryParse(reset.group(3) ?? ''),
+        languageCode: languageCode,
+      );
+      if (span != null) return s.plv1215ResetsIn(span);
+    }
+  }
+  return null;
+}
+
 PlanLimitRow? _row(AccountLimitLine line, Strings s, String languageCode) {
   final text = line.text.trim();
   final window = _window.firstMatch(text);
@@ -153,28 +223,7 @@ PlanLimitRow? _row(AccountLimitLine line, Strings s, String languageCode) {
       return null;
     }
     final tail = window.group(4)?.trim();
-    String? detail;
-    if (tail != null) {
-      final money = _moneyLeft.firstMatch(tail);
-      final now = _resetsNow.firstMatch(tail);
-      if (money != null &&
-          validatedMoney(money.group(1)) != null &&
-          validatedMoney(money.group(2)) != null) {
-        detail = s.plv1215Of(money.group(1)!, money.group(2)!);
-      } else if (now != null && validResetTimestamp(now.group(1))) {
-        detail = s.plv1215ResetsNow;
-      } else if (_resetsIn.firstMatch(tail) case final reset?) {
-        if (validResetTimestamp(reset.group(4))) {
-          final span = _span(
-            days: int.tryParse(reset.group(1) ?? ''),
-            hours: int.tryParse(reset.group(2) ?? ''),
-            minutes: int.tryParse(reset.group(3) ?? ''),
-            languageCode: languageCode,
-          );
-          if (span != null) detail = s.plv1215ResetsIn(span);
-        }
-      }
-    }
+    final detail = tail == null ? null : _tailDetail(tail, s, languageCode);
     return PlanLimitRow(
       label: _windowLabel(window.group(1)!, s) ?? s.plv1215Limit,
       value: s.plv1215Left(remaining),

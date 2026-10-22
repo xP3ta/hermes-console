@@ -3959,6 +3959,7 @@
   "plv1215Rollover": "Cumulé",
   "plv1215RenewsLabel": "Renouvellement",
   "plv1215Unavailable": "Indisponible",
+  "plv1215StateUnknown": "Utilisation pas encore communiquée",
   "plv1215ResetsNow": "Réinitialisation maintenant",
   "plv1215Depleted": "Crédit épuisé : recharge pour continuer",
   "plv1215Details": "Détails du fournisseur",

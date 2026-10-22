@@ -3959,6 +3959,7 @@
   "plv1215Rollover": "繰り越し",
   "plv1215RenewsLabel": "更新日",
   "plv1215Unavailable": "利用不可",
+  "plv1215StateUnknown": "使用状況はまだ報告されていません",
   "plv1215ResetsNow": "今リセット",
   "plv1215Depleted": "残高なし。続けるには追加してください",
   "plv1215Details": "プロバイダーの詳細",
