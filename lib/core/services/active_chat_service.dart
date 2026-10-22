@@ -3,6 +3,7 @@ import '../models/account_usage_limits.dart';
 import '../models/bot_mention.dart';
 import '../models/connection_request.dart';
 import 'connection_request_gateway.dart';
+import 'notifications/notification_strings.dart' show resolveNotificationLang;
 import 'transcript_rehydrate_cost.dart';
 import '../models/message_reaction.dart';
 import 'message_reaction_prefs.dart';
@@ -22,7 +23,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data' show TypedData;
-import 'dart:ui' show Locale, PlatformDispatcher;
+import 'dart:ui' show Locale;
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
@@ -26434,11 +26435,8 @@ class ActiveChat {
             event['description'] ??
             // Reserva en el idioma del dispositivo, igual que el widget del
             // launcher (este servicio no resuelve `app_locale` aquí).
-            switch (PlatformDispatcher.instance.locale.languageCode) {
-              'en' => 'a tool',
-              'pt' => 'uma ferramenta',
-              _ => 'una herramienta',
-            })
+            lookupStrings(Locale(resolveNotificationLang('system')))
+                .i18n131ApprovalTool)
         .toString();
     final approvalId = (event['request_id'] ?? event['approval_id'])
         ?.toString()
@@ -31605,11 +31603,7 @@ class ActiveChatService {
   /// language, so the tool it names follows the device too.
   @visibleForTesting
   Strings Function() homeWidgetStrings = () => lookupStrings(
-    Locale(switch (PlatformDispatcher.instance.locale.languageCode) {
-      'es' => 'es',
-      'pt' => 'pt',
-      _ => 'en',
-    }),
+    Locale(resolveNotificationLang('system')),
   );
 
   /// The running tool in the same words as every other surface, or null
