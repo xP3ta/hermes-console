@@ -20,6 +20,7 @@ import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
+import 'support/test_api_client.dart';
 
 class _Gateway
     implements HermesDesktopGateway, HermesDesktopSessionLifecycleGateway {
@@ -175,9 +176,8 @@ ActiveChat _chat(_Server server, _Gateway gateway) => ActiveChat(
   sessionTitle: 'Long chat',
   notifications: null,
   onTerminal: () {},
-  api: ApiClient(
+  api: testApiClient(
     baseUrl: 'http://127.0.0.1:8642',
-    apiKey: 'k',
     httpClient: server.client(),
   ),
   desktopGateway: gateway,

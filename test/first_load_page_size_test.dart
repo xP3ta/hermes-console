@@ -11,6 +11,7 @@ import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
+import 'support/test_api_client.dart';
 
 const _storedId = 'stored-first-load';
 
@@ -105,9 +106,8 @@ ActiveChat _attach(ActiveChatService service, _Server server) => service.attach(
   sessionTitle: _session.title,
   sessionSnapshot: _session,
   initialStoredSessionId: _storedId,
-  api: ApiClient(
+  api: testApiClient(
     baseUrl: 'http://127.0.0.1:8642',
-    apiKey: 'k',
     httpClient: server.client(),
   ),
   attachDesktopRuntimeOnLoad: false,

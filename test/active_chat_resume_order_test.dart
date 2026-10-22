@@ -8,6 +8,7 @@ import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
+import 'support/test_api_client.dart';
 
 SavedConnection connection(String id) => SavedConnection(
   id: id,
@@ -18,9 +19,8 @@ SavedConnection connection(String id) => SavedConnection(
   useHttps: true,
 );
 
-ApiClient api() => ApiClient(
+ApiClient api() => testApiClient(
   baseUrl: 'https://example.test',
-  apiKey: 'test-key',
   httpClient: MockClient((_) async => http.Response('not found', 404)),
 );
 

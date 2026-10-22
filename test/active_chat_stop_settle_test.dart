@@ -9,6 +9,7 @@ import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
+import 'support/test_api_client.dart';
 
 class _SettleGateway implements HermesDesktopGateway {
   final _events = StreamController<TuiGatewayEvent>.broadcast();
@@ -84,9 +85,8 @@ void main() {
       sessionTitle: 'Test',
       notifications: null,
       onTerminal: () {},
-      api: ApiClient(
+      api: testApiClient(
         baseUrl: 'https://example.invalid',
-        apiKey: 'test-only',
         httpClient: MockClient((_) async => http.Response('unused', 500)),
       ),
       desktopGateway: gateway,
