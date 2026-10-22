@@ -6,13 +6,14 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/models/connection.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/connection_manager.dart'
-    show ApiClient, DashboardClient, DashboardWebSocketAuth;
+    show DashboardClient, DashboardWebSocketAuth;
 import 'package:hermes_android/core/services/shared_gateway_pool.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
+import 'support/test_api_client.dart';
 
 /// NET1b: a network flap (validated `available`, then `lost`, every ~5 s)
 /// must not close parked sockets and must clear the reconnect backoff at most
@@ -124,9 +125,8 @@ void main() {
         connection: connection,
         sessionId: 'chat-a',
         sessionTitle: 'Warm',
-        api: ApiClient(
+        api: testApiClient(
           baseUrl: 'https://example.invalid',
-          apiKey: 'k',
           httpClient: MockClient((_) async => http.Response('unused', 500)),
         ),
         storedMessageLoader: (_, _) async => const [],

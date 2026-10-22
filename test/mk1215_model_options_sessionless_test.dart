@@ -17,6 +17,7 @@ import 'package:hermes_android/core/services/tui_gateway_client.dart';
 
 import 'support/mk1215_scripted_gateway_channel.dart';
 import 'support/rpc_frame_helpers.dart';
+import 'support/test_api_client.dart';
 
 // mk1215: the chat model picker must read `model.options` over the chat's own
 // gateway socket even when the chat has no live runtime yet (Desktop
@@ -115,9 +116,8 @@ class _Fixture {
         storage: _MemoryStorage(),
         mutationNamespaceForTesting: 'mk1215-$id',
       ),
-      api: ApiClient(
+      api: testApiClient(
         baseUrl: 'http://127.0.0.1:1',
-        apiKey: 'unused',
         httpClient: MockClient((_) async => http.Response('{}', 500)),
       ),
     );
@@ -249,9 +249,8 @@ void main() {
           storage: _MemoryStorage(),
           mutationNamespaceForTesting: 'mk1215-toctou',
         ),
-        api: ApiClient(
+        api: testApiClient(
           baseUrl: 'http://127.0.0.1:1',
-          apiKey: 'k',
           httpClient: MockClient((_) async => http.Response('{}', 500)),
         ),
       );

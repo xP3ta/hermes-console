@@ -22,6 +22,7 @@ import 'package:hermes_android/main.dart'
 
 import 'support/desktop_chat_socket.dart';
 import 'support/in_memory_compression_restore_storage.dart';
+import 'support/test_api_client.dart';
 
 SavedConnection _conn() => SavedConnection(
   id: 'conn-1',
@@ -46,9 +47,8 @@ void main() {
         notifications: null,
         onTerminal: () {},
         // The REST run API is gone from chat: any request fails the test.
-        api: ApiClient(
+        api: testApiClient(
           baseUrl: 'http://hermes.local:8642',
-          apiKey: 'fixture',
           httpClient: HostCounter(),
         ),
         desktopGateway: socket,
