@@ -8913,5 +8913,13 @@
   "i18n131RoutineCustom": "Custom",
   "@i18n131RoutineCustom": {
     "description": "i18n131: Preserved ES/EN/PT; routine."
+  },
+  "i18n131RosterNow": "now",
+  "@i18n131RosterNow": {
+    "description": "i18n131: Preserved ES/EN/PT; roster."
+  },
+  "i18n131RosterYesterday": "yesterday",
+  "@i18n131RosterYesterday": {
+    "description": "i18n131: Preserved ES/EN/PT; roster."
   }
 }
