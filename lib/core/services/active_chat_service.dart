@@ -373,7 +373,7 @@ String activeChatPromptFailureUiMessage(
   Object error, {
   String languageCode = 'es',
 }) {
-  final english = languageCode.toLowerCase().startsWith('en');
+  final strings = lookupStrings(Locale(resolveNotificationLang(languageCode)));
   // 4009 "session busy": the server is still busy with this conversation
   // (typically a /compress started before a restart, which never locks the
   // composer here). Like Hermes Desktop, an inline error; the text stays.
@@ -381,63 +381,58 @@ String activeChatPromptFailureUiMessage(
       error.method == 'prompt.submit' &&
       error.code == 4009 &&
       error.reason == null) {
-    return english
-        ? 'Hermes is busy (for example, compacting this conversation). Your '
-              'message is still in the composer; try again in a moment.'
-        : 'Hermes está ocupado (por ejemplo, compactando la conversación). '
-              'Tu mensaje sigue en el composer: inténtalo en un momento.';
+    return strings.i18n131ChatBusy;
   }
   if (error is TuiGatewayRpcError && error.method == 'prompt.submit') {
     return switch (error.reason) {
       _sessionNotOwnedReason =>
-        english
-            ? 'This conversation can’t continue live because it belongs to '
-                  'another gateway or process. Its history remains available, '
-                  'and you can still start a new chat.'
-            : 'No se puede continuar en directo porque esta conversación '
-                  'pertenece a otro gateway o proceso. El historial se conserva '
-                  'y puedes iniciar un chat nuevo.',
+        strings.i18n131ChatNotOwned,
       _maxConcurrentSessionsReason =>
-        english
-            ? 'Hermes reached the configured active-session limit. Wait for a '
-                  'session to finish or adjust the limit.'
-            : 'Hermes alcanzó el límite configurado de sesiones activas. '
-                  'Espera a que termine una sesión o ajusta el límite.',
+        strings.i18n131ChatLimit,
       _sessionCoordinationUnavailableReason =>
-        english
-            ? 'Hermes could not safely reserve this conversation. Check the '
-                  'server and try again.'
-            : 'Hermes no pudo reservar esta conversación con seguridad. '
-                  'Revisa el servidor y vuelve a intentarlo.',
+        strings.i18n131ChatCoordination,
       _ =>
-        english
-            ? 'The message could not be sent. Try again.'
-            : 'No se pudo enviar el mensaje. Inténtalo de nuevo.',
+        strings.i18n131ChatSendFailed,
     };
   }
-  return english
-      ? 'The message could not be sent. Try again.'
-      : 'No se pudo enviar el mensaje. Inténtalo de nuevo.';
+  return strings.i18n131ChatSendFailed;
 }
 
 /// Redacta únicamente el formato técnico que builds antiguas pudieron guardar
 /// en el transcript local. No se usa para decidir entrega ni reintentos: esas
 /// decisiones dependen del código y `error.data.reason` estructurados.
-String activeChatStoredErrorUiMessage(String error) {
+String activeChatStoredErrorUiMessage(String error, {String languageCode = 'es'}) {
+  final strings = lookupStrings(Locale(resolveNotificationLang(languageCode)));
   final normalized = error.trimLeft();
   if (normalized.startsWith('TuiGatewayRpcError(prompt.submit, 4090):')) {
-    return 'No se puede continuar esta conversación en directo. '
-        'El historial se conserva y puedes iniciar un chat nuevo.';
+    return strings.i18n131ChatStoredNotOwned;
   }
   final lower = normalized.toLowerCase();
   if (lower == 'hermes reported an error') {
-    return 'No se pudo completar la respuesta. Inténtalo de nuevo.';
+    return strings.i18n131ChatStoredFailed;
   }
   if (lower.contains('socketexception') ||
       lower.contains('clientexception with socketexception') ||
       lower.contains('websocket closed')) {
-    return 'Se perdió la conexión con Hermes. El mensaje no se confirmó; '
-        'revisa el borrador y reintenta.';
+    return strings.i18n131ChatStoredDisconnected;
+  }
+  // Local canned messages from older transcripts use the current UI locale.
+  final localCopy = switch (normalized) {
+    "Hermes está ocupado (por ejemplo, compactando la conversación). Tu mensaje sigue en el composer: inténtalo en un momento." => strings.i18n131ChatBusy,
+    "No se puede continuar en directo porque esta conversación pertenece a otro gateway o proceso. El historial se conserva y puedes iniciar un chat nuevo." => strings.i18n131ChatNotOwned,
+    "Hermes alcanzó el límite configurado de sesiones activas. Espera a que termine una sesión o ajusta el límite." => strings.i18n131ChatLimit,
+    "Hermes no pudo reservar esta conversación con seguridad. Revisa el servidor y vuelve a intentarlo." => strings.i18n131ChatCoordination,
+    "No se pudo enviar el mensaje. Inténtalo de nuevo." => strings.i18n131ChatSendFailed,
+    "No se puede continuar esta conversación en directo. El historial se conserva y puedes iniciar un chat nuevo." => strings.i18n131ChatStoredNotOwned,
+    "No se pudo completar la respuesta. Inténtalo de nuevo." => strings.i18n131ChatStoredFailed,
+    "Se perdió la conexión con Hermes. El mensaje no se confirmó; revisa el borrador y reintenta." => strings.i18n131ChatStoredDisconnected,
+    "No se pudo recuperar el turno. Inténtalo de nuevo." => strings.i18n131ChatRecoveryFailed,
+    _ => null,
+  };
+  if (localCopy != null) return localCopy;
+  const causePrefix = 'No se pudo completar la respuesta: ';
+  if (normalized.startsWith(causePrefix)) {
+    return strings.i18n131ChatFailureCause(normalized.substring(causePrefix.length));
   }
   return error;
 }

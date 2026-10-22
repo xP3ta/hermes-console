@@ -11382,5 +11382,50 @@
   "i18n131RosterYesterday": "ontem",
   "@i18n131RosterYesterday": {
     "description": "i18n131: Preserved ES/EN/PT; roster."
+  },
+  "i18n131ChatBusy": "O Hermes está ocupado (por exemplo, compactando esta conversa). Sua mensagem continua no campo de composição; tente novamente em instantes.",
+  "@i18n131ChatBusy": {
+    "description": "i18n131: Preserved ES/EN/PT; chat."
+  },
+  "i18n131ChatNotOwned": "Esta conversa não pode continuar ao vivo porque pertence a outro gateway ou processo. O histórico continua disponível e você pode iniciar uma nova conversa.",
+  "@i18n131ChatNotOwned": {
+    "description": "i18n131: Preserved ES/EN/PT; chat."
+  },
+  "i18n131ChatLimit": "O Hermes atingiu o limite configurado de sessões ativas. Aguarde uma sessão terminar ou ajuste o limite.",
+  "@i18n131ChatLimit": {
+    "description": "i18n131: Preserved ES/EN/PT; chat."
+  },
+  "i18n131ChatCoordination": "O Hermes não pôde reservar esta conversa com segurança. Verifique o servidor e tente novamente.",
+  "@i18n131ChatCoordination": {
+    "description": "i18n131: Preserved ES/EN/PT; chat."
+  },
+  "i18n131ChatSendFailed": "Não foi possível enviar a mensagem. Tente novamente.",
+  "@i18n131ChatSendFailed": {
+    "description": "i18n131: Preserved ES/EN/PT; chat."
+  },
+  "i18n131ChatStoredNotOwned": "Esta conversa não pode continuar ao vivo. O histórico continua disponível e você pode iniciar uma nova conversa.",
+  "@i18n131ChatStoredNotOwned": {
+    "description": "i18n131: Preserved ES/EN/PT; chat."
+  },
+  "i18n131ChatStoredFailed": "Não foi possível concluir a resposta. Tente novamente.",
+  "@i18n131ChatStoredFailed": {
+    "description": "i18n131: Preserved ES/EN/PT; chat."
+  },
+  "i18n131ChatStoredDisconnected": "A conexão com o Hermes foi perdida. A mensagem não foi confirmada; revise o rascunho e tente novamente.",
+  "@i18n131ChatStoredDisconnected": {
+    "description": "i18n131: Preserved ES/EN/PT; chat."
+  },
+  "i18n131ChatRecoveryFailed": "Não foi possível recuperar o turno. Tente novamente.",
+  "@i18n131ChatRecoveryFailed": {
+    "description": "i18n131: Preserved ES/EN/PT; chat."
+  },
+  "i18n131ChatFailureCause": "Não foi possível concluir a resposta: {cause}",
+  "@i18n131ChatFailureCause": {
+    "description": "i18n131: Preserved ES/EN/PT; chat.",
+    "placeholders": {
+      "cause": {
+        "type": "String"
+      }
+    }
   }
 }
