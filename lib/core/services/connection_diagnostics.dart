@@ -229,6 +229,7 @@ class ConnectionDiagnostics {
     Object? body,
     Set<int> okCodes = const {200},
     void Function(http.Response)? inspectResponse,
+    Strings? strings,
   }) async {
     final sw = Stopwatch()..start();
     try {
@@ -263,13 +264,15 @@ class ConnectionDiagnostics {
       return ProbeResult(
         name: name,
         status: ProbeStatus.timeout,
-        detail: 'sin respuesta en ${_kTimeout.inSeconds}s',
+        detail: strings?.connDiagTimeout(_kTimeout.inSeconds) ??
+            'sin respuesta en ${_kTimeout.inSeconds}s',
       );
     } on HandshakeException catch (e) {
       return ProbeResult(
         name: name,
         status: ProbeStatus.tlsError,
-        detail: 'certificado TLS inválido: ${e.message}',
+        detail: strings?.connDiagTlsInvalid(e.message) ??
+            'certificado TLS inválido: ${e.message}',
       );
     } on SocketException catch (e) {
       final msg = e.message.toLowerCase();
@@ -279,14 +282,15 @@ class ConnectionDiagnostics {
         return ProbeResult(
           name: name,
           status: ProbeStatus.dnsError,
-          detail: 'el host no se resuelve',
+          detail: strings?.connDiagDnsFailed ?? 'el host no se resuelve',
         );
       }
       if (msg.contains('refused') || os.contains('refused')) {
         return ProbeResult(
           name: name,
           status: ProbeStatus.refused,
-          detail: 'conexión rechazada (¿puerto correcto?)',
+          detail: strings?.connDiagRefused ??
+              'conexión rechazada (¿puerto correcto?)',
         );
       }
       return ProbeResult(
@@ -303,8 +307,9 @@ class ConnectionDiagnostics {
 
   Future<List<ProbeResult>> probeDashboard(
     SavedConnection conn,
-    DashboardSecrets secrets,
-  ) async {
+    DashboardSecrets secrets, {
+    Strings? strings,
+  }) async {
     final base = TransportPrivacy.requireAllowed(conn.effectiveDashboardUrl);
     final results = <ProbeResult>[];
 
@@ -315,6 +320,7 @@ class ConnectionDiagnostics {
       'status',
       'GET',
       Uri.parse('$base$path'),
+      strings: strings,
       inspectResponse: (res) {
         if (res.statusCode != 200) return;
         try {
@@ -372,7 +378,9 @@ class ConnectionDiagnostics {
           status: authError != null && authError.contains('login')
               ? ProbeStatus.authRequired
               : ProbeStatus.authInvalid,
-          detail: authError ?? 'revisa el usuario y la contraseña',
+          detail: authError ??
+              strings?.connDiagAuthHint ??
+              'revisa el usuario y la contraseña',
         ),
       );
       return results;
@@ -391,7 +399,13 @@ class ConnectionDiagnostics {
       ('logs', '/api/logs'),
     ]) {
       results.add(
-        await _probe(name, 'GET', Uri.parse('$base$path'), headers: headers),
+        await _probe(
+          name,
+          'GET',
+          Uri.parse('$base$path'),
+          headers: headers,
+          strings: strings,
+        ),
       );
     }
 
@@ -408,7 +422,7 @@ class ConnectionDiagnostics {
   }) async {
     // Desktop talks to one origin, the Dashboard: no Gateway request here.
     const gw = <ProbeResult>[];
-    final dash = await probeDashboard(conn, secrets);
+    final dash = await probeDashboard(conn, secrets, strings: s);
     onStage?.call(DiagnosticsStage.dashboard, dash);
     final version = dash.where((r) => r.name == 'version').firstOrNull?.detail;
     return DiagnosticsReport(

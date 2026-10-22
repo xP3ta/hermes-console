@@ -26430,10 +26430,16 @@ class ActiveChat {
     _emit(ActiveChatEvent.approvalRequest);
     final tool =
         (event['command'] ??
-                event['tool'] ??
-                event['description'] ??
-                'una herramienta')
-            .toString();
+            event['tool'] ??
+            event['description'] ??
+            // Reserva en el idioma del dispositivo, igual que el widget del
+            // launcher (este servicio no resuelve `app_locale` aquí).
+            switch (PlatformDispatcher.instance.locale.languageCode) {
+              'en' => 'a tool',
+              'pt' => 'uma ferramenta',
+              _ => 'una herramienta',
+            })
+        .toString();
     final approvalId = (event['request_id'] ?? event['approval_id'])
         ?.toString()
         .trim();
@@ -31599,9 +31605,11 @@ class ActiveChatService {
   /// language, so the tool it names follows the device too.
   @visibleForTesting
   Strings Function() homeWidgetStrings = () => lookupStrings(
-    Locale(
-      PlatformDispatcher.instance.locale.languageCode == 'es' ? 'es' : 'en',
-    ),
+    Locale(switch (PlatformDispatcher.instance.locale.languageCode) {
+      'es' => 'es',
+      'pt' => 'pt',
+      _ => 'en',
+    }),
   );
 
   /// The running tool in the same words as every other surface, or null

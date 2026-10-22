@@ -12,18 +12,23 @@ String relativeTime(double ts, {String languageCode = 'en', DateTime? now}) {
   if (canonicalTs <= 0) return '';
   final dt = DateTime.fromMillisecondsSinceEpoch((canonicalTs * 1000).toInt());
   final diff = (now ?? DateTime.now()).difference(dt);
-  final spanish = languageCode.toLowerCase().startsWith('es');
+  final lang = languageCode.toLowerCase();
+  final spanish = lang.startsWith('es');
+  // El portugués comparte el formato compacto del español ('36 min', '2 h',
+  // '5 d'); solo cambia la palabra inmediata ("agora").
+  final compact = spanish || lang.startsWith('pt');
   if (diff.isNegative || diff.inMinutes < 1) {
-    return spanish ? 'ahora' : 'just now';
+    if (compact) return spanish ? 'ahora' : 'agora';
+    return 'just now';
   }
   if (diff.inHours < 1) {
-    return spanish ? '${diff.inMinutes} min' : '${diff.inMinutes}m ago';
+    return compact ? '${diff.inMinutes} min' : '${diff.inMinutes}m ago';
   }
   if (diff.inDays < 1) {
-    return spanish ? '${diff.inHours} h' : '${diff.inHours}h ago';
+    return compact ? '${diff.inHours} h' : '${diff.inHours}h ago';
   }
   if (diff.inDays < 7) {
-    return spanish ? '${diff.inDays} d' : '${diff.inDays}d ago';
+    return compact ? '${diff.inDays} d' : '${diff.inDays}d ago';
   }
   return '${dt.day}/${dt.month}';
 }

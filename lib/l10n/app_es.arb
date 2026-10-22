@@ -8863,5 +8863,17 @@
     }
   },
   "cphPluginBlockedByScan": "El escaneo de seguridad bloqueó este plugin. No se cambió nada.",
-  "dashboardAuthSessionTokenWithheld": "Este Dashboard no entrega a Console su token de sesión: lo aloja el gateway de Hermes 0.22.3 o posterior sin inicio de sesión. Usa un Dashboard independiente o activa su inicio de sesión."
+  "dashboardAuthSessionTokenWithheld": "Este Dashboard no entrega a Console su token de sesión: lo aloja el gateway de Hermes 0.22.3 o posterior sin inicio de sesión. Usa un Dashboard independiente o activa su inicio de sesión.",
+  "connDiagTimeout": "sin respuesta en {seconds}s",
+  "@connDiagTimeout": {
+    "placeholders": {"seconds": {"type": "int"}}
+  },
+  "connDiagTlsInvalid": "certificado TLS inválido: {message}",
+  "@connDiagTlsInvalid": {
+    "placeholders": {"message": {"type": "String"}}
+  },
+  "connDiagDnsFailed": "el host no se resuelve",
+  "connDiagRefused": "conexión rechazada (¿puerto correcto?)",
+  "connDiagAuthHint": "revisa el usuario y la contraseña",
+  "transportPublicBlocked": "HTTP/WS público bloqueado: configura HTTPS/WSS o usa una dirección privada/Tailscale."
 }

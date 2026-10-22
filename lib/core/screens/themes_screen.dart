@@ -116,8 +116,13 @@ class _ThemesScreenState extends State<ThemesScreen> {
 
   HermesAppState? get _root =>
       context.findAncestorStateOfType<HermesAppState>();
-  bool get _es => Localizations.localeOf(context).languageCode == 'es';
-  String _t(String es, String en) => _es ? es : en;
+  String get _lang => Localizations.localeOf(context).languageCode;
+  // Español, inglés y portugués: [pt] es opcional como red de seguridad.
+  String _t(String es, String en, [String? pt]) => switch (_lang) {
+    'es' => es,
+    'pt' => pt ?? en,
+    _ => en,
+  };
 
   Future<void> _select(String id, {bool followSystem = false}) async {
     final testSelect = widget.onSelectForTesting;
@@ -228,7 +233,13 @@ class _ThemesScreenState extends State<ThemesScreen> {
       ]);
     } on Object {
       if (mounted) {
-        _message(_t('No se pudo exportar.', 'Could not export.'));
+        _message(
+          _t(
+            'No se pudo exportar.',
+            'Could not export.',
+            'Não foi possível exportar.',
+          ),
+        );
       }
     }
   }

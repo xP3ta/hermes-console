@@ -6,7 +6,9 @@ import 'package:hermes_android/core/models/cron_job.dart';
 import 'package:hermes_android/core/screens/cron_screen.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
+import 'package:hermes_android/core/design/schedule_humanizer.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
+import 'package:hermes_android/l10n/app_localizations_pt.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
@@ -268,4 +270,20 @@ void main() {
       _expectNoTechnicalText(tester);
     });
   }
+
+  group('pt: onceIn trata as unidades sem recorte de substring', () {
+    // Regressão: everyDuration(1440) é 'Todos os dias' e substring(7)
+    // gerava 's dias'; 1/60 geravam frases sem numeral.
+    test('casos exatos do _Pt.onceIn via describeHermesSchedule', () {
+      final s = StringsPt();
+      expect(describeHermesSchedule(s, 'in 1m'), 'Uma vez, daqui a 1 min');
+      expect(describeHermesSchedule(s, 'in 60m'), 'Uma vez, daqui a 1 hora');
+      expect(describeHermesSchedule(s, 'in 24h'), 'Uma vez, daqui a 1 dia');
+      expect(
+        describeHermesSchedule(s, 'in 90m'),
+        'Uma vez, daqui a 1 h 30 min',
+      );
+      expect(describeHermesSchedule(s, 'in 2h'), 'Uma vez, daqui a 2 horas');
+    });
+  });
 }

@@ -970,64 +970,96 @@ class _DiagnosticTile extends StatelessWidget {
 }
 
 class _KanbanDetailCopy {
-  final bool spanish;
+  final String lang;
 
-  const _KanbanDetailCopy._(this.spanish);
+  const _KanbanDetailCopy._(this.lang);
 
-  factory _KanbanDetailCopy.forLocale(String localeName) =>
-      _KanbanDetailCopy._(localeName.toLowerCase().startsWith('es'));
+  factory _KanbanDetailCopy.forLocale(String localeName) => _KanbanDetailCopy._(
+    switch (localeName.toLowerCase().split('_').first) {
+      'es' => 'es',
+      'pt' => 'pt',
+      _ => 'en',
+    },
+  );
 
-  String get readOnly => spanish
-      ? 'Esta instancia está en modo solo lectura.'
-      : 'This instance is read-only.';
+  // Español, inglés y portugués; cada getter define los tres.
+  String p(String es, String en, String pt) => switch (lang) {
+    'es' => es,
+    'pt' => pt,
+    _ => en,
+  };
+
+  String get readOnly => p(
+    'Esta instancia está en modo solo lectura.',
+    'This instance is read-only.',
+    'Esta instância está em modo somente leitura.',
+  );
   String get objective =>
-      spanish ? 'Objetivo · leer completo' : 'Objective · read all';
-  String get result => spanish ? 'Resultado' : 'Result';
-  String get latestSummary => spanish ? 'Último resumen' : 'Latest summary';
-  String get diagnostics => spanish ? 'Diagnósticos' : 'Diagnostics';
-  String get dependencies => spanish ? 'Dependencias' : 'Dependencies';
-  String get parents => spanish ? 'Depende de' : 'Depends on';
-  String get children => spanish ? 'Desbloquea' : 'Unblocks';
-  String get blockedBy => spanish ? 'Bloqueada por' : 'Blocked by';
-  String get blocks => spanish ? 'Bloquea' : 'Blocks';
-  String get childResults => spanish ? 'Subtareas' : 'Child tasks';
-  String get comments => spanish ? 'Comentarios' : 'Comments';
+      p('Objetivo · leer completo', 'Objective · read all', 'Objetivo · ler tudo');
+  String get result => p('Resultado', 'Result', 'Resultado');
+  String get latestSummary => p('Último resumen', 'Latest summary', 'Último resumo');
+  String get diagnostics => p('Diagnósticos', 'Diagnostics', 'Diagnósticos');
+  String get dependencies => p('Dependencias', 'Dependencies', 'Dependências');
+  String get parents => p('Depende de', 'Depends on', 'Depende de');
+  String get children => p('Desbloquea', 'Unblocks', 'Desbloqueia');
+  String get blockedBy => p('Bloqueada por', 'Blocked by', 'Bloqueada por');
+  String get blocks => p('Bloquea', 'Blocks', 'Bloqueia');
+  String get childResults => p('Subtareas', 'Child tasks', 'Subtarefas');
+  String get comments => p('Comentarios', 'Comments', 'Comentários');
   String get noComments =>
-      spanish ? 'Todavía no hay comentarios.' : 'No comments yet.';
-  String get someone => spanish ? 'Alguien' : 'Someone';
-  String get addComment => spanish ? 'Añadir comentario' : 'Add a comment';
-  String get messageWorker =>
-      spanish ? 'Enviar una nota al worker' : 'Message the worker';
-  String get send => spanish ? 'Enviar' : 'Send';
-  String get attachments => spanish ? 'Adjuntos' : 'Attachments';
-  String get noAttachments => spanish ? 'No hay adjuntos.' : 'No attachments.';
-  String get uploadAttachment =>
-      spanish ? 'Subir adjunto' : 'Upload attachment';
-  String get download => spanish ? 'Descargar' : 'Download';
+      p('Todavía no hay comentarios.', 'No comments yet.', 'Ainda não há comentários.');
+  String get someone => p('Alguien', 'Someone', 'Alguém');
+  String get addComment =>
+      p('Añadir comentario', 'Add a comment', 'Adicionar comentário');
+  String get messageWorker => p(
+    'Enviar una nota al worker',
+    'Message the worker',
+    'Enviar uma nota ao worker',
+  );
+  String get send => p('Enviar', 'Send', 'Enviar');
+  String get attachments => p('Adjuntos', 'Attachments', 'Anexos');
+  String get noAttachments => p('No hay adjuntos.', 'No attachments.', 'Não há anexos.');
+  String get uploadAttachment => p(
+    'Subir adjunto',
+    'Upload attachment',
+    'Enviar anexo',
+  );
+  String get download => p('Descargar', 'Download', 'Baixar');
   String get deleteAttachment =>
-      spanish ? 'Eliminar adjunto' : 'Delete attachment';
-  String get runs => spanish ? 'Ejecuciones' : 'Runs';
-  String get run => spanish ? 'Ejecución' : 'Run';
-  String get inspect => spanish ? 'Inspeccionar' : 'Inspect';
-  String get terminate => spanish ? 'Terminar ejecución' : 'Terminate run';
-  String get log => spanish ? 'Log' : 'Log';
-  String get activity => spanish ? 'Actividad' : 'Activity';
-  String get showAll => spanish ? 'Mostrar toda' : 'Show all';
-  String get showLess => spanish ? 'Mostrar menos' : 'Show less';
-  String get operations => spanish ? 'Operaciones' : 'Operations';
-  String get model => spanish ? 'Modelo de esta tarea' : 'Task model';
+      p('Eliminar adjunto', 'Delete attachment', 'Excluir anexo');
+  String get runs => p('Ejecuciones', 'Runs', 'Execuções');
+  String get run => p('Ejecución', 'Run', 'Execução');
+  String get inspect => p('Inspeccionar', 'Inspect', 'Inspecionar');
+  String get terminate => p('Terminar ejecución', 'Terminate run', 'Encerrar execução');
+  String get log => p('Log', 'Log', 'Log');
+  String get activity => p('Actividad', 'Activity', 'Atividade');
+  String get showAll => p('Mostrar toda', 'Show all', 'Mostrar tudo');
+  String get showLess => p('Mostrar menos', 'Show less', 'Mostrar menos');
+  String get operations => p('Operaciones', 'Operations', 'Operações');
+  String get model => p('Modelo de esta tarea', 'Task model', 'Modelo desta tarefa');
   String get inheritModel =>
-      spanish ? 'Heredar del perfil' : 'Inherit from profile';
-  String get reassign => spanish ? 'Reasignar' : 'Reassign';
-  String get reclaim =>
-      spanish ? 'Recuperar y reencolar' : 'Reclaim and requeue';
-  String get specify => spanish ? 'Especificar' : 'Specify';
-  String get decompose => spanish ? 'Descomponer' : 'Decompose';
-  String get notifyWhenDone =>
-      spanish ? 'Avisarme cuando termine' : "Notify me when it's done";
-  String get muteNotifications =>
-      spanish ? 'Silenciar notificaciones' : 'Mute notifications';
-  String get muteNotificationsSub => spanish
-      ? 'No avisar de cambios de estado de esta tarea, aunque los resultados de Kanban estén activados'
-      : "Don't notify status changes for this task, even if Kanban results are enabled";
+      p('Heredar del perfil', 'Inherit from profile', 'Herdar do perfil');
+  String get reassign => p('Reasignar', 'Reassign', 'Reatribuir');
+  String get reclaim => p(
+    'Recuperar y reencolar',
+    'Reclaim and requeue',
+    'Recuperar e reenfileirar',
+  );
+  String get specify => p('Especificar', 'Specify', 'Especificar');
+  String get decompose => p('Descomponer', 'Decompose', 'Decompor');
+  String get notifyWhenDone => p(
+    'Avisarme cuando termine',
+    "Notify me when it's done",
+    'Avisar quando terminar',
+  );
+  String get muteNotifications => p(
+    'Silenciar notificaciones',
+    'Mute notifications',
+    'Silenciar notificações',
+  );
+  String get muteNotificationsSub => p(
+    'No avisar de cambios de estado de esta tarea, aunque los resultados de Kanban estén activados',
+    "Don't notify status changes for this task, even if Kanban results are enabled",
+    'Não avisar sobre mudanças de estado desta tarefa, mesmo com os resultados do Kanban ativados',
+  );
 }

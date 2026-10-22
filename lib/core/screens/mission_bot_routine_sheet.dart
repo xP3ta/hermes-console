@@ -132,7 +132,37 @@ final class MissionBotRoutineSheetCopy {
   );
 
   static MissionBotRoutineSheetCopy forLocale(Locale locale) =>
-      locale.languageCode == 'en' ? en : es;
+      switch (locale.languageCode) {
+        'en' => en,
+        'pt' => pt,
+        _ => es,
+      };
+
+  static const pt = MissionBotRoutineSheetCopy(
+    title: 'Nova rotina',
+    description: 'Programe algo para este perfil fazer por você.',
+    botLabel: 'Perfil',
+    whatLabel: 'O quê',
+    whatHint: 'Descreva o que ele deve fazer',
+    whatRequired: 'Escreva o que o perfil deve fazer.',
+    whenLabel: 'Quando',
+    customScheduleLabel: 'Expressão cron',
+    customScheduleHint: '0 9 * * *',
+    customScheduleRequired: 'Escreva uma expressão cron.',
+    moreOptions: 'Mais opções',
+    optionalNameLabel: 'Nome opcional',
+    optionalNameHint: 'Por exemplo, Resumo da manhã',
+    create: 'Criar rotina',
+    creating: 'Criando…',
+    genericError: 'Não foi possível criar a rotina. Tente novamente.',
+    dailyAtNine: 'Todo dia · 09:00',
+    weekdaysAtNine: 'Dias úteis · 09:00',
+    weeklyMondayAtNine: 'Toda segunda-feira · 09:00',
+    monthlyAtNine: 'Todo mês · dia 1, 09:00',
+    hourly: 'A cada hora',
+    everyFifteenMinutes: 'A cada 15 minutos',
+    custom: 'Personalizado',
+  );
 }
 
 class MissionBotRoutineSheet extends StatefulWidget {
