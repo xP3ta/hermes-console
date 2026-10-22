@@ -104,7 +104,16 @@ void main() {
       ApiClient.profileEndpoint('api/sessions', profile: 'ops-2_alpha'),
       'p/ops-2_alpha/api/sessions',
     );
-    for (final invalid in const ['../other', 'team alpha', 'UPPER', 'a.b']) {
+    // As on the server, a display-cased name is that profile's lowercase id.
+    expect(
+      ApiClient.profileEndpoint('api/sessions', profile: 'UPPER'),
+      'p/upper/api/sessions',
+    );
+    expect(
+      ApiClient.profileEndpoint('api/sessions', profile: 'Default'),
+      'api/sessions',
+    );
+    for (final invalid in const ['../other', 'team alpha', 'a.b']) {
       expect(
         () => ApiClient.profileEndpoint('api/sessions', profile: invalid),
         throwsArgumentError,
