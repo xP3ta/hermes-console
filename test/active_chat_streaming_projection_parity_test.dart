@@ -10,6 +10,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 import 'support/long_streaming_transcript_fixture.dart';
+import 'support/test_api_client.dart';
 
 ActiveChat _chat(ActiveChatService service, String id) => service.attach(
   connection: SavedConnection(
@@ -21,9 +22,8 @@ ActiveChat _chat(ActiveChatService service, String id) => service.attach(
   ),
   sessionId: 'parity-$id',
   sessionTitle: 'Parity',
-  api: ApiClient(
+  api: testApiClient(
     baseUrl: 'http://10.0.0.1:8642',
-    apiKey: 'k',
     httpClient: MockClient((_) async => http.Response('not found', 404)),
   ),
 );
