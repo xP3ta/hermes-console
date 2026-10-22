@@ -19425,7 +19425,9 @@ class _ChatScreenState extends State<ChatScreen>
       final retryChat = _chat;
       final readOnly = _chat.conflictReadOnly || widget.connection.readOnly;
       return ChatErrorBubble(
-        error: activeChatStoredErrorUiMessage(content),
+        error: activeChatStoredErrorUiMessage(
+          content, languageCode: Strings.of(context).localeName,
+        ),
         onRetry: onRetry,
         prompt: prompt,
         onRestartGateway: _restartGatewayFromChat,
