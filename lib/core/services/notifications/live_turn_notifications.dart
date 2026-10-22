@@ -69,57 +69,46 @@ LiveTurnPhase liveTurnPhaseOf(
   _ => LiveTurnPhase.working,
 };
 
-/// Live row copy (es/en), resolved without BuildContext like [NotifL10n].
+/// Live row copy from the language catalogs, resolved without BuildContext like [NotifL10n].
 extension LiveTurnCopy on NotifL10n {
-  String _l(String esText, String enText, [String? ptText]) =>
-      pt ? (ptText ?? enText) : es ? esText : enText;
-
   /// The activity line: one phase in plain words. A running tool whose name
   /// is known is worded by [liveToolLine] instead.
   String livePhase(LiveTurnPhase phase) => switch (phase) {
-    LiveTurnPhase.thinking => _l('Pensando', 'Thinking', 'Pensando'),
-    LiveTurnPhase.responding => _l('Respondiendo', 'Responding', 'Respondendo'),
-    LiveTurnPhase.compacting => _l('Compactando', 'Compacting', 'Compactando'),
-    LiveTurnPhase.waitingForYou => _l('Te espera', 'Waiting for you', 'Esperando você'),
-    LiveTurnPhase.waitingForApproval => _l(
-      'Espera tu permiso',
-      'Waiting for approval',
-      'Esperando sua aprovação',
-    ),
-    LiveTurnPhase.needsClarification => _l(
-      'Tiene una pregunta',
-      'Needs clarification',
-      'Tem uma pergunta',
-    ),
+    LiveTurnPhase.thinking => message('livePhase'),
+    LiveTurnPhase.responding => message('livePhase2'),
+    LiveTurnPhase.compacting => message('livePhase3'),
+    LiveTurnPhase.waitingForYou => message('livePhase4'),
+    LiveTurnPhase.waitingForApproval => message('livePhase5'),
+    LiveTurnPhase.needsClarification => message('livePhase6'),
     LiveTurnPhase.usingTool ||
-    LiveTurnPhase.working => _l('Trabajando', 'Working', 'Trabalhando'),
+    LiveTurnPhase.working => message('livePhase7'),
   };
 
   /// The status-bar chip: at most seven characters, or Android cuts it.
   String liveChip(LiveTurnPhase phase) => switch (phase) {
-    LiveTurnPhase.thinking => _l('Piensa', 'Think', 'Pensa'),
-    LiveTurnPhase.responding => _l('Escribe', 'Reply', 'Escreve'),
-    LiveTurnPhase.compacting => _l('Resume', 'Compact', 'Resume'),
-    LiveTurnPhase.waitingForYou => _l('Te toca', 'You', 'Você'),
-    LiveTurnPhase.waitingForApproval => _l('Permiso', 'Approve', 'Aprova'),
-    LiveTurnPhase.needsClarification => _l('Duda', 'Ask', 'Dúvida'),
+    LiveTurnPhase.thinking => message('liveChip'),
+    LiveTurnPhase.responding => message('liveChip2'),
+    LiveTurnPhase.compacting => message('liveChip3'),
+    LiveTurnPhase.waitingForYou => message('liveChip4'),
+    LiveTurnPhase.waitingForApproval => message('liveChip5'),
+    LiveTurnPhase.needsClarification => message('liveChip6'),
     LiveTurnPhase.usingTool ||
-    LiveTurnPhase.working => _l('Trabaja', 'Working', 'Ocupado'),
+    LiveTurnPhase.working => message('liveChip7'),
   };
 
   String liveTasks(int done, int total) =>
-      _l('Tareas $done de $total', 'Tasks $done of $total', 'Tarefas $done de $total');
+      message('liveTasks', {'done': done, 'total': total});
   String liveSubagents(int n) => n == 1
-      ? _l('1 subagente', '1 subagent', '1 subagente')
-      : _l('$n subagentes', '$n subagents', '$n subagentes');
+      ? message('liveSubagents')
+      : message('liveSubagents2', {'n': n});
   String liveTools(int n) => n == 1
-      ? _l('1 herramienta', '1 tool', '1 ferramenta')
-      : _l('$n herramientas', '$n tools', '$n ferramentas');
+      ? message('liveTools')
+      : message('liveTools2', {'n': n});
 
   /// Title when nothing may name the conversation (lock screen, hidden
   /// content, a turn only the background listener still watches).
   String liveWorkingTitle(String who) =>
-      _l('$who está trabajando', '$who is working', '$who está trabalhando');
+      message('liveWorkingTitle', {'who': who});
 }
 
 /// How far the rail is while no task list measures the turn (out of 100).
