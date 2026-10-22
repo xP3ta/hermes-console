@@ -77,10 +77,15 @@ which only tests do:
 
 `test/u6_gateway_retirement/gateway_gate_test.dart` pins both lists: a new
 `v1/...` or `/health` call, or a new URL built on the Gateway origin, outside
-them fails CI. The same file checks behaviour as well: an `ApiClient` for a
+them fails CI. The origin pattern covers `$baseUrl/`, `${baseUrl}/`,
+`${x.baseUrl}/`, `gatewayUrl`, `p/$x` in either quote style, string
+concatenation and `Uri.parse(baseUrl).resolve/replace`, with one control
+sample per form; the few lines whose `baseUrl` is another server (the
+Dashboard's cron page, LiteRT, the native OAuth refresh, Kokoro) are pinned
+one by one. The same file checks behaviour as well: an `ApiClient` for a
 Dashboard-only connection sends no Gateway-shaped request (outside `/api/`, or
-an API-key bearer without a Dashboard session) for sessions, messages or
-liveness, default or named profile. No `API_SERVER_KEY` is asked for when
+an API-key bearer without a Dashboard session) for sessions, messages,
+deletes or liveness, default or named profile. No `API_SERVER_KEY` is asked for when
 adding a connection.
 
 ## 4. Mobile Bridge (retired in 1.2.15)
