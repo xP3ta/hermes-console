@@ -544,6 +544,7 @@ class AppLocales {
     AppLocaleOption('system', 'Sistema', null),
     AppLocaleOption('es', 'Español', Locale('es')),
     AppLocaleOption('en', 'English', Locale('en')),
+    AppLocaleOption('pt', 'Português (Brasil)', Locale('pt')),
   ];
 
   static AppLocaleOption byId(String? id) =>
@@ -3116,13 +3117,15 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
               locale: AppLocales.byId(locId).locale,
               localizationsDelegates: Strings.localizationsDelegates,
               supportedLocales: Strings.supportedLocales,
-              // El único idioma completo además del inglés es el español: si el
-              // sistema (o la elección manual) es español lo usamos; en cualquier
-              // otro caso caemos a inglés, nunca a un español a medias. Cubre los
-              // tres casos: elección manual 'es'/'en' y modo "Sistema" (locale
-              // nulo → llega el idioma del dispositivo).
+              // Los idiomas completos además del inglés son el español y el
+              // portugués de Brasil: si el sistema (o la elección manual) es
+              // uno de ellos lo usamos; en cualquier otro caso caemos a
+              // inglés, nunca a un idioma a medias. Cubre todos los casos:
+              // elección manual 'es'/'en'/'pt' y modo "Sistema" (locale nulo
+              // → llega el idioma del dispositivo).
               localeResolutionCallback: (locale, supported) {
                 if (locale?.languageCode == 'es') return const Locale('es');
+                if (locale?.languageCode == 'pt') return const Locale('pt');
                 return const Locale('en');
               },
               theme: AppFonts.applyToTheme(activeTheme, AppFonts.byId(font)),

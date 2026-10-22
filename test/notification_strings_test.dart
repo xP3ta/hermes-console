@@ -48,6 +48,38 @@ void main() {
       expect(en.voiceEndConversation, 'End conversation');
     });
 
+    test('pt-BR obtiene textos propios (sin mezclar idiomas)', () {
+      const t = NotifL10n(false, true);
+      expect(t.lang, 'pt');
+      expect(t.approvalTitle, 'Hermes precisa da sua atenção');
+      expect(t.runCompleted, 'Concluiu');
+      expect(t.runFailed, 'Não concluiu');
+      expect(t.cronCompleted, 'Tarefa agendada concluída');
+      expect(t.cronFailed, 'Falhou uma tarefa agendada');
+      expect(t.actOpen, 'Abrir');
+      expect(t.privateTitle, 'Nova atividade no Hermes');
+      expect(t.privateBody, 'Toque para ver');
+      expect(t.chTransfers, 'Transferências');
+      expect(t.chOperations, 'Operações locais');
+      expect(t.voiceCardListening, 'Ouvindo');
+      expect(t.voiceCardPaused, 'Em pausa');
+      expect(t.voiceCardWaitingApproval, 'Precisa de aprovação');
+      expect(t.voiceCardMicActive, 'Microfone ativo');
+      expect(t.voiceCardMicPaused, 'Microfone pausado');
+      expect(t.voiceCardOrbDescription, 'Estado de voz do Hermes');
+      expect(t.voiceCardDurationDescription, 'Duração da conversa');
+      expect(t.voiceOpenHintActive, 'Continue falando · toque para abrir o Hermes');
+      expect(t.voiceOpenHintPaused, 'Toque em Continuar ou abra o Hermes');
+      expect(t.voiceOpenHintApproval, 'Toque em Revisar para aprovar no Hermes');
+      expect(t.voicePause, 'Pausar');
+      expect(t.voiceContinue, 'Continuar');
+      expect(t.voiceReviewApproval, 'Revisar');
+      expect(t.voiceEnd, 'Encerrar');
+      expect(t.voiceEndConversation, 'Encerrar conversa');
+      expect(t.readAloudPlaying, 'Lendo a resposta');
+      expect(t.readAloudPaused, 'Leitura em pausa');
+    });
+
     test('todos los canales tienen nombre y descripción localizados', () {
       const es = NotifL10n(true);
       const en = NotifL10n(false);

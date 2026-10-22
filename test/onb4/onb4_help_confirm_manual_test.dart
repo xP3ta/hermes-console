@@ -167,7 +167,7 @@ void main() {
   }
 
   test('no arb says the password was created at install time', () {
-    for (final f in ['es', 'en']) {
+    for (final f in ['es', 'en', 'pt']) {
       final text = File('lib/l10n/app_$f.arb').readAsStringSync();
       expect(text, isNot(contains('creaste al instalarlo')));
       expect(text, isNot(contains('you created when you installed')));
@@ -224,7 +224,7 @@ void main() {
     for (final f in files) {
       expect(f.readAsStringSync(), isNot(contains('0.0.0.0')), reason: f.path);
     }
-    for (final f in ['es', 'en']) {
+    for (final f in ['es', 'en', 'pt']) {
       final text = File('lib/l10n/app_$f.arb').readAsStringSync();
       expect(text, isNot(contains('hermes dashboard --host 0.0.0.0')));
     }

@@ -49,6 +49,22 @@ void main() {
       );
     });
 
+    test('português explícito manda e o sistema pt-BR é reconhecido', () async {
+      final prefsPt = await _prefs({kAppLocalePrefKey: 'pt'});
+      expect(effectiveVoiceLang(prefsPt, deviceLocale: en), 'pt');
+      expect(effectiveVoiceLang(prefsPt, deviceLocale: fr), 'pt');
+
+      final prefs = await _prefs({kAppLocalePrefKey: 'system'});
+      expect(
+        effectiveVoiceLang(prefs, deviceLocale: const Locale('pt', 'BR')),
+        'pt',
+      );
+      expect(
+        effectiveVoiceLang(prefs, deviceLocale: const Locale('pt', 'PT')),
+        'pt',
+      );
+    });
+
     test('clave ausente o valor desconocido se tratan como system', () async {
       final ausente = await _prefs({});
       expect(effectiveVoiceLang(ausente, deviceLocale: en), 'en');

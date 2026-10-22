@@ -6957,5 +6957,11 @@
   "onb4HelpSafe": "It uses the official Hermes installer. If you already have Hermes, it doesn't touch it, nor Telegram or the Gateway. It takes a few minutes.",
   "onb4HelpVps": "Hermes on an internet server? Install Tailscale on the server and on this phone, then paste the line.",
   "onb4HadPassword": "This Hermes already had a password. Type it once and Console doesn't keep it.",
-  "onb4ManualBody": "Type the address, the user and the password that the setup showed you when it finished."
+  "onb4ManualBody": "Type the address, the user and the password that the setup showed you when it finished.",
+  "connDiagTimeout": "no response in {seconds}s",
+  "connDiagTlsInvalid": "invalid TLS certificate: {message}",
+  "connDiagDnsFailed": "the host does not resolve",
+  "connDiagRefused": "connection refused (wrong port?)",
+  "connDiagAuthHint": "check the username and password",
+  "transportPublicBlocked": "Public HTTP/WS is blocked: configure HTTPS/WSS or use a private/Tailscale address."
 }

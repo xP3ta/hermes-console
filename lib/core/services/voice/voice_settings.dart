@@ -429,14 +429,20 @@ class VoiceSettings {
 
   /// Voz neuronal propuesta cuando el usuario nunca eligió (spec 031). En
   /// español es la histórica (regresión cero); en inglés, Amy (en el catálogo).
-  static String defaultOnnxVoiceFor(String lang) =>
-      lang == 'en' ? 'en_US-amy-medium' : 'es_ES-davefx-medium';
+  static String defaultOnnxVoiceFor(String lang) => switch (lang) {
+    'en' => 'en_US-amy-medium',
+    'pt' => 'pt_BR-faber-medium',
+    _ => 'es_ES-davefx-medium',
+  };
 
   /// Voz del TTS por streaming cuando el usuario nunca eligió (spec 031). En
   /// Kokoro `em_santa` es la voz española histórica; `af_heart` la insignia
   /// americana.
-  static String defaultStreamingVoiceFor(String lang) =>
-      lang == 'en' ? 'af_heart' : 'em_santa';
+  static String defaultStreamingVoiceFor(String lang) => switch (lang) {
+    'en' => 'af_heart',
+    'pt' => 'pm_santa',
+    _ => 'em_santa',
+  };
 
   static VoiceSettings load(SharedPreferences prefs) {
     const d = VoiceSettings();

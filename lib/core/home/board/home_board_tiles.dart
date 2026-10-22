@@ -86,11 +86,17 @@ String homeAgo(BuildContext context, DateTime at, DateTime now) => relativeTime(
   now: now,
 );
 
-/// «hace 20 min», «20m ago»: [homeAgo] as a phrase.
+/// «hace 20 min», «há 20 min», «20m ago»: [homeAgo] as a phrase.
 String homeSince(BuildContext context, DateTime at, DateTime now) {
   final text = homeAgo(context, at, now);
-  final es = Localizations.localeOf(context).languageCode == 'es';
-  return es && RegExp(r'^\d+ (min|h|d)$').hasMatch(text) ? 'hace $text' : text;
+  final prefix = switch (Localizations.localeOf(context).languageCode) {
+    'es' => 'hace ',
+    'pt' => 'há ',
+    _ => null,
+  };
+  return prefix != null && RegExp(r'^\d+ (min|h|d)$').hasMatch(text)
+      ? '$prefix$text'
+      : text;
 }
 
 String _hhmm(DateTime at) =>
@@ -124,14 +130,18 @@ String homeElapsed(Duration d) =>
 /// «en 2 h», «en 35 min»: to the nearest hour or day (4 h 56 min is
 /// «en 5 h»).
 String homeCountdown(BuildContext context, Duration d) {
-  final es = Localizations.localeOf(context).languageCode == 'es';
+  final lang = Localizations.localeOf(context).languageCode;
   final minutes = math.max(0, d.inMinutes);
   final text = minutes < 60
       ? '$minutes min'
       : minutes < 60 * 24
       ? '${(minutes / 60).round()} h'
       : '${(minutes / (60 * 24)).round()} d';
-  return es ? 'en $text' : 'in $text';
+  return switch (lang) {
+    'es' => 'en $text',
+    'pt' => 'em $text',
+    _ => 'in $text',
+  };
 }
 
 /// Elapsed time that ticks once a second on its own (only this text
