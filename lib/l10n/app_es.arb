@@ -1533,7 +1533,7 @@
       }
     }
   },
-  "setRestartGatewayBody": "Reinicia el proceso del gateway sin actualizar nada. Útil para restablecer la conexión con Console o aplicar cambios de configuración.\n\nCorta brevemente las sesiones activas. ¿Continuar?",
+  "setRestartGatewayBody": "Reinicia el proceso del gateway sin actualizar nada. Útil para restablecer la conexión con Console o aplicar cambios de configuración.\n\nInterrumpe los turnos en curso, también el de este chat; podrás volver a enviarlos después. ¿Continuar?",
   "setMigrateBody": "Migra config.yaml de v{cur} a v{latest}.\n\nEs una migración ADITIVA: solo añade las opciones nuevas con su valor por defecto y sube el número de versión. No borra ni cambia nada de tu configuración actual.",
   "@setMigrateBody": {
     "placeholders": {

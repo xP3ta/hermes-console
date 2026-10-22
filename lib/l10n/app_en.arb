@@ -1115,7 +1115,7 @@
   "setSecData": "data",
   "setSecAbout": "about",
   "setUpdateBody": "«hermes update» will run on the server:\n\n• Downloads the new code{behind} ({method})\n• Reinstalls dependencies\n• Restarts the running gateways\n\nIt may take several minutes and cut active sessions. Continue?",
-  "setRestartGatewayBody": "Restarts the gateway process without updating anything. Useful to restore the Console connection or apply configuration changes.\n\nBriefly cuts active sessions. Continue?",
+  "setRestartGatewayBody": "Restarts the gateway process without updating anything. Useful to restore the Console connection or apply configuration changes.\n\nInterrupts running turns, including this chat's; you can resend them afterwards. Continue?",
   "setMigrateBody": "Migrates config.yaml from v{cur} to v{latest}.\n\nIt is an ADDITIVE migration: it only adds the new options with their default value and bumps the version number. It does not delete or change anything in your current config.",
   "setUpdateSchemaShort": "Update schema (v{from} → v{to})",
   "setAddsNewOptions": "Only adds new options; doesn't change your current config.",

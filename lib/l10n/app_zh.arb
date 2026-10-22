@@ -916,7 +916,7 @@
   "setSecData": "数据",
   "setSecAbout": "关于",
   "setUpdateBody": "将在服务器上运行 «hermes update»：\n\n• 下载新代码{behind}（{method}）\n• 重新安装依赖项\n• 重启正在运行的 Gateway\n\n可能需要几分钟，并中断活跃会话。是否继续？",
-  "setRestartGatewayBody": "重启 Gateway 进程，不更新任何内容。可用于恢复 Hermes Console 连接或应用配置更改。\n\n会短暂中断活跃会话。是否继续？",
+  "setRestartGatewayBody": "重启 Gateway 进程，不更新任何内容。可用于恢复 Hermes Console 连接或应用配置更改。\n\n正在进行的回合会被中断（包括当前聊天），之后可重新发送。是否继续？",
   "setMigrateBody": "将 config.yaml 从 v{cur} 迁移到 v{latest}。\n\n这是增量迁移：仅添加新选项及其默认值，并更新版本号。不会删除或更改当前配置中的任何内容。",
   "setUpdateSchemaShort": "更新配置架构（v{from} → v{to}）",
   "setAddsNewOptions": "仅添加新选项，不更改当前配置。",

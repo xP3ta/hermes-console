@@ -916,7 +916,7 @@
   "setSecData": "données",
   "setSecAbout": "à propos",
   "setUpdateBody": "« hermes update » sera exécuté sur le serveur :\n\n• Télécharge le nouveau code{behind} ({method})\n• Réinstalle les dépendances\n• Redémarre les passerelles en cours d’exécution\n\nCela peut prendre plusieurs minutes et interrompre les sessions actives. Continuer ?",
-  "setRestartGatewayBody": "Redémarre le processus de la passerelle sans mise à jour. Utile pour rétablir la connexion à Console ou appliquer des changements de configuration.\n\nInterrompt brièvement les sessions actives. Continuer ?",
+  "setRestartGatewayBody": "Redémarre le processus de la passerelle sans mise à jour. Utile pour rétablir la connexion à Console ou appliquer des changements de configuration.\n\nInterrompt les tours en cours, y compris celui de ce chat ; vous pourrez les renvoyer ensuite. Continuer ?",
   "setMigrateBody": "Migre config.yaml de v{cur} vers v{latest}.\n\nLa migration est ADDITIVE : elle ajoute uniquement les nouvelles options avec leur valeur par défaut et augmente le numéro de version. Elle ne supprime ni ne change ta configuration actuelle.",
   "setUpdateSchemaShort": "Mettre à jour le schéma (v{from} → v{to})",
   "setAddsNewOptions": "Ajoute uniquement de nouvelles options ; ne change pas ta configuration actuelle.",

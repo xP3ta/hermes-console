@@ -916,7 +916,7 @@
   "setSecData": "dados",
   "setSecAbout": "sobre",
   "setUpdateBody": "«hermes update» será executado no servidor:\n\n• Baixa o código novo{behind} ({method})\n• Reinstala dependências\n• Reinicia os gateways em execução\n\nPode levar vários minutos e interromper as sessões ativas. Continuar?",
-  "setRestartGatewayBody": "Reinicia o processo do gateway sem atualizar nada. Útil para restabelecer a conexão com o Console ou aplicar alterações de configuração.\n\nInterrompe brevemente as sessões ativas. Continuar?",
+  "setRestartGatewayBody": "Reinicia o processo do gateway sem atualizar nada. Útil para restabelecer a conexão com o Console ou aplicar alterações de configuração.\n\nInterrompe os turnos em andamento, inclusive o deste chat; você poderá reenviá-los depois. Continuar?",
   "setMigrateBody": "Migra config.yaml de v{cur} para v{latest}.\n\nÉ uma migração ADITIVA: apenas adiciona as novas opções com o valor padrão e aumenta o número da versão. Não exclui nem altera nada da sua configuração atual.",
   "setUpdateSchemaShort": "Atualizar esquema (v{from} → v{to})",
   "setAddsNewOptions": "Apenas adiciona novas opções; não altera sua configuração atual.",
