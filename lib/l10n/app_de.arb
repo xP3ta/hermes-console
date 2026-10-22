@@ -4600,131 +4600,131 @@
   "@i18n131RecoveredTurnPending": {
     "description": "i18n131: Translated into German."
   },
-  "i18n131McAllAgents": "All profiles",
+  "i18n131McAllAgents": "Alle Profile",
   "@i18n131McAllAgents": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McWorkspaces": "Workspaces",
+  "i18n131McWorkspaces": "Arbeitsbereiche",
   "@i18n131McWorkspaces": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McWorkspaceAgentCountOne": "{count} profile",
+  "i18n131McWorkspaceAgentCountOne": "{count} Profil",
   "@i18n131McWorkspaceAgentCountOne": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy.",
+    "description": "i18n131: Phase 3B translated; MissionControlCopy.",
     "placeholders": {
       "count": {
         "type": "int"
       }
     }
   },
-  "i18n131McWorkspaceAgentCountOther": "{count} profiles",
+  "i18n131McWorkspaceAgentCountOther": "{count} Profile",
   "@i18n131McWorkspaceAgentCountOther": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy.",
+    "description": "i18n131: Phase 3B translated; MissionControlCopy.",
     "placeholders": {
       "count": {
         "type": "int"
       }
     }
   },
-  "i18n131McCreateOrganization": "Create workspace",
+  "i18n131McCreateOrganization": "Arbeitsbereich erstellen",
   "@i18n131McCreateOrganization": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McEditOrganization": "Edit workspace",
+  "i18n131McEditOrganization": "Arbeitsbereich bearbeiten",
   "@i18n131McEditOrganization": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McOrganizationName": "Workspace name",
+  "i18n131McOrganizationName": "Name des Arbeitsbereichs",
   "@i18n131McOrganizationName": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McOrganizationHint": "e.g. Homelab",
+  "i18n131McOrganizationHint": "z. B. Heimlabor",
   "@i18n131McOrganizationHint": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McChooseProfiles": "Choose profiles",
+  "i18n131McChooseProfiles": "Profile auswählen",
   "@i18n131McChooseProfiles": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McDelete": "Delete",
+  "i18n131McDelete": "Löschen",
   "@i18n131McDelete": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McDeleteOrganizationTitle": "Delete workspace?",
+  "i18n131McDeleteOrganizationTitle": "Arbeitsbereich löschen?",
   "@i18n131McDeleteOrganizationTitle": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McDeleteOrganizationBody": "Only this local workspace is removed. Hermes profiles are not changed.",
+  "i18n131McDeleteOrganizationBody": "Nur dieser lokale Arbeitsbereich wird entfernt. Die Hermes-Profile bleiben unverändert.",
   "@i18n131McDeleteOrganizationBody": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McLoading": "Loading profiles…",
+  "i18n131McLoading": "Profile werden geladen…",
   "@i18n131McLoading": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McRetry": "Retry",
+  "i18n131McRetry": "Erneut versuchen",
   "@i18n131McRetry": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McRefresh": "Refresh",
+  "i18n131McRefresh": "Aktualisieren",
   "@i18n131McRefresh": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McTasks": "Tasks",
+  "i18n131McTasks": "Aufgaben",
   "@i18n131McTasks": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McActivity": "Activity",
+  "i18n131McActivity": "Aktivität",
   "@i18n131McActivity": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McShowLess": "Show less",
+  "i18n131McShowLess": "Weniger anzeigen",
   "@i18n131McShowLess": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McSharedRoomName": "Room name",
+  "i18n131McSharedRoomName": "Raumname",
   "@i18n131McSharedRoomName": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McChooseSharedMembers": "Choose official members",
+  "i18n131McChooseSharedMembers": "Offizielle Mitglieder auswählen",
   "@i18n131McChooseSharedMembers": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McRoomRefreshFailed": "Could not refresh this room. Reopen it to reconnect.",
+  "i18n131McRoomRefreshFailed": "Dieser Raum konnte nicht aktualisiert werden. Öffne ihn erneut, um die Verbindung wiederherzustellen.",
   "@i18n131McRoomRefreshFailed": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McNewAgent": "New profile",
+  "i18n131McNewAgent": "Neues Profil",
   "@i18n131McNewAgent": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McNoBots": "A profile has its own name, memory, skills and chat. Create the first one to get started.",
+  "i18n131McNoBots": "Ein Profil hat einen eigenen Namen, Speicher, Fähigkeiten und Chat. Erstelle das erste Profil, um loszulegen.",
   "@i18n131McNoBots": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McSearchAgents": "Search profiles",
+  "i18n131McSearchAgents": "Profile suchen",
   "@i18n131McSearchAgents": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McClearSearch": "Clear search",
+  "i18n131McClearSearch": "Suche leeren",
   "@i18n131McClearSearch": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McActiveNow": "Active now",
+  "i18n131McActiveNow": "Gerade aktiv",
   "@i18n131McActiveNow": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McBotRosterUpdateFailed": "Hermes did not update this profile.",
+  "i18n131McBotRosterUpdateFailed": "Hermes hat dieses Profil nicht aktualisiert.",
   "@i18n131McBotRosterUpdateFailed": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McNoMatchingAgents": "No matching profiles",
+  "i18n131McNoMatchingAgents": "Keine passenden Profile",
   "@i18n131McNoMatchingAgents": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McAttentionSummaryOne": "{approvals} approval · {blocked} blocked",
+  "i18n131McAttentionSummaryOne": "{approvals} Genehmigung · {blocked} blockiert",
   "@i18n131McAttentionSummaryOne": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy.",
+    "description": "i18n131: Phase 3B translated; MissionControlCopy.",
     "placeholders": {
       "approvals": {
         "type": "int"
@@ -4734,9 +4734,9 @@
       }
     }
   },
-  "i18n131McAttentionSummaryOther": "{approvals} approvals · {blocked} blocked",
+  "i18n131McAttentionSummaryOther": "{approvals} Genehmigungen · {blocked} blockiert",
   "@i18n131McAttentionSummaryOther": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy.",
+    "description": "i18n131: Phase 3B translated; MissionControlCopy.",
     "placeholders": {
       "approvals": {
         "type": "int"
@@ -4746,831 +4746,831 @@
       }
     }
   },
-  "i18n131McNeedsYou": "Needs you",
+  "i18n131McNeedsYou": "Braucht dich",
   "@i18n131McNeedsYou": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McUsage": "Usage",
+  "i18n131McUsage": "Nutzung",
   "@i18n131McUsage": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McProfilesUnavailable": "This Hermes installation does not publish profiles.",
+  "i18n131McProfilesUnavailable": "Diese Hermes-Installation stellt keine Profile bereit.",
   "@i18n131McProfilesUnavailable": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McReview": "Review",
+  "i18n131McReview": "Prüfen",
   "@i18n131McReview": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McMemory": "Memory",
+  "i18n131McMemory": "Speicher",
   "@i18n131McMemory": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McStaleProfiles": "Some saved profiles no longer exist. Edit the organization to update it.",
+  "i18n131McStaleProfiles": "Einige gespeicherte Profile existieren nicht mehr. Bearbeite den Arbeitsbereich, um ihn zu aktualisieren.",
   "@i18n131McStaleProfiles": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McUnattributedSessionsOne": "{count} session did not publish a profile owner. They are included only in overall usage.",
+  "i18n131McUnattributedSessionsOne": "Bei {count} Sitzung wurde kein zugehöriges Profil angegeben. Sie zählt nur zur Gesamtnutzung.",
   "@i18n131McUnattributedSessionsOne": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy.",
+    "description": "i18n131: Phase 3B translated; MissionControlCopy.",
     "placeholders": {
       "count": {
         "type": "int"
       }
     }
   },
-  "i18n131McUnattributedSessionsOther": "{count} sessions did not publish a profile owner. They are included only in overall usage.",
+  "i18n131McUnattributedSessionsOther": "Bei {count} Sitzungen wurde kein zugehöriges Profil angegeben. Sie zählen nur zur Gesamtnutzung.",
   "@i18n131McUnattributedSessionsOther": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy.",
+    "description": "i18n131: Phase 3B translated; MissionControlCopy.",
     "placeholders": {
       "count": {
         "type": "int"
       }
     }
   },
-  "i18n131McWorking": "working",
+  "i18n131McWorking": "aktiv",
   "@i18n131McWorking": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McApprovals": "approvals",
+  "i18n131McApprovals": "Genehmigungen",
   "@i18n131McApprovals": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McBlocked": "blocked",
+  "i18n131McBlocked": "blockiert",
   "@i18n131McBlocked": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McTokens": "tokens",
+  "i18n131McTokens": "Tokens",
   "@i18n131McTokens": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McUnknown": "Unknown",
+  "i18n131McUnknown": "Unbekannt",
   "@i18n131McUnknown": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McModelLabel": "Model",
+  "i18n131McModelLabel": "Modell",
   "@i18n131McModelLabel": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McEditBotTitle": "Edit profile",
+  "i18n131McEditBotTitle": "Profil bearbeiten",
   "@i18n131McEditBotTitle": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McBotDisplayName": "Display name",
+  "i18n131McBotDisplayName": "Anzeigename",
   "@i18n131McBotDisplayName": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McBotDisplayNameHint": "e.g. Researcher",
+  "i18n131McBotDisplayNameHint": "z. B. Recherche",
   "@i18n131McBotDisplayNameHint": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McBotSpriteHint": "The sprite becomes this profile's picture.",
+  "i18n131McBotSpriteHint": "Das Sprite wird zum Bild dieses Profils.",
   "@i18n131McBotSpriteHint": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McBotSpriteSearchHint": "Search sprites…",
+  "i18n131McBotSpriteSearchHint": "Sprites suchen…",
   "@i18n131McBotSpriteSearchHint": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McBotSpriteEmpty": "No sprites available.",
+  "i18n131McBotSpriteEmpty": "Keine Sprites verfügbar.",
   "@i18n131McBotSpriteEmpty": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McBotSpriteLoadFailed": "Couldn't load the list.",
+  "i18n131McBotSpriteLoadFailed": "Die Liste konnte nicht geladen werden.",
   "@i18n131McBotSpriteLoadFailed": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McBotSpriteUnsupported": "This Hermes installation does not support profile sprites.",
+  "i18n131McBotSpriteUnsupported": "Diese Hermes-Installation unterstützt keine Profil-Sprites.",
   "@i18n131McBotSpriteUnsupported": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McBotEditorSaved": "Profile updated",
+  "i18n131McBotEditorSaved": "Profil aktualisiert",
   "@i18n131McBotEditorSaved": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McBotEditorSaveFailed": "Hermes did not apply the changes.",
+  "i18n131McBotEditorSaveFailed": "Hermes hat die Änderungen nicht übernommen.",
   "@i18n131McBotEditorSaveFailed": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McCreateAgentSubtitle": "A profile has its own name, memory, skills and chat. It can message your other profiles.",
+  "i18n131McCreateAgentSubtitle": "Ein Profil hat einen eigenen Namen, Speicher, Fähigkeiten und Chat. Es kann deinen anderen Profilen Nachrichten senden.",
   "@i18n131McCreateAgentSubtitle": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
   "i18n131McAgentNameLabel": "Name",
   "@i18n131McAgentNameLabel": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McAgentNameInvalid": "Use lowercase letters, numbers, dashes and underscores.",
+  "i18n131McAgentNameInvalid": "Verwende Kleinbuchstaben, Zahlen, Binde- und Unterstriche.",
   "@i18n131McAgentNameInvalid": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McAgentNameTaken": "A profile with this name already exists.",
+  "i18n131McAgentNameTaken": "Ein Profil mit diesem Namen existiert bereits.",
   "@i18n131McAgentNameTaken": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McAgentTitleLabel": "Title",
+  "i18n131McAgentTitleLabel": "Titel",
   "@i18n131McAgentTitleLabel": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McAgentDescriptionLabel": "Description",
+  "i18n131McAgentDescriptionLabel": "Beschreibung",
   "@i18n131McAgentDescriptionLabel": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McAgentDescriptionHint": "What should this profile help with?",
+  "i18n131McAgentDescriptionHint": "Wobei soll dieses Profil helfen?",
   "@i18n131McAgentDescriptionHint": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McModelInherited": "Inherited from the launch profile",
+  "i18n131McModelInherited": "Vom Startprofil übernommen",
   "@i18n131McModelInherited": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McProviderLabel": "Provider",
+  "i18n131McProviderLabel": "Anbieter",
   "@i18n131McProviderLabel": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McAdvanced": "Advanced",
+  "i18n131McAdvanced": "Erweitert",
   "@i18n131McAdvanced": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McCloneFromLabel": "Clone from profile",
+  "i18n131McCloneFromLabel": "Von Profil klonen",
   "@i18n131McCloneFromLabel": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McCloneFresh": "Fresh profile (bundled skills)",
+  "i18n131McCloneFresh": "Neues Profil (mitgelieferte Fähigkeiten)",
   "@i18n131McCloneFresh": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McShareAuthLabel": "Share keys & accounts with the main profile",
+  "i18n131McShareAuthLabel": "Schlüssel und Konten mit dem Hauptprofil teilen",
   "@i18n131McShareAuthLabel": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McShareAuthHint": "Subscriptions, OAuth logins, and API keys stay shared (not copied), so token refreshes never invalidate each other. Uncheck for an isolated snapshot copy.",
+  "i18n131McShareAuthHint": "Abonnements, OAuth-Anmeldungen und API-Schlüssel werden gemeinsam genutzt und nicht kopiert. So machen Token-Aktualisierungen einander nie ungültig. Deaktiviere diese Option für eine isolierte Momentaufnahme.",
   "@i18n131McShareAuthHint": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McNoSkillsLabel": "Create empty (skip bundled skills)",
+  "i18n131McNoSkillsLabel": "Leer erstellen (ohne mitgelieferte Fähigkeiten)",
   "@i18n131McNoSkillsLabel": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
   "i18n131McSoulOptionalLabel": "SOUL.md (optional)",
   "@i18n131McSoulOptionalLabel": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McSoulOptionalHint": "Leave blank to auto-generate from name/title/description.",
+  "i18n131McSoulOptionalHint": "Leer lassen, um den Inhalt aus Name, Titel und Beschreibung zu erzeugen.",
   "@i18n131McSoulOptionalHint": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McCreateAgentSubmit": "Create profile",
+  "i18n131McCreateAgentSubmit": "Profil erstellen",
   "@i18n131McCreateAgentSubmit": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McCreateAgentError": "Could not create the profile: {detail}",
+  "i18n131McCreateAgentError": "Das Profil konnte nicht erstellt werden: {detail}",
   "@i18n131McCreateAgentError": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy.",
+    "description": "i18n131: Phase 3B translated; MissionControlCopy.",
     "placeholders": {
       "detail": {
         "type": "String"
       }
     }
   },
-  "i18n131McAgentCreated": "Profile @{name} created. Add it to a room when you are ready.",
+  "i18n131McAgentCreated": "Profil @{name} erstellt. Füge es einem Raum hinzu, wenn du bereit bist.",
   "@i18n131McAgentCreated": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy.",
+    "description": "i18n131: Phase 3B translated; MissionControlCopy.",
     "placeholders": {
       "name": {
         "type": "String"
       }
     }
   },
-  "i18n131McStatusIdle": "Idle",
+  "i18n131McStatusIdle": "Inaktiv",
   "@i18n131McStatusIdle": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McStatusThinking": "Thinking",
+  "i18n131McStatusThinking": "Denkt nach",
   "@i18n131McStatusThinking": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McStatusWorking": "Working",
+  "i18n131McStatusWorking": "Arbeitet",
   "@i18n131McStatusWorking": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McStatusResponding": "Responding",
+  "i18n131McStatusResponding": "Antwortet",
   "@i18n131McStatusResponding": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McStatusBlocked": "Blocked",
+  "i18n131McStatusBlocked": "Blockiert",
   "@i18n131McStatusBlocked": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McStatusApprovalRequired": "Approval required",
+  "i18n131McStatusApprovalRequired": "Genehmigung erforderlich",
   "@i18n131McStatusApprovalRequired": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McActivityLabelSessionUpdated": "Session active",
+  "i18n131McActivityLabelSessionUpdated": "Sitzung aktiv",
   "@i18n131McActivityLabelSessionUpdated": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McActivityLabelTaskCreated": "Task created",
+  "i18n131McActivityLabelTaskCreated": "Aufgabe erstellt",
   "@i18n131McActivityLabelTaskCreated": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McActivityLabelTaskStarted": "Task started",
+  "i18n131McActivityLabelTaskStarted": "Aufgabe gestartet",
   "@i18n131McActivityLabelTaskStarted": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McActivityLabelTaskCompleted": "Task completed",
+  "i18n131McActivityLabelTaskCompleted": "Aufgabe abgeschlossen",
   "@i18n131McActivityLabelTaskCompleted": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McActivityLabelTaskBlocked": "Task blocked",
+  "i18n131McActivityLabelTaskBlocked": "Aufgabe blockiert",
   "@i18n131McActivityLabelTaskBlocked": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McBotChat": "Bot Chat",
+  "i18n131McBotChat": "Bot-Chat",
   "@i18n131McBotChat": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McSkills": "Skills",
+  "i18n131McSkills": "Fähigkeiten",
   "@i18n131McSkills": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
   "i18n131McSoul": "SOUL",
   "@i18n131McSoul": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McInput": "input",
+  "i18n131McInput": "Eingabe",
   "@i18n131McInput": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McOutput": "output",
+  "i18n131McOutput": "Ausgabe",
   "@i18n131McOutput": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McReasoning": "reasoning",
+  "i18n131McReasoning": "Denkprozess",
   "@i18n131McReasoning": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McManagerLabel": "Manager",
+  "i18n131McManagerLabel": "Verwaltung",
   "@i18n131McManagerLabel": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McAgentNameHint": "inbox-triage",
+  "i18n131McAgentNameHint": "postfach-sortierung",
   "@i18n131McAgentNameHint": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McAgentTitleHint": "Inbox Triage",
+  "i18n131McAgentTitleHint": "Postfach sortieren",
   "@i18n131McAgentTitleHint": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131McStatusError": "Error",
+  "i18n131McStatusError": "Fehler",
   "@i18n131McStatusError": {
-    "description": "i18n131: Phase 3B English stub; MissionControlCopy."
+    "description": "i18n131: Phase 3B translated; MissionControlCopy."
   },
-  "i18n131AiScreenTitle": "Server integrations",
+  "i18n131AiScreenTitle": "Serverintegrationen",
   "@i18n131AiScreenTitle": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiEntryTitle": "Server integrations",
+  "i18n131AiEntryTitle": "Serverintegrationen",
   "@i18n131AiEntryTitle": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiEntryBody": "Manual MCP, OAuth, webhooks and server-side A2A status.",
+  "i18n131AiEntryBody": "Manuelles MCP, OAuth, Webhooks und serverseitiger A2A-Status.",
   "@i18n131AiEntryBody": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiSectionLabel": "Integration sections",
+  "i18n131AiSectionLabel": "Integrationsbereiche",
   "@i18n131AiSectionLabel": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
   "i18n131AiServerTab": "Server",
   "@i18n131AiServerTab": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiReadOnly": "This instance is read-only. You can inspect state, but server changes are disabled.",
+  "i18n131AiReadOnly": "Diese Instanz ist schreibgeschützt. Du kannst den Status einsehen, aber keine Serveränderungen vornehmen.",
   "@i18n131AiReadOnly": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiRefresh": "Refresh",
+  "i18n131AiRefresh": "Aktualisieren",
   "@i18n131AiRefresh": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiRetry": "Retry",
+  "i18n131AiRetry": "Erneut versuchen",
   "@i18n131AiRetry": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiCancel": "Cancel",
+  "i18n131AiCancel": "Abbrechen",
   "@i18n131AiCancel": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiClose": "Close",
+  "i18n131AiClose": "Schließen",
   "@i18n131AiClose": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiDone": "Done",
+  "i18n131AiDone": "Fertig",
   "@i18n131AiDone": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiCopy": "Copy",
+  "i18n131AiCopy": "Kopieren",
   "@i18n131AiCopy": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiCopied": "Copied.",
+  "i18n131AiCopied": "Kopiert.",
   "@i18n131AiCopied": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiDelete": "Delete",
+  "i18n131AiDelete": "Löschen",
   "@i18n131AiDelete": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiMoreOptions": "More options",
+  "i18n131AiMoreOptions": "Weitere Optionen",
   "@i18n131AiMoreOptions": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiMcpIntro": "Add a server with the same individual create contract as Hermes Desktop. Values entered here are sent once and are not saved by the app.",
+  "i18n131AiMcpIntro": "Füge einen Server über denselben Einzelanlagevorgang wie in Hermes Desktop hinzu. Hier eingegebene Werte werden einmal gesendet und nicht in der App gespeichert.",
   "@i18n131AiMcpIntro": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiAddMcp": "Add MCP server manually",
+  "i18n131AiAddMcp": "MCP-Server manuell hinzufügen",
   "@i18n131AiAddMcp": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiAddMcpBody": "Guided setup for a local command or an HTTP endpoint.",
+  "i18n131AiAddMcpBody": "Geführte Einrichtung für einen lokalen Befehl oder einen HTTP-Endpunkt.",
   "@i18n131AiAddMcpBody": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiNoMcpPut": "Existing servers are never edited by replacing the full MCP map, because redacted credentials could be lost.",
+  "i18n131AiNoMcpPut": "Bestehende Server werden niemals durch Ersetzen der gesamten MCP-Tabelle bearbeitet, da dabei ausgeblendete Zugangsdaten verloren gehen könnten.",
   "@i18n131AiNoMcpPut": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiManualMcpUnavailable": "This Hermes version does not publish individual MCP provisioning.",
+  "i18n131AiManualMcpUnavailable": "Diese Hermes-Version bietet keine Einrichtung einzelner MCP-Server an.",
   "@i18n131AiManualMcpUnavailable": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiMcpFormTitle": "New MCP server",
+  "i18n131AiMcpFormTitle": "Neuer MCP-Server",
   "@i18n131AiMcpFormTitle": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
   "i18n131AiTransport": "Transport",
   "@i18n131AiTransport": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiStdio": "Local command",
+  "i18n131AiStdio": "Lokaler Befehl",
   "@i18n131AiStdio": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
   "i18n131AiName": "Name",
   "@i18n131AiName": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiNameHint": "e.g. reports",
+  "i18n131AiNameHint": "z. B. berichte",
   "@i18n131AiNameHint": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiCommand": "Command",
+  "i18n131AiCommand": "Befehl",
   "@i18n131AiCommand": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiCommandHint": "e.g. npx",
+  "i18n131AiCommandHint": "z. B. npx",
   "@i18n131AiCommandHint": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiArguments": "Arguments",
+  "i18n131AiArguments": "Argumente",
   "@i18n131AiArguments": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiArgumentsHint": "One argument per line. No shell parsing is applied.",
+  "i18n131AiArgumentsHint": "Ein Argument pro Zeile. Die Eingabe wird nicht als Shell-Befehl ausgewertet.",
   "@i18n131AiArgumentsHint": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiEnvironment": "Environment variables",
+  "i18n131AiEnvironment": "Umgebungsvariablen",
   "@i18n131AiEnvironment": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiEnvironmentHint": "Values remain in memory only until this form is submitted or closed.",
+  "i18n131AiEnvironmentHint": "Die Werte bleiben nur im Arbeitsspeicher, bis dieses Formular gesendet oder geschlossen wird.",
   "@i18n131AiEnvironmentHint": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
   "i18n131AiVariableName": "Variable",
   "@i18n131AiVariableName": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiVariableValue": "Value",
+  "i18n131AiVariableValue": "Wert",
   "@i18n131AiVariableValue": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiAddVariable": "Add variable",
+  "i18n131AiAddVariable": "Variable hinzufügen",
   "@i18n131AiAddVariable": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiRemoveVariable": "Remove variable",
+  "i18n131AiRemoveVariable": "Variable entfernen",
   "@i18n131AiRemoveVariable": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiEndpointUrl": "MCP URL",
+  "i18n131AiEndpointUrl": "MCP-URL",
   "@i18n131AiEndpointUrl": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiEndpointHint": "HTTPS, or HTTP only on a private LAN/Tailscale address.",
+  "i18n131AiEndpointHint": "HTTPS oder HTTP nur mit einer privaten LAN-/Tailscale-Adresse.",
   "@i18n131AiEndpointHint": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiAuthentication": "Authentication",
+  "i18n131AiAuthentication": "Authentifizierung",
   "@i18n131AiAuthentication": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiAuthNone": "None",
+  "i18n131AiAuthNone": "Keine",
   "@i18n131AiAuthNone": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiAuthHeader": "Bearer header",
+  "i18n131AiAuthHeader": "Bearer-Header",
   "@i18n131AiAuthHeader": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiAuthOauth": "OAuth in browser",
+  "i18n131AiAuthOauth": "OAuth im Browser",
   "@i18n131AiAuthOauth": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiBearerToken": "Bearer token",
+  "i18n131AiBearerToken": "Bearer-Token",
   "@i18n131AiBearerToken": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiBearerHint": "Sent once to Hermes and never stored by the app.",
+  "i18n131AiBearerHint": "Wird einmal an Hermes gesendet und nie in der App gespeichert.",
   "@i18n131AiBearerHint": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiCreateMcp": "Add server",
+  "i18n131AiCreateMcp": "Server hinzufügen",
   "@i18n131AiCreateMcp": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiMcpCreated": "MCP server added.",
+  "i18n131AiMcpCreated": "MCP-Server hinzugefügt.",
   "@i18n131AiMcpCreated": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiInvalidForm": "Check the highlighted fields and their examples.",
+  "i18n131AiInvalidForm": "Prüfe die markierten Felder und ihre Beispiele.",
   "@i18n131AiInvalidForm": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiIncompleteEnvironment": "Each environment row needs both a variable and a value.",
+  "i18n131AiIncompleteEnvironment": "Jede Umgebungszeile benötigt eine Variable und einen Wert.",
   "@i18n131AiIncompleteEnvironment": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiAuthorize": "Authorize OAuth",
+  "i18n131AiAuthorize": "OAuth autorisieren",
   "@i18n131AiAuthorize": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiOauthTitle": "Authorize MCP server",
+  "i18n131AiOauthTitle": "MCP-Server autorisieren",
   "@i18n131AiOauthTitle": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiOauthBody": "Hermes receives the callback. This app only opens the authorization page and checks the short-lived flow while this window is visible.",
+  "i18n131AiOauthBody": "Hermes empfängt den Rückruf. Diese App öffnet nur die Autorisierungsseite und prüft den kurzlebigen Vorgang, solange dieses Fenster sichtbar ist.",
   "@i18n131AiOauthBody": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiOpenBrowser": "Open authorization page",
+  "i18n131AiOpenBrowser": "Autorisierungsseite öffnen",
   "@i18n131AiOpenBrowser": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiOpeningBrowserFailed": "Android could not open the authorization page.",
+  "i18n131AiOpeningBrowserFailed": "Android konnte die Autorisierungsseite nicht öffnen.",
   "@i18n131AiOpeningBrowserFailed": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiOauthWaiting": "Waiting for authorization…",
+  "i18n131AiOauthWaiting": "Warten auf Autorisierung…",
   "@i18n131AiOauthWaiting": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiOauthApproved": "Authorization complete.",
+  "i18n131AiOauthApproved": "Autorisierung abgeschlossen.",
   "@i18n131AiOauthApproved": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiOauthError": "Hermes reported an authorization error.",
+  "i18n131AiOauthError": "Hermes hat einen Autorisierungsfehler gemeldet.",
   "@i18n131AiOauthError": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiOauthExpired": "This authorization flow expired. Start it again.",
+  "i18n131AiOauthExpired": "Dieser Autorisierungsvorgang ist abgelaufen. Starte ihn erneut.",
   "@i18n131AiOauthExpired": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiOauthUnknown": "Hermes returned an unknown authorization state.",
+  "i18n131AiOauthUnknown": "Hermes hat einen unbekannten Autorisierungsstatus zurückgegeben.",
   "@i18n131AiOauthUnknown": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiOauthToolsOne": "{count} tool available",
+  "i18n131AiOauthToolsOne": "{count} Werkzeug verfügbar",
   "@i18n131AiOauthToolsOne": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy.",
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy.",
     "placeholders": {
       "count": {
         "type": "int"
       }
     }
   },
-  "i18n131AiOauthToolsOther": "{count} tools available",
+  "i18n131AiOauthToolsOther": "{count} Werkzeuge verfügbar",
   "@i18n131AiOauthToolsOther": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy.",
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy.",
     "placeholders": {
       "count": {
         "type": "int"
       }
     }
   },
-  "i18n131AiWebhooksIntro": "Webhooks are an official Hermes gateway platform. Subscriptions hot-reload after the receiver is enabled.",
+  "i18n131AiWebhooksIntro": "Webhooks sind eine offizielle Hermes-Gateway-Plattform. Abonnements werden nach dem Aktivieren des Empfängers ohne Neustart neu geladen.",
   "@i18n131AiWebhooksIntro": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiWebhooksUnavailable": "This Hermes version does not publish webhook administration.",
+  "i18n131AiWebhooksUnavailable": "Diese Hermes-Version bietet keine Webhook-Verwaltung an.",
   "@i18n131AiWebhooksUnavailable": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiWebhookLoadFailed": "Webhooks could not be loaded.",
+  "i18n131AiWebhookLoadFailed": "Webhooks konnten nicht geladen werden.",
   "@i18n131AiWebhookLoadFailed": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiWebhooksDisabled": "Webhook receiver disabled",
+  "i18n131AiWebhooksDisabled": "Webhook-Empfänger deaktiviert",
   "@i18n131AiWebhooksDisabled": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiWebhooksDisabledBody": "Enable it to accept incoming HTTP events. Hermes may need to restart the Gateway.",
+  "i18n131AiWebhooksDisabledBody": "Aktiviere ihn, um eingehende HTTP-Ereignisse zu empfangen. Hermes muss das Gateway möglicherweise neu starten.",
   "@i18n131AiWebhooksDisabledBody": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiEnableWebhooks": "Enable webhooks",
+  "i18n131AiEnableWebhooks": "Webhooks aktivieren",
   "@i18n131AiEnableWebhooks": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiEnableWarningTitle": "Enable webhook receiver?",
+  "i18n131AiEnableWarningTitle": "Webhook-Empfänger aktivieren?",
   "@i18n131AiEnableWarningTitle": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiEnableWarningBody": "Hermes may restart the Gateway. Active chats can reconnect while the receiver comes online.",
+  "i18n131AiEnableWarningBody": "Hermes startet das Gateway möglicherweise neu. Aktive Chats können sich während des Starts des Empfängers neu verbinden.",
   "@i18n131AiEnableWarningBody": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiEnable": "Enable",
+  "i18n131AiEnable": "Aktivieren",
   "@i18n131AiEnable": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiDisable": "Disable",
+  "i18n131AiDisable": "Deaktivieren",
   "@i18n131AiDisable": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiWebhooksEnabledRestarting": "Webhooks enabled; the Gateway is restarting.",
+  "i18n131AiWebhooksEnabledRestarting": "Webhooks aktiviert; das Gateway wird neu gestartet.",
   "@i18n131AiWebhooksEnabledRestarting": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiWebhooksEnabled": "Webhooks enabled.",
+  "i18n131AiWebhooksEnabled": "Webhooks aktiviert.",
   "@i18n131AiWebhooksEnabled": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiWebhooksNeedRestart": "Webhooks are enabled, but the Gateway still needs a restart.",
+  "i18n131AiWebhooksNeedRestart": "Webhooks sind aktiviert, aber das Gateway muss noch neu gestartet werden.",
   "@i18n131AiWebhooksNeedRestart": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiAddWebhook": "New subscription",
+  "i18n131AiAddWebhook": "Neues Abonnement",
   "@i18n131AiAddWebhook": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiAddWebhookBody": "Create an authenticated route and copy its one-time secret.",
+  "i18n131AiAddWebhookBody": "Erstelle eine authentifizierte Route und kopiere ihr einmalig angezeigtes Geheimnis.",
   "@i18n131AiAddWebhookBody": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiNoWebhooks": "No webhook subscriptions yet.",
+  "i18n131AiNoWebhooks": "Noch keine Webhook-Abonnements.",
   "@i18n131AiNoWebhooks": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiWebhookFormTitle": "New webhook subscription",
+  "i18n131AiWebhookFormTitle": "Neues Webhook-Abonnement",
   "@i18n131AiWebhookFormTitle": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiDescription": "Description",
+  "i18n131AiDescription": "Beschreibung",
   "@i18n131AiDescription": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiDescriptionHint": "What this route does (optional)",
+  "i18n131AiDescriptionHint": "Was diese Route tut (optional)",
   "@i18n131AiDescriptionHint": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiPrompt": "Prompt",
+  "i18n131AiPrompt": "Anweisung",
   "@i18n131AiPrompt": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiPromptHint": "Instructions for Hermes when this event arrives (optional)",
+  "i18n131AiPromptHint": "Anweisungen für Hermes beim Eingang dieses Ereignisses (optional)",
   "@i18n131AiPromptHint": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiEvents": "Events",
+  "i18n131AiEvents": "Ereignisse",
   "@i18n131AiEvents": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiEventsHint": "Comma-separated; empty accepts all events",
+  "i18n131AiEventsHint": "Durch Kommas getrennt; leer lassen, um alle Ereignisse anzunehmen",
   "@i18n131AiEventsHint": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiSkills": "Skills",
+  "i18n131AiSkills": "Fähigkeiten",
   "@i18n131AiSkills": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiSkillsHint": "Optional, comma-separated skill names",
+  "i18n131AiSkillsHint": "Optional, durch Kommas getrennte Namen von Fähigkeiten",
   "@i18n131AiSkillsHint": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiDelivery": "Deliver to",
+  "i18n131AiDelivery": "Zustellen an",
   "@i18n131AiDelivery": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiDeliverOnly": "Deliver payload only",
+  "i18n131AiDeliverOnly": "Nur Nutzdaten zustellen",
   "@i18n131AiDeliverOnly": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiDeliverOnlyHint": "Skips the agent response for channel delivery.",
+  "i18n131AiDeliverOnlyHint": "Überspringt die Agentenantwort bei der Kanalzustellung.",
   "@i18n131AiDeliverOnlyHint": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiDeliveryLabelLog": "Log only",
+  "i18n131AiDeliveryLabelLog": "Nur Protokoll",
   "@i18n131AiDeliveryLabelLog": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiDeliveryLabelEmail": "Email",
+  "i18n131AiDeliveryLabelEmail": "E-Mail",
   "@i18n131AiDeliveryLabelEmail": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiDeliveryLabelGithubComment": "GitHub comment",
+  "i18n131AiDeliveryLabelGithubComment": "GitHub-Kommentar",
   "@i18n131AiDeliveryLabelGithubComment": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiCreateWebhook": "Create",
+  "i18n131AiCreateWebhook": "Erstellen",
   "@i18n131AiCreateWebhook": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiWebhookCreated": "Subscription created.",
+  "i18n131AiWebhookCreated": "Abonnement erstellt.",
   "@i18n131AiWebhookCreated": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiDuplicateWebhook": "A webhook with that name already exists. Delete it explicitly before creating a replacement.",
+  "i18n131AiDuplicateWebhook": "Ein Webhook mit diesem Namen existiert bereits. Lösche ihn ausdrücklich, bevor du einen Ersatz erstellst.",
   "@i18n131AiDuplicateWebhook": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiSecretTitle": "Copy the webhook secret now",
+  "i18n131AiSecretTitle": "Webhook-Geheimnis jetzt kopieren",
   "@i18n131AiSecretTitle": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiSecretBody": "Hermes shows this secret only once. Closing this receipt removes it from the app and it cannot be recovered here.",
+  "i18n131AiSecretBody": "Hermes zeigt dieses Geheimnis nur einmal an. Wenn du diese Bestätigung schließt, wird es aus der App entfernt und kann hier nicht wiederhergestellt werden.",
   "@i18n131AiSecretBody": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiWebhookUrl": "Webhook URL",
+  "i18n131AiWebhookUrl": "Webhook-URL",
   "@i18n131AiWebhookUrl": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiWebhookSecret": "One-time secret",
+  "i18n131AiWebhookSecret": "Einmalig angezeigtes Geheimnis",
   "@i18n131AiWebhookSecret": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiDeleteWebhookTitle": "Delete webhook?",
+  "i18n131AiDeleteWebhookTitle": "Webhook löschen?",
   "@i18n131AiDeleteWebhookTitle": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiDeleteWebhookBody": "This permanently removes the subscription. Existing integrations will stop working.",
+  "i18n131AiDeleteWebhookBody": "Das Abonnement wird dauerhaft entfernt. Bestehende Integrationen funktionieren dann nicht mehr.",
   "@i18n131AiDeleteWebhookBody": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiWebhookDeleted": "Webhook deleted.",
+  "i18n131AiWebhookDeleted": "Webhook gelöscht.",
   "@i18n131AiWebhookDeleted": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiWebhookSubtitleAllEvents": "all events",
+  "i18n131AiWebhookSubtitleAllEvents": "alle Ereignisse",
   "@i18n131AiWebhookSubtitleAllEvents": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiA2aIntro": "A2A runs entirely on the Hermes host. Android only reports the official platform status and does not add another protocol client.",
+  "i18n131AiA2aIntro": "A2A läuft vollständig auf dem Hermes-Host. Android zeigt nur den offiziellen Plattformstatus an und fügt keinen weiteren Protokollclient hinzu.",
   "@i18n131AiA2aIntro": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiA2aUnavailable": "This server does not publish its platform catalog.",
+  "i18n131AiA2aUnavailable": "Dieser Server stellt keinen Plattformkatalog bereit.",
   "@i18n131AiA2aUnavailable": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiA2aNotPublished": "A2A is not published by this Hermes installation.",
+  "i18n131AiA2aNotPublished": "Diese Hermes-Installation stellt A2A nicht bereit.",
   "@i18n131AiA2aNotPublished": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiConfigured": "Configured",
+  "i18n131AiConfigured": "Konfiguriert",
   "@i18n131AiConfigured": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiNotConfigured": "Not configured",
+  "i18n131AiNotConfigured": "Nicht konfiguriert",
   "@i18n131AiNotConfigured": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiRunning": "Gateway running",
+  "i18n131AiRunning": "Gateway läuft",
   "@i18n131AiRunning": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiStopped": "Gateway stopped",
+  "i18n131AiStopped": "Gateway gestoppt",
   "@i18n131AiStopped": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiActive": "Enabled",
+  "i18n131AiActive": "Aktiviert",
   "@i18n131AiActive": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiInactive": "Disabled",
+  "i18n131AiInactive": "Deaktiviert",
   "@i18n131AiInactive": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiA2aStateConnected": "Connected",
+  "i18n131AiA2aStateConnected": "Verbunden",
   "@i18n131AiA2aStateConnected": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiA2aStateConnecting": "Connecting",
+  "i18n131AiA2aStateConnecting": "Verbindung wird hergestellt",
   "@i18n131AiA2aStateConnecting": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiA2aStateRetrying": "Retrying",
+  "i18n131AiA2aStateRetrying": "Erneuter Versuch",
   "@i18n131AiA2aStateRetrying": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiA2aStatePendingRestart": "Pending restart",
+  "i18n131AiA2aStatePendingRestart": "Neustart ausstehend",
   "@i18n131AiA2aStatePendingRestart": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiA2aStateNotConfigured": "Not configured",
+  "i18n131AiA2aStateNotConfigured": "Nicht konfiguriert",
   "@i18n131AiA2aStateNotConfigured": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiA2aStateGatewayStopped": "Gateway stopped",
+  "i18n131AiA2aStateGatewayStopped": "Gateway gestoppt",
   "@i18n131AiA2aStateGatewayStopped": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiA2aStateStartupFailed": "Startup failed",
+  "i18n131AiA2aStateStartupFailed": "Start fehlgeschlagen",
   "@i18n131AiA2aStateStartupFailed": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiA2aStateDisconnected": "Disconnected",
+  "i18n131AiA2aStateDisconnected": "Getrennt",
   "@i18n131AiA2aStateDisconnected": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiA2aStateFatal": "Fatal error",
+  "i18n131AiA2aStateFatal": "Schwerwiegender Fehler",
   "@i18n131AiA2aStateFatal": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiA2aStateDisabled": "Disabled",
+  "i18n131AiA2aStateDisabled": "Deaktiviert",
   "@i18n131AiA2aStateDisabled": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiA2aStateOther": "Status unavailable",
+  "i18n131AiA2aStateOther": "Status nicht verfügbar",
   "@i18n131AiA2aStateOther": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiUnsupported": "This operation is not available on the connected Hermes version.",
+  "i18n131AiUnsupported": "Dieser Vorgang ist in der verbundenen Hermes-Version nicht verfügbar.",
   "@i18n131AiUnsupported": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiForbidden": "The current Dashboard credentials do not allow this operation.",
+  "i18n131AiForbidden": "Die aktuellen Dashboard-Zugangsdaten erlauben diesen Vorgang nicht.",
   "@i18n131AiForbidden": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiUnavailable": "Hermes could not complete the operation right now.",
+  "i18n131AiUnavailable": "Hermes konnte den Vorgang gerade nicht abschließen.",
   "@i18n131AiUnavailable": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiInvalidResponse": "Hermes returned an invalid integration response.",
+  "i18n131AiInvalidResponse": "Hermes hat eine ungültige Integrationsantwort zurückgegeben.",
   "@i18n131AiInvalidResponse": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
-  "i18n131AiRejected": "Hermes rejected the values or the server state changed.",
+  "i18n131AiRejected": "Hermes hat die Werte abgelehnt oder der Serverstatus hat sich geändert.",
   "@i18n131AiRejected": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
   "i18n131AiMcpTab": "MCP",
   "@i18n131AiMcpTab": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
   "i18n131AiWebhooksTab": "Webhooks",
   "@i18n131AiWebhooksTab": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
   "i18n131AiHttp": "HTTP",
   "@i18n131AiHttp": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
   "i18n131AiA2aTitle": "A2A",
   "@i18n131AiA2aTitle": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
   "i18n131AiDeliveryLabelTelegram": "Telegram",
   "@i18n131AiDeliveryLabelTelegram": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
   "i18n131AiDeliveryLabelDiscord": "Discord",
   "@i18n131AiDeliveryLabelDiscord": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
   "i18n131AiDeliveryLabelSlack": "Slack",
   "@i18n131AiDeliveryLabelSlack": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy."
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy."
   },
   "i18n131AiWebhookSubtitleFormat": "{deliver} · {events}",
   "@i18n131AiWebhookSubtitleFormat": {
-    "description": "i18n131: Phase 3B English stub; AdminIntegrationsCopy.",
+    "description": "i18n131: Phase 3B translated; AdminIntegrationsCopy.",
     "placeholders": {
       "deliver": {
         "type": "String"
@@ -5580,13 +5580,13 @@
       }
     }
   },
-  "i18n131TasksBulkPartialTitle": "Some tasks were not changed",
+  "i18n131TasksBulkPartialTitle": "Einige Aufgaben wurden nicht geändert",
   "@i18n131TasksBulkPartialTitle": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksBulkPartial": "{ok} archived; {failed} could not be changed.",
+  "i18n131TasksBulkPartial": "{ok} archiviert; {failed} konnten nicht geändert werden.",
   "@i18n131TasksBulkPartial": {
-    "description": "i18n131: Phase 3B English stub; tasks.",
+    "description": "i18n131: Phase 3B translated; tasks.",
     "placeholders": {
       "ok": {
         "type": "int"
@@ -5596,254 +5596,254 @@
       }
     }
   },
-  "i18n131TasksActionUnavailable": "This operation is not available on the server.",
+  "i18n131TasksActionUnavailable": "Dieser Vorgang ist auf dem Server nicht verfügbar.",
   "@i18n131TasksActionUnavailable": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksSpecify": "Specify",
+  "i18n131TasksSpecify": "Präzisieren",
   "@i18n131TasksSpecify": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksSpecifyTitle": "Specify task",
+  "i18n131TasksSpecifyTitle": "Aufgabe präzisieren",
   "@i18n131TasksSpecifyTitle": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksSpecifyBody": "Hermes will use the auxiliary model to flesh out this triage task. This can take several minutes.",
+  "i18n131TasksSpecifyBody": "Hermes wird diese zu sichtende Aufgabe mit dem Hilfsmodell ausarbeiten. Das kann mehrere Minuten dauern.",
   "@i18n131TasksSpecifyBody": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksSpecifyStarted": "The task was specified.",
+  "i18n131TasksSpecifyStarted": "Die Aufgabe wurde präzisiert.",
   "@i18n131TasksSpecifyStarted": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksDecompose": "Decompose",
+  "i18n131TasksDecompose": "Aufteilen",
   "@i18n131TasksDecompose": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksDecomposeTitle": "Decompose into child tasks",
+  "i18n131TasksDecomposeTitle": "In Teilaufgaben aufteilen",
   "@i18n131TasksDecomposeTitle": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksDecomposeBody": "Hermes will create a child-task graph and route it to compatible profiles. This can take several minutes.",
+  "i18n131TasksDecomposeBody": "Hermes erstellt ein Teilaufgabendiagramm und weist es passenden Profilen zu. Das kann mehrere Minuten dauern.",
   "@i18n131TasksDecomposeBody": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksDecomposeResult": "Decomposition complete: {count} child tasks.",
+  "i18n131TasksDecomposeResult": "Aufteilung abgeschlossen: {count} Teilaufgaben.",
   "@i18n131TasksDecomposeResult": {
-    "description": "i18n131: Phase 3B English stub; tasks.",
+    "description": "i18n131: Phase 3B translated; tasks.",
     "placeholders": {
       "count": {
         "type": "int"
       }
     }
   },
-  "i18n131TasksAttachmentTooLarge": "The attachment exceeds the official 25 MiB limit.",
+  "i18n131TasksAttachmentTooLarge": "Der Anhang überschreitet die offizielle Grenze von 25 MiB.",
   "@i18n131TasksAttachmentTooLarge": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksAttachmentUnavailable": "Android could not provide this file.",
+  "i18n131TasksAttachmentUnavailable": "Android konnte diese Datei nicht bereitstellen.",
   "@i18n131TasksAttachmentUnavailable": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksAttachmentUploaded": "Attachment uploaded.",
+  "i18n131TasksAttachmentUploaded": "Anhang hochgeladen.",
   "@i18n131TasksAttachmentUploaded": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksSaveAttachment": "Save attachment",
+  "i18n131TasksSaveAttachment": "Anhang speichern",
   "@i18n131TasksSaveAttachment": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksAttachmentSaved": "Attachment saved.",
+  "i18n131TasksAttachmentSaved": "Anhang gespeichert.",
   "@i18n131TasksAttachmentSaved": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksDeleteAttachment": "Delete attachment",
+  "i18n131TasksDeleteAttachment": "Anhang löschen",
   "@i18n131TasksDeleteAttachment": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksDeleteAttachmentBody": "Delete “{name}” from the server? This cannot be undone.",
+  "i18n131TasksDeleteAttachmentBody": "„{name}“ vom Server löschen? Das kann nicht rückgängig gemacht werden.",
   "@i18n131TasksDeleteAttachmentBody": {
-    "description": "i18n131: Phase 3B English stub; tasks.",
+    "description": "i18n131: Phase 3B translated; tasks.",
     "placeholders": {
       "name": {
         "type": "String"
       }
     }
   },
-  "i18n131TasksDelete": "Delete",
+  "i18n131TasksDelete": "Löschen",
   "@i18n131TasksDelete": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksAttachmentDeleted": "Attachment deleted.",
+  "i18n131TasksAttachmentDeleted": "Anhang gelöscht.",
   "@i18n131TasksAttachmentDeleted": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksWorkerLog": "Worker log",
+  "i18n131TasksWorkerLog": "Worker-Protokoll",
   "@i18n131TasksWorkerLog": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksNoLog": "This task does not have a log yet.",
+  "i18n131TasksNoLog": "Für diese Aufgabe gibt es noch kein Protokoll.",
   "@i18n131TasksNoLog": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksLogTruncated": "Only the most recent log tail is shown.",
+  "i18n131TasksLogTruncated": "Nur das jüngste Ende des Protokolls wird angezeigt.",
   "@i18n131TasksLogTruncated": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksRunInspection": "Run inspection",
+  "i18n131TasksRunInspection": "Ausführung prüfen",
   "@i18n131TasksRunInspection": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksAlive": "Alive",
+  "i18n131TasksAlive": "Aktiv",
   "@i18n131TasksAlive": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksYes": "Yes",
+  "i18n131TasksYes": "Ja",
   "@i18n131TasksYes": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
   "i18n131TasksStatus": "Status",
   "@i18n131TasksStatus": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
   "i18n131TasksThreads": "Threads",
   "@i18n131TasksThreads": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksReason": "Reason",
+  "i18n131TasksReason": "Grund",
   "@i18n131TasksReason": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksError": "Error",
+  "i18n131TasksError": "Fehler",
   "@i18n131TasksError": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksTerminate": "Terminate",
+  "i18n131TasksTerminate": "Beenden",
   "@i18n131TasksTerminate": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksTerminateTitle": "Terminate run",
+  "i18n131TasksTerminateTitle": "Ausführung beenden",
   "@i18n131TasksTerminateTitle": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksTerminateBody": "The worker for run #{id} will stop and the task will return to the queue. Continue?",
+  "i18n131TasksTerminateBody": "Der Worker für Ausführung #{id} wird gestoppt und die Aufgabe kommt zurück in die Warteschlange. Fortfahren?",
   "@i18n131TasksTerminateBody": {
-    "description": "i18n131: Phase 3B English stub; tasks.",
+    "description": "i18n131: Phase 3B translated; tasks.",
     "placeholders": {
       "id": {
         "type": "int"
       }
     }
   },
-  "i18n131TasksRunTerminated": "Run terminated and requeued.",
+  "i18n131TasksRunTerminated": "Ausführung beendet und erneut eingereiht.",
   "@i18n131TasksRunTerminated": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksReclaim": "Reclaim",
+  "i18n131TasksReclaim": "Zurückholen",
   "@i18n131TasksReclaim": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksReclaimTitle": "Reclaim stuck task",
+  "i18n131TasksReclaimTitle": "Festhängende Aufgabe zurückholen",
   "@i18n131TasksReclaimTitle": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksReclaimBody": "The current worker will stop and the task will return to the queue. Use this only for a stuck run.",
+  "i18n131TasksReclaimBody": "Der aktuelle Worker wird gestoppt und die Aufgabe kommt zurück in die Warteschlange. Nur bei einer festhängenden Ausführung verwenden.",
   "@i18n131TasksReclaimBody": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksTaskReclaimed": "Task reclaimed and requeued.",
+  "i18n131TasksTaskReclaimed": "Aufgabe zurückgeholt und erneut eingereiht.",
   "@i18n131TasksTaskReclaimed": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksChooseProfile": "Choose profile",
+  "i18n131TasksChooseProfile": "Profil auswählen",
   "@i18n131TasksChooseProfile": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksReassign": "Reassign",
+  "i18n131TasksReassign": "Neu zuweisen",
   "@i18n131TasksReassign": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksReassignTitle": "Reassign task",
+  "i18n131TasksReassignTitle": "Aufgabe neu zuweisen",
   "@i18n131TasksReassignTitle": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksReassignBodyReclaims": "The task will be assigned to “{profile}”. The current worker will be stopped first.",
+  "i18n131TasksReassignBodyReclaims": "Die Aufgabe wird „{profile}“ zugewiesen. Der aktuelle Worker wird zuerst gestoppt.",
   "@i18n131TasksReassignBodyReclaims": {
-    "description": "i18n131: Phase 3B English stub; tasks.",
+    "description": "i18n131: Phase 3B translated; tasks.",
     "placeholders": {
       "profile": {
         "type": "String"
       }
     }
   },
-  "i18n131TasksReassignBody": "The task will be assigned to “{profile}”.",
+  "i18n131TasksReassignBody": "Die Aufgabe wird „{profile}“ zugewiesen.",
   "@i18n131TasksReassignBody": {
-    "description": "i18n131: Phase 3B English stub; tasks.",
+    "description": "i18n131: Phase 3B translated; tasks.",
     "placeholders": {
       "profile": {
         "type": "String"
       }
     }
   },
-  "i18n131TasksTaskReassigned": "Task reassigned.",
+  "i18n131TasksTaskReassigned": "Aufgabe neu zugewiesen.",
   "@i18n131TasksTaskReassigned": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksModelOptionsUnavailable": "This server does not publish Kanban model options.",
+  "i18n131TasksModelOptionsUnavailable": "Dieser Server stellt keine Kanban-Modelloptionen bereit.",
   "@i18n131TasksModelOptionsUnavailable": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksChooseModel": "Model for this task",
+  "i18n131TasksChooseModel": "Modell für diese Aufgabe",
   "@i18n131TasksChooseModel": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksInheritModel": "Inherit model from profile",
+  "i18n131TasksInheritModel": "Modell vom Profil übernehmen",
   "@i18n131TasksInheritModel": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksReasoningEffort": "Reasoning effort",
+  "i18n131TasksReasoningEffort": "Denkaufwand",
   "@i18n131TasksReasoningEffort": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksInheritEffort": "Inherit effort from profile",
+  "i18n131TasksInheritEffort": "Denkaufwand vom Profil übernehmen",
   "@i18n131TasksInheritEffort": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksEffortLabelNone": "Off",
+  "i18n131TasksEffortLabelNone": "Aus",
   "@i18n131TasksEffortLabelNone": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
   "i18n131TasksEffortLabelMinimal": "Minimal",
   "@i18n131TasksEffortLabelMinimal": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksEffortLabelLow": "Low",
+  "i18n131TasksEffortLabelLow": "Niedrig",
   "@i18n131TasksEffortLabelLow": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksEffortLabelMedium": "Medium",
+  "i18n131TasksEffortLabelMedium": "Mittel",
   "@i18n131TasksEffortLabelMedium": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksEffortLabelHigh": "High",
+  "i18n131TasksEffortLabelHigh": "Hoch",
   "@i18n131TasksEffortLabelHigh": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksEffortLabelXhigh": "XHigh",
+  "i18n131TasksEffortLabelXhigh": "Sehr hoch",
   "@i18n131TasksEffortLabelXhigh": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksEffortLabelMax": "Max",
+  "i18n131TasksEffortLabelMax": "Maximal",
   "@i18n131TasksEffortLabelMax": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksApplyModelTitle": "Apply model configuration",
+  "i18n131TasksApplyModelTitle": "Modellkonfiguration anwenden",
   "@i18n131TasksApplyModelTitle": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksApplyModelBody": "Model: {model}\nReasoning: {effortLabelValue}",
+  "i18n131TasksApplyModelBody": "Modell: {model}\nDenkaufwand: {effortLabelValue}",
   "@i18n131TasksApplyModelBody": {
-    "description": "i18n131: Phase 3B English stub; tasks.",
+    "description": "i18n131: Phase 3B translated; tasks.",
     "placeholders": {
       "model": {
         "type": "String"
@@ -5853,590 +5853,590 @@
       }
     }
   },
-  "i18n131TasksApply": "Apply",
+  "i18n131TasksApply": "Anwenden",
   "@i18n131TasksApply": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksModelApplied": "Model configuration applied.",
+  "i18n131TasksModelApplied": "Modellkonfiguration angewendet.",
   "@i18n131TasksModelApplied": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksNo": "No",
+  "i18n131TasksNo": "Nein",
   "@i18n131TasksNo": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksMemory": "RAM",
+  "i18n131TasksMemory": "Arbeitsspeicher",
   "@i18n131TasksMemory": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131TasksEffortLabelUltra": "Ultra",
+  "i18n131TasksEffortLabelUltra": "Extrem",
   "@i18n131TasksEffortLabelUltra": {
-    "description": "i18n131: Phase 3B English stub; tasks."
+    "description": "i18n131: Phase 3B translated; tasks."
   },
-  "i18n131DetailReadOnly": "This instance is read-only.",
+  "i18n131DetailReadOnly": "Diese Instanz ist schreibgeschützt.",
   "@i18n131DetailReadOnly": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailObjective": "Objective · read all",
+  "i18n131DetailObjective": "Ziel · alles lesen",
   "@i18n131DetailObjective": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailResult": "Result",
+  "i18n131DetailResult": "Ergebnis",
   "@i18n131DetailResult": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailLatestSummary": "Latest summary",
+  "i18n131DetailLatestSummary": "Neueste Zusammenfassung",
   "@i18n131DetailLatestSummary": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailDiagnostics": "Diagnostics",
+  "i18n131DetailDiagnostics": "Diagnose",
   "@i18n131DetailDiagnostics": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailDependencies": "Dependencies",
+  "i18n131DetailDependencies": "Abhängigkeiten",
   "@i18n131DetailDependencies": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailParents": "Depends on",
+  "i18n131DetailParents": "Hängt ab von",
   "@i18n131DetailParents": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailChildren": "Unblocks",
+  "i18n131DetailChildren": "Gibt frei",
   "@i18n131DetailChildren": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailBlockedBy": "Blocked by",
+  "i18n131DetailBlockedBy": "Blockiert durch",
   "@i18n131DetailBlockedBy": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailBlocks": "Blocks",
+  "i18n131DetailBlocks": "Blockiert",
   "@i18n131DetailBlocks": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailChildResults": "Child tasks",
+  "i18n131DetailChildResults": "Teilaufgaben",
   "@i18n131DetailChildResults": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailComments": "Comments",
+  "i18n131DetailComments": "Kommentare",
   "@i18n131DetailComments": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailNoComments": "No comments yet.",
+  "i18n131DetailNoComments": "Noch keine Kommentare.",
   "@i18n131DetailNoComments": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailSomeone": "Someone",
+  "i18n131DetailSomeone": "Jemand",
   "@i18n131DetailSomeone": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailAddComment": "Add a comment",
+  "i18n131DetailAddComment": "Kommentar hinzufügen",
   "@i18n131DetailAddComment": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailMessageWorker": "Message the worker",
+  "i18n131DetailMessageWorker": "Dem Worker schreiben",
   "@i18n131DetailMessageWorker": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailSend": "Send",
+  "i18n131DetailSend": "Senden",
   "@i18n131DetailSend": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailAttachments": "Attachments",
+  "i18n131DetailAttachments": "Anhänge",
   "@i18n131DetailAttachments": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailNoAttachments": "No attachments.",
+  "i18n131DetailNoAttachments": "Keine Anhänge.",
   "@i18n131DetailNoAttachments": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailUploadAttachment": "Upload attachment",
+  "i18n131DetailUploadAttachment": "Anhang hochladen",
   "@i18n131DetailUploadAttachment": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailDownload": "Download",
+  "i18n131DetailDownload": "Herunterladen",
   "@i18n131DetailDownload": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailDeleteAttachment": "Delete attachment",
+  "i18n131DetailDeleteAttachment": "Anhang löschen",
   "@i18n131DetailDeleteAttachment": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailRuns": "Runs",
+  "i18n131DetailRuns": "Ausführungen",
   "@i18n131DetailRuns": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailRun": "Run",
+  "i18n131DetailRun": "Ausführung",
   "@i18n131DetailRun": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailInspect": "Inspect",
+  "i18n131DetailInspect": "Prüfen",
   "@i18n131DetailInspect": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailTerminate": "Terminate run",
+  "i18n131DetailTerminate": "Ausführung beenden",
   "@i18n131DetailTerminate": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailLog": "Log",
+  "i18n131DetailLog": "Protokoll",
   "@i18n131DetailLog": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailActivity": "Activity",
+  "i18n131DetailActivity": "Aktivität",
   "@i18n131DetailActivity": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailShowAll": "Show all",
+  "i18n131DetailShowAll": "Alle anzeigen",
   "@i18n131DetailShowAll": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailShowLess": "Show less",
+  "i18n131DetailShowLess": "Weniger anzeigen",
   "@i18n131DetailShowLess": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailOperations": "Operations",
+  "i18n131DetailOperations": "Aktionen",
   "@i18n131DetailOperations": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailModel": "Task model",
+  "i18n131DetailModel": "Aufgabenmodell",
   "@i18n131DetailModel": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailInheritModel": "Inherit from profile",
+  "i18n131DetailInheritModel": "Vom Profil übernehmen",
   "@i18n131DetailInheritModel": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailReassign": "Reassign",
+  "i18n131DetailReassign": "Neu zuweisen",
   "@i18n131DetailReassign": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailReclaim": "Reclaim and requeue",
+  "i18n131DetailReclaim": "Zurückholen und erneut einreihen",
   "@i18n131DetailReclaim": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailSpecify": "Specify",
+  "i18n131DetailSpecify": "Präzisieren",
   "@i18n131DetailSpecify": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailDecompose": "Decompose",
+  "i18n131DetailDecompose": "Aufteilen",
   "@i18n131DetailDecompose": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailNotifyWhenDone": "Notify me when it's done",
+  "i18n131DetailNotifyWhenDone": "Bei Abschluss benachrichtigen",
   "@i18n131DetailNotifyWhenDone": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailMuteNotifications": "Mute notifications",
+  "i18n131DetailMuteNotifications": "Benachrichtigungen stummschalten",
   "@i18n131DetailMuteNotifications": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131DetailMuteNotificationsSub": "Don't notify status changes for this task, even if Kanban results are enabled",
+  "i18n131DetailMuteNotificationsSub": "Keine Statusänderungen dieser Aufgabe melden, auch wenn Kanban-Ergebnisse aktiviert sind",
   "@i18n131DetailMuteNotificationsSub": {
-    "description": "i18n131: Phase 3B English stub; detail."
+    "description": "i18n131: Phase 3B translated; detail."
   },
-  "i18n131TaskSheetTheTaskCouldNotBeAssignedTry": "The task could not be assigned. Try again.",
+  "i18n131TaskSheetTheTaskCouldNotBeAssignedTry": "Die Aufgabe konnte nicht zugewiesen werden. Versuche es erneut.",
   "@i18n131TaskSheetTheTaskCouldNotBeAssignedTry": {
-    "description": "i18n131: Phase 3B English stub; taskSheet."
+    "description": "i18n131: Phase 3B translated; taskSheet."
   },
-  "i18n131TaskSheetLow": "Low",
+  "i18n131TaskSheetLow": "Niedrig",
   "@i18n131TaskSheetLow": {
-    "description": "i18n131: Phase 3B English stub; taskSheet."
+    "description": "i18n131: Phase 3B translated; taskSheet."
   },
   "i18n131TaskSheetNormal": "Normal",
   "@i18n131TaskSheetNormal": {
-    "description": "i18n131: Phase 3B English stub; taskSheet."
+    "description": "i18n131: Phase 3B translated; taskSheet."
   },
-  "i18n131TaskSheetHigh": "High",
+  "i18n131TaskSheetHigh": "Hoch",
   "@i18n131TaskSheetHigh": {
-    "description": "i18n131: Phase 3B English stub; taskSheet."
+    "description": "i18n131: Phase 3B translated; taskSheet."
   },
-  "i18n131TaskSheetAssignTask": "Assign task",
+  "i18n131TaskSheetAssignTask": "Aufgabe zuweisen",
   "@i18n131TaskSheetAssignTask": {
-    "description": "i18n131: Phase 3B English stub; taskSheet."
+    "description": "i18n131: Phase 3B translated; taskSheet."
   },
-  "i18n131TaskSheetWhat": "What",
+  "i18n131TaskSheetWhat": "Was",
   "@i18n131TaskSheetWhat": {
-    "description": "i18n131: Phase 3B English stub; taskSheet."
+    "description": "i18n131: Phase 3B translated; taskSheet."
   },
-  "i18n131TaskSheetWhatShouldThisProfileDo": "What should this profile do?",
+  "i18n131TaskSheetWhatShouldThisProfileDo": "Was soll dieses Profil tun?",
   "@i18n131TaskSheetWhatShouldThisProfileDo": {
-    "description": "i18n131: Phase 3B English stub; taskSheet."
+    "description": "i18n131: Phase 3B translated; taskSheet."
   },
-  "i18n131TaskSheetDescribeTheTask": "Describe the task.",
+  "i18n131TaskSheetDescribeTheTask": "Beschreibe die Aufgabe.",
   "@i18n131TaskSheetDescribeTheTask": {
-    "description": "i18n131: Phase 3B English stub; taskSheet."
+    "description": "i18n131: Phase 3B translated; taskSheet."
   },
-  "i18n131TaskSheetWhyOptional": "Why (optional)",
+  "i18n131TaskSheetWhyOptional": "Warum (optional)",
   "@i18n131TaskSheetWhyOptional": {
-    "description": "i18n131: Phase 3B English stub; taskSheet."
+    "description": "i18n131: Phase 3B translated; taskSheet."
   },
-  "i18n131TaskSheetAddContextOrTheExpectedResult": "Add context or the expected result.",
+  "i18n131TaskSheetAddContextOrTheExpectedResult": "Ergänze den Kontext oder das erwartete Ergebnis.",
   "@i18n131TaskSheetAddContextOrTheExpectedResult": {
-    "description": "i18n131: Phase 3B English stub; taskSheet."
+    "description": "i18n131: Phase 3B translated; taskSheet."
   },
-  "i18n131TaskSheetPriority": "Priority",
+  "i18n131TaskSheetPriority": "Priorität",
   "@i18n131TaskSheetPriority": {
-    "description": "i18n131: Phase 3B English stub; taskSheet."
+    "description": "i18n131: Phase 3B translated; taskSheet."
   },
-  "i18n131ProfileUseAPngJpegWebpOrGif": "Use a PNG, JPEG, WebP, or GIF image up to 15 MB.",
+  "i18n131ProfileUseAPngJpegWebpOrGif": "Verwende ein PNG-, JPEG-, WebP- oder GIF-Bild mit höchstens 15 MB.",
   "@i18n131ProfileUseAPngJpegWebpOrGif": {
-    "description": "i18n131: Phase 3B English stub; profile."
+    "description": "i18n131: Phase 3B translated; profile."
   },
-  "i18n131ProfileDiscardChanges": "Discard changes?",
+  "i18n131ProfileDiscardChanges": "Änderungen verwerfen?",
   "@i18n131ProfileDiscardChanges": {
-    "description": "i18n131: Phase 3B English stub; profile."
+    "description": "i18n131: Phase 3B translated; profile."
   },
-  "i18n131ProfileTheProfileIdentityHasNotBeenSaved": "The profile identity has not been saved yet.",
+  "i18n131ProfileTheProfileIdentityHasNotBeenSaved": "Die Profilidentität wurde noch nicht gespeichert.",
   "@i18n131ProfileTheProfileIdentityHasNotBeenSaved": {
-    "description": "i18n131: Phase 3B English stub; profile."
+    "description": "i18n131: Phase 3B translated; profile."
   },
-  "i18n131ProfileKeepEditing": "Keep editing",
+  "i18n131ProfileKeepEditing": "Weiter bearbeiten",
   "@i18n131ProfileKeepEditing": {
-    "description": "i18n131: Phase 3B English stub; profile."
+    "description": "i18n131: Phase 3B translated; profile."
   },
-  "i18n131ProfileDiscard": "Discard",
+  "i18n131ProfileDiscard": "Verwerfen",
   "@i18n131ProfileDiscard": {
-    "description": "i18n131: Phase 3B English stub; profile."
+    "description": "i18n131: Phase 3B translated; profile."
   },
-  "i18n131ProfileUnsaved": "Unsaved",
+  "i18n131ProfileUnsaved": "Nicht gespeichert",
   "@i18n131ProfileUnsaved": {
-    "description": "i18n131: Phase 3B English stub; profile."
+    "description": "i18n131: Phase 3B translated; profile."
   },
-  "i18n131ProfileTheProfilenameIdentifierDoesNotChange": "The @{profileName} identifier does not change",
+  "i18n131ProfileTheProfilenameIdentifierDoesNotChange": "Die Kennung @{profileName} bleibt unverändert",
   "@i18n131ProfileTheProfilenameIdentifierDoesNotChange": {
-    "description": "i18n131: Phase 3B English stub; profile.",
+    "description": "i18n131: Phase 3B translated; profile.",
     "placeholders": {
       "profileName": {
         "type": "String"
       }
     }
   },
-  "i18n131ProfileCustomize": "Customize",
+  "i18n131ProfileCustomize": "Anpassen",
   "@i18n131ProfileCustomize": {
-    "description": "i18n131: Phase 3B English stub; profile."
+    "description": "i18n131: Phase 3B translated; profile."
   },
-  "i18n131ProfileVisualIdentity": "Visual identity",
+  "i18n131ProfileVisualIdentity": "Visuelle Identität",
   "@i18n131ProfileVisualIdentity": {
-    "description": "i18n131: Phase 3B English stub; profile."
+    "description": "i18n131: Phase 3B translated; profile."
   },
-  "i18n131ProfilePet": "Pet",
+  "i18n131ProfilePet": "Maskottchen",
   "@i18n131ProfilePet": {
-    "description": "i18n131: Phase 3B English stub; profile."
+    "description": "i18n131: Phase 3B translated; profile."
   },
-  "i18n131ProfileImage": "Image",
+  "i18n131ProfileImage": "Bild",
   "@i18n131ProfileImage": {
-    "description": "i18n131: Phase 3B English stub; profile."
+    "description": "i18n131: Phase 3B translated; profile."
   },
-  "i18n131ProfileFace": "Face",
+  "i18n131ProfileFace": "Gesicht",
   "@i18n131ProfileFace": {
-    "description": "i18n131: Phase 3B English stub; profile."
+    "description": "i18n131: Phase 3B translated; profile."
   },
-  "i18n131ProfileAutomatic": "Automatic",
+  "i18n131ProfileAutomatic": "Automatisch",
   "@i18n131ProfileAutomatic": {
-    "description": "i18n131: Phase 3B English stub; profile."
+    "description": "i18n131: Phase 3B translated; profile."
   },
-  "i18n131ProfileDescription": "Description",
+  "i18n131ProfileDescription": "Beschreibung",
   "@i18n131ProfileDescription": {
-    "description": "i18n131: Phase 3B English stub; profile."
+    "description": "i18n131: Phase 3B translated; profile."
   },
-  "i18n131ProfileNoDescription": "No description",
+  "i18n131ProfileNoDescription": "Keine Beschreibung",
   "@i18n131ProfileNoDescription": {
-    "description": "i18n131: Phase 3B English stub; profile."
+    "description": "i18n131: Phase 3B translated; profile."
   },
-  "i18n131ProfileViewSkills": "View skills",
+  "i18n131ProfileViewSkills": "Fähigkeiten ansehen",
   "@i18n131ProfileViewSkills": {
-    "description": "i18n131: Phase 3B English stub; profile."
+    "description": "i18n131: Phase 3B translated; profile."
   },
-  "i18n131ProfileProfileFace": "Profile face",
+  "i18n131ProfileProfileFace": "Profilgesicht",
   "@i18n131ProfileProfileFace": {
-    "description": "i18n131: Phase 3B English stub; profile."
+    "description": "i18n131: Phase 3B translated; profile."
   },
-  "i18n131ProfilePngJpegWebpOrGifCenterCropped": "PNG, JPEG, WebP, or GIF. Center-cropped and saved square.",
+  "i18n131ProfilePngJpegWebpOrGifCenterCropped": "PNG, JPEG, WebP oder GIF. Wird mittig zugeschnitten und quadratisch gespeichert.",
   "@i18n131ProfilePngJpegWebpOrGifCenterCropped": {
-    "description": "i18n131: Phase 3B English stub; profile."
+    "description": "i18n131: Phase 3B translated; profile."
   },
-  "i18n131ProfileChooseImage": "Choose image",
+  "i18n131ProfileChooseImage": "Bild auswählen",
   "@i18n131ProfileChooseImage": {
-    "description": "i18n131: Phase 3B English stub; profile."
+    "description": "i18n131: Phase 3B translated; profile."
   },
-  "i18n131ProfileChangeImage": "Change image",
+  "i18n131ProfileChangeImage": "Bild ändern",
   "@i18n131ProfileChangeImage": {
-    "description": "i18n131: Phase 3B English stub; profile."
+    "description": "i18n131: Phase 3B translated; profile."
   },
-  "i18n131ProfileASavedImageAlsoExistsThePet": "A saved image also exists. The pet takes priority.",
+  "i18n131ProfileASavedImageAlsoExistsThePet": "Es gibt auch ein gespeichertes Bild. Das Maskottchen hat Vorrang.",
   "@i18n131ProfileASavedImageAlsoExistsThePet": {
-    "description": "i18n131: Phase 3B English stub; profile."
+    "description": "i18n131: Phase 3B translated; profile."
   },
-  "i18n131ProfileUseImage": "Use image",
+  "i18n131ProfileUseImage": "Bild verwenden",
   "@i18n131ProfileUseImage": {
-    "description": "i18n131: Phase 3B English stub; profile."
+    "description": "i18n131: Phase 3B translated; profile."
   },
-  "i18n131ProfileUncertainStateReviewAndSaveAgain": "Uncertain state: review and save again.",
+  "i18n131ProfileUncertainStateReviewAndSaveAgain": "Unklarer Status: prüfen und erneut speichern.",
   "@i18n131ProfileUncertainStateReviewAndSaveAgain": {
-    "description": "i18n131: Phase 3B English stub; profile."
+    "description": "i18n131: Phase 3B translated; profile."
   },
-  "i18n131ProfileUnsavedChanges": "Unsaved changes",
+  "i18n131ProfileUnsavedChanges": "Ungespeicherte Änderungen",
   "@i18n131ProfileUnsavedChanges": {
-    "description": "i18n131: Phase 3B English stub; profile."
+    "description": "i18n131: Phase 3B translated; profile."
   },
-  "i18n131ProfileNoPendingChanges": "No pending changes",
+  "i18n131ProfileNoPendingChanges": "Keine ausstehenden Änderungen",
   "@i18n131ProfileNoPendingChanges": {
-    "description": "i18n131: Phase 3B English stub; profile."
+    "description": "i18n131: Phase 3B translated; profile."
   },
-  "i18n131ProfileSaving": "Saving…",
+  "i18n131ProfileSaving": "Wird gespeichert…",
   "@i18n131ProfileSaving": {
-    "description": "i18n131: Phase 3B English stub; profile."
+    "description": "i18n131: Phase 3B translated; profile."
   },
-  "i18n131CreateUseAPngJpegWebpOrGif": "Use a PNG, JPEG, WebP, or GIF image up to 15 MB.",
+  "i18n131CreateUseAPngJpegWebpOrGif": "Verwende ein PNG-, JPEG-, WebP- oder GIF-Bild mit höchstens 15 MB.",
   "@i18n131CreateUseAPngJpegWebpOrGif": {
-    "description": "i18n131: Phase 3B English stub; create."
+    "description": "i18n131: Phase 3B translated; create."
   },
-  "i18n131CreateTheProfileExistsButItsIdentityIs": "The profile exists, but its identity is uncertain. Review it and try again.",
+  "i18n131CreateTheProfileExistsButItsIdentityIs": "Das Profil existiert, aber seine Identität ist unklar. Prüfe sie und versuche es erneut.",
   "@i18n131CreateTheProfileExistsButItsIdentityIs": {
-    "description": "i18n131: Phase 3B English stub; create."
+    "description": "i18n131: Phase 3B translated; create."
   },
-  "i18n131CreateTheProfileExistsButItsIdentityCould": "The profile exists, but its identity could not be applied. Fix the issue and try again.",
+  "i18n131CreateTheProfileExistsButItsIdentityCould": "Das Profil existiert, aber seine Identität konnte nicht angewendet werden. Behebe das Problem und versuche es erneut.",
   "@i18n131CreateTheProfileExistsButItsIdentityCould": {
-    "description": "i18n131: Phase 3B English stub; create."
+    "description": "i18n131: Phase 3B translated; create."
   },
-  "i18n131CreateChooseAValidIdentityBeforeCreatingThe": "Choose a valid identity before creating the profile.",
+  "i18n131CreateChooseAValidIdentityBeforeCreatingThe": "Wähle vor dem Erstellen des Profils eine gültige Identität.",
   "@i18n131CreateChooseAValidIdentityBeforeCreatingThe": {
-    "description": "i18n131: Phase 3B English stub; create."
+    "description": "i18n131: Phase 3B translated; create."
   },
-  "i18n131CreateDiscardChanges": "Discard changes?",
+  "i18n131CreateDiscardChanges": "Änderungen verwerfen?",
   "@i18n131CreateDiscardChanges": {
-    "description": "i18n131: Phase 3B English stub; create."
+    "description": "i18n131: Phase 3B translated; create."
   },
-  "i18n131CreateTheProfileAlreadyExistsButItsVisual": "The profile already exists, but its visual setup is incomplete. Leaving will not open its automatic chat.",
+  "i18n131CreateTheProfileAlreadyExistsButItsVisual": "Das Profil existiert bereits, aber seine visuelle Einrichtung ist unvollständig. Beim Verlassen wird sein automatischer Chat nicht geöffnet.",
   "@i18n131CreateTheProfileAlreadyExistsButItsVisual": {
-    "description": "i18n131: Phase 3B English stub; create."
+    "description": "i18n131: Phase 3B translated; create."
   },
-  "i18n131CreateYouWillLoseThisProfileSetup": "You will lose this profile setup.",
+  "i18n131CreateYouWillLoseThisProfileSetup": "Diese Profileinrichtung geht verloren.",
   "@i18n131CreateYouWillLoseThisProfileSetup": {
-    "description": "i18n131: Phase 3B English stub; create."
+    "description": "i18n131: Phase 3B translated; create."
   },
-  "i18n131CreateKeepEditing": "Keep editing",
+  "i18n131CreateKeepEditing": "Weiter bearbeiten",
   "@i18n131CreateKeepEditing": {
-    "description": "i18n131: Phase 3B English stub; create."
+    "description": "i18n131: Phase 3B translated; create."
   },
-  "i18n131CreateDiscard": "Discard",
+  "i18n131CreateDiscard": "Verwerfen",
   "@i18n131CreateDiscard": {
-    "description": "i18n131: Phase 3B English stub; create."
+    "description": "i18n131: Phase 3B translated; create."
   },
-  "i18n131CreateCustomize": "Customize",
+  "i18n131CreateCustomize": "Anpassen",
   "@i18n131CreateCustomize": {
-    "description": "i18n131: Phase 3B English stub; create."
+    "description": "i18n131: Phase 3B translated; create."
   },
   "i18n131CreateOptional": "optional",
   "@i18n131CreateOptional": {
-    "description": "i18n131: Phase 3B English stub; create."
+    "description": "i18n131: Phase 3B translated; create."
   },
-  "i18n131CreateVisualIdentity": "Visual identity",
+  "i18n131CreateVisualIdentity": "Visuelle Identität",
   "@i18n131CreateVisualIdentity": {
-    "description": "i18n131: Phase 3B English stub; create."
+    "description": "i18n131: Phase 3B translated; create."
   },
-  "i18n131CreatePet": "Pet",
+  "i18n131CreatePet": "Maskottchen",
   "@i18n131CreatePet": {
-    "description": "i18n131: Phase 3B English stub; create."
+    "description": "i18n131: Phase 3B translated; create."
   },
-  "i18n131CreateImage": "Image",
+  "i18n131CreateImage": "Bild",
   "@i18n131CreateImage": {
-    "description": "i18n131: Phase 3B English stub; create."
+    "description": "i18n131: Phase 3B translated; create."
   },
-  "i18n131CreateFace": "Face",
+  "i18n131CreateFace": "Gesicht",
   "@i18n131CreateFace": {
-    "description": "i18n131: Phase 3B English stub; create."
+    "description": "i18n131: Phase 3B translated; create."
   },
-  "i18n131CreateTitleAndDescription": "Title and description",
+  "i18n131CreateTitleAndDescription": "Titel und Beschreibung",
   "@i18n131CreateTitleAndDescription": {
-    "description": "i18n131: Phase 3B English stub; create."
+    "description": "i18n131: Phase 3B translated; create."
   },
-  "i18n131CreateNotFilledIn": "Not filled in",
+  "i18n131CreateNotFilledIn": "Nicht ausgefüllt",
   "@i18n131CreateNotFilledIn": {
-    "description": "i18n131: Phase 3B English stub; create."
+    "description": "i18n131: Phase 3B translated; create."
   },
-  "i18n131CreateSoulCloneFrom": "Soul · Clone from",
+  "i18n131CreateSoulCloneFrom": "SOUL · Klonen von",
   "@i18n131CreateSoulCloneFrom": {
-    "description": "i18n131: Phase 3B English stub; create."
+    "description": "i18n131: Phase 3B translated; create."
   },
-  "i18n131CreateProfileFace": "Profile face",
+  "i18n131CreateProfileFace": "Profilgesicht",
   "@i18n131CreateProfileFace": {
-    "description": "i18n131: Phase 3B English stub; create."
+    "description": "i18n131: Phase 3B translated; create."
   },
-  "i18n131CreatePngJpegWebpOrGifCenterCropped": "PNG, JPEG, WebP, or GIF. Center-cropped and saved square.",
+  "i18n131CreatePngJpegWebpOrGifCenterCropped": "PNG, JPEG, WebP oder GIF. Wird mittig zugeschnitten und quadratisch gespeichert.",
   "@i18n131CreatePngJpegWebpOrGifCenterCropped": {
-    "description": "i18n131: Phase 3B English stub; create."
+    "description": "i18n131: Phase 3B translated; create."
   },
-  "i18n131CreateChooseImage": "Choose image",
+  "i18n131CreateChooseImage": "Bild auswählen",
   "@i18n131CreateChooseImage": {
-    "description": "i18n131: Phase 3B English stub; create."
+    "description": "i18n131: Phase 3B translated; create."
   },
-  "i18n131CreateChangeImage": "Change image",
+  "i18n131CreateChangeImage": "Bild ändern",
   "@i18n131CreateChangeImage": {
-    "description": "i18n131: Phase 3B English stub; create."
+    "description": "i18n131: Phase 3B translated; create."
   },
-  "i18n131CreateUncertainStateReviewAndTryAgain": "Uncertain state: review and try again.",
+  "i18n131CreateUncertainStateReviewAndTryAgain": "Unklarer Status: prüfen und erneut versuchen.",
   "@i18n131CreateUncertainStateReviewAndTryAgain": {
-    "description": "i18n131: Phase 3B English stub; create."
+    "description": "i18n131: Phase 3B translated; create."
   },
-  "i18n131CreateProfileCreatedIdentityConfirmationPending": "Profile created · identity confirmation pending",
+  "i18n131CreateProfileCreatedIdentityConfirmationPending": "Profil erstellt · Identitätsbestätigung ausstehend",
   "@i18n131CreateProfileCreatedIdentityConfirmationPending": {
-    "description": "i18n131: Phase 3B English stub; create."
+    "description": "i18n131: Phase 3B translated; create."
   },
-  "i18n131CreateCreating": "Creating…",
+  "i18n131CreateCreating": "Wird erstellt…",
   "@i18n131CreateCreating": {
-    "description": "i18n131: Phase 3B English stub; create."
+    "description": "i18n131: Phase 3B translated; create."
   },
-  "i18n131CreateRetryIdentity": "Retry identity",
+  "i18n131CreateRetryIdentity": "Identität erneut anwenden",
   "@i18n131CreateRetryIdentity": {
-    "description": "i18n131: Phase 3B English stub; create."
+    "description": "i18n131: Phase 3B translated; create."
   },
-  "i18n131RoomsRemoveMember": "Remove",
+  "i18n131RoomsRemoveMember": "Entfernen",
   "@i18n131RoomsRemoveMember": {
-    "description": "i18n131: Phase 3B English stub; rooms."
+    "description": "i18n131: Phase 3B translated; rooms."
   },
-  "i18n131RoomsNoMembersChosen": "Tap a profile to add it to the room.",
+  "i18n131RoomsNoMembersChosen": "Tippe auf ein Profil, um es dem Raum hinzuzufügen.",
   "@i18n131RoomsNoMembersChosen": {
-    "description": "i18n131: Phase 3B English stub; rooms."
+    "description": "i18n131: Phase 3B translated; rooms."
   },
-  "i18n131RoutineTitle": "New routine",
+  "i18n131RoutineTitle": "Neue Routine",
   "@i18n131RoutineTitle": {
-    "description": "i18n131: Phase 3B English stub; routine."
+    "description": "i18n131: Phase 3B translated; routine."
   },
-  "i18n131RoutineDescription": "Schedule something for this profile to do for you.",
+  "i18n131RoutineDescription": "Plane etwas, das dieses Profil für dich erledigen soll.",
   "@i18n131RoutineDescription": {
-    "description": "i18n131: Phase 3B English stub; routine."
+    "description": "i18n131: Phase 3B translated; routine."
   },
-  "i18n131RoutineBotLabel": "Profile",
+  "i18n131RoutineBotLabel": "Profil",
   "@i18n131RoutineBotLabel": {
-    "description": "i18n131: Phase 3B English stub; routine."
+    "description": "i18n131: Phase 3B translated; routine."
   },
-  "i18n131RoutineWhatLabel": "What",
+  "i18n131RoutineWhatLabel": "Was",
   "@i18n131RoutineWhatLabel": {
-    "description": "i18n131: Phase 3B English stub; routine."
+    "description": "i18n131: Phase 3B translated; routine."
   },
-  "i18n131RoutineWhatHint": "Describe what it should do",
+  "i18n131RoutineWhatHint": "Beschreibe, was es tun soll",
   "@i18n131RoutineWhatHint": {
-    "description": "i18n131: Phase 3B English stub; routine."
+    "description": "i18n131: Phase 3B translated; routine."
   },
-  "i18n131RoutineWhatRequired": "Describe what the profile should do.",
+  "i18n131RoutineWhatRequired": "Beschreibe, was das Profil tun soll.",
   "@i18n131RoutineWhatRequired": {
-    "description": "i18n131: Phase 3B English stub; routine."
+    "description": "i18n131: Phase 3B translated; routine."
   },
-  "i18n131RoutineWhenLabel": "When",
+  "i18n131RoutineWhenLabel": "Wann",
   "@i18n131RoutineWhenLabel": {
-    "description": "i18n131: Phase 3B English stub; routine."
+    "description": "i18n131: Phase 3B translated; routine."
   },
-  "i18n131RoutineCustomScheduleLabel": "Cron expression",
+  "i18n131RoutineCustomScheduleLabel": "Cron-Ausdruck",
   "@i18n131RoutineCustomScheduleLabel": {
-    "description": "i18n131: Phase 3B English stub; routine."
+    "description": "i18n131: Phase 3B translated; routine."
   },
   "i18n131RoutineCustomScheduleHint": "0 9 * * *",
   "@i18n131RoutineCustomScheduleHint": {
-    "description": "i18n131: Phase 3B English stub; routine."
+    "description": "i18n131: Phase 3B translated; routine."
   },
-  "i18n131RoutineCustomScheduleRequired": "Enter a cron expression.",
+  "i18n131RoutineCustomScheduleRequired": "Gib einen Cron-Ausdruck ein.",
   "@i18n131RoutineCustomScheduleRequired": {
-    "description": "i18n131: Phase 3B English stub; routine."
+    "description": "i18n131: Phase 3B translated; routine."
   },
-  "i18n131RoutineMoreOptions": "More options",
+  "i18n131RoutineMoreOptions": "Weitere Optionen",
   "@i18n131RoutineMoreOptions": {
-    "description": "i18n131: Phase 3B English stub; routine."
+    "description": "i18n131: Phase 3B translated; routine."
   },
-  "i18n131RoutineOptionalNameLabel": "Optional name",
+  "i18n131RoutineOptionalNameLabel": "Optionaler Name",
   "@i18n131RoutineOptionalNameLabel": {
-    "description": "i18n131: Phase 3B English stub; routine."
+    "description": "i18n131: Phase 3B translated; routine."
   },
-  "i18n131RoutineOptionalNameHint": "For example, Morning brief",
+  "i18n131RoutineOptionalNameHint": "Zum Beispiel: Morgenübersicht",
   "@i18n131RoutineOptionalNameHint": {
-    "description": "i18n131: Phase 3B English stub; routine."
+    "description": "i18n131: Phase 3B translated; routine."
   },
-  "i18n131RoutineCreate": "Create routine",
+  "i18n131RoutineCreate": "Routine erstellen",
   "@i18n131RoutineCreate": {
-    "description": "i18n131: Phase 3B English stub; routine."
+    "description": "i18n131: Phase 3B translated; routine."
   },
-  "i18n131RoutineCreating": "Creating…",
+  "i18n131RoutineCreating": "Wird erstellt…",
   "@i18n131RoutineCreating": {
-    "description": "i18n131: Phase 3B English stub; routine."
+    "description": "i18n131: Phase 3B translated; routine."
   },
-  "i18n131RoutineGenericError": "The routine could not be created. Try again.",
+  "i18n131RoutineGenericError": "Die Routine konnte nicht erstellt werden. Versuche es erneut.",
   "@i18n131RoutineGenericError": {
-    "description": "i18n131: Phase 3B English stub; routine."
+    "description": "i18n131: Phase 3B translated; routine."
   },
-  "i18n131RoutineDailyAtNine": "Every day · 09:00",
+  "i18n131RoutineDailyAtNine": "Täglich · 09:00",
   "@i18n131RoutineDailyAtNine": {
-    "description": "i18n131: Phase 3B English stub; routine."
+    "description": "i18n131: Phase 3B translated; routine."
   },
-  "i18n131RoutineWeekdaysAtNine": "Weekdays · 09:00",
+  "i18n131RoutineWeekdaysAtNine": "Montag bis Freitag · 09:00",
   "@i18n131RoutineWeekdaysAtNine": {
-    "description": "i18n131: Phase 3B English stub; routine."
+    "description": "i18n131: Phase 3B translated; routine."
   },
-  "i18n131RoutineWeeklyMondayAtNine": "Every Monday · 09:00",
+  "i18n131RoutineWeeklyMondayAtNine": "Jeden Montag · 09:00",
   "@i18n131RoutineWeeklyMondayAtNine": {
-    "description": "i18n131: Phase 3B English stub; routine."
+    "description": "i18n131: Phase 3B translated; routine."
   },
-  "i18n131RoutineMonthlyAtNine": "Every month · day 1, 09:00",
+  "i18n131RoutineMonthlyAtNine": "Jeden Monat · am 1., 09:00",
   "@i18n131RoutineMonthlyAtNine": {
-    "description": "i18n131: Phase 3B English stub; routine."
+    "description": "i18n131: Phase 3B translated; routine."
   },
-  "i18n131RoutineHourly": "Every hour",
+  "i18n131RoutineHourly": "Jede Stunde",
   "@i18n131RoutineHourly": {
-    "description": "i18n131: Phase 3B English stub; routine."
+    "description": "i18n131: Phase 3B translated; routine."
   },
-  "i18n131RoutineEveryFifteenMinutes": "Every 15 minutes",
+  "i18n131RoutineEveryFifteenMinutes": "Alle 15 Minuten",
   "@i18n131RoutineEveryFifteenMinutes": {
-    "description": "i18n131: Phase 3B English stub; routine."
+    "description": "i18n131: Phase 3B translated; routine."
   },
-  "i18n131RoutineCustom": "Custom",
+  "i18n131RoutineCustom": "Benutzerdefiniert",
   "@i18n131RoutineCustom": {
-    "description": "i18n131: Phase 3B English stub; routine."
+    "description": "i18n131: Phase 3B translated; routine."
   },
-  "i18n131RosterNow": "now",
+  "i18n131RosterNow": "jetzt",
   "@i18n131RosterNow": {
-    "description": "i18n131: Phase 3B English stub; roster."
+    "description": "i18n131: Phase 3B translated; roster."
   },
-  "i18n131RosterYesterday": "yesterday",
+  "i18n131RosterYesterday": "gestern",
   "@i18n131RosterYesterday": {
-    "description": "i18n131: Phase 3B English stub; roster."
+    "description": "i18n131: Phase 3B translated; roster."
   },
-  "i18n131ChatBusy": "Hermes is busy (for example, compacting this conversation). Your message is still in the composer; try again in a moment.",
+  "i18n131ChatBusy": "Hermes ist beschäftigt (zum Beispiel mit dem Komprimieren dieses Gesprächs). Deine Nachricht ist noch im Eingabefeld; versuche es gleich noch einmal.",
   "@i18n131ChatBusy": {
-    "description": "i18n131: Phase 3B English stub; chat."
+    "description": "i18n131: Phase 3B translated; chat."
   },
-  "i18n131ChatNotOwned": "This conversation can’t continue live because it belongs to another gateway or process. Its history remains available, and you can still start a new chat.",
+  "i18n131ChatNotOwned": "Dieses Gespräch kann nicht live fortgesetzt werden, da es zu einem anderen Gateway oder Prozess gehört. Der Verlauf bleibt verfügbar und du kannst einen neuen Chat starten.",
   "@i18n131ChatNotOwned": {
-    "description": "i18n131: Phase 3B English stub; chat."
+    "description": "i18n131: Phase 3B translated; chat."
   },
-  "i18n131ChatLimit": "Hermes reached the configured active-session limit. Wait for a session to finish or adjust the limit.",
+  "i18n131ChatLimit": "Hermes hat die konfigurierte Grenze für aktive Sitzungen erreicht. Warte, bis eine Sitzung endet, oder passe die Grenze an.",
   "@i18n131ChatLimit": {
-    "description": "i18n131: Phase 3B English stub; chat."
+    "description": "i18n131: Phase 3B translated; chat."
   },
-  "i18n131ChatCoordination": "Hermes could not safely reserve this conversation. Check the server and try again.",
+  "i18n131ChatCoordination": "Hermes konnte dieses Gespräch nicht sicher reservieren. Prüfe den Server und versuche es erneut.",
   "@i18n131ChatCoordination": {
-    "description": "i18n131: Phase 3B English stub; chat."
+    "description": "i18n131: Phase 3B translated; chat."
   },
-  "i18n131ChatSendFailed": "The message could not be sent. Try again.",
+  "i18n131ChatSendFailed": "Die Nachricht konnte nicht gesendet werden. Versuche es erneut.",
   "@i18n131ChatSendFailed": {
-    "description": "i18n131: Phase 3B English stub; chat."
+    "description": "i18n131: Phase 3B translated; chat."
   },
-  "i18n131ChatStoredNotOwned": "This conversation cannot continue live. Its history remains available and you can start a new chat.",
+  "i18n131ChatStoredNotOwned": "Dieses Gespräch kann nicht live fortgesetzt werden. Der Verlauf bleibt verfügbar und du kannst einen neuen Chat starten.",
   "@i18n131ChatStoredNotOwned": {
-    "description": "i18n131: Phase 3B English stub; chat."
+    "description": "i18n131: Phase 3B translated; chat."
   },
-  "i18n131ChatStoredFailed": "The response could not be completed. Try again.",
+  "i18n131ChatStoredFailed": "Die Antwort konnte nicht abgeschlossen werden. Versuche es erneut.",
   "@i18n131ChatStoredFailed": {
-    "description": "i18n131: Phase 3B English stub; chat."
+    "description": "i18n131: Phase 3B translated; chat."
   },
-  "i18n131ChatStoredDisconnected": "The connection with Hermes was lost. The message was not confirmed; review the draft and try again.",
+  "i18n131ChatStoredDisconnected": "Die Verbindung zu Hermes wurde unterbrochen. Die Nachricht wurde nicht bestätigt; prüfe den Entwurf und versuche es erneut.",
   "@i18n131ChatStoredDisconnected": {
-    "description": "i18n131: Phase 3B English stub; chat."
+    "description": "i18n131: Phase 3B translated; chat."
   },
-  "i18n131ChatRecoveryFailed": "The turn could not be recovered. Try again.",
+  "i18n131ChatRecoveryFailed": "Die Runde konnte nicht wiederhergestellt werden. Versuche es erneut.",
   "@i18n131ChatRecoveryFailed": {
-    "description": "i18n131: Phase 3B English stub; chat."
+    "description": "i18n131: Phase 3B translated; chat."
   },
-  "i18n131ChatFailureCause": "The response could not be completed: {cause}",
+  "i18n131ChatFailureCause": "Die Antwort konnte nicht abgeschlossen werden: {cause}",
   "@i18n131ChatFailureCause": {
-    "description": "i18n131: Phase 3B English stub; chat.",
+    "description": "i18n131: Phase 3B translated; chat.",
     "placeholders": {
       "cause": {
         "type": "String"
