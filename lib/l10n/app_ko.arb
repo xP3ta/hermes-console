@@ -4429,175 +4429,175 @@
   "recoveryCenterFailedDeletes": "{count, plural, other{파일 {count}개를 삭제하지 못했습니다.}}",
   "cphPluginBlockedByScan": "보안 검사에서 이 플러그인을 차단했습니다. 변경된 내용은 없습니다.",
   "dashboardAuthSessionTokenWithheld": "이 대시보드는 Console에 세션 토큰을 제공하지 않습니다. 로그인 없이 Hermes 0.22.3 이상 게이트웨이가 호스팅하고 있습니다. 독립 실행형 대시보드를 사용하거나 로그인을 켜 주세요.",
-  "connDiagTimeout": "no response in {seconds}s",
+  "connDiagTimeout": "{seconds}초 동안 응답 없음",
   "@connDiagTimeout": {
-    "description": "i18n131: English draft pending Phase 2 translation.",
+    "description": "i18n131: Translated into Korean.",
     "placeholders": {
       "seconds": {
         "type": "int"
       }
     }
   },
-  "connDiagTlsInvalid": "invalid TLS certificate: {message}",
+  "connDiagTlsInvalid": "유효하지 않은 TLS 인증서: {message}",
   "@connDiagTlsInvalid": {
-    "description": "i18n131: English draft pending Phase 2 translation.",
+    "description": "i18n131: Translated into Korean.",
     "placeholders": {
       "message": {
         "type": "String"
       }
     }
   },
-  "connDiagDnsFailed": "the host does not resolve",
+  "connDiagDnsFailed": "호스트 이름을 확인할 수 없음",
   "@connDiagDnsFailed": {
-    "description": "i18n131: English draft pending Phase 2 translation."
+    "description": "i18n131: Translated into Korean."
   },
-  "connDiagRefused": "connection refused (wrong port?)",
+  "connDiagRefused": "연결 거부됨 (포트가 올바른가요?)",
   "@connDiagRefused": {
-    "description": "i18n131: English draft pending Phase 2 translation."
+    "description": "i18n131: Translated into Korean."
   },
-  "connDiagAuthHint": "check the username and password",
+  "connDiagAuthHint": "사용자 이름과 비밀번호를 확인하세요",
   "@connDiagAuthHint": {
-    "description": "i18n131: English draft pending Phase 2 translation."
+    "description": "i18n131: Translated into Korean."
   },
-  "transportPublicBlocked": "Public HTTP/WS is blocked: configure HTTPS/WSS or use a private/Tailscale address.",
+  "transportPublicBlocked": "공개 HTTP/WS 연결은 차단됩니다. HTTPS/WSS를 설정하거나 사설 주소 또는 Tailscale 주소를 사용하세요.",
   "@transportPublicBlocked": {
-    "description": "i18n131: English draft pending Phase 2 translation."
+    "description": "i18n131: Translated into Korean."
   },
-  "i18n131ThemeExportFailed": "Could not export.",
+  "i18n131ThemeExportFailed": "내보내지 못했습니다.",
   "@i18n131ThemeExportFailed": {
-    "description": "i18n131: English draft pending Phase 2 translation."
+    "description": "i18n131: Translated into Korean."
   },
-  "i18n131DurationSeconds": "{value} s",
+  "i18n131DurationSeconds": "{value}초",
   "@i18n131DurationSeconds": {
-    "description": "i18n131: English draft pending Phase 2 translation.",
+    "description": "i18n131: Translated into Korean.",
     "placeholders": {
       "value": {
         "type": "String"
       }
     }
   },
-  "i18n131SpanDays": "{count}d",
+  "i18n131SpanDays": "{count}일",
   "@i18n131SpanDays": {
-    "description": "i18n131: English draft pending Phase 2 translation.",
+    "description": "i18n131: Translated into Korean.",
     "placeholders": {
       "count": {
         "type": "int"
       }
     }
   },
-  "i18n131SpanHours": "{count}h",
+  "i18n131SpanHours": "{count}시간",
   "@i18n131SpanHours": {
-    "description": "i18n131: English draft pending Phase 2 translation.",
+    "description": "i18n131: Translated into Korean.",
     "placeholders": {
       "count": {
         "type": "int"
       }
     }
   },
-  "i18n131SpanMinutes": "{count}m",
+  "i18n131SpanMinutes": "{count}분",
   "@i18n131SpanMinutes": {
-    "description": "i18n131: English draft pending Phase 2 translation.",
+    "description": "i18n131: Translated into Korean.",
     "placeholders": {
       "count": {
         "type": "int"
       }
     }
   },
-  "i18n131RelativeNow": "just now",
+  "i18n131RelativeNow": "방금",
   "@i18n131RelativeNow": {
-    "description": "i18n131: English draft pending Phase 2 translation."
+    "description": "i18n131: Translated into Korean."
   },
-  "i18n131RelativeMinutes": "{count}m ago",
+  "i18n131RelativeMinutes": "{count}분 전",
   "@i18n131RelativeMinutes": {
-    "description": "i18n131: English draft pending Phase 2 translation.",
+    "description": "i18n131: Translated into Korean.",
     "placeholders": {
       "count": {
         "type": "int"
       }
     }
   },
-  "i18n131RelativeHours": "{count}h ago",
+  "i18n131RelativeHours": "{count}시간 전",
   "@i18n131RelativeHours": {
-    "description": "i18n131: English draft pending Phase 2 translation.",
+    "description": "i18n131: Translated into Korean.",
     "placeholders": {
       "count": {
         "type": "int"
       }
     }
   },
-  "i18n131RelativeDays": "{count}d ago",
+  "i18n131RelativeDays": "{count}일 전",
   "@i18n131RelativeDays": {
-    "description": "i18n131: English draft pending Phase 2 translation.",
+    "description": "i18n131: Translated into Korean.",
     "placeholders": {
       "count": {
         "type": "int"
       }
     }
   },
-  "i18n131SinceMinutes": "{count}m ago",
+  "i18n131SinceMinutes": "{count}분 전",
   "@i18n131SinceMinutes": {
-    "description": "i18n131: English draft pending Phase 2 translation.",
+    "description": "i18n131: Translated into Korean.",
     "placeholders": {
       "count": {
         "type": "int"
       }
     }
   },
-  "i18n131SinceHours": "{count}h ago",
+  "i18n131SinceHours": "{count}시간 전",
   "@i18n131SinceHours": {
-    "description": "i18n131: English draft pending Phase 2 translation.",
+    "description": "i18n131: Translated into Korean.",
     "placeholders": {
       "count": {
         "type": "int"
       }
     }
   },
-  "i18n131SinceDays": "{count}d ago",
+  "i18n131SinceDays": "{count}일 전",
   "@i18n131SinceDays": {
-    "description": "i18n131: English draft pending Phase 2 translation.",
+    "description": "i18n131: Translated into Korean.",
     "placeholders": {
       "count": {
         "type": "int"
       }
     }
   },
-  "i18n131InMinutes": "in {count} min",
+  "i18n131InMinutes": "{count}분 후",
   "@i18n131InMinutes": {
-    "description": "i18n131: English draft pending Phase 2 translation.",
+    "description": "i18n131: Translated into Korean.",
     "placeholders": {
       "count": {
         "type": "int"
       }
     }
   },
-  "i18n131InHours": "in {count} h",
+  "i18n131InHours": "{count}시간 후",
   "@i18n131InHours": {
-    "description": "i18n131: English draft pending Phase 2 translation.",
+    "description": "i18n131: Translated into Korean.",
     "placeholders": {
       "count": {
         "type": "int"
       }
     }
   },
-  "i18n131InDays": "in {count} d",
+  "i18n131InDays": "{count}일 후",
   "@i18n131InDays": {
-    "description": "i18n131: English draft pending Phase 2 translation.",
+    "description": "i18n131: Translated into Korean.",
     "placeholders": {
       "count": {
         "type": "int"
       }
     }
   },
-  "i18n131ApprovalTool": "a tool",
+  "i18n131ApprovalTool": "도구",
   "@i18n131ApprovalTool": {
-    "description": "i18n131: English draft pending Phase 2 translation."
+    "description": "i18n131: Translated into Korean."
   },
-  "i18n131RecoveredTurnActive": "Hermes could not reattach a turn that may still be running. Send retries the check; discard only after verifying Hermes because this does not cancel the remote turn.",
+  "i18n131RecoveredTurnActive": "아직 실행 중일 수 있는 턴에 Hermes가 다시 연결하지 못했습니다. 보내기를 누르면 다시 확인합니다. 복구를 버려도 원격 턴은 취소되지 않으므로 Hermes의 상태를 확인한 후에만 버리세요.",
   "@i18n131RecoveredTurnActive": {
-    "description": "i18n131: English draft pending Phase 2 translation."
+    "description": "i18n131: Translated into Korean."
   },
-  "i18n131RecoveredTurnPending": "A pending turn was recovered. Discard the recovery to continue.",
+  "i18n131RecoveredTurnPending": "대기 중인 턴을 복구했습니다. 계속하려면 복구 내용을 버리세요.",
   "@i18n131RecoveredTurnPending": {
-    "description": "i18n131: English draft pending Phase 2 translation."
+    "description": "i18n131: Translated into Korean."
   }
 }
