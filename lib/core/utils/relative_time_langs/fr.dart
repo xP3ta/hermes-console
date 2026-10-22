@@ -1,15 +1,15 @@
 part of '../relative_time.dart';
 
-// English grammar stub for Phase 3b.
 class _RelativeFr extends _RelativeTimeGrammar {
   const _RelativeFr();
 
   @override
   String format(Duration age, DateTime date) {
-    if (age.isNegative || age.inMinutes < 1) return 'just now';
-    if (age.inHours < 1) return '${age.inMinutes}m ago';
-    if (age.inDays < 1) return '${age.inHours}h ago';
-    if (age.inDays < 7) return '${age.inDays}d ago';
-    return '${date.day}/${date.month}';
+    if (age.isNegative || age.inMinutes < 1) return 'à l’instant';
+    if (age.inHours < 1) return 'il y a ${age.inMinutes} min';
+    if (age.inDays < 1) return 'il y a ${age.inHours} h';
+    if (age.inDays < 7) return 'il y a ${age.inDays} j';
+    return '${date.day.toString().padLeft(2, '0')}/'
+        '${date.month.toString().padLeft(2, '0')}';
   }
 }

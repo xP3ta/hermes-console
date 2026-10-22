@@ -210,7 +210,7 @@ const Map<String, String> notifFr = {
   "summaryState2": "échec",
   "summaryState3": "a besoin de toi",
   "summaryState4": "nouveau",
-  // Punctuation templates; English stubs for Phase 3b in new languages.
+  // French name joins; the conjunction is supplied by the localized caller.
   "joinNamesPair": "{first} {conjunction} {second}",
   "joinNamesHead": "{first}, {second}",
 };
