@@ -14498,18 +14498,20 @@ class _ChatScreenState extends State<ChatScreen>
       releaseTextFocusIfKeyboardHidden(context);
       final confirm = await showHermesDialogRoute<bool>(
         context: context,
-        builder: (_) => AlertDialog(
+        builder: (dialogContext) => AlertDialog(
           title: Text(s.sesDeleteTitle),
           content: Text(
             s.sesDeleteContent(localizedSessionTitle(s, widget.session)),
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.pop(context, false),
+              onPressed: () =>
+                  Navigator.of(dialogContext, rootNavigator: true).pop(false),
               child: Text(s.sesCancel),
             ),
             TextButton(
-              onPressed: () => Navigator.pop(context, true),
+              onPressed: () =>
+                  Navigator.of(dialogContext, rootNavigator: true).pop(true),
               child: Text(s.sesDelete, style: TextStyle(color: colors.error)),
             ),
           ],
@@ -16316,18 +16318,20 @@ class _ChatScreenState extends State<ChatScreen>
       releaseTextFocusIfKeyboardHidden(context);
       final confirmed = await showHermesDialogRoute<bool>(
         context: context,
-        builder: (_) {
-          final s = Strings.of(context);
+        builder: (dialogContext) {
+          final s = Strings.of(dialogContext);
           return AlertDialog(
             title: Text(s.chaYoloTitle),
             content: Text(s.chaYoloBody),
             actions: [
               TextButton(
-                onPressed: () => Navigator.pop(context, false),
+                onPressed: () =>
+                    Navigator.of(dialogContext, rootNavigator: true).pop(false),
                 child: Text(s.chaCancel),
               ),
               FilledButton(
-                onPressed: () => Navigator.pop(context, true),
+                onPressed: () =>
+                    Navigator.of(dialogContext, rootNavigator: true).pop(true),
                 child: Text(s.chaActivate),
               ),
             ],
