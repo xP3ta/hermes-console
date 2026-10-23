@@ -586,7 +586,7 @@ class HermesDrawer extends StatelessWidget {
                   _DrawerSectionLabel(strings.drawerSectionAgents),
                   _DrawerItem(
                     icon: Icons.hub_outlined,
-                    label: 'Bots',
+                    label: strings.missionBotsLabel,
                     selected: current == DrawerSection.missionControl,
                     enabled: hasConn,
                     disabledHint: strings.drawerNeedInstance,
