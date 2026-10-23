@@ -39,7 +39,9 @@ Future<void> runGuardedStartup({
     }
     await run(StartupFailureApp(
       bootstrap: bootstrap,
-      locale: Locale(resolveNotificationLang(preference)),
+      locale: preference == null || preference == 'system'
+          ? null
+          : Locale(resolveNotificationLang(preference)),
     ));
     return;
   }
