@@ -529,7 +529,7 @@ class _TerminalOutputCardState extends State<TerminalOutputCard> {
             semanticsLabel: failed ? '$label, ${s.cevExitFailed(exit)}' : label,
             trailing: failed
                 ? Text(
-                    'exit $exit',
+                    s.i18n131P6ExitCode(exit.toString()),
                     style: TextStyle(
                       fontFamily: _mono,
                       fontSize: 11,

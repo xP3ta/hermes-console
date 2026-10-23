@@ -100,3 +100,25 @@ notification translations or recognition/synthesis language support there.
 Keep changes local and stage only explicit owned paths. Do not publish,
 contact services or people, access production/mobile/credentials, or alter
 the template's message keys without separate authorization.
+
+### Visible-copy literal ratchet
+
+Run `python3 -m unittest discover -s tool/l10n -p test_literal_ratchet.py`
+from the repository root. `test/l10n_visible_literal_ratchet_test.dart` also
+implements the same lexical guard directly in the Flutter suite, without
+spawning Python or requiring an additional executable.
+
+`literal_ratchet.py` lexes every Dart string in `lib/`, including strings
+inside interpolation, raw/triple strings, helpers and services. Only the ten
+named generated localization files are excluded. `literal_allowlist.json`
+records each exact source literal, its file, count and review reason. There
+are no path-wide exemptions for handwritten copy. New literals, moving a
+literal to another file, additional occurrences, and stale entries fail.
+
+The list also includes protocol keys, technical names and existing localized
+language tables: lexical scanning deliberately does not guess data flow or
+visibility. Review a change in context. Put new user-facing copy in all nine
+ARB catalogs, or the appropriate existing language table; approve only the
+remaining identifiers/data with a concrete reason. Remove obsolete entries.
+Do not regenerate the list to accept an unexplained diff. The initial review
+and translation decisions are recorded in the private lane report.

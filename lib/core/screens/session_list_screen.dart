@@ -1536,6 +1536,7 @@ class _SessionListScreenState extends State<SessionListScreen>
         // its own).
         unawaited(
           LauncherWidgetChatsPublisher.instance.offer(
+            strings: Strings.of(context),
             connectionId: widget.connection.id,
             sessions: sorted,
           ),
@@ -3778,7 +3779,7 @@ class _ConnectingStateState extends State<_ConnectingState>
                 builder: (context, child) {
                   final dots = '.' * ((_dotCtrl.value * 3).floor() + 1);
                   return Text(
-                    'connecting to ${widget.host}$dots',
+                    '${Strings.of(context).i18n131P6ConnectingHost(widget.host)}$dots',
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(

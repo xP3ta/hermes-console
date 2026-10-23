@@ -302,7 +302,13 @@ class _LogsTabState extends State<_LogsTab> with AutomaticKeepAliveClientMixin {
                         ),
                       ),
                       child: Text(
-                        value == null ? Strings.of(context).commonAll : label,
+                        switch (value) {
+                          null => Strings.of(context).commonAll,
+                          'WARNING' => Strings.of(context).i18n131P6LogWarning,
+                          'ERROR' => Strings.of(context).noticeKindError,
+                          'DEBUG' => Strings.of(context).i18n131P6LogDebug,
+                          _ => label,
+                        },
                         style: TextStyle(
                           fontSize: 10.5,
                           color: _level == value

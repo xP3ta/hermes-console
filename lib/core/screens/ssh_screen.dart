@@ -190,7 +190,10 @@ class _SshScreenState extends State<SshScreen> {
                     Text(
                       Strings.of(
                         context,
-                      ).sshAuthMethodLabel(cfg.method.label.toLowerCase()),
+                      ).sshAuthMethodLabel(switch (cfg.method) {
+                        SshAuthMethod.key => Strings.of(context).sshcPrivateKey,
+                        SshAuthMethod.password => Strings.of(context).commonPassword,
+                      }),
                       style: TextStyle(
                         fontSize: 12,
                         color: colors.textSecondary,

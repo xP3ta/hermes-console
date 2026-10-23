@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../l10n/app_localizations.dart';
 import '../../companion/render/companion_view.dart';
 import '../../companion/state/companion_controller.dart';
 import '../../companion/models/companion_mood.dart';
@@ -21,13 +22,13 @@ class CompanionPlaygroundScreen extends StatefulWidget {
 class _CompanionPlaygroundScreenState
     extends State<CompanionPlaygroundScreen> {
   // Animaciones mostrables (etiqueta visible → mood que las dispara).
-  static const List<({String label, CompanionMood mood})> _moves = [
-    (label: 'Reposo', mood: CompanionMood.idle),
-    (label: 'Correr', mood: CompanionMood.thinking),
-    (label: 'Esperar', mood: CompanionMood.waiting),
-    (label: 'Saludar', mood: CompanionMood.success),
-    (label: 'Saltar', mood: CompanionMood.jump),
-    (label: 'Fallo', mood: CompanionMood.error),
+  List<({String label, CompanionMood mood})> _moves(Strings s) => [
+    (label: s.i18n131P6Idle, mood: CompanionMood.idle),
+    (label: s.i18n131P6Run, mood: CompanionMood.thinking),
+    (label: s.i18n131P6Wait, mood: CompanionMood.waiting),
+    (label: s.i18n131P6Greet, mood: CompanionMood.success),
+    (label: s.i18n131P6Jump, mood: CompanionMood.jump),
+    (label: s.i18n131P6Failure, mood: CompanionMood.error),
   ];
 
   CompanionMood _mood = CompanionMood.idle;
@@ -46,7 +47,7 @@ class _CompanionPlaygroundScreenState
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Animaciones')),
+      appBar: AppBar(title: Text(Strings.of(context).i18n131P6Animations)),
       body: AnimatedBuilder(
         animation: widget.controller,
         builder: (context, _) {
@@ -69,7 +70,7 @@ class _CompanionPlaygroundScreenState
                   runSpacing: 10,
                   alignment: WrapAlignment.center,
                   children: [
-                    for (final m in _moves)
+                    for (final m in _moves(Strings.of(context)))
                       ChoiceChip(
                         label: Text(m.label),
                         selected: _mood == m.mood,

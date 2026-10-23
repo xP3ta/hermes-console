@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../l10n/app_localizations.dart';
+
 /// Un comando rápido guardado: una etiqueta legible y el comando a ejecutar.
 /// Es la pieza de "automatización" — atajos de un toque en la terminal.
 class SshQuickCommand {
@@ -41,9 +43,18 @@ class SshCommandsStore {
     ),
   ];
 
-  List<SshQuickCommand> load(String connectionId) {
+  List<SshQuickCommand> load(String connectionId, {Strings? strings}) {
+    final fallback = strings == null
+        ? List.of(defaults)
+        : [
+            SshQuickCommand(strings.i18n131P6SshUptime, defaults[0].command),
+            SshQuickCommand(strings.i18n131P6SshDisk, defaults[1].command),
+            SshQuickCommand(strings.drawerMemory, defaults[2].command),
+            SshQuickCommand(strings.i18n131P6SshCpu, defaults[3].command),
+            SshQuickCommand(strings.i18n131P6SshStatus, defaults[4].command),
+          ];
     final raw = _prefs.getString(_key(connectionId));
-    if (raw == null) return List.of(defaults);
+    if (raw == null) return fallback;
     try {
       final list = (jsonDecode(raw) as List)
           .map((e) => SshQuickCommand.fromJson(e as Map<String, dynamic>))
@@ -52,7 +63,7 @@ class SshCommandsStore {
       return list;
     } catch (e) {
       debugPrint('[ssh] excepción silenciada (se continúa sin propagar): $e');
-      return List.of(defaults);
+      return fallback;
     }
   }
 
