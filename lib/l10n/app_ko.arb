@@ -175,7 +175,7 @@
   "drawerToolsEmpty": "검색과 일치하는 도구가 없습니다.",
   "drawerUnsupported": "연결된 Hermes 인스턴스에서 지원하지 않는 기능입니다.",
   "drawerMascots": "마스코트",
-  "drawerKanban": "Kanban",
+  "drawerKanban": "칸반",
   "drawerSsh": "SSH / 터미널",
   "drawerSkills": "스킬",
   "drawerCron": "예약 작업",
