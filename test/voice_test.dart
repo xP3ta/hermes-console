@@ -493,6 +493,16 @@ void main() {
       expect(neuralVoiceById(s.onnxVoiceId), isNotNull);
     });
 
+    test('Japanese and Korean start with Android when no voice was chosen', () async {
+      for (final language in ['ja', 'ko']) {
+        SharedPreferences.setMockInitialValues({'app_locale': language});
+        final prefs = await SharedPreferences.getInstance();
+        final settings = VoiceSettings.load(prefs);
+        expect(settings.ttsEngine, TtsEngineKind.device);
+        expect(settings.onnxVoiceId, isEmpty);
+      }
+    });
+
     test('una elección guardada se respeta en ambos idiomas', () async {
       for (final locale in const ['es', 'en']) {
         SharedPreferences.setMockInitialValues({
@@ -515,11 +525,11 @@ void main() {
       }
     });
 
-    test('los helpers de default cubren idiomas desconocidos cayendo a es', () {
+    test('default helpers use English for unknown languages', () {
       expect(VoiceSettings.defaultOnnxVoiceFor('es'), 'es_ES-davefx-medium');
-      expect(VoiceSettings.defaultOnnxVoiceFor('xx'), 'es_ES-davefx-medium');
+      expect(VoiceSettings.defaultOnnxVoiceFor('xx'), 'en_US-amy-medium');
       expect(VoiceSettings.defaultStreamingVoiceFor('es'), 'em_santa');
-      expect(VoiceSettings.defaultStreamingVoiceFor('xx'), 'em_santa');
+      expect(VoiceSettings.defaultStreamingVoiceFor('xx'), 'af_heart');
       expect(VoiceSettings.defaultOnnxVoiceFor('pt'), 'pt_BR-faber-medium');
       expect(VoiceSettings.defaultStreamingVoiceFor('pt'), 'pm_santa');
     });

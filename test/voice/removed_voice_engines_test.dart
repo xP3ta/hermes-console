@@ -41,6 +41,14 @@ void main() {
   Future<bool?> neverAsked() =>
       fail('the server is not asked when dictation is not being moved');
 
+  test('Japanese ignores a saved neural selection for the active voice', () async {
+    final (voice, _) = await rig({
+      'app_locale': 'ja',
+      'voice_onnx_voice_id': 'es_ES-davefx-medium',
+    });
+    expect(await voice.onnxVoiceReady(), isFalse);
+  });
+
   group('a removed reply voice', () {
     for (final engine in const [
       TtsEngineKind.elevenlabs,
@@ -89,6 +97,20 @@ void main() {
       expect(voice.settings.ttsEngine, TtsEngineKind.onnx);
       expect(voice.settings.onnxVoiceId, kNeuralVoices[2].id);
       expect(prefs.getString('voice_onnx_voice_id'), kNeuralVoices[2].id);
+    });
+
+    test('does not automatically choose the Korean low-quality candidate', () async {
+      final (voice, prefs) = await rig({
+        'app_locale': 'ko',
+        'voice_tts_engine': TtsEngineKind.streaming.id,
+      });
+      await RemovedVoiceEngines.migrate(
+        voice: voice,
+        serverDictation: neverAsked,
+        downloads: onPhone(voices: {'ko_KO-kss_low'}),
+      );
+      expect(voice.settings.ttsEngine, TtsEngineKind.device);
+      expect(prefs.getString('voice_tts_engine'), TtsEngineKind.device.id);
     });
 
     test('becomes the Android voice when nothing is downloaded', () async {

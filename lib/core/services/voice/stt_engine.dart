@@ -11,6 +11,7 @@ import 'package:record/record.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 import 'package:whisper_ggml_plus/whisper_ggml_plus.dart';
 
+import 'voice_language.dart';
 import 'voice_latency_trace.dart';
 
 export 'package:whisper_ggml_plus/whisper_ggml_plus.dart' show WhisperModel;
@@ -98,15 +99,10 @@ abstract interface class CapturedWavSttEngine {
   Future<String> transcribeCapturedWav(Uint8List wavBytes);
 }
 
-/// Listas de preferencia de locales del reconocedor del sistema por idioma de
-/// voz efectivo (spec 031). La de 'es' DEBE mantenerse byte a byte como la
-/// histórica: un test la ancla (regresión cero en español). Idioma desconocido
-/// cae a la de 'es'.
-const Map<String, List<String>> kSystemSttLocalePrefs = {
-  'es': ['es_ES', 'es_US', 'es_MX', 'es_419', 'es_CO', 'es_AR', 'es-ES', 'es'],
-  'en': ['en_US', 'en_GB', 'en_AU', 'en_IN', 'en-US', 'en'],
-  'pt': ['pt_BR', 'pt_PT', 'pt-BR', 'pt'],
-};
+/// System recognition locale preferences derived from the shared language registry.
+final Map<String, List<String>> kSystemSttLocalePrefs = Map.unmodifiable({
+  for (final entry in voiceLanguages.entries) entry.key: entry.value.systemSttLocales,
+});
 
 /// Frontera inyectable con los plugins usados por [SystemSttEngine]. Mantiene
 /// las carreras de arranque testeables sin necesitar micrófono ni recognizer.
@@ -196,9 +192,8 @@ class _SystemListenOperation {
 /// Reconocedor del sistema (Android SpeechRecognizer). Da parciales en vivo.
 /// Privacidad: según el dispositivo puede usar Google (nube) — divulgado.
 class SystemSttEngine implements SttEngine {
-  /// Idioma de voz efectivo ('es'|'en') con el que se resuelve el locale del
-  /// reconocedor (spec 031). Inmutable por instancia: VoiceService recicla el
-  /// motor cuando el idioma de la app cambia (contrato I3).
+  /// Effective voice language used to choose the system recognizer locale.
+  /// Immutable per engine; VoiceService rebuilds it after a language change.
   final String lang;
 
   final Duration idleSilenceTimeout;
@@ -275,16 +270,16 @@ class SystemSttEngine implements SttEngine {
     try {
       final ids = await _runtime.locales();
       if (operation != null && !_isCurrent(operation)) return;
+      final language = voiceLanguageFor(lang);
       String? pick;
-      for (final p
-          in kSystemSttLocalePrefs[lang] ?? kSystemSttLocalePrefs['es']!) {
+      for (final p in language.systemSttLocales) {
         if (ids.contains(p)) {
           pick = p;
           break;
         }
       }
       pick ??= ids
-          .where((id) => id.toLowerCase().startsWith(lang))
+          .where((id) => id.toLowerCase().startsWith(language.code))
           .cast<String?>()
           .firstWhere((_) => true, orElse: () => null);
       if (pick == null) {
@@ -599,9 +594,8 @@ class WhisperSttEngine implements SttEngine {
   /// Reporta el nivel de micrófono normalizado (0 silencio … 1 fuerte).
   final void Function(double level)? onLevel;
 
-  /// Idioma en el que whisper.cpp decodifica ('es'|'en', spec 031). Antes
-  /// estaba fijado a 'es': dictar en inglés salía mal transcrito. Inmutable
-  /// por instancia: VoiceService recicla el motor si el idioma cambia.
+  /// Registered language used by the Whisper decoder.
+  /// Immutable per engine; VoiceService rebuilds it after a language change.
   final String lang;
 
   final WhisperSttRuntime _runtime;
@@ -1049,7 +1043,7 @@ class WhisperSttEngine implements SttEngine {
           .transcribe(
             model: model,
             audioPath: path,
-            lang: lang,
+            lang: voiceLanguageFor(lang).whisperLanguage,
             threads: _threads,
           )
           .timeout(budget);

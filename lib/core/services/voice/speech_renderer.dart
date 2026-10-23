@@ -1,3 +1,5 @@
+import 'voice_language.dart';
+
 /// Representación oral, local y determinista de una respuesta Markdown.
 ///
 /// La pantalla conserva el Markdown original. Este renderer solo produce la
@@ -42,15 +44,9 @@ class SpeechRenderer {
 
   const SpeechRenderer({required this.language});
 
-  bool get _isEnglish => language.toLowerCase().startsWith('en');
-  bool get _isPortuguese => language.toLowerCase().startsWith('pt');
-
-  String get _linkWord => _isEnglish || _isPortuguese ? 'link' : 'enlace';
-  String get _codeNotice => switch (language.toLowerCase()) {
-    _ when _isEnglish => 'Code block omitted.',
-    _ when _isPortuguese => 'Bloco de código omitido.',
-    _ => 'Bloque de código omitido.',
-  };
+  VoiceSpeechGrammar get _speech => voiceLanguageFor(language).speech;
+  String get _linkWord => _speech.linkWord;
+  String get _codeNotice => _speech.codeNotice;
 
   List<NarrationSegment> render(String markdown) {
     var source = markdown
@@ -79,13 +75,13 @@ class SpeechRenderer {
       final clean = _cleanInline(raw);
       if (clean.isEmpty) return;
       segments.add(
-        NarrationSegment(_withTerminalPunctuation(clean), kind, pause),
+        NarrationSegment(_speech.withTerminalPunctuation(clean), kind, pause),
       );
     }
 
     void flushParagraph([NarrationPause pause = NarrationPause.medium]) {
       if (paragraph.isEmpty) return;
-      append(paragraph.join(' '), NarrationSourceKind.paragraph, pause);
+      append(_speech.joinParagraph(paragraph), NarrationSourceKind.paragraph, pause);
       paragraph.clear();
     }
 
@@ -177,7 +173,7 @@ class SpeechRenderer {
             .toList();
         if (cells.isNotEmpty) {
           append(
-            cells.join(', '),
+            _speech.joinTableCells(cells),
             NarrationSourceKind.tableRow,
             NarrationPause.short,
           );
@@ -209,7 +205,7 @@ class SpeechRenderer {
     line = line.replaceAll(RegExp(r'[*_~`]'), '').trim();
     if (line.isEmpty) return false;
     if (RegExp(
-      r'^(?:fuentes?|sources?|referencias?|references?|fontes?|bibliograf[ií]a|bibliography)(?:\s*:|\s*$)',
+      voiceReferenceHeadingPattern,
       caseSensitive: false,
     ).hasMatch(line)) {
       return true;
@@ -289,68 +285,23 @@ class SpeechRenderer {
     text = _speakCurrencies(text);
     text = _speakPercentages(text);
     text = _speakDecimals(text);
-    text = text.replaceAllMapped(
-      RegExp(r'\b(\d{1,2})/(\d{1,2})/(\d{4})\b'),
-      _speakDate,
-    );
+    text = _speech.speakDates(text);
     // Horas HH:MM (feedback físico 2026-07-24: el TTS leía los dos puntos de
     // forma rara). Solo horas plausibles: 0-23 con minutos de DOS cifras 00-59
     // — un marcador "2:1" o un código "45:99" quedan intactos.
-    text = text.replaceAllMapped(RegExp(r'\b([01]?\d|2[0-3]):([0-5]\d)\b'), (
-      match,
-    ) {
-      final hour = int.parse(match.group(1)!);
-      final minutes = match.group(2)!;
-      if (_isEnglish) {
-        return minutes == '00'
-            ? "$hour o'clock"
-            : '$hour ${int.parse(minutes)}';
-      }
-      if (_isPortuguese) {
-        return minutes == '00'
-            ? '$hour em ponto'
-            : '$hour e ${int.parse(minutes)}';
-      }
-      return minutes == '00'
-          ? '$hour en punto'
-          : '$hour y ${int.parse(minutes)}';
-    });
-    text = text.replaceAllMapped(
-      RegExp(r'\b(\d{1,3})/(\d{1,3})\b'),
-      _speakFraction,
-    );
+    text = _speech.speakTimes(text);
+    text = _speech.speakFractions(text);
     text = text.replaceAllMapped(RegExp(r'\b([\w.+-]+)@([\w.-]+\b)'), (match) {
-      final at = _isEnglish ? ' at ' : ' arroba ';
-      final dot = _isEnglish
-          ? ' dot '
-          : _isPortuguese
-          ? ' ponto '
-          : ' punto ';
-      return '${match.group(1)}$at${match.group(2)!.replaceAll('.', dot)}';
+      return '${match.group(1)}${_speech.emailAt}'
+          '${match.group(2)!.replaceAll('.', _speech.emailDot)}';
     });
 
     text = _humanizeTechnical(text);
     text = text
         .replaceAll(RegExp(r'[─-◿⠀-⣿]'), ' ')
-        .replaceAll(RegExp(r'[`*_#>|]'), ' ')
-        // "y/o" es lo único donde la barra se dice "o". En rutas y endpoints
-        // (/api/audio/speak, src/lib/main.dart), que el asistente menciona a
-        // todas horas, decir "o" por cada barra suena a máquina rota: ahí la
-        // barra es un simple separador → espacio.
-        .replaceAllMapped(
-          // Español "y/o" / "y/u", inglés "e/o"… y portugués "e/ou" (la
-          // conjunción "ou" tiene dos letras; sin esto caería en la regla de
-          // caminos y se perdería la "e").
-          RegExp(
-            r'(?<=\b[yeo])\s*/\s*(?=(?:ou|[oaui])\b)',
-            caseSensitive: false,
-          ),
-          (_) => _isEnglish
-              ? ' or '
-              : _isPortuguese
-              ? ' ou '
-              : ' o ',
-        )
+        .replaceAll(RegExp(r'[`*_#>|]'), ' ');
+    text = _speech.speakConjunctions(text);
+    text = text
         // Un slug o ruta relativa ("rusty4444/omniroute", "src/lib/main.dart")
         // se dice por su ÚLTIMO tramo: al oído importa el nombre del repo o
         // del archivo, no el dueño ni los directorios (feedback del owner:
@@ -412,85 +363,11 @@ class SpeechRenderer {
     return result;
   }
 
-  String? _speakCurrencyAmount(String raw, String currency) {
-    final decimalAt = raw.lastIndexOf(RegExp(r'[,.]'));
-    String majorRaw = raw;
-    String? minorRaw;
-    if (decimalAt >= 0 && raw.length - decimalAt - 1 <= 2) {
-      majorRaw = raw.substring(0, decimalAt);
-      minorRaw = raw.substring(decimalAt + 1);
-    }
-    final major = int.tryParse(majorRaw.replaceAll(RegExp(r'[,.]'), ''));
-    if (major == null || (minorRaw != null && minorRaw.isEmpty)) return null;
-    final minor = minorRaw == null
-        ? null
-        : int.tryParse(minorRaw.padRight(2, '0'));
-    if (minorRaw != null && minor == null) return null;
+  String? _speakCurrencyAmount(String raw, String currency) =>
+      _speech.speakCurrencyAmount(raw, currency);
 
-    final normalizedCurrency = switch (currency.toUpperCase()) {
-      'USD' => r'$',
-      'EUR' => '€',
-      'GBP' => '£',
-      _ => currency,
-    };
-    final names = switch ((normalizedCurrency, _isEnglish, _isPortuguese)) {
-      ('€', false, false) => ('euro', 'euros', 'céntimo', 'céntimos'),
-      ('€', false, true) => ('euro', 'euros', 'centavo', 'centavos'),
-      ('€', true, _) => ('euro', 'euros', 'cent', 'cents'),
-      (r'$', false, false) => ('dólar', 'dólares', 'centavo', 'centavos'),
-      (r'$', false, true) => ('dólar', 'dólares', 'centavo', 'centavos'),
-      (r'$', true, _) => ('dollar', 'dollars', 'cent', 'cents'),
-      ('£', false, false) => ('libra', 'libras', 'penique', 'peniques'),
-      ('£', false, true) => ('libra', 'libras', 'centavo', 'centavos'),
-      ('£', true, _) => ('pound', 'pounds', 'penny', 'pence'),
-      _ => null,
-    };
-    if (names == null) return null;
-    final (unitOne, unitMany, subunitOne, subunitMany) = names;
-    final unit = major == 1 ? unitOne : unitMany;
-    final base = '$major $unit';
-    if (minor == null || minor == 0) return base;
-    final subunit = minor == 1 ? subunitOne : subunitMany;
-    final joiner = _isEnglish ? ' and ' : _isPortuguese ? ' com ' : ' con ';
-    return '$base$joiner$minor $subunit';
-  }
-
-  String _speakPercentages(String input) {
-    // Portugués: separador decimal "vírgula" y "por cento" (dos palabras).
-    final separator = _isEnglish
-        ? 'point'
-        : _isPortuguese
-        ? 'vírgula'
-        : 'coma';
-    final unit = _isEnglish
-        ? 'percent'
-        : _isPortuguese
-        ? 'por cento'
-        : 'por ciento';
-    return input.replaceAllMapped(RegExp(r'\b(\d+)(?:[.,](\d+))?\s*%'), (
-      match,
-    ) {
-      final major = match.group(1) ?? '';
-      final minor = match.group(2);
-      final amount = minor == null ? major : '$major $separator $minor';
-      return '$amount $unit';
-    });
-  }
-
-  String _speakDecimals(String input) {
-    final decimal = _isEnglish
-        ? RegExp(r'\b(\d+)\.(\d+)\b')
-        : RegExp(r'\b(\d+),(\d+)\b');
-    final separator = _isEnglish
-        ? 'point'
-        : _isPortuguese
-        ? 'vírgula'
-        : 'coma';
-    return input.replaceAllMapped(
-      decimal,
-      (match) => '${match.group(1)} $separator ${match.group(2)}',
-    );
-  }
+  String _speakPercentages(String input) => _speech.speakPercentages(input);
+  String _speakDecimals(String input) => _speech.speakDecimals(input);
 
   String _humanizeTechnical(String raw) {
     var text = raw;
@@ -514,86 +391,4 @@ class SpeechRenderer {
     return text;
   }
 
-  String _speakDate(Match match) {
-    final first = int.tryParse(match.group(1) ?? '');
-    final second = int.tryParse(match.group(2) ?? '');
-    final year = int.tryParse(match.group(3) ?? '');
-    if (first == null || second == null || year == null) {
-      return match.group(0) ?? '';
-    }
-    final day = _isEnglish ? second : first;
-    final month = _isEnglish ? first : second;
-    if (day < 1 || day > 31 || month < 1 || month > 12) {
-      return match.group(0) ?? '';
-    }
-    const monthsEs = [
-      'enero',
-      'febrero',
-      'marzo',
-      'abril',
-      'mayo',
-      'junio',
-      'julio',
-      'agosto',
-      'septiembre',
-      'octubre',
-      'noviembre',
-      'diciembre',
-    ];
-    const monthsPt = [
-      'janeiro',
-      'fevereiro',
-      'março',
-      'abril',
-      'maio',
-      'junho',
-      'julho',
-      'agosto',
-      'setembro',
-      'outubro',
-      'novembro',
-      'dezembro',
-    ];
-    const monthsEn = [
-      'January',
-      'February',
-      'March',
-      'April',
-      'May',
-      'June',
-      'July',
-      'August',
-      'September',
-      'October',
-      'November',
-      'December',
-    ];
-    if (_isEnglish) return '${monthsEn[month - 1]} $day, $year';
-    if (_isPortuguese) return '$day de ${monthsPt[month - 1]} de $year';
-    return '$day de ${monthsEs[month - 1]} de $year';
-  }
-
-  String _speakFraction(Match match) {
-    final numerator = match.group(1) ?? '';
-    final denominator = match.group(2) ?? '';
-    if (numerator == '1' && denominator == '2') {
-      if (_isEnglish) return 'one half';
-      if (_isPortuguese) return 'um meio';
-      return 'un medio';
-    }
-    if (numerator == '3' && denominator == '4') {
-      if (_isEnglish) return 'three quarters';
-      if (_isPortuguese) return 'três quartos';
-      return 'tres cuartos';
-    }
-    if (_isEnglish) return '$numerator over $denominator';
-    // "entre" sirve igual en español y en portugués ("3 entre 4").
-    return '$numerator entre $denominator';
-  }
-
-  static String _withTerminalPunctuation(String text) {
-    final trimmed = text.trim();
-    if (trimmed.isEmpty || RegExp(r'[.!?…]$').hasMatch(trimmed)) return trimmed;
-    return '$trimmed.';
-  }
 }

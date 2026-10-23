@@ -70,6 +70,7 @@ class _FakeDeviceTtsPlatform implements DeviceTtsPlatform {
   final languagesRequested = Completer<void>();
   final languagesResponse = Completer<dynamic>();
   int speakCount = 0;
+  String? requestedLocale;
   int stopCount = 0;
 
   @override
@@ -85,7 +86,10 @@ class _FakeDeviceTtsPlatform implements DeviceTtsPlatform {
   Future<dynamic> setEngine(String engine) async => 1;
 
   @override
-  Future<dynamic> setLanguage(String language) async => 1;
+  Future<dynamic> setLanguage(String language) async {
+    requestedLocale = language;
+    return 1;
+  }
 
   @override
   Future<dynamic> speak(String text) async {
@@ -102,6 +106,21 @@ class _FakeDeviceTtsPlatform implements DeviceTtsPlatform {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('system TTS resolves all nine language records before speaking', () async {
+    for (final locale in ['es-ES', 'en-US', 'pt-BR', 'de-DE', 'fr-FR', 'it-IT', 'ja-JP', 'ko-KR', 'zh-CN']) {
+      final platform = _FakeDeviceTtsPlatform()
+        ..languagesResponse.complete(['es-ES', 'en-US', locale]);
+      final engine = DeviceTtsEngine(lang: locale, platform: platform);
+      try {
+        await engine.speak('test');
+        expect(platform.requestedLocale, locale);
+        expect(platform.speakCount, 1);
+      } finally {
+        await engine.dispose();
+      }
+    }
+  });
 
   test(
     'ElevenLabs ignora la respuesta HTTP que llega después de stop',
