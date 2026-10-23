@@ -126,7 +126,6 @@ void main() {
     WidgetTester tester,
     _Hermes hermes, {
     String profile = 'console-builder',
-    ApiClient Function(SavedConnection conn)? clientFactory,
   }) async {
     final manager = await ConnectionManager.create(
       await SharedPreferences.getInstance(),
@@ -149,7 +148,7 @@ void main() {
         supportedLocales: Strings.supportedLocales,
         home: HomeDashboardScreen(
           connManager: manager,
-          clientFactory: clientFactory ?? (conn) => clientFor(conn, hermes),
+          clientFactory: (conn) => clientFor(conn, hermes),
           dashboardAuthProbe: (_) async => DashboardAuthCheck.ok,
         ),
       ),
@@ -251,18 +250,11 @@ void main() {
 
   testWidgets('a 401 on a named profile list is a profile error, not an '
       'offline connection', (tester) async {
-    final hermes = _Hermes();
-    // A client without the Dashboard route meets the API server's 401.
-    await pumpHome(
-      tester,
-      hermes,
-      clientFactory: (conn) => ApiClient(
-        baseUrl: conn.baseUrl,
-        apiKey: 'test-key',
-        httpClient: hermes.client(),
-      ),
-    );
-    expect(hermes.gatewayPaths, contains('/p/console-builder/api/sessions'));
+    // The Dashboard refuses that profile's list: the API server's
+    // `/p/<name>/` route is never asked instead.
+    final hermes = _Hermes()..dashboardStatus = 401;
+    await pumpHome(tester, hermes);
+    expect(hermes.gatewayPaths.where((p) => p.startsWith('/p/')), isEmpty);
     expect(find.byKey(const ValueKey('home-offline-retry')), findsNothing);
     expect(find.textContaining('offline ·'), findsNothing);
     expect(
@@ -350,22 +342,8 @@ void main() {
 
   testWidgets('a 401 on the default profile list is a login problem, not '
       'offline', (tester) async {
-    final hermes = _Hermes();
-    await pumpHome(
-      tester,
-      hermes,
-      profile: 'default',
-      clientFactory: (conn) => ApiClient(
-        baseUrl: conn.baseUrl,
-        apiKey: 'test-key',
-        httpClient: MockClient((request) async {
-          if (request.url.path == '/health') {
-            return http.Response('{"status":"ok"}', 200);
-          }
-          return http.Response('{}', 401);
-        }),
-      ),
-    );
+    final hermes = _Hermes()..dashboardStatus = 401;
+    await pumpHome(tester, hermes, profile: 'default');
     expect(find.byKey(const ValueKey('home-offline-retry')), findsNothing);
     expect(
       find.byKey(const ValueKey('home-profile-list-error')),

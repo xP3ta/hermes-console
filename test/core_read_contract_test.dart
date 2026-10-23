@@ -1,10 +1,13 @@
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/models/core_read.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+
+import 'support/test_api_client.dart';
 
 Map<String, dynamic> _sessionRow(String id, {String profile = 'research'}) => {
   'id': id,
@@ -20,39 +23,30 @@ Map<String, dynamic> _sessionRow(String id, {String profile = 'research'}) => {
 
 void main() {
   test(
-    'Gateway sessions traverses has_more by raw window and deduplicates pins',
+    'ApiClient sessions traverse the Dashboard total and deduplicate pins',
     () async {
       final requests = <http.Request>[];
-      final client = ApiClient(
+      final client = testApiClient(
         baseUrl: 'http://127.0.0.1:8642',
-        apiKey: 'test-key',
         connectionId: 'connection-a',
         httpClient: MockClient((request) async {
           requests.add(request);
           final offset = int.parse(
             request.url.queryParameters['offset'] ?? '0',
           );
-          if (offset == 0) {
-            return http.Response(
-              jsonEncode({
-                'data': [
-                  for (var index = 0; index < 200; index++)
-                    _sessionRow('session-$index'),
-                  _sessionRow('pinned'),
-                ],
-                'limit': 200,
-                'offset': 0,
-                'has_more': true,
-              }),
-              200,
-            );
-          }
+          // The Dashboard pages 100 rows at a time and back-fills the pinned
+          // chat on every page.
+          final end = math.min(offset + 100, 201);
           return http.Response(
             jsonEncode({
-              'data': [_sessionRow('session-200'), _sessionRow('pinned')],
-              'limit': 200,
-              'offset': 200,
-              'has_more': false,
+              'sessions': [
+                for (var index = offset; index < end; index++)
+                  _sessionRow('session-$index'),
+                _sessionRow('pinned'),
+              ],
+              'total': 202,
+              'limit': 100,
+              'offset': offset,
             }),
             200,
           );
@@ -65,96 +59,41 @@ void main() {
       expect(sessions, hasLength(202));
       expect(sessions.where((row) => row.id == 'pinned'), hasLength(1));
       expect(requests.map((request) => request.method), everyElement('GET'));
-      expect(requests.map((request) => request.url.path), [
-        '/p/research/api/sessions',
-        '/p/research/api/sessions',
-      ]);
+      expect(
+        requests.map((request) => request.url.path),
+        everyElement('/api/sessions'),
+      );
+      expect(
+        requests.map((request) => request.url.queryParameters['profile']),
+        everyElement('research'),
+      );
       expect(requests.map((request) => request.url.queryParameters['offset']), [
         '0',
+        '100',
         '200',
       ]);
-      expect(
-        requests.map((request) => request.headers['authorization']),
-        everyElement('Bearer test-key'),
-      );
+      for (final request in requests) {
+        expect(request.headers['X-Hermes-Session-Token'], testDashboardToken);
+        expect(request.headers['Authorization'], isNull);
+      }
     },
   );
 
-  test('a full page keeps paging when pins inside it made the server say '
-      'has_more=false', () async {
-    // Gateway `/api/sessions` computes has_more from the UNPINNED rows of
-    // the window, so two pinned chats among the 200 newest end the listing
-    // after page one: older rows (here the automation runs) were never
-    // read, and \"Vaciar automatizaciones\" missed them.
+  test('a short page without a total still ends the listing', () async {
     final offsets = <String>[];
-    final client = ApiClient(
+    final client = testApiClient(
       baseUrl: 'http://127.0.0.1:8642',
-      apiKey: 'test-key',
-      connectionId: 'connection-a',
-      httpClient: MockClient((request) async {
-        final offset = request.url.queryParameters['offset'] ?? '0';
-        offsets.add(offset);
-        if (offset == '0') {
-          return http.Response(
-            jsonEncode({
-              'data': [
-                for (var index = 0; index < 200; index++)
-                  {..._sessionRow('session-$index'), 'pinned': index < 2},
-              ],
-              'limit': 200,
-              'offset': 0,
-              'has_more': false,
-            }),
-            200,
-          );
-        }
-        if (offset == '200') {
-          return http.Response(
-            jsonEncode({
-              'data': [
-                {..._sessionRow('cron_job_20260920_090000'), 'source': 'cron'},
-                // Pins are back-filled on every page.
-                {..._sessionRow('session-0'), 'pinned': true},
-              ],
-              'limit': 200,
-              'offset': 200,
-              'has_more': false,
-            }),
-            200,
-          );
-        }
-        fail('unexpected offset $offset');
-      }),
-    );
-    addTearDown(client.close);
-
-    final sessions = await client.getSessions(profile: 'research');
-
-    expect(offsets, ['0', '200']);
-    expect(sessions, hasLength(201));
-    expect(
-      sessions.where((row) => row.id == 'cron_job_20260920_090000'),
-      hasLength(1),
-    );
-  });
-
-  test('a short page with has_more=false still ends the listing', () async {
-    final offsets = <String>[];
-    final client = ApiClient(
-      baseUrl: 'http://127.0.0.1:8642',
-      apiKey: 'test-key',
       connectionId: 'connection-a',
       httpClient: MockClient((request) async {
         offsets.add(request.url.queryParameters['offset'] ?? '0');
         return http.Response(
           jsonEncode({
-            'data': [
-              for (var index = 0; index < 199; index++)
+            'sessions': [
+              for (var index = 0; index < 99; index++)
                 _sessionRow('session-$index'),
             ],
-            'limit': 200,
+            'limit': 100,
             'offset': 0,
-            'has_more': false,
           }),
           200,
         );
@@ -162,85 +101,23 @@ void main() {
     );
     addTearDown(client.close);
 
-    expect(await client.getSessions(profile: 'research'), hasLength(199));
+    expect(await client.getSessions(profile: 'research'), hasLength(99));
     expect(offsets, ['0']);
   });
 
-  test('an inferred extra page holding only known pins ends cleanly', () async {
-    final offsets = <String>[];
-    final client = ApiClient(
-      baseUrl: 'http://127.0.0.1:8642',
-      apiKey: 'test-key',
-      connectionId: 'connection-a',
-      httpClient: MockClient((request) async {
-        final offset = request.url.queryParameters['offset'] ?? '0';
-        offsets.add(offset);
-        return http.Response(
-          jsonEncode({
-            'data': offset == '0'
-                ? [
-                    for (var index = 0; index < 200; index++)
-                      {..._sessionRow('session-$index'), 'pinned': index < 1},
-                  ]
-                : [
-                    {..._sessionRow('session-0'), 'pinned': true},
-                  ],
-            'limit': 200,
-            'offset': int.parse(offset),
-            'has_more': false,
-          }),
-          200,
-        );
-      }),
-    );
-    addTearDown(client.close);
-
-    expect(await client.getSessions(profile: 'research'), hasLength(200));
-    expect(offsets, ['0', '200']);
-  });
-
-  test('an inferred extra page repeating the first one ends cleanly', () async {
-    final offsets = <String>[];
-    final client = ApiClient(
-      baseUrl: 'http://127.0.0.1:8642',
-      apiKey: 'test-key',
-      connectionId: 'connection-a',
-      httpClient: MockClient((request) async {
-        offsets.add(request.url.queryParameters['offset'] ?? '0');
-        return http.Response(
-          jsonEncode({
-            'data': [
-              for (var index = 0; index < 200; index++)
-                {..._sessionRow('session-$index'), 'pinned': index < 1},
-            ],
-            'limit': 200,
-            'offset': 0,
-            'has_more': false,
-          }),
-          200,
-        );
-      }),
-    );
-    addTearDown(client.close);
-
-    expect(await client.getSessions(profile: 'research'), hasLength(200));
-    expect(offsets, ['0', '200']);
-  });
-
-  test('Gateway session pagination fails typed on a repeated page', () async {
+  test('session pagination fails typed on a repeated page', () async {
     var requests = 0;
-    final client = ApiClient(
+    final client = testApiClient(
       baseUrl: 'http://127.0.0.1:8642',
-      apiKey: 'test-key',
       connectionId: 'connection-a',
       httpClient: MockClient((request) async {
         requests += 1;
         return http.Response(
           jsonEncode({
-            'data': [_sessionRow('same')],
-            'limit': 200,
-            'offset': request.url.queryParameters['offset'] == '200' ? 200 : 0,
-            'has_more': true,
+            'sessions': [_sessionRow('same')],
+            'total': 500,
+            'limit': 100,
+            'offset': int.parse(request.url.queryParameters['offset'] ?? '0'),
           }),
           200,
         );
@@ -263,9 +140,8 @@ void main() {
 
   test('profile auth failure is terminal and never retries unscoped', () async {
     final requests = <http.Request>[];
-    final client = ApiClient(
+    final client = testApiClient(
       baseUrl: 'http://127.0.0.1:8642',
-      apiKey: 'test-key',
       connectionId: 'connection-a',
       httpClient: MockClient((request) async {
         requests.add(request);
@@ -285,17 +161,21 @@ void main() {
         ),
       ),
     );
-    expect(requests, hasLength(1));
-    expect(requests.single.url.path, '/p/research/api/sessions');
+    // The Dashboard retries a 401 once with its session, then gives up;
+    // both reads stay scoped to the profile.
+    expect(requests, hasLength(2));
+    for (final request in requests) {
+      expect(request.url.path, '/api/sessions');
+      expect(request.url.queryParameters['profile'], 'research');
+    }
   });
 
   test(
-    'Gateway messages caps pages and preserves raw cursor plus resolved tip',
+    'ApiClient messages caps pages and preserves raw cursor plus resolved tip',
     () async {
       late http.Request observed;
-      final client = ApiClient(
+      final client = testApiClient(
         baseUrl: 'http://127.0.0.1:8642',
-        apiKey: 'test-key',
         connectionId: 'connection-a',
         httpClient: MockClient((request) async {
           observed = request;
@@ -326,15 +206,14 @@ void main() {
       );
 
       expect(observed.method, 'GET');
-      expect(
-        observed.url.path,
-        '/p/research/api/sessions/stored-chat/messages',
-      );
+      // The Dashboard selects a named profile with `?profile=`.
+      expect(observed.url.path, '/api/sessions/stored-chat/messages');
       expect(observed.url.queryParameters, {
         'limit': '500',
         'order': 'latest',
         'offset': '0',
         'include_compacted': 'true',
+        'profile': 'research',
       });
       expect(page.returned, 2);
       expect(page.resolvedTipId, 'resolved-tip');
@@ -349,12 +228,11 @@ void main() {
   );
 
   test(
-    'Gateway messages requests canonical compacted display history',
+    'ApiClient messages request canonical compacted display history',
     () async {
       late http.Request observed;
-      final client = ApiClient(
+      final client = testApiClient(
         baseUrl: 'http://127.0.0.1:8642',
-        apiKey: 'test-key',
         connectionId: 'connection-a',
         httpClient: MockClient((request) async {
           observed = request;
@@ -408,9 +286,8 @@ void main() {
   test(
     'resolved descendant compacted rows never claim the whole lineage',
     () async {
-      final client = ApiClient(
+      final client = testApiClient(
         baseUrl: 'http://127.0.0.1:8642',
-        apiKey: 'test-key',
         connectionId: 'connection-a',
         httpClient: MockClient(
           (request) async => http.Response(
