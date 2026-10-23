@@ -141,6 +141,19 @@ void main() {
     expect(speech.speakConjunctions('lecture et/ou écriture'), 'lecture et ou écriture');
   });
 
+  test('French conjunction replacement consumes both complete words once', () {
+    for (final input in ['lecture et/ou écriture', 'lecture et / ou écriture',
+      'lecture et/ ou écriture', 'lecture et /ou écriture']) {
+      expect(speech.speakConjunctions(input), 'lecture et ou écriture', reason: input);
+    }
+    expect(speech.speakConjunctions('et/ou'), 'et ou');
+    expect(speech.speakConjunctions('lecture et/ou écriture et/ou dessin'),
+        'lecture et ou écriture et ou dessin');
+    expect(speech.speakConjunctions('projet/ouverture et outil'),
+        'projet/ouverture et outil');
+    expect(render('Lecture et/ou écriture.'), 'Lecture et ou écriture.');
+  });
+
   test('renderer adapts all Portuguese renderer fixtures to native French', () {
     final spoken = render('Réunion à 15:00. Remise de 50%. Rapport 1,5. '
         'Livraison le 5/6/2026. Une part de 1/2. Prix 0,99€.\n'
