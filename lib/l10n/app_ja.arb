@@ -175,7 +175,7 @@
   "drawerToolsEmpty": "検索に一致するツールはありません。",
   "drawerUnsupported": "接続中のHermesインスタンスはこの機能に対応していません。",
   "drawerMascots": "ペット",
-  "drawerKanban": "Kanban",
+  "drawerKanban": "カンバン",
   "drawerSsh": "SSH / ターミナル",
   "drawerSkills": "スキル",
   "drawerCron": "スケジュールタスク",
