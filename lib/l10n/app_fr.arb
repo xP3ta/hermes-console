@@ -305,7 +305,6 @@
   "chaAmbiguousRestored": "Impossible de confirmer si ce tour est arrivé au serveur. Vérifie la conversation avant de le renvoyer.",
   "chaRecoveredKeepsDraft": "Ton brouillon actuel est conservé. Envoie-le ou vide l’éditeur pour récupérer le message précédent.",
   "chaRetryKeepsDraft": "Ton brouillon actuel est conservé et aucun nouvel essai n’a eu lieu. Envoie-le ou vide l’éditeur pour renvoyer le message précédent.",
-  "chaUploadTitle": "Envoyer une pièce jointe",
   "chaNoMatch": "Aucun résultat pour « {arg} ». Choisis une option :",
   "chaModelChangeConfirmBody": "Ce changement de modèle nécessite une confirmation.",
   "chaModelChangeTitle": "Changer le modèle actif",

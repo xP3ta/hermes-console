@@ -305,7 +305,6 @@
   "chaAmbiguousRestored": "Impossibile confermare se questo turno è arrivato al server. Controlla la conversazione prima di inviarlo di nuovo.",
   "chaRecoveredKeepsDraft": "La bozza attuale viene conservata. Inviala o svuota l'editor per recuperare il messaggio precedente.",
   "chaRetryKeepsDraft": "La bozza attuale viene conservata e non è stato riprovato nulla. Inviala o svuota l'editor per riprovare il messaggio precedente.",
-  "chaUploadTitle": "Carica allegato",
   "chaNoMatch": "Nessuna corrispondenza per «{arg}». Scegline uno:",
   "chaModelChangeConfirmBody": "Questo cambio di modello richiede conferma.",
   "chaModelChangeTitle": "Cambia modello attivo",

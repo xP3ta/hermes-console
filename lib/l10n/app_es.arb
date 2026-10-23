@@ -507,7 +507,6 @@
   "chaAmbiguousRestored": "No se pudo confirmar si este turno llegó al servidor. Revisa la conversación antes de volver a enviarlo.",
   "chaRecoveredKeepsDraft": "Tu borrador actual se conserva. Envíalo o vacía el editor para recuperar el mensaje anterior.",
   "chaRetryKeepsDraft": "Tu borrador actual se conserva y no se ha reintentado nada. Envíalo o vacía el editor para reintentar el mensaje anterior.",
-  "chaUploadTitle": "Subir adjunto",
   "chaNoMatch": "Sin coincidencias para «{arg}». Elige uno:",
   "@chaNoMatch": {
     "placeholders": {
