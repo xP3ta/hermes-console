@@ -143,6 +143,39 @@ void main() {
     expect(find.text('Tentar novamente'), findsOneWidget);
   });
 
+  testWidgets('system preference leaves recovery language to the framework', (tester) async {
+    tester.platformDispatcher.localesTestValue = const [Locale('es')];
+    addTearDown(tester.platformDispatcher.clearLocalesTestValue);
+    SharedPreferences.setMockInitialValues({'app_locale': 'system'});
+    await runGuardedStartup(
+      bootstrap: () async => throw StateError('boom'),
+      run: (app) => tester.pumpWidget(app),
+    );
+    await tester.pumpAndSettle();
+    expect(tester.widget<StartupFailureApp>(find.byType(StartupFailureApp)).locale,
+        isNull);
+    expect(find.text('Reintentar'), findsOneWidget);
+
+    tester.platformDispatcher.localesTestValue = const [Locale('en')];
+    await tester.pumpAndSettle();
+    expect(find.text('Retry'), findsOneWidget);
+  });
+
+  testWidgets('explicit German overrides the Spanish device language', (tester) async {
+    tester.platformDispatcher.localesTestValue = const [Locale('es')];
+    addTearDown(tester.platformDispatcher.clearLocalesTestValue);
+    SharedPreferences.setMockInitialValues({'app_locale': 'de'});
+    await runGuardedStartup(
+      bootstrap: () async => throw StateError('boom'),
+      run: (app) => tester.pumpWidget(app),
+    );
+    await tester.pumpAndSettle();
+    expect(tester.widget<StartupFailureApp>(find.byType(StartupFailureApp)).locale,
+        const Locale('de'));
+    expect(find.text('Erneut versuchen'), findsOneWidget);
+    expect(find.text('Reintentar'), findsNothing);
+  });
+
   testWidgets('a healthy startup runs the app directly', (tester) async {
     await runGuardedStartup(
       readLocalePreference: () => throw StateError('must not read locale on success'),
