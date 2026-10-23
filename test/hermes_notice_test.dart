@@ -130,6 +130,31 @@ HermesNoticeCard _sample({
 );
 
 void main() {
+  testWidgets('the default dismiss tooltip follows the app locale', (tester) async {
+    final strings = lookupStrings(const Locale('fr'));
+    var dismissed = false;
+    await tester.pumpWidget(
+      MaterialApp(
+        locale: const Locale('fr'),
+        localizationsDelegates: Strings.localizationsDelegates,
+        supportedLocales: Strings.supportedLocales,
+        theme: AppTheme.fromId('dark'),
+        home: Scaffold(
+          body: HermesNoticeCard(
+            noticeKey: _card,
+            message: 'Fixture',
+            onDismissed: () => dismissed = true,
+            showDismiss: true,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byTooltip(strings.inAppDismiss), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('hermes-notice-dismiss')));
+    expect(dismissed, isTrue);
+  });
+
   group('HermesNotice: posicion y solapes', () {
     // Owner (1.2.15): on a screen with an island (chats, rooms) the island
     // says the notice; nothing floats over the chat. The whole behaviour is
