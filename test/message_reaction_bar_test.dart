@@ -5,9 +5,13 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/models/message_reaction.dart';
 import 'package:hermes_android/core/services/message_reaction_prefs.dart';
 import 'package:hermes_android/core/widgets/chat/message_reaction_bar.dart';
+import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-Widget _host(Widget child) => MaterialApp(
+Widget _host(Widget child, {Locale locale = const Locale('en')}) => MaterialApp(
+  locale: locale,
+  localizationsDelegates: Strings.localizationsDelegates,
+  supportedLocales: Strings.supportedLocales,
   home: Scaffold(body: Center(child: child)),
 );
 
@@ -17,6 +21,26 @@ void main() {
     emoji: '🎉',
     author: MessageReactionAuthor.agent,
   );
+
+  for (final locale in const [Locale('en'), Locale('fr')]) {
+    testWidgets('${locale.languageCode}: the add tooltip follows the locale', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        _host(
+          MessageReactionBar(reactions: const [], onPick: (_) {}),
+          locale: locale,
+        ),
+      );
+      expect(
+        find.byTooltip(lookupStrings(locale).reactAdd),
+        findsOneWidget,
+      );
+      final context = tester.element(find.byType(MessageReactionBar));
+      expect(Localizations.localeOf(context), locale);
+      expect(tester.takeException(), isNull);
+    });
+  }
 
   testWidgets('shows every reaction chip', (tester) async {
     await tester.pumpWidget(
