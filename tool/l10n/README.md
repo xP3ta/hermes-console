@@ -101,24 +101,15 @@ Keep changes local and stage only explicit owned paths. Do not publish,
 contact services or people, access production/mobile/credentials, or alter
 the template's message keys without separate authorization.
 
-### Visible-copy literal ratchet
+### Visible-copy ratchet
 
-Run `python3 -m unittest discover -s tool/l10n -p test_literal_ratchet.py`
-from the repository root. `test/l10n_visible_literal_ratchet_test.dart` also
-implements the same lexical guard directly in the Flutter suite, without
-spawning Python or requiring an additional executable.
+`test/l10n_visible_literal_ratchet_test.dart` checks handwritten literals in
+Text/SelectableText/TextSpan arguments, visible named arguments and the app's
+notice/dialog helpers. Its small support scanner skips keys, style metadata,
+callbacks, comparisons, URLs, paths, brands and canonical Bot Chat identity.
+It does not inventory arbitrary service strings, returns or language tables.
 
-`literal_ratchet.py` lexes every Dart string in `lib/`, including strings
-inside interpolation, raw/triple strings, helpers and services. Only the ten
-named generated localization files are excluded. `literal_allowlist.json`
-records each exact source literal, its file, count and review reason. There
-are no path-wide exemptions for handwritten copy. New literals, moving a
-literal to another file, additional occurrences, and stale entries fail.
-
-The list also includes protocol keys, technical names and existing localized
-language tables: lexical scanning deliberately does not guess data flow or
-visibility. Review a change in context. Put new user-facing copy in all nine
-ARB catalogs, or the appropriate existing language table; approve only the
-remaining identifiers/data with a concrete reason. Remove obsolete entries.
-Do not regenerate the list to accept an unexplained diff. The initial review
-and translation decisions are recorded in the private lane report.
+`visible_literal_allowlist.json` contains only exact file/literal exceptions,
+each with a one-line reason. New visible copy must use `Strings.of(context)`;
+the test reports unlisted literals and stale exceptions. Do not add file-wide
+or prefix exceptions. There is no Python mirror or external test dependency.
