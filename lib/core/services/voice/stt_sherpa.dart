@@ -27,6 +27,7 @@ import 'model_download.dart';
 import 'sherpa_stt_worker.dart';
 import 'stt_engine.dart';
 import 'voice_latency_trace.dart';
+import 'voice_language.dart';
 import 'voice_response_policy.dart';
 
 /// Qué modelo de reconocimiento usar. Los tres son en español (Whisper es
@@ -847,7 +848,7 @@ class SherpaSttEngine
   /// Cierra una captura conversacional que nunca llegó a detectar voz.
   final Duration idleSilenceTimeout;
 
-  /// Idioma en el que decodifican los modelos Whisper ('es'|'en', spec 031).
+  /// Registered language used by the Whisper decoder.
   /// Parakeet (transducer) es multilingüe automático y lo ignora. Inmutable
   /// por instancia: VoiceService recicla el motor si el idioma cambia.
   final String lang;
@@ -1152,7 +1153,7 @@ class SherpaSttEngine
       decoderPath: await manager.decoderPath(model),
       joinerPath: model.isTransducer ? await manager.joinerPath(model) : '',
       sileroPath: await manager.sileroPath(),
-      language: lang,
+      language: voiceLanguageFor(lang).whisperLanguage,
       transducer: model.isTransducer,
       numThreads: _threads,
     );

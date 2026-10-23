@@ -21,6 +21,7 @@ File _writeTar(Directory root, List<int> tar) {
 Archive _completeArchive({
   bool includePhondata = true,
   bool emptyDictionary = false,
+  String dictionaryLanguage = 'es',
 }) {
   final archive = Archive();
   archive.add(ArchiveFile.directory('$_dirName/'));
@@ -43,7 +44,7 @@ Archive _completeArchive({
   );
   archive.add(
     ArchiveFile.string(
-      '$_dirName/espeak-ng-data/es_dict',
+      '$_dirName/espeak-ng-data/${dictionaryLanguage}_dict',
       emptyDictionary ? '' : 'diccionario',
     ),
   );
@@ -93,6 +94,26 @@ void main() {
         Directory('${root.path}/$_dirName.previous').existsSync(),
         isFalse,
       );
+    } finally {
+      root.deleteSync(recursive: true);
+    }
+  });
+
+  test('Mandarin installs with cmn_dict and still rejects a missing dictionary', () {
+    final root = Directory.systemTemp.createTempSync('tts-model-mandarin-');
+    try {
+      final voice = neuralVoiceById('zh_CN-huayan-medium')!;
+      final input = _writeArchive(root, _completeArchive(dictionaryLanguage: 'cmn'));
+      extractTtsModelArchive(input.path, root.path,
+          dirName: _dirName, onnxFile: _onnxFile,
+          languageCode: voice.dictionaryLanguage);
+      final dictionary = File('${root.path}/$_dirName/espeak-ng-data/cmn_dict');
+      expect(dictionary.existsSync(), isTrue);
+      final incomplete = _writeArchive(root, _completeArchive());
+      expect(() => extractTtsModelArchive(incomplete.path, root.path,
+          dirName: _dirName, onnxFile: _onnxFile,
+          languageCode: voice.dictionaryLanguage), throwsFormatException);
+      expect(dictionary.existsSync(), isTrue);
     } finally {
       root.deleteSync(recursive: true);
     }

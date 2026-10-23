@@ -11,6 +11,7 @@ import '../spoken_text.dart';
 import '../stt_engine.dart';
 import '../voice_latency_trace.dart';
 import '../voice_phase.dart';
+import '../voice_language.dart';
 import '../voice_service.dart';
 import '../voice_settings.dart';
 import 'full_duplex_barge_in_monitor.dart';
@@ -363,11 +364,7 @@ class LocalVoiceConversationController extends ChangeNotifier
       if (!_isCurrent(operation)) return;
       _runtime.pauseByUser();
       userPaused = true;
-      note = _t(
-        'The microphone is still being released.',
-        'El micrófono todavía se está liberando.',
-        'O microfone ainda está sendo liberado.',
-      );
+      note = voiceLanguageFor(_lang).message('microphoneReleasing');
       _notify();
       return;
     }
@@ -428,11 +425,7 @@ class LocalVoiceConversationController extends ChangeNotifier
           if (!_runtime.failNormalCapture(captureToken)) {
             _runtime.failTranscription(captureToken, rearm: false);
           }
-          note = _t(
-            'I could not understand the microphone.',
-            'No pude entender el micrófono.',
-            'Não consegui entender o microfone.',
-          );
+          note = voiceLanguageFor(_lang).message('microphoneUnclear');
           _notify();
         },
         onDone: () {
@@ -447,7 +440,7 @@ class LocalVoiceConversationController extends ChangeNotifier
               _runtime.finishNormalSilence(captureToken) ||
               _runtime.failTranscription(captureToken);
           if (!finished) return;
-          note = _t('I did not hear you.', 'No te he oído.', 'Não ouvi você.');
+          note = voiceLanguageFor(_lang).message('didNotHear');
           _notify();
           _scheduleListening();
         },
@@ -461,11 +454,7 @@ class LocalVoiceConversationController extends ChangeNotifier
         _normalCaptureToken = null;
       }
       _runtime.failNormalCapture(captureToken);
-      note = _t(
-        'The microphone could not be started.',
-        'No se pudo iniciar el micrófono.',
-        'Não foi possível iniciar o microfone.',
-      );
+      note = voiceLanguageFor(_lang).message('microphoneUnavailable');
       _notify();
     }
   }
@@ -557,7 +546,7 @@ class LocalVoiceConversationController extends ChangeNotifier
   }) async {
     if (!_isCurrent(operation) || turn != _turnBinding) return;
     if (text.isEmpty) {
-      note = _t('I did not hear you.', 'No te he oído.', 'Não ouvi você.');
+      note = voiceLanguageFor(_lang).message('didNotHear');
       _scheduleListening();
       return;
     }
@@ -652,11 +641,7 @@ class LocalVoiceConversationController extends ChangeNotifier
     } catch (error) {
       if (!_isCurrent(operation) || turn != _turnBinding) return;
       _runtime.failSubmission(turn);
-      note = _t(
-        'The message could not be sent.',
-        'No se pudo enviar el mensaje.',
-        'Não foi possível enviar a mensagem.',
-      );
+      note = voiceLanguageFor(_lang).message('sendFailed');
       _notify();
       _scheduleListening();
     }
@@ -830,7 +815,7 @@ class LocalVoiceConversationController extends ChangeNotifier
         return;
       }
       _bargeRuntimeToken = null;
-      note = _t('I did not hear you.', 'No te he oído.', 'Não ouvi você.');
+      note = voiceLanguageFor(_lang).message('didNotHear');
       _notify();
       _scheduleListening();
       return;
@@ -1189,11 +1174,7 @@ class LocalVoiceConversationController extends ChangeNotifier
           _runtime.markBackendTerminal(errorTurn);
         }
         if (chat.assistantContent.trim().isEmpty) {
-          note = _t(
-            'The response was interrupted.',
-            'La respuesta se interrumpió.',
-            'A resposta foi interrompida.',
-          );
+          note = voiceLanguageFor(_lang).message('responseInterrupted');
         }
         final errorRawBefore = narration.rawObserved.length;
         final errorAppendLatency = _latencyTurn?.beginSuffixAppendLatency();
@@ -1683,11 +1664,7 @@ class LocalVoiceConversationController extends ChangeNotifier
         narration.pause();
         _runtime.pauseByUser();
         userPaused = true;
-        note = _t(
-          'Hermes server voice is unavailable. Voice was paused.',
-          'La voz del servidor Hermes no está disponible. Voz se ha pausado.',
-          'A voz do servidor Hermes está indisponível. A voz foi pausada.',
-        );
+        note = voiceLanguageFor(_lang).message('serverUnavailable');
         _notify();
         return;
       } finally {
@@ -2012,16 +1989,8 @@ class LocalVoiceConversationController extends ChangeNotifier
       return;
     }
     final message = approval
-        ? _t(
-            'Hermes needs your approval. Open the app to review it.',
-            'Hermes necesita tu aprobación. Abre la aplicación para revisarla.',
-            'Hermes precisa da sua aprovação. Abra o app para revisar.',
-          )
-        : _t(
-            'Hermes needs your response. Open the app to continue.',
-            'Hermes necesita tu respuesta. Abre la aplicación para continuar.',
-            'Hermes precisa da sua resposta. Abra o app para continuar.',
-          );
+        ? voiceLanguageFor(_lang).message('approvalRequired')
+        : voiceLanguageFor(_lang).message('responseRequired');
     await voice.enqueueLocalSpeech(message);
   }
 
@@ -2463,11 +2432,7 @@ class LocalVoiceConversationController extends ChangeNotifier
     } catch (_) {
       if (!_isCurrent(operation)) return;
       paused = true;
-      note = _t(
-        "Couldn't save Stop safely. Try again.",
-        'No se pudo guardar Stop de forma segura. Reinténtalo.',
-        'Não foi possível salvar o Stop com segurança. Tente novamente.',
-      );
+      note = voiceLanguageFor(_lang).message('stopNotSaved');
       _notify();
       return;
     }
@@ -2934,25 +2899,9 @@ class LocalVoiceConversationController extends ChangeNotifier
     if (rebound != null) _turnBinding = rebound;
   }
 
-  String get _lang {
-    final lang = voice.voiceLang.toLowerCase();
-    if (lang.startsWith('en')) return 'en';
-    if (lang.startsWith('pt')) return 'pt';
-    return 'es';
-  }
+  String get _lang => voiceLanguageFor(voice.voiceLang).code;
 
-  // Falas en tres idiomas; la que no aplica nunca se evalúa.
-  String _t(String en, String es, String pt) => switch (_lang) {
-    'es' => es,
-    'pt' => pt,
-    _ => en,
-  };
-
-  String _sttUnavailableNote(SttCheck check) => _t(
-    'Voice recognition is not ready (${check.status.name}).',
-    'El reconocimiento de voz no está listo (${check.status.name}).',
-    'O reconhecimento de voz não está pronto (${check.status.name}).',
-  );
+  String _sttUnavailableNote(SttCheck check) => voiceLanguageFor(_lang).message('recognitionUnavailable', {'status': check.status.name});
 
   static String? _pendingInputKey(ActiveChat? chat) {
     if (chat == null) return null;
