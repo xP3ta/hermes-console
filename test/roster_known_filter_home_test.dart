@@ -11,6 +11,7 @@ import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'support/test_api_client.dart';
 
 class _QuietClient extends ApiClient {
   _QuietClient()
@@ -18,6 +19,10 @@ class _QuietClient extends ApiClient {
         baseUrl: 'http://127.0.0.1:8642',
         apiKey: 'test-key',
         httpClient: MockClient((_) async => http.Response('{}', 404)),
+        profileDashboard: testDashboardClient(
+          baseUrl: 'http://127.0.0.1:8642',
+          httpClient: MockClient((_) async => http.Response('{}', 404)),
+        ),
       );
 
   @override

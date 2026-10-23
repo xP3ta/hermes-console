@@ -32,6 +32,7 @@ import 'package:hermes_android/core/widgets/floating_chat_header.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 
 import 'support/bottom_transparency.dart';
+import 'support/test_api_client.dart';
 
 // ignore: unused_element
 ScrollPosition _primaryVerticalScrollPosition(
@@ -153,9 +154,8 @@ Session _session() => Session(
   startedAt: 0,
 );
 
-ApiClient _safeApi() => ApiClient(
+ApiClient _safeApi() => testApiClient(
   baseUrl: 'https://example.test',
-  apiKey: 'test-key',
   httpClient: MockClient((_) async => http.Response('not found', 404)),
 );
 

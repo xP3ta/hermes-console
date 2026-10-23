@@ -179,6 +179,7 @@ import 'package:hermes_android/core/widgets/subagent_activity_card.dart';
 
 import 'support/inter_font.dart';
 import 'support/provider_logo_probe.dart';
+import 'support/test_api_client.dart';
 
 AgentProfileAvatar _testProfileAvatar() => AgentProfileAvatar.fromDataUri(
   'data:image/png;base64,'
@@ -2513,9 +2514,8 @@ Future<void> _tapSheetRow(WidgetTester tester, Finder row) async {
   await tester.tap(row);
 }
 
-ApiClient _safeApi() => ApiClient(
+ApiClient _safeApi() => testApiClient(
   baseUrl: 'http://127.0.0.1:8642',
-  apiKey: 'k',
   httpClient: MockClient((_) async => http.Response('not found', 404)),
 );
 
@@ -6461,9 +6461,8 @@ void main() {
       addTearDown(tester.view.reset);
       final gateway = _CompleteShortHistoryGateway();
       var restCalls = 0;
-      final api = ApiClient(
+      final api = testApiClient(
         baseUrl: 'https://example.test',
-        apiKey: 'test-key',
         httpClient: MockClient((request) async {
           restCalls += 1;
           final limit = int.parse(
@@ -6742,9 +6741,8 @@ void main() {
         headers: const {'content-type': 'application/json'},
       );
     });
-    final api = ApiClient(
+    final api = testApiClient(
       baseUrl: 'https://example.test',
-      apiKey: 'test-key',
       httpClient: client,
     );
     addTearDown(api.close);
@@ -7183,9 +7181,8 @@ void main() {
           headers: const {'content-type': 'application/json'},
         );
       });
-      final api = ApiClient(
+      final api = testApiClient(
         baseUrl: 'https://example.test',
-        apiKey: 'test-key',
         httpClient: client,
       );
       addTearDown(api.close);
@@ -7831,9 +7828,8 @@ void main() {
         tester,
         desktopGateway: _UiRewindGateway(),
         connection: _remoteConn('conn-cold-load-404'),
-        api: ApiClient(
+        api: testApiClient(
           baseUrl: 'http://127.0.0.1:8642',
-          apiKey: 'k',
           httpClient: MockClient((request) async {
             if (request.url.path == '/api/sessions/sess-test') {
               return http.Response(
@@ -7904,9 +7900,8 @@ void main() {
       messages: const [
         {'role': 'assistant', 'content': 'Historial intacto'},
       ],
-      api: ApiClient(
+      api: testApiClient(
         baseUrl: 'http://127.0.0.1:8642',
-        apiKey: 'k',
         httpClient: MockClient(
           (_) async => http.Response(
             jsonEncode({
@@ -8131,9 +8126,8 @@ void main() {
       tester,
       desktopGateway: _UiRewindGateway(),
       connection: _remoteConn('conn-android-share-missing'),
-      api: ApiClient(
+      api: testApiClient(
         baseUrl: 'http://127.0.0.1:8642',
-        apiKey: 'k',
         httpClient: MockClient((request) async {
           if (request.url.path == '/api/sessions/stored-android-share') {
             return http.Response(
@@ -9138,9 +9132,8 @@ void main() {
     (tester) async {
       final semantics = tester.ensureSemantics();
       final requests = <http.Request>[];
-      final api = ApiClient(
+      final api = testApiClient(
         baseUrl: 'http://192.168.255.254:8642',
-        apiKey: 'test-key',
         connectionId: 'conn-core-read-partial-ui',
         httpClient: MockClient((request) async {
           requests.add(request);
@@ -9219,9 +9212,8 @@ void main() {
     testWidgets('new uncompressed chat reports unknown API coverage $language', (
       tester,
     ) async {
-      final api = ApiClient(
+      final api = testApiClient(
         baseUrl: 'http://192.168.255.254:8642',
-        apiKey: 'test-key',
         httpClient: MockClient(
           (_) async => http.Response(
             jsonEncode({
@@ -9293,9 +9285,8 @@ void main() {
     'historial compacto canónico muestra el turno más antiguo sin aviso parcial',
     (tester) async {
       final semantics = tester.ensureSemantics();
-      final api = ApiClient(
+      final api = testApiClient(
         baseUrl: 'http://192.168.255.254:8642',
-        apiKey: 'test-key',
         connectionId: 'conn-core-read-full-ui',
         httpClient: MockClient(
           (request) async => http.Response(
@@ -12013,14 +12004,15 @@ void main() {
     Navigator.of(tester.element(find.byType(ChatScreen))).pop();
     await tester.pump(const Duration(milliseconds: 400));
 
-    final listApi = ApiClient(
+    final listApi = testApiClient(
       baseUrl: connection.baseUrl,
-      apiKey: connection.apiKey,
       httpClient: MockClient((request) async {
-        if (request.url.path == '/health') return http.Response('{}', 200);
+        if (request.url.path == '/api/status') {
+          return http.Response('{}', 200);
+        }
         if (request.url.path == '/api/sessions') {
           return http.Response(
-            jsonEncode({'data': const <Object>[], 'has_more': false}),
+            jsonEncode({'sessions': const <Object>[], 'total': 0}),
             200,
           );
         }
@@ -13459,9 +13451,8 @@ void main() {
     tester,
   ) async {
     var sessionDetailRequests = 0;
-    final api = ApiClient(
+    final api = testApiClient(
       baseUrl: 'http://127.0.0.1:8642',
-      apiKey: 'k',
       httpClient: MockClient((request) async {
         if (request.url.path.startsWith('/api/sessions/mob-voice-draft')) {
           sessionDetailRequests += 1;
@@ -16233,6 +16224,9 @@ void main() {
   testWidgets(
     'reabrir una sesión larga compactada no retrocea sus respuestas largas',
     (tester) async {
+      // The decode settle below lets real time pass: the app's companion
+      // store then reaches path_provider, which a fake clock never let it.
+      mockCompanionStorage();
       // QA 9340 (Pixel 9 Pro): abrir una sesión de ~800 filas con 555
       // compactadas dejó frames de build de ~1,4 s. El troceado verificado
       // de cada respuesta larga (markdownToHtml por frontera) se cacheaba
@@ -16252,9 +16246,8 @@ void main() {
           'returned': page.length,
         },
       });
-      final api = ApiClient(
+      final api = testApiClient(
         baseUrl: 'http://192.168.255.254:8642',
-        apiKey: 'test-key',
         connectionId: 'conn-long-compacted',
         httpClient: MockClient(
           (_) async => http.Response(
@@ -16276,6 +16269,17 @@ void main() {
         preview: '',
         startedAt: 0,
       );
+      // The 500-row page is over 64 KB, so the Dashboard decodes it in an
+      // isolate (decodeJsonOffMain), which only runs in real time.
+      Future<void> settleOffMainDecode({bool Function()? until}) async {
+        for (var i = 0; i < 50 && !(until?.call() ?? false); i++) {
+          await tester.runAsync(
+            () => Future<void>.delayed(const Duration(milliseconds: 20)),
+          );
+          await tester.pump();
+        }
+      }
+
       final probe = ChatPerformanceProbe();
       final chat = await pumpChat(
         tester,
@@ -16287,6 +16291,7 @@ void main() {
         performanceProbe: probe,
         transcriptPageSizeForTesting: 500,
       );
+      await settleOffMainDecode(until: () => chat.messagesLoaded);
       await tester.pump(const Duration(milliseconds: 400));
       expect(chat.messagesLoaded, isTrue);
       final firstOpenPlans = probe.assistantRenderPlanComputations;
@@ -16316,7 +16321,12 @@ void main() {
         ),
       );
       await tester.pump();
+      // Any read the reopen starts lands before the counts, as it did when
+      // the page decoded inline.
+      await settleOffMainDecode();
       await tester.pump(const Duration(milliseconds: 400));
+      await settleOffMainDecode();
+      await tester.pump();
 
       expect(reopenProbe.screenBuilds, greaterThan(0));
       expect(
@@ -41015,9 +41025,8 @@ void main() {
           ];
           var durableReady = false;
           var restMessageReads = 0;
-          final api = ApiClient(
+          final api = testApiClient(
             baseUrl: 'http://127.0.0.1:8642',
-            apiKey: 'test',
             httpClient: MockClient((request) async {
               final path = request.url.path;
               if (request.method == 'GET' &&
@@ -41146,9 +41155,8 @@ void main() {
       const prompt2 = 'PROMPT_DUP9341_SECOND';
       const reply2 = 'REPLY_DUP9341_SECOND';
       final durable = <Map<String, dynamic>>[];
-      final api = ApiClient(
+      final api = testApiClient(
         baseUrl: 'http://127.0.0.1:8642',
-        apiKey: 'test-key',
         httpClient: MockClient((request) async {
           if (request.method == 'GET' &&
               request.url.path == '/api/sessions/sess-test/messages') {
@@ -41254,9 +41262,8 @@ void main() {
       const prompt2 = 'PROMPT_DUP9343_SECOND';
       const reply2 = 'REPLY_DUP9343_SECOND';
       final durable = <Map<String, dynamic>>[];
-      final api = ApiClient(
+      final api = testApiClient(
         baseUrl: 'http://127.0.0.1:8642',
-        apiKey: 'test-key',
         httpClient: MockClient((request) async {
           if (request.method == 'GET' &&
               request.url.path == '/api/sessions/sess-test/messages') {
@@ -42088,9 +42095,8 @@ class _EarlierHistoryPages {
   final _held = <({Completer<http.Response> response, int offset})>[];
 
   ApiClient api() {
-    final client = ApiClient(
+    final client = testApiClient(
       baseUrl: 'https://example.test',
-      apiKey: 'fixture',
       httpClient: MockClient((request) {
         requests.add(request.url);
         final offset = int.parse(request.url.queryParameters['offset'] ?? '0');

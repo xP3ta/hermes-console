@@ -26,6 +26,7 @@ import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:hermes_android/core/services/turn_outbox_store.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
+import 'support/test_api_client.dart';
 
 class _MemoryOutbox implements TurnOutboxPersistence {
   _MemoryOutbox({this.beforeSave});
@@ -703,9 +704,8 @@ class _ConflictMutationGateway extends _RecheckOwnershipGateway
   ApprovalPolicyService? policy,
   StoredSessionMessageLoader? storedMessageLoader,
 }) {
-  final api = ApiClient(
+  final api = testApiClient(
     baseUrl: 'https://example.invalid',
-    apiKey: 'test-only',
     httpClient: MockClient((_) async => http.Response('unused', 500)),
   );
   final chat = ActiveChat(
@@ -908,9 +908,8 @@ void main() {
         apiKey: 'test-key',
         useHttps: true,
       );
-      final api = ApiClient(
+      final api = testApiClient(
         baseUrl: 'https://example.invalid',
-        apiKey: 'test-key',
         httpClient: MockClient((_) async => http.Response('unused', 500)),
       );
       final chat = service.attach(
@@ -1010,9 +1009,8 @@ void main() {
         sessionTitle: 'Canonical',
         initialStoredSessionId: 'session-modern',
         authoritativeStoredSessionBinding: true,
-        api: ApiClient(
+        api: testApiClient(
           baseUrl: 'https://example.invalid',
-          apiKey: 'test-key',
           httpClient: MockClient((_) async => http.Response('unused', 500)),
         ),
         desktopGateway: freshGateway,
@@ -1148,9 +1146,8 @@ void main() {
     'sin capability usa prompt heredado exacto y no consulta status',
     () async {
       final gateway = _LegacyGateway();
-      final api = ApiClient(
+      final api = testApiClient(
         baseUrl: 'https://example.invalid',
-        apiKey: 'test-only',
         httpClient: MockClient((_) async => http.Response('unused', 500)),
       );
       final chat = ActiveChat(
@@ -3514,9 +3511,8 @@ void main() {
         ),
         sessionId: 'session-probe',
         sessionTitle: 'Probe',
-        api: ApiClient(
+        api: testApiClient(
           baseUrl: 'https://example.invalid',
-          apiKey: 'probe-key',
           httpClient: MockClient((_) async => http.Response('unused', 500)),
         ),
         desktopGateway: gateway,

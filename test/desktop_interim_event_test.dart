@@ -9,6 +9,7 @@ import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
+import 'support/test_api_client.dart';
 
 class _InterimGateway implements HermesDesktopGateway {
   final StreamController<TuiGatewayEvent> _events =
@@ -103,9 +104,8 @@ Future<_InterimFixture> _startChat() async {
     sessionTitle: 'Interim contract',
     notifications: null,
     onTerminal: () {},
-    api: ApiClient(
+    api: testApiClient(
       baseUrl: 'https://example.invalid',
-      apiKey: 'test-only',
       httpClient: MockClient((_) async => http.Response('unused', 500)),
     ),
     desktopGateway: gateway,

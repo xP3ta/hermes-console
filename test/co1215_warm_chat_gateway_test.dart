@@ -11,6 +11,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
+import 'support/test_api_client.dart';
 
 /// co1215: a released chat parks its own WebSocket client for a short grace
 /// so reopening the same chat skips the ticket + upgrade + ready handshake.
@@ -83,9 +84,8 @@ SavedConnection _connection(
   dashboardAuthMode: dashboardAuthMode,
 );
 
-ApiClient _api() => ApiClient(
+ApiClient _api() => testApiClient(
   baseUrl: 'https://example.invalid',
-  apiKey: 'test-key',
   httpClient: MockClient((_) async => http.Response('unused', 500)),
 );
 

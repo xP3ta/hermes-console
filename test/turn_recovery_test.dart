@@ -14,6 +14,7 @@ import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:hermes_android/core/services/turn_outbox_store.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
+import 'support/test_api_client.dart';
 
 class _MemoryOutbox implements TurnOutboxPersistence {
   final List<PreparedTurn> writes = [];
@@ -335,9 +336,9 @@ void main() {
     );
     final gateway = _DesktopGateway()
       ..submitError = TimeoutException('synthetic ack loss');
-    final api = ApiClient(
+    final api = testApiClient(
       baseUrl: 'https://example.invalid',
-      apiKey: 'test-only',
+      answerAfterClose: true,
       httpClient: MockClient((_) async => http.Response('unused', 500)),
     );
     final chat = ActiveChat(
@@ -375,9 +376,9 @@ void main() {
   test('cola conserva turno completo y cancela por clientTurnId', () async {
     final store = _MemoryOutbox();
     final gateway = _DesktopGateway();
-    final api = ApiClient(
+    final api = testApiClient(
       baseUrl: 'https://example.invalid',
-      apiKey: 'test',
+      answerAfterClose: true,
       httpClient: MockClient((_) async => http.Response('unused', 500)),
     );
     final chat = ActiveChat(
@@ -437,9 +438,9 @@ void main() {
       final store = _BlockingSaveOutbox();
       final gateway = _DesktopGateway();
       final firstRemotePost = Completer<http.Request>();
-      final api = ApiClient(
+      final api = testApiClient(
         baseUrl: 'https://example.invalid',
-        apiKey: String.fromCharCodes([116, 101, 115, 116]),
+        answerAfterClose: true,
         httpClient: MockClient((request) async {
           if (request.method == 'POST' &&
               request.url.path == '/v1/runs' &&
@@ -519,9 +520,9 @@ void main() {
     final firstStore = _BlockingSaveOutbox();
     final secondStore = _MemoryOutbox();
     final gateway = _DesktopGateway();
-    final api = ApiClient(
+    final api = testApiClient(
       baseUrl: 'https://example.invalid',
-      apiKey: String.fromCharCodes([116, 101, 115, 116]),
+      answerAfterClose: true,
       httpClient: MockClient((_) async => http.Response('unused', 500)),
     );
     final chat = ActiveChat(
@@ -582,9 +583,9 @@ void main() {
     final firstStore = _BlockingSaveOutbox();
     final secondStore = _MemoryOutbox();
     final gateway = _DesktopGateway();
-    final api = ApiClient(
+    final api = testApiClient(
       baseUrl: 'https://example.invalid',
-      apiKey: String.fromCharCodes([116, 101, 115, 116]),
+      answerAfterClose: true,
       httpClient: MockClient((_) async => http.Response('unused', 500)),
     );
     final chat = ActiveChat(
@@ -642,9 +643,9 @@ void main() {
   test('fallo al borrar cancelación mantiene el turno bloqueado', () async {
     final store = _FailingDeleteOutbox();
     final gateway = _DesktopGateway();
-    final api = ApiClient(
+    final api = testApiClient(
       baseUrl: 'https://example.invalid',
-      apiKey: String.fromCharCodes([116, 101, 115, 116]),
+      answerAfterClose: true,
       httpClient: MockClient((_) async => http.Response('unused', 500)),
     );
     final chat = ActiveChat(
@@ -702,9 +703,9 @@ void main() {
     () async {
       final store = _FailingDeleteOutbox();
       final gateway = _DesktopGateway();
-      final api = ApiClient(
+      final api = testApiClient(
         baseUrl: 'https://example.invalid',
-        apiKey: 'not-a-secret',
+        answerAfterClose: true,
         httpClient: MockClient((_) async => http.Response('unused', 500)),
       );
       final chat = ActiveChat(
@@ -741,9 +742,9 @@ void main() {
   test('cancel individual no compite con drain terminal', () async {
     final store = _BlockingDeleteOutbox();
     final gateway = _DesktopGateway();
-    final api = ApiClient(
+    final api = testApiClient(
       baseUrl: 'https://example.invalid',
-      apiKey: String.fromCharCodes([116, 101, 115, 116]),
+      answerAfterClose: true,
       httpClient: MockClient((_) async => http.Response('unused', 500)),
     );
     final chat = ActiveChat(
@@ -812,9 +813,9 @@ void main() {
     () async {
       final store = _BlockingSaveFailingDeleteOutbox();
       final gateway = _DesktopGateway();
-      final api = ApiClient(
+      final api = testApiClient(
         baseUrl: 'https://example.invalid',
-        apiKey: String.fromCharCodes(const [116, 101, 115, 116]),
+        answerAfterClose: true,
         httpClient: MockClient((_) async => http.Response('unused', 500)),
       );
       final chat = ActiveChat(
@@ -897,9 +898,9 @@ void main() {
     () async {
       final store = _MemoryOutbox()..failState = PreparedTurnState.terminal;
       final gateway = _DesktopGateway();
-      final api = ApiClient(
+      final api = testApiClient(
         baseUrl: 'https://example.invalid',
-        apiKey: String.fromCharCodes(const [116, 101, 115, 116]),
+        answerAfterClose: true,
         httpClient: MockClient((_) async => http.Response('unused', 500)),
       );
       final chat = ActiveChat(
@@ -948,9 +949,9 @@ void main() {
   test('un turno nuevo reabre la admisión después de Stop seguro', () async {
     final store = _MemoryOutbox();
     final gateway = _DesktopGateway();
-    final api = ApiClient(
+    final api = testApiClient(
       baseUrl: 'https://example.invalid',
-      apiKey: String.fromCharCodes(const [116, 101, 115, 116]),
+      answerAfterClose: true,
       httpClient: MockClient((_) async => http.Response('unused', 500)),
     );
     final chat = ActiveChat(
@@ -999,9 +1000,9 @@ void main() {
   test('un Stop repetido conserva nuevas entradas estacionadas', () async {
     final store = _MemoryOutbox();
     final gateway = _DesktopGateway();
-    final api = ApiClient(
+    final api = testApiClient(
       baseUrl: 'https://example.invalid',
-      apiKey: String.fromCharCodes(const [116, 101, 115, 116]),
+      answerAfterClose: true,
       httpClient: MockClient((_) async => http.Response('unused', 500)),
     );
     final chat = ActiveChat(
@@ -1046,9 +1047,9 @@ void main() {
     () async {
       final store = _MemoryOutbox();
       final gateway = _DesktopGateway();
-      final api = ApiClient(
+      final api = testApiClient(
         baseUrl: 'https://example.invalid',
-        apiKey: String.fromCharCodes(const [116, 101, 115, 116]),
+        answerAfterClose: true,
         httpClient: MockClient((_) async => http.Response('unused', 500)),
       );
       final chat = ActiveChat(
@@ -1108,9 +1109,9 @@ void main() {
       final releaseTranscriptSave = Completer<void>();
       final store = _MemoryOutbox();
       final gateway = _DesktopGateway();
-      final api = ApiClient(
+      final api = testApiClient(
         baseUrl: 'https://example.invalid',
-        apiKey: String.fromCharCodes(const [116, 101, 115, 116]),
+        answerAfterClose: true,
         httpClient: MockClient((_) async => http.Response('unused', 500)),
       );
       final chat = ActiveChat(
@@ -1165,9 +1166,9 @@ void main() {
     () async {
       final gateway = _DesktopGateway()
         ..interruptError = StateError('interrupt rejected');
-      final api = ApiClient(
+      final api = testApiClient(
         baseUrl: 'https://example.invalid',
-        apiKey: String.fromCharCodes([116, 101, 115, 116]),
+        answerAfterClose: true,
         httpClient: MockClient((_) async => http.Response('unused', 500)),
       );
       final chat = ActiveChat(
@@ -1220,9 +1221,9 @@ void main() {
   test('terminal autoritativo confirma Stop mientras espera el ACK', () async {
     final interruptGate = Completer<void>();
     final gateway = _DesktopGateway()..interruptGate = interruptGate;
-    final api = ApiClient(
+    final api = testApiClient(
       baseUrl: 'https://example.invalid',
-      apiKey: 'not-a-secret',
+      answerAfterClose: true,
       httpClient: MockClient((_) async => http.Response('unused', 500)),
     );
     final chat = ActiveChat(
@@ -1271,9 +1272,9 @@ void main() {
     () async {
       final gateway = _DesktopGateway()
         ..redirectDisposition = DesktopRedirectDisposition.queued;
-      final api = ApiClient(
+      final api = testApiClient(
         baseUrl: 'https://example.invalid',
-        apiKey: 'not-a-secret',
+        answerAfterClose: true,
         httpClient: MockClient((_) async => http.Response('unused', 500)),
       );
       final chat = ActiveChat(
@@ -1325,9 +1326,9 @@ void main() {
     () async {
       final store = _BlockingSaveOutbox();
       final gateway = _DesktopGateway();
-      final api = ApiClient(
+      final api = testApiClient(
         baseUrl: 'https://example.invalid',
-        apiKey: String.fromCharCodes([116, 101, 115, 116]),
+        answerAfterClose: true,
         httpClient: MockClient((_) async => http.Response('unused', 500)),
       );
       final chat = ActiveChat(
@@ -1389,9 +1390,9 @@ void main() {
   test('dispose bloquea un drain ya agendado por enqueue', () async {
     var remoteRequests = 0;
     final gateway = _DesktopGateway();
-    final api = ApiClient(
+    final api = testApiClient(
       baseUrl: 'https://example.invalid',
-      apiKey: String.fromCharCodes([116, 101, 115, 116]),
+      answerAfterClose: true,
       httpClient: MockClient((_) async {
         remoteRequests++;
         return http.Response('{}', 500);
@@ -1429,9 +1430,9 @@ void main() {
     var remoteRequests = 0;
     final gateway = _DesktopGateway()
       ..connectError = StateError('desktop unavailable before submit');
-    final api = ApiClient(
+    final api = testApiClient(
       baseUrl: 'https://example.invalid',
-      apiKey: String.fromCharCodes([116, 101, 115, 116]),
+      answerAfterClose: true,
       httpClient: MockClient((_) async {
         remoteRequests++;
         return http.Response('{"run_id":"unexpected"}', 200);
@@ -1465,9 +1466,9 @@ void main() {
   test('cola hereda el fence Desktop tras resetear el config staged', () async {
     var remoteRequests = 0;
     final gateway = _DesktopGateway();
-    final api = ApiClient(
+    final api = testApiClient(
       baseUrl: 'https://example.invalid',
-      apiKey: String.fromCharCodes([116, 101, 115, 116]),
+      answerAfterClose: true,
       httpClient: MockClient((_) async {
         remoteRequests++;
         return http.Response('{"run_id":"unexpected"}', 200);
@@ -1521,9 +1522,9 @@ void main() {
     final store = _MemoryOutbox();
     final gateway = _DesktopGateway()
       ..connectError = StateError('desktop unavailable before submit');
-    final api = ApiClient(
+    final api = testApiClient(
       baseUrl: 'https://example.invalid',
-      apiKey: String.fromCharCodes([116, 101, 115, 116]),
+      answerAfterClose: true,
       httpClient: MockClient((_) async {
         remoteRequests++;
         return http.Response('{"run_id":"unexpected"}', 200);
@@ -1557,9 +1558,9 @@ void main() {
   test('terminal drena una cola que solo contiene turno preparado', () async {
     final store = _MemoryOutbox();
     final gateway = _DesktopGateway();
-    final api = ApiClient(
+    final api = testApiClient(
       baseUrl: 'https://example.invalid',
-      apiKey: 'test-key',
+      answerAfterClose: true,
       httpClient: MockClient((_) async => http.Response('unused', 500)),
     );
     final chat = ActiveChat(
@@ -1623,9 +1624,9 @@ void main() {
     () async {
       final store = _MemoryOutbox();
       final gateway = _DesktopGateway();
-      final api = ApiClient(
+      final api = testApiClient(
         baseUrl: 'https://example.invalid',
-        apiKey: 'test-key',
+        answerAfterClose: true,
         httpClient: MockClient((_) async => http.Response('unused', 500)),
       );
       final chat = ActiveChat(
@@ -1663,9 +1664,9 @@ void main() {
     final store = _MemoryOutbox();
     final gateway = _DesktopGateway()
       ..submitError = TimeoutException('synthetic ack loss');
-    final api = ApiClient(
+    final api = testApiClient(
       baseUrl: 'https://example.invalid',
-      apiKey: 'test',
+      answerAfterClose: true,
       httpClient: MockClient((_) async => http.Response('unused', 500)),
     );
     final chat = ActiveChat(
@@ -1706,9 +1707,9 @@ void main() {
     () async {
       final store = _MemoryOutbox();
       final gateway = _DesktopGateway();
-      final api = ApiClient(
+      final api = testApiClient(
         baseUrl: 'https://example.invalid',
-        apiKey: 'test',
+        answerAfterClose: true,
         httpClient: MockClient((_) async => http.Response('unused', 500)),
       );
       final chat = ActiveChat(
@@ -1831,9 +1832,9 @@ void main() {
         sessionTitle: 'Test',
         notifications: null,
         onTerminal: () {},
-        api: ApiClient(
+        api: testApiClient(
           baseUrl: 'https://example.invalid',
-          apiKey: 'test-key',
+          answerAfterClose: true,
           httpClient: MockClient((_) async => http.Response('unused', 500)),
         ),
         desktopGateway: gateway,

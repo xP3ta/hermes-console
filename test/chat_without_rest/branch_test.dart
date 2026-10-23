@@ -13,6 +13,7 @@ import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'hermes_fixture.dart';
+import '../support/test_api_client.dart';
 
 class _RealHttp extends HttpOverrides {}
 
@@ -27,6 +28,13 @@ class _Api extends ApiClient {
           log.add('HTTP ${r.method} ${r.url.path}');
           return http.Response('{}', 404);
         }),
+        profileDashboard: testDashboardClient(
+          baseUrl: 'http://127.0.0.1:1',
+          httpClient: MockClient((r) async {
+            log.add('HTTP ${r.method} ${r.url.path}');
+            return http.Response('{}', 404);
+          }),
+        ),
       );
   final List<String> log;
 

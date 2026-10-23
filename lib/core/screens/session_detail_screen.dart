@@ -415,13 +415,8 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     try {
       final result = await deleteSessionWithResolvedLineage(
         _session,
-        loadSessions: ({bool includeChildren = false}) => _client.getSessions(
-          includeChildren: includeChildren,
-          profile: ownerProfile,
-        ),
         deleteSession: (sessionId) =>
             _client.deleteSession(sessionId, profile: ownerProfile),
-        serverDeletesChain: _client.hasDashboard,
         cronDeletion: cronDeletion,
         deleteCronJob:
             !_session.isJob ||

@@ -16,6 +16,7 @@ import 'package:hermes_android/l10n/app_localizations_es.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../support/test_api_client.dart';
 
 /// A 1.2.x connection that only ever had the Gateway (port 8642 and its key,
 /// no Dashboard address, no Dashboard secrets) while the Dashboard is not
@@ -26,6 +27,10 @@ class _Client extends ApiClient {
         baseUrl: 'http://127.0.0.1:8642',
         apiKey: 'k',
         httpClient: MockClient((_) async => http.Response('{}', 404)),
+        profileDashboard: testDashboardClient(
+          baseUrl: 'http://127.0.0.1:8642',
+          httpClient: MockClient((_) async => http.Response('{}', 404)),
+        ),
       );
 
   final bool reachable;

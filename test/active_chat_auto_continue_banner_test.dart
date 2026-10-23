@@ -9,6 +9,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
+import 'support/test_api_client.dart';
 
 class _RunningResumeGateway
     implements HermesDesktopGateway, HermesDesktopSessionLifecycleGateway {
@@ -100,9 +101,8 @@ void main() {
       initialStoredSessionId: 'stored-auto-continue',
       notifications: null,
       onTerminal: () {},
-      api: ApiClient(
+      api: testApiClient(
         baseUrl: 'https://example.invalid',
-        apiKey: 'test-key',
         httpClient: MockClient(
           (_) async => http.Response('{"messages":[]}', 200),
         ),
@@ -137,9 +137,8 @@ void main() {
       initialStoredSessionId: 'stored-auto-continue',
       notifications: null,
       onTerminal: () {},
-      api: ApiClient(
+      api: testApiClient(
         baseUrl: 'https://example.invalid',
-        apiKey: 'test-key',
         httpClient: MockClient(
           (_) async => http.Response('{"messages":[]}', 200),
         ),

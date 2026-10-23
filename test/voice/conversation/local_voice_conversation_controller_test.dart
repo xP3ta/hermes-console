@@ -24,6 +24,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../support/desktop_chat_socket.dart';
 import '../../support/in_memory_compression_restore_storage.dart';
+import '../../support/test_api_client.dart';
 
 class _FakeVoice extends VoiceService {
   _FakeVoice(SharedPreferences prefs, {bool bargeInEnabled = true})
@@ -713,9 +714,8 @@ Future<_Harness> _harness({
     connection: _connection(),
     sessionId: 'visible-session',
     sessionTitle: 'Voz',
-    api: ApiClient(
+    api: testApiClient(
       baseUrl: 'http://hermes.test:8642',
-      apiKey: 'test-key',
       httpClient: gateway.counter,
     ),
     desktopGateway: gateway.socket,
@@ -856,9 +856,8 @@ void main() {
             connection: connection,
             sessionId: 'stored-spoken',
             sessionTitle: 'Synthetic',
-            api: ApiClient(
+            api: testApiClient(
               baseUrl: 'http://hermes.test:8642',
-              apiKey: '',
               httpClient: HostCounter(),
             ),
             desktopGateway: desktop,
@@ -924,9 +923,8 @@ void main() {
         connection: _connection(),
         sessionId: 'remote-voice-no-live-mutation',
         sessionTitle: 'Remote voice queue',
-        api: ApiClient(
+        api: testApiClient(
           baseUrl: 'http://hermes.test:8642',
-          apiKey: String.fromCharCodes(const [107]),
           httpClient: rest,
         ),
         desktopGateway: desktop,
@@ -1005,9 +1003,8 @@ void main() {
         connection: _connection(),
         sessionId: 'remote-voice-no-rest',
         sessionTitle: 'Remote voice',
-        api: ApiClient(
+        api: testApiClient(
           baseUrl: 'http://hermes.test:8642',
-          apiKey: String.fromCharCodes(const [107]),
           httpClient: httpGateway,
         ),
         desktopGateway: desktop,
@@ -1051,9 +1048,8 @@ void main() {
         connection: _localOnDeviceConnection(),
         sessionId: 'local-voice-policy-no-rest',
         sessionTitle: 'Restricted local voice',
-        api: ApiClient(
+        api: testApiClient(
           baseUrl: 'http://127.0.0.1:8642',
-          apiKey: String.fromCharCodes(const [108, 111, 99, 97, 108]),
           httpClient: httpGateway,
         ),
         desktopGateway: desktop,
@@ -1904,9 +1900,8 @@ void main() {
         connection: _connection(),
         sessionId: 'second-visible-session',
         sessionTitle: 'Segundo chat',
-        api: ApiClient(
+        api: testApiClient(
           baseUrl: 'http://hermes.test:8642',
-          apiKey: 'test-key',
           httpClient: h.gateway.counter,
         ),
       );

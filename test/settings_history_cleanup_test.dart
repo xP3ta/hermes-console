@@ -18,6 +18,8 @@ import 'package:hermes_android/core/widgets/hermes_notice.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'support/test_api_client.dart';
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -247,26 +249,26 @@ void main() {
       );
 
       final deleted = <String>[];
-      final remote = ApiClient(
+      final remote = testApiClient(
         baseUrl: connection.baseUrl,
-        apiKey: connection.apiKey,
         connectionId: connection.id,
         httpClient: MockClient((request) async {
           if (request.method == 'GET' &&
               request.url.path.endsWith('/api/sessions')) {
             return http.Response(
               jsonEncode({
-                'data': [
+                'sessions': [
                   {'id': 'chat-1', 'source': 'mobile', 'title': 'chat'},
                   {'id': 'cron_job_1', 'source': 'cron', 'title': 'informe'},
                 ],
+                'total': 2,
               }),
               200,
             );
           }
           if (request.method == 'DELETE') {
             deleted.add(request.url.pathSegments.last);
-            return http.Response(jsonEncode({'deleted': true}), 200);
+            return http.Response(jsonEncode({'ok': true}), 200);
           }
           return http.Response('{}', 404);
         }),
@@ -625,7 +627,9 @@ void main() {
       // Mitad remota: sin ella las sesiones seguían en el servidor y volvían
       // a la lista al refrescar ("no se borran todas").
       expect(normalCleanup, contains('.getSessions('));
-      expect(normalCleanup, contains('includeChildren: !client.hasDashboard'));
+      // The Dashboard lists each row once, continuations folded into their
+      // parent, and deletes the whole chain from it: no child-inclusive read.
+      expect(normalCleanup, isNot(contains('includeChildren')));
       expect(normalCleanup, contains('historyCleanupDeleteOrder('));
       expect(normalCleanup, contains('clearRemoteConversations('));
       expect(normalCleanup, contains('.deleteSession('));
@@ -907,26 +911,26 @@ void main() {
     await drafts.save(connection.id, 'chat-1', 'keep this draft', const []);
 
     final deleted = <String>[];
-    final remote = ApiClient(
+    final remote = testApiClient(
       baseUrl: connection.baseUrl,
-      apiKey: connection.apiKey,
       connectionId: connection.id,
       httpClient: MockClient((request) async {
         if (request.method == 'GET' &&
             request.url.path.endsWith('/api/sessions')) {
           return http.Response(
             jsonEncode({
-              'data': [
+              'sessions': [
                 {'id': 'chat-1', 'source': 'mobile', 'title': 'chat'},
                 {'id': 'cron_job_1', 'source': 'cron', 'title': 'informe'},
               ],
+              'total': 2,
             }),
             200,
           );
         }
         if (request.method == 'DELETE') {
           deleted.add(request.url.pathSegments.last);
-          return http.Response(jsonEncode({'deleted': true}), 200);
+          return http.Response(jsonEncode({'ok': true}), 200);
         }
         return http.Response('{}', 404);
       }),
@@ -1090,16 +1094,18 @@ void main() {
       final manager = await ConnectionManager.create(prefs);
       final connection = connectionWith('instance-a');
       var deletes = 0;
-      final remote = ApiClient(
+      final remote = testApiClient(
         baseUrl: connection.baseUrl,
-        apiKey: connection.apiKey,
         connectionId: connection.id,
         httpClient: MockClient((request) async {
           if (request.method == 'GET' &&
               request.url.path.endsWith('/api/sessions')) {
             // Un gateway que acaba de reiniciarse puede responder 200 con la
             // lista vacía: no lanza, así que el `catch` no se enteraba.
-            return http.Response(jsonEncode({'data': <Object>[]}), 200);
+            return http.Response(
+              jsonEncode({'sessions': <Object>[], 'total': 0}),
+              200,
+            );
           }
           if (request.method == 'DELETE') deletes++;
           return http.Response('{}', 404);
@@ -1146,16 +1152,15 @@ void main() {
           invalidations.add,
         );
         addTearDown(sub.cancel);
-        final remote = ApiClient(
+        final remote = testApiClient(
           baseUrl: connection.baseUrl,
-          apiKey: connection.apiKey,
           connectionId: connection.id,
           httpClient: MockClient((request) async {
             if (request.method == 'GET' &&
                 request.url.path.endsWith('/api/sessions')) {
               return http.Response(
                 jsonEncode({
-                  'data': [
+                  'sessions': [
                     {'id': 'chat-1', 'source': 'desktop', 'title': 'chat'},
                     {'id': 'cron_job_a_20260920_090000', 'source': 'cron'},
                     {'id': 'cron_job_a_20260921_090000', 'source': 'cron'},
@@ -1166,13 +1171,14 @@ void main() {
                     },
                     {'id': 'oneshot-1', 'source': 'oneshot'},
                   ],
+                  'total': 5,
                 }),
                 200,
               );
             }
             if (request.method == 'DELETE') {
               deleted.add(request.url.pathSegments.last);
-              return http.Response(jsonEncode({'deleted': true}), 200);
+              return http.Response(jsonEncode({'ok': true}), 200);
             }
             return http.Response('{}', 404);
           }),
@@ -1289,18 +1295,18 @@ void main() {
 
         final deleted = <String>[];
         final firstDelete = Completer<void>();
-        final remote = ApiClient(
+        final remote = testApiClient(
           baseUrl: connection.baseUrl,
-          apiKey: connection.apiKey,
           connectionId: connection.id,
           httpClient: MockClient((request) async {
             if (request.method == 'GET' &&
                 request.url.path.endsWith('/api/sessions')) {
               return http.Response(
                 jsonEncode({
-                  'data': [
+                  'sessions': [
                     {'id': 'chat-1', 'source': 'mobile', 'title': 'chat'},
                   ],
+                  'total': 1,
                 }),
                 200,
               );
@@ -1308,7 +1314,7 @@ void main() {
             if (request.method == 'DELETE') {
               deleted.add(request.url.pathSegments.last);
               await firstDelete.future;
-              return http.Response(jsonEncode({'deleted': true}), 200);
+              return http.Response(jsonEncode({'ok': true}), 200);
             }
             return http.Response('{}', 404);
           }),
@@ -1371,20 +1377,20 @@ void main() {
 
       final deleted = <String>[];
       final firstDelete = Completer<void>();
-      final remote = ApiClient(
+      final remote = testApiClient(
         baseUrl: connection.baseUrl,
-        apiKey: connection.apiKey,
         connectionId: connection.id,
         httpClient: MockClient((request) async {
           if (request.method == 'GET' &&
               request.url.path.endsWith('/api/sessions')) {
             return http.Response(
               jsonEncode({
-                'data': [
+                'sessions': [
                   {'id': 'chat-1', 'source': 'mobile', 'title': 'a'},
                   {'id': 'chat-2', 'source': 'mobile', 'title': 'b'},
                   {'id': 'chat-3', 'source': 'mobile', 'title': 'c'},
                 ],
+                'total': 3,
               }),
               200,
             );
@@ -1392,7 +1398,7 @@ void main() {
           if (request.method == 'DELETE') {
             deleted.add(request.url.pathSegments.last);
             if (deleted.length == 1) await firstDelete.future;
-            return http.Response(jsonEncode({'deleted': true}), 200);
+            return http.Response(jsonEncode({'ok': true}), 200);
           }
           return http.Response('{}', 404);
         }),

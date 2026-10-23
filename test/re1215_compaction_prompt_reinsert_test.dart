@@ -28,6 +28,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
+import 'support/test_api_client.dart';
 
 const _prompt = 'Vale hazlo';
 const _promptTs = 1790000000.0; // "18:48:51"
@@ -244,9 +245,8 @@ ActiveChat _chat({
   sessionTitle: 'QA 9481',
   notifications: null,
   onTerminal: () {},
-  api: ApiClient(
+  api: testApiClient(
     baseUrl: 'http://127.0.0.1:8642',
-    apiKey: 'k',
     httpClient: MockClient(
       (request) async => _page(apiRows, request.url, key: 'data'),
     ),

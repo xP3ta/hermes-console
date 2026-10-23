@@ -22,6 +22,8 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../support/test_api_client.dart';
+
 const _expiredBody =
     'Your session on this Hermes has expired. Sign in again with your browser.';
 const _channel = MethodChannel('plugins.it_nomads.com/flutter_secure_storage');
@@ -117,11 +119,10 @@ void main() {
       _app(
         HomeDashboardScreen(
           connManager: m,
-          clientFactory: (conn) => ApiClient(
+          clientFactory: (conn) => testApiClient(
             baseUrl: conn.baseUrl,
-            apiKey: 'test-key',
             httpClient: MockClient((request) async {
-              if (request.url.path == '/health') {
+              if (request.url.path == '/api/status') {
                 return http.Response('{"status":"ok"}', 200);
               }
               return _answer(listStatus);

@@ -7,6 +7,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/connection_diagnostics.dart';
 
+import 'support/test_api_client.dart';
+
 class _Real extends HttpOverrides {}
 
 void main() {
@@ -110,9 +112,9 @@ void main() {
               basicUser: password ? 'synthetic-user' : null,
               basicPass: password ? 'synthetic-password' : null,
             );
-            final gateway = ApiClient(
+            // ApiClient's own entry point, now a Dashboard read.
+            final gateway = testApiClient(
               baseUrl: 'http://127.0.0.1:${origin.port}',
-              apiKey: 'synthetic-gateway-key',
             );
             final diagnostics = ConnectionDiagnostics();
             final dir = await Directory.systemTemp.createTemp(
@@ -207,7 +209,7 @@ void main() {
     }
   }
   test(
-    'accepted origin preserves token, password cookie, body and gateway bearer',
+    'accepted origin preserves token, password cookie, body and client token',
     () => HttpOverrides.runZoned(() async {
       DashboardClient.resetSharedPasswordSessionsForTesting();
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
@@ -246,10 +248,7 @@ void main() {
         basicUser: 'synthetic-user',
         basicPass: 'synthetic-password',
       );
-      final gateway = ApiClient(
-        baseUrl: 'http://127.0.0.1:${server.port}',
-        apiKey: 'synthetic-gateway-key',
-      );
+      final gateway = testApiClient(baseUrl: 'http://127.0.0.1:${server.port}');
       addTearDown(token.close);
       addTearDown(cookie.close);
       addTearDown(gateway.close);
@@ -264,7 +263,8 @@ void main() {
         'synthetic-page-token',
         'synthetic-page-token',
         'hermes_session_at=synthetic-cookie',
-        'Bearer synthetic-gateway-key',
+        // ApiClient reads go to its Dashboard, with the session token.
+        testDashboardToken,
       ]);
     }, createHttpClient: _Real().createHttpClient),
   );

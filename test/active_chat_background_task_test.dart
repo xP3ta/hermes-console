@@ -8,6 +8,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
+import 'support/test_api_client.dart';
 
 /// Minimal fake — only what `ActiveChat` needs to reach a live desktop
 /// runtime and let a `TuiGatewayEvent` through `_onDesktopEvent`.
@@ -82,9 +83,8 @@ ActiveChat _buildChat(_FakeDesktopGateway gateway) => ActiveChat(
   sessionTitle: 'Background',
   notifications: null,
   onTerminal: () {},
-  api: ApiClient(
+  api: testApiClient(
     baseUrl: 'https://example.invalid',
-    apiKey: 'test-key',
     httpClient: MockClient((_) async => http.Response('unused', 500)),
   ),
   desktopGateway: gateway,

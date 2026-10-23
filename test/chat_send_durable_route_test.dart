@@ -34,6 +34,7 @@ import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
+import 'support/test_api_client.dart';
 
 const _provisionalId = 'mob-1-durable-route-fixture';
 const _durableId = 'stored-durable-route-fixture';
@@ -187,9 +188,8 @@ Future<_Fixture> _mount(
     sessionId: _provisional.id,
     sessionTitle: _provisional.title,
     sessionSnapshot: _provisional,
-    api: ApiClient(
+    api: testApiClient(
       baseUrl: 'https://example.invalid',
-      apiKey: '',
       httpClient: MockClient((_) async => http.Response('{}', 200)),
     ),
     desktopGateway: gateway,

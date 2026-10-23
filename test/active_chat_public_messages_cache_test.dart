@@ -3,6 +3,7 @@ import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'support/test_api_client.dart';
 
 ActiveChat _chat(ActiveChatService service) => service.attach(
   connection: SavedConnection(
@@ -14,9 +15,8 @@ ActiveChat _chat(ActiveChatService service) => service.attach(
   ),
   sessionId: 'cache-session',
   sessionTitle: 'Cache',
-  api: ApiClient(
+  api: testApiClient(
     baseUrl: 'http://10.0.0.1:8642',
-    apiKey: 'test',
     httpClient: MockClient((_) async => http.Response('not found', 404)),
   ),
 );

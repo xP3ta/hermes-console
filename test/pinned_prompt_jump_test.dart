@@ -1,5 +1,6 @@
 // QA 9491: tapping the slim pinned prompt must open THAT prompt, also in a
 // long chat whose earlier pages were loaded while reading back.
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -24,6 +25,7 @@ import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
+import 'support/test_api_client.dart';
 
 const _storedId = 'stored-pinned-jump';
 
@@ -117,15 +119,21 @@ Future<(ActiveChat, ActiveChatService)> _open(
     sessionTitle: _session.title,
     sessionSnapshot: _session,
     initialStoredSessionId: _storedId,
-    api: ApiClient(
+    api: testApiClient(
       baseUrl: 'http://127.0.0.1:8642',
-      apiKey: 'test-key',
       httpClient: server.client(),
     ),
     attachDesktopRuntimeOnLoad: false,
     disableForegroundKeepAlive: true,
   );
-  await chat.loadMessages(expectedMessageCount: 400);
+  // Its pages (~280 KB) decode in an isolate, which only runs in real time;
+  // the load itself stays on the test's fake clock, as it always was.
+  var loaded = false;
+  unawaited(
+    chat.loadMessages(expectedMessageCount: 400).then((_) => loaded = true),
+  );
+  await _settleOffMainDecode(tester, until: () => loaded);
+  expect(loaded, isTrue, reason: 'precondition: the first page loaded');
   await tester.pumpWidget(
     HermesApp(
       connManager: manager,
@@ -160,7 +168,23 @@ Future<(ActiveChat, ActiveChatService)> _open(
   for (var frame = 0; frame < 60; frame++) {
     await tester.pump(const Duration(milliseconds: 16));
   }
+  // A read the screen started lands now, as it did when pages decoded inline.
+  await _settleOffMainDecode(tester);
   return (chat, activeChats);
+}
+
+/// Pages over 64 KB decode in an isolate (`decodeJsonOffMain`), which only
+/// runs in real time: gives it some, then delivers the result.
+Future<void> _settleOffMainDecode(
+  WidgetTester tester, {
+  bool Function()? until,
+}) async {
+  for (var i = 0; i < 50 && !(until?.call() ?? false); i++) {
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 20)),
+    );
+    await tester.pump();
+  }
 }
 
 Finder _transcript() => find.descendant(
@@ -253,8 +277,9 @@ void main() {
         const Offset(0, 400),
         const Duration(milliseconds: 300),
       );
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 5)),
+      await _settleOffMainDecode(
+        tester,
+        until: () => chat.messages.length > firstPage,
       );
       await _frames(tester, 20);
     }
@@ -263,6 +288,8 @@ void main() {
       greaterThan(firstPage),
       reason: 'precondition: an earlier page was loaded while reading',
     );
+    // An earlier page a gesture started lands now, as it did inline.
+    await _settleOffMainDecode(tester);
     // Settle inside a tall reply of the earlier page, so the header pins
     // its prompt.
     position().jumpTo(position().maxScrollExtent - 5000);
@@ -273,10 +300,23 @@ void main() {
         const Offset(0, 230),
         const Duration(milliseconds: 200),
       );
+      // Each drag can start the next earlier page: let it land before the
+      // header is read, as it did when pages decoded inline.
+      await _settleOffMainDecode(
+        tester,
+        until: () => _stickyId(tester) != null,
+      );
       await _frames(tester, 20);
     }
     final id = _stickyId(tester);
-    expect(id, isNotNull, reason: 'precondition: the header pins a prompt');
+    expect(
+      id,
+      isNotNull,
+      reason:
+          'precondition: the header pins a prompt '
+          '(rows=${chat.messages.length}, '
+          'pixels=${position().pixels}, max=${position().maxScrollExtent})',
+    );
     final before = find.descendant(
       of: _transcript(),
       matching: find.text(_prompt(id!), skipOffstage: false),

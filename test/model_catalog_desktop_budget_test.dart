@@ -13,6 +13,7 @@ import 'package:hermes_android/core/services/model_catalog_cache.dart';
 import 'package:hermes_android/core/services/model_picker_loader.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'support/model_catalog_budget_channel.dart';
+import 'support/test_api_client.dart';
 
 const _catalog = <String, dynamic>{
   'model': 'synthetic-model',
@@ -101,9 +102,8 @@ class _Fixture {
         storage: _MemoryStorage(),
         mutationNamespaceForTesting: 'synthetic-budget',
       ),
-      api: ApiClient(
+      api: testApiClient(
         baseUrl: 'http://127.0.0.1:1',
-        apiKey: 'synthetic',
         httpClient: MockClient((_) async {
           httpCalls++;
           return http.Response('{}', 500);

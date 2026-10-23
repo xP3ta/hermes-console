@@ -13,7 +13,9 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// Gateway that answers each profile's session list on its own, so a test
+import 'support/test_api_client.dart';
+
+/// Dashboard that answers each profile's session list on its own, so a test
 /// can hold the previous profile's read on the wire across a switch.
 final class _Server {
   final gates = <String, Completer<void>>{};
@@ -21,18 +23,17 @@ final class _Server {
 
   http.Client client() => MockClient((request) async {
     final path = request.url.path;
-    if (path == '/health') return http.Response('{"status":"ok"}', 200);
-    final match = RegExp(r'^(?:/p/([^/]+))?/api/sessions$').firstMatch(path);
-    if (match == null) return http.Response('{}', 404);
-    final profile = match.group(1) ?? 'default';
+    if (path == '/api/status') return http.Response('{"status":"ok"}', 200);
+    if (path != '/api/sessions') return http.Response('{}', 404);
+    final profile = request.url.queryParameters['profile'] ?? 'default';
     reads.add(profile);
     final gate = gates[profile];
     if (gate != null) await gate.future;
     final title = '${profile[0].toUpperCase()}${profile.substring(1)} chat';
     return http.Response(
-      '{"data":[{"id":"s-$profile","title":"$title","source":"cli",'
+      '{"sessions":[{"id":"s-$profile","title":"$title","source":"cli",'
       '"started_at":1790000000,"last_active":1790000100}],'
-      '"has_more":false}',
+      '"total":1}',
       200,
     );
   });
@@ -112,9 +113,8 @@ void main() {
           SessionListScreen(
             connection: _connection,
             connManager: manager,
-            clientOverride: ApiClient(
+            clientOverride: testApiClient(
               baseUrl: _connection.baseUrl,
-              apiKey: _connection.apiKey,
               httpClient: server.client(),
             ),
           ),
@@ -173,9 +173,8 @@ void main() {
               connection: _connection,
               connManager: manager,
               current: DrawerSection.home,
-              recentSessionsClientFactory: (saved) => ApiClient(
+              recentSessionsClientFactory: (saved) => testApiClient(
                 baseUrl: saved.baseUrl,
-                apiKey: saved.apiKey,
                 httpClient: server.client(),
               ),
             ),

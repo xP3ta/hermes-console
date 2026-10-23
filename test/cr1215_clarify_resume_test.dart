@@ -13,6 +13,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
+import 'support/test_api_client.dart';
 
 /// Fake Hermes gateway speaking the v7 contract: it answers client RPCs and
 /// can push server→client request frames (`tui_gateway/server_requests.py`).
@@ -265,9 +266,8 @@ ActiveChat _chatFor(
     sessionTitle: 'Clarify resume',
     notifications: null,
     onTerminal: () {},
-    api: ApiClient(
+    api: testApiClient(
       baseUrl: connection.baseUrl,
-      apiKey: connection.apiKey,
       httpClient: MockClient((_) async => http.Response('unused', 500)),
     ),
     desktopGateway: client,

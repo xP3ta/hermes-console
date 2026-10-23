@@ -28,6 +28,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'cs1215_cold_start_store_test.dart' show MemoryColdStartStorage;
 import 'support/in_memory_compression_restore_storage.dart';
+import 'support/test_api_client.dart';
 
 /// Counts every private read: Home recents snapshots and chat tails (each
 /// one a Keystore decryption in production).
@@ -151,9 +152,8 @@ void main() {
       attachDesktopRuntimeOnLoad: false,
       compressionRestoreStore: testCompressionRestoreStore(),
       coldStartStore: store,
-      defaultApiForTesting: (connection) => ApiClient(
+      defaultApiForTesting: (connection) => testApiClient(
         baseUrl: connection.baseUrl,
-        apiKey: connection.apiKey,
         httpClient: MockClient((_) async => http.Response('{}', 200)),
       ),
       defaultStoredMessageLoaderForTesting: (_, _) =>

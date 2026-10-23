@@ -7,6 +7,7 @@ import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/session_reconciler.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'support/test_api_client.dart';
 
 void main() {
   group('normalizeTranscriptMessageForDisplay compaction projection', () {
@@ -362,9 +363,8 @@ void main() {
         ),
         sessionId: 'private-state-session',
         sessionTitle: 'Private state probe',
-        api: ApiClient(
+        api: testApiClient(
           baseUrl: 'http://hermes.local:8642',
-          apiKey: 'probe-key',
           httpClient: MockClient((_) async => http.Response('not found', 404)),
         ),
       );
