@@ -21,6 +21,8 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'support/test_api_client.dart';
+
 const _connectionId = 'conn-spec-046';
 
 Map<String, dynamic> _sessionRow(
@@ -85,9 +87,9 @@ http.Response _searchResponse({
   200,
 );
 
-ApiClient _gateway(http.Client client) => ApiClient(
+/// The repository's fallback client: in production a second Dashboard read.
+ApiClient _gateway(http.Client client) => testApiClient(
   baseUrl: 'http://127.0.0.1:8642',
-  apiKey: 'gateway-key',
   connectionId: _connectionId,
   httpClient: client,
 );
@@ -136,7 +138,8 @@ Future<void> _pumpUntil(
 }
 
 MockClient _healthyGatewayHttp() => MockClient((request) async {
-  if (request.url.path == '/health' || request.url.path == '/api/sessions') {
+  if (request.url.path == '/api/status' ||
+      request.url.path == '/api/sessions') {
     return http.Response('{}', 200);
   }
   return http.Response('{}', 404);
@@ -193,13 +196,15 @@ void main() {
     );
     final gateway = _gateway(
       MockClient((request) async {
-        if (request.url.path == '/health') {
+        if (request.url.path == '/api/status') {
           return http.Response('{}', 200);
         }
         if (request.url.path == '/api/sessions') {
           return http.Response(
             jsonEncode({
-              'data': [_sessionRow(0, title: 'Gateway fallback conversation')],
+              'sessions': [
+                _sessionRow(0, title: 'Gateway fallback conversation'),
+              ],
             }),
             200,
           );
@@ -931,12 +936,11 @@ void main() {
     addTearDown(aggregate.dispose);
     final gateway = _gateway(
       MockClient((request) async {
-        if (request.url.path == '/health') return http.Response('{}', 200);
+        if (request.url.path == '/api/status') return http.Response('{}', 200);
         if (request.url.path == '/api/sessions') {
           return http.Response(
             jsonEncode({
-              'data': [_sessionRow(0)],
-              'has_more': false,
+              'sessions': [_sessionRow(0)],
             }),
             200,
           );
@@ -978,12 +982,11 @@ void main() {
     addTearDown(aggregate.dispose);
     final gateway = _gateway(
       MockClient((request) async {
-        if (request.url.path == '/health') return http.Response('{}', 200);
+        if (request.url.path == '/api/status') return http.Response('{}', 200);
         if (request.url.path == '/api/sessions') {
           return http.Response(
             jsonEncode({
-              'data': [_sessionRow(0)],
-              'has_more': false,
+              'sessions': [_sessionRow(0)],
             }),
             200,
           );
@@ -1025,12 +1028,11 @@ void main() {
     var rosterReads = 0;
     final gateway = _gateway(
       MockClient((request) async {
-        if (request.url.path == '/health') return http.Response('{}', 200);
+        if (request.url.path == '/api/status') return http.Response('{}', 200);
         if (request.url.path == '/api/sessions') {
           return http.Response(
             jsonEncode({
-              'data': [_sessionRow(0)],
-              'has_more': false,
+              'sessions': [_sessionRow(0)],
             }),
             200,
           );
@@ -1092,12 +1094,13 @@ void main() {
       addTearDown(aggregate.dispose);
       final gateway = _gateway(
         MockClient((request) async {
-          if (request.url.path == '/health') return http.Response('{}', 200);
+          if (request.url.path == '/api/status') {
+            return http.Response('{}', 200);
+          }
           if (request.url.path == '/api/sessions') {
             return http.Response(
               jsonEncode({
-                'data': [_sessionRow(0)],
-                'has_more': false,
+                'sessions': [_sessionRow(0)],
               }),
               200,
             );
@@ -1214,12 +1217,11 @@ void main() {
     ];
     final gateway = _gateway(
       MockClient((request) async {
-        if (request.url.path == '/health') return http.Response('{}', 200);
+        if (request.url.path == '/api/status') return http.Response('{}', 200);
         if (request.url.path == '/api/sessions') {
           return http.Response(
             jsonEncode({
-              'data': [_sessionRow(0), _sessionRow(1)],
-              'has_more': false,
+              'sessions': [_sessionRow(0), _sessionRow(1)],
             }),
             200,
           );
@@ -1326,12 +1328,11 @@ void main() {
   }
 
   http.Client sessionsHttp() => MockClient((request) async {
-    if (request.url.path == '/health') return http.Response('{}', 200);
+    if (request.url.path == '/api/status') return http.Response('{}', 200);
     if (request.url.path == '/api/sessions') {
       return http.Response(
         jsonEncode({
-          'data': [_sessionRow(0)],
-          'has_more': false,
+          'sessions': [_sessionRow(0)],
         }),
         200,
       );
@@ -1600,12 +1601,13 @@ void main() {
       );
       final gateway = _gateway(
         MockClient((request) async {
-          if (request.url.path == '/health') return http.Response('{}', 200);
+          if (request.url.path == '/api/status') {
+            return http.Response('{}', 200);
+          }
           if (request.url.path == '/api/sessions') {
             return http.Response(
               jsonEncode({
-                'data': [_sessionRow(0)],
-                'has_more': false,
+                'sessions': [_sessionRow(0)],
               }),
               200,
             );
@@ -1653,12 +1655,11 @@ void main() {
     addTearDown(aggregate.dispose);
     final gateway = _gateway(
       MockClient((request) async {
-        if (request.url.path == '/health') return http.Response('{}', 200);
+        if (request.url.path == '/api/status') return http.Response('{}', 200);
         if (request.url.path == '/api/sessions') {
           return http.Response(
             jsonEncode({
-              'data': [_sessionRow(0)],
-              'has_more': false,
+              'sessions': [_sessionRow(0)],
             }),
             200,
           );
@@ -1861,9 +1862,8 @@ void main() {
         logicalSessionId: 'root-0',
         sessionTitle: 'Working conversation',
         sessionProfile: 'default',
-        api: ApiClient(
+        api: testApiClient(
           baseUrl: connection.baseUrl,
-          apiKey: connection.apiKey,
           httpClient: MockClient((_) async => http.Response('{}', 404)),
         ),
         storedMessageLoader: (_, _) async {
@@ -2004,9 +2004,8 @@ void main() {
         logicalSessionId: 'root-0',
         sessionTitle: 'Background conversation',
         sessionProfile: 'default',
-        api: ApiClient(
+        api: testApiClient(
           baseUrl: connection.baseUrl,
-          apiKey: connection.apiKey,
           httpClient: MockClient((_) async => http.Response('{}', 404)),
         ),
         storedMessageLoader: (_, _) async {

@@ -13,14 +13,12 @@ import 'package:flutter_test/flutter_test.dart';
 /// subclasses outnumber the Dashboards it attaches (a `null` one is none).
 const _stillWithoutDashboard = {
   'test/e2e_real_gateway/support/real_gateway.dart',
-  'test/home_status_requests_test.dart',
   'test/lc1215_long_session_projection_test.dart',
   // Kept until C13 on purpose: its ~210 KB pages would decode off the main
   // isolate through the Dashboard, and the reads it measures happen inside
   // fake-time pumps, where that decode never completes. C13 ports it with a
   // test-only inline-decode hook next to `debugJsonDecodePathObserver`.
   'test/passive_transcript_bandwidth_test.dart',
-  'test/session_list_spec046_widget_test.dart',
   'test/u6_gateway_retirement/ids_and_constructors_test.dart',
   'test/u6_gateway_retirement/test_api_client_harness_test.dart',
 };
