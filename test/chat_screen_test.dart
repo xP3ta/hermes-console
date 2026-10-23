@@ -14134,6 +14134,105 @@ void main() {
     await tester.pump(const Duration(seconds: 10));
   });
 
+  // Desktop sends what the user picked without asking: choosing the file and
+  // pressing send is the action. Only a read-only chat refuses the upload.
+  group('sending a binary attachment', () {
+    Future<_SubmissionGateway> pasteAndSend(
+      WidgetTester tester,
+      ApprovalMode mode, {
+      bool Function()? settled,
+    }) async {
+      final temp = Directory.systemTemp.createTempSync('chat-attach-send-');
+      addTearDown(() {
+        if (temp.existsSync()) temp.deleteSync(recursive: true);
+      });
+      const pathProvider = MethodChannel('plugins.flutter.io/path_provider');
+      TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(pathProvider, (call) async => temp.path);
+      addTearDown(
+        () => TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(pathProvider, null),
+      );
+      final gateway = _SubmissionGateway();
+      await pumpChat(
+        tester,
+        connection: _remoteConn('conn-attach-${mode.name}'),
+        desktopGateway: gateway,
+        attachmentMaterializer: (attachment) async => attachment,
+        attachmentPrivateCopyDeleter: (_) async => true,
+        initialPreferences: {'approval_global_mode': mode.storageKey},
+      );
+      final field = tester.widget<TextField>(find.byType(TextField).last);
+      field.contentInsertionConfiguration!.onContentInserted(
+        KeyboardInsertedContent(
+          mimeType: 'image/png',
+          uri: 'content://keyboard/chart.png',
+          data: base64Decode(
+            'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC'
+            'AAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+          ),
+        ),
+      );
+      await pumpUntilReal(
+        tester,
+        () => find.byType(AttachmentCard).evaluate().isNotEmpty,
+        timeoutMessage: 'pasted image did not reach the composer',
+      );
+      await tester.enterText(find.byType(TextField).last, 'mira la gráfica');
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.tap(find.byKey(const ValueKey('send')));
+      for (
+        var i = 0;
+        i < 40 && gateway.submissions.isEmpty && !(settled?.call() ?? false);
+        i++
+      ) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 20)),
+        );
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      return gateway;
+    }
+
+    for (final mode in [ApprovalMode.interactive, ApprovalMode.conservative]) {
+      testWidgets('goes out without a confirmation (${mode.name})', (
+        tester,
+      ) async {
+        final gateway = await pasteAndSend(tester, mode);
+
+        expect(find.text('Subir adjunto'), findsNothing);
+        expect(find.text('Permitir'), findsNothing);
+        expect(gateway.submissions, hasLength(1));
+        expect(gateway.imageAttachCalls, 1);
+        expect(gateway.submissions.single, contains('pasted-image.png'));
+        expect(gateway.submissions.single, contains('mira la gráfica'));
+        gateway.emitComplete();
+        await tester.pump(const Duration(seconds: 10));
+      });
+    }
+
+    testWidgets('is still refused in read-only mode, without a dialog', (
+      tester,
+    ) async {
+      // The notice shows for 2 s: stop waiting as soon as it is there.
+      final notice = find.text(
+        'Instancia en solo lectura — acción desactivada',
+      );
+      final gateway = await pasteAndSend(
+        tester,
+        ApprovalMode.readOnly,
+        settled: () => notice.evaluate().isNotEmpty,
+      );
+
+      expect(find.text('Subir adjunto'), findsNothing);
+      expect(notice, findsOneWidget);
+      expect(gateway.submissions, isEmpty);
+      expect(gateway.imageAttachCalls, 0);
+      expect(find.byType(AttachmentCard), findsOneWidget, reason: 'kept');
+      await tester.pump(const Duration(seconds: 10));
+    });
+  });
+
   testWidgets('pegar desde el IME un tipo que no es imagen no crea adjunto', (
     tester,
   ) async {

@@ -513,7 +513,6 @@
   "chaAmbiguousRestored": "Não foi possível confirmar se este envio chegou ao servidor. Revise a conversa antes de enviar novamente.",
   "chaRecoveredKeepsDraft": "Seu rascunho atual é mantido. Envie-o ou limpe o editor para recuperar a mensagem anterior.",
   "chaRetryKeepsDraft": "Seu rascunho atual é mantido e nenhuma nova tentativa foi feita. Envie-o ou limpe o editor para reenviar a mensagem anterior.",
-  "chaUploadTitle": "Enviar anexo",
   "chaNoMatch": "Nenhuma correspondência para “{arg}”. Escolha um:",
   "@chaNoMatch": {
     "placeholders": {

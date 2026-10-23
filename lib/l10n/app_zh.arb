@@ -305,7 +305,6 @@
   "chaAmbiguousRestored": "应用无法确认本轮消息是否已到达服务器。再次发送前请检查对话。",
   "chaRecoveredKeepsDraft": "已保留当前草稿。请发送草稿或清空输入框，以恢复上一条消息。",
   "chaRetryKeepsDraft": "已保留当前草稿，未重试任何消息。请发送草稿或清空输入框，以重试上一条消息。",
-  "chaUploadTitle": "上传附件",
   "chaNoMatch": "未找到与 «{arg}» 匹配的项。请选择一项：",
   "chaModelChangeConfirmBody": "此次模型切换需要确认。",
   "chaModelChangeTitle": "更改当前模型",
