@@ -906,7 +906,7 @@ class HermesNoticeCard extends StatelessWidget {
     this.action,
     this.onTap,
     this.showDismiss = false,
-    this.dismissLabel = 'Dismiss',
+    this.dismissLabel,
     this.kindLabel,
     super.key,
   }) : event = null,
@@ -932,7 +932,7 @@ class HermesNoticeCard extends StatelessWidget {
        action = null,
        onTap = event.onTap,
        showDismiss = false,
-       dismissLabel = event.dismissLabel ?? 'Dismiss',
+       dismissLabel = event.dismissLabel,
        kindLabel = null,
        _inIsland = null;
 
@@ -953,7 +953,7 @@ class HermesNoticeCard extends StatelessWidget {
        onDismissed = _nothing,
        onSwipedAway = null,
        showDismiss = false,
-       dismissLabel = event.dismissLabel ?? 'Dismiss',
+       dismissLabel = event.dismissLabel,
        kindLabel = null,
        waiting = 0,
        onHold = null,
@@ -978,7 +978,7 @@ class HermesNoticeCard extends StatelessWidget {
   /// that animation here, or the card is seen coming back while it leaves.
   final VoidCallback? onSwipedAway;
   final bool showDismiss;
-  final String dismissLabel;
+  final String? dismissLabel;
 
   /// Prefijo solo para lectores de pantalla ("Error", "Aviso"...).
   final String? kindLabel;
@@ -1157,7 +1157,7 @@ class HermesNoticeCard extends StatelessWidget {
         ? IconButton(
             key: const ValueKey('hermes-notice-dismiss'),
             onPressed: onDismissed,
-            tooltip: dismissLabel,
+            tooltip: dismissLabel ?? Strings.of(context).inAppDismiss,
             constraints: const BoxConstraints.tightFor(width: 48, height: 48),
             icon: Icon(
               Icons.close_rounded,

@@ -86,7 +86,34 @@ String localizedApiError(Strings strings, Object error) {
   if (error is ArgumentError && error.name == 'profile') {
     return strings.cronProfileInvalid;
   }
-  return humanizeApiError(error);
+  final message = humanizeApiError(error);
+  final http = RegExp(r'^The server responded with error (\d+)\.$').firstMatch(message);
+  if (http != null) return strings.i18n131P6HttpError(http[1]!);
+  return switch (message) {
+    'SOUL changed during review. Reload and review again.' => strings.i18n131P6SoulChanged,
+    'Invalid SOUL response' => strings.i18n131P6SoulInvalid,
+    'SOUL write not confirmed' => strings.i18n131P6SoulUnconfirmed,
+    'SOUL write not verified' => strings.i18n131P6SoulUnverified,
+    'HTTP/WS público bloqueado: configura HTTPS/WSS o usa una dirección privada/Tailscale.' => strings.transportPublicBlocked,
+    'Official Bot Chat verification is unavailable' ||
+    'Bot Chat pin persistence is unavailable' ||
+    'Hermes did not confirm a durable Bot Chat id' ||
+    'Hermes did not confirm a Bot Chat runtime' => strings.missionBotChatMetadataUnavailable,
+    'Native session expired' ||
+    'Authentication changed while the request was running' => strings.dashboardAuthLoginRequired,
+    'Native session refresh unavailable' => strings.apiErrorNetwork,
+    'Native session storage unavailable' => strings.apiErrorUnknown,
+    'no gateway' => strings.drawerNeedInstance,
+    'invalid task' => strings.kanbanDetailLoadError,
+    'Auxiliary assignment rejected' => strings.mdlNotSaved,
+    'Invalid auxiliary response' => strings.apiErrorUnknown,
+    'No pet selected' => strings.i18n131P6NoPet,
+    'Pet unavailable' => strings.i18n131P6PetUnavailable,
+    'Profile image unavailable' => strings.i18n131P6ImageUnavailable,
+    'Profile capabilities were not saved' => strings.i18n131P6ProfileCapabilitiesUnsaved,
+    'Bot identity RPCs unavailable' => strings.i18n131P6BotIdentityUnavailable,
+    _ => message,
+  };
 }
 
 /// Convierte una excepción de API en un mensaje legible para el usuario.

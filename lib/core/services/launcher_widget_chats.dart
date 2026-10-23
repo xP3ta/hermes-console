@@ -7,6 +7,8 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../l10n/app_localizations.dart';
+import '../utils/session_title.dart';
 import '../models/launcher_widget_chats.dart';
 import '../models/session.dart';
 import 'launcher_widget_cron.dart'
@@ -46,11 +48,14 @@ String? launcherWidgetChatLine(String? preview) {
 LauncherWidgetChat? launcherWidgetChat(
   Session session, {
   bool hideSensitive = false,
+  Strings? strings,
 }) {
   if (session.isDraftOnly || !LauncherWidgetChat.addressable(session.id)) {
     return null;
   }
-  final title = session.displayTitle.trim();
+  final title = (strings == null
+      ? session.displayTitle
+      : localizedSessionTitle(strings, session)).trim();
   if (title.isEmpty) return null;
   final owner = Session.profileOwner(session.profile);
   final activity = session.lastActivityAt;
@@ -97,13 +102,14 @@ class LauncherWidgetChatsPublisher {
   Future<void> offer({
     required String connectionId,
     required Iterable<Session> sessions,
+    Strings? strings,
   }) {
     final listed = sessions
         .take(LauncherWidgetChatsSnapshot.maxChats * 3)
         .toList(growable: false);
     final operation = _tail.then((_) async {
       try {
-        await _publish(connectionId, listed);
+        await _publish(connectionId, listed, strings);
       } catch (error) {
         if (kDebugMode) {
           debugPrint('[launcher-widget] chats (${error.runtimeType})');
@@ -114,7 +120,11 @@ class LauncherWidgetChatsPublisher {
     return operation;
   }
 
-  Future<void> _publish(String connectionId, List<Session> sessions) async {
+  Future<void> _publish(
+    String connectionId,
+    List<Session> sessions,
+    Strings? strings,
+  ) async {
     final preferred = await _preferredConnection();
     final previous = LauncherWidgetChatsSnapshot.tryDecode(
       await store.read(LauncherWidgetChatsSnapshot.storageKey),
@@ -132,7 +142,7 @@ class LauncherWidgetChatsPublisher {
       updatedAtMs: now,
       chats: [
         for (final session in sessions)
-          ?launcherWidgetChat(session, hideSensitive: hide),
+          ?launcherWidgetChat(session, hideSensitive: hide, strings: strings),
       ].take(LauncherWidgetChatsSnapshot.maxChats).toList(growable: false),
     );
     final unchanged = previous != null && previous.content == next.content;

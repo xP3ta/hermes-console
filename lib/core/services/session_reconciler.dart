@@ -1516,6 +1516,7 @@ class DesktopSessionReconciler {
       'content': role == 'tool' && !retainMediaEvidence ? '' : content,
       if (reasoning.isNotEmpty) 'reasoning': reasoning,
       if (toolActivity.isNotEmpty) assistantActivityTraceKey: toolActivity,
+      if (imageCount > 0) '_structuredImageCount': imageCount,
       '_desktopSnapshotKey': 'message-$runtimeSessionId-$ordinal',
       '_desktopSnapshotKind': 'persisted',
       '_desktopMessageOrdinal': ordinal,

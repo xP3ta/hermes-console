@@ -11431,5 +11431,239 @@
         "type": "String"
       }
     }
+  },
+  "i18n131P6Animations": "Animações",
+  "i18n131P6Idle": "Repouso",
+  "i18n131P6Run": "Correr",
+  "i18n131P6Wait": "Esperar",
+  "i18n131P6Greet": "Cumprimentar",
+  "i18n131P6Jump": "Pular",
+  "i18n131P6Failure": "Falha",
+  "i18n131P6Module": "▸ módulo: {name}",
+  "@i18n131P6Module": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6ModulePending": "Não conectado · {phase}",
+  "@i18n131P6ModulePending": {
+    "placeholders": {
+      "phase": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6ConnectingHost": "Conectando a {host}",
+  "@i18n131P6ConnectingHost": {
+    "placeholders": {
+      "host": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6BaseUrl": "URL base",
+  "i18n131P6OpenAiCompatible": "Compatível com OpenAI",
+  "i18n131P6StoredKey": "•••• chave salva — cole uma nova para substituir",
+  "i18n131P6StoredPassword": "•••• salva — digite para alterar",
+  "i18n131P6Host": "Servidor",
+  "i18n131P6Fingerprint": "{type} · impressão digital",
+  "@i18n131P6Fingerprint": {
+    "placeholders": {
+      "type": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6TokenSummary": "Tokens: {total} (entrada {input} / saída {output})",
+  "@i18n131P6TokenSummary": {
+    "placeholders": {
+      "total": {
+        "type": "String"
+      },
+      "input": {
+        "type": "String"
+      },
+      "output": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6TruncatedOutput": "{output}\n…(saída truncada)",
+  "@i18n131P6TruncatedOutput": {
+    "placeholders": {
+      "output": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6LocalChat": "Chat local",
+  "i18n131P6ExitCode": "saída {code}",
+  "@i18n131P6ExitCode": {
+    "placeholders": {
+      "code": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6SshUptime": "Tempo de atividade",
+  "i18n131P6SshDisk": "Disco",
+  "i18n131P6SshCpu": "Maior uso de CPU",
+  "i18n131P6SshStatus": "Estado do Hermes",
+  "i18n131P6TurnNotSaved": "Não foi possível salvar o turno antes de enviá-lo.",
+  "i18n131P6AttachmentUnreadable": "Não foi possível ler um anexo local.",
+  "i18n131P6AttachmentNotSaved": "Não foi possível salvar o estado de um anexo.",
+  "i18n131P6AttachmentsChanged": "O lote de anexos mudou durante o envio.",
+  "i18n131P6SendAuthorityLost": "A autorização de envio foi perdida antes da entrega.",
+  "i18n131P6TurnFailedAfterReconnect": "O Hermes confirmou que o turno falhou após reconectar.",
+  "i18n131P6SoulChanged": "O SOUL mudou durante a revisão. Recarregue e revise novamente.",
+  "i18n131P6SoulInvalid": "A resposta do SOUL é inválida.",
+  "i18n131P6SoulUnconfirmed": "A gravação do SOUL não foi confirmada.",
+  "i18n131P6SoulUnverified": "Não foi possível verificar a gravação do SOUL.",
+  "i18n131P6ThemeTooLarge": "O tema excede o limite de 64 KiB.",
+  "i18n131P6ThemeUnreadable": "Não foi possível ler o tema selecionado.",
+  "i18n131P6ThemeBuiltin": "Duplique o tema integrado antes de modificá-lo ou exportá-lo.",
+  "i18n131P6ThemeMissing": "O tema selecionado não existe mais.",
+  "i18n131P6ThemeFieldError": "Campo de tema inválido: {field} ({code}).",
+  "@i18n131P6ThemeFieldError": {
+    "placeholders": {
+      "field": {
+        "type": "String"
+      },
+      "code": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6ThemeIdFailed": "Não foi possível criar um identificador único para o tema.",
+  "i18n131P6LogWarning": "aviso",
+  "i18n131P6LogDebug": "depuração",
+  "i18n131P6BadgeCode": "CÓDIGO",
+  "i18n131P6BadgeAudio": "ÁUDIO",
+  "i18n131P6BadgeVideo": "VÍDEO",
+  "i18n131P6ProfileCreateUnavailable": "Este Hermes Gateway não permite criar perfis.",
+  "i18n131P6NoPet": "Nenhum mascote selecionado.",
+  "i18n131P6PetUnavailable": "O mascote não está disponível.",
+  "i18n131P6ImageUnavailable": "A imagem do perfil não está disponível.",
+  "i18n131P6ProfileCapabilitiesUnsaved": "Os recursos do perfil não foram salvos.",
+  "i18n131P6BotIdentityUnavailable": "O gerenciamento de identidade do bot não está disponível.",
+  "i18n131P6PetInvalid": "Valor inválido em {field}.",
+  "@i18n131P6PetInvalid": {
+    "placeholders": {
+      "field": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6PetMissing": "Falta {field}.",
+  "@i18n131P6PetMissing": {
+    "placeholders": {
+      "field": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6PetTooLarge": "{field} excede o tamanho máximo.",
+  "@i18n131P6PetTooLarge": {
+    "placeholders": {
+      "field": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6PetEmpty": "{field} está vazio.",
+  "@i18n131P6PetEmpty": {
+    "placeholders": {
+      "field": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6PetOutOfRange": "Valor fora do intervalo em {field}.",
+  "@i18n131P6PetOutOfRange": {
+    "placeholders": {
+      "field": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6PetWriteFailed": "Não foi possível salvar o mascote.",
+  "i18n131P6PetSlugUsed": "Um mascote integrado já usa o identificador {slug}.",
+  "@i18n131P6PetSlugUsed": {
+    "placeholders": {
+      "slug": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6PetArchivePath": "Caminho não permitido no ZIP: {path}.",
+  "@i18n131P6PetArchivePath": {
+    "placeholders": {
+      "path": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6PetImageFormat": "O spritesheet deve ser uma imagem PNG ou WebP válida.",
+  "i18n131P6PetBase64": "O spritesheet deve usar base64 válido sem prefixo.",
+  "i18n131P6PetMismatch": "{field} não corresponde a {expected}.",
+  "@i18n131P6PetMismatch": {
+    "placeholders": {
+      "field": {
+        "type": "String"
+      },
+      "expected": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6PetFieldType": "{field} deve ser do tipo {type}.",
+  "@i18n131P6PetFieldType": {
+    "placeholders": {
+      "field": {
+        "type": "String"
+      },
+      "type": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6PetImportUnavailable": "A importação de mascotes não está disponível.",
+  "i18n131P6PetFormat": "Formato de pet.json não reconhecido: são necessários grid e states, ou um id válido.",
+  "i18n131P6PetNoEntries": "O catálogo não contém mascotes válidos.",
+  "i18n131P6PetUrlBlocked": "A origem ou URL de download não é permitida.",
+  "i18n131P6PetHttp": "O download retornou HTTP {code}.",
+  "@i18n131P6PetHttp": {
+    "placeholders": {
+      "code": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6Document": "Documento",
+  "i18n131P6GeneratedArtifact": "Artefato gerado",
+  "i18n131P6ToolResult": "Resultado da ferramenta",
+  "i18n131P6Artifact": "Artefato",
+  "i18n131P6WhisperLocal": "Whisper local",
+  "i18n131P6PetDimensions": "Dimensões inesperadas ({actual}): devem ser um múltiplo de {expected}.",
+  "@i18n131P6PetDimensions": {
+    "placeholders": {
+      "actual": {
+        "type": "String"
+      },
+      "expected": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6UserExample": "ex.: user",
+  "i18n131P6HttpError": "O servidor respondeu com o erro {code}.",
+  "@i18n131P6HttpError": {
+    "placeholders": {
+      "code": {
+        "type": "String"
+      }
+    }
   }
 }

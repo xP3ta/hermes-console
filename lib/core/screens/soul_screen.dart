@@ -101,14 +101,10 @@ class LocalSoulRepository implements SoulRepository {
 
 class _SoulTemplate {
   final String id;
-  final String label;
-  final String description;
   final String content;
 
   const _SoulTemplate({
     required this.id,
-    required this.label,
-    required this.description,
     required this.content,
   });
 }
@@ -131,8 +127,6 @@ String _soulTplDesc(Strings s, _SoulTemplate t) => switch (t.id) {
 const _kTemplates = [
   _SoulTemplate(
     id: 'tech',
-    label: 'Technical assistant',
-    description: 'Profile for programming and sysadmin tasks.',
     content: '''# Identidad
 
 Soy un asistente técnico especializado en programación, infraestructura y
@@ -155,8 +149,6 @@ funcional cuando corresponde.
   ),
   _SoulTemplate(
     id: 'homelab',
-    label: 'Homelab operator',
-    description: 'Profile for home infrastructure management.',
     content: '''# Identidad
 
 Soy el operador de esta instancia homelab. Gestiono servicios, automatizo tareas
@@ -177,8 +169,6 @@ repetitivas y mantengo la infraestructura personal segura y eficiente.
   ),
   _SoulTemplate(
     id: 'minimal',
-    label: 'Minimalist agent',
-    description: 'No extra instructions; just the base model.',
     content: '''# Identidad
 
 Responde con la menor cantidad de palabras que transmita la información completa.
@@ -187,8 +177,6 @@ Sin preámbulos, sin despedidas, sin confirmaciones innecesarias.
   ),
   _SoulTemplate(
     id: 'empty',
-    label: 'Empty',
-    description: 'Blank document to start from scratch.',
     content: '',
   ),
 ];

@@ -43,6 +43,9 @@ final class SessionArtifact {
   final String? serverId;
   final SessionArtifactKind kind;
   final String displayName;
+  /// False only when the index synthesized a generic name, never for a file
+  /// actually named "Image" or another word that happens to match UI copy.
+  final bool hasExplicitDisplayName;
   final String? mimeType;
   final int? sizeBytes;
   final List<SessionArtifactSource> sources;
@@ -55,6 +58,7 @@ final class SessionArtifact {
     required this.id,
     required this.kind,
     required this.displayName,
+    this.hasExplicitDisplayName = true,
     required List<SessionArtifactSource> sources,
     this.serverId,
     this.mimeType,
@@ -73,6 +77,7 @@ final class SessionArtifact {
         serverId: serverId,
         kind: kind,
         displayName: displayName,
+        hasExplicitDisplayName: hasExplicitDisplayName,
         mimeType: mimeType,
         sizeBytes: sizeBytes,
         sources: value,
@@ -90,6 +95,7 @@ final class SessionArtifact {
           serverId == other.serverId &&
           kind == other.kind &&
           displayName == other.displayName &&
+          hasExplicitDisplayName == other.hasExplicitDisplayName &&
           mimeType == other.mimeType &&
           sizeBytes == other.sizeBytes &&
           _listEquals(sources, other.sources) &&
@@ -104,6 +110,7 @@ final class SessionArtifact {
     serverId,
     kind,
     displayName,
+    hasExplicitDisplayName,
     mimeType,
     sizeBytes,
     Object.hashAll(sources),

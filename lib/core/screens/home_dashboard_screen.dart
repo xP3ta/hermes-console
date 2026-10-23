@@ -2130,6 +2130,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
       chatsLoaded: _initialLoadComplete,
       mainName: _activeProfileLabel(context),
       bots: homeBoardBots(
+        titleOf: (session) => localizedSessionTitle(Strings.of(context), session),
         profiles: profiles,
         sessions: snapshot?.sessions ?? const [],
         strings: strings,

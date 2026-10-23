@@ -64,7 +64,7 @@ Future<bool> showSshHostKeyDialog(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  '${prompt.type} · fingerprint',
+                  Strings.of(ctx).i18n131P6Fingerprint(prompt.type),
                   style: TextStyle(fontSize: 11, color: colors.textTertiary),
                 ),
                 const SizedBox(height: 4),

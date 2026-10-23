@@ -289,6 +289,7 @@ List<HomeBoardBot> homeBoardBots({
   required DateTime now,
   DateTime? observedAt,
   List<Session> sessions = const [],
+  String Function(Session session)? titleOf,
   DateTime? Function(String sessionId, String profile)? turnStartedAtOf,
   Strings? strings,
 }) {
@@ -324,7 +325,7 @@ List<HomeBoardBot> homeBoardBots({
         if (since != null) break;
       }
     }
-    final last = _lastWork(profile, sessions, strings);
+    final last = _lastWork(profile, sessions, titleOf, strings);
     bots.add(
       HomeBoardBot(
         profileName: profile.name,
@@ -348,6 +349,7 @@ List<HomeBoardBot> homeBoardBots({
 (String, DateTime)? _lastWork(
   AgentProfile profile,
   List<Session> sessions, [
+  String Function(Session session)? titleOf,
   Strings? strings,
 ]) {
   Session? newest;
@@ -362,9 +364,10 @@ List<HomeBoardBot> homeBoardBots({
   final botChat = ids.contains(newest.id) || ids.contains(newest.logicalId);
   final said = humanReadableSessionPreview(newest.lastAssistantPreview);
   final title =
-      (strings == null
-              ? newest.displayTitle
-              : localizedSessionTitle(strings, newest))
+      (titleOf?.call(newest) ??
+              (strings == null
+                  ? newest.displayTitle
+                  : localizedSessionTitle(strings, newest)))
           .trim();
   final text = botChat ? (said ?? title) : (title.isEmpty ? said : title);
   if (text == null || text.isEmpty) return null;
