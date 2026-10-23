@@ -21,6 +21,7 @@ import 'package:http/testing.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
 import 'support/lc1215_long_session_fixture.dart';
+import 'support/test_api_client.dart';
 
 /// Fake del canal Desktop que graba los flags de `session.resume` y permite
 /// emitir eventos `session.resume_progress` como haría Hermes Agent 0.20.
@@ -495,11 +496,7 @@ ActiveChat _chat(
   sessionTitle: 'Paginación',
   notifications: null,
   onTerminal: onTerminal ?? () {},
-  api: ApiClient(
-    baseUrl: 'http://127.0.0.1:8642',
-    apiKey: 'test-key',
-    httpClient: client,
-  ),
+  api: testApiClient(baseUrl: 'http://127.0.0.1:8642', httpClient: client),
   desktopGateway: gateway,
   initialStoredSessionId: initialStoredSessionId,
   allowUnownedDesktopSnapshotForTesting: true,
@@ -549,11 +546,14 @@ void main() {
       );
       addTearDown(chat.dispose);
       final loading = chat.loadMessages(profile: 'builder');
-      await Future<void>.delayed(Duration.zero);
-      expect(gateway.historyRequests, isEmpty);
       // co1215: the canonical tail is tried first, at t0; its 401 leaves
-      // native history as the display source.
-      expect(restCalls, 1);
+      // native history as the display source. That one read is sent twice:
+      // the Dashboard retries a 401 once with its session.
+      for (var turn = 0; turn < 20 && restCalls < 2; turn++) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      expect(gateway.historyRequests, isEmpty);
+      expect(restCalls, 2);
       gateway.resumeGate!.complete(
         const DesktopSessionSnapshot(
           runtimeSessionId: 'resolved-runtime',
@@ -566,7 +566,7 @@ void main() {
       expect(gateway.historyRequests, [
         (sessionId: 'resolved-runtime', profile: 'builder'),
       ]);
-      expect(restCalls, 1);
+      expect(restCalls, 2);
       expect(
         chat.messages.map((row) => row['content']),
         rows.reversed.map((row) => row['content']),
@@ -574,7 +574,7 @@ void main() {
       expect(chat.transcriptExtentForTesting, 'partial');
       expect(chat.hasEarlierMessages, isTrue);
       expect(await chat.loadEarlierMessages(), isFalse);
-      expect(restCalls, 1);
+      expect(restCalls, 2);
       expect(gateway.historyRequests, hasLength(1));
     },
   );
@@ -2366,9 +2366,8 @@ void main() {
           headers: {'content-type': 'application/json'},
         );
       });
-      final api = ApiClient(
+      final api = testApiClient(
         baseUrl: 'http://127.0.0.1:8642',
-        apiKey: 'test-key',
         httpClient: client,
       );
       final parsedTail = await api.getMessagesPage('stored-chat');
@@ -2463,9 +2462,8 @@ void main() {
             headers: const {'content-type': 'application/json'},
           ),
         );
-        final api = ApiClient(
+        final api = testApiClient(
           baseUrl: 'http://127.0.0.1:8642',
-          apiKey: 'test-key',
           httpClient: client,
         );
 

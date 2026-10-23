@@ -12,9 +12,6 @@ import 'package:flutter_test/flutter_test.dart';
 /// deleted once the list is empty. A file counts while its constructions and
 /// subclasses outnumber the Dashboards it attaches (a `null` one is none).
 const _stillWithoutDashboard = {
-  'test/active_chat_profile_transcript_fallback_test.dart',
-  'test/active_chat_transcript_pagination_test.dart',
-  'test/chat_screen_profile_dashboard_access_test.dart',
   'test/e2e_real_gateway/support/real_gateway.dart',
   'test/home_status_requests_test.dart',
   'test/lc1215_long_session_projection_test.dart',
