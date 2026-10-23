@@ -49,45 +49,64 @@ void main() {
     });
   });
 
-  test('a body read to the end still cancels the deadline', () {
+  // A full read never cancels: its body reaches the reader on the test's own
+  // clock, with nothing left for a real event loop (a FakeAsync zone, like a
+  // widget test, never runs one).
+  test('a body read to the end completes and cancels the deadline', () {
     fakeAsync((async) {
       final client = DeadlineHttpClient(
-        MockClient((_) async => http.Response('{}', 200)),
+        MockClient((_) async => http.Response('{"ok":true}', 200)),
         deadline,
       );
-      unawaited(client.get(Uri.parse('http://127.0.0.1:9/x')));
+      String? body;
+      unawaited(
+        client
+            .get(Uri.parse('http://127.0.0.1:9/x'))
+            .then((response) => body = response.body),
+      );
       async.flushMicrotasks();
+      expect(body, '{"ok":true}');
       expect(async.pendingTimers, isEmpty);
     });
   });
 
   group('DashboardClient.apiGetBounded', () {
-    Object? capped(
+    // The body stays open, so only the reader's cancel can end the call:
+    // with no deadline left armed and nobody listening, it was cancelled.
+    // The typed error itself is pinned in
+    // transcript_bounded_dashboard_read_test.dart.
+    //
+    // Runs a capped read and returns how many requests it sent.
+    int capped(
       FakeAsync async,
       Future<http.StreamedResponse> Function(http.BaseRequest request) send,
     ) {
+      var sent = 0;
       final dashboard = DashboardClient(
         host: '127.0.0.1',
         port: 9119,
         manualToken: 'synthetic-token',
-        httpClientOverride: MockClient.streaming(
-          (request, _) => send(request),
-        ),
+        httpClientOverride: MockClient.streaming((request, _) {
+          sent++;
+          return send(request);
+        }),
       );
-      Object? error;
       unawaited(
         dashboard
             .apiGetBounded('sessions/s1/messages', maxBytes: 1024)
-            .then<void>((_) {}, onError: (Object e) => error = e),
+            .then<void>((_) {}, onError: (Object _) {}),
       );
       async.flushMicrotasks();
-      return error;
+      return sent;
     }
 
     test('a declared length over the cap leaves no deadline armed', () {
       fakeAsync((async) {
-        final body = StreamController<List<int>>();
-        final error = capped(
+        var listened = false;
+        final body = StreamController<List<int>>(
+          onListen: () => listened = true,
+        );
+        final sent = capped(
           async,
           (_) async => http.StreamedResponse(
             body.stream,
@@ -95,7 +114,9 @@ void main() {
             contentLength: 1 << 20,
           ),
         );
-        expect(error, isA<SessionTranscriptTooLargeException>());
+        expect(sent, 1);
+        expect(listened, isTrue, reason: 'the reader drains, then cancels');
+        expect(body.hasListener, isFalse);
         expect(async.pendingTimers, isEmpty);
       });
     });
@@ -103,14 +124,19 @@ void main() {
     test('a body cut part way through leaves no deadline armed', () {
       fakeAsync((async) {
         // Past the cap and still open: the read gives up mid-body.
-        final body = StreamController<List<int>>()
-          ..add(List<int>.filled(800, 0x61))
-          ..add(List<int>.filled(800, 0x61));
-        final error = capped(
+        var listened = false;
+        final body = StreamController<List<int>>(
+          onListen: () => listened = true,
+        );
+        body.add(List<int>.filled(800, 0x61));
+        body.add(List<int>.filled(800, 0x61));
+        final sent = capped(
           async,
           (_) async => http.StreamedResponse(body.stream, 200),
         );
-        expect(error, isA<SessionTranscriptTooLargeException>());
+        expect(sent, 1);
+        expect(listened, isTrue);
+        expect(body.hasListener, isFalse);
         expect(async.pendingTimers, isEmpty);
       });
     });
