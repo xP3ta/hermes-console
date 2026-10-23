@@ -122,6 +122,46 @@ Future<void> _pumpApp(WidgetTester tester, List<bool> results) async {
   await tester.pump(const Duration(milliseconds: 500));
 }
 
+/// Pumps frames until [done] holds, failing with [what] after [max]. A
+/// route in the medium pane starts its transition only once the pane is
+/// shown, so a fixed pump can still see it sliding in.
+Future<void> _pumpUntil(
+  WidgetTester tester,
+  bool Function() done, {
+  required String what,
+  Duration max = const Duration(seconds: 3),
+}) async {
+  const step = Duration(milliseconds: 50);
+  var waited = Duration.zero;
+  while (!done() && waited < max) {
+    await tester.pump(step);
+    waited += step;
+  }
+  expect(done(), isTrue, reason: 'Timed out waiting for $what');
+}
+
+/// The route of [finder]'s widget has finished its entrance transition.
+bool _routeSettled(WidgetTester tester, Finder finder) {
+  if (finder.evaluate().length != 1) return false;
+  final route = ModalRoute.of(tester.element(finder));
+  return route?.animation?.status == AnimationStatus.completed;
+}
+
+/// A tap on [finder] lands inside the view. Fails before the tap, so an
+/// unsettled layout is never mistaken for a failure of the dialog fix.
+void _expectOnScreen(WidgetTester tester, Finder finder, String what) {
+  expect(finder, findsOneWidget, reason: '$what is not in the tree');
+  final view = tester.view.physicalSize / tester.view.devicePixelRatio;
+  final centre = tester.getCenter(finder);
+  expect(
+    (Offset.zero & view).contains(centre),
+    isTrue,
+    reason:
+        '$what is at $centre, outside the ${view.width}x${view.height} '
+        'view: the layout has not settled',
+  );
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -182,10 +222,14 @@ void main() {
         final pane = tester.state<AdaptiveListDetailState>(
           find.byType(AdaptiveListDetail),
         );
+        _expectOnScreen(tester, find.byKey(_openDetail), 'Open detail');
         await tester.tap(find.byKey(_openDetail));
-        await tester.pump();
-        await tester.pump(const Duration(milliseconds: 500));
         final pageFinder = find.byType(_ApprovalPage);
+        await _pumpUntil(
+          tester,
+          () => _routeSettled(tester, pageFinder),
+          what: 'the detail page transition',
+        );
         expect(pageFinder, findsOneWidget);
         final page = tester.state<_ApprovalPageState>(pageFinder);
         final callerContext = tester.element(find.byKey(_requestApproval));
@@ -195,21 +239,25 @@ void main() {
         expect(pane.hasDetail, width >= 600);
         final strings = Strings.of(callerContext);
 
+        _expectOnScreen(tester, find.byKey(_requestApproval), 'The request');
         await tester.tap(find.byKey(_requestApproval));
-        await tester.pump();
-        await tester.pump(const Duration(milliseconds: 300));
         final dialog = find.byType(AlertDialog);
+        await _pumpUntil(
+          tester,
+          () => _routeSettled(tester, dialog),
+          what: 'the approval dialog transition',
+        );
         expect(dialog, findsOneWidget);
         expect(Navigator.of(tester.element(dialog)), same(root));
         expect(results, isEmpty);
-        await tester.tap(
-          find.descendant(
-            of: dialog,
-            matching: find.text(
-              allow ? strings.approvalAllow : strings.commonCancel,
-            ),
+        final choice = find.descendant(
+          of: dialog,
+          matching: find.text(
+            allow ? strings.approvalAllow : strings.commonCancel,
           ),
         );
+        _expectOnScreen(tester, choice, 'The dialog choice');
+        await tester.tap(choice);
         // Bounded pumps: a broken pop must fail, not await the unresolved dialog.
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 500));
