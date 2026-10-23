@@ -58,35 +58,25 @@ class DeadlineHttpClient extends http.BaseClient {
       if (code >= 400) {
         _log(code == 401 || code == 403 ? 'auth' : 'http($code)');
       }
-      // The call ends when its body ends or when the reader stops early (a
-      // size cap, a refused declared length): the deadline goes with it.
-      // Synchronous, so events arrive exactly when the source delivers them.
-      StreamSubscription<List<int>>? source;
-      late final StreamController<List<int>> body;
-      body = StreamController<List<int>>(
-        sync: true,
-        onListen: () {
-          source = response.stream.listen(
-            body.add,
-            onError: (Object error, StackTrace stack) {
-              _log('timeout');
-              body.addError(_asTimeout(error), stack);
-            },
-            onDone: () {
-              timer.cancel();
-              body.close();
-            },
-          );
-        },
-        onPause: () => source?.pause(),
-        onResume: () => source?.resume(),
-        onCancel: () {
-          timer.cancel();
-          return source?.cancel();
-        },
-      );
       return http.StreamedResponse(
-        body.stream,
+        // A reader that stops early (a size cap, a refused declared length)
+        // ends the call too: the deadline goes with it. Events pass through
+        // exactly as before; only the reader's cancel is observed.
+        _CancelNotifyingStream(
+          response.stream.transform(
+            StreamTransformer<List<int>, List<int>>.fromHandlers(
+              handleError: (error, stack, sink) {
+                _log('timeout');
+                sink.addError(_asTimeout(error), stack);
+              },
+              handleDone: (sink) {
+                timer.cancel();
+                sink.close();
+              },
+            ),
+          ),
+          timer.cancel,
+        ),
         code,
         contentLength: response.contentLength,
         request: response.request,
@@ -112,6 +102,64 @@ class DeadlineHttpClient extends http.BaseClient {
       debugPrint('[rest] failed class=$failure');
     }
   }
+}
+
+/// A body stream whose subscription also runs [_onCancel] when its reader
+/// cancels it. Data, errors and done reach the reader untouched.
+final class _CancelNotifyingStream<T> extends StreamView<T> {
+  _CancelNotifyingStream(super.stream, this._onCancel);
+
+  final void Function() _onCancel;
+
+  @override
+  StreamSubscription<T> listen(
+    void Function(T event)? onData, {
+    Function? onError,
+    void Function()? onDone,
+    bool? cancelOnError,
+  }) => _CancelNotifyingSubscription(
+    super.listen(
+      onData,
+      onError: onError,
+      onDone: onDone,
+      cancelOnError: cancelOnError,
+    ),
+    _onCancel,
+  );
+}
+
+final class _CancelNotifyingSubscription<T> implements StreamSubscription<T> {
+  _CancelNotifyingSubscription(this._inner, this._onCancel);
+
+  final StreamSubscription<T> _inner;
+  final void Function() _onCancel;
+
+  @override
+  Future<void> cancel() {
+    _onCancel();
+    return _inner.cancel();
+  }
+
+  @override
+  void onData(void Function(T data)? handleData) => _inner.onData(handleData);
+
+  @override
+  void onError(Function? handleError) => _inner.onError(handleError);
+
+  @override
+  void onDone(void Function()? handleDone) => _inner.onDone(handleDone);
+
+  @override
+  void pause([Future<void>? resumeSignal]) => _inner.pause(resumeSignal);
+
+  @override
+  void resume() => _inner.resume();
+
+  @override
+  bool get isPaused => _inner.isPaused;
+
+  @override
+  Future<E> asFuture<E>([E? futureValue]) => _inner.asFuture<E>(futureValue);
 }
 
 class OriginBoundHttpClient extends http.BaseClient {
