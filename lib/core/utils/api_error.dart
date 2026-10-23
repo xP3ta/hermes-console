@@ -87,8 +87,10 @@ String localizedApiError(Strings strings, Object error) {
     return strings.cronProfileInvalid;
   }
   final message = humanizeApiError(error);
-  final http = RegExp(r'^The server responded with error (\d+)\.$').firstMatch(message);
-  if (http != null) return strings.i18n131P6HttpError(http[1]!);
+  final httpMessage = RegExp(
+    r'^The server responded with error (\d+)\.$',
+  ).firstMatch(message);
+  if (httpMessage != null) return strings.i18n131P6HttpError(httpMessage[1]!);
   return switch (message) {
     'SOUL changed during review. Reload and review again.' => strings.i18n131P6SoulChanged,
     'Invalid SOUL response' => strings.i18n131P6SoulInvalid,

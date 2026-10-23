@@ -129,6 +129,7 @@ class _ThemesScreenState extends State<ThemesScreen> {
     try {
       await root.setThemeId(id, followSystem: followSystem);
     } on ThemeProfileStoreException catch (error) {
+      if (!mounted) return;
       _message(themeErrorCopy(Strings.of(context), error.code));
     } finally {
       if (mounted) setState(() => _busy = false);

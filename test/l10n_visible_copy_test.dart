@@ -2,6 +2,7 @@ import 'package:hermes_android/core/models/agent_task_list.dart';
 import 'package:hermes_android/core/utils/projected_content_copy.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
 import 'package:hermes_android/core/models/session_artifact.dart';
 import 'package:hermes_android/core/services/ssh_commands.dart';
 import 'package:hermes_android/core/utils/api_error.dart';
@@ -46,6 +47,14 @@ void main() {
     });
 
     test('$language: local validation errors use catalog copy', () {
+      expect(
+        localizedApiError(s, http.ClientException('connection failed')),
+        s.apiErrorNetwork,
+      );
+      expect(
+        localizedApiError(s, Exception('HTTP 503: {}')),
+        s.i18n131P6HttpError('503'),
+      );
       expect(
         localizedApiError(s, StateError('SOUL changed during review. Reload and review again.')),
         s.i18n131P6SoulChanged,

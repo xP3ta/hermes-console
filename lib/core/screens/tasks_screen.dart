@@ -44,6 +44,7 @@ import '../design/modal.dart'
         showHermesMenu,
         showHermesModelPicker;
 import '../theme/app_theme.dart';
+import '../utils/api_error.dart';
 import '../utils/relative_time.dart';
 import '../widgets/dock_anchored_popover.dart';
 import '../widgets/general_dock_shell.dart';
@@ -1020,7 +1021,7 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
                   }
                 }
               } catch (error) {
-                if (sheetCtx.mounted) _snack(_humanError(error));
+                if (mounted && sheetCtx.mounted) _snack(_humanError(error));
               } finally {
                 if (sheetCtx.mounted) setSheet(() => busy.remove(field));
               }
@@ -1267,7 +1268,7 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
     } on DashboardHttpException catch (error) {
       if (sheetContext.mounted) _snack(_dashboardDetail(error));
     } catch (error) {
-      if (sheetContext.mounted) _snack(_humanError(error));
+      if (mounted && sheetContext.mounted) _snack(_humanError(error));
     } finally {
       if (sheetContext.mounted) setSheet(() => busy.remove(field));
     }
@@ -1311,7 +1312,7 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
     } on DashboardHttpException catch (error) {
       if (sheetContext.mounted) _snack(_dashboardDetail(error));
     } catch (error) {
-      if (sheetContext.mounted) _snack(_humanError(error));
+      if (mounted && sheetContext.mounted) _snack(_humanError(error));
     } finally {
       if (sheetContext.mounted) setSheet(() => busy.remove(field));
     }
