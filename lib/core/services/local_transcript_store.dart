@@ -1,14 +1,18 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:ui' show Locale;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../l10n/app_localizations.dart';
+
 import '../models/session.dart';
 import '../models/transcript_privacy_state.dart';
 import '../utils/assistant_content.dart';
 import '../utils/chat_turn.dart';
+import 'notifications/notification_strings.dart' show resolveNotificationLang;
 import 'session_deletion.dart';
 import 'session_reconciler.dart';
 
@@ -750,7 +754,9 @@ class LocalTranscriptStore {
       sessions.add(
         Session(
           id: identity.sessionId,
-          title: 'Chat local',
+          title: lookupStrings(
+            Locale(resolveNotificationLang(prefs.getString('app_locale'))),
+          ).i18n131P6LocalChat,
           model: 'hermes-agent',
           source: 'mobile-local',
           messageCount: msgs.length,

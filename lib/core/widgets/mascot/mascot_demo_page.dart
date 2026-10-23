@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../l10n/app_localizations.dart';
 import '../../theme/app_theme.dart';
 import '../hermes_app_bar.dart';
 import 'mascot_cluster.dart';
@@ -24,7 +25,7 @@ class _MascotDemoPageState extends State<MascotDemoPage> {
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
     return Scaffold(
-      appBar: HermesAppBar(title: const Text('Mascot')),
+      appBar: HermesAppBar(title: Text(Strings.of(context).petScreenTitle)),
       body: ListView(
         clipBehavior: hermesUnderHeader,
         padding: const EdgeInsets.all(16),

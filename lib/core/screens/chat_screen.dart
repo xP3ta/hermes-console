@@ -7,6 +7,8 @@ export '../widgets/chat/chat_markdown_body.dart'
         validateRemoteChatImageTransport;
 export '../widgets/chat/chat_message_selection_area.dart';
 
+import '../utils/projected_content_copy.dart';
+import '../utils/enum_labels.dart';
 import '../bots/data/gateway_socket_meter.dart';
 import '../models/bot_mention.dart';
 import '../services/app_error_log.dart';
@@ -9045,7 +9047,7 @@ class _ChatScreenState extends State<ChatScreen>
         HermesNotice.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              Strings.of(context).chaCantSendApproval(humanizeApiError(e)),
+              Strings.of(context).chaCantSendApproval(localizedApiError(Strings.of(context), e)),
             ),
           ),
           kind: HermesNoticeKind.error,
@@ -9094,7 +9096,7 @@ class _ChatScreenState extends State<ChatScreen>
             content: Text(
               Strings.of(
                 context,
-              ).interactiveRespondFailed(humanizeApiError(error)),
+              ).interactiveRespondFailed(localizedApiError(Strings.of(context), error)),
             ),
           ),
           kind: HermesNoticeKind.error,
@@ -9125,7 +9127,7 @@ class _ChatScreenState extends State<ChatScreen>
             content: Text(
               Strings.of(
                 context,
-              ).interactiveRespondFailed(humanizeApiError(error)),
+              ).interactiveRespondFailed(localizedApiError(Strings.of(context), error)),
             ),
           ),
           kind: HermesNoticeKind.error,
@@ -11997,11 +11999,11 @@ class _ChatScreenState extends State<ChatScreen>
   _responseGroupCache = Map.identity();
 
   /// Texto visible de las filas anteriores del grupo, en orden.
-  static String _responseGroupTextPrefix(List<Map<String, dynamic>> older) => [
+  String _responseGroupTextPrefix(List<Map<String, dynamic>> older) => [
     for (final row in older)
       if (row['content'] is String &&
           (row['content'] as String).trim().isNotEmpty)
-        row['content'] as String,
+        projectedContentCopy(Strings.of(context), row, row['content'] as String),
   ].join('\n\n');
 
   static String _joinResponseGroupText(String prefix, String content) =>
@@ -13002,7 +13004,7 @@ class _ChatScreenState extends State<ChatScreen>
         if (mounted) {
           HermesNotice.of(context).showSnackBar(
             SnackBar(
-              content: Text(str.chaModelChangeFailed(humanizeApiError(error))),
+              content: Text(str.chaModelChangeFailed(localizedApiError(Strings.of(context), error))),
             ),
             kind: HermesNoticeKind.error,
           );
@@ -13117,7 +13119,7 @@ class _ChatScreenState extends State<ChatScreen>
       if (mounted) {
         HermesNotice.of(context).showSnackBar(
           SnackBar(
-            content: Text(str.chaModelChangeFailed(humanizeApiError(error))),
+            content: Text(str.chaModelChangeFailed(localizedApiError(Strings.of(context), error))),
           ),
           kind: HermesNoticeKind.error,
         );
@@ -13175,7 +13177,7 @@ class _ChatScreenState extends State<ChatScreen>
         if (mounted) {
           HermesNotice.of(context).showSnackBar(
             SnackBar(
-              content: Text(str.chaModelChangeFailed(humanizeApiError(error))),
+              content: Text(str.chaModelChangeFailed(localizedApiError(Strings.of(context), error))),
             ),
             kind: HermesNoticeKind.error,
           );
@@ -13244,7 +13246,7 @@ class _ChatScreenState extends State<ChatScreen>
         if (mounted) {
           HermesNotice.of(context).showSnackBar(
             SnackBar(
-              content: Text(str.chaModelChangeFailed(humanizeApiError(error))),
+              content: Text(str.chaModelChangeFailed(localizedApiError(Strings.of(context), error))),
             ),
             kind: HermesNoticeKind.error,
           );
@@ -16186,7 +16188,10 @@ class _ChatScreenState extends State<ChatScreen>
         effective == ApprovalMode.readOnly ||
         override != null;
     if (!prominent) return null;
-    return (effective.label, _modeColor(effective, colors));
+    return (
+      approvalModeLabel(Strings.of(context), effective),
+      _modeColor(effective, colors),
+    );
   }
 
   /// Opciones de modo (radio) de «Permisos de esta sesión». YOLO se confirma
@@ -16520,7 +16525,7 @@ class _ChatScreenState extends State<ChatScreen>
               HermesNotice.of(context).showSnackBar(
                 SnackBar(
                   content: Text(
-                    Strings.of(context).chaDictationError(humanizeApiError(e)),
+                    Strings.of(context).chaDictationError(localizedApiError(Strings.of(context), e)),
                   ),
                 ),
                 kind: HermesNoticeKind.error,
@@ -19299,14 +19304,22 @@ class _ChatScreenState extends State<ChatScreen>
     // burbuja compacta en lugar de apilar mensajes de usuario independientes.
     if (unit is _UserTurnGroup) {
       final rawContent = (unit.primary['content'] as String?) ?? '';
-      final content = projectedUserVisibleContent(unit.primary);
+      final content = projectedContentCopy(
+        Strings.of(context),
+        unit.primary,
+        projectedUserVisibleContent(unit.primary),
+      );
       final systemChip = _jobChipLabel(content, Strings.of(context));
       if (systemChip != null && unit.supplements.isEmpty) {
         return _SystemBlobChip(label: systemChip, raw: content);
       }
       final parsedContent = _parseUserContent(content);
       final supplements = unit.supplements
-          .map(projectedUserVisibleContent)
+          .map((row) => projectedContentCopy(
+                Strings.of(context),
+                row,
+                projectedUserVisibleContent(row),
+              ))
           .where((text) => text.trim().isNotEmpty)
           .toList();
       if (parsedContent.text.trim().isEmpty &&
@@ -19358,6 +19371,7 @@ class _ChatScreenState extends State<ChatScreen>
     final role = (msg['role'] as String?) ?? 'assistant';
     var content = (msg['content'] as String?) ?? '';
     final rawContent = content;
+    content = projectedContentCopy(Strings.of(context), msg, content);
     // Un turno del agente llega en varias filas (herramientas, razonamiento,
     // texto intermedio y final). Como Desktop, todas comparten UNA burbuja:
     // una cabecera, un «Pensó ⌄» con todas las herramientas y el texto al

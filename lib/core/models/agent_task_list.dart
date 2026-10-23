@@ -15,10 +15,13 @@ final class AgentTaskItem {
     required this.content,
     required this.status,
     this.parentId,
+    this.isFallbackContent = false,
   });
 
   final String id;
   final String content;
+  /// True only for an app-synthesized missing description in a merge delta.
+  final bool isFallbackContent;
   final AgentTaskStatus status;
 
   /// Id de otro elemento cuando este es una subtarea. Puede apuntar a un id
@@ -34,11 +37,12 @@ final class AgentTaskItem {
       other is AgentTaskItem &&
       other.id == id &&
       other.content == content &&
+      other.isFallbackContent == isFallbackContent &&
       other.status == status &&
       other.parentId == parentId;
 
   @override
-  int get hashCode => Object.hash(id, content, status, parentId);
+  int get hashCode => Object.hash(id, content, status, parentId, isFallbackContent);
 }
 
 /// Fila ya ordenada para pintar: elemento + profundidad de anidamiento.
@@ -113,6 +117,7 @@ final class AgentTaskList {
               ? AgentTaskItem(
                   id: item.id,
                   content: item.content,
+                  isFallbackContent: item.isFallbackContent,
                   status: AgentTaskStatus.pending,
                   parentId: item.parentId,
                 )
@@ -261,11 +266,14 @@ final class AgentTaskList {
       );
       final hasStatus = entry['status'] != null;
       if (index < 0) {
-        final created = _parseItem({
-          ...entry,
-          'id': id,
-          'content': content.isEmpty ? '(no description)' : content,
-        });
+        final created = _parseItem(
+          {
+            ...entry,
+            'id': id,
+            'content': content.isEmpty ? '(no description)' : content,
+          },
+          fallbackContent: content.isEmpty,
+        );
         if (created == null || next.length >= maxItems) continue;
         next.add(created);
         touched = true;
@@ -282,6 +290,7 @@ final class AgentTaskList {
       next[index] = AgentTaskItem(
         id: id,
         content: content.isEmpty ? current.content : content,
+        isFallbackContent: content.isEmpty && current.isFallbackContent,
         status: status,
         parentId: current.parentId,
       );
@@ -338,7 +347,7 @@ final class AgentTaskList {
     return value;
   }
 
-  static AgentTaskItem? _parseItem(Object? raw) {
+  static AgentTaskItem? _parseItem(Object? raw, {bool fallbackContent = false}) {
     if (raw is! Map) return null;
     final id = sanitizeAgentTaskText(
       '${raw['id'] ?? ''}',
@@ -371,6 +380,7 @@ final class AgentTaskList {
     return AgentTaskItem(
       id: id,
       content: content,
+      isFallbackContent: fallbackContent,
       status: status,
       parentId: parent.isEmpty || parent == id ? null : parent,
     );

@@ -712,7 +712,7 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
         } catch (error) {
           notice.notify(
             FeedbackKind.error,
-            str.prfSoulWarning(humanizeApiError(error)),
+            str.prfSoulWarning(localizedApiError(str, error)),
             warning: true,
           );
         }
@@ -721,7 +721,7 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
         notice.notify(
           FeedbackKind.error,
           str.prfModelWarning(
-            'profiles.create is unavailable on this Hermes Gateway',
+            str.i18n131P6ProfileCreateUnavailable,
           ),
           warning: true,
         );
@@ -865,7 +865,7 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
           final _BotCreateIdentityFailure failure when failure.uncertain => _strings.i18n131CreateTheProfileExistsButItsIdentityIs,
           _BotCreateIdentityFailure() => _strings.i18n131CreateTheProfileExistsButItsIdentityCould,
           FormatException() => _strings.i18n131CreateChooseAValidIdentityBeforeCreatingThe,
-          _ => copy.createAgentError(humanizeApiError(error)),
+          _ => copy.createAgentError(localizedApiError(Strings.of(context), error)),
         };
       });
     }

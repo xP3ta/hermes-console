@@ -533,7 +533,7 @@ class _OutputBlock extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
     final trimmed = output.length > 2000
-        ? '${output.substring(0, 2000)}\n…(salida truncada)'
+        ? Strings.of(context).i18n131P6TruncatedOutput(output.substring(0, 2000))
         : output;
     return Container(
       width: double.infinity,

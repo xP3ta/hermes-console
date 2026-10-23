@@ -1108,7 +1108,7 @@ class _VoiceSettingsScreenState extends State<VoiceSettingsScreen>
     'kokoro' => 'Kokoro',
     'piper' => 'Piper',
     'local' => 'Whisper',
-    'local_command' => 'Local command',
+    'local_command' => Strings.of(context).i18n131AiStdio,
     'groq' => 'Groq',
     final value? => value,
     null => '—',

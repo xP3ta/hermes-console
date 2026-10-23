@@ -809,7 +809,7 @@ class _MemoryScreenState extends State<MemoryScreen>
                             borderRadius: BorderRadius.circular(4),
                           ),
                           child: Text(
-                            'active',
+                            Strings.of(context).extActive,
                             style: TextStyle(
                               fontSize: 10,
                               color: colors.success,

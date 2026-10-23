@@ -283,6 +283,7 @@ List<HomeBoardBot> homeBoardBots({
   required DateTime now,
   DateTime? observedAt,
   List<Session> sessions = const [],
+  String Function(Session session)? titleOf,
   DateTime? Function(String sessionId, String profile)? turnStartedAtOf,
 }) {
   if (profiles.isEmpty) return const [];
@@ -317,7 +318,7 @@ List<HomeBoardBot> homeBoardBots({
         if (since != null) break;
       }
     }
-    final last = _lastWork(profile, sessions);
+    final last = _lastWork(profile, sessions, titleOf);
     bots.add(
       HomeBoardBot(
         profileName: profile.name,
@@ -338,7 +339,11 @@ List<HomeBoardBot> homeBoardBots({
 /// The last thing [profile] worked on and when, from the Bots read's own
 /// list: its newest chat. A task chat goes by its title; its one Bot Chat,
 /// whose title never changes, by the last thing it said.
-(String, DateTime)? _lastWork(AgentProfile profile, List<Session> sessions) {
+(String, DateTime)? _lastWork(
+  AgentProfile profile,
+  List<Session> sessions,
+  String Function(Session session)? titleOf,
+) {
   Session? newest;
   for (final session in sessions) {
     if (session.profile?.trim() != profile.name) continue;
@@ -350,7 +355,7 @@ List<HomeBoardBot> homeBoardBots({
   final ids = BotPresence.botChatIds(profile);
   final botChat = ids.contains(newest.id) || ids.contains(newest.logicalId);
   final said = humanReadableSessionPreview(newest.lastAssistantPreview);
-  final title = newest.displayTitle.trim();
+  final title = (titleOf?.call(newest) ?? newest.displayTitle).trim();
   final text = botChat ? (said ?? title) : (title.isEmpty ? said : title);
   if (text == null || text.isEmpty) return null;
   return (

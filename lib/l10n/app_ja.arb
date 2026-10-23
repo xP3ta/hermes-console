@@ -6442,5 +6442,239 @@
         "type": "String"
       }
     }
+  },
+  "i18n131P6Animations": "アニメーション",
+  "i18n131P6Idle": "待機",
+  "i18n131P6Run": "走る",
+  "i18n131P6Wait": "待つ",
+  "i18n131P6Greet": "挨拶する",
+  "i18n131P6Jump": "跳ぶ",
+  "i18n131P6Failure": "失敗",
+  "i18n131P6Module": "▸ モジュール：{name}",
+  "@i18n131P6Module": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6ModulePending": "未接続・{phase}",
+  "@i18n131P6ModulePending": {
+    "placeholders": {
+      "phase": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6ConnectingHost": "{host}に接続中",
+  "@i18n131P6ConnectingHost": {
+    "placeholders": {
+      "host": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6BaseUrl": "ベースURL",
+  "i18n131P6OpenAiCompatible": "OpenAI互換",
+  "i18n131P6StoredKey": "•••• キーは保存済みです。置き換えるには新しいキーを貼り付けてください",
+  "i18n131P6StoredPassword": "•••• 保存済みです。変更するには入力してください",
+  "i18n131P6Host": "ホスト",
+  "i18n131P6Fingerprint": "{type}・フィンガープリント",
+  "@i18n131P6Fingerprint": {
+    "placeholders": {
+      "type": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6TokenSummary": "トークン：{total}（入力{input}／出力{output}）",
+  "@i18n131P6TokenSummary": {
+    "placeholders": {
+      "total": {
+        "type": "String"
+      },
+      "input": {
+        "type": "String"
+      },
+      "output": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6TruncatedOutput": "{output}\n…（出力は省略されています）",
+  "@i18n131P6TruncatedOutput": {
+    "placeholders": {
+      "output": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6LocalChat": "ローカルチャット",
+  "i18n131P6ExitCode": "終了コード{code}",
+  "@i18n131P6ExitCode": {
+    "placeholders": {
+      "code": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6SshUptime": "稼働時間",
+  "i18n131P6SshDisk": "ディスク",
+  "i18n131P6SshCpu": "CPU使用率上位",
+  "i18n131P6SshStatus": "Hermesの状態",
+  "i18n131P6TurnNotSaved": "送信前にターンを保存できませんでした。",
+  "i18n131P6AttachmentUnreadable": "ローカルの添付ファイルを読み取れませんでした。",
+  "i18n131P6AttachmentNotSaved": "添付ファイルの状態を保存できませんでした。",
+  "i18n131P6AttachmentsChanged": "アップロード中に添付ファイルが変更されました。",
+  "i18n131P6SendAuthorityLost": "配信前に送信の許可が失われました。",
+  "i18n131P6TurnFailedAfterReconnect": "再接続後、Hermesがターンの失敗を確認しました。",
+  "i18n131P6SoulChanged": "確認中にSOULが変更されました。再読み込みしてもう一度確認してください。",
+  "i18n131P6SoulInvalid": "SOULの応答が無効です。",
+  "i18n131P6SoulUnconfirmed": "SOULへの書き込みが確認されませんでした。",
+  "i18n131P6SoulUnverified": "SOULへの書き込みを検証できませんでした。",
+  "i18n131P6ThemeTooLarge": "テーマが64KiBの上限を超えています。",
+  "i18n131P6ThemeUnreadable": "選択したテーマを読み取れませんでした。",
+  "i18n131P6ThemeBuiltin": "組み込みテーマを変更またはエクスポートする前に複製してください。",
+  "i18n131P6ThemeMissing": "選択したテーマは存在しません。",
+  "i18n131P6ThemeFieldError": "無効なテーマフィールド：{field}（{code}）。",
+  "@i18n131P6ThemeFieldError": {
+    "placeholders": {
+      "field": {
+        "type": "String"
+      },
+      "code": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6ThemeIdFailed": "テーマの一意な識別子を作成できませんでした。",
+  "i18n131P6LogWarning": "警告",
+  "i18n131P6LogDebug": "デバッグ",
+  "i18n131P6BadgeCode": "コード",
+  "i18n131P6BadgeAudio": "音声",
+  "i18n131P6BadgeVideo": "動画",
+  "i18n131P6ProfileCreateUnavailable": "このHermes Gatewayはプロフィール作成に対応していません。",
+  "i18n131P6NoPet": "ペットが選択されていません。",
+  "i18n131P6PetUnavailable": "ペットを利用できません。",
+  "i18n131P6ImageUnavailable": "プロフィール画像を利用できません。",
+  "i18n131P6ProfileCapabilitiesUnsaved": "プロフィールの機能が保存されませんでした。",
+  "i18n131P6BotIdentityUnavailable": "ボットの識別情報を管理できません。",
+  "i18n131P6PetInvalid": "{field}の値が無効です。",
+  "@i18n131P6PetInvalid": {
+    "placeholders": {
+      "field": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6PetMissing": "{field}がありません。",
+  "@i18n131P6PetMissing": {
+    "placeholders": {
+      "field": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6PetTooLarge": "{field}が最大サイズを超えています。",
+  "@i18n131P6PetTooLarge": {
+    "placeholders": {
+      "field": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6PetEmpty": "{field}が空です。",
+  "@i18n131P6PetEmpty": {
+    "placeholders": {
+      "field": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6PetOutOfRange": "{field}の値が範囲外です。",
+  "@i18n131P6PetOutOfRange": {
+    "placeholders": {
+      "field": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6PetWriteFailed": "ペットを保存できませんでした。",
+  "i18n131P6PetSlugUsed": "組み込みペットが識別子{slug}を使用しています。",
+  "@i18n131P6PetSlugUsed": {
+    "placeholders": {
+      "slug": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6PetArchivePath": "ZIP内の許可されていないパス：{path}。",
+  "@i18n131P6PetArchivePath": {
+    "placeholders": {
+      "path": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6PetImageFormat": "スプライトシートには有効なPNGまたはWebP画像を指定してください。",
+  "i18n131P6PetBase64": "スプライトシートにはプレフィックスなしの有効なbase64を使用してください。",
+  "i18n131P6PetMismatch": "{field}が{expected}と一致しません。",
+  "@i18n131P6PetMismatch": {
+    "placeholders": {
+      "field": {
+        "type": "String"
+      },
+      "expected": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6PetFieldType": "{field}の型は{type}である必要があります。",
+  "@i18n131P6PetFieldType": {
+    "placeholders": {
+      "field": {
+        "type": "String"
+      },
+      "type": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6PetImportUnavailable": "ペットのインポートを利用できません。",
+  "i18n131P6PetFormat": "pet.jsonの形式を認識できません。gridとstates、または有効なidが必要です。",
+  "i18n131P6PetNoEntries": "カタログに有効なペットがありません。",
+  "i18n131P6PetUrlBlocked": "ダウンロード元またはURLが許可されていません。",
+  "i18n131P6PetHttp": "ダウンロードがHTTP{code}を返しました。",
+  "@i18n131P6PetHttp": {
+    "placeholders": {
+      "code": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6Document": "ドキュメント",
+  "i18n131P6GeneratedArtifact": "生成された成果物",
+  "i18n131P6ToolResult": "ツールの結果",
+  "i18n131P6Artifact": "成果物",
+  "i18n131P6WhisperLocal": "ローカルWhisper",
+  "i18n131P6PetDimensions": "想定外のサイズ（{actual}）です。{expected}の倍数である必要があります。",
+  "@i18n131P6PetDimensions": {
+    "placeholders": {
+      "actual": {
+        "type": "String"
+      },
+      "expected": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6UserExample": "例：user",
+  "i18n131P6HttpError": "サーバーがエラー{code}を返しました。",
+  "@i18n131P6HttpError": {
+    "placeholders": {
+      "code": {
+        "type": "String"
+      }
+    }
   }
 }

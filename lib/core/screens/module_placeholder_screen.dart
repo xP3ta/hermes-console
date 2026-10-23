@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../l10n/app_localizations.dart';
 import '../theme/app_theme.dart';
 import '../widgets/hermes_app_bar.dart';
 
@@ -60,7 +61,7 @@ class ModulePlaceholderScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 18),
                 Text(
-                  '▸ module: $slug',
+                  Strings.of(context).i18n131P6Module(slug),
                   style: TextStyle(
                     fontSize: 13,
                     color: colors.textSecondary,
@@ -69,7 +70,7 @@ class ModulePlaceholderScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  'status: not_linked · $phase',
+                  Strings.of(context).i18n131P6ModulePending(phase),
                   style: TextStyle(
                     fontSize: 11,
                     color: colors.textTertiary,
