@@ -357,21 +357,20 @@ class _DeSpeechGrammar extends VoiceSpeechGrammar {
   @override
   String speakCurrencies(String input) {
     const unit = r'(?:USD|EUR|GBP|[€$£])';
-    var text = input.replaceAllMapped(
-        RegExp('$_deNumericLeft([+−-]?)($unit)\\s*([+−-]?$_deAmount)$_deNumericRight',
-            caseSensitive: false), (match) {
-          final sign = match[1]!;
-          final amount = match[3]!;
-          if (sign.isNotEmpty && RegExp(r'^[+−-]').hasMatch(amount)) {
-            return match[0]!;
-          }
-          return speakCurrencyAmount('$sign$amount', match[2]!) ?? match[0]!;
-        });
-    text = text.replaceAllMapped(
-        RegExp('$_deNumericLeft([+−-]?$_deAmount)\\s*($unit)$_deNumericRight',
-            caseSensitive: false),
-        (match) => speakCurrencyAmount(match[1]!, match[2]!) ?? match[0]!);
-    return text;
+    // One pass pairs each amount with its own unit before moving right.
+    final pattern = RegExp(
+        '$_deNumericLeft(?:([+−-]?)($unit)\\s*([+−-]?$_deAmount)|'
+        '([+−-]?$_deAmount)\\s*($unit))$_deNumericRight',
+        caseSensitive: false);
+    return input.replaceAllMapped(pattern, (match) {
+      final sign = match[1] ?? '';
+      final amount = match[3] ?? match[4]!;
+      final currency = match[2] ?? match[5]!;
+      if (sign.isNotEmpty && RegExp(r'^[+−-]').hasMatch(amount)) {
+        return match[0]!;
+      }
+      return speakCurrencyAmount('$sign$amount', currency) ?? match[0]!;
+    });
   }
 
   @override

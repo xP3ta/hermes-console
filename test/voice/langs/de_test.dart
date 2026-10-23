@@ -202,6 +202,24 @@ Ende.
     expect(render('Preis 1,01 €.'), 'Preis ein Euro und ein Cent.');
   });
 
+  test('currency tokens are paired left to right without stealing the next amount', () {
+    const grouped = 'eintausendzweihundertvierunddreißig Euro und sechsundfünfzig Cent';
+    expect(speech.speakCurrencyAmount('1.234,56', 'EUR'), grouped);
+    for (final input in [
+      '1.234,56 EUR -0,05 EUR +1 EUR',
+      '1.234,56 € -0,05 EUR +1 EUR',
+      'EUR 1.234,56 -0,05 EUR +1 EUR',
+    ]) {
+      expect(speech.speakCurrencies(input),
+          '$grouped minus null Euro und fünf Cent plus ein Euro', reason: input);
+    }
+    expect(speech.speakCurrencies('1 EUR 2 USD 3 GBP'),
+        'ein Euro zwei US-Dollar drei Pfund Sterling');
+    expect(speech.speakCurrencies('EUR 1 USD 2 GBP 3'),
+        'ein Euro zwei US-Dollar drei Pfund Sterling');
+    expect(render('Preis 1.234,56 EUR.'), 'Preis $grouped.');
+  });
+
   test('numbers use German composition and leave technical tokens intact', () {
     expect(speech.normalizeNarration('0 1 16 17 21 30 60 70 100 101 1000 1000000'),
         'null eins sechzehn siebzehn einundzwanzig dreißig sechzig siebzig '
