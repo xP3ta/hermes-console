@@ -14,6 +14,8 @@ import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/session_repository.dart';
 import 'package:hermes_android/core/utils/byte_bounded_lru_cache.dart';
 
+import 'support/test_api_client.dart';
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   // Dashboard page tokens are shared per base URL across clients.
@@ -329,9 +331,8 @@ void main() {
 
   group('ApiClient', () {
     test('getMessages rechaza un transcript one-shot truncado', () async {
-      final client = ApiClient(
+      final client = testApiClient(
         baseUrl: 'http://hermes.local:8642',
-        apiKey: 'gateway-key',
         httpClient: MockClient(
           (_) async => http.Response(
             jsonEncode({
@@ -358,87 +359,51 @@ void main() {
       );
     });
 
-    test('healthCheck verifies an authenticated endpoint', () async {
-      final client = ApiClient(
-        baseUrl: 'http://hermes.local:8642',
-        apiKey: 'valid-key',
-        httpClient: MockClient((request) async {
-          expect(request.headers['authorization'], 'Bearer valid-key');
-          if (request.url.path == '/health') {
-            return http.Response('{}', 200);
-          }
-          if (request.url.path == '/api/sessions') {
-            return http.Response('{"object":"list","data":[]}', 200);
-          }
-          return http.Response('not found', 404);
-        }),
-      );
-
-      expect(await client.healthCheck(), isTrue);
-      client.close();
-    });
-
-    test('healthCheck rejects invalid API keys', () async {
-      final client = ApiClient(
-        baseUrl: 'http://hermes.local:8642',
-        apiKey: 'bad-key',
-        httpClient: MockClient((request) async {
-          if (request.url.path == '/health') {
-            return http.Response('{}', 200);
-          }
-          if (request.url.path == '/api/sessions') {
-            return http.Response('unauthorized', 401);
-          }
-          return http.Response('not found', 404);
-        }),
-      );
-
-      expect(await client.healthCheck(), isFalse);
-      client.close();
-    });
-
-    // #1215: /health answers 200 while the server is busy streaming large
-    // transcripts; the authenticated probe can time out or return 5xx. That
-    // is a slow server, not a missing one, and the library must not flip to
-    // "no gateway connection" for it.
-    for (final outcome in ['503', '429', 'timeout', 'reset']) {
-      test('healthCheck keeps a reachable server online when the auth probe '
-          'is slow or overloaded ($outcome)', () async {
-        final client = ApiClient(
+    // The Dashboard's public /api/status is the liveness probe: a server
+    // that refuses the login is there, and the login is what is missing.
+    for (final status in [401, 403]) {
+      test('healthCheck keeps a Dashboard that refuses the login online '
+          '($status)', () async {
+        var probes = 0;
+        final client = testApiClient(
           baseUrl: 'http://hermes.local:8642',
-          apiKey: 'valid-key',
           httpClient: MockClient((request) async {
-            if (request.url.path == '/health') {
-              return http.Response('{}', 200);
-            }
-            if (request.url.path == '/api/sessions') {
-              switch (outcome) {
-                case 'timeout':
-                  throw TimeoutException('slow list');
-                case 'reset':
-                  throw http.ClientException('connection reset');
-                default:
-                  return http.Response('busy', int.parse(outcome));
-              }
+            if (request.url.path == '/api/status') {
+              probes++;
+              return http.Response('{"detail":"unauthorized"}', status);
             }
             return http.Response('not found', 404);
           }),
         );
 
         expect(await client.healthCheck(), isTrue);
+        // A 401 is retried once with the session; a 403 is final.
+        expect(probes, status == 401 ? 2 : 1);
         client.close();
       });
     }
 
-    test('healthCheck still fails when /health itself fails', () async {
-      final client = ApiClient(
+    // An overloaded or failing liveness probe is not a reachable Dashboard.
+    for (final status in [429, 503]) {
+      test('healthCheck fails when /api/status answers $status', () async {
+        final client = testApiClient(
+          baseUrl: 'http://hermes.local:8642',
+          httpClient: MockClient((_) async => http.Response('busy', status)),
+        );
+
+        expect(await client.healthCheck(), isFalse);
+        client.close();
+      });
+    }
+
+    test('healthCheck fails when /api/status itself fails', () async {
+      final client = testApiClient(
         baseUrl: 'http://hermes.local:8642',
-        apiKey: 'valid-key',
         httpClient: MockClient((request) async {
-          if (request.url.path == '/health') {
+          if (request.url.path == '/api/status') {
             throw http.ClientException('connection refused');
           }
-          return http.Response('{"object":"list","data":[]}', 200);
+          return http.Response('{"sessions":[],"total":0}', 200);
         }),
       );
 
@@ -483,9 +448,8 @@ void main() {
             );
           }),
         );
-        final gateway = ApiClient(
+        final gateway = testApiClient(
           baseUrl: 'http://127.0.0.1:8642',
-          apiKey: 'gateway-key',
           httpClient: MockClient((request) async {
             gatewayRequests.add(request);
             return http.Response('{}', 500);
