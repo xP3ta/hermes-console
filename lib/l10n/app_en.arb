@@ -348,7 +348,6 @@
   "chaAmbiguousRestored": "The app couldn't confirm whether this turn reached the server. Check the conversation before sending it again.",
   "chaRecoveredKeepsDraft": "Your current draft is kept. Send it or clear the composer to recover the previous message.",
   "chaRetryKeepsDraft": "Your current draft is kept and nothing was retried. Send it or clear the composer to retry the previous message.",
-  "chaUploadTitle": "Upload attachment",
   "chaNoMatch": "No matches for «{arg}». Choose one:",
   "chaModelChangeConfirmBody": "This model switch needs confirmation.",
   "chaModelChangeTitle": "Change active model",

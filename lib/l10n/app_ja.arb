@@ -305,7 +305,6 @@
   "chaAmbiguousRestored": "このターンがサーバーに届いたか確認できませんでした。再送信する前に会話を確認してください。",
   "chaRecoveredKeepsDraft": "現在の下書きは保持されます。以前のメッセージを復元するには、送信するか入力欄を空にしてください。",
   "chaRetryKeepsDraft": "現在の下書きは保持され、再試行は行われていません。以前のメッセージを再試行するには、送信するか入力欄を空にしてください。",
-  "chaUploadTitle": "添付をアップロード",
   "chaNoMatch": "「{arg}」に一致するものがありません。選択してください:",
   "chaModelChangeConfirmBody": "このモデル変更には確認が必要です。",
   "chaModelChangeTitle": "使用モデルを変更",
