@@ -326,45 +326,10 @@ class SpeechRenderer {
         .replaceAllMapped(RegExp(r'\s+([,.;:!?…])'), (m) => m.group(1)!)
         .replaceAll(RegExp(r'(?:,\s*){2,}'), ', ')
         .trim();
-    return text;
+    return _speech.normalizeNarration(text);
   }
 
-  String _speakCurrencies(String input) {
-    var result = input.replaceAllMapped(
-      RegExp(
-        r'\b(USD|EUR|GBP)\s*(\d+(?:[.,]\d{1,2})?)\b',
-        caseSensitive: false,
-      ),
-      (match) =>
-          _speakCurrencyAmount(match.group(2) ?? '', match.group(1) ?? '') ??
-          (match.group(0) ?? ''),
-    );
-    result = result.replaceAllMapped(
-      RegExp(
-        r'\b(\d+(?:[.,]\d{1,2})?)\s*(USD|EUR|GBP)\b',
-        caseSensitive: false,
-      ),
-      (match) =>
-          _speakCurrencyAmount(match.group(1) ?? '', match.group(2) ?? '') ??
-          (match.group(0) ?? ''),
-    );
-    result = result.replaceAllMapped(
-      RegExp(r'([€$£])\s*(\d+(?:[.,]\d{1,2})?)'),
-      (match) =>
-          _speakCurrencyAmount(match.group(2) ?? '', match.group(1) ?? '') ??
-          (match.group(0) ?? ''),
-    );
-    result = result.replaceAllMapped(
-      RegExp(r'(\d+(?:[.,]\d{1,2})?)\s*([€$£])'),
-      (match) =>
-          _speakCurrencyAmount(match.group(1) ?? '', match.group(2) ?? '') ??
-          (match.group(0) ?? ''),
-    );
-    return result;
-  }
-
-  String? _speakCurrencyAmount(String raw, String currency) =>
-      _speech.speakCurrencyAmount(raw, currency);
+  String _speakCurrencies(String input) => _speech.speakCurrencies(input);
 
   String _speakPercentages(String input) => _speech.speakPercentages(input);
   String _speakDecimals(String input) => _speech.speakDecimals(input);

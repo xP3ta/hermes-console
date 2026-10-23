@@ -162,6 +162,9 @@ abstract class VoiceSpeechGrammar {
   String formatDate(int day, int month, int year);
   String formatFraction(String numerator, String denominator);
 
+  /// Final language-specific number and spacing normalization after markup cleanup.
+  String normalizeNarration(String text) => text;
+
   String joinParagraph(List<String> lines) => lines.join(' ');
   String joinTableCells(List<String> cells) => cells.join(', ');
 
@@ -209,6 +212,40 @@ abstract class VoiceSpeechGrammar {
 
   String formatDecimal(String major, String minor) =>
       '$major $decimalSeparator $minor';
+
+  String speakCurrencies(String input) {
+    var result = input.replaceAllMapped(
+      RegExp(
+        r'\b(USD|EUR|GBP)\s*(\d+(?:[.,]\d{1,2})?)\b',
+        caseSensitive: false,
+      ),
+      (match) =>
+          speakCurrencyAmount(match.group(2) ?? '', match.group(1) ?? '') ??
+          (match.group(0) ?? ''),
+    );
+    result = result.replaceAllMapped(
+      RegExp(
+        r'\b(\d+(?:[.,]\d{1,2})?)\s*(USD|EUR|GBP)\b',
+        caseSensitive: false,
+      ),
+      (match) =>
+          speakCurrencyAmount(match.group(1) ?? '', match.group(2) ?? '') ??
+          (match.group(0) ?? ''),
+    );
+    result = result.replaceAllMapped(
+      RegExp(r'([€$£])\s*(\d+(?:[.,]\d{1,2})?)'),
+      (match) =>
+          speakCurrencyAmount(match.group(2) ?? '', match.group(1) ?? '') ??
+          (match.group(0) ?? ''),
+    );
+    result = result.replaceAllMapped(
+      RegExp(r'(\d+(?:[.,]\d{1,2})?)\s*([€$£])'),
+      (match) =>
+          speakCurrencyAmount(match.group(1) ?? '', match.group(2) ?? '') ??
+          (match.group(0) ?? ''),
+    );
+    return result;
+  }
 
   String? speakCurrencyAmount(String raw, String currency) {
     final decimalAt = raw.lastIndexOf(RegExp(r'[,.]'));

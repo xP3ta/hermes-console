@@ -63,6 +63,7 @@ void main() {
     expect(language.speech.formatFraction('1', '2'), 'um meio');
     expect(language.speech.formatFraction('3', '4'), 'três quartos');
     expect(language.speech.codeNotice, 'Bloco de código omitido.');
+    expect(language.speech.speakCurrencies('USD 1.50'), '1 dólar com 50 centavos');
     expect(language.message('didNotHear'), 'Não ouvi você.');
     expect(language.message('recognitionUnavailable', {'status': 'unavailable'}),
         'O reconhecimento de voz não está pronto (unavailable).');
