@@ -32,9 +32,9 @@ List<String> visibleDartLiterals(String source) {
       } else if (')]}'.contains(char)) {
         if (frames.isNotEmpty) frames.removeLast();
       } else if (char == ',' && frames.isNotEmpty && frames.last.char == '(') {
-        frames.last
-          ..argument = cursor + 1
-          ..position++;
+        final frame = frames.last;
+        frame.argument = cursor + 1;
+        frame.position++;
       }
       cursor++;
     }
@@ -133,7 +133,8 @@ class _Strings {
 
   List<_StringToken> scan() {
     _code(0);
-    return tokens..sort((a, b) => a.start.compareTo(b.start));
+    tokens.sort((a, b) => a.start.compareTo(b.start));
+    return tokens;
   }
 
   int commentEnd(int start) {

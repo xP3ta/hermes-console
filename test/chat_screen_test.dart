@@ -29569,61 +29569,67 @@ void main() {
     });
   });
 
-  testWidgets(
-    'pt1215: la salida de terminal en color aparece plegada en la traza',
-    (tester) async {
-      final gateway = _UiRewindGateway();
-      final chat = await pumpChat(
-        tester,
-        connection: _remoteConn('conn-pt1215-term'),
-        desktopGateway: gateway,
-        messages: const [
-          {'role': 'user', 'content': 'PUBLIC_REQUEST'},
-        ],
-      );
-      expect(
-        await chat.send(
-          fullText: 'PUBLIC_TERM_PARENT',
-          model: 'hermes-agent',
-          history: chat.messages,
-        ),
-        isTrue,
-      );
-      gateway.emit('message.start');
-      gateway.emit('tool.start', const {
-        'tool_id': 'call-pt-term',
-        'name': 'terminal',
-        'args': {'command': 'make test'},
-      });
-      gateway.emit('tool.complete', const {
-        'tool_id': 'call-pt-term',
-        'name': 'terminal',
-        'args': {'command': 'make test'},
-        'result': {
-          'output': 'one\ntwo\nthree\nfour\nfive\n\x1B[31mFAILED\x1B[0m',
-          'exit_code': 2,
-        },
-      });
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 100));
-      gateway.emit('message.complete', const {'text': 'PUBLIC_TERM_DONE'});
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 400));
-      expect(find.byType(TerminalOutputCard), findsNothing);
+  for (final language in const ['es', 'de']) {
+    testWidgets(
+      'pt1215: folded ANSI terminal output uses the exit label in $language',
+      (tester) async {
+        final gateway = _UiRewindGateway();
+        final chat = await pumpChat(
+          tester,
+          connection: _remoteConn('conn-pt1215-term'),
+          desktopGateway: gateway,
+          initialPreferences: {'app_locale': language},
+          messages: const [
+            {'role': 'user', 'content': 'PUBLIC_REQUEST'},
+          ],
+        );
+        expect(
+          await chat.send(
+            fullText: 'PUBLIC_TERM_PARENT',
+            model: 'hermes-agent',
+            history: chat.messages,
+          ),
+          isTrue,
+        );
+        gateway.emit('message.start');
+        gateway.emit('tool.start', const {
+          'tool_id': 'call-pt-term',
+          'name': 'terminal',
+          'args': {'command': 'make test'},
+        });
+        gateway.emit('tool.complete', const {
+          'tool_id': 'call-pt-term',
+          'name': 'terminal',
+          'args': {'command': 'make test'},
+          'result': {
+            'output': 'one\ntwo\nthree\nfour\nfive\n\x1B[31mFAILED\x1B[0m',
+            'exit_code': 2,
+          },
+        });
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
+        gateway.emit('message.complete', const {'text': 'PUBLIC_TERM_DONE'});
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+        expect(find.byType(TerminalOutputCard), findsNothing);
 
-      await tester.tap(find.byKey(const ValueKey('thinking-trace-summary')));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 300));
-      expect(find.byType(TerminalOutputCard), findsOneWidget);
-      expect(find.text('exit 2'), findsOneWidget);
-      expect(find.textContaining('FAILED', findRichText: true), findsOneWidget);
-      expect(
-        find.textContaining('two\nthree', findRichText: true),
-        findsNothing,
-      );
-      expect(tester.takeException(), isNull);
-    },
-  );
+        await tester.tap(find.byKey(const ValueKey('thinking-trace-summary')));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+        expect(find.byType(TerminalOutputCard), findsOneWidget);
+        final cardContext = tester.element(find.byType(TerminalOutputCard));
+        final strings = Strings.of(cardContext);
+        expect(Localizations.localeOf(cardContext).languageCode, language);
+        expect(find.text(strings.i18n131P6ExitCode('2')), findsOneWidget);
+        expect(find.textContaining('FAILED', findRichText: true), findsOneWidget);
+        expect(
+          find.textContaining('two\nthree', findRichText: true),
+          findsNothing,
+        );
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
 
   testWidgets(
     'pt1215: el último turno con ediciones cierra con «archivos cambiados»',
@@ -39453,7 +39459,11 @@ void main() {
       expect(userRows(chat, 'forzado'), 1);
       expect(errorRows(chat), 0);
       expect(
-        find.text('No se pudo conservar el turno antes de enviarlo.'),
+        find.text(
+          Strings.of(
+            tester.element(find.byType(ChatScreen)),
+          ).i18n131P6TurnNotSaved,
+        ),
         findsNothing,
       );
       expect(chat.queuedEntries, isEmpty);
