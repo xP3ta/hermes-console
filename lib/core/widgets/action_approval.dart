@@ -165,7 +165,7 @@ Future<bool> _confirmDialog(
   };
   final ok = await showHermesDialogRoute<bool>(
     context: context,
-    builder: (_) => AlertDialog(
+    builder: (dialogContext) => AlertDialog(
       title: Text(title),
       content: Column(
         mainAxisSize: MainAxisSize.min,
@@ -198,11 +198,13 @@ Future<bool> _confirmDialog(
       ),
       actions: [
         TextButton(
-          onPressed: () => Navigator.pop(context, false),
+          onPressed: () =>
+              Navigator.of(dialogContext, rootNavigator: true).pop(false),
           child: Text(Strings.of(context).commonCancel),
         ),
         TextButton(
-          onPressed: () => Navigator.pop(context, true),
+          onPressed: () =>
+              Navigator.of(dialogContext, rootNavigator: true).pop(true),
           child: Text(
             Strings.of(context).approvalAllow,
             style: TextStyle(
