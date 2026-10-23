@@ -7,6 +7,10 @@ void main() {
   // Reviewed brands, protocols, syntax examples and native cognates.
   const identicalValues = <String, Set<String>>{
     "de": {
+      "i18n131P6BadgeAudio", // AUDIO: German media label.
+      "i18n131P6BadgeCode", // CODE: German source-code label.
+      "i18n131P6BadgeVideo", // VIDEO: German media label.
+      "i18n131P6Host", // Host: established computing term in German.
       "i18n131DurationSeconds",
       "i18n131McAgentNameLabel",
       "i18n131McSoulOptionalLabel",
@@ -31,6 +35,10 @@ void main() {
       "i18n131RoutineCustomScheduleHint",
     },
     "fr": {
+      "i18n131P6Animations", // Animations: native French plural.
+      "i18n131P6BadgeAudio", // AUDIO: French media label.
+      "i18n131P6BadgeCode", // CODE: native French word for source code.
+      "i18n131P6Document", // Document: native French noun.
       "i18n131DurationSeconds",
       "i18n131McAgentDescriptionLabel",
       "i18n131McActivityLabelSessionUpdated",
@@ -57,6 +65,10 @@ void main() {
       "i18n131RoutineCustomScheduleHint",
     },
     "it": {
+      "i18n131P6BadgeAudio", // AUDIO: Italian media label.
+      "i18n131P6BadgeVideo", // VIDEO: Italian media label.
+      "i18n131P6Host", // Host: established computing term in Italian.
+      "i18n131P6LogDebug", // debug: established Italian diagnostic level.
       "i18n131DurationSeconds",
       "i18n131McSoul",
       "i18n131AiServerTab",
