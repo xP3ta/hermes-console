@@ -358,55 +358,6 @@ void main() {
       );
     });
 
-    test(
-      'includeChildren serializa include_children=true solo en Gateway API',
-      () async {
-        final requests = <http.Request>[];
-        final client = ApiClient(
-          baseUrl: 'http://hermes.local:8642',
-          apiKey: 'gateway-key',
-          httpClient: MockClient((request) async {
-            requests.add(request);
-            return http.Response(
-              jsonEncode({
-                'data': [
-                  {
-                    'id': 'root-session',
-                    'title': 'Root',
-                    'source': 'mobile',
-                    'message_count': 1,
-                  },
-                  {
-                    'id': 'child-session',
-                    'title': 'Child',
-                    'source': 'mobile',
-                    'message_count': 1,
-                    'parent_session_id': 'root-session',
-                  },
-                ],
-              }),
-              200,
-            );
-          }),
-        );
-        addTearDown(client.close);
-
-        final sessions = await client.getSessions(includeChildren: true);
-
-        expect(requests, hasLength(1));
-        expect(requests.single.url.path, '/api/sessions');
-        expect(requests.single.url.queryParameters, {
-          'limit': '200',
-          'offset': '0',
-          'include_children': 'true',
-        });
-        expect(sessions.map((session) => session.id), [
-          'root-session',
-          'child-session',
-        ]);
-      },
-    );
-
     test('healthCheck verifies an authenticated endpoint', () async {
       final client = ApiClient(
         baseUrl: 'http://hermes.local:8642',
@@ -548,7 +499,7 @@ void main() {
         });
 
         final snapshot = await repository.refresh(
-          const SessionLibraryQuery(includeChildren: true, minMessages: 0),
+          const SessionLibraryQuery(minMessages: 0),
         );
 
         expect(snapshot.source, SessionLibrarySource.dashboard);

@@ -14544,13 +14544,8 @@ class _ChatScreenState extends State<ChatScreen>
     try {
       final result = await deleteSessionWithResolvedLineage(
         widget.session,
-        loadSessions: ({bool includeChildren = false}) => client.getSessions(
-          includeChildren: includeChildren,
-          profile: ownerProfile,
-        ),
         deleteSession: (sessionId) =>
             client.deleteSession(sessionId, profile: ownerProfile),
-        serverDeletesChain: client.hasDashboard,
         remoteSessionId: _chat.serverSessionId,
         localRecoverySessionId: widget.session.id,
         clearLocalRecovery: _clearDeletedChatRecovery,

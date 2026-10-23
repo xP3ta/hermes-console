@@ -1847,13 +1847,8 @@ class _SessionListScreenState extends State<SessionListScreen>
     final ownerProfile = Session.profileOwner(session.profile);
     return deleteSessionWithResolvedLineage(
       session,
-      loadSessions: ({bool includeChildren = false}) => _client.getSessions(
-        includeChildren: includeChildren,
-        profile: ownerProfile,
-      ),
       deleteSession: (sessionId) =>
           _client.deleteSession(sessionId, profile: ownerProfile),
-      serverDeletesChain: _client.hasDashboard,
       cronDeletion: cronDeletion,
       deleteCronJob:
           !session.isJob || cronDeletion == LinkedCronDeletionMode.keepSchedule

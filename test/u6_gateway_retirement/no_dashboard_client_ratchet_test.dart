@@ -29,14 +29,10 @@ const _stillWithoutDashboard = {
   // test-only inline-decode hook next to `debugJsonDecodePathObserver`.
   'test/passive_transcript_bandwidth_test.dart',
   'test/profile_named_session_read_test.dart',
-  'test/session_deletion_surface_test.dart',
-  'test/session_deletion_test.dart',
   'test/session_export_test.dart',
-  'test/session_list_merge_test.dart',
   'test/session_list_spec046_widget_test.dart',
   'test/session_recovery_cleanup_test.dart',
   'test/session_repository_test.dart',
-  'test/settings_history_cleanup_test.dart',
   'test/u6_gateway_retirement/ids_and_constructors_test.dart',
   'test/u6_gateway_retirement/test_api_client_harness_test.dart',
 };
