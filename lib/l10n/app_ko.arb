@@ -305,7 +305,6 @@
   "chaAmbiguousRestored": "이 턴이 서버에 도착했는지 확인하지 못했습니다. 다시 전송하기 전에 대화를 확인하세요.",
   "chaRecoveredKeepsDraft": "현재 초안은 유지됩니다. 이전 메시지를 복구하려면 초안을 전송하거나 입력란을 비우세요.",
   "chaRetryKeepsDraft": "현재 초안은 유지되며 다시 시도하지 않았습니다. 이전 메시지를 다시 시도하려면 초안을 전송하거나 입력란을 비우세요.",
-  "chaUploadTitle": "첨부 파일 업로드",
   "chaNoMatch": "‘{arg}’에 해당하는 항목이 없습니다. 하나를 선택하세요:",
   "chaModelChangeConfirmBody": "이 모델 변경에는 확인이 필요합니다.",
   "chaModelChangeTitle": "사용 중인 모델 변경",

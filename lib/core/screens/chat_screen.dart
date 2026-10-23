@@ -10964,7 +10964,7 @@ class _ChatScreenState extends State<ChatScreen>
     // SOLO para el modelo (oculto en pantalla).
     //  - Archivos de texto → incrustamos el contenido (fiable, sin depender de
     //    librerías del servidor; no escribe nada → sin gate de aprobación).
-    //  - Binarios (PDF/imagen/doc) → subimos al agente (gate) y pasamos la ruta.
+    //  - Binarios (PDF/imagen/doc) → subimos al agente y pasamos la ruta.
     final String fullText;
     String? desktopText;
     if (attachments.isNotEmpty) {
@@ -11004,21 +11004,24 @@ class _ChatScreenState extends State<ChatScreen>
         );
       }
 
-      // Una única aprobación cubre el lote binario completo. El canal Desktop
-      // envía después los bytes por sus RPC nativos; solo si ese protocolo no
-      // está disponible, ActiveChat usa la subida Dashboard de compatibilidad.
+      // Picking the files and pressing send is the user's own action: as on
+      // Desktop, nothing asks again. A read-only instance, a read-only global
+      // mode or this chat set to read-only still refuses the upload. The
+      // Desktop channel then sends the bytes over its native RPCs; only
+      // without that protocol does ActiveChat fall back to the Dashboard
+      // upload.
       if (binaries.isNotEmpty) {
         if (!mounted) return _sendRefused('routeClosed');
-        final approved = await confirmMutatingAction(
-          context,
-          instanceId: widget.connection.id,
-          readOnlyInstance: widget.connection.readOnly,
-          risk: CommandRisk.low,
-          title: str.chaUploadTitle,
-          detail: binaries.map((a) => a.messageLabel).join('\n'),
-        );
-        // Declining the upload is the user's own answer: nothing to tell.
-        if (!approved || !mounted) return _sendRefused('uploadDeclined');
+        final policy = context
+            .findAncestorStateOfType<HermesAppState>()
+            ?.approvalPolicy;
+        if (widget.connection.readOnly ||
+            policy?.globalMode == ApprovalMode.readOnly ||
+            policy?.effectiveMode(widget.session.id) ==
+                ApprovalMode.readOnly) {
+          showReadOnlyNotice(context);
+          return _sendRefused('uploadReadOnly');
+        }
       }
 
       // El historial conserva una copia privada verificable de cada elemento,

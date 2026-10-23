@@ -305,7 +305,6 @@
   "chaAmbiguousRestored": "Es konnte nicht bestätigt werden, ob dieser Gesprächsschritt den Server erreicht hat. Prüfe die Unterhaltung, bevor du ihn erneut sendest.",
   "chaRecoveredKeepsDraft": "Dein aktueller Entwurf bleibt erhalten. Sende ihn oder leere das Eingabefeld, um die vorherige Nachricht wiederherzustellen.",
   "chaRetryKeepsDraft": "Dein aktueller Entwurf bleibt erhalten; es wurde kein erneuter Versuch gestartet. Sende ihn oder leere das Eingabefeld, um die vorherige Nachricht erneut zu senden.",
-  "chaUploadTitle": "Anhang hochladen",
   "chaNoMatch": "Keine Treffer für „{arg}“. Wähle einen aus:",
   "chaModelChangeConfirmBody": "Dieser Modellwechsel muss bestätigt werden.",
   "chaModelChangeTitle": "Aktives Modell wechseln",
