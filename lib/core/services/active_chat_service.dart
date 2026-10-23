@@ -284,8 +284,9 @@ final class _ProfileTranscriptReadExpired extends StateError {
     : super('Profile transcript read authority expired');
 }
 
-/// A named profile's transcript is unreachable: its gateway route answered
-/// 401 (no own API key) and the Dashboard `?profile=` read failed too.
+/// A named profile's transcript is unreachable: the read through the chat's
+/// ApiClient answered auth and the direct Dashboard `?profile=` read refused
+/// it too.
 final class ProfileTranscriptAccessRequired implements Exception {
   const ProfileTranscriptAccessRequired();
 
@@ -11564,8 +11565,9 @@ class ActiveChat {
 
   /// Whole transcript of [storedSessionId] (this chat or one of its
   /// subagent children). A named profile follows the same rule as the paged
-  /// reads: once its gateway route said 401, it is read from the Dashboard
-  /// (`?profile=`) and the gateway is not asked again.
+  /// reads: once the chat's ApiClient (or the caller's [gateway]) answered
+  /// auth, it is read with the direct Dashboard client (`?profile=`) and no
+  /// ApiClient is asked again.
   Future<List<Map<String, dynamic>>> _readWholeTranscript(
     String storedSessionId, {
     required String profile,
@@ -11859,10 +11861,14 @@ class ActiveChat {
     );
   }
 
-  /// Named profiles without their own API key get 401 from the gateway's
-  /// `/p/<profile>/` routes. That answer is definitive for this chat: the
-  /// transcript is read from the Dashboard (`?profile=`), as Hermes Desktop
-  /// does, instead of waiting for hydration and retrying the same 401.
+  /// The named profile's transcript read through [_api] (the Dashboard,
+  /// `?profile=`) answered auth. [ApiClient] folds every sign-in failure and
+  /// a 401 into that one kind (a 403 stays `forbidden` and is not latched),
+  /// so this chat reads the transcript with its direct Dashboard client
+  /// instead: only that read tells a refused login (blocked, one notice)
+  /// from a throttled or failed sign-in on the server (transient). The
+  /// answer is definitive for this chat: [_api] is not asked again, and
+  /// nothing waits for hydration to retry it.
   bool _profileGatewayTranscriptUnauthorized = false;
 
   /// The Dashboard could not serve this named profile's transcript either.
@@ -11870,11 +11876,11 @@ class ActiveChat {
   /// user retries: one actionable error instead of a polling loop.
   bool _profileTranscriptAccessBlocked = false;
 
-  /// The named profile's transcript is reachable neither through its gateway
-  /// route nor through the Dashboard.
+  /// The named profile's transcript is reachable neither through [_api] nor
+  /// through the direct Dashboard client.
   bool get profileTranscriptAccessBlocked => _profileTranscriptAccessBlocked;
 
-  /// Explicit user retry: allows one more Dashboard read. The gateway 401
+  /// Explicit user retry: allows one more Dashboard read. The [_api] auth
   /// latch stays set.
   void retryProfileTranscriptAccess() {
     if (!_profileTranscriptAccessBlocked) return;
@@ -11889,8 +11895,8 @@ class ActiveChat {
     }
   }
 
-  /// Runs a Dashboard read for a named profile whose gateway route is
-  /// unauthorized. Only a refusal to authenticate blocks further reads and
+  /// Runs a direct Dashboard read for a named profile whose [_api] read
+  /// answered auth. Only a refusal to authenticate blocks further reads and
   /// is reported (once) as missing Dashboard access. A missing session (404),
   /// a dropped connection, a timeout or a server error keeps its own meaning:
   /// the caller sees a transient read failure and the next read asks again.

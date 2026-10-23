@@ -27,6 +27,8 @@ import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:hermes_android/core/services/turn_outbox_store.dart';
 import 'package:hermes_android/main.dart';
 
+import 'support/test_api_client.dart';
+
 // Tablet list-detail must keep ONE chat per session: the conversation open in
 // the right pane and the same conversation opened from a deep link or a
 // notification share the same ActiveChat (and therefore the same socket).
@@ -136,12 +138,12 @@ Session _session() => Session(
   startedAt: 0,
 );
 
-ApiClient _safeApi() => ApiClient(
+ApiClient _safeApi() => testApiClient(
   baseUrl: 'http://127.0.0.1:8642',
-  apiKey: 'k',
   connectionId: 'conn-tablet-single',
   httpClient: MockClient((request) async {
-    if (request.url.path == '/health' || request.url.path == '/api/sessions') {
+    if (request.url.path == '/api/status' ||
+        request.url.path == '/api/sessions') {
       return http.Response('{}', 200);
     }
     return http.Response('not found', 404);

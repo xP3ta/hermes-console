@@ -32,6 +32,7 @@ import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'support/test_api_client.dart';
 
 GestureDockController get _c => GestureDockController.instance;
 
@@ -432,12 +433,12 @@ void main() {
               connection: _connection,
               connManager: manager,
               current: DrawerSection.home,
-              recentSessionsClientFactory: (saved) => ApiClient(
+              // An empty recents list in the Dashboard's shape.
+              recentSessionsClientFactory: (saved) => testApiClient(
                 baseUrl: saved.baseUrl,
-                apiKey: saved.apiKey,
                 httpClient: MockClient(
                   (request) async => http.Response(
-                    jsonEncode({'object': 'list', 'data': <Object>[]}),
+                    jsonEncode({'sessions': <Object>[], 'total': 0}),
                     200,
                   ),
                 ),

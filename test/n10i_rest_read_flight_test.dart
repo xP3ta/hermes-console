@@ -8,6 +8,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
+import 'support/test_api_client.dart';
 
 http.Response _page(String t) => http.Response(
   '{"data":[{"id":1,"message_id":"m1","role":"user","content":"$t"}]}',
@@ -30,9 +31,8 @@ class _Rig {
       sessionTitle: 'n10i',
       notifications: null,
       onTerminal: () {},
-      api: ApiClient(
+      api: testApiClient(
         baseUrl: 'http://hermes.local:8642',
-        apiKey: 'k',
         httpClient: MockClient((request) async {
           gets++;
           final first = gate;

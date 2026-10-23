@@ -31,6 +31,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'session_identity_peer_test.dart' as peer;
 import 'support/design_shots.dart' show loadDesignFonts;
 import 'support/in_memory_compression_restore_storage.dart';
+import 'support/test_api_client.dart';
 
 final _connection = SavedConnection(
   id: 'peer',
@@ -192,9 +193,8 @@ void main() {
       sessionId: 'stored-peer',
       sessionTitle: 'Peer',
       sessionSnapshot: _session,
-      api: ApiClient(
+      api: testApiClient(
         baseUrl: 'https://example.invalid',
-        apiKey: 'test-key',
         httpClient: MockClient((_) async => http.Response('nf', 404)),
       ),
       desktopGateway: gateway,

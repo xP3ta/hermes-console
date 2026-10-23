@@ -27,6 +27,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'session_identity_peer_test.dart' as peer;
 import 'support/in_memory_compression_restore_storage.dart';
+import 'support/test_api_client.dart';
 
 final Strings _es = StringsEs();
 
@@ -152,9 +153,8 @@ void main() {
         connection: _conn(id),
         sessionId: 'sess-$id',
         sessionTitle: 'Tareas',
-        api: ApiClient(
+        api: testApiClient(
           baseUrl: 'https://example.invalid',
-          apiKey: 'k',
           httpClient: MockClient((_) async => http.Response('nf', 404)),
         ),
         desktopGateway: gateway,
@@ -437,9 +437,8 @@ void main() {
       ),
       sessionId: 'stored-peer',
       sessionTitle: 'Peer',
-      api: ApiClient(
+      api: testApiClient(
         baseUrl: 'https://example.invalid',
-        apiKey: 'k',
         httpClient: MockClient(rest ?? (_) async => http.Response('nf', 404)),
       ),
       desktopGateway: gateway,

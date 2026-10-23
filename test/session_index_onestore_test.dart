@@ -10,6 +10,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'support/home_chat_finders.dart';
+import 'support/test_api_client.dart';
 
 /// One source of truth for the per-connection session overrides (local
 /// titles, archive, pin, hidden): every screen reads the same store, a change
@@ -34,6 +35,10 @@ class _CountingHomeClient extends ApiClient {
         baseUrl: 'http://127.0.0.1:8642',
         apiKey: 'test-key',
         httpClient: MockClient((_) async => http.Response('{}', 404)),
+        profileDashboard: testDashboardClient(
+          baseUrl: 'http://127.0.0.1:8642',
+          httpClient: MockClient((_) async => http.Response('{}', 404)),
+        ),
       );
 
   List<Session> sessions;

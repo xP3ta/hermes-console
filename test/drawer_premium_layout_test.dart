@@ -12,6 +12,8 @@ import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/hermes_drawer.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 
+import 'support/test_api_client.dart';
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -46,9 +48,8 @@ void main() {
             connection: connection,
             connManager: connManager,
             current: DrawerSection.home,
-            recentSessionsClientFactory: (saved) => ApiClient(
+            recentSessionsClientFactory: (saved) => testApiClient(
               baseUrl: saved.baseUrl,
-              apiKey: saved.apiKey,
               httpClient:
                   sessionsClient ??
                   MockClient((request) async {
@@ -57,8 +58,7 @@ void main() {
                     expect(request.url.queryParameters['limit'], '40');
                     return http.Response(
                       jsonEncode({
-                        'object': 'list',
-                        'data': [
+                        'sessions': [
                           {
                             'id': 'older',
                             'title': 'Diseño anterior',
@@ -99,6 +99,7 @@ void main() {
                             'parent_session_id': 'newest',
                           },
                         ],
+                        'total': 6,
                       }),
                       200,
                     );
@@ -205,11 +206,10 @@ void main() {
       ];
       return http.Response(
         jsonEncode({
-          'object': 'list',
-          'data': rows,
+          'sessions': rows,
+          'total': total,
           'limit': limit,
           'offset': offset,
-          'has_more': offset + rows.length < total,
         }),
         200,
       );

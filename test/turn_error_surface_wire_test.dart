@@ -15,6 +15,7 @@ import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
+import 'support/test_api_client.dart';
 
 class _FakeDesktopGateway implements HermesDesktopGateway {
   final StreamController<TuiGatewayEvent> _events =
@@ -86,9 +87,8 @@ Future<ActiveChat> _liveChat(_FakeDesktopGateway gateway) async {
     sessionTitle: 'Surface',
     notifications: null,
     onTerminal: () {},
-    api: ApiClient(
+    api: testApiClient(
       baseUrl: 'https://example.invalid',
-      apiKey: 'unused',
       httpClient: MockClient((_) async => http.Response('unused', 500)),
     ),
     desktopGateway: gateway,

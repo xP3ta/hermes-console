@@ -12,6 +12,7 @@ import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
+import 'support/test_api_client.dart';
 
 /// N10b: with the socket stable, a withheld turn end or a silent-fanout gap
 /// asks the chat to re-read authoritative state. That is not a lost transport:
@@ -209,9 +210,8 @@ void main() {
       sessionId: 'stored-1',
       sessionTitle: 'N10b',
       sessionProfile: 'default',
-      api: ApiClient(
+      api: testApiClient(
         baseUrl: 'http://127.0.0.1:1',
-        apiKey: 'unused',
         httpClient: MockClient((_) async => http.Response('unused', 500)),
       ),
       storedMessageLoader: (_, _) async {

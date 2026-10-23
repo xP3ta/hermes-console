@@ -5,6 +5,7 @@ import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'support/test_api_client.dart';
 
 void main() {
   for (final liveCalls in [false, true]) {
@@ -26,9 +27,8 @@ void main() {
               ),
               sessionId: 'diagnostic',
               sessionTitle: 'Diagnostic',
-              api: ApiClient(
+              api: testApiClient(
                 baseUrl: 'https://example.invalid',
-                apiKey: 'test-only',
                 httpClient: MockClient(
                   (_) async => http.Response('not found', 404),
                 ),

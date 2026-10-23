@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 import 'support/long_streaming_transcript_fixture.dart';
+import 'support/test_api_client.dart';
 
 /// Counts projection work per streaming tick on a ~300-row transcript (the
 /// shape of the long session that stutters while the agent streams). Work is
@@ -26,9 +27,8 @@ void main() {
       ),
       sessionId: 'bench',
       sessionTitle: 'Bench',
-      api: ApiClient(
+      api: testApiClient(
         baseUrl: 'http://10.0.0.1:8642',
-        apiKey: 'k',
         httpClient: MockClient((_) async => http.Response('not found', 404)),
       ),
     );

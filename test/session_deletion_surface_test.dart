@@ -8,6 +8,8 @@ import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'support/test_api_client.dart';
+
 Widget _host(Widget child, {Locale locale = const Locale('es')}) => MaterialApp(
   locale: locale,
   theme: AppTheme.fromId('dark'),
@@ -16,32 +18,38 @@ Widget _host(Widget child, {Locale locale = const Locale('es')}) => MaterialApp(
   home: child,
 );
 
-class _OfflineLineageApiClient extends ApiClient {
-  _OfflineLineageApiClient()
+/// The list reads, but the network is gone when the DELETE goes out.
+class _OfflineDeleteApiClient extends ApiClient {
+  _OfflineDeleteApiClient()
     : super(
         baseUrl: 'https://hermes.test',
         apiKey: 'test-key',
         connectionId: 'conn-offline-delete',
         httpClient: MockClient((_) async => throw UnimplementedError()),
+        profileDashboard: testDashboardClient(
+          baseUrl: 'https://hermes.test',
+          httpClient: MockClient((_) async => throw UnimplementedError()),
+        ),
       );
 
-  int lineageRequests = 0;
+  int deleteRequests = 0;
 
   @override
   Future<bool> healthCheck() async => true;
 
   @override
+  Future<bool> deleteSession(String sessionId, {String? profile}) async {
+    deleteRequests++;
+    throw StateError('offline');
+  }
+
+  @override
   Future<List<Session>> getSessions({
-    bool includeChildren = false,
     String? profile,
     int pageSize = 200,
     bool Function(List<Session> sessions)? enough,
     int? maxPages,
   }) async {
-    if (includeChildren) {
-      lineageRequests++;
-      throw StateError('offline');
-    }
     return [
       Session.fromJson({
         'id': 'cron_report_20260717_090000',
@@ -130,7 +138,7 @@ void main() {
   testWidgets('swipe cron sin red conserva la fila y muestra un solo error', (
     tester,
   ) async {
-    final client = _OfflineLineageApiClient();
+    final client = _OfflineDeleteApiClient();
     await pumpOfflineCronList(tester, client);
 
     await tester.drag(find.text('Informe QA'), const Offset(-700, 0));
@@ -148,16 +156,16 @@ void main() {
 
     expectOfflineFeedback(
       tester,
-      'No se pudo comprobar la conversación completa. '
+      'No se pudo borrar la sesión. '
       'Revisa la conexión e inténtalo de nuevo.',
     );
-    expect(client.lineageRequests, 1);
+    expect(client.deleteRequests, 1);
   });
 
   testWidgets('sheet cron sin red conserva la fila y muestra un solo error', (
     tester,
   ) async {
-    final client = _OfflineLineageApiClient();
+    final client = _OfflineDeleteApiClient();
     await pumpOfflineCronList(tester, client);
 
     await tester.longPress(find.text('Informe QA'));
@@ -170,16 +178,16 @@ void main() {
 
     expectOfflineFeedback(
       tester,
-      'No se pudo comprobar la conversación completa. '
+      'No se pudo borrar la sesión. '
       'Revisa la conexión e inténtalo de nuevo.',
     );
-    expect(client.lineageRequests, 1);
+    expect(client.deleteRequests, 1);
   });
 
   testWidgets('el error offline se localiza en inglés sin prefijo técnico', (
     tester,
   ) async {
-    final client = _OfflineLineageApiClient();
+    final client = _OfflineDeleteApiClient();
     await pumpOfflineCronList(tester, client, locale: const Locale('en'));
 
     await tester.drag(find.text('Informe QA'), const Offset(-700, 0));
@@ -192,10 +200,10 @@ void main() {
 
     expectOfflineFeedback(
       tester,
-      'The full conversation could not be checked. '
+      'The session could not be deleted. '
       'Check the connection and try again.',
     );
     expect(find.textContaining('No se pudo'), findsNothing);
-    expect(client.lineageRequests, 1);
+    expect(client.deleteRequests, 1);
   });
 }

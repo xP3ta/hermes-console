@@ -31,6 +31,7 @@ import 'package:hermes_android/core/services/turn_outbox_store.dart';
 import 'package:hermes_android/core/utils/chat_turn.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
+import 'support/test_api_client.dart';
 
 class _DroppingDesktopGateway implements HermesDesktopGateway {
   _DroppingDesktopGateway({this.canonicalStoredId});
@@ -1316,12 +1317,20 @@ class _RestFallbackApiClient extends ApiClient {
         baseUrl: 'http://127.0.0.1:8642',
         apiKey: 'test-key',
         httpClient: MockClient((_) async => http.Response('not found', 404)),
+        profileDashboard: testDashboardClient(
+          baseUrl: 'http://127.0.0.1:8642',
+          httpClient: MockClient((_) async => http.Response('not found', 404)),
+        ),
       );
 }
 
 class _ControlledApiClient extends ApiClient {
   _ControlledApiClient()
-    : super(baseUrl: 'http://127.0.0.1:8642', apiKey: 'test-key');
+    : super(
+        baseUrl: 'http://127.0.0.1:8642',
+        apiKey: 'test-key',
+        profileDashboard: testDashboardClient(baseUrl: 'http://127.0.0.1:8642'),
+      );
 
   final List<Completer<List<Map<String, dynamic>>>> requests = [];
   bool closed = false;
@@ -1359,7 +1368,11 @@ class _ControlledApiClient extends ApiClient {
 /// respuesta del turno.
 class _CompletedTranscriptApi extends ApiClient {
   _CompletedTranscriptApi(this.transcript)
-    : super(baseUrl: 'http://127.0.0.1:8642', apiKey: 'test-key');
+    : super(
+        baseUrl: 'http://127.0.0.1:8642',
+        apiKey: 'test-key',
+        profileDashboard: testDashboardClient(baseUrl: 'http://127.0.0.1:8642'),
+      );
 
   final List<Map<String, dynamic>> transcript;
   int calls = 0;
@@ -1383,6 +1396,7 @@ class _SingleAuthorizedTranscriptApi extends ApiClient {
     : super(
         baseUrl: 'http://127.0.0.1:8642',
         apiKey: String.fromCharCodes(const [113, 97]),
+        profileDashboard: testDashboardClient(baseUrl: 'http://127.0.0.1:8642'),
       );
 
   final List<Map<String, dynamic>> transcript;
@@ -1411,7 +1425,11 @@ class _SingleAuthorizedTranscriptApi extends ApiClient {
 
 class _ToolThenFinalTranscriptApi extends ApiClient {
   _ToolThenFinalTranscriptApi()
-    : super(baseUrl: 'http://127.0.0.1:8642', apiKey: 'test-key');
+    : super(
+        baseUrl: 'http://127.0.0.1:8642',
+        apiKey: 'test-key',
+        profileDashboard: testDashboardClient(baseUrl: 'http://127.0.0.1:8642'),
+      );
 
   final firstRead = Completer<void>();
   final finalReady = Completer<void>();
@@ -1473,7 +1491,11 @@ class _ToolThenFinalTranscriptApi extends ApiClient {
 
 class _PartialTailApi extends ApiClient {
   _PartialTailApi(this.rows)
-    : super(baseUrl: 'http://127.0.0.1:8642', apiKey: 'test-key');
+    : super(
+        baseUrl: 'http://127.0.0.1:8642',
+        apiKey: 'test-key',
+        profileDashboard: testDashboardClient(baseUrl: 'http://127.0.0.1:8642'),
+      );
 
   final List<Map<String, dynamic>> rows;
   final List<int> requestedOffsets = [];
@@ -1658,9 +1680,8 @@ ActiveChat _recoverableChat(
   onTerminal: () {},
   api:
       api ??
-      ApiClient(
+      testApiClient(
         baseUrl: 'http://127.0.0.1:1',
-        apiKey: 'test-key',
         httpClient: MockClient((_) async => http.Response('not found', 404)),
       ),
   desktopGateway: gateway,
@@ -1708,9 +1729,8 @@ ActiveChat _productionAttachChat(
     onTerminal: () {},
     api:
         api ??
-        ApiClient(
+        testApiClient(
           baseUrl: 'http://127.0.0.1:1',
-          apiKey: 'test-key',
           httpClient: MockClient((_) async => http.Response('not found', 404)),
         ),
     desktopGateway: gateway,
@@ -2222,9 +2242,8 @@ void main() {
         sessionProfile: 'owner-profile',
         initialStoredSessionId: 'session-retarget-old',
         authoritativeStoredSessionBinding: true,
-        api: ApiClient(
+        api: testApiClient(
           baseUrl: 'http://127.0.0.1:1',
-          apiKey: '',
           httpClient: MockClient((_) async => http.Response('not found', 404)),
         ),
         desktopGateway: oldGateway,
@@ -2251,9 +2270,8 @@ void main() {
         sessionProfile: 'owner-profile',
         initialStoredSessionId: 'session-retarget-new',
         authoritativeStoredSessionBinding: true,
-        api: ApiClient(
+        api: testApiClient(
           baseUrl: 'http://127.0.0.1:1',
-          apiKey: '',
           httpClient: MockClient((_) async => http.Response('not found', 404)),
         ),
         desktopGateway: replacementGateway,
@@ -2618,9 +2636,8 @@ void main() {
       sessionTitle: 'Bot Chat',
       notifications: null,
       onTerminal: () {},
-      api: ApiClient(
+      api: testApiClient(
         baseUrl: 'http://127.0.0.1:1',
-        apiKey: 'test-key',
         httpClient: MockClient((_) async => http.Response('not found', 404)),
       ),
       desktopGateway: gateway,
@@ -6094,9 +6111,8 @@ void main() {
         'native-durable',
         gateway,
         turnIdempotencySupported: false,
-        api: ApiClient(
+        api: testApiClient(
           baseUrl: 'https://gateway.invalid',
-          apiKey: '',
           httpClient: MockClient((_) async {
             restCalls++;
             return http.Response('Unauthorized', 401);
@@ -9942,9 +9958,8 @@ void main() {
       final gateway = _DroppingDesktopGateway(
         canonicalStoredId: '20260716_canonical',
       );
-      final api = ApiClient(
+      final api = testApiClient(
         baseUrl: 'http://127.0.0.1:1',
-        apiKey: 'test-key',
         httpClient: MockClient((_) async => http.Response('not found', 404)),
       );
       final chat = ActiveChat(
@@ -9993,9 +10008,8 @@ void main() {
     'contract future-capability: cobertura completa reanuda corte idempotente',
     () async {
       final gateway = _RecoverableDesktopGateway();
-      final api = ApiClient(
+      final api = testApiClient(
         baseUrl: 'http://127.0.0.1:1',
-        apiKey: 'test-key',
         httpClient: MockClient((_) async => http.Response('not found', 404)),
       );
       final chat = ActiveChat(
@@ -10337,9 +10351,8 @@ void main() {
         sessionTitle: id,
         notifications: null,
         onTerminal: () {},
-        api: ApiClient(
+        api: testApiClient(
           baseUrl: 'http://127.0.0.1:1',
-          apiKey: 'fixture-key',
           httpClient: MockClient((_) async => http.Response('not found', 404)),
         ),
         desktopGateway: chatGateway,
@@ -12009,9 +12022,8 @@ void main() {
       );
       var transcriptReads = 0;
       final requestedPaths = <String>[];
-      final api = ApiClient(
+      final api = testApiClient(
         baseUrl: 'http://127.0.0.1:8642',
-        apiKey: 'test-key',
         httpClient: MockClient((request) async {
           requestedPaths.add(request.url.path);
           if (request.url.path == '/api/sessions/20260716_delayed/messages') {
@@ -12071,9 +12083,8 @@ void main() {
   );
 
   test('un 404 al recargar conserva los mensajes visibles', () async {
-    final api = ApiClient(
+    final api = testApiClient(
       baseUrl: 'http://127.0.0.1:8642',
-      apiKey: 'test-key',
       httpClient: MockClient((_) async => http.Response('not found', 404)),
     );
     final chat = ActiveChat(

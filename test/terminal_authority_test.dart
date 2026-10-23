@@ -30,6 +30,7 @@ import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
+import 'support/test_api_client.dart';
 
 const _runtimeId = 'runtime-terminal-authority';
 const _storedId = 'stored-terminal-authority';
@@ -225,9 +226,8 @@ ActiveChat _chat(
   sessionTitle: 'Terminal authority',
   notifications: null,
   onTerminal: () {},
-  api: ApiClient(
+  api: testApiClient(
     baseUrl: 'http://127.0.0.1:1',
-    apiKey: 'test-key',
     httpClient: MockClient((_) async => http.Response('not found', 404)),
   ),
   desktopGateway: gateway,

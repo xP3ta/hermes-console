@@ -12,6 +12,8 @@ import 'package:hermes_android/main.dart' show hermesRouteObserver;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'support/test_api_client.dart';
+
 Session _session({
   required String id,
   required String title,
@@ -40,6 +42,10 @@ class _SessionListApiClient extends ApiClient {
         apiKey: 'test-key',
         connectionId: 'conn-merge',
         httpClient: MockClient((_) async => throw UnimplementedError()),
+        profileDashboard: testDashboardClient(
+          baseUrl: 'https://hermes.test',
+          httpClient: MockClient((_) async => throw UnimplementedError()),
+        ),
       );
 
   final List<Session> remoteSessions;

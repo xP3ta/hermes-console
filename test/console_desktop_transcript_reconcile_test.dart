@@ -44,6 +44,7 @@ import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
+import 'support/test_api_client.dart';
 
 /// A minimal desktop gateway: connects, resumes/activates, and lets tests
 /// fire real `sessions.changed` (and terminal) events on its event stream.
@@ -240,9 +241,8 @@ Future<_Fixture> _mountChat(
     sessionId: _session.id,
     sessionTitle: _session.title,
     initialStoredSessionId: initialStoredSessionId,
-    api: ApiClient(
+    api: testApiClient(
       baseUrl: 'https://example.invalid',
-      apiKey: 'unused',
       httpClient: MockClient((_) async => http.Response('unused', 500)),
     ),
     desktopGateway: gateway,

@@ -29,6 +29,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'cs1215_cold_start_store_test.dart' show MemoryColdStartStorage;
 import 'support/in_memory_compression_restore_storage.dart';
 import 'support/design_shots.dart' show loadDesignFonts;
+import 'support/test_api_client.dart';
 
 /// Records every tail blob read (each one is a Keystore decryption in
 /// production) and optionally charges [readLatency] per read.
@@ -164,9 +165,8 @@ void main() {
       attachDesktopRuntimeOnLoad: false,
       compressionRestoreStore: testCompressionRestoreStore(),
       coldStartStore: storage == null ? null : ColdStartStore(storage: storage),
-      defaultApiForTesting: (connection) => ApiClient(
+      defaultApiForTesting: (connection) => testApiClient(
         baseUrl: connection.baseUrl,
-        apiKey: 'key',
         httpClient: MockClient(
           (_) async => http.Response(
             sessionStatus == 404 ? '{"error":"not found"}' : '{}',

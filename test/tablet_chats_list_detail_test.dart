@@ -14,6 +14,8 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'support/test_api_client.dart';
+
 // Chats on a tablet: the conversation list and the open conversation side by
 // side in expanded windows, one at a time in medium ones, and the phone flow
 // (a full-screen chat route) on compact windows.
@@ -152,12 +154,11 @@ void main() {
         return http.Response('{}', 404);
       }),
     );
-    final gateway = ApiClient(
+    final gateway = testApiClient(
       baseUrl: 'http://127.0.0.1:8642',
-      apiKey: 'k',
       connectionId: _connectionId,
       httpClient: MockClient((request) async {
-        if (request.url.path == '/health' ||
+        if (request.url.path == '/api/status' ||
             request.url.path == '/api/sessions') {
           return http.Response('{}', 200);
         }

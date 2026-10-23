@@ -21,11 +21,13 @@ import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
+import 'support/test_api_client.dart';
 
-// A named profile (a bot) whose own API server route answers 401 and whose
-// Dashboard refuses the profile read too. The chat itself streams over the
-// gateway socket, so what the user sees must depend on whether anything is
-// actually missing from the screen.
+// A named profile (a bot) whose transcript read through the chat's ApiClient
+// (the Dashboard, `?profile=`) answers 401, and whose direct Dashboard read
+// refuses it too. The chat itself streams over the gateway socket, so what
+// the user sees must depend on whether anything is actually missing from the
+// screen.
 
 final _connection = SavedConnection(
   id: 'profile-dashboard-access',
@@ -51,7 +53,7 @@ class _Routes {
 
   http.Client gateway() => MockClient((request) async {
     gatewayPaths.add(request.url.path);
-    // The connection key is not this profile's key.
+    // The Dashboard refuses this profile's read through ApiClient.
     return http.Response('{"error":{"code":"gateway_auth_failed"}}', 401);
   });
 
@@ -130,9 +132,8 @@ Future<(ActiveChatService, ActiveChat)> _open(
     sessionTitle: session.title,
     sessionSnapshot: session,
     sessionProfile: _profile,
-    api: ApiClient(
+    api: testApiClient(
       baseUrl: 'https://example.invalid',
-      apiKey: 'main-connection-key',
       httpClient: routes.gateway(),
     ),
     transcriptDashboard: DashboardClient(

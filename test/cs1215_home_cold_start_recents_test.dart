@@ -20,8 +20,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'cs1215_cold_start_store_test.dart' show MemoryColdStartStorage;
 import 'support/in_memory_compression_restore_storage.dart';
+import 'support/test_api_client.dart';
 
-/// A Gateway for Home: answers at once, or never ([hang]) like a phone
+/// A Dashboard for Home: answers at once, or never ([hang]) like a phone
 /// whose network is still coming up after a cold start.
 final class _Gateway {
   _Gateway({this.hang = false, this.healthStatus = 200});
@@ -36,12 +37,12 @@ final class _Gateway {
     if (hang) return Completer<http.Response>().future;
     answered += 1;
     switch (request.url.path) {
-      case '/health':
+      case '/api/status':
         return http.Response('{"status":"ok"}', healthStatus);
       case '/api/sessions':
         return http.Response(
           jsonEncode({
-            'data': [
+            'sessions': [
               {
                 'id': 's-recent',
                 'title': 'Plan de la semana',
@@ -60,7 +61,7 @@ final class _Gateway {
                 'last_active': 1789990100,
               },
             ],
-            'has_more': false,
+            'total': 2,
           }),
           200,
         );
@@ -183,9 +184,8 @@ void main() {
           appLockOverride: lock,
           connManager: manager,
           activeChatsOverride: chats,
-          clientFactory: (conn) => ApiClient(
+          clientFactory: (conn) => testApiClient(
             baseUrl: conn.baseUrl,
-            apiKey: conn.apiKey,
             httpClient: gateway.client(),
           ),
           dashboardAuthProbe: (_) async => DashboardAuthCheck.ok,

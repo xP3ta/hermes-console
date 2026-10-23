@@ -10,6 +10,7 @@ import 'package:http/testing.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
 import 'support/turn_side_gateway.dart';
+import 'support/test_api_client.dart';
 
 SavedConnection _connection({bool readOnly = false}) => SavedConnection(
   id: 'turn-side',
@@ -376,9 +377,8 @@ void main() {
         sessionTitle: 'Turn side',
         notifications: null,
         onTerminal: () {},
-        api: ApiClient(
+        api: testApiClient(
           baseUrl: 'http://127.0.0.1:8642',
-          apiKey: 'test-key',
           httpClient: MockClient(
             (request) async => http.Response(
               jsonEncode({

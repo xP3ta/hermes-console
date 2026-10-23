@@ -1423,9 +1423,8 @@ bool isAutomationSessionRow(Session session) => session.isAutomation;
 /// Un DELETE de la raíz antes que sus continuaciones convierte a la siguiente
 /// hija en una sesión principal nueva que reaparece en la lista: ese era otro
 /// motivo real de "no se borran todas". Se reutiliza
-/// [sessionLineageDeleteOrder] (el mismo orden que usa el borrado de una sola
-/// conversación) y se filtra al ámbito elegido, para que elegir solo Cron no
-/// arrastre un chat normal ni al contrario.
+/// [sessionLineageDeleteOrder] y se filtra al ámbito elegido, para que elegir
+/// solo Cron no arrastre un chat normal ni al contrario.
 @visibleForTesting
 List<String> historyCleanupDeleteOrder(
   Iterable<Session> sessions,
@@ -1884,13 +1883,10 @@ class _HistoryCleanupSectionState extends State<HistoryCleanupSection> {
       if (!mounted) return;
       // The server rows are listed BEFORE asking, and that same listing is
       // what gets deleted: the dialog states exactly how many conversations
-      // and automation runs go, and the result counts the same rows.
-      // `includeChildren`: the server folds continuations into their parent
-      // and, unseen, they were left orphaned and came back as new rows.
-      final sessions = await client.getSessions(
-        includeChildren: !client.hasDashboard,
-        profile: targetProfile,
-      );
+      // and automation runs go, and the result counts the same rows. The
+      // Dashboard folds continuations into their parent and deletes the
+      // whole chain with it.
+      final sessions = await client.getSessions(profile: targetProfile);
       if (!mounted) return;
       if (widget.connection.id != targetConnection.id) {
         _showCleanupNotice(_connectionLostMessage());

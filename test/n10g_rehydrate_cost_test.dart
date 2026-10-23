@@ -13,6 +13,7 @@ import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
+import 'support/test_api_client.dart';
 
 /// N10g: a recovery that changes nothing must not rebuild the transcript.
 /// Unchanged rows keep their identity (so list entries, sticky index, anchors
@@ -217,9 +218,8 @@ void main() {
       sessionId: 'stored-1',
       sessionTitle: 'N10g',
       sessionProfile: 'default',
-      api: ApiClient(
+      api: testApiClient(
         baseUrl: 'http://127.0.0.1:1',
-        apiKey: 'unused',
         httpClient: MockClient((_) async => http.Response('unused', 500)),
       ),
       storedMessageLoader: (_, _) async => [

@@ -10,6 +10,7 @@ import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'support/test_api_client.dart';
 
 void main() {
   testWidgets(
@@ -17,9 +18,8 @@ void main() {
     (tester) async {
       SharedPreferences.setMockInitialValues({});
       var requests = 0;
-      final api = ApiClient(
+      final api = testApiClient(
         baseUrl: 'http://127.0.0.1:8642',
-        apiKey: 'key',
         httpClient: MockClient((_) async {
           requests++;
           return http.Response('{}', 404);

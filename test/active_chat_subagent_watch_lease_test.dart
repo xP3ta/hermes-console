@@ -11,6 +11,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
+import 'support/test_api_client.dart';
 
 class _Gateway
     implements
@@ -157,9 +158,8 @@ Future<ActiveChat> _start(HermesDesktopGateway gateway) async {
     sessionTitle: 'Lease',
     notifications: null,
     onTerminal: () {},
-    api: ApiClient(
+    api: testApiClient(
       baseUrl: 'https://example.invalid',
-      apiKey: 'test-only',
       httpClient: MockClient((_) async => http.Response('unused', 500)),
     ),
     desktopGateway: gateway,

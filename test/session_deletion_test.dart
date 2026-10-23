@@ -1,12 +1,9 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hermes_android/core/services/connection_manager.dart';
+import 'package:hermes_android/core/models/session.dart';
 import 'package:hermes_android/core/services/session_deletion.dart';
-import 'package:http/http.dart' as http;
-import 'package:http/testing.dart';
 
 Session cronSession(String id) =>
     Session.fromJson({'id': id, 'title': 'Scheduled report', 'source': 'cron'});
@@ -87,19 +84,19 @@ void main() {
         contains('cronDeletion:'),
         reason: '$path debe declarar si conserva o elimina la programación',
       );
+      // The Dashboard deletes the whole chain from any id: nothing reads
+      // the lineage first.
+      expect(
+        source,
+        isNot(contains('loadSessions:')),
+        reason: '$path no debe leer el linaje antes de borrar',
+      );
+      expect(source, isNot(contains('serverDeletesChain:')), reason: path);
     }
 
     final chat = File('lib/core/screens/chat_screen.dart').readAsStringSync();
     expect(chat, isNot(contains('deleteSession: client.deleteSession')));
     expect(chat, contains('final ownerProfile = _chat.sessionProfile;'));
-    expect(
-      chat,
-      matches(
-        RegExp(
-          r'client\.getSessions\(\s*includeChildren: includeChildren,\s*profile: ownerProfile,',
-        ),
-      ),
-    );
     expect(
       chat,
       contains('client.deleteSession(sessionId, profile: ownerProfile)'),
@@ -125,11 +122,7 @@ void main() {
     ).readAsStringSync();
     expect(
       list,
-      matches(
-        RegExp(
-          r'_client\.getSessions\(\s*includeChildren: includeChildren,\s*profile: ownerProfile,',
-        ),
-      ),
+      contains('_client.deleteSession(sessionId, profile: ownerProfile)'),
     );
 
     final service = File(
@@ -294,118 +287,26 @@ void main() {
     ]);
   });
 
-  test('resuelve la raíz cron desde la última continuación', () {
-    final root = cronSession('cron_job123_20260715_214800');
-    final child = childSession('compact-1', root.id);
-    final leaf = childSession('compact-2', child.id);
-
-    expect(sessionLineageRoot(leaf, [root, child, leaf]), same(root));
-    expect(sessionLineageRoot(leaf, [root, child, leaf]).cronJobId, 'job123');
-  });
-
   test(
-    'el contexto compartido fuerza includeChildren y conserva raíz y linaje',
+    'el contexto apunta a la fila elegida: el Dashboard borra la cadena',
     () async {
       final root = cronSession('cron_job123_20260715_214800');
-      final child = childSession('compact-1', root.id);
-      final leaf = childSession('compact-2', child.id);
-      bool? requestedIncludeChildren;
+      final leaf = childSession('compact-2', 'compact-1');
 
-      final context = await resolveSessionDeletionContext(
-        leaf,
-        loadSessions: ({bool includeChildren = false}) async {
-          requestedIncludeChildren = includeChildren;
-          return [root, child, leaf];
-        },
-      );
-
-      expect(requestedIncludeChildren, isTrue);
-      expect(context.target, same(root));
-      expect(context.lineage, [root, child, leaf]);
-      expect(context.remoteSessionId, root.id);
+      final context = await resolveSessionDeletionContext(leaf);
+      expect(context.target, same(leaf));
+      expect(context.remoteSessionId, leaf.id);
       expect(context.localRecoverySessionId, leaf.id);
+
+      // A cron run is deleted by its own id, never by a client-side id.
+      final rootContext = await resolveSessionDeletionContext(
+        root,
+        remoteSessionId: 'desktop-runtime',
+      );
+      expect(rootContext.target, same(root));
+      expect(rootContext.remoteSessionId, root.id);
     },
   );
-
-  test(
-    'borrado de linaje conserva include_children=true en el wire Gateway',
-    () async {
-      final requests = <http.Request>[];
-      final root = cronSession('cron_wire_20260807_001500');
-      final leaf = childSession('leaf-wire', root.id);
-      final client = ApiClient(
-        baseUrl: 'http://hermes.local:8642',
-        apiKey: 'gateway-key',
-        httpClient: MockClient((request) async {
-          requests.add(request);
-          if (request.method == 'GET' && request.url.path == '/api/sessions') {
-            return http.Response(
-              jsonEncode({
-                'data': [
-                  {
-                    'id': root.id,
-                    'title': root.title,
-                    'source': root.source,
-                    'message_count': 1,
-                  },
-                  {
-                    'id': leaf.id,
-                    'title': leaf.title,
-                    'source': leaf.source,
-                    'message_count': 1,
-                    'parent_session_id': root.id,
-                  },
-                ],
-              }),
-              200,
-            );
-          }
-          if (request.method == 'DELETE' &&
-              request.url.path.startsWith('/api/sessions/')) {
-            return http.Response(jsonEncode({'deleted': true}), 200);
-          }
-          return http.Response('not found', 404);
-        }),
-      );
-      addTearDown(client.close);
-
-      final result = await deleteSessionWithResolvedLineage(
-        leaf,
-        loadSessions: client.getSessions,
-        deleteSession: client.deleteSession,
-      );
-
-      expect(result.status, LinkedSessionDeleteStatus.deleted);
-      expect(requests.map((request) => request.method), [
-        'GET',
-        'DELETE',
-        'DELETE',
-      ]);
-      expect(requests.first.url.queryParameters, {
-        'limit': '200',
-        'offset': '0',
-        'include_children': 'true',
-      });
-      expect(requests[1].url.path, '/api/sessions/leaf-wire');
-      expect(requests.last.url.path, '/api/sessions/${root.id}');
-    },
-  );
-
-  test('un fetch de linaje fallido se convierte en fallo controlado', () async {
-    final result = await deleteSessionWithResolvedLineage(
-      cronSession('cron_job123_20260715_214800'),
-      loadSessions: ({bool includeChildren = false}) async {
-        expect(includeChildren, isTrue);
-        throw StateError('offline');
-      },
-      deleteSession: (_) async => true,
-      deleteCronJob: (_) async {},
-    );
-
-    expect(result.status, LinkedSessionDeleteStatus.sessionDeleteFailed);
-    expect(result.failure?.code, SessionDeletionFailureCode.lineageUnavailable);
-    expect(result.failure?.cause, isA<StateError>());
-  });
 
   test(
     'cron sin vínculo o gestor devuelve códigos estables sin copy',
@@ -434,32 +335,6 @@ void main() {
     },
   );
 
-  test('borra una cadena cron de las hojas a la raíz', () async {
-    final root = cronSession('cron_job123_20260715_214800');
-    final child = childSession('compact-1', root.id);
-    final leaf = childSession('compact-2', child.id);
-    final calls = <String>[];
-
-    final result = await deleteSessionWithLinkedCron(
-      root,
-      lineage: [root, child, leaf],
-      cronDeletion: LinkedCronDeletionMode.deleteSchedule,
-      deleteCronJob: (id) async => calls.add('cron:$id'),
-      deleteSession: (id) async {
-        calls.add('session:$id');
-        return true;
-      },
-    );
-
-    expect(result.status, LinkedSessionDeleteStatus.deleted);
-    expect(calls, [
-      'cron:job123',
-      'session:compact-2',
-      'session:compact-1',
-      'session:${root.id}',
-    ]);
-  });
-
   test('si no puede detener el cron conserva la conversación', () async {
     var sessionDeleteCalled = false;
     final result = await deleteSessionWithLinkedCron(
@@ -485,7 +360,6 @@ void main() {
 
       final result = await deleteSessionWithResolvedLineage(
         scheduled,
-        loadSessions: ({bool includeChildren = false}) async => [scheduled],
         deleteCronJob: (id) async => calls.add('cron:$id'),
         deleteSession: (id) async {
           calls.add('session:$id');
@@ -505,7 +379,6 @@ void main() {
 
     final result = await deleteSessionWithResolvedLineage(
       legacy,
-      loadSessions: ({bool includeChildren = false}) async => [legacy],
       deleteCronJob: (id) async => calls.add('cron:$id'),
       deleteSession: (id) async {
         calls.add('session:$id');
@@ -532,7 +405,6 @@ void main() {
       final result = await deleteSessionWithResolvedLineage(
         local,
         remoteSessionId: 'desktop-remote',
-        loadSessions: ({bool includeChildren = false}) async => const [],
         deleteSession: (id) async {
           remoteDeletes.add(id);
           return true;
@@ -557,14 +429,12 @@ void main() {
     final rejected = await deleteSessionWithResolvedLineage(
       local,
       remoteSessionId: 'desktop-rejected',
-      loadSessions: ({bool includeChildren = false}) async => const [],
       deleteSession: (_) async => false,
       clearLocalRecovery: (id) async => localCleanups.add(id),
     );
     final failed = await deleteSessionWithResolvedLineage(
       local,
       remoteSessionId: 'desktop-failed',
-      loadSessions: ({bool includeChildren = false}) async => const [],
       deleteSession: (_) async => throw StateError('offline'),
       clearLocalRecovery: (id) async => localCleanups.add(id),
     );

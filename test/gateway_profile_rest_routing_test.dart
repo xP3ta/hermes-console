@@ -5,23 +5,33 @@ import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
+import 'support/test_api_client.dart';
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   test(
-    'named profile prefixes session detail message and delete routes',
+    'a named profile selects its session detail, messages and delete with '
+    '?profile=',
     () async {
       final requests = <http.Request>[];
-      final client = ApiClient(
+      final client = testApiClient(
         baseUrl: 'https://hermes.example',
-        apiKey: 'test-key',
         httpClient: MockClient((request) async {
           requests.add(request);
-          if (request.url.path.endsWith('/messages')) {
-            return http.Response(jsonEncode({'data': <Object>[]}), 200);
+          final path = request.url.path;
+          if (path.endsWith('/messages')) {
+            return http.Response(
+              jsonEncode({'session_id': 'session/1', 'messages': <Object>[]}),
+              200,
+            );
+          }
+          // No mutation fence: the DELETE goes out as is.
+          if (path.endsWith('/mutation-snapshot')) {
+            return http.Response('{}', 404);
           }
           if (request.method == 'DELETE') {
-            return http.Response(jsonEncode({'deleted': true}), 200);
+            return http.Response(jsonEncode({'ok': true}), 200);
           }
           return http.Response(
             jsonEncode({
@@ -39,46 +49,29 @@ void main() {
       await client.getSession('session/1', profile: 'team_alpha');
       await client.getMessages('session/1', profile: 'team_alpha');
       await client.getMessagesPage('session/1', profile: 'team_alpha');
-      await client.deleteSession('session/1', profile: 'team_alpha');
-
       expect(
-        requests.map((request) => request.url.toString()),
-        everyElement(contains('/p/team_alpha/api/sessions/session%2F1')),
+        await client.deleteSession('session/1', profile: 'team_alpha'),
+        isTrue,
       );
+
+      expect(requests, isNotEmpty);
+      for (final request in requests) {
+        final url = request.url.toString();
+        expect(url, contains('/api/sessions/session%2F1'));
+        expect(url, isNot(contains('/p/')));
+        expect(request.url.queryParameters['profile'], 'team_alpha');
+      }
       client.close();
     },
   );
 
-  test('named profile prefixes the Gateway session inventory route', () async {
-    late Uri requested;
-    final client = ApiClient(
+  test('named profile rejects a conflicting session owner', () async {
+    final client = testApiClient(
       baseUrl: 'https://hermes.example',
-      apiKey: 'test-key',
-      httpClient: MockClient((request) async {
-        requested = request.url;
-        return http.Response(jsonEncode({'data': <Object>[]}), 200);
-      }),
-    );
-
-    await client.getSessions(includeChildren: true, profile: 'team_alpha');
-
-    expect(requested.path, '/p/team_alpha/api/sessions');
-    expect(requested.queryParameters, {
-      'limit': '200',
-      'offset': '0',
-      'include_children': 'true',
-    });
-    client.close();
-  });
-
-  test('named profile rejects a conflicting Gateway session owner', () async {
-    final client = ApiClient(
-      baseUrl: 'https://hermes.example',
-      apiKey: 'fixture-token',
       httpClient: MockClient((_) async {
         return http.Response(
           jsonEncode({
-            'data': [
+            'sessions': [
               {
                 'id': 'session-1',
                 'title': 'Wrong owner',
@@ -86,6 +79,9 @@ void main() {
                 'profile': 'other_team',
               },
             ],
+            'total': 1,
+            'limit': 100,
+            'offset': 0,
           }),
           200,
         );

@@ -58,19 +58,35 @@ class DeadlineHttpClient extends http.BaseClient {
       if (code >= 400) {
         _log(code == 401 || code == 403 ? 'auth' : 'http($code)');
       }
-      return http.StreamedResponse(
-        response.stream.transform(
-          StreamTransformer<List<int>, List<int>>.fromHandlers(
-            handleError: (error, stack, sink) {
+      // The call ends when its body ends or when the reader stops early (a
+      // size cap, a refused declared length): the deadline goes with it.
+      // Synchronous, so events arrive exactly when the source delivers them.
+      StreamSubscription<List<int>>? source;
+      late final StreamController<List<int>> body;
+      body = StreamController<List<int>>(
+        sync: true,
+        onListen: () {
+          source = response.stream.listen(
+            body.add,
+            onError: (Object error, StackTrace stack) {
               _log('timeout');
-              sink.addError(_asTimeout(error), stack);
+              body.addError(_asTimeout(error), stack);
             },
-            handleDone: (sink) {
+            onDone: () {
               timer.cancel();
-              sink.close();
+              body.close();
             },
-          ),
-        ),
+          );
+        },
+        onPause: () => source?.pause(),
+        onResume: () => source?.resume(),
+        onCancel: () {
+          timer.cancel();
+          return source?.cancel();
+        },
+      );
+      return http.StreamedResponse(
+        body.stream,
         code,
         contentLength: response.contentLength,
         request: response.request,

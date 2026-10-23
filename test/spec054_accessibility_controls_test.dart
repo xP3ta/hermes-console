@@ -14,6 +14,7 @@ import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'support/test_api_client.dart';
 
 Widget _host(Widget child, {TextScaler textScaler = TextScaler.noScaling}) {
   return MaterialApp(
@@ -261,9 +262,8 @@ void main() {
       apiKey: 'test-key',
     );
     const rawReply = '  Respuesta\nsin recortar  ';
-    final client = ApiClient(
+    final client = testApiClient(
       baseUrl: connection.baseUrl,
-      apiKey: connection.apiKey,
       httpClient: MockClient(
         (_) async => http.Response(
           jsonEncode({'status': 'completed', 'output': rawReply}),

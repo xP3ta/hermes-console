@@ -11,6 +11,8 @@ import 'package:hermes_android/core/services/chat_draft_store.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/turn_outbox_store.dart';
 
+import 'support/test_api_client.dart';
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   final secure = <String, String>{};
@@ -63,26 +65,32 @@ void main() {
     );
   }
 
-  ApiClient clientWithDeleted(bool deleted) => ApiClient(
+  /// A Dashboard delete: no mutation fence (the snapshot read answers 404),
+  /// then [delete] answers the DELETE.
+  ApiClient dashboardDelete(http.Response Function() delete) => testApiClient(
     baseUrl: 'https://example.invalid',
-    apiKey: 'test-only',
     connectionId: 'conn-cleanup',
     httpClient: MockClient(
-      (_) async => http.Response(jsonEncode({'deleted': deleted}), 200),
+      (request) async =>
+          request.method == 'DELETE' ? delete() : http.Response('{}', 404),
     ),
   );
+
+  ApiClient clientWithDeleted(bool deleted) =>
+      dashboardDelete(() => http.Response(jsonEncode({'ok': deleted}), 200));
 
   test(
     'missing or mistyped delete evidence preserves local recovery',
     () async {
       await seedRecovery();
-      for (final body in ['{}', '{"deleted":null}', '{"deleted":"true"}']) {
-        final client = ApiClient(
-          baseUrl: 'https://example.invalid',
-          apiKey: 'test-only',
-          connectionId: 'conn-cleanup',
-          httpClient: MockClient((_) async => http.Response(body, 200)),
-        );
+      // The Gateway's `deleted` is no evidence on the Dashboard either.
+      for (final body in [
+        '{}',
+        '{"ok":null}',
+        '{"ok":"true"}',
+        '{"deleted":true}',
+      ]) {
+        final client = dashboardDelete(() => http.Response(body, 200));
         expect(await client.deleteSession('session-cleanup'), isFalse);
         client.close();
       }
@@ -215,27 +223,56 @@ void main() {
     client.close();
   });
 
-  test('404 remoto se trata como borrado idempotente y limpia local', () async {
-    await seedRecovery();
-    final client = ApiClient(
-      baseUrl: 'https://example.invalid',
-      apiKey: 'test-only',
-      connectionId: 'conn-cleanup',
-      httpClient: MockClient((_) async => http.Response('not found', 404)),
-    );
+  test(
+    'a session the Dashboard reports already absent clears local recovery',
+    () async {
+      await seedRecovery();
+      final client = dashboardDelete(
+        () => http.Response('{"ok":true,"already_absent":true}', 200),
+      );
 
-    expect(await client.deleteSession('session-cleanup'), isTrue);
+      expect(await client.deleteSession('session-cleanup'), isTrue);
+
+      final prefs = await SharedPreferences.getInstance();
+      expect(
+        (await ChatDraftStore(
+          prefs,
+        ).load('conn-cleanup', 'session-cleanup')).text,
+        isEmpty,
+      );
+      expect(
+        await TurnOutboxStore().loadForChat('conn-cleanup', 'session-cleanup'),
+        isNull,
+      );
+      client.close();
+    },
+  );
+
+  test('a Dashboard 404 is an error and keeps local recovery', () async {
+    await seedRecovery();
+    final client = dashboardDelete(() => http.Response('not found', 404));
+
+    await expectLater(
+      client.deleteSession('session-cleanup'),
+      throwsA(
+        isA<DashboardHttpException>().having(
+          (error) => error.statusCode,
+          'statusCode',
+          404,
+        ),
+      ),
+    );
 
     final prefs = await SharedPreferences.getInstance();
     expect(
       (await ChatDraftStore(
         prefs,
       ).load('conn-cleanup', 'session-cleanup')).text,
-      isEmpty,
+      'privado',
     );
     expect(
       await TurnOutboxStore().loadForChat('conn-cleanup', 'session-cleanup'),
-      isNull,
+      isNotNull,
     );
     client.close();
   });
@@ -247,12 +284,7 @@ void main() {
       // gateway a medio reiniciar) se daba por "borrado" sin evidencia,
       // anunciando éxito con la fila todavía viva en el servidor.
       await seedRecovery();
-      final client = ApiClient(
-        baseUrl: 'https://example.invalid',
-        apiKey: 'test-only',
-        connectionId: 'conn-cleanup',
-        httpClient: MockClient((_) async => http.Response('<html>', 200)),
-      );
+      final client = dashboardDelete(() => http.Response('<html>', 200));
 
       expect(await client.deleteSession('session-cleanup'), isFalse);
 

@@ -30,6 +30,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
 import 'support/home_chat_finders.dart';
+import 'support/test_api_client.dart';
 
 /// Rediseño de Conversaciones (drawer › "Conversaciones").
 ///
@@ -76,12 +77,12 @@ http.Response _page(Iterable<Map<String, dynamic>> rows) => http.Response(
   200,
 );
 
-ApiClient _gateway() => ApiClient(
+ApiClient _gateway() => testApiClient(
   baseUrl: 'http://127.0.0.1:8642',
-  apiKey: 'gateway-key',
   connectionId: _connectionId,
   httpClient: MockClient((request) async {
-    if (request.url.path == '/health' || request.url.path == '/api/sessions') {
+    if (request.url.path == '/api/status' ||
+        request.url.path == '/api/sessions') {
       return http.Response('{}', 200);
     }
     return http.Response('{}', 404);
@@ -118,6 +119,10 @@ class _HomeActivityClient extends ApiClient {
         baseUrl: 'http://127.0.0.1:8642',
         apiKey: 'gateway-key',
         httpClient: MockClient((_) async => http.Response('{}', 200)),
+        profileDashboard: testDashboardClient(
+          baseUrl: 'http://127.0.0.1:8642',
+          httpClient: MockClient((_) async => http.Response('{}', 200)),
+        ),
       );
 
   List<Session> sessions;
