@@ -11,6 +11,12 @@ import 'notifications/notification_strings.dart' show resolveNotificationLang;
 /// throw can be surfaced instead of leaving the native splash up forever.
 typedef StartupBootstrap = Future<Widget> Function();
 
+/// Reads only the optional locale preference; recovery must tolerate failure.
+typedef StartupLocaleReader = Future<String?> Function();
+
+Future<String?> _readStartupLocalePreference() async =>
+    (await SharedPreferences.getInstance()).getString('app_locale');
+
 /// Runs [bootstrap] and hands its widget to [run]. When it throws, [run]
 /// receives a recovery screen instead; Retry runs [bootstrap] again and swaps
 /// in the app once it succeeds. Nothing is deleted on failure: the steps
@@ -18,6 +24,7 @@ typedef StartupBootstrap = Future<Widget> Function();
 Future<void> runGuardedStartup({
   required StartupBootstrap bootstrap,
   required FutureOr<void> Function(Widget app) run,
+  StartupLocaleReader readLocalePreference = _readStartupLocalePreference,
 }) async {
   final Widget app;
   try {
@@ -26,9 +33,9 @@ Future<void> runGuardedStartup({
     AppErrorLog.record('startup', error);
     String? preference;
     try {
-      preference = (await SharedPreferences.getInstance()).getString('app_locale');
+      preference = await readLocalePreference().timeout(const Duration(seconds: 2));
     } catch (_) {
-      // Storage failure must not hide the recovery surface.
+      // Failed or stalled storage must not hide the recovery surface.
     }
     await run(StartupFailureApp(
       bootstrap: bootstrap,
