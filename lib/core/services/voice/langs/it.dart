@@ -276,8 +276,10 @@ class _ItSpeechGrammar extends VoiceSpeechGrammar {
   @override
   String clock(int hour, String minutes) {
     final minute = int.parse(minutes);
-    if (hour == 0) return minute == 0 ? 'mezzanotte'
-        : 'mezzanotte e ${_itNumber(minute)}';
+    if (hour == 0) {
+      return minute == 0 ? 'mezzanotte'
+          : 'mezzanotte e ${_itNumber(minute)}';
+    }
     final spokenHour = hour == 1 ? 'una' : _itNumber(hour);
     return minute == 0 ? '$spokenHour in punto'
         : '$spokenHour e ${_itNumber(minute)}';
