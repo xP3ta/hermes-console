@@ -5,8 +5,6 @@ import '../models/session.dart';
 
 typedef DeleteRemoteSession = Future<bool> Function(String sessionId);
 typedef DeleteLinkedCronJob = Future<void> Function(String jobId);
-typedef LoadSessionsForDeletion =
-    Future<List<Session>> Function({bool includeChildren});
 typedef ClearLocalSessionRecovery = Future<void> Function(String sessionId);
 typedef ClearConnectionConversationState = Future<int> Function();
 typedef ClearProfileConversationState =
@@ -924,68 +922,38 @@ Future<bool> authorizeHistoryCleanup({
 /// debe detener futuras ejecuciones sin una elección explícita del usuario.
 enum LinkedCronDeletionMode { keepSchedule, deleteSchedule }
 
-/// Identidades y linaje resueltos una sola vez antes de borrar. El ID que usa
+/// Identidades resueltas una sola vez antes de borrar. El ID que usa
 /// el servidor puede diferir de la clave local con la que Chat guardó su
 /// draft/outbox; mantenerlos separados evita limpiar el chat equivocado.
 class SessionDeletionContext {
   final Session selected;
   final Session target;
-  final List<Session> lineage;
   final String remoteSessionId;
   final String localRecoverySessionId;
 
   const SessionDeletionContext({
     required this.selected,
     required this.target,
-    required this.lineage,
     required this.remoteSessionId,
     required this.localRecoverySessionId,
   });
 }
 
-/// Resuelve la raíz de una cadena padre/hija. Las compactaciones de Hermes
-/// conservan `source: cron`, pero solo la raíz mantiene el ID `cron_<job>_...`.
-Session sessionLineageRoot(Session selected, Iterable<Session> sessions) {
-  final byId = {for (final session in sessions) session.id: session};
-  var current = byId[selected.id] ?? selected;
-  final visited = <String>{};
-  while (visited.add(current.id)) {
-    final parentId = current.parentSessionId;
-    if (parentId == null || parentId.isEmpty) break;
-    final parent = byId[parentId];
-    if (parent == null) break;
-    current = parent;
-  }
-  return current;
-}
-
 /// Obtiene el contexto autoritativo para cualquier superficie de borrado.
-/// Solo las sesiones cron necesitan refetch, pero cuando lo hacen el helper
-/// fuerza `includeChildren` para no dejar continuaciones huérfanas.
+/// The Dashboard deletes the whole chain (compression continuations and
+/// delegated children) from any of its ids, so nothing is read first and the
+/// selected row is the one DELETE. A cron run is deleted by its own id.
 Future<SessionDeletionContext> resolveSessionDeletionContext(
   Session selected, {
-  required LoadSessionsForDeletion loadSessions,
   String? remoteSessionId,
   String? localRecoverySessionId,
-  bool serverDeletesChain = false,
 }) async {
-  var target = selected;
-  List<Session> lineage = const <Session>[];
-  // The Dashboard deletes the whole chain from any id, so there is nothing to
-  // read and the selected row is the one DELETE.
-  if (selected.isJob && !serverDeletesChain) {
-    lineage = List<Session>.unmodifiable(
-      await loadSessions(includeChildren: true),
-    );
-    target = sessionLineageRoot(selected, lineage);
-  }
   final remote = selected.isJob
-      ? target.id
+      ? selected.id
       : _nonEmptyOr(remoteSessionId, selected.id);
   return SessionDeletionContext(
     selected: selected,
-    target: target,
-    lineage: lineage,
+    target: selected,
     remoteSessionId: remote,
     localRecoverySessionId: _nonEmptyOr(localRecoverySessionId, selected.id),
   );
@@ -1170,7 +1138,6 @@ enum LinkedSessionDeleteStatus {
 /// técnica únicamente para diagnóstico; las pantallas presentan el código con
 /// ARB y nunca exponen `StateError.toString()` ni copy dependiente del idioma.
 enum SessionDeletionFailureCode {
-  lineageUnavailable('session_lineage_unavailable'),
   missingCronJobId('missing_cron_job_id'),
   cronManagerUnavailable('cron_manager_unavailable'),
   cronDeleteFailed('cron_delete_failed'),
@@ -1231,17 +1198,17 @@ class LinkedSessionDeleteResult {
        );
 }
 
-/// Flujo compartido por Home, Lista, Detalle y Chat. Resuelve el linaje, trata
-/// un fallo de red como resultado (nunca como Future rechazado de un widget),
-/// ofrece una salida honesta para cron legacy y limpia la recuperación local
-/// únicamente después de que todos los DELETE remotos hayan sido confirmados.
+/// Flujo compartido por Home, Lista, Detalle y Chat. Resuelve el contexto,
+/// trata un fallo de red como resultado (nunca como Future rechazado de un
+/// widget), ofrece una salida honesta para cron legacy y limpia la
+/// recuperación local únicamente después de que el DELETE remoto haya sido
+/// confirmado.
 ///
-/// [onRemoteDeleted] runs synchronously as soon as the server confirmed every
+/// [onRemoteDeleted] runs synchronously as soon as the server confirmed the
 /// DELETE, before the local cleanup, so a caller can tell the other screens
 /// in that same turn instead of after the cleanup's awaits.
 Future<LinkedSessionDeleteResult> deleteSessionWithResolvedLineage(
   Session selected, {
-  required LoadSessionsForDeletion loadSessions,
   required DeleteRemoteSession deleteSession,
   LinkedCronDeletionMode cronDeletion = LinkedCronDeletionMode.keepSchedule,
   DeleteLinkedCronJob? deleteCronJob,
@@ -1249,30 +1216,17 @@ Future<LinkedSessionDeleteResult> deleteSessionWithResolvedLineage(
   String? localRecoverySessionId,
   ClearLocalSessionRecovery? clearLocalRecovery,
   void Function()? onRemoteDeleted,
-  bool serverDeletesChain = false,
 }) async {
-  late final SessionDeletionContext context;
-  try {
-    context = await resolveSessionDeletionContext(
-      selected,
-      loadSessions: loadSessions,
-      remoteSessionId: remoteSessionId,
-      localRecoverySessionId: localRecoverySessionId,
-      serverDeletesChain: serverDeletesChain,
-    );
-  } catch (error) {
-    return LinkedSessionDeleteResult.sessionDeleteFailed(
-      SessionDeletionFailureCode.lineageUnavailable,
-      cronDeleted: false,
-      cause: error,
-    );
-  }
+  final context = await resolveSessionDeletionContext(
+    selected,
+    remoteSessionId: remoteSessionId,
+    localRecoverySessionId: localRecoverySessionId,
+  );
 
   final result = await deleteSessionWithLinkedCron(
     context.target,
     deleteSession: deleteSession,
     deleteCronJob: deleteCronJob,
-    lineage: context.lineage,
     remoteSessionId: context.remoteSessionId,
     cronDeletion: cronDeletion,
   );
@@ -1299,7 +1253,6 @@ Future<LinkedSessionDeleteResult> deleteSessionWithLinkedCron(
   required DeleteRemoteSession deleteSession,
   LinkedCronDeletionMode cronDeletion = LinkedCronDeletionMode.keepSchedule,
   DeleteLinkedCronJob? deleteCronJob,
-  Iterable<Session> lineage = const <Session>[],
   String? remoteSessionId,
 }) async {
   var cronDeleted = false;
@@ -1338,28 +1291,24 @@ Future<LinkedSessionDeleteResult> deleteSessionWithLinkedCron(
     }
   }
 
-  final deleteOrder = session.isJob
-      ? sessionLineageDeleteOrder(session.id, lineage)
-      : <String>[_nonEmptyOr(remoteSessionId, session.id)];
-  for (final sessionId in deleteOrder) {
-    final sessionResult = await deleteRemoteSession(
-      sessionId,
-      delete: deleteSession,
-    );
-    switch (sessionResult.status) {
-      case RemoteSessionDeleteStatus.deleted:
-        continue;
-      case RemoteSessionDeleteStatus.rejected:
-        return LinkedSessionDeleteResult.sessionRejected(
-          cronDeleted: cronDeleted,
-        );
-      case RemoteSessionDeleteStatus.failed:
-        return LinkedSessionDeleteResult.sessionDeleteFailed(
-          SessionDeletionFailureCode.sessionDeleteFailed,
-          cronDeleted: cronDeleted,
-          cause: sessionResult.error,
-        );
-    }
+  // One DELETE: the Dashboard removes the whole chain from any of its ids.
+  final sessionResult = await deleteRemoteSession(
+    session.isJob ? session.id : _nonEmptyOr(remoteSessionId, session.id),
+    delete: deleteSession,
+  );
+  switch (sessionResult.status) {
+    case RemoteSessionDeleteStatus.deleted:
+      break;
+    case RemoteSessionDeleteStatus.rejected:
+      return LinkedSessionDeleteResult.sessionRejected(
+        cronDeleted: cronDeleted,
+      );
+    case RemoteSessionDeleteStatus.failed:
+      return LinkedSessionDeleteResult.sessionDeleteFailed(
+        SessionDeletionFailureCode.sessionDeleteFailed,
+        cronDeleted: cronDeleted,
+        cause: sessionResult.error,
+      );
   }
   return LinkedSessionDeleteResult.deleted(cronDeleted: cronDeleted);
 }

@@ -16,8 +16,6 @@ String sessionDeletionFailureMessage(
 ) {
   if (result.cronDeleted) return strings.cronStoppedChatDeleteFailed;
   return switch (result.failure?.code) {
-    SessionDeletionFailureCode.lineageUnavailable =>
-      strings.sessionDeletionLineageUnavailable,
     SessionDeletionFailureCode.missingCronJobId =>
       strings.sessionDeletionCronLinkUnavailable,
     SessionDeletionFailureCode.cronManagerUnavailable =>

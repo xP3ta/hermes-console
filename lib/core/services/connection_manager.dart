@@ -1291,10 +1291,6 @@ class ApiClient {
     ),
   );
 
-  /// Whether this client has the Dashboard attached. With one, session reads
-  /// and deletes go to it and never to the Gateway, as in Desktop.
-  bool get hasDashboard => _profileDashboard != null;
-
   Map<String, String> get _headers => {
     'Authorization': 'Bearer $_apiKey',
     'Content-Type': 'application/json',
@@ -1310,16 +1306,15 @@ class ApiClient {
 
   // ── Session listing ──────────────────────────────────────────────────
 
-  /// Lista sesiones. Por defecto el servidor pliega las sesiones "hijas"
-  /// (continuaciones/subagentes/ramas) dentro de su padre, así que muchas
-  /// quedan ocultas y no se pueden borrar desde la app. [includeChildren] pide
-  /// `?include_children=true` para ver TODAS (necesario para limpiar de verdad).
-  /// `limit=200` evita el tope por defecto de 50 del servidor.
+  /// Lista sesiones. El servidor pliega las continuaciones y los subagentes
+  /// dentro de su padre, y el Dashboard los borra con él desde cualquier id
+  /// de la cadena, así que ningún borrado necesita leerlos. `limit=200` evita
+  /// el tope por defecto de 50 del servidor.
   ///
   /// [pageSize] and [enough] bound the walk for surfaces that only show the
   /// newest rows (Home, drawer): the read stops after the first page for
   /// which `enough(sessionsSoFar)` is true, or after [maxPages] pages. Without
-  /// them every page is read, as cleanup and lineage resolution require.
+  /// them every page is read, as the history cleanup requires.
   ///
   /// With a Dashboard attached ([profileDashboard]) every list is read from
   /// it, as Desktop does: `listSessions()` sends `/api/sessions` (plus
@@ -1327,7 +1322,6 @@ class ApiClient {
   /// `/p/<name>/` mirror only accepts that profile's own `API_SERVER_KEY`
   /// and answers 401 when it has none, so the connection's key cannot read it.
   Future<List<Session>> getSessions({
-    bool includeChildren = false,
     String? profile,
     int pageSize = 200,
     bool Function(List<Session> sessions)? enough,
@@ -1335,12 +1329,7 @@ class ApiClient {
   }) async {
     var pagesRead = 0;
     final owner = validateCronProfile(profile);
-    // The Dashboard list never returns continuation rows and has no
-    // `include_children`; the lineage delete order needs them, so that read
-    // of the default profile stays on the Gateway.
-    final dashboard = includeChildren && owner == null
-        ? null
-        : _profileDashboard;
+    final dashboard = _profileDashboard;
     // The Dashboard caps `limit` at 100 (422 above it).
     final pageLimit = pageSize.clamp(1, dashboard == null ? 200 : 100);
     final endpoint = profileEndpoint('api/sessions', profile: owner); // U6c
@@ -1386,7 +1375,6 @@ class ApiClient {
         final query = <String, String>{
           'limit': '$pageLimit',
           'offset': '$offset',
-          if (includeChildren) 'include_children': 'true',
         };
         final uri = Uri.parse(
           '$baseUrl/$endpoint', // U6c

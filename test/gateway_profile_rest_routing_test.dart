@@ -60,14 +60,10 @@ void main() {
       }),
     );
 
-    await client.getSessions(includeChildren: true, profile: 'team_alpha');
+    await client.getSessions(profile: 'team_alpha');
 
     expect(requested.path, '/p/team_alpha/api/sessions');
-    expect(requested.queryParameters, {
-      'limit': '200',
-      'offset': '0',
-      'include_children': 'true',
-    });
+    expect(requested.queryParameters, {'limit': '200', 'offset': '0'});
     client.close();
   });
 
