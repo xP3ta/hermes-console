@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../utils/enum_labels.dart';
 import '../../l10n/app_localizations.dart';
 import '../../main.dart';
 import '../screens/lock_screen.dart';
@@ -181,7 +182,7 @@ Future<bool> _confirmDialog(
               Icon(Icons.shield_outlined, size: 14, color: riskColor),
               const SizedBox(width: 6),
               Text(
-                risk.label,
+                commandRiskLabel(Strings.of(context), risk),
                 style: TextStyle(fontSize: 12, color: riskColor),
               ),
             ],

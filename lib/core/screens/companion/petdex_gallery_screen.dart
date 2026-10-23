@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../utils/companion_error_copy.dart';
 import '../../../l10n/app_localizations.dart';
 import '../../companion/data/companion_import_service.dart';
 import '../../companion/data/petdex_remote_service.dart';
@@ -168,11 +169,11 @@ class _PetdexGalleryScreenState extends State<PetdexGalleryScreen> {
         if (route != null && route.isCurrent) Navigator.of(sheetCtx).pop();
       }
     } on CompanionImportException catch (e) {
-      _installError[pet.slug] = str.petdexInstallFailed(e.message);
-      messenger.notify(FeedbackKind.error, str.petdexInstallFailed(e.message));
+      _installError[pet.slug] = str.petdexInstallFailed(companionErrorCopy(str, e.message));
+      messenger.notify(FeedbackKind.error, str.petdexInstallFailed(companionErrorCopy(str, e.message)));
     } on PetdexRemoteException catch (e) {
-      _installError[pet.slug] = str.petdexDownloadFailed(e.message);
-      messenger.notify(FeedbackKind.error, str.petdexDownloadFailed(e.message));
+      _installError[pet.slug] = str.petdexDownloadFailed(companionErrorCopy(str, e.message));
+      messenger.notify(FeedbackKind.error, str.petdexDownloadFailed(companionErrorCopy(str, e.message)));
     } catch (e) {
       debugPrint(
         '[petdex-gallery] excepción silenciada (se avisa al usuario y se sigue): $e',

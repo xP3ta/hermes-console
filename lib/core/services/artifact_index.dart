@@ -608,6 +608,7 @@ final class _ArtifactSeed {
     serverId: serverId,
     kind: kind,
     displayName: displayName,
+    hasExplicitDisplayName: hasExplicitDisplayName,
     mimeType: mimeType,
     sizeBytes: sizeBytes,
     sources: [source],
@@ -625,6 +626,7 @@ final class _ArtifactSeed {
     serverId: serverId ?? current.serverId,
     kind: kind == SessionArtifactKind.unknown ? current.kind : kind,
     displayName: hasExplicitDisplayName ? displayName : current.displayName,
+    hasExplicitDisplayName: hasExplicitDisplayName || current.hasExplicitDisplayName,
     mimeType: mimeType ?? current.mimeType,
     sizeBytes: sizeBytes ?? current.sizeBytes,
     sources: current.sources.contains(source)

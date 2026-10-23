@@ -6442,5 +6442,239 @@
         "type": "String"
       }
     }
+  },
+  "i18n131P6Animations": "애니메이션",
+  "i18n131P6Idle": "쉬기",
+  "i18n131P6Run": "달리기",
+  "i18n131P6Wait": "기다리기",
+  "i18n131P6Greet": "인사하기",
+  "i18n131P6Jump": "뛰기",
+  "i18n131P6Failure": "실패",
+  "i18n131P6Module": "▸ 모듈: {name}",
+  "@i18n131P6Module": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6ModulePending": "연결되지 않음 · {phase}",
+  "@i18n131P6ModulePending": {
+    "placeholders": {
+      "phase": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6ConnectingHost": "{host}에 연결 중",
+  "@i18n131P6ConnectingHost": {
+    "placeholders": {
+      "host": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6BaseUrl": "기본 URL",
+  "i18n131P6OpenAiCompatible": "OpenAI 호환",
+  "i18n131P6StoredKey": "•••• 키가 저장됨 — 새 키를 붙여넣어 교체하세요",
+  "i18n131P6StoredPassword": "•••• 저장됨 — 변경하려면 입력하세요",
+  "i18n131P6Host": "호스트",
+  "i18n131P6Fingerprint": "{type} · 지문",
+  "@i18n131P6Fingerprint": {
+    "placeholders": {
+      "type": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6TokenSummary": "토큰: {total} (입력 {input} / 출력 {output})",
+  "@i18n131P6TokenSummary": {
+    "placeholders": {
+      "total": {
+        "type": "String"
+      },
+      "input": {
+        "type": "String"
+      },
+      "output": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6TruncatedOutput": "{output}\n…(출력 생략됨)",
+  "@i18n131P6TruncatedOutput": {
+    "placeholders": {
+      "output": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6LocalChat": "로컬 채팅",
+  "i18n131P6ExitCode": "종료 코드 {code}",
+  "@i18n131P6ExitCode": {
+    "placeholders": {
+      "code": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6SshUptime": "가동 시간",
+  "i18n131P6SshDisk": "디스크",
+  "i18n131P6SshCpu": "CPU 사용량 상위",
+  "i18n131P6SshStatus": "Hermes 상태",
+  "i18n131P6TurnNotSaved": "전송 전에 턴을 저장하지 못했습니다.",
+  "i18n131P6AttachmentUnreadable": "로컬 첨부 파일을 읽지 못했습니다.",
+  "i18n131P6AttachmentNotSaved": "첨부 파일 상태를 저장하지 못했습니다.",
+  "i18n131P6AttachmentsChanged": "업로드 중 첨부 파일이 변경되었습니다.",
+  "i18n131P6SendAuthorityLost": "메시지 전달 전에 전송 권한이 사라졌습니다.",
+  "i18n131P6TurnFailedAfterReconnect": "다시 연결한 후 Hermes가 턴 실패를 확인했습니다.",
+  "i18n131P6SoulChanged": "검토 중 SOUL이 변경되었습니다. 다시 불러와 검토하세요.",
+  "i18n131P6SoulInvalid": "SOUL 응답이 올바르지 않습니다.",
+  "i18n131P6SoulUnconfirmed": "SOUL 저장이 확인되지 않았습니다.",
+  "i18n131P6SoulUnverified": "SOUL 저장 결과를 검증하지 못했습니다.",
+  "i18n131P6ThemeTooLarge": "테마가 64KiB 제한을 초과합니다.",
+  "i18n131P6ThemeUnreadable": "선택한 테마를 읽지 못했습니다.",
+  "i18n131P6ThemeBuiltin": "기본 테마를 수정하거나 내보내려면 먼저 복제하세요.",
+  "i18n131P6ThemeMissing": "선택한 테마가 더 이상 없습니다.",
+  "i18n131P6ThemeFieldError": "올바르지 않은 테마 필드: {field} ({code}).",
+  "@i18n131P6ThemeFieldError": {
+    "placeholders": {
+      "field": {
+        "type": "String"
+      },
+      "code": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6ThemeIdFailed": "테마의 고유 식별자를 만들지 못했습니다.",
+  "i18n131P6LogWarning": "경고",
+  "i18n131P6LogDebug": "디버그",
+  "i18n131P6BadgeCode": "코드",
+  "i18n131P6BadgeAudio": "오디오",
+  "i18n131P6BadgeVideo": "동영상",
+  "i18n131P6ProfileCreateUnavailable": "이 Hermes Gateway는 프로필 생성을 지원하지 않습니다.",
+  "i18n131P6NoPet": "선택한 펫이 없습니다.",
+  "i18n131P6PetUnavailable": "펫을 사용할 수 없습니다.",
+  "i18n131P6ImageUnavailable": "프로필 이미지를 사용할 수 없습니다.",
+  "i18n131P6ProfileCapabilitiesUnsaved": "프로필 기능이 저장되지 않았습니다.",
+  "i18n131P6BotIdentityUnavailable": "봇 신원 관리를 사용할 수 없습니다.",
+  "i18n131P6PetInvalid": "{field} 값이 올바르지 않습니다.",
+  "@i18n131P6PetInvalid": {
+    "placeholders": {
+      "field": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6PetMissing": "{field} 항목이 없습니다.",
+  "@i18n131P6PetMissing": {
+    "placeholders": {
+      "field": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6PetTooLarge": "{field} 항목이 최대 크기를 초과합니다.",
+  "@i18n131P6PetTooLarge": {
+    "placeholders": {
+      "field": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6PetEmpty": "{field} 항목이 비어 있습니다.",
+  "@i18n131P6PetEmpty": {
+    "placeholders": {
+      "field": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6PetOutOfRange": "{field} 값이 범위를 벗어났습니다.",
+  "@i18n131P6PetOutOfRange": {
+    "placeholders": {
+      "field": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6PetWriteFailed": "펫을 저장하지 못했습니다.",
+  "i18n131P6PetSlugUsed": "기본 펫이 이미 {slug} 식별자를 사용 중입니다.",
+  "@i18n131P6PetSlugUsed": {
+    "placeholders": {
+      "slug": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6PetArchivePath": "ZIP에서 허용되지 않는 경로: {path}.",
+  "@i18n131P6PetArchivePath": {
+    "placeholders": {
+      "path": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6PetImageFormat": "스프라이트 시트는 올바른 PNG 또는 WebP 이미지여야 합니다.",
+  "i18n131P6PetBase64": "스프라이트 시트는 접두사 없는 올바른 base64를 사용해야 합니다.",
+  "i18n131P6PetMismatch": "{field} 항목이 {expected} 항목과 일치하지 않습니다.",
+  "@i18n131P6PetMismatch": {
+    "placeholders": {
+      "field": {
+        "type": "String"
+      },
+      "expected": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6PetFieldType": "{field} 항목은 {type} 형식이어야 합니다.",
+  "@i18n131P6PetFieldType": {
+    "placeholders": {
+      "field": {
+        "type": "String"
+      },
+      "type": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6PetImportUnavailable": "펫 가져오기를 사용할 수 없습니다.",
+  "i18n131P6PetFormat": "pet.json 형식을 인식하지 못했습니다. grid 및 states 또는 올바른 id가 필요합니다.",
+  "i18n131P6PetNoEntries": "카탈로그에 올바른 펫이 없습니다.",
+  "i18n131P6PetUrlBlocked": "다운로드 출처 또는 URL이 허용되지 않습니다.",
+  "i18n131P6PetHttp": "다운로드가 HTTP {code} 응답을 반환했습니다.",
+  "@i18n131P6PetHttp": {
+    "placeholders": {
+      "code": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6Document": "문서",
+  "i18n131P6GeneratedArtifact": "생성된 결과물",
+  "i18n131P6ToolResult": "도구 결과",
+  "i18n131P6Artifact": "결과물",
+  "i18n131P6WhisperLocal": "로컬 Whisper",
+  "i18n131P6PetDimensions": "예상하지 못한 크기({actual})입니다. {expected}의 배수여야 합니다.",
+  "@i18n131P6PetDimensions": {
+    "placeholders": {
+      "actual": {
+        "type": "String"
+      },
+      "expected": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6UserExample": "예: user",
+  "i18n131P6HttpError": "서버가 오류 {code} 응답을 반환했습니다.",
+  "@i18n131P6HttpError": {
+    "placeholders": {
+      "code": {
+        "type": "String"
+      }
+    }
   }
 }

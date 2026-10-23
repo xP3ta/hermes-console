@@ -5,6 +5,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../utils/companion_error_copy.dart';
 import '../../../l10n/app_localizations.dart';
 import '../../../main.dart';
 import '../../companion/companion_links.dart';
@@ -590,7 +591,7 @@ class _MascotasBodyState extends State<_MascotasBody> {
       final pet = await controller.importFromZipBytes(bytes);
       messenger.notify(FeedbackKind.routine, str.petImportedSnack(pet.name));
     } on CompanionImportException catch (e) {
-      messenger.notify(FeedbackKind.error, str.petImportFailed(e.message));
+      messenger.notify(FeedbackKind.error, str.petImportFailed(companionErrorCopy(str, e.message)));
     } catch (e) {
       debugPrint('[mascotas] fallo inesperado al importar mascota: $e');
       messenger.notify(FeedbackKind.error, str.petImportFailedGeneric);

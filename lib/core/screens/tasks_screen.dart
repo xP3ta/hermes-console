@@ -648,7 +648,7 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
   }
 
   String _humanError(Object e) {
-    final s = e.toString().replaceFirst('Exception: ', '');
+    final s = localizedApiError(Strings.of(context), humanizeApiError(e));
     return s.length > 160 ? '${s.substring(0, 160)}…' : s;
   }
 

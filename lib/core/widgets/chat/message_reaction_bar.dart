@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../l10n/app_localizations.dart';
 import '../../design/modal.dart' show HermesAction, showHermesMenu;
 import '../../models/message_reaction.dart';
 
@@ -13,12 +14,12 @@ class MessageReactionBar extends StatelessWidget {
     super.key,
     required this.reactions,
     required this.onPick,
-    this.addTooltip = 'React',
+    this.addTooltip,
   });
 
   final List<MessageReaction> reactions;
   final ValueChanged<String>? onPick;
-  final String addTooltip;
+  final String? addTooltip;
 
   @override
   Widget build(BuildContext context) {
@@ -39,7 +40,7 @@ class MessageReactionBar extends StatelessWidget {
           Builder(
             builder: (context) => IconButton(
               key: const ValueKey('message-react-add'),
-              tooltip: addTooltip,
+              tooltip: addTooltip ?? Strings.of(context).reactAdd,
               padding: EdgeInsets.zero,
               visualDensity: VisualDensity.compact,
               icon: Icon(

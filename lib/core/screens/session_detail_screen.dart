@@ -491,9 +491,13 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
       str.sesCopyInstanceLabel(widget.connection.label),
       if (s.model.isNotEmpty) str.sesCopyModelLabel(s.model),
       str.sesCopyMessagesLabel(s.messageCount),
-      if (s.toolCallCount > 0) 'Tool calls: ${s.toolCallCount}',
+      if (s.toolCallCount > 0) '${str.sesUiToolCalls}: ${s.toolCallCount}',
       if (s.totalTokens > 0)
-        'Tokens: ${s.totalTokens} (in ${s.inputTokens} / out ${s.outputTokens})',
+        str.i18n131P6TokenSummary(
+          s.totalTokens.toString(),
+          s.inputTokens.toString(),
+          s.outputTokens.toString(),
+        ),
       if (s.sessionDuration != null)
         str.sesCopyDurationLabel(_formatDuration(s.sessionDuration!)),
       if (preview.isNotEmpty) str.sesCopyLastMessageLabel(preview),

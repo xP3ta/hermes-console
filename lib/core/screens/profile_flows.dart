@@ -107,7 +107,7 @@ Future<bool> deleteProfileFlow(
   } catch (error) {
     notice.notify(
       FeedbackKind.error,
-      str.prfDeleteError(humanizeApiError(error)),
+      str.prfDeleteError(localizedApiError(str, error)),
     );
     return false;
   }

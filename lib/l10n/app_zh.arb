@@ -6442,5 +6442,239 @@
         "type": "String"
       }
     }
+  },
+  "i18n131P6Animations": "动画",
+  "i18n131P6Idle": "静止",
+  "i18n131P6Run": "奔跑",
+  "i18n131P6Wait": "等待",
+  "i18n131P6Greet": "打招呼",
+  "i18n131P6Jump": "跳跃",
+  "i18n131P6Failure": "失败",
+  "i18n131P6Module": "▸ 模块：{name}",
+  "@i18n131P6Module": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6ModulePending": "未连接 · {phase}",
+  "@i18n131P6ModulePending": {
+    "placeholders": {
+      "phase": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6ConnectingHost": "正在连接{host}",
+  "@i18n131P6ConnectingHost": {
+    "placeholders": {
+      "host": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6BaseUrl": "基础URL",
+  "i18n131P6OpenAiCompatible": "兼容OpenAI",
+  "i18n131P6StoredKey": "•••• 密钥已保存，粘贴新密钥即可替换",
+  "i18n131P6StoredPassword": "•••• 已保存，输入即可更改",
+  "i18n131P6Host": "主机",
+  "i18n131P6Fingerprint": "{type} · 指纹",
+  "@i18n131P6Fingerprint": {
+    "placeholders": {
+      "type": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6TokenSummary": "令牌：{total}（输入{input}／输出{output}）",
+  "@i18n131P6TokenSummary": {
+    "placeholders": {
+      "total": {
+        "type": "String"
+      },
+      "input": {
+        "type": "String"
+      },
+      "output": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6TruncatedOutput": "{output}\n…（输出已截断）",
+  "@i18n131P6TruncatedOutput": {
+    "placeholders": {
+      "output": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6LocalChat": "本地聊天",
+  "i18n131P6ExitCode": "退出码{code}",
+  "@i18n131P6ExitCode": {
+    "placeholders": {
+      "code": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6SshUptime": "运行时间",
+  "i18n131P6SshDisk": "磁盘",
+  "i18n131P6SshCpu": "CPU占用排行",
+  "i18n131P6SshStatus": "Hermes状态",
+  "i18n131P6TurnNotSaved": "发送前无法保存回合。",
+  "i18n131P6AttachmentUnreadable": "无法读取本地附件。",
+  "i18n131P6AttachmentNotSaved": "无法保存附件状态。",
+  "i18n131P6AttachmentsChanged": "上传期间附件发生了变化。",
+  "i18n131P6SendAuthorityLost": "消息送达前发送授权已失效。",
+  "i18n131P6TurnFailedAfterReconnect": "重新连接后，Hermes确认回合失败。",
+  "i18n131P6SoulChanged": "审核期间SOUL发生了变化。请重新加载并再次审核。",
+  "i18n131P6SoulInvalid": "SOUL响应无效。",
+  "i18n131P6SoulUnconfirmed": "SOUL写入未获确认。",
+  "i18n131P6SoulUnverified": "无法验证SOUL写入结果。",
+  "i18n131P6ThemeTooLarge": "主题超过64KiB上限。",
+  "i18n131P6ThemeUnreadable": "无法读取所选主题。",
+  "i18n131P6ThemeBuiltin": "请先复制内置主题，再修改或导出。",
+  "i18n131P6ThemeMissing": "所选主题已不存在。",
+  "i18n131P6ThemeFieldError": "主题字段无效：{field}（{code}）。",
+  "@i18n131P6ThemeFieldError": {
+    "placeholders": {
+      "field": {
+        "type": "String"
+      },
+      "code": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6ThemeIdFailed": "无法为主题创建唯一标识符。",
+  "i18n131P6LogWarning": "警告",
+  "i18n131P6LogDebug": "调试",
+  "i18n131P6BadgeCode": "代码",
+  "i18n131P6BadgeAudio": "音频",
+  "i18n131P6BadgeVideo": "视频",
+  "i18n131P6ProfileCreateUnavailable": "此Hermes Gateway不支持创建配置文件。",
+  "i18n131P6NoPet": "尚未选择宠物。",
+  "i18n131P6PetUnavailable": "宠物不可用。",
+  "i18n131P6ImageUnavailable": "配置文件图片不可用。",
+  "i18n131P6ProfileCapabilitiesUnsaved": "配置文件能力未保存。",
+  "i18n131P6BotIdentityUnavailable": "机器人身份管理不可用。",
+  "i18n131P6PetInvalid": "{field}的值无效。",
+  "@i18n131P6PetInvalid": {
+    "placeholders": {
+      "field": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6PetMissing": "缺少{field}。",
+  "@i18n131P6PetMissing": {
+    "placeholders": {
+      "field": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6PetTooLarge": "{field}超过大小上限。",
+  "@i18n131P6PetTooLarge": {
+    "placeholders": {
+      "field": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6PetEmpty": "{field}为空。",
+  "@i18n131P6PetEmpty": {
+    "placeholders": {
+      "field": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6PetOutOfRange": "{field}的值超出范围。",
+  "@i18n131P6PetOutOfRange": {
+    "placeholders": {
+      "field": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6PetWriteFailed": "无法保存宠物。",
+  "i18n131P6PetSlugUsed": "内置宠物已使用标识符{slug}。",
+  "@i18n131P6PetSlugUsed": {
+    "placeholders": {
+      "slug": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6PetArchivePath": "ZIP中不允许的路径：{path}。",
+  "@i18n131P6PetArchivePath": {
+    "placeholders": {
+      "path": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6PetImageFormat": "精灵图集必须是有效的PNG或WebP图像。",
+  "i18n131P6PetBase64": "精灵图集必须使用不带前缀的有效base64。",
+  "i18n131P6PetMismatch": "{field}与{expected}不匹配。",
+  "@i18n131P6PetMismatch": {
+    "placeholders": {
+      "field": {
+        "type": "String"
+      },
+      "expected": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6PetFieldType": "{field}必须为{type}类型。",
+  "@i18n131P6PetFieldType": {
+    "placeholders": {
+      "field": {
+        "type": "String"
+      },
+      "type": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6PetImportUnavailable": "宠物导入不可用。",
+  "i18n131P6PetFormat": "无法识别pet.json格式：需要grid和states，或有效的id。",
+  "i18n131P6PetNoEntries": "目录中没有有效的宠物。",
+  "i18n131P6PetUrlBlocked": "下载来源或URL不被允许。",
+  "i18n131P6PetHttp": "下载返回HTTP{code}。",
+  "@i18n131P6PetHttp": {
+    "placeholders": {
+      "code": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6Document": "文档",
+  "i18n131P6GeneratedArtifact": "生成的产物",
+  "i18n131P6ToolResult": "工具结果",
+  "i18n131P6Artifact": "产物",
+  "i18n131P6WhisperLocal": "本地Whisper",
+  "i18n131P6PetDimensions": "尺寸不符合要求（{actual}）：必须是{expected}的倍数。",
+  "@i18n131P6PetDimensions": {
+    "placeholders": {
+      "actual": {
+        "type": "String"
+      },
+      "expected": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6UserExample": "例如：user",
+  "i18n131P6HttpError": "服务器返回错误{code}。",
+  "@i18n131P6HttpError": {
+    "placeholders": {
+      "code": {
+        "type": "String"
+      }
+    }
   }
 }

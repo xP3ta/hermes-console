@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../utils/theme_error_copy.dart';
 import '../../l10n/app_localizations.dart';
 import '../theme/app_theme.dart';
 import '../theme/component_profile.dart';
@@ -303,7 +304,7 @@ class _ThemeStudioScreenState extends State<ThemeStudioScreen> {
         );
       }
     } on ThemeProfileStoreException catch (error) {
-      if (mounted) _showMessage(error.message);
+      if (mounted) _showMessage(themeErrorCopy(Strings.of(context), error.code));
     } finally {
       if (mounted) setState(() => _busy = false);
     }

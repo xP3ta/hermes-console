@@ -427,6 +427,12 @@ String activeChatStoredErrorUiMessage(String error, {String languageCode = 'en'}
     "No se pudo completar la respuesta. Inténtalo de nuevo." => strings.i18n131ChatStoredFailed,
     "Se perdió la conexión con Hermes. El mensaje no se confirmó; revisa el borrador y reintenta." => strings.i18n131ChatStoredDisconnected,
     "No se pudo recuperar el turno. Inténtalo de nuevo." => strings.i18n131ChatRecoveryFailed,
+    'No se pudo conservar el turno antes de enviarlo.' => strings.i18n131P6TurnNotSaved,
+    'No se pudo leer un adjunto local.' => strings.i18n131P6AttachmentUnreadable,
+    'No se pudo conservar el estado de un adjunto.' => strings.i18n131P6AttachmentNotSaved,
+    'El lote de adjuntos cambió durante la subida.' => strings.i18n131P6AttachmentsChanged,
+    'El envío perdió su autorización antes de entregarse.' => strings.i18n131P6SendAuthorityLost,
+    'Hermes confirmó que el turno falló tras reconectar.' => strings.i18n131P6TurnFailedAfterReconnect,
     _ => null,
   };
   if (localCopy != null) return localCopy;

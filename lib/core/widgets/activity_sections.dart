@@ -208,7 +208,7 @@ class ActivityTaskRow extends StatelessWidget {
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              plainPreview(item.content),
+              plainPreview(item.isFallbackContent ? s.i18n131ProfileNoDescription : item.content),
               style: style.copyWith(fontSize: dense ? 12.5 : 13, height: 1.35),
             ),
           ),
@@ -217,7 +217,7 @@ class ActivityTaskRow extends StatelessWidget {
     );
     return Semantics(
       container: true,
-      label: '${_taskStatusWord(s, item.status)}: ${item.content}',
+      label: '${_taskStatusWord(s, item.status)}: ${item.isFallbackContent ? s.i18n131ProfileNoDescription : item.content}',
       excludeSemantics: true,
       // fh1215: the task in progress is the one to find at a glance: a soft
       // accent band behind it (same insets, so nothing shifts).
