@@ -135,9 +135,9 @@ class _FrSpeechGrammar extends VoiceSpeechGrammar {
   @override
   String get emailDot => ' point ';
   @override
-  String get conjunctionPattern => r'(?<=\bet)\s*/\s*(?=ou\b)';
+  String get conjunctionPattern => r'\bet\s*/\s*ou\b';
   @override
-  String get orWord => ' ou ';
+  String get orWord => 'et ou';
   @override
   String get decimalSeparator => 'virgule';
   @override
