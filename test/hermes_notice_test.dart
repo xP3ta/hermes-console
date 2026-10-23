@@ -86,7 +86,11 @@ Widget _cardHost(
   bool reduceMotion = true,
   double textScale = 1,
   String theme = 'dark',
+  Locale locale = const Locale('en'),
 }) => MaterialApp(
+  locale: locale,
+  localizationsDelegates: Strings.localizationsDelegates,
+  supportedLocales: Strings.supportedLocales,
   theme: AppTheme.fromId(theme),
   builder: (context, page) => MediaQuery(
     data: MediaQuery.of(context).copyWith(
@@ -134,19 +138,14 @@ void main() {
     final strings = lookupStrings(const Locale('fr'));
     var dismissed = false;
     await tester.pumpWidget(
-      MaterialApp(
-        locale: const Locale('fr'),
-        localizationsDelegates: Strings.localizationsDelegates,
-        supportedLocales: Strings.supportedLocales,
-        theme: AppTheme.fromId('dark'),
-        home: Scaffold(
-          body: HermesNoticeCard(
-            noticeKey: _card,
-            message: 'Fixture',
-            onDismissed: () => dismissed = true,
-            showDismiss: true,
-          ),
+      _cardHost(
+        HermesNoticeCard(
+          noticeKey: _card,
+          message: 'Fixture',
+          onDismissed: () => dismissed = true,
+          showDismiss: true,
         ),
+        locale: const Locale('fr'),
       ),
     );
     await tester.pumpAndSettle();
