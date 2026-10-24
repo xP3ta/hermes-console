@@ -9266,16 +9266,29 @@ class ActiveChat {
       ..addListener(_onReactionPrefChanged);
     final gateway = _desktopGateway;
     if (gateway is TuiGatewayClient) {
+      _desktopLinkWasUp = gateway.isConnected;
       gateway.linkListenable.addListener(_onDesktopLinkChanged);
     }
   }
 
   /// PX5D: the socket that comes back by itself (PX5A redial) also clears a
-  /// loss no recovery loop owns any more.
+  /// loss no recovery loop owns any more. A socket that comes back also
+  /// proves the Dashboard just accepted the credential (it minted the
+  /// ticket): the sign-in notice goes, and an attempt that began before it
+  /// cannot raise it again (new attempt epoch). Only the edge counts: a loss
+  /// is announced while the client still reads as connected.
   void _onDesktopLinkChanged() {
     final gateway = _desktopGateway;
-    if (gateway != null) _settleOrphanedTransport(gateway, 'link');
+    if (_disposed || gateway == null) return;
+    final up = gateway.isConnected;
+    final cameUp = up && !_desktopLinkWasUp;
+    _desktopLinkWasUp = up;
+    if (cameUp) _publishDashboardAuthRequired(false);
+    _settleOrphanedTransport(gateway, 'link');
   }
+
+  /// The chat's socket was ready at the last link change.
+  bool _desktopLinkWasUp = false;
 
   MessageReactionPrefs? _watchedReactionPrefs;
   bool _reactionsWereEnabled = false;
