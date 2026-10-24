@@ -6299,7 +6299,10 @@ class _ChatScreenState extends State<ChatScreen>
         connection: widget.connection,
         sessionId: widget.session.id,
         logicalSessionId: widget.session.logicalId,
-        sessionTitle: widget.session.displayTitle,
+        sessionTitle: localizedSessionTitle(
+          Strings.of(context),
+          widget.session,
+        ),
         sessionSnapshot: widget.session,
         sessionProfile: resolvedSessionProfile,
         initialStoredSessionId: widget.initialStoredSessionId,
