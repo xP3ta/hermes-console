@@ -1,8 +1,6 @@
-/// Etiquetas localizadas para enums compartidos (modo de aprobación, riesgo).
-///
-/// Los enums conservan su `.label` en español como fallback y para no romper
-/// nada; la UI usa estos helpers para respetar el idioma. Reutilizables en
-/// permisos, chat (aprobaciones) y runs.
+/// Localized labels for shared enums (approval mode, risk), used by
+/// permissions, the chat (approvals) and runs. The approval mode has no other
+/// name for people; the UI always goes through these helpers.
 library;
 
 import '../../l10n/app_localizations.dart';
