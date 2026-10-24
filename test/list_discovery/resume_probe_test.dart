@@ -187,16 +187,22 @@ SharedGatewayLease _observer(
   String id,
   _Channel channel, {
   _Tickets? tickets,
-}) => SharedGatewayPool.instance.acquire(
-  _conn(id),
-  factory: (connection) => TuiGatewayClient(
-    connection,
-    dashboard: tickets ?? _Tickets(),
-    heartbeatInterval: Duration.zero,
-    now: () => tester.binding.clock.now(),
-    channelFactory: (_, _) => channel,
-  ),
-);
+}) {
+  final lease = SharedGatewayPool.instance.acquire(
+    _conn(id),
+    factory: (connection) => TuiGatewayClient(
+      connection,
+      dashboard: tickets ?? _Tickets(),
+      heartbeatInterval: Duration.zero,
+      now: () => tester.binding.clock.now(),
+      channelFactory: (_, _) => channel,
+    ),
+  );
+  // Idempotent: the test releases it before unmounting; this covers a
+  // failure before that.
+  addTearDown(lease.release);
+  return lease;
+}
 
 Future<void> _connect(WidgetTester tester, TuiGatewayClient client) async {
   final connecting = client.connect();
@@ -221,6 +227,13 @@ void main() {
         (_) async => null,
       );
     }
+    // A test that fails part way leaves no pooled socket, and no background
+    // backoff cadence, to the next one. Synchronous: the pool closes them in
+    // the background.
+    addTearDown(() {
+      SharedGatewayPool.instance.disconnectIdle();
+      GatewayReconnectBackoff.backgroundCadence = false;
+    });
     final support = Directory.systemTemp.createTempSync('list-discovery-');
     const pathProvider = MethodChannel('plugins.flutter.io/path_provider');
     messenger.setMockMethodCallHandler(pathProvider, (_) async => support.path);
@@ -238,7 +251,10 @@ void main() {
     final client = lease.client;
     await _connect(tester, client);
     final errors = <Object>[];
-    final subscription = client.events.listen((_) {}, onError: errors.add);
+    // Cancelled by the framework after the test: a subscription's cancel()
+    // is a completed root-zone future, and awaiting one in a widget test's
+    // body leaves the fake clock behind (the next pump never completes).
+    addTearDown(client.events.listen((_) {}, onError: errors.add).cancel);
     // Nothing arrived for longer than the probe's "recent traffic" window.
     await tester.pump(const Duration(seconds: 4));
     final sentBefore = channel.methods.length;
@@ -262,7 +278,6 @@ void main() {
       isNotEmpty,
       reason: 'its owners (list, Home) hear the loss and reconnect',
     );
-    await subscription.cancel();
     lease.release();
     await _unmountApp(tester);
   });
@@ -327,6 +342,7 @@ void main() {
         channelFactory: (_, _) => _Channel(answers: true),
       ),
     );
+    addTearDown(lease.release);
     final client = lease.client;
     client.connect().then<void>((_) {}, onError: (Object _) {});
     await tester.pump();
