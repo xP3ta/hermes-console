@@ -243,6 +243,16 @@ class SharedGatewayPool {
     return _probe(entries, resetBackoff: resetBackoff);
   }
 
+  /// The app is back in the foreground: probe every live pooled socket at
+  /// once, as Desktop does on focus and visibility (`reconnectNow`,
+  /// use-gateway-boot.ts). Android may have frozen the app while a socket
+  /// died without closing; it still reads as connected, so its owner (the
+  /// list, Home) would not reconnect until the heartbeat noticed. A dead one
+  /// now fails within the probe deadline. Unlike [probeAll], nothing is
+  /// redialled and no backoff is reset.
+  Future<void> probeLive() =>
+      _probe(_entries.values.toList(), resetBackoff: false);
+
   /// Desktop's `WAKE_RECONNECT_HOLDOFF_MS`.
   @visibleForTesting
   Duration networkBackoffHoldoff = const Duration(seconds: 15);
