@@ -1720,6 +1720,9 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
         }
       });
       widget.activeChats.reconcileAfterResume();
+      // The list's and Home's sockets too: one may have died, unclosed,
+      // while the app was frozen (the chats' own probe shares the flight).
+      unawaited(SharedGatewayPool.instance.probeLive());
       _resumeHermesUpdates();
       // Volver a primer plano no deshace una pausa explícita; el usuario puede
       // continuar con el orbe o desde la notificación.
