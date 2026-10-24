@@ -23,6 +23,7 @@ import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/models/prepared_turn.dart';
 
 import 'package:hermes_android/core/services/connection_manager.dart';
+import 'package:hermes_android/core/services/connection_status.dart';
 import 'package:hermes_android/core/services/recovery_proof.dart';
 import 'package:hermes_android/core/services/replay_coordinator.dart';
 import 'package:hermes_android/core/services/session_reconciler.dart';
@@ -1760,6 +1761,43 @@ void _expectNoViewerAttachmentMutations(
 
 // Mirrors `chatConnectionActiveGrace` (connection row, active turn).
 const chatConnectionActiveGraceForTest = Duration(seconds: 3);
+
+/// OFFLINE-LATCH: a viewer gateway whose link edges reach the chat, as the
+/// real client's do (only a [ConnectionLinkSource] registers the listener).
+class _LinkedViewerGateway extends _ActivityLifecycleRecoverableGateway
+    implements ConnectionLinkSource {
+  final ConnectionSignal linkSignal = ConnectionSignal();
+
+  @override
+  ConnectionSignal get linkListenable => linkSignal;
+
+  @override
+  bool get isClosed => false;
+
+  @override
+  bool get linkAuthRejected => false;
+
+  @override
+  DateTime? get linkReconnectAt => null;
+
+  @override
+  int get linkReconnectAttempt => 0;
+
+  @override
+  bool get linkParked => false;
+
+  @override
+  void drop() {
+    super.drop();
+    linkSignal.notify();
+  }
+
+  /// The socket is back by itself, as the real client's own redial brings it.
+  void comeBack() {
+    _connected = true;
+    linkSignal.notify();
+  }
+}
 
 void main() {
   // Real-socket reconnect scenarios: keep the owner's backoff shape but on a
@@ -12547,6 +12585,207 @@ void main() {
       expect(api.finalReady.isCompleted, isFalse);
     },
   );
+
+  // OFFLINE-LATCH (EMU-VERIFY §2): a viewer recovery stopped by a transport
+  // or credential failure stayed closed for good: the chat showed "Offline"
+  // while its socket was back, Retry did nothing, and a refused credential
+  // never said so. Only reopening the chat cleared it.
+  group('a stopped viewer recovery', () {
+    const recovered = DesktopSessionSnapshot(
+      runtimeSessionId: 'runtime-offline-latch-recovered',
+      storedSessionId: 'session-offline-latch',
+      created: false,
+    );
+    List<Map<String, dynamic>> history() => [
+      {
+        'message_id': 'offline-latch-history',
+        'role': 'assistant',
+        'content': 'durable history',
+      },
+    ];
+    const refusedTicket = DashboardWebSocketAuthException(
+      DashboardWebSocketAuthFailureCode.unavailable,
+      statusCode: 401,
+    );
+
+    test('T1: a refused credential in the reattach says "sign in"', () async {
+      final api = _RestFallbackApiClient();
+      final gateway = _ActivityLifecycleRecoverableGateway()
+        // The cold open fails in transit: the viewer reattaches.
+        ..resumeExistingError = WebSocketChannelException.from(
+          const SocketException('Connection refused'),
+        )
+        ..resumeExistingFailuresRemaining = 1
+        // Its connect meets the latched credential.
+        ..recoveryConnectError = const DashboardAuthException(
+          DashboardAuthFailureCode.loginRequired,
+        )
+        ..recoverySnapshot = recovered;
+      final chat = _productionAttachChat(
+        'offline-latch',
+        gateway,
+        api: api,
+        storedMessageLoader: (_, _) async => history(),
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages(profile: 'owner-profile');
+      await _waitUntil(() => gateway.connectCalls >= 2);
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+
+      expect(chat.desktopRuntimeSessionId, isNull);
+      expect(
+        chat.dashboardAuthRequired,
+        isTrue,
+        reason: 'the reattach stopped on a refused credential',
+      );
+      expect(chat.dashboardAuthNoticeVisible, isTrue);
+      _expectNoViewerAttachmentMutations(gateway, api);
+    });
+
+    test('T2: the socket coming back reopens it once and the viewer '
+        'reattaches without reopening the chat', () async {
+      final api = _RestFallbackApiClient();
+      final gateway = _LinkedViewerGateway()
+        ..resumeExistingError = refusedTicket
+        ..resumeExistingFailuresRemaining = 1
+        ..recoverySnapshot = recovered;
+      final chat = _productionAttachChat(
+        'offline-latch',
+        gateway,
+        api: api,
+        storedMessageLoader: (_, _) async => history(),
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages(profile: 'owner-profile');
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+      expect(gateway.resumeExistingCalls, 1, reason: 'the cold open stopped');
+      expect(chat.desktopRuntimeSessionId, isNull);
+
+      gateway.drop();
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+      expect(gateway.resumeExistingCalls, 1, reason: 'closed while down');
+
+      gateway.comeBack();
+      await _waitUntil(
+        () => chat.desktopRuntimeSessionId == recovered.runtimeSessionId,
+      );
+      expect(gateway.resumeExistingCalls, 2, reason: 'one reattach');
+      expect(chat.transportStatus.state, ChatTransportState.connected);
+      expect(chat.dashboardAuthRequired, isFalse);
+      _expectNoViewerAttachmentMutations(gateway, api);
+    });
+
+    test('T3: Retry on a live socket reopens it once', () async {
+      final api = _RestFallbackApiClient();
+      final gateway = _ActivityLifecycleRecoverableGateway()
+        ..resumeExistingError = refusedTicket
+        ..resumeExistingFailuresRemaining = 1
+        ..recoverySnapshot = recovered;
+      final chat = _productionAttachChat(
+        'offline-latch',
+        gateway,
+        api: api,
+        storedMessageLoader: (_, _) async => history(),
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages(profile: 'owner-profile');
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+      expect(gateway.resumeExistingCalls, 1);
+      expect(chat.desktopRuntimeSessionId, isNull);
+
+      await chat.retryConnectionNow();
+      await _waitUntil(
+        () => chat.desktopRuntimeSessionId == recovered.runtimeSessionId,
+      );
+      expect(gateway.resumeExistingCalls, 2, reason: 'one reattach');
+      expect(chat.transportStatus.state, ChatTransportState.connected);
+      _expectNoViewerAttachmentMutations(gateway, api);
+    });
+
+    test('T4: a terminal stop stays closed when the socket comes back or on '
+        'Retry', () async {
+      final api = _RestFallbackApiClient();
+      final gateway = _LinkedViewerGateway()
+        ..resumeExistingError = const TuiGatewayRpcError(
+          'session.resume',
+          'resume refused',
+          code: 4030,
+          origin: CompressionFailureOrigin.remoteRpc,
+        )
+        ..resumeExistingFailuresRemaining = 1
+        ..recoverySnapshot = recovered;
+      final chat = _productionAttachChat(
+        'offline-latch',
+        gateway,
+        api: api,
+        storedMessageLoader: (_, _) async => history(),
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages(profile: 'owner-profile');
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+      expect(gateway.resumeExistingCalls, 1);
+
+      gateway.drop();
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+      gateway.comeBack();
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+      await chat.retryConnectionNow();
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+
+      expect(
+        gateway.resumeExistingCalls,
+        1,
+        reason: 'a terminal stop is never reopened',
+      );
+      expect(chat.desktopRuntimeSessionId, isNull);
+      _expectNoViewerAttachmentMutations(gateway, api);
+    });
+
+    test('T5: at most one reattach per link-up edge', () async {
+      final api = _RestFallbackApiClient();
+      final gateway = _LinkedViewerGateway()
+        ..resumeExistingError = refusedTicket
+        // The cold open and the first reopened reattach both stop.
+        ..resumeExistingFailuresRemaining = 2
+        ..recoverySnapshot = recovered;
+      final chat = _productionAttachChat(
+        'offline-latch',
+        gateway,
+        api: api,
+        storedMessageLoader: (_, _) async => history(),
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages(profile: 'owner-profile');
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+      gateway.drop();
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+      gateway.comeBack();
+      await _waitUntil(() => gateway.resumeExistingCalls == 2);
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+      expect(chat.desktopRuntimeSessionId, isNull, reason: 'stopped again');
+
+      // More link notifications on the live socket are not new edges.
+      for (var i = 0; i < 3; i++) {
+        gateway.linkSignal.notify();
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+      expect(gateway.resumeExistingCalls, 2, reason: 'no edge, no reattach');
+
+      gateway.drop();
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+      gateway.comeBack();
+      await _waitUntil(
+        () => chat.desktopRuntimeSessionId == recovered.runtimeSessionId,
+      );
+      expect(gateway.resumeExistingCalls, 3, reason: 'one per edge');
+      _expectNoViewerAttachmentMutations(gateway, api);
+    });
+  });
 }
 
 class _NoopOutbox implements TurnOutboxPersistence {
