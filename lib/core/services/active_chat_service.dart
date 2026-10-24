@@ -113,6 +113,7 @@ import 'subagent_transcript_projection.dart';
 import 'terminal_transcript_authority.dart';
 import 'prompt_client_surface.dart';
 import 'delegation_control.dart';
+import 'connection_status.dart' show ConnectionLinkSource;
 import 'tui_gateway_client.dart';
 import 'turn_outbox_store.dart';
 
@@ -4506,6 +4507,7 @@ class _ClosedViewerRecoveryScope {
     required this.turnEpoch,
     required this.bindEpoch,
     required this.sessionEpoch,
+    required this.reopenOnLinkUp,
   });
 
   final HermesDesktopGateway gateway;
@@ -4517,6 +4519,11 @@ class _ClosedViewerRecoveryScope {
   final int turnEpoch;
   final int bindEpoch;
   final int sessionEpoch;
+
+  /// Closed by a transport or credential failure: a socket that works again
+  /// (link-up edge, Retry) earns one more reattach. Terminal closes (4007,
+  /// identity, roster) stay closed.
+  final bool reopenOnLinkUp;
 }
 
 /// Estado vivo de un chat con streaming. Es la fuente de verdad de los mensajes,
@@ -9265,9 +9272,10 @@ class ActiveChat {
     _watchedReactionPrefs = MessageReactionPrefs.shared
       ..addListener(_onReactionPrefChanged);
     final gateway = _desktopGateway;
-    if (gateway is TuiGatewayClient) {
-      _desktopLinkWasUp = gateway.isConnected;
-      gateway.linkListenable.addListener(_onDesktopLinkChanged);
+    if (gateway is ConnectionLinkSource) {
+      final link = gateway as ConnectionLinkSource;
+      _desktopLinkWasUp = link.isConnected;
+      link.linkListenable.addListener(_onDesktopLinkChanged);
     }
   }
 
@@ -9283,7 +9291,10 @@ class ActiveChat {
     final up = gateway.isConnected;
     final cameUp = up && !_desktopLinkWasUp;
     _desktopLinkWasUp = up;
-    if (cameUp) _publishDashboardAuthRequired(false);
+    if (cameUp) {
+      _publishDashboardAuthRequired(false);
+      _reopenRetriableViewerRecovery(gateway);
+    }
     _settleOrphanedTransport(gateway, 'link');
   }
 
@@ -16298,6 +16309,7 @@ class ActiveChat {
       debugPrint('[active-chat] Retry connect failed (${error.runtimeType})');
     }
     requestImmediateTransportRecovery();
+    if (gateway.isConnected) _reopenRetriableViewerRecovery(gateway);
     _settleOrphanedTransport(gateway, 'retry');
   }
 
@@ -20324,7 +20336,15 @@ class ActiveChat {
         _desktopAutomaticReattach = null;
         // qr1215: the queue gets a fresh budget once this socket is back.
         if (_hasQueuedWork) _armQueuedTransportWait();
-        if (viewerRecoveryClosed) _closeViewerRecovery(gateway);
+        if (viewerRecoveryClosed) {
+          _closeViewerRecovery(
+            gateway,
+            reopenOnLinkUp:
+                !malformedTransport &&
+                !_desktopStoredSessionKnownMissing &&
+                (_closedViewerRecoveryScope?.reopenOnLinkUp ?? false),
+          );
+        }
         if (interruptedActiveTurn && clientSubmittedTurn) {
           _scheduleDesktopTurnRecovery(
             gateway,
@@ -20728,7 +20748,10 @@ class ActiveChat {
               : ChatTransportState.reconnecting,
         );
         if (stops) {
-          _closeViewerRecovery(gateway);
+          _closeViewerRecovery(
+            gateway,
+            reopenOnLinkUp: _viewerStopReopensOnLinkUp(error),
+          );
           return;
         }
       }
@@ -20758,11 +20781,40 @@ class ActiveChat {
       if (_isDashboardAuthRequired(error) && !_dashboardAuthRequired) {
         _publishDashboardAuthRequired(true);
       }
-      _closeViewerRecovery(gateway);
+      _closeViewerRecovery(
+        gateway,
+        reopenOnLinkUp: _viewerStopReopensOnLinkUp(error),
+      );
     }
   }
 
-  void _closeViewerRecovery(HermesDesktopGateway gateway) {
+  /// A viewer stop that a working socket can undo: the credential (latched
+  /// login, refused ticket) or the transport (refused or cut upgrade, a dial
+  /// cancelled by a newer one). Server verdicts on the session do not.
+  static bool _viewerStopReopensOnLinkUp(Object error) =>
+      error is DashboardAuthException ||
+      error is DashboardWebSocketAuthException ||
+      error is WebSocketChannelException ||
+      (error is StateError && error.message.startsWith('Hermes Desktop'));
+
+  /// The socket works again (a link-up edge, or Retry on a live socket): a
+  /// viewer recovery closed by a transport or credential failure gets one
+  /// more reattach. A terminal close stays closed.
+  void _reopenRetriableViewerRecovery(HermesDesktopGateway gateway) {
+    final scope = _closedViewerRecoveryScope;
+    if (scope == null ||
+        !scope.reopenOnLinkUp ||
+        !_closedViewerRecoveryBlocks(gateway)) {
+      return;
+    }
+    _closedViewerRecoveryScope = null;
+    _scheduleAutomaticDesktopReattach(gateway);
+  }
+
+  void _closeViewerRecovery(
+    HermesDesktopGateway gateway, {
+    bool reopenOnLinkUp = false,
+  }) {
     _desktopAutomaticReattachGeneration += 1;
     _closedViewerRecoveryScope = _ClosedViewerRecoveryScope(
       gateway: gateway,
@@ -20774,6 +20826,7 @@ class ActiveChat {
       turnEpoch: _turnEpoch,
       bindEpoch: _desktopBindEpoch,
       sessionEpoch: _desktopSessionEpoch,
+      reopenOnLinkUp: reopenOnLinkUp,
     );
   }
 
@@ -30521,8 +30574,10 @@ class ActiveChat {
     _terminalTimer?.cancel();
     _desktopEventSubscription?.cancel();
     final gateway = _desktopGateway;
-    if (gateway is TuiGatewayClient) {
-      gateway.linkListenable.removeListener(_onDesktopLinkChanged);
+    if (gateway is ConnectionLinkSource) {
+      (gateway as ConnectionLinkSource).linkListenable.removeListener(
+        _onDesktopLinkChanged,
+      );
     }
     _interactivePrompts = InteractivePromptReducer.reduce(
       _interactivePrompts,
