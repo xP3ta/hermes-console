@@ -20685,6 +20685,11 @@ class ActiveChat {
         final stops =
             _viewerAttachmentDisposition(error) !=
             _ViewerAttachmentDisposition.retryTransient;
+        // A refused credential is the sign-in notice's to say, not a bare
+        // "Offline" (S2).
+        if (_isDashboardAuthRequired(error)) {
+          _publishDashboardAuthRequired(true);
+        }
         // Hermes advertised the session yet cannot resume it (4007) on an
         // empty chat with a healthy socket. Only when the durable row and
         // transcript answer 404 too (the check chat_screen's
@@ -20747,6 +20752,7 @@ class ActiveChat {
     if (disposition == _ViewerAttachmentDisposition.retryTransient) {
       _scheduleAutomaticDesktopReattach(gateway);
     } else {
+      if (_isDashboardAuthRequired(error)) _publishDashboardAuthRequired(true);
       _closeViewerRecovery(gateway);
     }
   }
