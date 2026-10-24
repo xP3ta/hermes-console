@@ -42126,6 +42126,56 @@ void main() {
       expect(tester.takeException(), isNull);
     });
   });
+
+  // i18n-approval (emulator QA H5): an English chat must not show the
+  // Spanish source names of the approval modes or of the generic titles.
+  group('an English chat names modes and titles in English', () {
+    testWidgets('the permissions pill and the mode sheet say the mode in '
+        'English', (tester) async {
+      await pumpChat(tester, initialPreferences: const {'app_locale': 'en'});
+      final permissions = find.byKey(const ValueKey('status-pill-permissions'));
+      expect(permissions, findsOneWidget);
+      final label = tester.getSemantics(permissions).getSemanticsData().label;
+      expect(label, startsWith('Permissions: Ask'));
+      for (final spanish in const [
+        'Preguntar',
+        'Config. global',
+        'Conservador',
+        'Solo lectura',
+      ]) {
+        expect(label, isNot(contains(spanish)), reason: label);
+      }
+
+      await tester.tap(permissions);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.byKey(const ValueKey('chat-mode-dialog')), findsOneWidget);
+      expect(find.text('Effective mode: Ask'), findsOneWidget);
+      expect(find.text('Effective mode: Preguntar'), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('the chat it attaches carries the English generic title', (
+      tester,
+    ) async {
+      final chat = await pumpChat(
+        tester,
+        initialPreferences: const {'app_locale': 'en'},
+        session: const Session(
+          id: 'sess-kanban-title',
+          title: 'work kanban task t_1a2b',
+          model: 'hermes-agent',
+          source: 'mobile',
+          messageCount: 0,
+          isActive: true,
+          preview: '',
+          startedAt: 0,
+        ),
+      );
+      expect(chat.sessionTitle, 'Kanban task');
+      expect(tester.takeException(), isNull);
+    });
+  });
 }
 
 class _TodoResumeGateway extends _StableRefreshGateway {
