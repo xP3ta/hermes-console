@@ -20687,7 +20687,7 @@ class ActiveChat {
             _ViewerAttachmentDisposition.retryTransient;
         // A refused credential is the sign-in notice's to say, not a bare
         // "Offline" (S2).
-        if (_isDashboardAuthRequired(error)) {
+        if (_isDashboardAuthRequired(error) && !_dashboardAuthRequired) {
           _publishDashboardAuthRequired(true);
         }
         // Hermes advertised the session yet cannot resume it (4007) on an
@@ -20752,7 +20752,12 @@ class ActiveChat {
     if (disposition == _ViewerAttachmentDisposition.retryTransient) {
       _scheduleAutomaticDesktopReattach(gateway);
     } else {
-      if (_isDashboardAuthRequired(error)) _publishDashboardAuthRequired(true);
+      // Already raised by the cold open's own attempt in the usual case:
+      // publishing again would move the attempt epoch under an in-flight
+      // warm-up that could still clear it.
+      if (_isDashboardAuthRequired(error) && !_dashboardAuthRequired) {
+        _publishDashboardAuthRequired(true);
+      }
       _closeViewerRecovery(gateway);
     }
   }
