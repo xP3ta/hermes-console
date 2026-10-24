@@ -6299,7 +6299,10 @@ class _ChatScreenState extends State<ChatScreen>
         connection: widget.connection,
         sessionId: widget.session.id,
         logicalSessionId: widget.session.logicalId,
-        sessionTitle: widget.session.displayTitle,
+        sessionTitle: localizedSessionTitle(
+          Strings.of(context),
+          widget.session,
+        ),
         sessionSnapshot: widget.session,
         sessionProfile: resolvedSessionProfile,
         initialStoredSessionId: widget.initialStoredSessionId,
@@ -16273,7 +16276,7 @@ class _ChatScreenState extends State<ChatScreen>
       surfaceKey: const ValueKey('chat-mode-dialog'),
       title: strings.chaModeSheetTitle,
       subtitle: strings.chaModeSheetEffective(
-        policy.effectiveMode(widget.session.id).label,
+        approvalModeLabel(strings, policy.effectiveMode(widget.session.id)),
       ),
       builder: (ctx) {
         final colors = Theme.of(ctx).hermes;
@@ -16349,7 +16352,10 @@ class _ChatScreenState extends State<ChatScreen>
     if (!mounted) return true;
     setState(() {});
     if (wasSending) {
-      final label = policy.effectiveMode(widget.session.id).label;
+      final label = approvalModeLabel(
+        Strings.of(context),
+        policy.effectiveMode(widget.session.id),
+      );
       HermesNotice.of(context)
         ..hideCurrentSnackBar()
         ..showSnackBar(
@@ -18370,7 +18376,12 @@ class _ChatScreenState extends State<ChatScreen>
           // Plan limits from `session.usage` (as Hermes Desktop shows them):
           // the dot appears only from an unambiguous number ≥ 80 %.
           limitLevel: limitLevel,
-          permissionsLabel: policy?.effectiveMode(widget.session.id).label,
+          permissionsLabel: policy == null
+              ? null
+              : approvalModeLabel(
+                  Strings.of(context),
+                  policy.effectiveMode(widget.session.id),
+                ),
           permissionsFlag: flag?.$1,
           permissionsColor: flag?.$2,
           onOpenPermissions: policy == null

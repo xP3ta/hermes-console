@@ -1508,6 +1508,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
       // the Chats screen.
       unawaited(
         LauncherWidgetChatsPublisher.instance.offer(
+          strings: Strings.of(context),
           connectionId: conn.id,
           sessions: recentSessions.where((s) => !archive.isSessionDeleted(s)),
         ),
