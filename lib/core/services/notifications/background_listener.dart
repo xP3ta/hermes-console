@@ -8,6 +8,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:ui' show Locale;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -17,6 +18,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite/sqflite.dart' as sqflite;
 
+import '../../../l10n/app_localizations.dart';
 import '../../models/cron_job.dart';
 import '../../models/kanban.dart';
 import '../connection_manager.dart';
@@ -25,6 +27,7 @@ import '../launcher_widget_cron.dart';
 import '../launcher_widget_tasks.dart';
 import '../shared_gateway_pool.dart';
 import '../tui_gateway_client.dart';
+import '../../utils/session_title.dart';
 import '../../utils/transport_privacy.dart';
 import 'bot_mode_background.dart';
 import 'notification_delivery_store.dart';
@@ -654,10 +657,22 @@ class BackgroundCronWatch {
     'cron/jobs',
   ];
 
+  /// The title a cron notification gives the run's chat: the server's own,
+  /// or the generic one in the notification language ([Session.displayTitle]
+  /// spells it in Spanish). Without a chat, the job's [fallback].
+  @visibleForTesting
+  static String cronSessionTitle(
+    Session? session, {
+    required String fallback,
+    required Strings strings,
+  }) => session == null ? fallback : localizedSessionTitle(strings, session);
+
+  /// [strings] names an untitled run in the notification language.
   @visibleForTesting
   static List<CronExecutionSnapshot> mergeExecutionAuthority({
     required List<CronExecutionSnapshot> jobExecutions,
     required List<Session> sessions,
+    Strings? strings,
   }) {
     final byJob = <String, CronExecutionSnapshot>{
       for (final execution in jobExecutions) execution.jobKey: execution,
@@ -696,7 +711,11 @@ class BackgroundCronWatch {
       byJob[entry.key] = CronExecutionSnapshot(
         jobKey: entry.key,
         jobId: jobId,
-        title: existing?.title ?? session.displayTitle,
+        title:
+            existing?.title ??
+            (strings == null
+                ? session.displayTitle
+                : localizedSessionTitle(strings, session)),
         profile: Session.profileOwner(session.profile),
         executionId: session.id,
         status: failure ? 'failed' : 'completed',
@@ -2019,9 +2038,12 @@ class BackgroundAutomationDiscovery {
           }
         }
 
+        // Untitled runs are named in the notification language.
+        final titleStrings = lookupStrings(Locale(NotifL10n.of(prefs).lang));
         executions = BackgroundCronWatch.mergeExecutionAuthority(
           jobExecutions: executions,
           sessions: sessions,
+          strings: titleStrings,
         );
         _noteActivity(
           '${connection.id}/cron',
@@ -2104,6 +2126,11 @@ class BackgroundAutomationDiscovery {
           final destination = session == null
               ? null
               : BackgroundCronWatch.notificationDestination(session);
+          final chatTitle = BackgroundCronWatch.cronSessionTitle(
+            session,
+            fallback: execution.title,
+            strings: titleStrings,
+          );
           String? preview;
           try {
             preview = BackgroundCronWatch.notificationPreview(session);
@@ -2190,18 +2217,16 @@ class BackgroundAutomationDiscovery {
                   title: execution.ok ? t.cronCompleted : t.cronFailed,
                   body: NotificationService.compactAutomationPreview(
                     preview,
-                    fallback: session?.displayTitle ?? execution.title,
+                    fallback: chatTitle,
                   ),
                   sessionId: destination?.sessionId,
                   jobId: destination == null ? execution.jobId : null,
-                  subText: NotificationService.compactSessionLabel(
-                    session?.displayTitle ?? execution.title,
-                  ),
+                  subText: NotificationService.compactSessionLabel(chatTitle),
                   rich: execution.ownerBot != null
                       ? null
                       : NotificationService.cronRichSpec(
                           t: t,
-                          title: session?.displayTitle ?? execution.title,
+                          title: chatTitle,
                           ok: execution.ok,
                           jobId: execution.jobId,
                           profile: normalizedProfile,
