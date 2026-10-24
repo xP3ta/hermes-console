@@ -20775,12 +20775,9 @@ class ActiveChat {
     if (disposition == _ViewerAttachmentDisposition.retryTransient) {
       _scheduleAutomaticDesktopReattach(gateway);
     } else {
-      // Already raised by the cold open's own attempt in the usual case:
-      // publishing again would move the attempt epoch under an in-flight
-      // warm-up that could still clear it.
-      if (_isDashboardAuthRequired(error) && !_dashboardAuthRequired) {
-        _publishDashboardAuthRequired(true);
-      }
+      // No sign-in notice here: the cold open's own attempt already raised
+      // it for this error. If it is down now, a link-up edge or a newer
+      // attempt cleared it on purpose, and raising it again would be wrong.
       _closeViewerRecovery(
         gateway,
         reopenOnLinkUp: _viewerStopReopensOnLinkUp(error),
@@ -20807,8 +20804,14 @@ class ActiveChat {
         !_closedViewerRecoveryBlocks(gateway)) {
       return;
     }
+    final running = _desktopAutomaticReattach;
     _closedViewerRecoveryScope = null;
     _scheduleAutomaticDesktopReattach(gateway);
+    // Its own guards may still refuse (a turn streaming, a session now known
+    // missing): then the close stands, and nothing settles as connected.
+    if (identical(_desktopAutomaticReattach, running)) {
+      _closedViewerRecoveryScope = scope;
+    }
   }
 
   void _closeViewerRecovery(
