@@ -1095,12 +1095,17 @@ class _StaticTicketDashboardClient extends DashboardClient {
   _StaticTicketDashboardClient()
     : super(host: '127.0.0.1', port: 1, manualToken: 'unused');
 
+  /// Ticket requests that arrived.
+  int tickets = 0;
+
   @override
-  Future<DashboardWebSocketAuth> webSocketAuth() async =>
-      const DashboardWebSocketAuth(
-        queryName: 'ticket',
-        credential: 'ticket-qa',
-      );
+  Future<DashboardWebSocketAuth> webSocketAuth() async {
+    tickets += 1;
+    return const DashboardWebSocketAuth(
+      queryName: 'ticket',
+      credential: 'ticket-qa',
+    );
+  }
 }
 
 class _CountingRealLifecycleGateway
@@ -2447,10 +2452,14 @@ void main() {
     () async {
       for (final status in const [401, 403, 404, 429, 500, 503]) {
         final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        // A refused ticket (401/403) earns one fresh ticket inside the same
+        // dial: the server refuses that one too, so the refusal is real.
+        final ticketRefused = status == 401 || status == 403;
+        final refusals = ticketRefused ? 2 : 1;
         var upgradeRequests = 0;
         server.listen((request) async {
           upgradeRequests += 1;
-          if (upgradeRequests == 1) {
+          if (upgradeRequests <= refusals) {
             request.response.statusCode = status;
             request.response.write('PRIVATE_UPGRADE_BODY_$status');
             await request.response.close();
@@ -2487,6 +2496,7 @@ void main() {
             );
           }
         });
+        final tickets = _StaticTicketDashboardClient();
         final delegate = TuiGatewayClient(
           SavedConnection(
             id: 'real-upgrade-$status',
@@ -2496,7 +2506,7 @@ void main() {
             apiKey: String.fromCharCodes(const [113, 97]),
             dashboardUrl: 'http://127.0.0.1:${server.port}',
           ),
-          dashboard: _StaticTicketDashboardClient(),
+          dashboard: tickets,
         );
         final gateway = _CountingRealLifecycleGateway(delegate);
         final chat = _productionAttachChat(
@@ -2521,6 +2531,20 @@ void main() {
           expect(gateway.resumeExistingCalls, 1, reason: 'HTTP $status');
           // The retry reaches current upstream, but no coverage/cut authority is
           // available, so the live overlay remains quarantined.
+          expect(gateway.committedRuntimeIds, isEmpty, reason: 'HTTP $status');
+          expect(chat.desktopRuntimeSessionId, isNull, reason: 'HTTP $status');
+        } else if (ticketRefused) {
+          await _waitUntil(() => upgradeRequests == 2);
+          // Past the second refusal's teardown (1 s budget): a third attempt
+          // would have been dialled by now.
+          await Future<void>.delayed(const Duration(milliseconds: 1200));
+          expect(gateway.connectCalls, 1, reason: 'HTTP $status');
+          expect(upgradeRequests, 2, reason: 'HTTP $status: one fresh ticket');
+          expect(tickets.tickets, 2, reason: 'HTTP $status: one fresh ticket');
+          expect(delegate.isConnected, isFalse, reason: 'HTTP $status');
+          expect(delegate.linkAuthRejected, isFalse, reason: 'HTTP $status');
+          expect(chat.dashboardAuthRequired, isFalse, reason: 'HTTP $status');
+          expect(gateway.resumeExistingCalls, 0, reason: 'HTTP $status');
           expect(gateway.committedRuntimeIds, isEmpty, reason: 'HTTP $status');
           expect(chat.desktopRuntimeSessionId, isNull, reason: 'HTTP $status');
         } else {
