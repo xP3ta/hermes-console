@@ -31,15 +31,9 @@ enum ApprovalMode {
   readOnly,
 }
 
+/// Storage codec for [ApprovalMode]. Its name for people is
+/// `approvalModeLabel` (`utils/enum_labels.dart`), in the app language.
 extension ApprovalModeLabel on ApprovalMode {
-  String get label => switch (this) {
-    ApprovalMode.globalDefault => 'Config. global',
-    ApprovalMode.yolo => 'YOLO',
-    ApprovalMode.interactive => 'Preguntar',
-    ApprovalMode.conservative => 'Conservador',
-    ApprovalMode.readOnly => 'Solo lectura',
-  };
-
   String get storageKey => name;
 
   static ApprovalMode fromStorage(String? v) => ApprovalMode.values.firstWhere(
