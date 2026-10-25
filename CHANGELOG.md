@@ -26,6 +26,8 @@ Console 1.3.1 fixes named profiles, completes nine languages and follows Hermes
   as **Working…** without opening the chat.
 - *Chat stuck on Offline.* After a single refused ticket the chat reconnects by
   itself, or with Retry.
+- *Setup help freeze.* Pressing Back on the guided setup help no longer freezes
+  the app (Android reported it as "not responding"); it closes the screen.
 - *Startup recovery screen* follows the device language.
 - *Permission modes and generic chat titles* (Kanban task, Scheduled task,
   Conversation) were shown in Spanish in other languages; they follow the app

@@ -22,6 +22,8 @@ Hermes Dashboard, and it now follows Hermes 0.22.4.
   client) shows as **Working…** without opening the chat.
 - **Chat stuck on Offline.** After a single refused ticket the chat reconnects by
   itself, or with Retry, instead of staying offline.
+- **Setup help freeze.** Pressing Back on the guided setup help (opened from an
+  existing connection) no longer freezes the app; it closes the screen.
 - **Startup recovery screen** follows the language of the device.
 
 **Languages**
