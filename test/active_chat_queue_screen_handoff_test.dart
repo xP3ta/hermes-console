@@ -13,6 +13,7 @@ import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
+import 'support/test_api_client.dart';
 
 // qp1215: a queued turn outlives the chat screen that queued it. Its durable
 // writes must follow the screen that owns the chat now, and a turn that could
@@ -31,9 +32,8 @@ final _connection = SavedConnection(
   kind: InstanceKind.vps,
 );
 
-ApiClient _unusedApi() => ApiClient(
+ApiClient _unusedApi() => testApiClient(
   baseUrl: 'https://example.invalid',
-  apiKey: 'unused',
   httpClient: MockClient((_) async => http.Response('unused', 500)),
 );
 

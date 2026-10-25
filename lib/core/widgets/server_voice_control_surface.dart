@@ -291,7 +291,7 @@ class _ServerVoiceControlSurfaceState extends State<ServerVoiceControlSurface> {
       }, profile: widget.profile);
       if (!mounted) return;
       _snack(
-        s.voiceServerProviderChanged(_providerLabel(provider)),
+        s.voiceServerProviderChanged(_providerLabel(provider, Strings.of(context))),
         FeedbackKind.routine,
       );
       widget.onServerChanged();
@@ -590,7 +590,7 @@ class _ServerVoiceControlSurfaceState extends State<ServerVoiceControlSurface> {
     final provider = _activeConfigProvider('stt');
     final providerLabel = provider == null
         ? (_sttToolset?.activeProvider ?? s.voiceServerChoiceAutomatic)
-        : _providerLabel(provider);
+        : _providerLabel(provider, Strings.of(context));
     final detail = provider == null
         ? ''
         : _activeProviderDetail('stt', provider);
@@ -634,7 +634,7 @@ class _ServerVoiceControlSurfaceState extends State<ServerVoiceControlSurface> {
                   : () => _openParameters(
                       section: 'stt',
                       provider: provider,
-                      label: _providerLabel(provider),
+                      label: _providerLabel(provider, Strings.of(context)),
                       allowProviderChoice: false,
                     ),
               icon: const Icon(Icons.tune_rounded, size: 18),
@@ -678,7 +678,7 @@ class _ServerVoiceControlSurfaceState extends State<ServerVoiceControlSurface> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  _providerLabel(provider),
+                  _providerLabel(provider, Strings.of(context)),
                   style: TextStyle(
                     color: colors.textPrimary,
                     fontSize: 16,
@@ -718,7 +718,7 @@ class _ServerVoiceControlSurfaceState extends State<ServerVoiceControlSurface> {
                   ? () => _openParameters(
                       section: section,
                       provider: provider,
-                      label: _providerLabel(provider),
+                      label: _providerLabel(provider, Strings.of(context)),
                     )
                   : null,
               icon: const Icon(Icons.tune_rounded, size: 18),
@@ -824,7 +824,7 @@ class _ServerVoiceControlSurfaceState extends State<ServerVoiceControlSurface> {
         if (!announced.contains(key)) {
           providers.add(
             HermesTtsToolsetProvider(
-              name: _providerLabel(key),
+              name: _providerLabel(key, Strings.of(context)),
               status: _activeConfigProvider('tts') == key ? 'ready' : null,
               isActive: _activeConfigProvider('tts') == key,
               ttsProvider: key,
@@ -1464,7 +1464,7 @@ class _ServerVoiceParametersEditorState
         decoration: _controlDecoration(colors),
         options: [
           for (final option in options)
-            HermesOption(value: option, label: _providerLabel(option)),
+            HermesOption(value: option, label: _providerLabel(option, Strings.of(context))),
         ],
         onChanged: widget.readOnly
             ? null
@@ -1999,7 +1999,7 @@ List<String> deduplicateServerVoiceSchemaFieldPaths({
   return keys;
 }
 
-String _providerLabel(String value) => switch (value.toLowerCase()) {
+String _providerLabel(String value, Strings strings) => switch (value.toLowerCase()) {
   'edge' => 'Microsoft Edge TTS',
   'elevenlabs' => 'ElevenLabs',
   'openai' => 'OpenAI',
@@ -2011,7 +2011,7 @@ String _providerLabel(String value) => switch (value.toLowerCase()) {
   'minimax' => 'MiniMax',
   'mistral' => 'Mistral',
   'deepinfra' => 'DeepInfra',
-  'local' => 'Whisper local',
+  'local' => strings.i18n131P6WhisperLocal,
   'groq' => 'Groq',
   _ => value,
 };

@@ -1,13 +1,21 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../l10n/app_localizations.dart';
 import 'app_error_log.dart';
+import 'notifications/notification_strings.dart' show resolveNotificationLang;
 
 /// Builds the root widget. Everything awaited before `runApp` lives here so a
 /// throw can be surfaced instead of leaving the native splash up forever.
 typedef StartupBootstrap = Future<Widget> Function();
+
+/// Reads only the optional locale preference; recovery must tolerate failure.
+typedef StartupLocaleReader = Future<String?> Function();
+
+Future<String?> _readStartupLocalePreference() async =>
+    (await SharedPreferences.getInstance()).getString('app_locale');
 
 /// Runs [bootstrap] and hands its widget to [run]. When it throws, [run]
 /// receives a recovery screen instead; Retry runs [bootstrap] again and swaps
@@ -16,13 +24,25 @@ typedef StartupBootstrap = Future<Widget> Function();
 Future<void> runGuardedStartup({
   required StartupBootstrap bootstrap,
   required FutureOr<void> Function(Widget app) run,
+  StartupLocaleReader readLocalePreference = _readStartupLocalePreference,
 }) async {
   final Widget app;
   try {
     app = await bootstrap();
   } catch (error) {
     AppErrorLog.record('startup', error);
-    await run(StartupFailureApp(bootstrap: bootstrap));
+    String? preference;
+    try {
+      preference = await readLocalePreference().timeout(const Duration(seconds: 2));
+    } catch (_) {
+      // Failed or stalled storage must not hide the recovery surface.
+    }
+    await run(StartupFailureApp(
+      bootstrap: bootstrap,
+      locale: preference == null || preference == 'system'
+          ? null
+          : Locale(resolveNotificationLang(preference)),
+    ));
     return;
   }
   await run(app);
@@ -45,8 +65,9 @@ class StartupFailureApp extends StatefulWidget {
   static const retryKey = ValueKey('startup-failure-retry');
 
   final StartupBootstrap bootstrap;
+  final Locale? locale;
 
-  const StartupFailureApp({required this.bootstrap, super.key});
+  const StartupFailureApp({required this.bootstrap, this.locale, super.key});
 
   @override
   State<StartupFailureApp> createState() => _StartupFailureAppState();
@@ -81,9 +102,9 @@ class _StartupFailureAppState extends State<StartupFailureApp> {
       theme: ThemeData(brightness: Brightness.dark, useMaterial3: true),
       localizationsDelegates: Strings.localizationsDelegates,
       supportedLocales: Strings.supportedLocales,
-      localeResolutionCallback: (locale, _) => locale?.languageCode == 'es'
-          ? const Locale('es')
-          : const Locale('en'),
+      locale: widget.locale,
+      localeResolutionCallback: (locale, _) =>
+          Locale(resolveNotificationLang(locale?.languageCode)),
       home: Builder(
         builder: (context) {
           final strings = Strings.of(context);

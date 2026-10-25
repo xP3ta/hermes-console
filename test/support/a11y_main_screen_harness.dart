@@ -26,6 +26,7 @@ import 'package:hermes_android/core/widgets/floating_chat_header.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'test_api_client.dart';
 
 final a11yConnection = SavedConnection(
   id: 'a11y-main-screens',
@@ -331,6 +332,10 @@ final class A11yApiClient extends ApiClient {
         apiKey: 'fixture-token',
         connectionId: a11yConnection.id,
         httpClient: MockClient((_) async => http.Response('{}', 404)),
+        profileDashboard: testDashboardClient(
+          baseUrl: 'https://hermes.example.test',
+          httpClient: MockClient((_) async => http.Response('{}', 404)),
+        ),
       );
 
   final List<Session> sessions;

@@ -44,6 +44,7 @@ import '../design/modal.dart'
         showHermesMenu,
         showHermesModelPicker;
 import '../theme/app_theme.dart';
+import '../utils/api_error.dart';
 import '../utils/relative_time.dart';
 import '../widgets/dock_anchored_popover.dart';
 import '../widgets/general_dock_shell.dart';
@@ -648,7 +649,7 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
   }
 
   String _humanError(Object e) {
-    final s = e.toString().replaceFirst('Exception: ', '');
+    final s = localizedApiError(Strings.of(context), humanizeApiError(e));
     return s.length > 160 ? '${s.substring(0, 160)}…' : s;
   }
 
@@ -1020,7 +1021,7 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
                   }
                 }
               } catch (error) {
-                if (sheetCtx.mounted) _snack(_humanError(error));
+                if (mounted && sheetCtx.mounted) _snack(_humanError(error));
               } finally {
                 if (sheetCtx.mounted) setSheet(() => busy.remove(field));
               }
@@ -1267,7 +1268,7 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
     } on DashboardHttpException catch (error) {
       if (sheetContext.mounted) _snack(_dashboardDetail(error));
     } catch (error) {
-      if (sheetContext.mounted) _snack(_humanError(error));
+      if (mounted && sheetContext.mounted) _snack(_humanError(error));
     } finally {
       if (sheetContext.mounted) setSheet(() => busy.remove(field));
     }
@@ -1311,7 +1312,7 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
     } on DashboardHttpException catch (error) {
       if (sheetContext.mounted) _snack(_dashboardDetail(error));
     } catch (error) {
-      if (sheetContext.mounted) _snack(_humanError(error));
+      if (mounted && sheetContext.mounted) _snack(_humanError(error));
     } finally {
       if (sheetContext.mounted) setSheet(() => busy.remove(field));
     }
@@ -3640,138 +3641,86 @@ class _KanbanModelChoice {
   const _KanbanModelChoice({required this.provider, required this.model});
 }
 
-/// Copy transitorio del lote 0.20. Las mismas claves viven en los ARB; se
-/// mantiene aquí hasta el próximo `gen-l10n` global para no regenerar archivos
-/// compartidos mientras otros lotes editan el catálogo en paralelo.
+/// Localized copy for task operations.
 class _Kanban020Copy {
-  final bool spanish;
+  final Strings _strings;
 
-  const _Kanban020Copy._(this.spanish);
+  const _Kanban020Copy._(this._strings);
 
-  factory _Kanban020Copy.forContext(BuildContext context) => _Kanban020Copy._(
-    Strings.of(context).localeName.toLowerCase().startsWith('es'),
-  );
+  factory _Kanban020Copy.forContext(BuildContext context) =>
+      _Kanban020Copy._(Strings.of(context));
 
   String get bulkPartialTitle =>
-      spanish ? 'Algunas tareas no cambiaron' : 'Some tasks were not changed';
-  String bulkPartial(int ok, int failed) => spanish
-      ? '$ok archivadas; $failed no se pudieron cambiar.'
-      : '$ok archived; $failed could not be changed.';
-  String get actionUnavailable => spanish
-      ? 'Esta operación no está disponible en el servidor.'
-      : 'This operation is not available on the server.';
-  String get specify => spanish ? 'Especificar' : 'Specify';
-  String get specifyTitle => spanish ? 'Especificar tarea' : 'Specify task';
-  String get specifyBody => spanish
-      ? 'Hermes usará el modelo auxiliar para completar esta tarea de triage. Puede tardar varios minutos.'
-      : 'Hermes will use the auxiliary model to flesh out this triage task. This can take several minutes.';
+      _strings.i18n131TasksBulkPartialTitle;
+  String bulkPartial(int ok, int failed) => _strings.i18n131TasksBulkPartial(ok, failed);
+  String get actionUnavailable => _strings.i18n131TasksActionUnavailable;
+  String get specify => _strings.i18n131TasksSpecify;
+  String get specifyTitle => _strings.i18n131TasksSpecifyTitle;
+  String get specifyBody => _strings.i18n131TasksSpecifyBody;
   String get specifyStarted =>
-      spanish ? 'La tarea se ha especificado.' : 'The task was specified.';
-  String get decompose => spanish ? 'Descomponer' : 'Decompose';
-  String get decomposeTitle =>
-      spanish ? 'Descomponer en subtareas' : 'Decompose into child tasks';
-  String get decomposeBody => spanish
-      ? 'Hermes creará un grafo de subtareas y las asignará a perfiles compatibles. Puede tardar varios minutos.'
-      : 'Hermes will create a child-task graph and route it to compatible profiles. This can take several minutes.';
-  String decomposeResult(int count) => spanish
-      ? 'Descomposición completada: $count subtareas.'
-      : 'Decomposition complete: $count child tasks.';
-  String get attachmentTooLarge => spanish
-      ? 'El adjunto supera el límite oficial de 25 MiB.'
-      : 'The attachment exceeds the official 25 MiB limit.';
-  String get attachmentUnavailable => spanish
-      ? 'Android no pudo proporcionar este archivo.'
-      : 'Android could not provide this file.';
-  String get attachmentUploaded =>
-      spanish ? 'Adjunto subido.' : 'Attachment uploaded.';
-  String get saveAttachment => spanish ? 'Guardar adjunto' : 'Save attachment';
-  String get attachmentSaved =>
-      spanish ? 'Adjunto guardado.' : 'Attachment saved.';
-  String get deleteAttachment =>
-      spanish ? 'Eliminar adjunto' : 'Delete attachment';
-  String deleteAttachmentBody(String name) => spanish
-      ? '¿Eliminar «$name» del servidor? Esta acción no se puede deshacer.'
-      : 'Delete “$name” from the server? This cannot be undone.';
-  String get delete => spanish ? 'Eliminar' : 'Delete';
-  String get attachmentDeleted =>
-      spanish ? 'Adjunto eliminado.' : 'Attachment deleted.';
-  String get workerLog => spanish ? 'Log del worker' : 'Worker log';
-  String get noLog => spanish
-      ? 'Esta tarea todavía no tiene log.'
-      : 'This task does not have a log yet.';
-  String get logTruncated => spanish
-      ? 'Se muestra únicamente la cola más reciente del log.'
-      : 'Only the most recent log tail is shown.';
-  String get runInspection =>
-      spanish ? 'Estado de la ejecución' : 'Run inspection';
-  String get alive => spanish ? 'Activo' : 'Alive';
-  String get yes => spanish ? 'Sí' : 'Yes';
-  String get no => 'No';
-  String get status => spanish ? 'Estado' : 'Status';
-  String get memory => 'RAM';
-  String get threads => spanish ? 'Hilos' : 'Threads';
-  String get reason => spanish ? 'Motivo' : 'Reason';
-  String get error => 'Error';
-  String get terminate => spanish ? 'Terminar' : 'Terminate';
-  String get terminateTitle => spanish ? 'Terminar ejecución' : 'Terminate run';
-  String terminateBody(int id) => spanish
-      ? 'Se detendrá el worker de la ejecución #$id y la tarea volverá a la cola. ¿Continuar?'
-      : 'The worker for run #$id will stop and the task will return to the queue. Continue?';
-  String get runTerminated => spanish
-      ? 'Ejecución terminada y reencolada.'
-      : 'Run terminated and requeued.';
-  String get reclaim => spanish ? 'Recuperar' : 'Reclaim';
-  String get reclaimTitle =>
-      spanish ? 'Recuperar tarea atascada' : 'Reclaim stuck task';
-  String get reclaimBody => spanish
-      ? 'Se detendrá el worker actual y la tarea volverá a «En cola». Úsalo solo si la ejecución está atascada.'
-      : 'The current worker will stop and the task will return to the queue. Use this only for a stuck run.';
-  String get taskReclaimed => spanish
-      ? 'Tarea recuperada y reencolada.'
-      : 'Task reclaimed and requeued.';
-  String get chooseProfile => spanish ? 'Elegir perfil' : 'Choose profile';
-  String get reassign => spanish ? 'Reasignar' : 'Reassign';
-  String get reassignTitle => spanish ? 'Reasignar tarea' : 'Reassign task';
-  String reassignBody(String profile, bool reclaims) => spanish
-      ? 'La tarea se asignará a «$profile».${reclaims ? ' El worker actual se detendrá primero.' : ''}'
-      : 'The task will be assigned to “$profile”.${reclaims ? ' The current worker will be stopped first.' : ''}';
-  String get taskReassigned =>
-      spanish ? 'Tarea reasignada.' : 'Task reassigned.';
-  String get modelOptionsUnavailable => spanish
-      ? 'Este servidor no publica opciones de modelo para Kanban.'
-      : 'This server does not publish Kanban model options.';
-  String get chooseModel =>
-      spanish ? 'Modelo para esta tarea' : 'Model for this task';
-  String get inheritModel =>
-      spanish ? 'Heredar modelo del perfil' : 'Inherit model from profile';
-  String get reasoningEffort =>
-      spanish ? 'Esfuerzo de razonamiento' : 'Reasoning effort';
-  String get inheritEffort =>
-      spanish ? 'Heredar esfuerzo del perfil' : 'Inherit effort from profile';
+      _strings.i18n131TasksSpecifyStarted;
+  String get decompose => _strings.i18n131TasksDecompose;
+  String get decomposeTitle => _strings.i18n131TasksDecomposeTitle;
+  String get decomposeBody => _strings.i18n131TasksDecomposeBody;
+  String decomposeResult(int count) => _strings.i18n131TasksDecomposeResult(count);
+  String get attachmentTooLarge => _strings.i18n131TasksAttachmentTooLarge;
+  String get attachmentUnavailable => _strings.i18n131TasksAttachmentUnavailable;
+  String get attachmentUploaded => _strings.i18n131TasksAttachmentUploaded;
+  String get saveAttachment => _strings.i18n131TasksSaveAttachment;
+  String get attachmentSaved => _strings.i18n131TasksAttachmentSaved;
+  String get deleteAttachment => _strings.i18n131TasksDeleteAttachment;
+  String deleteAttachmentBody(String name) => _strings.i18n131TasksDeleteAttachmentBody(name);
+  String get delete => _strings.i18n131TasksDelete;
+  String get attachmentDeleted => _strings.i18n131TasksAttachmentDeleted;
+  String get workerLog => _strings.i18n131TasksWorkerLog;
+  String get noLog => _strings.i18n131TasksNoLog;
+  String get logTruncated => _strings.i18n131TasksLogTruncated;
+  String get runInspection => _strings.i18n131TasksRunInspection;
+  String get alive => _strings.i18n131TasksAlive;
+  String get yes => _strings.i18n131TasksYes;
+  String get no => _strings.i18n131TasksNo;
+  String get status => _strings.i18n131TasksStatus;
+  String get memory => _strings.i18n131TasksMemory;
+  String get threads => _strings.i18n131TasksThreads;
+  String get reason => _strings.i18n131TasksReason;
+  String get error => _strings.i18n131TasksError;
+  String get terminate => _strings.i18n131TasksTerminate;
+  String get terminateTitle => _strings.i18n131TasksTerminateTitle;
+  String terminateBody(int id) => _strings.i18n131TasksTerminateBody(id);
+  String get runTerminated => _strings.i18n131TasksRunTerminated;
+  String get reclaim => _strings.i18n131TasksReclaim;
+  String get reclaimTitle => _strings.i18n131TasksReclaimTitle;
+  String get reclaimBody => _strings.i18n131TasksReclaimBody;
+  String get taskReclaimed => _strings.i18n131TasksTaskReclaimed;
+  String get chooseProfile => _strings.i18n131TasksChooseProfile;
+  String get reassign => _strings.i18n131TasksReassign;
+  String get reassignTitle => _strings.i18n131TasksReassignTitle;
+  String reassignBody(String profile, bool reclaims) => (reclaims ? _strings.i18n131TasksReassignBodyReclaims(profile) : _strings.i18n131TasksReassignBody(profile));
+  String get taskReassigned => _strings.i18n131TasksTaskReassigned;
+  String get modelOptionsUnavailable => _strings.i18n131TasksModelOptionsUnavailable;
+  String get chooseModel => _strings.i18n131TasksChooseModel;
+  String get inheritModel => _strings.i18n131TasksInheritModel;
+  String get reasoningEffort => _strings.i18n131TasksReasoningEffort;
+  String get inheritEffort => _strings.i18n131TasksInheritEffort;
   String effortLabel(String value) {
-    if (value == 'none') return spanish ? 'Desactivado' : 'Off';
-    if (value == 'minimal') return spanish ? 'Mínimo' : 'Minimal';
-    if (value == 'low') return spanish ? 'Bajo' : 'Low';
-    if (value == 'medium') return spanish ? 'Medio' : 'Medium';
-    if (value == 'high') return spanish ? 'Alto' : 'High';
-    if (value == 'xhigh') return spanish ? 'Muy alto' : 'XHigh';
-    if (value == 'max') return spanish ? 'Máximo' : 'Max';
-    return 'Ultra';
+    if (value == 'none') return _strings.i18n131TasksEffortLabelNone;
+    if (value == 'minimal') return _strings.i18n131TasksEffortLabelMinimal;
+    if (value == 'low') return _strings.i18n131TasksEffortLabelLow;
+    if (value == 'medium') return _strings.i18n131TasksEffortLabelMedium;
+    if (value == 'high') return _strings.i18n131TasksEffortLabelHigh;
+    if (value == 'xhigh') return _strings.i18n131TasksEffortLabelXhigh;
+    if (value == 'max') return _strings.i18n131TasksEffortLabelMax;
+    return _strings.i18n131TasksEffortLabelUltra;
   }
 
-  String get applyModelTitle =>
-      spanish ? 'Aplicar configuración de modelo' : 'Apply model configuration';
+  String get applyModelTitle => _strings.i18n131TasksApplyModelTitle;
   String applyModelBody(String model, String effort) {
     final effortLabelValue = effort.isEmpty
         ? inheritEffort
         : effortLabel(effort);
-    return spanish
-        ? 'Modelo: $model\nRazonamiento: $effortLabelValue'
-        : 'Model: $model\nReasoning: $effortLabelValue';
+    return _strings.i18n131TasksApplyModelBody(model, effortLabelValue);
   }
 
-  String get apply => spanish ? 'Aplicar' : 'Apply';
-  String get modelApplied => spanish
-      ? 'Configuración de modelo aplicada.'
-      : 'Model configuration applied.';
+  String get apply => _strings.i18n131TasksApply;
+  String get modelApplied => _strings.i18n131TasksModelApplied;
 }

@@ -11,6 +11,8 @@ import 'package:hermes_android/core/utils/assistant_content.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
+import 'support/test_api_client.dart';
+
 DesktopSessionSnapshot _snapshot(Map<String, dynamic> json) =>
     DesktopSessionSnapshot.fromJson(
       json,
@@ -190,9 +192,8 @@ void main() {
         sessionTitle: 'Privacy',
         notifications: null,
         onTerminal: () {},
-        api: ApiClient(
+        api: testApiClient(
           baseUrl: 'https://example.invalid',
-          apiKey: 'test',
           httpClient: MockClient((request) async {
             requests.add(request.url.path);
             return http.Response(
@@ -259,9 +260,8 @@ void main() {
         sessionTitle: 'Privacy',
         notifications: null,
         onTerminal: () {},
-        api: ApiClient(
+        api: testApiClient(
           baseUrl: 'https://example.invalid',
-          apiKey: 'test',
           httpClient: MockClient((_) async => http.Response('not found', 404)),
         ),
         desktopGateway: _PrivacySnapshotGateway(snap),

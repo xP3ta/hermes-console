@@ -1,3 +1,6 @@
+import '../services/notifications/notification_strings.dart'
+    show resolveNotificationLang;
+
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
@@ -970,64 +973,56 @@ class _DiagnosticTile extends StatelessWidget {
 }
 
 class _KanbanDetailCopy {
-  final bool spanish;
+  final Strings _strings;
 
-  const _KanbanDetailCopy._(this.spanish);
+  const _KanbanDetailCopy._(this._strings);
 
   factory _KanbanDetailCopy.forLocale(String localeName) =>
-      _KanbanDetailCopy._(localeName.toLowerCase().startsWith('es'));
+      _KanbanDetailCopy._(lookupStrings(Locale(resolveNotificationLang(localeName))));
 
-  String get readOnly => spanish
-      ? 'Esta instancia está en modo solo lectura.'
-      : 'This instance is read-only.';
+  String get readOnly => _strings.i18n131DetailReadOnly;
   String get objective =>
-      spanish ? 'Objetivo · leer completo' : 'Objective · read all';
-  String get result => spanish ? 'Resultado' : 'Result';
-  String get latestSummary => spanish ? 'Último resumen' : 'Latest summary';
-  String get diagnostics => spanish ? 'Diagnósticos' : 'Diagnostics';
-  String get dependencies => spanish ? 'Dependencias' : 'Dependencies';
-  String get parents => spanish ? 'Depende de' : 'Depends on';
-  String get children => spanish ? 'Desbloquea' : 'Unblocks';
-  String get blockedBy => spanish ? 'Bloqueada por' : 'Blocked by';
-  String get blocks => spanish ? 'Bloquea' : 'Blocks';
-  String get childResults => spanish ? 'Subtareas' : 'Child tasks';
-  String get comments => spanish ? 'Comentarios' : 'Comments';
+      _strings.i18n131DetailObjective;
+  String get result => _strings.i18n131DetailResult;
+  String get latestSummary => _strings.i18n131DetailLatestSummary;
+  String get diagnostics => _strings.i18n131DetailDiagnostics;
+  String get dependencies => _strings.i18n131DetailDependencies;
+  String get parents => _strings.i18n131DetailParents;
+  String get children => _strings.i18n131DetailChildren;
+  String get blockedBy => _strings.i18n131DetailBlockedBy;
+  String get blocks => _strings.i18n131DetailBlocks;
+  String get childResults => _strings.i18n131DetailChildResults;
+  String get comments => _strings.i18n131DetailComments;
   String get noComments =>
-      spanish ? 'Todavía no hay comentarios.' : 'No comments yet.';
-  String get someone => spanish ? 'Alguien' : 'Someone';
-  String get addComment => spanish ? 'Añadir comentario' : 'Add a comment';
-  String get messageWorker =>
-      spanish ? 'Enviar una nota al worker' : 'Message the worker';
-  String get send => spanish ? 'Enviar' : 'Send';
-  String get attachments => spanish ? 'Adjuntos' : 'Attachments';
-  String get noAttachments => spanish ? 'No hay adjuntos.' : 'No attachments.';
-  String get uploadAttachment =>
-      spanish ? 'Subir adjunto' : 'Upload attachment';
-  String get download => spanish ? 'Descargar' : 'Download';
+      _strings.i18n131DetailNoComments;
+  String get someone => _strings.i18n131DetailSomeone;
+  String get addComment =>
+      _strings.i18n131DetailAddComment;
+  String get messageWorker => _strings.i18n131DetailMessageWorker;
+  String get send => _strings.i18n131DetailSend;
+  String get attachments => _strings.i18n131DetailAttachments;
+  String get noAttachments => _strings.i18n131DetailNoAttachments;
+  String get uploadAttachment => _strings.i18n131DetailUploadAttachment;
+  String get download => _strings.i18n131DetailDownload;
   String get deleteAttachment =>
-      spanish ? 'Eliminar adjunto' : 'Delete attachment';
-  String get runs => spanish ? 'Ejecuciones' : 'Runs';
-  String get run => spanish ? 'Ejecución' : 'Run';
-  String get inspect => spanish ? 'Inspeccionar' : 'Inspect';
-  String get terminate => spanish ? 'Terminar ejecución' : 'Terminate run';
-  String get log => spanish ? 'Log' : 'Log';
-  String get activity => spanish ? 'Actividad' : 'Activity';
-  String get showAll => spanish ? 'Mostrar toda' : 'Show all';
-  String get showLess => spanish ? 'Mostrar menos' : 'Show less';
-  String get operations => spanish ? 'Operaciones' : 'Operations';
-  String get model => spanish ? 'Modelo de esta tarea' : 'Task model';
+      _strings.i18n131DetailDeleteAttachment;
+  String get runs => _strings.i18n131DetailRuns;
+  String get run => _strings.i18n131DetailRun;
+  String get inspect => _strings.i18n131DetailInspect;
+  String get terminate => _strings.i18n131DetailTerminate;
+  String get log => _strings.i18n131DetailLog;
+  String get activity => _strings.i18n131DetailActivity;
+  String get showAll => _strings.i18n131DetailShowAll;
+  String get showLess => _strings.i18n131DetailShowLess;
+  String get operations => _strings.i18n131DetailOperations;
+  String get model => _strings.i18n131DetailModel;
   String get inheritModel =>
-      spanish ? 'Heredar del perfil' : 'Inherit from profile';
-  String get reassign => spanish ? 'Reasignar' : 'Reassign';
-  String get reclaim =>
-      spanish ? 'Recuperar y reencolar' : 'Reclaim and requeue';
-  String get specify => spanish ? 'Especificar' : 'Specify';
-  String get decompose => spanish ? 'Descomponer' : 'Decompose';
-  String get notifyWhenDone =>
-      spanish ? 'Avisarme cuando termine' : "Notify me when it's done";
-  String get muteNotifications =>
-      spanish ? 'Silenciar notificaciones' : 'Mute notifications';
-  String get muteNotificationsSub => spanish
-      ? 'No avisar de cambios de estado de esta tarea, aunque los resultados de Kanban estén activados'
-      : "Don't notify status changes for this task, even if Kanban results are enabled";
+      _strings.i18n131DetailInheritModel;
+  String get reassign => _strings.i18n131DetailReassign;
+  String get reclaim => _strings.i18n131DetailReclaim;
+  String get specify => _strings.i18n131DetailSpecify;
+  String get decompose => _strings.i18n131DetailDecompose;
+  String get notifyWhenDone => _strings.i18n131DetailNotifyWhenDone;
+  String get muteNotifications => _strings.i18n131DetailMuteNotifications;
+  String get muteNotificationsSub => _strings.i18n131DetailMuteNotificationsSub;
 }

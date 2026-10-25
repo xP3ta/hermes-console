@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="new_session_shortcut_short_label">새 대화</string>
+    <string name="new_session_shortcut_long_label">Hermes와 새 대화 시작</string>
+    <string name="hermes_widget_not_configured">설정 안 됨</string>
+    <string name="hermes_widget_setup_action">Hermes 설정</string>
+</resources>

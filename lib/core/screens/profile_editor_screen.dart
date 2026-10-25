@@ -174,9 +174,7 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
       _identityTouched && _identitySignature != _baselineIdentitySignature;
   bool get _dirty => _titleDirty || _identityDirty;
 
-  bool get _spanish =>
-      Localizations.localeOf(context).languageCode.toLowerCase() == 'es';
-  String _text(String es, String en) => _spanish ? es : en;
+  Strings get _strings => Strings.of(context);
 
   @override
   void initState() {
@@ -423,10 +421,7 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
       if (!mounted) return;
       messenger.notify(
         FeedbackKind.error,
-        _text(
-          'Usa una imagen PNG, JPEG, WebP o GIF de hasta 15 MB.',
-          'Use a PNG, JPEG, WebP, or GIF image up to 15 MB.',
-        ),
+        _strings.i18n131ProfileUseAPngJpegWebpOrGif,
         warning: true,
       );
     } finally {
@@ -539,21 +534,18 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
     _discardDialogOpen = true;
     final discard = await showHermesDialog<bool>(
       context: context,
-      title: _text('¿Descartar cambios?', 'Discard changes?'),
-      message: _text(
-        'La identidad del perfil todavía no se ha guardado.',
-        'The profile identity has not been saved yet.',
-      ),
+      title: _strings.i18n131ProfileDiscardChanges,
+      message: _strings.i18n131ProfileTheProfileIdentityHasNotBeenSaved,
       actions: [
         HermesDialogAction(
           key: const ValueKey('profile-editor-keep-editing'),
-          label: _text('Seguir editando', 'Keep editing'),
+          label: _strings.i18n131ProfileKeepEditing,
           value: false,
           style: HermesDialogActionStyle.cancel,
         ),
         HermesDialogAction(
           key: const ValueKey('profile-editor-discard'),
-          label: _text('Descartar', 'Discard'),
+          label: _strings.i18n131ProfileDiscard,
           value: true,
           style: HermesDialogActionStyle.destructive,
         ),
@@ -592,7 +584,7 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
                     borderRadius: BorderRadius.circular(999),
                   ),
                   child: Text(
-                    _text('Sin guardar', 'Unsaved'),
+                    _strings.i18n131ProfileUnsaved,
                     style: TextStyle(
                       color: colors.warning,
                       fontSize: 11.5,
@@ -622,10 +614,7 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
                     Padding(
                       padding: const EdgeInsets.only(left: 4, top: 4),
                       child: Text(
-                        _text(
-                          'El identificador @$_profileName no cambia',
-                          'The @$_profileName identifier does not change',
-                        ),
+                        _strings.i18n131ProfileTheProfilenameIdentifierDoesNotChange(_profileName),
                         style: TextStyle(
                           color: colors.textTertiary,
                           fontSize: 12,
@@ -635,7 +624,7 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
                     ),
                     const SizedBox(height: 22),
                     Text(
-                      _text('Personalizar', 'Customize'),
+                      _strings.i18n131ProfileCustomize,
                       style: TextStyle(
                         color: colors.textPrimary,
                         fontWeight: FontWeight.w800,
@@ -648,11 +637,11 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
                         BotSettingsRow(
                           rowKey: const ValueKey('profile-editor-identity-row'),
                           initiallyExpanded: false,
-                          label: _text('Identidad visual', 'Visual identity'),
+                          label: _strings.i18n131ProfileVisualIdentity,
                           summary: switch (_mode) {
-                            _IdentityMode.pet => _text('Mascota', 'Pet'),
-                            _IdentityMode.image => _text('Imagen', 'Image'),
-                            _IdentityMode.face => _text('Cara', 'Face'),
+                            _IdentityMode.pet => _strings.i18n131ProfilePet,
+                            _IdentityMode.image => _strings.i18n131ProfileImage,
+                            _IdentityMode.face => _strings.i18n131ProfileFace,
                           },
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -692,21 +681,21 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
                             key: const ValueKey('profile-editor-model-row'),
                             label: copy.modelLabel,
                             value: row.model.trim().isEmpty
-                                ? _text('Automático', 'Automatic')
+                                ? _strings.i18n131ProfileAutomatic
                                 : row.model,
                             onTap: row.onTap,
                             busy: row.busy,
                           ),
                         ),
-                        _infoRow(label: _text('Descripción', 'Description'),
+                        _infoRow(label: _strings.i18n131ProfileDescription,
                           value: widget.profile.description.trim().isEmpty
-                              ? _text('Sin descripción', 'No description')
+                              ? _strings.i18n131ProfileNoDescription
                               : widget.profile.description,
                         ),
                         _navRow(
                           key: const ValueKey('profile-editor-skills-row'),
                           label: copy.skills,
-                          value: _text('Ver skills', 'View skills'),
+                          value: _strings.i18n131ProfileViewSkills,
                           onTap: widget.onOpenSkills,
                         ),
                         if (_gateway is BotProfileGateway)
@@ -768,7 +757,7 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
     children: [
       _modeTile(
         key: const ValueKey('profile-editor-mode-pet'),
-        label: _text('Mascota', 'Pet'),
+        label: _strings.i18n131ProfilePet,
         icon: Icons.pets_outlined,
         selected: _mode == _IdentityMode.pet,
         onTap: () => _selectMode(_IdentityMode.pet),
@@ -776,7 +765,7 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
       ),
       _modeTile(
         key: const ValueKey('profile-editor-mode-image'),
-        label: _text('Imagen', 'Image'),
+        label: _strings.i18n131ProfileImage,
         icon: Icons.image_outlined,
         selected: _mode == _IdentityMode.image,
         onTap: () => _selectMode(_IdentityMode.image),
@@ -784,7 +773,7 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
       ),
       _modeTile(
         key: const ValueKey('profile-editor-mode-face'),
-        label: _text('Cara', 'Face'),
+        label: _strings.i18n131ProfileFace,
         icon: Icons.face_outlined,
         selected: _mode == _IdentityMode.face,
         onTap: () => _selectMode(_IdentityMode.face),
@@ -979,7 +968,7 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
     return HermesBotFace(
       visual: visual,
       size: size,
-      semanticLabel: _text('Cara del perfil', 'Profile face'),
+      semanticLabel: _strings.i18n131ProfileProfileFace,
       animate: true,
     );
   }
@@ -988,10 +977,7 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
       Text(
-        _text(
-          'PNG, JPEG, WebP o GIF. Se recorta al centro y se guarda cuadrada.',
-          'PNG, JPEG, WebP, or GIF. Center-cropped and saved square.',
-        ),
+        _strings.i18n131ProfilePngJpegWebpOrGifCenterCropped,
         style: TextStyle(color: colors.textSecondary, fontSize: 12.5),
       ),
       const SizedBox(height: 12),
@@ -1001,8 +987,8 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
         icon: Icon(_pickingImage ? Icons.hourglass_top : Icons.photo_library),
         label: Text(
           _pickedAvatar == null && _remoteAvatar == null
-              ? _text('Elegir imagen', 'Choose image')
-              : _text('Cambiar imagen', 'Change image'),
+              ? _strings.i18n131ProfileChooseImage
+              : _strings.i18n131ProfileChangeImage,
         ),
       ),
     ],
@@ -1170,10 +1156,7 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          _text(
-            'También hay una imagen guardada. La mascota tiene prioridad.',
-            'A saved image also exists. The pet takes priority.',
-          ),
+          _strings.i18n131ProfileASavedImageAlsoExistsThePet,
           style: TextStyle(color: colors.textPrimary, fontSize: 12.5),
         ),
         const SizedBox(height: 4),
@@ -1182,7 +1165,7 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
           onPressed: _remoteAvatar == null
               ? null
               : () => _changeIdentity(() => _mode = _IdentityMode.image),
-          child: Text(_text('Usar imagen', 'Use image')),
+          child: Text(_strings.i18n131ProfileUseImage),
         ),
       ],
     ),
@@ -1272,13 +1255,10 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
               children: [
                 Text(
                   _uncertain
-                      ? _text(
-                          'Estado incierto: revisa y vuelve a guardar.',
-                          'Uncertain state: review and save again.',
-                        )
+                      ? _strings.i18n131ProfileUncertainStateReviewAndSaveAgain
                       : _dirty
-                      ? _text('Cambios sin guardar', 'Unsaved changes')
-                      : _text('Sin cambios pendientes', 'No pending changes'),
+                      ? _strings.i18n131ProfileUnsavedChanges
+                      : _strings.i18n131ProfileNoPendingChanges,
                   key: ValueKey(
                     _uncertain
                         ? 'profile-editor-uncertain'
@@ -1301,7 +1281,9 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
                 const SizedBox(height: 7),
                 HermesPrimaryButton(
                   key: const ValueKey('profile-editor-save'),
-                  label: _saving ? _text('Guardando…', 'Saving…') : copy.save,
+                  label: _saving
+                      ? _strings.i18n131ProfileSaving
+                      : copy.save,
                   icon: _saving ? Icons.sync : Icons.check,
                   onTap: _saving || !_dirty ? null : _save,
                 ),

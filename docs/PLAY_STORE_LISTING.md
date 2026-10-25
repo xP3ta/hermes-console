@@ -1,7 +1,7 @@
 # Google Play listing — Hermes Console
 
-Listing text and assets for `1.3.0` (build number to be assigned; the
-1.2.15 texts are kept in [`release/1.2.15/`](release/1.2.15/)). Default language: **English
+Listing text and assets for `1.3.1` (build 9650; the
+1.3.0 texts are kept in [`release/1.3.0/`](release/1.3.0/)). Default language: **English
 (United States)**, followed by the Spanish (Spain) translation. The listing is
 not authorised for submission until the signed AAB, the deployed privacy policy,
 Data Safety, the foreground-service videos, the screenshots and the emulator QA
@@ -151,22 +151,22 @@ implicados; Console explica esos flujos.
 Console es una aplicación independiente y no oficial. No está afiliada,
 patrocinada ni mantenida por Nous Research ni por los autores de Hermes Agent.
 
-## What's new — `1.3.0`
+## What's new — `1.3.1`
 
-The same texts are kept as files in [`release/1.3.0/`](release/1.3.0/). Every
+The same texts are kept as files in [`release/1.3.1/`](release/1.3.1/). Every
 statement below is taken from the commits between the previous release and this
 one; nothing promises automatic setup, discovery or Cloud.
 
 ### English (United States), maximum 500 characters
 
 ```text
-Console now talks only to the Hermes Dashboard: no Gateway, API key or pairing code. Choose "I already have Hermes" or "I don't have Hermes yet", run one command on your computer and scan the code. Only had the Gateway? Console guides you and updates your connection; your chats stay. Steadier after network cuts. New chats and named-profile images and files work again. Thanks to Rafael Telles, Luke Manning and oeyhaga for their fixes.
+Fixes and polish. Named profiles open and keep their chats again, with no false "Messages missing". Works with Hermes 0.22.4. The whole interface, notifications, widgets and voice come in nine languages. Sending a photo or file no longer asks to confirm. Dialogs no longer close the chat on foldables and tablets. The "Sign in" notice clears itself, a chat no longer stays on "Working" or "Offline", the list shows running chats, and Back in the guided setup no longer freezes the app.
 ```
 
 ### Español (España), máximo 500 caracteres
 
 ```text
-Console ahora habla solo con el Dashboard de Hermes: sin Gateway, clave de API ni código de emparejado. Elige «Ya tengo Hermes» o «Aún no tengo Hermes», ejecuta un comando en tu ordenador y escanea el código. ¿Solo tenías el Gateway? Console te guía y actualiza tu conexión; tus chats se conservan. Más estable tras cortes de red. Los chats nuevos y las imágenes y archivos de perfiles con nombre vuelven a funcionar. Gracias a Rafael Telles, Luke Manning y oeyhaga por sus arreglos.
+Correcciones y mejoras. Los perfiles con nombre vuelven a abrir y conservar sus chats, sin el falso «Faltan mensajes». Compatible con Hermes 0.22.4. Interfaz, avisos, widgets y voz en nueve idiomas. Enviar una foto o archivo ya no pide confirmación. Los diálogos no cierran el chat en plegables y tabletas. El aviso «Iniciar sesión» se quita solo, un chat no se queda en «Trabajando» ni «Sin conexión», la lista muestra los chats en marcha y Atrás en la configuración guiada ya no congela la app.
 ```
 
 ## Graphic assets

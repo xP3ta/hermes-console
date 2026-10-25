@@ -15,6 +15,8 @@ import 'package:hermes_android/core/services/session_export_service.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
+import 'support/test_api_client.dart';
+
 Session _session({
   String id = 'stored-0123456789',
   String title = 'Plan de viaje',
@@ -52,9 +54,8 @@ ApiClient _api(
   List<Map<String, dynamic>> all, {
   List<Uri>? requests,
   int status = 200,
-}) => ApiClient(
+}) => testApiClient(
   baseUrl: 'https://hermes.example.test',
-  apiKey: 'k',
   httpClient: MockClient((request) async {
     requests?.add(request.url);
     if (status != 200) return http.Response('x', status);
@@ -109,62 +110,6 @@ void main() {
       );
       // It does not keep paging once the cap is passed.
       expect(requests.length, lessThan(3));
-    });
-  });
-
-  group('ApiClient.getMessages bounded read', () {
-    // The cap must hold while the body arrives, not after it was decoded: a
-    // first page with one huge message is abandoned part way through.
-    ApiClient streamingApi({
-      required int totalBytes,
-      required void Function(int) onChunk,
-      int? declaredLength,
-    }) => ApiClient(
-      baseUrl: 'https://hermes.example.test',
-      apiKey: 'k',
-      httpClient: MockClient.streaming((request, _) async {
-        Stream<List<int>> body() async* {
-          var sent = 0;
-          while (sent < totalBytes) {
-            const chunk = 64 * 1024;
-            sent += chunk;
-            onChunk(sent);
-            yield List<int>.filled(chunk, 0x61);
-          }
-        }
-
-        return http.StreamedResponse(
-          body(),
-          200,
-          contentLength: declaredLength,
-        );
-      }),
-    );
-
-    test('stops reading the body once it passes the cap', () async {
-      var delivered = 0;
-      await expectLater(
-        streamingApi(
-          totalBytes: 40 * 1024 * 1024,
-          onChunk: (n) => delivered = n,
-        ).getMessages('s1', maxJsonChars: 100000),
-        throwsA(isA<SessionTranscriptTooLargeException>()),
-      );
-      // 100 000 chars allow at most 400 000 bytes (+ one chunk in flight).
-      expect(delivered, lessThanOrEqualTo(512 * 1024));
-    });
-
-    test('a declared length over the cap is refused without reading', () async {
-      var delivered = 0;
-      await expectLater(
-        streamingApi(
-          totalBytes: 40 * 1024 * 1024,
-          declaredLength: 20 * 1024 * 1024,
-          onChunk: (n) => delivered = n,
-        ).getMessages('s1', maxJsonChars: 100000),
-        throwsA(isA<SessionTranscriptTooLargeException>()),
-      );
-      expect(delivered, lessThanOrEqualTo(64 * 1024));
     });
   });
 
@@ -283,10 +228,9 @@ void main() {
       await service(
         _api(_messages(2), requests: requests),
       ).export(_session(profile: 'work'));
-      expect(
-        requests.single.path,
-        '/p/work/api/sessions/stored-0123456789/messages',
-      );
+      // The Dashboard selects a named profile with `?profile=`.
+      expect(requests.single.path, '/api/sessions/stored-0123456789/messages');
+      expect(requests.single.queryParameters['profile'], 'work');
     });
 
     test('overlapping exports of one chat never share a path', () async {

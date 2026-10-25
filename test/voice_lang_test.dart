@@ -40,23 +40,40 @@ void main() {
       );
     });
 
-    test('system con idioma no soportado cae a español (como la UI)', () async {
+    test('all nine system languages and regions resolve without Spanish fallback', () async {
       final prefs = await _prefs({kAppLocalePrefKey: 'system'});
-      expect(effectiveVoiceLang(prefs, deviceLocale: fr), 'es');
+      for (final code in ['es', 'en', 'pt', 'de', 'fr', 'it', 'ja', 'ko', 'zh']) {
+        expect(effectiveVoiceLang(prefs, deviceLocale: Locale(code)), code);
+        final explicit = await _prefs({kAppLocalePrefKey: '${code}_XX'});
+        expect(effectiveVoiceLang(explicit, deviceLocale: es), code);
+      }
+      expect(effectiveVoiceLang(prefs, deviceLocale: const Locale('xx')), 'en');
+    });
+
+    test('português explícito manda e o sistema pt-BR é reconhecido', () async {
+      final prefsPt = await _prefs({kAppLocalePrefKey: 'pt'});
+      expect(effectiveVoiceLang(prefsPt, deviceLocale: en), 'pt');
+      expect(effectiveVoiceLang(prefsPt, deviceLocale: fr), 'pt');
+
+      final prefs = await _prefs({kAppLocalePrefKey: 'system'});
       expect(
-        effectiveVoiceLang(prefs, deviceLocale: const Locale('de', 'DE')),
-        'es',
+        effectiveVoiceLang(prefs, deviceLocale: const Locale('pt', 'BR')),
+        'pt',
+      );
+      expect(
+        effectiveVoiceLang(prefs, deviceLocale: const Locale('pt', 'PT')),
+        'pt',
       );
     });
 
-    test('clave ausente o valor desconocido se tratan como system', () async {
+    test('absent preference uses the device; unknown explicit preference uses English', () async {
       final ausente = await _prefs({});
       expect(effectiveVoiceLang(ausente, deviceLocale: en), 'en');
-      expect(effectiveVoiceLang(ausente, deviceLocale: fr), 'es');
+      expect(effectiveVoiceLang(ausente, deviceLocale: fr), 'fr');
 
       final raro = await _prefs({kAppLocalePrefKey: 'xx'});
       expect(effectiveVoiceLang(raro, deviceLocale: en), 'en');
-      expect(effectiveVoiceLang(raro, deviceLocale: es), 'es');
+      expect(effectiveVoiceLang(raro, deviceLocale: es), 'en');
     });
 
     test('la clave duplicada no diverge de AppLocales.prefKey', () {

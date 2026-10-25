@@ -101,7 +101,7 @@ class _RecoveryCenterScreenState extends State<RecoveryCenterScreen> {
   }
 
   Future<void> _openCheckpoint(RecoveryCheckpoint checkpoint) async {
-    final restored = await showHermesFloatingSurface<bool>(
+    final restored = await showHermesFloatingSurface<RecoveryRestoreResult>(
       context: context,
       surfaceKey: const ValueKey('recovery-checkpoint-surface'),
       maxWidth: 680,
@@ -116,12 +116,29 @@ class _RecoveryCenterScreenState extends State<RecoveryCenterScreen> {
         ),
       ),
     );
-    if (restored != true || !mounted) return;
+    if (restored == null || !mounted) return;
     await _load();
     if (!mounted) return;
-    AppFeedback.of(
-      context,
-    ).notify(FeedbackKind.routine, Strings.of(context).recoveryCenterRestored);
+    final strings = Strings.of(context);
+    final feedback = AppFeedback.of(context);
+    if (!restored.hasOmissions) {
+      feedback.notify(FeedbackKind.routine, strings.recoveryCenterRestored);
+      return;
+    }
+    // Hermes restored in safe mode and left some files alone: say so instead
+    // of reporting a clean restore.
+    feedback.notify(
+      FeedbackKind.error,
+      [
+        strings.recoveryCenterRestoredPartial,
+        if (restored.skippedUserEdits > 0)
+          strings.recoveryCenterSkippedUserEdits(restored.skippedUserEdits),
+        if (restored.skippedOversize > 0)
+          strings.recoveryCenterSkippedOversize(restored.skippedOversize),
+        if (restored.failedDeletes > 0)
+          strings.recoveryCenterFailedDeletes(restored.failedDeletes),
+      ].join(' '),
+    );
   }
 
   @override
@@ -354,7 +371,7 @@ class _RecoveryCheckpointSheetState extends State<_RecoveryCheckpointSheet> {
         );
         return;
       }
-      Navigator.of(context).pop(true);
+      Navigator.of(context).pop(result);
     } catch (error) {
       if (!mounted) return;
       setState(() => _failure = error);

@@ -10,6 +10,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
+import 'support/test_api_client.dart';
 
 class _ReconnectGateway
     implements HermesDesktopGateway, HermesDesktopSessionLifecycleGateway {
@@ -149,9 +150,8 @@ void main() {
         sessionTitle: 'T102 subagents',
         notifications: null,
         onTerminal: () {},
-        api: ApiClient(
+        api: testApiClient(
           baseUrl: 'https://example.invalid',
-          apiKey: 'test-only',
           httpClient: MockClient((_) async {
             restCalls++;
             return http.Response('unexpected REST', 500);

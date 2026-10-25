@@ -43,7 +43,7 @@ String liveToolLine(NotifL10n t, String tool, {bool isSkill = false}) {
   final name = tool.trim();
   if (isSkill) return name;
   return toolOrSkillStepTitle(
-    lookupStrings(Locale(t.es ? 'es' : 'en')),
+    lookupStrings(Locale(t.lang)),
     name,
     running: true,
   );
@@ -69,54 +69,46 @@ LiveTurnPhase liveTurnPhaseOf(
   _ => LiveTurnPhase.working,
 };
 
-/// Live row copy (es/en), resolved without BuildContext like [NotifL10n].
+/// Live row copy from the language catalogs, resolved without BuildContext like [NotifL10n].
 extension LiveTurnCopy on NotifL10n {
-  String _l(String esText, String enText) => es ? esText : enText;
-
   /// The activity line: one phase in plain words. A running tool whose name
   /// is known is worded by [liveToolLine] instead.
   String livePhase(LiveTurnPhase phase) => switch (phase) {
-    LiveTurnPhase.thinking => _l('Pensando', 'Thinking'),
-    LiveTurnPhase.responding => _l('Respondiendo', 'Responding'),
-    LiveTurnPhase.compacting => _l('Compactando', 'Compacting'),
-    LiveTurnPhase.waitingForYou => _l('Te espera', 'Waiting for you'),
-    LiveTurnPhase.waitingForApproval => _l(
-      'Espera tu permiso',
-      'Waiting for approval',
-    ),
-    LiveTurnPhase.needsClarification => _l(
-      'Tiene una pregunta',
-      'Needs clarification',
-    ),
+    LiveTurnPhase.thinking => message('livePhase'),
+    LiveTurnPhase.responding => message('livePhase2'),
+    LiveTurnPhase.compacting => message('livePhase3'),
+    LiveTurnPhase.waitingForYou => message('livePhase4'),
+    LiveTurnPhase.waitingForApproval => message('livePhase5'),
+    LiveTurnPhase.needsClarification => message('livePhase6'),
     LiveTurnPhase.usingTool ||
-    LiveTurnPhase.working => _l('Trabajando', 'Working'),
+    LiveTurnPhase.working => message('livePhase7'),
   };
 
   /// The status-bar chip: at most seven characters, or Android cuts it.
   String liveChip(LiveTurnPhase phase) => switch (phase) {
-    LiveTurnPhase.thinking => _l('Piensa', 'Think'),
-    LiveTurnPhase.responding => _l('Escribe', 'Reply'),
-    LiveTurnPhase.compacting => _l('Resume', 'Compact'),
-    LiveTurnPhase.waitingForYou => _l('Te toca', 'You'),
-    LiveTurnPhase.waitingForApproval => _l('Permiso', 'Approve'),
-    LiveTurnPhase.needsClarification => _l('Duda', 'Ask'),
+    LiveTurnPhase.thinking => message('liveChip'),
+    LiveTurnPhase.responding => message('liveChip2'),
+    LiveTurnPhase.compacting => message('liveChip3'),
+    LiveTurnPhase.waitingForYou => message('liveChip4'),
+    LiveTurnPhase.waitingForApproval => message('liveChip5'),
+    LiveTurnPhase.needsClarification => message('liveChip6'),
     LiveTurnPhase.usingTool ||
-    LiveTurnPhase.working => _l('Trabaja', 'Working'),
+    LiveTurnPhase.working => message('liveChip7'),
   };
 
   String liveTasks(int done, int total) =>
-      _l('Tareas $done de $total', 'Tasks $done of $total');
+      message('liveTasks', {'done': done, 'total': total});
   String liveSubagents(int n) => n == 1
-      ? _l('1 subagente', '1 subagent')
-      : _l('$n subagentes', '$n subagents');
+      ? message('liveSubagents')
+      : message('liveSubagents2', {'n': n});
   String liveTools(int n) => n == 1
-      ? _l('1 herramienta', '1 tool')
-      : _l('$n herramientas', '$n tools');
+      ? message('liveTools')
+      : message('liveTools2', {'n': n});
 
   /// Title when nothing may name the conversation (lock screen, hidden
   /// content, a turn only the background listener still watches).
   String liveWorkingTitle(String who) =>
-      _l('$who está trabajando', '$who is working');
+      message('liveWorkingTitle', {'who': who});
 }
 
 /// How far the rail is while no task list measures the turn (out of 100).
@@ -417,7 +409,7 @@ class LiveTurnNotifications {
     }
     final t = strings();
     final who = whoFor?.call(turn) ?? t.brand;
-    final signature = Object.hash(turn, who, row.hideSensitive, t.es);
+    final signature = Object.hash(turn, who, row.hideSensitive, t.lang);
     final now = _now();
     final last = row.postedAt;
     final unchanged = row.postedTag != null && row.signature == signature;

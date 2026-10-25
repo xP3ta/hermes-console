@@ -7,9 +7,13 @@ export '../widgets/chat/chat_markdown_body.dart'
         validateRemoteChatImageTransport;
 export '../widgets/chat/chat_message_selection_area.dart';
 
+import '../utils/projected_content_copy.dart';
+import '../utils/enum_labels.dart';
 import '../bots/data/gateway_socket_meter.dart';
 import '../models/bot_mention.dart';
 import '../services/app_error_log.dart';
+import '../services/notifications/notification_strings.dart'
+    show resolveNotificationLang;
 import '../services/app_lock_sensitive_read_fence.dart';
 import '../models/composer_reference.dart';
 import '../models/reference_directive.dart';
@@ -3921,16 +3925,10 @@ class _ChatScreenState extends State<ChatScreen>
     final acknowledged =
         prepared.state == PreparedTurnState.accepted ||
         prepared.state == PreparedTurnState.running;
-    final english = Localizations.localeOf(context).languageCode == 'en';
-    return ambiguous
-        ? Strings.of(context).chaAmbiguousRestored
-        : acknowledged
-        ? english
-              ? 'Hermes could not reattach a turn that may still be running. Send retries the check; discard only after verifying Hermes because this does not cancel the remote turn.'
-              : 'Hermes no pudo reanexar un turno que aún podría seguir activo. Enviar repite la comprobación; descarta solo tras verificar Hermes porque esto no cancela el turno remoto.'
-        : english
-        ? 'A pending turn was recovered. Discard the recovery to continue.'
-        : 'Se recuperó un turno pendiente. Descarta la recuperación para continuar.';
+    final strings = Strings.of(context);
+    if (ambiguous) return Strings.of(context).chaAmbiguousRestored;
+    if (acknowledged) return strings.i18n131RecoveredTurnActive;
+    return strings.i18n131RecoveredTurnPending;
   }
 
   /// True cuando el composer contiene trabajo del usuario distinto del lote
@@ -6301,7 +6299,10 @@ class _ChatScreenState extends State<ChatScreen>
         connection: widget.connection,
         sessionId: widget.session.id,
         logicalSessionId: widget.session.logicalId,
-        sessionTitle: widget.session.displayTitle,
+        sessionTitle: localizedSessionTitle(
+          Strings.of(context),
+          widget.session,
+        ),
         sessionSnapshot: widget.session,
         sessionProfile: resolvedSessionProfile,
         initialStoredSessionId: widget.initialStoredSessionId,
@@ -9049,7 +9050,7 @@ class _ChatScreenState extends State<ChatScreen>
         HermesNotice.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              Strings.of(context).chaCantSendApproval(humanizeApiError(e)),
+              Strings.of(context).chaCantSendApproval(localizedApiError(Strings.of(context), e)),
             ),
           ),
           kind: HermesNoticeKind.error,
@@ -9098,7 +9099,7 @@ class _ChatScreenState extends State<ChatScreen>
             content: Text(
               Strings.of(
                 context,
-              ).interactiveRespondFailed(humanizeApiError(error)),
+              ).interactiveRespondFailed(localizedApiError(Strings.of(context), error)),
             ),
           ),
           kind: HermesNoticeKind.error,
@@ -9129,7 +9130,7 @@ class _ChatScreenState extends State<ChatScreen>
             content: Text(
               Strings.of(
                 context,
-              ).interactiveRespondFailed(humanizeApiError(error)),
+              ).interactiveRespondFailed(localizedApiError(Strings.of(context), error)),
             ),
           ),
           kind: HermesNoticeKind.error,
@@ -10968,7 +10969,7 @@ class _ChatScreenState extends State<ChatScreen>
     // SOLO para el modelo (oculto en pantalla).
     //  - Archivos de texto → incrustamos el contenido (fiable, sin depender de
     //    librerías del servidor; no escribe nada → sin gate de aprobación).
-    //  - Binarios (PDF/imagen/doc) → subimos al agente (gate) y pasamos la ruta.
+    //  - Binarios (PDF/imagen/doc) → subimos al agente y pasamos la ruta.
     final String fullText;
     String? desktopText;
     if (attachments.isNotEmpty) {
@@ -11008,21 +11009,24 @@ class _ChatScreenState extends State<ChatScreen>
         );
       }
 
-      // Una única aprobación cubre el lote binario completo. El canal Desktop
-      // envía después los bytes por sus RPC nativos; solo si ese protocolo no
-      // está disponible, ActiveChat usa la subida Dashboard de compatibilidad.
+      // Picking the files and pressing send is the user's own action: as on
+      // Desktop, nothing asks again. A read-only instance, a read-only global
+      // mode or this chat set to read-only still refuses the upload. The
+      // Desktop channel then sends the bytes over its native RPCs; only
+      // without that protocol does ActiveChat fall back to the Dashboard
+      // upload.
       if (binaries.isNotEmpty) {
         if (!mounted) return _sendRefused('routeClosed');
-        final approved = await confirmMutatingAction(
-          context,
-          instanceId: widget.connection.id,
-          readOnlyInstance: widget.connection.readOnly,
-          risk: CommandRisk.low,
-          title: str.chaUploadTitle,
-          detail: binaries.map((a) => a.messageLabel).join('\n'),
-        );
-        // Declining the upload is the user's own answer: nothing to tell.
-        if (!approved || !mounted) return _sendRefused('uploadDeclined');
+        final policy = context
+            .findAncestorStateOfType<HermesAppState>()
+            ?.approvalPolicy;
+        if (widget.connection.readOnly ||
+            policy?.globalMode == ApprovalMode.readOnly ||
+            policy?.effectiveMode(widget.session.id) ==
+                ApprovalMode.readOnly) {
+          showReadOnlyNotice(context);
+          return _sendRefused('uploadReadOnly');
+        }
       }
 
       // El historial conserva una copia privada verificable de cada elemento,
@@ -12001,11 +12005,11 @@ class _ChatScreenState extends State<ChatScreen>
   _responseGroupCache = Map.identity();
 
   /// Texto visible de las filas anteriores del grupo, en orden.
-  static String _responseGroupTextPrefix(List<Map<String, dynamic>> older) => [
+  String _responseGroupTextPrefix(List<Map<String, dynamic>> older) => [
     for (final row in older)
       if (row['content'] is String &&
           (row['content'] as String).trim().isNotEmpty)
-        row['content'] as String,
+        projectedContentCopy(Strings.of(context), row, row['content'] as String),
   ].join('\n\n');
 
   static String _joinResponseGroupText(String prefix, String content) =>
@@ -13006,7 +13010,7 @@ class _ChatScreenState extends State<ChatScreen>
         if (mounted) {
           HermesNotice.of(context).showSnackBar(
             SnackBar(
-              content: Text(str.chaModelChangeFailed(humanizeApiError(error))),
+              content: Text(str.chaModelChangeFailed(localizedApiError(Strings.of(context), error))),
             ),
             kind: HermesNoticeKind.error,
           );
@@ -13121,7 +13125,7 @@ class _ChatScreenState extends State<ChatScreen>
       if (mounted) {
         HermesNotice.of(context).showSnackBar(
           SnackBar(
-            content: Text(str.chaModelChangeFailed(humanizeApiError(error))),
+            content: Text(str.chaModelChangeFailed(localizedApiError(Strings.of(context), error))),
           ),
           kind: HermesNoticeKind.error,
         );
@@ -13179,7 +13183,7 @@ class _ChatScreenState extends State<ChatScreen>
         if (mounted) {
           HermesNotice.of(context).showSnackBar(
             SnackBar(
-              content: Text(str.chaModelChangeFailed(humanizeApiError(error))),
+              content: Text(str.chaModelChangeFailed(localizedApiError(Strings.of(context), error))),
             ),
             kind: HermesNoticeKind.error,
           );
@@ -13248,7 +13252,7 @@ class _ChatScreenState extends State<ChatScreen>
         if (mounted) {
           HermesNotice.of(context).showSnackBar(
             SnackBar(
-              content: Text(str.chaModelChangeFailed(humanizeApiError(error))),
+              content: Text(str.chaModelChangeFailed(localizedApiError(Strings.of(context), error))),
             ),
             kind: HermesNoticeKind.error,
           );
@@ -14497,18 +14501,20 @@ class _ChatScreenState extends State<ChatScreen>
       releaseTextFocusIfKeyboardHidden(context);
       final confirm = await showHermesDialogRoute<bool>(
         context: context,
-        builder: (_) => AlertDialog(
+        builder: (dialogContext) => AlertDialog(
           title: Text(s.sesDeleteTitle),
           content: Text(
             s.sesDeleteContent(localizedSessionTitle(s, widget.session)),
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.pop(context, false),
+              onPressed: () =>
+                  Navigator.of(dialogContext, rootNavigator: true).pop(false),
               child: Text(s.sesCancel),
             ),
             TextButton(
-              onPressed: () => Navigator.pop(context, true),
+              onPressed: () =>
+                  Navigator.of(dialogContext, rootNavigator: true).pop(true),
               child: Text(s.sesDelete, style: TextStyle(color: colors.error)),
             ),
           ],
@@ -14544,13 +14550,8 @@ class _ChatScreenState extends State<ChatScreen>
     try {
       final result = await deleteSessionWithResolvedLineage(
         widget.session,
-        loadSessions: ({bool includeChildren = false}) => client.getSessions(
-          includeChildren: includeChildren,
-          profile: ownerProfile,
-        ),
         deleteSession: (sessionId) =>
             client.deleteSession(sessionId, profile: ownerProfile),
-        serverDeletesChain: client.hasDashboard,
         remoteSessionId: _chat.serverSessionId,
         localRecoverySessionId: widget.session.id,
         clearLocalRecovery: _clearDeletedChatRecovery,
@@ -16190,7 +16191,10 @@ class _ChatScreenState extends State<ChatScreen>
         effective == ApprovalMode.readOnly ||
         override != null;
     if (!prominent) return null;
-    return (effective.label, _modeColor(effective, colors));
+    return (
+      approvalModeLabel(Strings.of(context), effective),
+      _modeColor(effective, colors),
+    );
   }
 
   /// Opciones de modo (radio) de «Permisos de esta sesión». YOLO se confirma
@@ -16272,7 +16276,7 @@ class _ChatScreenState extends State<ChatScreen>
       surfaceKey: const ValueKey('chat-mode-dialog'),
       title: strings.chaModeSheetTitle,
       subtitle: strings.chaModeSheetEffective(
-        policy.effectiveMode(widget.session.id).label,
+        approvalModeLabel(strings, policy.effectiveMode(widget.session.id)),
       ),
       builder: (ctx) {
         final colors = Theme.of(ctx).hermes;
@@ -16317,18 +16321,20 @@ class _ChatScreenState extends State<ChatScreen>
       releaseTextFocusIfKeyboardHidden(context);
       final confirmed = await showHermesDialogRoute<bool>(
         context: context,
-        builder: (_) {
-          final s = Strings.of(context);
+        builder: (dialogContext) {
+          final s = Strings.of(dialogContext);
           return AlertDialog(
             title: Text(s.chaYoloTitle),
             content: Text(s.chaYoloBody),
             actions: [
               TextButton(
-                onPressed: () => Navigator.pop(context, false),
+                onPressed: () =>
+                    Navigator.of(dialogContext, rootNavigator: true).pop(false),
                 child: Text(s.chaCancel),
               ),
               FilledButton(
-                onPressed: () => Navigator.pop(context, true),
+                onPressed: () =>
+                    Navigator.of(dialogContext, rootNavigator: true).pop(true),
                 child: Text(s.chaActivate),
               ),
             ],
@@ -16346,7 +16352,10 @@ class _ChatScreenState extends State<ChatScreen>
     if (!mounted) return true;
     setState(() {});
     if (wasSending) {
-      final label = policy.effectiveMode(widget.session.id).label;
+      final label = approvalModeLabel(
+        Strings.of(context),
+        policy.effectiveMode(widget.session.id),
+      );
       HermesNotice.of(context)
         ..hideCurrentSnackBar()
         ..showSnackBar(
@@ -16524,7 +16533,7 @@ class _ChatScreenState extends State<ChatScreen>
               HermesNotice.of(context).showSnackBar(
                 SnackBar(
                   content: Text(
-                    Strings.of(context).chaDictationError(humanizeApiError(e)),
+                    Strings.of(context).chaDictationError(localizedApiError(Strings.of(context), e)),
                   ),
                 ),
                 kind: HermesNoticeKind.error,
@@ -18367,7 +18376,12 @@ class _ChatScreenState extends State<ChatScreen>
           // Plan limits from `session.usage` (as Hermes Desktop shows them):
           // the dot appears only from an unambiguous number ≥ 80 %.
           limitLevel: limitLevel,
-          permissionsLabel: policy?.effectiveMode(widget.session.id).label,
+          permissionsLabel: policy == null
+              ? null
+              : approvalModeLabel(
+                  Strings.of(context),
+                  policy.effectiveMode(widget.session.id),
+                ),
           permissionsFlag: flag?.$1,
           permissionsColor: flag?.$2,
           onOpenPermissions: policy == null
@@ -19303,14 +19317,22 @@ class _ChatScreenState extends State<ChatScreen>
     // burbuja compacta en lugar de apilar mensajes de usuario independientes.
     if (unit is _UserTurnGroup) {
       final rawContent = (unit.primary['content'] as String?) ?? '';
-      final content = projectedUserVisibleContent(unit.primary);
+      final content = projectedContentCopy(
+        Strings.of(context),
+        unit.primary,
+        projectedUserVisibleContent(unit.primary),
+      );
       final systemChip = _jobChipLabel(content, Strings.of(context));
       if (systemChip != null && unit.supplements.isEmpty) {
         return _SystemBlobChip(label: systemChip, raw: content);
       }
       final parsedContent = _parseUserContent(content);
       final supplements = unit.supplements
-          .map(projectedUserVisibleContent)
+          .map((row) => projectedContentCopy(
+                Strings.of(context),
+                row,
+                projectedUserVisibleContent(row),
+              ))
           .where((text) => text.trim().isNotEmpty)
           .toList();
       if (parsedContent.text.trim().isEmpty &&
@@ -19362,6 +19384,7 @@ class _ChatScreenState extends State<ChatScreen>
     final role = (msg['role'] as String?) ?? 'assistant';
     var content = (msg['content'] as String?) ?? '';
     final rawContent = content;
+    content = projectedContentCopy(Strings.of(context), msg, content);
     // Un turno del agente llega en varias filas (herramientas, razonamiento,
     // texto intermedio y final). Como Desktop, todas comparten UNA burbuja:
     // una cabecera, un «Pensó ⌄» con todas las herramientas y el texto al
@@ -19429,7 +19452,9 @@ class _ChatScreenState extends State<ChatScreen>
       final retryChat = _chat;
       final readOnly = _chat.conflictReadOnly || widget.connection.readOnly;
       return ChatErrorBubble(
-        error: activeChatStoredErrorUiMessage(content),
+        error: activeChatStoredErrorUiMessage(
+          content, languageCode: Strings.of(context).localeName,
+        ),
         onRetry: onRetry,
         prompt: prompt,
         onRestartGateway: _restartGatewayFromChat,
@@ -22221,14 +22246,13 @@ AssistantOperationalProjection _projectOperationalArtifacts(
   BuildContext context,
   String markdown,
 ) {
-  final strings = Localizations.of<Strings>(context, Strings);
-  final isSpanish = Localizations.maybeLocaleOf(context)?.languageCode == 'es';
+  final strings = Localizations.of<Strings>(context, Strings) ??
+      lookupStrings(Locale(resolveNotificationLang(
+          Localizations.maybeLocaleOf(context)?.languageCode ?? 'en')));
   return projectAssistantOperationalArtifacts(
     markdown,
-    subagentLabel:
-        strings?.subagentActivityItem ??
-        (index) => isSpanish ? 'Subagente $index' : 'Subagent $index',
-    resultLabel: strings?.commonResult ?? (isSpanish ? 'Resultado' : 'Result'),
+    subagentLabel: strings.subagentActivityItem,
+    resultLabel: strings.commonResult,
   );
 }
 

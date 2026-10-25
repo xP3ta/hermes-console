@@ -18,6 +18,7 @@ import 'package:hermes_android/core/widgets/chat_connection_recovery_row.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
+import 'support/test_api_client.dart';
 
 class _DroppingGateway
     implements
@@ -148,9 +149,8 @@ ActiveChat _chat(_DroppingGateway gateway) => ActiveChat(
   sessionTitle: 'Recovery test',
   notifications: null,
   onTerminal: () {},
-  api: ApiClient(
+  api: testApiClient(
     baseUrl: 'http://127.0.0.1:1',
-    apiKey: 'test-key',
     httpClient: MockClient((_) async => http.Response('not found', 404)),
   ),
   desktopGateway: gateway,

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../utils/artifact_name_copy.dart';
 import '../../l10n/app_localizations.dart';
 import '../models/generated_artifact.dart';
 import '../models/session_artifact.dart';
@@ -472,8 +473,8 @@ class _ArtifactRow extends StatelessWidget {
     return Semantics(
       button: canJump,
       label: canJump
-          ? strings.artifactJumpSemantics(artifact.displayName)
-          : artifact.displayName,
+          ? strings.artifactJumpSemantics(artifactNameCopy(strings, artifact))
+          : artifactNameCopy(strings, artifact),
       child: Material(
         color: Colors.transparent,
         child: InkWell(
@@ -495,7 +496,7 @@ class _ArtifactRow extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        artifact.displayName,
+                        artifactNameCopy(strings, artifact),
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(

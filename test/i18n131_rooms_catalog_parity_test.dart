@@ -1,0 +1,54 @@
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:flutter/widgets.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/l10n/app_localizations.dart';
+
+void main() {
+  const keys = <String>{
+    'i18n131RoomsRemoveMember',
+    'i18n131RoomsNoMembersChosen'
+  };
+  Map<String, int> arguments(String value) {
+    final result = <String, int>{};
+    for (final match in RegExp(r'\{[A-Za-z][A-Za-z0-9_]*\}').allMatches(value)) {
+      result.update(match.group(0)!, (n) => n + 1, ifAbsent: () => 1);
+    }
+    return result;
+  }
+  final catalogs = <String, Map<String, dynamic>>{
+    for (final lang in ['es', 'en', 'pt', 'de', 'fr', 'it', 'ja', 'ko', 'zh'])
+      lang: jsonDecode(File('lib/l10n/app_$lang.arb').readAsStringSync())
+          as Map<String, dynamic>,
+  };
+  test('exact class keys and placeholder multiplicity in all nine locales', () {
+    for (final catalog in catalogs.values) {
+      expect(catalog.keys.where((key) => key.startsWith('i18n131Rooms')), unorderedEquals(keys));
+      for (final key in keys) {
+        expect((catalog[key] as String).trim(), isNotEmpty, reason: key);
+        expect(arguments(catalog[key] as String), arguments(catalogs['en']![key] as String), reason: key);
+      }
+    }
+  });
+  test('generated accessors preserve literal and parameterized copy', () {
+    expect(lookupStrings(const Locale('es')).i18n131RoomsRemoveMember, "Quitar");
+    expect(lookupStrings(const Locale('en')).i18n131RoomsRemoveMember, "Remove");
+    expect(lookupStrings(const Locale('pt')).i18n131RoomsRemoveMember, "Remover");
+    expect(lookupStrings(const Locale('de')).i18n131RoomsRemoveMember, "Entfernen");
+    expect(lookupStrings(const Locale('fr')).i18n131RoomsRemoveMember, "Retirer");
+    expect(lookupStrings(const Locale('it')).i18n131RoomsRemoveMember, "Rimuovi");
+    expect(lookupStrings(const Locale('ja')).i18n131RoomsRemoveMember, "削除");
+    expect(lookupStrings(const Locale('ko')).i18n131RoomsRemoveMember, "제거");
+    expect(lookupStrings(const Locale('zh')).i18n131RoomsRemoveMember, "移除");
+    expect(lookupStrings(const Locale('es')).i18n131RoomsNoMembersChosen, "Toca un perfil para añadirlo a la sala.");
+    expect(lookupStrings(const Locale('en')).i18n131RoomsNoMembersChosen, "Tap a profile to add it to the room.");
+    expect(lookupStrings(const Locale('pt')).i18n131RoomsNoMembersChosen, "Toque em um perfil para adicioná-lo à sala.");
+    expect(lookupStrings(const Locale('de')).i18n131RoomsNoMembersChosen, "Tippe auf ein Profil, um es dem Raum hinzuzufügen.");
+    expect(lookupStrings(const Locale('fr')).i18n131RoomsNoMembersChosen, "Appuie sur un profil pour l’ajouter au salon.");
+    expect(lookupStrings(const Locale('it')).i18n131RoomsNoMembersChosen, "Tocca un profilo per aggiungerlo alla stanza.");
+    expect(lookupStrings(const Locale('ja')).i18n131RoomsNoMembersChosen, "プロフィールをタップしてルームに追加してください。");
+    expect(lookupStrings(const Locale('ko')).i18n131RoomsNoMembersChosen, "프로필을 눌러 대화방에 추가하세요.");
+    expect(lookupStrings(const Locale('zh')).i18n131RoomsNoMembersChosen, "点按配置档即可将其加入房间。");
+  });
+}

@@ -12,6 +12,7 @@ import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:hermes_android/core/services/compression_restore_store.dart';
 
 import 'support/rpc_frame_helpers.dart';
+import 'support/test_api_client.dart';
 
 class _Dashboard extends DashboardClient {
   _Dashboard() : super(host: '127.0.0.1', port: 1, manualToken: 'unused');
@@ -124,9 +125,8 @@ class _Fixture {
         storage: storage,
         mutationNamespaceForTesting: 'independent-$id',
       ),
-      api: ApiClient(
+      api: testApiClient(
         baseUrl: 'http://127.0.0.1:1',
-        apiKey: 'local-test-not-a-real-secret',
         httpClient: MockClient((req) async {
           rest.add('${req.method} ${req.url.path}');
           return successfulReads

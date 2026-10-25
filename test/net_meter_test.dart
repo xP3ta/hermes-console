@@ -13,7 +13,7 @@ import 'package:hermes_android/core/config/flavor.dart';
 import 'package:hermes_android/core/models/connection.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/connection_manager.dart'
-    show ApiClient, DashboardClient, DashboardWebSocketAuth;
+    show DashboardClient, DashboardWebSocketAuth;
 import 'package:hermes_android/core/services/shared_gateway_pool.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:hermes_android/core/services/origin_bound_http_client.dart';
@@ -23,6 +23,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
+import 'support/test_api_client.dart';
 
 void main() {
   final meter = GatewaySocketMeter.instance;
@@ -615,9 +616,8 @@ void main() {
         sessionId: 'stored-1',
         sessionTitle: 'Reason',
         sessionProfile: 'default',
-        api: ApiClient(
+        api: testApiClient(
           baseUrl: 'http://127.0.0.1:1',
-          apiKey: 'k',
           httpClient: MockClient((_) async => http.Response('unused', 500)),
         ),
         storedMessageLoader: (_, _) async => [

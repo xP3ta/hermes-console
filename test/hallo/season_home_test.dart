@@ -13,6 +13,7 @@ import 'package:http/testing.dart';
 
 import '../support/design_shots.dart';
 import '../support/onboarding_fakes.dart';
+import '../support/test_api_client.dart';
 
 class _Client extends ApiClient {
   _Client()
@@ -20,6 +21,10 @@ class _Client extends ApiClient {
         baseUrl: 'https://fixture.invalid:8642',
         apiKey: 'synthetic',
         httpClient: MockClient((_) async => http.Response('{}', 404)),
+        profileDashboard: testDashboardClient(
+          baseUrl: 'https://fixture.invalid:8642',
+          httpClient: MockClient((_) async => http.Response('{}', 404)),
+        ),
       );
   @override
   Future<bool> healthCheck() async => true;

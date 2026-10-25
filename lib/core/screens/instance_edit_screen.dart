@@ -747,6 +747,11 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
       }
       return str.sBadAddress;
     }
+    // TransportPrivacy.requireAllowed: HTTP/WS público rechazado antes de
+    // construir el cliente; la causa y la solución van en la clave.
+    if (e is ArgumentError) {
+      return str.transportPublicBlocked;
+    }
     // Only structural causes, never a remote error body.
     if (e is DashboardAuthException || e is DashboardHttpException) {
       return localizedApiError(str, e);
@@ -858,7 +863,11 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
       }
 
       // Dashboard-only recheck: no matrix, it never claims more than it read.
-      final dashResults = await _diag!.probeDashboard(conn, secrets);
+      final dashResults = await _diag!.probeDashboard(
+        conn,
+        secrets,
+        strings: s,
+      );
 
       if (!mounted) return _diagnosticsSnapshot;
       if (!current()) {

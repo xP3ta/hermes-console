@@ -24,7 +24,7 @@ void main() {
       'lasStartFirstBody',
       'lunLaunchError',
     ];
-    for (final locale in ['en', 'es']) {
+    for (final locale in ['en', 'es', 'pt']) {
       final catalog =
           jsonDecode(File('lib/l10n/app_$locale.arb').readAsStringSync())
               as Map<String, dynamic>;
@@ -96,7 +96,7 @@ void main() {
       'mascotMenuHide',
       'mascotSuggestionNever',
     ];
-    for (final locale in ['en', 'es']) {
+    for (final locale in ['en', 'es', 'pt']) {
       final catalog =
           jsonDecode(File('lib/l10n/app_$locale.arb').readAsStringSync())
               as Map<String, dynamic>;

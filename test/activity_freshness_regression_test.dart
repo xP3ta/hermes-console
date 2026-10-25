@@ -15,6 +15,7 @@ import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'session_identity_peer_test.dart' as peer;
+import 'support/test_api_client.dart';
 
 const secret = 'PRIVATE_FRESH_REVIEW';
 Map<String, dynamic> row(
@@ -237,9 +238,8 @@ void main() {
         sessionTitle: 'Peer',
         notifications: null,
         onTerminal: () {},
-        api: ApiClient(
+        api: testApiClient(
           baseUrl: 'https://example.invalid',
-          apiKey: 'fixture',
           httpClient: MockClient((_) async => http.Response('not found', 404)),
         ),
         desktopGateway: gateway,

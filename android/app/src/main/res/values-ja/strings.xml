@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="voice_notification_title">Hermes 音声</string>
+    <string name="voice_notification_active">聞き取り中</string>
+    <string name="voice_notification_paused">一時停止中</string>
+    <string name="voice_notification_mic_active">マイク使用中</string>
+    <string name="voice_notification_mic_paused">マイク一時停止中</string>
+    <string name="voice_notification_orb">Hermesの音声の状態</string>
+    <string name="voice_notification_duration">会話時間</string>
+    <string name="voice_notification_open_hint">タップしてHermesを開く</string>
+    <string name="voice_notification_primary_action">一時停止</string>
+    <string name="voice_notification_end_action">会話を終了</string>
+    <string name="external_data_sync_channel">安全な転送</string>
+    <string name="external_data_sync_active">安全な転送またはターミナルを使用中</string>
+    <string name="external_data_sync_stop">停止</string>
+    <string name="rich_channel_conversations">ボットとルーム</string>
+    <string name="rich_channel_conversations_desc">ボットからのメッセージ、メンション、ラウンドの概要</string>
+    <string name="rich_channel_live">進行中のアクティビティ</string>
+    <string name="rich_channel_live_desc">ボットやルームの作業の進捗</string>
+    <string name="rich_channel_approvals">承認</string>
+    <string name="rich_brand">Hermes</string>
+    <string name="rich_you">あなた</string>
+    <string name="rich_thinking">考え中…</string>
+    <string name="rich_done">完了</string>
+    <string name="rich_sending">送信中…</string>
+    <string name="rich_unlock_to_answer">Hermesのロックを解除して回答</string>
+    <string name="rich_reply_failed">送信できませんでした · 開いて再試行してください</string>
+    <string name="rich_action_failed">送信できませんでした · Hermesを開いてください</string>
+    <plurals name="rich_quiet_more">
+        <item quantity="other">ほか%d件</item>
+    </plurals>
+    <plurals name="rich_auto_summary">
+        <item quantity="other">自動処理%d件</item>
+    </plurals>
+</resources>

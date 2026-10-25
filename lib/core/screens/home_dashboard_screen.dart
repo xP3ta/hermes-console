@@ -1508,6 +1508,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
       // the Chats screen.
       unawaited(
         LauncherWidgetChatsPublisher.instance.offer(
+          strings: Strings.of(context),
           connectionId: conn.id,
           sessions: recentSessions.where((s) => !archive.isSessionDeleted(s)),
         ),
@@ -2130,8 +2131,10 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
       chatsLoaded: _initialLoadComplete,
       mainName: _activeProfileLabel(context),
       bots: homeBoardBots(
+        titleOf: (session) => localizedSessionTitle(Strings.of(context), session),
         profiles: profiles,
         sessions: snapshot?.sessions ?? const [],
+        strings: strings,
         activeSessions: _activeRoster,
         observedAt: _activeRosterAt,
         turnStartedAtOf: (id, profile) =>

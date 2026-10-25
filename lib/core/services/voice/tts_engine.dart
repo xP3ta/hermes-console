@@ -17,6 +17,7 @@ import '../../utils/transport_privacy.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'neural_tts_worker.dart';
+import 'voice_language.dart';
 
 abstract class TtsEngine {
   /// Lee [text] en voz alta. Lanza con mensaje claro si no se pudo.
@@ -303,25 +304,22 @@ class TtsUserException extends FormatException {
     : super('tts_user_error');
 }
 
-/// Listas de preferencia de voces del sistema por idioma de voz efectivo
-/// (spec 031). La de 'es' y su fallback DEBEN mantenerse byte a byte como los
-/// históricos: un test los ancla (regresión cero en español). Idioma
-/// desconocido cae a los de 'es'.
-const Map<String, List<String>> kDeviceTtsLangPrefs = {
-  'es': ['es-ES', 'es-US', 'es-MX', 'es-419', 'es-CO', 'es-AR'],
-  'en': ['en-US', 'en-GB', 'en-AU', 'en-IN'],
-};
+/// System TTS locale preferences derived from the shared language registry.
+final Map<String, List<String>> kDeviceTtsLangPrefs = Map.unmodifiable({
+  for (final entry in voiceLanguages.entries) entry.key: entry.value.deviceTtsLocales,
+});
 
 /// Fallback de [DeviceTtsEngine] cuando el dispositivo no lista idiomas o no
 /// tiene ninguno del idioma efectivo (el plugin cae a la voz por defecto si
 /// el idioma pedido no existe).
-const Map<String, String> kDeviceTtsFallback = {'es': 'es-ES', 'en': 'en-US'};
+final Map<String, String> kDeviceTtsFallback = Map.unmodifiable({
+  for (final entry in voiceLanguages.entries) entry.key: entry.value.deviceTtsFallback,
+});
 
 /// Voz del sistema (on-device). Privada y gratuita.
 class DeviceTtsEngine implements TtsEngine {
-  /// Idioma de voz efectivo ('es'|'en') con el que se elige la voz (spec 031).
-  /// Inmutable por instancia: VoiceService recicla el motor si el idioma de la
-  /// app cambia (contrato I3).
+  /// Effective voice language used to choose the system voice.
+  /// Immutable per engine; VoiceService rebuilds it after a language change.
   final String lang;
 
   DeviceTtsEngine({this.lang = 'es', DeviceTtsPlatform? platform})
@@ -352,20 +350,21 @@ class DeviceTtsEngine implements TtsEngine {
       final langs = (raw is List)
           ? raw.map((e) => e.toString()).toList()
           : <String>[];
+      final language = voiceLanguageFor(lang);
       String? pick;
-      for (final p in kDeviceTtsLangPrefs[lang] ?? kDeviceTtsLangPrefs['es']!) {
+      for (final p in language.deviceTtsLocales) {
         if (langs.contains(p)) {
           pick = p;
           break;
         }
       }
       pick ??= langs
-          .where((l) => l.toLowerCase().startsWith(lang))
+          .where((l) => l.toLowerCase().startsWith(language.code))
           .cast<String?>()
           .firstWhere((_) => true, orElse: () => null);
       // Si no hay lista (algunas ROMs) o no hay voz del idioma, intenta el
       // fallback igual: el plugin cae a la voz por defecto si no existe.
-      await _tts.setLanguage(pick ?? kDeviceTtsFallback[lang] ?? 'es-ES');
+      await _tts.setLanguage(pick ?? language.deviceTtsFallback);
     } catch (e) {
       debugPrint('[hermes-tts] local operation failed (${e.runtimeType})');
     }

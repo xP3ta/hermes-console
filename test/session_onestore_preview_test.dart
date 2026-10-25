@@ -20,6 +20,7 @@ import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/home_chat_finders.dart';
+import 'support/test_api_client.dart';
 
 class _ListOnlyClient extends ApiClient {
   _ListOnlyClient(this.sessions)
@@ -27,6 +28,10 @@ class _ListOnlyClient extends ApiClient {
         baseUrl: 'http://127.0.0.1:8642',
         apiKey: 'test-key',
         httpClient: MockClient((_) async => http.Response('{}', 404)),
+        profileDashboard: testDashboardClient(
+          baseUrl: 'http://127.0.0.1:8642',
+          httpClient: MockClient((_) async => http.Response('{}', 404)),
+        ),
       );
 
   final List<Session> sessions;
@@ -223,16 +228,14 @@ void main() {
     final manager = await ConnectionManager.create(
       await SharedPreferences.getInstance(),
     );
-    final gateway = ApiClient(
+    final gateway = testApiClient(
       baseUrl: 'http://127.0.0.1:8642',
-      apiKey: 'test-key',
       connectionId: 'conn-onestore-preview',
       httpClient: MockClient((request) async {
         if (request.url.path == '/api/sessions') {
           return http.Response(
             jsonEncode({
-              'object': 'list',
-              'data': [
+              'sessions': [
                 {
                   'id': row.id,
                   'title': row.title,
@@ -246,11 +249,14 @@ void main() {
                   'last_active': row.startedAt,
                 },
               ],
+              'total': 1,
             }),
             200,
           );
         }
-        if (request.url.path == '/health') return http.Response('{}', 200);
+        if (request.url.path == '/api/status') {
+          return http.Response('{}', 200);
+        }
         return http.Response('{}', 404);
       }),
     );

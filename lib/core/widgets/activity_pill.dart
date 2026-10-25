@@ -1,8 +1,11 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 
 import '../../l10n/app_localizations.dart';
+import '../services/notifications/notification_strings.dart'
+    show resolveNotificationLang;
 import '../models/activity_snapshot.dart';
 import '../models/tool_label.dart';
 import '../theme/app_theme.dart';
@@ -21,12 +24,16 @@ String formatTurnElapsed(Duration elapsed) {
 /// Duración de un paso terminado: `0.7 s`, `23 s`, `1:05`. Coma decimal en
 /// español.
 String formatStepDuration(Duration value, {String languageCode = 'en'}) {
+  final lang = resolveNotificationLang(languageCode);
+  final strings = lookupStrings(Locale(lang));
   final ms = value.inMilliseconds;
   if (ms < 10000) {
-    final text = (ms / 1000).toStringAsFixed(1);
-    return '${languageCode == 'es' ? text.replaceAll('.', ',') : text} s';
+    final text = NumberFormat('0.0', lang).format(ms / 1000);
+    return strings.i18n131DurationSeconds(text);
   }
-  if (ms < 60000) return '${value.inSeconds} s';
+  if (ms < 60000) {
+    return strings.i18n131DurationSeconds(value.inSeconds.toString());
+  }
   return formatTurnElapsed(value);
 }
 

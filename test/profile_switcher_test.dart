@@ -19,6 +19,7 @@ import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/face_halo.dart';
+import 'support/test_api_client.dart';
 
 AgentProfile _profile(String name, {bool isDefault = false}) =>
     AgentProfile.fromJson({
@@ -36,14 +37,13 @@ final _roster = [
 /// Session lists per profile, so a switch shows up in the recents.
 http.Client _sessions(List<String> reads) => MockClient((request) async {
   final path = request.url.path;
-  if (path == '/health') return http.Response('{"status":"ok"}', 200);
-  final match = RegExp(r'^(?:/p/([^/]+))?/api/sessions$').firstMatch(path);
-  if (match == null) return http.Response('{}', 404);
-  final profile = match.group(1) ?? 'default';
+  if (path == '/api/status') return http.Response('{"status":"ok"}', 200);
+  if (path != '/api/sessions') return http.Response('{}', 404);
+  final profile = request.url.queryParameters['profile'] ?? 'default';
   reads.add(profile);
   return http.Response(
-    '{"data":[{"id":"s-$profile","title":"$profile chat","source":"cli",'
-    '"started_at":1790000000,"last_active":1790000100}],"has_more":false}',
+    '{"sessions":[{"id":"s-$profile","title":"$profile chat","source":"cli",'
+    '"started_at":1790000000,"last_active":1790000100}],"total":1}',
     200,
   );
 });
@@ -117,9 +117,8 @@ void main() {
       app(
         HomeDashboardScreen(
           connManager: manager,
-          clientFactory: (conn) => ApiClient(
+          clientFactory: (conn) => testApiClient(
             baseUrl: conn.baseUrl,
-            apiKey: conn.apiKey,
             httpClient: _sessions(reads),
           ),
           dashboardAuthProbe: (_) async => DashboardAuthCheck.ok,
@@ -169,9 +168,8 @@ void main() {
             connection: connection,
             connManager: manager,
             current: DrawerSection.home,
-            recentSessionsClientFactory: (saved) => ApiClient(
+            recentSessionsClientFactory: (saved) => testApiClient(
               baseUrl: saved.baseUrl,
-              apiKey: saved.apiKey,
               httpClient: _sessions(reads),
             ),
           ),
@@ -447,11 +445,8 @@ void main() {
       app(
         HomeDashboardScreen(
           connManager: manager,
-          clientFactory: (conn) => ApiClient(
-            baseUrl: conn.baseUrl,
-            apiKey: conn.apiKey,
-            httpClient: _sessions([]),
-          ),
+          clientFactory: (conn) =>
+              testApiClient(baseUrl: conn.baseUrl, httpClient: _sessions([])),
           dashboardAuthProbe: (_) async => DashboardAuthCheck.ok,
         ),
       ),

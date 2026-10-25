@@ -27,6 +27,7 @@ import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/design_shots.dart' show loadDesignFonts;
+import 'support/test_api_client.dart';
 
 const _shotKey = ValueKey('rg1215-shot');
 
@@ -177,9 +178,8 @@ void main() {
       connection: _connection,
       sessionId: _session.id,
       sessionTitle: _session.title,
-      api: ApiClient(
+      api: testApiClient(
         baseUrl: 'http://192.168.255.254:8642',
-        apiKey: 'test',
         httpClient: MockClient((_) async => http.Response('nf', 404)),
       ),
       attachDesktopRuntimeOnLoad: false,

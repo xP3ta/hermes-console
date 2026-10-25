@@ -25,6 +25,7 @@ import 'package:hermes_android/core/services/turn_outbox_store.dart';
 import 'package:hermes_android/core/models/message_reaction.dart';
 import 'package:hermes_android/core/services/message_reaction_prefs.dart';
 import 'package:hermes_android/main.dart';
+import 'support/test_api_client.dart';
 
 class _StreamingGateway
     implements
@@ -152,9 +153,8 @@ Session _session() => Session(
   startedAt: 0,
 );
 
-ApiClient _safeApi() => ApiClient(
+ApiClient _safeApi() => testApiClient(
   baseUrl: 'https://example.test',
-  apiKey: 'test-key',
   httpClient: MockClient((_) async => http.Response('not found', 404)),
 );
 

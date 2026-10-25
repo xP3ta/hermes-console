@@ -20,7 +20,9 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// Counts every request Home's status refresh sends to the Gateway.
+import 'support/test_api_client.dart';
+
+/// Counts every request Home's status refresh sends to the Dashboard.
 final class _Server {
   _Server({
     this.sessionsStatus = 200,
@@ -32,18 +34,18 @@ final class _Server {
   int sessionsStatus;
   int healthStatus;
 
-  /// Delay of /health, so a status check stays in flight.
+  /// Delay of /api/status, so a status check stays in flight.
   Duration healthDelay = Duration.zero;
 
   /// When set, /api/sessions serves this many rows newest first, paged like
-  /// the Gateway (`limit` capped at 200, `has_more`). The first
+  /// the Dashboard (`limit` capped at 100, `total`). The first
   /// [leadingAutomation] rows are cron reports Home does not list.
   final int? totalSessions;
   final int leadingAutomation;
   final sessionQueries = <Map<String, String>>[];
 
   /// Delay of the authenticated list read: a server busy serving other
-  /// clients answers /health at once but the paged list late (#1215).
+  /// clients answers /api/status at once but the paged list late (#1215).
   Duration sessionsDelay = Duration.zero;
   final paths = <String>[];
 
@@ -52,7 +54,7 @@ final class _Server {
   http.Client client() => MockClient((request) async {
     paths.add(request.url.path);
     switch (request.url.path) {
-      case '/health':
+      case '/api/status':
         if (healthDelay > Duration.zero) {
           await Future<void>.delayed(healthDelay);
         }
@@ -66,9 +68,9 @@ final class _Server {
         final total = totalSessions;
         if (total != null) return _page(request.url.queryParameters, total);
         return http.Response(
-          '{"data":[{"id":"s-1","title":"Hola","source":"cli",'
+          '{"sessions":[{"id":"s-1","title":"Hola","source":"cli",'
           '"started_at":1790000000,"last_active":1790000100}],'
-          '"has_more":false}',
+          '"total":1}',
           200,
         );
     }
@@ -76,7 +78,7 @@ final class _Server {
   });
 
   http.Response _page(Map<String, String> query, int total) {
-    final limit = (int.tryParse(query['limit'] ?? '') ?? 50).clamp(1, 200);
+    final limit = (int.tryParse(query['limit'] ?? '') ?? 50).clamp(1, 100);
     final offset = int.tryParse(query['offset'] ?? '') ?? 0;
     final rows = [
       for (var i = offset; i < total && i < offset + limit; i++)
@@ -90,11 +92,10 @@ final class _Server {
     ];
     return http.Response(
       jsonEncode({
-        'object': 'list',
-        'data': rows,
+        'sessions': rows,
+        'total': total,
         'limit': limit,
         'offset': offset,
-        'has_more': offset + rows.length < total,
       }),
       200,
     );
@@ -167,11 +168,8 @@ void main() {
         supportedLocales: Strings.supportedLocales,
         home: HomeDashboardScreen(
           connManager: manager,
-          clientFactory: (conn) => ApiClient(
-            baseUrl: conn.baseUrl,
-            apiKey: 'test-key',
-            httpClient: server.client(),
-          ),
+          clientFactory: (conn) =>
+              testApiClient(baseUrl: conn.baseUrl, httpClient: server.client()),
           dashboardAuthProbe: (_) async => DashboardAuthCheck.ok,
           missionPrewarm: prewarm,
           homeWidgetUpdateOverride: homeWidget?.update,
@@ -204,7 +202,7 @@ void main() {
     await settleHome(tester);
     expect(find.text('online · Default'), findsOneWidget);
     expect(find.text('Hola'), findsWidgets);
-    expect(server.count('/health'), 1);
+    expect(server.count('/api/status'), 1);
     expect(server.count('/api/sessions'), 1);
     await unmount(tester);
   });
@@ -262,19 +260,21 @@ void main() {
     await unmount(tester);
   });
 
-  testWidgets('a rejected session list still shows Home offline', (
-    tester,
-  ) async {
+  testWidgets('a rejected session list shows the Dashboard login, not '
+      'online', (tester) async {
     final server = _Server(sessionsStatus: 401);
     await pumpHome(tester, server);
     await settleHome(tester);
     expect(find.text('online · Default'), findsNothing);
-    expect(server.count('/api/sessions'), 1);
+    expect(find.text('Dashboard login required · QA'), findsOneWidget);
+    // One list read, sent twice: the Dashboard retries a 401 once with its
+    // session before it gives up.
+    expect(server.count('/api/sessions'), 2);
     await unmount(tester);
   });
 
-  // #1215: /health answered 200 throughout while a slow or overloaded server
-  // made the paged list read time out or fail with 5xx. Home flipped to
+  // #1215: /api/status answered 200 throughout while a slow or overloaded
+  // server made the paged list read time out or fail with 5xx. Home flipped to
   // "offline · QA" on every such refresh and back on the next one.
   for (final failure in ['503', 'timeout']) {
     testWidgets('a reachable server with a slow list read stays online '
@@ -313,7 +313,7 @@ void main() {
     });
   }
 
-  testWidgets('an unreachable /health keeps Home offline, no list read', (
+  testWidgets('an unreachable /api/status keeps Home offline, no list read', (
     tester,
   ) async {
     final server = _Server(healthStatus: 503);
@@ -343,7 +343,7 @@ void main() {
       await pumpHome(tester, server);
       await settleHome(tester);
       expect(find.text('online · Default'), findsOneWidget);
-      final healthReads = server.count('/health');
+      final healthReads = server.count('/api/status');
 
       server.healthDelay = const Duration(seconds: 2);
       await recheck(tester);
@@ -358,7 +358,7 @@ void main() {
           onlineFrames += 1;
         }
       }
-      expect(server.count('/health'), healthReads + 1, reason: 'it ran');
+      expect(server.count('/api/status'), healthReads + 1, reason: 'it ran');
       expect(checkingFrames, 0);
       expect(onlineFrames, 30);
 
@@ -379,7 +379,7 @@ void main() {
           drawerChecking += 1;
         }
       }
-      expect(server.count('/health'), healthReads + 2);
+      expect(server.count('/api/status'), healthReads + 2);
       expect(drawerChecking, 0);
       await unmount(tester);
     });

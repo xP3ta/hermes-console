@@ -8,6 +8,7 @@ import 'package:hermes_android/core/widgets/hermes_drawer.dart';
 import 'package:hermes_android/core/widgets/status_pill.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'support/test_api_client.dart';
 
 void main() {
   Widget app(Locale locale, Widget child) => MaterialApp(
@@ -101,11 +102,11 @@ void main() {
             connManager: manager,
             current: DrawerSection.home,
             connected: connected,
-            recentSessionsClientFactory: (saved) => ApiClient(
+            // An empty recents list in the Dashboard's shape.
+            recentSessionsClientFactory: (saved) => testApiClient(
               baseUrl: saved.baseUrl,
-              apiKey: saved.apiKey,
               httpClient: MockClient(
-                (_) async => http.Response('{"object":"list","data":[]}', 200),
+                (_) async => http.Response('{"sessions":[],"total":0}', 200),
               ),
             ),
           ),

@@ -321,6 +321,19 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen>
       );
       return;
     }
+    if (kind == CapabilityFailureKind.blockedByScan &&
+        _item.kind == CapabilityKind.plugin) {
+      // Plugin scan block: nothing changed. Show the verdict and findings;
+      // there is deliberately no override here.
+      final detail = error is CapabilityFailure ? error.detail.trim() : '';
+      notices.notify(
+        FeedbackKind.error,
+        detail.isEmpty
+            ? s.cphPluginBlockedByScan
+            : '${s.cphPluginBlockedByScan}\n$detail',
+      );
+      return;
+    }
     if (kind == CapabilityFailureKind.uncertain) {
       // The request may have landed: refresh once, never retry.
       notices.notify(

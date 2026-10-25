@@ -15,6 +15,7 @@ import 'package:hermes_android/core/services/replay_coordinator.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
+import 'support/test_api_client.dart';
 
 class _DroppingDesktopGateway implements HermesDesktopGateway {
   _DroppingDesktopGateway({this.canonicalStoredId});
@@ -337,9 +338,8 @@ ActiveChat _attachRecovering(
   connection: _connection(id),
   sessionId: 'session-$id',
   sessionTitle: id,
-  api: ApiClient(
+  api: testApiClient(
     baseUrl: 'http://127.0.0.1:1',
-    apiKey: 'k',
     httpClient: MockClient((_) async => http.Response('not found', 404)),
   ),
   desktopGateway: gateway,

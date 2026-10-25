@@ -103,9 +103,7 @@ Session _cron(String id, {String? parent}) => Session.fromJson({
 Future<LinkedSessionDeleteResult> _deleteChat(ApiClient client) =>
     deleteSessionWithResolvedLineage(
       Session.fromJson({'id': 's1', 'source': 'cli'}),
-      loadSessions: ({bool includeChildren = false}) async => const [],
       deleteSession: client.deleteSession,
-      serverDeletesChain: true,
     );
 
 void main() {
@@ -221,29 +219,33 @@ void main() {
   });
 
   group('cron lineage', () {
-    test('the server deletes the chain: no child read, one DELETE', () async {
+    test('the server deletes the chain: no list read, one DELETE', () async {
       final hermes = _Hermes();
       final client = clientFor(hermes);
-      var childReads = 0;
       final root = _cron('cron_job1_20261016');
       final result = await deleteSessionWithResolvedLineage(
         root,
-        loadSessions: ({bool includeChildren = false}) async {
-          if (includeChildren) childReads++;
-          return [
-            root,
-            _cron('c1', parent: root.id),
-            _cron('c2', parent: 'c1'),
-          ];
-        },
         deleteSession: (id) => client.deleteSession(id),
-        serverDeletesChain: client.hasDashboard,
       );
       expect(result.status, LinkedSessionDeleteStatus.deleted);
-      expect(childReads, 0);
+      expect(hermes.listQueries, isEmpty);
       expect(hermes.deletes.map((u) => u.path), [
         '/api/sessions/cron_job1_20261016',
       ]);
+      expect(hermes.gatewayHits, 0);
+    });
+
+    test('a continuation is deleted by its own id, chain and all', () async {
+      final hermes = _Hermes();
+      final client = clientFor(hermes);
+      final leaf = _cron('c2', parent: 'c1');
+      final result = await deleteSessionWithResolvedLineage(
+        leaf,
+        deleteSession: (id) => client.deleteSession(id),
+      );
+      expect(result.status, LinkedSessionDeleteStatus.deleted);
+      expect(hermes.listQueries, isEmpty);
+      expect(hermes.deletes.map((u) => u.path), ['/api/sessions/c2']);
       expect(hermes.gatewayHits, 0);
     });
 
@@ -259,38 +261,13 @@ void main() {
         final root = _cron('cron_job1_20261016');
         final result = await deleteSessionWithResolvedLineage(
           root,
-          loadSessions: ({bool includeChildren = false}) async => [root],
           deleteSession: (id) => client.deleteSession(id),
           cronDeletion: LinkedCronDeletionMode.deleteSchedule,
           deleteCronJob: (jobId) => dashboard.deleteCronJob(jobId),
-          serverDeletesChain: client.hasDashboard,
         );
         expect(result.status, LinkedSessionDeleteStatus.deleted);
         expect(hermes.calls, ['cron:job1', 'session:cron_job1_20261016']);
         expect(hermes.gatewayHits, 0);
-      },
-    );
-
-    test(
-      'without a Dashboard the lineage is still read and deleted leaf first',
-      () async {
-        final deleted = <String>[];
-        var childReads = 0;
-        final root = _cron('cron_job1_20261016');
-        final result = await deleteSessionWithResolvedLineage(
-          root,
-          loadSessions: ({bool includeChildren = false}) async {
-            if (includeChildren) childReads++;
-            return [root, _cron('c1', parent: root.id)];
-          },
-          deleteSession: (id) async {
-            deleted.add(id);
-            return true;
-          },
-        );
-        expect(result.status, LinkedSessionDeleteStatus.deleted);
-        expect(childReads, 1);
-        expect(deleted, ['c1', 'cron_job1_20261016']);
       },
     );
   });
@@ -388,18 +365,23 @@ void main() {
       'lib/core/screens/session_detail_screen.dart',
       'lib/core/screens/session_list_screen.dart',
     ]) {
+      final source = File(path).readAsStringSync();
       expect(
-        File(path).readAsStringSync(),
-        contains('serverDeletesChain:'),
-        reason: '$path must say whether the server deletes the chain',
+        source,
+        contains('ApiClient.forConnection(widget.connection)'),
+        reason: path,
+      );
+      expect(
+        source,
+        isNot(contains('serverDeletesChain:')),
+        reason: '$path: the Dashboard deletes the chain, nothing reads it',
       );
     }
     final settings = File(
       'lib/core/screens/settings_screen.dart',
     ).readAsStringSync();
     expect(settings, contains('ApiClient.forConnection(targetConnection)'));
-    expect(settings, contains('includeChildren: !client.hasDashboard'));
-    final chat = File('lib/core/screens/chat_screen.dart').readAsStringSync();
-    expect(chat, contains('ApiClient.forConnection(widget.connection)'));
+    expect(settings, isNot(contains('includeChildren')));
+    expect(settings, isNot(contains('hasDashboard')));
   });
 }

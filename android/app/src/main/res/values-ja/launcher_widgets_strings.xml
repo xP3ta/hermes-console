@@ -1,0 +1,142 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="lw_ahora_name">いま</string>
+    <string name="lw_ahora_description">確認が必要なこと、進行中の作業、すべてが落ち着いた状態を確認</string>
+    <string name="lw_quick_name">クイックチャット</string>
+    <string name="lw_quick_description">新しいチャットや音声チャットをワンタップで開始</string>
+    <string name="lw_quick_wide_name">クイックチャット（ワイド）</string>
+    <string name="lw_cron_name">Cron</string>
+    <string name="lw_cron_description">次の予約タスクを表示。大きいサイズでは失敗したタスクを含め、すべて表示</string>
+    <string name="lw_new">新規</string>
+    <string name="lw_ask_hint">Hermesに質問…</string>
+    <string name="lw_new_description">新しいチャット</string>
+    <string name="lw_voice_description">新しい音声チャット</string>
+    <string name="lw_camera_description">カメラを使って新しいチャットを開始</string>
+    <string name="lw_open_description">Consoleを開く</string>
+    <string name="lw_agent">Hermes</string>
+    <string name="lw_calm">すべて落ち着いています</string>
+    <string name="lw_setup">Hermesを設定</string>
+    <string name="lw_setup_hint">Consoleを開いて開始</string>
+    <string name="lw_no_connection">未接続</string>
+    <string name="lw_since">%1$sから</string>
+    <string name="lw_since_one">%1$sから</string>
+    <string name="lw_since_yesterday">昨日から</string>
+    <string name="lw_since_day">%1$sから</string>
+    <string name="lw_asks_permission">%1$sが許可を求めています</string>
+    <string name="lw_asks_permission_short">許可のリクエスト</string>
+    <string name="lw_asks_you">%1$sから質問があります</string>
+    <string name="lw_asks_you_short">質問があります</string>
+    <string name="lw_needs_you_who">%1$sの確認が必要です</string>
+    <string name="lw_needs_you_short">確認が必要です</string>
+    <string name="lw_needs_you_word">要確認</string>
+    <string name="lw_allow">許可</string>
+    <string name="lw_deny">拒否</string>
+    <string name="lw_allow_short">はい</string>
+    <string name="lw_deny_short">いいえ</string>
+    <string name="lw_open">開く</string>
+    <string name="lw_thinking">考え中</string>
+    <string name="lw_responding">返信中</string>
+    <string name="lw_working">作業中</string>
+    <string name="lw_finished">完了</string>
+    <string name="lw_failed">失敗</string>
+    <string name="lw_finished_at">%1$sが完了 · %2$s</string>
+    <plurals name="lw_for_you">
+        <item quantity="other">あなた宛て%1$d件</item>
+    </plurals>
+    <plurals name="lw_running">
+        <item quantity="other">実行中%1$d件</item>
+    </plurals>
+    <plurals name="lw_needs_you">
+        <item quantity="other">要確認%1$d件</item>
+    </plurals>
+    <string name="lw_cron">Cron</string>
+    <string name="lw_cron_empty">予約タスクはありません</string>
+    <string name="lw_cron_unknown">ConsoleのCronを開くと、ここに表示されます</string>
+    <string name="lw_cron_unknown_short">まだデータがありません</string>
+    <string name="lw_cron_last">前回：%1$s</string>
+    <string name="lw_cron_failed_at">失敗：%1$s</string>
+    <string name="lw_cron_running">実行中</string>
+    <string name="lw_cron_never">まだ実行されていません</string>
+    <string name="lw_cron_paused">一時停止中</string>
+    <plurals name="lw_cron_failed">
+        <item quantity="other">失敗%1$d件</item>
+    </plurals>
+    <string name="lw_bots_name">ボット</string>
+    <string name="lw_bots_description">ボットのアイコンと応答待ちのボットを表示。大きいサイズでは各ボットの作業も表示</string>
+    <string name="lw_bots">ボット</string>
+    <string name="lw_bot_waits">%1$sが回答待ちです</string>
+    <string name="lw_bot_works">%1$sが作業中</string>
+    <string name="lw_bots_calm">落ち着いています</string>
+    <string name="lw_bot_needs_you">要確認</string>
+    <string name="lw_bot_free">待機中</string>
+    <string name="lw_bots_unknown">Consoleのボットを開くと、ここに表示されます</string>
+    <string name="lw_bots_unknown_short">まだデータがありません</string>
+    <string name="lw_bots_empty">まだボットがありません</string>
+    <plurals name="lw_bots_working">
+        <item quantity="other">作業中%1$d体</item>
+    </plurals>
+    <plurals name="lw_bots_waiting">
+        <item quantity="other">回答待ち%1$d体</item>
+    </plurals>
+    <string name="lw_rooms_name">ルーム</string>
+    <string name="lw_rooms_description">進行中のルームと返信中のメンバーを表示。大きいサイズでは複数のルームと最新のメッセージも表示</string>
+    <string name="lw_rooms">ルーム</string>
+    <string name="lw_room_answers">%1$sが返信中</string>
+    <string name="lw_room_needs_you">%1$sの確認が必要です</string>
+    <string name="lw_room_then">その後、%1$s</string>
+    <string name="lw_room_said">%1$s：%2$s</string>
+    <string name="lw_room_quiet">落ち着いています</string>
+    <string name="lw_rooms_empty">まだルームがありません</string>
+    <plurals name="lw_rooms_answering">
+        <item quantity="other">返信中%1$d件</item>
+    </plurals>
+    <plurals name="lw_rooms_waiting">
+        <item quantity="other">回答待ち%1$d件</item>
+    </plurals>
+    <string name="lw_tasks_name">タスク</string>
+    <string name="lw_tasks_description">実行中のタスクを表示。大きいサイズでは実行中のタスクの後に未処理のタスクを表示</string>
+    <string name="lw_tasks">タスク</string>
+    <string name="lw_task_running">実行中</string>
+    <string name="lw_task_attention">回答待ち</string>
+    <string name="lw_task_pending">未処理</string>
+    <string name="lw_tasks_empty">未処理のタスクはありません</string>
+    <string name="lw_tasks_unknown">Consoleのタスクを開くと、ここに表示されます</string>
+    <plurals name="lw_task_pending_more">
+        <item quantity="other">未処理 · ほか%1$d件</item>
+    </plurals>
+    <plurals name="lw_tasks_running">
+        <item quantity="other">実行中%1$d件</item>
+    </plurals>
+    <plurals name="lw_tasks_attention">
+        <item quantity="other">回答待ち%1$d件</item>
+    </plurals>
+    <plurals name="lw_tasks_pending">
+        <item quantity="other">未処理%1$d件</item>
+    </plurals>
+    <string name="lw_chats_name">チャット</string>
+    <string name="lw_chats_description">進行中のチャットを表示。大きいサイズでは最近のチャットとその状態も表示</string>
+    <string name="lw_chats">チャット</string>
+    <string name="lw_chat_working">作業中</string>
+    <string name="lw_chat_finished">完了 · %1$s</string>
+    <string name="lw_asks_permission_word">許可のリクエスト</string>
+    <string name="lw_asks_you_word">質問があります</string>
+    <string name="lw_view">表示</string>
+    <string name="lw_chats_empty">まだチャットがありません</string>
+    <string name="lw_chats_unknown">Consoleのチャットを開くと、ここに表示されます</string>
+    <string name="lw_today">今日</string>
+    <string name="lw_tomorrow">明日</string>
+    <string name="lw_yesterday">昨日</string>
+    <string name="lw_day_time">%1$s %2$s</string>
+    <string name="lw_day_at_time">%1$s %2$s</string>
+    <string name="lw_day_at_time_one">%1$s %2$s</string>
+    <string name="lw_sample_cron_job">今日のまとめ</string>
+    <string name="lw_sample_cron_next">今日 21:00</string>
+    <string name="lw_sample_chat">今週の予定</string>
+    <string name="lw_sample_chat_line">作業中 · 0:42</string>
+    <string name="lw_sample_room">チーム</string>
+    <string name="lw_sample_task">バージョンを公開</string>
+    <string name="lw_sample_task_line">Builder · 実行中</string>
+    <string name="lw_sample_room_line">Builderが返信中</string>
+    <string name="lw_sample_run_title">Hermes · ターミナル</string>
+    <string name="lw_sample_run_about">週次レポート</string>
+</resources>

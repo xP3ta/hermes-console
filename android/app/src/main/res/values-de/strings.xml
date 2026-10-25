@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="voice_notification_title">Hermes-Sprachmodus</string>
+    <string name="voice_notification_active">Hört zu</string>
+    <string name="voice_notification_paused">Pausiert</string>
+    <string name="voice_notification_mic_active">Mikrofon aktiv</string>
+    <string name="voice_notification_mic_paused">Mikrofon pausiert</string>
+    <string name="voice_notification_orb">Hermes-Sprachstatus</string>
+    <string name="voice_notification_duration">Gesprächsdauer</string>
+    <string name="voice_notification_open_hint">Zum Öffnen von Hermes tippen</string>
+    <string name="voice_notification_primary_action">Pausieren</string>
+    <string name="voice_notification_end_action">Gespräch beenden</string>
+    <string name="external_data_sync_channel">Sichere Übertragungen</string>
+    <string name="external_data_sync_active">Sichere Übertragung oder Terminal aktiv</string>
+    <string name="external_data_sync_stop">Stoppen</string>
+    <string name="rich_channel_conversations">Bots und Räume</string>
+    <string name="rich_channel_conversations_desc">Nachrichten, Erwähnungen und Rundenzusammenfassungen deiner Bots</string>
+    <string name="rich_channel_live">Laufende Aktivität</string>
+    <string name="rich_channel_live_desc">Fortschritt, während ein Bot oder Raum arbeitet</string>
+    <string name="rich_channel_approvals">Genehmigungen</string>
+    <string name="rich_brand">Hermes</string>
+    <string name="rich_you">Du</string>
+    <string name="rich_thinking">Denkt nach…</string>
+    <string name="rich_done">Erledigt</string>
+    <string name="rich_sending">Wird gesendet…</string>
+    <string name="rich_unlock_to_answer">Hermes zum Antworten entsperren</string>
+    <string name="rich_reply_failed">Senden fehlgeschlagen · für neuen Versuch öffnen</string>
+    <string name="rich_action_failed">Senden fehlgeschlagen · Hermes öffnen</string>
+    <plurals name="rich_quiet_more">
+        <item quantity="one">%d weitere</item>
+        <item quantity="other">%d weitere</item>
+    </plurals>
+    <plurals name="rich_auto_summary">
+        <item quantity="one">%d Automatisierung</item>
+        <item quantity="other">%d Automatisierungen</item>
+    </plurals>
+</resources>

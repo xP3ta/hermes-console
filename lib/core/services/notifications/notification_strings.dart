@@ -1,247 +1,227 @@
-// Textos de las notificaciones, localizados SIN BuildContext.
-//
-// Las notificaciones se disparan también desde un isolate de segundo plano
-// (BackgroundListener) donde no hay `BuildContext` ni `AppLocalizations`. Por eso
-// no podemos usar gen-l10n aquí: resolvemos el idioma leyendo la misma clave que
-// usa la app (`app_locale` de AppLocales) y devolvemos los textos a mano (es/en).
-// Mantener en sintonía con lib/l10n cuando cambie el tono.
-import 'dart:ui' show PlatformDispatcher;
+// Notification copy is available in background isolates without BuildContext.
+import 'dart:ui' show Locale, PlatformDispatcher;
 
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'strings/notif_es.dart';
+import 'strings/notif_en.dart';
+import 'strings/notif_pt.dart';
+import 'strings/notif_de.dart';
+import 'strings/notif_fr.dart';
+import 'strings/notif_it.dart';
+import 'strings/notif_ja.dart';
+import 'strings/notif_ko.dart';
+import 'strings/notif_zh.dart';
+
+const Map<String, Map<String, String>> notificationCatalogs = {
+  'es': notifEs,
+  'en': notifEn,
+  'pt': notifPt,
+  'de': notifDe,
+  'fr': notifFr,
+  'it': notifIt,
+  'ja': notifJa,
+  'ko': notifKo,
+  'zh': notifZh,
+};
+
+/// Shared language resolution for background copy and context-free callers.
+String resolveNotificationLang(String? preference, {Locale? deviceLocale}) {
+  final code = preference == null || preference == 'system'
+      ? (deviceLocale ?? PlatformDispatcher.instance.locale).languageCode
+      : preference;
+  final lang = code.toLowerCase().split(RegExp('[-_]')).first;
+  return notificationCatalogs.containsKey(lang) ? lang : 'en';
+}
+
+/// Substitute once so user-provided braces never become another argument.
+String notificationMessage(
+  String lang,
+  String key, {
+  Map<String, Object> args = const {},
+  Map<String, String>? translations,
+}) {
+  final text = (translations ?? notificationCatalogs[lang])?[key] ??
+      notificationCatalogs['en']![key]!;
+  return text.replaceAllMapped(RegExp(r'\{([A-Za-z][A-Za-z0-9_]*)\}'),
+      (match) => args[match.group(1)]?.toString() ?? match.group(0)!);
+}
+
 class NotifL10n {
-  /// true = español; false = inglés (único fallback).
-  final bool es;
-  const NotifL10n(this.es);
+  final String lang;
 
-  /// Resuelve el idioma desde SharedPreferences (clave `app_locale`): 'es'/'en'
-  /// fuerzan; 'system' (o ausente) sigue el idioma del dispositivo.
-  factory NotifL10n.of(SharedPreferences prefs) {
-    final id = prefs.getString('app_locale') ?? 'system';
-    final code = id == 'system'
-        ? PlatformDispatcher.instance.locale.languageCode
-        : id;
-    return NotifL10n(code == 'es');
-  }
+  /// Accept historical boolean callers, including the optional Portuguese flag.
+  const NotifL10n(Object language, [bool portuguese = false])
+      : lang = portuguese || language == 'pt' ? 'pt'
+          : language == true || language == 'es' ? 'es'
+          : language == 'de' ? 'de'
+          : language == 'fr' ? 'fr'
+          : language == 'it' ? 'it'
+          : language == 'ja' ? 'ja'
+          : language == 'ko' ? 'ko'
+          : language == 'zh' ? 'zh'
+          : 'en';
 
-  String _(String es_, String en) => es ? es_ : en;
+  bool get es => lang == 'es';
+  bool get pt => lang == 'pt';
+
+  factory NotifL10n.of(SharedPreferences prefs, {Locale? deviceLocale}) =>
+      NotifL10n(resolveNotificationLang(prefs.getString('app_locale'),
+          deviceLocale: deviceLocale));
+
+  String message(String key, [Map<String, Object> args = const {}]) =>
+      notificationMessage(lang, key, args: args);
 
   // ── Marca / genéricos ─────────────────────────────────────────────────────
-  String get brand => 'Hermes';
+  String get brand => message('brand');
   String get privateTitle =>
-      _('Nueva actividad en Hermes', 'New Hermes activity');
-  String get privateBody => _('Toca para verla', 'Tap to see it');
+      message('privateTitle');
+  String get privateBody =>
+      message('privateBody');
 
   /// Resumen del grupo con el número real de avisos activos (más concreto que
   /// "varios" y estable a la vista en la bandeja).
   String groupSummaryCount(int n) =>
-      _('$n avisos recientes', '$n recent alerts');
+      message('groupSummaryCount', {'n': n});
 
   // ── Canales (nombre + descripción) ────────────────────────────────────────
-  String get chApprovals => _('Aprobaciones', 'Approvals');
-  String get chApprovalsDesc => _(
-    'Permisos que el agente necesita de ti',
-    'Permissions the agent needs from you',
-  );
-  String get chReplies => _('Respuestas', 'Replies');
-  String get chRepliesDesc => _(
-    'Cuando el agente termina de responder',
-    'When the agent finishes replying',
-  );
-  String get chRuns => _('Ejecuciones', 'Runs');
-  String get chRunsDesc =>
-      _('Estado de las tareas en ejecución', 'Status of running tasks');
-  String get chTransfers => _('Transferencias', 'Transfers');
-  String get chTransfersDesc => _(
-    'Progreso de subidas y descargas SFTP',
-    'SFTP upload and download progress',
-  );
-  String get chVoice => _('Modo voz', 'Voice mode');
-  String get chVoiceDesc =>
-      _('Estado del modo voz activo', 'Active voice mode status');
-  String get chOperations => _('Operaciones locales', 'Local operations');
-  String get chOperationsDesc => _(
-    'Progreso de operaciones locales que has iniciado',
-    'Progress of local operations you started',
-  );
+  String get chApprovals => message('chApprovals');
+  String get chApprovalsDesc => message('chApprovalsDesc');
+  String get chReplies => message('chReplies');
+  String get chRepliesDesc => message('chRepliesDesc');
+  String get chRuns => message('chRuns');
+  String get chRunsDesc => message('chRunsDesc');
+  String get chTransfers => message('chTransfers');
+  String get chTransfersDesc => message('chTransfersDesc');
+  String get chVoice => message('chVoice');
+  String get chVoiceDesc => message('chVoiceDesc');
+  String get chOperations =>
+      message('chOperations');
+  String get chOperationsDesc => message('chOperationsDesc');
 
   // ── Aprobaciones ──────────────────────────────────────────────────────────
-  String get approvalTitle =>
-      _('Hermes necesita tu atención', 'Hermes needs your attention');
-  String approvalBody(String tool, String where) =>
-      _('Toca para responder', 'Tap to answer');
+  String get approvalTitle => message('approvalTitle');
+  String approvalBody(String tool, String where) => message('approvalBody');
 
   // ── Ejecuciones ───────────────────────────────────────────────────────────
-  String get runCompleted => _('Terminó', 'Finished');
-  String get runFailed => _('No pudo terminar', 'Couldn’t finish');
+  String get runCompleted => message('runCompleted');
+  String get runFailed => message('runFailed');
 
   // ── Actividad en otra superficie (Desktop / otra Console / TUI) ──────────
-  String get sessionActivityFinishedTitle =>
-      _('Terminó en otro dispositivo', 'Finished on another device');
-  String get sessionActivityFailedTitle =>
-      _('Falló en otro dispositivo', 'Failed on another device');
-  String get sessionActivityInterruptedTitle =>
-      _('Se detuvo en otro dispositivo', 'Stopped on another device');
-  String get sessionActivityBody =>
-      _('Toca para ver el resultado', 'Tap to see the result');
+  String get sessionActivityFinishedTitle => message('sessionActivityFinishedTitle');
+  String get sessionActivityFailedTitle => message('sessionActivityFailedTitle');
+  String get sessionActivityInterruptedTitle => message('sessionActivityInterruptedTitle');
+  String get sessionActivityBody => message('sessionActivityBody');
 
   // ── Tarea en segundo plano (prompt.background / background.complete) ─────
-  String get backgroundTaskFinishedTitle =>
-      _('Terminó una tarea en segundo plano', 'A background task finished');
-  String get backgroundTaskFailedTitle =>
-      _('Falló una tarea en segundo plano', 'A background task failed');
-  String get backgroundTaskBody =>
-      _('Toca para ver el resultado', 'Tap to see the result');
-  String get cronCompleted =>
-      _('Tarea programada terminada', 'Scheduled task finished');
-  String get cronFailed =>
-      _('Falló una tarea programada', 'Scheduled task failed');
-  String get kanbanCompleted => _('Tarea terminada', 'Task done');
-  String get kanbanBlocked => _('Tarea bloqueada', 'Task blocked');
-  String get kanbanNeedsAttention =>
-      _('Una tarea te necesita', 'A task needs you');
-  String get kanbanUpdated => _('Tarea actualizada', 'Task updated');
-  String get kanbanCrashed => _(
-    'Una tarea falló y se va a reintentar',
-    'A task failed and will be retried',
-  );
-  String get kanbanTimedOut => _(
-    'Una tarea tardó demasiado y se va a reintentar',
-    'A task took too long and will be retried',
-  );
-  String get kanbanGaveUp => _('Tarea detenida', 'Task stopped');
-  String get kanbanBlockLoop =>
-      _('Una tarea necesita que decidas', 'A task needs your decision');
+  String get backgroundTaskFinishedTitle => message('backgroundTaskFinishedTitle');
+  String get backgroundTaskFailedTitle => message('backgroundTaskFailedTitle');
+  String get backgroundTaskBody => message('backgroundTaskBody');
+  String get cronCompleted => message('cronCompleted');
+  String get cronFailed => message('cronFailed');
+  String get kanbanCompleted =>
+      message('kanbanCompleted');
+  String get kanbanBlocked =>
+      message('kanbanBlocked');
+  String get kanbanNeedsAttention => message('kanbanNeedsAttention');
+  String get kanbanUpdated =>
+      message('kanbanUpdated');
+  String get kanbanCrashed => message('kanbanCrashed');
+  String get kanbanTimedOut => message('kanbanTimedOut');
+  String get kanbanGaveUp =>
+      message('kanbanGaveUp');
+  String get kanbanBlockLoop => message('kanbanBlockLoop');
 
   // ── Standing goals ────────────────────────────────────────────────────────
-  String get goalDone => _('Objetivo cumplido', 'Goal reached');
-  String get goalPaused => _('Objetivo en pausa', 'Goal paused');
-  String get goalBlocked => _('Objetivo bloqueado', 'Goal blocked');
-  String get goalWaiting => _('Objetivo en espera', 'Goal waiting');
+  String get goalDone =>
+      message('goalDone');
+  String get goalPaused => message('goalPaused');
+  String get goalBlocked =>
+      message('goalBlocked');
+  String get goalWaiting =>
+      message('goalWaiting');
   String goalBody(String title) =>
-      title.isEmpty ? _('Sin título', 'Untitled') : title;
+      title.isEmpty ? message('goalBody') : title;
 
   // ── Respuestas ────────────────────────────────────────────────────────────
   String replyTitle(String? session) {
     final s = session?.trim() ?? '';
-    if (s.isEmpty) return _('Hermes respondió', 'Hermes replied');
-    return _('Hermes respondió en $s', 'Hermes replied in $s');
+    if (s.isEmpty) {
+      return message('replyTitle');
+    }
+    return message('replyTitle2', {'s': s});
   }
 
-  String get replyReadyBody =>
-      _('Respuesta lista. Toca para abrir.', 'Reply ready. Tap to open.');
+  String get replyReadyBody => message('replyReadyBody');
 
   String replyFailedTitle(String? session) {
     final s = session?.trim() ?? '';
     if (s.isEmpty) {
-      return _('Hermes encontró un problema', 'Hermes hit a problem');
+      return message('replyFailedTitle');
     }
-    return _('Problema en $s', 'Problem in $s');
+    return message('replyFailedTitle2', {'s': s});
   }
 
-  String get replyFailedBody => _(
-    'El agente no pudo completar la tarea.',
-    'The agent could not complete the task.',
-  );
+  String get replyFailedBody => message('replyFailedBody');
 
   // ── Agente local ──────────────────────────────────────────────────────────
-  String get localInstalled =>
-      _('Hermes local instalado', 'Local Hermes installed');
-  String get localInstallError =>
-      _('Error al instalar Hermes local', 'Error installing local Hermes');
-  String get localInstalledBody => _(
-    'El agente Hermes local se instaló en el dispositivo.',
-    'The local Hermes agent was installed on the device.',
-  );
-  String get localInstallErrorBody => _(
-    'No se pudo completar la instalación.',
-    'Could not complete installation.',
-  );
-  String get localRemoved =>
-      _('Hermes local eliminado', 'Local Hermes removed');
-  String get localRemoveError =>
-      _('Error al eliminar Hermes local', 'Error removing local Hermes');
-  String get localRemovedBody => _(
-    'El agente Hermes local se eliminó del dispositivo.',
-    'The local Hermes agent was removed from the device.',
-  );
-  String get localRemoveErrorBody => _(
-    'No se pudieron eliminar algunos archivos.',
-    'Some files could not be removed.',
-  );
+  String get localInstalled => message('localInstalled');
+  String get localInstallError => message('localInstallError');
+  String get localInstalledBody => message('localInstalledBody');
+  String get localInstallErrorBody => message('localInstallErrorBody');
+  String get localRemoved => message('localRemoved');
+  String get localRemoveError => message('localRemoveError');
+  String get localRemovedBody => message('localRemovedBody');
+  String get localRemoveErrorBody => message('localRemoveErrorBody');
 
   // ── Prueba ────────────────────────────────────────────────────────────────
-  String get testTitle => 'Console';
-  String get testBody => _(
-    'Las notificaciones funcionan. Te avisaré cuando Hermes termine o te necesite.',
-    'Notifications work. I’ll tell you when Hermes finishes or needs you.',
-  );
+  String get testTitle => message('testTitle');
+  String get testBody => message('testBody');
 
   // ── Acciones ──────────────────────────────────────────────────────────────
-  String get actOpen => _('Abrir', 'Open');
+  String get actOpen => message('actOpen');
 
   // ── Servicio en segundo plano (foreground service) ────────────────────────
-  String get bgChannel => _('Servicio en segundo plano', 'Background service');
-  String get bgChannelDesc => _(
-    'Mantiene a Hermes activo con la app cerrada',
-    'Keeps Hermes active while the app is closed',
-  );
-  String get bgActive =>
-      _('Activo en segundo plano', 'Active in the background');
+  String get bgChannel => message('bgChannel');
+  String get bgChannelDesc => message('bgChannelDesc');
+  String get bgActive => message('bgActive');
 
   /// The fixed card while Console stays connected with the app closed.
-  String get bgConnected => _('Conectado a Hermes', 'Connected to Hermes');
-  String get bgStop => _('Detener', 'Stop');
+  String get bgConnected => message('bgConnected');
+  String get bgStop => message('bgStop');
 
   // ── Modo voz (estados) ────────────────────────────────────────────────────
-  String get voiceTitle => _('Modo voz', 'Voice mode');
-  String get vListening => _('Escuchando…', 'Listening…');
-  String get vTranscribing => _('Transcribiendo…', 'Transcribing…');
-  String get vThinking => _('Pensando…', 'Thinking…');
-  String get vTool => _('Ejecutando una herramienta…', 'Running a tool…');
-  String get vWaitingApproval => _('Necesita aprobación', 'Needs approval');
-  String get vSpeaking => _('Hablando…', 'Speaking…');
-  String get vError => _('Error en modo voz', 'Voice mode error');
-  String get voiceActive => _(
-    'Puedes seguir hablando · toca para abrir Hermes',
-    'Keep talking · tap to open Hermes',
-  );
-  String get voicePaused => _(
-    'Conversación en pausa · pulsa Continuar o abre Hermes',
-    'Conversation paused · tap Continue or open Hermes',
-  );
-  String get voiceWaitingApproval => _(
-    'Hermes necesita aprobación · pulsa Revisar',
-    'Hermes needs approval · tap Review',
-  );
-  String get voiceOpenHintActive => _(
-    'Sigue hablando · toca para abrir Hermes',
-    'Keep talking · tap to open Hermes',
-  );
-  String get voiceOpenHintPaused => _(
-    'Pulsa Continuar o toca para abrir Hermes',
-    'Tap Continue or tap to open Hermes',
-  );
-  String get voiceOpenHintApproval => _(
-    'Pulsa Revisar para aprobar en Hermes',
-    'Tap Review to approve in Hermes',
-  );
-  String get voiceCardListening => _('Escuchando', 'Listening');
-  String get voiceCardPaused => _('En pausa', 'Paused');
-  String get voiceCardWaitingApproval =>
-      _('Necesita aprobación', 'Needs approval');
-  String get voiceCardMicActive => _('Micrófono activo', 'Microphone active');
-  String get voiceCardMicPaused => _('Micrófono pausado', 'Microphone paused');
-  String get voiceCardOrbDescription =>
-      _('Estado de voz de Hermes', 'Hermes voice status');
-  String get voiceCardDurationDescription =>
-      _('Duración de la conversación', 'Conversation duration');
-  String get voicePause => _('Pausar', 'Pause');
-  String get voiceContinue => _('Continuar', 'Continue');
-  String get voiceReviewApproval => _('Revisar', 'Review');
-  String get voiceEnd => _('Terminar', 'End');
-  String get voiceEndConversation =>
-      _('Terminar conversación', 'End conversation');
-  String get readAloudPlaying => _('Leyendo respuesta', 'Reading response');
-  String get readAloudPaused => _('Lectura en pausa', 'Reading paused');
+  String get voiceTitle => message('voiceTitle');
+  String get vListening => message('vListening');
+  String get vTranscribing => message('vTranscribing');
+  String get vThinking => message('vThinking');
+  String get vTool => message('vTool');
+  String get vWaitingApproval => message('vWaitingApproval');
+  String get vSpeaking => message('vSpeaking');
+  String get vError => message('vError');
+  String get voiceActive => message('voiceActive');
+  String get voicePaused => message('voicePaused');
+  String get voiceWaitingApproval => message('voiceWaitingApproval');
+  String get voiceOpenHintActive => message('voiceOpenHintActive');
+  String get voiceOpenHintPaused => message('voiceOpenHintPaused');
+  String get voiceOpenHintApproval => message('voiceOpenHintApproval');
+  String get voiceCardListening =>
+      message('voiceCardListening');
+  String get voiceCardPaused => message('voiceCardPaused');
+  String get voiceCardWaitingApproval => message('voiceCardWaitingApproval');
+  String get voiceCardMicActive => message('voiceCardMicActive');
+  String get voiceCardMicPaused => message('voiceCardMicPaused');
+  String get voiceCardOrbDescription => message('voiceCardOrbDescription');
+  String get voiceCardDurationDescription => message('voiceCardDurationDescription');
+  String get voicePause => message('voicePause');
+  String get voiceContinue => message('voiceContinue');
+  String get voiceReviewApproval => message('voiceReviewApproval');
+  String get voiceEnd => message('voiceEnd');
+  String get voiceEndConversation => message('voiceEndConversation');
+  String get readAloudPlaying => message('readAloudPlaying');
+  String get readAloudPaused => message('readAloudPaused');
+
+  /// Fallback para el nombre de la herramienta en curso cuando el servidor
+  /// no envió una etiqueta legible (NotifL10n está disponible sin contexto).
+  String get tool => message('tool');
 }

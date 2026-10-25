@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../l10n/app_localizations.dart';
 import '../widgets/mission_profile_avatar.dart';
 
 enum MissionBotTaskPriority { low, normal, high }
@@ -55,8 +56,7 @@ class _MissionBotTaskSheetState extends State<MissionBotTaskSheet> {
   bool _showValidation = false;
   String? _submissionError;
 
-  bool get _english =>
-      Localizations.localeOf(context).languageCode.toLowerCase() == 'en';
+  Strings get _strings => Strings.of(context);
 
   @override
   void dispose() {
@@ -87,17 +87,15 @@ class _MissionBotTaskSheetState extends State<MissionBotTaskSheet> {
       if (!mounted) return;
       setState(() {
         _submitting = false;
-        _submissionError = _english
-            ? 'The task could not be assigned. Try again.'
-            : 'No se pudo encargar la tarea. Inténtalo de nuevo.';
+        _submissionError = _strings.i18n131TaskSheetTheTaskCouldNotBeAssignedTry;
       });
     }
   }
 
   String _priorityLabel(MissionBotTaskPriority priority) => switch (priority) {
-    MissionBotTaskPriority.low => _english ? 'Low' : 'Baja',
-    MissionBotTaskPriority.normal => _english ? 'Normal' : 'Normal',
-    MissionBotTaskPriority.high => _english ? 'High' : 'Alta',
+    MissionBotTaskPriority.low => _strings.i18n131TaskSheetLow,
+    MissionBotTaskPriority.normal => _strings.i18n131TaskSheetNormal,
+    MissionBotTaskPriority.high => _strings.i18n131TaskSheetHigh,
   };
 
   @override
@@ -129,7 +127,7 @@ class _MissionBotTaskSheetState extends State<MissionBotTaskSheet> {
             ),
             const SizedBox(height: 18),
             Text(
-              _english ? 'Assign task' : 'Encargar tarea',
+              _strings.i18n131TaskSheetAssignTask,
               style: theme.textTheme.headlineSmall?.copyWith(
                 fontWeight: FontWeight.w700,
               ),
@@ -192,14 +190,12 @@ class _MissionBotTaskSheetState extends State<MissionBotTaskSheet> {
               textInputAction: TextInputAction.next,
               maxLength: 160,
               decoration: InputDecoration(
-                labelText: _english ? 'What' : 'Qué',
-                hintText: _english
-                    ? 'What should this profile do?'
-                    : '¿Qué debe hacer este perfil?',
+                labelText: _strings.i18n131TaskSheetWhat,
+                hintText: _strings.i18n131TaskSheetWhatShouldThisProfileDo,
               ),
               validator: (value) {
                 if (value == null || value.trim().isEmpty) {
-                  return _english ? 'Describe the task.' : 'Describe la tarea.';
+                  return _strings.i18n131TaskSheetDescribeTheTask;
                 }
                 return null;
               },
@@ -214,16 +210,14 @@ class _MissionBotTaskSheetState extends State<MissionBotTaskSheet> {
               maxLines: 5,
               maxLength: 1200,
               decoration: InputDecoration(
-                labelText: _english ? 'Why (optional)' : 'Para qué (opcional)',
-                hintText: _english
-                    ? 'Add context or the expected result.'
-                    : 'Añade contexto o el resultado esperado.',
+                labelText: _strings.i18n131TaskSheetWhyOptional,
+                hintText: _strings.i18n131TaskSheetAddContextOrTheExpectedResult,
                 alignLabelWithHint: true,
               ),
             ),
             const SizedBox(height: 12),
             Text(
-              _english ? 'Priority' : 'Prioridad',
+              _strings.i18n131TaskSheetPriority,
               style: theme.textTheme.titleSmall?.copyWith(
                 fontWeight: FontWeight.w700,
               ),
@@ -273,7 +267,9 @@ class _MissionBotTaskSheetState extends State<MissionBotTaskSheet> {
                         dimension: 20,
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
-                    : Text(_english ? 'Assign task' : 'Encargar tarea'),
+                    : Text(
+                        _strings.i18n131TaskSheetAssignTask,
+                      ),
               ),
             ),
           ],

@@ -122,7 +122,8 @@ void main() {
     );
     expect(_plain(tester, tail.first), 'line 7\nline 8\nline 9\nline 10');
     expect(find.text('Show all (10 lines)'), findsOneWidget);
-    expect(find.text('exit 1'), findsOneWidget);
+    final strings = Strings.of(tester.element(find.byType(TerminalOutputCard)));
+    expect(find.text(strings.i18n131P6ExitCode('1')), findsOneWidget);
 
     // The red line is painted with the theme's error colour.
     final rich = tester.widget<RichText>(tail.first);
@@ -302,6 +303,7 @@ void main() {
     await tester.pumpWidget(_host(const TerminalOutputCard(output: 'a\nb')));
     expect(find.text('Output'), findsOneWidget);
     expect(find.byIcon(Icons.expand_more), findsNothing);
-    expect(find.text('exit 0'), findsNothing);
+    final strings = Strings.of(tester.element(find.byType(TerminalOutputCard)));
+    expect(find.text(strings.i18n131P6ExitCode('0')), findsNothing);
   });
 }

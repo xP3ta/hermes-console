@@ -25,6 +25,7 @@ import 'package:hermes_android/core/services/turn_outbox_store.dart';
 import 'package:hermes_android/core/services/voice/conversation/native_voice.dart';
 import 'package:hermes_android/core/services/voice/stt_engine.dart';
 import 'package:hermes_android/main.dart';
+import '../support/test_api_client.dart';
 
 class _MemorySecureStorage extends FlutterSecureStorage {
   _MemorySecureStorage(this.values);
@@ -141,9 +142,8 @@ Session _session() => Session(
   startedAt: 0,
 );
 
-ApiClient _safeApi() => ApiClient(
+ApiClient _safeApi() => testApiClient(
   baseUrl: 'http://127.0.0.1:8642',
-  apiKey: String.fromCharCodes(const [116]),
   httpClient: MockClient((_) async => http.Response('not found', 404)),
 );
 

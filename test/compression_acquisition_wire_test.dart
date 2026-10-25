@@ -11,6 +11,7 @@ import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:hermes_android/core/services/compression_restore_store.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
+import 'support/test_api_client.dart';
 
 class _Dashboard extends DashboardClient {
   _Dashboard() : super(host: '127.0.0.1', port: 1, manualToken: 'unused');
@@ -104,9 +105,8 @@ void main() {
             storage: InMemoryCompressionRestoreStorage(),
             mutationNamespaceForTesting: 'review-wire-$foreign',
           ),
-          api: ApiClient(
+          api: testApiClient(
             baseUrl: 'http://127.0.0.1:1',
-            apiKey: String.fromCharCodes([113, 97]),
             httpClient: MockClient((_) async => http.Response('{}', 500)),
           ),
         );
@@ -237,9 +237,8 @@ Future<List<Object?>> _runTipAcquisitionWire({
       storage: InMemoryCompressionRestoreStorage(),
       mutationNamespaceForTesting: 'fix4-tip-${storedTip ?? 'missing'}',
     ),
-    api: ApiClient(
+    api: testApiClient(
       baseUrl: 'http://127.0.0.1:1',
-      apiKey: String.fromCharCodes(List<int>.filled(32, 7)),
       httpClient: MockClient((_) async => http.Response('{}', 500)),
     ),
   );
@@ -333,9 +332,8 @@ _runConcurrentAcquisitionWire() async {
       storage: InMemoryCompressionRestoreStorage(),
       mutationNamespaceForTesting: 'fix4-concurrent-wire',
     ),
-    api: ApiClient(
+    api: testApiClient(
       baseUrl: 'http://127.0.0.1:1',
-      apiKey: String.fromCharCodes(List<int>.filled(32, 7)),
       httpClient: MockClient((_) async => http.Response('{}', 500)),
     ),
   );

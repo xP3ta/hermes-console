@@ -16,6 +16,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
+import 'support/test_api_client.dart';
 
 class _ConfiguredCreateGateway
     implements
@@ -317,9 +318,8 @@ ActiveChat _chat(
   sessionTitle: 'Draft',
   notifications: null,
   onTerminal: () {},
-  api: ApiClient(
+  api: testApiClient(
     baseUrl: 'http://127.0.0.1:8642',
-    apiKey: 'test-key',
     httpClient:
         httpClient ??
         MockClient((_) async => http.Response('unexpected REST', 500)),
@@ -375,9 +375,8 @@ _widgetChat(_ConfiguredCreateGateway gateway) async {
     ),
     sessionId: 'draft-mobile',
     sessionTitle: 'Widget model',
-    api: ApiClient(
+    api: testApiClient(
       baseUrl: 'http://127.0.0.1:8642',
-      apiKey: 'test-key',
       httpClient: MockClient((_) async => http.Response('unexpected', 500)),
     ),
     desktopGateway: gateway,

@@ -23,6 +23,7 @@ import 'package:hermes_android/core/widgets/hermes_app_bar.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'support/test_api_client.dart';
 
 /// Envuelve la pantalla bajo test con el tema y la localización que necesita
 /// (`Strings.of(context)`), forzando español para poder afirmar sobre textos.
@@ -49,6 +50,12 @@ class _EmptyHomeClient extends ApiClient {
         apiKey: 'test-key',
         httpClient: MockClient(
           (_) async => throw StateError('unexpected HTTP'),
+        ),
+        profileDashboard: testDashboardClient(
+          baseUrl: 'http://127.0.0.1:8642',
+          httpClient: MockClient(
+            (_) async => throw StateError('unexpected HTTP'),
+          ),
         ),
       );
 
@@ -99,6 +106,12 @@ class _DeferredHomeClient extends ApiClient {
         apiKey: 'test-key',
         httpClient: MockClient(
           (_) async => throw StateError('unexpected HTTP'),
+        ),
+        profileDashboard: testDashboardClient(
+          baseUrl: 'http://127.0.0.1:8642',
+          httpClient: MockClient(
+            (_) async => throw StateError('unexpected HTTP'),
+          ),
         ),
       );
 

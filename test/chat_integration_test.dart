@@ -45,6 +45,7 @@ import 'package:hermes_android/core/services/local_transcript_store.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 
 import 'support/desktop_chat_socket.dart';
+import 'support/test_api_client.dart';
 
 const _kWatchKey = 'bg_watch_runs'; // BackgroundWatch._key (privado)
 
@@ -75,9 +76,8 @@ SavedConnection _localConn() => SavedConnection(
 /// server, is the history a chat reopens. [requests] proves no network was
 /// read.
 ApiClient _restOnlyLocalApi(SavedConnection connection, List<Uri> requests) =>
-    ApiClient(
+    testApiClient(
       baseUrl: connection.baseUrl,
-      apiKey: connection.apiKey,
       httpClient: MockClient((request) async {
         requests.add(request.url);
         return http.Response('unused', 500);
@@ -111,9 +111,8 @@ ActiveChat _socketChat(
     connection: _remoteConn(),
     sessionId: sessionId,
     sessionTitle: title,
-    api: ApiClient(
+    api: testApiClient(
       baseUrl: _remoteConn().baseUrl,
-      apiKey: 'test-key',
       httpClient: HostCounter(),
     ),
     desktopGateway: socket,
@@ -701,9 +700,8 @@ void main() {
       connection: firstConnection,
       sessionId: 'shared-session',
       sessionTitle: 'Primero',
-      api: ApiClient(
+      api: testApiClient(
         baseUrl: firstConnection.baseUrl,
-        apiKey: 'test-key',
         httpClient: MockClient((_) async => http.Response('not found', 404)),
       ),
       desktopGateway: _FakeDesktopGateway(),
@@ -712,9 +710,8 @@ void main() {
       connection: secondConnection,
       sessionId: 'shared-session',
       sessionTitle: 'Segundo',
-      api: ApiClient(
+      api: testApiClient(
         baseUrl: secondConnection.baseUrl,
-        apiKey: 'test-key',
         httpClient: MockClient((_) async => http.Response('not found', 404)),
       ),
       desktopGateway: _FakeDesktopGateway(),
@@ -734,9 +731,8 @@ void main() {
       sessionId: 'shared-profile-session',
       sessionTitle: 'Perfil A',
       sessionProfile: 'profile-a',
-      api: ApiClient(
+      api: testApiClient(
         baseUrl: connection.baseUrl,
-        apiKey: 'test-key',
         httpClient: MockClient((_) async => http.Response('not found', 404)),
       ),
       desktopGateway: _FakeDesktopGateway(),
@@ -746,9 +742,8 @@ void main() {
       sessionId: 'shared-profile-session',
       sessionTitle: 'Perfil B',
       sessionProfile: 'profile-b',
-      api: ApiClient(
+      api: testApiClient(
         baseUrl: connection.baseUrl,
-        apiKey: 'test-key',
         httpClient: MockClient((_) async => http.Response('not found', 404)),
       ),
       desktopGateway: _FakeDesktopGateway(),
@@ -833,9 +828,8 @@ void main() {
       sessionId: sessionId,
       sessionTitle: 'Owner $profile',
       sessionProfile: profile,
-      api: ApiClient(
+      api: testApiClient(
         baseUrl: connection.baseUrl,
-        apiKey: 'test-key',
         httpClient: MockClient((_) async => http.Response('not found', 404)),
       ),
       desktopGateway: gateway,
@@ -1403,9 +1397,8 @@ void main() {
           connection: _remoteConn(),
           sessionId: 'sess-voice-context',
           sessionTitle: 'Noticias por voz',
-          api: ApiClient(
+          api: testApiClient(
             baseUrl: _remoteConn().baseUrl,
-            apiKey: 'test-key',
             httpClient: MockClient(
               (_) async => http.Response('not found', 404),
             ),
@@ -1481,7 +1474,7 @@ void main() {
           sessionId: 'sess-interrupt-recovery',
           sessionTitle: 'Interrupt recovery',
           sessionProfile: 'profile-a',
-          api: ApiClient(baseUrl: _remoteConn().baseUrl, apiKey: 'test-key'),
+          api: testApiClient(baseUrl: _remoteConn().baseUrl),
           desktopGateway: desktop,
         );
 
@@ -1533,7 +1526,7 @@ void main() {
             sessionId: 'sess-interrupt-no-retry-${failure.label}',
             sessionTitle: 'Interrupt no retry',
             sessionProfile: 'profile-a',
-            api: ApiClient(baseUrl: _remoteConn().baseUrl, apiKey: 'test-key'),
+            api: testApiClient(baseUrl: _remoteConn().baseUrl),
             desktopGateway: desktop,
           );
 
@@ -1571,9 +1564,8 @@ void main() {
           connection: _remoteConn(),
           sessionId: 'sess-late-voice-terminal',
           sessionTitle: 'Barge tardío',
-          api: ApiClient(
+          api: testApiClient(
             baseUrl: _remoteConn().baseUrl,
-            apiKey: 'test-key',
             httpClient: MockClient(
               (_) async => http.Response('not found', 404),
             ),
@@ -1642,9 +1634,8 @@ void main() {
           }
           return http.Response('not found', 404);
         });
-        final api = ApiClient(
+        final api = testApiClient(
           baseUrl: _remoteConn().baseUrl,
-          apiKey: 'test-key',
           httpClient: client,
         );
 
@@ -1705,7 +1696,7 @@ void main() {
           connection: _remoteConn(),
           sessionId: 'sess-redirect-optimistic',
           sessionTitle: 'Redirect optimista',
-          api: ApiClient(baseUrl: _remoteConn().baseUrl, apiKey: 'test-key'),
+          api: testApiClient(baseUrl: _remoteConn().baseUrl),
           desktopGateway: desktop,
         );
 
@@ -1753,7 +1744,7 @@ void main() {
           connection: _remoteConn(),
           sessionId: 'sess-redirect-queued',
           sessionTitle: 'Redirect queued',
-          api: ApiClient(baseUrl: _remoteConn().baseUrl, apiKey: 'test-key'),
+          api: testApiClient(baseUrl: _remoteConn().baseUrl),
           desktopGateway: desktop,
         );
         chat.acquireSubagentForegroundPresentation();
@@ -1878,7 +1869,7 @@ void main() {
           sessionId: 'sess-redirect-recovery',
           sessionTitle: 'Redirect recovery',
           sessionProfile: 'profile-a',
-          api: ApiClient(baseUrl: _remoteConn().baseUrl, apiKey: 'test-key'),
+          api: testApiClient(baseUrl: _remoteConn().baseUrl),
           desktopGateway: desktop,
         );
 
@@ -1939,7 +1930,7 @@ void main() {
           connection: _remoteConn(),
           sessionId: 'sess-redirect-timeout',
           sessionTitle: 'Redirect timeout',
-          api: ApiClient(baseUrl: _remoteConn().baseUrl, apiKey: 'test-key'),
+          api: testApiClient(baseUrl: _remoteConn().baseUrl),
           desktopGateway: desktop,
         );
 
@@ -1986,9 +1977,8 @@ void main() {
       () async {
         const mobileSessionId = 'sess-steer-navigation-mobile';
         const storedSessionId = 'sess-steer-navigation-server';
-        ApiClient api() => ApiClient(
+        ApiClient api() => testApiClient(
           baseUrl: _remoteConn().baseUrl,
-          apiKey: 'test-key',
           httpClient: MockClient((request) async {
             if (request.method == 'GET' &&
                 request.url.path == '/api/sessions/$storedSessionId/messages') {
@@ -2083,7 +2073,7 @@ void main() {
         connection: _remoteConn(),
         sessionId: sessionId,
         sessionTitle: 'Voz durante navegación',
-        api: ApiClient(baseUrl: _remoteConn().baseUrl, apiKey: 'test-key'),
+        api: testApiClient(baseUrl: _remoteConn().baseUrl),
         desktopGateway: _FakeDesktopGateway(),
       );
       final voiceSubscription = chat.changes.listen((_) {});
@@ -2107,9 +2097,8 @@ void main() {
             DesktopRedirectDisposition.queued,
           ],
         );
-        final api = ApiClient(
+        final api = testApiClient(
           baseUrl: _remoteConn().baseUrl,
-          apiKey: 'test-key',
           httpClient: MockClient((request) async {
             if (request.method == 'GET' &&
                 request.url.path == '/api/sessions/sess-queued/messages') {
@@ -2197,9 +2186,8 @@ void main() {
           connection: _remoteConn(),
           sessionId: 'sess-1',
           sessionTitle: 'Imagen estructurada',
-          api: ApiClient(
+          api: testApiClient(
             baseUrl: _remoteConn().baseUrl,
-            apiKey: 'test-key',
             httpClient: HostCounter(),
           ),
           desktopGateway: desktop,
@@ -2270,9 +2258,8 @@ void main() {
           connection: _remoteConn(),
           sessionId: 'sess-video-live',
           sessionTitle: 'Vídeo estructurado',
-          api: ApiClient(
+          api: testApiClient(
             baseUrl: _remoteConn().baseUrl,
-            apiKey: 'test-key',
             httpClient: HostCounter(),
           ),
           desktopGateway: desktop,
@@ -2334,9 +2321,8 @@ void main() {
           connection: _remoteConn(),
           sessionId: 'sess-tool-media-live',
           sessionTitle: 'Audio de herramienta',
-          api: ApiClient(
+          api: testApiClient(
             baseUrl: _remoteConn().baseUrl,
-            apiKey: 'k',
             httpClient: HostCounter(),
           ),
           desktopGateway: desktop,
@@ -2384,9 +2370,8 @@ void main() {
           connection: _remoteConn(),
           sessionId: 'sess-https',
           sessionTitle: 'Imagen HTTPS',
-          api: ApiClient(
+          api: testApiClient(
             baseUrl: _remoteConn().baseUrl,
-            apiKey: 'test-key',
             httpClient: HostCounter(),
           ),
           desktopGateway: desktop,
@@ -2435,9 +2420,8 @@ void main() {
         connection: _remoteConn(),
         sessionId: 'sess-same-basename',
         sessionTitle: 'Dos imágenes',
-        api: ApiClient(
+        api: testApiClient(
           baseUrl: _remoteConn().baseUrl,
-          apiKey: 'test-key',
           httpClient: HostCounter(),
         ),
         desktopGateway: desktop,
@@ -2482,9 +2466,8 @@ void main() {
       'mantiene el mismo run entre varias aprobaciones y la respuesta final',
       () async {
         final desktop = _FakeDesktopGateway();
-        final api = ApiClient(
+        final api = testApiClient(
           baseUrl: _remoteConn().baseUrl,
-          apiKey: 'test-key',
           httpClient: MockClient((request) async {
             if (request.method == 'GET' &&
                 request.url.path == '/api/sessions/sess-1/messages') {
@@ -2601,9 +2584,8 @@ void main() {
         connection: _remoteConn(),
         sessionId: 'sess-stop-queue',
         sessionTitle: 'Stop total',
-        api: ApiClient(
+        api: testApiClient(
           baseUrl: _remoteConn().baseUrl,
-          apiKey: 'test-key',
           httpClient: MockClient((_) async => http.Response('not found', 404)),
         ),
         desktopGateway: desktop,
@@ -2682,9 +2664,8 @@ void main() {
         connection: connection,
         sessionId: 'sess-legacy-rewind',
         sessionTitle: 'Legacy rewind',
-        api: ApiClient(
+        api: testApiClient(
           baseUrl: connection.baseUrl,
-          apiKey: 'test-key',
           httpClient: MockClient((_) async => http.Response('not found', 404)),
         ),
         desktopGateway: desktop,
@@ -2743,9 +2724,8 @@ void main() {
         connection: connection,
         sessionId: 'sess-rewind-ownership',
         sessionTitle: 'Rewind ownership',
-        api: ApiClient(
+        api: testApiClient(
           baseUrl: connection.baseUrl,
-          apiKey: 'test-key',
           httpClient: MockClient((_) async => http.Response('not found', 404)),
         ),
         desktopGateway: desktop,
@@ -2792,9 +2772,8 @@ void main() {
         connection: _remoteConn(),
         sessionId: 'sess-rewind',
         sessionTitle: 'Rewind',
-        api: ApiClient(
+        api: testApiClient(
           baseUrl: _remoteConn().baseUrl,
-          apiKey: 'test-key',
           httpClient: MockClient((_) async => http.Response('not found', 404)),
         ),
         desktopGateway: desktop,
@@ -2840,9 +2819,8 @@ void main() {
         connection: _remoteConn(),
         sessionId: 'sess-rewind-race',
         sessionTitle: 'Rewind race',
-        api: ApiClient(
+        api: testApiClient(
           baseUrl: _remoteConn().baseUrl,
-          apiKey: 'test-key',
           httpClient: MockClient((_) async => http.Response('not found', 404)),
         ),
         desktopGateway: desktop,
@@ -2893,9 +2871,8 @@ void main() {
         connection: _remoteConn(),
         sessionId: 'sess-rewind-model-switch',
         sessionTitle: 'Rewind model switch',
-        api: ApiClient(
+        api: testApiClient(
           baseUrl: _remoteConn().baseUrl,
-          apiKey: 'test-key',
           httpClient: MockClient((_) async => http.Response('not found', 404)),
         ),
         desktopGateway: desktop,
@@ -2938,9 +2915,8 @@ void main() {
       connection: _remoteConn(),
       sessionId: 'sess-rewind-error',
       sessionTitle: 'Rewind error',
-      api: ApiClient(
+      api: testApiClient(
         baseUrl: _remoteConn().baseUrl,
-        apiKey: 'test-key',
         httpClient: MockClient((_) async => http.Response('not found', 404)),
       ),
       desktopGateway: desktop,
@@ -2979,9 +2955,8 @@ void main() {
         connection: _remoteConn(),
         sessionId: 'sess-vault-continuation',
         sessionTitle: 'Vault continuation',
-        api: ApiClient(
+        api: testApiClient(
           baseUrl: _remoteConn().baseUrl,
-          apiKey: '',
           httpClient: MockClient((_) async => http.Response('not found', 404)),
         ),
         desktopGateway: desktop,
@@ -3015,9 +2990,8 @@ void main() {
       connection: _remoteConn(),
       sessionId: 'sess-rewind-ack-lost',
       sessionTitle: 'Rewind ACK lost',
-      api: ApiClient(
+      api: testApiClient(
         baseUrl: _remoteConn().baseUrl,
-        apiKey: '',
         httpClient: MockClient((_) async => http.Response('not found', 404)),
       ),
       desktopGateway: desktop,

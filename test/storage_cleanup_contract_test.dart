@@ -498,13 +498,14 @@ void main() {
         );
         // Two terminal proofs plus the two explicit read-only reloads.
         expect(server.historyReads, hasLength(4));
+        // Every profile reads its history from the Dashboard; a named one is
+        // selected with ?profile=, never with the Gateway's /p/<profile>/.
         expect(
           server.historyReads.every(
             (uri) =>
-                uri.path ==
-                (profile == 'default'
-                    ? '/api/sessions/s/messages'
-                    : '/p/$profile/api/sessions/s/messages'),
+                uri.path == '/api/sessions/s/messages' &&
+                uri.queryParameters['profile'] ==
+                    (profile == 'default' ? null : profile),
           ),
           isTrue,
         );

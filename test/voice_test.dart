@@ -436,6 +436,15 @@ void main() {
       ]);
     });
 
+    test('lista de locales del sistema en portugués', () {
+      expect(kSystemSttLocalePrefs['pt'], const [
+        'pt_BR',
+        'pt_PT',
+        'pt-BR',
+        'pt',
+      ]);
+    });
+
     test('la clave del caché de recognizers incluye el idioma', () {
       final base = sherpaModelByKind(SherpaModelKind.whisperBase);
       expect(SherpaSttEngine.recognizerCacheKey(base, 'es'), '${base.id}:es');
@@ -474,6 +483,26 @@ void main() {
       expect(neuralVoiceById(s.onnxVoiceId), isNotNull);
     });
 
+    test('sin elección guardada, app en portugués → Faber y pm_santa', () async {
+      SharedPreferences.setMockInitialValues({'app_locale': 'pt'});
+      final prefs = await SharedPreferences.getInstance();
+      final s = VoiceSettings.load(prefs);
+      expect(s.onnxVoiceId, 'pt_BR-faber-medium');
+      expect(s.streamingTtsVoice, 'pm_santa');
+      // La voz propuesta debe existir de verdad en el catálogo.
+      expect(neuralVoiceById(s.onnxVoiceId), isNotNull);
+    });
+
+    test('Japanese and Korean start with Android when no voice was chosen', () async {
+      for (final language in ['ja', 'ko']) {
+        SharedPreferences.setMockInitialValues({'app_locale': language});
+        final prefs = await SharedPreferences.getInstance();
+        final settings = VoiceSettings.load(prefs);
+        expect(settings.ttsEngine, TtsEngineKind.device);
+        expect(settings.onnxVoiceId, isEmpty);
+      }
+    });
+
     test('una elección guardada se respeta en ambos idiomas', () async {
       for (final locale in const ['es', 'en']) {
         SharedPreferences.setMockInitialValues({
@@ -496,11 +525,13 @@ void main() {
       }
     });
 
-    test('los helpers de default cubren idiomas desconocidos cayendo a es', () {
+    test('default helpers use English for unknown languages', () {
       expect(VoiceSettings.defaultOnnxVoiceFor('es'), 'es_ES-davefx-medium');
-      expect(VoiceSettings.defaultOnnxVoiceFor('xx'), 'es_ES-davefx-medium');
+      expect(VoiceSettings.defaultOnnxVoiceFor('xx'), 'en_US-amy-medium');
       expect(VoiceSettings.defaultStreamingVoiceFor('es'), 'em_santa');
-      expect(VoiceSettings.defaultStreamingVoiceFor('xx'), 'em_santa');
+      expect(VoiceSettings.defaultStreamingVoiceFor('xx'), 'af_heart');
+      expect(VoiceSettings.defaultOnnxVoiceFor('pt'), 'pt_BR-faber-medium');
+      expect(VoiceSettings.defaultStreamingVoiceFor('pt'), 'pm_santa');
     });
   });
 
@@ -526,6 +557,11 @@ void main() {
         'en-IN',
       ]);
       expect(kDeviceTtsFallback['en'], 'en-US');
+    });
+
+    test('lista de voces del sistema en portugués', () {
+      expect(kDeviceTtsLangPrefs['pt'], const ['pt-BR', 'pt-PT']);
+      expect(kDeviceTtsFallback['pt'], 'pt-BR');
     });
   });
 }

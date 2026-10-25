@@ -25,6 +25,7 @@ import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
+import 'support/test_api_client.dart';
 
 final _connection = SavedConnection(
   id: 'notif-open',
@@ -76,9 +77,8 @@ ActiveChat _attach(
   sessionId: session.id,
   sessionTitle: session.title,
   sessionSnapshot: session,
-  api: ApiClient(
+  api: testApiClient(
     baseUrl: 'https://example.invalid',
-    apiKey: 'test-key',
     httpClient: MockClient((_) async => http.Response('unused', 500)),
   ),
   storedMessageLoader: loader,

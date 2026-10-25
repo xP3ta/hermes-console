@@ -11,6 +11,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
+import 'support/test_api_client.dart';
 
 /// Fake Hermes gateway (v7 contract) for a chat reopened after the app
 /// process restarted while the agent waits on a `clarify`.
@@ -134,9 +135,8 @@ ActiveChat _coldChat(_Gateway gateway, TuiGatewayClient client) {
     sessionTitle: 'Clarify restart',
     notifications: null,
     onTerminal: () {},
-    api: ApiClient(
+    api: testApiClient(
       baseUrl: connection.baseUrl,
-      apiKey: connection.apiKey,
       httpClient: MockClient((_) async => http.Response('unused', 500)),
     ),
     desktopGateway: client,

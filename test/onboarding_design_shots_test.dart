@@ -19,6 +19,7 @@ import 'package:http/testing.dart';
 import 'support/design_shots.dart';
 import 'support/onboarding_fakes.dart';
 import 'support/connection_editor_actions.dart';
+import 'support/test_api_client.dart';
 
 const _root = ValueKey('onboarding-shot-root');
 
@@ -218,6 +219,10 @@ class _HomeDesignClient extends ApiClient {
         baseUrl: 'https://fixture.invalid:8642',
         apiKey: 'synthetic-design-key',
         httpClient: MockClient((_) async => http.Response('{}', 404)),
+        profileDashboard: testDashboardClient(
+          baseUrl: 'https://fixture.invalid:8642',
+          httpClient: MockClient((_) async => http.Response('{}', 404)),
+        ),
       );
 
   @override

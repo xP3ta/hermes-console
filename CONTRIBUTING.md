@@ -16,7 +16,8 @@ instances.
    says what changed for the user or the code, optionally prefixed by the area
    (`Voice: ...`, `fix(chat): ...`). The commit history shows the tone.
 6. Public text (README, release notes, issues, commit messages) is in English.
-   The app itself is translated into English and Spanish in `lib/l10n/*.arb`.
+   The app itself is translated into English, Spanish and Brazilian
+   Portuguese in `lib/l10n/*.arb`.
 
 ## Development checks
 

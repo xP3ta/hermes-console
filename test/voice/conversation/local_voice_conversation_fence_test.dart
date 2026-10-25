@@ -14,6 +14,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../support/desktop_chat_socket.dart';
 import '../../support/in_memory_compression_restore_storage.dart';
+import '../../support/test_api_client.dart';
 
 /// Spec 048 / US1 — corte selectivo en el controlador
 /// (contracts/narration-fence.md): un re-render que solo toca texto por
@@ -200,9 +201,8 @@ Future<_Harness> _harness() async {
     ),
     sessionId: 'visible-session',
     sessionTitle: 'Voz',
-    api: ApiClient(
+    api: testApiClient(
       baseUrl: 'http://hermes.test:8642',
-      apiKey: 'test-key',
       httpClient: gateway.counter,
     ),
     desktopGateway: gateway.socket,
