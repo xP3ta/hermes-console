@@ -1,4 +1,8 @@
+import 'dart:io' show IOException;
+
 import 'package:flutter/foundation.dart';
+import 'package:web_socket_channel/web_socket_channel.dart'
+    show WebSocketChannelException;
 
 import '../models/profile_pet.dart';
 import 'tui_gateway_client.dart';
@@ -29,8 +33,15 @@ class ProfilePetService {
   /// su payload refleja el perfil de arranque (no necesariamente el perfil
   /// activo en la app), así que solo debe usarse como disparador de un
   /// `pet.info` fresco, nunca como fuente de verdad del slug.
-  Stream<void> get petChanged =>
-      _gateway.events.where((event) => event.type == 'pet.changed').map((_) {});
+  ///
+  /// The socket's transport losses also travel on `events`, for its owners
+  /// (list, Home, chat), which hear them there. They are not pet changes:
+  /// a listener of this trigger must not get them as errors (it had no
+  /// handler, so they ended up uncaught). Any other error still surfaces.
+  Stream<void> get petChanged => _gateway.events
+      .where((event) => event.type == 'pet.changed')
+      .map((_) {})
+      .handleError((Object _) {}, test: _isTransportLoss);
 
   /// Mascota activa del [profile] según el servidor, o `null` si el gateway
   /// no soporta `pet.*` o la lectura falló (→ manda la selección local).
@@ -134,3 +145,12 @@ class ProfilePetService {
       ? 'código ${error.code}'
       : error.runtimeType.toString();
 }
+
+/// What a [TuiGatewayClient] puts on `events` when its socket goes: its own
+/// close, heartbeat and probe verdicts, a lost or malformed transport, and
+/// the socket's raw error.
+bool _isTransportLoss(Object? error) =>
+    (error is StateError && error.message.startsWith('Hermes Desktop')) ||
+    error is TuiGatewayRpcError ||
+    error is WebSocketChannelException ||
+    error is IOException;
