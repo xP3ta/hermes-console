@@ -962,7 +962,17 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     final c = Theme.of(context).hermes;
     _queueMeasure();
     return PopScope(
-      canPop: _step == _Step.welcome && !_busy && !_exiting,
+      // Back leaves exactly where [_back] would leave: the welcome, and the
+      // guided help with nothing behind it. The latter used to be refused
+      // here while [_back] asked `maybePop` again, which met the same refusal
+      // and called [_back] again: an endless microtask loop (ANR on 1.3.0).
+      canPop:
+          (_step == _Step.welcome ||
+              (widget.guided &&
+                  _history.isEmpty &&
+                  _step != _Step.success)) &&
+          !_busy &&
+          !_exiting,
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop) _back();
       },
