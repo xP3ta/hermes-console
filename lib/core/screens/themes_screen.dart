@@ -9,6 +9,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:uuid/uuid.dart';
 
+import '../utils/theme_error_copy.dart';
 import '../../l10n/app_localizations.dart';
 import '../../main.dart';
 import '../theme/app_theme.dart';
@@ -116,9 +117,6 @@ class _ThemesScreenState extends State<ThemesScreen> {
 
   HermesAppState? get _root =>
       context.findAncestorStateOfType<HermesAppState>();
-  bool get _es => Localizations.localeOf(context).languageCode == 'es';
-  String _t(String es, String en) => _es ? es : en;
-
   Future<void> _select(String id, {bool followSystem = false}) async {
     final testSelect = widget.onSelectForTesting;
     if (testSelect != null) {
@@ -131,7 +129,8 @@ class _ThemesScreenState extends State<ThemesScreen> {
     try {
       await root.setThemeId(id, followSystem: followSystem);
     } on ThemeProfileStoreException catch (error) {
-      _message(error.message);
+      if (!mounted) return;
+      _message(themeErrorCopy(Strings.of(context), error.code));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -228,7 +227,9 @@ class _ThemesScreenState extends State<ThemesScreen> {
       ]);
     } on Object {
       if (mounted) {
-        _message(_t('No se pudo exportar.', 'Could not export.'));
+        _message(
+          Strings.of(context).i18n131ThemeExportFailed,
+        );
       }
     }
   }
@@ -294,9 +295,11 @@ class _ThemesScreenState extends State<ThemesScreen> {
         _message(Strings.of(context).themesFutureSchema);
       }
     } on ThemeProfileCodecException catch (error) {
-      if (mounted) _message(error.message);
+      if (mounted) {
+        _message(themeErrorCopy(Strings.of(context), error.code, field: error.field));
+      }
     } on ThemeProfileStoreException catch (error) {
-      if (mounted) _message(error.message);
+      if (mounted) _message(themeErrorCopy(Strings.of(context), error.code));
     } on FormatException {
       if (mounted) {
         _message(Strings.of(context).themesInvalidUtf8);

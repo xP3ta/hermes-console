@@ -10,6 +10,7 @@ import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 
 import '../utils/transport_privacy.dart';
+import 'strings/oauth_callback_copy.dart';
 
 /// Deliberately body-free: provider messages, codes and tokens are not diagnostics.
 class MobileOAuthException implements Exception {
@@ -332,9 +333,9 @@ class MobileOAuthLogin {
             !query.containsKey('error');
         req.response.statusCode = valid ? 200 : 400;
         req.response.write(
-          _callbackPage(
+          oauthCallbackPage(
             ok: valid,
-            spanish: _prefersSpanish(req.headers.value('accept-language')),
+            lang: oauthCallbackLanguage(req.headers.value('accept-language')),
           ),
         );
         if (valid) consumed = true; // consume before ANY await/exchange
@@ -434,44 +435,4 @@ class _ResumeObserver with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) onResumed();
   }
-}
-
-// Static page for the loopback callback. The listener has no BuildContext, so
-// the texts live here. Nothing from the request is echoed into the page.
-bool _prefersSpanish(String? acceptLanguage) {
-  final first = (acceptLanguage ?? '').split(',').first.trim().toLowerCase();
-  return first.startsWith('es');
-}
-
-String _callbackPage({required bool ok, required bool spanish}) {
-  final (title, body) = switch ((ok, spanish)) {
-    (true, true) => (
-      'Sesión iniciada',
-      'Puedes cerrar esta pestaña y volver a Console.',
-    ),
-    (true, false) => (
-      'Signed in',
-      'You can close this tab and go back to Console.',
-    ),
-    (false, true) => (
-      'No se pudo completar el acceso',
-      'Vuelve a Console e inténtalo de nuevo.',
-    ),
-    (false, false) => (
-      "Sign-in didn't finish",
-      'Go back to Console and try again.',
-    ),
-  };
-  return '<!doctype html><html lang="${spanish ? 'es' : 'en'}"><head>'
-      '<meta charset="utf-8">'
-      '<meta name="viewport" content="width=device-width, initial-scale=1">'
-      '<meta name="color-scheme" content="light dark">'
-      '<title>$title</title><style>'
-      ':root{color-scheme:light dark}'
-      'body{margin:0;min-height:100vh;display:grid;place-items:center;'
-      'font:18px/1.5 system-ui,sans-serif;background:#faf7f2;color:#2b2b2b}'
-      'main{padding:24px;max-width:28em;text-align:center}'
-      'h1{font-size:1.5em;margin:0 0 .5em}p{margin:0;font-size:1em}'
-      '@media(prefers-color-scheme:dark){body{background:#1c1c1e;color:#eeeae4}}'
-      '</style></head><body><main><h1>$title</h1><p>$body</p></main></body></html>';
 }

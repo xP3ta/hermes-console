@@ -18,6 +18,8 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'support/test_api_client.dart';
+
 /// 1x1 transparent PNG: a real raster the avatar decoder accepts.
 const _png =
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA'
@@ -45,10 +47,10 @@ AgentProfile _profile(
 });
 
 http.Client _sessions() => MockClient((request) async {
-  if (request.url.path == '/health') {
+  if (request.url.path == '/api/status') {
     return http.Response('{"status":"ok"}', 200);
   }
-  return http.Response('{"data":[],"has_more":false}', 200);
+  return http.Response('{"sessions":[],"total":0}', 200);
 });
 
 void main() {
@@ -161,11 +163,8 @@ void main() {
             current: DrawerSection.home,
             profileAvatarLoader: loader,
             profileFacesLocked: locked,
-            recentSessionsClientFactory: (saved) => ApiClient(
-              baseUrl: saved.baseUrl,
-              apiKey: 'test-key',
-              httpClient: _sessions(),
-            ),
+            recentSessionsClientFactory: (saved) =>
+                testApiClient(baseUrl: saved.baseUrl, httpClient: _sessions()),
           ),
           body: const SizedBox.shrink(),
         ),

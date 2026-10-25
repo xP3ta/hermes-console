@@ -20,6 +20,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
+import 'support/test_api_client.dart';
 
 const _maxLocalTranscriptMessages = 1000;
 const _maxLocalTranscriptEncodedBytes = 2 * 1024 * 1024;
@@ -53,9 +54,8 @@ const _legacyTranscriptSession =
 /// server, is the history a chat reopens. Default wiring gives every
 /// topology the official gateway. [requests] proves no network was read.
 ApiClient _restOnlyLocalApi(SavedConnection connection, List<Uri> requests) =>
-    ApiClient(
+    testApiClient(
       baseUrl: connection.baseUrl,
-      apiKey: connection.apiKey,
       httpClient: MockClient((request) async {
         requests.add(request.url);
         return http.Response('unused', 500);

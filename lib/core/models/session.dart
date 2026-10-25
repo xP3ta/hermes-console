@@ -275,6 +275,7 @@ class Session implements SessionSortKey {
     );
     if (!isPlaceholderTitle(humanizedTitle) &&
         !_looksInternalTitle(humanizedTitle) &&
+        !_looksStrayCjkTitle(humanizedTitle, preview) &&
         !syntheticTodoTitle) {
       return humanizedTitle;
     }
@@ -499,6 +500,21 @@ class Session implements SessionSortKey {
         normalized.startsWith('operation interrupted:') ||
         normalized == 'operation interrupted.';
   }
+
+  static final _cjkChar = RegExp(
+    r'[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af]',
+  );
+  static final _latinLetter = RegExp(r'[A-Za-z\u00C0-\u024F]');
+
+  /// A model-generated title with a stray ideogram where an accented letter
+  /// belongs ("qu茅" for "qué"): Latin letters mixed with Chinese/Japanese/
+  /// Korean while the first message has none. It is hidden in the UI (the title
+  /// falls back to the one derived from the message); a title written entirely
+  /// in CJK is a deliberate translation and is kept.
+  static bool _looksStrayCjkTitle(String title, String preview) =>
+      _cjkChar.hasMatch(title) &&
+      _latinLetter.hasMatch(title) &&
+      !_cjkChar.hasMatch(preview);
 
   /// Primeras ~6 palabras de [text], limpiadas de puntuación de borde. Base del
   /// título autogenerado.

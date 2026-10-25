@@ -14,6 +14,7 @@ import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../support/test_api_client.dart';
 
 /// Records the routes Home pushes. ChatScreen needs the whole app above it,
 /// so the test reads what the route would build instead of mounting it.
@@ -38,6 +39,10 @@ class _Healthy extends ApiClient {
         baseUrl: 'http://127.0.0.1:8642',
         apiKey: 'synthetic-key',
         httpClient: MockClient((_) async => http.Response('{}', 404)),
+        profileDashboard: testDashboardClient(
+          baseUrl: 'http://127.0.0.1:8642',
+          httpClient: MockClient((_) async => http.Response('{}', 404)),
+        ),
       );
 
   @override

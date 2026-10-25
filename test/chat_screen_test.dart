@@ -179,6 +179,7 @@ import 'package:hermes_android/core/widgets/subagent_activity_card.dart';
 
 import 'support/inter_font.dart';
 import 'support/provider_logo_probe.dart';
+import 'support/test_api_client.dart';
 
 AgentProfileAvatar _testProfileAvatar() => AgentProfileAvatar.fromDataUri(
   'data:image/png;base64,'
@@ -2513,9 +2514,8 @@ Future<void> _tapSheetRow(WidgetTester tester, Finder row) async {
   await tester.tap(row);
 }
 
-ApiClient _safeApi() => ApiClient(
+ApiClient _safeApi() => testApiClient(
   baseUrl: 'http://127.0.0.1:8642',
-  apiKey: 'k',
   httpClient: MockClient((_) async => http.Response('not found', 404)),
 );
 
@@ -3009,6 +3009,7 @@ void main() {
     String? newChatWorkspace,
     Map<ModelPickerSource, ModelPickerFallback>? modelPickerFallbacks,
     DashboardClient Function(SavedConnection)? providerReauthClientFactory,
+    DashboardClient? transcriptDashboard,
   }) async {
     // Forzar locale español para que las cadenas i18n de ChatScreen coincidan
     // con las expectativas del test (el test fue escrito en español).
@@ -3077,6 +3078,7 @@ void main() {
         disableForegroundKeepAlive: desktopGateway != null,
         transcriptPageSizeForTesting: transcriptPageSizeForTesting,
         wallClockMsForTesting: wallClockMs,
+        transcriptDashboard: transcriptDashboard,
       );
       chat.internalMessagesForTesting = List<Map<String, dynamic>>.from(
         messages,
@@ -6459,9 +6461,8 @@ void main() {
       addTearDown(tester.view.reset);
       final gateway = _CompleteShortHistoryGateway();
       var restCalls = 0;
-      final api = ApiClient(
+      final api = testApiClient(
         baseUrl: 'https://example.test',
-        apiKey: 'test-key',
         httpClient: MockClient((request) async {
           restCalls += 1;
           final limit = int.parse(
@@ -6740,9 +6741,8 @@ void main() {
         headers: const {'content-type': 'application/json'},
       );
     });
-    final api = ApiClient(
+    final api = testApiClient(
       baseUrl: 'https://example.test',
-      apiKey: 'test-key',
       httpClient: client,
     );
     addTearDown(api.close);
@@ -7181,9 +7181,8 @@ void main() {
           headers: const {'content-type': 'application/json'},
         );
       });
-      final api = ApiClient(
+      final api = testApiClient(
         baseUrl: 'https://example.test',
-        apiKey: 'test-key',
         httpClient: client,
       );
       addTearDown(api.close);
@@ -7829,9 +7828,8 @@ void main() {
         tester,
         desktopGateway: _UiRewindGateway(),
         connection: _remoteConn('conn-cold-load-404'),
-        api: ApiClient(
+        api: testApiClient(
           baseUrl: 'http://127.0.0.1:8642',
-          apiKey: 'k',
           httpClient: MockClient((request) async {
             if (request.url.path == '/api/sessions/sess-test') {
               return http.Response(
@@ -7902,9 +7900,8 @@ void main() {
       messages: const [
         {'role': 'assistant', 'content': 'Historial intacto'},
       ],
-      api: ApiClient(
+      api: testApiClient(
         baseUrl: 'http://127.0.0.1:8642',
-        apiKey: 'k',
         httpClient: MockClient(
           (_) async => http.Response(
             jsonEncode({
@@ -8129,9 +8126,8 @@ void main() {
       tester,
       desktopGateway: _UiRewindGateway(),
       connection: _remoteConn('conn-android-share-missing'),
-      api: ApiClient(
+      api: testApiClient(
         baseUrl: 'http://127.0.0.1:8642',
-        apiKey: 'k',
         httpClient: MockClient((request) async {
           if (request.url.path == '/api/sessions/stored-android-share') {
             return http.Response(
@@ -9136,9 +9132,8 @@ void main() {
     (tester) async {
       final semantics = tester.ensureSemantics();
       final requests = <http.Request>[];
-      final api = ApiClient(
+      final api = testApiClient(
         baseUrl: 'http://192.168.255.254:8642',
-        apiKey: 'test-key',
         connectionId: 'conn-core-read-partial-ui',
         httpClient: MockClient((request) async {
           requests.add(request);
@@ -9217,9 +9212,8 @@ void main() {
     testWidgets('new uncompressed chat reports unknown API coverage $language', (
       tester,
     ) async {
-      final api = ApiClient(
+      final api = testApiClient(
         baseUrl: 'http://192.168.255.254:8642',
-        apiKey: 'test-key',
         httpClient: MockClient(
           (_) async => http.Response(
             jsonEncode({
@@ -9291,9 +9285,8 @@ void main() {
     'historial compacto canónico muestra el turno más antiguo sin aviso parcial',
     (tester) async {
       final semantics = tester.ensureSemantics();
-      final api = ApiClient(
+      final api = testApiClient(
         baseUrl: 'http://192.168.255.254:8642',
-        apiKey: 'test-key',
         connectionId: 'conn-core-read-full-ui',
         httpClient: MockClient(
           (request) async => http.Response(
@@ -12011,14 +12004,15 @@ void main() {
     Navigator.of(tester.element(find.byType(ChatScreen))).pop();
     await tester.pump(const Duration(milliseconds: 400));
 
-    final listApi = ApiClient(
+    final listApi = testApiClient(
       baseUrl: connection.baseUrl,
-      apiKey: connection.apiKey,
       httpClient: MockClient((request) async {
-        if (request.url.path == '/health') return http.Response('{}', 200);
+        if (request.url.path == '/api/status') {
+          return http.Response('{}', 200);
+        }
         if (request.url.path == '/api/sessions') {
           return http.Response(
-            jsonEncode({'data': const <Object>[], 'has_more': false}),
+            jsonEncode({'sessions': const <Object>[], 'total': 0}),
             200,
           );
         }
@@ -13457,9 +13451,8 @@ void main() {
     tester,
   ) async {
     var sessionDetailRequests = 0;
-    final api = ApiClient(
+    final api = testApiClient(
       baseUrl: 'http://127.0.0.1:8642',
-      apiKey: 'k',
       httpClient: MockClient((request) async {
         if (request.url.path.startsWith('/api/sessions/mob-voice-draft')) {
           sessionDetailRequests += 1;
@@ -14139,6 +14132,105 @@ void main() {
     expect(gateway.submissions.single, contains('mira la gráfica'));
     gateway.emitComplete();
     await tester.pump(const Duration(seconds: 10));
+  });
+
+  // Desktop sends what the user picked without asking: choosing the file and
+  // pressing send is the action. Only a read-only chat refuses the upload.
+  group('sending a binary attachment', () {
+    Future<_SubmissionGateway> pasteAndSend(
+      WidgetTester tester,
+      ApprovalMode mode, {
+      bool Function()? settled,
+    }) async {
+      final temp = Directory.systemTemp.createTempSync('chat-attach-send-');
+      addTearDown(() {
+        if (temp.existsSync()) temp.deleteSync(recursive: true);
+      });
+      const pathProvider = MethodChannel('plugins.flutter.io/path_provider');
+      TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(pathProvider, (call) async => temp.path);
+      addTearDown(
+        () => TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(pathProvider, null),
+      );
+      final gateway = _SubmissionGateway();
+      await pumpChat(
+        tester,
+        connection: _remoteConn('conn-attach-${mode.name}'),
+        desktopGateway: gateway,
+        attachmentMaterializer: (attachment) async => attachment,
+        attachmentPrivateCopyDeleter: (_) async => true,
+        initialPreferences: {'approval_global_mode': mode.storageKey},
+      );
+      final field = tester.widget<TextField>(find.byType(TextField).last);
+      field.contentInsertionConfiguration!.onContentInserted(
+        KeyboardInsertedContent(
+          mimeType: 'image/png',
+          uri: 'content://keyboard/chart.png',
+          data: base64Decode(
+            'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC'
+            'AAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+          ),
+        ),
+      );
+      await pumpUntilReal(
+        tester,
+        () => find.byType(AttachmentCard).evaluate().isNotEmpty,
+        timeoutMessage: 'pasted image did not reach the composer',
+      );
+      await tester.enterText(find.byType(TextField).last, 'mira la gráfica');
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.tap(find.byKey(const ValueKey('send')));
+      for (
+        var i = 0;
+        i < 40 && gateway.submissions.isEmpty && !(settled?.call() ?? false);
+        i++
+      ) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 20)),
+        );
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      return gateway;
+    }
+
+    for (final mode in [ApprovalMode.interactive, ApprovalMode.conservative]) {
+      testWidgets('goes out without a confirmation (${mode.name})', (
+        tester,
+      ) async {
+        final gateway = await pasteAndSend(tester, mode);
+
+        expect(find.text('Subir adjunto'), findsNothing);
+        expect(find.text('Permitir'), findsNothing);
+        expect(gateway.submissions, hasLength(1));
+        expect(gateway.imageAttachCalls, 1);
+        expect(gateway.submissions.single, contains('pasted-image.png'));
+        expect(gateway.submissions.single, contains('mira la gráfica'));
+        gateway.emitComplete();
+        await tester.pump(const Duration(seconds: 10));
+      });
+    }
+
+    testWidgets('is still refused in read-only mode, without a dialog', (
+      tester,
+    ) async {
+      // The notice shows for 2 s: stop waiting as soon as it is there.
+      final notice = find.text(
+        'Instancia en solo lectura — acción desactivada',
+      );
+      final gateway = await pasteAndSend(
+        tester,
+        ApprovalMode.readOnly,
+        settled: () => notice.evaluate().isNotEmpty,
+      );
+
+      expect(find.text('Subir adjunto'), findsNothing);
+      expect(notice, findsOneWidget);
+      expect(gateway.submissions, isEmpty);
+      expect(gateway.imageAttachCalls, 0);
+      expect(find.byType(AttachmentCard), findsOneWidget, reason: 'kept');
+      await tester.pump(const Duration(seconds: 10));
+    });
   });
 
   testWidgets('pegar desde el IME un tipo que no es imagen no crea adjunto', (
@@ -16231,6 +16323,9 @@ void main() {
   testWidgets(
     'reabrir una sesión larga compactada no retrocea sus respuestas largas',
     (tester) async {
+      // The decode settle below lets real time pass: the app's companion
+      // store then reaches path_provider, which a fake clock never let it.
+      mockCompanionStorage();
       // QA 9340 (Pixel 9 Pro): abrir una sesión de ~800 filas con 555
       // compactadas dejó frames de build de ~1,4 s. El troceado verificado
       // de cada respuesta larga (markdownToHtml por frontera) se cacheaba
@@ -16250,9 +16345,8 @@ void main() {
           'returned': page.length,
         },
       });
-      final api = ApiClient(
+      final api = testApiClient(
         baseUrl: 'http://192.168.255.254:8642',
-        apiKey: 'test-key',
         connectionId: 'conn-long-compacted',
         httpClient: MockClient(
           (_) async => http.Response(
@@ -16274,6 +16368,17 @@ void main() {
         preview: '',
         startedAt: 0,
       );
+      // The 500-row page is over 64 KB, so the Dashboard decodes it in an
+      // isolate (decodeJsonOffMain), which only runs in real time.
+      Future<void> settleOffMainDecode({bool Function()? until}) async {
+        for (var i = 0; i < 50 && !(until?.call() ?? false); i++) {
+          await tester.runAsync(
+            () => Future<void>.delayed(const Duration(milliseconds: 20)),
+          );
+          await tester.pump();
+        }
+      }
+
       final probe = ChatPerformanceProbe();
       final chat = await pumpChat(
         tester,
@@ -16285,6 +16390,7 @@ void main() {
         performanceProbe: probe,
         transcriptPageSizeForTesting: 500,
       );
+      await settleOffMainDecode(until: () => chat.messagesLoaded);
       await tester.pump(const Duration(milliseconds: 400));
       expect(chat.messagesLoaded, isTrue);
       final firstOpenPlans = probe.assistantRenderPlanComputations;
@@ -16314,7 +16420,12 @@ void main() {
         ),
       );
       await tester.pump();
+      // Any read the reopen starts lands before the counts, as it did when
+      // the page decoded inline.
+      await settleOffMainDecode();
       await tester.pump(const Duration(milliseconds: 400));
+      await settleOffMainDecode();
+      await tester.pump();
 
       expect(reopenProbe.screenBuilds, greaterThan(0));
       expect(
@@ -22319,21 +22430,24 @@ void main() {
 
     Future<(ActiveChat, _AccountUsageGateway)> open(
       WidgetTester tester,
-      String id,
-    ) async {
+      String id, {
+      String provider = 'provider-a',
+      DashboardClient? dashboard,
+    }) async {
       final gateway = _AccountUsageGateway();
       final chat = await pumpChat(
         tester,
         desktopGateway: gateway,
         connection: _remoteConn(id),
         messagesLoaded: false,
+        transcriptDashboard: dashboard,
       );
       for (var frame = 0; !chat.hasDesktopRuntime && frame < 10; frame++) {
         await tester.pump(const Duration(milliseconds: 50));
       }
       expect(chat.hasDesktopRuntime, isTrue);
-      gateway.emit('session.info', const {
-        'info': {'model': 'old-model', 'provider': 'provider-a'},
+      gateway.emit('session.info', {
+        'info': {'model': 'old-model', 'provider': provider},
       });
       await tester.pump();
       return (chat, gateway);
@@ -22374,6 +22488,100 @@ void main() {
       );
       expect(tester.takeException(), isNull);
     });
+
+    // Hermes >= 0.22.3: `session.usage` has no `account_lines`; the windows
+    // come from `usage` in GET /api/model/options.
+    DashboardClient catalogDashboard(
+      List<Uri> reads, {
+      int status = 200,
+      Object? providers,
+    }) => DashboardClient(
+      host: '127.0.0.1',
+      manualToken: 'dashboard-token',
+      httpClientOverride: MockClient((request) async {
+        reads.add(request.url);
+        if (status != 200 || request.url.path != '/api/model/options') {
+          return http.Response('{}', status == 200 ? 404 : status);
+        }
+        return http.Response(
+          jsonEncode({
+            'providers':
+                providers ??
+                [
+                  {
+                    'slug': 'openai-codex',
+                    'name': 'OpenAI Codex',
+                    'authenticated': true,
+                    'usage': {
+                      'windows': [
+                        {
+                          'label': 'Session',
+                          'used_percent': 28.0,
+                          'resets_at': null,
+                          'scope': 'account',
+                        },
+                      ],
+                    },
+                  },
+                ],
+          }),
+          200,
+        );
+      }),
+    );
+
+    testWidgets('without account_lines the session provider usage shows', (
+      tester,
+    ) async {
+      final reads = <Uri>[];
+      final (_, gateway) = await open(
+        tester,
+        'conn-plan-limits-catalog',
+        provider: 'openai-codex',
+        dashboard: catalogDashboard(reads),
+      );
+      gateway.usagePayload = acct.usage();
+      await openSheet(tester);
+      expect(reads.map((u) => u.path), ['/api/model/options']);
+      expect(find.text('Límites de tu plan'), findsOneWidget);
+      expect(find.text('OpenAI Codex'), findsWidgets);
+      expect(find.text('Sesión actual'), findsOneWidget);
+      expect(find.text('Quedan 72 %'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('with account_lines the catalog is not read', (tester) async {
+      final reads = <Uri>[];
+      final (_, gateway) = await open(
+        tester,
+        'conn-plan-limits-legacy',
+        provider: 'openai-codex',
+        dashboard: catalogDashboard(reads),
+      );
+      expect(gateway.usagePayload['account_lines'], isNotEmpty);
+      await openSheet(tester);
+      expect(reads, isEmpty);
+      expect(find.text('Quedan 72 %'), findsOneWidget);
+    });
+
+    for (final status in const [404, 500]) {
+      testWidgets('a catalog that fails ($status) leaves the block hidden', (
+        tester,
+      ) async {
+        final reads = <Uri>[];
+        final (_, gateway) = await open(
+          tester,
+          'conn-plan-limits-down-$status',
+          provider: 'openai-codex',
+          dashboard: catalogDashboard(reads, status: status),
+        );
+        gateway.usagePayload = acct.usage();
+        await openSheet(tester);
+        expect(reads, isNotEmpty);
+        expect(find.text('Límites de tu plan'), findsNothing);
+        expect(tester.takeException(), isNull);
+      });
+    }
 
     testWidgets('Nous credits also read usage.bars', (tester) async {
       final (_, gateway) = await open(tester, 'conn-plan-limits-nous');
@@ -29361,61 +29569,67 @@ void main() {
     });
   });
 
-  testWidgets(
-    'pt1215: la salida de terminal en color aparece plegada en la traza',
-    (tester) async {
-      final gateway = _UiRewindGateway();
-      final chat = await pumpChat(
-        tester,
-        connection: _remoteConn('conn-pt1215-term'),
-        desktopGateway: gateway,
-        messages: const [
-          {'role': 'user', 'content': 'PUBLIC_REQUEST'},
-        ],
-      );
-      expect(
-        await chat.send(
-          fullText: 'PUBLIC_TERM_PARENT',
-          model: 'hermes-agent',
-          history: chat.messages,
-        ),
-        isTrue,
-      );
-      gateway.emit('message.start');
-      gateway.emit('tool.start', const {
-        'tool_id': 'call-pt-term',
-        'name': 'terminal',
-        'args': {'command': 'make test'},
-      });
-      gateway.emit('tool.complete', const {
-        'tool_id': 'call-pt-term',
-        'name': 'terminal',
-        'args': {'command': 'make test'},
-        'result': {
-          'output': 'one\ntwo\nthree\nfour\nfive\n\x1B[31mFAILED\x1B[0m',
-          'exit_code': 2,
-        },
-      });
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 100));
-      gateway.emit('message.complete', const {'text': 'PUBLIC_TERM_DONE'});
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 400));
-      expect(find.byType(TerminalOutputCard), findsNothing);
+  for (final language in const ['es', 'de']) {
+    testWidgets(
+      'pt1215: folded ANSI terminal output uses the exit label in $language',
+      (tester) async {
+        final gateway = _UiRewindGateway();
+        final chat = await pumpChat(
+          tester,
+          connection: _remoteConn('conn-pt1215-term'),
+          desktopGateway: gateway,
+          initialPreferences: {'app_locale': language},
+          messages: const [
+            {'role': 'user', 'content': 'PUBLIC_REQUEST'},
+          ],
+        );
+        expect(
+          await chat.send(
+            fullText: 'PUBLIC_TERM_PARENT',
+            model: 'hermes-agent',
+            history: chat.messages,
+          ),
+          isTrue,
+        );
+        gateway.emit('message.start');
+        gateway.emit('tool.start', const {
+          'tool_id': 'call-pt-term',
+          'name': 'terminal',
+          'args': {'command': 'make test'},
+        });
+        gateway.emit('tool.complete', const {
+          'tool_id': 'call-pt-term',
+          'name': 'terminal',
+          'args': {'command': 'make test'},
+          'result': {
+            'output': 'one\ntwo\nthree\nfour\nfive\n\x1B[31mFAILED\x1B[0m',
+            'exit_code': 2,
+          },
+        });
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
+        gateway.emit('message.complete', const {'text': 'PUBLIC_TERM_DONE'});
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+        expect(find.byType(TerminalOutputCard), findsNothing);
 
-      await tester.tap(find.byKey(const ValueKey('thinking-trace-summary')));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 300));
-      expect(find.byType(TerminalOutputCard), findsOneWidget);
-      expect(find.text('exit 2'), findsOneWidget);
-      expect(find.textContaining('FAILED', findRichText: true), findsOneWidget);
-      expect(
-        find.textContaining('two\nthree', findRichText: true),
-        findsNothing,
-      );
-      expect(tester.takeException(), isNull);
-    },
-  );
+        await tester.tap(find.byKey(const ValueKey('thinking-trace-summary')));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+        expect(find.byType(TerminalOutputCard), findsOneWidget);
+        final cardContext = tester.element(find.byType(TerminalOutputCard));
+        final strings = Strings.of(cardContext);
+        expect(Localizations.localeOf(cardContext).languageCode, language);
+        expect(find.text(strings.i18n131P6ExitCode('2')), findsOneWidget);
+        expect(find.textContaining('FAILED', findRichText: true), findsOneWidget);
+        expect(
+          find.textContaining('two\nthree', findRichText: true),
+          findsNothing,
+        );
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
 
   testWidgets(
     'pt1215: el último turno con ediciones cierra con «archivos cambiados»',
@@ -39245,7 +39459,11 @@ void main() {
       expect(userRows(chat, 'forzado'), 1);
       expect(errorRows(chat), 0);
       expect(
-        find.text('No se pudo conservar el turno antes de enviarlo.'),
+        find.text(
+          Strings.of(
+            tester.element(find.byType(ChatScreen)),
+          ).i18n131P6TurnNotSaved,
+        ),
         findsNothing,
       );
       expect(chat.queuedEntries, isEmpty);
@@ -40916,9 +41134,8 @@ void main() {
           ];
           var durableReady = false;
           var restMessageReads = 0;
-          final api = ApiClient(
+          final api = testApiClient(
             baseUrl: 'http://127.0.0.1:8642',
-            apiKey: 'test',
             httpClient: MockClient((request) async {
               final path = request.url.path;
               if (request.method == 'GET' &&
@@ -41047,9 +41264,8 @@ void main() {
       const prompt2 = 'PROMPT_DUP9341_SECOND';
       const reply2 = 'REPLY_DUP9341_SECOND';
       final durable = <Map<String, dynamic>>[];
-      final api = ApiClient(
+      final api = testApiClient(
         baseUrl: 'http://127.0.0.1:8642',
-        apiKey: 'test-key',
         httpClient: MockClient((request) async {
           if (request.method == 'GET' &&
               request.url.path == '/api/sessions/sess-test/messages') {
@@ -41155,9 +41371,8 @@ void main() {
       const prompt2 = 'PROMPT_DUP9343_SECOND';
       const reply2 = 'REPLY_DUP9343_SECOND';
       final durable = <Map<String, dynamic>>[];
-      final api = ApiClient(
+      final api = testApiClient(
         baseUrl: 'http://127.0.0.1:8642',
-        apiKey: 'test-key',
         httpClient: MockClient((request) async {
           if (request.method == 'GET' &&
               request.url.path == '/api/sessions/sess-test/messages') {
@@ -41911,6 +42126,56 @@ void main() {
       expect(tester.takeException(), isNull);
     });
   });
+
+  // i18n-approval (emulator QA H5): an English chat must not show the
+  // Spanish source names of the approval modes or of the generic titles.
+  group('an English chat names modes and titles in English', () {
+    testWidgets('the permissions pill and the mode sheet say the mode in '
+        'English', (tester) async {
+      await pumpChat(tester, initialPreferences: const {'app_locale': 'en'});
+      final permissions = find.byKey(const ValueKey('status-pill-permissions'));
+      expect(permissions, findsOneWidget);
+      final label = tester.getSemantics(permissions).getSemanticsData().label;
+      expect(label, startsWith('Permissions: Ask'));
+      for (final spanish in const [
+        'Preguntar',
+        'Config. global',
+        'Conservador',
+        'Solo lectura',
+      ]) {
+        expect(label, isNot(contains(spanish)), reason: label);
+      }
+
+      await tester.tap(permissions);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.byKey(const ValueKey('chat-mode-dialog')), findsOneWidget);
+      expect(find.text('Effective mode: Ask'), findsOneWidget);
+      expect(find.text('Effective mode: Preguntar'), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('the chat it attaches carries the English generic title', (
+      tester,
+    ) async {
+      final chat = await pumpChat(
+        tester,
+        initialPreferences: const {'app_locale': 'en'},
+        session: const Session(
+          id: 'sess-kanban-title',
+          title: 'work kanban task t_1a2b',
+          model: 'hermes-agent',
+          source: 'mobile',
+          messageCount: 0,
+          isActive: true,
+          preview: '',
+          startedAt: 0,
+        ),
+      );
+      expect(chat.sessionTitle, 'Kanban task');
+      expect(tester.takeException(), isNull);
+    });
+  });
 }
 
 class _TodoResumeGateway extends _StableRefreshGateway {
@@ -41989,9 +42254,8 @@ class _EarlierHistoryPages {
   final _held = <({Completer<http.Response> response, int offset})>[];
 
   ApiClient api() {
-    final client = ApiClient(
+    final client = testApiClient(
       baseUrl: 'https://example.test',
-      apiKey: 'fixture',
       httpClient: MockClient((request) {
         requests.add(request.url);
         final offset = int.parse(request.url.queryParameters['offset'] ?? '0');

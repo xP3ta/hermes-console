@@ -13,6 +13,7 @@ void main() {
       'New profile',
       'New room',
       '1 member, incomplete team',
+      '0 members',
     ],
     'es': [
       'Bots',
@@ -20,6 +21,17 @@ void main() {
       'Nuevo perfil',
       'Nueva sala',
       '1 miembro, equipo incompleto',
+      '0 miembros',
+    ],
+    'pt': [
+      'Bots',
+      'Criar',
+      'Novo perfil',
+      'Nova sala',
+      '1 membro, equipe incompleta',
+      // pt usa o ramo explícito =0 (o ramo CLDR "one" cobre também o zero no
+      // intl; com zero:/one: emitidos, 0 casa por igualdade exata).
+      '0 membros',
     ],
   }.entries) {
     testWidgets(
@@ -106,7 +118,7 @@ void main() {
           tester
               .getSemantics(find.byKey(const ValueKey('room-avatar-stack')))
               .label,
-          entry.key == 'en' ? '0 members' : '0 miembros',
+          entry.value[5],
         );
         expect(
           Strings.of(tester.element(create)).roomAvatarMembers(1),

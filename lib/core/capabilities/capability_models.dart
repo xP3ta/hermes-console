@@ -725,9 +725,22 @@ final class PluginMutationResult {
   final bool restartRequired;
   final bool? gatewayReloaded;
 
+  /// The security scan refused the plugin (Hermes 0.22.4 `scan_blocked`).
+  /// Nothing changed on the server. [scanVerdict] is `caution` or
+  /// `dangerous`; [scanFindingCount] is the number of findings reported and
+  /// [scanFindingLines] the first few as one bounded line each.
+  final bool scanBlocked;
+  final String scanVerdict;
+  final int scanFindingCount;
+  final List<String> scanFindingLines;
+
   const PluginMutationResult({
     required this.ok,
     this.consentRequired = false,
+    this.scanBlocked = false,
+    this.scanVerdict = '',
+    this.scanFindingCount = 0,
+    this.scanFindingLines = const [],
     this.deltaLines = const [],
     this.warnings = const [],
     this.missingEnv = const [],
@@ -744,9 +757,16 @@ final class PluginMutationResult {
     final servers = live is Map
         ? _rows(live['mcp_servers'], max: 40)
         : const [];
+    final findings = _rows(json['scan_findings'], max: 200);
     return PluginMutationResult(
       ok: json['ok'] == true,
       consentRequired: json['consent_required'] == true,
+      scanBlocked: json['scan_blocked'] == true,
+      scanVerdict: _text(json['scan_verdict'], max: 40),
+      scanFindingCount: findings.length,
+      scanFindingLines: [
+        for (final finding in findings.take(5)) _scanFindingLine(finding),
+      ].where((line) => line.isNotEmpty).toList(growable: false),
       deltaLines: _strings(json['delta_lines'], max: 300),
       warnings: _strings(json['warnings'], max: 300),
       missingEnv: _strings(json['missing_env'], max: 120),
@@ -766,6 +786,18 @@ final class PluginMutationResult {
           : null,
     );
   }
+}
+
+String _scanFindingLine(Map<String, dynamic> finding) {
+  final severity = _text(finding['severity'], max: 20);
+  final description = _text(finding['description'], max: 160);
+  final file = _text(finding['file'], max: 80);
+  final line = finding['line'] is int ? ':${finding['line']}' : '';
+  final where = file.isEmpty ? '' : ' ($file$line)';
+  return [severity, description]
+          .where((part) => part.isNotEmpty)
+          .join(' · ') +
+      where;
 }
 
 /// One row of `plugins.manage list` (installed plugins of the hub profile).

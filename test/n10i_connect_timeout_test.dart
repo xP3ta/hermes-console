@@ -7,7 +7,9 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 void main() {
-  test('the default REST clients cut the TCP connect at the call deadline', () {
+  // The Dashboard carries every REST call in production: the Gateway
+  // client's 15 s connect cut is unused once a Dashboard is attached.
+  test('the default REST client cuts the TCP connect at the call deadline', () {
     final made = <HttpClient>[];
     final original = OriginBoundHttpClient.dartHttpClientFactory;
     OriginBoundHttpClient.dartHttpClientFactory = () {
@@ -16,12 +18,8 @@ void main() {
       return client;
     };
     addTearDown(() => OriginBoundHttpClient.dartHttpClientFactory = original);
-    ApiClient(baseUrl: 'http://hermes.local:8642', apiKey: 'k');
     DashboardClient(host: 'hermes.local', manualToken: 't');
-    expect(made.map((c) => c.connectionTimeout), [
-      const Duration(seconds: 15),
-      const Duration(seconds: 10),
-    ]);
+    expect(made.map((c) => c.connectionTimeout), [const Duration(seconds: 10)]);
   });
 
   test('a client substituted by http.runWithClient is kept', () async {

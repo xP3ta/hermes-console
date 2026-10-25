@@ -23,6 +23,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'support/home_chat_finders.dart';
+import 'support/test_api_client.dart';
 
 double _nowSeconds() => DateTime.now().millisecondsSinceEpoch / 1000;
 
@@ -47,6 +48,10 @@ class _HomeClient extends ApiClient {
         baseUrl: 'http://127.0.0.1:8642',
         apiKey: 'test-key',
         httpClient: MockClient((_) async => http.Response('{}', 404)),
+        profileDashboard: testDashboardClient(
+          baseUrl: 'http://127.0.0.1:8642',
+          httpClient: MockClient((_) async => http.Response('{}', 404)),
+        ),
       );
 
   List<Session> sessions;
@@ -87,6 +92,10 @@ class _DetailClient extends ApiClient {
         baseUrl: 'http://127.0.0.1:8642',
         apiKey: 'test-key',
         httpClient: MockClient((_) async => http.Response('{}', 404)),
+        profileDashboard: testDashboardClient(
+          baseUrl: 'http://127.0.0.1:8642',
+          httpClient: MockClient((_) async => http.Response('{}', 404)),
+        ),
       );
 
   final Session target;
@@ -772,16 +781,15 @@ void main() {
           return http.Response('{}', 404);
         }),
       );
-      final gateway = ApiClient(
+      final gateway = testApiClient(
         baseUrl: 'http://127.0.0.1:8642',
-        apiKey: 'test-key',
         connectionId: connectionId,
         httpClient: MockClient((request) async {
           if (request.method == 'DELETE') {
             deletes.add(request.url.pathSegments.last);
-            return http.Response('{"deleted": true}', 200);
+            return http.Response('{"ok": true}', 200);
           }
-          if (request.url.path == '/health' ||
+          if (request.url.path == '/api/status' ||
               request.url.path == '/api/sessions') {
             return http.Response('{}', 200);
           }
@@ -832,18 +840,19 @@ void main() {
         row('kept', 'Kept row', now - 120),
         row('gone', 'Deleted row', now - 60),
       ];
-      final gateway = ApiClient(
+      final gateway = testApiClient(
         baseUrl: 'http://127.0.0.1:8642',
-        apiKey: 'test-key',
         connectionId: connectionId,
         httpClient: MockClient((request) async {
           if (request.url.path == '/api/sessions') {
             return http.Response(
-              jsonEncode({'object': 'list', 'data': listed}),
+              jsonEncode({'sessions': listed, 'total': listed.length}),
               200,
             );
           }
-          if (request.url.path == '/health') return http.Response('{}', 200);
+          if (request.url.path == '/api/status') {
+            return http.Response('{}', 200);
+          }
           return http.Response('{}', 404);
         }),
       );
@@ -971,18 +980,17 @@ void main() {
             connection: connection,
             connManager: manager,
             current: DrawerSection.home,
-            recentSessionsClientFactory: (saved) => ApiClient(
+            recentSessionsClientFactory: (saved) => testApiClient(
               baseUrl: saved.baseUrl,
-              apiKey: 'test-key',
               httpClient: MockClient(
                 (_) async => http.Response(
                   jsonEncode({
-                    'object': 'list',
-                    'data': [
+                    'sessions': [
                       row('kept', 'Kept chat'),
                       row('deleted', 'Deleted chat'),
                       row('hidden', 'Hidden chat'),
                     ],
+                    'total': 3,
                   }),
                   200,
                 ),

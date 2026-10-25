@@ -5,6 +5,66 @@ are not releases.
 
 ## Unreleased
 
+Console 1.3.1 fixes named profiles, completes nine languages and follows Hermes
+0.22.4. It still talks only to the Dashboard.
+
+### Fixed
+
+- *Named profiles.* Chats of profiles with a name open, show their history and
+  keep new messages again; the false **Messages missing** warning is gone.
+- *Attachments.* Sending a photo or file no longer asks for a confirmation of its
+  own, as on Hermes Desktop. Read-only mode still blocks uploads.
+- *Foldables and tablets.* In the medium-width layout, cancelling or accepting a
+  dialog (delete a chat, YOLO) no longer closes the chat behind it.
+- *Sign-in notice.* **Session expired · Sign in** clears itself when the connection
+  returns. A socket whose one-time ticket is refused is retried once with a fresh
+  ticket before it counts as a failure.
+- *Chat list.* A chat no longer stays on **Working…** after the app is closed and
+  reopened during a running turn.
+- *Chat list on return.* When the app returns to the foreground the list checks its
+  live connections, so a running turn, even one started from another client, shows
+  as **Working…** without opening the chat.
+- *Chat stuck on Offline.* After a single refused ticket the chat reconnects by
+  itself, or with Retry.
+- *Setup help freeze.* Pressing Back on the guided setup help no longer freezes
+  the app (Android reported it as "not responding"); it closes the screen.
+- *Startup recovery screen* follows the device language.
+- *Permission modes and generic chat titles* (Kanban task, Scheduled task,
+  Conversation) were shown in Spanish in other languages; they follow the app
+  language.
+
+### Languages
+
+- The whole interface in nine languages: Spanish, English, German, French, Italian,
+  Brazilian Portuguese, Japanese, Korean and Chinese, including notifications,
+  Android widgets and shortcut, schedules, relative times, error messages and voice
+  controls and narration.
+
+### Hermes 0.22.4
+
+- Restoring a checkpoint lists the files it left untouched.
+- A plugin update blocked by the security scan shows the verdict and findings.
+- Provider limits are read from the model catalog when the session has none.
+- A Hermes that runs behind the gateway and withholds its session token gets a
+  clear message.
+- Bot Mode lists only the bots of the selected instance.
+
+### Under the hood
+
+- The last Gateway code paths are removed; chat, history and deletes use only the
+  Dashboard.
+
+### Thanks
+
+- **Lucas Oliveira** ([@lucasliet](https://github.com/lucasliet)): Brazilian Portuguese
+  translation
+  ([#212](https://github.com/xP3ta/hermes-console/pull/212)).
+- **Rafael Telles** ([@rafael-telles](https://github.com/rafael-telles)): localized
+  session titles
+  ([#211](https://github.com/xP3ta/hermes-console/pull/211)).
+
+## 1.3.0 (9630) — 2026-10-21
+
 Console 1.3.0 talks only to the Dashboard. The first start is two clear options
 and a code to scan, the connection is steadier, and several chat and file
 problems are fixed.

@@ -225,7 +225,7 @@ class _SshCredentialsScreenState extends State<SshCredentialsScreen> {
                 child: _field(
                   colors,
                   _hostCtrl,
-                  'Host',
+                  Strings.of(context).i18n131P6Host,
                   hint: Strings.of(context).sshcHostHint,
                 ),
               ),
@@ -245,7 +245,7 @@ class _SshCredentialsScreenState extends State<SshCredentialsScreen> {
             colors,
             _userCtrl,
             Strings.of(context).commonUser,
-            hint: 'p.ej. user',
+            hint: Strings.of(context).i18n131P6UserExample,
           ),
           const SizedBox(height: 18),
           Text(
@@ -360,7 +360,7 @@ class _SshCredentialsScreenState extends State<SshCredentialsScreen> {
         ),
         decoration: InputDecoration(
           hintText: _hadConfig
-              ? '•••• clave guardada — pega una nueva para reemplazar'
+              ? Strings.of(context).i18n131P6StoredKey
               : '-----BEGIN OPENSSH PRIVATE KEY-----',
           hintStyle: TextStyle(fontSize: 11.5, color: colors.textTertiary),
           filled: true,
@@ -389,7 +389,7 @@ class _SshCredentialsScreenState extends State<SshCredentialsScreen> {
       autocorrect: false,
       enableSuggestions: false,
       label: Strings.of(context).commonPassword,
-      hint: _hadConfig ? '•••• guardada — escribe para cambiar' : null,
+      hint: _hadConfig ? Strings.of(context).i18n131P6StoredPassword : null,
       suffix: IconButton(
         icon: Icon(
           _obscurePass

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="new_session_shortcut_short_label">新しい会話</string>
+    <string name="new_session_shortcut_long_label">Hermesと新しい会話を開始</string>
+    <string name="hermes_widget_not_configured">未設定</string>
+    <string name="hermes_widget_setup_action">Hermesを設定</string>
+</resources>

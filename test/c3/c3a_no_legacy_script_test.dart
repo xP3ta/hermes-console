@@ -43,7 +43,7 @@ void main() {
     expect(text, contains('--retire-bridge'));
   });
 
-  test('EN and ES have exactly the same message keys', () {
+  test('EN, ES and PT have exactly the same message keys', () {
     Map<String, dynamic> read(String name) =>
         jsonDecode(File('lib/l10n/$name').readAsStringSync())
             as Map<String, dynamic>;
@@ -52,7 +52,10 @@ void main() {
         read(name).keys.where((k) => !k.startsWith('@')).toSet();
     final en = keys('app_en.arb');
     final es = keys('app_es.arb');
+    final pt = keys('app_pt.arb');
     expect(en.difference(es), isEmpty, reason: 'only in EN');
     expect(es.difference(en), isEmpty, reason: 'only in ES');
+    expect(pt.difference(es), isEmpty, reason: 'only in PT');
+    expect(es.difference(pt), isEmpty, reason: 'only in ES (missing in PT)');
   });
 }

@@ -8,6 +8,8 @@ import 'package:hermes_android/core/services/session_repository.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
+import 'support/test_api_client.dart';
+
 Map<String, dynamic> _row(int index, {String source = 'mobile'}) => {
   'id': 'session-$index',
   '_lineage_root_id': 'root-$index',
@@ -66,9 +68,11 @@ DashboardClient _dashboard(http.Client client) => DashboardClient(
   httpClientOverride: client,
 );
 
-ApiClient _gateway(http.Client client) => ApiClient(
+/// The repository's fallback client. In production it is
+/// `ApiClient.forConnection`, so its list is a second Dashboard read in the
+/// Dashboard's `{sessions, total}` shape.
+ApiClient _gateway(http.Client client) => testApiClient(
   baseUrl: 'http://127.0.0.1:8642',
-  apiKey: 'gateway-key',
   httpClient: client,
 );
 
@@ -900,7 +904,7 @@ void main() {
     final gatewayHttp = MockClient((_) async {
       return http.Response(
         jsonEncode({
-          'data': [
+          'sessions': [
             _row(0, source: 'mobile'),
             for (
               var index = 0;
@@ -948,7 +952,7 @@ void main() {
     final gatewayHttp = MockClient(
       (_) async => http.Response(
         jsonEncode({
-          'data': [_row(0), _row(1, source: 'cron')],
+          'sessions': [_row(0), _row(1, source: 'cron')],
         }),
         200,
       ),
@@ -989,7 +993,7 @@ void main() {
       gatewayRequests += 1;
       return http.Response(
         jsonEncode({
-          'data': [_row(0, source: 'mobile'), _row(1, source: 'webhook')],
+          'sessions': [_row(0, source: 'mobile'), _row(1, source: 'webhook')],
         }),
         200,
       );
@@ -1343,7 +1347,7 @@ void main() {
         gatewayRequests += 1;
         return http.Response(
           jsonEncode({
-            'data': gatewayRequests == 1
+            'sessions': gatewayRequests == 1
                 ? [
                     _lineageRow(
                       id: 'new-chat',
@@ -1397,7 +1401,7 @@ void main() {
         gatewayRequests += 1;
         return http.Response(
           jsonEncode({
-            'data': gatewayRequests == 1
+            'sessions': gatewayRequests == 1
                 ? [
                     _lineageRow(
                       id: 'older-chat',
@@ -1450,7 +1454,7 @@ void main() {
         );
         return http.Response(
           jsonEncode({
-            'data': [row],
+            'sessions': [row],
           }),
           200,
         );
@@ -1494,7 +1498,7 @@ void main() {
                   },
                 ]
               : const <Map<String, Object?>>[];
-          return http.Response(jsonEncode({'data': data}), 200);
+          return http.Response(jsonEncode({'sessions': data}), 200);
         }),
       );
       final repository = SessionRepository(dashboard, gateway);
@@ -1534,7 +1538,7 @@ void main() {
           if (gatewayRequests == 1) {
             return http.Response(
               jsonEncode({
-                'data': [row],
+                'sessions': [row],
               }),
               200,
             );
@@ -1558,7 +1562,7 @@ void main() {
       delayed.complete(
         http.Response(
           jsonEncode({
-            'data': [row],
+            'sessions': [row],
           }),
           200,
         ),
@@ -1631,7 +1635,7 @@ void main() {
           gatewayRequest = request.url;
           return http.Response(
             jsonEncode({
-              'data': [_row(1)],
+              'sessions': [_row(1)],
             }),
             200,
           );
@@ -1652,7 +1656,9 @@ void main() {
       expect(gatewayRows.single.profile, 'team_alpha');
       expect(snapshot.source, SessionLibrarySource.gateway);
       expect(snapshot.sessions.single.profile, 'team_alpha');
-      expect(gatewayRequest.path, '/p/team_alpha/api/sessions');
+      // The Dashboard selects a named profile with `?profile=`.
+      expect(gatewayRequest.path, '/api/sessions');
+      expect(gatewayRequest.queryParameters['profile'], 'team_alpha');
     },
   );
 
@@ -1668,7 +1674,7 @@ void main() {
         gatewayRequests += 1;
         return http.Response(
           jsonEncode({
-            'data': [_row(1)],
+            'sessions': [_row(1)],
           }),
           200,
         );

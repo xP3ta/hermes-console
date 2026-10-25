@@ -40,7 +40,11 @@ List<String> _duplicateTopLevelKeys(String source) {
 }
 
 void main() {
-  for (final path in const ['lib/l10n/app_en.arb', 'lib/l10n/app_es.arb']) {
+  for (final path in const [
+    'lib/l10n/app_en.arb',
+    'lib/l10n/app_es.arb',
+    'lib/l10n/app_pt.arb',
+  ]) {
     test('$path has no duplicate keys', () {
       final source = File(path).readAsStringSync();
       expect(() => jsonDecode(source), returnsNormally);

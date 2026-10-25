@@ -25,6 +25,7 @@ import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/markdown_table.dart';
 import 'package:hermes_android/core/widgets/mascot/mascot.dart';
 import 'package:hermes_android/main.dart';
+import 'support/test_api_client.dart';
 
 class _IdleGateway
     implements HermesDesktopGateway, HermesDesktopSessionLifecycleGateway {
@@ -127,9 +128,8 @@ Session _session() => Session(
   startedAt: 0,
 );
 
-ApiClient _safeApi() => ApiClient(
+ApiClient _safeApi() => testApiClient(
   baseUrl: 'http://192.168.255.254:8642',
-  apiKey: 'test-key',
   httpClient: MockClient((_) async => http.Response('not found', 404)),
 );
 

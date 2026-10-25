@@ -14,6 +14,7 @@ import 'bot_profile_client.dart';
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io' show WebSocketException;
 import 'dart:math' show Random, min;
 
 import 'package:crypto/crypto.dart';
@@ -2105,7 +2106,16 @@ class TuiGatewayClient
     }
   }
 
-  Future<void> _connectOnceUnmetered() async {
+  /// The upgrade was answered 401/403 instead of 101: `/api/ws` refused the
+  /// ticket (expired, unknown or already used) or the host before accepting,
+  /// and uvicorn reports either as HTTP 403.
+  static bool _isRefusedUpgrade(Object error) {
+    final inner = error is WebSocketChannelException ? error.inner : null;
+    return inner is WebSocketException &&
+        (inner.httpStatusCode == 401 || inner.httpStatusCode == 403);
+  }
+
+  Future<void> _connectOnceUnmetered({bool ticketRetried = false}) async {
     final generation = ++_socketGeneration;
     _parked = false;
     _stopHeartbeat();
@@ -2234,12 +2244,19 @@ class TuiGatewayClient
       if (identical(_gatewayReadyCompleter, gatewayReady)) {
         _gatewayReadyCompleter = null;
       }
+      // A ticket refused on the upgrade says nothing about the credential
+      // that minted it a moment ago: one fresh ticket, before the dial counts
+      // as a lost link (no backoff, no own redial in between).
+      final retryTicket =
+          !ticketRetried &&
+          auth.queryName == 'ticket' &&
+          _isRefusedUpgrade(error);
       if (generation == _socketGeneration && identical(_channel, channel)) {
         _subscription = null;
         _channel = null;
         _connected = false;
         _authRejected = isDashboardAuthRejection(error);
-        _noteTransportLoss(generation);
+        if (!retryTicket) _noteTransportLoss(generation);
       }
       // Si el upgrade falla antes de enlazar el sink real (HTTP 401/404), tanto
       // `cancel()` como `close()` pueden quedar pendientes. Se desvincula antes
@@ -2251,6 +2268,15 @@ class TuiGatewayClient
         closeCode: TuiGatewayCloseCodes.normal,
         closeReason: 'connect_aborted',
       );
+      // The refused socket is gone; a close, park or newer dial meanwhile
+      // owns the client and ends this one.
+      if (retryTicket && !_closed && generation == _socketGeneration) {
+        debugPrint(
+          '[tui-gateway] Ticket refused on the upgrade; one fresh ticket'
+          '$_meterTag',
+        );
+        return _connectOnceUnmetered(ticketRetried: true);
+      }
       rethrow;
     }
   }

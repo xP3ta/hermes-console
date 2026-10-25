@@ -1291,10 +1291,6 @@ class ApiClient {
     ),
   );
 
-  /// Whether this client has the Dashboard attached. With one, session reads
-  /// and deletes go to it and never to the Gateway, as in Desktop.
-  bool get hasDashboard => _profileDashboard != null;
-
   Map<String, String> get _headers => {
     'Authorization': 'Bearer $_apiKey',
     'Content-Type': 'application/json',
@@ -1302,24 +1298,23 @@ class ApiClient {
 
   /// Hermes selects a non-default runtime profile from the URL namespace.
   /// Empty/default preserve the historical unprefixed API surface.
-  static String profileEndpoint(String endpoint, {String? profile}) {
+  static String profileEndpoint(String endpoint, {String? profile}) { // U6c
     final owner = validateCronProfile(profile);
     if (owner == null) return endpoint;
-    return 'p/${Uri.encodeComponent(owner)}/$endpoint';
+    return 'p/${Uri.encodeComponent(owner)}/$endpoint'; // U6c
   }
 
   // ── Session listing ──────────────────────────────────────────────────
 
-  /// Lista sesiones. Por defecto el servidor pliega las sesiones "hijas"
-  /// (continuaciones/subagentes/ramas) dentro de su padre, así que muchas
-  /// quedan ocultas y no se pueden borrar desde la app. [includeChildren] pide
-  /// `?include_children=true` para ver TODAS (necesario para limpiar de verdad).
-  /// `limit=200` evita el tope por defecto de 50 del servidor.
+  /// Lista sesiones. El servidor pliega las continuaciones y los subagentes
+  /// dentro de su padre, y el Dashboard los borra con él desde cualquier id
+  /// de la cadena, así que ningún borrado necesita leerlos. `limit=200` evita
+  /// el tope por defecto de 50 del servidor.
   ///
   /// [pageSize] and [enough] bound the walk for surfaces that only show the
   /// newest rows (Home, drawer): the read stops after the first page for
   /// which `enough(sessionsSoFar)` is true, or after [maxPages] pages. Without
-  /// them every page is read, as cleanup and lineage resolution require.
+  /// them every page is read, as the history cleanup requires.
   ///
   /// With a Dashboard attached ([profileDashboard]) every list is read from
   /// it, as Desktop does: `listSessions()` sends `/api/sessions` (plus
@@ -1327,7 +1322,6 @@ class ApiClient {
   /// `/p/<name>/` mirror only accepts that profile's own `API_SERVER_KEY`
   /// and answers 401 when it has none, so the connection's key cannot read it.
   Future<List<Session>> getSessions({
-    bool includeChildren = false,
     String? profile,
     int pageSize = 200,
     bool Function(List<Session> sessions)? enough,
@@ -1335,15 +1329,10 @@ class ApiClient {
   }) async {
     var pagesRead = 0;
     final owner = validateCronProfile(profile);
-    // The Dashboard list never returns continuation rows and has no
-    // `include_children`; the lineage delete order needs them, so that read
-    // of the default profile stays on the Gateway.
-    final dashboard = includeChildren && owner == null
-        ? null
-        : _profileDashboard;
+    final dashboard = _profileDashboard;
     // The Dashboard caps `limit` at 100 (422 above it).
     final pageLimit = pageSize.clamp(1, dashboard == null ? 200 : 100);
-    final endpoint = profileEndpoint('api/sessions', profile: owner);
+    final endpoint = profileEndpoint('api/sessions', profile: owner); // U6c
     final sessions = <Session>[];
     final observed = <String>{};
     final pageSignatures = <String>{};
@@ -1386,10 +1375,9 @@ class ApiClient {
         final query = <String, String>{
           'limit': '$pageLimit',
           'offset': '$offset',
-          if (includeChildren) 'include_children': 'true',
         };
         final uri = Uri.parse(
-          '$baseUrl/$endpoint',
+          '$baseUrl/$endpoint', // U6c
         ).replace(queryParameters: query);
         final res = await _http
             .within(_requestTimeout)
@@ -1585,7 +1573,7 @@ class ApiClient {
     final owner = validateCronProfile(profile);
     final boundedLimit = limit.clamp(1, 500);
     final uri = Uri.parse(
-      '$baseUrl/${profileEndpoint('api/sessions/${Uri.encodeComponent(sessionId)}/messages', profile: owner)}'
+      '$baseUrl/${profileEndpoint('api/sessions/${Uri.encodeComponent(sessionId)}/messages', profile: owner)}' // U6c
       '?limit=$boundedLimit&order=latest&offset=$offset'
       '&include_compacted=true',
     );
@@ -1599,17 +1587,24 @@ class ApiClient {
       _ => CoreReadErrorKind.temporarilyUnavailable,
     }, statusCode: status);
     final Map<String, dynamic> data;
-    final dashboard = owner == null ? _profileDashboard : null;
+    final dashboard = _profileDashboard;
     if (dashboard != null) {
-      // Desktop `getSessionMessages`: the Dashboard serves the default
-      // profile's transcript too. Its pages are capped at 500 rows, so the
-      // body size is bounded without the streaming read below.
-      try {
-        data = await dashboard.apiGet(
+      // Desktop `getSessionMessages`: the Dashboard serves every profile's
+      // transcript, a named one selected by `?profile=`. A Dashboard-only
+      // connection has no API server behind `/p/<profile>/`. A page holds
+      // at most 500 rows, but the Dashboard inlines images, so a caller
+      // with a byte budget still reads it bounded.
+      final profileQuery = owner == null
+          ? ''
+          : '&${Uri(queryParameters: {'profile': owner}).query}';
+      final endpoint =
           'sessions/${Uri.encodeComponent(sessionId)}/messages'
           '?limit=$boundedLimit&order=latest&offset=$offset'
-          '&include_compacted=true',
-        );
+          '&include_compacted=true$profileQuery';
+      try {
+        data = maxBodyBytes == null
+            ? await dashboard.apiGet(endpoint)
+            : await dashboard.apiGetBounded(endpoint, maxBytes: maxBodyBytes);
       } on DashboardHttpException catch (error) {
         throw failure(error.statusCode);
       } on DashboardAuthException {
@@ -1693,7 +1688,7 @@ class ApiClient {
     try {
       final sessions = await _http
           .within(const Duration(seconds: 10))
-          .get(Uri.parse('$baseUrl/api/sessions'), headers: _headers);
+          .get(Uri.parse('$baseUrl/api/sessions'), headers: _headers); // U6c
       final status = sessions.statusCode;
       return status == 200 || status == 408 || status == 429 || status >= 500;
     } on TimeoutException {
@@ -1721,70 +1716,6 @@ class ApiClient {
     } catch (e) {
       debugPrint('[connection] excepción silenciada (se asume false): $e');
       return false;
-    }
-  }
-
-  /// Calienta la conexión keep-alive al gateway (Fase 0 HCR). Un GET ligero a
-  /// el endpoint de salud abre el socket TCP + handshake TLS y deja la conexión en el pool
-  /// del `http.Client` compartido, para que el PRIMER turno de voz no arranque
-  /// en frío (DNS/TLS) — que es justo cuando "se queda pensando" más. Es
-  /// best-effort: traga cualquier error y no bloquea (fire-and-forget).
-  Future<void> warmUp() async {
-    try {
-      final dashboard = _profileDashboard;
-      if (dashboard != null) {
-        await dashboard.getServerStatus().timeout(const Duration(seconds: 4));
-        return;
-      }
-      await _http
-          .within(const Duration(seconds: 4))
-          .get(Uri.parse('$baseUrl/health'), headers: _headers); // U6b
-    } catch (_) {
-      // Calentamiento opcional: si falla, el turno real reportará el error.
-    }
-  }
-
-  // ── Generic HTTP helpers (for Dashboard API compatibility) ────────────
-
-  Future<Map<String, dynamic>> apiGet(String endpoint) async {
-    final res = await _http
-        .within(_requestTimeout)
-        .get(Uri.parse('$baseUrl/$endpoint'), headers: _headers);
-    if (res.statusCode != 200) throw Exception('HTTP ${res.statusCode}');
-    return jsonDecode(res.body) as Map<String, dynamic>;
-  }
-
-  Future<List<dynamic>> apiGetList(String endpoint) async {
-    final res = await _http
-        .within(_requestTimeout)
-        .get(Uri.parse('$baseUrl/$endpoint'), headers: _headers);
-    if (res.statusCode != 200) throw Exception('HTTP ${res.statusCode}');
-    return jsonDecode(res.body) as List<dynamic>;
-  }
-
-  Future<Map<String, dynamic>> apiPost(
-    String endpoint, {
-    Map<String, dynamic>? body,
-  }) async {
-    final res = await _http
-        .within(_requestTimeout)
-        .post(
-          Uri.parse('$baseUrl/$endpoint'),
-          headers: _headers,
-          body: body != null ? jsonEncode(body) : null,
-        );
-    if (res.statusCode < 200 || res.statusCode >= 300) {
-      throw Exception('HTTP ${res.statusCode}');
-    }
-    return jsonDecode(res.body) as Map<String, dynamic>;
-  }
-
-  Future<void> apiDelete(String endpoint) async {
-    final res = await _http
-        .within(_requestTimeout)
-        .delete(Uri.parse('$baseUrl/$endpoint'), headers: _headers);
-    if (res.statusCode < 200 || res.statusCode >= 300) {
-      throw Exception('HTTP ${res.statusCode}');
     }
   }
 
@@ -1818,13 +1749,13 @@ class ApiClient {
       if (deleted) await _clearSessionRecovery(sessionId, profile: profile);
       return deleted;
     }
-    final endpoint = profileEndpoint(
+    final endpoint = profileEndpoint( // U6c
       'api/sessions/${Uri.encodeComponent(sessionId)}',
       profile: profile,
     );
     final res = await _http
         .within(_requestTimeout)
-        .delete(Uri.parse('$baseUrl/$endpoint'), headers: _headers);
+        .delete(Uri.parse('$baseUrl/$endpoint'), headers: _headers); // U6c
     if (res.statusCode == 404) {
       await _clearSessionRecovery(sessionId, profile: profile);
       return true;
@@ -1877,16 +1808,22 @@ class ApiClient {
 
   /// GET /api/sessions/{id} — detalle con métricas (tokens, coste, lineage).
   Future<Session> getSession(String sessionId, {String? profile}) async {
+    final owner = validateCronProfile(profile);
     final dashboard = _profileDashboard;
-    if (dashboard != null && validateCronProfile(profile) == null) {
-      return dashboard.getSessionDetail(sessionId);
+    if (dashboard != null) {
+      // A named profile's row comes from the Dashboard (`?profile=`), as on
+      // Desktop: a Dashboard-only connection has no `/p/<profile>/` route.
+      return dashboard.getSessionDetail(sessionId, profile: owner ?? '');
     }
-    final data = await apiGet(
-      profileEndpoint(
-        'api/sessions/${Uri.encodeComponent(sessionId)}',
-        profile: profile,
-      ),
+    final endpoint = profileEndpoint( // U6c
+      'api/sessions/${Uri.encodeComponent(sessionId)}',
+      profile: profile,
     );
+    final res = await _http
+        .within(_requestTimeout)
+        .get(Uri.parse('$baseUrl/$endpoint'), headers: _headers); // U6c
+    if (res.statusCode != 200) throw Exception('HTTP ${res.statusCode}');
+    final data = jsonDecode(res.body) as Map<String, dynamic>;
     return Session.fromJson((data['session'] as Map<String, dynamic>?) ?? data);
   }
 
@@ -1931,7 +1868,12 @@ enum DashboardAuthFailureCode {
   invalidCredentials('dashboard_invalid_credentials'),
   rateLimited('dashboard_login_rate_limited'),
   loginFailed('dashboard_login_failed'),
-  sessionCookieMissing('dashboard_session_cookie_missing');
+  sessionCookieMissing('dashboard_session_cookie_missing'),
+
+  /// A Hermes 0.22.3+ Dashboard hosted by the gateway serves its page without
+  /// `__HERMES_SESSION_TOKEN__` (it hands tickets out on a private same-user
+  /// control socket instead). Console cannot authenticate against it.
+  sessionTokenWithheld('dashboard_session_token_withheld');
 
   const DashboardAuthFailureCode(this.stableCode);
 
@@ -2418,6 +2360,17 @@ class DashboardClient {
       if (looksLikeLogin) {
         throw const DashboardAuthException(
           DashboardAuthFailureCode.loginRequired,
+        );
+      }
+      // Hermes 0.22.3+ gateway-hosted listener: a real Dashboard page whose
+      // bootstrap script carries no token. The ticket endpoint cannot help
+      // here (it needs an OAuth session; the gateway's own tickets come from
+      // a private control socket), so say precisely what is wrong.
+      if (RegExp(
+        r'__HERMES_AUTH_REQUIRED__\s*=\s*false',
+      ).hasMatch(res.body)) {
+        throw const DashboardAuthException(
+          DashboardAuthFailureCode.sessionTokenWithheld,
         );
       }
       throw Exception(
@@ -2971,6 +2924,60 @@ class DashboardClient {
       throw DashboardHttpException(res.statusCode, body: res.body);
     }
     return await _decodeMapResponse(res);
+  }
+
+  /// [apiGet] for a caller with a byte budget (a capped transcript read): it
+  /// gives up with [SessionTranscriptTooLargeException] as soon as the body
+  /// passes [maxBytes], by the declared length or by what has arrived,
+  /// without buffering the rest. Same session, deadline, retry and errors as
+  /// [apiGet]; a rotated cookie is kept even when the body is refused.
+  Future<Map<String, dynamic>> apiGetBounded(
+    String endpoint, {
+    required int maxBytes,
+    bool retried = false,
+  }) async {
+    final headers = await _authHeaders();
+    _requireOpen();
+    final request = http.Request('GET', Uri.parse('$_baseUrl/api/$endpoint'))
+      ..headers.addAll(headers);
+    final streamed = await _http.within(_kTimeout).send(request);
+    _ingestSetCookie(
+      http.Response('', streamed.statusCode, headers: streamed.headers),
+      sentCookie: headers['Cookie'],
+    );
+    if (streamed.statusCode != 200) {
+      final res = await http.Response.fromStream(streamed);
+      if (res.statusCode == 401) {
+        final nextRetried = _unauthorizedRetry(
+          sentCookie: headers['Cookie'],
+          sentAuthorization: headers['Authorization'],
+          retried: retried,
+        );
+        if (nextRetried != null) {
+          return apiGetBounded(
+            endpoint,
+            maxBytes: maxBytes,
+            retried: nextRetried,
+          );
+        }
+      }
+      throw DashboardHttpException(res.statusCode, body: res.body);
+    }
+    final declared = streamed.contentLength;
+    if (declared != null && declared > maxBytes) {
+      await _cancelResponseStream(streamed.stream);
+      throw const SessionTranscriptTooLargeException();
+    }
+    final bytes = <int>[];
+    await for (final chunk in streamed.stream) {
+      bytes.addAll(chunk);
+      if (bytes.length > maxBytes) {
+        throw const SessionTranscriptTooLargeException();
+      }
+    }
+    return await _decodeMapResponse(
+      http.Response.bytes(bytes, 200, headers: streamed.headers),
+    );
   }
 
   Future<List<dynamic>> apiGetList(

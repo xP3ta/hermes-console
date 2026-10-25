@@ -15,6 +15,8 @@ import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/interactive_prompt_reducer.dart';
 import 'package:hermes_android/core/utils/home_recent_sessions.dart';
 
+import 'package:hermes_android/l10n/app_localizations.dart';
+import 'package:hermes_android/l10n/app_localizations_en.dart';
 import 'package:hermes_android/l10n/app_localizations_es.dart';
 
 import '../support/spec070_fixtures.dart';
@@ -686,6 +688,47 @@ void main() {
       );
       final astra = team.singleWhere((b) => b.profileName == 'astra');
       expect(astra.lastTitle, 'Disco al 93 %, sin cambios.');
+    });
+
+    test('an untitled run of a bot goes by its generic name in the app '
+        'language, never in the Spanish of the model', () {
+      Session run(String id, int at) => Session(
+        id: id,
+        title: '',
+        model: 'm',
+        source: 'cron',
+        messageCount: 6,
+        isActive: false,
+        preview: '',
+        startedAt: at.toDouble(),
+        profile: 'astra',
+      );
+
+      HomeBoardBot astra(Strings strings) => homeBoardBots(
+        profiles: spec070Profiles(),
+        sessions: [run('local-run', 1790000300)],
+        activeSessions: const [],
+        liveChats: const [],
+        now: now,
+        strings: strings,
+      ).singleWhere((b) => b.profileName == 'astra');
+
+      expect(astra(StringsEn()).lastTitle, 'Scheduled task');
+      expect(astra(StringsEs()).lastTitle, 'Tarea programada');
+
+      // A caller with no screen keeps the model's own fallback; Home always
+      // passes the app language.
+      final withoutStrings = homeBoardBots(
+        profiles: spec070Profiles(),
+        sessions: [run('local-run', 1790000300)],
+        activeSessions: const [],
+        liveChats: const [],
+        now: now,
+      );
+      expect(
+        withoutStrings.singleWhere((b) => b.profileName == 'astra').lastTitle,
+        'Tarea programada',
+      );
     });
 
     test('a working bot never uses the session start as its turn clock', () {

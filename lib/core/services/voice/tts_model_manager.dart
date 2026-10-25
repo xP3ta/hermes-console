@@ -31,6 +31,12 @@ class NeuralVoice {
   final String dirName;
   final String onnxFile;
 
+  /// Optional eSpeak dictionary code when it differs from the UI locale.
+  final String? phonemeLanguage;
+  final bool requiresQualityReview;
+
+  String get dictionaryLanguage => phonemeLanguage ?? _languageCode(locale);
+
   const NeuralVoice({
     required this.id,
     required this.displayName,
@@ -42,13 +48,12 @@ class NeuralVoice {
     required this.archiveSha256,
     required this.dirName,
     required this.onnxFile,
+    this.phonemeLanguage,
+    this.requiresQualityReview = false,
   });
 }
 
-/// Catálogo de voces en español e inglés empaquetadas para sherpa-onnx
-/// (origen Piper, de HuggingFace/rhasspy; las distribuye el proyecto
-/// sherpa-onnx en un único archivo con todo lo necesario). Añadir una
-/// voz = una entrada más aquí.
+/// Neural voice archives published by the official sherpa-onnx release.
 const String _ttsRelease =
     'https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models';
 
@@ -133,6 +138,88 @@ const List<NeuralVoice> kNeuralVoices = [
     dirName: 'vits-piper-en_GB-alan-medium',
     onnxFile: 'en_GB-alan-medium.onnx',
   ),
+  NeuralVoice(
+    id: 'pt_BR-faber-medium',
+    displayName: 'Faber (Brazil)',
+    locale: 'pt-BR',
+    quality: 'media',
+    sizeMb: 64,
+    url: '$_ttsRelease/vits-piper-pt_BR-faber-medium.tar.bz2',
+    archiveBytes: 67183065,
+    archiveSha256:
+        '7add3f923ad6bc25ca8a192805fd1a64d1b3893e4611c4a9719545a825039a83',
+    dirName: 'vits-piper-pt_BR-faber-medium',
+    onnxFile: 'pt_BR-faber-medium.onnx',
+  ),
+  // Sizes: release asset metadata. SHA-256: asset digest or release checksum.txt.
+  // https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/checksum.txt
+  NeuralVoice(
+    id: 'de_DE-thorsten-medium',
+    displayName: 'Thorsten (Germany)',
+    locale: 'de-DE',
+    quality: 'medium',
+    sizeMb: 64,
+    url: '$_ttsRelease/vits-piper-de_DE-thorsten-medium.tar.bz2',
+    archiveBytes: 67214254,
+    archiveSha256:
+        '50487d9c95fdf2191f31d2588569381063ba1591dcd4c7d4bdd30f12b2191714',
+    dirName: 'vits-piper-de_DE-thorsten-medium',
+    onnxFile: 'de_DE-thorsten-medium.onnx',
+  ),
+  NeuralVoice(
+    id: 'fr_FR-siwis-medium',
+    displayName: 'Siwis (France)',
+    locale: 'fr-FR',
+    quality: 'medium',
+    sizeMb: 64,
+    url: '$_ttsRelease/vits-piper-fr_FR-siwis-medium.tar.bz2',
+    archiveBytes: 67207459,
+    archiveSha256:
+        '375909aa30842b3a4efa10b1beb1d761af792960ae6873b4d53889f96c66195b',
+    dirName: 'vits-piper-fr_FR-siwis-medium',
+    onnxFile: 'fr_FR-siwis-medium.onnx',
+  ),
+  NeuralVoice(
+    id: 'it_IT-paola-medium',
+    displayName: 'Paola (Italy)',
+    locale: 'it-IT',
+    quality: 'medium',
+    sizeMb: 64,
+    url: '$_ttsRelease/vits-piper-it_IT-paola-medium.tar.bz2',
+    archiveBytes: 67221173,
+    archiveSha256:
+        '7541f75778afa164e44e34baaef63befad7698595df26a95ca944b63ef1a16b4',
+    dirName: 'vits-piper-it_IT-paola-medium',
+    onnxFile: 'it_IT-paola-medium.onnx',
+  ),
+  NeuralVoice(
+    id: 'zh_CN-huayan-medium',
+    displayName: 'Huayan (China)',
+    locale: 'zh-CN',
+    quality: 'medium',
+    sizeMb: 64,
+    url: '$_ttsRelease/vits-piper-zh_CN-huayan-medium.tar.bz2',
+    archiveBytes: 67255926,
+    archiveSha256:
+        'dbdfec42b91d9cee31cce9ff4b3e9c305eb6fbf60546d071f7e46273554cce6b',
+    dirName: 'vits-piper-zh_CN-huayan-medium',
+    onnxFile: 'zh_CN-huayan-medium.onnx',
+    phonemeLanguage: 'cmn',
+  ),
+  NeuralVoice(
+    id: 'ko_KO-kss_low',
+    displayName: 'KSS (Korea, low quality)',
+    locale: 'ko-KR',
+    quality: 'low',
+    sizeMb: 64,
+    url: '$_ttsRelease/vits-mimic3-ko_KO-kss_low.tar.bz2',
+    archiveBytes: 66838474,
+    archiveSha256:
+        'f015d1d15a52ed00d6fe22757c5ef4a74283c53daf829c838fa5c22616ed789c',
+    dirName: 'vits-mimic3-ko_KO-kss_low',
+    onnxFile: 'ko_KO-kss_low.onnx',
+    requiresQualityReview: true,
+  ),
 ];
 
 NeuralVoice? neuralVoiceById(String id) {
@@ -195,7 +282,7 @@ class TtsModelManager {
       _fileHasAtLeast('$data/phontab', 1),
       _fileHasAtLeast('$data/phondata', 1),
       _fileHasAtLeast('$data/phonindex', 1),
-      _fileHasAtLeast('$data/${_dictionaryName(v.locale)}', 1),
+      _fileHasAtLeast('$data/${v.dictionaryLanguage}_dict', 1),
     ]);
     return checks.every((ready) => ready);
   }
@@ -203,6 +290,7 @@ class TtsModelManager {
   /// Voz ya descargada cuyo id coincide, o null.
   Future<NeuralVoice?> firstReady() async {
     for (final v in kNeuralVoices) {
+      if (v.requiresQualityReview) continue;
       if (await isReady(v)) return v;
     }
     return null;
@@ -315,7 +403,7 @@ class TtsModelManager {
           base.path,
           dirName: v.dirName,
           onnxFile: v.onnxFile,
-          languageCode: _languageCode(v.locale),
+          languageCode: v.dictionaryLanguage,
         ),
       );
       if (_cancelledDownloads.contains(v.id)) {
@@ -357,8 +445,6 @@ Future<bool> _fileHasAtLeast(String path, int minimumBytes) async {
 
 String _languageCode(String locale) =>
     locale.split(RegExp('[-_]')).first.trim().toLowerCase();
-
-String _dictionaryName(String locale) => '${_languageCode(locale)}_dict';
 
 class _DigestSink implements Sink<Digest> {
   Digest? value;

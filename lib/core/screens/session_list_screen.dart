@@ -310,6 +310,7 @@ class _SessionListScreenState extends State<SessionListScreen>
   StreamSubscription<ChatDraftChange>? _draftSubscription;
   Timer? _eventRefreshTimer;
   Timer? _activityRefreshTimer;
+  Timer? _activityPollTimer;
   DateTime? _lastActivityRefreshAt;
 
   /// A roster read dropped rows the list had not loaded yet; the next list
@@ -756,6 +757,7 @@ class _SessionListScreenState extends State<SessionListScreen>
     _searchTimer?.cancel();
     _eventRefreshTimer?.cancel();
     _activityRefreshTimer?.cancel();
+    _activityPollTimer?.cancel();
     _eventReconnectTimer?.cancel();
     _eventStableTimer?.cancel();
     _sessionSafetyTimer?.cancel();
@@ -904,6 +906,40 @@ class _SessionListScreenState extends State<SessionListScreen>
     await _refreshRemoteActivity();
   }
 
+  /// A busy row learnt from the roster only returns to rest on a later
+  /// roster read: its turn's terminal goes to the socket of the chat that
+  /// runs it, and after a force-stop there is none. While this list shows a
+  /// live row it re-reads the roster [sessionLibraryActivityRefreshGap]
+  /// after its last read; at rest, covered or in background it reads
+  /// nothing.
+  void _scheduleActivityPoll() {
+    _activityPollTimer?.cancel();
+    _activityPollTimer = null;
+    if (!mounted || !_listHasLiveActivity) return;
+    _activityPollTimer = Timer(sessionLibraryActivityRefreshGap, () {
+      _activityPollTimer = null;
+      // A coalesced event read is already due; it re-arms this poll.
+      if (!mounted || !_foreground || _activityRefreshTimer != null) return;
+      unawaited(_refreshRemoteActivityIfVisible());
+    });
+  }
+
+  bool get _listHasLiveActivity {
+    final aggregate = _globalActivity;
+    if (aggregate == null) return false;
+    final profile = Session.profileOwner(_libraryQuery.profile);
+    return aggregate.activities.any(
+      (activity) =>
+          activity.scope.connectionId == widget.connection.id &&
+          activity.scope.profile == profile &&
+          aggregate.isActive(
+            activity.scope.connectionId,
+            activity.scope.profile,
+            activity.scope.durableSessionId,
+          ),
+    );
+  }
+
   /// An event of a runtime the aggregate does not route: coalesce to one
   /// roster read per [sessionLibraryActivityRefreshGap]. A covered list reads
   /// nothing and refreshes once when it is uncovered.
@@ -1048,6 +1084,8 @@ class _SessionListScreenState extends State<SessionListScreen>
       aggregate.markTransportStale(widget.connection.id, profile);
       _scheduleStaleExpiry();
       return false;
+    } finally {
+      _scheduleActivityPoll();
     }
   }
 
@@ -1536,6 +1574,7 @@ class _SessionListScreenState extends State<SessionListScreen>
         // its own).
         unawaited(
           LauncherWidgetChatsPublisher.instance.offer(
+            strings: Strings.of(context),
             connectionId: widget.connection.id,
             sessions: sorted,
           ),
@@ -1847,13 +1886,8 @@ class _SessionListScreenState extends State<SessionListScreen>
     final ownerProfile = Session.profileOwner(session.profile);
     return deleteSessionWithResolvedLineage(
       session,
-      loadSessions: ({bool includeChildren = false}) => _client.getSessions(
-        includeChildren: includeChildren,
-        profile: ownerProfile,
-      ),
       deleteSession: (sessionId) =>
           _client.deleteSession(sessionId, profile: ownerProfile),
-      serverDeletesChain: _client.hasDashboard,
       cronDeletion: cronDeletion,
       deleteCronJob:
           !session.isJob || cronDeletion == LinkedCronDeletionMode.keepSchedule
@@ -3783,7 +3817,7 @@ class _ConnectingStateState extends State<_ConnectingState>
                 builder: (context, child) {
                   final dots = '.' * ((_dotCtrl.value * 3).floor() + 1);
                   return Text(
-                    'connecting to ${widget.host}$dots',
+                    '${Strings.of(context).i18n131P6ConnectingHost(widget.host)}$dots',
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(

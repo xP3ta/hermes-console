@@ -10,6 +10,7 @@ import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:hermes_android/core/utils/assistant_content.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'support/test_api_client.dart';
 
 DesktopSessionSnapshot _snapshot(Map<String, dynamic> json) =>
     DesktopSessionSnapshot.fromJson(
@@ -170,9 +171,8 @@ void main() {
         sessionTitle: 'Privacy',
         notifications: null,
         onTerminal: () {},
-        api: ApiClient(
+        api: testApiClient(
           baseUrl: 'http://10.0.0.2:8642',
-          apiKey: '',
           httpClient: MockClient((_) async => http.Response('not found', 404)),
         ),
         desktopGateway: gateway,
@@ -371,9 +371,8 @@ void main() {
         ),
         sessionId: 'stored-privacy',
         sessionTitle: 'Snapshot privacy',
-        api: ApiClient(
+        api: testApiClient(
           baseUrl: 'http://10.0.0.1:8642',
-          apiKey: 'test-key',
           httpClient: MockClient((_) async => http.Response('not found', 404)),
         ),
       );
@@ -426,9 +425,8 @@ void main() {
         sessionTitle: 'Privacy',
         notifications: null,
         onTerminal: () {},
-        api: ApiClient(
+        api: testApiClient(
           baseUrl: 'https://example.invalid',
-          apiKey: '',
           httpClient: MockClient((_) async => http.Response('not found', 404)),
         ),
         desktopGateway: _PrivacySnapshotGateway(snapshot),

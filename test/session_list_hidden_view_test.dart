@@ -15,6 +15,8 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'support/test_api_client.dart';
+
 /// Conversations > Archive > Hidden: a chat hidden on the server (which
 /// Hermes' listing omits) can be found and shown again, and search hits
 /// paint their FTS matches instead of the raw `>>>`/`<<<` delimiters.
@@ -127,12 +129,12 @@ SavedConnection _connection() => SavedConnection(
   kind: InstanceKind.vps,
 );
 
-ApiClient _gateway() => ApiClient(
+ApiClient _gateway() => testApiClient(
   baseUrl: 'http://127.0.0.1:8642',
-  apiKey: 'k',
   connectionId: _connectionId,
   httpClient: MockClient((request) async {
-    if (request.url.path == '/health' || request.url.path == '/api/sessions') {
+    if (request.url.path == '/api/status' ||
+        request.url.path == '/api/sessions') {
       return http.Response('{}', 200);
     }
     return http.Response('{}', 404);

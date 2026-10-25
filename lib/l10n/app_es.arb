@@ -507,7 +507,6 @@
   "chaAmbiguousRestored": "No se pudo confirmar si este turno llegó al servidor. Revisa la conversación antes de volver a enviarlo.",
   "chaRecoveredKeepsDraft": "Tu borrador actual se conserva. Envíalo o vacía el editor para recuperar el mensaje anterior.",
   "chaRetryKeepsDraft": "Tu borrador actual se conserva y no se ha reintentado nada. Envíalo o vacía el editor para reintentar el mensaje anterior.",
-  "chaUploadTitle": "Subir adjunto",
   "chaNoMatch": "Sin coincidencias para «{arg}». Elige uno:",
   "@chaNoMatch": {
     "placeholders": {
@@ -1533,7 +1532,7 @@
       }
     }
   },
-  "setRestartGatewayBody": "Reinicia el proceso del gateway sin actualizar nada. Útil para restablecer la conexión con Console o aplicar cambios de configuración.\n\nCorta brevemente las sesiones activas. ¿Continuar?",
+  "setRestartGatewayBody": "Reinicia el proceso del gateway sin actualizar nada. Útil para restablecer la conexión con Console o aplicar cambios de configuración.\n\nInterrumpe los turnos en curso, también el de este chat; podrás volver a enviarlos después. ¿Continuar?",
   "setMigrateBody": "Migra config.yaml de v{cur} a v{latest}.\n\nEs una migración ADITIVA: solo añade las opciones nuevas con su valor por defecto y sube el número de versión. No borra ni cambia nada de tu configuración actual.",
   "@setMigrateBody": {
     "placeholders": {
@@ -7579,6 +7578,7 @@
   "plv1215Rollover": "Acumulado",
   "plv1215RenewsLabel": "Se renueva",
   "plv1215Unavailable": "No disponible",
+  "plv1215StateUnknown": "Uso aún sin informar",
   "plv1215ResetsNow": "Se reinicia ahora",
   "plv1215Depleted": "Sin saldo: recarga para seguir",
   "plv1215Details": "Detalles del proveedor",
@@ -8835,5 +8835,2258 @@
   "onb4HelpSafe": "Usa el instalador oficial de Hermes. Si ya tienes Hermes, no lo toca, y tampoco Telegram ni el Gateway. Tarda unos minutos.",
   "onb4HelpVps": "¿Hermes en un servidor de internet? Instala Tailscale en el servidor y en este móvil, y después pega la línea.",
   "onb4HadPassword": "Este Hermes ya tenía contraseña. Escríbela una vez y Console no la guarda.",
-  "onb4ManualBody": "Escribe la dirección, el usuario y la contraseña que te mostró la instalación al terminar."
+  "onb4ManualBody": "Escribe la dirección, el usuario y la contraseña que te mostró la instalación al terminar.",
+  "recoveryCenterRestoredPartial": "Checkpoint restaurado, con excepciones.",
+  "recoveryCenterSkippedUserEdits": "{count, plural, =1{1 archivo conservado porque lo editaste tú después del checkpoint.} other{{count} archivos conservados porque los editaste tú después del checkpoint.}}",
+  "@recoveryCenterSkippedUserEdits": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "recoveryCenterSkippedOversize": "{count, plural, =1{1 archivo demasiado grande no se restauró.} other{{count} archivos demasiado grandes no se restauraron.}}",
+  "@recoveryCenterSkippedOversize": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "recoveryCenterFailedDeletes": "{count, plural, =1{1 archivo no se pudo borrar.} other{{count} archivos no se pudieron borrar.}}",
+  "@recoveryCenterFailedDeletes": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "cphPluginBlockedByScan": "El escaneo de seguridad bloqueó este plugin. No se cambió nada.",
+  "dashboardAuthSessionTokenWithheld": "Este Dashboard no entrega a Console su token de sesión: lo aloja el gateway de Hermes 0.22.3 o posterior sin inicio de sesión. Usa un Dashboard independiente o activa su inicio de sesión.",
+  "connDiagTimeout": "sin respuesta en {seconds}s",
+  "@connDiagTimeout": {
+    "placeholders": {"seconds": {"type": "int"}}
+  },
+  "connDiagTlsInvalid": "certificado TLS inválido: {message}",
+  "@connDiagTlsInvalid": {
+    "placeholders": {"message": {"type": "String"}}
+  },
+  "connDiagDnsFailed": "el host no se resuelve",
+  "connDiagRefused": "conexión rechazada (¿puerto correcto?)",
+  "connDiagAuthHint": "revisa el usuario y la contraseña",
+  "transportPublicBlocked": "HTTP/WS público bloqueado: configura HTTPS/WSS o usa una dirección privada/Tailscale.",
+  "i18n131ThemeExportFailed": "No se pudo exportar.",
+  "@i18n131ThemeExportFailed": {
+    "description": "Manual UI copy migrated to the shared catalog."
+  },
+  "i18n131DurationSeconds": "{value} s",
+  "@i18n131DurationSeconds": {
+    "description": "Manual UI copy migrated to the shared catalog.",
+    "placeholders": {
+      "value": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131SpanDays": "{count} d",
+  "@i18n131SpanDays": {
+    "description": "Manual UI copy migrated to the shared catalog.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "i18n131SpanHours": "{count} h",
+  "@i18n131SpanHours": {
+    "description": "Manual UI copy migrated to the shared catalog.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "i18n131SpanMinutes": "{count} min",
+  "@i18n131SpanMinutes": {
+    "description": "Manual UI copy migrated to the shared catalog.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "i18n131RelativeNow": "ahora",
+  "@i18n131RelativeNow": {
+    "description": "Manual UI copy migrated to the shared catalog."
+  },
+  "i18n131RelativeMinutes": "{count} min",
+  "@i18n131RelativeMinutes": {
+    "description": "Manual UI copy migrated to the shared catalog.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "i18n131RelativeHours": "{count} h",
+  "@i18n131RelativeHours": {
+    "description": "Manual UI copy migrated to the shared catalog.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "i18n131RelativeDays": "{count} d",
+  "@i18n131RelativeDays": {
+    "description": "Manual UI copy migrated to the shared catalog.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "i18n131SinceMinutes": "hace {count} min",
+  "@i18n131SinceMinutes": {
+    "description": "Manual UI copy migrated to the shared catalog.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "i18n131SinceHours": "hace {count} h",
+  "@i18n131SinceHours": {
+    "description": "Manual UI copy migrated to the shared catalog.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "i18n131SinceDays": "hace {count} d",
+  "@i18n131SinceDays": {
+    "description": "Manual UI copy migrated to the shared catalog.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "i18n131InMinutes": "en {count} min",
+  "@i18n131InMinutes": {
+    "description": "Manual UI copy migrated to the shared catalog.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "i18n131InHours": "en {count} h",
+  "@i18n131InHours": {
+    "description": "Manual UI copy migrated to the shared catalog.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "i18n131InDays": "en {count} d",
+  "@i18n131InDays": {
+    "description": "Manual UI copy migrated to the shared catalog.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "i18n131ApprovalTool": "una herramienta",
+  "@i18n131ApprovalTool": {
+    "description": "Manual UI copy migrated to the shared catalog."
+  },
+  "i18n131RecoveredTurnActive": "Hermes no pudo reanexar un turno que aún podría seguir activo. Enviar repite la comprobación; descarta solo tras verificar Hermes porque esto no cancela el turno remoto.",
+  "@i18n131RecoveredTurnActive": {
+    "description": "Manual UI copy migrated to the shared catalog."
+  },
+  "i18n131RecoveredTurnPending": "Se recuperó un turno pendiente. Descarta la recuperación para continuar.",
+  "@i18n131RecoveredTurnPending": {
+    "description": "Manual UI copy migrated to the shared catalog."
+  },
+  "i18n131McAllAgents": "Todos los perfiles",
+  "@i18n131McAllAgents": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McWorkspaces": "Espacios de trabajo",
+  "@i18n131McWorkspaces": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McWorkspaceAgentCountOne": "{count} perfil",
+  "@i18n131McWorkspaceAgentCountOne": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "i18n131McWorkspaceAgentCountOther": "{count} perfiles",
+  "@i18n131McWorkspaceAgentCountOther": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "i18n131McCreateOrganization": "Crear espacio de trabajo",
+  "@i18n131McCreateOrganization": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McEditOrganization": "Editar espacio de trabajo",
+  "@i18n131McEditOrganization": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McOrganizationName": "Nombre del espacio de trabajo",
+  "@i18n131McOrganizationName": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McOrganizationHint": "p. ej. Homelab",
+  "@i18n131McOrganizationHint": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McChooseProfiles": "Elige perfiles",
+  "@i18n131McChooseProfiles": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McDelete": "Eliminar",
+  "@i18n131McDelete": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McDeleteOrganizationTitle": "¿Eliminar espacio de trabajo?",
+  "@i18n131McDeleteOrganizationTitle": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McDeleteOrganizationBody": "Solo se elimina este espacio local. Tus perfiles de Hermes no cambian.",
+  "@i18n131McDeleteOrganizationBody": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McLoading": "Cargando perfiles…",
+  "@i18n131McLoading": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McRetry": "Reintentar",
+  "@i18n131McRetry": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McRefresh": "Actualizar",
+  "@i18n131McRefresh": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McTasks": "Tareas",
+  "@i18n131McTasks": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McActivity": "Actividad",
+  "@i18n131McActivity": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McShowLess": "Mostrar menos",
+  "@i18n131McShowLess": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McSharedRoomName": "Nombre de la sala",
+  "@i18n131McSharedRoomName": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McChooseSharedMembers": "Elige miembros oficiales",
+  "@i18n131McChooseSharedMembers": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McRoomRefreshFailed": "No se pudo actualizar esta sala. Vuelve a abrirla para reconectar.",
+  "@i18n131McRoomRefreshFailed": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McNewAgent": "Nuevo perfil",
+  "@i18n131McNewAgent": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McNoBots": "Un perfil tiene nombre, memoria, skills y chat propios. Crea el primero para empezar.",
+  "@i18n131McNoBots": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McSearchAgents": "Buscar perfiles",
+  "@i18n131McSearchAgents": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McClearSearch": "Borrar búsqueda",
+  "@i18n131McClearSearch": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McActiveNow": "Activos ahora",
+  "@i18n131McActiveNow": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McBotRosterUpdateFailed": "Hermes no pudo actualizar este perfil.",
+  "@i18n131McBotRosterUpdateFailed": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McNoMatchingAgents": "No hay perfiles que coincidan",
+  "@i18n131McNoMatchingAgents": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McAttentionSummaryOne": "{approvals} aprobación · {blocked} bloqueados",
+  "@i18n131McAttentionSummaryOne": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy.",
+    "placeholders": {
+      "approvals": {
+        "type": "int"
+      },
+      "blocked": {
+        "type": "int"
+      }
+    }
+  },
+  "i18n131McAttentionSummaryOther": "{approvals} aprobaciones · {blocked} bloqueados",
+  "@i18n131McAttentionSummaryOther": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy.",
+    "placeholders": {
+      "approvals": {
+        "type": "int"
+      },
+      "blocked": {
+        "type": "int"
+      }
+    }
+  },
+  "i18n131McNeedsYou": "Necesita tu atención",
+  "@i18n131McNeedsYou": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McUsage": "Uso",
+  "@i18n131McUsage": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McProfilesUnavailable": "Esta instalación de Hermes no publica perfiles.",
+  "@i18n131McProfilesUnavailable": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McReview": "Revisar",
+  "@i18n131McReview": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McMemory": "Memoria",
+  "@i18n131McMemory": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McStaleProfiles": "Algunos perfiles guardados ya no existen. Edita la organización para actualizarla.",
+  "@i18n131McStaleProfiles": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McUnattributedSessionsOne": "{count} sesión no publicó su perfil propietario. Solo se incluyen en el uso global.",
+  "@i18n131McUnattributedSessionsOne": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "i18n131McUnattributedSessionsOther": "{count} sesiones no publicaron su perfil propietario. Solo se incluyen en el uso global.",
+  "@i18n131McUnattributedSessionsOther": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "i18n131McWorking": "trabajando",
+  "@i18n131McWorking": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McApprovals": "aprobaciones",
+  "@i18n131McApprovals": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McBlocked": "bloqueados",
+  "@i18n131McBlocked": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McTokens": "tokens",
+  "@i18n131McTokens": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McUnknown": "Desconocido",
+  "@i18n131McUnknown": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McModelLabel": "Modelo",
+  "@i18n131McModelLabel": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McEditBotTitle": "Editar perfil",
+  "@i18n131McEditBotTitle": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McBotDisplayName": "Nombre visible",
+  "@i18n131McBotDisplayName": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McBotDisplayNameHint": "p. ej. Investigador",
+  "@i18n131McBotDisplayNameHint": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McBotSpriteHint": "El sprite se convierte en la imagen de este perfil.",
+  "@i18n131McBotSpriteHint": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McBotSpriteSearchHint": "Buscar sprites…",
+  "@i18n131McBotSpriteSearchHint": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McBotSpriteEmpty": "No hay sprites disponibles.",
+  "@i18n131McBotSpriteEmpty": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McBotSpriteLoadFailed": "No se pudo cargar la lista.",
+  "@i18n131McBotSpriteLoadFailed": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McBotSpriteUnsupported": "Esta instalación de Hermes no admite sprites por perfil.",
+  "@i18n131McBotSpriteUnsupported": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McBotEditorSaved": "Perfil actualizado",
+  "@i18n131McBotEditorSaved": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McBotEditorSaveFailed": "Hermes no aplicó los cambios.",
+  "@i18n131McBotEditorSaveFailed": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McCreateAgentSubtitle": "Un perfil tiene nombre, memoria, skills y chat propios. Puede escribir a tus otros perfiles.",
+  "@i18n131McCreateAgentSubtitle": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McAgentNameLabel": "Nombre",
+  "@i18n131McAgentNameLabel": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McAgentNameInvalid": "Usa minúsculas, números, guiones y guiones bajos.",
+  "@i18n131McAgentNameInvalid": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McAgentNameTaken": "Ya existe un perfil con este nombre.",
+  "@i18n131McAgentNameTaken": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McAgentTitleLabel": "Título",
+  "@i18n131McAgentTitleLabel": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McAgentDescriptionLabel": "Descripción",
+  "@i18n131McAgentDescriptionLabel": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McAgentDescriptionHint": "¿En qué debería ayudar este perfil?",
+  "@i18n131McAgentDescriptionHint": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McModelInherited": "Heredado del perfil de arranque",
+  "@i18n131McModelInherited": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McProviderLabel": "Proveedor",
+  "@i18n131McProviderLabel": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McAdvanced": "Avanzado",
+  "@i18n131McAdvanced": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McCloneFromLabel": "Clonar de",
+  "@i18n131McCloneFromLabel": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McCloneFresh": "Perfil nuevo (skills incluidas)",
+  "@i18n131McCloneFresh": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McShareAuthLabel": "Compartir claves y cuentas con el perfil principal",
+  "@i18n131McShareAuthLabel": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McShareAuthHint": "Suscripciones, logins OAuth y API keys quedan compartidos (no copiados), así que los refrescos de token nunca se invalidan entre sí. Desmárcalo para una copia aislada.",
+  "@i18n131McShareAuthHint": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McNoSkillsLabel": "Crear vacío (sin skills incluidas)",
+  "@i18n131McNoSkillsLabel": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McSoulOptionalLabel": "SOUL.md (opcional)",
+  "@i18n131McSoulOptionalLabel": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McSoulOptionalHint": "Déjalo en blanco para autogenerarla a partir de nombre, título y descripción.",
+  "@i18n131McSoulOptionalHint": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McCreateAgentSubmit": "Crear perfil",
+  "@i18n131McCreateAgentSubmit": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McCreateAgentError": "No se pudo crear el perfil: {detail}",
+  "@i18n131McCreateAgentError": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy.",
+    "placeholders": {
+      "detail": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131McAgentCreated": "Perfil @{name} creado. Añádelo a una sala cuando quieras.",
+  "@i18n131McAgentCreated": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131McStatusIdle": "Inactivo",
+  "@i18n131McStatusIdle": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McStatusThinking": "Pensando",
+  "@i18n131McStatusThinking": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McStatusWorking": "Trabajando",
+  "@i18n131McStatusWorking": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McStatusResponding": "Respondiendo",
+  "@i18n131McStatusResponding": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McStatusBlocked": "Bloqueado",
+  "@i18n131McStatusBlocked": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McStatusApprovalRequired": "Aprobación requerida",
+  "@i18n131McStatusApprovalRequired": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McActivityLabelSessionUpdated": "Sesión activa",
+  "@i18n131McActivityLabelSessionUpdated": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McActivityLabelTaskCreated": "Tarea creada",
+  "@i18n131McActivityLabelTaskCreated": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McActivityLabelTaskStarted": "Tarea iniciada",
+  "@i18n131McActivityLabelTaskStarted": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McActivityLabelTaskCompleted": "Tarea completada",
+  "@i18n131McActivityLabelTaskCompleted": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McActivityLabelTaskBlocked": "Tarea bloqueada",
+  "@i18n131McActivityLabelTaskBlocked": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McBotChat": "Bot Chat",
+  "@i18n131McBotChat": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McSkills": "Skills",
+  "@i18n131McSkills": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McSoul": "SOUL",
+  "@i18n131McSoul": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McInput": "input",
+  "@i18n131McInput": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McOutput": "output",
+  "@i18n131McOutput": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McReasoning": "reasoning",
+  "@i18n131McReasoning": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McManagerLabel": "Manager",
+  "@i18n131McManagerLabel": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McAgentNameHint": "inbox-triage",
+  "@i18n131McAgentNameHint": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McAgentTitleHint": "Inbox Triage",
+  "@i18n131McAgentTitleHint": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131McStatusError": "Error",
+  "@i18n131McStatusError": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; MissionControlCopy."
+  },
+  "i18n131AiScreenTitle": "Integraciones del servidor",
+  "@i18n131AiScreenTitle": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiEntryTitle": "Integraciones del servidor",
+  "@i18n131AiEntryTitle": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiEntryBody": "MCP manual, OAuth, webhooks y estado A2A del servidor.",
+  "@i18n131AiEntryBody": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiSectionLabel": "Secciones de integraciones",
+  "@i18n131AiSectionLabel": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiServerTab": "Servidor",
+  "@i18n131AiServerTab": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiReadOnly": "Esta instancia es de solo lectura. Puedes consultar el estado, pero los cambios del servidor están desactivados.",
+  "@i18n131AiReadOnly": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiRefresh": "Actualizar",
+  "@i18n131AiRefresh": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiRetry": "Reintentar",
+  "@i18n131AiRetry": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiCancel": "Cancelar",
+  "@i18n131AiCancel": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiClose": "Cerrar",
+  "@i18n131AiClose": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiDone": "Listo",
+  "@i18n131AiDone": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiCopy": "Copiar",
+  "@i18n131AiCopy": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiCopied": "Copiado.",
+  "@i18n131AiCopied": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiDelete": "Eliminar",
+  "@i18n131AiDelete": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiMoreOptions": "Más opciones",
+  "@i18n131AiMoreOptions": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiMcpIntro": "Añade un servidor con el mismo contrato de alta individual de Hermes Desktop. Los valores introducidos se envían una vez y la app no los guarda.",
+  "@i18n131AiMcpIntro": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiAddMcp": "Añadir servidor MCP manualmente",
+  "@i18n131AiAddMcp": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiAddMcpBody": "Configuración guiada para un comando local o un endpoint HTTP.",
+  "@i18n131AiAddMcpBody": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiNoMcpPut": "Los servidores existentes nunca se editan reemplazando el mapa MCP completo, porque podrían perderse credenciales redactadas.",
+  "@i18n131AiNoMcpPut": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiManualMcpUnavailable": "Esta versión de Hermes no publica el alta individual de MCP.",
+  "@i18n131AiManualMcpUnavailable": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiMcpFormTitle": "Nuevo servidor MCP",
+  "@i18n131AiMcpFormTitle": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiTransport": "Transporte",
+  "@i18n131AiTransport": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiStdio": "Comando local",
+  "@i18n131AiStdio": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiName": "Nombre",
+  "@i18n131AiName": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiNameHint": "p. ej. reports",
+  "@i18n131AiNameHint": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiCommand": "Comando",
+  "@i18n131AiCommand": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiCommandHint": "p. ej. npx",
+  "@i18n131AiCommandHint": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiArguments": "Argumentos",
+  "@i18n131AiArguments": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiArgumentsHint": "Un argumento por línea. No se interpreta mediante un shell.",
+  "@i18n131AiArgumentsHint": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiEnvironment": "Variables de entorno",
+  "@i18n131AiEnvironment": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiEnvironmentHint": "Los valores solo permanecen en memoria hasta enviar o cerrar este formulario.",
+  "@i18n131AiEnvironmentHint": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiVariableName": "Variable",
+  "@i18n131AiVariableName": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiVariableValue": "Valor",
+  "@i18n131AiVariableValue": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiAddVariable": "Añadir variable",
+  "@i18n131AiAddVariable": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiRemoveVariable": "Quitar variable",
+  "@i18n131AiRemoveVariable": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiEndpointUrl": "URL de MCP",
+  "@i18n131AiEndpointUrl": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiEndpointHint": "HTTPS, o HTTP únicamente en una dirección privada LAN/Tailscale.",
+  "@i18n131AiEndpointHint": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiAuthentication": "Autenticación",
+  "@i18n131AiAuthentication": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiAuthNone": "Ninguna",
+  "@i18n131AiAuthNone": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiAuthHeader": "Cabecera Bearer",
+  "@i18n131AiAuthHeader": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiAuthOauth": "OAuth en navegador",
+  "@i18n131AiAuthOauth": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiBearerToken": "Token Bearer",
+  "@i18n131AiBearerToken": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiBearerHint": "Se envía una vez a Hermes y la app nunca lo guarda.",
+  "@i18n131AiBearerHint": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiCreateMcp": "Añadir servidor",
+  "@i18n131AiCreateMcp": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiMcpCreated": "Servidor MCP añadido.",
+  "@i18n131AiMcpCreated": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiInvalidForm": "Revisa los campos marcados y sus ejemplos.",
+  "@i18n131AiInvalidForm": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiIncompleteEnvironment": "Cada fila de entorno necesita una variable y un valor.",
+  "@i18n131AiIncompleteEnvironment": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiAuthorize": "Autorizar OAuth",
+  "@i18n131AiAuthorize": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiOauthTitle": "Autorizar servidor MCP",
+  "@i18n131AiOauthTitle": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiOauthBody": "Hermes recibe el callback. Esta app solo abre la página de autorización y comprueba el flujo temporal mientras esta ventana está visible.",
+  "@i18n131AiOauthBody": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiOpenBrowser": "Abrir página de autorização",
+  "@i18n131AiOpenBrowser": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiOpeningBrowserFailed": "Android no pudo abrir la página de autorización.",
+  "@i18n131AiOpeningBrowserFailed": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiOauthWaiting": "Esperando autorización…",
+  "@i18n131AiOauthWaiting": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiOauthApproved": "Autorización completada.",
+  "@i18n131AiOauthApproved": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiOauthError": "Hermes indicó un error de autorización.",
+  "@i18n131AiOauthError": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiOauthExpired": "Este flujo de autorización caducó. Inícialo de nuevo.",
+  "@i18n131AiOauthExpired": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiOauthUnknown": "Hermes devolvió un estado de autorización desconocido.",
+  "@i18n131AiOauthUnknown": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiOauthToolsOne": "{count} herramienta disponible",
+  "@i18n131AiOauthToolsOne": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "i18n131AiOauthToolsOther": "{count} herramientas disponibles",
+  "@i18n131AiOauthToolsOther": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "i18n131AiWebhooksIntro": "Webhooks es una plataforma oficial del Gateway de Hermes. Las suscripciones se recargan en caliente cuando el receptor está activo.",
+  "@i18n131AiWebhooksIntro": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiWebhooksUnavailable": "Esta versión de Hermes no publica la administración de webhooks.",
+  "@i18n131AiWebhooksUnavailable": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiWebhookLoadFailed": "No se pudieron cargar los webhooks.",
+  "@i18n131AiWebhookLoadFailed": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiWebhooksDisabled": "Receptor de webhooks desactivado",
+  "@i18n131AiWebhooksDisabled": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiWebhooksDisabledBody": "Actívalo para aceptar eventos HTTP entrantes. Hermes puede necesitar reiniciar el Gateway.",
+  "@i18n131AiWebhooksDisabledBody": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiEnableWebhooks": "Activar webhooks",
+  "@i18n131AiEnableWebhooks": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiEnableWarningTitle": "¿Activar el receptor de webhooks?",
+  "@i18n131AiEnableWarningTitle": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiEnableWarningBody": "Hermes puede reiniciar el Gateway. Los chats activos podrán reconectarse mientras arranca el receptor.",
+  "@i18n131AiEnableWarningBody": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiEnable": "Activar",
+  "@i18n131AiEnable": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiDisable": "Desactivar",
+  "@i18n131AiDisable": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiWebhooksEnabledRestarting": "Webhooks activados; el Gateway se está reiniciando.",
+  "@i18n131AiWebhooksEnabledRestarting": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiWebhooksEnabled": "Webhooks activados.",
+  "@i18n131AiWebhooksEnabled": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiWebhooksNeedRestart": "Webhooks están activados, pero el Gateway todavía necesita reiniciarse.",
+  "@i18n131AiWebhooksNeedRestart": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiAddWebhook": "Nueva suscripción",
+  "@i18n131AiAddWebhook": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiAddWebhookBody": "Crea una ruta autenticada y copia su secreto de una sola visualización.",
+  "@i18n131AiAddWebhookBody": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiNoWebhooks": "Todavía no hay suscripciones webhook.",
+  "@i18n131AiNoWebhooks": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiWebhookFormTitle": "Nueva suscripción webhook",
+  "@i18n131AiWebhookFormTitle": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiDescription": "Descripción",
+  "@i18n131AiDescription": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiDescriptionHint": "Qué hace esta ruta (opcional)",
+  "@i18n131AiDescriptionHint": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiPrompt": "Instrucciones",
+  "@i18n131AiPrompt": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiPromptHint": "Instrucciones para Hermes cuando llegue el evento (opcional)",
+  "@i18n131AiPromptHint": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiEvents": "Eventos",
+  "@i18n131AiEvents": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiEventsHint": "Separados por comas; vacío acepta todos los eventos",
+  "@i18n131AiEventsHint": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiSkills": "Skills",
+  "@i18n131AiSkills": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiSkillsHint": "Opcional, nombres de skills separados por comas",
+  "@i18n131AiSkillsHint": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiDelivery": "Entregar a",
+  "@i18n131AiDelivery": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiDeliverOnly": "Entregar solo el payload",
+  "@i18n131AiDeliverOnly": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiDeliverOnlyHint": "Omite la respuesta del agente al entregar en un canal.",
+  "@i18n131AiDeliverOnlyHint": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiDeliveryLabelLog": "Solo registro",
+  "@i18n131AiDeliveryLabelLog": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiDeliveryLabelEmail": "Correo",
+  "@i18n131AiDeliveryLabelEmail": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiDeliveryLabelGithubComment": "Comentario de GitHub",
+  "@i18n131AiDeliveryLabelGithubComment": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiCreateWebhook": "Crear",
+  "@i18n131AiCreateWebhook": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiWebhookCreated": "Suscripción creada.",
+  "@i18n131AiWebhookCreated": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiDuplicateWebhook": "Ya existe un webhook con ese nombre. Elimínalo de forma explícita antes de crear otro.",
+  "@i18n131AiDuplicateWebhook": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiSecretTitle": "Copia ahora el secreto del webhook",
+  "@i18n131AiSecretTitle": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiSecretBody": "Hermes solo muestra este secreto una vez. Al cerrar este recibo se elimina de la app y no podrá recuperarse aquí.",
+  "@i18n131AiSecretBody": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiWebhookUrl": "URL del webhook",
+  "@i18n131AiWebhookUrl": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiWebhookSecret": "Secreto de un solo uso",
+  "@i18n131AiWebhookSecret": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiDeleteWebhookTitle": "¿Eliminar webhook?",
+  "@i18n131AiDeleteWebhookTitle": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiDeleteWebhookBody": "Esto elimina la suscripción de forma permanente. Las integraciones existentes dejarán de funcionar.",
+  "@i18n131AiDeleteWebhookBody": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiWebhookDeleted": "Webhook eliminado.",
+  "@i18n131AiWebhookDeleted": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiWebhookSubtitleAllEvents": "todos los eventos",
+  "@i18n131AiWebhookSubtitleAllEvents": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiA2aIntro": "A2A funciona íntegramente en el host de Hermes. Android solo muestra el estado oficial de la plataforma y no añade otro cliente de protocolo.",
+  "@i18n131AiA2aIntro": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiA2aUnavailable": "Este servidor no publica su catálogo de plataformas.",
+  "@i18n131AiA2aUnavailable": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiA2aNotPublished": "Esta instalación de Hermes no publica A2A.",
+  "@i18n131AiA2aNotPublished": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiConfigured": "Configurado",
+  "@i18n131AiConfigured": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiNotConfigured": "Sin configurar",
+  "@i18n131AiNotConfigured": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiRunning": "Gateway en ejecución",
+  "@i18n131AiRunning": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiStopped": "Gateway detenido",
+  "@i18n131AiStopped": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiActive": "Activo",
+  "@i18n131AiActive": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiInactive": "Desactivado",
+  "@i18n131AiInactive": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiA2aStateConnected": "Conectado",
+  "@i18n131AiA2aStateConnected": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiA2aStateConnecting": "Conectando",
+  "@i18n131AiA2aStateConnecting": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiA2aStateRetrying": "Reintentando",
+  "@i18n131AiA2aStateRetrying": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiA2aStatePendingRestart": "Reinicio pendiente",
+  "@i18n131AiA2aStatePendingRestart": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiA2aStateNotConfigured": "Sin configurar",
+  "@i18n131AiA2aStateNotConfigured": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiA2aStateGatewayStopped": "Gateway detenido",
+  "@i18n131AiA2aStateGatewayStopped": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiA2aStateStartupFailed": "Error al iniciar",
+  "@i18n131AiA2aStateStartupFailed": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiA2aStateDisconnected": "Desconectado",
+  "@i18n131AiA2aStateDisconnected": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiA2aStateFatal": "Error fatal",
+  "@i18n131AiA2aStateFatal": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiA2aStateDisabled": "Desactivado",
+  "@i18n131AiA2aStateDisabled": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiA2aStateOther": "Estado no disponible",
+  "@i18n131AiA2aStateOther": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiUnsupported": "Esta operación no está disponible en la versión de Hermes conectada.",
+  "@i18n131AiUnsupported": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiForbidden": "Las credenciales actuales del Dashboard no permiten esta operación.",
+  "@i18n131AiForbidden": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiUnavailable": "Hermes no pudo completar la operación ahora mismo.",
+  "@i18n131AiUnavailable": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiInvalidResponse": "Hermes devolvió una respuesta de integración no válida.",
+  "@i18n131AiInvalidResponse": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiRejected": "Hermes rechazó los valores o cambió el estado del servidor.",
+  "@i18n131AiRejected": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiMcpTab": "MCP",
+  "@i18n131AiMcpTab": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiWebhooksTab": "Webhooks",
+  "@i18n131AiWebhooksTab": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiHttp": "HTTP",
+  "@i18n131AiHttp": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiA2aTitle": "A2A",
+  "@i18n131AiA2aTitle": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiDeliveryLabelTelegram": "Telegram",
+  "@i18n131AiDeliveryLabelTelegram": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiDeliveryLabelDiscord": "Discord",
+  "@i18n131AiDeliveryLabelDiscord": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiDeliveryLabelSlack": "Slack",
+  "@i18n131AiDeliveryLabelSlack": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy."
+  },
+  "i18n131AiWebhookSubtitleFormat": "{deliver} · {events}",
+  "@i18n131AiWebhookSubtitleFormat": {
+    "description": "i18n131: Extracted without changing ES/EN/PT; AdminIntegrationsCopy.",
+    "placeholders": {
+      "deliver": {
+        "type": "String"
+      },
+      "events": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131TasksBulkPartialTitle": "Algunas tareas no cambiaron",
+  "@i18n131TasksBulkPartialTitle": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksBulkPartial": "{ok} archivadas; {failed} no se pudieron cambiar.",
+  "@i18n131TasksBulkPartial": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks.",
+    "placeholders": {
+      "ok": {
+        "type": "int"
+      },
+      "failed": {
+        "type": "int"
+      }
+    }
+  },
+  "i18n131TasksActionUnavailable": "Esta operación no está disponible en el servidor.",
+  "@i18n131TasksActionUnavailable": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksSpecify": "Especificar",
+  "@i18n131TasksSpecify": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksSpecifyTitle": "Especificar tarea",
+  "@i18n131TasksSpecifyTitle": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksSpecifyBody": "Hermes usará el modelo auxiliar para completar esta tarea de triage. Puede tardar varios minutos.",
+  "@i18n131TasksSpecifyBody": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksSpecifyStarted": "La tarea se ha especificado.",
+  "@i18n131TasksSpecifyStarted": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksDecompose": "Descomponer",
+  "@i18n131TasksDecompose": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksDecomposeTitle": "Descomponer en subtareas",
+  "@i18n131TasksDecomposeTitle": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksDecomposeBody": "Hermes creará un grafo de subtareas y las asignará a perfiles compatibles. Puede tardar varios minutos.",
+  "@i18n131TasksDecomposeBody": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksDecomposeResult": "Descomposición completada: {count} subtareas.",
+  "@i18n131TasksDecomposeResult": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "i18n131TasksAttachmentTooLarge": "El adjunto supera el límite oficial de 25 MiB.",
+  "@i18n131TasksAttachmentTooLarge": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksAttachmentUnavailable": "Android no pudo proporcionar este archivo.",
+  "@i18n131TasksAttachmentUnavailable": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksAttachmentUploaded": "Adjunto subido.",
+  "@i18n131TasksAttachmentUploaded": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksSaveAttachment": "Guardar adjunto",
+  "@i18n131TasksSaveAttachment": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksAttachmentSaved": "Adjunto guardado.",
+  "@i18n131TasksAttachmentSaved": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksDeleteAttachment": "Eliminar adjunto",
+  "@i18n131TasksDeleteAttachment": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksDeleteAttachmentBody": "¿Eliminar «{name}» del servidor? Esta acción no se puede deshacer.",
+  "@i18n131TasksDeleteAttachmentBody": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131TasksDelete": "Eliminar",
+  "@i18n131TasksDelete": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksAttachmentDeleted": "Adjunto eliminado.",
+  "@i18n131TasksAttachmentDeleted": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksWorkerLog": "Log del worker",
+  "@i18n131TasksWorkerLog": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksNoLog": "Esta tarea todavía no tiene log.",
+  "@i18n131TasksNoLog": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksLogTruncated": "Se muestra únicamente la cola más reciente del log.",
+  "@i18n131TasksLogTruncated": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksRunInspection": "Estado de la ejecución",
+  "@i18n131TasksRunInspection": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksAlive": "Activo",
+  "@i18n131TasksAlive": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksYes": "Sí",
+  "@i18n131TasksYes": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksStatus": "Estado",
+  "@i18n131TasksStatus": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksThreads": "Hilos",
+  "@i18n131TasksThreads": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksReason": "Motivo",
+  "@i18n131TasksReason": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksError": "Error",
+  "@i18n131TasksError": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksTerminate": "Terminar",
+  "@i18n131TasksTerminate": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksTerminateTitle": "Terminar ejecución",
+  "@i18n131TasksTerminateTitle": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksTerminateBody": "Se detendrá el worker de la ejecución #{id} y la tarea volverá a la cola. ¿Continuar?",
+  "@i18n131TasksTerminateBody": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks.",
+    "placeholders": {
+      "id": {
+        "type": "int"
+      }
+    }
+  },
+  "i18n131TasksRunTerminated": "Ejecución terminada y reencolada.",
+  "@i18n131TasksRunTerminated": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksReclaim": "Recuperar",
+  "@i18n131TasksReclaim": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksReclaimTitle": "Recuperar tarea atascada",
+  "@i18n131TasksReclaimTitle": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksReclaimBody": "Se detendrá el worker actual y la tarea volverá a «En cola». Úsalo solo si la ejecución está atascada.",
+  "@i18n131TasksReclaimBody": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksTaskReclaimed": "Tarea recuperada y reencolada.",
+  "@i18n131TasksTaskReclaimed": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksChooseProfile": "Elegir perfil",
+  "@i18n131TasksChooseProfile": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksReassign": "Reasignar",
+  "@i18n131TasksReassign": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksReassignTitle": "Reasignar tarea",
+  "@i18n131TasksReassignTitle": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksReassignBodyReclaims": "La tarea se asignará a «{profile}». El worker actual se detendrá primero.",
+  "@i18n131TasksReassignBodyReclaims": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks.",
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131TasksReassignBody": "La tarea se asignará a «{profile}».",
+  "@i18n131TasksReassignBody": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks.",
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131TasksTaskReassigned": "Tarea reasignada.",
+  "@i18n131TasksTaskReassigned": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksModelOptionsUnavailable": "Este servidor no publica opciones de modelo para Kanban.",
+  "@i18n131TasksModelOptionsUnavailable": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksChooseModel": "Modelo para esta tarea",
+  "@i18n131TasksChooseModel": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksInheritModel": "Heredar modelo del perfil",
+  "@i18n131TasksInheritModel": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksReasoningEffort": "Esfuerzo de razonamiento",
+  "@i18n131TasksReasoningEffort": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksInheritEffort": "Heredar esfuerzo del perfil",
+  "@i18n131TasksInheritEffort": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksEffortLabelNone": "Desactivado",
+  "@i18n131TasksEffortLabelNone": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksEffortLabelMinimal": "Mínimo",
+  "@i18n131TasksEffortLabelMinimal": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksEffortLabelLow": "Bajo",
+  "@i18n131TasksEffortLabelLow": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksEffortLabelMedium": "Medio",
+  "@i18n131TasksEffortLabelMedium": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksEffortLabelHigh": "Alto",
+  "@i18n131TasksEffortLabelHigh": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksEffortLabelXhigh": "Muy alto",
+  "@i18n131TasksEffortLabelXhigh": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksEffortLabelMax": "Máximo",
+  "@i18n131TasksEffortLabelMax": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksApplyModelTitle": "Aplicar configuración de modelo",
+  "@i18n131TasksApplyModelTitle": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksApplyModelBody": "Modelo: {model}\nRazonamiento: {effortLabelValue}",
+  "@i18n131TasksApplyModelBody": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks.",
+    "placeholders": {
+      "model": {
+        "type": "String"
+      },
+      "effortLabelValue": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131TasksApply": "Aplicar",
+  "@i18n131TasksApply": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksModelApplied": "Configuración de modelo aplicada.",
+  "@i18n131TasksModelApplied": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksNo": "No",
+  "@i18n131TasksNo": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksMemory": "RAM",
+  "@i18n131TasksMemory": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131TasksEffortLabelUltra": "Ultra",
+  "@i18n131TasksEffortLabelUltra": {
+    "description": "i18n131: Preserved ES/EN/PT; tasks."
+  },
+  "i18n131DetailReadOnly": "Esta instancia está en modo solo lectura.",
+  "@i18n131DetailReadOnly": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailObjective": "Objetivo · leer completo",
+  "@i18n131DetailObjective": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailResult": "Resultado",
+  "@i18n131DetailResult": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailLatestSummary": "Último resumen",
+  "@i18n131DetailLatestSummary": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailDiagnostics": "Diagnósticos",
+  "@i18n131DetailDiagnostics": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailDependencies": "Dependencias",
+  "@i18n131DetailDependencies": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailParents": "Depende de",
+  "@i18n131DetailParents": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailChildren": "Desbloquea",
+  "@i18n131DetailChildren": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailBlockedBy": "Bloqueada por",
+  "@i18n131DetailBlockedBy": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailBlocks": "Bloquea",
+  "@i18n131DetailBlocks": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailChildResults": "Subtareas",
+  "@i18n131DetailChildResults": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailComments": "Comentarios",
+  "@i18n131DetailComments": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailNoComments": "Todavía no hay comentarios.",
+  "@i18n131DetailNoComments": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailSomeone": "Alguien",
+  "@i18n131DetailSomeone": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailAddComment": "Añadir comentario",
+  "@i18n131DetailAddComment": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailMessageWorker": "Enviar una nota al worker",
+  "@i18n131DetailMessageWorker": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailSend": "Enviar",
+  "@i18n131DetailSend": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailAttachments": "Adjuntos",
+  "@i18n131DetailAttachments": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailNoAttachments": "No hay adjuntos.",
+  "@i18n131DetailNoAttachments": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailUploadAttachment": "Subir adjunto",
+  "@i18n131DetailUploadAttachment": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailDownload": "Descargar",
+  "@i18n131DetailDownload": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailDeleteAttachment": "Eliminar adjunto",
+  "@i18n131DetailDeleteAttachment": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailRuns": "Ejecuciones",
+  "@i18n131DetailRuns": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailRun": "Ejecución",
+  "@i18n131DetailRun": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailInspect": "Inspeccionar",
+  "@i18n131DetailInspect": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailTerminate": "Terminar ejecución",
+  "@i18n131DetailTerminate": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailLog": "Log",
+  "@i18n131DetailLog": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailActivity": "Actividad",
+  "@i18n131DetailActivity": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailShowAll": "Mostrar toda",
+  "@i18n131DetailShowAll": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailShowLess": "Mostrar menos",
+  "@i18n131DetailShowLess": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailOperations": "Operaciones",
+  "@i18n131DetailOperations": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailModel": "Modelo de esta tarea",
+  "@i18n131DetailModel": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailInheritModel": "Heredar del perfil",
+  "@i18n131DetailInheritModel": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailReassign": "Reasignar",
+  "@i18n131DetailReassign": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailReclaim": "Recuperar y reencolar",
+  "@i18n131DetailReclaim": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailSpecify": "Especificar",
+  "@i18n131DetailSpecify": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailDecompose": "Descomponer",
+  "@i18n131DetailDecompose": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailNotifyWhenDone": "Avisarme cuando termine",
+  "@i18n131DetailNotifyWhenDone": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailMuteNotifications": "Silenciar notificaciones",
+  "@i18n131DetailMuteNotifications": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131DetailMuteNotificationsSub": "No avisar de cambios de estado de esta tarea, aunque los resultados de Kanban estén activados",
+  "@i18n131DetailMuteNotificationsSub": {
+    "description": "i18n131: Preserved ES/EN/PT; detail."
+  },
+  "i18n131TaskSheetTheTaskCouldNotBeAssignedTry": "No se pudo encargar la tarea. Inténtalo de nuevo.",
+  "@i18n131TaskSheetTheTaskCouldNotBeAssignedTry": {
+    "description": "i18n131: Preserved ES/EN/PT; taskSheet."
+  },
+  "i18n131TaskSheetLow": "Baja",
+  "@i18n131TaskSheetLow": {
+    "description": "i18n131: Preserved ES/EN/PT; taskSheet."
+  },
+  "i18n131TaskSheetNormal": "Normal",
+  "@i18n131TaskSheetNormal": {
+    "description": "i18n131: Preserved ES/EN/PT; taskSheet."
+  },
+  "i18n131TaskSheetHigh": "Alta",
+  "@i18n131TaskSheetHigh": {
+    "description": "i18n131: Preserved ES/EN/PT; taskSheet."
+  },
+  "i18n131TaskSheetAssignTask": "Encargar tarea",
+  "@i18n131TaskSheetAssignTask": {
+    "description": "i18n131: Preserved ES/EN/PT; taskSheet."
+  },
+  "i18n131TaskSheetWhat": "Qué",
+  "@i18n131TaskSheetWhat": {
+    "description": "i18n131: Preserved ES/EN/PT; taskSheet."
+  },
+  "i18n131TaskSheetWhatShouldThisProfileDo": "¿Qué debe hacer este perfil?",
+  "@i18n131TaskSheetWhatShouldThisProfileDo": {
+    "description": "i18n131: Preserved ES/EN/PT; taskSheet."
+  },
+  "i18n131TaskSheetDescribeTheTask": "Describe la tarea.",
+  "@i18n131TaskSheetDescribeTheTask": {
+    "description": "i18n131: Preserved ES/EN/PT; taskSheet."
+  },
+  "i18n131TaskSheetWhyOptional": "Para qué (opcional)",
+  "@i18n131TaskSheetWhyOptional": {
+    "description": "i18n131: Preserved ES/EN/PT; taskSheet."
+  },
+  "i18n131TaskSheetAddContextOrTheExpectedResult": "Añade contexto o el resultado esperado.",
+  "@i18n131TaskSheetAddContextOrTheExpectedResult": {
+    "description": "i18n131: Preserved ES/EN/PT; taskSheet."
+  },
+  "i18n131TaskSheetPriority": "Prioridad",
+  "@i18n131TaskSheetPriority": {
+    "description": "i18n131: Preserved ES/EN/PT; taskSheet."
+  },
+  "i18n131ProfileUseAPngJpegWebpOrGif": "Usa una imagen PNG, JPEG, WebP o GIF de hasta 15 MB.",
+  "@i18n131ProfileUseAPngJpegWebpOrGif": {
+    "description": "i18n131: Preserved ES/EN/PT; profile."
+  },
+  "i18n131ProfileDiscardChanges": "¿Descartar cambios?",
+  "@i18n131ProfileDiscardChanges": {
+    "description": "i18n131: Preserved ES/EN/PT; profile."
+  },
+  "i18n131ProfileTheProfileIdentityHasNotBeenSaved": "La identidad del perfil todavía no se ha guardado.",
+  "@i18n131ProfileTheProfileIdentityHasNotBeenSaved": {
+    "description": "i18n131: Preserved ES/EN/PT; profile."
+  },
+  "i18n131ProfileKeepEditing": "Seguir editando",
+  "@i18n131ProfileKeepEditing": {
+    "description": "i18n131: Preserved ES/EN/PT; profile."
+  },
+  "i18n131ProfileDiscard": "Descartar",
+  "@i18n131ProfileDiscard": {
+    "description": "i18n131: Preserved ES/EN/PT; profile."
+  },
+  "i18n131ProfileUnsaved": "Sin guardar",
+  "@i18n131ProfileUnsaved": {
+    "description": "i18n131: Preserved ES/EN/PT; profile."
+  },
+  "i18n131ProfileTheProfilenameIdentifierDoesNotChange": "El identificador @{profileName} no cambia",
+  "@i18n131ProfileTheProfilenameIdentifierDoesNotChange": {
+    "description": "i18n131: Preserved ES/EN/PT; profile.",
+    "placeholders": {
+      "profileName": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131ProfileCustomize": "Personalizar",
+  "@i18n131ProfileCustomize": {
+    "description": "i18n131: Preserved ES/EN/PT; profile."
+  },
+  "i18n131ProfileVisualIdentity": "Identidad visual",
+  "@i18n131ProfileVisualIdentity": {
+    "description": "i18n131: Preserved ES/EN/PT; profile."
+  },
+  "i18n131ProfilePet": "Mascota",
+  "@i18n131ProfilePet": {
+    "description": "i18n131: Preserved ES/EN/PT; profile."
+  },
+  "i18n131ProfileImage": "Imagen",
+  "@i18n131ProfileImage": {
+    "description": "i18n131: Preserved ES/EN/PT; profile."
+  },
+  "i18n131ProfileFace": "Cara",
+  "@i18n131ProfileFace": {
+    "description": "i18n131: Preserved ES/EN/PT; profile."
+  },
+  "i18n131ProfileAutomatic": "Automático",
+  "@i18n131ProfileAutomatic": {
+    "description": "i18n131: Preserved ES/EN/PT; profile."
+  },
+  "i18n131ProfileDescription": "Descripción",
+  "@i18n131ProfileDescription": {
+    "description": "i18n131: Preserved ES/EN/PT; profile."
+  },
+  "i18n131ProfileNoDescription": "Sin descripción",
+  "@i18n131ProfileNoDescription": {
+    "description": "i18n131: Preserved ES/EN/PT; profile."
+  },
+  "i18n131ProfileViewSkills": "Ver skills",
+  "@i18n131ProfileViewSkills": {
+    "description": "i18n131: Preserved ES/EN/PT; profile."
+  },
+  "i18n131ProfileProfileFace": "Cara del perfil",
+  "@i18n131ProfileProfileFace": {
+    "description": "i18n131: Preserved ES/EN/PT; profile."
+  },
+  "i18n131ProfilePngJpegWebpOrGifCenterCropped": "PNG, JPEG, WebP o GIF. Se recorta al centro y se guarda cuadrada.",
+  "@i18n131ProfilePngJpegWebpOrGifCenterCropped": {
+    "description": "i18n131: Preserved ES/EN/PT; profile."
+  },
+  "i18n131ProfileChooseImage": "Elegir imagen",
+  "@i18n131ProfileChooseImage": {
+    "description": "i18n131: Preserved ES/EN/PT; profile."
+  },
+  "i18n131ProfileChangeImage": "Cambiar imagen",
+  "@i18n131ProfileChangeImage": {
+    "description": "i18n131: Preserved ES/EN/PT; profile."
+  },
+  "i18n131ProfileASavedImageAlsoExistsThePet": "También hay una imagen guardada. La mascota tiene prioridad.",
+  "@i18n131ProfileASavedImageAlsoExistsThePet": {
+    "description": "i18n131: Preserved ES/EN/PT; profile."
+  },
+  "i18n131ProfileUseImage": "Usar imagen",
+  "@i18n131ProfileUseImage": {
+    "description": "i18n131: Preserved ES/EN/PT; profile."
+  },
+  "i18n131ProfileUncertainStateReviewAndSaveAgain": "Estado incierto: revisa y vuelve a guardar.",
+  "@i18n131ProfileUncertainStateReviewAndSaveAgain": {
+    "description": "i18n131: Preserved ES/EN/PT; profile."
+  },
+  "i18n131ProfileUnsavedChanges": "Cambios sin guardar",
+  "@i18n131ProfileUnsavedChanges": {
+    "description": "i18n131: Preserved ES/EN/PT; profile."
+  },
+  "i18n131ProfileNoPendingChanges": "Sin cambios pendientes",
+  "@i18n131ProfileNoPendingChanges": {
+    "description": "i18n131: Preserved ES/EN/PT; profile."
+  },
+  "i18n131ProfileSaving": "Guardando…",
+  "@i18n131ProfileSaving": {
+    "description": "i18n131: Preserved ES/EN/PT; profile."
+  },
+  "i18n131CreateUseAPngJpegWebpOrGif": "Usa una imagen PNG, JPEG, WebP o GIF de hasta 15 MB.",
+  "@i18n131CreateUseAPngJpegWebpOrGif": {
+    "description": "i18n131: Preserved ES/EN/PT; create."
+  },
+  "i18n131CreateTheProfileExistsButItsIdentityIs": "El perfil existe, pero no sabemos si su identidad se guardó. Revísala y vuelve a intentarlo.",
+  "@i18n131CreateTheProfileExistsButItsIdentityIs": {
+    "description": "i18n131: Preserved ES/EN/PT; create."
+  },
+  "i18n131CreateTheProfileExistsButItsIdentityCould": "El perfil existe, pero no se pudo aplicar su identidad. Corrige el problema y vuelve a intentarlo.",
+  "@i18n131CreateTheProfileExistsButItsIdentityCould": {
+    "description": "i18n131: Preserved ES/EN/PT; create."
+  },
+  "i18n131CreateChooseAValidIdentityBeforeCreatingThe": "Elige una identidad válida antes de crear el perfil.",
+  "@i18n131CreateChooseAValidIdentityBeforeCreatingThe": {
+    "description": "i18n131: Preserved ES/EN/PT; create."
+  },
+  "i18n131CreateDiscardChanges": "¿Descartar cambios?",
+  "@i18n131CreateDiscardChanges": {
+    "description": "i18n131: Preserved ES/EN/PT; create."
+  },
+  "i18n131CreateTheProfileAlreadyExistsButItsVisual": "El perfil ya existe, pero su configuración visual no terminó. Si sales, no se abrirá su chat automático.",
+  "@i18n131CreateTheProfileAlreadyExistsButItsVisual": {
+    "description": "i18n131: Preserved ES/EN/PT; create."
+  },
+  "i18n131CreateYouWillLoseThisProfileSetup": "Perderás la configuración de este perfil.",
+  "@i18n131CreateYouWillLoseThisProfileSetup": {
+    "description": "i18n131: Preserved ES/EN/PT; create."
+  },
+  "i18n131CreateKeepEditing": "Seguir editando",
+  "@i18n131CreateKeepEditing": {
+    "description": "i18n131: Preserved ES/EN/PT; create."
+  },
+  "i18n131CreateDiscard": "Descartar",
+  "@i18n131CreateDiscard": {
+    "description": "i18n131: Preserved ES/EN/PT; create."
+  },
+  "i18n131CreateCustomize": "Personalizar",
+  "@i18n131CreateCustomize": {
+    "description": "i18n131: Preserved ES/EN/PT; create."
+  },
+  "i18n131CreateOptional": "opcional",
+  "@i18n131CreateOptional": {
+    "description": "i18n131: Preserved ES/EN/PT; create."
+  },
+  "i18n131CreateVisualIdentity": "Identidad visual",
+  "@i18n131CreateVisualIdentity": {
+    "description": "i18n131: Preserved ES/EN/PT; create."
+  },
+  "i18n131CreatePet": "Mascota",
+  "@i18n131CreatePet": {
+    "description": "i18n131: Preserved ES/EN/PT; create."
+  },
+  "i18n131CreateImage": "Imagen",
+  "@i18n131CreateImage": {
+    "description": "i18n131: Preserved ES/EN/PT; create."
+  },
+  "i18n131CreateFace": "Cara",
+  "@i18n131CreateFace": {
+    "description": "i18n131: Preserved ES/EN/PT; create."
+  },
+  "i18n131CreateTitleAndDescription": "Título y descripción",
+  "@i18n131CreateTitleAndDescription": {
+    "description": "i18n131: Preserved ES/EN/PT; create."
+  },
+  "i18n131CreateNotFilledIn": "Sin rellenar",
+  "@i18n131CreateNotFilledIn": {
+    "description": "i18n131: Preserved ES/EN/PT; create."
+  },
+  "i18n131CreateSoulCloneFrom": "Soul · Clonar de",
+  "@i18n131CreateSoulCloneFrom": {
+    "description": "i18n131: Preserved ES/EN/PT; create."
+  },
+  "i18n131CreateProfileFace": "Cara del perfil",
+  "@i18n131CreateProfileFace": {
+    "description": "i18n131: Preserved ES/EN/PT; create."
+  },
+  "i18n131CreatePngJpegWebpOrGifCenterCropped": "PNG, JPEG, WebP o GIF. Se recorta al centro y se guarda cuadrada.",
+  "@i18n131CreatePngJpegWebpOrGifCenterCropped": {
+    "description": "i18n131: Preserved ES/EN/PT; create."
+  },
+  "i18n131CreateChooseImage": "Elegir imagen",
+  "@i18n131CreateChooseImage": {
+    "description": "i18n131: Preserved ES/EN/PT; create."
+  },
+  "i18n131CreateChangeImage": "Cambiar imagen",
+  "@i18n131CreateChangeImage": {
+    "description": "i18n131: Preserved ES/EN/PT; create."
+  },
+  "i18n131CreateUncertainStateReviewAndTryAgain": "Estado incierto: revisa y vuelve a intentar.",
+  "@i18n131CreateUncertainStateReviewAndTryAgain": {
+    "description": "i18n131: Preserved ES/EN/PT; create."
+  },
+  "i18n131CreateProfileCreatedIdentityConfirmationPending": "Perfil creado · falta confirmar la identidad",
+  "@i18n131CreateProfileCreatedIdentityConfirmationPending": {
+    "description": "i18n131: Preserved ES/EN/PT; create."
+  },
+  "i18n131CreateCreating": "Creando…",
+  "@i18n131CreateCreating": {
+    "description": "i18n131: Preserved ES/EN/PT; create."
+  },
+  "i18n131CreateRetryIdentity": "Reintentar identidad",
+  "@i18n131CreateRetryIdentity": {
+    "description": "i18n131: Preserved ES/EN/PT; create."
+  },
+  "i18n131RoomsRemoveMember": "Quitar",
+  "@i18n131RoomsRemoveMember": {
+    "description": "i18n131: Preserved ES/EN/PT; rooms."
+  },
+  "i18n131RoomsNoMembersChosen": "Toca un perfil para añadirlo a la sala.",
+  "@i18n131RoomsNoMembersChosen": {
+    "description": "i18n131: Preserved ES/EN/PT; rooms."
+  },
+  "i18n131RoutineTitle": "Nueva rutina",
+  "@i18n131RoutineTitle": {
+    "description": "i18n131: Preserved ES/EN/PT; routine."
+  },
+  "i18n131RoutineDescription": "Programa algo para que este perfil lo haga por ti.",
+  "@i18n131RoutineDescription": {
+    "description": "i18n131: Preserved ES/EN/PT; routine."
+  },
+  "i18n131RoutineBotLabel": "Perfil",
+  "@i18n131RoutineBotLabel": {
+    "description": "i18n131: Preserved ES/EN/PT; routine."
+  },
+  "i18n131RoutineWhatLabel": "Qué",
+  "@i18n131RoutineWhatLabel": {
+    "description": "i18n131: Preserved ES/EN/PT; routine."
+  },
+  "i18n131RoutineWhatHint": "Describe qué debe hacer",
+  "@i18n131RoutineWhatHint": {
+    "description": "i18n131: Preserved ES/EN/PT; routine."
+  },
+  "i18n131RoutineWhatRequired": "Escribe qué debe hacer el perfil.",
+  "@i18n131RoutineWhatRequired": {
+    "description": "i18n131: Preserved ES/EN/PT; routine."
+  },
+  "i18n131RoutineWhenLabel": "Cuándo",
+  "@i18n131RoutineWhenLabel": {
+    "description": "i18n131: Preserved ES/EN/PT; routine."
+  },
+  "i18n131RoutineCustomScheduleLabel": "Expresión cron",
+  "@i18n131RoutineCustomScheduleLabel": {
+    "description": "i18n131: Preserved ES/EN/PT; routine."
+  },
+  "i18n131RoutineCustomScheduleHint": "0 9 * * *",
+  "@i18n131RoutineCustomScheduleHint": {
+    "description": "i18n131: Preserved ES/EN/PT; routine."
+  },
+  "i18n131RoutineCustomScheduleRequired": "Escribe una expresión cron.",
+  "@i18n131RoutineCustomScheduleRequired": {
+    "description": "i18n131: Preserved ES/EN/PT; routine."
+  },
+  "i18n131RoutineMoreOptions": "Más opciones",
+  "@i18n131RoutineMoreOptions": {
+    "description": "i18n131: Preserved ES/EN/PT; routine."
+  },
+  "i18n131RoutineOptionalNameLabel": "Nombre opcional",
+  "@i18n131RoutineOptionalNameLabel": {
+    "description": "i18n131: Preserved ES/EN/PT; routine."
+  },
+  "i18n131RoutineOptionalNameHint": "Por ejemplo, Resumen de la mañana",
+  "@i18n131RoutineOptionalNameHint": {
+    "description": "i18n131: Preserved ES/EN/PT; routine."
+  },
+  "i18n131RoutineCreate": "Crear rutina",
+  "@i18n131RoutineCreate": {
+    "description": "i18n131: Preserved ES/EN/PT; routine."
+  },
+  "i18n131RoutineCreating": "Creando…",
+  "@i18n131RoutineCreating": {
+    "description": "i18n131: Preserved ES/EN/PT; routine."
+  },
+  "i18n131RoutineGenericError": "No se pudo crear la rutina. Inténtalo de nuevo.",
+  "@i18n131RoutineGenericError": {
+    "description": "i18n131: Preserved ES/EN/PT; routine."
+  },
+  "i18n131RoutineDailyAtNine": "Cada día · 09:00",
+  "@i18n131RoutineDailyAtNine": {
+    "description": "i18n131: Preserved ES/EN/PT; routine."
+  },
+  "i18n131RoutineWeekdaysAtNine": "Días laborables · 09:00",
+  "@i18n131RoutineWeekdaysAtNine": {
+    "description": "i18n131: Preserved ES/EN/PT; routine."
+  },
+  "i18n131RoutineWeeklyMondayAtNine": "Cada lunes · 09:00",
+  "@i18n131RoutineWeeklyMondayAtNine": {
+    "description": "i18n131: Preserved ES/EN/PT; routine."
+  },
+  "i18n131RoutineMonthlyAtNine": "Cada mes · día 1, 09:00",
+  "@i18n131RoutineMonthlyAtNine": {
+    "description": "i18n131: Preserved ES/EN/PT; routine."
+  },
+  "i18n131RoutineHourly": "Cada hora",
+  "@i18n131RoutineHourly": {
+    "description": "i18n131: Preserved ES/EN/PT; routine."
+  },
+  "i18n131RoutineEveryFifteenMinutes": "Cada 15 minutos",
+  "@i18n131RoutineEveryFifteenMinutes": {
+    "description": "i18n131: Preserved ES/EN/PT; routine."
+  },
+  "i18n131RoutineCustom": "Personalizado",
+  "@i18n131RoutineCustom": {
+    "description": "i18n131: Preserved ES/EN/PT; routine."
+  },
+  "i18n131RosterNow": "ahora",
+  "@i18n131RosterNow": {
+    "description": "i18n131: Preserved ES/EN/PT; roster."
+  },
+  "i18n131RosterYesterday": "ayer",
+  "@i18n131RosterYesterday": {
+    "description": "i18n131: Preserved ES/EN/PT; roster."
+  },
+  "i18n131ChatBusy": "Hermes está ocupado (por ejemplo, compactando la conversación). Tu mensaje sigue en el composer: inténtalo en un momento.",
+  "@i18n131ChatBusy": {
+    "description": "i18n131: Canned chat display text; Spanish preserved, English and Portuguese added where absent."
+  },
+  "i18n131ChatNotOwned": "No se puede continuar en directo porque esta conversación pertenece a otro gateway o proceso. El historial se conserva y puedes iniciar un chat nuevo.",
+  "@i18n131ChatNotOwned": {
+    "description": "i18n131: Canned chat display text; Spanish preserved, English and Portuguese added where absent."
+  },
+  "i18n131ChatLimit": "Hermes alcanzó el límite configurado de sesiones activas. Espera a que termine una sesión o ajusta el límite.",
+  "@i18n131ChatLimit": {
+    "description": "i18n131: Canned chat display text; Spanish preserved, English and Portuguese added where absent."
+  },
+  "i18n131ChatCoordination": "Hermes no pudo reservar esta conversación con seguridad. Revisa el servidor y vuelve a intentarlo.",
+  "@i18n131ChatCoordination": {
+    "description": "i18n131: Canned chat display text; Spanish preserved, English and Portuguese added where absent."
+  },
+  "i18n131ChatSendFailed": "No se pudo enviar el mensaje. Inténtalo de nuevo.",
+  "@i18n131ChatSendFailed": {
+    "description": "i18n131: Canned chat display text; Spanish preserved, English and Portuguese added where absent."
+  },
+  "i18n131ChatStoredNotOwned": "No se puede continuar esta conversación en directo. El historial se conserva y puedes iniciar un chat nuevo.",
+  "@i18n131ChatStoredNotOwned": {
+    "description": "i18n131: Canned chat display text; Spanish preserved, English and Portuguese added where absent."
+  },
+  "i18n131ChatStoredFailed": "No se pudo completar la respuesta. Inténtalo de nuevo.",
+  "@i18n131ChatStoredFailed": {
+    "description": "i18n131: Canned chat display text; Spanish preserved, English and Portuguese added where absent."
+  },
+  "i18n131ChatStoredDisconnected": "Se perdió la conexión con Hermes. El mensaje no se confirmó; revisa el borrador y reintenta.",
+  "@i18n131ChatStoredDisconnected": {
+    "description": "i18n131: Canned chat display text; Spanish preserved, English and Portuguese added where absent."
+  },
+  "i18n131ChatRecoveryFailed": "No se pudo recuperar el turno. Inténtalo de nuevo.",
+  "@i18n131ChatRecoveryFailed": {
+    "description": "i18n131: Canned chat display text; Spanish preserved, English and Portuguese added where absent."
+  },
+  "i18n131ChatFailureCause": "No se pudo completar la respuesta: {cause}",
+  "@i18n131ChatFailureCause": {
+    "description": "i18n131: Canned chat display text; Spanish preserved, English and Portuguese added where absent.",
+    "placeholders": {
+      "cause": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6Animations": "Animaciones",
+  "i18n131P6Idle": "Reposo",
+  "i18n131P6Run": "Correr",
+  "i18n131P6Wait": "Esperar",
+  "i18n131P6Greet": "Saludar",
+  "i18n131P6Jump": "Saltar",
+  "i18n131P6Failure": "Fallo",
+  "i18n131P6Module": "▸ módulo: {name}",
+  "@i18n131P6Module": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6ModulePending": "Sin conectar · {phase}",
+  "@i18n131P6ModulePending": {
+    "placeholders": {
+      "phase": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6ConnectingHost": "Conectando a {host}",
+  "@i18n131P6ConnectingHost": {
+    "placeholders": {
+      "host": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6BaseUrl": "URL base",
+  "i18n131P6OpenAiCompatible": "Compatible con OpenAI",
+  "i18n131P6StoredKey": "•••• clave guardada — pega una nueva para reemplazar",
+  "i18n131P6StoredPassword": "•••• guardada — escribe para cambiar",
+  "i18n131P6Host": "Servidor",
+  "i18n131P6Fingerprint": "{type} · huella digital",
+  "@i18n131P6Fingerprint": {
+    "placeholders": {
+      "type": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6TokenSummary": "Tokens: {total} (entrada {input} / salida {output})",
+  "@i18n131P6TokenSummary": {
+    "placeholders": {
+      "total": {
+        "type": "String"
+      },
+      "input": {
+        "type": "String"
+      },
+      "output": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6TruncatedOutput": "{output}\n…(salida truncada)",
+  "@i18n131P6TruncatedOutput": {
+    "placeholders": {
+      "output": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6LocalChat": "Chat local",
+  "i18n131P6ExitCode": "salida {code}",
+  "@i18n131P6ExitCode": {
+    "placeholders": {
+      "code": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6SshUptime": "Tiempo activo",
+  "i18n131P6SshDisk": "Disco",
+  "i18n131P6SshCpu": "Mayor uso de CPU",
+  "i18n131P6SshStatus": "Estado de Hermes",
+  "i18n131P6TurnNotSaved": "No se pudo conservar el turno antes de enviarlo.",
+  "i18n131P6AttachmentUnreadable": "No se pudo leer un adjunto local.",
+  "i18n131P6AttachmentNotSaved": "No se pudo conservar el estado de un adjunto.",
+  "i18n131P6AttachmentsChanged": "El lote de adjuntos cambió durante la subida.",
+  "i18n131P6SendAuthorityLost": "El envío perdió su autorización antes de entregarse.",
+  "i18n131P6TurnFailedAfterReconnect": "Hermes confirmó que el turno falló tras reconectar.",
+  "i18n131P6SoulChanged": "SOUL cambió durante la revisión. Recarga y vuelve a revisarlo.",
+  "i18n131P6SoulInvalid": "La respuesta de SOUL no es válida.",
+  "i18n131P6SoulUnconfirmed": "No se confirmó la escritura de SOUL.",
+  "i18n131P6SoulUnverified": "No se pudo verificar la escritura de SOUL.",
+  "i18n131P6ThemeTooLarge": "El tema supera el límite de 64 KiB.",
+  "i18n131P6ThemeUnreadable": "No se pudo leer el tema seleccionado.",
+  "i18n131P6ThemeBuiltin": "Duplica el tema integrado antes de modificarlo o exportarlo.",
+  "i18n131P6ThemeMissing": "El tema seleccionado ya no existe.",
+  "i18n131P6ThemeFieldError": "Campo de tema no válido: {field} ({code}).",
+  "@i18n131P6ThemeFieldError": {
+    "placeholders": {
+      "field": {
+        "type": "String"
+      },
+      "code": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6ThemeIdFailed": "No se pudo crear un identificador único para el tema.",
+  "i18n131P6LogWarning": "aviso",
+  "i18n131P6LogDebug": "depuración",
+  "i18n131P6BadgeCode": "CÓDIGO",
+  "i18n131P6BadgeAudio": "AUDIO",
+  "i18n131P6BadgeVideo": "VÍDEO",
+  "i18n131P6ProfileCreateUnavailable": "Este Hermes Gateway no permite crear perfiles.",
+  "i18n131P6NoPet": "No hay ninguna mascota seleccionada.",
+  "i18n131P6PetUnavailable": "La mascota no está disponible.",
+  "i18n131P6ImageUnavailable": "La imagen del perfil no está disponible.",
+  "i18n131P6ProfileCapabilitiesUnsaved": "No se guardaron las capacidades del perfil.",
+  "i18n131P6BotIdentityUnavailable": "La gestión de identidad del bot no está disponible.",
+  "i18n131P6PetInvalid": "Valor no válido en {field}.",
+  "@i18n131P6PetInvalid": {
+    "placeholders": {
+      "field": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6PetMissing": "Falta {field}.",
+  "@i18n131P6PetMissing": {
+    "placeholders": {
+      "field": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6PetTooLarge": "{field} supera el tamaño máximo.",
+  "@i18n131P6PetTooLarge": {
+    "placeholders": {
+      "field": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6PetEmpty": "{field} está vacío.",
+  "@i18n131P6PetEmpty": {
+    "placeholders": {
+      "field": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6PetOutOfRange": "Valor fuera de rango en {field}.",
+  "@i18n131P6PetOutOfRange": {
+    "placeholders": {
+      "field": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6PetWriteFailed": "No se pudo guardar la mascota.",
+  "i18n131P6PetSlugUsed": "Una mascota integrada ya usa el identificador {slug}.",
+  "@i18n131P6PetSlugUsed": {
+    "placeholders": {
+      "slug": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6PetArchivePath": "Ruta no permitida en el ZIP: {path}.",
+  "@i18n131P6PetArchivePath": {
+    "placeholders": {
+      "path": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6PetImageFormat": "El spritesheet debe ser una imagen PNG o WebP válida.",
+  "i18n131P6PetBase64": "El spritesheet debe usar base64 válido sin prefijo.",
+  "i18n131P6PetMismatch": "{field} no coincide con {expected}.",
+  "@i18n131P6PetMismatch": {
+    "placeholders": {
+      "field": {
+        "type": "String"
+      },
+      "expected": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6PetFieldType": "{field} debe ser de tipo {type}.",
+  "@i18n131P6PetFieldType": {
+    "placeholders": {
+      "field": {
+        "type": "String"
+      },
+      "type": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6PetImportUnavailable": "La importación de mascotas no está disponible.",
+  "i18n131P6PetFormat": "El formato de pet.json no se reconoce: necesita grid y states, o un id válido.",
+  "i18n131P6PetNoEntries": "El catálogo no contiene mascotas válidas.",
+  "i18n131P6PetUrlBlocked": "Origen o URL de descarga no permitido.",
+  "i18n131P6PetHttp": "La descarga respondió con HTTP {code}.",
+  "@i18n131P6PetHttp": {
+    "placeholders": {
+      "code": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6Document": "Documento",
+  "i18n131P6GeneratedArtifact": "Artefacto generado",
+  "i18n131P6ToolResult": "Resultado de herramienta",
+  "i18n131P6Artifact": "Artefacto",
+  "i18n131P6WhisperLocal": "Whisper local",
+  "i18n131P6PetDimensions": "Dimensiones inesperadas ({actual}): deben ser un múltiplo de {expected}.",
+  "@i18n131P6PetDimensions": {
+    "placeholders": {
+      "actual": {
+        "type": "String"
+      },
+      "expected": {
+        "type": "String"
+      }
+    }
+  },
+  "i18n131P6UserExample": "p. ej., user",
+  "i18n131P6HttpError": "El servidor respondió con el error {code}.",
+  "@i18n131P6HttpError": {
+    "placeholders": {
+      "code": {
+        "type": "String"
+      }
+    }
+  }
 }

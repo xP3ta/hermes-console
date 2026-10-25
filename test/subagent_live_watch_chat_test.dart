@@ -26,6 +26,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/fake_subagent_watch_gateway.dart' show watchTestSnapshot;
 import 'support/in_memory_compression_restore_storage.dart';
+import 'support/test_api_client.dart';
 
 const _childSession = 'child-session-chat';
 
@@ -199,9 +200,8 @@ _mountChat(WidgetTester tester) async {
     sessionTitle: _session.title,
     initialStoredSessionId: _session.id,
     sessionProfile: 'parent-profile',
-    api: ApiClient(
+    api: testApiClient(
       baseUrl: 'https://example.invalid',
-      apiKey: 'test-only',
       httpClient: MockClient((_) async => http.Response('unused', 500)),
     ),
     desktopGateway: gateway,

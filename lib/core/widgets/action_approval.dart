@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../utils/enum_labels.dart';
 import '../../l10n/app_localizations.dart';
 import '../../main.dart';
 import '../screens/lock_screen.dart';
@@ -164,7 +165,7 @@ Future<bool> _confirmDialog(
   };
   final ok = await showHermesDialogRoute<bool>(
     context: context,
-    builder: (_) => AlertDialog(
+    builder: (dialogContext) => AlertDialog(
       title: Text(title),
       content: Column(
         mainAxisSize: MainAxisSize.min,
@@ -181,7 +182,7 @@ Future<bool> _confirmDialog(
               Icon(Icons.shield_outlined, size: 14, color: riskColor),
               const SizedBox(width: 6),
               Text(
-                risk.label,
+                commandRiskLabel(Strings.of(context), risk),
                 style: TextStyle(fontSize: 12, color: riskColor),
               ),
             ],
@@ -197,11 +198,13 @@ Future<bool> _confirmDialog(
       ),
       actions: [
         TextButton(
-          onPressed: () => Navigator.pop(context, false),
+          onPressed: () =>
+              Navigator.of(dialogContext, rootNavigator: true).pop(false),
           child: Text(Strings.of(context).commonCancel),
         ),
         TextButton(
-          onPressed: () => Navigator.pop(context, true),
+          onPressed: () =>
+              Navigator.of(dialogContext, rootNavigator: true).pop(true),
           child: Text(
             Strings.of(context).approvalAllow,
             style: TextStyle(

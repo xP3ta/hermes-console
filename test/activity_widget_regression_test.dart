@@ -19,6 +19,7 @@ import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
+import 'support/test_api_client.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -97,9 +98,8 @@ void main() {
         connection: connection,
         sessionId: session.id,
         sessionTitle: session.title,
-        api: ApiClient(
+        api: testApiClient(
           baseUrl: 'https://example.invalid',
-          apiKey: 'fixture',
           httpClient: MockClient((_) async => http.Response('not found', 404)),
         ),
         disableForegroundKeepAlive: true,

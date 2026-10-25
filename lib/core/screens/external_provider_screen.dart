@@ -128,10 +128,10 @@ String humanizeProviderTestError(Strings s, String e) {
 
 /// Extrae el detalle útil de un 400/422 del Dashboard sin exponer una clave
 /// que un servidor remoto pudiera haber incluido en su mensaje de error.
-String humanizeExternalProviderError(Object error) {
+String humanizeExternalProviderError(Object error, {Strings? strings}) {
   var safe = error is DashboardHttpException
       ? humanizeApiError(Exception('HTTP ${error.statusCode}: ${error.body}'))
-      : humanizeApiError(error);
+      : (strings == null ? humanizeApiError(error) : localizedApiError(strings, error));
   safe = safe.replaceAll(
     RegExp(r'\bBearer\s+[A-Za-z0-9._~+/=-]{6,}', caseSensitive: false),
     'Bearer [redacted]',
@@ -370,7 +370,7 @@ class _ExternalProviderScreenState extends State<ExternalProviderScreen> {
       if (mounted && current()) {
         AppFeedback.of(
           context,
-        ).notify(FeedbackKind.error, humanizeExternalProviderError(error));
+        ).notify(FeedbackKind.error, humanizeExternalProviderError(error, strings: Strings.of(context)));
       }
     } finally {
       if (mounted) setState(() => _setting = false);
@@ -452,7 +452,7 @@ class _ExternalProviderScreenState extends State<ExternalProviderScreen> {
       setState(() {
         _testError = humanizeProviderTestError(
           s,
-          humanizeExternalProviderError(e),
+          humanizeExternalProviderError(e, strings: Strings.of(context)),
         );
         _testing = false;
       });
@@ -622,7 +622,7 @@ class _ExternalProviderScreenState extends State<ExternalProviderScreen> {
       );
     } catch (e) {
       if (!mounted || !current()) return;
-      final msg = humanizeExternalProviderError(e);
+      final msg = humanizeExternalProviderError(e, strings: Strings.of(context));
       final isVenvBroken =
           msg.contains('hermes_cli') ||
           msg.contains('ModuleNotFoundError') ||
@@ -673,7 +673,11 @@ class _ExternalProviderScreenState extends State<ExternalProviderScreen> {
             children: ExternalProviderType.values.map((t) {
               final sel = _type == t;
               return ChoiceChip(
-                label: Text(t.label),
+                label: Text(switch (t) {
+                  ExternalProviderType.custom => s.i18n131RoutineCustom,
+                  ExternalProviderType.openAiCompat => s.i18n131P6OpenAiCompatible,
+                  _ => t.label,
+                }),
                 selected: sel,
                 selectedColor: colors.accent.withValues(alpha: 0.18),
                 side: BorderSide(color: sel ? colors.accent : colors.divider),
@@ -695,7 +699,7 @@ class _ExternalProviderScreenState extends State<ExternalProviderScreen> {
             keyboardType: TextInputType.url,
             autocorrect: false,
             enableSuggestions: false,
-            label: 'Base URL',
+            label: s.i18n131P6BaseUrl,
             hint: _type.urlHint,
             helperText: s.extBaseUrlHelp,
             onChanged: (_) => setState(() {

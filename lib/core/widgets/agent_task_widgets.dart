@@ -271,7 +271,7 @@ class _TaskRow extends StatelessWidget {
     final indent = (depth > 3 ? 3 : depth) * (dense ? 12.0 : 16.0);
     return Semantics(
       container: true,
-      label: '${_statusWord(s, item.status)}: ${item.content}',
+      label: '${_statusWord(s, item.status)}: ${item.isFallbackContent ? s.i18n131ProfileNoDescription : item.content}',
       excludeSemantics: true,
       child: Padding(
         padding: EdgeInsets.only(
@@ -290,7 +290,7 @@ class _TaskRow extends StatelessWidget {
             SizedBox(width: dense ? 6 : 8),
             Expanded(
               child: Text(
-                plainPreview(item.content),
+                plainPreview(item.isFallbackContent ? s.i18n131ProfileNoDescription : item.content),
                 style: textStyle.copyWith(
                   fontSize: dense ? 12 : 14,
                   height: 1.35,

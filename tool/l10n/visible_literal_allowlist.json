@@ -1,0 +1,12 @@
+[
+  {"file": "lib/core/companion/render/companion_view.dart", "literal": "'Companion animado'", "reason": "Legacy fallback only without installed Strings; the app uses companionAnimatedLabel."},
+  {"file": "lib/core/models/session.dart", "literal": "'Untitled'", "reason": "Raw placeholder title from transport; presentation uses localizedSessionTitle."},
+  {"file": "lib/core/screens/bot_create_screen.dart", "literal": "'default'", "reason": "Canonical default profile identifier, not a translated profile name."},
+  {"file": "lib/core/screens/chat_screen.dart", "literal": "'bg'", "reason": "Background event kind identifier used when no task id exists."},
+  {"file": "lib/core/screens/ssh_credentials_screen.dart", "literal": "'-----BEGIN OPENSSH PRIVATE KEY-----'", "reason": "OpenSSH private-key format example; preserve the exact header."},
+  {"file": "lib/core/services/active_chat_service.dart", "literal": "'[bg $taskId]\\n$text'", "reason": "Background task protocol marker plus server-authored answer."},
+  {"file": "lib/core/widgets/chat/turn_changes_sheet.dart", "literal": "'Δ $label · '", "reason": "Mathematical delta symbol composed with an already localized label."},
+  {"file": "lib/core/widgets/session_artifacts_sheet.dart", "literal": "'sha256:${latest.sha256.substring(0, 10)}'", "reason": "SHA-256 fingerprint prefix and digest, not prose."},
+  {"file": "lib/core/widgets/ssh_host_key_dialog.dart", "literal": "'ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub -E sha256'", "reason": "Executable host-key verification command; preserve exact syntax."},
+  {"file": "lib/core/widgets/webhook_admin_surfaces.dart", "literal": "'github-push'", "reason": "Example webhook event identifier, not UI prose."}
+]

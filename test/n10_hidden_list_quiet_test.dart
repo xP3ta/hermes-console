@@ -18,6 +18,8 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'support/test_api_client.dart';
+
 /// N10d: the Conversations list mounted under a chat must not poll. Unrouted
 /// runtime events used to trigger `session.active_list` plus one
 /// `spawn_tree.list`/`process.list` pair per roster row on every event, with
@@ -35,11 +37,11 @@ class _Probe {
 }
 
 http.Client _http() => MockClient((request) async {
-  if (request.url.path == '/health') return http.Response('{}', 200);
+  if (request.url.path == '/api/status') return http.Response('{}', 200);
   if (request.url.path == '/api/sessions') {
     return http.Response(
       jsonEncode({
-        'data': [
+        'sessions': [
           {
             'id': 'session-0',
             '_lineage_root_id': 'root-0',
@@ -55,7 +57,7 @@ http.Client _http() => MockClient((request) async {
             'archived': false,
           },
         ],
-        'has_more': false,
+        'total': 1,
       }),
       200,
     );
@@ -86,9 +88,8 @@ Future<void> _mount(
   GlobalActivityAggregate aggregate,
 ) async {
   final manager = await _manager();
-  final gateway = ApiClient(
+  final gateway = testApiClient(
     baseUrl: 'http://127.0.0.1:8642',
-    apiKey: 'test-key',
     connectionId: _connectionId,
     httpClient: _http(),
   );

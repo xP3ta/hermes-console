@@ -36,6 +36,8 @@ import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:hermes_android/main.dart';
 
+import 'support/test_api_client.dart';
+
 // QA 9490 profile build (Pixel): while the soft keyboard animated in a chat,
 // the routes COVERED by that chat (Mission Control's Bots tab and Home) were
 // rebuilt and laid out again on every inset step, because they still depended
@@ -147,9 +149,8 @@ Session _session() => Session(
   startedAt: 0,
 );
 
-ApiClient _safeApi() => ApiClient(
+ApiClient _safeApi() => testApiClient(
   baseUrl: 'https://example.test',
-  apiKey: 'test-key',
   httpClient: MockClient((_) async => http.Response('not found', 404)),
 );
 

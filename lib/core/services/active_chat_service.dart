@@ -3,6 +3,7 @@ import '../models/account_usage_limits.dart';
 import '../models/bot_mention.dart';
 import '../models/connection_request.dart';
 import 'connection_request_gateway.dart';
+import 'notifications/notification_strings.dart' show resolveNotificationLang;
 import 'transcript_rehydrate_cost.dart';
 import '../models/message_reaction.dart';
 import 'message_reaction_prefs.dart';
@@ -22,7 +23,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data' show TypedData;
-import 'dart:ui' show Locale, PlatformDispatcher;
+import 'dart:ui' show Locale;
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
@@ -112,6 +113,7 @@ import 'subagent_transcript_projection.dart';
 import 'terminal_transcript_authority.dart';
 import 'prompt_client_surface.dart';
 import 'delegation_control.dart';
+import 'connection_status.dart' show ConnectionLinkSource;
 import 'tui_gateway_client.dart';
 import 'turn_outbox_store.dart';
 
@@ -283,8 +285,9 @@ final class _ProfileTranscriptReadExpired extends StateError {
     : super('Profile transcript read authority expired');
 }
 
-/// A named profile's transcript is unreachable: its gateway route answered
-/// 401 (no own API key) and the Dashboard `?profile=` read failed too.
+/// A named profile's transcript is unreachable: the read through the chat's
+/// ApiClient answered auth and the direct Dashboard `?profile=` read refused
+/// it too.
 final class ProfileTranscriptAccessRequired implements Exception {
   const ProfileTranscriptAccessRequired();
 
@@ -304,7 +307,8 @@ bool isDashboardAccessRefusal(Object error) => switch (error) {
   DashboardAuthException(:final code) => switch (code) {
     DashboardAuthFailureCode.loginRequired ||
     DashboardAuthFailureCode.invalidCredentials ||
-    DashboardAuthFailureCode.sessionCookieMissing => true,
+    DashboardAuthFailureCode.sessionCookieMissing ||
+    DashboardAuthFailureCode.sessionTokenWithheld => true,
     DashboardAuthFailureCode.rateLimited ||
     DashboardAuthFailureCode.loginFailed => false,
   },
@@ -369,9 +373,9 @@ DesktopPassiveActivityState activeChatPassiveRowsState(
 @visibleForTesting
 String activeChatPromptFailureUiMessage(
   Object error, {
-  String languageCode = 'es',
+  String languageCode = 'en',
 }) {
-  final english = languageCode.toLowerCase().startsWith('en');
+  final strings = lookupStrings(Locale(resolveNotificationLang(languageCode)));
   // 4009 "session busy": the server is still busy with this conversation
   // (typically a /compress started before a restart, which never locks the
   // composer here). Like Hermes Desktop, an inline error; the text stays.
@@ -379,63 +383,64 @@ String activeChatPromptFailureUiMessage(
       error.method == 'prompt.submit' &&
       error.code == 4009 &&
       error.reason == null) {
-    return english
-        ? 'Hermes is busy (for example, compacting this conversation). Your '
-              'message is still in the composer; try again in a moment.'
-        : 'Hermes está ocupado (por ejemplo, compactando la conversación). '
-              'Tu mensaje sigue en el composer: inténtalo en un momento.';
+    return strings.i18n131ChatBusy;
   }
   if (error is TuiGatewayRpcError && error.method == 'prompt.submit') {
     return switch (error.reason) {
       _sessionNotOwnedReason =>
-        english
-            ? 'This conversation can’t continue live because it belongs to '
-                  'another gateway or process. Its history remains available, '
-                  'and you can still start a new chat.'
-            : 'No se puede continuar en directo porque esta conversación '
-                  'pertenece a otro gateway o proceso. El historial se conserva '
-                  'y puedes iniciar un chat nuevo.',
+        strings.i18n131ChatNotOwned,
       _maxConcurrentSessionsReason =>
-        english
-            ? 'Hermes reached the configured active-session limit. Wait for a '
-                  'session to finish or adjust the limit.'
-            : 'Hermes alcanzó el límite configurado de sesiones activas. '
-                  'Espera a que termine una sesión o ajusta el límite.',
+        strings.i18n131ChatLimit,
       _sessionCoordinationUnavailableReason =>
-        english
-            ? 'Hermes could not safely reserve this conversation. Check the '
-                  'server and try again.'
-            : 'Hermes no pudo reservar esta conversación con seguridad. '
-                  'Revisa el servidor y vuelve a intentarlo.',
+        strings.i18n131ChatCoordination,
       _ =>
-        english
-            ? 'The message could not be sent. Try again.'
-            : 'No se pudo enviar el mensaje. Inténtalo de nuevo.',
+        strings.i18n131ChatSendFailed,
     };
   }
-  return english
-      ? 'The message could not be sent. Try again.'
-      : 'No se pudo enviar el mensaje. Inténtalo de nuevo.';
+  return strings.i18n131ChatSendFailed;
 }
 
 /// Redacta únicamente el formato técnico que builds antiguas pudieron guardar
 /// en el transcript local. No se usa para decidir entrega ni reintentos: esas
 /// decisiones dependen del código y `error.data.reason` estructurados.
-String activeChatStoredErrorUiMessage(String error) {
+String activeChatStoredErrorUiMessage(String error, {String languageCode = 'en'}) {
+  final strings = lookupStrings(Locale(resolveNotificationLang(languageCode)));
   final normalized = error.trimLeft();
   if (normalized.startsWith('TuiGatewayRpcError(prompt.submit, 4090):')) {
-    return 'No se puede continuar esta conversación en directo. '
-        'El historial se conserva y puedes iniciar un chat nuevo.';
+    return strings.i18n131ChatStoredNotOwned;
   }
   final lower = normalized.toLowerCase();
   if (lower == 'hermes reported an error') {
-    return 'No se pudo completar la respuesta. Inténtalo de nuevo.';
+    return strings.i18n131ChatStoredFailed;
   }
   if (lower.contains('socketexception') ||
       lower.contains('clientexception with socketexception') ||
       lower.contains('websocket closed')) {
-    return 'Se perdió la conexión con Hermes. El mensaje no se confirmó; '
-        'revisa el borrador y reintenta.';
+    return strings.i18n131ChatStoredDisconnected;
+  }
+  // Local canned messages from older transcripts use the current UI locale.
+  final localCopy = switch (normalized) {
+    "Hermes está ocupado (por ejemplo, compactando la conversación). Tu mensaje sigue en el composer: inténtalo en un momento." => strings.i18n131ChatBusy,
+    "No se puede continuar en directo porque esta conversación pertenece a otro gateway o proceso. El historial se conserva y puedes iniciar un chat nuevo." => strings.i18n131ChatNotOwned,
+    "Hermes alcanzó el límite configurado de sesiones activas. Espera a que termine una sesión o ajusta el límite." => strings.i18n131ChatLimit,
+    "Hermes no pudo reservar esta conversación con seguridad. Revisa el servidor y vuelve a intentarlo." => strings.i18n131ChatCoordination,
+    "No se pudo enviar el mensaje. Inténtalo de nuevo." => strings.i18n131ChatSendFailed,
+    "No se puede continuar esta conversación en directo. El historial se conserva y puedes iniciar un chat nuevo." => strings.i18n131ChatStoredNotOwned,
+    "No se pudo completar la respuesta. Inténtalo de nuevo." => strings.i18n131ChatStoredFailed,
+    "Se perdió la conexión con Hermes. El mensaje no se confirmó; revisa el borrador y reintenta." => strings.i18n131ChatStoredDisconnected,
+    "No se pudo recuperar el turno. Inténtalo de nuevo." => strings.i18n131ChatRecoveryFailed,
+    'No se pudo conservar el turno antes de enviarlo.' => strings.i18n131P6TurnNotSaved,
+    'No se pudo leer un adjunto local.' => strings.i18n131P6AttachmentUnreadable,
+    'No se pudo conservar el estado de un adjunto.' => strings.i18n131P6AttachmentNotSaved,
+    'El lote de adjuntos cambió durante la subida.' => strings.i18n131P6AttachmentsChanged,
+    'El envío perdió su autorización antes de entregarse.' => strings.i18n131P6SendAuthorityLost,
+    'Hermes confirmó que el turno falló tras reconectar.' => strings.i18n131P6TurnFailedAfterReconnect,
+    _ => null,
+  };
+  if (localCopy != null) return localCopy;
+  const causePrefix = 'No se pudo completar la respuesta: ';
+  if (normalized.startsWith(causePrefix)) {
+    return strings.i18n131ChatFailureCause(normalized.substring(causePrefix.length));
   }
   return error;
 }
@@ -4502,6 +4507,7 @@ class _ClosedViewerRecoveryScope {
     required this.turnEpoch,
     required this.bindEpoch,
     required this.sessionEpoch,
+    required this.reopenOnLinkUp,
   });
 
   final HermesDesktopGateway gateway;
@@ -4513,6 +4519,11 @@ class _ClosedViewerRecoveryScope {
   final int turnEpoch;
   final int bindEpoch;
   final int sessionEpoch;
+
+  /// Closed by a transport or credential failure: a socket that works again
+  /// (link-up edge, Retry) earns one more reattach. Terminal closes (4007,
+  /// identity, roster) stay closed.
+  final bool reopenOnLinkUp;
 }
 
 /// Estado vivo de un chat con streaming. Es la fuente de verdad de los mensajes,
@@ -9261,17 +9272,34 @@ class ActiveChat {
     _watchedReactionPrefs = MessageReactionPrefs.shared
       ..addListener(_onReactionPrefChanged);
     final gateway = _desktopGateway;
-    if (gateway is TuiGatewayClient) {
-      gateway.linkListenable.addListener(_onDesktopLinkChanged);
+    if (gateway is ConnectionLinkSource) {
+      final link = gateway as ConnectionLinkSource;
+      _desktopLinkWasUp = link.isConnected;
+      link.linkListenable.addListener(_onDesktopLinkChanged);
     }
   }
 
   /// PX5D: the socket that comes back by itself (PX5A redial) also clears a
-  /// loss no recovery loop owns any more.
+  /// loss no recovery loop owns any more. A socket that comes back also
+  /// proves the Dashboard just accepted the credential (it minted the
+  /// ticket): the sign-in notice goes, and an attempt that began before it
+  /// cannot raise it again (new attempt epoch). Only the edge counts: a loss
+  /// is announced while the client still reads as connected.
   void _onDesktopLinkChanged() {
     final gateway = _desktopGateway;
-    if (gateway != null) _settleOrphanedTransport(gateway, 'link');
+    if (_disposed || gateway == null) return;
+    final up = gateway.isConnected;
+    final cameUp = up && !_desktopLinkWasUp;
+    _desktopLinkWasUp = up;
+    if (cameUp) {
+      _publishDashboardAuthRequired(false);
+      _reopenRetriableViewerRecovery(gateway);
+    }
+    _settleOrphanedTransport(gateway, 'link');
   }
+
+  /// The chat's socket was ready at the last link change.
+  bool _desktopLinkWasUp = false;
 
   MessageReactionPrefs? _watchedReactionPrefs;
   bool _reactionsWereEnabled = false;
@@ -9592,9 +9620,9 @@ class ActiveChat {
   /// Hermes publishes through REST but older `session.info` events omit.
   ///
   /// A named profile's row is read from the Dashboard (`?profile=`), as
-  /// Hermes Desktop does; its API server route is asked only when the
-  /// Dashboard refuses this client (a profile that shares the connection's
-  /// key). This read never blocks the chat or raises the access notice.
+  /// Hermes Desktop does. A Dashboard refusal is reported as is: there is no
+  /// API server route to retry. This read never blocks the chat or raises
+  /// the access notice.
   Future<Session?> loadPersistedSessionSnapshot() async {
     final requestedId = serverSessionId;
     final owner = sessionProfile.trim();
@@ -9611,16 +9639,9 @@ class ActiveChat {
   Future<Session> _readNamedProfileSessionRow(
     String storedSessionId,
     String profile,
-  ) async {
-    try {
-      return await (_transcriptDashboard ??= DashboardClient.lazy(
-        connection,
-      )).getSessionDetail(storedSessionId, profile: profile);
-    } on Object catch (error) {
-      if (!isDashboardAccessRefusal(error)) rethrow;
-    }
-    return _api.getSession(storedSessionId, profile: profile);
-  }
+  ) => (_transcriptDashboard ??= DashboardClient.lazy(
+    connection,
+  )).getSessionDetail(storedSessionId, profile: profile);
 
   ArtifactAuthorizationPolicy _artifactPolicy() {
     final host = Uri.tryParse(connection.baseUrl)?.host.trim().toLowerCase();
@@ -11574,8 +11595,9 @@ class ActiveChat {
 
   /// Whole transcript of [storedSessionId] (this chat or one of its
   /// subagent children). A named profile follows the same rule as the paged
-  /// reads: once its gateway route said 401, it is read from the Dashboard
-  /// (`?profile=`) and the gateway is not asked again.
+  /// reads: once the chat's ApiClient (or the caller's [gateway]) answered
+  /// auth, it is read with the direct Dashboard client (`?profile=`) and no
+  /// ApiClient is asked again.
   Future<List<Map<String, dynamic>>> _readWholeTranscript(
     String storedSessionId, {
     required String profile,
@@ -11869,10 +11891,14 @@ class ActiveChat {
     );
   }
 
-  /// Named profiles without their own API key get 401 from the gateway's
-  /// `/p/<profile>/` routes. That answer is definitive for this chat: the
-  /// transcript is read from the Dashboard (`?profile=`), as Hermes Desktop
-  /// does, instead of waiting for hydration and retrying the same 401.
+  /// The named profile's transcript read through [_api] (the Dashboard,
+  /// `?profile=`) answered auth. [ApiClient] folds every sign-in failure and
+  /// a 401 into that one kind (a 403 stays `forbidden` and is not latched),
+  /// so this chat reads the transcript with its direct Dashboard client
+  /// instead: only that read tells a refused login (blocked, one notice)
+  /// from a throttled or failed sign-in on the server (transient). The
+  /// answer is definitive for this chat: [_api] is not asked again, and
+  /// nothing waits for hydration to retry it.
   bool _profileGatewayTranscriptUnauthorized = false;
 
   /// The Dashboard could not serve this named profile's transcript either.
@@ -11880,11 +11906,11 @@ class ActiveChat {
   /// user retries: one actionable error instead of a polling loop.
   bool _profileTranscriptAccessBlocked = false;
 
-  /// The named profile's transcript is reachable neither through its gateway
-  /// route nor through the Dashboard.
+  /// The named profile's transcript is reachable neither through [_api] nor
+  /// through the direct Dashboard client.
   bool get profileTranscriptAccessBlocked => _profileTranscriptAccessBlocked;
 
-  /// Explicit user retry: allows one more Dashboard read. The gateway 401
+  /// Explicit user retry: allows one more Dashboard read. The [_api] auth
   /// latch stays set.
   void retryProfileTranscriptAccess() {
     if (!_profileTranscriptAccessBlocked) return;
@@ -11899,8 +11925,8 @@ class ActiveChat {
     }
   }
 
-  /// Runs a Dashboard read for a named profile whose gateway route is
-  /// unauthorized. Only a refusal to authenticate blocks further reads and
+  /// Runs a direct Dashboard read for a named profile whose [_api] read
+  /// answered auth. Only a refusal to authenticate blocks further reads and
   /// is reported (once) as missing Dashboard access. A missing session (404),
   /// a dropped connection, a timeout or a server error keeps its own meaning:
   /// the caller sees a transient read failure and the next read asks again.
@@ -12613,6 +12639,9 @@ class ActiveChat {
     _transcriptExtent = nextExtent;
     _transcriptCoverageHasParseGap = nextParseGap;
     _earlierMessagesAvailable = nextEarlierAvailable;
+    if (nextExtent == _TranscriptExtent.complete) {
+      _earlierMessagesLoadFailed = false;
+    }
     _earlierMessagesNextOffset = nextOffset;
     _needsTranscriptTailHydration = nextTailHydration;
     _desktopHistoryNeedsHydration = nextDesktopHydration;
@@ -12635,6 +12664,7 @@ class ActiveChat {
     _transcriptCoverageHasParseGap = false;
     _transcriptExtent = _TranscriptExtent.complete;
     _earlierMessagesAvailable = false;
+    _earlierMessagesLoadFailed = false;
     _earlierMessagesNextOffset = visibleCount;
     _needsTranscriptTailHydration = false;
     _desktopHydrationExpectedMessageCount = null;
@@ -13178,7 +13208,36 @@ class ActiveChat {
     List<Map<String, dynamic>> candidateNewestFirst, {
     required bool candidateTranscriptComplete,
   }) {
-    final fences = _terminalReconciliationFences(previous);
+    // Resolve local fences with the same causal evidence as the page graft.
+    // Otherwise a confirmed first turn leaves an unbound fence behind and a
+    // later refresh incorrectly reopens history that is already complete.
+    final represented = <int>{
+      ..._liveUserProjectionIndexesRepresentedByRefreshedTail(
+        candidateNewestFirst,
+        previous,
+        refreshedTranscriptComplete: candidateTranscriptComplete,
+        currentTransportTerminalObserved: false,
+      ),
+      ..._liveUserProjectionIndexesRepresentedAfterActiveTurnBoundary(
+        candidateNewestFirst,
+        previous,
+      ),
+    };
+    final fences = _bindFenceChain(
+      [
+        for (final fence in _terminalReconciliationFences(previous))
+          _bindKnownMissingFirstTurnFence(
+            fence,
+            previous,
+            candidateNewestFirst,
+            represented,
+            refreshedTranscriptComplete: candidateTranscriptComplete,
+          ),
+      ],
+      previous,
+      candidateNewestFirst,
+      refreshedTranscriptComplete: candidateTranscriptComplete,
+    );
     if (fences.isEmpty ||
         !_terminalFencesAreCovered(
           candidateNewestFirst,
@@ -14394,13 +14453,23 @@ class ActiveChat {
 
   /// A 404 on the opening tail read (offset 0) of a chat whose open announced
   /// no stored history: the session is not in the store yet, so no earlier
-  /// page exists. Any other failure (network, 5xx, a 404 where history was
-  /// announced or earlier pages were already read) stays a real failure.
-  bool _storeHasNoEarlierRows(Object error, {required bool tailRead}) =>
-      tailRead &&
-      _hardExpectedStoredMessageCount == null &&
-      error is CoreReadException &&
-      error.kind == CoreReadErrorKind.notFound;
+  /// page exists. A named profile's store answers the same 404 (also for a
+  /// profile it does not know, which has nothing earlier either): the client
+  /// reports it as `profileUnavailable`, or as the Dashboard's own HTTP 404
+  /// when the transcript is read straight from the Dashboard. Only named
+  /// profiles produce those two. Any other failure (network, 5xx, a 404
+  /// where history was announced or earlier pages were already read) stays a
+  /// real failure.
+  bool _storeHasNoEarlierRows(Object error, {required bool tailRead}) {
+    if (!tailRead || _hardExpectedStoredMessageCount != null) return false;
+    return switch (error) {
+      CoreReadException(:final kind) =>
+        kind == CoreReadErrorKind.notFound ||
+            kind == CoreReadErrorKind.profileUnavailable,
+      DashboardHttpException(:final statusCode) => statusCode == 404,
+      _ => false,
+    };
+  }
 
   /// Espera el desenlace de una hidratación diferida del historial
   /// (`session.resume_progress`), con un tope para no colgar la apertura del
@@ -16217,10 +16286,6 @@ class ActiveChat {
     }
   }
 
-  /// Calienta la conexión al gateway (ver [ApiClient.warmUp]). Lo llama el modo
-  /// voz al entrar para que el primer turno no pague el handshake en frío.
-  Future<void> warmUp() => _api.warmUp();
-
   /// Abre anticipadamente el canal oficial de chat. Además de reducir la
   /// latencia del primer prompt, ejecuta la reparación de credenciales del
   /// Dashboard antes de que un seguimiento pueda caer al fallback de cola.
@@ -16244,6 +16309,7 @@ class ActiveChat {
       debugPrint('[active-chat] Retry connect failed (${error.runtimeType})');
     }
     requestImmediateTransportRecovery();
+    if (gateway.isConnected) _reopenRetriableViewerRecovery(gateway);
     _settleOrphanedTransport(gateway, 'retry');
   }
 
@@ -17058,10 +17124,49 @@ class ActiveChat {
         }
         if (_disposed || _desktopRuntimeSessionId != runtimeId) return null;
       }
-      return AccountUsageLimits.fromGateway(usage, usageBars: bars);
+      final limits = AccountUsageLimits.fromGateway(usage, usageBars: bars);
+      // Hermes >= 0.22.3 no longer sends `account_lines`: the provider
+      // windows come from the catalog's `usage` instead. A server that does
+      // send them is read exactly as before.
+      if (limits.lines.any((l) => l.source == AccountLimitSource.account)) {
+        return limits;
+      }
+      final fromCatalog = await _providerUsageLimits(limits);
+      if (_disposed || _desktopRuntimeSessionId != runtimeId) return null;
+      return fromCatalog == null
+          ? limits
+          : limits.withProviderLines(fromCatalog);
     } on TuiGatewayRpcError catch (error) {
       if (error.code == 4007 || error.code == -32601) return null;
       rethrow;
+    }
+  }
+
+  /// The provider windows in `GET /api/model/options` (`usage`) of this
+  /// chat's profile, or null when the server has none or cannot say (old
+  /// server, 404, timeout, a login it does not have): the block then stays
+  /// as `session.usage` left it.
+  Future<AccountUsageLimits?> _providerUsageLimits(
+    AccountUsageLimits current,
+  ) async {
+    try {
+      final dashboard = _transcriptDashboard ??= DashboardClient.lazy(
+        connection,
+      );
+      final providers = await dashboard.getModelOptions(
+        profile: sessionProfile,
+      );
+      final limits = AccountUsageLimits.fromProviderUsage(
+        providers,
+        sessionProvider: _desktopRuntimeInfo.provider,
+        skipProvider: current.creditsIdentity?.provider,
+      );
+      return limits.lines.isEmpty ? null : limits;
+    } catch (error) {
+      debugPrint(
+        '[plan-limits] catalog usage unavailable (${error.runtimeType})',
+      );
+      return null;
     }
   }
 
@@ -20174,7 +20279,7 @@ class ActiveChat {
         _failRun(
           _desktopStartRefusedByDashboard
               ? dashboardSignInRequiredError
-              : activeChatPromptFailureUiMessage(error),
+              : activeChatPromptFailureUiMessage(error, languageCode: 'es'),
         );
         return false;
       }
@@ -20231,7 +20336,15 @@ class ActiveChat {
         _desktopAutomaticReattach = null;
         // qr1215: the queue gets a fresh budget once this socket is back.
         if (_hasQueuedWork) _armQueuedTransportWait();
-        if (viewerRecoveryClosed) _closeViewerRecovery(gateway);
+        if (viewerRecoveryClosed) {
+          _closeViewerRecovery(
+            gateway,
+            reopenOnLinkUp:
+                !malformedTransport &&
+                !_desktopStoredSessionKnownMissing &&
+                (_closedViewerRecoveryScope?.reopenOnLinkUp ?? false),
+          );
+        }
         if (interruptedActiveTurn && clientSubmittedTurn) {
           _scheduleDesktopTurnRecovery(
             gateway,
@@ -20592,6 +20705,11 @@ class ActiveChat {
         final stops =
             _viewerAttachmentDisposition(error) !=
             _ViewerAttachmentDisposition.retryTransient;
+        // A refused credential is the sign-in notice's to say, not a bare
+        // "Offline" (S2).
+        if (_isDashboardAuthRequired(error) && !_dashboardAuthRequired) {
+          _publishDashboardAuthRequired(true);
+        }
         // Hermes advertised the session yet cannot resume it (4007) on an
         // empty chat with a healthy socket. Only when the durable row and
         // transcript answer 404 too (the check chat_screen's
@@ -20630,7 +20748,10 @@ class ActiveChat {
               : ChatTransportState.reconnecting,
         );
         if (stops) {
-          _closeViewerRecovery(gateway);
+          _closeViewerRecovery(
+            gateway,
+            reopenOnLinkUp: _viewerStopReopensOnLinkUp(error),
+          );
           return;
         }
       }
@@ -20654,11 +20775,49 @@ class ActiveChat {
     if (disposition == _ViewerAttachmentDisposition.retryTransient) {
       _scheduleAutomaticDesktopReattach(gateway);
     } else {
-      _closeViewerRecovery(gateway);
+      // No sign-in notice here: the cold open's own attempt already raised
+      // it for this error. If it is down now, a link-up edge or a newer
+      // attempt cleared it on purpose, and raising it again would be wrong.
+      _closeViewerRecovery(
+        gateway,
+        reopenOnLinkUp: _viewerStopReopensOnLinkUp(error),
+      );
     }
   }
 
-  void _closeViewerRecovery(HermesDesktopGateway gateway) {
+  /// A viewer stop that a working socket can undo: the credential (latched
+  /// login, refused ticket) or the transport (refused or cut upgrade, a dial
+  /// cancelled by a newer one). Server verdicts on the session do not.
+  static bool _viewerStopReopensOnLinkUp(Object error) =>
+      error is DashboardAuthException ||
+      error is DashboardWebSocketAuthException ||
+      error is WebSocketChannelException ||
+      (error is StateError && error.message.startsWith('Hermes Desktop'));
+
+  /// The socket works again (a link-up edge, or Retry on a live socket): a
+  /// viewer recovery closed by a transport or credential failure gets one
+  /// more reattach. A terminal close stays closed.
+  void _reopenRetriableViewerRecovery(HermesDesktopGateway gateway) {
+    final scope = _closedViewerRecoveryScope;
+    if (scope == null ||
+        !scope.reopenOnLinkUp ||
+        !_closedViewerRecoveryBlocks(gateway)) {
+      return;
+    }
+    final running = _desktopAutomaticReattach;
+    _closedViewerRecoveryScope = null;
+    _scheduleAutomaticDesktopReattach(gateway);
+    // Its own guards may still refuse (a turn streaming, a session now known
+    // missing): then the close stands, and nothing settles as connected.
+    if (identical(_desktopAutomaticReattach, running)) {
+      _closedViewerRecoveryScope = scope;
+    }
+  }
+
+  void _closeViewerRecovery(
+    HermesDesktopGateway gateway, {
+    bool reopenOnLinkUp = false,
+  }) {
     _desktopAutomaticReattachGeneration += 1;
     _closedViewerRecoveryScope = _ClosedViewerRecoveryScope(
       gateway: gateway,
@@ -20670,6 +20829,7 @@ class ActiveChat {
       turnEpoch: _turnEpoch,
       bindEpoch: _desktopBindEpoch,
       sessionEpoch: _desktopSessionEpoch,
+      reopenOnLinkUp: reopenOnLinkUp,
     );
   }
 
@@ -26358,10 +26518,13 @@ class ActiveChat {
     _emit(ActiveChatEvent.approvalRequest);
     final tool =
         (event['command'] ??
-                event['tool'] ??
-                event['description'] ??
-                'una herramienta')
-            .toString();
+            event['tool'] ??
+            event['description'] ??
+            // Reserva en el idioma del dispositivo, igual que el widget del
+            // launcher (este servicio no resuelve `app_locale` aquí).
+            lookupStrings(Locale(resolveNotificationLang('system')))
+                .i18n131ApprovalTool)
+        .toString();
     final approvalId = (event['request_id'] ?? event['approval_id'])
         ?.toString()
         .trim();
@@ -30414,8 +30577,10 @@ class ActiveChat {
     _terminalTimer?.cancel();
     _desktopEventSubscription?.cancel();
     final gateway = _desktopGateway;
-    if (gateway is TuiGatewayClient) {
-      gateway.linkListenable.removeListener(_onDesktopLinkChanged);
+    if (gateway is ConnectionLinkSource) {
+      (gateway as ConnectionLinkSource).linkListenable.removeListener(
+        _onDesktopLinkChanged,
+      );
     }
     _interactivePrompts = InteractivePromptReducer.reduce(
       _interactivePrompts,
@@ -31527,9 +31692,7 @@ class ActiveChatService {
   /// language, so the tool it names follows the device too.
   @visibleForTesting
   Strings Function() homeWidgetStrings = () => lookupStrings(
-    Locale(
-      PlatformDispatcher.instance.locale.languageCode == 'es' ? 'es' : 'en',
-    ),
+    Locale(resolveNotificationLang('system')),
   );
 
   /// The running tool in the same words as every other surface, or null

@@ -49,7 +49,7 @@ class _SshTerminalScreenState extends State<SshTerminalScreen> {
     // Si ya hay una sesión viva, reengánchate sin pedir App Lock de nuevo.
     final existing = _svc.of(widget.connection.id);
     _cmdStore = SshCommandsStore(app.connManager.prefs);
-    _commands = _cmdStore.load(widget.connection.id);
+    _commands = _cmdStore.load(widget.connection.id, strings: Strings.of(context));
     if (existing != null && existing.isLive) {
       setState(() {
         _session = existing;

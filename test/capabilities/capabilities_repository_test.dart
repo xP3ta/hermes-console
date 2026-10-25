@@ -297,6 +297,133 @@ void main() {
     expect(update.deltaLines, ['+ tool: reflect']);
   });
 
+  group('plugin update scan block (Hermes 0.22.4)', () {
+    const blocked = {
+      'ok': false,
+      'name': 'weather',
+      'error': 'blocked by scan',
+      'scan_blocked': true,
+      'scan_verdict': 'caution',
+      'scan_findings': [
+        {
+          'pattern_id': 'curl_pipe_shell',
+          'severity': 'high',
+          'category': 'exec',
+          'file': 'install.sh',
+          'line': 12,
+          'description': 'curl piped to shell',
+        },
+        {'severity': 'medium', 'description': 'reads env', 'file': 'a.py'},
+      ],
+    };
+
+    Matcher blockedFailure() => isA<CapabilityFailure>()
+        .having((f) => f.kind, 'kind', CapabilityFailureKind.blockedByScan)
+        .having((f) => f.findings, 'findings', 2)
+        .having(
+          (f) => f.detail,
+          'detail',
+          allOf(
+            contains('caution'),
+            contains('high'),
+            contains('curl piped to shell'),
+            contains('install.sh:12'),
+            contains('reads env'),
+          ),
+        );
+
+    test('REST update surfaces the verdict and findings, never forces', () async {
+      final rest = FakeRest()
+        ..posts['dashboard/agent-plugins/weather/update'] = blocked;
+      final repo = CapabilitiesRepository(rest: rest);
+      await expectLater(repo.updatePlugin('weather'), throwsA(blockedFailure()));
+      expect(rest.calls, ['POST dashboard/agent-plugins/weather/update']);
+      expect(rest.bodies.single, isNull);
+    });
+
+    test('plugins.manage update surfaces it and sends no force', () async {
+      final sent = <Map<String, dynamic>>[];
+      final repo = CapabilitiesRepository(
+        rest: FakeRest(),
+        rpc: (method, params) async {
+          sent.add(params);
+          return blocked;
+        },
+      );
+      await expectLater(repo.updatePlugin('weather'), throwsA(blockedFailure()));
+      expect(sent.single, {'action': 'update', 'name': 'weather'});
+      expect(sent.single.containsKey('force'), isFalse);
+    });
+
+    test('findings are bounded, sanitised and tolerate bad shapes', () async {
+      final rest = FakeRest()
+        ..posts['dashboard/agent-plugins/weather/update'] = {
+          'ok': false,
+          'scan_blocked': true,
+          'scan_verdict': 'dangerous',
+          'scan_findings': [
+            for (var i = 0; i < 50; i++)
+              {
+                'severity': 'high',
+                'description': 'x' * 5000 + '\u0007',
+                'file': 'f$i.py',
+              },
+            'not a map',
+            null,
+          ],
+        };
+      final repo = CapabilitiesRepository(rest: rest);
+      try {
+        await repo.updatePlugin('weather');
+        fail('expected a scan block');
+      } on CapabilityFailure catch (failure) {
+        expect(failure.kind, CapabilityFailureKind.blockedByScan);
+        expect(failure.detail.length, lessThan(1500));
+        expect(failure.detail.contains('\u0007'), isFalse);
+        expect(failure.findings, 50);
+      }
+    });
+
+    test('a scan block without findings is still a scan block', () async {
+      final rest = FakeRest()
+        ..posts['dashboard/agent-plugins/weather/update'] = {
+          'ok': false,
+          'scan_blocked': true,
+        };
+      final repo = CapabilitiesRepository(rest: rest);
+      await expectLater(
+        repo.updatePlugin('weather'),
+        throwsA(
+          isA<CapabilityFailure>()
+              .having((f) => f.kind, 'kind', CapabilityFailureKind.blockedByScan)
+              .having((f) => f.findings, 'findings', isNull),
+        ),
+      );
+    });
+
+    test('consent_required still returns the delta, ok:false stays rejected', () async {
+      final rest = FakeRest()
+        ..posts['dashboard/agent-plugins/a/update'] = {
+          'ok': false,
+          'consent_required': true,
+          'delta_lines': ['+ tool: x'],
+        }
+        ..posts['dashboard/agent-plugins/b/update'] = {'ok': false};
+      final repo = CapabilitiesRepository(rest: rest);
+      expect((await repo.updatePlugin('a')).consentRequired, isTrue);
+      await expectLater(
+        repo.updatePlugin('b'),
+        throwsA(
+          isA<CapabilityFailure>().having(
+            (f) => f.kind,
+            'kind',
+            CapabilityFailureKind.rejected,
+          ),
+        ),
+      );
+    });
+  });
+
   test('hosted connectors: join, signed out and missing RPC', () async {
     final repo = CapabilitiesRepository(
       rest: FakeRest(),

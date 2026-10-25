@@ -37,7 +37,6 @@ final class SessionLibraryQuery {
   final String? cwdPrefix;
   final String? profile;
   final bool full;
-  final bool includeChildren;
 
   const SessionLibraryQuery({
     this.pageSize = 20,
@@ -50,7 +49,6 @@ final class SessionLibraryQuery {
     this.cwdPrefix,
     this.profile,
     this.full = false,
-    this.includeChildren = false,
   });
 
   int get boundedPageSize => pageSize.clamp(10, 100);
@@ -84,7 +82,6 @@ final class SessionLibraryQuery {
     cwdPrefix?.trim() ?? '',
     profile?.trim() ?? '',
     full ? '1' : '0',
-    includeChildren ? '1' : '0',
   ].join('\u001f');
 
   String dashboardEndpoint(int offset) {
@@ -244,10 +241,7 @@ final class SessionRepository {
           previousSource != SessionLibrarySource.gateway) {
         rethrow;
       }
-      final rawFallback = await _gateway.getSessions(
-        includeChildren: query.includeChildren,
-        profile: query.profile,
-      );
+      final rawFallback = await _gateway.getSessions(profile: query.profile);
       if (!_isCurrent(epoch, fingerprint)) return _snapshot();
       final fallback = rawFallback
           .where((row) => !_matchesAliases(row, deletionTombstones))
@@ -287,9 +281,7 @@ final class SessionRepository {
       _exhausted = false;
       _deletionTombstones.removeAll(deletionTombstones);
       return _snapshot(
-        completeGatewayListing: query.includeChildren
-            ? null
-            : List<Session>.unmodifiable(rawFallback),
+        completeGatewayListing: List<Session>.unmodifiable(rawFallback),
       );
     }
   }
@@ -602,7 +594,7 @@ final class SessionRepository {
     final requestedOwner = Session.profileOwner(query.profile);
     for (final row in rows) {
       if (row.messageCount < query.boundedMinMessages) continue;
-      if (!query.includeChildren && !row.listsAsOwnRow) continue;
+      if (!row.listsAsOwnRow) continue;
       if (query.archived == SessionArchiveMode.exclude && row.archived) {
         continue;
       }

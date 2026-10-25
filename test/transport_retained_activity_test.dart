@@ -22,6 +22,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
+import 'support/test_api_client.dart';
 
 const _runtimeId = 'runtime-retained';
 const _storedId = 'stored-retained';
@@ -231,9 +232,8 @@ ActiveChat _chat(
   sessionProfile: 'default',
   notifications: null,
   onTerminal: () {},
-  api: ApiClient(
+  api: testApiClient(
     baseUrl: 'http://127.0.0.1:1',
-    apiKey: 'test-key',
     httpClient:
         httpClient ?? MockClient((_) async => http.Response('not found', 404)),
   ),

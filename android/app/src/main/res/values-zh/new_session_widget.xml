@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="new_session_shortcut_short_label">新建对话</string>
+    <string name="new_session_shortcut_long_label">与Hermes开始新对话</string>
+    <string name="hermes_widget_not_configured">尚未设置</string>
+    <string name="hermes_widget_setup_action">设置Hermes</string>
+</resources>

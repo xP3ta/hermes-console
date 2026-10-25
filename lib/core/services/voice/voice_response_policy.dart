@@ -1,3 +1,5 @@
+import 'voice_language.dart';
+
 // Política de qué se puede leer en voz alta en el modo voz.
 //
 // Decide, frase a frase, qué parte de la respuesta del agente es PROSA apta para
@@ -115,18 +117,11 @@ class VoiceResponsePolicy {
   static bool wantsFullReading(String userRequest) {
     final t = _normalize(userRequest);
     if (t.trim().isEmpty) return false;
-    // Palabras sueltas con LÍMITE de palabra (`\b`): así "cuento" no salta dentro
-    // de "descuento"/"recuento" ni "narra" dentro de otra palabra. El texto ya
-    // está sin acentos, así que `\b` (ASCII) basta.
-    if (_fullReadingWords.hasMatch(t)) return true;
-    // Frases (varias palabras): substring directo, son inequívocas.
-    const phrases = [
-      'una historia',
-      'historia para dormir',
-      'lee en voz alta',
-      'letra de',
-    ];
-    return phrases.any(t.contains);
+    return voiceLanguages.values.any((language) {
+      final grammar = language.transcript;
+      return RegExp(grammar.fullReadingWords, unicode: true).hasMatch(t) ||
+          grammar.fullReadingPhrases.any(t.contains);
+    });
   }
 
   /// ¿El transcript del STT es una ALUCINACIÓN típica de Whisper sobre
@@ -150,57 +145,25 @@ class VoiceResponsePolicy {
     // "pon música" sigue siendo una petición válida.
     if (_nonSpeechLabel.hasMatch(_normalize(raw))) return true;
     var t = _normalize(transcript);
-    // Quita todo salvo letras ASCII (ya sin acentos), dígitos, punto y espacio;
-    // colapsa espacios. Conserva el punto para reconocer "amara.org".
+    // Keep letters and numbers from every script, plus dots for domain markers.
     t = t
-        .replaceAll(RegExp(r'[^a-z0-9. ]'), ' ')
+        .replaceAll(RegExp(r'[^\p{L}\p{N}. ]', unicode: true), ' ')
         .replaceAll(RegExp(r'\s+'), ' ')
         .trim();
     // Sin letras ni dígitos (vacío, espacios o solo puntuación "..."): nada útil.
-    if (!RegExp(r'[a-z0-9]').hasMatch(t)) return true;
-    // Marcadores inequívocos de outro/subtítulos automáticos.
-    const strongMarkers = [
-      'amara.org',
-      'subtitulos realizados por',
-      'subtitulado por',
-      'thanks for watching',
-      'thanks watching',
-      'thank you for watching',
-      'thank you watching',
-      'gracias por ver el video',
-    ];
-    for (final m in strongMarkers) {
-      if (t.contains(m)) return true;
-    }
-    // Una cortesía o despedida breve también puede ser una orden real del
-    // usuario. Sin confianza acústica no se debe borrar "gracias", "adiós",
-    // "thanks", "bye", etc. Solo conserva el patrón inequívoco de outro que
-    // menciona el canal; "suscríbete" o "suscríbeme al boletín" no coinciden.
+    if (!RegExp(r'[\p{L}\p{N}]', unicode: true).hasMatch(t)) return true;
     final tNoDot = t.replaceAll('.', '').replaceAll(RegExp(r'\s+'), ' ').trim();
-    final subscribeOutro = RegExp(
-      r'^(?:(?:por favor )?(?:suscribete|suscribanse) al canal|'
-      r'(?:please )?subscribe to the channel)(?: gracias)?$',
-    );
-    if (subscribeOutro.hasMatch(tNoDot)) return true;
-    return false;
+    return voiceLanguages.values.any((language) {
+      final grammar = language.transcript;
+      return grammar.strongMarkers.any(t.contains) ||
+          RegExp(grammar.subscribeOutro, unicode: true).hasMatch(tNoDot);
+    });
   }
 
-  static final RegExp _fullReadingWords = RegExp(
-    r'\b('
-    r'cuento|cuentos|cuentito|cuentitos|relato|relatos|fabula|fabulas|'
-    r'poema|poemas|poesia|poesias|chiste|chistes|adivinanza|adivinanzas|'
-    r'trabalenguas|cancion|canciones|cantame|'
-    r'recita|recitame|recitalo|recitanos|'
-    r'leeme|leelo|leenos|narrame|narranos'
-    r')\b',
-  );
-
   static final RegExp _nonSpeechLabel = RegExp(
-    r'^[*_~\s]*[\[\(\{<]\s*'
-    r'(music|musica|noise|ruido|silence|silencio|'
-    r'laughter|laughs?|risas?|applause|aplausos?|'
-    r'inaudible|ininteligible)'
-    r'\s*[.!…]*\s*[\]\)\}>][*_~\s.!…]*$',
+    r'^[*_~\s]*[\[\(\{<]\s*('
+    '${voiceLanguages.values.map((language) => language.transcript.nonSpeechLabels).join('|')}'
+    r')\s*[.!…]*\s*[\]\)\}>][*_~\s.!…]*$',
     caseSensitive: false,
     unicode: true,
   );

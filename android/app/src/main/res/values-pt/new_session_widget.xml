@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Atalho do launcher e dois textos que os widgets de bots ainda usam.
+     Os widgets do launcher têm o próprio arquivo:
+     launcher_widgets_strings.xml. -->
+<resources>
+    <string name="new_session_shortcut_short_label">Nova conversa</string>
+    <string name="new_session_shortcut_long_label">Iniciar uma nova conversa com o Hermes</string>
+    <string name="hermes_widget_not_configured">Não configurado</string>
+    <string name="hermes_widget_setup_action">Configurar o Hermes</string>
+</resources>

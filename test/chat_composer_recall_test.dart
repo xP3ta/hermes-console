@@ -22,6 +22,7 @@ import 'package:hermes_android/core/utils/slash_commands.dart';
 import 'package:hermes_android/core/widgets/chat/composer_reference_palette.dart';
 import 'package:hermes_android/core/widgets/chat/console_composer.dart';
 import 'package:hermes_android/main.dart';
+import 'support/test_api_client.dart';
 
 SavedConnection _connection() => SavedConnection(
   id: 'conn-composer-recall',
@@ -43,9 +44,8 @@ Session _session() => Session(
   startedAt: 0,
 );
 
-ApiClient _safeApi() => ApiClient(
+ApiClient _safeApi() => testApiClient(
   baseUrl: 'http://192.168.255.254:8642',
-  apiKey: 'test-key',
   httpClient: MockClient((_) async => http.Response('not found', 404)),
 );
 

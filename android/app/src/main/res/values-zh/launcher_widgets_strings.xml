@@ -1,0 +1,142 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="lw_ahora_name">当前</string>
+    <string name="lw_ahora_description">谁需要你处理、哪些任务在运行，以及何时一切就绪</string>
+    <string name="lw_quick_name">快速聊天</string>
+    <string name="lw_quick_description">轻点即可发起聊天或语音聊天</string>
+    <string name="lw_quick_wide_name">快速聊天（宽版）</string>
+    <string name="lw_cron_name">Cron</string>
+    <string name="lw_cron_description">下一个定时任务；大尺寸显示全部任务，并突出失败的任务</string>
+    <string name="lw_new">新建</string>
+    <string name="lw_ask_hint">问问Hermes…</string>
+    <string name="lw_new_description">新建聊天</string>
+    <string name="lw_voice_description">新建语音聊天</string>
+    <string name="lw_camera_description">使用相机新建聊天</string>
+    <string name="lw_open_description">打开Console</string>
+    <string name="lw_agent">Hermes</string>
+    <string name="lw_calm">一切平静</string>
+    <string name="lw_setup">设置Hermes</string>
+    <string name="lw_setup_hint">打开Console开始使用</string>
+    <string name="lw_no_connection">未连接</string>
+    <string name="lw_since">自%1$s起</string>
+    <string name="lw_since_one">自%1$s起</string>
+    <string name="lw_since_yesterday">自昨天起</string>
+    <string name="lw_since_day">自%1$s起</string>
+    <string name="lw_asks_permission">%1$s请求权限</string>
+    <string name="lw_asks_permission_short">请求权限</string>
+    <string name="lw_asks_you">%1$s向你提问</string>
+    <string name="lw_asks_you_short">向你提问</string>
+    <string name="lw_needs_you_who">%1$s需要你处理</string>
+    <string name="lw_needs_you_short">需要你处理</string>
+    <string name="lw_needs_you_word">需要你处理</string>
+    <string name="lw_allow">允许</string>
+    <string name="lw_deny">拒绝</string>
+    <string name="lw_allow_short">是</string>
+    <string name="lw_deny_short">否</string>
+    <string name="lw_open">打开</string>
+    <string name="lw_thinking">思考中</string>
+    <string name="lw_responding">回复中</string>
+    <string name="lw_working">处理中</string>
+    <string name="lw_finished">已完成</string>
+    <string name="lw_failed">失败</string>
+    <string name="lw_finished_at">%1$s已完成 · %2$s</string>
+    <plurals name="lw_for_you">
+        <item quantity="other">%1$d项待你查看</item>
+    </plurals>
+    <plurals name="lw_running">
+        <item quantity="other">%1$d项运行中</item>
+    </plurals>
+    <plurals name="lw_needs_you">
+        <item quantity="other">%1$d项需要你处理</item>
+    </plurals>
+    <string name="lw_cron">Cron</string>
+    <string name="lw_cron_empty">暂无定时任务</string>
+    <string name="lw_cron_unknown">打开Console中的Cron以在此查看</string>
+    <string name="lw_cron_unknown_short">暂无数据</string>
+    <string name="lw_cron_last">上次：%1$s</string>
+    <string name="lw_cron_failed_at">失败于%1$s</string>
+    <string name="lw_cron_running">运行中</string>
+    <string name="lw_cron_never">尚未运行</string>
+    <string name="lw_cron_paused">已暂停</string>
+    <plurals name="lw_cron_failed">
+        <item quantity="other">%1$d项失败</item>
+    </plurals>
+    <string name="lw_bots_name">机器人</string>
+    <string name="lw_bots_description">显示机器人头像及谁在等你；大尺寸显示各机器人的活动</string>
+    <string name="lw_bots">机器人</string>
+    <string name="lw_bot_waits">%1$s在等你</string>
+    <string name="lw_bot_works">%1$s正在处理</string>
+    <string name="lw_bots_calm">一切平静</string>
+    <string name="lw_bot_needs_you">需要你处理</string>
+    <string name="lw_bot_free">空闲</string>
+    <string name="lw_bots_unknown">打开Console中的机器人以在此查看</string>
+    <string name="lw_bots_unknown_short">暂无数据</string>
+    <string name="lw_bots_empty">暂无机器人</string>
+    <plurals name="lw_bots_working">
+        <item quantity="other">%1$d个处理中</item>
+    </plurals>
+    <plurals name="lw_bots_waiting">
+        <item quantity="other">%1$d个在等你</item>
+    </plurals>
+    <string name="lw_rooms_name">房间</string>
+    <string name="lw_rooms_description">显示活跃房间及回复者；大尺寸显示更多房间及其最新消息</string>
+    <string name="lw_rooms">房间</string>
+    <string name="lw_room_answers">%1$s正在回复</string>
+    <string name="lw_room_needs_you">%1$s需要你处理</string>
+    <string name="lw_room_then">接下来，%1$s</string>
+    <string name="lw_room_said">%1$s：%2$s</string>
+    <string name="lw_room_quiet">暂无动态</string>
+    <string name="lw_rooms_empty">暂无房间</string>
+    <plurals name="lw_rooms_answering">
+        <item quantity="other">%1$d个回复中</item>
+    </plurals>
+    <plurals name="lw_rooms_waiting">
+        <item quantity="other">%1$d个在等你</item>
+    </plurals>
+    <string name="lw_tasks_name">任务</string>
+    <string name="lw_tasks_description">显示进行中的任务；大尺寸先显示进行中的任务，再显示待处理任务</string>
+    <string name="lw_tasks">任务</string>
+    <string name="lw_task_running">进行中</string>
+    <string name="lw_task_attention">等你处理</string>
+    <string name="lw_task_pending">待处理</string>
+    <string name="lw_tasks_empty">暂无待处理任务</string>
+    <string name="lw_tasks_unknown">打开Console中的任务以在此查看</string>
+    <plurals name="lw_task_pending_more">
+        <item quantity="other">待处理 · +%1$d</item>
+    </plurals>
+    <plurals name="lw_tasks_running">
+        <item quantity="other">%1$d项进行中</item>
+    </plurals>
+    <plurals name="lw_tasks_attention">
+        <item quantity="other">%1$d项在等你</item>
+    </plurals>
+    <plurals name="lw_tasks_pending">
+        <item quantity="other">%1$d项待处理</item>
+    </plurals>
+    <string name="lw_chats_name">聊天</string>
+    <string name="lw_chats_description">显示活跃聊天；大尺寸显示近期聊天及其状态</string>
+    <string name="lw_chats">聊天</string>
+    <string name="lw_chat_working">处理中</string>
+    <string name="lw_chat_finished">已完成 · %1$s</string>
+    <string name="lw_asks_permission_word">请求权限</string>
+    <string name="lw_asks_you_word">向你提问</string>
+    <string name="lw_view">查看</string>
+    <string name="lw_chats_empty">暂无聊天</string>
+    <string name="lw_chats_unknown">打开Console中的聊天以在此查看</string>
+    <string name="lw_today">今天</string>
+    <string name="lw_tomorrow">明天</string>
+    <string name="lw_yesterday">昨天</string>
+    <string name="lw_day_time">%1$s %2$s</string>
+    <string name="lw_day_at_time">%1$s %2$s</string>
+    <string name="lw_day_at_time_one">%1$s %2$s</string>
+    <string name="lw_sample_cron_job">每日摘要</string>
+    <string name="lw_sample_cron_next">今天21:00</string>
+    <string name="lw_sample_chat">本周计划</string>
+    <string name="lw_sample_chat_line">处理中 · 0:42</string>
+    <string name="lw_sample_room">团队</string>
+    <string name="lw_sample_task">发布版本</string>
+    <string name="lw_sample_task_line">Builder · 进行中</string>
+    <string name="lw_sample_room_line">Builder正在回复</string>
+    <string name="lw_sample_run_title">Hermes · 终端</string>
+    <string name="lw_sample_run_about">每周报告</string>
+</resources>

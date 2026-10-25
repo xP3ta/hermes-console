@@ -64,6 +64,7 @@ class _FakeSystemRuntime implements SystemSttRuntime {
   int initializeCalls = 0;
   int localesCalls = 0;
   int listenCalls = 0;
+  String? requestedLocale;
   int stopCalls = 0;
   int cancelCalls = 0;
   int disposeCalls = 0;
@@ -100,6 +101,7 @@ class _FakeSystemRuntime implements SystemSttRuntime {
   }) {
     listenCalls++;
     this.onResult = onResult;
+    requestedLocale = localeId;
     return listening;
   }
 
@@ -326,6 +328,23 @@ class _FakeSherpaRuntime implements SherpaSttRuntime {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('system STT resolves all nine language records before listening', () async {
+    for (final locale in ['es_ES', 'en_US', 'pt_BR', 'de_DE', 'fr_FR', 'it_IT', 'ja_JP', 'ko_KR', 'zh_CN']) {
+      final runtime = _FakeSystemRuntime()
+        ..localeList = Future.value(['es_ES', 'en_US', locale]);
+      final engine = SystemSttEngine(lang: locale, runtime: runtime);
+      try {
+        final listening = engine.listen().drain<void>();
+        await _waitUntil(() => runtime.listenCalls == 1);
+        expect(runtime.requestedLocale, locale);
+        runtime.onResult?.call('test', true);
+        await listening.timeout(const Duration(seconds: 1));
+      } finally {
+        await engine.dispose();
+      }
+    }
+  });
 
   group('SystemSttEngine startup cancellation', () {
     test(

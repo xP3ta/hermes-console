@@ -12,6 +12,8 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'support/test_api_client.dart';
+
 class _MemoryFenceStorage implements CompressionRestoreStorage {
   String? value;
 
@@ -141,6 +143,7 @@ void main() {
     List<Uri> gatewayReads,
     List<Uri> dashboardReads,
     List<Uri> gateway401s,
+    List<Uri> gatewayRetries,
     List<int> hydrationWaits,
   })
   build({
@@ -151,6 +154,8 @@ void main() {
     Future<void> Function()? gatewayGate,
   }) {
     final gateway401s = <Uri>[];
+    final gatewayRetries = <Uri>[];
+    final retryDue = <String, int>{};
     final hydrationWaits = <int>[];
     final gatewayReads = <Uri>[];
     final dashboardReads = <Uri>[];
@@ -162,14 +167,28 @@ void main() {
       sessionProfile: 'research',
       notifications: null,
       onTerminal: () {},
-      api: ApiClient(
+      // The chat's ApiClient reads the profile from the Dashboard
+      // (`?profile=`); "gateway" here is that route. A refused read is
+      // retried once by the Dashboard client with its session
+      // (`_unauthorizedRetry`): the counters below count reads, and the
+      // retry of each refused one is kept apart in [gatewayRetries].
+      api: testApiClient(
         baseUrl: 'http://127.0.0.1:8642',
-        apiKey: 'main-profile-key',
         httpClient: MockClient((request) async {
-          gatewayReads.add(request.url);
+          final key = request.url.toString();
+          final retry = (retryDue[key] ?? 0) > 0;
+          if (retry) {
+            retryDue[key] = retryDue[key]! - 1;
+            gatewayRetries.add(request.url);
+          } else {
+            gatewayReads.add(request.url);
+          }
           final status = gatewayStatusNow?.call() ?? gatewayStatus;
-          if (status == 401 && gatewayGate != null) await gatewayGate();
-          if (status == 401) gateway401s.add(request.url);
+          if (status == 401 && !retry) {
+            if (gatewayGate != null) await gatewayGate();
+            gateway401s.add(request.url);
+            retryDue[key] = (retryDue[key] ?? 0) + 1;
+          }
           if (status != 200) return http.Response('{}', status);
           return http.Response(jsonEncode(_page(request)), 200);
         }),
@@ -204,12 +223,13 @@ void main() {
       gatewayReads: gatewayReads,
       dashboardReads: dashboardReads,
       gateway401s: gateway401s,
+      gatewayRetries: gatewayRetries,
       hydrationWaits: hydrationWaits,
     );
   }
 
-  test('an unauthorized profile gateway route falls back to the Dashboard '
-      'immediately and is not retried', () async {
+  test('a profile read the Dashboard refuses through ApiClient falls back to '
+      'the direct Dashboard client at once and is not asked again', () async {
     final harness = build(gatewayStatus: 401);
     addTearDown(harness.chat.dispose);
 
@@ -226,7 +246,13 @@ void main() {
     expect(harness.hydrationWaits, isEmpty);
     expect(stopwatch.elapsed, lessThan(const Duration(seconds: 1)));
     expect(harness.gatewayReads, hasLength(1));
-    expect(harness.gatewayReads.single.path, contains('/p/research/'));
+    expect(
+      harness.gatewayReads.single.path,
+      '/api/sessions/stored-bot/messages',
+    );
+    expect(harness.gatewayReads.single.queryParameters['profile'], 'research');
+    // The Dashboard client retried the refusal once with its session.
+    expect(harness.gatewayRetries, [harness.gatewayReads.single]);
     expect(harness.dashboardReads, isNotEmpty);
     expect(
       harness.dashboardReads.first.path,
@@ -247,7 +273,7 @@ void main() {
     expect(harness.chat.messages, hasLength(2));
   });
 
-  test('a profile with its own gateway key keeps the gateway route', () async {
+  test('a profile the ApiClient Dashboard serves stays on it', () async {
     final harness = build(gatewayStatus: 200);
     addTearDown(harness.chat.dispose);
 
@@ -280,7 +306,8 @@ void main() {
 
   void expectSingleGateway401(List<Uri> gateway401s) {
     expect(gateway401s, hasLength(1));
-    expect(gateway401s.single.path, contains('/p/research/'));
+    expect(gateway401s.single.path, isNot(contains('/p/')));
+    expect(gateway401s.single.queryParameters['profile'], 'research');
   }
 
   void expectDashboardWholeRead(Uri read) {
@@ -447,9 +474,8 @@ void main() {
     test('the page keeps using the caller read-only client', () async {
       final h = await openedThen401();
       final childReads = <Uri>[];
-      final readOnly = ApiClient(
+      final readOnly = testApiClient(
         baseUrl: 'http://127.0.0.1:8642',
-        apiKey: 'main-...ey',
         httpClient: MockClient((request) async {
           childReads.add(request.url);
           return http.Response(jsonEncode(_page(request)), 200);
@@ -462,10 +488,8 @@ void main() {
           .timeout(const Duration(seconds: 5));
 
       expect(rows, hasLength(2));
-      expect(
-        childReads.single.path,
-        '/p/research/api/sessions/child-1/messages',
-      );
+      expect(childReads.single.path, '/api/sessions/child-1/messages');
+      expect(childReads.single.queryParameters['profile'], 'research');
       expect(h.gateway401s, isEmpty);
       expect(h.dashboardReads, isEmpty);
     });
@@ -715,18 +739,21 @@ void main() {
       expect(harness.chat.profileTranscriptAccessBlocked, isFalse);
     });
 
-    test('a Dashboard refusal falls back to the profile route', () async {
+    test('a Dashboard refusal is reported, never retried on the profile '
+        'route', () async {
       final harness = build(
         gatewayStatus: 200,
         dashboardHandler: (_) async => http.Response('{}', 401),
       );
       addTearDown(harness.chat.dispose);
-      // The gateway route answers for a profile that shares the key.
-      await expectLater(harness.chat.loadPersistedSessionSnapshot(), completes);
-      expect(
-        harness.gatewayReads.single.path,
-        '/p/research/api/sessions/stored-bot',
+      // A Dashboard-only connection has no `/p/<profile>/` API server route:
+      // even one that would answer is never asked.
+      await expectLater(
+        harness.chat.loadPersistedSessionSnapshot(),
+        throwsA(predicate(isDashboardAccessRefusal)),
       );
+      expect(harness.gatewayReads, isEmpty);
+      expect(harness.chat.profileTranscriptAccessBlocked, isFalse);
     });
 
     test('a transient Dashboard failure is reported as such', () async {

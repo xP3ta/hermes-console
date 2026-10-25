@@ -153,6 +153,7 @@ abstract final class RemovedVoiceEngines {
     final chosen = neuralVoiceById(preferred);
     if (chosen != null && await onPhone.voice(chosen)) return chosen.id;
     for (final candidate in kNeuralVoices) {
+      if (candidate.requiresQualityReview) continue;
       if (await onPhone.voice(candidate)) return candidate.id;
     }
     return null;

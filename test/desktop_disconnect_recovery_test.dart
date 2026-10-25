@@ -23,6 +23,7 @@ import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/models/prepared_turn.dart';
 
 import 'package:hermes_android/core/services/connection_manager.dart';
+import 'package:hermes_android/core/services/connection_status.dart';
 import 'package:hermes_android/core/services/recovery_proof.dart';
 import 'package:hermes_android/core/services/replay_coordinator.dart';
 import 'package:hermes_android/core/services/session_reconciler.dart';
@@ -31,6 +32,7 @@ import 'package:hermes_android/core/services/turn_outbox_store.dart';
 import 'package:hermes_android/core/utils/chat_turn.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
+import 'support/test_api_client.dart';
 
 class _DroppingDesktopGateway implements HermesDesktopGateway {
   _DroppingDesktopGateway({this.canonicalStoredId});
@@ -1094,12 +1096,17 @@ class _StaticTicketDashboardClient extends DashboardClient {
   _StaticTicketDashboardClient()
     : super(host: '127.0.0.1', port: 1, manualToken: 'unused');
 
+  /// Ticket requests that arrived.
+  int tickets = 0;
+
   @override
-  Future<DashboardWebSocketAuth> webSocketAuth() async =>
-      const DashboardWebSocketAuth(
-        queryName: 'ticket',
-        credential: 'ticket-qa',
-      );
+  Future<DashboardWebSocketAuth> webSocketAuth() async {
+    tickets += 1;
+    return const DashboardWebSocketAuth(
+      queryName: 'ticket',
+      credential: 'ticket-qa',
+    );
+  }
 }
 
 class _CountingRealLifecycleGateway
@@ -1316,12 +1323,20 @@ class _RestFallbackApiClient extends ApiClient {
         baseUrl: 'http://127.0.0.1:8642',
         apiKey: 'test-key',
         httpClient: MockClient((_) async => http.Response('not found', 404)),
+        profileDashboard: testDashboardClient(
+          baseUrl: 'http://127.0.0.1:8642',
+          httpClient: MockClient((_) async => http.Response('not found', 404)),
+        ),
       );
 }
 
 class _ControlledApiClient extends ApiClient {
   _ControlledApiClient()
-    : super(baseUrl: 'http://127.0.0.1:8642', apiKey: 'test-key');
+    : super(
+        baseUrl: 'http://127.0.0.1:8642',
+        apiKey: 'test-key',
+        profileDashboard: testDashboardClient(baseUrl: 'http://127.0.0.1:8642'),
+      );
 
   final List<Completer<List<Map<String, dynamic>>>> requests = [];
   bool closed = false;
@@ -1359,7 +1374,11 @@ class _ControlledApiClient extends ApiClient {
 /// respuesta del turno.
 class _CompletedTranscriptApi extends ApiClient {
   _CompletedTranscriptApi(this.transcript)
-    : super(baseUrl: 'http://127.0.0.1:8642', apiKey: 'test-key');
+    : super(
+        baseUrl: 'http://127.0.0.1:8642',
+        apiKey: 'test-key',
+        profileDashboard: testDashboardClient(baseUrl: 'http://127.0.0.1:8642'),
+      );
 
   final List<Map<String, dynamic>> transcript;
   int calls = 0;
@@ -1383,6 +1402,7 @@ class _SingleAuthorizedTranscriptApi extends ApiClient {
     : super(
         baseUrl: 'http://127.0.0.1:8642',
         apiKey: String.fromCharCodes(const [113, 97]),
+        profileDashboard: testDashboardClient(baseUrl: 'http://127.0.0.1:8642'),
       );
 
   final List<Map<String, dynamic>> transcript;
@@ -1411,7 +1431,11 @@ class _SingleAuthorizedTranscriptApi extends ApiClient {
 
 class _ToolThenFinalTranscriptApi extends ApiClient {
   _ToolThenFinalTranscriptApi()
-    : super(baseUrl: 'http://127.0.0.1:8642', apiKey: 'test-key');
+    : super(
+        baseUrl: 'http://127.0.0.1:8642',
+        apiKey: 'test-key',
+        profileDashboard: testDashboardClient(baseUrl: 'http://127.0.0.1:8642'),
+      );
 
   final firstRead = Completer<void>();
   final finalReady = Completer<void>();
@@ -1473,7 +1497,11 @@ class _ToolThenFinalTranscriptApi extends ApiClient {
 
 class _PartialTailApi extends ApiClient {
   _PartialTailApi(this.rows)
-    : super(baseUrl: 'http://127.0.0.1:8642', apiKey: 'test-key');
+    : super(
+        baseUrl: 'http://127.0.0.1:8642',
+        apiKey: 'test-key',
+        profileDashboard: testDashboardClient(baseUrl: 'http://127.0.0.1:8642'),
+      );
 
   final List<Map<String, dynamic>> rows;
   final List<int> requestedOffsets = [];
@@ -1658,9 +1686,8 @@ ActiveChat _recoverableChat(
   onTerminal: () {},
   api:
       api ??
-      ApiClient(
+      testApiClient(
         baseUrl: 'http://127.0.0.1:1',
-        apiKey: 'test-key',
         httpClient: MockClient((_) async => http.Response('not found', 404)),
       ),
   desktopGateway: gateway,
@@ -1708,9 +1735,8 @@ ActiveChat _productionAttachChat(
     onTerminal: () {},
     api:
         api ??
-        ApiClient(
+        testApiClient(
           baseUrl: 'http://127.0.0.1:1',
-          apiKey: 'test-key',
           httpClient: MockClient((_) async => http.Response('not found', 404)),
         ),
     desktopGateway: gateway,
@@ -1735,6 +1761,43 @@ void _expectNoViewerAttachmentMutations(
 
 // Mirrors `chatConnectionActiveGrace` (connection row, active turn).
 const chatConnectionActiveGraceForTest = Duration(seconds: 3);
+
+/// OFFLINE-LATCH: a viewer gateway whose link edges reach the chat, as the
+/// real client's do (only a [ConnectionLinkSource] registers the listener).
+class _LinkedViewerGateway extends _ActivityLifecycleRecoverableGateway
+    implements ConnectionLinkSource {
+  final ConnectionSignal linkSignal = ConnectionSignal();
+
+  @override
+  ConnectionSignal get linkListenable => linkSignal;
+
+  @override
+  bool get isClosed => false;
+
+  @override
+  bool get linkAuthRejected => false;
+
+  @override
+  DateTime? get linkReconnectAt => null;
+
+  @override
+  int get linkReconnectAttempt => 0;
+
+  @override
+  bool get linkParked => false;
+
+  @override
+  void drop() {
+    super.drop();
+    linkSignal.notify();
+  }
+
+  /// The socket is back by itself, as the real client's own redial brings it.
+  void comeBack() {
+    _connected = true;
+    linkSignal.notify();
+  }
+}
 
 void main() {
   // Real-socket reconnect scenarios: keep the owner's backoff shape but on a
@@ -2222,9 +2285,8 @@ void main() {
         sessionProfile: 'owner-profile',
         initialStoredSessionId: 'session-retarget-old',
         authoritativeStoredSessionBinding: true,
-        api: ApiClient(
+        api: testApiClient(
           baseUrl: 'http://127.0.0.1:1',
-          apiKey: '',
           httpClient: MockClient((_) async => http.Response('not found', 404)),
         ),
         desktopGateway: oldGateway,
@@ -2251,9 +2313,8 @@ void main() {
         sessionProfile: 'owner-profile',
         initialStoredSessionId: 'session-retarget-new',
         authoritativeStoredSessionBinding: true,
-        api: ApiClient(
+        api: testApiClient(
           baseUrl: 'http://127.0.0.1:1',
-          apiKey: '',
           httpClient: MockClient((_) async => http.Response('not found', 404)),
         ),
         desktopGateway: replacementGateway,
@@ -2429,10 +2490,14 @@ void main() {
     () async {
       for (final status in const [401, 403, 404, 429, 500, 503]) {
         final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        // A refused ticket (401/403) earns one fresh ticket inside the same
+        // dial: the server refuses that one too, so the refusal is real.
+        final ticketRefused = status == 401 || status == 403;
+        final refusals = ticketRefused ? 2 : 1;
         var upgradeRequests = 0;
         server.listen((request) async {
           upgradeRequests += 1;
-          if (upgradeRequests == 1) {
+          if (upgradeRequests <= refusals) {
             request.response.statusCode = status;
             request.response.write('PRIVATE_UPGRADE_BODY_$status');
             await request.response.close();
@@ -2469,6 +2534,7 @@ void main() {
             );
           }
         });
+        final tickets = _StaticTicketDashboardClient();
         final delegate = TuiGatewayClient(
           SavedConnection(
             id: 'real-upgrade-$status',
@@ -2478,7 +2544,7 @@ void main() {
             apiKey: String.fromCharCodes(const [113, 97]),
             dashboardUrl: 'http://127.0.0.1:${server.port}',
           ),
-          dashboard: _StaticTicketDashboardClient(),
+          dashboard: tickets,
         );
         final gateway = _CountingRealLifecycleGateway(delegate);
         final chat = _productionAttachChat(
@@ -2503,6 +2569,20 @@ void main() {
           expect(gateway.resumeExistingCalls, 1, reason: 'HTTP $status');
           // The retry reaches current upstream, but no coverage/cut authority is
           // available, so the live overlay remains quarantined.
+          expect(gateway.committedRuntimeIds, isEmpty, reason: 'HTTP $status');
+          expect(chat.desktopRuntimeSessionId, isNull, reason: 'HTTP $status');
+        } else if (ticketRefused) {
+          await _waitUntil(() => upgradeRequests == 2);
+          // Past the second refusal's teardown (1 s budget): a third attempt
+          // would have been dialled by now.
+          await Future<void>.delayed(const Duration(milliseconds: 1200));
+          expect(gateway.connectCalls, 1, reason: 'HTTP $status');
+          expect(upgradeRequests, 2, reason: 'HTTP $status: one fresh ticket');
+          expect(tickets.tickets, 2, reason: 'HTTP $status: one fresh ticket');
+          expect(delegate.isConnected, isFalse, reason: 'HTTP $status');
+          expect(delegate.linkAuthRejected, isFalse, reason: 'HTTP $status');
+          expect(chat.dashboardAuthRequired, isFalse, reason: 'HTTP $status');
+          expect(gateway.resumeExistingCalls, 0, reason: 'HTTP $status');
           expect(gateway.committedRuntimeIds, isEmpty, reason: 'HTTP $status');
           expect(chat.desktopRuntimeSessionId, isNull, reason: 'HTTP $status');
         } else {
@@ -2618,9 +2698,8 @@ void main() {
       sessionTitle: 'Bot Chat',
       notifications: null,
       onTerminal: () {},
-      api: ApiClient(
+      api: testApiClient(
         baseUrl: 'http://127.0.0.1:1',
-        apiKey: 'test-key',
         httpClient: MockClient((_) async => http.Response('not found', 404)),
       ),
       desktopGateway: gateway,
@@ -6094,9 +6173,8 @@ void main() {
         'native-durable',
         gateway,
         turnIdempotencySupported: false,
-        api: ApiClient(
+        api: testApiClient(
           baseUrl: 'https://gateway.invalid',
-          apiKey: '',
           httpClient: MockClient((_) async {
             restCalls++;
             return http.Response('Unauthorized', 401);
@@ -9942,9 +10020,8 @@ void main() {
       final gateway = _DroppingDesktopGateway(
         canonicalStoredId: '20260716_canonical',
       );
-      final api = ApiClient(
+      final api = testApiClient(
         baseUrl: 'http://127.0.0.1:1',
-        apiKey: 'test-key',
         httpClient: MockClient((_) async => http.Response('not found', 404)),
       );
       final chat = ActiveChat(
@@ -9993,9 +10070,8 @@ void main() {
     'contract future-capability: cobertura completa reanuda corte idempotente',
     () async {
       final gateway = _RecoverableDesktopGateway();
-      final api = ApiClient(
+      final api = testApiClient(
         baseUrl: 'http://127.0.0.1:1',
-        apiKey: 'test-key',
         httpClient: MockClient((_) async => http.Response('not found', 404)),
       );
       final chat = ActiveChat(
@@ -10337,9 +10413,8 @@ void main() {
         sessionTitle: id,
         notifications: null,
         onTerminal: () {},
-        api: ApiClient(
+        api: testApiClient(
           baseUrl: 'http://127.0.0.1:1',
-          apiKey: 'fixture-key',
           httpClient: MockClient((_) async => http.Response('not found', 404)),
         ),
         desktopGateway: chatGateway,
@@ -12009,9 +12084,8 @@ void main() {
       );
       var transcriptReads = 0;
       final requestedPaths = <String>[];
-      final api = ApiClient(
+      final api = testApiClient(
         baseUrl: 'http://127.0.0.1:8642',
-        apiKey: 'test-key',
         httpClient: MockClient((request) async {
           requestedPaths.add(request.url.path);
           if (request.url.path == '/api/sessions/20260716_delayed/messages') {
@@ -12071,9 +12145,8 @@ void main() {
   );
 
   test('un 404 al recargar conserva los mensajes visibles', () async {
-    final api = ApiClient(
+    final api = testApiClient(
       baseUrl: 'http://127.0.0.1:8642',
-      apiKey: 'test-key',
       httpClient: MockClient((_) async => http.Response('not found', 404)),
     );
     final chat = ActiveChat(
@@ -12512,6 +12585,207 @@ void main() {
       expect(api.finalReady.isCompleted, isFalse);
     },
   );
+
+  // OFFLINE-LATCH (EMU-VERIFY §2): a viewer recovery stopped by a transport
+  // or credential failure stayed closed for good: the chat showed "Offline"
+  // while its socket was back, Retry did nothing, and a refused credential
+  // never said so. Only reopening the chat cleared it.
+  group('a stopped viewer recovery', () {
+    const recovered = DesktopSessionSnapshot(
+      runtimeSessionId: 'runtime-offline-latch-recovered',
+      storedSessionId: 'session-offline-latch',
+      created: false,
+    );
+    List<Map<String, dynamic>> history() => [
+      {
+        'message_id': 'offline-latch-history',
+        'role': 'assistant',
+        'content': 'durable history',
+      },
+    ];
+    const refusedTicket = DashboardWebSocketAuthException(
+      DashboardWebSocketAuthFailureCode.unavailable,
+      statusCode: 401,
+    );
+
+    test('T1: a refused credential in the reattach says "sign in"', () async {
+      final api = _RestFallbackApiClient();
+      final gateway = _ActivityLifecycleRecoverableGateway()
+        // The cold open fails in transit: the viewer reattaches.
+        ..resumeExistingError = WebSocketChannelException.from(
+          const SocketException('Connection refused'),
+        )
+        ..resumeExistingFailuresRemaining = 1
+        // Its connect meets the latched credential.
+        ..recoveryConnectError = const DashboardAuthException(
+          DashboardAuthFailureCode.loginRequired,
+        )
+        ..recoverySnapshot = recovered;
+      final chat = _productionAttachChat(
+        'offline-latch',
+        gateway,
+        api: api,
+        storedMessageLoader: (_, _) async => history(),
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages(profile: 'owner-profile');
+      await _waitUntil(() => gateway.connectCalls >= 2);
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+
+      expect(chat.desktopRuntimeSessionId, isNull);
+      expect(
+        chat.dashboardAuthRequired,
+        isTrue,
+        reason: 'the reattach stopped on a refused credential',
+      );
+      expect(chat.dashboardAuthNoticeVisible, isTrue);
+      _expectNoViewerAttachmentMutations(gateway, api);
+    });
+
+    test('T2: the socket coming back reopens it once and the viewer '
+        'reattaches without reopening the chat', () async {
+      final api = _RestFallbackApiClient();
+      final gateway = _LinkedViewerGateway()
+        ..resumeExistingError = refusedTicket
+        ..resumeExistingFailuresRemaining = 1
+        ..recoverySnapshot = recovered;
+      final chat = _productionAttachChat(
+        'offline-latch',
+        gateway,
+        api: api,
+        storedMessageLoader: (_, _) async => history(),
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages(profile: 'owner-profile');
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+      expect(gateway.resumeExistingCalls, 1, reason: 'the cold open stopped');
+      expect(chat.desktopRuntimeSessionId, isNull);
+
+      gateway.drop();
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+      expect(gateway.resumeExistingCalls, 1, reason: 'closed while down');
+
+      gateway.comeBack();
+      await _waitUntil(
+        () => chat.desktopRuntimeSessionId == recovered.runtimeSessionId,
+      );
+      expect(gateway.resumeExistingCalls, 2, reason: 'one reattach');
+      expect(chat.transportStatus.state, ChatTransportState.connected);
+      expect(chat.dashboardAuthRequired, isFalse);
+      _expectNoViewerAttachmentMutations(gateway, api);
+    });
+
+    test('T3: Retry on a live socket reopens it once', () async {
+      final api = _RestFallbackApiClient();
+      final gateway = _ActivityLifecycleRecoverableGateway()
+        ..resumeExistingError = refusedTicket
+        ..resumeExistingFailuresRemaining = 1
+        ..recoverySnapshot = recovered;
+      final chat = _productionAttachChat(
+        'offline-latch',
+        gateway,
+        api: api,
+        storedMessageLoader: (_, _) async => history(),
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages(profile: 'owner-profile');
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+      expect(gateway.resumeExistingCalls, 1);
+      expect(chat.desktopRuntimeSessionId, isNull);
+
+      await chat.retryConnectionNow();
+      await _waitUntil(
+        () => chat.desktopRuntimeSessionId == recovered.runtimeSessionId,
+      );
+      expect(gateway.resumeExistingCalls, 2, reason: 'one reattach');
+      expect(chat.transportStatus.state, ChatTransportState.connected);
+      _expectNoViewerAttachmentMutations(gateway, api);
+    });
+
+    test('T4: a terminal stop stays closed when the socket comes back or on '
+        'Retry', () async {
+      final api = _RestFallbackApiClient();
+      final gateway = _LinkedViewerGateway()
+        ..resumeExistingError = const TuiGatewayRpcError(
+          'session.resume',
+          'resume refused',
+          code: 4030,
+          origin: CompressionFailureOrigin.remoteRpc,
+        )
+        ..resumeExistingFailuresRemaining = 1
+        ..recoverySnapshot = recovered;
+      final chat = _productionAttachChat(
+        'offline-latch',
+        gateway,
+        api: api,
+        storedMessageLoader: (_, _) async => history(),
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages(profile: 'owner-profile');
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+      expect(gateway.resumeExistingCalls, 1);
+
+      gateway.drop();
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+      gateway.comeBack();
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+      await chat.retryConnectionNow();
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+
+      expect(
+        gateway.resumeExistingCalls,
+        1,
+        reason: 'a terminal stop is never reopened',
+      );
+      expect(chat.desktopRuntimeSessionId, isNull);
+      _expectNoViewerAttachmentMutations(gateway, api);
+    });
+
+    test('T5: at most one reattach per link-up edge', () async {
+      final api = _RestFallbackApiClient();
+      final gateway = _LinkedViewerGateway()
+        ..resumeExistingError = refusedTicket
+        // The cold open and the first reopened reattach both stop.
+        ..resumeExistingFailuresRemaining = 2
+        ..recoverySnapshot = recovered;
+      final chat = _productionAttachChat(
+        'offline-latch',
+        gateway,
+        api: api,
+        storedMessageLoader: (_, _) async => history(),
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages(profile: 'owner-profile');
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+      gateway.drop();
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+      gateway.comeBack();
+      await _waitUntil(() => gateway.resumeExistingCalls == 2);
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+      expect(chat.desktopRuntimeSessionId, isNull, reason: 'stopped again');
+
+      // More link notifications on the live socket are not new edges.
+      for (var i = 0; i < 3; i++) {
+        gateway.linkSignal.notify();
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+      expect(gateway.resumeExistingCalls, 2, reason: 'no edge, no reattach');
+
+      gateway.drop();
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+      gateway.comeBack();
+      await _waitUntil(
+        () => chat.desktopRuntimeSessionId == recovered.runtimeSessionId,
+      );
+      expect(gateway.resumeExistingCalls, 3, reason: 'one per edge');
+      _expectNoViewerAttachmentMutations(gateway, api);
+    });
+  });
 }
 
 class _NoopOutbox implements TurnOutboxPersistence {

@@ -16,6 +16,8 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'support/test_api_client.dart';
+
 /// Conversations keeps per-session state on the server, as Desktop: the
 /// unread dot and the read toggle follow the server's `unread`, and a rename
 /// is a PATCH title.
@@ -49,12 +51,12 @@ SavedConnection _connection() => SavedConnection(
   kind: InstanceKind.vps,
 );
 
-ApiClient _gateway() => ApiClient(
+ApiClient _gateway() => testApiClient(
   baseUrl: 'http://127.0.0.1:8642',
-  apiKey: 'key',
   connectionId: _connectionId,
   httpClient: MockClient((request) async {
-    if (request.url.path == '/health' || request.url.path == '/api/sessions') {
+    if (request.url.path == '/api/status' ||
+        request.url.path == '/api/sessions') {
       return http.Response('{}', 200);
     }
     return http.Response('{}', 404);

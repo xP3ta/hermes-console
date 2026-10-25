@@ -565,6 +565,17 @@ class CapabilitiesRepository implements HermesMcpProvisioningGateway {
   }
 
   PluginMutationResult _checked(PluginMutationResult result) {
+    if (result.scanBlocked) {
+      // Never retried with `force`: that needs an explicit user decision.
+      throw CapabilityFailure(
+        CapabilityFailureKind.blockedByScan,
+        detail: [
+          if (result.scanVerdict.isNotEmpty) result.scanVerdict,
+          ...result.scanFindingLines,
+        ].join('\n'),
+        findings: result.scanFindingCount == 0 ? null : result.scanFindingCount,
+      );
+    }
     if (!result.ok && !result.consentRequired) {
       throw const CapabilityFailure(CapabilityFailureKind.rejected);
     }

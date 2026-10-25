@@ -379,8 +379,13 @@ String validateCronJobId(String jobId) {
   return id;
 }
 
+/// The profile id for the wire, or null for the default profile. Hermes
+/// stores ids lowercase and normalizes what it is sent before validating it
+/// (`hermes_cli/profiles.py` `normalize_profile_name`: `Pi` is `pi`,
+/// `Default` is the default profile), so a display-cased name selects the
+/// same profile here as on the server instead of being refused.
 String? validateCronProfile(String? profile) {
-  final value = profile?.trim() ?? '';
+  final value = (profile?.trim() ?? '').toLowerCase();
   if (value.isEmpty || value == 'default') return null;
   if (!isValidProfileName(value)) {
     throw ArgumentError.value(profile, 'profile');

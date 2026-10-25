@@ -167,7 +167,7 @@ class _ProfilesScreenState extends State<ProfilesScreen> {
     final s = e.toString();
     if (s.contains('401')) return str.prfLoadErrorToken;
     if (s.contains('404')) return str.prfLoadErrorVersion;
-    return str.prfLoadError(humanizeApiError(e));
+    return str.prfLoadError(localizedApiError(str, e));
   }
 
   void _snack(String msg, {bool ok = true}) {
@@ -234,7 +234,7 @@ class _ProfilesScreenState extends State<ProfilesScreen> {
       _snack(str.prfRenamedTo(newName));
       await _load();
     } catch (e) {
-      _snack(str.prfRenameError(humanizeApiError(e)), ok: false);
+      _snack(str.prfRenameError(localizedApiError(str, e)), ok: false);
     }
   }
 

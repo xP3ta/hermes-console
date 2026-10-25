@@ -96,19 +96,19 @@ AttachmentKind attachmentKindFor(String name, String mimeType) {
 }
 
 /// Etiqueta corta para el badge (p. ej. "PDF", "DOC", "TXT").
-String _badgeLabel(AttachmentKind kind, String name) {
+String _badgeLabel(AttachmentKind kind, String name, Strings strings) {
   final ext = name.contains('.') ? name.split('.').last.toUpperCase() : '';
   return switch (kind) {
     AttachmentKind.pdf => 'PDF',
     AttachmentKind.doc => ext.isNotEmpty ? ext : 'DOC',
     AttachmentKind.sheet => ext.isNotEmpty ? ext : 'CSV',
-    AttachmentKind.code => ext.isNotEmpty ? ext : 'CODE',
+    AttachmentKind.code => ext.isNotEmpty ? ext : strings.i18n131P6BadgeCode,
     AttachmentKind.text => ext.isNotEmpty ? ext : 'TXT',
     AttachmentKind.archive => ext.isNotEmpty ? ext : 'ZIP',
-    AttachmentKind.audio => ext.isNotEmpty ? ext : 'AUDIO',
-    AttachmentKind.video => ext.isNotEmpty ? ext : 'VIDEO',
-    AttachmentKind.image => 'IMG',
-    AttachmentKind.other => ext.isNotEmpty ? ext : 'FILE',
+    AttachmentKind.audio => ext.isNotEmpty ? ext : strings.i18n131P6BadgeAudio,
+    AttachmentKind.video => ext.isNotEmpty ? ext : strings.i18n131P6BadgeVideo,
+    AttachmentKind.image => strings.sa1215KindImage,
+    AttachmentKind.other => ext.isNotEmpty ? ext : strings.sa1215KindFile,
   };
 }
 
@@ -304,7 +304,7 @@ class AttachmentCard extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            _badge(kind),
+            _badge(context, kind),
             const SizedBox(width: 10),
             Flexible(
               child: Column(
@@ -409,7 +409,7 @@ class AttachmentCard extends StatelessWidget {
 
   String _fileSubtitle(BuildContext context, AttachmentKind kind) {
     if (!showUploadState) {
-      final badge = _badgeLabel(kind, name);
+      final badge = _badgeLabel(kind, name, Strings.of(context));
       return sizeLabel.isEmpty ? badge : '$badge · $sizeLabel';
     }
     final state = _uploadStateLabel(context);
@@ -459,7 +459,7 @@ class AttachmentCard extends StatelessWidget {
     );
   }
 
-  Widget _badge(AttachmentKind kind) {
+  Widget _badge(BuildContext context, AttachmentKind kind) {
     final color = _badgeColor(kind);
     return Container(
       width: 40,
@@ -470,7 +470,7 @@ class AttachmentCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(8),
       ),
       child: Text(
-        _badgeLabel(kind, name),
+        _badgeLabel(kind, name, Strings.of(context)),
         style: TextStyle(
           color: color,
           fontWeight: FontWeight.w800,
@@ -2143,7 +2143,7 @@ class GeneratedFileViewerScreen extends StatelessWidget {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                _badgeForViewer(kind),
+                _badgeForViewer(context, kind),
                 const SizedBox(height: 20),
                 SelectableText(
                   name,
@@ -2190,7 +2190,7 @@ class GeneratedFileViewerScreen extends StatelessWidget {
     );
   }
 
-  Widget _badgeForViewer(AttachmentKind kind) {
+  Widget _badgeForViewer(BuildContext context, AttachmentKind kind) {
     final color = _badgeColor(kind);
     return Container(
       width: 88,
@@ -2201,7 +2201,7 @@ class GeneratedFileViewerScreen extends StatelessWidget {
         borderRadius: BorderRadius.circular(18),
       ),
       child: Text(
-        _badgeLabel(kind, name),
+        _badgeLabel(kind, name, Strings.of(context)),
         style: TextStyle(
           color: color,
           fontSize: 18,

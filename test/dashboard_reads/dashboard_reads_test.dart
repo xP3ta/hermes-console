@@ -164,12 +164,11 @@ void main() {
       },
     );
 
-    test('reachability and warm-up use the public status route', () async {
+    test('reachability uses the public status route', () async {
       final hermes = _Hermes();
       final client = clientFor(hermes);
       expect(await client.healthReachable(), isTrue);
       expect(await client.healthCheck(), isTrue);
-      await client.warmUp();
       expect(hermes.paths, contains('/api/status'));
       expect(hermes.gatewayHits, 0);
     });
@@ -290,62 +289,60 @@ void main() {
     });
   });
 
-  // The Dashboard list (`list_sessions_rich`) never returns continuation
-  // rows, and the lineage delete order needs them: a root deleted alone leaves
-  // its children orphaned. Child-inclusive reads of the default profile stay
-  // on the Gateway, as before this change.
-  test(
-    'a child-inclusive default-profile read still uses the Gateway',
-    () async {
-      final gatewayQueries = <Map<String, String>>[];
-      var dashboardSessionReads = 0;
-      final client = ApiClient.forConnection(
-        _connection(),
-        httpClient: MockClient((request) async {
-          final url = request.url;
-          if (url.port == 9119) {
-            if (url.path == '/') {
-              return http.Response(
-                '<script>window.__HERMES_SESSION_TOKEN__="t";</script>',
-                200,
-              );
-            }
-            if (url.path == '/api/sessions') dashboardSessionReads++;
+  // The Dashboard deletes a whole chain from any of its ids, so no list read
+  // needs the continuation rows (the Gateway's `include_children`): every
+  // default-profile list read goes to the Dashboard.
+  test('a default-profile list read never goes to the Gateway', () async {
+    final gatewayQueries = <Map<String, String>>[];
+    final dashboardQueries = <Map<String, String>>[];
+    final client = ApiClient.forConnection(
+      _connection(),
+      httpClient: MockClient((request) async {
+        final url = request.url;
+        if (url.port == 9119) {
+          if (url.path == '/') {
             return http.Response(
-              jsonEncode({
-                'sessions': [_Hermes._session(0)],
-                'total': 1,
-                'limit': 100,
-                'offset': 0,
-              }),
+              '<script>window.__HERMES_SESSION_TOKEN__="t";</script>',
               200,
             );
           }
-          gatewayQueries.add(url.queryParameters);
+          if (url.path == '/api/sessions') {
+            dashboardQueries.add(url.queryParameters);
+          }
           return http.Response(
             jsonEncode({
-              'data': [
-                {'id': 'root', 'title': 'Root', 'message_count': 2},
-                {
-                  'id': 'child',
-                  'title': 'Child',
-                  'message_count': 2,
-                  'parent_session_id': 'root',
-                },
-              ],
-              'has_more': false,
+              'sessions': [_Hermes._session(0)],
+              'total': 1,
+              'limit': 100,
+              'offset': 0,
             }),
             200,
           );
-        }),
-      );
-      final rows = await client.getSessions(includeChildren: true);
-      expect(rows.map((s) => s.id), ['root', 'child']);
-      expect(gatewayQueries, hasLength(1));
-      expect(gatewayQueries.single['include_children'], 'true');
-      expect(dashboardSessionReads, 0);
-    },
-  );
+        }
+        gatewayQueries.add(url.queryParameters);
+        return http.Response(
+          jsonEncode({
+            'data': [
+              {'id': 'root', 'title': 'Root', 'message_count': 2},
+              {
+                'id': 'child',
+                'title': 'Child',
+                'message_count': 2,
+                'parent_session_id': 'root',
+              },
+            ],
+            'has_more': false,
+          }),
+          200,
+        );
+      }),
+    );
+    final rows = await client.getSessions();
+    expect(rows, hasLength(1));
+    expect(gatewayQueries, isEmpty);
+    expect(dashboardQueries, hasLength(1));
+    expect(dashboardQueries.single, isNot(contains('include_children')));
+  });
 
   test('every read site builds its client with the Dashboard attached', () {
     for (final path in [

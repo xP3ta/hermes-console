@@ -8,6 +8,43 @@ void main() {
       detector.detect(text, language: 'es-ES');
   LocalVoiceCommand? en(String text) =>
       detector.detect(text, language: 'en-US');
+  LocalVoiceCommand? pt(String text) =>
+      detector.detect(text, language: 'pt-BR');
+
+  group('comandos naturais em português', () {
+    test('silencia com variações, cortesia e mais de uma oração', () {
+      expect(pt('Cala a boca.'), LocalVoiceCommand.silenceCurrent);
+      expect(
+        pt('Tá bom, cala a boca; não fale mais, por favor.'),
+        LocalVoiceCommand.silenceCurrent,
+      );
+      expect(
+        pt('Hermes, você pode parar de falar?'),
+        LocalVoiceCommand.silenceCurrent,
+      );
+      expect(pt('Já chega, obrigado.'), LocalVoiceCommand.silenceCurrent);
+      expect(pt('Não quero te ouvir mais.'), LocalVoiceCommand.silenceCurrent);
+      expect(
+        pt('Acho que já pode cortar o áudio, valeu.'),
+        LocalVoiceCommand.silenceCurrent,
+      );
+    });
+
+    test('pausa e encerrar são intenções distintas', () {
+      expect(pt('Pausa a conversa.'), LocalVoiceCommand.pause);
+      expect(pt('Ok, faz uma pausa.'), LocalVoiceCommand.pause);
+      expect(pt('Hermes, encerra a conversa.'), LocalVoiceCommand.end);
+      expect(pt('Vamos parar por aqui, obrigado.'), LocalVoiceCommand.end);
+    });
+
+    test('não consome conversa que só parece comando', () {
+      expect(pt('Fale mais sobre silêncio.'), isNull);
+      expect(pt('Fale sobre produtividade.'), isNull);
+      expect(pt('Ok.'), isNull);
+      expect(pt('Por que você não fala mais devagar?'), isNull);
+      expect(pt('Não quero que você fale mais rápido.'), isNull);
+    });
+  });
 
   group('comandos naturales en español', () {
     test('silencia con variantes, cortesía y más de una cláusula', () {

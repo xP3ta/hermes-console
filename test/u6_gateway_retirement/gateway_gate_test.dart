@@ -1,10 +1,16 @@
+import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/services/connection_manager.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// CI form of the Gateway retirement gate (U6): production code under `lib`
 /// no longer talks to the Gateway REST API. The only matches left are the
-/// three liveness lines of the connection without a Dashboard, which carry
+/// two liveness lines of a client without a Dashboard, which carry
 /// `// U6b`; the on-device LiteRT/OlliteRT engine is a different server.
 final _gatewayCall = RegExp(
   r'v1/(runs|models|capabilities|skills|toolsets)|(?<!/api)/health\b',
@@ -23,6 +29,48 @@ final _retiredSymbols = RegExp(
   r'run_event_normalizer|\bModelInfo\b',
 );
 
+/// Session, message and profile URLs built on the Gateway origin: the
+/// `/p/<profile>/` prefix and anything joined to a `baseUrl`/`gatewayUrl`.
+/// 1.3.0 retired the Gateway, but [_gatewayCall] only knew the `v1/` and
+/// `/health` routes, so these reads stayed alive for named profiles and broke
+/// every Dashboard-only connection. The pattern covers `$baseUrl/`,
+/// `${baseUrl}/`, `${x.baseUrl}/`, `gatewayUrl`, `'p/$x`, `"p/${x}`,
+/// `'p/' +`, `baseUrl +` and `Uri.parse(baseUrl).resolve(...)`; the samples in
+/// the negative-control test below pin each form. The lines left are the
+/// [ApiClient] branches for a client built without a Dashboard, which
+/// production never does (see `ids_and_constructors_test.dart`); each carries
+/// `// U6c`.
+final _gatewayOriginUrl = RegExp(
+  r'''profileEndpoint\(|["']/?p/(\$|["']\s*\+)|'''
+  r'''\$\{?\s*(\w+\.)*(baseUrl|gatewayUrl)\s*\}?\s*/|'''
+  r'''\b(baseUrl|gatewayUrl)\s*\+|'''
+  r'''\b(baseUrl|gatewayUrl)\)\.(resolve|replace)\(''',
+);
+const _noDashboardMarker = '// U6c';
+const _noDashboardLines = 10;
+
+/// Lines whose `baseUrl` is not the Gateway, pinned one by one: a new line in
+/// these files is a new decision, and a stale entry fails too.
+const _otherOriginLines = {
+  // The Dashboard origin (`host:9119`).
+  'lib/core/services/cron_runs_client.dart': {
+    r"final res = await _http.get(Uri.parse('$baseUrl/')).timeout(_kTimeout);",
+    r"Uri.parse('$baseUrl/api/cron/jobs/$jobId/runs'),",
+  },
+  // The on-device LiteRT/OlliteRT engine.
+  'lib/core/services/litert_engine.dart': {
+    r".get(Uri.parse('$baseUrl/v1/models'), headers: _headers)",
+  },
+  // The Dashboard's native OAuth refresh.
+  'lib/core/services/native_session_store.dart': {
+    r"Uri.parse('${session.baseUrl}/auth/native/refresh'),",
+  },
+  // A Kokoro TTS server chosen by the user.
+  'lib/core/services/voice/tts_engine.dart': {
+    r"Uri.parse('$baseUrl/audio/voices'),",
+  },
+};
+
 Iterable<MapEntry<String, List<String>>> _libSources() sync* {
   for (final entity in Directory('lib').listSync(recursive: true)) {
     if (entity is! File || !entity.path.endsWith('.dart')) continue;
@@ -34,7 +82,9 @@ Iterable<MapEntry<String, List<String>>> _libSources() sync* {
 }
 
 void main() {
-  test('lib has no Gateway REST call but the three marked liveness lines', () {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('lib has no Gateway REST call but the two marked liveness lines', () {
     final hits = <String>[];
     final marked = <String>[];
     for (final source in _libSources()) {
@@ -51,11 +101,11 @@ void main() {
       everyElement(allOf(startsWith('$_allowedFile:'), endsWith(_marker))),
       reason: 'a Gateway call outside the whitelist',
     );
-    expect(hits, hasLength(3), reason: 'the whitelist is exactly 3 lines');
+    expect(hits, hasLength(2), reason: 'the whitelist is exactly 2 lines');
     expect(
       marked,
       hits,
-      reason: '`$_marker` is only for the 3 whitelisted lines',
+      reason: '`$_marker` is only for the 2 whitelisted lines',
     );
   });
 
@@ -71,5 +121,179 @@ void main() {
       }
     }
     expect(found, isEmpty);
+  });
+
+  test('lib builds no session, message or profile URL on the Gateway '
+      'origin but the marked no-Dashboard lines', () {
+    final hits = <String>[];
+    final marked = <String>[];
+    final otherOrigin = <String, Set<String>>{};
+    for (final source in _libSources()) {
+      final allowed = _otherOriginLines[source.key] ?? const <String>{};
+      for (var i = 0; i < source.value.length; i++) {
+        final line = source.value[i];
+        final where = '${source.key}:${i + 1}: ${line.trim()}';
+        if (line.contains(_noDashboardMarker)) marked.add(where);
+        if (!_gatewayOriginUrl.hasMatch(line) || line.contains(_marker)) {
+          continue;
+        }
+        if (allowed.contains(line.trim())) {
+          (otherOrigin[source.key] ??= <String>{}).add(line.trim());
+        } else {
+          hits.add(where);
+        }
+      }
+    }
+    expect(
+      hits,
+      everyElement(
+        allOf(startsWith('$_allowedFile:'), endsWith(_noDashboardMarker)),
+      ),
+      reason: 'a Gateway-origin URL outside the no-Dashboard branches',
+    );
+    expect(
+      hits,
+      hasLength(_noDashboardLines),
+      reason: 'the no-Dashboard whitelist is exactly $_noDashboardLines lines',
+    );
+    expect(marked, hits, reason: '`$_noDashboardMarker` marks only them');
+    expect(
+      otherOrigin,
+      _otherOriginLines,
+      reason: 'every other-origin entry still names a line in lib',
+    );
+  });
+
+  test('the Gateway-origin pattern recognises every way to write the URL', () {
+    // One sample per form a Gateway read could be reintroduced with.
+    const caught = [
+      r"Uri.parse('$baseUrl/api/sessions')",
+      r"Uri.parse('${baseUrl}/api/sessions')",
+      r"Uri.parse('${connection.baseUrl}/api/sessions/$id/messages')",
+      r"'${widget.connection.gatewayUrl}/api/sessions'",
+      r"Uri.parse(connection.baseUrl + '/api/sessions')",
+      r"Uri.parse(baseUrl).resolve('api/sessions')",
+      r"Uri.parse(connection.gatewayUrl).replace(path: '/api/sessions')",
+      r"'p/$owner/api/sessions'",
+      r"'p/${Uri.encodeComponent(owner)}/api/sessions'",
+      r'"p/${owner}/api/sessions"',
+      r'"/p/$owner/api/sessions/$id/messages"',
+      r"'p/' + owner + '/api/sessions'",
+      r'"/p/" + owner',
+      r"profileEndpoint('api/sessions', profile: owner)",
+    ];
+    // Legitimate lines that must stay out of the gate.
+    const ignored = [
+      r"'${connection.id}|${connection.baseUrl}|'",
+      r'Text(connection.baseUrl)',
+      r"'${c.gatewayUrl}:${c.onDeviceLoopback}'",
+      r"dashboard.apiGet('sessions/$id/messages?profile=$owner')",
+      r"'https://www.instagram.com/p/CxYz_12-ab/'",
+      r'Uri.tryParse(connection.baseUrl)?.host',
+    ];
+    for (final sample in caught) {
+      expect(_gatewayOriginUrl.hasMatch(sample), isTrue, reason: sample);
+    }
+    for (final sample in ignored) {
+      expect(_gatewayOriginUrl.hasMatch(sample), isFalse, reason: sample);
+    }
+  });
+
+  group('a Dashboard-only connection', () {
+    setUp(() {
+      SharedPreferences.setMockInitialValues({});
+      FlutterSecureStorage.setMockInitialValues({});
+      DashboardClient.resetSharedPasswordSessionsForTesting();
+    });
+
+    // What onboarding saves since 1.3.0: the Dashboard address, no API key.
+    final connection = SavedConnection(
+      id: 'gate-dashboard-only',
+      label: 'gate',
+      host: '127.0.0.2',
+      port: 9119,
+      apiKey: '',
+      dashboardUrl: 'http://127.0.0.2:9119',
+      kind: InstanceKind.vps,
+    );
+
+    test('never sends a Gateway-shaped request for sessions, messages, '
+        'deletes or liveness, default or named profile', () async {
+      // Gateway-shaped: outside `/api/`, or an API-key bearer without a
+      // Dashboard session. (A native OAuth envelope also sends a bearer
+      // without the page token; this connection has none.)
+      final gatewayShaped = <String>[];
+      final deletes = <Uri>[];
+      final client = ApiClient.forConnection(
+        connection,
+        httpClient: MockClient((request) async {
+          final url = request.url;
+          final bearerOnly =
+              (request.headers['Authorization'] ?? '').startsWith('Bearer') &&
+              !request.headers.containsKey('X-Hermes-Session-Token');
+          if (url.path == '/') {
+            return http.Response(
+              '<script>window.__HERMES_SESSION_TOKEN__="t";</script>',
+              200,
+            );
+          }
+          if (!url.path.startsWith('/api/') || bearerOnly) {
+            gatewayShaped.add('${request.method} $url');
+            return http.Response('<!doctype html>', 200);
+          }
+          if (url.path == '/api/sessions/s1/mutation-snapshot') {
+            // No fence: the DELETE goes out as is.
+            return http.Response('{"detail":"Not Found"}', 404);
+          }
+          if (request.method == 'DELETE') {
+            deletes.add(url);
+            return http.Response('{"ok":true}', 200);
+          }
+          final Object body = switch (url.path) {
+            '/api/status' => {'version': '0.22'},
+            '/api/sessions' => {
+              'sessions': <Object>[],
+              'total': 0,
+              'limit': 100,
+              'offset': 0,
+            },
+            '/api/sessions/s1' => {'id': 's1', 'title': 'T', 'started_at': 1},
+            '/api/sessions/s1/messages' => {
+              'session_id': 's1',
+              'messages': <Object>[],
+              'pagination': {
+                'limit': int.parse(url.queryParameters['limit'] ?? '500'),
+                'offset': 0,
+                'order': 'latest',
+                'returned': 0,
+              },
+            },
+            _ => {'detail': 'Not Found'},
+          };
+          return http.Response(jsonEncode(body), 200);
+        }),
+      );
+      addTearDown(client.close);
+
+      for (final profile in [null, 'social-writer']) {
+        await client.getSessions(profile: profile);
+        await client.getSession('s1', profile: profile);
+        await client.getMessagesPage('s1', profile: profile);
+        await client.getMessages('s1', profile: profile);
+        expect(await client.deleteSession('s1', profile: profile), isTrue);
+      }
+      await client.healthReachable();
+      await client.healthCheck();
+
+      expect(gatewayShaped, isEmpty);
+      expect(deletes.map((uri) => uri.path), [
+        '/api/sessions/s1',
+        '/api/sessions/s1',
+      ]);
+      expect(deletes.map((uri) => uri.queryParameters['profile']), [
+        null,
+        'social-writer',
+      ]);
+    });
   });
 }
