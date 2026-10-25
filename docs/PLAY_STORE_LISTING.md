@@ -160,13 +160,13 @@ one; nothing promises automatic setup, discovery or Cloud.
 ### English (United States), maximum 500 characters
 
 ```text
-Fixes and polish. Named profiles open and keep their chats again, with no false "Messages missing". Works with Hermes 0.22.4. The interface, notifications, widgets and voice follow your language in nine languages. Sending a photo or file no longer asks to confirm. Dialogs no longer close the chat on foldables and tablets. The "Sign in" notice clears itself, and a chat no longer stays on "Working" after you reopen the app.
+Fixes and polish. Named profiles open and keep their chats again, with no false "Messages missing". Works with Hermes 0.22.4. The whole interface, notifications, widgets and voice come in nine languages. Sending a photo or file no longer asks to confirm. Dialogs no longer close the chat on foldables and tablets. The "Sign in" notice clears itself, a chat no longer stays on "Working" or "Offline", the list shows running chats, and Back in the guided setup no longer freezes the app.
 ```
 
 ### Español (España), máximo 500 caracteres
 
 ```text
-Correcciones y mejoras. Los perfiles con nombre vuelven a abrir y conservar sus chats, sin el falso «Faltan mensajes». Compatible con Hermes 0.22.4. La interfaz, las notificaciones, los widgets y la voz siguen tu idioma en nueve idiomas. Enviar una foto o un archivo ya no pide confirmación. Los diálogos ya no cierran el chat en plegables y tabletas. El aviso «Iniciar sesión» se quita solo y un chat ya no se queda en «Trabajando» al reabrir la app.
+Correcciones y mejoras. Los perfiles con nombre vuelven a abrir y conservar sus chats, sin el falso «Faltan mensajes». Compatible con Hermes 0.22.4. Interfaz, avisos, widgets y voz en nueve idiomas. Enviar una foto o archivo ya no pide confirmación. Los diálogos no cierran el chat en plegables y tabletas. El aviso «Iniciar sesión» se quita solo, un chat no se queda en «Trabajando» ni «Sin conexión», la lista muestra los chats en marcha y Atrás en la configuración guiada ya no congela la app.
 ```
 
 ## Graphic assets
