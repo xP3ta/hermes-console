@@ -17,6 +17,11 @@ Hermes Dashboard, and it now follows Hermes 0.22.4.
   a new socket, Console asks for a fresh one once before it treats it as a problem.
 - **Chat list.** A chat no longer stays on **Working…** after you close and reopen
   the app while its turn was running; the list reads the server again.
+- **Chat list on return.** When the app comes back to the foreground, the list checks
+  its live connections, so a turn that is running (even one started from another
+  client) shows as **Working…** without opening the chat.
+- **Chat stuck on Offline.** After a single refused ticket the chat reconnects by
+  itself, or with Retry, instead of staying offline.
 - **Startup recovery screen** follows the language of the device.
 
 **Languages**

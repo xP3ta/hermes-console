@@ -21,6 +21,11 @@ Console 1.3.1 fixes named profiles, completes nine languages and follows Hermes
   ticket before it counts as a failure.
 - *Chat list.* A chat no longer stays on **Working…** after the app is closed and
   reopened during a running turn.
+- *Chat list on return.* When the app returns to the foreground the list checks its
+  live connections, so a running turn, even one started from another client, shows
+  as **Working…** without opening the chat.
+- *Chat stuck on Offline.* After a single refused ticket the chat reconnects by
+  itself, or with Retry.
 - *Startup recovery screen* follows the device language.
 - *Permission modes and generic chat titles* (Kanban task, Scheduled task,
   Conversation) were shown in Spanish in other languages; they follow the app
