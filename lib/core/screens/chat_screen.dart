@@ -13634,7 +13634,9 @@ class _ChatScreenState extends State<ChatScreen>
   /// first, so jumping never piles sections on top of the chat.
   void _goToFromNotch(ChatNotchDestination destination) {
     final app = context.findAncestorStateOfType<HermesAppState>();
-    final navigator = Navigator.of(context);
+    // Root navigator: in a tablet detail pane the nearest navigator is the
+    // pane's, and a section pushed there nests inside the conversation list.
+    final navigator = Navigator.of(context, rootNavigator: true);
     navigator.popUntil((route) => route.isFirst);
     if (destination == ChatNotchDestination.home || app == null) return;
     final connection = widget.connection;
