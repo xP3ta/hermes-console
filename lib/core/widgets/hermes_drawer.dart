@@ -307,7 +307,10 @@ class HermesDrawer extends StatelessWidget {
   ) {
     Navigator.pop(context); // close drawer
     if (section == current) return;
-    final root = Navigator.of(context);
+    // The root navigator, not the nearest one: inside a tablet detail pane the
+    // nearest navigator is the pane's, and a section pushed there nests a whole
+    // second screen (app bar, rail, drawer) inside the first.
+    final root = Navigator.of(context, rootNavigator: true);
     if (current != DrawerSection.home) root.popUntil((r) => r.isFirst);
     root.push(MaterialPageRoute(builder: (_) => builder())).then((_) {
       onSectionReturn?.call();
@@ -317,7 +320,7 @@ class HermesDrawer extends StatelessWidget {
   void _goHome(BuildContext context) {
     Navigator.pop(context);
     if (current == DrawerSection.home) return;
-    Navigator.of(context).popUntil((r) => r.isFirst);
+    Navigator.of(context, rootNavigator: true).popUntil((r) => r.isFirst);
   }
 
   void _goWithConnection(
@@ -393,7 +396,8 @@ class HermesDrawer extends StatelessWidget {
   }
 
   Future<void> _selectInstance(BuildContext context, String selectedId) async {
-    final navigator = Navigator.of(context);
+    final drawer = Navigator.of(context);
+    final navigator = Navigator.of(context, rootNavigator: true);
     final activeId =
         connManager.activeConnectionId.value ?? connection?.id ?? '';
     if (selectedId == activeId) return;
@@ -403,7 +407,7 @@ class HermesDrawer extends StatelessWidget {
 
     await connManager.setActiveConnection(selectedId);
     if (!context.mounted) return;
-    navigator.pop(); // drawer
+    drawer.pop(); // drawer
     navigator.popUntil((route) => route.isFirst);
   }
 
