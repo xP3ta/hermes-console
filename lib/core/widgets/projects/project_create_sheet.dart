@@ -8,6 +8,7 @@ import '../../models/project_files.dart';
 import '../../services/desktop_control_gateway.dart';
 import '../../theme/app_theme.dart';
 import '../../utils/short_server_path.dart';
+import '../../utils/server_path.dart';
 import '../../design/list.dart' show HermesListGroup, HermesSectionHeader;
 import '../../design/tokens.dart';
 import '../form_page.dart';
@@ -82,24 +83,12 @@ final class ProjectOpenExistingOutcome extends ProjectCreateOutcome {
 }
 
 /// Last path segment, the name Desktop gives a project made from a folder.
-String projectFolderBaseName(String path) {
-  final trimmed = path.replaceAll(RegExp(r'/+$'), '');
-  if (trimmed.isEmpty) return path;
-  final cut = trimmed.lastIndexOf('/');
-  return cut < 0 ? trimmed : trimmed.substring(cut + 1);
-}
+String projectFolderBaseName(String path) => serverPathBaseName(path);
 
 /// Server folder without trailing slashes (`/` stays `/`).
-String normalizeServerFolder(String path) {
-  final trimmed = path.trim().replaceAll(RegExp(r'/+$'), '');
-  return trimmed.isEmpty && path.trim().startsWith('/') ? '/' : trimmed;
-}
+String normalizeServerFolder(String path) => normalizeServerPath(path);
 
-bool _isUnderPath(String root, String path) {
-  final base = normalizeServerFolder(root);
-  if (base.isEmpty) return false;
-  return path == base || path.startsWith(base == '/' ? '/' : '$base/');
-}
+bool _isUnderPath(String root, String path) => serverPathIsWithin(root, path);
 
 /// Desktop `projectIdForCwd`: the project (saved or detected) owning
 /// [folder] by longest match over project, repository and worktree paths.
@@ -263,7 +252,10 @@ class _ProjectCreateSheetState extends State<_ProjectCreateSheet> {
       final picked = await widget.pickFolder();
       if (!mounted || picked == null) return;
       final folder = normalizeServerFolder(picked);
-      if (!folder.startsWith('/') || _folders.contains(folder)) return;
+      if (!isAbsoluteServerPath(folder) ||
+          _folders.any((saved) => serverPathsEqual(saved, folder))) {
+        return;
+      }
       // A folder that already belongs to a project opens that project
       // instead of minting a duplicate (Desktop "Open folder…" upsert).
       final owner = await widget.ownerOf(folder);
@@ -318,7 +310,7 @@ class _ProjectCreateSheetState extends State<_ProjectCreateSheet> {
         if (ideaNotWritten == null) {
           try {
             await writer.writeProjectFileText(
-              '${primary == '/' ? '' : primary}/$projectIdeaFileName',
+              serverPathChild(primary, projectIdeaFileName),
               idea.endsWith('\n') ? idea : '$idea\n',
             );
           } catch (_) {
@@ -468,7 +460,7 @@ class _ProjectCreateSheetState extends State<_ProjectCreateSheet> {
               padding: const EdgeInsets.fromLTRB(4, 6, 4, 0),
               child: Text(
                 strings.fp1215IdeaPathPreview(
-                  '${primary == '/' ? '' : primary}/$projectIdeaFileName',
+                  serverPathChild(primary, projectIdeaFileName),
                 ),
                 style: previewStyle,
               ),

@@ -41,6 +41,7 @@ Future<_Harness> _pump(
   HermesDesktopControlGateway gateway, {
   bool readOnly = false,
   List<String> picks = const [],
+  bool useRealPicker = false,
   Locale locale = const Locale('es'),
 }) async {
   SharedPreferences.setMockInitialValues({});
@@ -63,10 +64,12 @@ Future<_Harness> _pump(
         connectionManager: manager,
         gateway: gateway,
         chatLauncher: (_, request) => harness.launched.add(request),
-        folderPicker: (_, startPath) async {
-          harness.pickerStarts.add(startPath);
-          return harness.picks.isEmpty ? null : harness.picks.removeAt(0);
-        },
+        folderPicker: useRealPicker
+            ? null
+            : (_, startPath) async {
+                harness.pickerStarts.add(startPath);
+                return harness.picks.isEmpty ? null : harness.picks.removeAt(0);
+              },
       ),
     ),
   );
@@ -119,10 +122,61 @@ ProjectTreeSnapshot _treeWithNew() {
   return ProjectTreeSnapshot.fromJson(json);
 }
 
+/// Windows returns native separators even if the request used forward slashes.
+class _NativeWindowsProjectsGateway extends Pc1215CreatingProjectsGateway {
+  @override
+  Future<String> createProjectFolder(String path) async {
+    writes.add(('POST /api/files/mkdir', {'path': path}));
+    final native = path.replaceAll('/', r'\');
+    folders[native] = const [];
+    return native;
+  }
+}
+
 void main() {
   setUp(PrivateRenderCaches.clearAll);
 
   group('new project dialog', () {
+    for (final folder in [
+      r'D:\Hermes\workspace',
+      r'\\server\share\workspace',
+    ]) {
+      testWidgets('real picker creates a project from $folder', (tester) async {
+        final gateway = Pc1215CreatingProjectsGateway.sample()
+          ..defaultFolder = folder
+          ..folders[folder] = const [];
+        await _pump(tester, gateway, useRealPicker: true);
+        await _openCreate(tester);
+        await _tap(tester, 'pc1215-create-add-folder');
+
+        expect(gateway.calls, contains('GET /api/fs/default-cwd'));
+        expect(gateway.calls, contains('GET /api/fs/list:$folder'));
+        expect(gateway.calls, isNot(contains('GET /api/fs/list:/')));
+        await _tap(tester, 'pc1215-pick-folder-use');
+        expect(_submitEnabled(tester), isTrue);
+        expect(
+          tester
+              .widget<TextField>(
+                find.byKey(const ValueKey('pc1215-create-name')),
+              )
+              .controller!
+              .text,
+          'workspace',
+        );
+        await _tap(tester, 'pc1215-create-submit');
+        expect(_calls(gateway, 'projects.create'), [
+          [
+            'projects.create',
+            {
+              'name': 'workspace',
+              'folders': [folder],
+              'use': true,
+            },
+          ],
+        ]);
+      });
+    }
+
     testWidgets('picks a server folder, names it after the folder, sends '
         'Desktop\'s projects.create, writes IDEA.md, refreshes and enters it', (
       tester,
@@ -727,6 +781,20 @@ void main() {
         expect(projectOwningFolder(order, '/srv/application'), isNull);
       }
     });
+
+    test('Windows owner matching handles separators, case and boundaries', () {
+      final app = node('p_app', r'D:\Hermes\workspace');
+      final sub = node('p_sub', r'D:\Hermes\workspace\app');
+      expect(
+        projectOwningFolder([app, sub], 'd:/hermes/WORKSPACE/App/src')?.id,
+        'p_sub',
+      );
+      expect(projectOwningFolder([app], r'D:\Hermes\workspace-other'), isNull);
+      expect(
+        projectOwningFolder([app], r'D:\Hermes\workspace\..\outside'),
+        isNull,
+      );
+    });
   });
 
   group('IDEA.md guard', () {
@@ -883,6 +951,95 @@ void main() {
           ProjectFsEntry(name: 'demo', path: '/home/demo', isDirectory: true),
         ],
       });
+
+    for (final (root, start) in [
+      ('D:\\', r'D:\Hermes\workspace'),
+      ('\\\\server\\share\\', r'\\server\share\workspace'),
+    ]) {
+      testWidgets('Windows picker browses and creates under $start', (
+        tester,
+      ) async {
+        final child = '$start\\child';
+        final created = '$child\\created';
+        final gateway = _NativeWindowsProjectsGateway()
+          ..folders[start] = [
+            ProjectFsEntry(name: 'child', path: child, isDirectory: true),
+          ]
+          ..folders[child] = const [];
+        final picked = await pick(
+          tester,
+          gateway,
+          start: start,
+          steps: () async {
+            expect(gateway.calls, contains('GET /api/fs/list:$start'));
+            await _tap(tester, 'pf1215-fs-entry-$child');
+            expect(gateway.calls, contains('GET /api/fs/list:$child'));
+            await _tap(tester, 'pw1215-fs-add');
+            await _tap(tester, 'pw1215-add-folder');
+            await tester.enterText(
+              find.byKey(const ValueKey('pw1215-name-field')),
+              'created',
+            );
+            await _tap(tester, 'pw1215-name-create');
+            expect(gateway.calls, contains('GET /api/fs/list:$created'));
+            await _tap(tester, 'pc1215-pick-folder-use');
+          },
+        );
+        expect(_calls(gateway, 'POST /api/files/mkdir'), [
+          [
+            'POST /api/files/mkdir',
+            {'path': created},
+          ],
+        ]);
+        expect(picked, created);
+      });
+
+      testWidgets('Windows breadcrumbs stay within drive/share root $root', (
+        tester,
+      ) async {
+        final gateway = _NativeWindowsProjectsGateway()
+          ..folders[start] = const []
+          ..folders[root] = const [];
+        final picked = await pick(
+          tester,
+          gateway,
+          start: start,
+          steps: () async {
+            await _tap(tester, 'pf1215-crumb-0');
+            expect(gateway.calls, contains('GET /api/fs/list:$root'));
+            expect(gateway.calls, isNot(contains('GET /api/fs/list:/')));
+            expect(find.byKey(const ValueKey('pf1215-crumb-1')), findsNothing);
+            await _tap(tester, 'pc1215-pick-folder-use');
+          },
+        );
+        expect(picked, root);
+      });
+    }
+
+    test(
+      'Windows controller goes up and rejects paths outside its project',
+      () async {
+        const root = r'D:\Hermes\workspace';
+        final gateway = _NativeWindowsProjectsGateway();
+        final controller = ProjectFilesController(root: root, gateway: gateway);
+        addTearDown(controller.dispose);
+        await controller.open(r'd:\HERMES\workspace\nested');
+        expect(controller.atRoot, isFalse);
+        expect(controller.up(), isTrue);
+        expect(controller.atRoot, isTrue);
+        expect(controller.up(), isFalse);
+        final requests = gateway.calls.length;
+        for (final outside in [
+          r'E:\Hermes\workspace',
+          r'D:\Hermes\workspace-other',
+          r'D:\Hermes\workspace\..\outside',
+        ]) {
+          await controller.open(outside);
+          expect(controller.atRoot, isTrue);
+        }
+        expect(gateway.calls.length, requests);
+      },
+    );
 
     testWidgets('starts at the server folder, enters folders and returns the '
         'current one', (tester) async {
