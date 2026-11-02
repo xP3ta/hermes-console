@@ -14,6 +14,7 @@ import '../services/new_session_factory.dart';
 import '../theme/app_theme.dart';
 import '../utils/byte_bounded_lru_cache.dart';
 import '../utils/short_server_path.dart';
+import '../utils/server_path.dart';
 import '../widgets/adaptive_list_detail.dart';
 import '../shell/gesture_dock_state.dart' show GestureDockTab;
 import '../widgets/general_dock_shell.dart';
@@ -370,7 +371,7 @@ class _ProjectsCenterScreenState extends State<ProjectsCenterScreen> {
     final picked = await _pickServerFolder(context);
     if (!mounted || picked == null) return;
     final target = normalizeServerFolder(picked);
-    if (!target.startsWith('/')) return;
+    if (!isAbsoluteServerPath(target)) return;
     final existing = await _ownerOf(target);
     if (!mounted) return;
     if (existing != null) {

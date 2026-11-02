@@ -58,6 +58,7 @@ import 'replay_coordinator.dart';
 import 'server_restart_signal.dart';
 import 'subagent_live_watch.dart';
 import '../utils/transport_privacy.dart';
+import '../utils/server_path.dart';
 
 class TuiGatewayRpcError implements Exception {
   final String method;
@@ -7584,7 +7585,9 @@ class TuiGatewayClient
         () => _dashboard.apiGet('fs/default-cwd'),
       );
       final cwd = result['cwd'];
-      return cwd is String && cwd.trim().startsWith('/') ? cwd.trim() : null;
+      return cwd is String && isAbsoluteServerPath(cwd)
+          ? normalizeServerPath(cwd)
+          : null;
     } catch (_) {
       return null;
     }

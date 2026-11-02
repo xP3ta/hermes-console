@@ -21,6 +21,7 @@ import '../../models/project_files.dart';
 import '../../services/artifact_viewer_kind.dart';
 import '../../services/desktop_control_gateway.dart';
 import '../../theme/app_theme.dart';
+import '../../utils/server_path.dart';
 import '../artifact_viewer/artifact_viewer_screen.dart';
 import '../../design/edges.dart';
 import '../hermes_app_bar.dart';
@@ -81,27 +82,24 @@ String? validProjectEntryName(String raw) {
 }
 
 /// `childPath` from Desktop's remote picker.
-String projectChildPath(String parent, String name) {
-  final base = parent.length > 1 && parent.endsWith('/')
-      ? parent.substring(0, parent.length - 1)
-      : parent;
-  return base == '/' ? '/$name' : '$base/$name';
-}
+String projectChildPath(String parent, String name) =>
+    serverPathChild(parent, name);
 
 /// Where the read-only browser of one project currently is. Owned by the
 /// project screen so the folder survives switching between Chats and
 /// Archivos, and so system back can go up one folder first.
 class ProjectFilesController extends ChangeNotifier {
   ProjectFilesController({
-    required this.root,
+    required String root,
     required this.gateway,
     this.writes,
     this.readOnlyConnection = false,
     this.pickFolders = false,
     String? initialPath,
-  }) : _path = initialPath != null && _isInside(root, initialPath)
-           ? initialPath
-           : root;
+  }) : root = normalizeServerPath(root),
+       _path = initialPath != null && serverPathIsWithin(root, initialPath)
+           ? normalizeServerPath(initialPath)
+           : normalizeServerPath(root);
 
   /// Project folder on the Hermes host; the browser never leaves it.
   final String root;
@@ -148,7 +146,7 @@ class ProjectFilesController extends ChangeNotifier {
   int _generation = 0;
 
   String get path => _path;
-  bool get atRoot => _path == root;
+  bool get atRoot => serverPathsEqual(_path, root);
   bool get loading => _loading;
   Object? get failure => _failure;
   ProjectDirectoryListing? get listing => _listings[_path];
@@ -159,18 +157,7 @@ class ProjectFilesController extends ChangeNotifier {
       (gateway?.projectFilesKnownUnsupported ?? true);
 
   /// Folders from the project root down to [path], as (label, path).
-  List<(String, String)> get crumbs {
-    final out = <(String, String)>[(_basename(root), root)];
-    if (atRoot || !_inside(_path)) return out;
-    var current = root == '/' ? '' : root;
-    final rest = _path.substring(root == '/' ? 1 : root.length + 1);
-    for (final part in rest.split('/')) {
-      if (part.isEmpty) continue;
-      current = '$current/$part';
-      out.add((part, current));
-    }
-    return out;
-  }
+  List<(String, String)> get crumbs => serverPathBreadcrumbs(root, _path);
 
   /// First listing, done lazily the first time the Archivos tab shows.
   void ensureStarted() {
@@ -181,17 +168,18 @@ class ProjectFilesController extends ChangeNotifier {
 
   Future<void> open(String folder) async {
     if (!_inside(folder)) return;
-    _path = folder;
+    final target = normalizeServerPath(folder);
+    _path = target;
     _failure = null;
     _notify();
-    if (!_listings.containsKey(folder)) await _read(folder);
+    if (!_listings.containsKey(target)) await _read(target);
   }
 
   /// Goes one folder up; false when already at the project root.
   bool up() {
     if (atRoot) return false;
-    final cut = _path.lastIndexOf('/');
-    unawaited(open(cut <= root.length ? root : _path.substring(0, cut)));
+    final parent = serverPathParent(_path);
+    unawaited(open(_inside(parent) ? parent : root));
     return true;
   }
 
@@ -201,15 +189,13 @@ class ProjectFilesController extends ChangeNotifier {
   /// its cached listing so the next visit reads it again. The cached listing
   /// stays visible meanwhile so the view does not flash.
   Future<void> reload(String folder) async {
-    if (folder == _path) return _read(folder);
+    if (serverPathsEqual(folder, _path)) return _read(_path);
     invalidate(folder);
   }
 
   /// Forgets [folder] and everything cached below it.
   void invalidate(String folder) {
-    _listings.removeWhere(
-      (key, _) => key == folder || key.startsWith('$folder/'),
-    );
+    _listings.removeWhere((key, _) => serverPathIsWithin(folder, key));
   }
 
   /// Repaints after a capability change learned from a write.
@@ -245,11 +231,7 @@ class ProjectFilesController extends ChangeNotifier {
     }
   }
 
-  bool _inside(String folder) => _isInside(root, folder);
-
-  static bool _isInside(String root, String folder) =>
-      folder == root ||
-      (root == '/' ? folder.startsWith('/') : folder.startsWith('$root/'));
+  bool _inside(String folder) => serverPathIsWithin(root, folder);
 
   void _notify() {
     if (!_disposed) notifyListeners();
@@ -260,16 +242,6 @@ class ProjectFilesController extends ChangeNotifier {
     _disposed = true;
     super.dispose();
   }
-}
-
-String _basename(String path) {
-  final trimmed = path.endsWith('/') && path.length > 1
-      ? path.substring(0, path.length - 1)
-      : path;
-  final cut = trimmed.lastIndexOf('/');
-  return cut < 0 || cut == trimmed.length - 1
-      ? trimmed
-      : trimmed.substring(cut + 1);
 }
 
 /// Folder browser for the Archivos tab of a project: breadcrumbs, folders
@@ -699,7 +671,10 @@ class _ProjectFilesBrowserState extends State<ProjectFilesBrowser> {
     final strings = Strings.of(context);
     // Only entries listed inside the project root are ever deletable, and
     // never the root itself.
-    if (!entry.path.startsWith('${controller.root}/')) return;
+    if (serverPathsEqual(controller.root, entry.path) ||
+        !serverPathIsWithin(controller.root, entry.path)) {
+      return;
+    }
     final parent = controller.path;
     final confirmed = await showHermesDialog<bool>(
       context: context,
@@ -1214,7 +1189,7 @@ class _EditableTextViewerState extends State<_EditableTextViewer> {
 
 /// Picks a folder on the Hermes host, never on the phone: Desktop's remote
 /// folder picker (`selectDesktopPaths` in remote mode) seeded at the
-/// server's default folder. The whole server filesystem is browsable;
+/// server's default folder. Its filesystem root (drive/share on Windows) is browsable;
 /// "Nueva carpeta" is offered when the connection may write. Returns the
 /// absolute server path, or null when cancelled.
 Future<String?> showServerFolderPicker(
@@ -1228,7 +1203,7 @@ Future<String?> showServerFolderPicker(
   MaterialPageRoute(
     builder: (_) => _ServerFolderPicker(
       controller: ProjectFilesController(
-        root: '/',
+        root: serverPathRoot(startPath ?? '/'),
         gateway: files,
         writes: writes,
         readOnlyConnection: readOnlyConnection,
