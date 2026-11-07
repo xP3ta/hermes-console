@@ -29,7 +29,9 @@ Future<T?> openChatWithParent<T extends Object?>(
   required WidgetBuilder parentBuilder,
   required WidgetBuilder builder,
 }) {
-  final navigator = Navigator.of(context);
+  // Root navigator: called from a drawer inside a tablet detail pane, the
+  // nearest navigator would nest the list screen inside the pane.
+  final navigator = Navigator.of(context, rootNavigator: true);
   navigator.pushAndRemoveUntil<void>(
     MaterialPageRoute<void>(builder: parentBuilder),
     (route) => route.isFirst,
