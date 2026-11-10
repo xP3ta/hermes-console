@@ -35,9 +35,9 @@ Future<Strings> _welcome(
 void main() {
   const expected = {
     'es':
-        'Console es el mando de tu Hermes, el que tienes en tu ordenador o en un servidor.',
+        'Elige cómo llega Console a tu Hermes. Escribir la dirección del Dashboard es el camino más directo.',
     'en':
-        'Console is the remote for your Hermes, the one on your computer or on a server.',
+        'Choose how Console reaches your Hermes. Typing the Dashboard address is the most direct way.',
   };
   for (final language in ['es', 'en']) {
     for (final simpleConnect in [true, false]) {
@@ -50,7 +50,7 @@ void main() {
           language: language,
         );
         expect(find.text(expected[language]!), findsOneWidget);
-        expect(find.text(s.onb4WelcomeBody), findsOneWidget);
+        expect(find.text(s.onbFlowBody), findsOneWidget);
         expect(
           find.byKey(const ValueKey('onboarding-dashboard-explain')),
           findsNothing,

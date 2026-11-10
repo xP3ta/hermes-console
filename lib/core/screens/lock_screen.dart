@@ -7,6 +7,7 @@ import '../../l10n/app_localizations.dart';
 import '../services/app_lock.dart';
 import '../theme/app_theme.dart';
 import '../theme/motion.dart';
+import '../feedback/haptics.dart';
 
 /// Pantalla de desbloqueo: PIN propio + biometría opcional.
 ///
@@ -96,7 +97,7 @@ class _LockScreenState extends State<LockScreen> {
       return;
     }
     _pinCtrl.clear();
-    HapticFeedback.mediumImpact();
+    HermesHaptics.confirm();
     final wait = widget.lock.cooldownRemaining;
     setState(() {
       _error = wait > 0

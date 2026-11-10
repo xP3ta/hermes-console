@@ -598,7 +598,7 @@ void main() {
           {
             'action': 'install',
             'catalog_name': 'weather',
-            'enable': true,
+            'enable': false,
             'force': false,
             'profile': 'work',
           },
@@ -1077,6 +1077,49 @@ void main() {
       expect(calls, 1);
     });
   });
+
+  test(
+    'toolset counts use the selected profile and reject a malformed inventory',
+    () async {
+      final calls = <(String, Map<String, dynamic>)>[];
+      var malformed = false;
+      final repo = CapabilitiesRepository(
+        rest: FakeRest(),
+        profile: 'infra',
+        rpc: (method, params) async {
+          calls.add((method, params));
+          return malformed
+              ? {}
+              : {
+                  'toolsets': [
+                    {
+                      'name': 'docs',
+                      'tool_count': 7,
+                      'description': "MCP server 'docs' tools",
+                    },
+                  ],
+                };
+        },
+      );
+      final rows = await repo.toolsets();
+      expect(rows.single.name, 'docs');
+      expect(rows.single.toolCount, 7);
+      expect(calls, hasLength(1));
+      expect(calls.single.$1, 'tools.list');
+      expect(calls.single.$2, {'profile': 'infra'});
+      malformed = true;
+      await expectLater(
+        repo.toolsets(),
+        throwsA(
+          isA<CapabilityFailure>().having(
+            (e) => e.kind,
+            'kind',
+            CapabilityFailureKind.invalidResponse,
+          ),
+        ),
+      );
+    },
+  );
 
   group('mcp logs', () {
     test(

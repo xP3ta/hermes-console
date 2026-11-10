@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../theme/app_theme.dart';
+import '../../theme/hermes_tokens.dart';
 import '../../widgets/hermes_ui.dart' show PressableScale;
 import 'onboarding_motion.dart';
 
@@ -46,7 +47,9 @@ class OnbPrimary extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = Theme.of(context).hermes;
     final enabled = onTap != null;
-    final fg = enabled ? c.onAccent : c.textDisabled;
+    // Disabled, the label still reads (3:1) on the raised surface: the
+    // first button of the app is not a grey block.
+    final fg = enabled ? c.onAccent : c.disabledInkOn(c.surfaceVariant);
     final full = MediaQuery.sizeOf(context).width - 2 * kOnbGutter;
     final factor = expand >= 1
         ? 1.0
@@ -66,8 +69,8 @@ class OnbPrimary extends StatelessWidget {
           child: Container(
             constraints: const BoxConstraints(minHeight: kOnbPillHeight),
             padding: EdgeInsets.symmetric(
-              horizontal: expand > 0.6 ? 20 : 0,
-              vertical: 12,
+              horizontal: expand > 0.6 ? HermesSpace.x5 : 0,
+              vertical: HermesSpace.x3,
             ),
             decoration: BoxDecoration(
               color: enabled ? c.accent : c.surfaceVariant,
@@ -120,7 +123,10 @@ class OnbSecondary extends StatelessWidget {
         onTap: onTap,
         child: Container(
           constraints: const BoxConstraints(minHeight: kOnbPillHeight),
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+          padding: const EdgeInsets.symmetric(
+            horizontal: HermesSpace.x5,
+            vertical: HermesSpace.x3,
+          ),
           decoration: BoxDecoration(
             color: c.surfaceVariant,
             border: Border.all(color: c.controlBorder),
@@ -181,10 +187,13 @@ class OnbSmallPill extends StatelessWidget {
         onTap: onTap,
         child: Container(
           constraints: const BoxConstraints(minHeight: 40, minWidth: 48),
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          padding: const EdgeInsets.symmetric(
+            horizontal: 14,
+            vertical: HermesSpace.x2,
+          ),
           decoration: BoxDecoration(
             color: bg,
-            borderRadius: BorderRadius.circular(22),
+            borderRadius: BorderRadius.circular(HermesRadius.card),
             border: onDark ? Border.all(color: const Color(0x1FFFFFFF)) : null,
           ),
           child: Row(
@@ -236,12 +245,12 @@ class OnbTextButton extends StatelessWidget {
         child: Container(
           constraints: const BoxConstraints(minHeight: 48),
           alignment: Alignment.center,
-          padding: const EdgeInsets.symmetric(horizontal: 12),
+          padding: const EdgeInsets.symmetric(horizontal: HermesSpace.x3),
           child: Text(
             label,
             textAlign: TextAlign.center,
             style: TextStyle(
-              fontSize: 14.5,
+              fontSize: HermesType.bodySize,
               fontWeight: FontWeight.w600,
               color: c.textSecondary,
             ),
@@ -300,7 +309,10 @@ class OnbCard extends StatelessWidget {
   const OnbCard({
     required this.child,
     this.tone,
-    this.padding = const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+    this.padding = const EdgeInsets.symmetric(
+      horizontal: HermesSpace.x4,
+      vertical: HermesSpace.x1,
+    ),
     super.key,
   });
   final Widget child;
@@ -536,7 +548,7 @@ class OnbSegmented<T> extends StatelessWidget {
         .clamp(0, options.length - 1);
     final reduced = OnboardingMotion.reduced(context);
     return Container(
-      padding: const EdgeInsets.all(4),
+      padding: const EdgeInsets.all(HermesSpace.x1),
       decoration: BoxDecoration(
         color: c.surface,
         borderRadius: BorderRadius.circular(24),
@@ -583,14 +595,16 @@ class OnbSegmented<T> extends StatelessWidget {
                       child: Container(
                         constraints: const BoxConstraints(minHeight: 40),
                         alignment: Alignment.center,
-                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: HermesSpace.x2,
+                        ),
                         child: FittedBox(
                           fit: BoxFit.scaleDown,
                           child: Text(
                             label,
                             maxLines: 1,
                             style: TextStyle(
-                              fontSize: 14,
+                              fontSize: HermesType.textSize,
                               fontWeight: FontWeight.w600,
                               color: v == value
                                   ? c.textPrimary
@@ -655,7 +669,7 @@ class _OnbCodeBlockState extends State<OnbCodeBlock>
     final c = Theme.of(context).hermes;
     final style = TextStyle(
       fontFamily: 'monospace',
-      fontSize: 13,
+      fontSize: HermesType.valueSize,
       height: 1.5,
       color: c.accentText,
     );
@@ -670,7 +684,7 @@ class _OnbCodeBlockState extends State<OnbCodeBlock>
           color: Theme.of(context).brightness == Brightness.dark
               ? Color.lerp(c.background, Colors.black, .22)
               : c.surfaceVariant,
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(HermesRadius.row),
           border: Border.all(color: c.divider.withValues(alpha: .8)),
         ),
         child: controller == null
@@ -754,7 +768,7 @@ class OnbConsent extends StatelessWidget {
         onTap: () => onChanged(!value),
         child: Container(
           constraints: const BoxConstraints(minHeight: 48),
-          padding: const EdgeInsets.symmetric(vertical: 12),
+          padding: const EdgeInsets.symmetric(vertical: HermesSpace.x3),
           alignment: Alignment.centerLeft,
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,

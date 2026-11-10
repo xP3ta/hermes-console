@@ -194,7 +194,7 @@ class CompanionController extends ChangeNotifier {
   String? _remoteCompanionRevision;
 
   List<Companion> _available = const [];
-  bool _enabled = true;
+  bool _enabled = CompanionPreferences.defaultEnabled;
   String? _selectedSlug;
   CompanionScale _scale = CompanionScale.medium;
   double _sizeMultiplier = CompanionDisplaySettings.defaultSizeMultiplier;

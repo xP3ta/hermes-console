@@ -7,20 +7,29 @@
 // administrativas que Hermes aún no publica por RPC.
 //
 // - Lista con estado real (modelo·proveedor, nº skills, gateway activo).
-// - "Usar como activo": reescala Modelos y Skills a ese perfil.
-// - Crear: el mismo formulario que «Nuevo bot» en Modo Bot (un bot es un
-//   perfil), ver `profile_flows.dart`.
+// - Cada fila muestra la MISMA identidad visual que el resto de la app
+//   (`ProfileFace`: personaje del Estudio > foto > mascota > cara) y al
+//   tocarla abre el perfil (`ProfileHubScreen`: modelo, skills,
+//   integraciones…). Su menú ⋯ lleva la administración del servidor.
+// - "Hacer activo": reescala Modelos y Skills a ese perfil.
+// - Crear / clonar: el mismo formulario que «Nuevo bot» en Modo Bot (un bot
+//   es un perfil), ver `profile_flows.dart`.
+//
+// Bots = tus bots (modo bot, estado vivo, chat). Esta pantalla es la
+// administración del servidor: crear, clonar, renombrar, borrar.
 import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../l10n/app_localizations.dart';
+import '../bots/ui/profile/profile_hub_screen.dart';
 import '../design/modal.dart' show HermesAction, showHermesMenu;
 import '../models/agent_profile.dart';
 import '../services/active_profile_scope.dart';
 import '../services/bot_roster_store.dart';
 import '../services/connection_manager.dart';
+import '../services/new_session_factory.dart';
 import '../services/tui_gateway_client.dart';
 import '../theme/app_theme.dart';
 import '../utils/api_error.dart';
@@ -28,7 +37,9 @@ import '../widgets/general_dock_shell.dart';
 import '../widgets/hermes_app_bar.dart';
 import '../widgets/hermes_premium_ui.dart';
 import '../widgets/hermes_ui.dart';
-import '../widgets/mission_profile_avatar.dart';
+import '../widgets/mission_profile_avatar.dart' show MissionProfileAvatarCache;
+import '../widgets/profile_face.dart';
+import 'chat_screen.dart';
 import 'profile_editor_screen.dart';
 import 'profile_flows.dart';
 import '../widgets/console_loader.dart';
@@ -48,12 +59,16 @@ class ProfilesScreen extends StatefulWidget {
 
   /// Stands in for the Gateway's `profiles.list` in tests.
   final Future<List<AgentProfile>> Function()? gatewayProfilesOverride;
+
+  /// Stands in for the chat route of «Abrir chat» in tests.
+  final Future<void> Function(AgentProfile profile)? chatOpenerOverride;
   const ProfilesScreen({
     required this.connection,
     required this.connManager,
     this.rosterRegistry,
     @visibleForTesting this.clientOverride,
     @visibleForTesting this.gatewayProfilesOverride,
+    @visibleForTesting this.chatOpenerOverride,
     super.key,
   });
 
@@ -66,10 +81,6 @@ class _ProfilesScreenState extends State<ProfilesScreen> {
   TuiGatewayClient? _gateway;
   late final BotRosterRegistry _roster;
   late final BotRosterStore _store;
-  // Mismo caché que usa Mission Control para las mismas caras de bot: cada
-  // perfil ya trae su propia identidad visual (foto subida o "Blobatar"
-  // procedural), así que la lista no necesita un icono genérico propio.
-  late final MissionProfileAvatarCache _avatarCache;
   List<AgentProfile> get _profiles => _store.profiles;
   bool _loading = true;
   String? _error;
@@ -85,9 +96,6 @@ class _ProfilesScreenState extends State<ProfilesScreen> {
         ? TuiGatewayClient(widget.connection, dashboard: _client)
         : null;
     _gateway = gateway;
-    _avatarCache = MissionProfileAvatarCache(
-      loader: gateway?.profileAvatar ?? (_) async => null,
-    );
     _roster = widget.rosterRegistry ?? BotRosterRegistry.shared;
     _roster.hydrate(widget.connection);
     _store = _roster.store(widget.connection.id)..addListener(_onRoster);
@@ -208,6 +216,75 @@ class _ProfilesScreenState extends State<ProfilesScreen> {
     if (saved == true && mounted) await _load();
   }
 
+  /// The profile's own page (model, skills, integrations…), the same one
+  /// Bots and Inicio open.
+  Future<void> _openProfile(AgentProfile p) async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => ProfileHubScreen(
+          key: ValueKey('profile-hub-${p.name}'),
+          connection: widget.connection,
+          connManager: widget.connManager,
+          profile: p.name,
+          rosterRegistry: _roster,
+          onChat: () => unawaited(_openChat(p)),
+          onChanged: () => unawaited(_load()),
+          onEdited: () => unawaited(_load()),
+        ),
+      ),
+    );
+    if (mounted) setState(() {});
+  }
+
+  /// A new chat with [p]: it becomes the active profile first, so the
+  /// chat, Models and Skills all follow it.
+  Future<void> _openChat(AgentProfile p) async {
+    await ActiveProfileScope.of(
+      widget.connManager,
+      widget.connection.id,
+    ).switchTo(p.name);
+    if (!mounted) return;
+    final override = widget.chatOpenerOverride;
+    if (override != null) return override(p);
+    final session = Session(
+      id: generateSessionId(),
+      title: Strings.of(context).drawerNewChat,
+      model: 'hermes-agent',
+      source: 'mobile',
+      messageCount: 0,
+      isActive: true,
+      preview: '',
+      startedAt: DateTime.now().millisecondsSinceEpoch / 1000,
+      profile: p.name,
+      isDefaultProfile: p.isDefault,
+    );
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) =>
+            ChatScreen(connection: widget.connection, session: session),
+      ),
+    );
+  }
+
+  /// «Clonar»: the create flow with [p] as the source to clone from.
+  Future<void> _clone(AgentProfile p) async {
+    final str = Strings.of(context);
+    final created = await openCreateProfile(
+      context,
+      connection: widget.connection,
+      existing: _profiles.map((e) => e.name).toSet(),
+      initialCloneFrom: p.name,
+    );
+    if (created == null || !mounted) return;
+    _roster.profileCreated(widget.connection.id, AgentProfile(name: created));
+    await ActiveProfileScope.of(
+      widget.connManager,
+      widget.connection.id,
+    ).switchTo(created);
+    _snack(str.prfCreatedActive(created));
+    await _load();
+  }
+
   Future<void> _rename(AgentProfile p) async {
     final str = Strings.of(context);
     final newName = await Navigator.of(context).push<String>(
@@ -274,12 +351,12 @@ class _ProfilesScreenState extends State<ProfilesScreen> {
 
   // ── UI ────────────────────────────────────────────────────────────────
 
-  Widget _wrapWithDock(Widget body) => GeneralDockShell(
+  Widget _wrapWithDock(Widget Function(double) buildBody) => GeneralDockShell(
     connection: widget.connection,
     connManager: widget.connManager,
     pet: false,
     onCreate: _openBuilder,
-    body: body,
+    bodyBuilder: (_, bottomClearance) => buildBody(bottomClearance),
   );
 
   @override
@@ -288,7 +365,7 @@ class _ProfilesScreenState extends State<ProfilesScreen> {
     final str = Strings.of(context);
     return Scaffold(
       appBar: HermesAppBar(
-        title: Text(str.prfScreenTitle),
+        title: Text(str.pfuManageProfiles),
         // This screen's own way to add a profile is up here, with the dock
         // on, off or hidden (the dock's "+" is a new chat).
         actions: [
@@ -307,28 +384,53 @@ class _ProfilesScreenState extends State<ProfilesScreen> {
       ),
       body: _wrapWithDock(
         // The shared (or cached) roster stays visible while it revalidates.
-        _loading && _profiles.isEmpty
-            ? const Center(child: ConsoleLoader.large())
+        (bottomClearance) => _loading && _profiles.isEmpty
+            ? Padding(
+                padding: EdgeInsets.only(bottom: bottomClearance),
+                child: const Center(child: ConsoleLoader.large()),
+              )
             : _error != null
-            ? _ErrorState(message: _error!, onRetry: _load)
+            ? Padding(
+                padding: EdgeInsets.only(bottom: bottomClearance),
+                child: _ErrorState(message: _error!, onRetry: _load),
+              )
             : RefreshIndicator(
                 color: colors.accent,
                 onRefresh: _load,
                 child: ListView(
-                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+                  // Q9-CRISTAL: the roster passes under the glass header.
+                  clipBehavior: hermesUnderHeader,
+                  padding: EdgeInsets.fromLTRB(
+                    16,
+                    12,
+                    16,
+                    24 + bottomClearance,
+                  ),
                   children: [
                     for (final p in _profiles)
                       _ProfileCard(
                         profile: p,
+                        connectionId: widget.connection.id,
                         active:
                             _activeProfile == p.name ||
                             (_activeProfile.isEmpty && p.isDefault),
-                        avatarCache: _avatarCache,
+                        avatarCache: ProfileFace.cacheFor(
+                          widget.connection,
+                          rosterTicket: _store.ticket,
+                          loader: widget.clientOverride == null
+                              ? null
+                              : (_) async => null,
+                        ),
+                        onOpen: () => _openProfile(p),
                         onUse: () => _useAsActive(p),
+                        onChat: () => _openChat(p),
                         onEdit: widget.connection.readOnly
                             ? null
                             : () => _editProfile(p),
                         onRename: () => _rename(p),
+                        onClone: widget.connection.readOnly
+                            ? null
+                            : () => _clone(p),
                         onDelete: p.isDefault ? null : () => _delete(p),
                       ),
                   ],
@@ -340,24 +442,32 @@ class _ProfilesScreenState extends State<ProfilesScreen> {
 }
 
 /// What a profile's "more" menu offers.
-enum _ProfileAction { edit, rename, delete }
+enum _ProfileAction { edit, makeActive, chat, rename, clone, delete }
 
 class _ProfileCard extends StatelessWidget {
   final AgentProfile profile;
+  final String connectionId;
   final bool active;
   final MissionProfileAvatarCache avatarCache;
+  final VoidCallback onOpen;
   final VoidCallback onUse;
+  final VoidCallback onChat;
   final VoidCallback? onEdit;
   final VoidCallback onRename;
+  final VoidCallback? onClone;
   final VoidCallback? onDelete;
 
   const _ProfileCard({
     required this.profile,
+    required this.connectionId,
     required this.active,
     required this.avatarCache,
+    required this.onOpen,
     required this.onUse,
+    required this.onChat,
     required this.onEdit,
     required this.onRename,
+    required this.onClone,
     required this.onDelete,
   });
 
@@ -365,11 +475,13 @@ class _ProfileCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
     final str = Strings.of(context);
+    final title = profile.botListName;
     // State first, then what it runs; the free text goes last, where the
-    // ellipsis falls.
+    // ellipsis falls. The server's own name shows when the visible one
+    // differs, so the row still says which profile it administers.
     final details = <String>[
       if (active) str.prfInUse,
-      if (profile.isDefault) 'default',
+      if (title != profile.name) profile.name,
       if (profile.gatewayRunning) 'gateway',
       if (profile.model.isNotEmpty) profile.model,
       if (profile.provider.isNotEmpty) profile.provider,
@@ -383,26 +495,26 @@ class _ProfileCard extends StatelessWidget {
       showDividers: false,
       children: [
         HermesListRow(
-          // Antes un icono genérico (account_tree_outlined) para todos los
-          // perfiles; ahora la cara/avatar real que cada uno tiene
-          // configurado, igual que en Bots — mismo caché, mismo widget.
+          key: ValueKey('profile-row-${profile.name}'),
+          // The face every list of the app draws for this profile: Studio
+          // character, photo, mascot or classic face, one resolver.
           leading: Stack(
             clipBehavior: Clip.none,
             children: [
-              MissionProfileAvatar(
+              ProfileFace(
                 profileName: profile.name,
-                hasAvatar: profile.hasAvatar,
-                cache: avatarCache,
-                size: 34,
-                shape: profile.botShape,
-                colorHex: profile.botFaceColorHex,
-                imageKind: profile.botImageKind,
+                profile: profile,
+                avatarCache: avatarCache,
+                connectionId: connectionId,
+                active: active,
+                size: 40,
               ),
               if (active)
                 PositionedDirectional(
                   bottom: -2,
                   end: -2,
                   child: Container(
+                    key: ValueKey('profile-active-check-${profile.name}'),
                     padding: const EdgeInsets.all(1),
                     decoration: BoxDecoration(
                       color: colors.surface,
@@ -417,12 +529,12 @@ class _ProfileCard extends StatelessWidget {
                 ),
             ],
           ),
-          title: profile.name,
+          title: title,
           titleMaxLines: 1,
           subtitle: details.join(' · '),
           selected: active,
-          onTap: active ? null : onUse,
-          semanticHint: active ? str.prfInUse : str.prfUseAsActive,
+          onTap: onOpen,
+          semanticHint: str.pfuOpenHint,
           padding: const EdgeInsets.fromLTRB(14, 10, 4, 10),
           // One control at the end of the row, like every other list of
           // Ajustes: what was three buttons is its menu.
@@ -455,12 +567,32 @@ class _ProfileCard extends StatelessWidget {
             icon: Icons.tune,
             label: str.prfEditBotTooltip,
           ),
+        if (!active)
+          HermesAction(
+            key: const ValueKey('profile-make-active'),
+            value: _ProfileAction.makeActive,
+            icon: Icons.check_circle_outline,
+            label: str.pfuMakeActive,
+          ),
+        HermesAction(
+          key: const ValueKey('profile-open-chat'),
+          value: _ProfileAction.chat,
+          icon: Icons.chat_bubble_outline_rounded,
+          label: str.pfuOpenChat,
+        ),
         HermesAction(
           key: const ValueKey('profile-rename'),
           value: _ProfileAction.rename,
           icon: Icons.drive_file_rename_outline,
           label: str.prfRenameTooltip,
         ),
+        if (onClone != null)
+          HermesAction(
+            key: const ValueKey('profile-clone'),
+            value: _ProfileAction.clone,
+            icon: Icons.copy_all_outlined,
+            label: str.pfuClone,
+          ),
         if (onDelete != null)
           HermesAction(
             key: const ValueKey('profile-delete'),
@@ -474,8 +606,14 @@ class _ProfileCard extends StatelessWidget {
     switch (action) {
       case _ProfileAction.edit:
         onEdit?.call();
+      case _ProfileAction.makeActive:
+        onUse();
+      case _ProfileAction.chat:
+        onChat();
       case _ProfileAction.rename:
         onRename();
+      case _ProfileAction.clone:
+        onClone?.call();
       case _ProfileAction.delete:
         onDelete?.call();
       case null:
@@ -603,6 +741,7 @@ class _NameEntryScreenState extends State<_NameEntryScreen> {
       ),
       body: SafeArea(
         child: ListView(
+          clipBehavior: hermesUnderHeader,
           padding: const EdgeInsets.all(20),
           children: [
             HermesField(

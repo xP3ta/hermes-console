@@ -39,4 +39,10 @@ final class ModelCatalogCache {
   void invalidate(String connectionId, String profile) {
     _entries.remove(_key(connectionId, profile));
   }
+
+  /// Drops every profile's entry of [connectionId] (an account linked on
+  /// the server changes what each of them may offer).
+  void invalidateConnection(String connectionId) {
+    _entries.removeWhere((key, _) => key.startsWith('$connectionId\u0000'));
+  }
 }

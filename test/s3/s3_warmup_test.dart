@@ -71,7 +71,7 @@ void main() {
     });
 
     test('Nous Cloud hosts only', () {
-      expect(isNousCloudHost('ares-3009.agents.nousresearch.com'), isTrue);
+      expect(isNousCloudHost('demo-0000.agents.nousresearch.com'), isTrue);
       expect(isNousCloudHost('agents.nousresearch.com'), isFalse);
       expect(isNousCloudHost('example.com'), isFalse);
       expect(

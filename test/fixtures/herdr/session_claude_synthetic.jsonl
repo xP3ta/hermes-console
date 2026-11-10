@@ -1,0 +1,14 @@
+{"type": "queue-operation", "operation": "enqueue", "sessionId": "s1"}
+{"type": "user", "uuid": "u1", "cwd": "/home/demo/proyectos/app", "sessionId": "s1", "message": {"role": "user", "content": "Add tests to the session module"}}
+{"type": "assistant", "uuid": "a1", "message": {"role": "assistant", "content": [{"type": "thinking", "thinking": "Plan: read the module first."}]}}
+{"type": "assistant", "uuid": "a2", "message": {"role": "assistant", "content": [{"type": "text", "text": "I read **session.ts** and found two ways to test it."}]}}
+{"type": "assistant", "uuid": "a3", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "t1", "name": "Read", "input": {"file_path": "src/session.ts"}}]}}
+{"type": "assistant", "uuid": "a4", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "t2", "name": "Bash", "input": {"command": "npm test", "description": "run the tests"}}]}}
+{"type": "user", "uuid": "u2", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "line 1\nline 2"}]}}
+{"type": "user", "uuid": "u3", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t2", "is_error": true, "content": [{"type": "text", "text": "1 failed"}]}]}}
+{"type": "assistant", "uuid": "s1x", "isSidechain": true, "message": {"role": "assistant", "content": [{"type": "text", "text": "SIDECHAIN TEXT"}]}}
+{"type": "user", "uuid": "m1", "isMeta": true, "message": {"role": "user", "content": "META TEXT"}}
+{"type": "assistant", "uuid": "a5", "message": {"role": "assistant", "content": [{"type": "text", "text": "Set API_KEY=sk-abcdefghijklmnopqrstuvwxyz0123456789 and run it again."}]}}
+{"type": "assistant", "uuid": "a6", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "q1", "name": "AskUserQuestion", "input": {"questions": [{"question": "Which approach do you prefer?", "options": [{"label": "Unit tests"}, {"label": "Fake server"}]}]}}]}}
+{"type":"assistant","message":{"content":[{"type":"te
+{"type": "future-thing", "x": 1}

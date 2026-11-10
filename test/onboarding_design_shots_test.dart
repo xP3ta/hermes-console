@@ -146,6 +146,12 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
+      // The three ways in come first; the form is below them.
+      await tester.scrollUntilVisible(
+        find.byKey(const ValueKey('instance-gateway-url')),
+        300,
+        scrollable: find.byType(Scrollable).first,
+      );
       await tester.enterText(
         find.byKey(const ValueKey('instance-gateway-url')),
         '192.168.1.20',

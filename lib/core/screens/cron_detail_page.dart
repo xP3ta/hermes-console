@@ -557,7 +557,7 @@ class _CronJobDetailPageState extends State<CronJobDetailPage>
             HermesToggleRow(
               key: const ValueKey('cron-detail-notify'),
               switchKey: const ValueKey('cron-notify-switch'),
-              title: s.crnNotifyFinish,
+              title: s.cronNoticeInherit,
               value: notifyOn,
               onChanged: notif == null
                   ? null

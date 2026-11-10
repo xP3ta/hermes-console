@@ -10,6 +10,8 @@ import 'package:hermes_android/core/widgets/hermes_app_bar.dart';
 import 'package:hermes_android/core/services/connection_diagnostics.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
+import 'package:hermes_android/core/theme/theme_contrast.dart';
+import 'package:hermes_android/core/widgets/hermes_ui.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 
 class _FakeDiagnostics extends ConnectionDiagnostics {
@@ -31,6 +33,22 @@ class _FakeDiagnostics extends ConnectionDiagnostics {
 
   @override
   void close() {}
+}
+
+/// The ink a capability badge paints for [token]: the token made readable
+/// as a 10 px label on its own tint (HermesBadge.readableInk, Ola 8 / T2-E).
+/// It keeps the token's hue, so green still means yes and red a failure,
+/// and it reads at 4.5:1 on the badge over the page.
+Color _badgeInk(HermesThemeColors colors, Color token) {
+  final ink = HermesBadge.readableInk(token, colors);
+  final hue = HSLColor.fromColor(ink).hue - HSLColor.fromColor(token).hue;
+  expect(hue.abs(), lessThan(2), reason: 'the same colour, lighter or darker');
+  final tile = ThemeContrast.composite(
+    token.withValues(alpha: HermesBadge.tint),
+    colors.surface,
+  );
+  expect(ThemeContrast.ratio(ink, tile), greaterThanOrEqualTo(4.5));
+  return ink;
 }
 
 void main() {
@@ -268,7 +286,7 @@ void main() {
       'MEMORIA (LECTURA): SÍ',
     ]) {
       final text = tester.widget<Text>(find.text(label));
-      expect(text.style?.color, colors.success);
+      expect(text.style?.color, _badgeInk(colors, colors.success));
     }
     // Sustituir el árbol equivale a salir sin guardar y abrir otra vez.
     await tester.binding.handlePopRoute();
@@ -359,15 +377,15 @@ void main() {
 
     expect(
       tester.widget<Text>(find.text('CHAT: SÍ')).style?.color,
-      colors.success,
+      _badgeInk(colors, colors.success),
     );
     expect(
       tester.widget<Text>(find.text('STREAMING: ?')).style?.color,
-      colors.warning,
+      _badgeInk(colors, colors.warning),
     );
     expect(
       tester.widget<Text>(find.text('SKILLS (TOGGLE): NO')).style?.color,
-      colors.textTertiary,
+      _badgeInk(colors, colors.textTertiary),
     );
     expect(semanticsLabel('CHAT: SÍ'), findsOneWidget);
     expect(semanticsLabel('STREAMING: ?'), findsOneWidget);
@@ -408,7 +426,7 @@ void main() {
     ).hermes;
     expect(
       tester.widget<Text>(find.text('SIN RESPUESTA')).style?.color,
-      colors.error,
+      _badgeInk(colors, colors.error),
     );
     expect(semanticsLabel('SIN RESPUESTA'), findsOneWidget);
   });

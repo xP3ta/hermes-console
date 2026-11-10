@@ -2,6 +2,7 @@
 //
 // Endpoints are the ones Hermes Desktop's Capabilities area calls:
 //   skills   GET /api/skills · PUT /api/skills/toggle
+//            GET|PUT /api/skills/content · POST /api/skills   (read, rewrite, create)
 //            GET /api/skills/hub/{official,sources,search}
 //            POST /api/skills/hub/{install,uninstall,update}
 //            GET /api/actions/{name}/status        (background action poll)
@@ -15,6 +16,9 @@
 //   hosted   RPC connectors.{list,catalog,accounts,connect,operation.status,
 //            operation.wake,accounts.remove,tools,policy.get,policy.set}
 //            · connection.respond
+//
+// No "teach a skill" flow is wired: the server exposes no route for it, so it
+// stays unverified and unimplemented.
 //
 // Every capability is detected per server: a 404/405 (REST) or -32601 (RPC)
 // marks it unsupported for this repository's lifetime and the UI hides it
@@ -61,6 +65,9 @@ enum CapabilityFeature {
   skillInstall,
   skillPreview,
   skillScan,
+  skillContent,
+  skillWrite,
+  skillCreate,
   envSet,
   skillsUpdate,
   pluginCatalog,
@@ -70,6 +77,7 @@ enum CapabilityFeature {
   mcpCatalog,
   mcpServers,
   mcpStatus,
+  toolsets,
   mcpLogs,
   hostedConnectors,
   connectorPolicy,
@@ -331,6 +339,69 @@ class CapabilitiesRepository implements HermesMcpProvisioningGateway {
     return SkillScan.fromJson(result);
   });
 
+  /// A 404 whose detail names the skill is a missing *skill*; a bare "Not
+  /// Found" is a missing *route* (`_call` then marks the feature unsupported).
+  static CapabilityFailure? _skillMissing(DashboardHttpException error) {
+    if (error.statusCode != 404) return null;
+    final detail = _detailOf(error.body);
+    if (!detail.startsWith("Skill '")) return null;
+    return CapabilityFailure(CapabilityFailureKind.rejected, detail: detail);
+  }
+
+  /// The raw SKILL.md of an installed skill, exactly as stored.
+  Future<SkillDocument> skillContent(String name) =>
+      _call(CapabilityFeature.skillContent, () async {
+        try {
+          final result = await rest.get(
+            _withProfile(
+              'skills/content?name=${Uri.encodeQueryComponent(name.trim())}',
+            ),
+          );
+          return SkillDocument.fromJson(result);
+        } on DashboardHttpException catch (error) {
+          throw _skillMissing(error) ?? error;
+        }
+      });
+
+  /// Replaces the SKILL.md of an existing skill (full rewrite).
+  Future<void> updateSkillContent(String name, String content) => _call(
+    CapabilityFeature.skillWrite,
+    () async {
+      try {
+        final result = await rest.put(
+          _withProfile('skills/content'),
+          _profileBody({'name': name.trim(), 'content': content}),
+        );
+        if (result['success'] != true && result['ok'] != true) {
+          throw const CapabilityFailure(CapabilityFailureKind.invalidResponse);
+        }
+      } on DashboardHttpException catch (error) {
+        throw _skillMissing(error) ?? error;
+      }
+    },
+  );
+
+  /// Creates a skill. A server without the route answers 405 (the path exists
+  /// for reading), which marks creation unsupported for this repository.
+  Future<void> createSkill(
+    String name,
+    String content, {
+    String category = '',
+  }) => _call(CapabilityFeature.skillCreate, () async {
+    final result = await rest.post(
+      _withProfile('skills'),
+      body: _profileBody({
+        'name': name.trim(),
+        'content': content,
+        if (category.trim().isNotEmpty) 'category': category.trim(),
+      }),
+      timeout: const Duration(seconds: 45),
+    );
+    if (result['success'] != true && result['ok'] != true) {
+      throw const CapabilityFailure(CapabilityFailureKind.invalidResponse);
+    }
+  });
+
   Future<void> setSkillEnabled(String name, bool enabled) =>
       _call(CapabilityFeature.skillToggle, () async {
         final result = await rest.put(
@@ -429,15 +500,31 @@ class CapabilitiesRepository implements HermesMcpProvisioningGateway {
   }) async {
     final deadline = _clock().add(actionTimeout);
     var elapsed = Duration.zero;
+    var silent = 0;
     while (true) {
       if (shouldStop?.call() ?? false) return null;
       await _gate(token);
-      final status = await _call(
-        feature,
-        () async => CapabilityActionStatus.fromJson(
-          await rest.get('actions/${_seg(name)}/status?lines=200'),
-        ),
-      );
+      final CapabilityActionStatus status;
+      try {
+        status = await _call(
+          feature,
+          () async => CapabilityActionStatus.fromJson(
+            await rest.get('actions/${_seg(name)}/status?lines=200'),
+          ),
+        );
+        silent = 0;
+      } on CapabilityFailure catch (error) {
+        // The server keeps running the action when the phone loses the line
+        // for a moment. Ask again a couple of times; if it stays silent the
+        // action may have finished, so it is "uncertain", never "failed".
+        if (error.kind != CapabilityFailureKind.unavailable) rethrow;
+        if (++silent >= 3) {
+          throw const CapabilityFailure(CapabilityFailureKind.uncertain);
+        }
+        await _sleep(actionPollInterval);
+        elapsed += actionPollInterval;
+        continue;
+      }
       if (token?.cancelled ?? false) throw const CapabilityActionAbandoned();
       onProgress?.call(status);
       if (!status.running) {
@@ -582,13 +669,16 @@ class CapabilitiesRepository implements HermesMcpProvisioningGateway {
     return result;
   }
 
+  /// Installs a catalog plugin. It lands disabled: switching it on is a
+  /// separate, explicit step (portable packages are installed disabled by the
+  /// server in any case).
   Future<PluginMutationResult> installPlugin(String catalogName) {
     final name = catalogName.trim();
     return _pluginMutation(
       {
         'action': 'install',
         'catalog_name': name,
-        'enable': true,
+        'enable': false,
         'force': false,
       },
       (json) => _checked(PluginMutationResult.fromJson(json)),
@@ -600,7 +690,7 @@ class CapabilitiesRepository implements HermesMcpProvisioningGateway {
               'identifier': '',
               'catalog_name': name,
               'force': false,
-              'enable': true,
+              'enable': false,
             },
             timeout: const Duration(minutes: 3),
           ),
@@ -632,7 +722,7 @@ class CapabilitiesRepository implements HermesMcpProvisioningGateway {
 
   /// Toggles by canonical [key] (Desktop sends the key only). [name] is used
   /// only by the REST fallback.
-  Future<void> setPluginEnabled(
+  Future<PluginMutationResult> setPluginEnabled(
     String name,
     bool enabled, {
     String key = '',
@@ -645,7 +735,7 @@ class CapabilitiesRepository implements HermesMcpProvisioningGateway {
         _support[CapabilityFeature.pluginsManage] != false) {
       throw const CapabilityFailure(CapabilityFailureKind.rejected);
     }
-    await _pluginMutation(
+    return _pluginMutation(
       {'action': 'toggle', 'key': canonical, 'enable': enabled},
       (json) => _checked(PluginMutationResult.fromJson(json)),
       () async {
@@ -688,6 +778,25 @@ class CapabilitiesRepository implements HermesMcpProvisioningGateway {
         return _list(result['servers'])
             .map(CapabilityItem.mcpServer)
             .whereType<CapabilityItem>()
+            .toList(growable: false);
+      });
+
+  /// Read-only enrichment for MCP counts; unsupported gateways keep their
+  /// runtime/static counts. A toolset is not a server enable/disable control:
+  /// tools.configure accepts built-ins or individual server:tool selectors.
+  Future<List<DesktopToolsetEntry>> toolsets() =>
+      _call(CapabilityFeature.toolsets, () async {
+        final result = await _rpc(
+          'tools.list',
+          const {},
+          feature: CapabilityFeature.toolsets,
+        );
+        if (result['toolsets'] is! List) {
+          throw const FormatException('toolsets expected');
+        }
+        return _list(result['toolsets'])
+            .map(DesktopToolsetEntry.tryParse)
+            .whereType<DesktopToolsetEntry>()
             .toList(growable: false);
       });
 

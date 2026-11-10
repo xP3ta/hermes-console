@@ -1,0 +1,10 @@
+● I looked at session.ts and found two ways to test it.
+
+╭──────────────────────────────────────────────────────╮
+│ Which approach do you prefer for the tests?          │
+│                                                      │
+│ ❯ 1. Pure unit tests                                 │
+│   2. Fake server                                     │
+│   3. Type something else                             │
+╰──────────────────────────────────────────────────────╯
+  Enter to select · ↑/↓ to navigate · Esc to cancel

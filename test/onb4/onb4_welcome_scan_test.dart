@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: Copyright (c) 2026 XPeta Lab
 
-// ONB4: the welcome has two doors (I have Hermes / I don't have it yet), no
-// network search, and the camera carries the setup command under the
+// The welcome has four connection cards and a separate setup-help link.
+// The camera carries the setup command under the
 // viewfinder. Synthetic fixtures only.
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -70,53 +70,25 @@ void main() {
   for (final language in ['es', 'en']) {
     // Default (no flag passed), flag on, flag off: the same welcome.
     for (final flag in <bool?>[null, true, false]) {
-      testWidgets('$language/$flag: two doors, equal width, no search', (
-        tester,
-      ) async {
-        final s = await _welcome(tester, language, flag: flag);
-        final primary = find.byKey(const ValueKey('onboarding-scan'));
-        final second = find.byKey(const ValueKey('onboarding-help'));
-        expect(tester.widget(primary), isA<OnbPrimary>());
-        expect(tester.widget(second), isA<OnbSecondary>());
-        expect(find.text(s.onb4HaveHermes), findsOneWidget);
-        expect(find.text(s.onb4NoHermes), findsOneWidget);
-        expect(find.text(s.onb4WelcomeBody), findsOneWidget);
-        // Same full width: an option as visible as the first.
-        expect(tester.getSize(second).width, tester.getSize(primary).width);
-        // Both are pills of the same minimum height (the test font wraps
-        // long labels, so the exact height is not compared).
-        expect(
-          tester.getSize(primary).height,
-          greaterThanOrEqualTo(kOnbPillHeight),
-        );
-        expect(
-          tester.getSize(second).height,
-          greaterThanOrEqualTo(kOnbPillHeight),
-        );
-        expect(tester.getSize(second).width, greaterThan(300));
-        // «Connect manually» stays a quiet text button.
-        expect(
-          tester.widget(find.byKey(const ValueKey('onboarding-manual'))),
-          isA<OnbTextButton>(),
-        );
-        // No search, whatever the flag says.
-        expect(find.text('Buscar mi Hermes'), findsNothing);
-        expect(find.text('Find my Hermes'), findsNothing);
-        expect(
-          find.byKey(const ValueKey('onboarding-simple-connect')),
-          findsNothing,
-        );
-      });
+      testWidgets(
+        '$language/$flag: four ordered cards, scan last, no automatic search',
+        (tester) async {
+          final s = await _welcome(tester, language, flag: flag);
+          expectOnboardingWays(tester, s);
+          expect(find.text('Buscar mi Hermes'), findsNothing);
+          expect(find.text('Find my Hermes'), findsNothing);
+        },
+      );
     }
 
-    testWidgets('$language: the main door opens the camera', (tester) async {
+    testWidgets('$language: the QR way opens the camera', (tester) async {
       final s = await _welcome(tester, language);
       await tapOnboarding(tester, 'onboarding-scan');
       expect(find.byType(QrScanView), findsOneWidget);
       expect(find.text(s.onb4ScanHint), findsOneWidget);
     });
 
-    testWidgets('$language: the second door opens the install help', (
+    testWidgets('$language: the pairing way opens the install help', (
       tester,
     ) async {
       final s = await _welcome(tester, language);
@@ -125,7 +97,7 @@ void main() {
       expect(find.byType(QrScanView), findsNothing);
     });
 
-    testWidgets('$language: connect by hand opens the manual page', (
+    testWidgets('$language: the main way opens the manual page', (
       tester,
     ) async {
       await _welcome(tester, language);

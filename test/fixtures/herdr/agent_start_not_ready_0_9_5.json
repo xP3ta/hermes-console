@@ -1,0 +1,1 @@
+{"error":{"code":"agent_not_ready","message":"agent hpclaude is blocked during startup and is not ready for prompts"},"id":"cli:agent:start"}

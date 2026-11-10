@@ -12,6 +12,7 @@ import '../widgets/hermes_premium_ui.dart'
     show HermesSegment, HermesSegmentedControl;
 import 'capabilities_repository.dart';
 import 'capability_ui.dart';
+import 'spp_safety.dart';
 import '../widgets/console_loader.dart';
 
 enum _LogSource { server, agent }
@@ -145,11 +146,12 @@ class _McpLogsScreenState extends State<McpLogsScreen> {
           )
         else
           SelectableText(
-            lines.join('\n'),
+            // The server's log may name a credential: show it hidden.
+            lines.map(sppMaskLogLine).join('\n'),
             key: const ValueKey('cph-logs-text'),
             style: HermesType.caption.copyWith(
               color: colors.textPrimary,
-              fontFamily: 'monospace',
+              fontFamily: HermesType.monoFamily,
             ),
           ),
       ],

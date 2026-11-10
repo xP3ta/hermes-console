@@ -195,7 +195,7 @@ final class GatewaySocketMeter {
   int get networkLostCount => _networkLost;
 
   /// One transport close: `reason` is a stable token (client_dispose,
-  /// heartbeat_timeout, probe_timeout, protocol_violation, peer_closed,
+  /// heartbeat_timeout, probe_timeout, protocol_violation, stream_done,
   /// transport_error, connect_aborted…), `code` the close code sent or
   /// received, `life` how long the socket was up.
   void recordClose({

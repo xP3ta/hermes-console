@@ -5,6 +5,7 @@ import 'dart:async';
 import '../bots/data/gateway_socket_meter.dart';
 import '../services/app_lock_sensitive_read_fence.dart';
 import 'dart:io';
+import '../widgets/battery_optimization_prompt.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
@@ -13,6 +14,7 @@ import 'package:http/http.dart' as http;
 import '../app_header_title.dart';
 import '../bots/state/attention.dart';
 import '../bots/state/mission_live_chats.dart';
+import '../bots/ui/profile/profile_hub_screen.dart';
 import '../bots/ui/room/room_launcher.dart';
 import '../bots/ui/room/room_prefs.dart';
 import '../home/home_now.dart';
@@ -25,7 +27,6 @@ import '../home/board/home_board_view.dart';
 import '../home/home_feed_cache.dart';
 import '../home/home_sources.dart';
 import '../models/account_usage_limits.dart';
-import '../models/agent_profile.dart';
 import '../models/cron_job.dart';
 import '../models/hosted_groups.dart';
 import '../models/kanban.dart';
@@ -88,6 +89,7 @@ import '../widgets/profile_face.dart';
 import 'profiles_screen.dart';
 import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_premium_ui.dart';
+import '../design/tokens.dart' show HermesSpace, HermesType;
 import '../widgets/hermes_ui.dart' show HermesPrimaryButton;
 import '../../main.dart';
 import '../companion/models/companion_presence_level.dart';
@@ -102,7 +104,7 @@ import 'mission_control_screen.dart';
 import 'onboarding/manual_setup_page.dart';
 import 'onboarding_screen.dart';
 import 'session_list_screen.dart';
-import 'settings_screen.dart';
+import 'app_settings_screen.dart';
 import 'tasks_screen.dart';
 import '../widgets/hermes_app_bar.dart';
 import '../widgets/instance_status_panel.dart';
@@ -458,7 +460,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   void didPopNext() {
     unawaited(DrawerGestureExclusion.setEnabled(true));
     // cs1215: Home is on screen again; a cold start opens Home.
-    final connectionId = widget.connManager.activeConnectionId.value;
+    final connectionId = widget.connManager.resolveActiveConnectionId();
     if (connectionId != null) {
       unawaited(
         _activeChats?.coldStartStore
@@ -772,9 +774,22 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     _missionPrewarm.schedule(
       prefs: widget.connManager.prefs,
       connection: conn,
+      homeNeedsIt: _boardNeedsMission,
       stillIdle: () =>
           _activityRefreshAllowed && _healthOk && _active?.id == conn.id,
     );
+  }
+
+  /// The Bots, Bot and Rooms widgets paint from the Bot Mode read, and until
+  /// the user arranged the board its default (team or single agent) depends
+  /// on that same read, so Home reads it itself instead of waiting for the
+  /// user to open Bot Mode.
+  bool get _boardNeedsMission {
+    final layout = _boardLayout;
+    if (layout == null || !_boardArranged) return true;
+    return layout.contains(HomeWidgetKind.team) ||
+        layout.contains(HomeWidgetKind.bot) ||
+        layout.contains(HomeWidgetKind.room);
   }
 
   void _onActivityChanged() {
@@ -1040,7 +1055,12 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     // Al volver de segundo plano re-comprobamos la salud: una instancia que
     // sigue viva (p.ej. el agente local con wake-lock) vuelve a "online" sola,
     // sin obligar al usuario a reconectar a mano cada vez que reabre la app.
-    if (_active != null && !_checking) _refreshStatus();
+    // Only while Home is the screen on top: covered by a chat, its probe
+    // would only compete with the chat's own resume work on a server that
+    // answers in series, and `didPopNext` refreshes it when it is back. A
+    // probe already running is not a reason to skip (it may be hung from
+    // before the pause); the epoch discards the older one.
+    if (_active != null && _route?.isCurrent != false) _refreshStatus();
     _scheduleActivityReconnect(immediate: true);
   }
 
@@ -1744,6 +1764,13 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   MissionSnapshotCache get _missionCache =>
       widget.missionSnapshotCacheOverride ?? MissionSnapshotCache.shared;
 
+  /// The active profile's name, `default` for the main one: the page the
+  /// avatar opens is the hub of this profile.
+  String _activeProfileName(SavedConnection connection) {
+    final name = widget.connManager.activeProfileFor(connection.id).trim();
+    return name.isEmpty ? 'default' : name;
+  }
+
   BotRosterRegistry get _rosterRegistry =>
       widget.rosterRegistryOverride ?? BotRosterRegistry.shared;
 
@@ -1976,6 +2003,9 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     // the chat pill and Conversaciones) and the server's unread flag.
     String? botName(String profile) {
       final info = store.profile(profile);
+      if (info != null ? info.isMainProfile : profile == 'default') {
+        return profileVisibleNameOf(store, profile);
+      }
       final title = info?.botTitle?.trim();
       if (title != null && title.isNotEmpty) return title;
       return profile;
@@ -2108,9 +2138,12 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
       );
     }
 
+    // A roster restored from disk (fromCache) is display data: it keeps the
+    // Bots widget from sitting on a placeholder after a cold start until a
+    // live read replaces it. Only a live roster counts as "known" below.
     final profiles = store.isLive
         ? store.profiles
-        : (snapshot?.profiles ?? const <AgentProfile>[]);
+        : (snapshot?.profiles ?? store.profiles);
     final todayRows = [
       for (final s in recents)
         (
@@ -2131,7 +2164,8 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
       chatsLoaded: _initialLoadComplete,
       mainName: _activeProfileLabel(context),
       bots: homeBoardBots(
-        titleOf: (session) => localizedSessionTitle(Strings.of(context), session),
+        titleOf: (session) =>
+            localizedSessionTitle(Strings.of(context), session),
         profiles: profiles,
         sessions: snapshot?.sessions ?? const [],
         strings: strings,
@@ -2151,7 +2185,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
         now: now,
         attention: attention,
       ),
-      botsLoaded: snapshot != null || store.isLive,
+      botsLoaded: snapshot != null || store.snapshot != null,
       roomsState: roomsState,
       roomsFailedReads: _roomsReads.failedReads,
       botsKnown:
@@ -2501,13 +2535,17 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   bool get _locked => _appLock?.locked.value == true;
 
   /// Reads only what a widget on the board needs and Home does not already
-  /// read: the server version/update (Servidor), the plan limits (Límites)
+  /// read: the Bot Mode snapshot (Bots, Bot, Salas; at most once a minute),
+  /// the server version/update (Servidor), the plan limits (Límites)
   /// and the Kanban board (Tareas). Runs on Home's own refresh cadence,
   /// never on a timer, and never while App Lock is locked.
   void _refreshBoardExtras(SavedConnection conn) {
     if (_locked || !_healthOk || _active?.id != conn.id) return;
     final layout = _boardLayout;
     if (layout == null) return;
+    if (_boardNeedsMission) {
+      _missionPrewarm.refreshForHome(connection: conn);
+    }
     if (layout.contains(HomeWidgetKind.server)) {
       unawaited(_refreshServerInfo(conn));
     }
@@ -2683,7 +2721,11 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
                 data.chats.isEmpty)
               HermesPrimaryButton(
                 key: const ValueKey('home-first-chat'),
-                label: Strings.of(context).o2FirstChat,
+                label: Strings.of(context).mpnFirstChat(
+                  mainProfileVisibleName(
+                    BotRosterRegistry.shared.peek(active.id),
+                  ),
+                ),
                 icon: Icons.chat_bubble_outline,
                 onTap: _newChat,
               ),
@@ -2729,7 +2771,18 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
         scrim: false,
         // Active profile, one tap from Home (Desktop's profile rail). Its
         // ring ends 16 dp from the screen edge, like the menu icon's side.
+        // Before it, «Editar» opens the board's edit mode (the long press
+        // on a tile still does); it steps aside on the narrowest screens.
         actions: [
+          if (_active != null &&
+              !_locked &&
+              !_boardEditing &&
+              MediaQuery.sizeOf(context).width >= _HeaderTextAction.minWidth)
+            _HeaderTextAction(
+              key: const ValueKey('home-header-edit'),
+              label: Strings.of(context).commonEdit,
+              onTap: () => _boardViewKey.currentState?.setEditing(true),
+            ),
           if (_active != null)
             Padding(
               padding: const EdgeInsetsDirectional.only(start: 8, end: 14),
@@ -2738,6 +2791,20 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
                 connManager: widget.connManager,
                 compact: true,
                 rosterRegistry: _rosterRegistry,
+                // A tap opens the profile switcher; the active profile's page
+                // is «Ver perfil» in that sheet and the long press.
+                onOpenProfile: () => unawaited(
+                  Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => ProfileHubScreen(
+                        connection: _active!,
+                        connManager: widget.connManager,
+                        profile: _activeProfileName(_active!),
+                        rosterRegistry: _rosterRegistry,
+                      ),
+                    ),
+                  ),
+                ),
                 onManage: () => Navigator.of(context).push(
                   MaterialPageRoute<void>(
                     builder: (_) => ProfilesScreen(
@@ -2855,9 +2922,10 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
-                              // ≥11px: a 9.5px el estado era casi ilegible (A-110).
-                              fontSize: 11,
-                              letterSpacing: 0.6,
+                              // The board's own quiet line: the support
+                              // size, no tracking, the secondary ink.
+                              fontSize: HermesType.supportSize,
+                              height: 16 / HermesType.supportSize,
                               color: colors.textSecondary,
                             ),
                           ),
@@ -2908,6 +2976,10 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
                   ? gestureDockFootprint(context)
                   : 48 + 12 + 6 + MediaQuery.paddingOf(context).bottom + 16;
               final banners = <Widget>[
+                BatteryOptimizationPrompt(
+                  prefs: widget.connManager.prefs,
+                  hasConnection: _connections.isNotEmpty,
+                ),
                 // A failed refresh keeps the last good list, but still says
                 // so and offers the retry.
                 if (_recentListFailed && !isRemoteAndOffline)
@@ -2973,7 +3045,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
                     : () => Navigator.push(
                         context,
                         MaterialPageRoute(
-                          builder: (_) => SettingsScreen(
+                          builder: (_) => AppSettingsScreen(
                             connection: _active!,
                             connManager: widget.connManager,
                           ),
@@ -3002,9 +3074,11 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
                         widget.connManager,
                       ),
               ),
-              DockItemId.tools: DockItemAction(
-                onTap: () =>
-                    openDockTools(context, _active, widget.connManager),
+              DockItemId.agents: DockItemAction(
+                onTap: _active == null
+                    ? null
+                    : () =>
+                          openDockAgents(context, _active!, widget.connManager),
               ),
             },
           ),
@@ -3249,6 +3323,63 @@ class _RemoteInstanceOfflineCardState
                     ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// A word in the header that does something («Editar»): the accent ink,
+/// a 48 dp target, a label that grows less than the text around it and
+/// never wraps.
+class _HeaderTextAction extends StatelessWidget {
+  const _HeaderTextAction({
+    super.key,
+    required this.label,
+    required this.onTap,
+  });
+  final String label;
+  final VoidCallback onTap;
+
+  /// Under this screen width the header has no room for it beside the
+  /// title and the profile.
+  static const double minWidth = 360;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).hermes;
+    return Semantics(
+      button: true,
+      label: label,
+      excludeSemantics: true,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(
+            minWidth: HermesSpace.tap,
+            minHeight: HermesSpace.tap,
+          ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: HermesSpace.x2),
+            child: Center(
+              widthFactor: 1,
+              child: Text(
+                label,
+                maxLines: 1,
+                softWrap: false,
+                overflow: TextOverflow.fade,
+                textScaler: MediaQuery.textScalerOf(
+                  context,
+                ).clamp(maxScaleFactor: 1.3),
+                style: TextStyle(
+                  fontSize: HermesType.valueSize,
+                  fontWeight: FontWeight.w600,
+                  color: colors.accentText,
+                ),
+              ),
+            ),
+          ),
         ),
       ),
     );

@@ -191,6 +191,10 @@ final class CapabilityItem {
 
   /// Skill provenance (`hub`, `bundled`, `agent`); only hub skills uninstall.
   final String provenance;
+
+  /// Where an installed plugin comes from, as the server states it
+  /// (`bundled`, `user`…); empty when unknown.
+  final String origin;
   final bool canRemove;
   final List<String> tags;
   final List<String> tools;
@@ -220,6 +224,7 @@ final class CapabilityItem {
     this.enabled,
     this.updateAvailable = false,
     this.provenance = '',
+    this.origin = '',
     this.canRemove = false,
     this.tags = const [],
     this.tools = const [],
@@ -240,6 +245,7 @@ final class CapabilityItem {
     String? installedName,
     String? installedKey,
     String? provenance,
+    String? origin,
     bool? canRemove,
     String? version,
     CapabilityDisclosure? disclosure,
@@ -261,6 +267,7 @@ final class CapabilityItem {
     enabled: enabled ?? this.enabled,
     updateAvailable: updateAvailable ?? this.updateAvailable,
     provenance: provenance ?? this.provenance,
+    origin: origin ?? this.origin,
     canRemove: canRemove ?? this.canRemove,
     tags: tags,
     tools: tools,
@@ -409,6 +416,7 @@ final class CapabilityItem {
       installedKey: _text(json['key'], max: 160),
       installed: true,
       enabled: status == 'enabled',
+      origin: source.toLowerCase(),
       canRemove: json['can_remove'] == true,
       updateAvailable: false,
     );
@@ -684,28 +692,121 @@ final class SkillPreview {
   const SkillPreview({this.skillMd = '', this.files = const []});
 
   factory SkillPreview.fromJson(Map<String, dynamic> json) => SkillPreview(
-    skillMd: _text(json['skill_md'], max: 20000),
+    skillMd: _text(json['skill_md'], max: 120000),
     files: _strings(json['files'], maxRows: 200, max: 200),
   );
+}
+
+/// What the hub does with a scanned skill.
+enum SkillScanGate {
+  /// The server's policy lets it install.
+  allow,
+
+  /// The server wants a human decision: findings must be read first.
+  ask,
+
+  /// The server refuses it: there is nothing to confirm.
+  block,
+
+  /// The answer states no policy.
+  unknown,
 }
 
 /// `GET /api/skills/hub/scan`: install-time scan without installing.
 final class SkillScan {
   final String summary;
+
+  /// One bounded line per finding: `severity: description (file:line)`.
   final List<String> findings;
 
-  const SkillScan({this.summary = '', this.findings = const []});
+  /// The scanner's own verdict (`safe`, `caution`, `dangerous`), lower case;
+  /// empty when the server sends none.
+  final String verdict;
 
-  factory SkillScan.fromJson(Map<String, dynamic> json) => SkillScan(
-    summary: _text(json['summary'], max: 400),
-    findings: [
-      for (final row in _rows(json['findings'], max: 100))
-        [
-          _text(row['severity'], max: 20),
-          _text(row['description'], max: 300),
-        ].where((part) => part.isNotEmpty).join(': '),
-    ].where((line) => line.isNotEmpty).toList(growable: false),
-  );
+  /// The server's install policy for this scan (`allow`, `ask`, `block`) and
+  /// the reason it gives; empty when the server states none.
+  final String policy;
+  final String policyReason;
+
+  /// Findings by severity (`critical`, `high`, `medium`, `low`).
+  final Map<String, int> severityCounts;
+
+  const SkillScan({
+    this.summary = '',
+    this.findings = const [],
+    this.verdict = '',
+    this.policy = '',
+    this.policyReason = '',
+    this.severityCounts = const {},
+  });
+
+  factory SkillScan.fromJson(Map<String, dynamic> json) {
+    final counts = <String, int>{};
+    final raw = json['severity_counts'];
+    if (raw is Map) {
+      for (final entry in raw.entries) {
+        final value = entry.value;
+        if (value is int && value > 0) counts['${entry.key}'] = value;
+      }
+    }
+    return SkillScan(
+      verdict: _text(
+        json['verdict'] ?? json['scan_verdict'],
+        max: 40,
+      ).toLowerCase(),
+      summary: _text(json['summary'], max: 400),
+      policy: _text(json['policy'], max: 20).toLowerCase(),
+      policyReason: _text(json['policy_reason'], max: 300),
+      severityCounts: counts,
+      findings: [
+        for (final row in _rows(json['findings'], max: 100)) _scanLine(row),
+      ].where((line) => line.isNotEmpty).toList(growable: false),
+    );
+  }
+
+  static String _scanLine(Map<String, dynamic> row) {
+    final severity = _text(row['severity'], max: 20);
+    final description = _text(row['description'], max: 300);
+    final file = _text(row['file'], max: 120);
+    final line = row['line'] is int ? ':${row['line']}' : '';
+    final head = [
+      severity,
+      description,
+    ].where((part) => part.isNotEmpty).join(': ');
+    return file.isEmpty ? head : '$head ($file$line)';
+  }
+
+  /// The server's policy; without one, the verdict is only a hint, so even
+  /// `dangerous` asks (the install itself is still refused by the server).
+  SkillScanGate get gate => switch (policy) {
+    'allow' => SkillScanGate.allow,
+    'ask' => SkillScanGate.ask,
+    'block' => SkillScanGate.block,
+    _ => switch (verdict) {
+      'safe' => SkillScanGate.allow,
+      'caution' || 'dangerous' => SkillScanGate.ask,
+      _ => SkillScanGate.unknown,
+    },
+  };
+
+  int get totalFindings =>
+      severityCounts.values.fold(0, (sum, value) => sum + value);
+}
+
+/// `GET /api/skills/content`: the raw SKILL.md of an installed skill. The text
+/// is kept exactly as received (no trimming, no truncation) so that saving it
+/// back can never change what the user did not edit.
+final class SkillDocument {
+  final String name;
+  final String content;
+
+  const SkillDocument({required this.name, required this.content});
+
+  factory SkillDocument.fromJson(Map<String, dynamic> json) {
+    final content = json['content'];
+    if (content is! String) throw const FormatException('content expected');
+    return SkillDocument(name: _text(json['name'], max: 160), content: content);
+  }
 }
 
 /// Plugin mutation answer (`/api/dashboard/agent-plugins/...`).
@@ -794,9 +895,7 @@ String _scanFindingLine(Map<String, dynamic> finding) {
   final file = _text(finding['file'], max: 80);
   final line = finding['line'] is int ? ':${finding['line']}' : '';
   final where = file.isEmpty ? '' : ' ($file$line)';
-  return [severity, description]
-          .where((part) => part.isNotEmpty)
-          .join(' · ') +
+  return [severity, description].where((part) => part.isNotEmpty).join(' · ') +
       where;
 }
 
@@ -809,6 +908,10 @@ final class InstalledPluginRow {
   final bool enabled;
   final bool updateAvailable;
 
+  /// Installed version and origin when the row states them.
+  final String version;
+  final String source;
+
   const InstalledPluginRow({
     required this.name,
     this.key = '',
@@ -816,6 +919,8 @@ final class InstalledPluginRow {
     this.installedSha = '',
     this.enabled = true,
     this.updateAvailable = false,
+    this.version = '',
+    this.source = '',
   });
 
   static InstalledPluginRow? tryParse(Map<String, dynamic> json) {
@@ -829,6 +934,8 @@ final class InstalledPluginRow {
       installedSha: _text(json['installed_sha'], max: 64),
       enabled: status != 'disabled' && status != 'off',
       updateAvailable: json['update_available'] == true,
+      version: _text(json['version'], max: 60),
+      source: _text(json['source'], max: 40).toLowerCase(),
     );
   }
 }

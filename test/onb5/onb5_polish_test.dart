@@ -13,9 +13,10 @@ import 'package:hermes_android/core/screens/onboarding/manual_connect_page.dart'
 import 'package:hermes_android/core/screens/onboarding/onboarding_motion.dart';
 import 'package:hermes_android/core/screens/onboarding/onboarding_widgets.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
+import 'package:hermes_android/core/design/tokens.dart';
 
 import '../support/design_shots.dart' show loadDesignFonts;
-import '../support/onboarding_fakes.dart' show tapOnboarding;
+import '../support/onboarding_fakes.dart' show tapOnboarding, revealOnboarding;
 import 'onb5_support.dart';
 
 Future<void> _manual(
@@ -25,21 +26,25 @@ Future<void> _manual(
   String language = 'es',
 }) async {
   await openOnboarding(tester, size: size, theme: theme, language: language);
+  await revealOnboarding(tester, 'onboarding-manual');
   await tester.tap(find.byKey(const ValueKey('onboarding-manual')));
   await tester.pumpAndSettle();
 }
 
 void main() {
   for (final language in ['es', 'en']) {
-    testWidgets('$language: Connect by hand is titled «Connect by hand»', (
+    testWidgets('$language: Connect by hand is titled «Connect»', (
       tester,
     ) async {
       await _manual(tester, language: language);
       final s = stringsOf(tester, ManualConnectPage);
-      final title = find.descendant(
-        of: find.byType(ManualConnectPage),
-        matching: find.text(s.o2Manual),
-      );
+      // The Connect button reads the same word: the title is the first.
+      final title = find
+          .descendant(
+            of: find.byType(ManualConnectPage),
+            matching: find.text(s.cnxTitle),
+          )
+          .first;
       expect(title, findsOneWidget);
       expect(
         tester.getSemantics(title).getSemanticsData().flagsCollection.isHeader,
@@ -48,14 +53,14 @@ void main() {
       expect(
         find.descendant(
           of: find.byType(ManualConnectPage),
-          matching: find.text('Conecta con tu Hermes'),
+          matching: find.text('Conectar un agente'),
         ),
         findsNothing,
       );
       expect(
         find.descendant(
           of: find.byType(ManualConnectPage),
-          matching: find.text('Connect to your Hermes'),
+          matching: find.text('Connect an agent'),
         ),
         findsNothing,
       );
@@ -74,6 +79,7 @@ void main() {
 
   testWidgets('the help keeps «Scan» fixed above the fold', (tester) async {
     await openOnboarding(tester);
+    await revealOnboarding(tester, 'onboarding-help');
     await tester.tap(find.byKey(const ValueKey('onboarding-help')));
     await tester.pumpAndSettle();
     expect(
@@ -139,6 +145,7 @@ void main() {
       tester,
     ) async {
       await openOnboarding(tester, theme: theme);
+      await revealOnboarding(tester, 'onboarding-help');
       await tester.tap(find.byKey(const ValueKey('onboarding-help')));
       await tester.pumpAndSettle();
       final box = find.descendant(
@@ -184,22 +191,22 @@ void main() {
     expect(tops, hasLength(1), reason: 'the address is split: $tops');
   });
 
-  testWidgets('Connect by hand: Connect sits under the fields, keyboard '
+  testWidgets('Connect by hand: Connect is pinned under the form, keyboard '
       'closed, and keeps its height', (tester) async {
     await _manual(tester);
-    final gap =
-        rectOf(tester, 'manual-connect').top -
-        rectOf(tester, 'manual-password').bottom;
-    expect(gap, inInclusiveRange(24, 40));
+    final connect = rectOf(tester, 'manual-connect');
+    expect(connect.top, greaterThan(rectOf(tester, 'manual-address').bottom));
+    expect(connect.bottom, inInclusiveRange(844 - 40, 844));
+    expect(connect.height, greaterThanOrEqualTo(48));
   });
 
   testWidgets('the welcome brings the mark close to its title', (tester) async {
     await loadDesignFonts();
     final s = await openOnboarding(tester);
     final mark = rectOf(tester, 'console-mark');
-    final title = tester.getRect(find.text(s.o2WelcomeTitle).first);
+    final title = tester.getRect(find.text(s.onbFlowTitle).first);
     final gap = title.top - mark.bottom;
-    expect(gap, inInclusiveRange(85, 100), reason: '$gap');
+    expect(gap, inInclusiveRange(0, HermesSpace.x3), reason: '$gap');
     for (final (size, scale) in [
       (const Size(320, 640), 1.0),
       (const Size(320, 640), 2.0),
@@ -214,6 +221,7 @@ void main() {
   ) async {
     for (final theme in ['console', 'console-light']) {
       await openOnboarding(tester, theme: theme);
+      await revealOnboarding(tester, 'onboarding-scan');
       await tester.tap(find.byKey(const ValueKey('onboarding-scan')));
       await tester.pump();
       await tester.pump(const Duration(seconds: 2));

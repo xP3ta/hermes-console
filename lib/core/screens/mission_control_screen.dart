@@ -37,7 +37,9 @@ import '../bots/state/bot_presence.dart';
 import '../bots/state/mission_live_chats.dart';
 import '../bots/state/bot_roster_meta.dart';
 import '../bots/ui/profile/bot_profile_screen.dart';
+import '../bots/ui/profile/profile_hub_screen.dart';
 import '../bots/ui/roster/dots_home_view.dart';
+import '../bots/ui/bot_screen_access.dart';
 import '../bots/ui/roster/roster_actions.dart';
 import '../bots/ui/roster/roster_model.dart';
 import '../bots/state/bot_chat_target.dart';
@@ -50,7 +52,9 @@ import '../services/mission_organization_store.dart';
 import '../services/open_hosted_room_reads.dart';
 import '../services/notifications/background_listener.dart';
 import '../services/tui_gateway_client.dart';
+import 'screen_peek_screen.dart' show pushBotScreen;
 import '../theme/app_theme.dart';
+import '../theme/hermes_tokens.dart';
 import '../widgets/hermes_app_bar.dart';
 import '../widgets/hermes_drawer.dart';
 import '../widgets/hermes_premium_ui.dart';
@@ -75,6 +79,7 @@ import 'memory_screen.dart';
 import 'mission_control_copy.dart';
 import 'profile_editor_screen.dart';
 import 'profile_flows.dart';
+import 'profiles_screen.dart';
 import 'soul_screen.dart';
 import 'tasks_screen.dart';
 import '../widgets/console_loader.dart';
@@ -286,6 +291,9 @@ class _MissionControlScreenState extends State<MissionControlScreen>
   late final MissionOrganizationStoreContract _organizationStore;
   late final MissionBotChatStore _botChatStore;
   SharedGatewayLease? _profileAssetsLease;
+
+  /// Which bots have a desktop (null with an injected gateway).
+  BotScreenAccess? _screenAccess;
   late final HermesDesktopProfileAssetsGateway _profileAssetsGateway;
   MissionBackendSnapshot? _snapshot;
   late final BotRosterRegistry _roster;
@@ -364,6 +372,8 @@ class _MissionControlScreenState extends State<MissionControlScreen>
       final lease = SharedGatewayPool.instance.acquire(widget.connection);
       _profileAssetsLease = lease;
       _profileAssetsGateway = lease.client;
+      // Which bots have a desktop, asked on demand over the same socket.
+      _screenAccess = BotScreenAccess.overRpc(lease.client.displayRequest);
     }
     _organizations = _organizationStore.load(widget.connection.id);
     _profileScope = ActiveProfileScope.of(
@@ -490,6 +500,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     _liveChangeSubscription = null;
     _rosterSearchOpen.dispose();
     _statusRevision.dispose();
+    _screenAccess?.dispose();
     WidgetsBinding.instance.removeObserver(this);
     _activeChats?.activeIds.removeListener(_onActiveIdsChanged);
     _cancelLiveSubscriptions();
@@ -782,6 +793,10 @@ class _MissionControlScreenState extends State<MissionControlScreen>
   /// pull ends when that read lands; a change seen meanwhile is still read
   /// once afterwards through [_changeDuringLoad].
   Future<void> _pullRefresh() {
+    final profiles = _snapshot?.profiles;
+    if (profiles != null) {
+      _screenAccess?.refresh([for (final p in profiles) botScreenProfile(p)]);
+    }
     final inFlight = _inFlightLoad;
     if (inFlight == null) return _load(refresh: true);
     if (_quietRefresh && mounted) setState(() => _quietRefresh = false);
@@ -1769,7 +1784,35 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     );
   }
 
-  /// Bot profile (spec 070 S4) as a full route.
+  /// The bot's profile (1.4.0): everything that is of that bot in one page.
+  /// Tapping a bot opens it; Chat is a pill in its header and the card below
+  /// (what the bot is doing now, rooms, duplicate, delete) is its Advanced ›
+  /// «Ficha del bot» row.
+  Future<void> _openProfileHub(MissionAgent agent) async {
+    final name = agent.profile.name;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => ProfileHubScreen(
+          key: ValueKey('profile-hub-$name'),
+          connection: widget.connection,
+          connManager: widget.connManager,
+          profile: name,
+          modelGateway: _botModelGateway,
+          profileGateway: _botProfileGateway,
+          onChat: () => unawaited(_openChat(_currentAgent(agent))),
+          onOpenBotCard: () => unawaited(_openBotProfile(agent)),
+          onChanged: () => unawaited(_load(refresh: true)),
+          // The editor saved: forget the cached avatar and read the roster.
+          onEdited: () {
+            _profileAvatarCache?.clear();
+            unawaited(_load(refresh: true));
+          },
+        ),
+      ),
+    );
+  }
+
+  /// Bot profile (spec 070 S4) as a full route: the bot's card.
   Future<void> _openBotProfile(MissionAgent agent) async {
     final name = agent.profile.name;
     final readOnly = widget.connection.readOnly;
@@ -1801,6 +1844,10 @@ class _MissionControlScreenState extends State<MissionControlScreen>
               ? null
               : () =>
                     unawaited(_openProfileEditor(_currentAgent(agent).profile)),
+          onScreen: _screenAccess == null
+              ? null
+              : () => unawaited(_openBotScreen(_currentAgent(agent).profile)),
+          screenAccess: _screenAccess,
           onChanged: () => unawaited(_load(refresh: true)),
           moreActions: [
             BotProfileAction(
@@ -1888,6 +1935,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
             avatarCache: _profileAvatarCache,
             canMutate: !widget.connection.readOnly,
             canSection: _botProfileGateway != null,
+            screen: _screenAccess?.stateOf(botScreenProfile(entry.profile)),
           ),
         ).whenComplete(() {
           if (mounted) _surfaceCoordinator.setRouteActive(true);
@@ -1904,9 +1952,19 @@ class _MissionControlScreenState extends State<MissionControlScreen>
       case RosterBotAction.section:
         await _moveBotToSection(agent.profile);
       case RosterBotAction.profile:
-        await _openBotProfile(agent);
+        await _openProfileHub(agent);
+      case RosterBotAction.screen:
+        await _openBotScreen(agent.profile);
     }
   }
+
+  /// The bot's desktop, from the bot list and the bot's profile.
+  Future<void> _openBotScreen(AgentProfile profile) => pushBotScreen(
+    context,
+    connection: widget.connection,
+    profile: botScreenProfile(profile),
+    botName: profile.botListName,
+  );
 
   Future<void> _openRosterRoom(RoomRosterEntry entry) async {
     final snapshot = _snapshot;
@@ -1965,7 +2023,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
               onTap: () => Navigator.pop(context, 'new'),
             ),
           Padding(
-            padding: const EdgeInsets.all(20),
+            padding: const EdgeInsets.all(HermesSpace.x5),
             child: Text(Strings.of(context).botRoomMembersUnavailable),
           ),
         ],
@@ -2302,7 +2360,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
       maxWidth: 420,
       builder: (sheetContext) => ListView(
         shrinkWrap: true,
-        padding: const EdgeInsets.symmetric(vertical: 8),
+        padding: const EdgeInsets.symmetric(vertical: HermesSpace.x2),
         children: [
           for (final approval in approvals)
             ListTile(
@@ -2383,10 +2441,20 @@ class _MissionControlScreenState extends State<MissionControlScreen>
               child: ListView(
                 key: const ValueKey('roster-room-actions'),
                 shrinkWrap: true,
-                padding: const EdgeInsets.fromLTRB(4, 8, 4, 12),
+                padding: const EdgeInsets.fromLTRB(
+                  HermesSpace.x1,
+                  HermesSpace.x2,
+                  HermesSpace.x1,
+                  HermesSpace.x3,
+                ),
                 children: [
                   Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 10),
+                    padding: const EdgeInsets.fromLTRB(
+                      HermesSpace.x4,
+                      HermesSpace.x1,
+                      HermesSpace.x4,
+                      10,
+                    ),
                     child: Text(
                       entry.title,
                       maxLines: 2,
@@ -2929,14 +2997,12 @@ class _MissionControlScreenState extends State<MissionControlScreen>
       ),
       appBar: HermesAppBar(
         titleSpacing: 0,
+        // One line: the page's name. The roster's summary lives in the roster.
         title: Text(
           copy.title,
           key: const ValueKey('mission-title'),
-          style: const TextStyle(
-            fontSize: 20,
-            fontWeight: FontWeight.w700,
-            letterSpacing: -0.3,
-          ),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
         ),
         // The organisation the list is limited to, when there is one.
         titleBadge: switch (_selectedOrganization) {
@@ -3092,7 +3158,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
       maxWidth: 420,
       builder: (sheetContext) => ListView(
         shrinkWrap: true,
-        padding: const EdgeInsets.symmetric(vertical: 8),
+        padding: const EdgeInsets.symmetric(vertical: HermesSpace.x2),
         children: [
           if (_canCreateBot)
             ListTile(
@@ -3145,6 +3211,14 @@ class _MissionControlScreenState extends State<MissionControlScreen>
                 : Text(_selectedOrganization!.name),
             onTap: () => Navigator.pop(sheetContext, 'workspaces'),
           ),
+          // The server's profiles (create, clone, rename, delete): the one
+          // screen of Ajustes, not a second list here.
+          ListTile(
+            key: const ValueKey('mission-create-chooser-profiles'),
+            leading: const Icon(Icons.account_tree_outlined),
+            title: Text(strings.pfuManageProfiles),
+            onTap: () => Navigator.pop(sheetContext, 'profiles'),
+          ),
         ],
       ),
     );
@@ -3158,6 +3232,16 @@ class _MissionControlScreenState extends State<MissionControlScreen>
         await _moveBotToSection();
       case 'rooms':
         await _manageBotRooms();
+      case 'profiles':
+        await Navigator.of(context).push<void>(
+          MaterialPageRoute<void>(
+            builder: (_) => ProfilesScreen(
+              connection: widget.connection,
+              connManager: widget.connManager,
+            ),
+          ),
+        );
+        if (mounted) unawaited(_load(refresh: true));
       case 'board':
         await _openTasks();
       case 'workspaces':
@@ -3209,9 +3293,9 @@ class _MissionControlScreenState extends State<MissionControlScreen>
         onTap: () =>
             openDockSessions(context, widget.connection, widget.connManager),
       ),
-      DockItemId.tools: DockItemAction(
+      DockItemId.agents: DockItemAction(
         onTap: () =>
-            openDockTools(context, widget.connection, widget.connManager),
+            openDockAgents(context, widget.connection, widget.connManager),
       ),
     };
   }
@@ -3317,8 +3401,12 @@ class _MissionControlScreenState extends State<MissionControlScreen>
             copy: copy,
             avatarCache: _profileAvatarCache,
             searchOpen: _rosterSearchOpen,
-            onOpenChat: (agent) => unawaited(_openChat(agent)),
+            onOpenChat: (agent) => unawaited(_openProfileHub(agent)),
             onBotActions: (entry) => unawaited(_openRosterActions(entry)),
+            screenAccess: _screenAccess,
+            onOpenScreen: _screenAccess == null
+                ? null
+                : (entry) => unawaited(_openBotScreen(entry.profile)),
             onOpenRoom: (entry) => unawaited(_openRosterRoom(entry)),
             onRoomActions: (entry) => unawaited(_openRoomActions(entry)),
             onAttention:
@@ -3572,7 +3660,7 @@ class _HostedGroupCreateDialogState extends State<_HostedGroupCreateDialog> {
               child: Text(
                 widget.copy.chooseSharedMembers,
                 style: TextStyle(
-                  fontSize: 13,
+                  fontSize: HermesType.valueSize,
                   fontWeight: FontWeight.w600,
                   color: colors.textSecondary,
                 ),
@@ -3633,7 +3721,10 @@ class _HostedGroupCreateDialogState extends State<_HostedGroupCreateDialog> {
             padding: const EdgeInsets.symmetric(vertical: 10),
             child: Text(
               widget.copy.noMatchingAgents,
-              style: TextStyle(fontSize: 13, color: colors.textSecondary),
+              style: TextStyle(
+                fontSize: HermesType.valueSize,
+                color: colors.textSecondary,
+              ),
             ),
           )
         else
@@ -3657,7 +3748,7 @@ class _HostedGroupCreateDialogState extends State<_HostedGroupCreateDialog> {
           for (final peer in _peers ?? <_RoomPeerCandidate>[])
             CheckboxListTile(
               contentPadding: EdgeInsets.zero,
-              title: Text(peer.profile.botTitle ?? peer.profile.name),
+              title: Text(peer.profile.botListName),
               subtitle: Text(peer.connection.label),
               value: _selectedPeers.contains(peer.key),
               onChanged: (v) => setState(() {
@@ -3707,7 +3798,10 @@ class _HostedGroupChosenStrip extends StatelessWidget {
       return Text(
         extra.noMembersChosen,
         key: const ValueKey('mission-hosted-create-chosen-empty'),
-        style: TextStyle(fontSize: 12.5, color: colors.textTertiary),
+        style: TextStyle(
+          fontSize: HermesType.supportSize,
+          color: colors.textTertiary,
+        ),
       );
     }
     return Wrap(
@@ -3728,7 +3822,12 @@ class _HostedGroupChosenStrip extends StatelessWidget {
                 borderRadius: BorderRadius.circular(20),
                 onTap: () => onRemove(profile.name),
                 child: Padding(
-                  padding: const EdgeInsetsDirectional.fromSTEB(4, 4, 9, 4),
+                  padding: const EdgeInsetsDirectional.fromSTEB(
+                    HermesSpace.x1,
+                    HermesSpace.x1,
+                    9,
+                    HermesSpace.x1,
+                  ),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
@@ -3743,9 +3842,9 @@ class _HostedGroupChosenStrip extends StatelessWidget {
                       ),
                       const SizedBox(width: 7),
                       Text(
-                        profile.botTitle ?? profile.name,
+                        profile.botListName,
                         style: TextStyle(
-                          fontSize: 12.5,
+                          fontSize: HermesType.supportSize,
                           fontWeight: FontWeight.w600,
                           color: colors.accentText,
                         ),
@@ -3795,10 +3894,10 @@ class _HostedGroupMemberOption extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
-    final title = profile.botTitle ?? profile.name;
+    final title = profile.botListName;
     final radius = BorderRadius.circular(18);
     return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.only(bottom: HermesSpace.x2),
       child: Semantics(
         selected: selected,
         child: Material(
@@ -3818,7 +3917,10 @@ class _HostedGroupMemberOption extends StatelessWidget {
                 ),
               ),
               constraints: const BoxConstraints(minHeight: 56),
-              padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 8),
+              padding: const EdgeInsets.symmetric(
+                horizontal: 11,
+                vertical: HermesSpace.x2,
+              ),
               child: Row(
                 children: [
                   MissionProfileAvatar(
@@ -3841,7 +3943,7 @@ class _HostedGroupMemberOption extends StatelessWidget {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                            fontSize: 14.5,
+                            fontSize: HermesType.bodySize,
                             fontWeight: selected
                                 ? FontWeight.w700
                                 : FontWeight.w600,
@@ -3925,10 +4027,20 @@ class _WorkspaceSheet extends StatelessWidget {
       child: ListView(
         key: const ValueKey('mission-workspace-sheet'),
         shrinkWrap: true,
-        padding: const EdgeInsets.fromLTRB(12, 0, 12, 18),
+        padding: const EdgeInsets.fromLTRB(
+          HermesSpace.x3,
+          0,
+          HermesSpace.x3,
+          18,
+        ),
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(8, 0, 8, 14),
+            padding: const EdgeInsets.fromLTRB(
+              HermesSpace.x2,
+              0,
+              HermesSpace.x2,
+              14,
+            ),
             child: Text(
               copy.workspaces,
               style: Theme.of(context).textTheme.titleLarge?.copyWith(
@@ -4063,6 +4175,8 @@ class _BotsTab extends StatefulWidget {
   final ValueNotifier<bool> searchOpen;
   final ValueChanged<MissionAgent> onOpenChat;
   final ValueChanged<BotRosterEntry> onBotActions;
+  final ValueChanged<BotRosterEntry>? onOpenScreen;
+  final BotScreenAccess? screenAccess;
   final ValueChanged<RoomRosterEntry> onOpenRoom;
   final ValueChanged<RoomRosterEntry>? onRoomActions;
   final VoidCallback? onAttention;
@@ -4081,6 +4195,8 @@ class _BotsTab extends StatefulWidget {
     required this.searchOpen,
     required this.onOpenChat,
     required this.onBotActions,
+    this.onOpenScreen,
+    this.screenAccess,
     required this.onOpenRoom,
     this.onRoomActions,
     required this.onRefresh,
@@ -4170,6 +4286,8 @@ class _BotsTabState extends State<_BotsTab> {
       searchOpen: widget.searchOpen,
       onOpenBot: (entry) => widget.onOpenChat(entry.agent),
       onBotActions: widget.onBotActions,
+      onOpenScreen: widget.onOpenScreen,
+      screenAccess: widget.screenAccess,
       onOpenRoom: widget.onOpenRoom,
       onRoomActions: widget.onRoomActions,
       onAttention: widget.onAttention,
@@ -4554,7 +4672,12 @@ class _OrganizationEditorState extends State<_OrganizationEditor> {
     // sumarlo aquí dentro dejaba el formulario sin altura útil con el
     // teclado abierto.
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
+      padding: const EdgeInsets.fromLTRB(
+        HermesSpace.x5,
+        HermesSpace.x5,
+        HermesSpace.x5,
+        HermesSpace.x5,
+      ),
       child: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -4648,7 +4771,10 @@ class _MessageCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 12),
+    padding: const EdgeInsets.symmetric(
+      horizontal: 2,
+      vertical: HermesSpace.x3,
+    ),
     child: Text(text),
   );
 }
@@ -4664,7 +4790,10 @@ class _InlineNotice extends StatelessWidget {
     final colors = Theme.of(context).hermes;
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+      padding: const EdgeInsets.symmetric(
+        horizontal: HermesSpace.x4,
+        vertical: 9,
+      ),
       color: colors.warning.withValues(alpha: 0.08),
       child: Row(
         children: [

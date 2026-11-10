@@ -98,6 +98,7 @@ Future<void> _pump(
 
 void main() {
   setUpAll(loadInterFont);
+  _oauthRowTests();
 
   group('capabilityActions', () {
     test('not installed → install; read-only → nothing mutating', () {
@@ -221,8 +222,12 @@ void main() {
     );
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('cph-primary')));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 300));
+    // The install is preceded by a scan read (this server has no scan route,
+    // so it ends at once); wait for the install's own surface.
+    for (var i = 0; i < 30; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+      if (find.text('Instalando docker…').evaluate().isNotEmpty) break;
+    }
 
     expect(find.byKey(const ValueKey('cph-progress')), findsOneWidget);
     expect(find.text('Instalando docker…'), findsOneWidget);
@@ -419,6 +424,30 @@ void main() {
     }
   });
 
+  testWidgets('the clone URL hides user info, query and fragment', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      _gitMcp.copyWith(
+        disclosure: const CapabilityDisclosure(
+          installUrl:
+              'https://deploy:hunter2@git.example.test/labs/docs-mcp'
+              '?token=abc123#frag',
+          installRef: 'v1.0.0',
+        ),
+      ),
+      ScriptedRest(),
+    );
+    expect(
+      find.textContaining('https://git.example.test/labs/docs-mcp?…'),
+      findsWidgets,
+    );
+    for (final secret in const ['hunter2', 'deploy:', 'abc123', '#frag']) {
+      expect(find.textContaining(secret), findsNothing, reason: secret);
+    }
+  });
+
   testWidgets('preview and scan rows need support already confirmed', (
     tester,
   ) async {
@@ -453,7 +482,12 @@ void main() {
     expect(rest.calls.where((c) => c.startsWith('GET skills/hub/preview')), [
       'GET skills/hub/preview?identifier=official%2Fdevops%2Fdocker',
     ]);
-    expect(find.textContaining('Runs **containers**'), findsOneWidget);
+    // Rendered with the chat's Markdown: the marks are gone, the text stays.
+    expect(
+      find.textContaining('Runs containers', findRichText: true),
+      findsWidgets,
+    );
+    expect(find.textContaining('**', findRichText: true), findsNothing);
     expect(find.textContaining('scripts/run.sh'), findsOneWidget);
     // Scan support was never confirmed: no row.
     expect(find.byKey(const ValueKey('cph-row-scan')), findsNothing);
@@ -474,6 +508,30 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('cph-row-scan')), findsOneWidget);
     expect(rest.calls.where((c) => c.contains('scan')), isEmpty);
+  });
+
+  testWidgets('the scan dialog leads with the verdict the server returned', (
+    tester,
+  ) async {
+    final rest = ScriptedRest()
+      ..gets['skills/hub/scan'] = {
+        'verdict': 'dangerous',
+        'summary': 'Two risky patterns',
+        'findings': [
+          {'severity': 'high', 'description': 'curl piped to shell'},
+        ],
+      };
+    final repo = repoOf(rest);
+    await repo.skillScan('official/devops/docker');
+    await setPhone(tester);
+    await tester.pumpWidget(
+      spanishApp(CapabilityDetailScreen(item: _docker, repository: repo)),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('cph-row-scan')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Veredicto del escáner: peligroso'), findsOne);
+    expect(find.textContaining('curl piped to shell'), findsOneWidget);
   });
 
   testWidgets('a blocked skill install offers the scan, never an override', (
@@ -509,7 +567,9 @@ void main() {
     expect(find.textContaining('force'), findsNothing);
     await tester.tap(find.text('Ver escaneo'));
     await tester.pumpAndSettle();
+    // One scan read before the install was offered, one for "Ver escaneo".
     expect(rest.calls.where((c) => c.startsWith('GET skills/hub/scan')), [
+      'GET skills/hub/scan?identifier=official%2Fdevops%2Fdocker',
       'GET skills/hub/scan?identifier=official%2Fdevops%2Fdocker',
     ]);
     expect(find.textContaining('curl piped to shell'), findsOneWidget);
@@ -805,6 +865,50 @@ const _gitMcp = CapabilityItem(
     authType: 'api_key',
   ),
 );
+
+const _oauthServer = CapabilityItem(
+  kind: CapabilityKind.mcp,
+  id: 'mcp:server:reports',
+  name: 'reports',
+  description: 'oauth',
+  installed: true,
+  enabled: true,
+  installedName: 'reports',
+  transport: 'http',
+  url: 'https://mcp.example.com/reports',
+);
+
+const _plainServer = CapabilityItem(
+  kind: CapabilityKind.mcp,
+  id: 'mcp:server:plain',
+  name: 'plain',
+  description: '',
+  installed: true,
+  enabled: true,
+  installedName: 'plain',
+  transport: 'http',
+  url: 'https://mcp.example.com/plain',
+);
+
+void _oauthRowTests() {
+  testWidgets('an OAuth server offers to authorize it from its detail', (
+    tester,
+  ) async {
+    await _pump(tester, _oauthServer, ScriptedRest());
+    expect(find.byKey(const ValueKey('cph-authorize-row')), findsOneWidget);
+    expect(find.text('Autorizar OAuth'), findsOneWidget);
+  });
+
+  testWidgets('read-only, or a server that is not OAuth: no authorize row', (
+    tester,
+  ) async {
+    await _pump(tester, _oauthServer, ScriptedRest(), readOnly: true);
+    expect(find.byKey(const ValueKey('cph-authorize-row')), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+    await _pump(tester, _plainServer, ScriptedRest());
+    expect(find.byKey(const ValueKey('cph-authorize-row')), findsNothing);
+  });
+}
 
 class _GatedRest extends ScriptedRest {
   final ScriptedRest inner;

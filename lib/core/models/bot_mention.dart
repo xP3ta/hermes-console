@@ -125,6 +125,13 @@ final class BotMentionResolver {
     }
   }
 
+  /// The bot a single `@token` (without `@`) routes to, as [resolve] would
+  /// find it; null when unknown or ambiguous.
+  BotMention? lookup(String token) => _byForm[token.toLowerCase()];
+
+  /// No bot can be mentioned (no roster, or only this chat's own profile).
+  bool get isEmpty => _byForm.values.every((bot) => bot == null);
+
   List<BotMention> resolve(String text) {
     final prose = text
         .replaceAll(RegExp(r'```[\s\S]*?```'), ' ')

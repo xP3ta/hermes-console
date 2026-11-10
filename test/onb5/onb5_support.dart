@@ -81,7 +81,7 @@ Future<void> scan(
   bool motion = false,
 }) async {
   final button = find.byKey(const ValueKey('onboarding-scan'));
-  await tester.ensureVisible(button);
+  await revealOnboarding(tester, 'onboarding-scan');
   await tester.tap(button);
   await tester.pump();
   await tester.pump(const Duration(seconds: 2));

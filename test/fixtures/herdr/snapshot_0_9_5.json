@@ -1,0 +1,285 @@
+{
+  "id": "cli:api:snapshot",
+  "result": {
+    "snapshot": {
+      "agents": [
+        {
+          "agent": "claude",
+          "agent_status": "working",
+          "cwd": "/home/demo/proyectos/app",
+          "focused": true,
+          "foreground_cwd": "/home/demo/proyectos/app",
+          "name": "reviewer",
+          "pane_id": "w1:p1",
+          "revision": 0,
+          "state_change_seq": 1,
+          "tab_id": "w1:t1",
+          "terminal_id": "term_65eb41c96bdf41",
+          "workspace_id": "w1"
+        },
+        {
+          "agent": "codex",
+          "agent_status": "blocked",
+          "cwd": "/home/demo/proyectos/app",
+          "focused": false,
+          "foreground_cwd": "/home/demo/proyectos/app",
+          "pane_id": "w1:p2",
+          "revision": 0,
+          "state_change_seq": 2,
+          "tab_id": "w1:t1",
+          "terminal_id": "term_65eb41c96c1e12",
+          "workspace_id": "w1"
+        },
+        {
+          "agent": "claude",
+          "agent_status": "done",
+          "completion_seq": 4,
+          "cwd": "/home/demo/proyectos/app",
+          "focused": false,
+          "foreground_cwd": "/home/demo/proyectos/app",
+          "pane_id": "w2:p1",
+          "revision": 0,
+          "state_change_seq": 4,
+          "tab_id": "w2:t1",
+          "terminal_id": "term_65eb41c96c6153",
+          "workspace_id": "w2"
+        }
+      ],
+      "focused_pane_id": "w1:p1",
+      "focused_tab_id": "w1:t1",
+      "focused_workspace_id": "w1",
+      "layouts": [
+        {
+          "area": {
+            "height": 40,
+            "width": 120,
+            "x": 0,
+            "y": 0
+          },
+          "focused_pane_id": "w1:p1",
+          "panes": [
+            {
+              "focused": true,
+              "pane_id": "w1:p1",
+              "rect": {
+                "height": 40,
+                "width": 60,
+                "x": 0,
+                "y": 0
+              }
+            },
+            {
+              "focused": false,
+              "pane_id": "w1:p2",
+              "rect": {
+                "height": 40,
+                "width": 60,
+                "x": 60,
+                "y": 0
+              }
+            }
+          ],
+          "splits": [
+            {
+              "direction": "right",
+              "id": "split_0_root",
+              "ratio": 0.5,
+              "rect": {
+                "height": 40,
+                "width": 120,
+                "x": 0,
+                "y": 0
+              }
+            }
+          ],
+          "tab_id": "w1:t1",
+          "workspace_id": "w1",
+          "zoomed": false
+        },
+        {
+          "area": {
+            "height": 40,
+            "width": 120,
+            "x": 0,
+            "y": 0
+          },
+          "focused_pane_id": "w2:p1",
+          "panes": [
+            {
+              "focused": true,
+              "pane_id": "w2:p1",
+              "rect": {
+                "height": 40,
+                "width": 120,
+                "x": 0,
+                "y": 0
+              }
+            }
+          ],
+          "splits": [],
+          "tab_id": "w2:t1",
+          "workspace_id": "w2",
+          "zoomed": false
+        },
+        {
+          "area": {
+            "height": 40,
+            "width": 120,
+            "x": 0,
+            "y": 0
+          },
+          "focused_pane_id": "w3:p1",
+          "panes": [
+            {
+              "focused": true,
+              "pane_id": "w3:p1",
+              "rect": {
+                "height": 40,
+                "width": 120,
+                "x": 0,
+                "y": 0
+              }
+            }
+          ],
+          "splits": [],
+          "tab_id": "w3:t1",
+          "workspace_id": "w3",
+          "zoomed": false
+        }
+      ],
+      "panes": [
+        {
+          "agent": "claude",
+          "agent_status": "working",
+          "cwd": "/home/demo/proyectos/app",
+          "focused": true,
+          "foreground_cwd": "/home/demo/proyectos/app",
+          "pane_id": "w1:p1",
+          "revision": 0,
+          "scroll": {
+            "max_offset_from_bottom": 0,
+            "offset_from_bottom": 0,
+            "viewport_rows": 38
+          },
+          "tab_id": "w1:t1",
+          "terminal_id": "term_65eb41c96bdf41",
+          "workspace_id": "w1"
+        },
+        {
+          "agent": "codex",
+          "agent_status": "blocked",
+          "cwd": "/home/demo/proyectos/app",
+          "focused": false,
+          "foreground_cwd": "/home/demo/proyectos/app",
+          "pane_id": "w1:p2",
+          "revision": 0,
+          "scroll": {
+            "max_offset_from_bottom": 0,
+            "offset_from_bottom": 0,
+            "viewport_rows": 38
+          },
+          "tab_id": "w1:t1",
+          "terminal_id": "term_65eb41c96c1e12",
+          "workspace_id": "w1"
+        },
+        {
+          "agent": "claude",
+          "agent_status": "done",
+          "cwd": "/home/demo/proyectos/app",
+          "focused": false,
+          "foreground_cwd": "/home/demo/proyectos/app",
+          "pane_id": "w2:p1",
+          "revision": 0,
+          "scroll": {
+            "max_offset_from_bottom": 0,
+            "offset_from_bottom": 0,
+            "viewport_rows": 40
+          },
+          "tab_id": "w2:t1",
+          "terminal_id": "term_65eb41c96c6153",
+          "workspace_id": "w2"
+        },
+        {
+          "agent_status": "unknown",
+          "cwd": "/home/demo/proyectos/app",
+          "focused": false,
+          "foreground_cwd": "/home/demo/proyectos/app",
+          "pane_id": "w3:p1",
+          "revision": 0,
+          "scroll": {
+            "max_offset_from_bottom": 0,
+            "offset_from_bottom": 0,
+            "viewport_rows": 40
+          },
+          "tab_id": "w3:t1",
+          "terminal_id": "term_65eb41c96c9ce4",
+          "workspace_id": "w3"
+        }
+      ],
+      "protocol": 22,
+      "tabs": [
+        {
+          "agent_status": "blocked",
+          "focused": true,
+          "label": "1",
+          "number": 1,
+          "pane_count": 2,
+          "tab_id": "w1:t1",
+          "workspace_id": "w1"
+        },
+        {
+          "agent_status": "done",
+          "focused": false,
+          "label": "1",
+          "number": 1,
+          "pane_count": 1,
+          "tab_id": "w2:t1",
+          "workspace_id": "w2"
+        },
+        {
+          "agent_status": "unknown",
+          "focused": false,
+          "label": "1",
+          "number": 1,
+          "pane_count": 1,
+          "tab_id": "w3:t1",
+          "workspace_id": "w3"
+        }
+      ],
+      "version": "0.9.5",
+      "workspaces": [
+        {
+          "active_tab_id": "w1:t1",
+          "agent_status": "blocked",
+          "focused": true,
+          "label": "app",
+          "number": 1,
+          "pane_count": 2,
+          "tab_count": 1,
+          "workspace_id": "w1"
+        },
+        {
+          "active_tab_id": "w2:t1",
+          "agent_status": "done",
+          "focused": false,
+          "label": "logs",
+          "number": 2,
+          "pane_count": 1,
+          "tab_count": 1,
+          "workspace_id": "w2"
+        },
+        {
+          "active_tab_id": "w3:t1",
+          "agent_status": "unknown",
+          "focused": false,
+          "label": "real",
+          "number": 3,
+          "pane_count": 1,
+          "tab_count": 1,
+          "workspace_id": "w3"
+        }
+      ]
+    },
+    "type": "session_snapshot"
+  }
+}

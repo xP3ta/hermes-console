@@ -9,7 +9,9 @@ import '../../../design/hermes_design.dart';
 import '../../../theme/app_theme.dart';
 import '../../../widgets/console_loader.dart';
 import '../../../widgets/hermes_app_bar.dart';
+import '../../../widgets/hermes_reasoning_pill.dart';
 import '../../../widgets/mission_profile_avatar.dart';
+import '../bot_screen_access.dart';
 import '../roster/living_bot_face.dart';
 import 'profile_model_picker.dart';
 import '../../../feedback/feedback_policy.dart';
@@ -95,6 +97,11 @@ class BotProfileScreen extends StatefulWidget {
   final VoidCallback? onTasks;
   final VoidCallback? onEditIdentity;
 
+  /// Opens the bot's desktop. With it, a "View screen" pill sits under the
+  /// name; [screenAccess] says whether the bot has one (dimmed when not).
+  final VoidCallback? onScreen;
+  final BotScreenAccess? screenAccess;
+
   /// Called after a successful model/reasoning change (roster reload).
   final VoidCallback? onChanged;
   final List<BotProfileAction> moreActions;
@@ -118,6 +125,8 @@ class BotProfileScreen extends StatefulWidget {
     this.onRooms,
     this.onTasks,
     this.onEditIdentity,
+    this.onScreen,
+    this.screenAccess,
     this.onChanged,
     this.moreActions = const [],
   });
@@ -144,6 +153,16 @@ class _BotProfileScreenState extends State<BotProfileScreen> {
     widget.refresh?.addListener(_onRefresh);
     _scroll.addListener(_onScroll);
     unawaited(_loadReasoning());
+    _askScreen();
+  }
+
+  void _askScreen() {
+    final access = widget.screenAccess;
+    if (access == null || widget.onScreen == null) return;
+    final name = botScreenProfile(widget.data().profile);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) access.ensure([name]);
+    });
   }
 
   @override
@@ -223,17 +242,15 @@ class _BotProfileScreenState extends State<BotProfileScreen> {
     final gateway = widget.modelGateway;
     final s = Strings.of(context);
     if (gateway == null || widget.readOnly || _busy) return;
-    final picked = await showHermesOptions<String>(
+    final picked = await showHermesReasoningPicker(
       context: context,
       surfaceKey: const ValueKey('bot-profile-reasoning-picker'),
+      title: s.botProfileReasoning,
       selected: _reasoning,
-      options: [
+      defaultLabel: s.botProfileReasoningDefault,
+      levels: [
         for (final effort in BotProfileClient.reasoningEfforts)
-          HermesOption(
-            key: ValueKey('bot-profile-reasoning-$effort'),
-            value: effort,
-            label: reasoningLabel(s, effort),
-          ),
+          HermesReasoningLevel(effort, reasoningLabel(s, effort)),
       ],
     );
     if (picked == null || !mounted || picked == _reasoning) return;
@@ -292,7 +309,7 @@ class _BotProfileScreenState extends State<BotProfileScreen> {
     final colors = Theme.of(context).hermes;
     final data = widget.data();
     final profile = data.profile;
-    final title = profile.botTitle ?? profile.name;
+    final title = profile.botListName;
     final canEditModel =
         !widget.readOnly &&
         widget.modelGateway != null &&
@@ -334,6 +351,8 @@ class _BotProfileScreenState extends State<BotProfileScreen> {
         child: ListView(
           key: const ValueKey('bot-profile'),
           controller: _scroll,
+          // Q9-CRISTAL: the profile passes under the glass header.
+          clipBehavior: hermesUnderHeader,
           padding: EdgeInsets.fromLTRB(
             18,
             12,
@@ -378,6 +397,14 @@ class _BotProfileScreenState extends State<BotProfileScreen> {
               overflow: TextOverflow.ellipsis,
               style: TextStyle(color: colors.textSecondary, fontSize: 13),
             ),
+            if (widget.onScreen != null) ...[
+              const SizedBox(height: 12),
+              _ScreenPill(
+                access: widget.screenAccess,
+                profile: botScreenProfile(profile),
+                onTap: widget.onScreen!,
+              ),
+            ],
             const SizedBox(height: 18),
             Row(
               children: [
@@ -557,6 +584,79 @@ String reasoningLabel(Strings s, String effort) => switch (effort) {
   'ultra' => s.reasoningEffortUltra,
   _ => effort,
 };
+
+/// "View screen" under the bot's name. Dimmed with the cause when the bot
+/// has no desktop; while that is unknown the person can still try.
+class _ScreenPill extends StatelessWidget {
+  final BotScreenAccess? access;
+  final String profile;
+  final VoidCallback onTap;
+
+  const _ScreenPill({
+    required this.access,
+    required this.profile,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final access = this.access;
+    if (access == null) return _pill(context, BotScreenState.unknown);
+    return ListenableBuilder(
+      listenable: access,
+      builder: (context, _) => _pill(context, access.stateOf(profile)),
+    );
+  }
+
+  Widget _pill(BuildContext context, BotScreenState state) {
+    final s = Strings.of(context);
+    final colors = Theme.of(context).hermes;
+    final none = state == BotScreenState.none;
+    final fg = none ? colors.textDisabled : colors.accentText;
+    return Center(
+      child: Material(
+        key: const ValueKey('bot-profile-screen'),
+        color: none
+            ? colors.surfaceVariant.withValues(alpha: .5)
+            : colors.accent.withValues(alpha: .14),
+        shape: const StadiumBorder(),
+        child: InkWell(
+          customBorder: const StadiumBorder(),
+          onTap: none ? null : onTap,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 48, minWidth: 48),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
+              child: Semantics(
+                button: true,
+                enabled: !none,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.desktop_windows_outlined, size: 18, color: fg),
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: Text(
+                        none ? s.bsaNoDesktop : s.bsaScreen,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: fg,
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
 
 class _Shortcut extends StatelessWidget {
   final IconData icon;

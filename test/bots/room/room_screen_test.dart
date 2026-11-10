@@ -8,6 +8,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/widgets/chat/mention_chips.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:hermes_android/core/services/app_lock.dart';
 import 'package:hermes_android/core/services/chat_draft_store.dart';
@@ -947,6 +948,47 @@ void main() {
     await tester.tapOnText(find.textRange.ofSubstring('@builder').first);
     await tester.pumpAndSettle();
     expect(opened, ['builder', 'builder']);
+  });
+
+  testWidgets('the thread page keeps its mention chips across rebuilds', (
+    tester,
+  ) async {
+    final seq = EventSeq();
+    final u = seq.user('@builder @radar @all look');
+    await _pump(
+      tester,
+      events: [u, seq.member('m-lead', 'lead', 'On it @builder @radar', 'd1')],
+      profileFor: (m) =>
+          m.handle == 'builder' ? AgentProfile(name: 'builder') : null,
+      onOpenMember: (_) {},
+    );
+    await tester.longPress(find.byKey(const ValueKey('room-header')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('room-menu-threads')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('room-thread-thread-1')));
+    await tester.pumpAndSettle();
+    MentionChipResolver? resolver() => tester
+        .widget<MentionChipScope>(
+          find.descendant(
+            of: find.byKey(const ValueKey('room-thread-page')),
+            matching: find.byType(MentionChipScope),
+          ),
+        )
+        .resolver;
+    final before = resolver();
+    expect(before, isNotNull);
+    // The page rebuilds (the keyboard, a turn of the phone; REVIEW-R5-B
+    // #17): same resolver, so no message of the thread is parsed again.
+    tester
+        .element(
+          find.byWidgetPredicate(
+            (widget) => widget.runtimeType.toString() == '_RoomThreadPage',
+          ),
+        )
+        .markNeedsBuild();
+    await tester.pump();
+    expect(identical(resolver(), before), isTrue);
   });
 
   testWidgets('attachment suffix renders as a card with download/open/share', (

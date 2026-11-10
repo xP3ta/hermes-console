@@ -9,6 +9,7 @@ import '../../services/pairing_link.dart';
 import '../../theme/app_theme.dart';
 import 'onboarding_motion.dart';
 import 'onboarding_widgets.dart';
+import '../../feedback/haptics.dart';
 
 /// The camera, the four corner brackets that fly in and lock onto a square,
 /// the line that scans it, and what happens when the code is read: the
@@ -21,6 +22,8 @@ class QrScanView extends StatefulWidget {
   const QrScanView({
     required this.onLink,
     this.onDashboardLink,
+    this.onRaw,
+    this.acceptsRaw,
     required this.onBack,
     this.cameraBuilder,
     this.aimHint,
@@ -34,6 +37,12 @@ class QrScanView extends StatefulWidget {
 
   /// v2 Dashboard links; without it only v1 codes are accepted.
   final ValueChanged<DashboardPairingLink>? onDashboardLink;
+
+  /// Códigos que no son enlaces `hermes://` (p. ej. el código `hc-pair1:` del
+  /// push): con [onRaw] el texto leído se entrega tal cual si [acceptsRaw] lo
+  /// admite, y los enlaces no se aceptan.
+  final ValueChanged<String>? onRaw;
+  final bool Function(String raw)? acceptsRaw;
   final VoidCallback onBack;
   final Widget Function(ValueChanged<String>, ValueChanged<bool>)?
   cameraBuilder;
@@ -114,20 +123,34 @@ class _QrScanViewState extends State<QrScanView> with TickerProviderStateMixin {
 
   Future<void> _read(String raw) async {
     if (_handled || _invalid || !mounted) return;
-    final parsed = PairingLink.parse(raw);
-    final v1 = parsed.v1, v2 = parsed.v2;
-    if (v1 == null && (v2 == null || widget.onDashboardLink == null)) {
+    final rawHandler = widget.onRaw;
+    final PairingLink? v1;
+    final DashboardPairingLink? v2;
+    if (rawHandler == null) {
+      final parsed = PairingLink.parse(raw);
+      v1 = parsed.v1;
+      v2 = parsed.v2;
+    } else {
+      v1 = null;
+      v2 = null;
+    }
+    final rawOk = rawHandler != null && (widget.acceptsRaw?.call(raw) ?? true);
+    if (rawHandler != null
+        ? !rawOk
+        : (v1 == null && (v2 == null || widget.onDashboardLink == null))) {
       setState(() => _invalid = true);
       return;
     }
     _handled = true;
-    unawaited(HapticFeedback.lightImpact().catchError((_) {}));
+    HermesHaptics.tap();
     if (!OnboardingMotion.reduced(context)) {
       unawaited(_ring.forward(from: 0));
       await _lock.forward();
     }
     if (!mounted) return;
-    if (v1 != null) {
+    if (rawHandler != null) {
+      rawHandler(raw);
+    } else if (v1 != null) {
       widget.onLink(v1);
     } else {
       widget.onDashboardLink!(v2!);

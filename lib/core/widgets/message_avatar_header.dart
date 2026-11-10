@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../theme/app_theme.dart';
+import '../theme/hermes_tokens.dart';
 import 'session_status_tone.dart';
 
 /// Tamaño de la mascota en la cabecera (el de siempre).
@@ -8,6 +9,31 @@ const double kAvatarMascotSize = 44;
 
 /// Ancho reservado a la mascota, más un respiro hasta el título.
 const double kAvatarSlotWidth = 50;
+
+/// Width of the slot a face of [size] takes before the title (and so how far
+/// the card under the title, and what hangs from it, is indented).
+double avatarSlotWidthFor(double size) =>
+    size == kAvatarMascotSize ? kAvatarSlotWidth : size + HermesSpace.x2;
+
+/// What hangs under a header that wears a face (the live window and its
+/// connector, the steps): it starts where the header's text does, past the
+/// face's slot, so the connector hangs from the card's own edge.
+class AvatarDetailsIndent extends StatelessWidget {
+  const AvatarDetailsIndent({
+    required this.mascotSize,
+    required this.child,
+    super.key,
+  });
+
+  final double mascotSize;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: EdgeInsetsDirectional.only(start: avatarSlotWidthFor(mascotSize)),
+    child: child,
+  );
+}
 
 /// «HERMES CONSOLE» / «hermes» se muestra en «Hermes Console»; un nombre con
 /// mayúsculas mezcladas se respeta tal cual.
@@ -37,6 +63,7 @@ class MessageAvatarHeader extends StatelessWidget {
   const MessageAvatarHeader({
     required this.name,
     this.mascot,
+    this.mascotSize = kAvatarMascotSize,
     this.subtitle,
     this.nameColor,
     this.actions = const [],
@@ -47,6 +74,11 @@ class MessageAvatarHeader extends StatelessWidget {
 
   /// La cara ya construida (44 dp), o `null` para una cabecera sin cara.
   final Widget? mascot;
+
+  /// The face's size: 44 dp by default (rooms); a chat's answer wears its
+  /// face small, 24 dp, beside the name (Q9, the owner: «sprite pequeño +
+  /// nombre del bot»).
+  final double mascotSize;
 
   /// Segunda línea bajo el título (estado del turno o su resumen plegado).
   final Widget? subtitle;
@@ -86,21 +118,21 @@ class MessageAvatarHeader extends StatelessWidget {
     );
     // No face, no slot: the name starts where the message does.
     if (face == null) return Row(children: [text, ...actions]);
+    final size = mascotSize;
     return ConstrainedBox(
-      constraints: const BoxConstraints(minHeight: kAvatarMascotSize),
+      constraints: BoxConstraints(minHeight: size),
       child: Row(
+        // The face sits at the top, level with the name, however tall the
+        // block under the name grows (the live card, its window).
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SizedBox(
             key: const ValueKey('assistant-avatar-slot'),
-            width: kAvatarSlotWidth,
-            height: kAvatarMascotSize,
+            width: avatarSlotWidthFor(size),
+            height: size,
             child: Align(
               alignment: AlignmentDirectional.centerStart,
-              child: SizedBox(
-                width: kAvatarMascotSize,
-                height: kAvatarMascotSize,
-                child: face,
-              ),
+              child: SizedBox(width: size, height: size, child: face),
             ),
           ),
           text,

@@ -74,6 +74,15 @@ class _Server {
   }
 }
 
+/// The setup screen shows the looping loader while it waits, so the frame
+/// queue never empties: advance a bounded stretch of time instead of
+/// waiting for it to settle.
+Future<void> _settle(WidgetTester tester) async {
+  for (var i = 0; i < 30; i++) {
+    await tester.pump(const Duration(milliseconds: 100));
+  }
+}
+
 Future<void> _pump(
   WidgetTester tester,
   _Server server,
@@ -104,7 +113,7 @@ Future<void> _pump(
         ),
       ),
     );
-    await tester.pumpAndSettle();
+    await _settle(tester);
   }, () => client);
 }
 
@@ -138,7 +147,7 @@ void main() {
           'Tu Hermes está arrancando…',
           'Esperando hasta 3 minutos. Puedes seguir usando Console.',
           'Si sigue así, mira el estado en el Portal de Nous.',
-          'https://ares-3009.agents.nousresearch.com',
+          'https://demo-0000.agents.nousresearch.com',
         ),
       ]) {
         final gate = Completer<void>();
@@ -156,7 +165,7 @@ void main() {
         );
         expect(find.byKey(_retry), findsNothing, reason: 'no manual retry yet');
         gate.complete();
-        await tester.pumpAndSettle();
+        await _settle(tester);
       }
     },
   );
@@ -179,10 +188,10 @@ void main() {
       );
       final atGiveUp = server.healthCalls;
       await tester.pump(const Duration(minutes: 5));
-      await tester.pumpAndSettle();
+      await _settle(tester);
       expect(server.healthCalls, atGiveUp, reason: '0 probes after giving up');
       await tester.tap(find.byKey(_retry));
-      await tester.pumpAndSettle();
+      await _settle(tester);
       expect(server.healthCalls, greaterThan(atGiveUp));
       expect(
         find.text('The server is not finishing its start-up.'),
@@ -198,7 +207,7 @@ void main() {
       server,
       _Clock(),
       locale: 'es',
-      url: 'https://ares-3009.agents.nousresearch.com',
+      url: 'https://demo-0000.agents.nousresearch.com',
     );
     expect(find.text('El servidor no termina de arrancar.'), findsOneWidget);
     expect(
@@ -263,11 +272,11 @@ void main() {
     // The app is hidden while the first status read is still in flight.
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
     gate.complete();
-    await tester.pumpAndSettle();
+    await _settle(tester);
     expect(server.statusCalls, 1);
     expect(server.healthCalls, 0);
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
-    await tester.pumpAndSettle();
+    await _settle(tester);
     expect(server.healthCalls, 1);
     expect(find.byKey(_browser), findsOneWidget);
   });
@@ -330,7 +339,7 @@ void main() {
             ),
           ),
         );
-        await tester.pumpAndSettle();
+        await _settle(tester);
       }, () => client);
 
       await run(await clientFor(statusRefused: false));

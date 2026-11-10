@@ -119,7 +119,10 @@ void main() {
     expect(find.byKey(_submit), findsOneWidget);
   });
 
-  testWidgets('several providers: one browser button, no provider param', (
+  // The password provider keeps its form; the one browser provider left is
+  // Nous, so the button is named after it and the authorize request names
+  // it too (the server's own chooser page is skipped).
+  testWidgets('password and Nous: one browser button that names Nous', (
     tester,
   ) async {
     final opened = await _pump(
@@ -133,6 +136,23 @@ void main() {
     await tester.pump(const Duration(milliseconds: 50));
     expect(opened, hasLength(1));
     expect(opened.single.path, '/auth/native/authorize');
+    expect(opened.single.queryParameters['provider'], 'nous');
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('one unnamed browser provider: no provider param', (
+    tester,
+  ) async {
+    final opened = await _pump(
+      tester,
+      flows: ['native_pkce'],
+      providers: [_provider('basic', password: true), _provider('oidc')],
+    );
+    expect(find.byKey(_browser), findsOneWidget);
+    await tester.tap(find.byKey(_browser));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(opened, hasLength(1));
     expect(opened.single.queryParameters.containsKey('provider'), isFalse);
     await tester.pumpAndSettle();
   });

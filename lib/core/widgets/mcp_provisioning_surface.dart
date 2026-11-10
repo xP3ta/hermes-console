@@ -3,13 +3,24 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../l10n/app_localizations.dart';
+import '../capabilities/spp_copy.dart';
+import '../capabilities/spp_safety.dart';
 import '../models/admin_integrations.dart';
 import '../screens/admin_integrations_copy.dart';
 import '../services/desktop_control_gateway.dart';
 import '../theme/app_theme.dart';
+import '../theme/hermes_tokens.dart' show HermesMotion;
+import 'cleartext_once_line.dart';
 import 'form_page.dart';
 import 'hermes_premium_ui.dart';
-import '../design/hermes_design.dart' show HermesOption, HermesSelectField;
+import '../design/hermes_design.dart'
+    show
+        HermesInlineNotice,
+        HermesOption,
+        HermesSelectField,
+        HermesSpace,
+        HermesStatusTone;
 
 typedef McpExternalUriLauncher = Future<bool> Function(Uri uri);
 
@@ -318,7 +329,11 @@ class _McpOAuthFlowSurfaceState extends State<McpOAuthFlowSurface>
 }
 
 class McpServerDraftSurface extends StatefulWidget {
-  const McpServerDraftSurface({super.key});
+  const McpServerDraftSurface({this.connectionId, super.key});
+
+  /// The saved connection the server is added to; the plain-http line is shown
+  /// once for it. Null when the caller does not know one.
+  final String? connectionId;
 
   @override
   State<McpServerDraftSurface> createState() => _McpServerDraftSurfaceState();
@@ -338,12 +353,29 @@ class _McpServerDraftSurfaceState extends State<McpServerDraftSurface> {
   McpAuthMode _auth = McpAuthMode.none;
   String? _formError;
 
+  /// The address once the user stopped typing. A half-typed private address
+  /// (`http://192.`) reads as public, so the plain-http notes wait for this.
+  String _settledUrl = '';
+  Timer? _urlSettle;
+  // Four beats of the base motion (800 ms): a typing pause, not an animation.
+  static final Duration _urlSettleDelay = HermesMotion.base * 4;
+
   @override
   void initState() {
     super.initState();
     for (final controller in [_name, _command, _url]) {
       controller.addListener(_changed);
     }
+    _url.addListener(_urlChanged);
+  }
+
+  void _urlChanged() {
+    _urlSettle?.cancel();
+    _urlSettle = Timer(_urlSettleDelay, () {
+      if (mounted && _settledUrl != _url.text) {
+        setState(() => _settledUrl = _url.text);
+      }
+    });
   }
 
   void _changed() {
@@ -370,6 +402,7 @@ class _McpServerDraftSurfaceState extends State<McpServerDraftSurface> {
 
   @override
   void dispose() {
+    _urlSettle?.cancel();
     _name.dispose();
     _command.dispose();
     _arguments.dispose();
@@ -410,6 +443,15 @@ class _McpServerDraftSurfaceState extends State<McpServerDraftSurface> {
   String? _required(String? value) => value == null || value.trim().isEmpty
       ? AdminIntegrationsCopy.of(context).invalidForm
       : null;
+
+  /// A specific reason, in the user's language, instead of one generic line.
+  String? _reason(SppMcpIssue? issue) =>
+      issue == null ? null : sppMcpIssueText(Strings.of(context), issue);
+
+  String? _checkName(String? value) => _reason(sppCheckMcpName(value ?? ''));
+  String? _checkUrl(String? value) => _reason(sppCheckMcpUrl(value ?? ''));
+  String? _checkCommand(String? value) =>
+      _reason(sppCheckMcpCommand(value ?? ''));
 
   void _submit() {
     final copy = AdminIntegrationsCopy.of(context);
@@ -497,7 +539,8 @@ class _McpServerDraftSurfaceState extends State<McpServerDraftSurface> {
             autocorrect: false,
             enableSuggestions: false,
             textInputAction: TextInputAction.next,
-            validator: _required,
+            autovalidateMode: AutovalidateMode.onUserInteraction,
+            validator: _checkName,
             decoration: InputDecoration(
               labelText: copy.name,
               hintText: copy.nameHint,
@@ -511,12 +554,23 @@ class _McpServerDraftSurfaceState extends State<McpServerDraftSurface> {
               autocorrect: false,
               enableSuggestions: false,
               textInputAction: TextInputAction.next,
-              validator: _required,
+              autovalidateMode: AutovalidateMode.onUserInteraction,
+              validator: _checkCommand,
               decoration: InputDecoration(
                 labelText: copy.command,
                 hintText: copy.commandHint,
               ),
             ),
+            if (sppMcpCommandHint(_command.text) case final hint?)
+              Padding(
+                padding: const EdgeInsets.only(top: HermesSpace.x2),
+                child: HermesInlineNotice(
+                  key: const ValueKey('spp-mcp-command-hint'),
+                  tone: HermesStatusTone.warn,
+                  icon: Icons.info_outline_rounded,
+                  message: sppMcpIssueText(Strings.of(context), hint),
+                ),
+              ),
             const SizedBox(height: 12),
             TextFormField(
               key: const ValueKey('mcp-draft-arguments'),
@@ -573,13 +627,33 @@ class _McpServerDraftSurfaceState extends State<McpServerDraftSurface> {
               enableSuggestions: false,
               keyboardType: TextInputType.url,
               textInputAction: TextInputAction.next,
-              validator: _required,
+              autovalidateMode: AutovalidateMode.onUserInteraction,
+              validator: _checkUrl,
               decoration: InputDecoration(
                 labelText: copy.endpointUrl,
                 hintText: 'https://mcp.example/mcp',
                 helperText: copy.endpointHint,
               ),
             ),
+            // The phone never opens this address; the server will. Plain http
+            // inside a private network says nothing. Towards a public host a
+            // token gets the strong notice; without one, a single quiet line.
+            if (sppMcpUrlIsPublicCleartext(_settledUrl))
+              if (_auth == McpAuthMode.header)
+                Padding(
+                  padding: const EdgeInsets.only(top: HermesSpace.x2),
+                  child: HermesInlineNotice(
+                    key: const ValueKey('spp-mcp-insecure'),
+                    tone: HermesStatusTone.warn,
+                    icon: Icons.warning_amber_rounded,
+                    message: Strings.of(context).sppMcpInsecurePublicToken,
+                  ),
+                )
+              else
+                CleartextOnceLine(
+                  message: Strings.of(context).krhHttpPublicLine,
+                  connectionId: widget.connectionId,
+                ),
             const SizedBox(height: 12),
             HermesSelectField<McpAuthMode>(
               key: ValueKey('mcp-auth-${_auth.name}'),

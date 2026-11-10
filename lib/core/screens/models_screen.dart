@@ -5,8 +5,6 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:flutter/services.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../../main.dart';
@@ -23,18 +21,22 @@ import '../design/hermes_design.dart'
         HermesStatusText,
         HermesStatusTone,
         HermesToggleRow,
+        kHermesInheritMainProvider,
         showHermesDialog,
         showHermesModelPicker,
         showHermesOptions;
 import '../theme/app_theme.dart';
+import '../theme/hermes_tokens.dart';
 import '../utils/api_error.dart';
 import '../widgets/profile_scope.dart';
 import '../widgets/hermes_notice.dart';
 import '../widgets/read_only.dart';
 import '../widgets/hermes_app_bar.dart';
+import '../widgets/hermes_reasoning_pill.dart';
 import '../widgets/hermes_premium_ui.dart'
     as premium
     show HermesListRow, HermesListSection;
+import '../widgets/nous_account_card.dart';
 import '../widgets/provider_logo.dart';
 
 import '../models/desktop_model_catalog.dart';
@@ -59,6 +61,8 @@ import 'local_models_screen.dart';
 import 'moa_recipe_screen.dart';
 import 'model_visibility_screen.dart';
 import 'models_accounts_section.dart';
+import 'nous_account_screen.dart'
+    show connectProviderAccount, disconnectProviderAccount;
 import 'models_api_keys_section.dart';
 import 'models_fallback_section.dart';
 import 'models_look.dart';
@@ -325,9 +329,9 @@ class _ModelsScreenState extends State<ModelsScreen>
   );
 
   /// Refresh official APIs without probing or provisioning optional services.
-  Future<void> _bootstrap() async {
+  Future<void> _bootstrap({bool serverRefresh = false}) async {
     unawaited(_probeLocalModels());
-    await _load();
+    await _load(serverRefresh: serverRefresh);
   }
 
   LocalModelsClient get _localModels =>
@@ -709,7 +713,10 @@ class _ModelsScreenState extends State<ModelsScreen>
     }
   }
 
-  Future<void> _load({bool fresh = false}) async {
+  /// [serverRefresh] also busts the server's per-provider model cache
+  /// (Desktop's «Refresh Models»): the list of an account that has gained
+  /// models shows them without waiting for the cache to expire.
+  Future<void> _load({bool fresh = false, bool serverRefresh = false}) async {
     unawaited(_loadProviderKeys());
     final generation = ++_catalogGeneration;
     final ticket = profileReadTicket();
@@ -771,7 +778,7 @@ class _ModelsScreenState extends State<ModelsScreen>
             .then<void>((v) => active = v)
             .catchError((Object _) {}),
         _client
-            .getModelOptions(profile: ticket.name)
+            .getModelOptions(profile: ticket.name, refresh: serverRefresh)
             .then<void>((v) => providers = v)
             .catchError((Object error) {
               optionsError = error;
@@ -1132,17 +1139,14 @@ class _ModelsScreenState extends State<ModelsScreen>
 
   Future<void> _pickReasoning(String current) async {
     final s = Strings.of(context);
-    final picked = await showHermesOptions<String>(
+    final picked = await showHermesReasoningPicker(
       context: context,
       title: s.mdlRowReasoning,
       selected: current,
-      options: [
+      defaultLabel: s.modelPickerLevelDefault,
+      levels: [
         for (final value in _reasoningEfforts)
-          HermesOption(
-            key: ValueKey('models-reasoning-$value'),
-            value: value,
-            label: _effortLabel(value, s),
-          ),
+          HermesReasoningLevel(value, _effortLabel(value, s)),
       ],
     );
     if (picked == null || picked == current || !mounted) return;
@@ -1181,6 +1185,7 @@ class _ModelsScreenState extends State<ModelsScreen>
   Future<({String provider, String model})?> _pickModel({
     required String title,
     bool allowAuto = true,
+    bool allowInheritMain = false,
   }) async {
     final ticket = profileReadTicket();
     final s = Strings.of(context);
@@ -1190,6 +1195,8 @@ class _ModelsScreenState extends State<ModelsScreen>
       keyPrefix: 'models-picker',
       title: title,
       defaultLabel: allowAuto ? s.mdlAutomatic : null,
+      inheritLabel: allowInheritMain ? s.modelsBotInheritMain : null,
+      inheritSubtitle: allowInheritMain ? s.modelsBotInheritMainHint : null,
       groups: [
         for (final provider in _readyProviders)
           if (_shownModels(provider) case final models when models.isNotEmpty)
@@ -1209,7 +1216,7 @@ class _ModelsScreenState extends State<ModelsScreen>
   Future<void> _pickAuxModel(String task, String label) async {
     final write = _beginWrite();
     if (write == null) return;
-    final picked = await _pickModel(title: label);
+    final picked = await _pickModel(title: label, allowInheritMain: true);
     if (picked == null || !mounted || !write.isCurrent) return;
     await _assign(
       write,
@@ -1288,61 +1295,37 @@ class _ModelsScreenState extends State<ModelsScreen>
     return accounts;
   }
 
-  /// Device-code sign-in of [id]: starts the flow, opens the verification
-  /// page and polls until the provider confirms. "Connected" is only what
-  /// the server's account list says afterwards.
+  /// The Accounts row of [id], or a bare card for an id the list does not
+  /// carry (an older cache): the sign-in flow needs its name and hosts.
+  OAuthAccount _accountRow(String name, String id) {
+    for (final account in _accounts ?? const <OAuthAccount>[]) {
+      if (account.id == id) return account;
+    }
+    return OAuthAccount(
+      id: id,
+      name: name,
+      flow: 'device_code',
+      connected: false,
+      disconnectable: true,
+    );
+  }
+
+  /// Device-code sign-in of [id]: the first request runs under the write
+  /// guard of the profile on screen; the page then shows the code, opens the
+  /// provider and polls until it confirms. "Connected" is only what the
+  /// server's account list says afterwards.
   Future<void> _signIn(String name, String id) async {
     final write = _beginWrite();
     if (write == null) return;
-    Map<String, dynamic>? start;
-    final started = await write.run(() async {
-      start = await _client.startOAuth(id, profile: write.profile);
-    });
-    final data = start;
-    if (!started || data == null || !mounted) return;
-    final sessionId = providerOAuthStartField(data, const [
-      'session_id',
-      'session',
-      'poll_id',
-      'device_code',
-      'state',
-    ]);
-    final url = normalizeProviderOAuthBrowserUrl(
-      providerOAuthStartField(data, const [
-        'verification_uri_complete',
-        'verification_url_complete',
-        'auth_url',
-        'authorization_url',
-        'login_url',
-        'verification_url',
-        'verification_uri',
-        'url',
-      ]),
+    final outcome = await connectProviderAccount(
+      context: context,
+      client: _client,
       connection: widget.connection,
-      dashboardBaseUrl: _client.baseUrl,
+      account: _accountRow(name, id),
+      profile: write.profile,
+      start: write.run,
     );
-    if (sessionId.isEmpty || url.isEmpty) {
-      AppFeedback.of(context).notify(
-        FeedbackKind.error,
-        Strings.of(context).mdlOAuthNotAvailable(name),
-        warning: true,
-      );
-      return;
-    }
-    final approved = await Navigator.of(context).push<bool>(
-      MaterialPageRoute(
-        fullscreenDialog: true,
-        builder: (_) => ProviderOAuthLoginScreen(
-          providerName: name,
-          providerSlug: id,
-          url: url,
-          code: providerOAuthStartField(data, const ['user_code', 'code']),
-          expiresIn: (data['expires_in'] as num?)?.toInt() ?? 0,
-          poll: () => _client.pollOAuth(id, sessionId, profile: write.profile),
-        ),
-      ),
-    );
-    if (approved != true || !mounted || !write.isCurrent) return;
+    if (!outcome.approved || !mounted || !write.isCurrent) return;
     var connected = false;
     final read = await write.run(() async {
       final accounts = await _readAccounts(write);
@@ -1352,9 +1335,14 @@ class _ModelsScreenState extends State<ModelsScreen>
     if (!read || !mounted) return;
     unawaited(_loadFreeTierStatus());
     final s = Strings.of(context);
+    final email = outcome.accountEmail;
     AppFeedback.of(context).notify(
       connected ? FeedbackKind.routine : FeedbackKind.error,
-      connected ? s.mdlProviderConnected(name) : s.mdlAccountNotConnected(name),
+      !connected
+          ? s.mdlAccountNotConnected(name)
+          : email == null
+          ? s.mdlProviderConnected(name)
+          : s.nacLinkApprovedAs(email),
     );
   }
 
@@ -1366,6 +1354,29 @@ class _ModelsScreenState extends State<ModelsScreen>
     final write = _beginWrite();
     if (write == null) return;
     final s = Strings.of(context);
+    if (account.isNous) {
+      // The Nous Portal account: its own confirmation, App Lock when the app
+      // has one, then the re-read that says whether it is gone.
+      final removed = await disconnectProviderAccount(
+        context: context,
+        client: _client,
+        connection: widget.connection,
+        account: account,
+        profile: write.profile,
+        run: write.run,
+      );
+      if (!mounted || !write.isCurrent) return;
+      final read = await write.run(() async {
+        await _readAccounts(write);
+        await _reload();
+      });
+      if (!read || !mounted || !removed) return;
+      unawaited(_loadFreeTierStatus());
+      AppFeedback.of(
+        context,
+      ).notify(FeedbackKind.routine, s.nacCardDisconnected(account.name));
+      return;
+    }
     final confirmed = await _confirm(
       s.mdlRemoveNamed(account.name),
       action: s.mdlRemove,
@@ -1767,7 +1778,9 @@ class _ModelsScreenState extends State<ModelsScreen>
           else
             IconButton(
               icon: const Icon(Icons.refresh),
-              onPressed: _loading ? null : _bootstrap,
+              onPressed: _loading
+                  ? null
+                  : () => _bootstrap(serverRefresh: true),
               tooltip: s.mdlReload,
             ),
         ],
@@ -1776,11 +1789,16 @@ class _ModelsScreenState extends State<ModelsScreen>
         color: colors.accentHover,
         onRefresh: () {
           setState(() => _endpointsReload++);
-          return _load(fresh: true);
+          return _load(fresh: true, serverRefresh: true);
         },
         child: ListView(
           clipBehavior: hermesUnderHeader,
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+          padding: const EdgeInsets.fromLTRB(
+            HermesSpace.x4,
+            HermesSpace.x4,
+            HermesSpace.x4,
+            HermesSpace.x6,
+          ),
           children: _blocks(s, colors),
         ),
       ),
@@ -1891,6 +1909,20 @@ class _ModelsScreenState extends State<ModelsScreen>
     return rows..sort((a, b) => a.name.compareTo(b.name));
   }
 
+  /// The Nous Portal card to offer at the top: the server lists it, it is
+  /// not signed in with an account and the profile has not taken it out.
+  OAuthAccount? _nousOffer(List<OAuthAccount>? accounts) {
+    for (final account in accounts ?? const <OAuthAccount>[]) {
+      if (account.isNous &&
+          (!account.signedIn || account.expiredAt(DateTime.now())) &&
+          account.canSignInHere &&
+          !excludesProvider(_excluded ?? const <String>[], account.id)) {
+        return account;
+      }
+    }
+    return null;
+  }
+
   List<Widget> _blocks(Strings s, HermesThemeColors colors) {
     final owner = profileReadTicket().owner;
     final busy = _setting;
@@ -1904,7 +1936,7 @@ class _ModelsScreenState extends State<ModelsScreen>
       // The last answer is on screen; say it is being refreshed.
       if (_revalidating)
         const Padding(
-          padding: EdgeInsets.only(bottom: 12),
+          padding: EdgeInsets.only(bottom: HermesSpace.x3),
           child: LinearProgressIndicator(
             key: ValueKey('mdl-revalidating'),
             minHeight: 2,
@@ -1918,7 +1950,7 @@ class _ModelsScreenState extends State<ModelsScreen>
       if (_error != null || _stale) _buildLoadFailedCard(s, colors),
       if (_freeTierStatus?.shouldShowNotice == true)
         Padding(
-          padding: const EdgeInsets.only(bottom: 12),
+          padding: const EdgeInsets.only(bottom: HermesSpace.x3),
           child: HermesNoticeCard(
             noticeKey: const ValueKey('models-free-tier-notice'),
             message: s.mdlFreeTierNotice(_freeTierStatus!.label),
@@ -1933,6 +1965,16 @@ class _ModelsScreenState extends State<ModelsScreen>
         ),
       if (_localSetupFit case final fit? when !_loading)
         _buildLocalSetupOffer(s, colors, fit),
+      // The Nous Portal account first, while it is not connected: one card
+      // with its state and the button that connects it.
+      if (_nousOffer(accounts) case final nous?)
+        NousAccountCard(
+          key: ValueKey('models-nous-offer-$owner'),
+          account: nous,
+          enabled: !busy,
+          margin: const EdgeInsets.only(bottom: HermesSpace.x3),
+          onConnect: () => unawaited(_signIn(nous.name, nous.id)),
+        ),
       // "ACTIVE MODEL" only when a connected provider is behind it; a server
       // without any gets the "no model" card instead.
       if (!_loading && active != null && _shouldShowActiveCard(active))
@@ -1946,7 +1988,7 @@ class _ModelsScreenState extends State<ModelsScreen>
       if (fallback != null)
         Padding(
           key: ValueKey('models-fallback-block-$owner'),
-          padding: const EdgeInsets.only(bottom: 8),
+          padding: const EdgeInsets.only(bottom: HermesSpace.x2),
           child: ModelsFallbackSection(
             // Keyed by profile: a problem shown for one profile's chain
             // never stays on screen for another's.
@@ -1980,13 +2022,16 @@ class _ModelsScreenState extends State<ModelsScreen>
         ModelsSectionLabel(s.mdlMainProviders),
         premium.HermesListSection(
           key: ValueKey('models-providers-$owner'),
-          margin: const EdgeInsets.only(bottom: 8),
+          margin: const EdgeInsets.only(bottom: HermesSpace.x2),
           children: [
             for (final provider in listed)
               _buildProviderTile(s, colors, provider, busy),
             premium.HermesListRow(
               key: const ValueKey('models-edit-models'),
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              padding: const EdgeInsets.symmetric(
+                horizontal: 14,
+                vertical: HermesSpace.x2,
+              ),
               icon: Icons.visibility_outlined,
               title: s.mdlEditModels,
               trailing: Icon(
@@ -2057,7 +2102,12 @@ class _ModelsScreenState extends State<ModelsScreen>
   }
 
   Widget _problem(String sentence, {Key? key}) => Padding(
-    padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
+    padding: const EdgeInsets.fromLTRB(
+      HermesSpace.x1,
+      0,
+      HermesSpace.x1,
+      HermesSpace.x2,
+    ),
     child: HermesStatusText(
       key: key,
       label: sentence,
@@ -2069,7 +2119,7 @@ class _ModelsScreenState extends State<ModelsScreen>
   /// The catalog could not be read (or refreshed): one sentence and Retry.
   Widget _buildLoadFailedCard(Strings s, HermesThemeColors colors) => Card(
     key: const ValueKey('models-load-failed'),
-    margin: const EdgeInsets.only(bottom: 8),
+    margin: const EdgeInsets.only(bottom: HermesSpace.x2),
     shape: RoundedRectangleBorder(
       borderRadius: BorderRadius.circular(8),
       side: BorderSide(color: colors.warning.withValues(alpha: 0.45), width: 1),
@@ -2084,7 +2134,7 @@ class _ModelsScreenState extends State<ModelsScreen>
             child: Text(
               s.mdlLoadError,
               style: TextStyle(
-                fontSize: 12.5,
+                fontSize: HermesType.supportSize,
                 fontWeight: FontWeight.w600,
                 color: colors.textPrimary,
               ),
@@ -2107,7 +2157,7 @@ class _ModelsScreenState extends State<ModelsScreen>
     HermesThemeColors colors,
     LocalCatalogModel fit,
   ) => ModelsTonalGroup(
-    margin: const EdgeInsets.only(bottom: 12),
+    margin: const EdgeInsets.only(bottom: HermesSpace.x3),
     child: premium.HermesListRow(
       key: const ValueKey('lm-setup-offer'),
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
@@ -2139,7 +2189,10 @@ class _ModelsScreenState extends State<ModelsScreen>
             : s.lm1215EntryEmpty,
     };
     return ModelsTonalGroup(
-      margin: const EdgeInsets.only(top: 8, bottom: 8),
+      margin: const EdgeInsets.only(
+        top: HermesSpace.x2,
+        bottom: HermesSpace.x2,
+      ),
       child: premium.HermesListRow(
         key: const ValueKey('lm1215-entry'),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
@@ -2173,9 +2226,9 @@ class _ModelsScreenState extends State<ModelsScreen>
   Widget _buildNoActiveModelCard(Strings s, HermesThemeColors colors) =>
       ModelsTonalGroup(
         key: const ValueKey('models-no-provider'),
-        margin: const EdgeInsets.only(bottom: 16),
+        margin: const EdgeInsets.only(bottom: HermesSpace.x4),
         child: Padding(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(HermesSpace.x4),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -2192,7 +2245,7 @@ class _ModelsScreenState extends State<ModelsScreen>
                     Text(
                       s.mdlNoActiveModelTitle,
                       style: TextStyle(
-                        fontSize: 14,
+                        fontSize: HermesType.textSize,
                         fontWeight: FontWeight.w700,
                         color: colors.textPrimary,
                       ),
@@ -2230,13 +2283,13 @@ class _ModelsScreenState extends State<ModelsScreen>
         : s.mdlCtxTokens(ctx.toString());
     final small = Theme.of(context).textTheme.bodySmall;
     return ModelsTonalGroup(
-      margin: const EdgeInsets.only(bottom: 16),
+      margin: const EdgeInsets.only(bottom: HermesSpace.x4),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(10),
         side: BorderSide(color: colors.accent, width: 1.5),
       ),
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(HermesSpace.x4),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -2254,7 +2307,7 @@ class _ModelsScreenState extends State<ModelsScreen>
                 const Spacer(),
                 Container(
                   padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
+                    horizontal: HermesSpace.x2,
                     vertical: 3,
                   ),
                   decoration: BoxDecoration(
@@ -2377,7 +2430,7 @@ class _ModelsScreenState extends State<ModelsScreen>
         : 'normal';
     return [
       ModelsTonalGroup(
-        margin: const EdgeInsets.only(bottom: 8),
+        margin: const EdgeInsets.only(bottom: HermesSpace.x2),
         child: Column(
           children: [
             if (reasoning)
@@ -2450,7 +2503,7 @@ class _ModelsScreenState extends State<ModelsScreen>
     return [
       if (stale.isNotEmpty)
         Padding(
-          padding: const EdgeInsets.only(bottom: 8),
+          padding: const EdgeInsets.only(bottom: HermesSpace.x2),
           child: HermesInlineNotice(
             key: const ValueKey('models-aux-stale'),
             message: s.mdlStaleAux(
@@ -2462,7 +2515,7 @@ class _ModelsScreenState extends State<ModelsScreen>
           ),
         ),
       ModelsTonalGroup(
-        margin: const EdgeInsets.only(bottom: 8),
+        margin: const EdgeInsets.only(bottom: HermesSpace.x2),
         child: premium.HermesListRow.alignTile(
           child: ExpansionTile(
             key: const ValueKey('models-aux'),
@@ -2489,7 +2542,12 @@ class _ModelsScreenState extends State<ModelsScreen>
                 color: colors.textSecondary,
               ),
             ),
-            childrenPadding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+            childrenPadding: const EdgeInsets.fromLTRB(
+              HermesSpace.x2,
+              0,
+              HermesSpace.x2,
+              HermesSpace.x2,
+            ),
             children: [
               if (customized > 0)
                 ListTile(
@@ -2502,7 +2560,10 @@ class _ModelsScreenState extends State<ModelsScreen>
                   ),
                   title: Text(
                     s.mdlAuxResetAll,
-                    style: TextStyle(fontSize: 12.5, color: colors.accentHover),
+                    style: TextStyle(
+                      fontSize: HermesType.supportSize,
+                      color: colors.accentHover,
+                    ),
                   ),
                   onTap: busy ? null : _resetAux,
                 ),
@@ -2525,6 +2586,7 @@ class _ModelsScreenState extends State<ModelsScreen>
     final provider = task['provider'] as String? ?? 'auto';
     final model = task['model'] as String? ?? '';
     final isAuto = provider == 'auto' || provider.isEmpty;
+    final inheritsMain = provider == kHermesInheritMainProvider;
     final serverLabel = (task['label'] ?? '').toString().trim();
     final label =
         _auxLabel(slot, s) ?? (serverLabel.isEmpty ? slot : serverLabel);
@@ -2535,19 +2597,24 @@ class _ModelsScreenState extends State<ModelsScreen>
         ? s.chaControlInherit
         : value == 'none'
         ? s.chaControlOff
-        : value;
+        : _effortLabel(value, s);
     return ModelsTonalGroup(
       margin: const EdgeInsets.only(bottom: 6),
       child: Column(
         children: [
           premium.HermesListRow(
             key: ValueKey('models-aux-$slot'),
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            padding: const EdgeInsets.symmetric(
+              horizontal: 14,
+              vertical: HermesSpace.x2,
+            ),
             icon: Icons.route_outlined,
             title: label,
             // The stored route as it is, like Desktop's route line.
             subtitle: isAuto
                 ? s.mdlAutomatic
+                : inheritsMain && model.isEmpty
+                ? s.modelsBotInheritMain
                 : model.isEmpty
                 ? provider
                 : '$model · $provider',
@@ -2566,16 +2633,16 @@ class _ModelsScreenState extends State<ModelsScreen>
               onTap: busy || widget.connection.readOnly
                   ? null
                   : () async {
-                      final picked = await showHermesOptions<String>(
+                      final picked = await showHermesReasoningPicker(
                         context: context,
                         title: s.chaSessionReasoningLabel,
                         selected: selectedEffort,
-                        options: [
+                        inheritLabel: effortLabel(''),
+                        defaultLabel: effortLabel(''),
+                        levels: [
                           for (final value in efforts)
-                            HermesOption(
-                              value: value,
-                              label: effortLabel(value),
-                            ),
+                            if (value.isNotEmpty)
+                              HermesReasoningLevel(value, effortLabel(value)),
                         ],
                       );
                       if (picked == null || !mounted) return;
@@ -2623,9 +2690,12 @@ class _ModelsScreenState extends State<ModelsScreen>
     return ListTile(
       key: key,
       dense: true,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 20),
+      contentPadding: const EdgeInsets.symmetric(horizontal: HermesSpace.x5),
       leading: Icon(icon, size: 17, color: destructive ? color : colors.accent),
-      title: Text(label, style: TextStyle(fontSize: 12.5, color: color)),
+      title: Text(
+        label,
+        style: TextStyle(fontSize: HermesType.supportSize, color: color),
+      ),
       onTap: onTap,
     );
   }
@@ -2693,11 +2763,16 @@ class _ModelsScreenState extends State<ModelsScreen>
           ListTile(
             key: const ValueKey('models-moa'),
             dense: true,
-            contentPadding: const EdgeInsets.symmetric(horizontal: 20),
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: HermesSpace.x5,
+            ),
             leading: Icon(Icons.tune, size: 18, color: colors.accent),
             title: Text(
               s.moaConfigureRecipe,
-              style: TextStyle(fontSize: 13, color: colors.accentHover),
+              style: TextStyle(
+                fontSize: HermesType.valueSize,
+                color: colors.accentHover,
+              ),
             ),
             trailing: Icon(
               Icons.chevron_right,
@@ -2758,7 +2833,10 @@ class _ModelsScreenState extends State<ModelsScreen>
     final unavailable = provider.unavailableModels.contains(modelId);
     return premium.HermesListRow(
       key: ValueKey('models-model-${provider.slug}-$modelId'),
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+      padding: const EdgeInsets.symmetric(
+        horizontal: HermesSpace.x5,
+        vertical: HermesSpace.x2,
+      ),
       leading: ProviderLogo(
         key: ValueKey('provider-logo-model-${provider.slug}-$modelId'),
         provider: provider.slug,
@@ -2786,7 +2864,7 @@ class _ModelsScreenState extends State<ModelsScreen>
     List<_SetupRow> rows,
     bool busy,
   ) => ModelsTonalGroup(
-    margin: const EdgeInsets.only(bottom: 8),
+    margin: const EdgeInsets.only(bottom: HermesSpace.x2),
     child: premium.HermesListRow.alignTile(
       child: ExpansionTile(
         key: const ValueKey('models-unconfigured'),
@@ -2811,11 +2889,16 @@ class _ModelsScreenState extends State<ModelsScreen>
             color: colors.textSecondary,
           ),
         ),
-        childrenPadding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+        childrenPadding: const EdgeInsets.fromLTRB(
+          HermesSpace.x2,
+          0,
+          HermesSpace.x2,
+          HermesSpace.x2,
+        ),
         children: [
           for (final row in rows)
             ModelsTonalGroup(
-              margin: const EdgeInsets.only(bottom: 8),
+              margin: const EdgeInsets.only(bottom: HermesSpace.x2),
               child: premium.HermesListRow(
                 icon: Icons.lock_outline,
                 iconColor: colors.textDisabled,
@@ -2969,272 +3052,4 @@ String normalizeProviderOAuthBrowserUrl(
     debugPrint('OAuth URL redirect normalized for ${dashboard.origin}');
   }
   return changed ? uri.replace(queryParameters: query).toString() : rawUrl;
-}
-
-/// Device-code sign-in: shows the code, opens the browser and polls until the
-/// provider confirms. Pops `true` on success.
-class ProviderOAuthLoginScreen extends StatefulWidget {
-  final String providerName;
-  final String providerSlug;
-  final String url;
-  final String code;
-  final int expiresIn;
-  final Future<Map<String, dynamic>> Function() poll;
-
-  const ProviderOAuthLoginScreen({
-    super.key,
-    required this.providerName,
-    required this.providerSlug,
-    required this.url,
-    required this.code,
-    required this.poll,
-    this.expiresIn = 0,
-  });
-
-  @override
-  State<ProviderOAuthLoginScreen> createState() =>
-      _ProviderOAuthLoginScreenState();
-}
-
-class _ProviderOAuthLoginScreenState extends State<ProviderOAuthLoginScreen> {
-  Timer? _timer;
-  Timer? _countdown;
-  String? _error;
-  int _remaining = 0;
-  bool _opened = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _remaining = widget.expiresIn;
-    // Copia el código y abre el navegador automáticamente (un toque menos).
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      if (widget.code.isNotEmpty) {
-        await Clipboard.setData(ClipboardData(text: widget.code));
-      }
-      await _open();
-    });
-    _timer = Timer.periodic(const Duration(seconds: 3), (_) => _poll());
-    if (_remaining > 0) {
-      _countdown = Timer.periodic(const Duration(seconds: 1), (_) {
-        if (!mounted) return;
-        setState(() => _remaining = (_remaining - 1).clamp(0, 1 << 30));
-        if (_remaining == 0) {
-          _timer?.cancel();
-          _countdown?.cancel();
-          setState(() => _error = Strings.of(context).mdlCodeExpired);
-        }
-      });
-    }
-  }
-
-  @override
-  void dispose() {
-    _timer?.cancel();
-    _countdown?.cancel();
-    super.dispose();
-  }
-
-  Future<void> _poll() async {
-    try {
-      final res = await widget.poll();
-      final status = (res['status'] ?? 'pending').toString();
-      final normalized = status.toLowerCase();
-      if (kDebugMode) {
-        debugPrint(
-          'OAuth poll ${widget.providerSlug}: status=$status keys=${res.keys.toList()}',
-        );
-      }
-      if (!mounted) return;
-      if (!_isPendingStatus(normalized)) {
-        _timer?.cancel();
-        _countdown?.cancel();
-        if (_isSuccessStatus(normalized)) {
-          Navigator.of(context).pop(true);
-        } else {
-          setState(() {
-            _error =
-                (res['error_message'] ??
-                        res['message'] ??
-                        res['error'] ??
-                        res['detail'] ??
-                        Strings.of(context).mdlLoginNotCompleted(status))
-                    .toString();
-          });
-        }
-      }
-    } catch (e) {
-      if (kDebugMode) debugPrint('OAuth poll ${widget.providerSlug} error: $e');
-      // Reintenta en el siguiente tick.
-    }
-  }
-
-  bool _isPendingStatus(String status) => const {
-    'pending',
-    'slow_down',
-    'authorization_pending',
-    'waiting',
-    'in_progress',
-    'started',
-  }.contains(status);
-
-  bool _isSuccessStatus(String status) => const {
-    'success',
-    'completed',
-    'complete',
-    'ok',
-    'authorized',
-    // OpenAI Codex termina el flujo loopback con status "approved" (visto en
-    // vivo): sin esto la app mostraba "Login no completado (approved)" pese a
-    // que el login SÍ había terminado bien.
-    'approved',
-    'saved',
-    'linked',
-    'authenticated',
-    'connected',
-    'done',
-  }.contains(status);
-
-  Future<void> _open() async {
-    final uri = Uri.tryParse(widget.url);
-    if (uri != null) {
-      try {
-        await launchUrl(uri, mode: LaunchMode.externalApplication);
-        if (mounted) setState(() => _opened = true);
-      } catch (e) {
-        debugPrint('[models] excepción silenciada (se ignora sin más): $e');
-      }
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
-    final s = Strings.of(context);
-    final done = _error != null;
-    final expiryLabel = _remaining > 0
-        ? s.mdlCodeExpiry(
-            '${_remaining ~/ 60}:${(_remaining % 60).toString().padLeft(2, '0')}',
-          )
-        : '';
-    return Scaffold(
-      appBar: HermesAppBar(
-        title: Text(s.mdlOAuthTitle(widget.providerName)),
-        leading: IconButton(
-          icon: const Icon(Icons.close),
-          tooltip: s.commonClose,
-          onPressed: () => Navigator.of(context).pop(false),
-        ),
-      ),
-      body: ListView(
-        clipBehavior: hermesUnderHeader,
-        padding: const EdgeInsets.all(20),
-        children: [
-          Text(
-            _opened
-                ? s.mdlOAuthBrowserOpened(widget.providerName)
-                : s.mdlOAuthOpenBrowser(widget.providerName),
-            style: TextStyle(fontSize: 13, color: colors.textSecondary),
-          ),
-          if (widget.code.isNotEmpty) ...[
-            const SizedBox(height: 20),
-            Row(
-              children: [
-                Text(
-                  s.mdlOAuthCodeLabel,
-                  style: TextStyle(fontSize: 11, color: colors.textTertiary),
-                ),
-                const Spacer(),
-                if (expiryLabel.isNotEmpty)
-                  Text(
-                    expiryLabel,
-                    style: TextStyle(fontSize: 11, color: colors.textTertiary),
-                  ),
-              ],
-            ),
-            const SizedBox(height: 6),
-            InkWell(
-              onTap: () {
-                Clipboard.setData(ClipboardData(text: widget.code));
-                AppFeedback.of(
-                  context,
-                ).notify(FeedbackKind.routine, s.mdlCodeCopied);
-              },
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 12,
-                ),
-                decoration: BoxDecoration(
-                  color: colors.surfaceVariant,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: colors.accent),
-                ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        widget.code,
-                        style: TextStyle(
-                          fontSize: 22,
-                          letterSpacing: 3,
-                          color: colors.accentHover,
-                        ),
-                      ),
-                    ),
-                    Icon(Icons.copy, size: 16, color: colors.textSecondary),
-                  ],
-                ),
-              ),
-            ),
-          ],
-          const SizedBox(height: 20),
-          FilledButton.icon(
-            onPressed: done ? null : _open,
-            icon: const Icon(Icons.open_in_browser),
-            label: Text(_opened ? s.mdlReopenBrowser : s.mdlOpenBrowser),
-          ),
-          const SizedBox(height: 12),
-          if (!done)
-            OutlinedButton.icon(
-              onPressed: _poll,
-              icon: const Icon(Icons.refresh, size: 16),
-              label: Text(s.mdlCheckNow),
-            ),
-          const SizedBox(height: 24),
-          if (!done)
-            Row(
-              children: [
-                SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: colors.accent,
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Text(
-                  s.mdlWaitingAuth,
-                  style: TextStyle(fontSize: 12, color: colors.textSecondary),
-                ),
-              ],
-            )
-          else
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: colors.error.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: colors.error.withValues(alpha: 0.4)),
-              ),
-              child: Text(
-                _error!,
-                style: TextStyle(fontSize: 12, color: colors.error),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
 }

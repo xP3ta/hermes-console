@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../design/list.dart';
 import '../theme/app_theme.dart';
+import 'hermes_ui.dart' show HermesSoftLight;
 
 /// Tarjeta redondeada que agrupa las filas de "Personalizar" en las
 /// pantallas de crear/editar bot, como en el mockup del rediseño de Bots:
@@ -33,7 +34,9 @@ class BotSettingsGroup extends StatelessWidget {
     // fila de Skills) sin perder sus ripples de tinta: un DecoratedBox con
     // color de fondo entre un ListTile y su Material ancestro los oculta.
     return Material(
-      color: colors.surfaceVariant.withValues(alpha: 0.4),
+      color: HermesSoftLight.solid(context)
+          ? HermesSoftLight.fill(context)
+          : colors.surfaceVariant.withValues(alpha: 0.4),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(18),
         side: BorderSide(color: colors.divider),

@@ -57,7 +57,9 @@ Future<CompanionController> _scoped(
   CompanionRepository? repository,
   String? selectedSlug,
 }) async {
-  SharedPreferences.setMockInitialValues({});
+  SharedPreferences.setMockInitialValues({
+    CompanionPreferences.enabledKey: true,
+  });
   late CompanionController controller;
   await tester.runAsync(() async {
     final prefs = await CompanionPreferences.load();

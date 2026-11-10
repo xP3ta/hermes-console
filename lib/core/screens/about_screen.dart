@@ -6,6 +6,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../theme/app_theme.dart';
+import '../widgets/install_source_section.dart';
 import '../widgets/animated_hermes_logo.dart' show kConsoleIconAsset;
 import '../design/hermes_design.dart';
 import '../feedback/feedback_policy.dart';
@@ -220,6 +221,10 @@ SOFTWARE.
             ),
           ],
         ),
+        // Which channel delivers the updates (it was only in the full list of
+        // Settings, which has no row of its own any more).
+        const SizedBox(height: HermesSpace.x4),
+        const InstallSourceSection(),
         // Nota de compatibilidad
         Padding(
           padding: const EdgeInsets.fromLTRB(6, 16, 6, 0),

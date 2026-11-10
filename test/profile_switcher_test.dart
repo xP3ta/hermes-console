@@ -129,6 +129,7 @@ void main() {
     // With bots, Home's board is Ahora, Bots, Salas and Cron: the profile's
     // chat is named in Ahora, as the last thing that finished.
     expect(find.textContaining('ana chat'), findsWidgets);
+    // A tap on the avatar opens the switcher.
     await tester.tap(find.byKey(const ValueKey('profile-switcher-compact')));
     await settle(tester);
     expect(
@@ -148,6 +149,9 @@ void main() {
     expect(find.byKey(const ValueKey('profile-switcher-sheet')), findsNothing);
     expect(find.textContaining('bob chat'), findsWidgets);
     expect(find.textContaining('ana chat'), findsNothing);
+    // The pick is announced and the avatar follows the new profile.
+    expect(find.text('Active profile: bob'), findsOneWidget);
+    expect(find.byKey(const ValueKey('profile-face-bob')), findsWidgets);
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pumpAndSettle();
   });
@@ -187,9 +191,68 @@ void main() {
     );
     await settle(tester);
     expect(manager.activeProfileFor(connection.id), '');
-    expect(find.text('Profile: Default'), findsOneWidget);
+    expect(find.text('Profile: Hermes'), findsOneWidget);
     expect(find.text('default chat'), findsOneWidget);
     expect(reads, ['ana', 'default']);
+  });
+
+  testWidgets('drawer: the main profile is named by its own name, the one of '
+      'the Bots list, never by «Hermes» nor «default»', (tester) async {
+    tester.view.physicalSize = const Size(600, 2400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await manager.setActiveProfile(connection.id, '');
+    BotRosterRegistry.shared.publish(connection.id, 'QA', [
+      const AgentProfile(
+        name: 'default',
+        isDefault: true,
+        displayName: 'Hermes',
+        botModeUiMeta: {'title': 'xPeta'},
+      ),
+      _profile('ana'),
+    ]);
+    final scaffoldKey = GlobalKey<ScaffoldState>();
+    await tester.pumpWidget(
+      app(
+        Scaffold(
+          key: scaffoldKey,
+          drawer: HermesDrawer(
+            connection: connection,
+            connManager: manager,
+            current: DrawerSection.home,
+            recentSessionsClientFactory: (saved) => testApiClient(
+              baseUrl: saved.baseUrl,
+              httpClient: _sessions(<String>[]),
+            ),
+          ),
+          body: const SizedBox.shrink(),
+        ),
+      ),
+    );
+    scaffoldKey.currentState!.openDrawer();
+    await settle(tester);
+    expect(find.text('Profile: xPeta'), findsOneWidget);
+    expect(find.text('Profile: Hermes'), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('profile-switcher-row')));
+    await settle(tester);
+    final main = find.byKey(const ValueKey('profile-switcher-option-default'));
+    expect(
+      find.descendant(of: main, matching: find.text('xPeta')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: main, matching: find.text('Hermes')),
+      findsNothing,
+    );
+    // Another profile keeps its own name.
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('profile-switcher-option-ana')),
+        matching: find.text('ana'),
+      ),
+      findsOneWidget,
+    );
   });
 
   testWidgets('the sheet reads the list only when no live roster exists', (
@@ -477,5 +540,278 @@ void main() {
     await manager.setActiveProfile(connection.id, 'bob');
     await settle(tester);
     expect(find.text('online · bob'), findsOneWidget);
+  });
+
+  group('the sheet', () {
+    Future<void> open(
+      WidgetTester tester, {
+      VoidCallback? onViewProfile,
+    }) async {
+      late BuildContext ctx;
+      await tester.pumpWidget(
+        app(
+          Builder(
+            builder: (context) {
+              ctx = context;
+              return const SizedBox.shrink();
+            },
+          ),
+        ),
+      );
+      unawaited(
+        showProfileSwitcher(
+          ctx,
+          connection: connection,
+          connManager: manager,
+          onViewProfile: onViewProfile,
+        ),
+      );
+      await settle(tester);
+    }
+
+    List<AgentProfile> many(int count) => [
+      _profile('default', isDefault: true),
+      for (var i = 1; i < count; i++)
+        _profile('bot-${i.toString().padLeft(2, '0')}'),
+    ];
+
+    testWidgets('lists every profile with its state: the active one says '
+        'Active and carries the check, the others are free', (tester) async {
+      await open(tester);
+      final ana = find.byKey(const ValueKey('profile-switcher-option-ana'));
+      expect(
+        find.descendant(of: ana, matching: find.text('Active')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: ana, matching: find.byIcon(Icons.check_rounded)),
+        findsOneWidget,
+      );
+      final bob = find.byKey(const ValueKey('profile-switcher-option-bob'));
+      expect(
+        find.descendant(of: bob, matching: find.text('free')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: bob, matching: find.byIcon(Icons.check_rounded)),
+        findsNothing,
+      );
+      // No «Ver perfil» unless the caller offers it.
+      expect(
+        find.byKey(const ValueKey('profile-switcher-view-profile')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const ValueKey('profile-switcher-search')),
+        findsNothing,
+      );
+    });
+
+    testWidgets('a single profile is listed and can be picked', (tester) async {
+      BotRosterRegistry.shared.publish(connection.id, 'QA', [
+        _profile('default', isDefault: true),
+      ]);
+      await open(tester);
+      expect(
+        find.byKey(const ValueKey('profile-switcher-option-default')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('profile-switcher-option-ana')),
+        findsNothing,
+      );
+      await tester.tap(
+        find.byKey(const ValueKey('profile-switcher-option-default')),
+      );
+      await settle(tester);
+      expect(manager.activeProfileFor(connection.id), '');
+      expect(
+        find.byKey(const ValueKey('profile-switcher-sheet')),
+        findsNothing,
+      );
+    });
+
+    testWidgets('«Ver perfil» closes the sheet and opens the page', (
+      tester,
+    ) async {
+      var views = 0;
+      await open(tester, onViewProfile: () => views++);
+      await tester.tap(
+        find.byKey(const ValueKey('profile-switcher-view-profile')),
+      );
+      await settle(tester);
+      expect(views, 1);
+      expect(
+        find.byKey(const ValueKey('profile-switcher-sheet')),
+        findsNothing,
+      );
+      // Nothing was switched.
+      expect(manager.activeProfileFor(connection.id), 'ana');
+    });
+
+    testWidgets('eight profiles: no search; nine: a search that narrows the '
+        'list and says when nothing matches', (tester) async {
+      BotRosterRegistry.shared.publish(connection.id, 'QA', many(8));
+      await open(tester);
+      expect(
+        find.byKey(const ValueKey('profile-switcher-search')),
+        findsNothing,
+      );
+      await tester.pumpWidget(const SizedBox.shrink());
+      BotRosterRegistry.shared.publish(connection.id, 'QA', many(12));
+      await open(tester);
+      final search = find.byKey(const ValueKey('profile-switcher-search'));
+      expect(search, findsOneWidget);
+      expect(tester.getSize(search).height, greaterThanOrEqualTo(48));
+      await tester.enterText(search, 'bot-03');
+      await tester.pump();
+      expect(
+        find.byKey(const ValueKey('profile-switcher-option-bot-03')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('profile-switcher-option-bot-04')),
+        findsNothing,
+      );
+      await tester.enterText(search, 'zzz');
+      await tester.pump();
+      expect(find.text('No profile matches'), findsOneWidget);
+      await tester.enterText(search, '');
+      await tester.pump();
+      expect(find.text('No profile matches'), findsNothing);
+      expect(
+        find.byKey(const ValueKey('profile-switcher-option-default')),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('many profiles scroll inside the sheet and the last one can '
+        'be picked', (tester) async {
+      tester.view.physicalSize = const Size(400, 600);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      BotRosterRegistry.shared.publish(connection.id, 'QA', many(30));
+      await open(tester);
+      expect(tester.takeException(), isNull);
+      final last = find.byKey(const ValueKey('profile-switcher-option-bot-29'));
+      expect(last, findsNothing);
+      await tester.scrollUntilVisible(
+        last,
+        200,
+        scrollable: find
+            .descendant(
+              of: find.byKey(const ValueKey('profile-switcher-list')),
+              matching: find.byType(Scrollable),
+            )
+            .first,
+      );
+      await tester.tap(last);
+      await settle(tester);
+      expect(manager.activeProfileFor(connection.id), 'bot-29');
+    });
+
+    for (final locale in Strings.supportedLocales) {
+      testWidgets('${locale.languageCode}: 2x text, phone width, the sheet '
+          'with a search does not overflow and keeps 48 dp targets', (
+        tester,
+      ) async {
+        tester.view.physicalSize = const Size(360, 800);
+        tester.view.devicePixelRatio = 1;
+        tester.platformDispatcher.textScaleFactorTestValue = 2;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+        BotRosterRegistry.shared.publish(connection.id, 'QA', many(12));
+        late BuildContext ctx;
+        await tester.pumpWidget(
+          MaterialApp(
+            locale: locale,
+            theme: AppTheme.fromId('dark'),
+            localizationsDelegates: Strings.localizationsDelegates,
+            supportedLocales: Strings.supportedLocales,
+            home: Builder(
+              builder: (context) {
+                ctx = context;
+                return const SizedBox.shrink();
+              },
+            ),
+          ),
+        );
+        unawaited(
+          showProfileSwitcher(
+            ctx,
+            connection: connection,
+            connManager: manager,
+            onViewProfile: () {},
+            onManage: () {},
+          ),
+        );
+        await settle(tester);
+        expect(tester.takeException(), isNull);
+        for (final key in const [
+          'profile-switcher-search',
+          'profile-switcher-option-default',
+          'profile-switcher-view-profile',
+          'profile-switcher-manage',
+        ]) {
+          expect(
+            tester.getSize(find.byKey(ValueKey(key))).height,
+            greaterThanOrEqualTo(48),
+            reason: key,
+          );
+        }
+      });
+    }
+  });
+
+  testWidgets('the avatar is a selector: a tap opens the sheet, a long press '
+      'opens the page; Semantics announce both', (tester) async {
+    final semantics = tester.ensureSemantics();
+    var pages = 0;
+    await tester.pumpWidget(
+      app(
+        Scaffold(
+          body: ProfileSwitcherButton(
+            connection: connection,
+            connManager: manager,
+            compact: true,
+            onOpenProfile: () => pages++,
+          ),
+        ),
+      ),
+    );
+    await settle(tester);
+    final chip = find.byKey(const ValueKey('profile-switcher-compact'));
+    expect(
+      find.byKey(const ValueKey('profile-switcher-chevron')),
+      findsOneWidget,
+    );
+    expect(
+      tester.getSemantics(chip),
+      isSemantics(
+        isButton: true,
+        hasTapAction: true,
+        hasLongPressAction: true,
+        label: 'Profile: ana',
+        hint: 'Switch profile',
+      ),
+    );
+    await tester.longPress(chip);
+    await settle(tester);
+    expect(pages, 1);
+    expect(find.byKey(const ValueKey('profile-switcher-sheet')), findsNothing);
+    await tester.tap(chip);
+    await settle(tester);
+    expect(
+      find.byKey(const ValueKey('profile-switcher-sheet')),
+      findsOneWidget,
+    );
+    await tester.tap(
+      find.byKey(const ValueKey('profile-switcher-view-profile')),
+    );
+    await settle(tester);
+    expect(pages, 2);
+    semantics.dispose();
   });
 }

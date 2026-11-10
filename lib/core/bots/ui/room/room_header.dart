@@ -119,6 +119,13 @@ class RoomHeaderBar extends StatelessWidget {
           );
     return FloatingChatHeader(
       key: const ValueKey('room-header-bar'),
+      // The chat's header treatment (chat_screen.dart): the composer's
+      // glass, one strip with its soft fade, and the solid header only
+      // where the blur policy says no. Without it a room painted an opaque
+      // band with a hard edge over its first rows (QA 1.4.0).
+      glass: true,
+      // The members' faces sit a little into the island's edge.
+      overlap: FloatingChatHeader.roomFaceOverlap,
       // QA 9493: a room keeps its members' ORIGINAL faces (the cluster
       // below, the same faces as the round sheet); the request only tells
       // the seam who is there.

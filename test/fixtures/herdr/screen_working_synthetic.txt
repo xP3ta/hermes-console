@@ -1,0 +1,8 @@
+● Reading lib/main.dart
+✓ 3 files read
+✻ Editing auth.ts… (12s · esc to interrupt)
+
+╭──────────────╮
+│ >            │
+╰──────────────╯
+  ? for shortcuts

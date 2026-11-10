@@ -36,6 +36,10 @@ class ProfileFace extends StatelessWidget {
   final String profileName;
   final AgentProfile? profile;
   final MissionProfileAvatarCache? avatarCache;
+
+  /// Connection of [profileName], for the saved character of a profile that
+  /// has no photo (and so no cache is handed down). [avatarCache] wins.
+  final String? connectionId;
   final bool active;
   final bool working;
   final double size;
@@ -45,6 +49,7 @@ class ProfileFace extends StatelessWidget {
     required this.profileName,
     this.profile,
     this.avatarCache,
+    this.connectionId,
     this.active = false,
     this.working = false,
     this.size = defaultSize,
@@ -130,6 +135,7 @@ class ProfileFace extends StatelessWidget {
                   profileName: profile?.name ?? profileName,
                   hasAvatar: photo,
                   cache: photo ? cache : null,
+                  connectionId: cache?.connectionId ?? connectionId,
                   size: inner,
                   shape: profile?.botFaceShape,
                   colorHex: profile?.botFaceColorHex,

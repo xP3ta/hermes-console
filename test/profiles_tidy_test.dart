@@ -132,9 +132,8 @@ void main() {
         await tester.pump();
         final labels = {
           for (final label in [
-            'Identidad visual',
             'Modelo',
-            'Descripción',
+            'Razonamiento',
             'Skills',
             'Configuración avanzada',
           ])
@@ -146,11 +145,10 @@ void main() {
           matching: find.byIcon(Icons.chevron_right_rounded),
         );
         final ends = {
-          tester.getTopRight(find.text('Sin descripción')).dx,
           tester.getTopRight(find.text('Ver skills')).dx,
           tester.getTopRight(arrow('profile-editor-model-row')).dx,
+          tester.getTopRight(arrow('profile-editor-reasoning-row')).dx,
           tester.getTopRight(arrow('profile-editor-advanced-row')).dx,
-          tester.getTopRight(arrow('profile-editor-identity-row')).dx,
         };
         expect(ends, hasLength(1));
         expect(tester.takeException(), isNull);
@@ -231,7 +229,8 @@ void main() {
         // Every name starts at the same x and every menu ends at the same
         // one.
         final lefts = {
-          for (final p in profiles) tester.getTopLeft(find.text(p.name)).dx,
+          for (final p in profiles)
+            tester.getTopLeft(find.text(p.botListName)).dx,
         };
         final rights = {
           for (final p in profiles)

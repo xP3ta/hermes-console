@@ -7,17 +7,24 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../l10n/app_localizations.dart';
+import '../../main.dart' show HermesAppState;
 import '../design/hermes_design.dart';
+import '../models/admin_integrations.dart' show McpOAuthFlow;
+import '../screens/admin_integrations_copy.dart';
+import '../screens/lock_screen.dart';
 import '../services/command_risk.dart';
 import '../theme/app_theme.dart';
 import '../widgets/action_approval.dart';
 import '../widgets/hermes_notice.dart';
+import '../widgets/mcp_provisioning_surface.dart' show showMcpOAuthFlowSurface;
 import 'capabilities_repository.dart';
 import 'capability_env_sheet.dart';
 import 'capability_models.dart';
 import 'capability_ui.dart';
 import 'mcp_logs_screen.dart';
 import 'mcp_runtime_status.dart';
+import 'skill_content_screen.dart';
+import 'spp_safety.dart';
 import '../feedback/feedback_policy.dart';
 
 enum CapabilityAction { install, update, enable, disable, remove, test, docs }
@@ -63,6 +70,19 @@ List<CapabilityAction> capabilityActions(
   if (hasDocs) out.add(CapabilityAction.docs);
   return out;
 }
+
+/// How risky the confirmation of [action] on [item] is. Installing is always
+/// high; so is removing a plugin, which is code that ran on the server.
+CommandRisk capabilityActionRisk(
+  CapabilityItem item,
+  CapabilityAction action,
+) => switch (action) {
+  CapabilityAction.install => CommandRisk.high,
+  CapabilityAction.remove =>
+    item.kind == CapabilityKind.plugin ? CommandRisk.high : CommandRisk.medium,
+  CapabilityAction.update => CommandRisk.medium,
+  _ => CommandRisk.low,
+};
 
 class CapabilityDetailScreen extends StatefulWidget {
   final CapabilityItem item;
@@ -169,7 +189,7 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen>
     CapabilityAction.docs => Icons.open_in_new_rounded,
   };
 
-  Future<bool> _confirm(CapabilityAction action) {
+  Future<bool> _confirm(CapabilityAction action, {String scanLine = ''}) {
     final s = Strings.of(context);
     final name = _item.name;
     final install = capabilityInstallConfirmation(
@@ -180,18 +200,18 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen>
     final (title, detail, risk) = switch (action) {
       CapabilityAction.install => (
         install.title,
-        install.detail,
+        scanLine.isEmpty ? install.detail : '${install.detail}\n$scanLine',
         CommandRisk.high,
       ),
       CapabilityAction.remove => (
         s.cphConfirmRemove(name),
         s.cphConfirmRemoveBody,
-        CommandRisk.medium,
+        capabilityActionRisk(_item, action),
       ),
       CapabilityAction.update => (
         s.cphConfirmUpdate(name),
         '',
-        CommandRisk.medium,
+        capabilityActionRisk(_item, action),
       ),
       _ => (_label(s, action), name, CommandRisk.low),
     };
@@ -205,6 +225,8 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen>
     );
   }
 
+  /// Busy from the first tap to the last step, so a second tap during the
+  /// scan, a confirmation or the request can never open a second flow.
   Future<void> _run(CapabilityAction action) async {
     if (_busy) return;
     if (action == CapabilityAction.docs) {
@@ -212,7 +234,20 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen>
       await launchUrl(uri, mode: LaunchMode.externalApplication);
       return;
     }
-    if (action != CapabilityAction.test && !await _confirm(action)) return;
+    setState(() => _busy = true);
+    try {
+      await _runAction(action);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _runAction(CapabilityAction action) async {
+    if (action == CapabilityAction.install) {
+      if (!await _confirmInstall()) return;
+    } else if (action != CapabilityAction.test && !await _confirm(action)) {
+      return;
+    }
     if (!mounted) return;
     // Credentials are typed after the confirmation and live only inside this
     // call: the map is cleared as soon as the request has been made.
@@ -273,6 +308,9 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen>
               ? FeedbackKind.critical
               // A test result is what the user asked to see, and a fresh
               // install only reaches new sessions: both stay visible.
+              // A change saved but not live yet leaves the user a step to take.
+              : outcome.restart
+              ? FeedbackKind.critical
               : outcome.ok &&
                     action != CapabilityAction.test &&
                     action != CapabilityAction.install
@@ -281,7 +319,7 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen>
               ? FeedbackKind.critical
               : FeedbackKind.error,
           outcome.message,
-          warning: !outcome.ok || missing.isNotEmpty,
+          warning: !outcome.ok || missing.isNotEmpty || outcome.restart,
           action: canAddCredentials
               ? HermesNoticeAction(
                   label: s.cphAddCredentials,
@@ -375,36 +413,203 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen>
     }
   }
 
-  Future<void> _showScan() async {
-    final s = Strings.of(context);
-    final scan = await _guard(() => _repo.skillScan(_item.installId));
-    if (scan == null || !mounted) return;
-    await showHermesDialog<void>(
-      context: context,
-      title: s.cphRowScan,
-      message: [
-        if (scan.summary.isNotEmpty) scan.summary,
-        ...scan.findings,
-        if (scan.summary.isEmpty && scan.findings.isEmpty) s.cphScanClean,
-      ].join('\n'),
-      actions: [HermesDialogAction(label: s.commonClose, value: null)],
-    );
+  static String _verdictLine(Strings s, String verdict) {
+    final label = switch (verdict) {
+      'safe' => s.memShareVerdictSafe,
+      'caution' => s.memShareVerdictCaution,
+      'dangerous' => s.memShareVerdictDangerous,
+      _ => verdict,
+    };
+    return s.memShareVerdict(label);
   }
 
-  Future<void> _showPreview() async {
+  /// The scan as text: verdict, the server's reason, then up to twelve
+  /// findings and how many more there are.
+  static String _scanText(Strings s, SkillScan scan) {
+    const shown = 12;
+    return [
+      if (scan.verdict.isNotEmpty) _verdictLine(s, scan.verdict),
+      if (scan.summary.isNotEmpty) scan.summary,
+      if (scan.policyReason.isNotEmpty) scan.policyReason,
+      ...scan.findings.take(shown),
+      if (scan.findings.length > shown)
+        s.sppScanMore(scan.findings.length - shown),
+      if (scan.summary.isEmpty && scan.findings.isEmpty) s.cphScanClean,
+    ].join('\n');
+  }
+
+  /// The line the install confirmation carries about the scan.
+  static String _scanLine(Strings s, SkillScan scan) =>
+      scan.totalFindings == 0 && scan.findings.isEmpty
+      ? s.sppScanClean
+      : s.sppScanFindings(
+          scan.totalFindings == 0 ? scan.findings.length : scan.totalFindings,
+        );
+
+  /// Scans a hub skill before it is installed, then asks. The server's own
+  /// policy decides what the person is offered:
+  ///  * `block`: nothing to confirm; the findings are shown and that is all.
+  ///  * `ask`: the findings, then an explicit "install anyway".
+  ///  * `allow`: the usual confirmation, with the scan result in it.
+  ///  * no answer (the scan failed on the network): a warning first, then the
+  ///    person may continue. This is fail-open ON PURPOSE (a product
+  ///    decision): the scan is a courtesy of the server, and a flaky network
+  ///    must not make installing impossible. The warning is explicit and the
+  ///    confirmation line says the scan was unavailable. Do not turn this
+  ///    into a block without that decision being revisited.
+  ///  * no scan route on this server: the usual confirmation, unchanged.
+  Future<bool> _confirmInstall() async {
     final s = Strings.of(context);
-    final preview = await _guard(() => _repo.skillPreview(_item.installId));
-    if (preview == null || !mounted) return;
-    await showHermesDialog<void>(
-      context: context,
-      title: s.cphRowPreview,
-      message: [
-        preview.skillMd,
-        if (preview.files.isNotEmpty)
-          '${s.cphPreviewFiles}: ${preview.files.join(', ')}',
-      ].where((part) => part.isNotEmpty).join('\n\n'),
-      actions: [HermesDialogAction(label: s.commonClose, value: null)],
+    SkillScan? scan;
+    var scanFailed = false;
+    if (_item.kind == CapabilityKind.skill &&
+        _repo.supports(CapabilityFeature.skillScan) != false) {
+      try {
+        scan = await runCapabilityProgress<SkillScan>(
+          context,
+          label: s.sppScanning(_item.name),
+          task: (_) => _repo.skillScan(_item.installId),
+        );
+      } catch (error) {
+        scanFailed =
+            capabilityFailureKindOf(error) != CapabilityFailureKind.unsupported;
+      }
+      if (!mounted) return false;
+    }
+    if (scan != null) {
+      switch (scan.gate) {
+        case SkillScanGate.block:
+          await showHermesDialog<void>(
+            context: context,
+            surfaceKey: const ValueKey('spp-scan-blocked'),
+            title: s.sppScanBlockedTitle,
+            message: '${s.sppScanBlockedBody}\n\n${_scanText(s, scan)}',
+            actions: [HermesDialogAction(label: s.commonClose, value: null)],
+          );
+          return false;
+        case SkillScanGate.ask:
+          final go = await showHermesDialog<bool>(
+            context: context,
+            surfaceKey: const ValueKey('spp-scan-ask'),
+            title: s.sppScanAskTitle,
+            message: '${s.sppScanAskBody}\n\n${_scanText(s, scan)}',
+            actions: [
+              HermesDialogAction(
+                label: s.commonCancel,
+                value: false,
+                style: HermesDialogActionStyle.cancel,
+              ),
+              HermesDialogAction(
+                key: const ValueKey('spp-scan-install-anyway'),
+                label: s.sppInstallAnyway,
+                value: true,
+                style: HermesDialogActionStyle.destructive,
+              ),
+            ],
+          );
+          if (go != true || !mounted) return false;
+        case SkillScanGate.allow || SkillScanGate.unknown:
+          break;
+      }
+      if (!mounted) return false;
+      return _confirm(CapabilityAction.install, scanLine: _scanLine(s, scan));
+    }
+    if (scanFailed) {
+      final go = await showHermesDialog<bool>(
+        context: context,
+        surfaceKey: const ValueKey('spp-scan-failed'),
+        title: s.sppScanFailedTitle,
+        message: s.sppScanFailedBody,
+        actions: [
+          HermesDialogAction(
+            label: s.commonCancel,
+            value: false,
+            style: HermesDialogActionStyle.cancel,
+          ),
+          HermesDialogAction(
+            key: const ValueKey('spp-scan-continue'),
+            label: s.sppContinue,
+            value: true,
+          ),
+        ],
+      );
+      if (go != true || !mounted) return false;
+      return _confirm(CapabilityAction.install, scanLine: s.sppScanUnavailable);
+    }
+    return _confirm(CapabilityAction.install);
+  }
+
+  Future<void> _showScan() async {
+    if (_busy) return;
+    final s = Strings.of(context);
+    setState(() => _busy = true);
+    try {
+      final scan = await _guard(() => _repo.skillScan(_item.installId));
+      if (scan == null || !mounted) return;
+      await showHermesDialog<void>(
+        context: context,
+        title: s.cphRowScan,
+        message: _scanText(s, scan),
+        actions: [HermesDialogAction(label: s.commonClose, value: null)],
+      );
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  /// The SKILL.md of a hub skill that is not installed yet, rendered.
+  Future<void> _showPreview() async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      final preview = await _guard(() => _repo.skillPreview(_item.installId));
+      if (preview == null || !mounted) return;
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => SkillContentScreen(
+            name: _item.name,
+            load: () async => preview.skillMd,
+            files: preview.files,
+            readOnly: true,
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  /// The SKILL.md of an installed skill. Only the user's own skills can be
+  /// rewritten; the hub's and the built-in ones are overwritten by updates.
+  Future<void> _openSkillMd() async {
+    if (_busy) return;
+    final s = Strings.of(context);
+    final item = _item;
+    final editable =
+        !widget.readOnly &&
+        item.provenance == 'agent' &&
+        _repo.supports(CapabilityFeature.skillWrite) != false;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => SkillContentScreen(
+          name: item.name,
+          load: () async =>
+              (await _repo.skillContent(item.installedName)).content,
+          save: editable
+              ? (content) =>
+                    _repo.updateSkillContent(item.installedName, content)
+              : null,
+          readOnlyReason: editable || widget.readOnly
+              ? null
+              : s.sppReadOnlySkill,
+          instanceId: widget.instanceId,
+          readOnly: widget.readOnly,
+          onChanged: widget.onChanged,
+        ),
+      ),
     );
+    // The route may have learned the server has no such route.
+    if (mounted) setState(() {});
   }
 
   /// One on-demand read: a missing route hides the row, other failures notify.
@@ -460,9 +665,12 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen>
             if (result.consentRequired) {
               return _Outcome.message(s.cphConsentNeeded, ok: false);
             }
+            // Installed disabled: the user switches it on from the list.
             return _Outcome(
-              message: '${s.cphDoneInstalled(name)}${pluginNotes(result)}',
-              next: item.copyWith(installed: true, enabled: true),
+              message:
+                  '${s.cphDoneInstalled(name)}\n${s.pghInstalledDisabled}'
+                  '${pluginNotes(result)}',
+              next: item.copyWith(installed: true, enabled: false),
               missingEnv: result.missingEnv,
             );
           case CapabilityKind.mcp:
@@ -494,21 +702,25 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen>
       case CapabilityAction.enable:
       case CapabilityAction.disable:
         final enabled = action == CapabilityAction.enable;
+        var restart = false;
         switch (item.kind) {
           case CapabilityKind.skill:
             await _repo.setSkillEnabled(item.installedName, enabled);
           case CapabilityKind.plugin:
-            await _repo.setPluginEnabled(
+            final result = await _repo.setPluginEnabled(
               item.installedName,
               enabled,
               key: item.installedKey,
             );
+            restart = result.restartRequired;
           case CapabilityKind.mcp:
             await _repo.setMcpEnabled(item.installedName, enabled);
         }
+        final done = enabled ? s.cphDoneEnabled(name) : s.cphDoneDisabled(name);
         return _Outcome(
-          message: enabled ? s.cphDoneEnabled(name) : s.cphDoneDisabled(name),
+          message: restart ? '$done\n${s.cphRestartRequired}' : done,
           next: item.copyWith(enabled: enabled),
+          restart: restart,
         );
       case CapabilityAction.remove:
         switch (item.kind) {
@@ -609,6 +821,39 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen>
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  /// Authorises an OAuth server that is already configured: the lock first
+  /// (when there is one), then the server starts the flow and the surface
+  /// opens the browser and follows it. The phone never sees the token.
+  Future<void> _authorizeMcp() async {
+    if (_busy || widget.readOnly) return;
+    final label = AdminIntegrationsCopy.of(context).authorize;
+    final lock = context.findAncestorStateOfType<HermesAppState>()?.appLock;
+    if (lock != null &&
+        !await LockScreen.verify(context, lock, reason: label)) {
+      return;
+    }
+    if (!mounted) return;
+    final s = Strings.of(context);
+    final notices = AppFeedback.of(context);
+    setState(() => _busy = true);
+    McpOAuthFlow? flow;
+    try {
+      flow = await _repo.startMcpOAuth(_item.installedName);
+    } catch (error) {
+      if (mounted) {
+        notices.notify(FeedbackKind.error, capabilityFailureMessage(s, error));
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+    if (!mounted || flow == null) return;
+    await showMcpOAuthFlowSurface(
+      context: context,
+      gateway: _repo,
+      initialFlow: flow,
+    );
   }
 
   Future<void> _openLogs() async {
@@ -878,6 +1123,22 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen>
         ),
         if (item.kind == CapabilityKind.mcp &&
             item.installed &&
+            !widget.readOnly &&
+            item.description == 'oauth') ...[
+          const SizedBox(height: HermesSpace.x4),
+          HermesListGroup(
+            children: [
+              HermesListRow(
+                key: const ValueKey('cph-authorize-row'),
+                icon: Icons.lock_open_rounded,
+                title: AdminIntegrationsCopy.of(context).authorize,
+                onTap: _busy ? null : _authorizeMcp,
+              ),
+            ],
+          ),
+        ],
+        if (item.kind == CapabilityKind.mcp &&
+            item.installed &&
             _repo.supports(CapabilityFeature.mcpLogs) != false) ...[
           const SizedBox(height: HermesSpace.x4),
           HermesListGroup(
@@ -887,6 +1148,23 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen>
                 icon: Icons.article_outlined,
                 title: s.cphLogsTitle,
                 onTap: _openLogs,
+              ),
+            ],
+          ),
+        ],
+        if (item.kind == CapabilityKind.skill &&
+            item.installed &&
+            !item.stateUnknown &&
+            item.installedName.isNotEmpty &&
+            _repo.supports(CapabilityFeature.skillContent) != false) ...[
+          const SizedBox(height: HermesSpace.x4),
+          HermesListGroup(
+            children: [
+              HermesListRow(
+                key: const ValueKey('spp-row-skill-md'),
+                icon: Icons.description_outlined,
+                title: s.sppViewSkillMd,
+                onTap: _busy ? null : _openSkillMd,
               ),
             ],
           ),
@@ -917,15 +1195,26 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen>
                 HermesListRow(
                   icon: Icons.terminal_rounded,
                   title: s.cphRowCommand,
-                  subtitle: item.command,
+                  subtitle: sppSafeTarget(item.command),
                   subtitleMaxLines: 4,
                 ),
               if (item.url.isNotEmpty)
                 HermesListRow(
                   icon: Icons.link_rounded,
                   title: s.cphRowUrl,
-                  subtitle: item.url,
+                  subtitle: sppSafeEndpoint(item.url),
                   subtitleMaxLines: 3,
+                ),
+              // Plain http inside a private network is not worth a row.
+              if (item.kind == CapabilityKind.mcp &&
+                  sppMcpUrlIsPublicCleartext(item.url))
+                HermesListRow(
+                  key: const ValueKey('spp-row-insecure'),
+                  icon: Icons.warning_amber_rounded,
+                  iconColor: Theme.of(context).hermes.warning,
+                  title: s.sppInsecureTitle,
+                  subtitle: s.sppInsecurePublicBody,
+                  subtitleMaxLines: 4,
                 ),
               if (d.authType.isNotEmpty)
                 HermesListRow(
@@ -937,7 +1226,7 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen>
                 HermesListRow(
                   icon: Icons.cloud_download_outlined,
                   title: s.cphRowCloneFrom,
-                  subtitle: d.installUrl,
+                  subtitle: sppSafeEndpoint(d.installUrl),
                   subtitleMaxLines: 3,
                 ),
               if (d.installRef.isNotEmpty)
@@ -985,13 +1274,21 @@ final class _Outcome {
   final bool changed;
   final List<String> missingEnv;
 
-  const _Outcome({required this.message, this.next, this.missingEnv = const []})
-    : ok = true,
-      consent = null,
-      changed = true;
+  /// The server saved the change but wants a restart to apply it.
+  final bool restart;
+
+  const _Outcome({
+    required this.message,
+    this.next,
+    this.missingEnv = const [],
+    this.restart = false,
+  }) : ok = true,
+       consent = null,
+       changed = true;
 
   const _Outcome.message(this.message, {this.ok = true})
     : next = null,
+      restart = false,
       missingEnv = const [],
       consent = null,
       changed = false;
@@ -1000,6 +1297,7 @@ final class _Outcome {
     : message = '',
       ok = true,
       next = null,
+      restart = false,
       missingEnv = const [],
       consent = result,
       changed = false;

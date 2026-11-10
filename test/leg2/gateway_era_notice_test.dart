@@ -286,7 +286,9 @@ void main() {
             e.value,
       ];
       // Title and action of the notice, its body, the page and the rest.
-      expect(texts.length, 7);
+      // (leg3SetupBody went away: onbFlowGuidedBody replaced it in the
+      // guided setup page.)
+      expect(texts.length, 6);
       for (final text in texts) {
         expect(text, isNot(matches(bad)));
       }

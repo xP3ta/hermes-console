@@ -16,6 +16,7 @@ BotProfileClient _gateway() => BotProfileClient((method, params) async {
     return {
       'description': _description,
       'soul': 'Plain claims over adjectives; when unsure, say so plainly.',
+      'model': 'GPT-6.1-sol',
       'skills': [
         {'name': 'a', 'enabled': true},
       ],
@@ -91,12 +92,34 @@ void main() {
       expect(counter.top, greaterThanOrEqualTo(input.bottom));
       expect(nextLabel.top, greaterThanOrEqualTo(counter.bottom));
       expect(nextField.top, greaterThanOrEqualTo(nextLabel.bottom));
-      // One left edge for the heading and the labels' fields.
-      expect(field.left, heading.left);
-      expect(nextField.left, heading.left);
+      // The heading is centred under the bot's face (profile hero); the
+      // fields keep one left edge among themselves.
+      expect(heading.center.dx, closeTo(width / 2, 1));
+      expect(nextField.left, field.left);
       expect(tester.takeException(), isNull);
     });
   }
+
+  testWidgets('profile hero: the bot\'s face, name and model, then the '
+      'capability rows in one group with their icons', (tester) async {
+    await _pump(tester);
+    expect(find.byKey(const ValueKey('profile-face-default')), findsOneWidget);
+    expect(
+      tester.getSize(find.byKey(const ValueKey('profile-face-default'))).width,
+      greaterThan(60),
+    );
+    expect(find.byKey(const ValueKey('bot-settings-model')), findsOneWidget);
+    expect(find.text('GPT-6.1-sol'), findsOneWidget);
+    final row = find.byKey(const ValueKey('bot-settings-skills-row'));
+    expect(
+      find.ancestor(of: row, matching: find.byType(HermesGroup)),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: row, matching: find.byIcon(Icons.extension_outlined)),
+      findsOneWidget,
+    );
+  });
 
   testWidgets('qa9529: «Guardar» stays at the bottom and says whether there is '
       'anything to save', (tester) async {

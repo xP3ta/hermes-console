@@ -237,7 +237,7 @@ class _RemoteBotRosterState extends State<RemoteBotRoster> {
                   colorHex: profile.botFaceColorHex,
                 ),
                 title: Text(
-                  profile.botTitle ?? profile.name,
+                  profile.botListName,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),

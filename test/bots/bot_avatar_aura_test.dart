@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/bots/state/bot_presence.dart';
+import 'package:hermes_android/core/bots/ui/profile/profile_hub_screen.dart';
 import 'package:hermes_android/core/bots/ui/roster/living_bot_face.dart';
 import 'package:hermes_android/core/bots/ui/roster/roster_model.dart';
 import 'package:hermes_android/core/models/agent_profile.dart';
@@ -18,6 +19,7 @@ import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../support/fake_bot_chat_title_lookup.dart';
+import '../support/profile_model_fakes.dart' show FakeModelGateway;
 
 // Desktop parity: a Bots avatar opens the profile's canonical Bot Chat, so
 // its working/waiting aura reflects that chat alone. A turn the main profile
@@ -139,10 +141,12 @@ void main() {
   // Opening a Bot Chat retires a legacy secure-storage pin first.
   const secure = MethodChannel('plugins.it_nomads.com/flutter_secure_storage');
   setUp(() {
+    ProfileHubScreen.debugGateway = FakeModelGateway();
     TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(secure, (call) async => null);
   });
   tearDown(() {
+    ProfileHubScreen.debugGateway = null;
     TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(secure, null);
   });
@@ -175,6 +179,8 @@ void main() {
       expect(_ring('default', 'attention'), findsNothing);
       await tester.tap(find.byKey(const ValueKey('mission-bot-default')));
       await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('profile-hub-chat')));
+      await tester.pumpAndSettle();
       expect(opened?.source, 'bot-mode-canonical');
       expect(opened?.lineageRootId, 's-botchat');
     },
@@ -205,6 +211,8 @@ void main() {
 
     expect(_ring('default', 'working'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('mission-bot-default')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('profile-hub-chat')));
     await tester.pumpAndSettle();
     expect(opened?.lineageRootId, 's-botchat');
   });

@@ -265,6 +265,7 @@ void main() {
         tester,
         find.byKey(const ValueKey('models-account-disconnect-nous')),
       );
+      // Removing a connected provider also disconnects its OAuth account.
       await tap(tester, within('hermes-dialog', 'Remove'));
     },
     'activating an endpoint': (tester) async {
