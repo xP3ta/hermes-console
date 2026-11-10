@@ -68,6 +68,9 @@ class FakeWebViewController extends PlatformWebViewController {
       javaScriptModes.add(javaScriptMode);
 
   @override
+  Future<void> setBackgroundColor(Color color) async {}
+
+  @override
   Future<void> setPlatformNavigationDelegate(
     PlatformNavigationDelegate handler,
   ) async => navigationDelegate = handler as FakeNavigationDelegate;
@@ -93,15 +96,66 @@ class FakeWebViewController extends PlatformWebViewController {
   /// Every JavaScript bridge the code under test tried to expose.
   final List<String> javaScriptChannels = [];
 
+  /// Callbacks registered with [addJavaScriptChannel], keyed by channel name.
+  final Map<String, void Function(JavaScriptMessage)> channelHandlers = {};
+
+  /// Every `runJavaScript` / `runJavaScriptReturningResult` script.
+  final List<String> javaScriptCalls = [];
+
+  /// What `runJavaScriptReturningResult` answers for a script ('' default).
+  Object Function(String script)? javaScriptResponder;
+
+  /// What `getTitle` answers.
+  String? title;
+
+  @override
+  Future<void> runJavaScript(String javaScript) async =>
+      javaScriptCalls.add(javaScript);
+
+  @override
+  Future<Object> runJavaScriptReturningResult(String javaScript) async {
+    javaScriptCalls.add(javaScript);
+    return javaScriptResponder?.call(javaScript) ?? '';
+  }
+
+  @override
+  Future<String?> getTitle() async => title;
+
   @override
   Future<void> addJavaScriptChannel(
     JavaScriptChannelParams javaScriptChannelParams,
-  ) async => javaScriptChannels.add(javaScriptChannelParams.name);
+  ) async {
+    javaScriptChannels.add(javaScriptChannelParams.name);
+    channelHandlers[javaScriptChannelParams.name] =
+        javaScriptChannelParams.onMessageReceived;
+  }
 
   @override
   Future<void> setOnPlatformPermissionRequest(
     void Function(PlatformWebViewPermissionRequest request) onPermissionRequest,
   ) async => permissionHandler = onPermissionRequest;
+
+  /// History the test sets; the WebView answers from it.
+  bool canGoBackValue = false;
+  bool canGoForwardValue = false;
+  int goBackCalls = 0;
+  int goForwardCalls = 0;
+  int reloadCalls = 0;
+
+  @override
+  Future<bool> canGoBack() async => canGoBackValue;
+
+  @override
+  Future<bool> canGoForward() async => canGoForwardValue;
+
+  @override
+  Future<void> goBack() async => goBackCalls++;
+
+  @override
+  Future<void> goForward() async => goForwardCalls++;
+
+  @override
+  Future<void> reload() async => reloadCalls++;
 }
 
 class FakeNavigationDelegate extends PlatformNavigationDelegate {
@@ -114,11 +168,18 @@ class FakeNavigationDelegate extends PlatformNavigationDelegate {
     NavigationRequestCallback onNavigationRequest,
   ) async => this.onNavigationRequest = onNavigationRequest;
 
-  @override
-  Future<void> setOnPageStarted(PageEventCallback onPageStarted) async {}
+  PageEventCallback? onPageStarted;
+  PageEventCallback? onPageFinished;
+  WebResourceErrorCallback? onWebResourceError;
+  UrlChangeCallback? onUrlChange;
 
   @override
-  Future<void> setOnPageFinished(PageEventCallback onPageFinished) async {}
+  Future<void> setOnPageStarted(PageEventCallback onPageStarted) async =>
+      this.onPageStarted = onPageStarted;
+
+  @override
+  Future<void> setOnPageFinished(PageEventCallback onPageFinished) async =>
+      this.onPageFinished = onPageFinished;
 
   @override
   Future<void> setOnProgress(ProgressCallback onProgress) async {}
@@ -126,10 +187,37 @@ class FakeNavigationDelegate extends PlatformNavigationDelegate {
   @override
   Future<void> setOnWebResourceError(
     WebResourceErrorCallback onWebResourceError,
-  ) async {}
+  ) async => this.onWebResourceError = onWebResourceError;
 
   @override
-  Future<void> setOnUrlChange(UrlChangeCallback onUrlChange) async {}
+  Future<void> setOnUrlChange(UrlChangeCallback onUrlChange) async =>
+      this.onUrlChange = onUrlChange;
+
+  /// Simulates a main-frame load that starts and finishes at [url].
+  void load(String url) {
+    onPageStarted?.call(url);
+    onUrlChange?.call(UrlChange(url: url));
+    onPageFinished?.call(url);
+  }
+
+  /// Simulates the native client reporting a failed load.
+  void fail(
+    String url, {
+    String description = 'net::ERR_NAME_NOT_RESOLVED',
+    int code = -2,
+    bool mainFrame = true,
+  }) {
+    if (mainFrame) onPageStarted?.call(url);
+    onWebResourceError?.call(
+      WebResourceError(
+        errorCode: code,
+        description: description,
+        isForMainFrame: mainFrame,
+        url: url,
+      ),
+    );
+    if (mainFrame) onPageFinished?.call(url);
+  }
 
   @override
   Future<void> setOnHttpAuthRequest(

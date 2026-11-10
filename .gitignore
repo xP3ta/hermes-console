@@ -65,6 +65,8 @@ app.*.map.json
 *.pem
 *.key
 google-services.json
+GoogleService-Info.plist
+*.p8
 .env
 .env.*
 !.env.example
@@ -75,9 +77,13 @@ test/failures/
 releases/
 /artifacts/
 
-# Private agent state and handoff material are not public source. The tracked
-# root AGENTS.md contains only public release-safety rules.
+# Local tool state and handoff material; never public source.
 /.claude/
 /.serena/
 /.rollback-snapshots/
 /docs/agent-handoffs/
+
+# Local worktrees and plans; never public source. Listed so a stray
+# `git add -A` cannot publish them.
+/.worktrees/
+/.hermes/

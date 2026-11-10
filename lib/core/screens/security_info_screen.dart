@@ -17,6 +17,7 @@ import '../design/hermes_design.dart'
         HermesDialogActionStyle,
         HermesOption,
         HermesSelectField,
+        HermesSpace,
         showHermesDialog;
 import '../feedback/feedback_policy.dart';
 
@@ -345,7 +346,7 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
                   ),
                   title: s.secHideNotificationsTitle,
                   subtitle: s.secHideNotificationsSub,
-                  value: notifications?.hideSensitiveContent ?? false,
+                  value: notifications?.hideSensitiveContent ?? true,
                   onChanged: notifications == null
                       ? null
                       : (value) async {
@@ -492,16 +493,19 @@ class _SecurityStatusRow extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
+                // The state goes under the title when the two no longer fit
+                // side by side (large text, a narrow window).
+                Wrap(
+                  alignment: WrapAlignment.spaceBetween,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: HermesSpace.x2,
                   children: [
-                    Expanded(
-                      child: Text(
-                        title,
-                        style: TextStyle(
-                          fontWeight: FontWeight.w600,
-                          fontSize: 13,
-                          color: colors.textPrimary,
-                        ),
+                    Text(
+                      title,
+                      style: TextStyle(
+                        fontWeight: FontWeight.w600,
+                        fontSize: 13,
+                        color: colors.textPrimary,
                       ),
                     ),
                     Text(

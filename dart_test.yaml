@@ -1,0 +1,8 @@
+# Tests that need something the default run does not have (a real gateway, a
+# GPU shader backend, an upstream checkout, a benchmark or evidence switch) carry
+# the `opt-in` tag. The default run and CI exclude them with `-x opt-in`, so a
+# skipped test never hides in the totals; run them on purpose with
+# `flutter test --tags opt-in` and the environment each file names.
+tags:
+  opt-in:
+    description: needs a real gateway, a GPU shader backend, an upstream checkout or a capture switch
