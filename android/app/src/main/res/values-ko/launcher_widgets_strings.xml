@@ -9,6 +9,7 @@
     <string name="lw_cron_description">다음 예약 작업을 확인하세요. 크게 배치하면 실패한 작업을 포함한 모든 작업을 볼 수 있습니다</string>
     <string name="lw_new">새 채팅</string>
     <string name="lw_ask_hint">Hermes에게 물어보세요…</string>
+    <string name="lw_ask_hint_named">%1$s에게 물어보세요…</string>
     <string name="lw_new_description">새 채팅</string>
     <string name="lw_voice_description">새 음성 채팅</string>
     <string name="lw_camera_description">카메라로 새 채팅</string>
@@ -139,4 +140,9 @@
     <string name="lw_sample_room_line">빌더 응답 중</string>
     <string name="lw_sample_run_title">Hermes · 터미널</string>
     <string name="lw_sample_run_about">주간 보고서</string>
+
+    <!-- Quick Settings tiles -->
+    <string name="widgets_qs_new_chat_label">새 채팅</string>
+    <string name="widgets_qs_voice_chat_label">음성 채팅</string>
+    <string name="widgets_qs_camera_chat_label">카메라 채팅</string>
 </resources>

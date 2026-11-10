@@ -1,5 +1,6 @@
-/// Home widget board: a two-column grid of whole rows that fits between
-/// the header and the dock and never scrolls, and its edit mode (hold
+/// Home widget board: a grid of whole rows (two columns on a phone, four
+/// on a wide screen) that fits between the header and the dock and never
+/// scrolls, and its edit mode (hold
 /// 420 ms, drag to reorder, remove, a size control, add) with its
 /// accessibility.
 library;
@@ -10,18 +11,18 @@ import 'dart:math' as math;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
-import 'package:flutter/services.dart';
 
 import '../../../l10n/app_localizations.dart';
 import '../../theme/soft_tokens.dart';
+import '../../design/tokens.dart' show HermesSpace;
 import '../../widgets/hermes_app_bar.dart';
-import '../../widgets/hermes_ui.dart' show HermesPrimaryButton;
 import 'home_board_catalog.dart';
 import 'home_board_data.dart';
 import 'home_board_kit.dart';
 import 'home_board_model.dart';
 import 'home_board_sheets.dart';
 import 'home_board_tiles.dart';
+import '../../feedback/haptics.dart';
 
 /// Interaction constants of the owner's guide.
 abstract final class HomeBoardMotion {
@@ -29,6 +30,9 @@ abstract final class HomeBoardMotion {
   static const holdSlop = 9.0;
   static const reflow = Duration(milliseconds: 210);
   static const wiggleDegrees = 0.55;
+
+  /// Opacity of a card's content while the board is edited.
+  static const editContent = 0.6;
 }
 
 abstract final class HomeBoardMetrics {
@@ -38,7 +42,15 @@ abstract final class HomeBoardMetrics {
   /// Room around the grid for the edit handles (they overhang the tiles);
   /// above the first row it is also the space under the header.
   static const handleRoom = 13.0;
+
+  /// The widest a two-column board grows; a four-column one takes two of
+  /// these side by side.
   static const maxBoardWidth = 640.0;
+
+  /// The widest a board of [columns] columns grows.
+  static double maxWidthFor(int columns) => columns <= HomeBoardGridRule.columns
+      ? maxBoardWidth
+      : maxBoardWidth * 2 + gap;
 
   /// The edit bar takes the place of the screen's header.
   static const editBarHeight = kToolbarHeight;
@@ -55,6 +67,9 @@ final class HomeBoardGeometry {
     required this.rowHeight,
     required this.cellWidth,
   });
+
+  /// Columns of the board ([HomeBoardPlan.columns]).
+  int get columns => plan.columns;
 
   static const _gap = HomeBoardMetrics.gap;
 
@@ -204,6 +219,9 @@ class HomeBoardViewState extends State<HomeBoardView>
 
   int get _rows => _geometry?.plan.rows ?? HomeBoardGridRule.designRows;
 
+  /// Columns of the board as last laid out (two until it is).
+  int get _columns => _geometry?.plan.columns ?? HomeBoardGridRule.columns;
+
   // ── drag ────────────────────────────────────────────────────────────
 
   Offset? _toBoard(Offset global) {
@@ -215,7 +233,7 @@ class HomeBoardViewState extends State<HomeBoardView>
 
   void _onHoldStart(String id, Offset global) {
     if (!_editing) {
-      HapticFeedback.lightImpact();
+      HermesHaptics.tap();
       setEditing(true);
     }
     final local = _toBoard(global);
@@ -274,7 +292,7 @@ class HomeBoardViewState extends State<HomeBoardView>
         order
           ..remove(id)
           ..add(id);
-        HapticFeedback.selectionClick();
+        HermesHaptics.selection();
       }
       return;
     }
@@ -284,7 +302,7 @@ class HomeBoardViewState extends State<HomeBoardView>
       ..remove(id)
       ..insert(to, id);
     _lastSwap = target;
-    HapticFeedback.selectionClick();
+    HermesHaptics.selection();
   }
 
   void _onDragEnd() {
@@ -292,7 +310,7 @@ class HomeBoardViewState extends State<HomeBoardView>
     final order = _order;
     if (id == null || order == null) return;
     final layout = widget.layout.move(id, order.indexOf(id));
-    if (!identical(layout, widget.layout)) HapticFeedback.selectionClick();
+    if (!identical(layout, widget.layout)) HermesHaptics.selection();
     setState(() {
       _dragId = null;
       _order = null;
@@ -304,7 +322,7 @@ class HomeBoardViewState extends State<HomeBoardView>
   // ── edits ───────────────────────────────────────────────────────────
 
   void _remove(HomeWidgetInstance item) {
-    HapticFeedback.selectionClick();
+    HermesHaptics.selection();
     if (_sizingId == item.id) _sizingId = null;
     widget.onChanged(widget.layout.remove(item.id));
   }
@@ -318,11 +336,17 @@ class HomeBoardViewState extends State<HomeBoardView>
   /// staying on it as it is.
   bool _sizeFits(String id, HomeWidgetSize size) =>
       _shownSize(id) == size ||
-      HomeBoardPlan.allows(widget.layout.items, _rows, id, size);
+      HomeBoardPlan.allows(
+        widget.layout.items,
+        _rows,
+        id,
+        size,
+        columns: _columns,
+      );
 
   void _resize(String id, HomeWidgetSize size) {
     if (_shownSize(id) == size || !_sizeFits(id, size)) return;
-    HapticFeedback.selectionClick();
+    HermesHaptics.selection();
     widget.onChanged(widget.layout.resize(id, size));
   }
 
@@ -386,6 +410,7 @@ class HomeBoardViewState extends State<HomeBoardView>
       context,
       layout: () => widget.layout,
       rows: plan.rows,
+      columns: plan.columns,
       onResize: (item, size) =>
           widget.onChanged(widget.layout.resize(item.id, size)),
       onRemove: _remove,
@@ -484,11 +509,14 @@ class HomeBoardViewState extends State<HomeBoardView>
     final reduced = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
     const room = HomeBoardMetrics.handleRoom;
     const gap = HomeBoardMetrics.gap;
+    // Two columns on a phone, four on a wide screen: the same layout,
+    // nothing stored about it.
+    final columns = HomeBoardGridRule.columnsFor(area.maxWidth);
     final width = math.max(
       0.0,
       math.min(
         area.maxWidth - 2 * HomeBoardMetrics.sidePadding,
-        HomeBoardMetrics.maxBoardWidth,
+        HomeBoardMetrics.maxWidthFor(columns),
       ),
     );
     final around = room + math.max(widget.bottomPadding, room);
@@ -499,9 +527,9 @@ class HomeBoardViewState extends State<HomeBoardView>
       math.max(height, open - around),
     );
     final geometry = HomeBoardGeometry(
-      plan: HomeBoardPlan.of(_ordered(), rows),
+      plan: HomeBoardPlan.of(_ordered(), rows, columns: columns),
       rowHeight: HomeBoardGridRule.rowHeightFor(height, rows),
-      cellWidth: math.max(0.0, (width - gap) / 2),
+      cellWidth: math.max(0.0, (width - gap * (columns - 1)) / columns),
     );
     final before = _geometry?.plan;
     _geometry = geometry;
@@ -509,6 +537,7 @@ class HomeBoardViewState extends State<HomeBoardView>
     if (_editing &&
         (before == null ||
             before.rows != plan.rows ||
+            before.columns != plan.columns ||
             before.free != plan.free ||
             before.hidden.length != plan.hidden.length)) {
       // The edit bar (built before the grid was measured) shows these.
@@ -674,24 +703,35 @@ class HomeBoardViewState extends State<HomeBoardView>
     required bool selected,
   }) {
     final s = Strings.of(context);
-    final p = SoftPalette.ofContext(context);
+    final p = HomePalette.ofContext(context);
     final name = homeWidgetName(s, item.kind);
     final spec = HomeWidgetCatalog.of(item.kind);
     final tint = homeWidgetTint(p, item, colorful: !widget.layout.neutral);
     final count = widget.layout.items.length;
+    // In edit mode the card wears the quiet accent outline and its content
+    // steps back, so the handles and the name read first.
     final body = HomeCard(
       padding: _editing
-          ? const EdgeInsets.fromLTRB(14, 48, 14, 12)
+          ? const EdgeInsets.fromLTRB(
+              HermesSpace.x4,
+              HermesSpace.tap,
+              HermesSpace.x4,
+              HermesSpace.x4,
+            )
           : HomeCard.contentPadding,
       hero: !_editing && homeWidgetHero(item, widget.data),
-      child: HomeWidgetBody(
-        HomeTileContext(
-          item: item,
-          data: widget.data,
-          actions: widget.actions,
-          tint: tint,
-          editing: _editing,
-          clock: widget.clock,
+      outlined: _editing,
+      child: Opacity(
+        opacity: _editing ? HomeBoardMotion.editContent : 1,
+        child: HomeWidgetBody(
+          HomeTileContext(
+            item: item,
+            data: widget.data,
+            actions: widget.actions,
+            tint: tint,
+            editing: _editing,
+            clock: widget.clock,
+          ),
         ),
       ),
     );
@@ -709,7 +749,9 @@ class HomeBoardViewState extends State<HomeBoardView>
     final visual = AnimatedBuilder(
       animation: _wiggle,
       builder: (context, child) => Transform.rotate(
-        angle: wiggles
+        // Still (reduced motion, a background route): level, never left
+        // at the tilt of the phase it stopped in.
+        angle: wiggles && _wiggle.isAnimating
             ? math.sin((_wiggle.value + phase) * 2 * math.pi) *
                   HomeBoardMotion.wiggleDegrees *
                   math.pi /
@@ -731,7 +773,8 @@ class HomeBoardViewState extends State<HomeBoardView>
           child: DecoratedBox(
             position: DecorationPosition.foreground,
             decoration: ShapeDecoration(
-              shape: SoftShapes.card(
+              shape: RoundedRectangleBorder(
+                borderRadius: HomeCard.radiusOf(context),
                 side: selected
                     ? BorderSide(color: HomeType.live(p), width: 2)
                     : BorderSide.none,
@@ -739,7 +782,9 @@ class HomeBoardViewState extends State<HomeBoardView>
             ),
             child: DecoratedBox(
               decoration: ShapeDecoration(
-                shape: SoftShapes.card(),
+                shape: RoundedRectangleBorder(
+                  borderRadius: HomeCard.radiusOf(context),
+                ),
                 shadows: dragging
                     ? const [
                         BoxShadow(
@@ -1134,22 +1179,22 @@ class _DropPlaceholder extends StatelessWidget {
   const _DropPlaceholder();
   @override
   Widget build(BuildContext context) {
-    final p = SoftPalette.ofContext(context);
+    final p = HomePalette.ofContext(context);
     return CustomPaint(
       painter: _DashedSquircle(p.hairline, p.inset.withValues(alpha: 0.5)),
     );
   }
 }
 
-/// A free slot in edit mode: a dashed cell that adds a widget.
+/// A free slot in edit mode: a dashed cell that adds a widget. Quiet (the
+/// hairline and the muted ink): the one accent of the edit bar is «Hecho».
 class _Hole extends StatelessWidget {
   const _Hole({required this.onTap});
   final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    final p = SoftPalette.ofContext(context);
-    final accent = HomeType.live(p);
+    final p = HomePalette.ofContext(context);
     return Semantics(
       button: true,
       label: Strings.of(context).hwAddWidget,
@@ -1158,12 +1203,18 @@ class _Hole extends StatelessWidget {
         behavior: HitTestBehavior.opaque,
         onTap: onTap,
         child: CustomPaint(
-          painter: _DashedSquircle(
-            accent.withValues(alpha: 0.75),
-            accent.withValues(alpha: 0.06),
-          ),
+          painter: _DashedSquircle(p.hairline, p.inset.withValues(alpha: 0.4)),
           child: Center(
-            child: Icon(Icons.add_rounded, size: 26, color: accent),
+            child: DecoratedBox(
+              decoration: ShapeDecoration(
+                color: p.track,
+                shape: const CircleBorder(),
+              ),
+              child: SizedBox.square(
+                dimension: 36,
+                child: Icon(Icons.add_rounded, size: 20, color: p.textMuted),
+              ),
+            ),
           ),
         ),
       ),
@@ -1194,7 +1245,7 @@ class _Handle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final p = SoftPalette.ofContext(context);
+    final p = HomePalette.ofContext(context);
     return Semantics(
       button: true,
       label: label,
@@ -1205,25 +1256,20 @@ class _Handle extends StatelessWidget {
         child: SizedBox.square(
           dimension: extent,
           child: Center(
+            // A flat disc on the page's ink, its hairline the edge: no drop
+            // shadow (the open control is the one accent).
             child: DecoratedBox(
               decoration: ShapeDecoration(
-                color: hot ? p.primary : p.track,
+                color: hot ? p.primary : p.inset,
                 shape: CircleBorder(
                   side: BorderSide(
                     color: hot ? p.primary : p.hairline,
-                    width: 0.8,
+                    width: 1,
                   ),
                 ),
-                shadows: const [
-                  BoxShadow(
-                    color: Color(0x33000000),
-                    blurRadius: 6,
-                    offset: Offset(0, 2),
-                  ),
-                ],
               ),
               child: SizedBox.square(
-                dimension: 26,
+                dimension: 28,
                 child: Icon(icon, size: 14, color: hot ? p.onPrimary : p.text),
               ),
             ),
@@ -1259,30 +1305,24 @@ class _EditBar extends StatelessWidget {
       child: SizedBox(
         height: HomeBoardMetrics.editBarHeight,
         child: HermesAppBar(
+          // No glass (Q9-CRISTAL): the board sits below the bar, never
+          // under it.
+          glass: false,
           automaticallyImplyLeading: false,
-          // The title over how full the board is, in the bar's own height:
-          // entering edit mode never moves the grid.
-          title: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                s.hwEditTitle,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                textScaler: MediaQuery.textScalerOf(
-                  context,
-                ).clamp(maxScaleFactor: 1.3),
-              ),
-              if (plan != null) ...[
-                const SizedBox(height: 2),
-                HomeBoardMeter(
+          // The page's name, and how full the board is beside it: one line,
+          // so entering edit mode never moves the grid.
+          title: Text(
+            s.hwEditTitle,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          titleBadge: plan == null
+              ? null
+              : HomeBoardMeter(
                   key: const ValueKey('home-edit-meter'),
                   plan: plan,
                   onTap: plan.hidden.isEmpty ? null : onHidden,
                 ),
-              ],
-            ],
-          ),
           leading: IconButton(
             key: const ValueKey('home-edit-add'),
             tooltip: full ? s.hwBoardFull : s.hwAddWidget,
@@ -1290,18 +1330,17 @@ class _EditBar extends StatelessWidget {
             icon: const Icon(Icons.add_rounded),
           ),
           actions: [
+            // The one accent of the bar: a gel capsule like the board's
+            // primary answers.
             Padding(
               padding: const EdgeInsetsDirectional.only(end: 12),
-              child: SizedBox(
-                width: 76,
-                child: HermesPrimaryButton(
+              child: Center(
+                widthFactor: 1,
+                child: HomeGelPill(
+                  s.hwDone,
                   key: const ValueKey('home-edit-done'),
-                  label: s.hwDone,
+                  primary: true,
                   onTap: onDone,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 8,
-                  ),
                 ),
               ),
             ),

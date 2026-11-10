@@ -13,13 +13,13 @@ class _BotTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final s = Strings.of(context);
-    final p = SoftPalette.ofContext(context);
+    final p = HomePalette.ofContext(context);
     final bot = t.data.bot(t.item.stringOption('bot'));
     if (bot == null) {
       if (!t.data.botsLoaded) return _loading(t, context);
       return _Missing(t);
     }
-    final name = HomeType.row(p).copyWith(fontSize: 14.5, height: 19 / 14.5);
+    final name = HomeType.row(p);
     final meta = HomeType.meta(p);
     final stateLine = Text(
       bot.state == HomeBotState.idle
@@ -32,7 +32,7 @@ class _BotTile extends StatelessWidget {
     final nameLine = _title(context, bot.displayName, style: name);
     final textH = HomeType.line(context, name) + HomeType.line(context, meta);
     final small = t.size == HomeWidgetSize.small;
-    final faceSize = small ? 30.0 : 38.0;
+    final faceSize = small ? LwGrid.faceSmall : LwGrid.face;
     final face = HomeFace(
       profileName: bot.profileName,
       data: t.data,
@@ -51,6 +51,12 @@ class _BotTile extends StatelessWidget {
       ),
       gap: 8,
     );
+    // The face at the start of its line, with the ring's room around it
+    // (a stretched box would send its state dot to the far edge).
+    final faceLine = Padding(
+      padding: const EdgeInsets.all(_ringRoom),
+      child: Align(alignment: AlignmentDirectional.centerStart, child: face),
+    );
     return _Tap(
       onTap: _act(t, () => t.actions.openBot(bot)),
       label: bot.displayName,
@@ -58,7 +64,7 @@ class _BotTile extends StatelessWidget {
           ? _Body(
               t: t,
               gap: 9,
-              pieces: [_Piece(faceSize, face)],
+              pieces: [_Piece(faceSize + 2 * _ringRoom, faceLine)],
               footer: _Piece(
                 textH,
                 Column(
@@ -73,11 +79,14 @@ class _BotTile extends StatelessWidget {
               gap: 9,
               pieces: [
                 _Piece(
-                  math.max(faceSize, textH),
+                  math.max(faceSize + 2 * _ringRoom, textH),
                   Row(
                     children: [
-                      face,
-                      const SizedBox(width: 12),
+                      Padding(
+                        padding: const EdgeInsets.all(_ringRoom),
+                        child: face,
+                      ),
+                      const SizedBox(width: 12 - _ringRoom),
                       Expanded(
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
@@ -118,7 +127,7 @@ class _ChatTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final p = SoftPalette.ofContext(context);
+    final p = HomePalette.ofContext(context);
     final chat = t.data.chat(t.item.stringOption('chat'));
     if (chat == null) return _Missing(t);
     final title = HomeType.row(p).copyWith(height: 18.5 / 14);
@@ -172,13 +181,14 @@ class _ChatTile extends StatelessWidget {
 
 // ── Límites del plan ───────────────────────────────────────────────────
 
-/// Calm by default; the soft attention tone from 80 %, the soft failure
-/// tone at 100 % (the model sheet's thresholds).
-Color _limitColor(SoftPalette p, SoftTint tint, HomeLimitRow row) => row.reached
+/// Neutral by default (the muted ink, no colour spent on a calm figure);
+/// the soft attention tone from 80 %, the soft failure tone at 100 % (the
+/// model sheet's thresholds).
+Color _limitColor(HomePalette p, SoftTint tint, HomeLimitRow row) => row.reached
     ? p.failure
     : row.near
     ? p.attention
-    : tint.ink.withValues(alpha: 0.8);
+    : p.textMuted;
 
 /// Whose limits follow: the provider's own mark, its name and, when it
 /// reports one, the plan («Anthropic · Max 5x»). A long name gives up its
@@ -191,7 +201,7 @@ class _LimitWho extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final p = SoftPalette.ofContext(context);
+    final p = HomePalette.ofContext(context);
     final base = (style ?? HomeType.meta(p)).copyWith(color: p.text);
     final plan = who.plan;
     return Semantics(
@@ -241,7 +251,7 @@ class _LimitsTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final s = Strings.of(context);
-    final p = SoftPalette.ofContext(context);
+    final p = HomePalette.ofContext(context);
     final limits = t.data.limits;
     final rows = limits == null
         ? const <HomeLimitRow>[]
@@ -253,7 +263,10 @@ class _LimitsTile extends StatelessWidget {
     if (rows.isEmpty) return _quiet(t, context, s.hwLimitsEmpty);
     final groups = homeLimitGroups(rows);
     final body = HomeType.body(p).copyWith(fontSize: 13.5, height: 18 / 13.5);
-    final note = HomeType.meta(p).copyWith(fontSize: 12, height: 16 / 12);
+    final note = HomeType.meta(p).copyWith(
+      fontSize: HermesType.subtitleSize,
+      height: 17 / HermesType.subtitleSize,
+    );
     if (t.size == HomeWidgetSize.small) {
       // The fullest window of the account in use, and whose it is.
       final inUse = groups.first;
@@ -349,7 +362,7 @@ class _LimitRowView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final s = Strings.of(context);
-    final p = SoftPalette.ofContext(context);
+    final p = HomePalette.ofContext(context);
     final note = homeLimitNote(s, row);
     final color = _limitColor(p, t.tint, row);
     final body = HomeType.body(p).copyWith(fontSize: 13.5, height: 18 / 13.5);
@@ -358,13 +371,15 @@ class _LimitRowView extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        // The window and, at its end, the figure: tabular, the text ink
+        // while calm, the state's ink past the thresholds.
         _Ends(
-          share: 0.6,
+          share: 0.5,
           start: Text(
             homeLimitLabel(s, row),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: body.copyWith(fontWeight: FontWeight.w500),
+            style: body.copyWith(color: p.textMuted),
           ),
           end: Text(
             s.hwLimitsUsed(row.used.round()),
@@ -372,8 +387,8 @@ class _LimitRowView extends StatelessWidget {
             softWrap: false,
             overflow: TextOverflow.fade,
             style: body.copyWith(
-              fontSize: 13,
-              color: row.near ? color : p.textMuted,
+              fontWeight: FontWeight.w600,
+              color: row.near ? color : p.text,
               fontFeatures: const [FontFeature.tabularFigures()],
             ),
           ),
@@ -391,7 +406,10 @@ class _LimitRowView extends StatelessWidget {
             note,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: HomeType.meta(p).copyWith(fontSize: 12, height: 16 / 12),
+            style: HomeType.meta(p).copyWith(
+              fontSize: HermesType.subtitleSize,
+              height: 17 / HermesType.subtitleSize,
+            ),
           ),
         ],
       ],
@@ -408,7 +426,7 @@ class _ServerTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final s = Strings.of(context);
-    final p = SoftPalette.ofContext(context);
+    final p = HomePalette.ofContext(context);
     final server = t.data.server;
     if (server == null) return _loading(t, context);
     // A socket that is down overrides a REST answer: never «Connected».
@@ -416,6 +434,7 @@ class _ServerTile extends StatelessWidget {
         server.link != null && server.link != ConnectionStatusKind.connected;
     final color = linkDown
         ? ((server.link == ConnectionStatusKind.reconnecting ||
+                  server.link == ConnectionStatusKind.connecting ||
                   server.link == ConnectionStatusKind.starting)
               ? p.textMuted
               : p.failure)
@@ -433,12 +452,14 @@ class _ServerTile extends StatelessWidget {
         : s.hwServerOffline;
     final facts = [
       if (server.version case final v?) 'Hermes $v',
+      // The figure and its unit stay on one line.
       if (server.latencyMs case final ms?
           when server.online && !linkDown && ms > 0)
-        s.hwServerLatency(ms),
+        s.hwServerLatency(ms).replaceAll(' ', '\u00A0'),
     ];
     final update = server.updateAvailable;
-    final head = HomeType.row(p).copyWith(fontSize: 15, height: 20 / 15);
+    // The state as the card's one big line, its dot beside it.
+    final head = HomeType.title(p);
     final meta = HomeType.meta(p);
     final lines = _bigText(context) ? 1 : 2;
     return _Tap(
@@ -447,6 +468,7 @@ class _ServerTile extends StatelessWidget {
       child: _Body(
         key: const ValueKey('home-server'),
         t: t,
+        faded: false,
         gap: 8,
         pieces: [
           _Piece(
@@ -469,17 +491,24 @@ class _ServerTile extends StatelessWidget {
           ),
           _Piece(
             HomeType.line(context, meta) * lines,
-            Text(
-              [
-                // «Hermes · Hermes 0.12.3» says the name twice.
-                if (server.label.trim().toLowerCase() != 'hermes' ||
-                    facts.isEmpty)
-                  server.label,
-                ...facts,
-              ].join(' · '),
-              maxLines: lines,
-              overflow: TextOverflow.ellipsis,
-              style: meta,
+            LayoutBuilder(
+              builder: (context, box) => Text(
+                _sepLines(
+                  context,
+                  [
+                    // «Hermes · Hermes 0.12.3» says the name twice.
+                    if (server.label.trim().toLowerCase() != 'hermes' ||
+                        facts.isEmpty)
+                      server.label,
+                    ...facts,
+                  ],
+                  meta,
+                  box.maxWidth,
+                ),
+                maxLines: lines,
+                overflow: TextOverflow.ellipsis,
+                style: meta,
+              ),
             ),
             gap: 2,
           ),
@@ -506,7 +535,7 @@ class _TodayTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final s = Strings.of(context);
-    final p = SoftPalette.ofContext(context);
+    final p = HomePalette.ofContext(context);
     final today = t.data.today;
     if (today == null) return _loading(t, context);
     if (today.chats == 0) return _quiet(t, context, s.hwTodayNone);
@@ -514,7 +543,6 @@ class _TodayTile extends StatelessWidget {
       if (today.messages > 0) s.hwTodayMessages(today.messages),
       if (today.tools > 0) s.hwTodayTools(today.tools),
     ];
-    final big = HomeType.figure(p, size: 27);
     final meta = HomeType.meta(p);
     final wide = t.size == HomeWidgetSize.wide;
     return _Tap(
@@ -525,23 +553,8 @@ class _TodayTile extends StatelessWidget {
         gap: 6,
         pieces: [
           _Piece(
-            HomeType.line(context, big),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.baseline,
-              textBaseline: TextBaseline.alphabetic,
-              children: [
-                SoftCounter(today.chats, style: big),
-                const SizedBox(width: 7),
-                Flexible(
-                  child: Text(
-                    s.hwTodayChats(today.chats),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: HomeType.body(p).copyWith(fontSize: 14.5),
-                  ),
-                ),
-              ],
-            ),
+            HomeFigure.heightOf(context),
+            HomeFigure('${today.chats}', unit: s.hwTodayChats(today.chats)),
           ),
           if (wide && extras.isNotEmpty)
             _Piece(

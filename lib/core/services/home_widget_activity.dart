@@ -73,7 +73,14 @@ HomeWidgetNeed? homeWidgetNeedForApproval({
   if (requestId == null || requestId.isEmpty) return null;
   final choices = permittedApprovalChoices(approval);
   String? action;
-  if (!readOnly && choices.contains('once') && choices.contains('deny')) {
+  // With «hide sensitive content» on, the widget does not name the command,
+  // so it must not offer to approve it either (blind approval): it only
+  // opens the chat, where the command is on screen. Its native buttons come
+  // as an Allow/Deny pair, so no payload at all rather than a lone Deny.
+  if (!readOnly &&
+      !hideSensitive &&
+      choices.contains('once') &&
+      choices.contains('deny')) {
     final payload = NotificationActionPayload(
       route: NotificationActionRoute.chat,
       connId: connectionId,

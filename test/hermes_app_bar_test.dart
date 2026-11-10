@@ -7,12 +7,16 @@ import 'package:hermes_android/core/design/floating.dart';
 import 'package:hermes_android/core/design/tokens.dart';
 import 'package:hermes_android/core/feedback/screen_help.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
+import 'package:hermes_android/core/widgets/frosted_backdrop.dart';
 import 'package:hermes_android/core/widgets/hermes_app_bar.dart';
+import 'package:hermes_android/core/widgets/read_only.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 
 Widget _scaffold(String themeId) => MaterialApp(
   theme: AppTheme.fromId(themeId),
-  home: const Scaffold(appBar: HermesAppBar(title: Text('Sesiones'))),
+  home: const Scaffold(
+    appBar: HermesAppBar(titleInPill: true, title: Text('Sesiones')),
+  ),
 );
 
 void main() {
@@ -40,6 +44,7 @@ void main() {
         theme: AppTheme.fromId('dracula'),
         home: const Scaffold(
           appBar: HermesAppBar(
+            titleInPill: true,
             title: Column(
               children: [Text('skills'), Text('69 activas · /api/skills')],
             ),
@@ -57,7 +62,9 @@ void main() {
     const titleKey = ValueKey('hermes-app-bar-title');
     const actionsKey = ValueKey('hermes-app-bar-actions');
     const leadingKey = ValueKey('hermes-app-bar-leading');
-    const scrimKey = ValueKey('hermes-app-bar-scrim');
+    // The header's glass band (the page's tint over the strip's one blur).
+    const scrimKey = ValueKey('hermes-app-bar-glass');
+    const tailKey = ValueKey('hermes-app-bar-veil-tail');
     const moreKey = ValueKey('hermes-app-bar-more');
 
     Widget app(
@@ -98,6 +105,7 @@ void main() {
           app(
             themeId: id,
             HermesAppBar(
+              titleInPill: true,
               title: const Text('Conversaciones'),
               actions: [
                 icon(Icons.edit_square, 'Nueva'),
@@ -123,9 +131,21 @@ void main() {
           findsWidgets,
         );
 
-        // Leading: the implied menu button, round and floating.
+        // Leading: the implied menu button, round and floating, in the
+        // header strip's glass (Q9-CRISTAL: the composer's veil; without
+        // blur, the chrome's fill, test/glass_strip_test.dart).
         final leading = tester.widget<IconButtonTheme>(find.byKey(leadingKey));
-        expect(leading.data.style?.backgroundColor?.resolve({}), chrome.fill);
+        expect(
+          leading.data.style?.backgroundColor?.resolve({}),
+          FrostedBackdrop.glassVeil(theme.hermes),
+        );
+        final pill = tester.widget<Material>(
+          find.descendant(
+            of: find.byKey(titleKey),
+            matching: find.byType(Material),
+          ),
+        );
+        expect((pill.shape! as OutlinedBorder).side.color, chrome.line);
         final menu = find.descendant(
           of: find.byKey(leadingKey),
           matching: find.byType(DrawerButton),
@@ -157,7 +177,8 @@ void main() {
         final title = tester.getRect(find.byKey(titleKey));
         expect(title.center.dx, moreOrLessEquals(400, epsilon: 1));
 
-        // The scrim is the page colour and runs below the header.
+        // The band is the page colour, translucent, over the whole header;
+        // its tail melts into the page just below it.
         final scrim = tester.widget<DecoratedBox>(find.byKey(scrimKey));
         final gradient =
             (scrim.decoration as BoxDecoration).gradient! as LinearGradient;
@@ -165,10 +186,15 @@ void main() {
           gradient.colors.first.withValues(alpha: 1),
           theme.hermes.background,
         );
-        expect(gradient.colors.last.a, 0);
+        expect(gradient.colors.last.a, lessThan(1));
+        expect(gradient.colors.last.a, greaterThan(0));
+        final tail = tester.widget<DecoratedBox>(find.byKey(tailKey));
+        final fade =
+            (tail.decoration as BoxDecoration).gradient! as LinearGradient;
+        expect(fade.colors.last.a, 0);
         expect(
-          tester.getRect(find.byKey(scrimKey)).bottom,
-          tester.getRect(find.byType(AppBar)).bottom + HermesAppBar.scrimTail,
+          tester.getRect(find.byKey(tailKey)).bottom,
+          tester.getRect(find.byType(AppBar)).bottom + HermesAppBar.veilTail,
         );
       });
     }
@@ -178,6 +204,7 @@ void main() {
       await tester.pumpWidget(
         app(
           const HermesAppBar(
+            titleInPill: true,
             title: Text('Conversaciones'),
             titleBadge: HermesTitleBadge('ana', semanticsLabel: 'Perfil: ana'),
           ),
@@ -218,6 +245,7 @@ void main() {
       await tester.pumpWidget(
         app(
           HermesAppBar(
+            titleInPill: true,
             title: const Text('Kanban'),
             actions: [
               icon(Icons.add, 'Nueva'),
@@ -256,6 +284,7 @@ void main() {
             ),
             child: app(
               HermesAppBar(
+                titleInPill: true,
                 title: const Text(
                   'Un nombre de página larguísimo que no cabe en la cabecera',
                 ),
@@ -282,6 +311,75 @@ void main() {
         expect(pill.left, greaterThanOrEqualTo(0));
         expect(pill.right, lessThanOrEqualTo(320));
       }
+    });
+
+    testWidgets('a badge never runs past the pill (gint51)', (tester) async {
+      tester.view.physicalSize = const Size(320, 700);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final badge = find.byKey(const ValueKey('hermes-app-bar-title-badge'));
+      for (final scale in const [1.0, 2.0]) {
+        await tester.pumpWidget(
+          MediaQuery(
+            data: MediaQueryData(
+              size: const Size(320, 700),
+              textScaler: TextScaler.linear(scale),
+            ),
+            child: app(
+              HermesAppBar(
+                titleInPill: true,
+                title: const Text('Sesiones'),
+                // A badge that does not shrink by itself.
+                titleBadge: const SizedBox(width: 400, height: 12),
+                actions: [
+                  icon(Icons.add, 'Nuevo'),
+                  icon(Icons.inventory_2_outlined, 'Archivo'),
+                ],
+              ),
+            ),
+          ),
+        );
+        expect(tester.takeException(), isNull, reason: 'scale $scale');
+        final pill = tester.getRect(find.byKey(titleKey));
+        expect(pill.right, lessThanOrEqualTo(320), reason: 'scale $scale');
+        expect(tester.getRect(badge).right, lessThanOrEqualTo(pill.right));
+      }
+    });
+
+    testWidgets('the read-only badge: its words while they fit, its icon '
+        'when not, and TalkBack says it either way', (tester) async {
+      final semantics = tester.ensureSemantics();
+      addTearDown(tester.view.reset);
+      tester.view.devicePixelRatio = 1;
+      final words = find.text('SOLO LECTURA');
+      final iconOnly = find.byKey(const ValueKey('read-only-badge-icon'));
+      Future<void> pumpAt(double width) async {
+        tester.view.physicalSize = Size(width, 700);
+        await tester.pumpWidget(
+          app(
+            const HermesAppBar(
+              titleInPill: true,
+              title: Text('Sesiones'),
+              titleBadge: ReadOnlyBadge(compact: true, fitWidth: true),
+            ),
+          ),
+        );
+        expect(tester.takeException(), isNull, reason: 'at $width');
+      }
+
+      // The title pill is one node: the page's name, then its state (as
+      // «Conversaciones\nPerfil: ana» above). Read-only is said in it in
+      // words and as an icon alike.
+      const spoken = 'Sesiones\nSOLO LECTURA';
+      await pumpAt(800);
+      expect(words, findsOneWidget);
+      expect(iconOnly, findsNothing);
+      expect(tester.getSemantics(words).label, spoken);
+      await pumpAt(160);
+      expect(words, findsNothing);
+      expect(iconOnly, findsOneWidget);
+      expect(tester.getSemantics(iconOnly).label, spoken);
+      semantics.dispose();
     });
 
     test('no page gives the header a second line', () {
@@ -319,6 +417,7 @@ void main() {
       await tester.pumpWidget(
         app(
           HermesAppBar(
+            titleInPill: true,
             title: const Text(''),
             actions: [
               icon(Icons.refresh, 'Actualizar'),
@@ -351,6 +450,7 @@ void main() {
       await tester.pumpWidget(
         app(
           HermesAppBar(
+            titleInPill: true,
             title: const Text('SOUL'),
             actions: [
               const ScreenHelpButton(paragraphs: ['Ayuda de la pantalla']),
@@ -407,11 +507,15 @@ void main() {
         ].indexed)
           icon(data, 'Acción $i'),
       ];
-      await tester.pumpWidget(app(HermesAppBar(actions: four().sublist(0, 3))));
+      await tester.pumpWidget(
+        app(HermesAppBar(titleInPill: true, actions: four().sublist(0, 3))),
+      );
       expect(find.byKey(moreKey), findsNothing);
       expect(find.byType(IconButton), findsNWidgets(3));
       await tester.pumpWidget(
-        app(HermesAppBar(actions: four(), maxPillActions: 4)),
+        app(
+          HermesAppBar(titleInPill: true, actions: four(), maxPillActions: 4),
+        ),
       );
       expect(find.byKey(moreKey), findsNothing);
       expect(find.byType(IconButton), findsNWidgets(4));
@@ -425,14 +529,17 @@ void main() {
         MaterialApp(
           navigatorKey: navigator,
           theme: AppTheme.fromId('classic-dark'),
-          home: const Scaffold(appBar: HermesAppBar(title: Text('Ajustes'))),
+          home: const Scaffold(
+            appBar: HermesAppBar(titleInPill: true, title: Text('Ajustes')),
+          ),
         ),
       );
       expect(find.byKey(leadingKey), findsNothing);
       navigator.currentState!.push(
         MaterialPageRoute<void>(
-          builder: (_) =>
-              const Scaffold(appBar: HermesAppBar(title: Text('Voz'))),
+          builder: (_) => const Scaffold(
+            appBar: HermesAppBar(titleInPill: true, title: Text('Voz')),
+          ),
         ),
       );
       await tester.pumpAndSettle();
@@ -452,7 +559,7 @@ void main() {
     ) async {
       await tester.pumpWidget(
         app(
-          const HermesAppBar(title: Text('Voz')),
+          const HermesAppBar(titleInPill: true, title: Text('Voz')),
           body: ListView(
             clipBehavior: hermesUnderHeader,
             children: [
@@ -491,6 +598,28 @@ void main() {
         tester.getRect(find.text('Fila 39')).bottom,
         lessThanOrEqualTo(600),
       );
+    });
+
+    testWidgets('by default the title is plain text, not a pill, and keeps '
+        'its badge', (tester) async {
+      await tester.pumpWidget(
+        app(
+          HermesAppBar(
+            title: const Text('Memoria'),
+            titleBadge: const SizedBox.square(
+              key: ValueKey('test-badge'),
+              dimension: 8,
+            ),
+          ),
+        ),
+      );
+      expect(find.byKey(titleKey), findsNothing);
+      expect(
+        find.byKey(const ValueKey('hermes-app-bar-plain-title')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('test-badge')), findsOneWidget);
+      expect(find.text('Memoria'), findsOneWidget);
     });
 
     testWidgets(

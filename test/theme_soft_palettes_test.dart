@@ -1,7 +1,9 @@
 // GENERATED from the soft-palette design (Claude-derived bands). Every
 // preset's effective tokens, so a palette change is always deliberate.
+import 'package:flutter/painting.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
+import 'package:hermes_android/core/theme/theme_contrast.dart';
 
 const softPalettes = <String, Map<String, int>>{
   'console': {
@@ -275,6 +277,40 @@ const softPalettes = <String, Map<String, int>>{
     'warning': 0xFF785F29,
     'success': 0xFF406D38,
     'secondary': 0xFF755C44,
+  },
+  'indigo-glass': {
+    'background': 0xFF08090F,
+    'surface': 0xFF12141F,
+    'surfaceVariant': 0xFF1A1D2E,
+    'accent': 0xFF5B6CFF,
+    'accentHover': 0xFF9B86FF,
+    'onAccent': 0xFF08090F,
+    'accentText': 0xFF8591FF,
+    'textPrimary': 0xFFF3F4F8,
+    'textSecondary': 0xFF8C8D92,
+    'textDisabled': 0xFF6C6E7A,
+    'divider': 0xFF2B2B31,
+    'error': 0xFFF0707C,
+    'warning': 0xFFFFB454,
+    'success': 0xFF4CD6A4,
+    'secondary': 0xFF9B86FF,
+  },
+  'indigo-glass-light': {
+    'background': 0xFFF1EEF8,
+    'surface': 0xFFFBFBFD,
+    'surfaceVariant': 0xFFE7E4F0,
+    'accent': 0xFF5B6CFF,
+    'accentHover': 0xFF5A3EDB,
+    'onAccent': 0xFF08090F,
+    'accentText': 0xFF3F4FE0,
+    'textPrimary': 0xFF1B1B1F,
+    'textSecondary': 0xFF5E5D66,
+    'textDisabled': 0xFF9A9AA2,
+    'divider': 0xFFD7D5DE,
+    'error': 0xFFB3261E,
+    'warning': 0xFF9A5208,
+    'success': 0xFF0F7050,
+    'secondary': 0xFF5A3EDB,
   },
   'nous': {
     'background': 0xFFF7F7F7,
@@ -686,6 +722,24 @@ const softPalettes = <String, Map<String, int>>{
   },
 };
 
+/// The ink tokens the legibility pass may move (the rest are pinned
+/// exactly): the text inks, the disabled ink (3:1 on every body), the
+/// status inks (AA on every body) and the accent as a control (3:1 on every
+/// body, as the Look & Feel derivation already keeps its accents).
+const _derivedInks = {
+  'textPrimary',
+  'textSecondary',
+  'textDisabled',
+  'accentText',
+  'accent',
+  'error',
+  'warning',
+  'success',
+};
+
+/// The inks whose declared value the glass tones keep certifying against.
+const _toneInks = {'textPrimary', 'textSecondary'};
+
 void main() {
   test('the catalogue is exactly the designed soft palettes', () {
     expect(
@@ -716,6 +770,43 @@ void main() {
         'secondary': p.secondary!.toARGB32(),
       };
       entry.value.forEach((token, argb) {
+        if (_derivedInks.contains(token)) {
+          // The text inks are the palette's declaration moved, by the least
+          // the legibility pass needs ([HermesThemeColors.withReadableInk]):
+          // the same hue, never less readable on the page than declared.
+          final declared = Color(argb);
+          final now = Color(actual[token]!);
+          // The glass tones keep certifying against the inks as pinned here,
+          // exactly (the dock, the chat foot and the gel keep their material).
+          if (_toneInks.contains(token)) {
+            final tone = token == 'textPrimary'
+                ? c.toneInkPrimary
+                : c.toneInkSecondary;
+            expect(
+              tone.toARGB32().toRadixString(16),
+              argb.toRadixString(16),
+              reason: '${entry.key}.$token tone ink',
+            );
+          }
+          expect(
+            ThemeContrast.ratio(now, c.background),
+            greaterThanOrEqualTo(
+              ThemeContrast.ratio(declared, c.background) - 1e-9,
+            ),
+            reason: '${entry.key}.$token reads at least as declared',
+          );
+          final from = HSLColor.fromColor(declared);
+          final to = HSLColor.fromColor(now);
+          final dh = (from.hue - to.hue).abs();
+          if (from.saturation > 0.08) {
+            expect(
+              dh < 8 || 360 - dh < 8,
+              isTrue,
+              reason: '${entry.key}.$token keeps its hue',
+            );
+          }
+          return;
+        }
         expect(
           actual[token]!.toRadixString(16),
           argb.toRadixString(16),

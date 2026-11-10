@@ -12,6 +12,7 @@ import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/dock_preferences_store.dart';
 import 'package:hermes_android/core/services/global_activity_aggregate.dart';
 import 'package:hermes_android/core/services/mission_control_repository.dart';
+import 'package:hermes_android/core/services/ssh_profile_presence.dart';
 import 'package:hermes_android/core/home/board/home_board_data.dart';
 import 'package:hermes_android/core/shell/dock_activity_sheet.dart';
 import 'package:hermes_android/core/shell/dock_geometry.dart';
@@ -158,7 +159,9 @@ class _BotsHomeStandIn extends StatelessWidget {
                 DockItemId.sessions: DockItemAction(
                   onTap: () => log.add('sessions'),
                 ),
-                DockItemId.tools: DockItemAction(onTap: () => log.add('tools')),
+                DockItemId.agents: DockItemAction(
+                  onTap: () => log.add('agents'),
+                ),
               },
             ),
           ],
@@ -277,9 +280,12 @@ void main() {
     DockModes.instance.resetForTesting();
     GestureDockHost.debugActivity = null;
     GestureDockHost.debugFeed = DockActivityFeed();
+    // No SSH profile: the bar is Inicio · Chats · Bots · Ajustes and «+».
+    SshProfilePresence.instance.value = false;
   });
 
   tearDown(() async {
+    SshProfilePresence.instance.value = false;
     FeatureFlags.instance.resetForTesting();
     GestureDockHost.debugActivity = null;
     GestureDockHost.debugFeed = null;
@@ -320,8 +326,8 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('open-bots')));
     await tester.pumpAndSettle();
-    // 34 inset + 14 gap + 60 bar + 8 breathing, as on every General screen.
-    const footprint = 34.0 + 14 + 60 + 8;
+    // 34 inset + 14 gap + 56 bar + 8 breathing, as on every General screen.
+    const footprint = 34.0 + 14 + 56 + 8;
     expect(
       gestureDockFootprint(tester.element(find.byType(GestureDock))),
       footprint,
@@ -347,12 +353,14 @@ void main() {
     );
     await tester.pumpAndSettle();
     final general = _dockSignature(tester);
+    // QA 9709 (dock-final): the places in the pill, then the round «+»
+    // after it, the order a screen reader walks them.
     expect(general, [
       'gesture-dock-tab-home:Inicio',
-      'gesture-dock-tab-create:Nuevo chat',
       'gesture-dock-tab-search:Chats',
       'gesture-dock-tab-bots:Bots',
-      'gesture-dock-tab-tools:Herramientas',
+      'gesture-dock-tab-settings:Ajustes',
+      'gesture-dock-tab-create:Nuevo chat',
     ]);
     final generalRect = tester.getRect(
       find.byKey(const ValueKey('gesture-dock-pointer')),
@@ -389,7 +397,7 @@ void main() {
       GestureDockTab.home: [s.dockSessionsLabel, s.gdShortCron],
       GestureDockTab.create: [s.gdGotoNewChat, s.missionCreateBotLabel],
       GestureDockTab.projects: [s.gdShortTasks],
-      GestureDockTab.settings: [s.drawerTools],
+      GestureDockTab.settings: [s.gdSettingsTitle],
     };
     for (final MapEntry(key: tab, value: labels) in expected.entries) {
       await _hold(tester, tab);
@@ -585,13 +593,15 @@ void main() {
     );
     await tester.pumpAndSettle();
     final hide = _strings(tester).gdHideDock;
-    for (final tab in GestureDockController.instance.value.tabs) {
+    for (final tab in gestureDockShownTabs(
+      GestureDockController.instance.value.tabs,
+    )) {
       await _hold(tester, tab);
       expect(_popoverLabels(tester), contains(hide), reason: tab.name);
       await tester.tapAt(const Offset(195, 200));
       await tester.pumpAndSettle();
     }
-    await _hold(tester, GestureDockTab.tools);
+    await _hold(tester, GestureDockTab.settings);
     await tester.tap(find.byKey(ValueKey('gesture-dock-shortcut-$hide')));
     await tester.pumpAndSettle();
     expect(GestureDockController.instance.hidden.value, isTrue);
@@ -713,11 +723,25 @@ void main() {
     final shown = [
       for (final e in tiles.evaluate()) (e.widget as DockItemTile),
     ];
+    // QA 9709 (dock-final): «Nuevo chat» apart on top, then the places in
+    // the layout's order; icons only, the label kept for a screen reader.
+    final order = [
+      GestureDockTab.create,
+      for (final tab in layout)
+        if (tab != GestureDockTab.create) tab,
+    ];
     expect(
       [for (final t in shown) (t.controlKey! as ValueKey<String>).value],
-      [for (final tab in layout) 'gesture-dock-rail-${tab.name}'],
+      [for (final tab in order) 'gesture-dock-rail-${tab.name}'],
     );
-    for (final (i, tab) in layout.indexed) {
+    expect([for (final t in shown) t.iconOnly], everyElement(isTrue));
+    Rect rectOf(String key) => tester.getRect(find.byKey(ValueKey(key)));
+    expect(
+      rectOf('gesture-dock-rail-create').bottom,
+      lessThan(rectOf('gesture-dock-rail-home').top),
+      reason: '«+» above the pill',
+    );
+    for (final (i, tab) in order.indexed) {
       expect(shown[i].icon, gestureDockTabIcon(tab), reason: tab.name);
       expect(
         shown[i].selectedIcon,
@@ -730,8 +754,65 @@ void main() {
       [for (final tile in shown) tile.selected],
       [false, false, false, false, true],
     );
+    // No accent on «+»: the same material as the rest.
+    expect(shown.first.accent, isFalse);
     await tester.pumpWidget(const SizedBox());
   });
+
+  // QA 9709 (dock-final): the rail of the open Fold, a phone on its side and
+  // a tablet: icons only, «+» apart above the pill, 48 dp targets, every
+  // name for TalkBack, and nothing grows or overflows with large text.
+  for (final size in const [Size(773, 1024), Size(800, 360), Size(1280, 800)]) {
+    for (final scale in [1.0, 2.0]) {
+      testWidgets('rail ${size.width.toInt()}x${size.height.toInt()}, '
+          'text ${scale}x: icons only, «+» apart, 48 dp', (tester) async {
+        tester.view.devicePixelRatio = 1;
+        tester.view.physicalSize = size;
+        tester.platformDispatcher.textScaleFactorTestValue = scale;
+        addTearDown(tester.view.reset);
+        addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+        final semantics = tester.ensureSemantics();
+        GestureDockController.instance.resetForTesting(
+          settings: const GestureDockSettings(
+            tabs: GestureDockTab.defaultLayout,
+          ),
+        );
+        // With an SSH profile the rail has all five destinations.
+        SshProfilePresence.instance.value = true;
+        final manager = await _manager();
+        await tester.pumpWidget(_app(_generalScreen(manager)));
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+        final rail = find.byKey(const ValueKey('gesture-dock-rail'));
+        expect(rail, findsOneWidget);
+        expect(
+          find.descendant(of: rail, matching: find.byType(Text)),
+          findsNothing,
+          reason: 'icons only',
+        );
+        final strings = Strings.of(tester.element(rail));
+        Rect rectOf(GestureDockTab tab) => tester.getRect(
+          find.byKey(ValueKey('gesture-dock-rail-${tab.name}')),
+        );
+        for (final tab in GestureDockTab.defaultLayout) {
+          final item = rectOf(tab);
+          expect(item.width, greaterThanOrEqualTo(48), reason: tab.name);
+          expect(item.height, greaterThanOrEqualTo(48), reason: tab.name);
+          expect(
+            find.bySemanticsLabel(gestureDockTabLabel(strings, tab)),
+            findsWidgets,
+            reason: tab.name,
+          );
+        }
+        expect(
+          rectOf(GestureDockTab.create).bottom,
+          lessThan(rectOf(GestureDockTab.home).top),
+        );
+        semantics.dispose();
+        await tester.pumpWidget(const SizedBox());
+      });
+    }
+  }
 
   testWidgets('the tablet rail carries the amber dot too', (tester) async {
     tester.view.devicePixelRatio = 2;

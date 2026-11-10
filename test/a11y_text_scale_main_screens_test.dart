@@ -88,7 +88,9 @@ void main() {
 
     await expectA11yLayoutUsable(tester, {
       'menu': find.byTooltip('Menu'),
-      'new chat': find.byTooltip('New chat'),
+      // Vistas v3: [Vistas] [Ajustes] where «+» was (new chat is Ajustes').
+      'views': find.byKey(const ValueKey('chat-views-button')),
+      'conversation settings': find.byTooltip('This conversation'),
       // fh1215: the floating header's activity pill.
       'header pill': find.byKey(const ValueKey('chat-header-pill')),
       'composer': find.byKey(const ValueKey('chat-composer-host')),
@@ -97,13 +99,16 @@ void main() {
       'edit message': find.byTooltip('Edit message'),
       'copy message': find.byTooltip('Copy message'),
     });
-    // Search and conversation settings live behind the composer notch. It
-    // floats over the transcript like the activity pill, so scrolled
-    // messages may pass under it; check it against the fixed chrome only.
+    // Search and conversation settings live behind «Ajustes» in the header
+    // (Vistas v3; the composer notch before). It floats over the transcript
+    // like the activity pill, so scrolled messages may pass under it; check
+    // it against the fixed chrome only.
     await expectA11yLayoutUsable(tester, {
-      'conversation notch': find.byKey(const ValueKey('chat-notch')),
+      'conversation settings': find.byKey(
+        const ValueKey('chat-settings-button'),
+      ),
       'composer': find.byKey(const ValueKey('chat-composer-host')),
-      'new chat': find.byTooltip('New chat'),
+      'views': find.byKey(const ValueKey('chat-views-button')),
     });
   });
 
@@ -122,10 +127,10 @@ void main() {
 
     await expectA11yLayoutUsable(tester, {
       'connection section': find.text('connection'),
-      'connection label': find.text('Accessibility fixture').last,
+      'connection label': find.textContaining('Accessibility fixture').last,
       'manage instances': find.text('Manage instances'),
       'appearance section': find.text('Appearance'),
-      'themes': find.text('Themes'),
+      'themes': find.text('Look & Feel'),
       'font style': find.text('Font style'),
       'language': find.text('Language'),
       'header name': find.text('Header name'),
@@ -142,7 +147,8 @@ void main() {
     await pumpA11yProfiles(tester);
 
     await expectA11yLayoutUsable(tester, {
-      'default profile': find.text('default'),
+      // The main profile wears its visible name, not the server's.
+      'default profile': find.text('Hermes'),
       'release profile': find.text('release'),
       'default actions': find.byKey(const ValueKey('profile-more-default')),
       'release actions': find.byKey(const ValueKey('profile-more-release')),
@@ -167,13 +173,30 @@ void main() {
     await expectA11yLayoutUsable(
       tester,
       {
-        'welcome': find.text('Connect to your Hermes'),
-        'scan': find.text('I already have Hermes'),
-        'no Hermes yet': find.text("I don't have Hermes yet"),
+        'welcome': find.text('Connect an agent'),
+        // The three ways in, as cards.
+        'nous': find.text('Nous Portal account'),
+        'server': find.text('Manual dashboard'),
+        'scan': find.text('Scan a code or find my server'),
+        'pairing': find.text('Pair with a setup command'),
         // The headline follows the system size up to 1.35x: at 2x it would break
         // words on a 320 dp phone.
       },
       fixedSizeText: {'welcome'},
     );
+    expect(find.byKey(const ValueKey('onboarding-way-ssh')), findsNothing);
+    // SSH keeps the same large-text accessibility checks in its new home.
+    final manual = find.byKey(const ValueKey('onboarding-manual'));
+    await tester.ensureVisible(manual);
+    await tester.pumpAndSettle();
+    await tester.tap(manual);
+    await tester.pumpAndSettle();
+    await expectA11yLayoutUsable(tester, {
+      'direct route': find.text('Direct'),
+      'ssh route': find.text('SSH'),
+    });
+    await tester.tap(find.byKey(const ValueKey('cnx-tab-ssh')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('cnx-ssh-host')), findsOneWidget);
   });
 }

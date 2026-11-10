@@ -2,9 +2,9 @@ import 'dart:ui' show FlutterView;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
-import 'package:flutter/services.dart';
 
 import '../widgets/hermes_notice.dart';
+import 'haptics.dart';
 
 /// What a piece of transient feedback is for. The kind, not the call site,
 /// decides whether anything is drawn on screen.
@@ -114,7 +114,7 @@ class FeedbackSink {
   }) {
     if (!FeedbackPolicy.isVisual(kind)) {
       _announce(message);
-      HapticFeedback.selectionClick();
+      HermesHaptics.selection();
       return null;
     }
     final HermesNoticeKind tone = switch (kind) {

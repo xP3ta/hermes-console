@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 
+import '../theme/app_theme.dart';
 import '../widgets/hermes_app_bar.dart' show hermesUnderHeader;
+import 'scrim_holes.dart';
+import 'tokens.dart' show HermesSpace;
 
 /// Ends a page's body at its lower edge and at its sides, but not at the
 /// top: a list inside it that does not clip itself (`hermesUnderHeader`)
@@ -54,7 +58,7 @@ class HermesBottomFade extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final page = color ?? Theme.of(context).scaffoldBackgroundColor;
+    final page = color ?? Theme.of(context).hermes.background;
     return IgnorePointer(
       child: SizedBox(
         height: extent,
@@ -173,15 +177,19 @@ class HermesStickyControls extends StatelessWidget {
     super.key,
   });
 
-  /// Room the controls take at the top of the content.
-  static const double extent = 56;
+  /// The air between the header's foot and the controls: the header's tail
+  /// ([HermesAppBar.veilTail]) never reaches them.
+  static const double gap = HermesSpace.x2;
+
+  /// Room the controls take at the top of the content, [gap] included.
+  static const double extent = 56 + gap;
 
   final Widget controls;
   final Widget child;
 
   @override
   Widget build(BuildContext context) {
-    final page = Theme.of(context).scaffoldBackgroundColor;
+    final page = Theme.of(context).hermes.background;
     return Stack(
       fit: StackFit.expand,
       children: [
@@ -210,10 +218,10 @@ class HermesStickyControls extends StatelessWidget {
           ),
         ),
         Positioned(
-          top: 0,
+          top: gap,
           left: 14,
           right: 14,
-          height: extent,
+          height: extent - gap,
           child: RepaintBoundary(child: Center(child: controls)),
         ),
       ],
@@ -231,7 +239,7 @@ class HermesStickyControls extends StatelessWidget {
 ///
 /// Give it exactly the area of the pieces. Nothing is painted above them.
 class HermesBottomScrim extends StatelessWidget {
-  const HermesBottomScrim({this.foot = 52, this.color, super.key});
+  const HermesBottomScrim({this.foot = 52, this.color, this.holes, super.key});
 
   /// How much of the page colour covers what is behind the lowest row. Text
   /// behind it stays under 1.6:1 against the page, light theme or dark.
@@ -247,19 +255,112 @@ class HermesBottomScrim extends StatelessWidget {
   /// The page colour; the scaffold's by default.
   final Color? color;
 
+  /// OPUS-CRISTAL: outlines the scrim leaves alone, published by a toned
+  /// glass strip that frosts (HermesGlassStrip.scrimHoles): its still
+  /// pieces, a few dp inside them. The gaps keep the scrim. Null or empty:
+  /// the scrim of before, pixel for pixel.
+  final HermesScrimHoles? holes;
+
   @override
   Widget build(BuildContext context) {
-    final page = color ?? Theme.of(context).scaffoldBackgroundColor;
+    final page = color ?? Theme.of(context).hermes.background;
     return IgnorePointer(
-      child: RepaintBoundary(
-        child: CustomPaint(
-          painter: _BottomScrimPainter(
-            page,
-            foot + MediaQuery.paddingOf(context).bottom,
+      child: _ScrimHolesClip(
+        holes: holes,
+        child: RepaintBoundary(
+          child: CustomPaint(
+            painter: _BottomScrimPainter(
+              page,
+              foot + MediaQuery.paddingOf(context).bottom,
+            ),
+            size: Size.infinite,
           ),
-          size: Size.infinite,
         ),
       ),
+    );
+  }
+}
+
+/// Clips [HermesScrimHoles] out of the scrim; nothing when there are none.
+class _ScrimHolesClip extends SingleChildRenderObjectWidget {
+  const _ScrimHolesClip({required this.holes, super.child});
+
+  final HermesScrimHoles? holes;
+
+  @override
+  RenderObject createRenderObject(BuildContext context) =>
+      _RenderScrimHolesClip(holes);
+
+  @override
+  void updateRenderObject(
+    BuildContext context,
+    _RenderScrimHolesClip renderObject,
+  ) {
+    renderObject.holes = holes;
+  }
+}
+
+class _RenderScrimHolesClip extends RenderProxyBox {
+  _RenderScrimHolesClip(this._holes);
+
+  HermesScrimHoles? _holes;
+  set holes(HermesScrimHoles? value) {
+    if (identical(value, _holes)) return;
+    if (attached) _holes?.removeListener(markNeedsPaint);
+    _holes = value;
+    if (attached) _holes?.addListener(markNeedsPaint);
+    markNeedsPaint();
+  }
+
+  final LayerHandle<ClipPathLayer> _clip = LayerHandle<ClipPathLayer>();
+
+  @override
+  void attach(PipelineOwner owner) {
+    super.attach(owner);
+    _holes?.addListener(markNeedsPaint);
+  }
+
+  @override
+  void detach() {
+    _holes?.removeListener(markNeedsPaint);
+    super.detach();
+  }
+
+  @override
+  void dispose() {
+    _clip.layer = null;
+    super.dispose();
+  }
+
+  @override
+  void paint(PaintingContext context, Offset offset) {
+    // Checked now, against the current layout: a stale hole is never cut.
+    final paths = _holes?.current(hermesPaintPass(parent)) ?? const <Path>[];
+    final toLocal = paths.isEmpty
+        ? null
+        : Matrix4.tryInvert(getTransformTo(null));
+    if (toLocal == null || child == null) {
+      _clip.layer = null;
+      super.paint(context, offset);
+      return;
+    }
+    final cut = Path();
+    for (final hole in paths) {
+      cut.addPath(hole.transform(toLocal.storage), Offset.zero);
+    }
+    final area = Offset.zero & size;
+    final clip = Path.combine(
+      PathOperation.difference,
+      Path()..addRect(area),
+      cut,
+    );
+    _clip.layer = context.pushClipPath(
+      needsCompositing,
+      offset,
+      area,
+      clip,
+      super.paint,
+      oldLayer: _clip.layer,
     );
   }
 }

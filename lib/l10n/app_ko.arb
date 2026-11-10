@@ -1,6 +1,13 @@
 {
   "@@locale": "ko",
-  "o2FirstChat": "Hermes와 대화하기",
+  "mpnFirstChat": "{name}와 대화하기",
+  "@mpnFirstChat": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "sInvalidPort": "포트는 1~65535 사이의 숫자여야 합니다. 고급 설정에서 수정해 주세요.",
   "sBackToConnection": "연결로 돌아가기",
   "sBadAddress": "주소가 올바르지 않습니다. 컴퓨터 주소를 붙여넣고 다시 시도해 주세요.",
@@ -72,6 +79,21 @@
   "o2OpenChat": "채팅 열기",
   "o2NeedsModelBody": "Hermes가 응답하려면 모델을 선택해야 합니다",
   "o2ChooseModel": "모델 선택",
+  "nacWayPickTitle": "어떻게 연결할까요?",
+  "nacWayNousTitle": "Nous Portal 계정",
+  "nacWayNousBody": "Hermes가 Nous Cloud에서 실행 중인 경우: 브라우저에서 Nous 계정으로 로그인합니다.",
+  "nacWayManualTitle": "Dashboard 직접 입력",
+  "nacWayManualBody": "Dashboard 주소를 알고 있다면 직접 또는 SSH 터널로 연결한 뒤 비밀번호, ID 공급자 또는 Nous로 로그인하세요.",
+  "nacWayScanTitle": "코드 스캔 또는 내 서버 찾기",
+  "nacWayScanBody": "Hermes가 같은 네트워크나 Tailscale에 있는 경우: 설정 코드를 스캔하거나 기기 이름을 입력하면 앱이 Hermes가 응답하는지 확인합니다.",
+  "nacWayRecommended": "추천",
+  "nacWayWhichLink": "무엇을 골라야 할지 모르겠어요",
+  "nacWayWhichTitle": "나에게 맞는 방법은?",
+  "nacWayWhichBody": "Nous Portal 계정: Nous가 Hermes를 호스팅하고 Nous 계정으로 로그인합니다.\n수동 Dashboard: https 또는 로컬 주소나 SSH 터널로 연결한 뒤 비밀번호, ID 공급자 또는 Nous로 로그인합니다.\n스캔 또는 찾기: 서버가 같은 네트워크나 Tailscale에 있고 설정 코드가 손에 있습니다.",
+  "nacWayNousPageBody": "Nous Portal에 로그인해 에이전트 주소를 복사한 뒤 돌아오세요. 앱이 알아서 사용합니다.",
+  "nacWayNousAddressHint": "name.agents.nousresearch.com",
+  "nacWayNousHostOk": "Nous Cloud 서버",
+  "nacWayEditorForm": "또는 아래에서 연결 정보를 직접 입력",
   "o2MacLinux": "Mac 또는 Linux",
   "o2Windows": "Windows",
   "o2IssueTitle": "문제가 발생했습니다",
@@ -177,7 +199,72 @@
   "drawerMascots": "마스코트",
   "drawerKanban": "칸반",
   "drawerSsh": "SSH / 터미널",
-  "drawerSkills": "스킬",
+  "screenTitle": "봇 화면",
+  "botScreenTooltip": "봇의 데스크톱 보기",
+  "bsaScreen": "화면 보기",
+  "bsaNoDesktop": "데스크톱 없음",
+  "bsaTitle": "{bot}의 화면",
+  "bsaSubView": "보기만 · {seconds}초마다 새로고침",
+  "bsaSubControl": "제어 중입니다",
+  "bsaSubOff": "정지됨",
+  "bsaStateOff": "꺼짐",
+  "bsaStateOn": "켜짐",
+  "bsaStateControl": "제어 중",
+  "bsaPowerOff": "끄기",
+  "bsaPowerOffTitle": "{bot}의 컴퓨터를 끌까요?",
+  "bsaPowerOffBody": "창과 화면에서 하던 작업이 닫힙니다. 봇은 계속 동작하며 다시 켤 수 있습니다.",
+  "bsaPowerOffFailed": "봇의 컴퓨터를 끌 수 없습니다.",
+  "bsaPowerOffHeld": "다른 사람이 화면을 제어 중이라 지금은 끌 수 없습니다.",
+  "bsaTrackpad": "트랙패드",
+  "bsaKeyboard": "키보드",
+  "bsaZoomOut": "축소",
+  "bsaZoomIn": "확대",
+  "bsaClick": "클릭",
+  "bsaWheel": "휠",
+  "bsaRightClick": "오른쪽 클릭",
+  "bsaPadHint": "이동 · 탭하여 클릭 · 두 손가락으로 스크롤",
+  "bsaPadScroll": "스크롤",
+  "bsaDirectHint": "화면을 직접 터치하세요",
+  "bsaHttpShort": "암호화되지 않은 연결 · 탭하여 자세히 보기",
+  "bsaStoppedNote": "켜져 있는 동안에는 봇만 사용합니다",
+  "bsaClose": "닫기",
+  "screenRefresh": "지금 새로고침",
+  "screenPollHint": "{seconds}초마다 새로고침",
+  "screenSuppressed": "사람이 화면을 조작하고 있습니다. 프레임이 일시 중지되었습니다.",
+  "screenSuppressedPartial": "사람이 제어 중입니다. 보기가 제한됩니다.",
+  "screenStopped": "봇의 컴퓨터가 꺼져 있습니다.",
+  "screenStart": "봇의 컴퓨터 켜기",
+  "screenUnsupported": "이 인스턴스에 디스플레이가 설치되어 있지 않습니다.",
+  "screenFailed": "봇의 화면을 읽을 수 없습니다.",
+  "screenStartFailed": "봇의 컴퓨터를 켤 수 없습니다.",
+  "screenReadOnly": "읽기 전용 연결입니다. 화면 제어를 넘겨받을 수 없습니다.",
+  "screenStale": "마지막 화면 — 화면에 연결할 수 없음",
+  "screenUnavailable": "화면을 사용하려면 봇의 Hermes를 업데이트하세요.",
+  "screenTakeoverTitle": "봇 화면 제어",
+  "screenTakeover": "제어권 가져오기",
+  "screenHandBack": "돌려주기",
+  "screenShowKeyboard": "키보드 표시",
+  "screenHideKeyboard": "키보드 숨기기",
+  "screenSwitchToTouchpad": "터치패드 모드로 전환",
+  "screenSwitchToTouch": "직접 터치 모드로 전환",
+  "screenChecking": "봇 화면을 확인하는 중…",
+  "screenStarting": "서버에서 화면을 시작하는 중…",
+  "screenAcquiring": "제어권을 가져오는 중…",
+  "screenActiveHint": "제어권이 있습니다. 평소처럼 탭하고 드래그하고 입력하세요.",
+  "screenLeaseLost": "다른 클라이언트가 제어권을 가져갔습니다.",
+  "screenLeaseAgent": "아직 에이전트가 화면을 사용 중입니다.",
+  "screenRetry": "다시 시도",
+  "screenStartDisplay": "화면 시작",
+  "screenBlocked": "화면이 차단되어 시작할 수 없습니다.",
+  "screenUnsupportedDetail": "이 인스턴스에 디스플레이가 설치되어 있지 않습니다. 서버에 TigerVNC와 Xfce 코어가 필요합니다.",
+  "screenTakeoverFailed": "화면 제어권을 가져올 수 없습니다.",
+  "screenBridgeConnecting": "연결 중…",
+  "screenBridgeMissing": "화면 주소가 없습니다",
+  "screenBridgeClosed": "세션이 종료되었습니다",
+  "screenBridgeLost": "연결이 끊겼습니다. 탭하여 다시 연결하세요.",
+  "screenBridgeSecurity": "보안 오류",
+  "screenBridgeCredentials": "화면이 자격 증명을 요청했습니다",
+  "screenUnencrypted": "암호화되지 않은 연결입니다(http Dashboard). Tailscale이나 VPN을 통해서만 사용하세요.",
   "drawerCron": "예약 작업",
   "drawerSoul": "SOUL",
   "drawerGroupInstance": "인스턴스",
@@ -295,7 +382,6 @@
   "chatAttachCamera": "카메라",
   "chatAttachPhotos": "갤러리",
   "chatAttachFiles": "파일",
-  "chaCantSendApproval": "승인을 전송하지 못했습니다: {err}",
   "chaTextFileError": "텍스트 파일을 읽지 못했습니다",
   "chaOutboxUnavailable": "턴을 안전하게 저장하지 못했습니다. 전송되지 않았으며 다시 시도할 수 있도록 메시지가 남아 있습니다.",
   "chaSendNotSentRetry": "전송되지 않았습니다. 메시지가 남아 있으니 전송을 다시 누르세요.",
@@ -325,7 +411,6 @@
   "chaMenuTooltip": "메뉴",
   "chaProfileChip": "프로필: {name}",
   "chaNewChatTooltip": "새 채팅",
-  "chaPermissionsTitle": "권한 / 모드",
   "chaUpdateTitle": "업데이트",
   "chaSessionDetailsAction": "세션 상세 정보 보기",
   "chaModelSheetTitle": "모델 및 세션",
@@ -367,14 +452,343 @@
   "chaContextNotMeasured": "Hermes가 응답의 첫 텍스트를 표시할 때 측정됩니다",
   "chaContextNotPublished": "Hermes가 이 데이터를 제공하지 않습니다",
   "chaContextWindowUnavailable": "Hermes가 아직 이 세션의 컨텍스트 크기를 제공하지 않았습니다.",
-  "chaControlTitle": "이 대화의 설정",
-  "chaControlScope": "이 대화에만 적용",
-  "chaControlSectionSession": "세션",
-  "chaControlSectionTools": "도구",
-  "chaControlSectionDanger": "민감한 설정",
+  "chaControlTitle": "이 대화",
+  "chaControlTerminal": "터미널",
+  "chaControlDeleteConversation": "대화 삭제",
+  "chaControlBrowser": "브라우저",
+  "brwBack": "뒤로",
+  "brwForward": "앞으로",
+  "brwReload": "페이지 새로고침",
+  "brwAddress": "주소",
+  "brwAddressPlaceholder": "주소 입력",
+  "brwBlankPage": "위에 주소를 입력해 탐색하세요.",
+  "brwOpenExternal": "브라우저에서 열기",
+  "brwServerNotFound": "서버를 찾을 수 없음",
+  "brwFailedToLoad": "페이지를 불러오지 못했습니다",
+  "brwUnreachable": "페이지에 연결할 수 없습니다.",
+  "brwRemoteLoopback": "이 주소는 이 기기가 아니라 에이전트를 실행하는 컴퓨터를 가리킵니다. 브라우저는 페이지를 로컬에서 불러오므로 원격 개발 서버에는 포트 포워딩이나 접근 가능한 호스트 이름이 필요합니다.",
+  "brwBackToChat": "채팅으로 돌아가기",
+  "brwAgentOffer": "Hermes가 페이지를 보여 주려고 합니다",
+  "brwAgentOfferOpen": "보기",
+  "brwAgentOfferDismiss": "닫기",
+  "brwAgentReading": "Hermes가 이 페이지를 읽는 중입니다",
+  "brwCleartextTitle": "이 앱은 https 페이지만 엽니다",
+  "brwCleartextBody": "이 페이지는 암호화되지 않은 http를 사용해 여기서 불러올 수 없습니다. 시스템 브라우저에서 여세요.",
+  "brwRendererGone": "페이지가 닫혔습니다",
+  "brwRendererGoneBody": "메모리를 확보하거나 페이지가 응답하지 않아 Android가 페이지를 닫았습니다. 앱은 계속 열려 있습니다. 다시 불러오세요.",
+  "brwTabNew": "새 탭",
+  "brwTabBlank": "새 탭",
+  "brwTabsShow": "{count, plural, =1{탭 보기} other{탭 {count}개 보기}}",
+  "brwTabsCount": "{count, plural, =1{탭 1개} other{탭 {count}개}}",
+  "brwTabClose": "{name} 탭 닫기",
+  "brwTabsCloseAll": "모두 닫기",
+  "brwTabsCloseAllLabel": "{count, plural, =1{탭 닫기} other{탭 {count}개 모두 닫기}}",
+  "brwTabLabel": "탭 {index}/{count}, {name}",
+  "brwTabAgentLabel": "Hermes의 탭, {name}",
+  "brwTabAgentLiveLabel": "Hermes의 탭, {name}, 실시간",
+  "brwTabHermes": "Hermes",
+  "brwTabClosed": "‘{name}’ 닫음",
+  "brwTabsClosed": "{count, plural, =1{탭 1개 닫음} other{탭 {count}개 닫음}}",
+  "brwTabUndo": "실행 취소",
+  "brwTabHermesSees": "Hermes가 보고 있음",
+  "brwPipWatch": "{host} 보기",
+  "brwPipWatchLabel": "Hermes 브라우저 보기, {host}",
+  "brwPipWatchLabelLive": "Hermes 브라우저 보기, {host}, 실시간",
+  "brwPipLive": "실시간",
+  "brwPipOffline": "연결 끊김",
+  "brwPipDone": "완료",
+  "brwPipAgentControls": "Hermes가 조작 중",
+  "brwPipYouControl": "내가 조작 중",
+  "brwPipDock": "위에 고정",
+  "brwPipUndock": "고정 해제",
+  "brwPipExpand": "확대",
+  "brwPipClose": "브라우저 닫기",
+  "brwPipRegion": "Hermes 브라우저",
+  "gitTitle": "Git",
+  "gitNoBranch": "브랜치 없음",
+  "gitDetached": "분리됨",
+  "gitChanged": "{count, plural, other{{count}개 변경}}",
+  "gitAhead": "{count}개 앞섬",
+  "gitBehind": "{count}개 뒤처짐",
+  "gitStage": "스테이징",
+  "gitUnstage": "스테이징 취소",
+  "gitStaged": "스테이징됨",
+  "gitNotRepo": "Git 저장소가 아닙니다",
+  "gitNoDiffs": "차이 없음",
+  "gitNoDiff": "표시할 차이가 없습니다",
+  "gitCommit": "커밋",
+  "gitCommitMessage": "메시지",
+  "gitDiffTooLarge": "차이가 너무 큽니다",
+  "gitDiffBinary": "바이너리 파일",
+  "gitFailureUnsupported": "이 버전의 Hermes는 Git을 제공하지 않습니다.",
+  "gitFailureForbidden": "이 인스턴스는 이 세션에서 Git 사용을 허용하지 않습니다.",
+  "gitFailureRejected": "Git이 서버에서 작업을 완료하지 못했습니다.",
+  "gitFailureUnknown": "Git을 읽을 수 없습니다.",
+  "gitConflicts": "{count, plural, other{해결되지 않은 충돌 {count}개}}",
+  "gitProblemConflict": "해결되지 않은 충돌이 있습니다.",
+  "gitProblemNoIdentity": "서버의 Git에 작성자 이름과 이메일이 없습니다.",
+  "gitRefresh": "트리 새로고침",
+  "gitStatusModified": "수정됨",
+  "gitStatusAdded": "추가됨",
+  "gitStatusDeleted": "삭제됨",
+  "gitStatusRenamed": "이름 변경됨",
+  "gitStatusCopied": "복사됨",
+  "gitStatusConflicted": "충돌",
+  "gitStatusUntracked": "추적되지 않음",
+  "ghtSwitchAction": "전환",
+  "ghtRemoveAction": "제거",
+  "ghtSearchPaths": "경로 검색",
+  "ghtScopeUncommitted": "미커밋",
+  "ghtScopeBranch": "브랜치",
+  "ghtFileCount": "{count, plural, =1{파일 1개} other{파일 {count}개}}",
+  "@ghtFileCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "ghtCleanTitle": "작업 트리가 깨끗합니다",
+  "ghtCleanBody": "마지막 커밋 이후 변경이 없습니다.",
+  "ghtBranchCleanTitle": "브랜치가 기준과 같습니다",
+  "ghtBranchCleanBody": "기준 브랜치 대비 변경이 있는 커밋이 없습니다.",
+  "ghtNoMatches": "검색과 일치하는 경로가 없습니다.",
+  "ghtShipTitle": "푸시와 풀 리퀘스트",
+  "ghtShipOpen": "푸시와 풀 리퀘스트 열기",
+  "ghtCommitOptions": "커밋 옵션",
+  "ghtBranchScopeHint": "기준 대비 브랜치의 변경(이미 커밋됨).",
+  "ghtPanelTitle": "변경",
+  "ghtNotRepoBody": "이 채팅의 폴더는 서버의 Git 저장소 안에 있지 않습니다.",
+  "ghtGitHubConnected": "GitHub: 로그인됨",
+  "ghtGitHubSignedOut": "GitHub: 서버에 로그인되지 않음",
+  "ghtGitHubMissing": "GitHub: 서버에 gh가 설치되지 않음",
+  "ghtGitHubUnknown": "GitHub: 확인 안 됨",
+  "ghtIdentityMissing": "서버에 작성자 정보가 없음",
+  "ghtRefreshGitHub": "GitHub 다시 확인",
+  "ghtMore": "기타 Git 작업",
+  "ghtBranchPick": "브랜치 전환",
+  "ghtBranchesTitle": "브랜치",
+  "ghtBranchCurrent": "현재 브랜치",
+  "ghtBranchRemote": "원격",
+  "ghtBranchInWorktree": "다른 워크트리에 있음: {path}",
+  "@ghtBranchInWorktree": {
+    "placeholders": {
+      "path": {
+        "type": "String"
+      }
+    }
+  },
+  "ghtBranchSwitchConfirmTitle": "{branch}(으)로 전환할까요?",
+  "@ghtBranchSwitchConfirmTitle": {
+    "placeholders": {
+      "branch": {
+        "type": "String"
+      }
+    }
+  },
+  "ghtBranchSwitchConfirmBody": "{count, plural, =1{커밋되지 않은 변경 1개가 있습니다. 충돌이 없을 때만 전환되며 변경은 새 브랜치로 옮겨집니다.} other{커밋되지 않은 변경 {count}개가 있습니다. 충돌이 없을 때만 전환되며 변경은 새 브랜치로 옮겨집니다.}}",
+  "@ghtBranchSwitchConfirmBody": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "ghtBranchSwitched": "이제 {branch}에 있습니다",
+  "@ghtBranchSwitched": {
+    "placeholders": {
+      "branch": {
+        "type": "String"
+      }
+    }
+  },
+  "ghtBranchNew": "워크트리에 새 브랜치",
+  "ghtBranchNewName": "브랜치 이름",
+  "ghtBranchNewBase": "기준 브랜치",
+  "ghtBranchNewCreate": "만들기",
+  "ghtBranchNewHint": "서버가 .worktrees 아래 새 워크트리에 브랜치를 만듭니다.",
+  "ghtBranchNone": "브랜치 없음",
+  "ghtWorktrees": "워크트리",
+  "ghtWorktreeMain": "기본",
+  "ghtWorktreeLocked": "잠김",
+  "ghtWorktreeDetached": "분리된 HEAD",
+  "ghtWorktreeAdd": "워크트리 추가",
+  "ghtWorktreeRemove": "워크트리 제거",
+  "ghtWorktreeRemoveTitle": "워크트리를 제거할까요?",
+  "ghtWorktreeRemoveBody": "서버의 {path} 폴더가 삭제됩니다. 브랜치는 남습니다. 되돌릴 수 없습니다.",
+  "@ghtWorktreeRemoveBody": {
+    "placeholders": {
+      "path": {
+        "type": "String"
+      }
+    }
+  },
+  "ghtWorktreeRemoveForceTitle": "워크트리에 변경이 있음",
+  "ghtWorktreeRemoveForceBody": "{path}에 수정되었거나 추적되지 않은 파일이 있습니다. 강제하면 영구 삭제됩니다.",
+  "@ghtWorktreeRemoveForceBody": {
+    "placeholders": {
+      "path": {
+        "type": "String"
+      }
+    }
+  },
+  "ghtWorktreeRemoveForce": "강제 삭제",
+  "ghtWorktreeRemoved": "워크트리를 제거했습니다",
+  "ghtWorktreeOpen": "여기서 Git 열기",
+  "ghtWorktreeNone": "기본 트리만 있음",
+  "ghtWorktreeCreated": "{path}에 워크트리를 만들었습니다",
+  "@ghtWorktreeCreated": {
+    "placeholders": {
+      "path": {
+        "type": "String"
+      }
+    }
+  },
+  "ghtTabChanges": "변경",
+  "ghtTabCommit": "커밋",
+  "ghtTabPullRequests": "PR",
+  "ghtGroupStaged": "스테이지됨",
+  "ghtGroupUnstaged": "스테이지 안 됨",
+  "ghtGroupUntracked": "추적되지 않음",
+  "ghtStageAll": "모두 스테이지",
+  "ghtUnstageAll": "모두 스테이지 해제",
+  "ghtDiscardFile": "변경 버리기",
+  "ghtDiscardAll": "모든 변경 버리기",
+  "ghtDiscardTitle": "{name}의 변경을 버릴까요?",
+  "@ghtDiscardTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "ghtDiscardBody": "파일은 마지막 커밋으로 돌아가고 새 파일은 삭제됩니다. 되돌릴 수 없습니다.",
+  "ghtDiscardAllTitle": "모든 변경을 버릴까요?",
+  "ghtDiscardAllBody": "{count, plural, =1{파일 1개가 마지막 커밋으로 돌아가고 새 파일은 삭제됩니다. 되돌릴 수 없습니다.} other{파일 {count}개가 마지막 커밋으로 돌아가고 새 파일은 삭제됩니다. 되돌릴 수 없습니다.}}",
+  "@ghtDiscardAllBody": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "ghtDiscardAction": "버리기",
+  "ghtDiscarded": "변경을 버렸습니다",
+  "ghtViewDiff": "변경 내용 보기",
+  "ghtFileActions": "파일 작업",
+  "ghtHunkCollapse": "헝크 접기",
+  "ghtHunkExpand": "헝크 펼치기",
+  "ghtHunkHidden": "{count, plural, =1{1줄 숨김} other{{count}줄 숨김}}",
+  "@ghtHunkHidden": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "ghtCommitContextTitle": "서버 컨텍스트",
+  "ghtCommitContextRecent": "최근 커밋",
+  "ghtCommitContextDiff": "커밋에 들어갈 내용",
+  "ghtCommitContextEmpty": "이 커밋에 대한 컨텍스트가 없습니다.",
+  "ghtCommitContextTruncated": "일부만 표시",
+  "ghtCommitContextShow": "컨텍스트 보기",
+  "ghtCommitContextHide": "컨텍스트 숨기기",
+  "ghtCommitStagesAllHint": "스테이지가 비어 있으면 서버가 커밋 전에 모든 변경을 스테이지합니다.",
+  "ghtCommitAndPush": "커밋 후 푸시",
+  "ghtCommitDone": "커밋했습니다",
+  "ghtCommitPushedDone": "커밋하고 푸시했습니다",
+  "ghtPush": "브랜치 푸시",
+  "ghtPushUpstreamHint": "업스트림이 없으면 같은 이름으로 origin에 게시됩니다.",
+  "ghtPushAhead": "{count, plural, =1{푸시할 커밋 1개} other{푸시할 커밋 {count}개}}",
+  "@ghtPushAhead": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "ghtPushNothing": "푸시할 것이 없습니다",
+  "ghtPushDone": "푸시했습니다",
+  "ghtPushBehindHint": "{count, plural, =1{원격 브랜치에 여기 없는 커밋 1개가 있습니다.} other{원격 브랜치에 여기 없는 커밋 {count}개가 있습니다.}}",
+  "@ghtPushBehindHint": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "ghtPrTitle": "이 브랜치의 풀 리퀘스트",
+  "ghtPrNone": "이 브랜치에 풀 리퀘스트가 없습니다.",
+  "ghtPrNumber": "#{number}",
+  "@ghtPrNumber": {
+    "placeholders": {
+      "number": {
+        "type": "int"
+      }
+    }
+  },
+  "ghtPrStateOpen": "열림",
+  "ghtPrStateMerged": "병합됨",
+  "ghtPrStateClosed": "닫힘",
+  "ghtPrStateDraft": "초안",
+  "ghtPrOpenLink": "브라우저에서 열기",
+  "ghtPrLinkUnsafe": "이 링크는 앱에서 열지 않습니다.",
+  "ghtPrCreate": "풀 리퀘스트 만들기",
+  "ghtPrCreateHint": "서버가 브랜치를 푸시하고 gh로 PR을 만듭니다. 제목과 본문은 커밋에서 오고, 기준은 저장소의 기본 브랜치입니다.",
+  "ghtPrCreateBase": "기준: {branch}",
+  "@ghtPrCreateBase": {
+    "placeholders": {
+      "branch": {
+        "type": "String"
+      }
+    }
+  },
+  "ghtPrCreateConfirmTitle": "풀 리퀘스트를 만들까요?",
+  "ghtPrCreateConfirmBody": "브랜치 {branch}을(를) GitHub에 게시하고 {base}에 대한 풀 리퀘스트를 엽니다.",
+  "@ghtPrCreateConfirmBody": {
+    "placeholders": {
+      "branch": {
+        "type": "String"
+      },
+      "base": {
+        "type": "String"
+      }
+    }
+  },
+  "ghtPrCreated": "풀 리퀘스트를 만들었습니다",
+  "ghtPrListTitle": "로컬 브랜치의 풀 리퀘스트",
+  "ghtPrListEmpty": "로컬 브랜치에 풀 리퀘스트가 없습니다.",
+  "ghtPrListLoad": "풀 리퀘스트 찾기",
+  "ghtGhNotReady": "서버에서 GitHub가 준비되지 않았습니다. 거기서 gh로 로그인하세요.",
+  "ghtDetachedNoPublish": "분리된 HEAD에서는 게시할 브랜치가 없습니다.",
+  "ghtProblemPushRejected": "원격이 푸시를 거부했습니다. 먼저 원격 변경을 가져오세요.",
+  "ghtProblemRemoteAuth": "서버에 해당 원격의 자격 증명이 없습니다.",
+  "ghtProblemRemoteUnreachable": "원격에 연결할 수 없습니다.",
+  "ghtProblemNoRemote": "브랜치에 푸시할 원격이 없습니다.",
+  "ghtProblemGhNotReady": "서버에 gh가 없거나 로그인되지 않았습니다.",
+  "ghtProblemPrExists": "이 브랜치에는 이미 풀 리퀘스트가 있습니다.",
+  "ghtProblemPrNoCommits": "기준 브랜치 대비 새 커밋이 없습니다.",
+  "ghtProblemLocalChanges": "로컬 변경이 사라질 수 있어 Git이 중단했습니다.",
+  "ghtProblemBranchNotFound": "브랜치가 없습니다.",
+  "ghtLockReasonDiscard": "Git 변경 버리기",
+  "ghtLockReasonPush": "브랜치를 원격에 푸시",
+  "ghtLockReasonPr": "풀 리퀘스트 만들기",
+  "ghtLockReasonWorktree": "워크트리 제거",
+  "ghtLockReasonSwitch": "커밋되지 않은 변경이 있는 채로 브랜치 전환",
+  "ghtProjectMenuHint": "변경, 커밋, 브랜치, 풀 리퀘스트",
+  "ghtDrawerDetail": "서버의 변경, 브랜치, 풀 리퀘스트",
+  "ghtDefaultFolderMissing": "서버가 기본 폴더를 알려주지 않았습니다. 프로젝트나 대화에서 Git을 여세요.",
+  "ghtUnsupportedBody": "이 Hermes 버전은 Git 경로를 제공하지 않습니다. 앱에서 Git을 쓰려면 서버를 업데이트하세요.",
+  "ghtFolderLabel": "폴더: {path}",
+  "@ghtFolderLabel": {
+    "placeholders": {
+      "path": {
+        "type": "String"
+      }
+    }
+  },
   "chaControlInherit": "전체 설정 사용",
   "chaControlOff": "아니요",
-  "chaControlRecovery": "파일 복구",
   "chaYoloTitle": "이 세션에서 YOLO를 사용하시겠어요?",
   "chaYoloBody": "Hermes가 이 세션의 모든 작업을 확인 없이 실행합니다. 삭제, sudo, 재시작 등 위험도가 높은 작업도 포함됩니다. 읽기 전용 모드만 YOLO보다 우선합니다.",
   "chaActivate": "활성화",
@@ -394,6 +808,27 @@
   "chaVoiceReturnOverlay": "음성 모드로 돌아가기",
   "chaVoiceActiveElsewhere": "‘{title}’에서 음성 모드 사용 중",
   "chaVoiceExitTooltip": "음성 모드 종료",
+  "voiceDockHint": "‘{phrase}’라고 말하면 종료 · 스프라이트를 탭하면 일시정지",
+  "voiceDockHintNoPhrase": "스프라이트를 탭하면 일시정지",
+  "voiceDockType": "텍스트로 입력",
+  "voiceDockSendNow": "지금 보내기",
+  "voiceDockInterrupt": "끼어들기",
+  "voiceDockReview": "검토",
+  "voiceCapsuleTitle": "음성 모드",
+  "voiceCapsuleMinimize": "최소화",
+  "voiceCapsuleOpen": "음성 모드 열기",
+  "voiceCapsuleOpenRunning": "실행 중인 항목 열기",
+  "voiceCapsuleExpand": "펼치기",
+  "voiceModelTitle": "음성 모델",
+  "voiceModelChange": "변경",
+  "voiceModelMain": "기본 모델: {model}",
+  "voiceModelPickerHint": "말할 때 응답하는 모델(이 프로필). 다음 차례부터 적용됩니다.",
+  "voiceModelEmptyTitle": "준비된 모델이 없습니다",
+  "voiceModelEmptyBody": "이 서버에는 아직 연결된 모델이 없습니다. 음성은 기본 모델을 사용합니다.",
+  "voiceModelOpenModels": "모델 열기",
+  "voiceModelReadOnly": "읽기 전용",
+  "voiceModelLiveNote": "GPT-Live에서는 자체 모델이 응답합니다. 이 모델은 일반 모드용입니다.",
+  "voiceModelLoadError": "음성 모델을 읽지 못했습니다.",
   "chaVoiceEnd": "종료",
   "chaVoiceComposerHint": "입력하세요…",
   "chaVoicePause": "일시 중지",
@@ -491,13 +926,35 @@
   "chaConnectionLostReconnecting": "연결 끊김 — 다시 연결하는 중…",
   "chaConnectionRecovered": "연결이 복구되었습니다",
   "chaHintSystem": "지침(선택 사항)…",
-  "chaHintUser": "Hermes에게 물어보세요…",
+  "mpnComposerHint": "{name}에게 물어보세요…",
+  "@mpnComposerHint": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "chaHintUserShort": "질문…",
   "chaAttachTooltip": "파일 첨부",
   "chaSendTooltip": "메시지 전송",
   "chaStopTooltip": "중지",
-  "chaSteerSupplementsLabel": "Hermes가 작업하는 동안 추가됨",
+  "mpnSteerAdded": "{name}가 작업하는 동안 추가됨",
+  "@mpnSteerAdded": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "chaSteerFailed": "현재 실행에 전송되었는지 확인하지 못했습니다. 텍스트를 초안으로 유지합니다. 중복 전송을 피하려면 다시 연결된 후 확인하고 재시도하세요.",
-  "chaSteerQueued": "메시지가 대기열에 추가되었습니다. Hermes가 작업을 마치면 다음 턴으로 전송됩니다.",
+  "mpnSteerQueued": "메시지가 대기열에 추가되었습니다. {name}가 작업을 마치면 다음 턴으로 전송됩니다.",
+  "@mpnSteerQueued": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "commonAdd": "추가",
   "commonEdit": "편집",
   "commonRefresh": "새로고침",
@@ -720,7 +1177,17 @@
   "cevDeny": "거부",
   "cevThisSession": "이 세션",
   "cevAlways": "항상",
-  "cevPermissionHeadline": "Hermes가 허락을 요청합니다",
+  "approvalAlwaysTitle": "이 명령을 항상 허용할까요?",
+  "approvalAlwaysBody": "“{pattern}” 패턴이 영구 허용 목록(~/.hermes/config.yaml)에 추가됩니다. Hermes는 이 세션과 이후 세션에서 이런 명령에 대해 다시 묻지 않습니다.",
+  "approvalAlwaysConfirm": "항상 허용",
+  "mpnPermissionHeadline": "{name}가 허락을 요청합니다",
+  "@mpnPermissionHeadline": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "cevRemember": "기억하기",
   "cevApprovalRequired": "승인 필요",
   "cevApprovalPending": "대기 중",
@@ -752,7 +1219,6 @@
   "ssh2ForgetHostKey": "호스트 키 삭제",
   "ssh2ForgetHostKeySub": "다음 연결 시 서버 재검증",
   "ssh2RemoveSshSub": "이 인스턴스의 자격 증명 삭제",
-  "sftpListError": "{path}의 목록을 불러오지 못했습니다: {error}",
   "sftpDownloading": "백그라운드에서 {file} 다운로드 중…",
   "sftpReadError": "파일을 읽지 못했습니다.",
   "sftpDeleteTitle": "파일 삭제",
@@ -762,7 +1228,6 @@
   "sftpOpenOf": "{label}의 파일(SFTP) 열기",
   "sftpUpload": "파일 업로드",
   "sftpUpLevel": "상위 폴더로",
-  "sftpEmpty": "빈 폴더",
   "sshcNotText": "파일을 텍스트로 읽지 못했습니다(PEM 키인가요?).",
   "sshcMissingHost": "호스트가 필요합니다.",
   "sshcInvalidPort": "포트가 유효하지 않습니다.",
@@ -799,7 +1264,7 @@
   "ieNetworkNote": "앱은 Android 시스템 네트워크를 사용합니다. VPN/Tailscale/WireGuard를 사용한다면 연결 테스트 전에 켜세요.",
   "ieCapabilitiesDetected": "감지된 기능",
   "setTitle": "설정",
-  "setSecurity": "보안",
+  "setSecurity": "잠금 및 개인정보 보호",
   "setSecuritySub": "잠금, 개인정보 보호 및 자격 증명 보호",
   "setPermissions": "권한 / 승인",
   "setPermissionsSub": "Hermes의 권한 요청 방식: YOLO, 대화형, 보수적 또는 읽기 전용",
@@ -1052,10 +1517,6 @@
   "notifMasterSub": "모든 알림의 전체 설정",
   "notifApprovalsTitle": "승인",
   "notifApprovalsSub": "Hermes가 허락을 요청할 때",
-  "notifCronResultsTitle": "자동화 결과",
-  "notifCronResultsSub": "결과가 있거나 조치가 필요한 오류로 종료된 Cron",
-  "notifKanbanResultsTitle": "Kanban 결과",
-  "notifKanbanResultsSub": "보드 작업이 완료되거나 막히거나 확인이 필요할 때",
   "notifLocalAgentResultsTitle": "지속 목표",
   "notifLocalAgentResultsSub": "세션이 연결된 동안 goal이 일시 중지, 차단, 대기 또는 완료되었을 때",
   "notifRunsTitle": "실행",
@@ -1064,15 +1525,8 @@
   "notifRepliesSub": "Hermes가 백그라운드에 있는 동안 수신한 답변",
   "notifForegroundTitle": "앱 사용 중에도 알림",
   "notifForegroundSub": "Hermes를 사용 중이어도 알림을 표시합니다",
-  "notifBgTitle": "백그라운드에서 수신",
-  "notifBgSub": "앱이 닫혀 있어도 알림 수신 · 지속 알림 사용",
-  "notifBgActive": "직접 끌 때까지 활성화됨 · 에이전트 이벤트 수신 중",
-  "notifBgPaused": "일시 중지됨 · 백그라운드 이벤트를 받으려면 수신을 켜세요",
-  "notifBgFiniteNotice": "직접 끌 때까지 수신을 유지하며 Android 지속 알림을 표시합니다.",
-  "notifFgsChannelLabel": "지속 서비스 채널",
-  "notifBgActivating": "지속 수신 활성화 중…",
-  "notifBgError": "시작 오류 · 탭하여 다시 시도",
-  "notifBgRestartNotice": "최근 앱에서 Hermes를 지워도 수신은 중지되지 않습니다. 강제 종료하면 앱을 다시 열 때까지 수신이 중단됩니다.",
+  "notifKeepAliveTitle": "백그라운드에서 작업하는 동안 연결 유지",
+  "notifKeepAliveSub": "턴 진행 중에 나가도 끝날 때까지 Hermes가 실시간으로 계속 표시됩니다(최대 30분)",
   "notifTestButton": "알림 테스트",
   "notifTestSent": "테스트 알림을 보냈습니다.",
   "notifTestFailed": "전송하지 못했습니다. 시스템 권한을 확인하세요.",
@@ -1443,7 +1897,15 @@
   "chaCommandAttachmentsUnsupported": "명령어를 실행하기 전에 첨부 파일을 제거하세요.",
   "chaCommandUnknown": "이 서버에서 /{name} 명령어를 사용할 수 없습니다.",
   "chaCompactUnavailable": "/compact는 Hermes Desktop 명령어가 아닙니다. 이 대화의 컨텍스트를 압축하려면 /compress를 사용하세요.",
-  "chaCommandFailed": "Hermes가 명령어를 실행하지 못했습니다.",
+  "cmdErrNoSession": "{command}: 이 채팅에는 아직 Hermes 세션이 없습니다. 먼저 메시지를 보내거나 다시 시도하세요.",
+  "cmdErrBadArgument": "{command}: 명령 뒤에 쓴 내용을 Hermes가 받아들이지 않았습니다.",
+  "cmdErrNoRuntime": "{command}: Hermes에 이 채팅의 활성 세션이 없습니다. 잠시 후 다시 시도하세요.",
+  "cmdErrServerRefused": "{command}: Hermes가 실행하지 못했습니다.",
+  "cmdErrReadOnly": "{command}: 이 연결은 읽기 전용입니다.",
+  "cmdErrUnsupported": "{command}: 이 Hermes 서버는 지원하지 않습니다. Hermes Agent를 업데이트하세요.",
+  "cmdErrOffline": "{command}: Hermes에 연결되어 있지 않습니다.",
+  "cmdErrTimeout": "{command}: Hermes가 제때 응답하지 않았습니다.",
+  "cmdErrFailed": "{command} 실패.",
   "chaCommandAccepted": "{command} 명령어가 수락되었습니다.",
   "chaCompressionAccepted": "Hermes가 압축 요청을 수락했습니다. 새 컨텍스트가 준비되면 대화가 업데이트됩니다.",
   "chaCompressionCompleted": "컨텍스트 압축을 완료했습니다.",
@@ -1590,7 +2052,6 @@
   "gatewayEraTitle": "Console이 달라졌습니다",
   "gatewayEraAction": "방법 보기",
   "leg3SetupTitle": "내 Hermes 연결",
-  "leg3SetupBody": "Console이 이제 Hermes Dashboard를 사용합니다. Hermes가 있는 컴퓨터에 이 명령줄을 붙여넣으세요. 완료되면 표시되는 코드를 스캔하세요. 채팅은 유지됩니다.",
   "leg3EraBody": "Console이 이제 Hermes Dashboard를 사용합니다. 컴퓨터에 명령줄 하나를 붙여넣고 코드를 스캔하면 됩니다. 채팅은 유지됩니다.",
   "leg3UpdatesExisting": "‘{name}’ 연결을 업데이트하세요. 채팅은 유지됩니다.",
   "dashboardSetupForgotPassword": "비밀번호를 모르겠어요",
@@ -1783,9 +2244,7 @@
   "chaVoiceNeedsServerTitle": "음성 서버 설정",
   "chaVoiceNeedsServerBody": "서버 인식에 필요한 Hermes-STT 서버 URL(및 토큰)이 없거나 서버가 응답하지 않습니다. 설정 › 음성에서 확인하세요.",
   "chaVoiceAllowMic": "마이크 허용",
-  "chaQueuedCount": "대기열 · {count}",
   "chaQueuedNote": "턴이 끝나면 전송됩니다",
-  "chaQueuedPausedCount": "일시 중지 · {count}",
   "chaQueueParkedNote": "Stop 후 일시 중지됨",
   "chaQueueResume": "대기열 재개",
   "chaQueueEdit": "편집",
@@ -1827,6 +2286,7 @@
   "chaBackgroundAwaitingResponse": "현재 실행이 끝나기를 기다리는 중",
   "chaBackgroundDeferredByGoal": "지속 goal이 활성 상태여서 연기됨",
   "chaBackgroundActionStop": "중지",
+  "chatRetouchProcessesStopAll": "모두 중지",
   "chaBackgroundActionFailed": "Hermes가 해당 작업을 확인하지 않았습니다.",
   "chaStopStopping": "중지 중…",
   "chaStopRetrying": "Stop 다시 시도 중…",
@@ -1856,12 +2316,26 @@
   "chaEmptyPrompt": "메시지를 입력하여 시작하세요",
   "chaCopyMessage": "메시지 복사",
   "chaEditMessage": "메시지 편집",
-  "chaEditHint": "Hermes가 대신 어떻게 답변해야 하나요?",
+  "mpnEditHint": "{name}가 대신 어떻게 답변해야 하나요?",
+  "@mpnEditHint": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "chaEditCancel": "편집 취소",
   "chaEditSave": "저장 및 재전송",
   "chaEditFailed": "메시지를 편집하지 못했습니다. 원래 대화는 계속 확인할 수 있습니다.",
   "chaRegenerate": "답변 다시 생성",
-  "chaRegenerateWarning": "Hermes가 마지막 답변을 되돌리고 같은 메시지에 다시 답변합니다. 이미 수행된 외부 작업은 되돌릴 수 없습니다.",
+  "mpnRegenerateWarning": "{name}가 마지막 답변을 되돌리고 같은 메시지에 다시 답변합니다. 이미 수행된 외부 작업은 되돌릴 수 없습니다.",
+  "@mpnRegenerateWarning": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "chaRegenerateFailed": "답변을 다시 생성하지 못했습니다.",
   "chaLoadImageFrom": "{domain}에서 이미지 불러오기",
   "chaStopReading": "읽기 중지",
@@ -1880,7 +2354,6 @@
   "setRestartingBanner": "업데이트 후 게이트웨이 재시작 중… 복구되면 앱이 자동으로 다시 연결합니다.",
   "setHermesAutoUpdateTitle": "구성 요소 자동 업데이트",
   "setHermesAutoUpdateSub": "인스턴스를 사용하는 동안 Hermes 업데이트를 확인합니다.",
-  "notifListenerStartFailed": "백그라운드 수신을 시작하지 못했습니다. 다시 시도하세요.",
   "notifPermManualRoute": "아직 권한이 허용되지 않았습니다. 이전에 거부하여 Android가 대화상자를 표시하지 않는다면 시스템 설정 › 앱 › Console › 알림에서 직접 켜세요.",
   "voiceSherpaLiveLabel": "빠른 받아쓰기",
   "voiceSystemLabel": "Android 인식기",
@@ -2075,9 +2548,30 @@
   "voiceGuidePrivacyNote": "Hermes 서버를 선택한 경우에만 오디오가 휴대전화 밖으로 전송됩니다. 음성 키는 휴대전화가 아닌 서버에 저장됩니다.",
   "cronJobIdInvalid": "예약 작업 식별자가 유효하지 않습니다.",
   "cronProfileInvalid": "예약 작업 프로필이 유효하지 않습니다.",
-  "interactiveClarifyTitle": "Hermes에 추가 설명이 필요합니다",
-  "interactiveSudoTitle": "Hermes에 sudo 권한이 필요합니다",
-  "interactiveSecretTitle": "Hermes에 비밀 정보가 필요합니다",
+  "mpnClarifyTitle": "{name}에 추가 설명이 필요합니다",
+  "@mpnClarifyTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "mpnSudoTitle": "{name}에 sudo 권한이 필요합니다",
+  "@mpnSudoTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "mpnSecretTitle": "{name}에 비밀 정보가 필요합니다",
+  "@mpnSecretTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "interactiveTerminalTitle": "터미널 요청",
   "interactiveAnswerHint": "답변을 입력하세요",
   "interactivePasswordHint": "sudo 비밀번호",
@@ -2085,6 +2579,7 @@
   "interactiveTerminalBody": "이 앱에는 관리형 터미널이 없습니다. 휴대전화의 파일이나 프로세스를 읽지 않고 빈 텍스트로 응답합니다.",
   "interactiveSend": "전송",
   "interactiveCancel": "작업 중지",
+  "interactiveSkip": "건너뛰기",
   "interactiveRetry": "안전한 응답 다시 시도",
   "interactiveRespondFailed": "응답하지 못했습니다: {error}",
   "interactiveBatchProgress": "{total}개 중 {answered}개 응답 완료",
@@ -2102,51 +2597,8 @@
   "subagentInterruptNotFound": "Hermes가 이 활성 하위 에이전트를 더 이상 찾을 수 없습니다. 서버 이벤트에 따라 상태가 업데이트됩니다.",
   "subagentInterruptFailed": "하위 에이전트를 중지하지 못했습니다.",
   "chaArtifactsAction": "아티팩트",
-  "artifactTitle": "세션 아티팩트",
-  "artifactCount": "{count, plural, other{항목 {count}개}}",
-  "artifactEmptyTitle": "아직 아티팩트가 없습니다",
-  "artifactEmptyBody": "이 세션에서 생성한 이미지, 문서 및 결과가 여기에 표시됩니다.",
-  "artifactImages": "이미지",
-  "artifactFiles": "파일",
-  "artifactDocuments": "문서",
-  "artifactGenerated": "생성된 콘텐츠",
-  "artifactToolResults": "도구 결과",
-  "artifactOther": "기타",
-  "artifactAvailable": "사용 가능",
-  "artifactMissing": "사용 불가",
-  "artifactExpired": "만료됨",
   "artifactUnknown": "알 수 없는 상태",
-  "artifactJumpSource": "원본 메시지로 이동",
   "artifactSourceUnavailable": "불러온 기록에서 원본 메시지를 찾지 못했습니다.",
-  "artifactJumpSemantics": "{name}. 원본 메시지로 이동",
-  "artifactSourceOne": "출처: 메시지 {number}",
-  "artifactSourceMany": "출처: 메시지 {number} · 참조 {count}개",
-  "generatedArtifactSection": "생성된 아티팩트",
-  "generatedArtifactKindCode": "코드",
-  "generatedArtifactKindHtml": "HTML 소스",
-  "generatedArtifactKindSvg": "SVG 소스",
-  "generatedArtifactVersionCount": "{count, plural, other{버전 {count}개}}",
-  "generatedArtifactOpenSemantics": "{name}. 생성된 아티팩트 열기",
-  "generatedArtifactSourceOnly": "보안을 위해 Console은 HTML과 SVG를 소스 코드로만 표시합니다. 실행하거나 WebView에서 열지 않습니다.",
-  "generatedArtifactSourceSemantics": "{title}의 소스 코드",
-  "generatedArtifactCharacterCount": "{count}자",
-  "generatedArtifactPreviewTruncated": "미리보기는 {limit}자로 제한됩니다. 복사, 공유 및 저장은 계속 전체 버전을 사용합니다.",
-  "generatedArtifactCopied": "아티팩트 내용을 복사했습니다.",
-  "generatedArtifactSaved": "{name}으로 저장했습니다.",
-  "generatedArtifactExportTooLarge": "이 아티팩트는 내보내기 한도 {mb} MB를 초과합니다.",
-  "generatedArtifactExportFailed": "아티팩트를 내보내지 못했습니다.",
-  "generatedArtifactVersionOf": "{total}개 중 버전 {current}",
-  "generatedArtifactPreviousVersion": "이전 버전",
-  "generatedArtifactNextVersion": "다음 버전",
-  "generatedArtifactLatest": "최신",
-  "generatedArtifactMissing": "현재 세션 기록에서 이 생성된 아티팩트를 더 이상 사용할 수 없습니다.",
-  "artifactDownloadSaved": "아티팩트를 저장했습니다.",
-  "artifactDownloadUnavailable": "서버에서 이 아티팩트를 더 이상 사용할 수 없습니다.",
-  "artifactDownloadExpired": "이 아티팩트가 만료되었습니다. 원본 메시지는 계속 확인할 수 있습니다.",
-  "artifactDownloadUnsupported": "이 서버는 아티팩트의 안전한 관리형 다운로드 경로를 제공하지 않았습니다.",
-  "artifactDownloadAccessDenied": "Hermes가 아티팩트 접근을 거부했습니다. Dashboard 세션을 확인하세요.",
-  "artifactDownloadTooLarge": "이 아티팩트는 모바일 다운로드 한도 25 MB를 초과합니다.",
-  "artifactDownloadFailed": "아티팩트를 다운로드하지 못했습니다.",
   "desktopCenterServerPathRedacted": "[서버 경로]",
   "desktopCenterSecretRedacted": "[비밀 정보 생략]",
   "recoveryCenterTitle": "복구",
@@ -2422,6 +2874,12 @@
   "dockToolsLabel": "도구",
   "dockCronLabel": "루틴",
   "chaMentionSuggestions": "프로필 멘션",
+  "chaMentionChipLabel": "{name} 멘션",
+  "chaMentionChipYou": "나에 대한 멘션",
+  "chaMentionChipEveryone": "모두에 대한 멘션",
+  "amcAgentChipLabel": "에이전트 {name}",
+  "chaImageStackCaption": "이미지 {count}개 · 탭하여 열기",
+  "chaImageStackSemantics": "이미지 {count}개, 탭하여 열기",
   "botSectionNew": "새 섹션…",
   "botSectionRename": "섹션 이름 변경",
   "botSectionDelete": "섹션 삭제",
@@ -2743,14 +3201,8 @@
   "dotsA11yWaiting": "응답 대기",
   "dotsA11yIdle": "유휴",
   "dotsA11yRoom": "{name}, 방, {detail}",
-  "notifBotModeListenerOn": "프로필과 방의 승인, @멘션, 라운드 요약 및 실시간 진행 상황을 여기서 알립니다. 알림에서 바로 승인, 거부, 답변 및 중지할 수 있습니다.",
-  "notifBotModeListenerOff": "백그라운드 수신이 꺼져 있습니다. 프로필 및 방 알림과 위젯은 Hermes가 열려 있을 때만 업데이트됩니다.",
   "notifLiveUpdatesTitle": "실시간 업데이트",
   "notifLiveUpdatesSub": "작업 중인 프로필과 방을 상태 표시줄 및 잠금 화면에 표시합니다(Android 16 이상)",
-  "notifFixedCardTitle": "고정 알림",
-  "notifFixedCardSub": "Android에서 ‘Hermes에 연결됨’을 최소화합니다",
-  "notifKanbanDoneTitle": "작업이 완료될 때도 알림",
-  "notifKanbanDoneSub": "개별 설정이 없는 작업의 기본값",
   "designShowAll": "모두 보기",
   "designShowLess": "간략히 보기",
   "designCopied": "복사됨",
@@ -2833,7 +3285,6 @@
   "subagentUiAllDone": "모두 완료",
   "subagentUiFailedCount": "{count}개 실패",
   "subagentUiListTitle": "하위 에이전트",
-  "subagentUiListSubtitle": "이 채팅에서 위임한 작업",
   "subagentUiStop": "중지",
   "subagentUiOpenConversation": "대화 열기",
   "subagentUiSectionNow": "현재 수행 중인 작업",
@@ -2864,6 +3315,8 @@
   "subagentUiLiveTruncated": "가장 최근 출력만 표시합니다.",
   "subagentUiLiveTitle": "실시간 출력",
   "subagentUiLiveFollow": "따라가기",
+  "subagentUiWaitingChild": "하위 에이전트를 기다리는 중…",
+  "subagentUiGoToEnd": "끝으로 이동",
   "subagentUiGuideHint": "변경할 내용을 알려 주세요…",
   "subagentUiGuideSend": "지침 전송",
   "subagentUiGuideQueued": "전송됨 · 다음 단계에서 적용합니다",
@@ -2886,6 +3339,8 @@
   "subagentUiTranscriptTitle": "하위 에이전트 대화",
   "subagentUiTranscriptTask": "요청 작업",
   "subagentUiTranscriptEmpty": "이 대화에는 아직 메시지가 없습니다.",
+  "subagentRecordParentOnly": "하위 에이전트의 대화를 열 수 없습니다. 아래는 완료 시 보고한 내용입니다.",
+  "subagentRecordUnavailable": "Hermes가 이 하위 에이전트의 작업을 저장하지 않았습니다. 표시할 대화나 결과가 없습니다.",
   "subagentUiTranscriptError": "대화를 불러오지 못했습니다.",
   "subagentUiTranscriptReadOnly": "읽기 전용",
   "subagentUiRetry": "다시 시도",
@@ -3202,6 +3657,9 @@
   "mp1215MemoryChip": "메모리",
   "mp1215ShowMore": "더 보기",
   "mp1215ShowLess": "간략히 보기",
+  "liveMemSaving": "메모리에 저장하는 중",
+  "liveMemRemoving": "메모리에서 제거하는 중",
+  "liveMemFailed": "저장하지 못했어요",
   "pj1215ActionRejected": "Hermes가 작업을 거부했습니다. 이름 또는 브랜치를 확인하고 다시 시도하세요.",
   "pj1215ActiveNotice": "‘{name}’이 현재 프로젝트가 되었습니다",
   "pj1215AgoNow": "방금",
@@ -3383,8 +3841,6 @@
   "rr1215KeepAsIs": "나중에",
   "rr1215Resumed": "{name}님의 세션이 다시 열렸습니다",
   "rr1215ResumeFailed": "{name}님을 재개하지 못했습니다. 다시 시도하세요.",
-  "sa1215ContentAction": "파일 및 링크",
-  "sa1215ContentTitle": "파일 및 링크",
   "sa1215SearchHint": "이름 또는 링크로 검색",
   "sa1215SearchClear": "검색 지우기",
   "sa1215FilterAll": "전체",
@@ -3400,6 +3856,8 @@
   "sa1215OlderPending": "이 채팅에 아직 불러오지 않은 이전 메시지가 있습니다.",
   "sa1215LoadOlder": "이전 항목 불러오기",
   "sa1215LoadOlderFailed": "이전 메시지를 불러오지 못했습니다",
+  "sa1215ReadFailed": "이 대화를 읽지 못했습니다",
+  "sa1215ReadPartial": "대화를 모두 읽지 못했습니다. 읽은 내용만 표시합니다.",
   "sa1215OpenFailed": "{name}을 열지 못했습니다",
   "sa1215NotReachable": "이 파일은 휴대전화에서 열 수 없습니다. 길게 눌러 경로를 복사하세요.",
   "sa1215AgentPreviews": "에이전트 미리보기",
@@ -3517,7 +3975,6 @@
   "tc1215FilesChanged": "{count, plural, other{파일 {count}개 변경됨}}",
   "au1215CronRunViewOnly": "아직 종료되지 않은 예약 실행: 읽기 전용",
   "au1215CronRunSendBlocked": "읽기 전용 예약 실행이므로 전송할 수 없습니다.",
-  "au1215BgNeededForAutomation": "Cron 및 Kanban 알림은 이 기능이 켜져 있을 때만 도착합니다.",
   "te1215TitleRateLimit": "사용 한도 도달",
   "te1215HintRateLimit": "한도가 해제될 때까지 기다리거나 다른 모델을 사용하세요.",
   "te1215TitleProviderBusy": "AI 서비스가 혼잡합니다",
@@ -3804,6 +4261,8 @@
   "cs1215PinnedPromptHide": "이 채팅에서 숨기기",
   "cs1215PinnedPromptSetting": "상단에 내 질문 고정",
   "cs1215PinnedPromptSettingSubtitle": "읽고 있는 답변의 질문을 채팅 상단에 한 줄로 표시합니다. 켜면 이전에 숨긴 채팅에서도 다시 나타납니다.",
+  "fluidReasoningCollapsedTitle": "기본적으로 추론 접기",
+  "fluidReasoningCollapsedDesc": "스트리밍된 추론을 열 때까지 펼치지 않고 보관합니다.",
   "q90PinnedPromptHidden": "이 채팅에서 숨김",
   "q90PinnedPromptUndo": "실행 취소",
   "q90PinnedPromptShow": "고정된 내 질문 표시",
@@ -3851,11 +4310,8 @@
   "sp1215LimitExtra": "추가 사용: {used} / {limit} {currency}",
   "sp1215LimitLocal": "로컬 모델: 사용 한도와 비용이 없습니다.",
   "sp1215LimitNoData": "이 공급자의 한도 데이터가 없습니다.",
-  "chatNotchLabel": "대화 설정 및 이동",
-  "chatNotchGoTo": "이동",
-  "chatNotchChats": "채팅",
+  "chatNotchLabel": "이 대화의 옵션",
   "chatNotchNeedsYouElsewhere": "다른 대화에서 확인이 필요합니다",
-  "chatNotchSearchChats": "채팅 검색",
   "chatNotchFindInChat": "이 채팅에서 검색",
   "chatNotchPreviousChat": "이전 채팅",
   "chatNotchNextChat": "다음 채팅",
@@ -3876,6 +4332,7 @@
   "islandEarlierFailed": "누락된 메시지",
   "fh1215TasksDoneFlash": "{count, plural, other{✓ 작업 {count}개}}",
   "fh1215TasksCompleted": "{count}개 완료",
+  "liveTasksEarlierDone": "이전 완료 {count}개",
   "fh1215TasksHideCompleted": "완료된 항목 숨기기",
   "ctToolPending": "{tool, select, browser_click{ 페이지 요소 클릭 중} browser_fill{ 양식 입력란 작성 중} browser_navigate{ 페이지 여는 중} browser_snapshot{ 페이지 스냅샷 캡처 중} browser_take_screenshot{ 스크린샷 캡처 중} browser_type{ 페이지에 입력 중} clarify{ 질문하는 중} cronjob{ cron 작업 예약 중} edit_file{ 파일 편집 중} execute_code{ 코드 실행 중} image_generate{ 이미지 생성 중} list_files{ 파일 목록 조회 중} memory{ 메모리에 저장 중} patch{ 파일에 패치 적용 중} read_file{ 파일 읽는 중} search_files{ 파일 검색 중} session_search_recall{ 세션 기록 검색 중} setup_choose{ 설정 질문하는 중} start_chat{ 채팅 시작 중} terminal{ 명령어 실행 중} todo{ 작업 업데이트 중} vision_analyze{ 이미지 분석 중} web_extract{ 웹페이지 읽는 중} web_search{ 웹 검색 중} write_file{ 파일 작성 중} delegate_task{ 작업 위임 중} process_manage{ 백그라운드 프로세스 관리 중} skill_manage{ Skill 업데이트 중} text_to_speech{ 음성 생성 중} send_message{ 메시지 전송 중} computer_use{ 컴퓨터 사용 중} manage_connections{ 연결 관리 중} manage_catalog{ 카탈로그 조회 중} x_search{ X 검색 중} fact_store{ 저장된 데이터 사용 중} fact_feedback{ 데이터 평가 중} video_generate{ 동영상 생성 중} video_analyze{ 동영상 분석 중} xai_video_edit{ 동영상 편집 중} xai_video_extend{ 동영상 확장 중} browser_scroll{ 페이지 스크롤 중} browser_back{ 이전 페이지로 돌아가는 중} browser_press{ 키 누르는 중} browser_get_images{ 페이지 이미지 목록 조회 중} browser_vision{ 페이지 확인 중} browser_console{ 브라우저 콘솔 읽는 중} browser_cdp{ 브라우저 명령어 실행 중} browser_dialog{ 페이지 대화상자 응답 중} browser_exec{ 브라우저 사용 중} browser_vault_list{ 저장된 로그인 정보 조회 중} browser_vault_unlock{ 저장된 로그인 정보 잠금 해제 중} browser_vault_fill{ 로그인 정보 입력 중} browser_vault_save_login{ 로그인 정보 저장 중} browser_vault_enter_code{ 인증 코드 입력 중} kanban_show{ 작업 읽는 중} kanban_list{ 작업 목록 조회 중} kanban_create{ 작업 생성 중} kanban_complete{ 작업 완료 중} kanban_block{ 작업 차단 중} kanban_unblock{ 작업 차단 해제 중} kanban_request_review{ 검토 요청 중} kanban_request_changes{ 변경 요청 중} kanban_heartbeat{ 진행 상황 보고 중} kanban_comment{ 작업에 댓글 작성 중} kanban_link{ 작업 연결 중} kanban_attach{ 작업에 파일 첨부 중} kanban_attach_url{ 작업에 링크 첨부 중} kanban_attachments{ 작업 첨부 파일 목록 조회 중} desktop_project{ 프로젝트 변경 중} desktop_preview{ 미리보기 표시 중} drive_preview{ 미리보기 사용 중} annotate_preview{ 미리보기에 주석 작성 중} read_terminal{ 터미널 읽는 중} close_terminal{ 터미널 닫는 중} read_window_below{ 뒤쪽 창 확인 중} focus_pane{ 패널 표시 중} apply_layout{ 작업 공간 재배치 중} react_to_message{ 메시지에 반응 추가 중} gui_tour{ 둘러보기 시작 중} show_tip{ 팁 표시 중} discord{ Discord 사용 중} discord_admin{ Discord 서버 관리 중} feishu_doc_read{ Feishu 문서 읽는 중} feishu_drive_list_comments{ Feishu 댓글 목록 조회 중} feishu_drive_list_comment_replies{ Feishu 답글 목록 조회 중} feishu_drive_reply_comment{ Feishu에서 답변 중} feishu_drive_add_comment{ Feishu에 댓글 작성 중} yb_query_group_info{ Yuanbao 그룹 읽는 중} yb_query_group_members{ Yuanbao 구성원 목록 조회 중} yb_send_dm{ Yuanbao 메시지 전송 중} yb_search_sticker{ Yuanbao 스티커 검색 중} yb_send_sticker{ Yuanbao 스티커 전송 중} other{}}",
   "ctToolAction": "{tool, select, browser_click{ 클릭 중} browser_fill{ 작성 중} browser_navigate{ 여는 중} browser_snapshot{ 캡처 중} browser_take_screenshot{ 캡처 중} browser_type{ 입력 중} clarify{ 질문 중} cronjob{ 예약 중} edit_file{ 편집 중} execute_code{ 실행 중} image_generate{ 생성 중} list_files{ 목록 조회 중} memory{ 저장 중} patch{ 패치 적용 중} read_file{ 읽는 중} search_files{ 검색 중} session_search_recall{ 검색 중} setup_choose{ 질문 중} start_chat{ 시작 중} terminal{ 실행 중} todo{ 업데이트 중} vision_analyze{ 분석 중} web_extract{ 읽는 중} web_search{ 검색 중} write_file{ 작성 중} delegate_task{ 위임 중} process_manage{ 관리 중} skill_manage{ 업데이트 중} text_to_speech{ 생성 중} send_message{ 전송 중} computer_use{ 사용 중} manage_connections{ 관리 중} manage_catalog{ 조회 중} x_search{ 검색 중} fact_store{ 사용 중} fact_feedback{ 평가 중} video_generate{ 생성 중} video_analyze{ 분석 중} xai_video_edit{ 편집 중} xai_video_extend{ 확장 중} browser_scroll{ 스크롤 중} browser_back{ 돌아가는 중} browser_press{ 누르는 중} browser_get_images{ 목록 조회 중} browser_vision{ 확인 중} browser_console{ 읽는 중} browser_cdp{ 실행 중} browser_dialog{ 응답 중} browser_exec{ 사용 중} browser_vault_list{ 조회 중} browser_vault_unlock{ 잠금 해제 중} browser_vault_fill{ 입력 중} browser_vault_save_login{ 저장 중} browser_vault_enter_code{ 입력 중} kanban_show{ 읽는 중} kanban_list{ 목록 조회 중} kanban_create{ 생성 중} kanban_complete{ 완료 중} kanban_block{ 차단 중} kanban_unblock{ 차단 해제 중} kanban_request_review{ 요청 중} kanban_request_changes{ 요청 중} kanban_heartbeat{ 보고 중} kanban_comment{ 댓글 작성 중} kanban_link{ 연결 중} kanban_attach{ 첨부 중} kanban_attach_url{ 첨부 중} kanban_attachments{ 목록 조회 중} desktop_project{ 변경 중} desktop_preview{ 표시 중} drive_preview{ 사용 중} annotate_preview{ 주석 작성 중} read_terminal{ 읽는 중} close_terminal{ 닫는 중} read_window_below{ 확인 중} focus_pane{ 표시 중} apply_layout{ 재배치 중} react_to_message{ 반응 추가 중} gui_tour{ 시작 중} show_tip{ 표시 중} discord{ 사용 중} discord_admin{ 관리 중} feishu_doc_read{ 읽는 중} feishu_drive_list_comments{ 목록 조회 중} feishu_drive_list_comment_replies{ 목록 조회 중} feishu_drive_reply_comment{ 답변 중} feishu_drive_add_comment{ 댓글 작성 중} yb_query_group_info{ 읽는 중} yb_query_group_members{ 목록 조회 중} yb_send_dm{ 전송 중} yb_search_sticker{ 검색 중} yb_send_sticker{ 전송 중} other{}}",
@@ -3982,6 +4439,8 @@
   "thTaglineGruvboxLight": "따뜻한 복고풍 · 라이트",
   "thTaglineSageGarden": "차분한 세이지 · 고요한 온실",
   "thTaglineSageGardenLight": "옅은 세이지 · 낮의 온실",
+  "presetIndigoTagline": "한밤의 인디고 · 유리",
+  "presetIndigoLightTagline": "라벤더 안개 · 유리",
   "thTaglineNous": "GitHub 크롬 · Nous 블루",
   "thTaglineNousDark": "GitHub 다크 · Nous 블루",
   "thTaglineGithub": "GitHub 기본 라이트",
@@ -4245,8 +4704,8 @@
   "gt1215ChatHeaderBody": "대화 상대와 현재 작업을 보여 줍니다. 누르면 활동을 확인할 수 있습니다.",
   "gt1215ChatComposerTitle": "여기에 입력하세요",
   "gt1215ChatComposerBody": "글을 입력하거나 음성으로 입력하세요. +로 파일과 사진을 첨부할 수 있습니다.",
-  "gt1215ChatNotchTitle": "채팅 탭",
-  "gt1215ChatNotchBody": "눌러서 이 대화를 검색하거나 설정하세요. 위로 올리면 다른 곳으로 이동할 수 있습니다.",
+  "gt1215ChatNotchTitle": "채팅 설정",
+  "gt1215ChatNotchBody": "눌러서 이 대화를 검색하거나 새 대화를 시작하거나 설정하세요. 패널은 옆의 보기에 있습니다.",
   "gt1215ChatStatusTitle": "컨텍스트, 모델, 권한",
   "gt1215ChatStatusBody": "사용 중인 컨텍스트, 응답하는 모델, 가능한 작업을 확인하세요. 각 부분을 눌러 보세요.",
   "gt1215BotsPinnedTitle": "고정한 봇",
@@ -4368,7 +4827,6 @@
   "mascotNoticeGo": "이동",
   "mascotSuggestNotifications": "알림이 꺼져 있습니다",
   "mascotSuggestTurnOn": "켜기",
-  "mascotSuggestBackground": "앱이 닫혀 있어도 예약 작업이 끝나면 알려 드릴 수 있습니다",
   "mascotSuggestOpenSettings": "설정 열기",
   "connStatusNoNetwork": "네트워크 없음",
   "connStatusAuthRequired": "로그인 필요",
@@ -6433,6 +6891,10 @@
   "@i18n131ChatRecoveryFailed": {
     "description": "i18n131: Phase 3B translated; chat."
   },
+  "i18n140ChatEndedWithoutReply": "Hermes가 응답 없이 이 턴을 종료했습니다.",
+  "@i18n140ChatEndedWithoutReply": {
+    "description": "dp140: Notice when Hermes reports the turn over and no reply arrived (Desktop store/session-no-reply.ts NO_REPLY_ERROR)."
+  },
   "i18n131ChatFailureCause": "응답을 완료하지 못했습니다: {cause}",
   "@i18n131ChatFailureCause": {
     "description": "i18n131: Phase 3B translated; chat.",
@@ -6651,10 +7113,6 @@
       }
     }
   },
-  "i18n131P6Document": "문서",
-  "i18n131P6GeneratedArtifact": "생성된 결과물",
-  "i18n131P6ToolResult": "도구 결과",
-  "i18n131P6Artifact": "결과물",
   "i18n131P6WhisperLocal": "로컬 Whisper",
   "i18n131P6PetDimensions": "예상하지 못한 크기({actual})입니다. {expected}의 배수여야 합니다.",
   "@i18n131P6PetDimensions": {
@@ -6675,5 +7133,2367 @@
         "type": "String"
       }
     }
-  }
+  },
+  "sshExpandTerminal": "터미널 확대",
+  "sshShrinkTerminal": "터미널 축소",
+  "sshKeyArrowUp": "위쪽 화살표",
+  "sshKeyArrowDown": "아래쪽 화살표",
+  "sshKeyArrowLeft": "왼쪽 화살표",
+  "sshKeyArrowRight": "오른쪽 화살표",
+  "sshSessionKind": "세션 유형",
+  "sshSessionKindShell": "일반 셸",
+  "sshSessionKindHint": "Herdr와 tmux는 연결이 끊겨도 서버의 프로세스를 계속 실행하며, 연결이 돌아오면 앱이 세션에 다시 연결합니다.",
+  "sshProgramMissing": "이 서버에 {program}이(가) 설치되어 있지 않습니다. 앱은 아무것도 직접 설치하지 않습니다.",
+  "sshProgramInstallWith": "설치하려면 서버에서 다음을 실행하세요:",
+  "sshProgramInstallOnServer": "서버에 설치하세요. 안내:",
+  "sshUsePlainShell": "일반 셸로 계속",
+  "sshCopied": "복사됨",
+  "sshReconnecting": "다시 연결 중…",
+  "sshReconnectedFreshShell": "새 셸에 다시 연결했습니다. 이전 프로세스는 사라졌습니다.",
+  "sshReconnectedReattached": "다시 연결했습니다. 이전 세션을 이어서 사용합니다.",
+  "sshOffline": "오프라인",
+  "sshHostKeyNeedsReview": "서버 키를 확인해야 합니다. 직접 다시 연결하세요.",
+  "sshKeyInterrupt": "Ctrl+C, 중단",
+  "sshKeyEndOfInput": "Control D, 입력 끝",
+  "sshKeyPipe": "세로 막대",
+  "sshKeyTilde": "물결표",
+  "sshProtocolLabel": "SSH",
+  "herdrPanelTooltip": "Herdr: 작업 공간과 에이전트",
+  "herdrStatusWorking": "작업 중",
+  "herdrStatusBlocked": "확인이 필요함",
+  "herdrStatusIdle": "다음 지시를 기다리는 중",
+  "herdrStatusDone": "완료됨",
+  "herdrStatusUnknown": "상태 알 수 없음",
+  "herdrShell": "셸",
+  "herdrNoAgent": "이 창에서 감지된 에이전트가 없습니다",
+  "herdrKeepsAgentsAlive": "앱을 닫아도 Herdr가 에이전트를 계속 실행합니다.",
+  "herdrServerNotRunning": "Herdr 서버가 실행 중이 아닙니다.",
+  "herdrUnreachable": "Herdr 상태를 읽을 수 없습니다.",
+  "herdrEmpty": "Herdr에 열린 작업 공간이 없습니다.",
+  "herdrNeedsYouCount": "확인이 필요한 에이전트: {count}",
+  "cwsWorkspace": "작업 공간",
+  "cwsFiles": "파일",
+  "cwsCollapsePanel": "패널 접기",
+  "cwsExpandWorkspace": "최대화",
+  "cwsRestoreSplit": "분할 보기로 돌아가기",
+  "cwsCloseTab": "탭 닫기",
+  "cwsMore": "더보기",
+  "cwsLayoutChat": "채팅만",
+  "cwsLayoutSplit": "분할",
+  "cwsLayoutWorkspace": "작업 공간만",
+  "cwsOpenTab": "탭 열기",
+  "cwsShowChat": "채팅 표시",
+  "cwsDivider": "채팅과 작업 공간 사이의 구분선",
+  "cwsHideTools": "도구 숨기기",
+  "cwsShowTools": "도구 표시",
+  "cwsTerminalKeys": "키보드",
+  "cwsViews": "보기",
+  "cwsViewList": "채팅 목록",
+  "cwsViewChat": "채팅",
+  "cwsViewWorkspace": "작업 패널",
+  "cwsViewsHintTwo": "이 화면에는 한 번에 두 개의 보기만 표시됩니다. 작업 패널을 열면 목록이 자동으로 접힙니다. 채팅은 작업 패널이 열려 있을 때만 숨길 수 있습니다.",
+  "cwsViewsState": "보기: {views}",
+  "cwsOpenList": "채팅 목록 열기",
+  "cwsCloseList": "채팅 목록 닫기",
+  "cwsOpenWorkspace": "작업 패널 열기",
+  "cwsLayoutWork": "작업",
+  "chaControlPanels": "패널",
+  "chaControlPanelOpen": "표시 중",
+  "cwsPanelExpanded": "{panel} 확대됨",
+  "cwsPanelRestored": "{panel} 복원됨",
+  "cwsCloseWorkspace": "작업 패널 닫기",
+  "cwsPickPanel": "패널 선택",
+  "cwsViewsHintNoPanel": "화면을 나누려면 패널을 여세요.",
+  "cwsViewsHintStacked": "세로 방향에서는 채팅이 화면 전체를 씁니다. 목록은 그 위에 열리고 작업 패널의 각 탭은 전체 화면으로 열립니다.",
+  "cwsChatShare": "채팅 {percent}%",
+  "voz132VoiceProviderError": "음성 공급자 응답: {detail}",
+  "@voz132VoiceProviderError": {
+    "description": "voz132: client-direct voice consent and provider error (voice lane).",
+    "placeholders": {
+      "detail": {
+        "type": "String"
+      }
+    }
+  },
+  "voz132DirectConsentTitle": "공급자로 직접 음성 전송",
+  "@voz132DirectConsentTitle": {
+    "description": "voz132: client-direct voice consent and provider error (voice lane)."
+  },
+  "voz132DirectConsentBody": "Hermes 서버가 직접 음성을 허용합니다. 사용하면 이 휴대폰은 녹음한 오디오와 응답 텍스트를 서버를 거치지 않고 이 프로필에 설정된 음성 공급자(예: OpenAI, ElevenLabs, Groq)로 직접 보냅니다. 이를 위해 서버가 해당 공급자의 키를 휴대폰에 전달하며, 키는 메모리에만 보관되고 휴대폰 저장소에는 저장되지 않습니다. 데이터 처리 방식은 공급자의 약관에 따릅니다. 동의하지 않으면 음성은 지금처럼 서버를 거칩니다.",
+  "@voz132DirectConsentBody": {
+    "description": "voz132: client-direct voice consent and provider error (voice lane)."
+  },
+  "voz132DirectConsentAccept": "직접 음성 사용",
+  "@voz132DirectConsentAccept": {
+    "description": "voz132: client-direct voice consent and provider error (voice lane)."
+  },
+  "voz132DirectConsentAcceptSub": "오디오와 텍스트가 휴대폰에서 프로필의 공급자로 전송됩니다.",
+  "@voz132DirectConsentAcceptSub": {
+    "description": "voz132: client-direct voice consent and provider error (voice lane)."
+  },
+  "voz132DirectConsentDecline": "서버를 계속 사용",
+  "@voz132DirectConsentDecline": {
+    "description": "voz132: client-direct voice consent and provider error (voice lane)."
+  },
+  "voz132DirectConsentDeclineSub": "음성은 지금처럼 Hermes 서버를 거칩니다.",
+  "@voz132DirectConsentDeclineSub": {
+    "description": "voz132: client-direct voice consent and provider error (voice lane)."
+  },
+  "voz132SayStopToEnd": "\"{phrase}\"라고 말하면 음성 채팅이 종료됩니다.",
+  "@voz132SayStopToEnd": {
+    "description": "voz132: notice when a voice conversation starts; names the first voice.stop_phrases entry (voice lane).",
+    "placeholders": {
+      "phrase": {
+        "type": "String"
+      }
+    }
+  },
+  "sshHostKeyRejected": "서버 키를 신뢰할 수 없어 연결하지 않았습니다.",
+  "sshPermissionDenied": "권한이 거부되었습니다.",
+  "sshNoSuchFile": "존재하지 않습니다(삭제되었거나 이동됨).",
+  "sshHubLoadError": "SSH 설정을 읽을 수 없습니다.",
+  "sftpTryAgain": "다시 시도",
+  "sftpUnreadableTitle": "읽을 수 없음",
+  "sftpUnreadableBody": "이 폴더를 읽을 수 없습니다({error})",
+  "sftpEmptyTitle": "비어 있음",
+  "sftpEmptyBody": "이 폴더는 비어 있습니다.",
+  "sftpPreviewLoading": "미리보기 불러오는 중",
+  "sftpPreviewUnavailable": "미리보기를 사용할 수 없음",
+  "sftpPreviewBinaryTitle": "바이너리 파일로 보입니다",
+  "sftpPreviewBinaryBody": "{label}을(를) 미리 보면 읽을 수 없는 텍스트가 표시될 수 있습니다.",
+  "sftpPreviewLargeTitle": "용량이 큰 파일입니다",
+  "sftpPreviewLargeBody": "{label}의 크기는 {size}입니다. Hermes는 처음 512KB만 표시합니다.",
+  "sftpPreviewAnyway": "그래도 미리보기",
+  "sftpPreviewTruncated": "처음 512KB를 표시하는 중입니다.",
+  "sftpDlShow": "보기",
+  "saveSaved": "저장됨: {name}",
+  "saveAnotherCopy": "다른 사본 저장…",
+  "saveReadyBody": "탭하여 열거나 공유하거나 다른 사본을 저장하세요.",
+  "saveNoSpace": "그 위치에 저장할 공간이 부족합니다.",
+  "savePermission": "앱에 더 이상 그 위치에 쓸 권한이 없습니다. 저장 위치를 다시 선택하세요.",
+  "saveUnsupported": "그 위치에는 파일을 저장할 수 없습니다. 다른 위치를 선택하세요.",
+  "saveCancelled": "저장이 취소되었습니다.",
+  "saveSourceMissing": "저장하려던 파일이 더 이상 없습니다.",
+  "saveNetwork": "다운로드 중 서버 연결이 끊어졌습니다.",
+  "savePickerNotShown": "Android가 “다른 이름으로 저장” 창을 열지 않았습니다. 다시 시도하세요.",
+  "saveTimeout": "저장 중 Android가 제때 응답하지 않았습니다.",
+  "saveUnavailable": "이 버전의 앱은 휴대폰에 저장할 수 없습니다.",
+  "saveFailed": "저장하지 못했습니다: Android에서 예기치 않은 오류가 발생했습니다.",
+  "sftpShareTooLarge": "“{name}”의 크기는 {size}입니다. 저장하지 않고 공유하기에는 너무 큽니다. 다운로드를 사용하세요.",
+  "sftpShareLargeTitle": "큰 파일",
+  "sftpShareLargeBody": "“{name}”의 크기는 {size}입니다. 공유를 위해 잠시 휴대폰에 전체를 복사하고, 나가면 삭제합니다.",
+  "sftpSharePreparing": "“{name}” 공유 준비 중…",
+  "artThumbLoading": "미리보기 불러오는 중",
+  "artKindLink": "링크",
+  "artCopyPath": "경로 복사",
+  "artCopyUrl": "URL 복사",
+  "artSectionCount": "{label} · {count}",
+  "artItemSemantics": "{kind}: {name}",
+  "artItemSemanticsAt": "{kind}: {name}, 위치 {location}",
+  "artTypePdf": "PDF",
+  "artTypeDocument": "문서",
+  "artTypeSpreadsheet": "스프레드시트",
+  "artTypePresentation": "프레젠테이션",
+  "artTypeArchive": "압축 파일",
+  "artTypeApp": "Android 앱",
+  "artTypeAudio": "오디오",
+  "artTypeVideo": "동영상",
+  "artTypeText": "텍스트",
+  "artTypeData": "데이터",
+  "artTypeCode": "코드",
+  "artTypeOther": "기타 파일",
+  "artChat": "채팅",
+  "artOpenChat": "대화 {title} 열기",
+  "brwBackToArtifacts": "아티팩트로 돌아가기",
+  "artGlobalDetail": "생성된 출력 둘러보기",
+  "artGlobalSearchHint": "아티팩트 검색…",
+  "artGlobalRefresh": "아티팩트 새로고침",
+  "artGlobalIndexing": "최근 세션의 아티팩트 색인 중",
+  "artGlobalProgress": "대화 {current}/{total} 읽는 중",
+  "artGlobalEmptyTitle": "아티팩트를 찾을 수 없음",
+  "artGlobalEmptyBody": "세션에서 생성한 이미지와 파일 출력이 여기에 표시됩니다.",
+  "artGlobalFailed": "아티팩트를 불러오지 못했습니다",
+  "artGlobalSkipped": "아티팩트를 색인하는 동안 최근 대화 {total}개 중 {skipped}개를 건너뛰었습니다.",
+  "artGlobalSkippedTooLarge": "{count}개는 안전한 불러오기 한도를 넘었습니다.",
+  "artGlobalTruncated": "대화 {count}개는 일부만 읽었습니다(매우 길거나 항목이 너무 많음).",
+  "artGlobalCapped": "최근 아티팩트 3000개만 표시됩니다.",
+  "artGlobalScope": "최근 대화 {total}개 중 {indexed}개에서 가져왔습니다. 데이터와 배터리를 아끼기 위해 10개씩 읽습니다.",
+  "artGlobalLoadMore": "대화 {count}개 더 읽기",
+  "artGlobalBudget": "알리지 않고 데이터를 쓰지 않도록 대화 32 MB를 읽은 뒤 이번 묶음을 멈췄습니다. 마지막 대화는 일부만 읽었습니다. '더 읽기'로 다음 대화를 이어서 읽습니다.",
+  "artThumbRemote": "원격 이미지를 가져올 수 없음",
+  "artThumbInsecure": "암호화되지 않은 http 이미지",
+  "artThumbNoFolder": "폴더 없는 경로",
+  "artThumbNotFound": "서버에 없음",
+  "artThumbTooLarge": "너무 큼",
+  "artThumbDenied": "Hermes가 읽기를 허용하지 않음",
+  "artThumbRetry": "다시 시도",
+  "artOpenFailedBecause": "{name}을(를) 열 수 없습니다. {reason}",
+  "vltSettingsTitle": "비밀번호 및 로그인",
+  "vltSettingsSubtitle": "에이전트가 대신 로그인할 때 사용하는 정보",
+  "vltBlurb": "“GitHub에 로그인해 줘”라고 말하면 에이전트가 대신 로그인합니다. 로그인 페이지를 처음 만나면 그 자리에서 로그인 정보를 묻고, 그다음부터는 알아서 처리합니다. 비밀번호는 Hermes 서버에 암호화되어 저장되고 페이지에 바로 입력되며, 모델은 절대 볼 수 없습니다.",
+  "vltCount": "{count}개 저장됨",
+  "vltLoadFailed": "저장된 항목을 불러오지 못했습니다.",
+  "vltUnavailable": "Hermes에 연결할 수 없습니다.",
+  "vltUnsupported": "이 Hermes 서버에는 비밀번호 및 로그인 기능이 없습니다. 여기에서 관리하려면 Hermes를 업데이트하세요.",
+  "vltReadOnly": "읽기 전용 연결입니다. 목록은 볼 수 있지만 변경할 수 없습니다.",
+  "vltEmpty": "아직 저장된 항목이 없습니다",
+  "vltEmptyDesc": "여기에 아무것도 추가하지 않아도 됩니다. 에이전트에게 사이트 로그인을 요청하면 그때 한 번만 로그인 정보를 묻습니다. 미리 입력하려면 추가를 사용하세요.",
+  "vltAddTitle": "로그인, 카드 또는 주소 추가",
+  "vltAddDescription": "Hermes 서버에 암호화되어 저장됩니다. 에이전트는 비밀번호를 볼 수 없습니다.",
+  "vltAdded": "저장했습니다.",
+  "vltSaving": "저장 중…",
+  "vltKindField": "종류",
+  "vltKindLogin": "로그인",
+  "vltKindPayment": "결제 카드",
+  "vltKindAddress": "주소",
+  "vltLabelField": "레이블",
+  "vltLabelHint": "예: GitHub 업무 계정",
+  "vltLabelRequired": "레이블은 필수입니다.",
+  "vltOriginField": "사이트 출처",
+  "vltOriginInvalid": "https://example.com 같은 올바른 URL을 입력하세요.",
+  "vltIdTypeField": "식별자 종류",
+  "vltIdEmail": "이메일",
+  "vltIdPhone": "전화번호",
+  "vltIdUsername": "사용자 이름",
+  "vltIdentifierField": "식별자",
+  "vltLoginFieldsRequired": "식별자와 비밀번호는 필수입니다.",
+  "vltCardNumber": "카드 번호",
+  "vltCardNameOptional": "카드 소유자 이름(선택)",
+  "vltExpMonth": "만료 월",
+  "vltExpYear": "만료 연도",
+  "vltCvc": "CVC",
+  "vltPostal": "우편번호",
+  "vltPostalOptional": "우편번호(선택)",
+  "vltPaymentFieldsRequired": "카드 번호, 만료 월과 연도, CVC는 필수입니다.",
+  "vltLine1": "주소 1행",
+  "vltLine2Optional": "주소 2행(선택)",
+  "vltCity": "도시",
+  "vltStateOptional": "시/도(선택)",
+  "vltCountry": "국가",
+  "vltAddressFieldsRequired": "주소 1행, 도시, 우편번호, 국가는 필수입니다.",
+  "vltCreatedOn": "{date}에 추가됨",
+  "vltOtpFieldOptional": "인증기 키(선택)",
+  "vltOtpHint": "2단계 인증을 켤 때 사이트에 표시되는 “설정 키”입니다. 저장해 두면 Hermes가 코드를 직접 생성합니다.",
+  "vltOtpPlaceholder": "Base32 비밀 키 또는 otpauth:// 링크",
+  "vltOtpInvalid": "키는 Base32 비밀 키 또는 otpauth://totp 링크여야 합니다.",
+  "vltTwoFactorBadge": "2FA 자동",
+  "vltDeleteTitle": "이 항목을 삭제할까요?",
+  "vltDeleteBody": "“{label}” 항목이 삭제됩니다. 되돌릴 수 없습니다.",
+  "vltDeleteConfirm": "삭제",
+  "vltSaveFailed": "Hermes가 저장하지 못했습니다. 입력 내용을 확인하세요.",
+  "vltRemoveFailed": "삭제하지 못했습니다.",
+  "vltSourcesTitle": "비밀번호 관리자",
+  "vltSourcesBlurb": "서버에 설치된 비밀번호 관리자는 자동으로 감지됩니다. 에이전트가 로그인 정보가 처음 필요할 때 잠금 해제를 요청합니다(세션당 한 번). 메모리에는 세션 토큰만 남고, 에이전트는 마스터 비밀번호나 로그인 정보를 볼 수 없습니다.",
+  "vltSourceToggleFailed": "비밀번호 관리자를 업데이트하지 못했습니다.",
+  "vltSourceNotInstalled": "감지되지 않았습니다. 서버에 {name} 명령줄 도구를 설치하고 로그인하면 Hermes가 자동으로 감지합니다.",
+  "vltSourceDisabled": "감지되었지만 Hermes에서는 꺼져 있습니다.",
+  "vltSourceLockedDesc": "감지되었습니다. 에이전트가 로그인 정보가 필요할 때 잠금 해제를 요청하며, 지금 해제할 수도 있습니다.",
+  "vltSourceUnlockedDesc": "이 세션 동안 잠금 해제되었습니다. 30분 동안 사용하지 않거나 Hermes가 종료되면 자동으로 잠깁니다.",
+  "vltStatusLocked": "잠김",
+  "vltStatusNotDetected": "감지 안 됨",
+  "vltStatusOff": "꺼짐",
+  "vltStatusUnlocked": "잠금 해제됨",
+  "vltUnlock": "잠금 해제",
+  "vltUnlocking": "잠금 해제 중…",
+  "vltLock": "잠금",
+  "vltUnlocked": "이 세션 동안 {name} 잠금을 해제했습니다.",
+  "vltUnlockTitle": "{name} 잠금 해제",
+  "vltUnlockBody": "마스터 비밀번호를 입력하세요. 서버의 비밀번호 관리자에 전달된 뒤 폐기되며, 저장·기록되거나 에이전트에게 표시되지 않습니다.",
+  "vltMasterPassword": "마스터 비밀번호",
+  "vltUnlockFailed": "잠금을 해제하지 못했습니다. 마스터 비밀번호를 확인하세요.",
+  "vltProfile": "프로필: {profile}",
+  "vltSourcesUnavailable": "이 Hermes 서버는 비밀번호 관리자를 알려 주지 않습니다.",
+  "mvDetails": "세부 정보",
+  "mvLocation": "위치",
+  "mvConversation": "대화",
+  "mvDate": "날짜",
+  "mvPosition": "{count}개 중 {index}번째",
+  "mvGoTo": "{name}, {count}개 중 {index}번째",
+  "mvZoomIn": "확대",
+  "mvZoomOut": "축소",
+  "mvZoomReset": "확대/축소 재설정({percent})",
+  "mvPlay": "재생",
+  "mvView": "앱에서 보기",
+  "mvActionFailed": "작업을 완료할 수 없습니다",
+  "mvDimensions": "{width} × {height}px",
+  "mvKindNumbered": "{kind} {index}",
+  "voiceNoAudioHeard": "아무 소리도 들리지 않아요. 마이크가 차량이나 헤드셋으로 연결되어 있지 않나요?",
+  "@voiceNoAudioHeard": {
+    "description": "Voice: the take had nothing in it (too short or no energy), so it was not sent (backlog 1.4.x item 7)."
+  },
+  "voiceMicrophonePhoneTitle": "항상 휴대폰 마이크 사용",
+  "@voiceMicrophonePhoneTitle": {
+    "description": "Voice settings: record from the phone's own microphone instead of a car kit or Bluetooth headset (backlog 1.4.x item 7)."
+  },
+  "voiceMicrophonePhoneSubtitle": "차량이나 블루투스 헤드셋이 연결되어 있어도 사용합니다. 끄면 Android가 선택합니다.",
+  "@voiceMicrophonePhoneSubtitle": {
+    "description": "Voice settings: explains the phone-microphone switch; off means automatic."
+  },
+  "artThumbUnsupported": "지원되지 않는 경로 또는 링크",
+  "artThumbUnreachable": "Hermes에 연결할 수 없습니다",
+  "artThumbTimedOut": "시간이 너무 오래 걸렸습니다",
+  "artThumbNotImage": "이미지 파일이 아닙니다",
+  "artThumbUndecodable": "이미지를 열 수 없습니다",
+  "artThumbDownloadFailed": "다운로드하지 못했습니다",
+  "artThumbSvg": "SVG는 앱에서 미리 볼 수 없습니다",
+  "artGlobalSkippedTimedOut": "{count}개는 시간이 너무 오래 걸렸습니다.",
+  "vltSaveUnsure": "Hermes가 응답하지 않았습니다. 이미 저장되었을 수 있으니 다시 시도하기 전에 목록을 확인하세요.",
+  "vltRemoveItem": "“{label}” 삭제",
+  "tk140ThoughtBrief": "짧은 생각",
+  "tk140ThinkingFor": "생각하는 중, {seconds}초",
+  "tk140ThoughtFor": "생각, {seconds}초",
+  "tk140ToolsCount": "도구 {count}개",
+  "tk140WorkedFor": "{duration} 작업",
+  "tk140SecondsSpoken": "{seconds}초",
+  "q9TurnVerbsWork": "작업 중…|하는 중…|처리 중…|만지는 중…|요리 중…|몰두 중…|연결 중…|진행 중…|집중 중…|열심히 하는 중…",
+  "q9TurnVerbsThink": "생각 중…|읽는 중…|검토 중…|궁리 중…|점을 잇는 중…|가늠하는 중…|따라가는 중…|곰곰이 생각 중…|계획 중…|음…",
+  "q9ComposerQueueHint": "대기열에 추가…",
+  "q9TurnMoreSteps": "+{count}단계",
+  "@q9TurnMoreSteps": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "q9TurnOutcomeFailed": "오류",
+  "q9TurnOutcomeRecovered": "다시 시도 후 완료",
+  "constellationTitle": "나의 별자리",
+  "constellationLoading": "메모리 불러오는 중…",
+  "constellationEmpty": "아직 표시할 내용이 없습니다",
+  "constellationHint": "메모리 별자리. 드래그하여 회전하고 노드를 탭하면 이름이 표시됩니다.",
+  "constellationRecenter": "가운데로",
+  "constellationKindMemory": "기억",
+  "constellationKindSkill": "스킬",
+  "constellationKindOther": "기타",
+  "cacheTitle": "캐시",
+  "cacheSubtitle": "이 휴대폰에 저장된 채팅과 메시지",
+  "cacheOnDevice": "이 기기에 저장됨",
+  "cacheChatList": "채팅 목록",
+  "cacheChatListDesc": "제목, 미리보기, 날짜. 서버가 응답하기 전에 목록이 표시됩니다.",
+  "cacheMessages": "메시지",
+  "cacheMessagesDesc": "각 채팅의 최신 메시지. 채팅이 즉시 열립니다.",
+  "cacheOffNote": "끄면 이미 저장된 내용이 삭제됩니다. 서버에서는 아무것도 삭제되지 않습니다.",
+  "cacheLimitSection": "한도",
+  "cacheLimitLabel": "최대 {count}개 채팅 저장",
+  "@cacheLimitLabel": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "cacheLimitHint": "채팅이 많을수록 공간을 더 쓰고 앱을 열 때 로딩이 조금 더 걸립니다.",
+  "cacheUsage": "사용량",
+  "cacheOnThisDevice": "이 기기",
+  "cacheClear": "캐시 지우기",
+  "cacheCleared": "캐시를 지웠습니다",
+  "modelsBotFrequentTitle": "자주 사용",
+  "modelsBotFreeOnly": "무료만",
+  "modelsBotFreeOnlyEmpty": "이 목록에 무료 모델이 없습니다.",
+  "modelsBotInheritMain": "기본 모델 상속",
+  "modelsBotInheritMainHint": "기본 슬롯의 모델을 사용합니다",
+  "modelsBotAutoMainSlot": "자동은 기본 슬롯의 모델을 사용합니다",
+  "modelsBotCreateUnconfirmed": "생성이 확인되지 않았습니다. 다른 봇을 만들기 전에 봇 목록을 확인하세요.",
+  "modelsBotSwitchTitle": "이 대화의 모델을 바꿀까요?",
+  "modelsBotSwitchBody": "대화가 이미 깁니다. {model}이(가) 다음 메시지부터 응답하며 전체 맥락을 다시 읽어야 하므로 그 턴은 더 오래 걸리고 비용이 더 들 수 있습니다.",
+  "@modelsBotSwitchBody": {
+    "placeholders": {
+      "model": {
+        "type": "String"
+      }
+    }
+  },
+  "modelPickerCurrent": "현재",
+  "modelPickerAllModels": "모든 모델",
+  "modelPickerLevelNone": "끔",
+  "modelPickerLevelMinimal": "최소",
+  "modelPickerLevelXhigh": "매우 높음",
+  "modelPickerLevelMax": "최대",
+  "modelPickerLevelUltra": "울트라",
+  "modelPickerLevelDefault": "기본값",
+  "modelPickerImpactOff": "추론 없음: 더 빠르고 저렴하게 답합니다.",
+  "modelPickerImpactLight": "짧게 생각: 빠르게 답하고 비용도 적습니다.",
+  "modelPickerImpactBalanced": "속도, 품질, 비용의 균형을 맞춥니다.",
+  "modelPickerImpactDeep": "깊이 생각: 더 느리고 더 비쌉니다.",
+  "modelPickerImpactDefault": "모델의 기본 수준을 사용합니다.",
+  "stepsBarCommands": "{count, plural, other{명령 {count}개 실행}}",
+  "stepsBarEdits": "{count, plural, other{파일 {count}개 편집}}",
+  "stepsBarReads": "{count, plural, other{파일 {count}개 읽음}}",
+  "stepsBarSearches": "{count, plural, other{웹 검색 {count}회}}",
+  "stepsBarPages": "{count, plural, other{웹 페이지 {count}개 읽음}}",
+  "stepsBarOther": "{count, plural, other{기타 호출 {count}회}}",
+  "stepsBarListPair": "{a}, {b}",
+  "stepsBarListLast": "{head}, {last}",
+  "stepsBarListSeparator": ", ",
+  "stepsBarStatusRunning": "진행 중",
+  "stepsBarStatusFailed": "실패",
+  "stepsBarStatusDone": "완료",
+  "stepsBarShowCalls": "이 단계의 각 호출 표시",
+  "stepsBarHideCalls": "이 단계의 호출 숨기기",
+  "stepsBarWorkedShow": "턴의 단계 표시",
+  "stepsBarWorkedHide": "턴의 단계 숨기기",
+  "stepsBarWord1": "고민 중",
+  "stepsBarWord2": "확인 중",
+  "stepsBarWord3": "탐색 중",
+  "stepsBarWord4": "정리 중",
+  "stepsBarWord5": "시험 중",
+  "stepsBarWord6": "다듬는 중",
+  "kanbanSkinSettingTitle": "새 칸반 디자인",
+  "kanbanSkinSettingSubtitle": "상태별 열, 실시간 타이머가 있는 카드, 일괄 작업. 끄면 이전 디자인으로 돌아갑니다.",
+  "kanbanSkinHelpTriage": "명확한 사양을 기다리는 아이디어",
+  "kanbanSkinHelpTodo": "아직 준비되지 않은 대기 중인 작업",
+  "kanbanSkinHelpScheduled": "정해진 시각까지 보류",
+  "kanbanSkinHelpReady": "디스패처를 위해 준비된 작업",
+  "kanbanSkinHelpRunning": "에이전트가 지금 실행 중",
+  "kanbanSkinHelpBlocked": "중단됨: 결정이나 도움이 필요",
+  "kanbanSkinHelpReview": "완료, 결정 대기 중",
+  "kanbanSkinHelpDone": "완료되어 참고용으로 보관됨",
+  "kanbanSkinHelpArchived": "활성 보드에서 제거됨",
+  "kanbanSkinCount": "{count, plural, =0{작업 없음} other{작업 {count}개}}",
+  "kanbanSkinSelect": "작업 선택",
+  "kanbanSkinSelectExit": "선택 종료",
+  "kanbanSkinSelected": "{count, plural, other{{count}개 선택됨}}",
+  "kanbanSkinBulkAssign": "담당자 변경",
+  "kanbanSkinBulkDelete": "삭제",
+  "kanbanSkinBulkArchiveTitle": "작업 보관",
+  "kanbanSkinBulkArchiveConfirm": "{count, plural, other{작업 {count}개를 보관합니다.}} 활성 보드에서는 사라지지만 서버에는 남습니다.",
+  "kanbanSkinBulkDeleteTitle": "작업 삭제",
+  "kanbanSkinBulkDeleteConfirm": "{count, plural, other{작업 {count}개를 서버에서 영구적으로 삭제합니다.}} 되돌릴 수 없습니다.",
+  "kanbanSkinBulkDone": "{count, plural, other{작업 {count}개를 업데이트했습니다}}",
+  "kanbanSkinBulkDeleteFailed": "{count, plural, other{작업 {count}개를 삭제하지 못했습니다}}",
+  "kanbanSkinColumnEmpty": "이 열에 작업이 없습니다",
+  "kanbanSkinLinksCount": "{count, plural, other{링크 {count}개}}",
+  "kanbanSkinSettingsUnavailable": "이 서버는 오케스트레이션 설정을 제공하지 않습니다",
+  "motionCursorTitle": "답변 커서",
+  "motionCursorCaption": "답변이 도착하는 동안 본문 아래에 커서를 표시합니다. 본문 표시를 늦추지 않습니다.",
+  "motionCursorOff": "커서 없음",
+  "motionCursorLine": "선",
+  "motionCursorBlock": "블록",
+  "motionCursorUnderscore": "밑줄",
+  "motionTreeExpand": "폴더 펼치기",
+  "motionTreeCollapse": "폴더 접기",
+  "memShareEditNode": "편집",
+  "memShareTitle": "공유된 항목 검토",
+  "memShareIntro": "앱에 공유된 항목입니다. 보내고 싶지 않은 것은 제거하고 대상을 선택하세요.",
+  "memShareRemove": "제거",
+  "memShareTextChars": "텍스트, {count}자",
+  "@memShareTextChars": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "memShareNothingLeft": "보낼 항목이 없습니다. 공유된 항목을 삭제하세요.",
+  "memShareDestination": "대상",
+  "memShareDiscard": "삭제",
+  "memShareContinue": "계속",
+  "memShareVerdict": "스캐너 판정: {verdict}",
+  "@memShareVerdict": {
+    "placeholders": {
+      "verdict": {
+        "type": "String"
+      }
+    }
+  },
+  "memShareVerdictSafe": "안전",
+  "memShareVerdictCaution": "주의",
+  "memShareVerdictDangerous": "위험",
+  "scanDocMenuLabel": "문서 스캔",
+  "scanDocTitle": "문서 스캔",
+  "scanDocStartHint": "문서를 촬영하거나 이미지를 선택하세요. 모든 처리는 이 기기에서 이루어지며 아무것도 업로드되지 않습니다.",
+  "scanDocTakePhoto": "사진 찍기",
+  "scanDocFromGallery": "갤러리에서 선택",
+  "scanDocCropHint": "각 모서리를 문서 가장자리까지 끌어 주세요.",
+  "scanDocCropReset": "초기화",
+  "scanDocCropContinue": "자르기",
+  "scanDocCropInvalid": "모서리가 올바른 사각형을 이루지 않습니다. 다시 배치해 주세요.",
+  "scanDocCropArea": "문서 영역",
+  "scanDocCorner": "모서리 {n}/4",
+  "scanDocFilterOriginal": "원본",
+  "scanDocFilterGray": "회색조",
+  "scanDocFilterContrast": "대비",
+  "scanDocFilterBw": "흑백",
+  "scanDocRotate": "회전",
+  "scanDocDeletePage": "페이지 삭제",
+  "scanDocAddPage": "페이지 추가",
+  "scanDocPageOf": "{total}페이지 중 {n}페이지",
+  "scanDocAttachImages": "이미지로 첨부",
+  "scanDocAttachPdf": "PDF로 첨부",
+  "scanDocProcessing": "처리 중…",
+  "scanDocError": "이미지를 처리할 수 없습니다.",
+  "scanDocPageLimit": "최대 {max}페이지에 도달했습니다.",
+  "latexFormulaLabel": "수식: {source}",
+  "galleryTitle": "갤러리",
+  "galleryAction": "이미지 갤러리",
+  "galleryEmptyTitle": "아직 이미지가 없습니다",
+  "galleryEmptyBody": "대화에서 생성되거나 받은 이미지가 여기에 표시됩니다.",
+  "galleryFilterAll": "모든 대화",
+  "galleryFilterTitle": "대화",
+  "galleryImageCount": "{count, plural, other{이미지 {count}개}}",
+  "galleryToday": "오늘",
+  "galleryYesterday": "어제",
+  "galleryTileLabel": "{name}, {conversation}에서",
+  "onbFlowTitle": "에이전트 연결",
+  "onbFlowBody": "Console이 Hermes에 연결되는 방법을 선택하세요. Dashboard 주소를 직접 입력하는 것이 가장 확실합니다.",
+  "onbFlowServer": "내 서버에 연결",
+  "onbFlowPair": "명령으로 페어링",
+  "onbFlowQr": "QR 코드 스캔",
+  "onbFlowGuidedBody": "Console이 이제 Hermes Dashboard를 사용합니다. Hermes가 있는 컴퓨터에 이 명령줄을 붙여넣고 표시되는 코드를 스캔하거나, Dashboard 주소로 직접 연결하세요. 채팅은 유지됩니다.",
+  "charactersTitle": "캐릭터",
+  "charactersSettingsSubtitle": "봇의 실루엣, 눈, 장식, 색상",
+  "charactersAnimateTitle": "봇 애니메이션",
+  "charactersAnimateSubtitle": "끄면 봇 얼굴이 움직이지 않습니다. 시스템의 동작 줄이기 설정은 항상 지켜집니다",
+  "charactersPreview": "미리보기",
+  "charactersSectionEyes": "눈",
+  "charactersSectionTopper": "머리 장식",
+  "charactersSectionSeed": "시드",
+  "charactersSeedHint": "비워 두면 이름을 따릅니다",
+  "charactersSeedInvalid": "소문자, 숫자, 하이픈, 밑줄만 가능(최대 64자)",
+  "charactersAuto": "자동",
+  "charactersEyesSeeded": "시드 기준",
+  "charactersEyesWide": "큰 눈",
+  "charactersEyesSleepy": "졸린 눈",
+  "charactersEyesHappy": "웃는 눈",
+  "charactersTopperNone": "없음",
+  "charactersTopperAntenna": "안테나",
+  "charactersTopperSprout": "새싹",
+  "charactersTopperCrown": "왕관",
+  "charactersTopperHalo": "후광",
+  "charactersSave": "저장",
+  "charactersReset": "초기화",
+  "charactersSaved": "캐릭터를 저장했습니다",
+  "turnFlowThoughtCount": "{count, plural, =1{1번 생각함} other{{count}번 생각함}}",
+  "screenChatsSubtitleLive": "실시간 {count}",
+  "screenChatsSubtitleToday": "오늘 {count}",
+  "screenChatsBotFilter": "봇별 필터",
+  "screenProfileToolsGroups": "{count, plural, other{{count}개 그룹}}",
+  "screenSettingsBrand": "HERMES CONSOLE",
+  "turnLineThinking": "생각 중",
+  "turnLineWorked": "작업함",
+  "litThoughtRow": "추론",
+  "mdlPillSectionProvider": "제공자",
+  "mdlPillSectionModels": "{provider} 모델",
+  "mdlPillSectionResults": "검색 결과",
+  "mdlPillSectionSettings": "설정",
+  "mdlPillSearchHint": "모든 제공자에서 검색",
+  "mdlPillSearchTooltip": "모델 검색",
+  "mdlPillOpenSettings": "설정 › 모델 열기",
+  "mdlPillProfile": "프로필 · {name}",
+  "mdlPillTagLocal": "로컬",
+  "mdlPillFastUnavailable": "이 모델에서는 사용할 수 없음",
+  "livePDone": "완료",
+  "livePWriting": "작성 중",
+  "livePCoordinating": "조정 중",
+  "livePAgents": "에이전트 {done}/{total}",
+  "@livePAgents": {
+    "placeholders": {
+      "done": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "livePNeedsPermission": "권한이 필요해요",
+  "livePThought": "{duration} 동안 생각함",
+  "@livePThought": {
+    "placeholders": {
+      "duration": {
+        "type": "String"
+      }
+    }
+  },
+  "subFTitle": "하위 에이전트 · {done}/{total}",
+  "@subFTitle": {
+    "placeholders": {
+      "done": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "subFAndMore": "{line} 외 {count}개",
+  "@subFAndMore": {
+    "placeholders": {
+      "line": {
+        "type": "String"
+      },
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "subFGuideHint": "이 에이전트에게 안내…",
+  "subFGuideSend": "보내기",
+  "subFExpandHint": "하위 에이전트 보기",
+  "subFCollapseHint": "하위 에이전트 숨기기",
+  "cnxTitle": "연결",
+  "cnxTabDirect": "직접",
+  "cnxTabSsh": "SSH",
+  "cnxServer": "서버",
+  "cnxSignIn": "로그인",
+  "cnxNameLabel": "이름 · 선택",
+  "cnxNameHint": "집, 스튜디오…",
+  "cnxAddressNote": "포트를 포함한 대시보드의 전체 주소입니다. Tailscale을 쓴다면 서버의 100.x 주소나 Tailscale Serve 주소를 사용하고, 이 휴대폰에서 Tailscale을 계속 연결해 두세요.",
+  "cnxMethod": "방식",
+  "cnxMethodPassword": "비밀번호",
+  "cnxMethodBrowser": "브라우저",
+  "cnxMethodToken": "토큰",
+  "cnxRemember": "비밀번호 기억",
+  "cnxRememberNote": "이 휴대폰의 보안 저장소에 암호화되어 보관됩니다.",
+  "cnxBrowserNote": "서버 자체의 로그인 페이지를 브라우저로 엽니다. 주소가 로그인 페이지 뒤에 있을 때 사용하세요.",
+  "cnxTokenLabel": "세션 토큰",
+  "cnxTokenRejected": "서버가 해당 토큰을 받아들이지 않았습니다.",
+  "cnxScanQr": "QR 스캔 또는 Hermes 서비스 설치",
+  "cnxSshHost": "SSH 호스트",
+  "cnxSshUser": "SSH 사용자 이름",
+  "cnxSshPort": "SSH 포트",
+  "cnxSshAuth": "SSH 인증",
+  "cnxSshAuthPassword": "비밀번호",
+  "cnxSshAuthKey": "개인 키",
+  "cnxSshPassword": "SSH 비밀번호",
+  "cnxDashHost": "대시보드 호스트",
+  "cnxDashPort": "대시보드 포트",
+  "cnxSshNote": "대시보드는 이미 서버에서 실행 중이어야 합니다. 암호화된 SSH 터널을 통해 비공개로 유지됩니다.",
+  "sshTDashboardRefused": "SSH 서버가 대시보드로의 연결을 열지 않았습니다. 대시보드 호스트와 포트를 확인하세요.",
+  "sshTPublicKey": "공개 키입니다. SSH로 로그인하려면 개인 키가 필요합니다.",
+  "sshTPassphraseNeeded": "이 키는 암호화되어 있습니다. 암호 문구를 입력하세요.",
+  "sshTOtherAddress": "이 터널은 다른 대시보드 주소에 속해 있습니다.",
+  "sshTServerNotFound": "SSH 서버를 찾을 수 없습니다. 호스트를 확인하세요.",
+  "sshTPassphraseLabel": "키 암호 문구",
+  "sshTOpening": "SSH 터널을 여는 중…",
+  "cnxSshSoon": "SSH 터널을 통한 연결은 이 버전에서 아직 사용할 수 없습니다. 이 휴대폰이 닿을 수 있는 주소로 '직접' 탭을 사용하세요.",
+  "vcrEntryAttachments": "음성을 사용하기 전에 첨부 파일을 보내거나 제거하세요.",
+  "vcrEntryEditing": "음성을 사용하기 전에 메시지 편집을 끝내세요.",
+  "vcrEntryApproval": "음성을 사용하기 전에 대기 중인 승인에 응답하세요.",
+  "vcrEntryQueued": "대기 중인 메시지가 있습니다. 전송된 뒤에 음성을 사용하세요.",
+  "vcrRetryMessage": "이 메시지 다시 보내기",
+  "vcrSendFailed": "메시지를 보내지 못했습니다. 다시 보낼 수 있도록 저장해 두었습니다.",
+  "vcrMicBusy": "다른 앱이나 통화가 마이크를 사용 중입니다. 닫고 다시 시도하세요.",
+  "vcrMicUnavailable": "마이크를 열 수 없습니다. 다시 시도하세요.",
+  "vcrNeedsNetwork": "음성 인식에는 연결이 필요한데 연결이 없습니다. 연결이 돌아오면 다시 시도하세요.",
+  "vcrLanguageFallback": "이 음성 인식기에서 음성 언어를 사용할 수 없어 시스템 언어를 사용합니다.",
+  "vcrServerUnavailable": "서버 음성을 사용할 수 없습니다. 이 휴대폰의 음성을 사용할 수 있습니다.",
+  "vcrUseThisPhone": "이 휴대폰 사용",
+  "vcrPausedByBackground": "백그라운드로 인해 일시 중지됨",
+  "vcrContinue": "계속",
+  "vcrRouteRestarted": "오디오 장치가 바뀌었습니다(헤드셋 또는 블루투스). 마이크를 다시 시작했습니다.",
+  "vcrOpenSettings": "설정 열기",
+  "vcrTranscriptionTimedOut": "받아쓰기가 너무 오래 걸려 취소되었습니다. 다시 시도하세요.",
+  "chcFileLabel": "파일 {name}",
+  "chcFolderLabel": "폴더 {name}",
+  "chcFileOpenHint": "파일을 엽니다",
+  "chcFileCopyHint": "경로를 복사합니다",
+  "chcPathCopied": "경로를 복사했습니다",
+  "chcFileOpenFailed": "파일을 열 수 없습니다. 경로를 복사했습니다.",
+  "chcCitationLabel": "인용 {n}",
+  "chcCitationSourceLabel": "출처 {n}",
+  "chcCitationOpenHint": "출처를 브라우저에서 엽니다",
+  "mdpSourcesLabel": "출처: {count}개",
+  "mdpSourceLabel": "출처 {n}: {title}, {domain}",
+  "mdpSourceOpenHint": "브라우저에서 출처를 엽니다. 길게 누르면 링크를 복사합니다",
+  "mdpOpenLinkHint": "브라우저에서 링크를 엽니다. 길게 누르면 링크를 복사합니다",
+  "mdpLinkChipLabel": "{domain} 링크",
+  "mdpLinkCopied": "링크를 복사했습니다",
+  "mdpTablePreparing": "표 준비 중",
+  "msvCurrentUnknown": "모델 선택",
+  "msvCurrentHint": "다른 모델 선택",
+  "msvFavorites": "즐겨찾기",
+  "msvFavoritesHint": "‘모든 모델’에서 모델에 별표를 하면 여기에 표시됩니다.",
+  "msvFrequent": "자주 사용",
+  "msvThink": "추론",
+  "msvThinkOn": "켜짐",
+  "msvThinkOff": "꺼짐",
+  "msvFastNormal": "보통",
+  "msvFastActive": "켜짐",
+  "msvPermissions": "권한",
+  "msvPermissionsManual": "수동",
+  "msvFavAdd": "{model}을(를) 즐겨찾기에 추가",
+  "@msvFavAdd": {
+    "placeholders": {
+      "model": {
+        "type": "String"
+      }
+    }
+  },
+  "msvFavRemove": "{model}을(를) 즐겨찾기에서 제거",
+  "@msvFavRemove": {
+    "placeholders": {
+      "model": {
+        "type": "String"
+      }
+    }
+  },
+  "msvFavLimit": "즐겨찾기는 최대 {count}개입니다",
+  "@msvFavLimit": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "sv2Close": "닫기",
+  "sv2CloseHint": "이 채팅에서 그룹을 숨깁니다. 서브에이전트는 계속 작업합니다.",
+  "sv2MenuEntry": "서브에이전트 · {count}",
+  "sv2MenuShowHidden": "숨긴 서브에이전트 표시",
+  "sv2TaskSection": "맡은 작업",
+  "sv2StepsSection": "단계",
+  "sv2StepsPartial": "이 그룹이 채팅에 나타난 뒤 확인된 단계만 표시됩니다.",
+  "sv2ThoughtSection": "생각",
+  "sv2ResultPartial": "중간 결과",
+  "sv2LeftBehind": "끝내지 못했습니다. 마지막으로 남긴 내용입니다.",
+  "sv2NoResultYet": "아직 결과가 없습니다.",
+  "sv2LastLog": "마지막 로그",
+  "kluKeysTitle": "키",
+  "kluKeysLoading": "키를 읽는 중…",
+  "kluKeysSearch": "키 검색",
+  "kluSummaryAvailable": "사용 가능",
+  "kluSummaryConfigured": "설정됨",
+  "kluProfileLabel": "프로필",
+  "kluProfileDefault": "기본",
+  "kluKeysNote": "Hermes는 선택한 프로필의 .env에 비밀 값을 저장합니다. 여기서는 쓰기만 가능하며 표시하거나 읽지 않습니다.",
+  "kluStatusSet": "설정됨",
+  "kluStatusNotSet": "설정 안 됨",
+  "kluCategoryCustom": "사용자 지정",
+  "kluKeysEmpty": "이 프로필에는 키가 없습니다.",
+  "kluKeysNoMatches": "일치하는 키가 없습니다.",
+  "kluKeysLoadError": "키를 읽을 수 없습니다",
+  "kluAddKey": "키 추가",
+  "kluNameLabel": "변수 이름",
+  "kluNameInvalid": "대문자, 숫자, 밑줄만 사용하고 문자로 시작해야 합니다(최대 128자).",
+  "kluSheetStatus": "상태",
+  "kluSheetCategory": "카테고리",
+  "kluValueLabel": "값",
+  "kluValueHint": "새 값",
+  "kluSaveKey": "키 저장",
+  "kluDeleteKey": "키 삭제",
+  "kluRevealValue": "입력 내용 표시",
+  "kluHideValue": "입력 내용 숨기기",
+  "kluWriteOnly": "저장된 값은 표시되지 않습니다. 새 값을 입력하면 현재 값을 대체합니다.",
+  "kluValueEmpty": "값을 입력하세요",
+  "kluValueInvalid": "값에는 줄바꿈이나 제어 문자, 앞뒤 공백을 사용할 수 없습니다.",
+  "kluValueTooLong": "값이 {max}자를 초과합니다",
+  "kluOverwriteTitle": "{name}을(를) 바꿀까요?",
+  "kluOverwriteBody": "프로필 {profile}에 이미 설정되어 있습니다. 새 값이 현재 값을 대체하며 복구할 수 없습니다.",
+  "kluOverwriteAction": "바꾸기",
+  "kluDeleteTitle": "{name}을(를) 삭제할까요?",
+  "kluDeleteBody": "프로필 {profile}의 .env에서 제거됩니다.",
+  "kluDeleteAction": "삭제",
+  "kluSaved": "키 {name} 저장됨",
+  "kluDeleted": "키 {name} 삭제됨",
+  "kluSaveFailed": "키를 저장할 수 없습니다.",
+  "kluDeleteFailed": "키를 삭제할 수 없습니다.",
+  "kluCleartextBlocked": "이 연결은 사설 네트워크 밖에서 암호화되지 않은 HTTP를 사용합니다. HTTPS를 사용하기 전에는 키를 쓸 수 없습니다.",
+  "kluCleartextPrivate": "사설 네트워크의 암호화되지 않은 HTTP 연결입니다. 값이 암호화되지 않고 전송됩니다.",
+  "kluRowLabel": "{name}, {status}, {category}",
+  "kluTargetProfile": "쓰기 대상 프로필: {profile}",
+  "kluLogComponent": "구성 요소",
+  "kluLogForComponent": " 구성 요소 {component}에서",
+  "kluUsageTitle": "사용량",
+  "kluUsageLoading": "사용량을 읽는 중…",
+  "kluUsagePeriod": "{days}일",
+  "kluUsageTokens": "토큰",
+  "kluUsageInput": "입력",
+  "kluUsageOutput": "출력",
+  "kluUsageSessions": "세션",
+  "kluUsageCost": "비용",
+  "kluUsageCostEstimated": "예상 비용",
+  "kluUsageDaily": "일별 토큰",
+  "kluUsageByModel": "모델별",
+  "kluUsageSessionsCount": "{count}개 세션",
+  "kluUsageEmpty": "이 기간에 기록된 사용량이 없습니다",
+  "kluUsageLoadError": "사용량을 읽을 수 없습니다",
+  "kluUsageUnsupported": "이 서버는 사용량 분석을 제공하지 않습니다",
+  "fcoCopyPath": "경로 복사",
+  "fcoOpenFolder": "폴더 열기",
+  "fcoErrNotFound": "파일을 찾을 수 없습니다. 이동되었거나 삭제되었을 수 있습니다.",
+  "fcoErrForbidden": "서버에서 이 파일을 읽도록 허용하지 않습니다.",
+  "fcoErrDenied": "서버가 이 경로를 거부했습니다.",
+  "fcoErrTooLarge": "파일이 너무 커서 여기서 볼 수 없습니다.",
+  "fcoErrBinary": "바이너리 파일이라 텍스트로 표시할 수 없습니다.",
+  "fcoErrTimeout": "서버 응답이 너무 오래 걸립니다.",
+  "fcoErrUnreachable": "파일을 읽을 수 없습니다. 연결을 확인하세요.",
+  "fcoErrUnsupported": "이 서버에서는 파일을 읽을 수 없습니다.",
+  "fcoErrOutside": "서버가 이 대화의 폴더 밖에 있는 파일을 반환했습니다. 표시하지 않습니다.",
+  "fcoErrBadPath": "경로가 올바르지 않아 열지 않습니다.",
+  "fcoErrNoBase": "이 파일이 어느 폴더에 있는지 알 수 없습니다.",
+  "fcoEmpty": "파일이 비어 있습니다.",
+  "fcoSensitiveTitle": "민감한 파일",
+  "fcoSensitiveBody": "{name}에 비밀번호나 키가 들어 있을 수 있습니다. 화면에만 표시되며 기기에는 저장되지 않습니다.",
+  "fcoShow": "표시",
+  "cfxSearchedIn": "찾아본 위치 ({count})",
+  "@cfxSearchedIn": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "cfxSeveralMatches": "이 대화의 폴더에 같은 이름의 파일이 여러 개 있습니다. 열 파일을 선택하세요.",
+  "cfxChoose": "파일 선택",
+  "sppChangedTitle": "서버에서 스킬이 변경되었습니다",
+  "sppChangedBody": "열어 본 이후 내용이 바뀌었습니다. 저장하면 현재 내용을 덮어씁니다.",
+  "sppCharCount": "{count} / {max}",
+  "@sppCharCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      },
+      "max": {
+        "type": "int"
+      }
+    }
+  },
+  "sppContentErrorTitle": "SKILL.md를 읽을 수 없습니다",
+  "sppContentErrorBody": "서버가 응답하지 않았거나 스킬을 찾지 못했습니다. 연결을 확인하고 다시 시도하세요.",
+  "sppContentHeader": "내용",
+  "sppContentTooLongToEdit": "이 텍스트는 서버 한도를 넘어 읽기만 할 수 있습니다.",
+  "sppContinue": "계속",
+  "sppCreate": "만들기",
+  "sppCreateConfirmTitle": "스킬 {name}을(를) 만들까요?",
+  "@sppCreateConfirmTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "sppCreateConfirmBody": "에이전트가 새 세션에서 따를 지침입니다. 내용이 맞는지 확인하세요.",
+  "sppDetailsHeader": "세부 정보",
+  "sppEdit": "편집",
+  "sppEditorLabel": "SKILL.md 내용",
+  "sppEditTitle": "{name} 편집",
+  "@sppEditTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "sppEditWarning": "에이전트는 이 지침을 그대로 따릅니다. 이해한 변경만 저장하세요.",
+  "sppFilterActive": "활성",
+  "sppFilterAll": "전체",
+  "sppFilterInactive": "비활성",
+  "sppInsecureTitle": "암호화되지 않은 연결",
+  "sppInsecurePublicBody": "이 서버는 직접 관리하지 않는 네트워크에서 http로 연결됩니다. 자격 증명을 포함한 전송 내용이 중간에서 읽힐 수 있습니다.",
+  "sppInsecurePrivateBody": "http(암호화 없음)로 연결되지만 사설 네트워크 안입니다.",
+  "sppInstallAnyway": "그래도 설치",
+  "sppInstalledSummary": "설치됨 {total}개 · 활성 {on}개",
+  "@sppInstalledSummary": {
+    "placeholders": {
+      "total": {
+        "type": "int"
+      },
+      "on": {
+        "type": "int"
+      }
+    }
+  },
+  "sppMcpAddConfirmTitle": "MCP 서버 {name}을(를) 추가할까요?",
+  "@sppMcpAddConfirmTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "sppMcpAddConfirmBody": "Hermes 서버가 저장하고 실행하거나 연결할 수 있습니다. 이 휴대폰에서는 아무것도 실행되지 않습니다.",
+  "sppMcpAdded": "서버 {name} 추가됨",
+  "@sppMcpAdded": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "sppMcpAddRejected": "서버가 이 설정을 받아들이지 않았습니다. 이름(중복일 수 있음)과 명령 또는 URL을 확인하세요.",
+  "sppMcpNameEmpty": "이름을 입력하세요.",
+  "sppMcpNameChars": "영문자, 숫자, 마침표, 하이픈, 밑줄만 사용하세요(공백 없음, 최대 64자).",
+  "sppMcpUrlEmpty": "서버 주소를 입력하세요.",
+  "sppMcpUrlScheme": "주소는 https:// 또는 http://로 시작해야 합니다.",
+  "sppMcpUrlHost": "주소에 호스트 이름이 없습니다.",
+  "sppMcpUrlUserInfo": "주소에 사용자 이름이나 비밀번호를 넣지 말고 인증 항목을 사용하세요.",
+  "sppMcpUrlQuery": "주소에 매개변수(?key=value)를 넣지 마세요. 자격 증명일 수 있습니다.",
+  "sppMcpUrlFragment": "주소 끝의 # 부분을 지우세요.",
+  "sppMcpCommandEmpty": "명령을 입력하세요.",
+  "sppMcpCommandControl": "명령에 줄바꿈이나 제어 문자가 있습니다.",
+  "sppMcpCommandTooLong": "명령이 너무 깁니다(최대 800자).",
+  "sppMcpCommandSpaces": "여기에는 프로그램만 입력하고, 인수는 아래 칸에 한 줄에 하나씩 입력하세요.",
+  "sppMcpCommandShell": "서버는 셸 없이 프로그램을 시작합니다. 리디렉션이나 연결 기호는 여기서 동작하지 않습니다.",
+  "sppMcpInsecurePublic": "이 주소는 사설 네트워크 밖에서 http를 사용합니다. MCP 서버 트래픽이 암호화되지 않고 전송됩니다.",
+  "sppMcpInsecurePublicToken": "이 주소는 사설 네트워크 밖에서 http를 사용하며 토큰을 보내게 됩니다. 암호화되지 않습니다. https를 사용하세요.",
+  "sppMcpInsecurePrivate": "이 주소는 http(암호화 없음)입니다. 사설 네트워크이지만 https를 권장합니다.",
+  "sppMenuAddMcp": "MCP 서버 추가",
+  "sppMenuNewSkill": "새 스킬",
+  "sppNewSkillIntro": "이름, 짧은 설명, 지침을 입력하세요. SKILL.md 머리말은 휴대폰이 만들고 서버가 검증합니다.",
+  "sppNewSkillTitle": "새 스킬",
+  "sppOriginBundled": "내장",
+  "sppOriginUser": "사용자",
+  "sppOriginHub": "허브",
+  "sppOriginGit": "Git",
+  "sppOriginExternal": "외부",
+  "sppOverwrite": "덮어쓰기",
+  "sppReadOnlySkill": "여기서는 직접 만든 스킬만 편집할 수 있습니다. 허브 및 내장 스킬은 업데이트 시 덮어써집니다.",
+  "sppRestoreTitle": "원본 복사본으로 복원할까요?",
+  "sppRestoreBody": "이 화면을 열었을 때의 내용 그대로 다시 씁니다.",
+  "sppRestored": "원본 복원됨",
+  "sppRestoreOriginal": "원본 복원",
+  "sppSave": "저장",
+  "sppSaveTitle": "{name}의 변경 사항을 저장할까요?",
+  "@sppSaveTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "sppSaveBody": "텍스트가 SKILL.md 전체를 대체합니다. 새 에이전트 세션은 이 지침을 따릅니다.",
+  "sppSaved": "저장했습니다. 새 세션부터 적용됩니다.",
+  "sppScanAskTitle": "검사 결과 판단이 필요합니다",
+  "sppScanAskBody": "설치 전에 확인해야 할 사항이 서버에서 발견되었습니다. 계속하면 본인 책임으로 설치됩니다.",
+  "sppScanBlockedTitle": "설치가 차단되었습니다",
+  "sppScanBlockedBody": "보안 검사에서 이 스킬의 설치를 허용하지 않아 확인할 것이 없습니다.",
+  "sppScanClean": "보안 검사: 발견 사항 없음.",
+  "sppScanFailedTitle": "검사할 수 없습니다",
+  "sppScanFailedBody": "보안 검사에서 응답이 없었습니다. 계속해도 설치는 서버의 검사를 거치며 거부될 수 있습니다.",
+  "sppScanFindings": "보안 검사: 발견 {count}건.",
+  "@sppScanFindings": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "sppScanMore": "…외 {count}건",
+  "@sppScanMore": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "sppScanning": "{name} 검사 중…",
+  "@sppScanning": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "sppScanUnavailable": "보안 검사: 사용할 수 없음.",
+  "sppSearchingHub": "허브 검색 중…",
+  "sppShowMore": "{count}개 더 보기",
+  "@sppShowMore": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "sppShowRest": "나머지 보기({count}자)",
+  "@sppShowRest": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "sppSkillCategoryChars": "카테고리는 하나의 이름이어야 하며 소문자, 숫자, 마침표, 하이픈, 밑줄만 쓸 수 있습니다.",
+  "sppSkillCategoryLabel": "카테고리(선택)",
+  "sppSkillContentEmpty": "내용이 비어 있습니다.",
+  "sppSkillContentNoBody": "머리말 뒤에 지침이 없습니다.",
+  "sppSkillContentNoDescription": "머리말에 description이 있어야 합니다.",
+  "sppSkillContentNoFrontmatter": "SKILL.md는 --- 줄 사이의 머리말로 시작해야 합니다.",
+  "sppSkillContentNoName": "머리말에 name이 있어야 합니다.",
+  "sppSkillContentNul": "텍스트에 널 문자가 있습니다.",
+  "sppSkillContentTooLong": "텍스트가 서버 한도인 {max}자를 넘었습니다.",
+  "@sppSkillContentTooLong": {
+    "placeholders": {
+      "max": {
+        "type": "int"
+      }
+    }
+  },
+  "sppSkillContentUnclosed": "머리말이 닫히지 않았습니다. 두 번째 --- 줄이 없습니다.",
+  "sppSkillCreated": "스킬 {name} 생성됨",
+  "@sppSkillCreated": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "sppSkillDescriptionEmpty": "짧은 설명을 입력하세요.",
+  "sppSkillDescriptionHelp": "한 문장으로, 에이전트가 언제 사용해야 하는지 적으세요.",
+  "sppSkillDescriptionLabel": "설명",
+  "sppSkillDescriptionTooLong": "새 스킬의 설명은 최대 {max}자까지 가능합니다.",
+  "@sppSkillDescriptionTooLong": {
+    "placeholders": {
+      "max": {
+        "type": "int"
+      }
+    }
+  },
+  "sppSkillInstructionsLabel": "지침",
+  "sppSkillNameChars": "소문자, 숫자, 마침표, 하이픈, 밑줄을 사용하고 문자나 숫자로 시작하세요.",
+  "sppSkillNameEmpty": "이름을 입력하세요.",
+  "sppSkillNameHelp": "폴더 이름으로 사용됩니다(예: my-skill).",
+  "sppSkillNameLabel": "이름",
+  "sppSkillNameTooLong": "이름은 최대 {max}자까지 가능합니다.",
+  "@sppSkillNameTooLong": {
+    "placeholders": {
+      "max": {
+        "type": "int"
+      }
+    }
+  },
+  "sppStatusFilter": "상태",
+  "sppSwitchLabel": "{name} 사용",
+  "@sppSwitchLabel": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "sppToggleFailed": "{name}을(를) 변경하지 못했습니다. 이전 상태로 돌아갑니다.",
+  "@sppToggleFailed": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "sppVersion": "v{version}",
+  "@sppVersion": {
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
+  },
+  "sppViewSkillMd": "SKILL.md 보기",
+  "hdaTitle": "에이전트",
+  "hdaFilterAll": "전체",
+  "hdaStatusWorking": "작업 중",
+  "hdaStatusBlocked": "응답 대기",
+  "hdaStatusIdle": "대기 중",
+  "hdaStatusDone": "완료",
+  "hdaStatusUnknown": "알 수 없음",
+  "hdaInState": "이 상태로 {duration}",
+  "hdaNow": "방금",
+  "hdaEmptyTitle": "실행 중인 에이전트가 없습니다",
+  "hdaEmptyBody": "이 서버에서 Herdr로 시작한 에이전트가 실시간 상태와 함께 여기에 표시됩니다.",
+  "hdaNew": "새 에이전트",
+  "hdaProbing": "서버에서 Herdr를 찾는 중…",
+  "hdaServerStoppedTitle": "Herdr가 실행 중이 아닙니다",
+  "hdaServerStoppedBody": "Herdr 서버가 응답하지 않습니다. 터미널 탭에서 herdr를 입력해 실행한 뒤 돌아오세요.",
+  "hdaConnectionError": "서버와 통신할 수 없습니다.",
+  "hdaTimedOut": "서버 응답이 너무 오래 걸렸습니다.",
+  "hdaStale": "마지막으로 읽은 내용을 표시 중입니다. 다시 시도하는 중…",
+  "hdaHintLine": "이 서버에는 Herdr가 설치되어 있지 않습니다.",
+  "hdaHowToInstall": "설치 방법",
+  "hdaHintDismiss": "안내 닫기",
+  "hdaInstallTitle": "Herdr 설치",
+  "hdaInstallBody": "앱은 스스로 아무것도 설치하지 않습니다. 서버에서 아래를 실행한 뒤 이 화면으로 돌아오세요.",
+  "hdaInstallProject": "GitHub 프로젝트",
+  "hdaInstallCheck": "설치했어요",
+  "hdaRecheck": "Herdr 다시 찾기",
+  "hdaMore": "에이전트 추가 옵션",
+  "hdaBack": "에이전트 목록으로 돌아가기",
+  "hdaRowHint": "출력을 열고 지시를 보내기",
+  "hdaFolderUnknown": "알 수 없는 폴더",
+  "hdaOutputTitle": "출력",
+  "hdaOutputEmpty": "아직 출력이 없습니다.",
+  "hdaOutputLabel": "{agent}의 실시간 출력",
+  "hdaOutputFailed": "출력을 읽을 수 없습니다. 다시 시도하는 중…",
+  "hdaPromptTarget": "{agent} 에게 · {folder}",
+  "hdaPromptHint": "에이전트에게 보낼 지시를 입력하세요",
+  "hdaSend": "보내기",
+  "hdaKeysTitle": "키",
+  "hdaKeyEnter": "Enter",
+  "hdaKeySemantics": "{key} 키 보내기",
+  "hdaKeySent": "{key} 키를 보냈습니다",
+  "hdaSentTo": "{agent}에게 보냈습니다",
+  "hdaBlockedTitle": "{agent}이(가) 응답을 기다립니다",
+  "hdaBlockedBody": "승인이나 답변을 요청하고 있습니다. 수락은 Enter, 거절은 Esc를 보냅니다. 다른 선택지는 키로 보내세요.",
+  "hdaAccept": "수락",
+  "hdaReject": "거절",
+  "hdaReadOnly": "읽기 전용: 앱이 서버에서 Herdr의 위치를 확인하지 못했습니다.",
+  "hdaGone": "이 에이전트는 더 이상 Herdr에 없습니다.",
+  "hdaErrBlocked": "{agent}이(가) 답변을 기다리고 있어 텍스트를 보내지 않았습니다. 키를 사용하세요.",
+  "hdaErrNotFound": "해당 에이전트가 더 이상 없습니다.",
+  "hdaErrEmpty": "보내기 전에 내용을 입력하세요.",
+  "hdaErrTooLong": "텍스트가 너무 깁니다(최대 4KB).",
+  "hdaErrChars": "보낼 수 없는 제어 문자가 포함되어 있습니다.",
+  "hdaErrFailed": "작업을 완료하지 못했습니다.",
+  "hdaCreateKind": "에이전트",
+  "hdaCreateFolder": "서버의 폴더",
+  "hdaCreateFolderHint": "/프로젝트의/절대/경로",
+  "hdaCreateRecent": "최근",
+  "hdaCreateContinue": "계속",
+  "hdaCreateConfirmTitle": "이 에이전트를 만들까요?",
+  "hdaCreateConfirmBody": "{server}의 {folder}에서 Herdr 작업 공간을 열고 {agent}을(를) 시작합니다. 서버에서 에이전트가 작업을 시작하게 됩니다.",
+  "hdaCreateAction": "만들기",
+  "hdaCreated": "에이전트를 만들었습니다",
+  "hdaCreateStartFailed": "작업 공간은 만들어졌지만 {agent}이(가) 시작되지 않았습니다. 터미널 탭에서 여세요.",
+  "hdaErrFolder": "/로 시작하는 절대 경로 폴더를 입력하세요.",
+  "hdaUnlockReason": "{server}의 에이전트 열기",
+  "hdaRowSemantics": "{agent}, {state}, {folder}",
+  "bstEditorTitle": "캐릭터 편집기",
+  "bstStudioTitle": "캐릭터 스튜디오",
+  "bstUndo": "실행 취소",
+  "bstRedo": "다시 실행",
+  "bstMore": "옵션 더보기",
+  "bstConfirm": "프로필에 적용",
+  "bstReset": "초기화",
+  "bstSaveCharacter": "캐릭터 저장",
+  "bstSavedCharacters": "저장한 캐릭터",
+  "bstSharePng": "PNG 공유",
+  "bstDuplicate": "캐릭터 복제",
+  "bstNewCharacter": "새 캐릭터",
+  "bstNameTitle": "캐릭터 이름",
+  "bstNameHint": "예: 파란 아기 고양이",
+  "bstDefaultName": "내 캐릭터",
+  "bstCopyName": "{name} (사본)",
+  "@bstCopyName": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "bstSavedToast": "내 캐릭터에 저장했습니다",
+  "bstAppliedToast": "{name}이(가) 이 캐릭터를 사용합니다",
+  "@bstAppliedToast": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "bstDiscardTitle": "변경 사항을 취소할까요?",
+  "bstDiscardBody": "편집기의 변경 사항이 아직 어떤 프로필에도 적용되지 않았습니다.",
+  "bstDiscard": "취소",
+  "bstKeepEditing": "계속 편집",
+  "bstShareFailed": "이미지를 공유할 수 없습니다",
+  "bstCanvasSize": "1024 × 1024",
+  "bstPan": "캔버스 이동",
+  "bstZoomOut": "축소",
+  "bstZoomIn": "확대",
+  "bstZoomValue": "{percent}%",
+  "@bstZoomValue": {
+    "placeholders": {
+      "percent": {
+        "type": "int"
+      }
+    }
+  },
+  "bstZoomResetTip": "100%로 보기",
+  "bstFit": "맞춤",
+  "bstCanvasLabel": "캐릭터 캔버스",
+  "bstStateButton": "미리보기 상태",
+  "bstStatePickTitle": "상태 미리보기",
+  "bstStateStill": "정지",
+  "bstStateIdle": "대기",
+  "bstStateListen": "듣기",
+  "bstStateThink": "생각",
+  "bstStateWork": "작업",
+  "bstStateSpeak": "말하기",
+  "bstStateCurious": "호기심",
+  "bstStateCelebrate": "축하",
+  "bstStateLove": "사랑",
+  "bstStateOops": "앗",
+  "bstStateSleep": "잠자기",
+  "bstStateBounce": "통통",
+  "bstStateDance": "춤추기",
+  "bstStateSpin": "회전",
+  "bstTabShape": "모양",
+  "bstTabEyes": "눈",
+  "bstTabPieces": "파츠",
+  "bstTabColor": "색상",
+  "bstFormRound": "둥근",
+  "bstFormOrganic": "유기적",
+  "bstFormBoxy": "각진",
+  "bstFormRectangle": "직사각형",
+  "bstFormCloud": "구름",
+  "bstRange": "범위",
+  "bstStrength": "강도",
+  "bstEyeDot": "점",
+  "bstEyeOval": "타원",
+  "bstEyeJoy": "웃는 눈",
+  "bstEyeDreamy": "몽환",
+  "bstEyeGlint": "반짝임",
+  "bstEyeBold": "단호함",
+  "bstEyeLantern": "랜턴",
+  "bstEyeRing": "링",
+  "bstEyeWink": "윙크",
+  "bstEyeAmazed": "놀람",
+  "bstEyeNarrow": "가는 눈",
+  "bstEyeGrumpy": "심술",
+  "bstEyeSlit": "세로 동공",
+  "bstEyeUndead": "언데드",
+  "bstEyeHeart": "하트",
+  "bstEyeSize": "눈 크기",
+  "bstEyeColor": "눈 색상",
+  "bstColorAuto": "자동",
+  "bstColorCustom": "사용자 지정",
+  "bstColorInk": "검정",
+  "bstColorWhite": "흰색",
+  "bstColorViolet": "보라",
+  "bstColorBlue": "파랑",
+  "bstColorRed": "빨강",
+  "bstColorGreen": "초록",
+  "bstHue": "색조",
+  "bstSaturation": "채도",
+  "bstBrightness": "밝기",
+  "bstPieceCatEars": "고양이 귀",
+  "bstPieceBearEars": "곰 귀",
+  "bstPieceBunnyEars": "토끼 귀",
+  "bstPieceCrown": "왕관",
+  "bstPieceHorn": "뿔",
+  "bstPieceHalo": "후광",
+  "bstPieceSwirl": "소용돌이",
+  "bstPieceSprout": "새싹",
+  "bstPieceLeaf": "잎",
+  "bstPieceWing": "날개",
+  "bstPieceTail": "꼬리",
+  "bstPieceStar": "별",
+  "bstPieceHeart": "하트",
+  "bstPieceBow": "리본",
+  "bstPiecePaw": "발바닥",
+  "bstPieceFin": "지느러미",
+  "bstPieceBolt": "번개",
+  "bstPieceFlower": "꽃",
+  "bstPieceMoon": "달",
+  "bstPieceDrop": "물방울",
+  "bstPiecesAdd": "파츠 추가",
+  "bstPiecesPlaced": "배치한 파츠",
+  "bstPiecesNone": "아직 파츠가 없습니다. 눌러서 추가하세요.",
+  "bstPiecesLimit": "파츠 최대 개수에 도달했습니다",
+  "bstPieceDelete": "삭제",
+  "bstPieceRotation": "회전",
+  "bstPieceSize": "크기",
+  "bstPieceFlip": "뒤집기",
+  "bstPiecePosition": "위치",
+  "bstPieceAcross": "가로",
+  "bstPieceHeight": "세로",
+  "bstFur": "털",
+  "bstFinish": "마감",
+  "bstFinishFlat": "플랫",
+  "bstFinishMatte": "무광",
+  "bstFinishSoft": "부드러움",
+  "bstFinishGlossy": "유광",
+  "bstSolidColors": "단색",
+  "bstColorOriginal": "원래 색",
+  "bstBodyColor": "몸 색상",
+  "bstGradients": "그라데이션",
+  "bstGradSunrise": "일출",
+  "bstGradZest": "시트러스",
+  "bstGradBay": "만",
+  "bstGradGumdrop": "젤리",
+  "bstGradCinder": "잿불",
+  "bstGradNightfall": "해질녘",
+  "bstGradTide": "조수",
+  "bstGradApricot": "살구",
+  "bstGradPlum": "자두",
+  "bstGradSpearmint": "스피어민트",
+  "bstGradBorealis": "오로라",
+  "bstGradSherbet": "셔벗",
+  "bstGradPetal": "꽃잎",
+  "bstGradPearl": "진주",
+  "bstGenerateTitle": "AI로 생성",
+  "bstGenerateHint": "캐릭터 설명: 날개 달린 파란 아기 고양이",
+  "sagAsk": "에이전트에게 요청",
+  "sagCopy": "요청 복사",
+  "sagPaste": "답변 붙여넣기",
+  "sagHelp": "{name}와(과)의 새 채팅을 열고 캐릭터 스키마와 입력한 문장을 보냅니다. 모델 한 턴이 소모되며 채팅은 기록에 남습니다. 답변이 오면 복사한 뒤 「답변 붙여넣기」를 누르세요. 초안에 적용되며 되돌릴 수 있습니다.",
+  "@sagHelp": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "sagOffWhy": "쓰기가 가능한 연결이고 활성 프로필이 있을 때만 사용할 수 있습니다.",
+  "sagStatusCopied": "요청을 복사했습니다. 이 봇의 채팅에 붙여넣고 답변을 복사하세요.",
+  "sagStatusApplied": "캐릭터를 초안에 적용했습니다. 되돌릴 수 있습니다.",
+  "sagStatusInvalid": "답변을 이해하지 못했습니다. 다른 문장으로 시도해 보세요.",
+  "sagStatusEmpty": "붙여넣을 내용이 없습니다. 먼저 에이전트의 답변을 복사하세요.",
+  "sagStatusNeedPhrase": "먼저 문장을 입력하세요.",
+  "sagChatTitle": "캐릭터 디자인",
+  "bstSavedEmpty": "아직 저장한 캐릭터가 없습니다.",
+  "bstSavedHint": "눌러서 캐릭터를 사용하세요. 길게 누르면 편집, 복제, 삭제할 수 있습니다.",
+  "bstMoreActions": "추가 작업",
+  "bstMyCharacters": "내 캐릭터",
+  "bstPresets": "프리셋",
+  "bstPresetCoral": "코랄",
+  "bstPresetLilac": "라일락",
+  "bstPresetSunny": "화창",
+  "bstPresetMint": "민트",
+  "bstPresetSlate": "슬레이트",
+  "bstPresetKitten": "아기 고양이",
+  "bstPresetEmber": "불씨",
+  "bstPresetRegal": "로열",
+  "bstCustomize": "맞춤 설정",
+  "bstUseCharacter": "이 캐릭터 사용",
+  "bstCurrentCharacter": "현재 캐릭터",
+  "bstDeleteTitle": "“{name}”을(를) 삭제할까요?",
+  "@bstDeleteTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "bstOriginalFace": "원래 얼굴로 되돌리기",
+  "bstOriginalToast": "원래 얼굴로 되돌렸습니다",
+  "lflTitle": "룩앤필",
+  "lflAppearance": "모양",
+  "lflAppearanceSystem": "시스템",
+  "lflAppearanceLight": "라이트",
+  "lflAppearanceDark": "다크",
+  "lflAccent": "강조색",
+  "lflAccentCustom": "사용자 지정 색",
+  "lflAccentPickerTitle": "강조 색상",
+  "lflAccentTerracotta": "테라코타",
+  "lflAccentOrange": "주황",
+  "lflAccentRose": "장미",
+  "lflAccentViolet": "보라",
+  "lflAccentIndigo": "남색",
+  "lflAccentBlue": "파랑",
+  "lflAccentTeal": "청록",
+  "lflAccentGreen": "초록",
+  "lflAccentSlate": "슬레이트",
+  "lflLightBackground": "라이트 배경",
+  "lflDarkBackground": "다크 배경",
+  "lflBgWhite": "화이트",
+  "lflBgPaper": "페이퍼",
+  "lflBgMidnight": "미드나잇",
+  "lflBgBlack": "블랙",
+  "lflBgGray": "그레이",
+  "lflFont": "글꼴",
+  "lflFontSystem": "시스템",
+  "lflFontSystemDesc": "Android 기본 글꼴로, 중립적이고 익숙합니다.",
+  "lflFontInterDesc": "화면과 긴 글 읽기에 맞춘 또렷한 산세리프체입니다.",
+  "lflFontMontserratDesc": "기하학적이고 넓은 글꼴로 제목에 개성이 살아납니다.",
+  "lflFontNunitoDesc": "둥근 산세리프체로 친근하고 가독성이 높습니다.",
+  "lflFontMonoDesc": "고정폭 글꼴로 코드와 터미널 느낌에 어울립니다.",
+  "lflMoreThemes": "더 많은 테마",
+  "lflMoreThemesBody": "독자적인 스타일의 테마 {count}개",
+  "lflThemeBanner": "테마: {name}",
+  "lflThemeBannerBody": "목록의 테마를 사용 중입니다. 모양, 강조색 또는 배경을 바꾸면 룩앤필로 돌아갑니다.",
+  "lflReturn": "룩앤필로 돌아가기",
+  "pexChange": "변경",
+  "pexAvatarLabel": "{name}의 비주얼 아이덴티티. 눌러서 변경",
+  "@pexAvatarLabel": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "pexPhoto": "사진",
+  "pexCharacter": "캐릭터",
+  "pexCharacterNote": "캐릭터는 이 기기에만 저장됩니다.",
+  "pexCharacterOpen": "캐릭터 선택 또는 만들기",
+  "pexReset": "초기화",
+  "pexDone": "완료",
+  "pexDescription": "설명",
+  "pexDescriptionHint": "이 프로필의 용도",
+  "pexReasoning": "추론",
+  "pexSaveFailed": "저장하지 못했습니다. 연결을 확인하고 다시 시도하세요.",
+  "pexDescriptionFailed": "설명을 저장하지 못했습니다. 다시 시도하세요.",
+  "pexReasoningFailed": "추론 수준을 변경하지 못했습니다.",
+  "krhKeysNote": "Hermes는 선택한 프로필의 .env에 비밀 값을 저장합니다. 목록에는 값이 표시되지 않으며, 필요할 때 하나씩 볼 수 있습니다.",
+  "krhWriteOnly": "새 값을 입력하면 현재 값이 교체됩니다. 저장된 값은 「값 보기」를 누를 때만 표시됩니다.",
+  "krhRevealAction": "값 보기",
+  "krhRevealConfirmTitle": "값을 표시할까요?",
+  "krhRevealConfirmBody": "몇 초 동안 화면에 표시된 뒤 자동으로 숨겨집니다.",
+  "krhRevealConfirmAction": "표시",
+  "krhRevealAuthReason": "저장된 값을 보려면 본인임을 확인하세요",
+  "krhRevealAuthFailed": "본인 확인이 되지 않았습니다. 값은 계속 숨겨져 있습니다.",
+  "krhRevealLoading": "값을 요청하는 중…",
+  "krhRevealCountdown": "{seconds}초 후 숨김",
+  "@krhRevealCountdown": {
+    "placeholders": {
+      "seconds": {
+        "type": "int"
+      }
+    }
+  },
+  "krhRevealHide": "숨기기",
+  "krhRevealCopied": "복사했습니다. 30초 후 클립보드에서 지워집니다.",
+  "krhRevealHiddenHint": "값 숨김",
+  "krhRevealVisibleLabel": "값 표시 중",
+  "krhRevealBlocked": "개인 네트워크 밖에서는 http로 값을 표시할 수 없습니다. HTTPS를 사용하세요.",
+  "krhRevealTooMany": "요청이 연달아 너무 많습니다. 몇 초 기다려 주세요.",
+  "krhRevealNotFound": "이 값은 더 이상 프로필의 .env에 없습니다.",
+  "krhRevealFailed": "값을 요청하지 못했습니다.",
+  "krhHttpPublicLine": "암호화되지 않은 http 연결입니다. 전송되는 내용이 중간에 읽힐 수 있습니다.",
+  "krhPrivateHttpInfo": "개인 네트워크 안의 http 연결입니다.",
+  "tplSshRunInHint": "선택 사항이며 기본값은 꺼짐입니다. 터미널은 일반 셸입니다. Herdr나 tmux를 고르면 연결할 때 자동으로 시작되고, 네트워크가 끊겨도 프로세스가 계속 실행됩니다. 에이전트는 별도의 섹션에 있습니다.",
+  "tplAgentsAddSshTitle": "SSH 연결 추가",
+  "tplAgentsAddSshBody": "에이전트는 SSH로 서버에서 읽어 옵니다. 연결을 추가하면 여기에 표시됩니다.",
+  "tplAgentsPickAgent": "에이전트를 선택하면 화면이 표시됩니다",
+  "tplAgentsServerLabel": "서버",
+  "tplAgentsProcTitle": "Herdr 없이 실행 중: {names}",
+  "@tplAgentsProcTitle": {
+    "placeholders": {
+      "names": {
+        "type": "String"
+      }
+    }
+  },
+  "tplAgentsProcHint": "Herdr로 열면 여기에서 제어할 수 있습니다.",
+  "navAgents": "에이전트",
+  "navSettingsSearch": "설정 검색…",
+  "navGroupConnection": "연결",
+  "navGroupSecurityData": "보안 및 데이터",
+  "navGroupLook": "모양",
+  "navGroupAlerts": "알림",
+  "navGroupServer": "서버",
+  "navGroupHelp": "도움말",
+  "navSshStartHint": "SSH 프로필을 추가하면 터미널을 쓸 수 있고 독에 에이전트가 나타납니다",
+  "navMaintenanceData": "데이터, 백업 및 정리",
+  "navCharactersPets": "마스코트와 캐릭터",
+  "navAppearanceMore": "독, 언어 등",
+  "navAlertsSub": "알림 및 백그라운드",
+  "navModelsProviders": "모델 및 제공자",
+  "navAboutHelp": "정보 및 도움말",
+  "navEditProfile": "프로필 편집",
+  "navProfileActive": "활성",
+  "navActiveProfileNotice": "활성 프로필: {name}",
+  "navFollowsActiveHint": "활성 프로필을 따릅니다. 열면 이 프로필이 활성 상태가 됩니다",
+  "navSwitchProfile": "프로필 전환",
+  "navSecIntegrations": "통합",
+  "navSecWork": "작업",
+  "navSecAgent": "에이전트",
+  "navAdvanced": "고급",
+  "navAdvancedHint": "음성, 키, 로그 등",
+  "navMcp": "MCP",
+  "navBotCard": "봇 카드",
+  "navBotCardSub": "현재 상태, 룸, 복제 및 삭제",
+  "psfMakeActive": "활성으로 설정",
+  "psfViewProfile": "프로필 보기",
+  "psfSearchHint": "프로필 검색",
+  "psfNoMatch": "일치하는 프로필이 없습니다",
+  "bstGenerateButton": "생성",
+  "bstGenerateWhy": "아직 편집기에서 프로필의 AI에 안전하게 요청할 방법이 없습니다. 요청하면 채팅 한 턴이 통째로 시작되기 때문입니다. 지금은 캐릭터를 직접 만들어 주세요. 응답 검증은 이미 준비되어 있습니다.",
+  "pghOpenDetail": "세부 정보 열기",
+  "pghFactVersion": "버전",
+  "pghFactOrigin": "출처",
+  "pghFactState": "상태",
+  "pghFactAuth": "인증",
+  "pghFactTransport": "전송 방식",
+  "pghFactAddress": "주소",
+  "pghFactTools": "도구",
+  "pghStateOn": "사용 중",
+  "pghStateOff": "사용 안 함",
+  "pghHubButton": "플러그인 허브",
+  "pghHubTitle": "플러그인 허브",
+  "pghHubSubtitle": "서버의 플러그인 카탈로그를 둘러보고 설치",
+  "pghHubIntro": "서버가 엄선한 플러그인 카탈로그입니다. 각 플러그인은 꺼진 상태로 설치되며, 원할 때 켜면 됩니다.",
+  "pghNoCatalogTitle": "플러그인 카탈로그 없음",
+  "pghNoCatalogBody": "이 서버는 플러그인 카탈로그를 제공하지 않습니다. 저장소를 알고 있다면 확장 기능에서 Git 또는 owner/repo로 설치하세요.",
+  "pghUpdatesGroup": "사용 가능한 업데이트",
+  "pghInstalledDisabled": "꺼진 상태로 설치했습니다. 원할 때 목록에서 켜세요.",
+  "ssxTitleSecurity": "보안",
+  "ssxTitleChat": "채팅",
+  "ssxTitleAppearance": "모양, 독, 언어",
+  "ssxTitleData": "데이터와 백업",
+  "ssxTitleSystem": "유지 관리",
+  "ssxTitleConnection": "연결",
+  "ssxTitleAbout": "정보",
+  "hdpSearchHint": "에이전트나 폴더 검색",
+  "hdpSearchClear": "검색 지우기",
+  "hdpFocused": "포커스됨",
+  "hdpShellOnly": "셸만 있음",
+  "hdpWorkspaceAgents": "{count, plural, other{에이전트 {count}개}}",
+  "@hdpWorkspaceAgents": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "hdpWorkspaceMenu": "워크스페이스 {name} 옵션",
+  "@hdpWorkspaceMenu": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "hdpNoMatches": "검색과 일치하는 항목이 없습니다.",
+  "hdpUpdatedNow": "방금 업데이트됨",
+  "hdpUpdatedSeconds": "{seconds}초 전 업데이트",
+  "@hdpUpdatedSeconds": {
+    "placeholders": {
+      "seconds": {
+        "type": "int"
+      }
+    }
+  },
+  "hdpUpdatedAgo": "{duration} 전 업데이트",
+  "@hdpUpdatedAgo": {
+    "placeholders": {
+      "duration": {
+        "type": "String"
+      }
+    }
+  },
+  "hdpStarting": "시작하는 중…",
+  "hdpStartingHint": "느린 에이전트는 최대 30초 걸릴 수 있습니다. 여기서 기다리지 않아도 됩니다.",
+  "hdpStartFailedTitle": "{agent}이(가) 시작되지 않았습니다",
+  "@hdpStartFailedTitle": {
+    "placeholders": {
+      "agent": {
+        "type": "String"
+      }
+    }
+  },
+  "hdpStartFailedBody": "워크스페이스는 만들어졌지만 에이전트가 제때 나타나지 않았습니다.",
+  "hdpStartReason": "서버의 응답",
+  "hdpRetry": "다시 시도",
+  "hdpOpenTerminal": "터미널에서 열기",
+  "hdpDismiss": "닫기",
+  "hdpOpenWithHerdr": "herdr로 열기",
+  "hdpNotInstalled": "설치되지 않음",
+  "hdpInstallNote": "흐리게 표시된 항목은 서버에 없습니다. 서버에 설치한 뒤 다시 확인하세요.",
+  "hdpDetectFailed": "설치된 에이전트를 확인하지 못해 모두 표시합니다.",
+  "hdpNoneInstalled": "이 서버에는 지원되는 에이전트가 설치되어 있지 않습니다.",
+  "hdpRefreshAgents": "다시 확인",
+  "hdpChooseFolder": "폴더 선택",
+  "hdpNameLabel": "워크스페이스 이름(선택)",
+  "hdpNameHint": "기본값은 폴더 이름",
+  "hdpStart": "시작",
+  "hdpConfirmBody": "{server}의 {folder}에서 {agent}을(를) 시작합니다.",
+  "@hdpConfirmBody": {
+    "placeholders": {
+      "agent": {
+        "type": "String"
+      },
+      "folder": {
+        "type": "String"
+      },
+      "server": {
+        "type": "String"
+      }
+    }
+  },
+  "hdpFolderTitle": "폴더",
+  "hdpFolderHome": "홈",
+  "hdpFolderFavorites": "고정됨",
+  "hdpFolderRunning": "이미 에이전트가 있는 곳",
+  "hdpFolderPin": "폴더 고정",
+  "hdpFolderUnpin": "고정 해제",
+  "hdpFolderFilter": "폴더 필터",
+  "hdpFolderEmpty": "여기에는 폴더가 없습니다.",
+  "hdpFolderGit": "Git 저장소",
+  "hdpFolderCreate": "여기에 폴더 만들기",
+  "hdpFolderNameLabel": "폴더 이름",
+  "hdpFolderUse": "이 폴더 선택",
+  "hdpFolderUp": "상위 폴더",
+  "hdpFolderHidden": "숨김 폴더 표시/숨기기",
+  "hdpFolderUnreadable": "이 폴더를 읽을 수 없습니다.",
+  "hdpFolderMore": "처음 {count}개만 표시합니다.",
+  "@hdpFolderMore": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "hdpFolderAdvanced": "경로 직접 입력",
+  "hdpFolderCheck": "이 경로 사용",
+  "hdpFolderNotFound": "해당 경로는 서버의 폴더가 아닙니다.",
+  "hdpFolderNameEmpty": "이름을 입력하세요.",
+  "hdpFolderNameSlash": "이름에 / 또는 \\ 를 쓸 수 없습니다.",
+  "hdpFolderNameDots": "이름을 . 또는 .. 로 할 수 없습니다.",
+  "hdpFolderNameControl": "이름에 제어 문자가 있습니다.",
+  "hdpFolderNameLong": "이름이 너무 깁니다.",
+  "hdpFolderCreateFailed": "폴더를 만들 수 없습니다.",
+  "hdpFolderPathLabel": "경로: {path}",
+  "@hdpFolderPathLabel": {
+    "placeholders": {
+      "path": {
+        "type": "String"
+      }
+    }
+  },
+  "hdpJumpToEnd": "맨 아래로",
+  "hdpBlockedBody": "응답을 기다리는 중입니다. 확인하기 전에 화면을 보세요. Enter는 선택된 항목을 고르며, 그것이 항상 “예”는 아닙니다.",
+  "hdpKeyEnterMarked": "Enter(선택됨)",
+  "hdpKeyEscCancel": "Esc(취소)",
+  "hdpTerminalLiveTitle": "이미 터미널이 열려 있습니다",
+  "hdpTerminalLiveBody": "명령이 그 터미널에 입력됩니다. Herdr, 편집기 등 다른 프로그램이 실행 중이면 그 텍스트를 받게 됩니다. 대신 복사할 수도 있습니다.",
+  "hdpTerminalType": "그곳에 입력",
+  "hdpTerminalCopy": "명령 복사",
+  "hdpSessionsTitle": "세션",
+  "hdpTabShell": "셸",
+  "hdpTabTmux": "Tmux",
+  "hdpTabHerdr": "Herdr",
+  "hdpTabRecent": "최근",
+  "hdpShellRow": "일반 셸",
+  "hdpShellBody": "터미널은 그대로 유지됩니다.",
+  "hdpNoSessions": "아직 세션이 없습니다.",
+  "hdpNoRecent": "아직 남아 있는 최근 항목이 없습니다.",
+  "hdpSessionWindows": "{count, plural, other{창 {count}개}}",
+  "@hdpSessionWindows": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "hdpSessionInUse": "사용 중",
+  "hdpSessionRunning": "실행 중",
+  "hdpSessionStopped": "중지됨",
+  "hdpSessionDefault": "기본 세션",
+  "hdpSessionsFailed": "세션을 읽을 수 없습니다.",
+  "lasMenuLearn": "스킬 학습시키기",
+  "lasTitle": "스킬 학습시키기",
+  "lasSubmit": "학습",
+  "lasFieldLabel": "에이전트가 무엇을 배워야 하나요?",
+  "lasFieldHelp": "URL이나 저장소를 붙여넣거나 작업을 설명하세요.",
+  "lasAgentNote": "프로필의 에이전트가 자체 도구로 새 채팅에서 진행합니다. 시간이 걸리고 토큰이 소모될 수 있습니다. 이 앱은 아무것도 다운로드하지 않습니다.",
+  "lasErrEmpty": "에이전트가 배울 내용을 입력하세요.",
+  "lasErrTooLong": "너무 깁니다. 핵심만 남겨 주세요.",
+  "lasLinkHttp": "암호화되지 않은 http 링크가 있습니다. https를 권장합니다. 열기 전에 먼저 확인하도록 에이전트에게 요청합니다.",
+  "lasLinkOdd": "일반적이지 않은 스킴(https 아님)의 링크가 있습니다. 열기 전에 먼저 확인하도록 에이전트에게 요청합니다.",
+  "lasChatTitle": "스킬 학습시키기",
+  "pfuManageProfiles": "프로필 관리",
+  "pfuManageProfilesSub": "서버의 프로필을 만들고, 복제하고, 이름을 바꾸고, 삭제합니다",
+  "pfuMakeActive": "활성으로 설정",
+  "pfuOpenChat": "채팅 열기",
+  "pfuClone": "복제",
+  "pfuOpenHint": "프로필 열기",
+  "navAllSettings": "모든 설정",
+  "navAllSettingsSub": "음성, 독, 백업 등 모든 옵션",
+  "ssxAllBadge": "전체 목록",
+  "ssxAllSub": "모든 항목을 모은 전체 목록",
+  "exuTabsLabel": "섹션",
+  "exuAddTooltip": "추가 또는 둘러보기",
+  "exuMenuSkillHub": "Skill 허브 둘러보기",
+  "exuMenuPluginHub": "플러그인 허브 둘러보기",
+  "exuMenuInstallSource": "Git 또는 owner/repo에서 설치",
+  "exuMenuMcpCatalog": "MCP 카탈로그 둘러보기",
+  "exuMoreTools": "도구",
+  "exuMoreServer": "웹훅 및 서버 상태",
+  "exuHubSkillTitle": "Skill 허브",
+  "exuToolsScopeNote": "도구 그룹은 하나의 프로필이 아니라 서버 전체에 적용됩니다.",
+  "exuSearchSkills": "Skills 검색",
+  "exuSearchPlugins": "플러그인 검색",
+  "exuSearchMcp": "MCP 서버 검색",
+  "agfTrayTitle": "확인이 필요함",
+  "agfReasonQuestion": "질문",
+  "agfReasonApproval": "승인",
+  "agfReasonWaiting": "대기 중",
+  "agfStateAnswer": "답변 필요",
+  "agfStateWorking": "작업 중…",
+  "agfStateFree": "대기",
+  "agfStateDone": "완료",
+  "agfDoneTitle": "완료 ({count})",
+  "@agfDoneTitle": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "agfDoneExpand": "완료 항목 보기",
+  "agfDoneCollapse": "완료 항목 숨기기",
+  "agfServerPick": "서버 전환",
+  "agfCopyPath": "경로 복사",
+  "agfLaunchedHere": "↳ Console에서 실행",
+  "agfAskCommand": "명령",
+  "agfOptionSemantics": "{number}번 선택: {label}",
+  "@agfOptionSemantics": {
+    "placeholders": {
+      "number": {
+        "type": "int"
+      },
+      "label": {
+        "type": "String"
+      }
+    }
+  },
+  "agfSending": "보내는 중…",
+  "agfSent": "보냈습니다 ✓",
+  "agfSendFailed": "보내지 못했습니다 · 다시 시도",
+  "agfAskKeyHint": "선택한 번호의 키만 전송합니다.",
+  "agfKeysMenu": "빠른 키",
+  "agfShellsTitle": "터미널만 ({count})",
+  "@agfShellsTitle": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "agfShowTerminal": "터미널 화면 보기",
+  "agfShowConversation": "대화 보기",
+  "agfNoTranscript": "터미널 화면: 이 에이전트의 대화를 확실하게 찾지 못했습니다.",
+  "agfLoadEarlier": "이전 메시지 불러오기",
+  "agfThinking": "생각 중",
+  "agfStepsMore": "{count, plural, other{{count}단계 더 보기}}",
+  "@agfStepsMore": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "agfStepRunning": "진행 중",
+  "agfStepDone": "완료",
+  "agfStepFailed": "실패",
+  "nrdAlertsTitle": "알릴 항목",
+  "nrdMasterTitle": "알림 표시",
+  "nrdMasterSub": "모든 알림의 전체 스위치",
+  "nrdQuestionsTitle": "질문",
+  "nrdQuestionsSub": "Hermes가 질문하고 답을 기다릴 때",
+  "nrdDoneTitle": "끝남",
+  "nrdDoneSub": "Hermes가 답변을 마쳤을 때",
+  "pekCronSwitchTitle": "Cron",
+  "pekCronSwitchSub": "예약된 작업이 완료되거나 실패할 때",
+  "pekKanbanSwitchTitle": "Kanban",
+  "pekKanbanSwitchSub": "카드가 완료되거나 차단되거나 확인이 필요할 때",
+  "cswRailLabel": "에이전트",
+  "cswAgentFace": "{agent}, {count, plural, one {대화 1개} other {대화 {count}개}}",
+  "cswAgentCurrent": "현재: {title}",
+  "cswChatCount": "{count, plural, one {채팅 1개} other {채팅 {count}개}}",
+  "cswChatCountMore": "채팅 {count}+개",
+  "cswAgentFaceMore": "{agent}, 대화 {count}+개",
+  "cswNoChats": "불러온 대화가 없습니다",
+  "cswNewChatWith": "{agent}와 새 대화",
+  "cswSeeMore": "더 보기 ({count})",
+  "cswClosePanel": "에이전트의 대화 닫기",
+  "cswCurrentChat": "열린 대화",
+  "qrcConnecting": "연결 중…",
+  "nacLinkTitle": "{name} 연결",
+  "@nacLinkTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "nacLinkPreparing": "로그인을 준비하는 중…",
+  "nacLinkIntro": "브라우저에서 {name}이(가) 열립니다. 코드를 요구하면 다음 코드를 입력하세요:",
+  "@nacLinkIntro": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "nacLinkIntroNoBrowser": "브라우저에서 {name}을(를) 열고 다음 코드를 입력하세요:",
+  "@nacLinkIntroNoBrowser": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "nacLinkCodeLabel": "내 코드",
+  "nacLinkCopyCode": "코드 복사",
+  "nacLinkCodeCopied": "코드를 복사했습니다",
+  "nacLinkExpiresIn": "코드 만료까지 {time}",
+  "@nacLinkExpiresIn": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "nacLinkOpen": "{name} 열기",
+  "@nacLinkOpen": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "nacLinkOpenAgain": "다시 열기",
+  "nacLinkOpenFailed": "브라우저를 열 수 없습니다. 코드를 복사해 다른 기기에서 로그인하세요.",
+  "nacLinkAddressUnvetted": "앱은 {name}의 공식 사이트에 있는 페이지만 엽니다. 방문하기 전에 이 주소를 확인하세요.",
+  "@nacLinkAddressUnvetted": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "nacLinkCopyAddress": "주소 복사",
+  "nacLinkAddressCopied": "주소를 복사했습니다",
+  "nacCardExpired": "세션이 만료되었습니다. 다시 연결하세요",
+  "nacLinkCheckNow": "지금 확인",
+  "nacLinkWaiting": "브라우저에서 승인하기를 기다리는 중…",
+  "nacLinkApprovedTitle": "{name} 연결됨",
+  "@nacLinkApprovedTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "nacLinkApprovedAs": "{email}(으)로 연결됨",
+  "@nacLinkApprovedAs": {
+    "placeholders": {
+      "email": {
+        "type": "String"
+      }
+    }
+  },
+  "nacLinkApprovedBody": "이제 선택기에서 해당 모델을 사용할 수 있습니다.",
+  "nacLinkDone": "완료",
+  "nacLinkDeniedTitle": "접근이 거부되었습니다",
+  "nacLinkDeniedBody": "브라우저에서 접근이 허용되지 않았습니다. 다시 시도할 수 있습니다.",
+  "nacLinkExpiredTitle": "코드가 만료되었습니다",
+  "nacLinkExpiredBody": "새 코드를 받아 몇 분 안에 브라우저에서 완료하세요.",
+  "nacLinkCancelledTitle": "로그인이 취소되었습니다",
+  "nacLinkCancelledBody": "아무것도 저장되지 않았습니다.",
+  "nacLinkFailedTitle": "로그인이 완료되지 않았습니다",
+  "nacLinkFailedBody": "서버가 완료하지 못했습니다. 다시 시도하세요.",
+  "nacLinkFailedRetryAfter": "서비스가 잠시 기다리라고 합니다. {time} 후에 다시 시도하세요.",
+  "@nacLinkFailedRetryAfter": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "nacLinkFailedNoRetry": "이 서버는 지금 로그인을 완료할 수 없습니다.",
+  "nacLinkOfflineTitle": "서버에 연결할 수 없습니다",
+  "nacLinkOfflineBody": "네트워크를 확인하고 다시 시도하세요.",
+  "nacLinkUnsupportedTitle": "이 서버에서는 사용할 수 없습니다",
+  "nacLinkUnsupportedBody": "이 Hermes 버전은 앱에서 계정을 연결할 수 없습니다. 서버를 업데이트하거나 서버의 터미널에서 연결하세요.",
+  "nacLinkReadOnlyTitle": "읽기 전용 연결",
+  "nacLinkReadOnlyBody": "이 연결에서는 로그인하거나 계정을 변경할 수 없습니다.",
+  "nacLinkTryAgain": "다시 시도",
+  "nacDurationSeconds": "{count}초",
+  "@nacDurationSeconds": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "nacDurationMinutes": "{count}분",
+  "@nacDurationMinutes": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "nacCardPitch": "Nous Portal 계정으로 로그인하면 이 Hermes에서 해당 모델을 사용할 수 있습니다. 연결은 서버에 저장됩니다.",
+  "nacCardConnect": "Nous Portal로 연결",
+  "nacCardConnected": "연결됨",
+  "nacCardConnectedTier": "연결됨 · {tier}",
+  "@nacCardConnectedTier": {
+    "placeholders": {
+      "tier": {
+        "type": "String"
+      }
+    }
+  },
+  "nacCardValidUntil": "{date}까지 유효",
+  "@nacCardValidUntil": {
+    "placeholders": {
+      "date": {
+        "type": "String"
+      }
+    }
+  },
+  "nacCardNotConnected": "연결되지 않음",
+  "nacCardFreeTier": "무료 등급, 계정 없음",
+  "nacCardUnsupported": "이 서버에서는 사용할 수 없습니다",
+  "nacCardUnsupportedBody": "이 Hermes 버전은 앱에서 계정 연결을 지원하지 않습니다.",
+  "nacCardManage": "계정 옵션",
+  "nacCardReconnect": "계정 전환",
+  "nacCardDisconnect": "연결 해제",
+  "nacCardDisconnectTitle": "{name} 연결을 해제할까요?",
+  "@nacCardDisconnectTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "nacCardDisconnectBody": "서버에 저장된 자격 증명이 삭제됩니다. 계정을 다시 연결할 때까지 해당 모델을 사용할 수 없습니다.",
+  "nacCardDisconnected": "{name} 연결 해제됨",
+  "@nacCardDisconnected": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "nacCardStillConnected": "서버에는 {name}이(가) 여전히 연결된 것으로 표시됩니다.",
+  "@nacCardStillConnected": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "nacCardUnlockReason": "{name} 계정 연결 해제",
+  "@nacCardUnlockReason": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "nacScreenTitle": "Nous Portal 계정",
+  "nacScreenBody": "Nous Portal 계정을 사용하면 이 Hermes가 구독 모델을 사용합니다. 자격 증명은 휴대폰이 아닌 서버에 보관됩니다.",
+  "nacScreenLoadFailed": "계정 상태를 읽을 수 없습니다.",
+  "nacScreenManageModels": "모델 및 제공자",
+  "nacSettingsSubtitle": "계정 연결 또는 해제",
+  "nacOnboardingOffer": "Nous Portal 계정을 연결해 해당 모델 사용하기",
+  "nacSheetConnect": "Nous Portal 연결",
+  "nacSheetNoAccountHint": "사용할 수 있는 모델이 없습니다. 계정을 연결해 Nous Portal 모델을 사용하세요.",
+  "nacContinueWithNous": "Nous로 계속",
+  "nacContinueWithProvider": "{name}(으)로 계속",
+  "@nacContinueWithProvider": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "lwpAhora": "지금",
+  "lwpChats": "채팅",
+  "lwpCron": "Cron",
+  "lwpTasks": "작업",
+  "lwpNewChat": "새 대화",
+  "lwpNewChatLine": "입력 또는 음성",
+  "lwpNewChatSetup": "먼저 Hermes에 연결",
+  "lwpVoice": "음성",
+  "lwpAgent": "Hermes",
+  "lwpNeedsPermission": "허가가 필요합니다",
+  "lwpAsksYou": "질문이 있습니다",
+  "lwpNeedsYou": "당신이 필요합니다",
+  "lwpAllow": "허용",
+  "lwpDeny": "거부",
+  "lwpOpen": "열기",
+  "lwpWorking": "작업 중",
+  "lwpThinking": "생각 중",
+  "lwpResponding": "답변 중",
+  "lwpStartedAt": "{time}부터",
+  "@lwpStartedAt": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "lwpCalmTitle": "기다리는 사람이 없습니다",
+  "lwpCalmEnd": "조용함",
+  "lwpLastFinished": "최근: {title} · {time}",
+  "@lwpLastFinished": {
+    "placeholders": {
+      "title": {
+        "type": "String"
+      },
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "lwpOffline": "오프라인",
+  "lwpOfflineTitle": "{instance} 응답 없음",
+  "@lwpOfflineTitle": {
+    "placeholders": {
+      "instance": {
+        "type": "String"
+      }
+    }
+  },
+  "lwpOfflineTitleGeneric": "서버 응답 없음",
+  "lwpLastKnown": "마지막 확인",
+  "lwpSetupTitle": "Hermes 설정",
+  "lwpSetupLine": "인스턴스를 연결하면 누가 당신을 기다리는지 여기에 표시됩니다.",
+  "lwpSetupButton": "시작",
+  "lwpChatsWaiting": "{count, plural, =0{모두 확인함} other{{count}개 대기 중}}",
+  "@lwpChatsWaiting": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "lwpChatsRunning": "{count, plural, other{{count}개 진행 중}}",
+  "@lwpChatsRunning": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "lwpChatsEmptyTitle": "아직 채팅이 없습니다",
+  "lwpChatsEmptyLine": "연결하면 여기에 표시됩니다.",
+  "lwpChatWaits": "대기 중",
+  "lwpChatWriting": "작성 중…",
+  "lwpCronEmptyTitle": "예약된 작업 없음",
+  "lwpCronEmptyLine": "앱에서 첫 작업을 예약하세요.",
+  "lwpCronPaused": "일시중지",
+  "lwpCronFailed": "실패",
+  "lwpCronRunning": "실행 중",
+  "lwpCronNoNext": "다음 실행 없음",
+  "lwpInMinutes": "{count, plural, other{{count}분 후}}",
+  "@lwpInMinutes": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "lwpInHours": "{hours}시간 {minutes}분 후",
+  "@lwpInHours": {
+    "placeholders": {
+      "hours": {
+        "type": "int"
+      },
+      "minutes": {
+        "type": "int"
+      }
+    }
+  },
+  "lwpInDays": "{count, plural, other{{count}일 후}}",
+  "@lwpInDays": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "lwpToday": "오늘",
+  "lwpTomorrow": "내일",
+  "lwpYesterday": "어제",
+  "lwpDayTime": "{day} · {time}",
+  "@lwpDayTime": {
+    "placeholders": {
+      "day": {
+        "type": "String"
+      },
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "lwpAgoMinutes": "{count, plural, =0{방금} other{{count}분 전}}",
+  "@lwpAgoMinutes": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "lwpAgoHours": "{count, plural, other{{count}시간 전}}",
+  "@lwpAgoHours": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "lwpTasksEmptyTitle": "보드 없음",
+  "lwpTasksEmptyLine": "연결하면 표시됩니다.",
+  "lwpTasksRunning": "진행 중",
+  "lwpTasksAttention": "대기 중",
+  "lwpTasksPending": "대기",
+  "lwpTasksNext": "다음 · {title}",
+  "@lwpTasksNext": {
+    "placeholders": {
+      "title": {
+        "type": "String"
+      }
+    }
+  },
+  "lwpTasksInProgressUnit": "진행 중",
+  "lwpTasksPendingCount": "{count, plural, other{대기 {count}개}}",
+  "@lwpTasksPendingCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "lwpTasksAttentionCount": "{count, plural, other{대기 중 {count}개}}",
+  "@lwpTasksAttentionCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "lwpA11yNeeds": "{name}이(가) 허가를 요청합니다: {what}",
+  "@lwpA11yNeeds": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "what": {
+        "type": "String"
+      }
+    }
+  },
+  "lwpA11yAsks": "{name}의 질문: {what}",
+  "@lwpA11yAsks": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "what": {
+        "type": "String"
+      }
+    }
+  },
+  "lwpA11yWorking": "{name} 작업 중: {what}",
+  "@lwpA11yWorking": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "what": {
+        "type": "String"
+      }
+    }
+  },
+  "lwpA11yOffline": "{time}부터 오프라인",
+  "@lwpA11yOffline": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "lwpA11ySetup": "Hermes를 설정하면 누가 기다리는지 여기에 표시됩니다",
+  "lwpA11yNextJob": "다음 예약 작업: {name}, {when}",
+  "@lwpA11yNextJob": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "when": {
+        "type": "String"
+      }
+    }
+  },
+  "lwpA11yChats": "{count, plural, =0{대화 없음} other{대화 {count}개, 첫 번째: {first}}}",
+  "@lwpA11yChats": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      },
+      "first": {
+        "type": "String"
+      }
+    }
+  },
+  "lwpA11yTasks": "작업: 진행 중 {running}개, 대기 중 {attention}개, 대기 {pending}개",
+  "@lwpA11yTasks": {
+    "placeholders": {
+      "running": {
+        "type": "int"
+      },
+      "attention": {
+        "type": "int"
+      },
+      "pending": {
+        "type": "int"
+      }
+    }
+  },
+  "lwpA11yOpenChat": "{title} 열기",
+  "@lwpA11yOpenChat": {
+    "placeholders": {
+      "title": {
+        "type": "String"
+      }
+    }
+  },
+  "lwpA11yOpenJob": "예약 작업 {name} 열기",
+  "@lwpA11yOpenJob": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "lwpA11yNewChat": "Hermes와 새 대화",
+  "lwpA11yVoice": "새 음성 대화",
+  "lwpA11yAllow": "{name} 허용",
+  "@lwpA11yAllow": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "lwpA11yDeny": "{name}의 요청 거부",
+  "@lwpA11yDeny": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "lwpA11yOpenApp": "Hermes Console 열기",
+  "nacNousWriteAddress": "주소 직접 입력",
+  "nacNousWaitingAddress": "주소를 기다리는 중…",
+  "nacNousOpenPortal": "Nous Portal 열기",
+  "nacNousPasteAddress": "주소 붙여넣기",
+  "nacNousPasteNone": "복사된 Nous Cloud 주소가 없습니다",
+  "subagentUiStatusUnconfirmed": "확인되지 않음",
+  "cronNoticeAutomatic": "자동",
+  "cronNoticeAll": "모두",
+  "cronNoticeFailuresOnly": "실패만",
+  "cronNoticeOff": "끄기",
+  "cronNoticeAutomaticHint": "자동 모드에서는 모든 실패를 알리고, 작업별 성공 알림은 60분에 한 번으로 제한합니다.",
+  "cronNoticeInherit": "설정의 모드 따르기",
+  "cronNoticeAutomaticRepliesHint": "모두 모드에서만 내부 작업으로 시작된 턴의 응답도 알립니다. 실패와 확인 요청은 계속 알립니다.",
+  "biComposerInterruptHint": "중단하고 보내기…",
+  "biComposerSteerHint": "에이전트 안내…",
+  "biQueueThisMessageHint": "길게 눌러 이 메시지를 대기열에 추가",
+  "biInterruptFailedQueued": "중단하지 못했습니다. 메시지는 대기열에 남아 있습니다",
+  "subagentPillAgents": "에이전트",
+  "subagentPillWorking": "작업 중",
+  "subagentPillRunningTool": "{tool} 실행 중",
+  "@subagentPillRunningTool": {
+    "placeholders": {
+      "tool": {
+        "type": "String"
+      }
+    }
+  },
+  "exuToolGroupsTitle": "도구 그룹",
+  "exuToolGroupsSubtitle": "에이전트가 사용할 수 있는 Hermes 내장 기능",
+  "exuBuiltinToolsEmpty": "사용 가능한 내장 도구 그룹이 없습니다",
+  "exuBuiltinToolsEmptyBody": "MCP 서버와 도구는 확장 기능의 MCP 탭에서 관리합니다.",
+  "turnLineEdited": "{count, plural, other{파일 {count}개 수정}}",
+  "turnLineRead": "{count, plural, other{파일 {count}개 읽음}}",
+  "turnLineRan": "{count, plural, other{명령 {count}개 실행}}",
+  "turnLineSearchedFiles": "{count, plural, other{파일 내 {count}회 검색}}",
+  "turnLineSearchedWeb": "{count, plural, other{웹 {count}회 검색}}",
+  "turnLineOpened": "{count, plural, other{페이지 {count}개 열음}}",
+  "turnLineUsedTools": "{count, plural, other{도구 {count}개 사용}}",
+  "turnLineFailed": "{count, plural, other{{count}개 실패}}",
+  "turnLineAgents": "{count, plural, other{에이전트 {count}개}}",
+  "turnLineMore": "+{count}개 더",
+  "turnLineThought": "생각함",
+  "turnLineDelegated": "{count, plural, other{작업 {count}개 위임}}",
+  "turnLineReadCalls": "{count, plural, other{{count}회 읽음}}",
+  "turnLineEditCalls": "{count, plural, other{{count}회 수정}}",
+  "turnLineExecutedCode": "{count, plural, other{코드 {count}회 실행}}",
+  "turnLineSteps": "{count}단계",
+  "@turnLineSteps": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "msvModelLoading": "모델 불러오는 중…",
+  "msvModelUnavailable": "모델을 사용할 수 없음",
+  "msvProviderNoUsage": "이 제공업체의 사용량 데이터 없음",
+  "msvUsageAvailable": "사용량 여유 있음",
+  "msvUsageNearLimit": "한도에 가까움",
+  "msvCapabilityUnavailable": "이 모델에서는 사용할 수 없음",
+  "queueSheetTitle": "전송 대기",
+  "queuePillCount": "{count}개 전송 대기",
+  "@queuePillCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "queuePillPaused": "일시 중지됨",
+  "activitySheetTitle": "활동",
+  "chatDelegatesSheetLive": "백그라운드 · {clock}",
+  "chatDelegatesSheetDone": "위임됨 · {clock}",
+  "delegatedCapsuleRunning": "{count, plural, other{서브에이전트 {count}개에 위임 · {clock} · {done}/{count}}}",
+  "delegatedCapsuleDone": "{count, plural, other{✓ 서브에이전트 {count}개 완료 · {clock}}}",
+  "delegatedCapsuleFinished": "{count, plural, other{✓ 서브에이전트 {count}개 완료}}",
+  "delegatedCapsuleRunningIdle": "{count, plural, other{서브에이전트 {count}개 실행 중}}",
+  "delegatedChildNoData": "데이터 없음",
+  "activityProcessesTitle": "백그라운드 프로세스",
+  "activityAgentCount": "에이전트 {count}개",
+  "@activityAgentCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "activityProcessCount": "프로세스 {count}개",
+  "@activityProcessCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "activityStop": "중지",
+  "activityWaitingAgents": "하위 에이전트 {count}개 대기 중",
+  "@activityWaitingAgents": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "adkTitle": "실행 권한",
+  "adkOnce": "이번만 허용",
+  "adkSession": "이 세션에서",
+  "adkAlways": "이 유형의 명령 항상 허용",
+  "adkViewFull": "전체 보기",
+  "adkAlwaysConfirm": "이 프로필에서 이 유형의 명령을 항상 허용",
+  "adkSending": "결정 전송 중…",
+  "adkSendError": "결정을 전송하지 못했습니다. 다시 시도하세요.",
+  "adkWaiting": "권한을 기다리는 중",
+  "adkAllowed": "허용됨",
+  "adkDenied": "거부됨",
+  "adkAlwaysHint": "이 프로필의 모든 채팅에서 이 유형의 명령을 허용합니다. 권한은 서버에 저장됩니다.",
+  "batTitle": "배터리",
+  "batStateUnrestricted": "제한 없음",
+  "batStateOptimized": "최적화됨",
+  "batStateRestricted": "백그라운드에서 제한됨",
+  "batOptimizedBody": "휴대폰이 대기 중일 때 Android가 알림을 늦출 수 있습니다. Samsung에서는 배터리 → 절전 앱도 확인하세요. 바로 받으려면 「제한 없음」을 선택하세요.",
+  "batRestrictedBody": "Android가 이 앱을 백그라운드에서 제한합니다. 알림이 오지 않을 수 있습니다. 앱의 배터리 사용에서 제한을 해제하세요.",
+  "batOpenSettings": "배터리 설정 열기",
+  "batPromptTitle": "백그라운드에서도 Console 연결 유지",
+  "batPromptBody": "Console을 벗어나면 Android가 연결을 끊을 수 있습니다. 배터리 설정에서 제한 없는 사용을 허용하세요.",
+  "batPromptNotNow": "나중에",
+  "batPromptRestore": "홈에 안내 다시 표시",
+  "batPushBatteryNote": "Android가 알림을 지연시키거나 백그라운드 연결을 끊을 수 있습니다. 배터리 설정에서 제한 없는 사용을 허용하세요. 이 단계는 선택 사항입니다.",
+  "chatLiveDelegating": "{count, plural, other{작업 {count}개 위임 중}}",
+  "chatLiveWaitingDelegates": "하위 에이전트를 기다리는 중",
+  "chatLiveCommands": "명령 {count}개",
+  "chatLiveAgents": "하위 에이전트 {count}개",
+  "chatLiveReady": "{count}개 완료",
+  "chatLiveSteps": "{count}단계",
+  "assistRowTitle": "디지털 어시스턴트",
+  "assistRowOn": "디지털 어시스턴트로 설정됨: 호출하면 음성이 준비된 새 채팅이 열립니다",
+  "assistRowOff": "Console을 디지털 어시스턴트로 선택하면 호출 시 음성이 준비된 새 채팅이 열립니다. 화면은 읽지 않습니다.",
+  "subagentHistoricalUnavailable": "저장된 채팅에는 이 하위 에이전트의 세부 정보가 더 이상 없습니다.",
+  "lflHapticsTitle": "햅틱 피드백",
+  "lflHapticsSubtitle": "탭하거나 전송하거나 턴이 끝날 때 부드럽게 진동합니다. 시스템의 터치 피드백이 꺼져 있으면 진동하지 않습니다",
+  "notifBgTitle": "백그라운드에서 수신",
+  "notifBgSub": "앱이 닫혀 있어도 알림 수신 · 지속 알림 사용",
+  "notifBgActive": "직접 끌 때까지 활성화됨 · 에이전트 이벤트 수신 중",
+  "notifListenerStartFailed": "백그라운드 수신을 시작하지 못했습니다. 다시 시도하세요.",
+  "notifBgRestartNotice": "최근 앱에서 Hermes를 지워도 수신은 중지되지 않습니다. 강제 종료하면 앱을 다시 열 때까지 수신이 중단됩니다.",
+  "au1215BgNeededForAutomation": "Cron 및 Kanban 알림은 이 기능이 켜져 있을 때만 도착합니다.",
+  "notifFixedCardTitle": "고정 알림",
+  "notifFixedCardSub": "Android에서 ‘Hermes에 연결됨’을 최소화합니다"
 }

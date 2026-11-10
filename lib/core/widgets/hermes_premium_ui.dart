@@ -3,8 +3,19 @@ import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import '../theme/component_profile.dart';
 import '../theme/motion.dart';
+import '../design/ambient_backdrop.dart' show HermesGlassLook;
+import '../design/box_edge.dart' show HermesBoxEdges;
+import '../theme/glass_look.dart' show GlassMaterial;
+import '../theme/lines.dart';
 import '../design/floating.dart';
+import '../design/gel_surface.dart';
+import '../design/glass_strip.dart';
+import '../design/liquid_glass.dart';
+import '../design/liquid_sheen.dart';
 import '../design/modal.dart' show showHermesSurface;
+import '../design/tokens.dart'
+    show HermesChrome, HermesGel, HermesRadius, HermesSpace, HermesType;
+import 'hermes_ui.dart' show HermesSoftLight;
 
 /// Legacy entry point of the ONE floating modal container (spec 080).
 ///
@@ -351,22 +362,48 @@ class HermesListSection extends StatelessWidget {
   final EdgeInsetsGeometry titlePadding;
   final bool showDividers;
 
+  /// Where a divider starts; null lines it up with the text of the rows:
+  /// past the icon slot when any row has a leading icon, at the row's own
+  /// padding when none has (a divider starting 54 dp in, next to rows
+  /// whose text started at 14, read as a misplaced line on the device).
+  final double? dividerIndent;
+
   const HermesListSection({
     required this.children,
     this.title,
     this.trailing,
-    this.margin = const EdgeInsets.symmetric(horizontal: 16),
+    this.margin = const EdgeInsets.symmetric(
+      horizontal: 16,
+      vertical: HermesSpace.x1,
+    ),
     this.titlePadding = const EdgeInsets.fromLTRB(4, 16, 4, 8),
     this.showDividers = true,
+    this.dividerIndent,
     super.key,
   });
+
+  /// Where the text of the rows starts: the icon slot's end when any of
+  /// [children] is a [HermesListRow] with a leading icon, else the row's
+  /// horizontal padding.
+  static double textIndentOf(List<Widget> children) {
+    final withLead = children.any(
+      (child) =>
+          child is HermesListRow &&
+          (child.icon != null || child.leading != null),
+    );
+    return withLead ? HermesListRow.iconIndent : HermesSpace.rowH;
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colors = theme.hermes;
     final profile = theme.hermesComponents.profile;
+    final glass = HermesGlassLook.of(context);
     final rows = <Widget>[];
+    final indent = dividerIndent ?? textIndentOf(children);
+    // The least line that is seen on the body ([HermesLines.dividerRatio]).
+    final divider = HermesLines.of(colors).divider;
     for (var index = 0; index < children.length; index++) {
       rows.add(children[index]);
       if (showDividers && index < children.length - 1) {
@@ -374,8 +411,9 @@ class HermesListSection extends StatelessWidget {
           Divider(
             height: 1,
             thickness: profile.border.width,
-            indent: 54,
-            color: colors.divider.withValues(alpha: 0.62),
+            indent: indent,
+            endIndent: HermesSpace.rowH,
+            color: divider,
           ),
         );
       }
@@ -397,11 +435,20 @@ class HermesListSection extends StatelessWidget {
                       child: Semantics(
                         header: true,
                         child: Text(
-                          title!,
-                          style: theme.textTheme.labelLarge?.copyWith(
-                            color: colors.textSecondary,
-                            fontWeight: FontWeight.w600,
-                            letterSpacing: 0,
+                          HermesGlassLook.sectionText(context, title!),
+                          semanticsLabel: HermesGlassLook.sectionSemantics(
+                            context,
+                            title!,
+                          ),
+                          style: HermesGlassLook.sectionLabel(
+                            context,
+                            (theme.textTheme.labelLarge ?? const TextStyle())
+                                .copyWith(
+                                  color: colors.textSecondary,
+                                  fontWeight: FontWeight.w600,
+                                  letterSpacing: 0,
+                                ),
+                            glass: glass,
                           ),
                         ),
                       ),
@@ -412,25 +459,39 @@ class HermesListSection extends StatelessWidget {
                 ],
               ),
             ),
-          DecoratedBox(
-            decoration: BoxDecoration(
-              color: colors.surfaceVariant.withValues(alpha: 0.42),
-              borderRadius: BorderRadius.circular(profile.shape.groupRadius),
-              border: profile.border.outlinesRestingControls
-                  ? Border.all(
-                      color: colors.divider.withValues(alpha: 0.68),
-                      width: profile.border.width,
-                    )
-                  : null,
-            ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(profile.shape.groupRadius),
+          if (glass != null)
+            HermesGlassLook.body(
+              glass,
+              BorderRadius.circular(profile.shape.groupRadius),
+              fill: glass.groupFill,
+              lifted: true,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: rows,
               ),
+            )
+          else
+            DecoratedBox(
+              decoration: BoxDecoration(
+                color: HermesSoftLight.solid(context)
+                    ? HermesSoftLight.fill(context)
+                    : colors.surfaceVariant.withValues(alpha: 0.42),
+                borderRadius: BorderRadius.circular(profile.shape.groupRadius),
+                border: profile.border.outlinesRestingControls
+                    ? Border.all(
+                        color: colors.divider.withValues(alpha: 0.68),
+                        width: profile.border.width,
+                      )
+                    : null,
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(profile.shape.groupRadius),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: rows,
+                ),
+              ),
             ),
-          ),
         ],
       ),
     );
@@ -500,6 +561,11 @@ class HermesListRow extends StatelessWidget {
   /// Gap between the leading icon and the text of a list row.
   static const double leadingGap = 11;
 
+  /// Where the text of a row with a leading icon starts, from the row's
+  /// edge: the divider of its section starts there too.
+  static const double iconIndent =
+      HermesSpace.rowH + leadingExtent + leadingGap;
+
   /// Gives a [ListTile]-based row (e.g. an [ExpansionTile] header) whose
   /// leading is a [leadingExtent] icon slot the same gap as a
   /// [HermesListRow], so its text starts where the sibling rows' does.
@@ -511,13 +577,15 @@ class HermesListRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colors = theme.hermes;
+    // A disabled row still reads (3:1 on the bodies of the boxes).
+    final disabledInk = HermesLines.of(colors).disabledInk;
     final foreground = !enabled
-        ? colors.textDisabled
+        ? disabledInk
         : destructive
         ? colors.error
         : colors.textPrimary;
     final secondary = !enabled
-        ? colors.textDisabled
+        ? disabledInk
         : destructive
         ? colors.error.withValues(alpha: 0.82)
         : colors.textSecondary;
@@ -666,26 +734,39 @@ class _HermesSearchFieldState extends State<HermesSearchField> {
     final colors = theme.hermes;
     final profile = theme.hermesComponents.profile;
     final focused = _focusNode.hasFocus;
+    final glass = HermesGlassLook.of(context);
     final borderColor = focused
-        ? colors.accent.withValues(alpha: 0.48)
-        : colors.divider.withValues(alpha: 0.44);
+        ? (glass == null
+              ? colors.accent.withValues(alpha: 0.48)
+              : glass.selectedLine)
+        : (glass?.line ?? colors.divider.withValues(alpha: 0.44));
 
-    return AnimatedContainer(
+    final fieldRadius = BorderRadius.circular(profile.shape.fieldRadius);
+    final field = AnimatedContainer(
       duration: Duration(
         milliseconds: MediaQuery.disableAnimationsOf(context)
             ? 0
             : profile.motion.stateDurationMs.clamp(0, 220),
       ),
       constraints: const BoxConstraints(minHeight: componentMinimumTapTarget),
+      // On glass the contour, rims and shadow are the box's finish
+      // ([HermesBoxEdges]); the body leaves the pixel of the contour.
+      padding: glass == null ? null : const EdgeInsets.all(HermesGel.rimWidth),
       decoration: BoxDecoration(
-        color: colors.surfaceVariant.withValues(alpha: 0.52),
-        borderRadius: BorderRadius.circular(profile.shape.fieldRadius),
-        border: Border.all(
-          color: borderColor,
-          width: focused
-              ? profile.border.emphasizedWidth
-              : profile.border.width,
-        ),
+        color:
+            glass?.groupFill ??
+            (HermesSoftLight.solid(context)
+                ? HermesSoftLight.fill(context)
+                : colors.surfaceVariant.withValues(alpha: 0.52)),
+        borderRadius: fieldRadius,
+        border: glass != null
+            ? null
+            : Border.all(
+                color: borderColor,
+                width: focused
+                    ? profile.border.emphasizedWidth
+                    : profile.border.width,
+              ),
       ),
       child: TextField(
         controller: _controller,
@@ -700,6 +781,7 @@ class _HermesSearchFieldState extends State<HermesSearchField> {
           hintText: widget.hintText,
           hintStyle: theme.textTheme.bodyMedium?.copyWith(
             color: colors.textSecondary,
+            fontSize: HermesType.hintSize,
           ),
           prefixIcon: Icon(
             Icons.search_rounded,
@@ -723,6 +805,15 @@ class _HermesSearchFieldState extends State<HermesSearchField> {
           ),
         ),
       ),
+    );
+    if (glass == null) return field;
+    return HermesBoxEdges(
+      glass: glass,
+      radius: fieldRadius,
+      lifted: true,
+      compact: true,
+      line: focused ? glass.selectedLine : null,
+      child: field,
     );
   }
 }
@@ -771,38 +862,108 @@ class HermesSegmentedControl<T> extends StatelessWidget {
     super.key,
   });
 
+  /// Pill: the track and the selected segment are fully round.
+  static final BorderRadius pill = BorderRadius.circular(HermesRadius.tag);
+
+  /// The body of the selected segment, a pill: the soft accent fill with the
+  /// accent as its border where the theme wears glass ([GlassMaterial.selected]
+  /// is certified for the main ink); the raised surface with an accent border
+  /// where it does not.
+  static BoxDecoration selectedDecoration(
+    ThemeData theme,
+    GlassMaterial? glass,
+  ) {
+    final colors = theme.hermes;
+    final profile = theme.hermesComponents.profile;
+    return BoxDecoration(
+      color: glass == null
+          ? colors.surface.withValues(alpha: 0.94)
+          : glass.selected,
+      borderRadius: pill,
+      border: Border.all(
+        color: glass == null
+            ? colors.accent.withValues(alpha: 0.6)
+            : glass.selectedLine,
+      ),
+      boxShadow: glass == null && profile.elevation.resting > 0
+          ? [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.13),
+                blurRadius: 5,
+                offset: const Offset(0, 1),
+              ),
+            ]
+          : null,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     final scale = MediaQuery.textScalerOf(context).scale(1);
     final useScrollable = scale > 1.35;
+    final glass = HermesGlassLook.of(context);
+    final selectedIndex = [for (final s in segments) s.value].indexOf(value);
+    // The selected pill slides from segment to segment (short, none with
+    // reduced motion). With the reader's large text the segments scroll and
+    // each one wears its own selected body instead.
+    final slides = !useScrollable && selectedIndex >= 0;
     final children = [
       for (final segment in segments)
         _HermesSegmentButton<T>(
           key: segment.key,
           segment: segment,
           selected: segment.value == value,
-          round: floating,
+          glass: glass,
+          paintsSelected: !slides,
           onTap: segment.enabled ? () => onChanged(segment.value) : null,
         ),
     ];
 
-    final radius = BorderRadius.circular(
-      Theme.of(context).hermesComponents.profile.shape.fieldRadius,
-    );
-    final track = Padding(
-      padding: const EdgeInsets.all(3),
-      child: useScrollable
-          ? SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(children: children),
-            )
-          : Row(
-              children: [
-                for (var index = 0; index < children.length; index++)
-                  Expanded(flex: segments[index].flex, child: children[index]),
-              ],
-            ),
-    );
+    final Widget row = useScrollable
+        ? SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(children: children),
+          )
+        : Row(
+            children: [
+              for (var index = 0; index < children.length; index++)
+                Expanded(flex: segments[index].flex, child: children[index]),
+            ],
+          );
+    final Widget inner = !slides
+        ? row
+        : LayoutBuilder(
+            builder: (context, box) {
+              var total = 0;
+              var before = 0;
+              for (var i = 0; i < segments.length; i++) {
+                total += segments[i].flex;
+                if (i < selectedIndex) before += segments[i].flex;
+              }
+              final width = box.maxWidth.isFinite ? box.maxWidth : 0.0;
+              return Stack(
+                children: [
+                  AnimatedPositionedDirectional(
+                    key: const ValueKey('hermes-segmented-indicator'),
+                    duration: HermesMotion.duration(context, HermesMotion.base),
+                    curve: HermesMotion.standard,
+                    top: 0,
+                    bottom: 0,
+                    start: width * before / total,
+                    width: width * segments[selectedIndex].flex / total,
+                    child: IgnorePointer(
+                      child: DecoratedBox(
+                        decoration: selectedDecoration(theme, glass),
+                      ),
+                    ),
+                  ),
+                  row,
+                ],
+              );
+            },
+          );
+    final track = Padding(padding: const EdgeInsets.all(3), child: inner);
     return Semantics(
       container: true,
       label: semanticLabel,
@@ -812,12 +973,19 @@ class HermesSegmentedControl<T> extends StatelessWidget {
               key: const ValueKey('hermes-segmented-floating'),
               child: track,
             )
+          : glass != null
+          ? HermesGlassLook.body(
+              glass,
+              pill,
+              fill: glass.pieceFill,
+              lifted: true,
+              compact: true,
+              child: track,
+            )
           : DecoratedBox(
               decoration: BoxDecoration(
-                color: Theme.of(
-                  context,
-                ).hermes.surfaceVariant.withValues(alpha: 0.46),
-                borderRadius: radius,
+                color: theme.hermes.surfaceVariant.withValues(alpha: 0.46),
+                borderRadius: pill,
               ),
               child: track,
             ),
@@ -830,14 +998,19 @@ class _HermesSegmentButton<T> extends StatelessWidget {
   final bool selected;
   final VoidCallback? onTap;
 
-  /// True rounds the segment fully, inside a track that is a pill.
-  final bool round;
+  /// The glass the selected segment is lifted out of, if the theme wears any.
+  final GlassMaterial? glass;
+
+  /// True: the segment paints its own selected body (the track does not
+  /// slide a pill under it).
+  final bool paintsSelected;
 
   const _HermesSegmentButton({
     required this.segment,
     required this.selected,
     required this.onTap,
-    this.round = false,
+    this.glass,
+    this.paintsSelected = true,
     super.key,
   });
 
@@ -849,16 +1022,15 @@ class _HermesSegmentButton<T> extends StatelessWidget {
     final label = segment.count == null
         ? segment.label
         : '${segment.label} ${segment.count}';
-    final corner = BorderRadius.circular(
-      round ? 999 : profile.shape.fieldRadius - 3,
-    );
+    final corner = HermesSegmentedControl.pill;
     final text = Text(
       label,
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
       style: theme.textTheme.labelLarge?.copyWith(
         color: selected ? colors.textPrimary : colors.textSecondary,
-        fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+        // The chosen one is bold, in every look.
+        fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
         letterSpacing: 0,
       ),
     );
@@ -889,21 +1061,12 @@ class _HermesSegmentButton<T> extends StatelessWidget {
               horizontal: segment.horizontalPadding,
               vertical: 9,
             ),
-            decoration: BoxDecoration(
-              color: selected
-                  ? colors.surface.withValues(alpha: 0.94)
-                  : Colors.transparent,
-              borderRadius: corner,
-              boxShadow: selected && profile.elevation.resting > 0
-                  ? [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.13),
-                        blurRadius: 5,
-                        offset: const Offset(0, 1),
-                      ),
-                    ]
-                  : null,
-            ),
+            decoration: selected && paintsSelected
+                ? HermesSegmentedControl.selectedDecoration(theme, glass)
+                : BoxDecoration(
+                    color: Colors.transparent,
+                    borderRadius: corner,
+                  ),
             alignment: Alignment.center,
             child: ExcludeSemantics(
               // Only a segment that cannot be chosen is dimmed; every other
@@ -1003,6 +1166,7 @@ class HermesInlineActivity extends StatelessWidget {
     this.semanticHint,
     this.enabled = true,
     this.flexibleDetail = false,
+    this.flexibleDetailFit = FlexFit.tight,
     this.padding = const EdgeInsets.fromLTRB(12, 4, 12, 6),
     this.floating = false,
     super.key,
@@ -1030,6 +1194,11 @@ class HermesInlineActivity extends StatelessWidget {
   final String? semanticHint;
   final bool enabled;
   final bool flexibleDetail;
+
+  /// How a [flexibleDetail] takes the height left: all of it (tight, the
+  /// default) or up to its own size (loose: a card that grows with its
+  /// content and scrolls it once the room runs out).
+  final FlexFit flexibleDetailFit;
   final EdgeInsetsGeometry padding;
 
   /// When true, renders as a self-contained floating pill (opaque surface,
@@ -1058,6 +1227,7 @@ class HermesInlineActivity extends StatelessWidget {
       semanticHint: semanticHint,
       enabled: enabled,
       flexibleDetail: flexibleDetail,
+      flexibleDetailFit: flexibleDetailFit,
       padding: padding,
       floating: floating,
       density: _HermesEditorialDensity.activity,
@@ -1174,6 +1344,7 @@ class _HermesEditorialBlock extends StatelessWidget {
     required this.semanticHint,
     required this.enabled,
     this.flexibleDetail = false,
+    this.flexibleDetailFit = FlexFit.tight,
     required this.padding,
     required this.density,
     this.floating = false,
@@ -1192,6 +1363,7 @@ class _HermesEditorialBlock extends StatelessWidget {
   final String? semanticHint;
   final bool enabled;
   final bool flexibleDetail;
+  final FlexFit flexibleDetailFit;
   final EdgeInsetsGeometry padding;
   final _HermesEditorialDensity density;
   final int? titleMaxLines;
@@ -1208,7 +1380,10 @@ class _HermesEditorialBlock extends StatelessWidget {
     final profile = theme.hermesComponents.profile;
     final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
     final textScale = MediaQuery.textScalerOf(context).scale(1);
-    final overlayStatus = status != null && flexibleDetail;
+    // A detail that fills the block lays the status over the header; one
+    // that only takes its own height keeps the status in the row.
+    final overlayStatus =
+        status != null && flexibleDetail && flexibleDetailFit == FlexFit.tight;
     final stackStatus = status != null && textScale > 1.3 && !overlayStatus;
     final isDecision = density == _HermesEditorialDensity.decision;
     final showDetail = detail != null && (!_hasDisclosure || expanded);
@@ -1223,7 +1398,7 @@ class _HermesEditorialBlock extends StatelessWidget {
             );
     final summaryStyle = theme.textTheme.bodySmall?.copyWith(
       color: colors.textSecondary,
-      fontSize: isDecision ? 12.5 : 11.5,
+      fontSize: HermesType.subtitleSize,
       height: 1.38,
     );
 
@@ -1371,7 +1546,8 @@ class _HermesEditorialBlock extends StatelessWidget {
               ),
             ],
             if (detail != null && flexibleDetail)
-              Expanded(
+              Flexible(
+                fit: flexibleDetailFit,
                 child: AnimatedSize(
                   duration: reduceMotion ? Duration.zero : Motion.base,
                   curve: Motion.enter,
@@ -1658,11 +1834,13 @@ class HermesComposerSurface extends StatelessWidget {
     this.focused = false,
     this.padding = EdgeInsets.zero,
     this.unfocusedHorizontalInset = 4,
+    this.material,
     super.key,
   }) : assert(unfocusedHorizontalInset >= 0);
 
   /// How solid the capsule is: what scrolls behind it must not read through
-  /// what is written in it.
+  /// what is written in it. Ola 3 paints it with [HermesChrome.opaque], which
+  /// is solid; this stays the floor `chat_bottom_scrim_test` models.
   static const double fillOpacity = 0.97;
 
   final Widget child;
@@ -1670,60 +1848,115 @@ class HermesComposerSurface extends StatelessWidget {
   final EdgeInsetsGeometry padding;
   final double unfocusedHorizontalInset;
 
+  /// Shared edge-only finish. The opaque text surface and its geometry stay
+  /// unchanged; null leaves Home and other callers on their existing surface.
+  final HermesLiquid? material;
+
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
-    final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
-    final duration = reduceMotion
-        ? Duration.zero
-        : const Duration(milliseconds: 160);
+    // Ola 3 (AUDITORIA-PULIDO T2/T3): the one tone of what floats.
+    final chrome = HermesChrome.of(colors);
+    final duration = HermesMotion.duration(context, HermesMotion.fast);
+    // OPUS-CRISTAL: a piece of the chat foot's toned strip when it sits in
+    // one. The strip hands a veil only where its smoked glass reads;
+    // otherwise, and anywhere else (Home, rooms, a header's or an overlay's
+    // strip), the opaque chrome of before.
+    final glass = HermesGlassStrip.toneOf(context);
+    final piece = HermesGlassStrip.tonedAround(context);
+    final shape = RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(HermesRadius.pane),
+    );
+    final body = AnimatedContainer(
+      key: const ValueKey('hermes-composer-visible-surface'),
+      duration: duration,
+      curve: HermesMotion.standard,
+      constraints: const BoxConstraints(minHeight: HermesSpace.tap),
+      padding: padding,
+      decoration: BoxDecoration(
+        color: glass?.veil ?? chrome.opaque,
+        borderRadius: BorderRadius.circular(HermesRadius.pane),
+        border: Border.all(
+          // Focus still reads: the secondary ink, a hair thicker.
+          color: focused
+              ? colors.textSecondary.withValues(alpha: 0.58)
+              // Over glass the rim is a thin light edge, as on a lit pane.
+              : (glass == null ? chrome.line : HermesGlassRim.edgeOf(chrome)),
+          width: focused ? 1.15 : 1,
+        ),
+        // Over the glass a shadow would darken what shows through.
+        boxShadow: glass == null ? chrome.shadow : null,
+      ),
+      child: child,
+    );
+    // The gel of the buttons (rims and sheen) over the opaque grey fill: the
+    // foot is as liquid as the rest, never darker.
+    final surface = HermesGelSurface(
+      key: const ValueKey('hermes-composer-gel'),
+      shape: shape,
+      pressable: false,
+      sheenScale: HermesGel.textSheenScale(colors),
+      child: body,
+    );
+    final role = material;
+    final finished = role == null
+        ? surface
+        : HermesSheen(liquid: role, shape: shape, child: surface);
+    // A veto (policy, a lock) drops the blur in one frame while the fill
+    // above eases from the veil to opaque: never a bare veil over sharp
+    // text. A base under it turns opaque at once. It sits 1.5 dp inside
+    // the outline, so at rest the opaque fill hides it entirely and the
+    // fallback paints exactly as before.
+    final based = piece
+        ? CustomPaint(
+            key: const ValueKey('hermes-composer-glass-base'),
+            painter: glass == null
+                ? _OpaqueBase(chrome.opaque, HermesRadius.pane)
+                : null,
+            child: finished,
+          )
+        : finished;
     return AnimatedPadding(
       duration: duration,
-      curve: Curves.easeOutCubic,
+      curve: HermesMotion.standard,
       padding: EdgeInsets.symmetric(
         horizontal: focused ? 0 : unfocusedHorizontalInset,
       ),
-      child: AnimatedContainer(
-        key: const ValueKey('hermes-composer-visible-surface'),
-        duration: duration,
-        curve: Curves.easeOutCubic,
-        constraints: const BoxConstraints(minHeight: 48),
-        padding: padding,
-        decoration: BoxDecoration(
-          color: colors.surfaceVariant.withValues(alpha: fillOpacity),
-          borderRadius: BorderRadius.circular(28),
-          border: Border.all(
-            color: focused
-                ? colors.textSecondary.withValues(alpha: 0.58)
-                : colors.divider.withValues(alpha: 0.48),
-            width: focused ? 1.15 : 1,
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.38),
-              blurRadius: 22,
-              spreadRadius: -4,
-              offset: const Offset(0, 9),
-            ),
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.18),
-              blurRadius: 5,
-              offset: const Offset(0, 2),
-            ),
-          ],
-        ),
-        child: child,
-      ),
+      child: piece ? HermesGlassPiece(shape: shape, child: based) : finished,
     );
   }
+}
+
+/// The composer's opaque base under a fading fill (OPUS-CRISTAL).
+class _OpaqueBase extends CustomPainter {
+  const _OpaqueBase(this.color, this.radius);
+
+  final Color color;
+  final double radius;
+
+  static const double inset = 1.5;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = (Offset.zero & size).deflate(inset);
+    if (rect.isEmpty) return;
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(rect, Radius.circular(radius - inset)),
+      Paint()..color = color,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_OpaqueBase oldDelegate) =>
+      color != oldDelegate.color || radius != oldDelegate.radius;
 }
 
 enum HermesTactileActionVisual { filled, quiet }
 
 /// Acción circular con respuesta táctil de profundidad y luz.
 ///
-/// En reposo no mantiene ticker. Al pulsar comprime dos puntos, reduce la
-/// sombra y desplaza ligeramente el highlight; con reducir movimiento cambia
+/// En reposo no mantiene ticker. Al pulsar comprime el gel un 4 %, reduce el
+/// resplandor y desplaza el brillo (`HermesGelSurface`); con reducir movimiento cambia
 /// de estado sin interpolación.
 class HermesTactileAction extends StatefulWidget {
   const HermesTactileAction({
@@ -1779,6 +2012,22 @@ class _HermesTactileActionState extends State<HermesTactileAction> {
         ? Duration.zero
         : const Duration(milliseconds: 150);
     final quiet = widget.visual == HermesTactileActionVisual.quiet;
+    // The filled, enabled action is the accent gel: gradient, glow and sheen.
+    final gel = !quiet && enabled && background.a >= 0.5;
+
+    final content = AnimatedOpacity(
+      opacity: quiet && _pressed && enabled ? 0.68 : 1,
+      duration: duration,
+      child: Center(
+        child: AnimatedSlide(
+          duration: duration,
+          offset: _pressed && enabled ? const Offset(0, 0.04) : Offset.zero,
+          child: ExcludeSemantics(
+            child: Icon(widget.icon, size: widget.iconSize, color: foreground),
+          ),
+        ),
+      ),
+    );
 
     return Semantics(
       button: true,
@@ -1800,56 +2049,40 @@ class _HermesTactileActionState extends State<HermesTactileAction> {
               onLongPress: enabled ? widget.onLongPress : null,
               child: Center(
                 child: AnimatedScale(
-                  scale: _pressed && enabled ? 0.94 : 1,
+                  scale: _pressed && enabled ? HermesGel.pressScale : 1,
                   duration: duration,
                   curve: Curves.easeOutCubic,
                   child: AnimatedContainer(
                     duration: duration,
                     width: widget.size,
                     height: widget.size,
-                    decoration: quiet
+                    decoration: quiet || gel
                         ? null
                         : BoxDecoration(
                             shape: BoxShape.circle,
                             color: background,
                             border: Border.all(
-                              color: enabled
-                                  ? Colors.white.withValues(
-                                      alpha: _pressed ? 0.16 : 0.08,
-                                    )
-                                  : colors.divider.withValues(alpha: 0.45),
-                            ),
-                            boxShadow: enabled
-                                ? [
-                                    BoxShadow(
-                                      color: background.withValues(
-                                        alpha: _pressed ? 0.14 : 0.28,
-                                      ),
-                                      blurRadius: _pressed ? 5 : 11,
-                                      offset: Offset(0, _pressed ? 1 : 4),
-                                    ),
-                                  ]
-                                : null,
-                          ),
-                    child: AnimatedOpacity(
-                      opacity: quiet && _pressed && enabled ? 0.68 : 1,
-                      duration: duration,
-                      child: Center(
-                        child: AnimatedSlide(
-                          duration: duration,
-                          offset: _pressed && enabled
-                              ? const Offset(0, 0.04)
-                              : Offset.zero,
-                          child: ExcludeSemantics(
-                            child: Icon(
-                              widget.icon,
-                              size: widget.iconSize,
-                              color: foreground,
+                              color: colors.divider.withValues(alpha: 0.45),
                             ),
                           ),
-                        ),
-                      ),
-                    ),
+                    child: gel
+                        ? HermesGelSurface(
+                            accent: background,
+                            ink: foreground,
+                            tone: HermesGelTone.accent,
+                            pressed: _pressed,
+                            child: content,
+                          )
+                        : quiet
+                        ? content
+                        // A filled action that cannot be used keeps the
+                        // gel's rims and sheen over its flat disc.
+                        : HermesGelSurface(
+                            key: const ValueKey('hermes-tactile-gel-idle'),
+                            enabled: false,
+                            pressable: false,
+                            child: content,
+                          ),
                   ),
                 ),
               ),

@@ -34,7 +34,7 @@ void main() {
       final titleWidget = tester.widget<Text>(find.text(title));
       expect(titleWidget.maxLines, 2);
       final titleRect = tester.getRect(find.text(title));
-      final header = tester.getRect(find.text('Ahora'));
+      final header = tester.getRect(find.text('AHORA'));
       expect(titleRect.top - header.bottom, greaterThan(16));
       expect(find.text('Hermes'), findsOneWidget);
       expect(find.text(' · 0:41'), findsOneWidget);

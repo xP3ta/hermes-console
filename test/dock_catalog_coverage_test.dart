@@ -77,7 +77,7 @@ void main() {
               DockItemId.cron: bump(DockItemId.cron),
               DockItemId.tasks: bump(DockItemId.tasks),
               DockItemId.sessions: bump(DockItemId.sessions),
-              DockItemId.tools: bump(DockItemId.tools),
+              DockItemId.agents: bump(DockItemId.agents),
             },
           ),
         ),
@@ -92,7 +92,7 @@ void main() {
         DockItemId.cron,
         DockItemId.tasks,
         DockItemId.sessions,
-        DockItemId.tools,
+        DockItemId.agents,
       ];
       for (final id in actionable) {
         final finder = find.byKey(ValueKey('general-mode-dock-${id.name}'));
@@ -116,96 +116,92 @@ void main() {
     },
   );
 
-  testWidgets(
-    'Bots profile: every catalog item paints a real, tappable tile, '
-    'except the documented no-op ("settings"), which is fully excluded',
-    (tester) async {
-      await tester.binding.setSurfaceSize(const Size(390, 844));
-      addTearDown(() => tester.binding.setSurfaceSize(null));
+  testWidgets('Bots profile: every catalog item paints a real, tappable tile, '
+      'except the documented no-op ("settings"), which is fully excluded', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(390, 844));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
 
-      await controller.ensureLoaded();
-      await controller.updateBots(
-        (p) => p.copyWith(
-          items: [for (final id in DockItemId.values) DockItemConfig(id: id)],
+    await controller.ensureLoaded();
+    await controller.updateBots(
+      (p) => p.copyWith(
+        items: [for (final id in DockItemId.values) DockItemConfig(id: id)],
+      ),
+    );
+
+    final taps = <DockItemId, int>{};
+    DockItemAction bump(DockItemId id) =>
+        DockItemAction(onTap: () => taps[id] = (taps[id] ?? 0) + 1);
+
+    await tester.pumpWidget(
+      _wrap(
+        Dock(
+          profileId: DockProfileId.bots,
+          // `settings` NO está en el mapa: el perfil Bots no ofrece un
+          // destino de Ajustes propio.
+          actions: {
+            DockItemId.home: bump(DockItemId.home),
+            DockItemId.bots: bump(DockItemId.bots),
+            DockItemId.create: const DockItemAction(),
+            DockItemId.cron: bump(DockItemId.cron),
+            DockItemId.tasks: bump(DockItemId.tasks),
+            DockItemId.sessions: bump(DockItemId.sessions),
+            DockItemId.agents: bump(DockItemId.agents),
+          },
+          createOrbits: const [
+            DockCreateOrbit(
+              controlKey: ValueKey('bot-mode-create-bot'),
+              label: 'Bot',
+              icon: Icons.smart_toy_outlined,
+            ),
+            DockCreateOrbit(
+              controlKey: ValueKey('bot-mode-create-room'),
+              label: 'Room',
+              icon: Icons.groups_2_outlined,
+            ),
+          ],
         ),
-      );
+      ),
+    );
+    await tester.pumpAndSettle();
 
-      final taps = <DockItemId, int>{};
-      DockItemAction bump(DockItemId id) =>
-          DockItemAction(onTap: () => taps[id] = (taps[id] ?? 0) + 1);
+    // "create" abre la bandeja de dos órbitas (estado interno del propio
+    // dock, no un callback directo): basta con comprobar que el toque
+    // realmente la despliega.
+    await tester.tap(find.byKey(const ValueKey('bot-mode-dock-create')));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('bot-mode-create-actions')),
+      findsOneWidget,
+    );
+    await tester.tap(find.byKey(const ValueKey('bot-mode-create-outside')));
+    await tester.pumpAndSettle();
 
-      await tester.pumpWidget(
-        _wrap(
-          Dock(
-            profileId: DockProfileId.bots,
-            // `settings` NO está en el mapa: el perfil Bots no ofrece un
-            // destino de Ajustes propio.
-            actions: {
-              DockItemId.home: bump(DockItemId.home),
-              DockItemId.bots: bump(DockItemId.bots),
-              DockItemId.create: const DockItemAction(),
-              DockItemId.cron: bump(DockItemId.cron),
-              DockItemId.tasks: bump(DockItemId.tasks),
-              DockItemId.sessions: bump(DockItemId.sessions),
-              DockItemId.tools: bump(DockItemId.tools),
-            },
-            createOrbits: const [
-              DockCreateOrbit(
-                controlKey: ValueKey('bot-mode-create-bot'),
-                label: 'Bot',
-                icon: Icons.smart_toy_outlined,
-              ),
-              DockCreateOrbit(
-                controlKey: ValueKey('bot-mode-create-room'),
-                label: 'Room',
-                icon: Icons.groups_2_outlined,
-              ),
-            ],
-          ),
-        ),
-      );
-      await tester.pumpAndSettle();
-
-      // "create" abre la bandeja de dos órbitas (estado interno del propio
-      // dock, no un callback directo): basta con comprobar que el toque
-      // realmente la despliega.
-      await tester.tap(find.byKey(const ValueKey('bot-mode-dock-create')));
-      await tester.pumpAndSettle();
+    const directAction = [
+      DockItemId.home,
+      DockItemId.bots,
+      DockItemId.cron,
+      DockItemId.tasks,
+      DockItemId.sessions,
+      DockItemId.agents,
+    ];
+    for (final id in directAction) {
+      final finder = find.byKey(ValueKey('bot-mode-dock-${id.name}'));
+      expect(finder, findsOneWidget, reason: '$id should paint a real tile');
+      await tester.tap(finder);
+      await tester.pump();
       expect(
-        find.byKey(const ValueKey('bot-mode-create-actions')),
-        findsOneWidget,
+        taps[id],
+        greaterThan(0),
+        reason: '$id tile should trigger its real action on tap',
       );
-      await tester.tap(find.byKey(const ValueKey('bot-mode-create-outside')));
-      await tester.pumpAndSettle();
+    }
 
-      const directAction = [
-        DockItemId.home,
-        DockItemId.bots,
-        DockItemId.cron,
-        DockItemId.tasks,
-        DockItemId.sessions,
-        DockItemId.tools,
-      ];
-      for (final id in directAction) {
-        final finder = find.byKey(ValueKey('bot-mode-dock-${id.name}'));
-        expect(finder, findsOneWidget, reason: '$id should paint a real tile');
-        await tester.tap(finder);
-        await tester.pump();
-        expect(
-          taps[id],
-          greaterThan(0),
-          reason: '$id tile should trigger its real action on tap',
-        );
-      }
-
-      // `settings` no forma parte del catálogo de "Bots": mismo patrón
-      // latente que `work` en "General" (ver A5). No debe pintar tile.
-      expect(
-        find.byKey(const ValueKey('bot-mode-dock-settings')),
-        findsNothing,
-      );
-    },
-  );
+    // `settings` no forma parte del catálogo de "Bots": mismo patrón
+    // latente que `work` en "General" (ver A5). No debe pintar tile.
+    expect(find.byKey(const ValueKey('bot-mode-dock-settings')), findsNothing);
+  });
 
   testWidgets(
     'one shared component, two independent profiles: same Dock class, but '
@@ -240,9 +236,7 @@ void main() {
             children: [
               Dock(
                 profileId: DockProfileId.bots,
-                actions: const {
-                  DockItemId.bots: DockItemAction(),
-                },
+                actions: const {DockItemId.bots: DockItemAction()},
               ),
               Dock(
                 profileId: DockProfileId.general,

@@ -12,6 +12,7 @@
     <!-- Chat rápido -->
     <string name="lw_new">Nuevo</string>
     <string name="lw_ask_hint">Pregunta a Hermes…</string>
+    <string name="lw_ask_hint_named">Pregunta a %1$s…</string>
     <string name="lw_new_description">Chat nuevo</string>
     <string name="lw_voice_description">Chat de voz nuevo</string>
     <string name="lw_camera_description">Chat nuevo con la cámara</string>
@@ -170,4 +171,9 @@
     <string name="lw_sample_room_line">Builder responde</string>
     <string name="lw_sample_run_title">Hermes · Terminal</string>
     <string name="lw_sample_run_about">Informe semanal</string>
+
+    <!-- Quick Settings tiles -->
+    <string name="widgets_qs_new_chat_label">Chat nuevo</string>
+    <string name="widgets_qs_voice_chat_label">Chat de voz</string>
+    <string name="widgets_qs_camera_chat_label">Chat con cámara</string>
 </resources>

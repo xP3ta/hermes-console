@@ -97,7 +97,7 @@ void main() {
           'cron',
           'tasks',
           'sessions',
-          'tools',
+          'agents',
         ]);
         expect(value.items.last.visible, isFalse);
         expect(value.visibleItemIds.map((i) => i.name), ['home', 'create']);

@@ -1,6 +1,13 @@
 {
   "@@locale": "zh",
-  "o2FirstChat": "与 Hermes 聊天",
+  "mpnFirstChat": "与 {name} 聊天",
+  "@mpnFirstChat": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "sInvalidPort": "端口必须是 1 到 65535 之间的数字，请在高级设置中更正。",
   "sBackToConnection": "返回连接",
   "sBadAddress": "地址无效，请粘贴电脑的地址后重新测试。",
@@ -72,6 +79,21 @@
   "o2OpenChat": "打开聊天",
   "o2NeedsModelBody": "还需要选择一个模型，Hermes 才能回复",
   "o2ChooseModel": "选择模型",
+  "nacWayPickTitle": "你想怎样连接？",
+  "nacWayNousTitle": "Nous Portal 账户",
+  "nacWayNousBody": "你的 Hermes 运行在 Nous Cloud：在浏览器中用 Nous 账户登录。",
+  "nacWayManualTitle": "手动填写 Dashboard",
+  "nacWayManualBody": "知道 Dashboard 地址：直接连接或通过 SSH 隧道连接，然后使用密码、身份提供商或 Nous 登录。",
+  "nacWayScanTitle": "扫描二维码或查找我的服务器",
+  "nacWayScanBody": "Hermes 在你的网络或 Tailscale 中：扫描安装码，或输入设备名称，应用会检查 Hermes 是否响应。",
+  "nacWayRecommended": "推荐",
+  "nacWayWhichLink": "我不知道该选哪个",
+  "nacWayWhichTitle": "哪一个适合我？",
+  "nacWayWhichBody": "Nous Portal 账户：Hermes 由 Nous 托管，你用 Nous 账户登录。\n手动 Dashboard：使用 https 或本地地址，或通过 SSH 隧道连接，然后使用密码、身份提供商或 Nous 登录。\n扫描或查找：服务器与你在同一网络或 Tailscale 中，且安装码就在手边。",
+  "nacWayNousPageBody": "登录 Nous Portal，复制你的代理地址后回到这里，应用会自动使用。",
+  "nacWayNousAddressHint": "name.agents.nousresearch.com",
+  "nacWayNousHostOk": "Nous Cloud 服务器",
+  "nacWayEditorForm": "或者在下方手动填写连接信息",
   "o2MacLinux": "Mac 或 Linux",
   "o2Windows": "Windows",
   "o2IssueTitle": "未能成功",
@@ -177,7 +199,72 @@
   "drawerMascots": "宠物",
   "drawerKanban": "看板",
   "drawerSsh": "SSH / 终端",
-  "drawerSkills": "技能",
+  "screenTitle": "机器人屏幕",
+  "botScreenTooltip": "查看机器人的桌面",
+  "bsaScreen": "查看屏幕",
+  "bsaNoDesktop": "没有桌面",
+  "bsaTitle": "{bot}的屏幕",
+  "bsaSubView": "仅查看 · 每 {seconds} 秒刷新",
+  "bsaSubControl": "你正在控制",
+  "bsaSubOff": "已停止",
+  "bsaStateOff": "已关闭",
+  "bsaStateOn": "已开启",
+  "bsaStateControl": "控制中",
+  "bsaPowerOff": "关机",
+  "bsaPowerOffTitle": "要关闭{bot}的电脑吗？",
+  "bsaPowerOffBody": "它的窗口和屏幕上正在进行的操作都会关闭。机器人会继续运行，之后可以再次开启。",
+  "bsaPowerOffFailed": "无法关闭机器人的电脑。",
+  "bsaPowerOffHeld": "其他人正在控制屏幕，现在无法关闭。",
+  "bsaTrackpad": "触控板",
+  "bsaKeyboard": "键盘",
+  "bsaZoomOut": "缩小",
+  "bsaZoomIn": "放大",
+  "bsaClick": "点击",
+  "bsaWheel": "滚轮",
+  "bsaRightClick": "右键",
+  "bsaPadHint": "移动 · 轻点为点击 · 双指滚动",
+  "bsaPadScroll": "滚动",
+  "bsaDirectHint": "直接触摸屏幕",
+  "bsaHttpShort": "未加密连接 · 点按查看详情",
+  "bsaStoppedNote": "开启期间只有机器人在使用",
+  "bsaClose": "关闭",
+  "screenRefresh": "立即刷新",
+  "screenPollHint": "每 {seconds} 秒刷新一次",
+  "screenSuppressed": "有人正在控制屏幕，画面已暂停。",
+  "screenSuppressedPartial": "有人正在控制，视图受限。",
+  "screenStopped": "机器人的电脑已关闭。",
+  "screenStart": "启动机器人的电脑",
+  "screenUnsupported": "此实例未安装屏幕组件。",
+  "screenFailed": "无法读取机器人的屏幕。",
+  "screenStartFailed": "无法启动机器人的电脑。",
+  "screenReadOnly": "只读连接，无法接管屏幕。",
+  "screenStale": "最后画面 — 屏幕无法访问",
+  "screenUnavailable": "请更新机器人的 Hermes 以使用其屏幕。",
+  "screenTakeoverTitle": "控制机器人的屏幕",
+  "screenTakeover": "接管控制",
+  "screenHandBack": "交还控制",
+  "screenShowKeyboard": "显示键盘",
+  "screenHideKeyboard": "隐藏键盘",
+  "screenSwitchToTouchpad": "切换到触控板模式",
+  "screenSwitchToTouch": "切换到直接触控",
+  "screenChecking": "正在检查机器人的屏幕…",
+  "screenStarting": "正在服务器上启动屏幕…",
+  "screenAcquiring": "正在接管控制…",
+  "screenActiveHint": "你已获得控制权，可以照常点按、拖动和输入。",
+  "screenLeaseLost": "另一个客户端接管了控制。",
+  "screenLeaseAgent": "智能体仍在使用屏幕。",
+  "screenRetry": "重试",
+  "screenStartDisplay": "启动屏幕",
+  "screenBlocked": "屏幕已被阻止，无法启动。",
+  "screenUnsupportedDetail": "此实例未安装屏幕组件。服务器需要 TigerVNC 和 Xfce 核心。",
+  "screenTakeoverFailed": "无法接管屏幕控制。",
+  "screenBridgeConnecting": "正在连接…",
+  "screenBridgeMissing": "缺少屏幕地址",
+  "screenBridgeClosed": "会话已结束",
+  "screenBridgeLost": "连接已断开。点按以重新连接。",
+  "screenBridgeSecurity": "安全错误",
+  "screenBridgeCredentials": "屏幕要求提供凭据",
+  "screenUnencrypted": "未加密的连接（http Dashboard）：只应通过 Tailscale 或 VPN 使用。",
   "drawerCron": "定时任务",
   "drawerSoul": "SOUL",
   "drawerGroupInstance": "实例",
@@ -295,7 +382,6 @@
   "chatAttachCamera": "相机",
   "chatAttachPhotos": "图库",
   "chatAttachFiles": "文件",
-  "chaCantSendApproval": "无法发送批准：{err}",
   "chaTextFileError": "无法读取文本文件",
   "chaOutboxUnavailable": "无法安全保存本轮消息。消息未发送，仍保留在此处，可重试。",
   "chaSendNotSentRetry": "未发送，消息仍保留在此处。请再次点击发送。",
@@ -325,7 +411,6 @@
   "chaMenuTooltip": "菜单",
   "chaProfileChip": "配置文件：{name}",
   "chaNewChatTooltip": "新建聊天",
-  "chaPermissionsTitle": "权限 / 模式",
   "chaUpdateTitle": "刷新",
   "chaSessionDetailsAction": "查看会话详情",
   "chaModelSheetTitle": "模型与会话",
@@ -367,14 +452,343 @@
   "chaContextNotMeasured": "在 Hermes 显示回复的首段文本时测量",
   "chaContextNotPublished": "Hermes 未提供",
   "chaContextWindowUnavailable": "Hermes 尚未提供此会话的上下文窗口大小。",
-  "chaControlTitle": "对话设置",
-  "chaControlScope": "仅限此对话",
-  "chaControlSectionSession": "会话",
-  "chaControlSectionTools": "工具",
-  "chaControlSectionDanger": "敏感操作",
+  "chaControlTitle": "此对话",
+  "chaControlTerminal": "终端",
+  "chaControlDeleteConversation": "删除对话",
+  "chaControlBrowser": "浏览器",
+  "brwBack": "后退",
+  "brwForward": "前进",
+  "brwReload": "重新加载页面",
+  "brwAddress": "地址",
+  "brwAddressPlaceholder": "输入地址",
+  "brwBlankPage": "在上方输入地址开始浏览。",
+  "brwOpenExternal": "在浏览器中打开",
+  "brwServerNotFound": "未找到服务器",
+  "brwFailedToLoad": "页面加载失败",
+  "brwUnreachable": "无法访问该页面。",
+  "brwRemoteLoopback": "该地址指向运行智能体的那台机器，而不是本机。浏览器在本地加载页面，因此远程开发服务器需要端口转发或可访问的主机名。",
+  "brwBackToChat": "返回聊天",
+  "brwAgentOffer": "Hermes 想给你看一个页面",
+  "brwAgentOfferOpen": "查看",
+  "brwAgentOfferDismiss": "忽略",
+  "brwAgentReading": "Hermes 正在读取此页面",
+  "brwCleartextTitle": "此应用只打开 https 页面",
+  "brwCleartextBody": "该页面使用未加密的 http，无法在此加载。请在系统浏览器中打开。",
+  "brwRendererGone": "页面已关闭",
+  "brwRendererGoneBody": "Android 为释放内存或因页面无响应而关闭了页面。应用仍然打开：请重新加载。",
+  "brwTabNew": "新标签页",
+  "brwTabBlank": "新标签页",
+  "brwTabsShow": "{count, plural, =1{查看标签页} other{查看全部 {count} 个标签页}}",
+  "brwTabsCount": "{count, plural, =1{1 个标签页} other{{count} 个标签页}}",
+  "brwTabClose": "关闭标签页 {name}",
+  "brwTabsCloseAll": "全部关闭",
+  "brwTabsCloseAllLabel": "{count, plural, =1{关闭标签页} other{关闭全部 {count} 个标签页}}",
+  "brwTabLabel": "标签页 {index}/{count}，{name}",
+  "brwTabAgentLabel": "Hermes 的标签页，{name}",
+  "brwTabAgentLiveLabel": "Hermes 的标签页，{name}，直播中",
+  "brwTabHermes": "Hermes",
+  "brwTabClosed": "已关闭「{name}」",
+  "brwTabsClosed": "{count, plural, =1{已关闭 1 个标签页} other{已关闭 {count} 个标签页}}",
+  "brwTabUndo": "撤销",
+  "brwTabHermesSees": "Hermes 能看到",
+  "brwPipWatch": "查看 {host}",
+  "brwPipWatchLabel": "查看 Hermes 的浏览器，{host}",
+  "brwPipWatchLabelLive": "查看 Hermes 的浏览器，{host}，直播中",
+  "brwPipLive": "直播中",
+  "brwPipOffline": "离线",
+  "brwPipDone": "已完成",
+  "brwPipAgentControls": "Hermes 正在操作",
+  "brwPipYouControl": "由你操作",
+  "brwPipDock": "固定在顶部",
+  "brwPipUndock": "取消固定",
+  "brwPipExpand": "放大",
+  "brwPipClose": "关闭浏览器",
+  "brwPipRegion": "Hermes 的浏览器",
+  "gitTitle": "Git",
+  "gitNoBranch": "无分支",
+  "gitDetached": "分离头指针",
+  "gitChanged": "{count, plural, other{{count} 处更改}}",
+  "gitAhead": "领先 {count}",
+  "gitBehind": "落后 {count}",
+  "gitStage": "暂存",
+  "gitUnstage": "取消暂存",
+  "gitStaged": "已暂存",
+  "gitNotRepo": "不是 Git 仓库",
+  "gitNoDiffs": "无差异",
+  "gitNoDiff": "没有可显示的差异",
+  "gitCommit": "提交",
+  "gitCommitMessage": "提交信息",
+  "gitDiffTooLarge": "差异过大",
+  "gitDiffBinary": "二进制文件",
+  "gitFailureUnsupported": "此版本的 Hermes 未提供 Git。",
+  "gitFailureForbidden": "此实例不允许在此会话中使用 Git。",
+  "gitFailureRejected": "Git 无法在服务器上完成该操作。",
+  "gitFailureUnknown": "无法读取 Git。",
+  "gitConflicts": "{count, plural, other{{count} 个未解决的冲突}}",
+  "gitProblemConflict": "存在未解决的冲突。",
+  "gitProblemNoIdentity": "服务器上的 Git 没有作者姓名和邮箱。",
+  "gitRefresh": "刷新文件树",
+  "gitStatusModified": "已修改",
+  "gitStatusAdded": "新增",
+  "gitStatusDeleted": "已删除",
+  "gitStatusRenamed": "已重命名",
+  "gitStatusCopied": "已复制",
+  "gitStatusConflicted": "冲突",
+  "gitStatusUntracked": "未跟踪",
+  "ghtSwitchAction": "切换",
+  "ghtRemoveAction": "移除",
+  "ghtSearchPaths": "搜索路径",
+  "ghtScopeUncommitted": "未提交",
+  "ghtScopeBranch": "分支",
+  "ghtFileCount": "{count, plural, =1{1 个文件} other{{count} 个文件}}",
+  "@ghtFileCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "ghtCleanTitle": "工作树干净",
+  "ghtCleanBody": "自上次提交以来没有任何更改。",
+  "ghtBranchCleanTitle": "分支与基础分支一致",
+  "ghtBranchCleanBody": "相对基础分支没有任何提交更改。",
+  "ghtNoMatches": "没有与搜索匹配的路径。",
+  "ghtShipTitle": "推送与拉取请求",
+  "ghtShipOpen": "打开推送与拉取请求",
+  "ghtCommitOptions": "提交选项",
+  "ghtBranchScopeHint": "分支相对基础的更改（已提交）。",
+  "ghtPanelTitle": "更改",
+  "ghtNotRepoBody": "此聊天的文件夹不在服务器上的 Git 仓库内。",
+  "ghtGitHubConnected": "GitHub：已登录",
+  "ghtGitHubSignedOut": "GitHub：服务器上未登录",
+  "ghtGitHubMissing": "GitHub：服务器未安装 gh",
+  "ghtGitHubUnknown": "GitHub：未检查",
+  "ghtIdentityMissing": "服务器上没有作者身份",
+  "ghtRefreshGitHub": "重新检查 GitHub",
+  "ghtMore": "更多 Git 操作",
+  "ghtBranchPick": "切换分支",
+  "ghtBranchesTitle": "分支",
+  "ghtBranchCurrent": "当前分支",
+  "ghtBranchRemote": "远程",
+  "ghtBranchInWorktree": "位于另一个工作树：{path}",
+  "@ghtBranchInWorktree": {
+    "placeholders": {
+      "path": {
+        "type": "String"
+      }
+    }
+  },
+  "ghtBranchSwitchConfirmTitle": "切换到 {branch}？",
+  "@ghtBranchSwitchConfirmTitle": {
+    "placeholders": {
+      "branch": {
+        "type": "String"
+      }
+    }
+  },
+  "ghtBranchSwitchConfirmBody": "{count, plural, =1{有 1 处未提交的更改。仅在无冲突时切换，更改会带到新分支。} other{有 {count} 处未提交的更改。仅在无冲突时切换，更改会带到新分支。}}",
+  "@ghtBranchSwitchConfirmBody": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "ghtBranchSwitched": "已切换到 {branch}",
+  "@ghtBranchSwitched": {
+    "placeholders": {
+      "branch": {
+        "type": "String"
+      }
+    }
+  },
+  "ghtBranchNew": "在工作树中新建分支",
+  "ghtBranchNewName": "分支名称",
+  "ghtBranchNewBase": "基础分支",
+  "ghtBranchNewCreate": "创建",
+  "ghtBranchNewHint": "服务器会在 .worktrees 下的新工作树中创建该分支。",
+  "ghtBranchNone": "没有分支",
+  "ghtWorktrees": "工作树",
+  "ghtWorktreeMain": "主",
+  "ghtWorktreeLocked": "已锁定",
+  "ghtWorktreeDetached": "分离的 HEAD",
+  "ghtWorktreeAdd": "添加工作树",
+  "ghtWorktreeRemove": "移除工作树",
+  "ghtWorktreeRemoveTitle": "移除工作树？",
+  "ghtWorktreeRemoveBody": "将删除服务器上的文件夹 {path}。分支保留。此操作无法撤销。",
+  "@ghtWorktreeRemoveBody": {
+    "placeholders": {
+      "path": {
+        "type": "String"
+      }
+    }
+  },
+  "ghtWorktreeRemoveForceTitle": "工作树有更改",
+  "ghtWorktreeRemoveForceBody": "{path} 中有已修改或未跟踪的文件。强制移除将永久删除它们。",
+  "@ghtWorktreeRemoveForceBody": {
+    "placeholders": {
+      "path": {
+        "type": "String"
+      }
+    }
+  },
+  "ghtWorktreeRemoveForce": "强制删除",
+  "ghtWorktreeRemoved": "已移除工作树",
+  "ghtWorktreeOpen": "在此打开 Git",
+  "ghtWorktreeNone": "仅有主工作树",
+  "ghtWorktreeCreated": "已在 {path} 创建工作树",
+  "@ghtWorktreeCreated": {
+    "placeholders": {
+      "path": {
+        "type": "String"
+      }
+    }
+  },
+  "ghtTabChanges": "更改",
+  "ghtTabCommit": "提交",
+  "ghtTabPullRequests": "PR",
+  "ghtGroupStaged": "已暂存",
+  "ghtGroupUnstaged": "未暂存",
+  "ghtGroupUntracked": "未跟踪",
+  "ghtStageAll": "全部暂存",
+  "ghtUnstageAll": "全部取消暂存",
+  "ghtDiscardFile": "放弃更改",
+  "ghtDiscardAll": "放弃所有更改",
+  "ghtDiscardTitle": "放弃 {name} 的更改？",
+  "@ghtDiscardTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "ghtDiscardBody": "文件将恢复到最近一次提交；新文件会被删除。此操作无法撤销。",
+  "ghtDiscardAllTitle": "放弃所有更改？",
+  "ghtDiscardAllBody": "{count, plural, =1{1 个文件将恢复到最近一次提交；新文件会被删除。此操作无法撤销。} other{{count} 个文件将恢复到最近一次提交；新文件会被删除。此操作无法撤销。}}",
+  "@ghtDiscardAllBody": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "ghtDiscardAction": "放弃",
+  "ghtDiscarded": "已放弃更改",
+  "ghtViewDiff": "查看差异",
+  "ghtFileActions": "文件操作",
+  "ghtHunkCollapse": "折叠块",
+  "ghtHunkExpand": "展开块",
+  "ghtHunkHidden": "{count, plural, =1{已隐藏 1 行} other{已隐藏 {count} 行}}",
+  "@ghtHunkHidden": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "ghtCommitContextTitle": "服务器上下文",
+  "ghtCommitContextRecent": "最近的提交",
+  "ghtCommitContextDiff": "将进入提交的内容",
+  "ghtCommitContextEmpty": "服务器没有此提交的上下文。",
+  "ghtCommitContextTruncated": "已截断显示",
+  "ghtCommitContextShow": "显示上下文",
+  "ghtCommitContextHide": "隐藏上下文",
+  "ghtCommitStagesAllHint": "若没有暂存内容，服务器会在提交前暂存所有更改。",
+  "ghtCommitAndPush": "提交后推送",
+  "ghtCommitDone": "已提交",
+  "ghtCommitPushedDone": "已提交并推送",
+  "ghtPush": "推送分支",
+  "ghtPushUpstreamHint": "若没有上游，服务器会以同名发布到 origin。",
+  "ghtPushAhead": "{count, plural, =1{1 个待推送的提交} other{{count} 个待推送的提交}}",
+  "@ghtPushAhead": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "ghtPushNothing": "没有可推送的内容",
+  "ghtPushDone": "已推送",
+  "ghtPushBehindHint": "{count, plural, =1{远程分支有 1 个此处没有的提交。} other{远程分支有 {count} 个此处没有的提交。}}",
+  "@ghtPushBehindHint": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "ghtPrTitle": "此分支的拉取请求",
+  "ghtPrNone": "此分支没有拉取请求。",
+  "ghtPrNumber": "#{number}",
+  "@ghtPrNumber": {
+    "placeholders": {
+      "number": {
+        "type": "int"
+      }
+    }
+  },
+  "ghtPrStateOpen": "开启",
+  "ghtPrStateMerged": "已合并",
+  "ghtPrStateClosed": "已关闭",
+  "ghtPrStateDraft": "草稿",
+  "ghtPrOpenLink": "在浏览器中打开",
+  "ghtPrLinkUnsafe": "此链接不会从应用中打开。",
+  "ghtPrCreate": "创建拉取请求",
+  "ghtPrCreateHint": "服务器会推送分支并用 gh 创建 PR：标题和正文来自提交；基础为仓库的默认分支。",
+  "ghtPrCreateBase": "基础：{branch}",
+  "@ghtPrCreateBase": {
+    "placeholders": {
+      "branch": {
+        "type": "String"
+      }
+    }
+  },
+  "ghtPrCreateConfirmTitle": "创建拉取请求？",
+  "ghtPrCreateConfirmBody": "将把分支 {branch} 发布到 GitHub，并针对 {base} 打开拉取请求。",
+  "@ghtPrCreateConfirmBody": {
+    "placeholders": {
+      "branch": {
+        "type": "String"
+      },
+      "base": {
+        "type": "String"
+      }
+    }
+  },
+  "ghtPrCreated": "已创建拉取请求",
+  "ghtPrListTitle": "本地分支的拉取请求",
+  "ghtPrListEmpty": "本地分支上没有拉取请求。",
+  "ghtPrListLoad": "查找拉取请求",
+  "ghtGhNotReady": "服务器上的 GitHub 未就绪：请在服务器上用 gh 登录。",
+  "ghtDetachedNoPublish": "分离的 HEAD 没有可发布的分支。",
+  "ghtProblemPushRejected": "远程拒绝了推送：请先获取远程更改。",
+  "ghtProblemRemoteAuth": "服务器没有该远程的凭据。",
+  "ghtProblemRemoteUnreachable": "无法连接远程。",
+  "ghtProblemNoRemote": "分支没有可推送的远程。",
+  "ghtProblemGhNotReady": "服务器上未安装 gh 或未登录。",
+  "ghtProblemPrExists": "此分支已有拉取请求。",
+  "ghtProblemPrNoCommits": "相对基础分支没有新提交。",
+  "ghtProblemLocalChanges": "本地更改会丢失；Git 已停止。",
+  "ghtProblemBranchNotFound": "分支不存在。",
+  "ghtLockReasonDiscard": "放弃 Git 更改",
+  "ghtLockReasonPush": "将分支推送到远程",
+  "ghtLockReasonPr": "创建拉取请求",
+  "ghtLockReasonWorktree": "移除工作树",
+  "ghtLockReasonSwitch": "带着未提交的更改切换分支",
+  "ghtProjectMenuHint": "更改、提交、分支和拉取请求",
+  "ghtDrawerDetail": "服务器的更改、分支和拉取请求",
+  "ghtDefaultFolderMissing": "服务器未指定默认文件夹。请从项目或对话打开 Git。",
+  "ghtUnsupportedBody": "此 Hermes 版本未提供 Git 路由。请更新服务器以在应用中使用 Git。",
+  "ghtFolderLabel": "文件夹：{path}",
+  "@ghtFolderLabel": {
+    "placeholders": {
+      "path": {
+        "type": "String"
+      }
+    }
+  },
   "chaControlInherit": "使用通用设置",
   "chaControlOff": "关闭",
-  "chaControlRecovery": "文件恢复",
   "chaYoloTitle": "为此会话启用 YOLO？",
   "chaYoloBody": "Hermes 将执行此会话中的所有操作而不请求确认，包括高风险操作（删除、sudo、重启…）。只有只读模式可覆盖 YOLO。",
   "chaActivate": "启用",
@@ -394,6 +808,27 @@
   "chaVoiceReturnOverlay": "返回语音模式",
   "chaVoiceActiveElsewhere": "语音模式正在“{title}”中运行",
   "chaVoiceExitTooltip": "结束语音模式",
+  "voiceDockHint": "说“{phrase}”即可退出 · 点按精灵暂停",
+  "voiceDockHintNoPhrase": "点按精灵暂停",
+  "voiceDockType": "改为输入文字",
+  "voiceDockSendNow": "立即发送",
+  "voiceDockInterrupt": "打断",
+  "voiceDockReview": "查看",
+  "voiceCapsuleTitle": "语音模式",
+  "voiceCapsuleMinimize": "最小化",
+  "voiceCapsuleOpen": "打开语音模式",
+  "voiceCapsuleOpenRunning": "打开正在进行的内容",
+  "voiceCapsuleExpand": "展开",
+  "voiceModelTitle": "语音模型",
+  "voiceModelChange": "更改",
+  "voiceModelMain": "主模型：{model}",
+  "voiceModelPickerHint": "你说话时回答的模型（此配置）。从你的下一轮起生效。",
+  "voiceModelEmptyTitle": "没有可用的模型",
+  "voiceModelEmptyBody": "此服务器尚未连接任何模型。语音使用主模型。",
+  "voiceModelOpenModels": "打开模型",
+  "voiceModelReadOnly": "只读",
+  "voiceModelLiveNote": "使用 GPT-Live 时由它自己的模型回答；这个用于普通模式。",
+  "voiceModelLoadError": "无法读取语音模型。",
   "chaVoiceEnd": "结束",
   "chaVoiceComposerHint": "输入…",
   "chaVoicePause": "暂停",
@@ -491,13 +926,35 @@
   "chaConnectionLostReconnecting": "连接已断开 — 正在重新连接…",
   "chaConnectionRecovered": "已重新连接",
   "chaHintSystem": "指令（可选）…",
-  "chaHintUser": "向 Hermes 提问…",
+  "mpnComposerHint": "向 {name} 提问…",
+  "@mpnComposerHint": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "chaHintUserShort": "提问…",
   "chaAttachTooltip": "添加附件",
   "chaSendTooltip": "发送消息",
   "chaStopTooltip": "停止",
-  "chaSteerSupplementsLabel": "在 Hermes 工作期间添加",
+  "mpnSteerAdded": "在 {name} 工作期间添加",
+  "@mpnSteerAdded": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "chaSteerFailed": "尚未确认消息是否已送达当前运行。你的文本已保留为草稿；重新连接后，请检查并重试，以免重复发送。",
-  "chaSteerQueued": "消息已排队：Hermes 完成后，将作为下一回合发送。",
+  "mpnSteerQueued": "消息已排队：{name} 完成后，将作为下一回合发送。",
+  "@mpnSteerQueued": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "commonAdd": "添加",
   "commonEdit": "编辑",
   "commonRefresh": "刷新",
@@ -720,7 +1177,17 @@
   "cevDeny": "拒绝",
   "cevThisSession": "本次会话",
   "cevAlways": "始终",
-  "cevPermissionHeadline": "Hermes 请求你的许可",
+  "approvalAlwaysTitle": "始终允许此命令？",
+  "approvalAlwaysBody": "这会将“{pattern}”模式加入永久允许列表 (~/.hermes/config.yaml)。Hermes 对类似命令将不再询问，包括当前会话和未来会话。",
+  "approvalAlwaysConfirm": "始终允许",
+  "mpnPermissionHeadline": "{name} 请求你的许可",
+  "@mpnPermissionHeadline": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "cevRemember": "记住选择",
   "cevApprovalRequired": "需要批准",
   "cevApprovalPending": "待处理",
@@ -752,7 +1219,6 @@
   "ssh2ForgetHostKey": "忘记主机密钥",
   "ssh2ForgetHostKeySub": "下次连接时重新验证服务器",
   "ssh2RemoveSshSub": "删除此实例的凭据",
-  "sftpListError": "无法列出 {path}：{error}",
   "sftpDownloading": "正在后台下载 {file}…",
   "sftpReadError": "无法读取文件。",
   "sftpDeleteTitle": "删除文件",
@@ -762,7 +1228,6 @@
   "sftpOpenOf": "打开 {label} 的文件（SFTP）",
   "sftpUpload": "上传文件",
   "sftpUpLevel": "返回上一级",
-  "sftpEmpty": "空文件夹",
   "sshcNotText": "无法以文本形式读取文件（是否为 PEM 密钥？）。",
   "sshcMissingHost": "未填写主机。",
   "sshcInvalidPort": "端口无效。",
@@ -799,7 +1264,7 @@
   "ieNetworkNote": "应用使用 Android 系统网络。如果你使用 VPN/Tailscale/WireGuard，请在测试连接前启用。",
   "ieCapabilitiesDetected": "检测到的功能",
   "setTitle": "设置",
-  "setSecurity": "安全",
+  "setSecurity": "锁定与隐私",
   "setSecuritySub": "应用锁、隐私和凭据保护",
   "setPermissions": "权限 / 批准",
   "setPermissionsSub": "Hermes 请求权限的方式：YOLO、交互式、保守或只读",
@@ -1052,10 +1517,6 @@
   "notifMasterSub": "所有提醒的总开关",
   "notifApprovalsTitle": "批准",
   "notifApprovalsSub": "当 Hermes 需要你的许可时",
-  "notifCronResultsTitle": "自动化结果",
-  "notifCronResultsSub": "cron 任务结束并产生结果，或发生需要处理的故障时",
-  "notifKanbanResultsTitle": "看板结果",
-  "notifKanbanResultsSub": "看板任务已完成、受阻或需要关注时",
   "notifLocalAgentResultsTitle": "长期目标",
   "notifLocalAgentResultsSub": "会话保持连接期间，目标暂停、受阻、进入等待或完成时",
   "notifRunsTitle": "运行",
@@ -1064,15 +1525,8 @@
   "notifRepliesSub": "Hermes 在后台时收到的回复",
   "notifForegroundTitle": "前台也提醒",
   "notifForegroundSub": "使用 Hermes 时也显示提醒",
-  "notifBgTitle": "后台监听",
-  "notifBgSub": "应用关闭时也接收提醒 · 会显示常驻通知",
-  "notifBgActive": "持续运行，直到你关闭 · 正在监听智能体事件",
-  "notifBgPaused": "已暂停 · 启用监听以接收后台事件",
-  "notifBgFiniteNotice": "监听将持续运行，直到你将其关闭，并显示一条常驻 Android 通知。",
-  "notifFgsChannelLabel": "常驻服务通知渠道",
-  "notifBgActivating": "正在启动持续监听…",
-  "notifBgError": "启动失败 · 点按重试",
-  "notifBgRestartNotice": "从最近任务中移除 Hermes 不会停止监听。强行停止会中断监听，直到你再次打开应用。",
+  "notifKeepAliveTitle": "后台工作时保持连接",
+  "notifKeepAliveSub": "回合进行中离开应用时，Hermes 会继续实时传来，直到完成（最长 30 分钟）",
   "notifTestButton": "测试通知",
   "notifTestSent": "测试通知已发送。",
   "notifTestFailed": "无法发送。请检查系统权限。",
@@ -1443,7 +1897,15 @@
   "chaCommandAttachmentsUnsupported": "请先移除附件，再运行命令。",
   "chaCommandUnknown": "此服务器不支持命令 /{name}。",
   "chaCompactUnavailable": "/compact 不是 Hermes Desktop 的命令。请使用 /compress 压缩此对话的上下文。",
-  "chaCommandFailed": "Hermes 无法运行该命令。",
+  "cmdErrNoSession": "{command}：此聊天在 Hermes 中还没有会话。请先发送一条消息或重试。",
+  "cmdErrBadArgument": "{command}：Hermes 不接受命令后面输入的内容。",
+  "cmdErrNoRuntime": "{command}：Hermes 没有此聊天的活动会话。请稍后重试。",
+  "cmdErrServerRefused": "{command}：Hermes 无法执行它。",
+  "cmdErrReadOnly": "{command}：此连接为只读。",
+  "cmdErrUnsupported": "{command}：此 Hermes 服务器不支持。请更新 Hermes Agent。",
+  "cmdErrOffline": "{command}：未连接到 Hermes。",
+  "cmdErrTimeout": "{command}：Hermes 未能及时响应。",
+  "cmdErrFailed": "{command} 失败。",
   "chaCommandAccepted": "已接受命令 {command}。",
   "chaCompressionAccepted": "Hermes 已接受压缩请求。新上下文准备就绪后，对话将刷新。",
   "chaCompressionCompleted": "上下文压缩已完成。",
@@ -1590,7 +2052,6 @@
   "gatewayEraTitle": "Console 已更新",
   "gatewayEraAction": "了解变化",
   "leg3SetupTitle": "连接你的 Hermes",
-  "leg3SetupBody": "Console 现在使用 Hermes 的 Dashboard。请在运行 Hermes 的电脑上粘贴这一行命令；完成后会显示一个二维码，请扫描它。你的聊天会保留。",
   "leg3EraBody": "Console 现在使用 Hermes 的 Dashboard。只需一步：在电脑上粘贴一行命令，然后扫描二维码。你的聊天会保留。",
   "leg3UpdatesExisting": "更新连接“{name}”：你的聊天会保留。",
   "dashboardSetupForgotPassword": "我不知道密码",
@@ -1783,9 +2244,7 @@
   "chaVoiceNeedsServerTitle": "设置语音服务器",
   "chaVoiceNeedsServerBody": "服务器端语音识别需要 Hermes-STT 服务器 URL（及 token），或当前服务器未响应。请在设置 › 语音中检查。",
   "chaVoiceAllowMic": "允许使用麦克风",
-  "chaQueuedCount": "已排队 · {count}",
   "chaQueuedNote": "本轮结束后将发送",
-  "chaQueuedPausedCount": "已暂停 · {count}",
   "chaQueueParkedNote": "停止后已暂停",
   "chaQueueResume": "恢复队列",
   "chaQueueEdit": "编辑",
@@ -1827,6 +2286,7 @@
   "chaBackgroundAwaitingResponse": "等待本次运行结束",
   "chaBackgroundDeferredByGoal": "持续目标处于活动状态，已暂缓",
   "chaBackgroundActionStop": "停止",
+  "chatRetouchProcessesStopAll": "全部停止",
   "chaBackgroundActionFailed": "Hermes 未确认该操作。",
   "chaStopStopping": "正在停止…",
   "chaStopRetrying": "正在重试停止…",
@@ -1856,12 +2316,26 @@
   "chaEmptyPrompt": "输入点什么，开始聊天",
   "chaCopyMessage": "复制消息",
   "chaEditMessage": "编辑消息",
-  "chaEditHint": "你希望 Hermes 改为回答什么？",
+  "mpnEditHint": "你希望 {name} 改为回答什么？",
+  "@mpnEditHint": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "chaEditCancel": "取消编辑",
   "chaEditSave": "保存并重新发送",
   "chaEditFailed": "无法编辑消息。原对话仍可查看。",
   "chaRegenerate": "重新生成回复",
-  "chaRegenerateWarning": "Hermes 将撤回上一条回复，并重新回答同一条消息。已执行的外部操作无法撤销。",
+  "mpnRegenerateWarning": "{name} 将撤回上一条回复，并重新回答同一条消息。已执行的外部操作无法撤销。",
+  "@mpnRegenerateWarning": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "chaRegenerateFailed": "无法重新生成回复。",
   "chaLoadImageFrom": "从 {domain} 加载图片",
   "chaStopReading": "停止朗读",
@@ -1880,7 +2354,6 @@
   "setRestartingBanner": "更新后正在重启 Gateway… 恢复后，应用会自动重新连接。",
   "setHermesAutoUpdateTitle": "自动更新组件",
   "setHermesAutoUpdateSub": "使用实例时检查 Hermes 更新。",
-  "notifListenerStartFailed": "无法启动后台监听。请重试。",
   "notifPermManualRoute": "仍未授予权限。如果 Android 不再显示权限对话框（此前已拒绝），请前往系统设置 › 应用 › Console › 通知，手动启用。",
   "voiceSherpaLiveLabel": "快速听写",
   "voiceSystemLabel": "Android 语音识别器",
@@ -2075,9 +2548,30 @@
   "voiceGuidePrivacyNote": "只有选择 Hermes 服务器时，音频才会传出手机。语音服务密钥存储在服务器上，而非手机上。",
   "cronJobIdInvalid": "定时任务标识符无效。",
   "cronProfileInvalid": "定时任务的配置文件无效。",
-  "interactiveClarifyTitle": "Hermes 需要进一步确认",
-  "interactiveSudoTitle": "Hermes 需要 sudo 授权",
-  "interactiveSecretTitle": "Hermes 需要机密信息",
+  "mpnClarifyTitle": "{name} 需要进一步确认",
+  "@mpnClarifyTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "mpnSudoTitle": "{name} 需要 sudo 授权",
+  "@mpnSudoTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "mpnSecretTitle": "{name} 需要机密信息",
+  "@mpnSecretTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "interactiveTerminalTitle": "终端请求",
   "interactiveAnswerHint": "输入你的回答",
   "interactivePasswordHint": "sudo 密码",
@@ -2085,6 +2579,7 @@
   "interactiveTerminalBody": "此应用没有托管终端，将返回空文本，不会读取手机上的文件或进程。",
   "interactiveSend": "发送",
   "interactiveCancel": "停止任务",
+  "interactiveSkip": "跳过",
   "interactiveRetry": "重试安全响应",
   "interactiveRespondFailed": "无法回复：{error}",
   "interactiveBatchProgress": "已回答 {answered}/{total}",
@@ -2102,51 +2597,8 @@
   "subagentInterruptNotFound": "Hermes 已找不到此运行中的子代理。其状态将根据服务器事件刷新。",
   "subagentInterruptFailed": "无法停止子代理。",
   "chaArtifactsAction": "产物",
-  "artifactTitle": "会话产物",
-  "artifactCount": "{count, plural, other{{count} 项}}",
-  "artifactEmptyTitle": "暂无产物",
-  "artifactEmptyBody": "此会话中的图片、文档和生成结果将显示在这里。",
-  "artifactImages": "图片",
-  "artifactFiles": "文件",
-  "artifactDocuments": "文档",
-  "artifactGenerated": "生成内容",
-  "artifactToolResults": "工具结果",
-  "artifactOther": "其他",
-  "artifactAvailable": "可用",
-  "artifactMissing": "不可用",
-  "artifactExpired": "已过期",
   "artifactUnknown": "状态未知",
-  "artifactJumpSource": "前往来源消息",
   "artifactSourceUnavailable": "在已加载的历史记录中找不到来源消息。",
-  "artifactJumpSemantics": "{name}。前往来源消息",
-  "artifactSourceOne": "来源：消息 {number}",
-  "artifactSourceMany": "来源：消息 {number} · {count} 处引用",
-  "generatedArtifactSection": "生成的产物",
-  "generatedArtifactKindCode": "代码",
-  "generatedArtifactKindHtml": "HTML 源代码",
-  "generatedArtifactKindSvg": "SVG 源代码",
-  "generatedArtifactVersionCount": "{count, plural, other{{count} 个版本}}",
-  "generatedArtifactOpenSemantics": "{name}。打开生成的产物",
-  "generatedArtifactSourceOnly": "为保障安全，Console 仅以源代码形式显示 HTML 和 SVG。绝不会执行它们，也不会在 WebView 中打开它们。",
-  "generatedArtifactSourceSemantics": "{title} 的源代码",
-  "generatedArtifactCharacterCount": "{count} 个字符",
-  "generatedArtifactPreviewTruncated": "预览仅显示 {limit} 个字符。复制、分享和保存仍使用完整版本。",
-  "generatedArtifactCopied": "已复制产物内容。",
-  "generatedArtifactSaved": "已保存为 {name}。",
-  "generatedArtifactExportTooLarge": "此产物超过 {mb} MB 的导出限制。",
-  "generatedArtifactExportFailed": "无法导出产物。",
-  "generatedArtifactVersionOf": "版本 {current}/{total}",
-  "generatedArtifactPreviousVersion": "上一版本",
-  "generatedArtifactNextVersion": "下一版本",
-  "generatedArtifactLatest": "最新",
-  "generatedArtifactMissing": "此生成的产物已不在当前会话的注册表中。",
-  "artifactDownloadSaved": "已保存产物。",
-  "artifactDownloadUnavailable": "此产物已不在服务器上。",
-  "artifactDownloadExpired": "此产物已过期。来源消息仍可查看。",
-  "artifactDownloadUnsupported": "此服务器未为此产物提供安全的托管下载路径。",
-  "artifactDownloadAccessDenied": "Hermes 拒绝访问此产物。请检查 Dashboard 会话。",
-  "artifactDownloadTooLarge": "此产物超过移动端 25 MB 的下载限制。",
-  "artifactDownloadFailed": "无法下载产物。",
   "desktopCenterServerPathRedacted": "[服务器路径]",
   "desktopCenterSecretRedacted": "[机密信息已隐藏]",
   "recoveryCenterTitle": "恢复",
@@ -2422,6 +2874,12 @@
   "dockToolsLabel": "工具",
   "dockCronLabel": "定时任务",
   "chaMentionSuggestions": "提及配置文件",
+  "chaMentionChipLabel": "提及 {name}",
+  "chaMentionChipYou": "提及你",
+  "chaMentionChipEveryone": "提及所有人",
+  "amcAgentChipLabel": "智能体 {name}",
+  "chaImageStackCaption": "{count} 张图片 · 点按打开",
+  "chaImageStackSemantics": "{count} 张图片，点按打开",
   "botSectionNew": "新建分组…",
   "botSectionRename": "重命名分组",
   "botSectionDelete": "删除分组",
@@ -2743,14 +3201,8 @@
   "dotsA11yWaiting": "等待你处理",
   "dotsA11yIdle": "空闲",
   "dotsA11yRoom": "{name}，房间，{detail}",
-  "notifBotModeListenerOn": "配置文件和房间可在此向你发送批准请求、@提及、轮次摘要和实时进度，你可以直接在通知中批准、拒绝、回复或停止。",
-  "notifBotModeListenerOff": "后台监听已关闭，因此配置文件和房间提醒以及主屏幕小组件仅在 Hermes 打开时更新。",
   "notifLiveUpdatesTitle": "实时更新",
   "notifLiveUpdatesSub": "在状态栏和锁屏上显示正在工作的配置文件和房间（Android 16+）",
-  "notifFixedCardTitle": "固定通知",
-  "notifFixedCardSub": "在 Android 中最小化“已连接到 Hermes”通知",
-  "notifKanbanDoneTitle": "任务完成时也通知",
-  "notifKanbanDoneSub": "未单独设置的任务默认使用此选项",
   "designShowAll": "显示全部",
   "designShowLess": "收起",
   "designCopied": "已复制",
@@ -2833,7 +3285,6 @@
   "subagentUiAllDone": "全部已完成",
   "subagentUiFailedCount": "{count} 个失败",
   "subagentUiListTitle": "子代理",
-  "subagentUiListSubtitle": "此聊天委派的工作",
   "subagentUiStop": "停止",
   "subagentUiOpenConversation": "打开对话",
   "subagentUiSectionNow": "正在做什么",
@@ -2864,6 +3315,8 @@
   "subagentUiLiveTruncated": "仅显示最新输出。",
   "subagentUiLiveTitle": "实时输出",
   "subagentUiLiveFollow": "跟随",
+  "subagentUiWaitingChild": "正在等待子代理…",
+  "subagentUiGoToEnd": "跳到末尾",
   "subagentUiGuideHint": "告诉它需要做哪些调整…",
   "subagentUiGuideSend": "发送指导",
   "subagentUiGuideQueued": "已发送 · 将在下一步应用",
@@ -2886,6 +3339,8 @@
   "subagentUiTranscriptTitle": "子代理对话",
   "subagentUiTranscriptTask": "任务",
   "subagentUiTranscriptEmpty": "此对话暂无消息。",
+  "subagentRecordParentOnly": "无法打开子代理的对话；以下是它完成时的报告。",
+  "subagentRecordUnavailable": "Hermes 没有保存这个子代理做了什么：没有可显示的对话或结果。",
   "subagentUiTranscriptError": "无法加载对话。",
   "subagentUiTranscriptReadOnly": "只读",
   "subagentUiRetry": "重试",
@@ -3202,6 +3657,9 @@
   "mp1215MemoryChip": "记忆",
   "mp1215ShowMore": "展开",
   "mp1215ShowLess": "收起",
+  "liveMemSaving": "正在保存到记忆",
+  "liveMemRemoving": "正在从记忆中移除",
+  "liveMemFailed": "无法保存",
   "pj1215ActionRejected": "Hermes 拒绝了此操作。请检查名称或分支后重试。",
   "pj1215ActiveNotice": "“{name}”现为当前项目",
   "pj1215AgoNow": "刚刚",
@@ -3383,8 +3841,6 @@
   "rr1215KeepAsIs": "暂不",
   "rr1215Resumed": "{name} 的会话已重新打开",
   "rr1215ResumeFailed": "无法恢复 {name}。请重试。",
-  "sa1215ContentAction": "文件和链接",
-  "sa1215ContentTitle": "文件和链接",
   "sa1215SearchHint": "按名称或链接搜索",
   "sa1215SearchClear": "清除搜索",
   "sa1215FilterAll": "全部",
@@ -3400,6 +3856,8 @@
   "sa1215OlderPending": "此聊天还有尚未加载的历史消息。",
   "sa1215LoadOlder": "加载更早消息",
   "sa1215LoadOlderFailed": "无法加载更早的消息",
+  "sa1215ReadFailed": "无法读取此对话",
+  "sa1215ReadPartial": "无法读取完整对话，以下是已读取的内容。",
   "sa1215OpenFailed": "无法打开 {name}",
   "sa1215NotReachable": "无法在手机上打开此文件。长按可复制其路径。",
   "sa1215AgentPreviews": "智能体预览",
@@ -3517,7 +3975,6 @@
   "tc1215FilesChanged": "{count, plural, other{{count} 个文件已更改}}",
   "au1215CronRunViewOnly": "未结束的定时运行 — 仅供查看",
   "au1215CronRunSendBlocked": "此次定时运行仅供查看 — 无法发送消息。",
-  "au1215BgNeededForAutomation": "仅在此选项开启时，才能收到 Cron 和看板通知。",
   "te1215TitleRateLimit": "已达使用上限",
   "te1215HintRateLimit": "请等待限制解除，或尝试其他模型。",
   "te1215TitleProviderBusy": "AI 服务繁忙",
@@ -3804,6 +4261,8 @@
   "cs1215PinnedPromptHide": "在此聊天中隐藏",
   "cs1215PinnedPromptSetting": "在顶部置顶你的提示词",
   "cs1215PinnedPromptSettingSubtitle": "在聊天顶部用一行显示你正在阅读的回复所对应的提示词。开启后，此前在聊天中隐藏的提示词也会重新显示。",
+  "fluidReasoningCollapsedTitle": "默认折叠推理过程",
+  "fluidReasoningCollapsedDesc": "保留流式推理内容，但在你打开前保持折叠。",
   "q90PinnedPromptHidden": "已在此聊天中隐藏",
   "q90PinnedPromptUndo": "撤销",
   "q90PinnedPromptShow": "显示你置顶的提示词",
@@ -3851,11 +4310,8 @@
   "sp1215LimitExtra": "额外用量：{used} / {limit} {currency}",
   "sp1215LimitLocal": "本地模型：无用量限制或费用。",
   "sp1215LimitNoData": "没有此提供商的用量上限数据。",
-  "chatNotchLabel": "会话设置与跳转",
-  "chatNotchGoTo": "跳转",
-  "chatNotchChats": "聊天",
+  "chatNotchLabel": "此对话的选项",
   "chatNotchNeedsYouElsewhere": "其他会话中有事项需要你处理",
-  "chatNotchSearchChats": "搜索聊天",
   "chatNotchFindInChat": "搜索此聊天",
   "chatNotchPreviousChat": "上一个聊天",
   "chatNotchNextChat": "下一个聊天",
@@ -3876,6 +4332,7 @@
   "islandEarlierFailed": "消息缺失",
   "fh1215TasksDoneFlash": "{count, plural, other{✓ {count} 个任务}}",
   "fh1215TasksCompleted": "已完成 {count} 个",
+  "liveTasksEarlierDone": "更早已完成 {count} 项",
   "fh1215TasksHideCompleted": "隐藏已完成任务",
   "ctToolPending": "{tool, select, browser_click{ 正在点击页面元素} browser_fill{ 正在填写表单字段} browser_navigate{ 正在打开页面} browser_snapshot{ 正在获取页面快照} browser_take_screenshot{ 正在截图} browser_type{ 正在页面上输入} clarify{ 正在提问} cronjob{ 正在安排定时任务} edit_file{ 正在编辑文件} execute_code{ 正在执行代码} image_generate{ 正在生成图像} list_files{ 正在列出文件} memory{ 正在保存到记忆} patch{ 正在修补文件} read_file{ 正在读取文件} search_files{ 正在搜索文件} session_search_recall{ 正在搜索会话历史} setup_choose{ 正在询问设置问题} start_chat{ 正在开始聊天} terminal{ 正在运行命令} todo{ 正在更新待办事项} vision_analyze{ 正在分析图像} web_extract{ 正在读取网页} web_search{ 正在搜索网络} write_file{ 正在写入文件} delegate_task{ 正在委派任务} process_manage{ 正在管理后台进程} skill_manage{ 正在更新技能} text_to_speech{ 正在生成语音} send_message{ 正在发送消息} computer_use{ 正在使用电脑} manage_connections{ 正在管理连接} manage_catalog{ 正在浏览目录} x_search{ 正在搜索 X} fact_store{ 正在使用已存储的事实} fact_feedback{ 正在评价事实} video_generate{ 正在生成视频} video_analyze{ 正在分析视频} xai_video_edit{ 正在编辑视频} xai_video_extend{ 正在延长视频} browser_scroll{ 正在滚动页面} browser_back{ 正在返回上一页} browser_press{ 正在按键} browser_get_images{ 正在列出页面图像} browser_vision{ 正在检查页面} browser_console{ 正在读取浏览器控制台} browser_cdp{ 正在运行浏览器命令} browser_dialog{ 正在回应页面对话框} browser_exec{ 正在使用浏览器} browser_vault_list{ 正在检查已保存的登录信息} browser_vault_unlock{ 正在解锁已保存的登录信息} browser_vault_fill{ 正在填写登录信息} browser_vault_save_login{ 正在保存登录信息} browser_vault_enter_code{ 正在输入验证码} kanban_show{ 正在读取任务} kanban_list{ 正在列出任务} kanban_create{ 正在创建任务} kanban_complete{ 正在完成任务} kanban_block{ 正在标记任务受阻} kanban_unblock{ 正在解除任务阻碍} kanban_request_review{ 正在请求审核} kanban_request_changes{ 正在请求修改} kanban_heartbeat{ 正在汇报进度} kanban_comment{ 正在评论任务} kanban_link{ 正在关联任务} kanban_attach{ 正在为任务添加文件附件} kanban_attach_url{ 正在为任务添加链接} kanban_attachments{ 正在列出任务附件} desktop_project{ 正在切换项目} desktop_preview{ 正在显示预览} drive_preview{ 正在使用预览} annotate_preview{ 正在标注预览} read_terminal{ 正在读取终端} close_terminal{ 正在关闭终端} read_window_below{ 正在检查后方窗口} focus_pane{ 正在显示面板} apply_layout{ 正在重新排列工作区} react_to_message{ 正在回应消息} gui_tour{ 正在开始导览} show_tip{ 正在显示提示} discord{ 正在使用 Discord} discord_admin{ 正在管理 Discord 服务器} feishu_doc_read{ 正在读取飞书文档} feishu_drive_list_comments{ 正在列出飞书评论} feishu_drive_list_comment_replies{ 正在列出飞书回复} feishu_drive_reply_comment{ 正在飞书上回复} feishu_drive_add_comment{ 正在飞书上评论} yb_query_group_info{ 正在读取元宝群组信息} yb_query_group_members{ 正在列出元宝成员} yb_send_dm{ 正在发送元宝消息} yb_search_sticker{ 正在搜索元宝表情包} yb_send_sticker{ 正在发送元宝表情包} other{}}",
   "ctToolAction": "{tool, select, browser_click{ 正在点击} browser_fill{ 正在填写} browser_navigate{ 正在打开} browser_snapshot{ 正在获取} browser_take_screenshot{ 正在截取} browser_type{ 正在输入} clarify{ 正在询问} cronjob{ 正在安排} edit_file{ 正在编辑} execute_code{ 正在执行} image_generate{ 正在生成} list_files{ 正在列出} memory{ 正在保存} patch{ 正在修补} read_file{ 正在读取} search_files{ 正在搜索} session_search_recall{ 正在搜索} setup_choose{ 正在询问} start_chat{ 正在开始} terminal{ 正在运行} todo{ 正在更新} vision_analyze{ 正在分析} web_extract{ 正在读取} web_search{ 正在搜索} write_file{ 正在写入} delegate_task{ 正在委派} process_manage{ 正在管理} skill_manage{ 正在更新} text_to_speech{ 正在生成} send_message{ 正在发送} computer_use{ 正在使用} manage_connections{ 正在管理} manage_catalog{ 正在浏览} x_search{ 正在搜索} fact_store{ 正在使用} fact_feedback{ 正在评价} video_generate{ 正在生成} video_analyze{ 正在分析} xai_video_edit{ 正在编辑} xai_video_extend{ 正在延长} browser_scroll{ 正在滚动} browser_back{ 正在返回} browser_press{ 正在按下} browser_get_images{ 正在列出} browser_vision{ 正在检查} browser_console{ 正在读取} browser_cdp{ 正在运行} browser_dialog{ 正在回应} browser_exec{ 正在使用} browser_vault_list{ 正在检查} browser_vault_unlock{ 正在解锁} browser_vault_fill{ 正在填写} browser_vault_save_login{ 正在保存} browser_vault_enter_code{ 正在输入} kanban_show{ 正在读取} kanban_list{ 正在列出} kanban_create{ 正在创建} kanban_complete{ 正在完成} kanban_block{ 正在标记受阻} kanban_unblock{ 正在解除阻碍} kanban_request_review{ 正在请求} kanban_request_changes{ 正在请求} kanban_heartbeat{ 正在汇报} kanban_comment{ 正在评论} kanban_link{ 正在关联} kanban_attach{ 正在添加附件} kanban_attach_url{ 正在添加链接} kanban_attachments{ 正在列出} desktop_project{ 正在切换} desktop_preview{ 正在显示} drive_preview{ 正在使用} annotate_preview{ 正在标注} read_terminal{ 正在读取} close_terminal{ 正在关闭} read_window_below{ 正在检查} focus_pane{ 正在显示} apply_layout{ 正在重新排列} react_to_message{ 正在回应} gui_tour{ 正在开始} show_tip{ 正在显示} discord{ 正在使用} discord_admin{ 正在管理} feishu_doc_read{ 正在读取} feishu_drive_list_comments{ 正在列出} feishu_drive_list_comment_replies{ 正在列出} feishu_drive_reply_comment{ 正在回复} feishu_drive_add_comment{ 正在评论} yb_query_group_info{ 正在读取} yb_query_group_members{ 正在列出} yb_send_dm{ 正在发送} yb_search_sticker{ 正在搜索} yb_send_sticker{ 正在发送} other{}}",
@@ -3982,6 +4439,8 @@
   "thTaglineGruvboxLight": "复古暖色 · 浅色",
   "thTaglineSageGarden": "柔和鼠尾草绿 · 静谧温室",
   "thTaglineSageGardenLight": "浅鼠尾草绿 · 日间温室",
+  "presetIndigoTagline": "午夜靛蓝 · 玻璃",
+  "presetIndigoLightTagline": "薰衣草薄雾 · 玻璃",
   "thTaglineNous": "GitHub 界面 · Nous 蓝",
   "thTaglineNousDark": "GitHub 深色 · Nous 蓝",
   "thTaglineGithub": "GitHub 默认浅色",
@@ -4245,8 +4704,8 @@
   "gt1215ChatHeaderBody": "查看你正在与谁聊天，以及它正在做什么。点按查看活动详情。",
   "gt1215ChatComposerTitle": "在这里输入",
   "gt1215ChatComposerBody": "键入或语音输入。使用 + 添加文件和照片。",
-  "gt1215ChatNotchTitle": "聊天标签",
-  "gt1215ChatNotchBody": "点按可搜索或调整此对话。向上拖动可前往其他页面。",
+  "gt1215ChatNotchTitle": "聊天设置",
+  "gt1215ChatNotchBody": "点按可搜索此对话、开始新对话或调整此对话。面板就在旁边的“视图”中。",
   "gt1215ChatStatusTitle": "上下文、模型和权限",
   "gt1215ChatStatusBody": "查看上下文用量、回复所用的模型，以及它可以执行的操作。点按各部分查看详情。",
   "gt1215BotsPinnedTitle": "置顶",
@@ -4368,7 +4827,6 @@
   "mascotNoticeGo": "前往",
   "mascotSuggestNotifications": "通知已关闭",
   "mascotSuggestTurnOn": "开启",
-  "mascotSuggestBackground": "即使应用已关闭，我也能在定时任务结束时通知你",
   "mascotSuggestOpenSettings": "打开设置",
   "connStatusNoNetwork": "无网络",
   "connStatusAuthRequired": "需要登录",
@@ -6433,6 +6891,10 @@
   "@i18n131ChatRecoveryFailed": {
     "description": "i18n131: Phase 3B translated; chat."
   },
+  "i18n140ChatEndedWithoutReply": "Hermes 结束了这一轮，但没有回复。",
+  "@i18n140ChatEndedWithoutReply": {
+    "description": "dp140: Notice when Hermes reports the turn over and no reply arrived (Desktop store/session-no-reply.ts NO_REPLY_ERROR)."
+  },
   "i18n131ChatFailureCause": "无法完成回复：{cause}",
   "@i18n131ChatFailureCause": {
     "description": "i18n131: Phase 3B translated; chat.",
@@ -6651,10 +7113,6 @@
       }
     }
   },
-  "i18n131P6Document": "文档",
-  "i18n131P6GeneratedArtifact": "生成的产物",
-  "i18n131P6ToolResult": "工具结果",
-  "i18n131P6Artifact": "产物",
   "i18n131P6WhisperLocal": "本地Whisper",
   "i18n131P6PetDimensions": "尺寸不符合要求（{actual}）：必须是{expected}的倍数。",
   "@i18n131P6PetDimensions": {
@@ -6675,5 +7133,2367 @@
         "type": "String"
       }
     }
-  }
+  },
+  "sshExpandTerminal": "放大终端",
+  "sshShrinkTerminal": "缩小终端",
+  "sshKeyArrowUp": "上箭头",
+  "sshKeyArrowDown": "下箭头",
+  "sshKeyArrowLeft": "左箭头",
+  "sshKeyArrowRight": "右箭头",
+  "sshSessionKind": "会话类型",
+  "sshSessionKindShell": "普通 Shell",
+  "sshSessionKindHint": "即使连接中断，Herdr 和 tmux 也会让服务器上的进程继续运行，恢复后应用会重新接入会话。",
+  "sshProgramMissing": "此服务器未安装 {program}。应用不会自行安装任何东西。",
+  "sshProgramInstallWith": "如需安装，请在服务器上运行：",
+  "sshProgramInstallOnServer": "请在服务器上安装。说明：",
+  "sshUsePlainShell": "继续使用普通 Shell",
+  "sshCopied": "已复制",
+  "sshReconnecting": "正在重新连接…",
+  "sshReconnectedFreshShell": "已重新连接到新的 Shell：之前的进程已丢失。",
+  "sshReconnectedReattached": "已重新连接：已重新接入会话。",
+  "sshOffline": "离线",
+  "sshHostKeyNeedsReview": "需要核对服务器密钥：请手动重新连接。",
+  "sshKeyInterrupt": "Ctrl+C，中断",
+  "sshKeyEndOfInput": "Control D，结束输入",
+  "sshKeyPipe": "竖线",
+  "sshKeyTilde": "波浪号",
+  "sshProtocolLabel": "SSH",
+  "herdrPanelTooltip": "Herdr：工作区和智能体",
+  "herdrStatusWorking": "工作中",
+  "herdrStatusBlocked": "需要你处理",
+  "herdrStatusIdle": "等待你的下一条指令",
+  "herdrStatusDone": "已完成",
+  "herdrStatusUnknown": "状态未知",
+  "herdrShell": "Shell",
+  "herdrNoAgent": "此窗格中未检测到智能体",
+  "herdrKeepsAgentsAlive": "即使关闭应用，Herdr 也会让智能体继续运行。",
+  "herdrServerNotRunning": "Herdr 服务器未运行。",
+  "herdrUnreachable": "无法读取 Herdr 的状态。",
+  "herdrEmpty": "Herdr 没有打开的工作区。",
+  "herdrNeedsYouCount": "需要你处理的智能体：{count}",
+  "cwsWorkspace": "工作区",
+  "cwsFiles": "文件",
+  "cwsCollapsePanel": "收起面板",
+  "cwsExpandWorkspace": "最大化",
+  "cwsRestoreSplit": "返回分屏视图",
+  "cwsCloseTab": "关闭标签页",
+  "cwsMore": "更多",
+  "cwsLayoutChat": "仅聊天",
+  "cwsLayoutSplit": "分屏",
+  "cwsLayoutWorkspace": "仅工作区",
+  "cwsOpenTab": "打开标签页",
+  "cwsShowChat": "显示聊天",
+  "cwsDivider": "聊天与工作区之间的分隔条",
+  "cwsHideTools": "隐藏工具",
+  "cwsShowTools": "显示工具",
+  "cwsTerminalKeys": "键盘",
+  "cwsViews": "视图",
+  "cwsViewList": "聊天列表",
+  "cwsViewChat": "聊天",
+  "cwsViewWorkspace": "工作面板",
+  "cwsViewsHintTwo": "此屏幕同时只能显示两个视图：打开工作面板时，列表会自动收起。只有在工作面板打开时才能隐藏聊天。",
+  "cwsViewsState": "视图：{views}",
+  "cwsOpenList": "打开聊天列表",
+  "cwsCloseList": "关闭聊天列表",
+  "cwsOpenWorkspace": "打开工作面板",
+  "cwsLayoutWork": "工作",
+  "chaControlPanels": "面板",
+  "chaControlPanelOpen": "显示中",
+  "cwsPanelExpanded": "{panel}已放大",
+  "cwsPanelRestored": "{panel}已还原",
+  "cwsCloseWorkspace": "关闭工作面板",
+  "cwsPickPanel": "选择面板",
+  "cwsViewsHintNoPanel": "打开一个面板即可分屏。",
+  "cwsViewsHintStacked": "竖屏时聊天占满屏幕：列表在其上方打开，工作面板的每个标签页以全屏打开。",
+  "cwsChatShare": "聊天占 {percent}%",
+  "voz132VoiceProviderError": "语音提供商返回：{detail}",
+  "@voz132VoiceProviderError": {
+    "description": "voz132: client-direct voice consent and provider error (voice lane).",
+    "placeholders": {
+      "detail": {
+        "type": "String"
+      }
+    }
+  },
+  "voz132DirectConsentTitle": "直接连接语音提供商",
+  "@voz132DirectConsentTitle": {
+    "description": "voz132: client-direct voice consent and provider error (voice lane)."
+  },
+  "voz132DirectConsentBody": "你的 Hermes 服务器允许直接语音。启用后，此手机会将你录制的音频和回复文本直接发送到此配置文件设置的语音提供商（例如 OpenAI、ElevenLabs 或 Groq），而不经过你的服务器。为此，服务器会把该提供商的密钥交给手机；密钥只保存在内存中，不会写入手机存储。这些数据如何处理取决于提供商的条款。如果不同意，语音仍会像现在一样经过你的服务器。",
+  "@voz132DirectConsentBody": {
+    "description": "voz132: client-direct voice consent and provider error (voice lane)."
+  },
+  "voz132DirectConsentAccept": "使用直接语音",
+  "@voz132DirectConsentAccept": {
+    "description": "voz132: client-direct voice consent and provider error (voice lane)."
+  },
+  "voz132DirectConsentAcceptSub": "音频和文本从手机发送到配置文件的提供商。",
+  "@voz132DirectConsentAcceptSub": {
+    "description": "voz132: client-direct voice consent and provider error (voice lane)."
+  },
+  "voz132DirectConsentDecline": "继续通过我的服务器",
+  "@voz132DirectConsentDecline": {
+    "description": "voz132: client-direct voice consent and provider error (voice lane)."
+  },
+  "voz132DirectConsentDeclineSub": "语音像现在一样经过你的 Hermes 服务器。",
+  "@voz132DirectConsentDeclineSub": {
+    "description": "voz132: client-direct voice consent and provider error (voice lane)."
+  },
+  "voz132SayStopToEnd": "说“{phrase}”即可结束语音对话。",
+  "@voz132SayStopToEnd": {
+    "description": "voz132: notice when a voice conversation starts; names the first voice.stop_phrases entry (voice lane).",
+    "placeholders": {
+      "phrase": {
+        "type": "String"
+      }
+    }
+  },
+  "sshHostKeyRejected": "服务器密钥不受信任：未连接。",
+  "sshPermissionDenied": "权限被拒绝。",
+  "sshNoSuchFile": "不存在（已删除或移动）。",
+  "sshHubLoadError": "无法读取 SSH 设置。",
+  "sftpTryAgain": "重试",
+  "sftpUnreadableTitle": "无法读取",
+  "sftpUnreadableBody": "无法读取此文件夹（{error}）",
+  "sftpEmptyTitle": "空文件夹",
+  "sftpEmptyBody": "此文件夹为空。",
+  "sftpPreviewLoading": "正在加载预览",
+  "sftpPreviewUnavailable": "预览不可用",
+  "sftpPreviewBinaryTitle": "这似乎是二进制文件",
+  "sftpPreviewBinaryBody": "预览 {label} 可能显示无法阅读的文本。",
+  "sftpPreviewLargeTitle": "此文件较大",
+  "sftpPreviewLargeBody": "{label} 大小为 {size}。Hermes 只显示前 512 KB。",
+  "sftpPreviewAnyway": "仍然预览",
+  "sftpPreviewTruncated": "正在显示前 512 KB。",
+  "sftpDlShow": "查看",
+  "saveSaved": "已保存：{name}",
+  "saveAnotherCopy": "另存一份副本…",
+  "saveReadyBody": "点按即可打开、分享或另存一份副本。",
+  "saveNoSpace": "该位置空间不足，无法保存。",
+  "savePermission": "应用已无权写入该位置。请重新选择保存位置。",
+  "saveUnsupported": "该位置不接受文件。请选择其他位置。",
+  "saveCancelled": "已取消保存。",
+  "saveSourceMissing": "要保存的文件已不存在。",
+  "saveNetwork": "下载时与服务器的连接中断。",
+  "savePickerNotShown": "Android 没有打开“另存为”对话框。请重试。",
+  "saveTimeout": "保存时 Android 未能及时响应。",
+  "saveUnavailable": "此版本的应用无法保存到手机。",
+  "saveFailed": "无法保存：Android 返回了意外错误。",
+  "sftpShareTooLarge": "“{name}”大小为 {size}，太大，无法不保存直接分享。请使用下载。",
+  "sftpShareLargeTitle": "大文件",
+  "sftpShareLargeBody": "“{name}”大小为 {size}。分享时会临时完整复制到手机，离开时删除。",
+  "sftpSharePreparing": "正在准备分享“{name}”…",
+  "artThumbLoading": "正在加载预览",
+  "artKindLink": "链接",
+  "artCopyPath": "复制路径",
+  "artCopyUrl": "复制 URL",
+  "artSectionCount": "{label} · {count}",
+  "artItemSemantics": "{kind}：{name}",
+  "artItemSemanticsAt": "{kind}：{name}，位于 {location}",
+  "artTypePdf": "PDF",
+  "artTypeDocument": "文档",
+  "artTypeSpreadsheet": "电子表格",
+  "artTypePresentation": "演示文稿",
+  "artTypeArchive": "压缩包",
+  "artTypeApp": "Android 应用",
+  "artTypeAudio": "音频",
+  "artTypeVideo": "视频",
+  "artTypeText": "文本",
+  "artTypeData": "数据",
+  "artTypeCode": "代码",
+  "artTypeOther": "其他文件",
+  "artChat": "聊天",
+  "artOpenChat": "打开对话 {title}",
+  "brwBackToArtifacts": "返回产物",
+  "artGlobalDetail": "浏览生成的输出",
+  "artGlobalSearchHint": "搜索产物…",
+  "artGlobalRefresh": "刷新产物",
+  "artGlobalIndexing": "正在索引最近会话的产物",
+  "artGlobalProgress": "正在读取对话 {current}/{total}",
+  "artGlobalEmptyTitle": "未找到产物",
+  "artGlobalEmptyBody": "当会话生成图片和文件输出时，它们会显示在这里。",
+  "artGlobalFailed": "产物加载失败",
+  "artGlobalSkipped": "索引产物时跳过了 {total} 个最近对话中的 {skipped} 个。",
+  "artGlobalSkippedTooLarge": "{count} 个超过了安全加载上限。",
+  "artGlobalTruncated": "{count} 个对话只读取了部分内容（过长或条目过多）。",
+  "artGlobalCapped": "仅显示最近的 3000 个产物。",
+  "artGlobalScope": "来自最近 {total} 个对话中的 {indexed} 个。为节省流量和电量，每次读取 10 个。",
+  "artGlobalLoadMore": "再读取 {count} 个对话",
+  "artGlobalBudget": "为避免在未提示的情况下消耗流量，本批在读取 32 MB 对话后停止，最后一个对话只读取了部分内容。“再读取”会继续读取后面的对话。",
+  "artThumbRemote": "远程图片不可用",
+  "artThumbInsecure": "未加密的 http 图片",
+  "artThumbNoFolder": "路径缺少文件夹",
+  "artThumbNotFound": "不在服务器上",
+  "artThumbTooLarge": "太大",
+  "artThumbDenied": "Hermes 不允许读取",
+  "artThumbRetry": "重试",
+  "artOpenFailedBecause": "无法打开 {name}。{reason}",
+  "vltSettingsTitle": "密码与登录",
+  "vltSettingsSubtitle": "智能体代你登录时使用的信息",
+  "vltBlurb": "说一句“登录 GitHub”，智能体就会代你登录。第一次遇到登录页时它会当场向你要登录信息，之后就自动完成。密码加密保存在 Hermes 服务器上并直接填入页面，模型永远看不到。",
+  "vltCount": "已保存 {count} 项",
+  "vltLoadFailed": "无法加载已保存的项目。",
+  "vltUnavailable": "无法连接到 Hermes。",
+  "vltUnsupported": "此 Hermes 服务器没有密码与登录功能。更新 Hermes 后即可在此管理。",
+  "vltReadOnly": "只读连接：你可以查看列表，但无法更改。",
+  "vltEmpty": "尚未保存任何内容",
+  "vltEmptyDesc": "这里不必手动添加。让智能体登录某个网站时，它会当场向你询问一次登录信息。若想提前录入，可点“添加”。",
+  "vltAddTitle": "添加登录信息、银行卡或地址",
+  "vltAddDescription": "加密保存在 Hermes 服务器上。智能体永远看不到密码。",
+  "vltAdded": "已保存。",
+  "vltSaving": "保存中…",
+  "vltKindField": "类型",
+  "vltKindLogin": "登录",
+  "vltKindPayment": "支付卡",
+  "vltKindAddress": "地址",
+  "vltLabelField": "标签",
+  "vltLabelHint": "例如：GitHub 工作账号",
+  "vltLabelRequired": "标签为必填项。",
+  "vltOriginField": "站点来源",
+  "vltOriginInvalid": "请输入有效的 URL，例如 https://example.com。",
+  "vltIdTypeField": "标识符类型",
+  "vltIdEmail": "邮箱",
+  "vltIdPhone": "电话",
+  "vltIdUsername": "用户名",
+  "vltIdentifierField": "标识符",
+  "vltLoginFieldsRequired": "标识符和密码为必填项。",
+  "vltCardNumber": "卡号",
+  "vltCardNameOptional": "持卡人姓名（可选）",
+  "vltExpMonth": "到期月份",
+  "vltExpYear": "到期年份",
+  "vltCvc": "CVC",
+  "vltPostal": "邮政编码",
+  "vltPostalOptional": "邮政编码（可选）",
+  "vltPaymentFieldsRequired": "卡号、到期月份和年份以及 CVC 为必填项。",
+  "vltLine1": "地址第 1 行",
+  "vltLine2Optional": "地址第 2 行（可选）",
+  "vltCity": "城市",
+  "vltStateOptional": "省 / 州（可选）",
+  "vltCountry": "国家/地区",
+  "vltAddressFieldsRequired": "地址第 1 行、城市、邮政编码和国家/地区为必填项。",
+  "vltCreatedOn": "添加于 {date}",
+  "vltOtpFieldOptional": "验证器密钥（可选）",
+  "vltOtpHint": "启用两步验证时网站显示的“设置密钥”。保存后 Hermes 会自动生成验证码。",
+  "vltOtpPlaceholder": "Base32 密钥或 otpauth:// 链接",
+  "vltOtpInvalid": "密钥必须是 Base32 密钥或 otpauth://totp 链接。",
+  "vltTwoFactorBadge": "自动 2FA",
+  "vltDeleteTitle": "移除此项？",
+  "vltDeleteBody": "“{label}”将被移除。此操作无法撤销。",
+  "vltDeleteConfirm": "移除",
+  "vltSaveFailed": "Hermes 无法保存。请检查填写的信息。",
+  "vltRemoveFailed": "无法移除。",
+  "vltSourcesTitle": "密码管理器",
+  "vltSourcesBlurb": "服务器上安装的密码管理器会被自动识别。智能体第一次需要其中的登录信息时会请你解锁（每个会话一次）；内存中只保留会话令牌，智能体永远看不到你的主密码或任何登录信息。",
+  "vltSourceToggleFailed": "无法更新密码管理器。",
+  "vltSourceNotInstalled": "未检测到。在服务器上安装 {name} 命令行工具并登录后，Hermes 会自动识别。",
+  "vltSourceDisabled": "已检测到，但已为 Hermes 关闭。",
+  "vltSourceLockedDesc": "已检测到。智能体需要登录信息时会请你解锁，也可立即解锁。",
+  "vltSourceUnlockedDesc": "本会话已解锁。闲置 30 分钟或 Hermes 关闭后会自动锁定。",
+  "vltStatusLocked": "已锁定",
+  "vltStatusNotDetected": "未检测到",
+  "vltStatusOff": "已关闭",
+  "vltStatusUnlocked": "已解锁",
+  "vltUnlock": "解锁",
+  "vltUnlocking": "解锁中…",
+  "vltLock": "锁定",
+  "vltUnlocked": "{name} 已在本会话中解锁。",
+  "vltUnlockTitle": "解锁 {name}",
+  "vltUnlockBody": "输入主密码。它会交给服务器上的密码管理器后立即丢弃，不会被存储、记录或展示给智能体。",
+  "vltMasterPassword": "主密码",
+  "vltUnlockFailed": "无法解锁。请检查主密码。",
+  "vltProfile": "配置文件：{profile}",
+  "vltSourcesUnavailable": "此 Hermes 服务器不提供密码管理器信息。",
+  "mvDetails": "详情",
+  "mvLocation": "位置",
+  "mvConversation": "对话",
+  "mvDate": "日期",
+  "mvPosition": "第 {index} 个，共 {count} 个",
+  "mvGoTo": "{name}，第 {index} 个，共 {count} 个",
+  "mvZoomIn": "放大",
+  "mvZoomOut": "缩小",
+  "mvZoomReset": "重置缩放（{percent}）",
+  "mvPlay": "播放",
+  "mvView": "在应用中查看",
+  "mvActionFailed": "无法完成此操作",
+  "mvDimensions": "{width} × {height} 像素",
+  "mvKindNumbered": "{kind} {index}",
+  "voiceNoAudioHeard": "什么也听不到。麦克风是否连接到了车载设备或耳机？",
+  "@voiceNoAudioHeard": {
+    "description": "Voice: the take had nothing in it (too short or no energy), so it was not sent (backlog 1.4.x item 7)."
+  },
+  "voiceMicrophonePhoneTitle": "始终使用手机麦克风",
+  "@voiceMicrophonePhoneTitle": {
+    "description": "Voice settings: record from the phone's own microphone instead of a car kit or Bluetooth headset (backlog 1.4.x item 7)."
+  },
+  "voiceMicrophonePhoneSubtitle": "即使连接了车载设备或蓝牙耳机也使用。关闭时由 Android 选择。",
+  "@voiceMicrophonePhoneSubtitle": {
+    "description": "Voice settings: explains the phone-microphone switch; off means automatic."
+  },
+  "artThumbUnsupported": "不支持的路径或链接",
+  "artThumbUnreachable": "无法连接到 Hermes",
+  "artThumbTimedOut": "耗时过长",
+  "artThumbNotImage": "该文件不是图片",
+  "artThumbUndecodable": "无法打开图片",
+  "artThumbDownloadFailed": "下载失败",
+  "artThumbSvg": "SVG 无法在应用内预览",
+  "artGlobalSkippedTimedOut": "{count} 个耗时过长。",
+  "vltSaveUnsure": "Hermes 没有响应。可能已经保存：重试前请先查看列表。",
+  "vltRemoveItem": "移除“{label}”",
+  "tk140ThoughtBrief": "简短思考",
+  "tk140ThinkingFor": "正在思考，{seconds} 秒",
+  "tk140ThoughtFor": "思考，{seconds} 秒",
+  "tk140ToolsCount": "{count} 个工具",
+  "tk140WorkedFor": "工作了 {duration}",
+  "tk140SecondsSpoken": "{seconds} 秒",
+  "q9TurnVerbsWork": "处理中…|在做了…|计算中…|捣鼓中…|酝酿中…|埋头苦干…|接线中…|推进中…|专注中…|全力以赴…",
+  "q9TurnVerbsThink": "思考中…|阅读中…|复查中…|琢磨中…|串联线索…|估量中…|追踪中…|沉思中…|谋划中…|嗯…",
+  "q9ComposerQueueHint": "加入队列…",
+  "q9TurnMoreSteps": "+{count} 步",
+  "@q9TurnMoreSteps": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "q9TurnOutcomeFailed": "错误",
+  "q9TurnOutcomeRecovered": "重试后完成",
+  "constellationTitle": "你的星座",
+  "constellationLoading": "正在加载记忆…",
+  "constellationEmpty": "暂无可显示的内容",
+  "constellationHint": "记忆星座。拖动旋转，点按节点查看名称。",
+  "constellationRecenter": "居中",
+  "constellationKindMemory": "记忆",
+  "constellationKindSkill": "技能",
+  "constellationKindOther": "其他",
+  "cacheTitle": "缓存",
+  "cacheSubtitle": "保存在此手机上的聊天和消息",
+  "cacheOnDevice": "缓存在此设备上",
+  "cacheChatList": "聊天列表",
+  "cacheChatListDesc": "标题、预览和日期，让列表在服务器响应之前就已显示。",
+  "cacheMessages": "消息",
+  "cacheMessagesDesc": "每个聊天的最新消息，让聊天即刻打开。",
+  "cacheOffNote": "关闭其中一项会删除已为其保存的内容。服务器上不会删除任何内容。",
+  "cacheLimitSection": "上限",
+  "cacheLimitLabel": "最多保存 {count} 个聊天",
+  "@cacheLimitLabel": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "cacheLimitHint": "聊天越多占用空间越大，打开应用时加载也稍慢。",
+  "cacheUsage": "用量",
+  "cacheOnThisDevice": "此设备",
+  "cacheClear": "清除缓存",
+  "cacheCleared": "缓存已清除",
+  "modelsBotFrequentTitle": "常用",
+  "modelsBotFreeOnly": "仅免费",
+  "modelsBotFreeOnlyEmpty": "此列表中没有免费模型。",
+  "modelsBotInheritMain": "继承主模型",
+  "modelsBotInheritMainHint": "使用主槽位的模型",
+  "modelsBotAutoMainSlot": "自动使用主槽位的模型",
+  "modelsBotCreateUnconfirmed": "创建未得到确认。请先查看机器人列表，再创建新的。",
+  "modelsBotSwitchTitle": "要在此对话中切换模型吗？",
+  "modelsBotSwitchBody": "此对话已经很长。{model} 将从下一条消息开始回答，并需要重新阅读全部上下文，因此该回合可能更慢、费用更高。",
+  "@modelsBotSwitchBody": {
+    "placeholders": {
+      "model": {
+        "type": "String"
+      }
+    }
+  },
+  "modelPickerCurrent": "当前",
+  "modelPickerAllModels": "所有模型",
+  "modelPickerLevelNone": "关闭",
+  "modelPickerLevelMinimal": "极低",
+  "modelPickerLevelXhigh": "很高",
+  "modelPickerLevelMax": "最高",
+  "modelPickerLevelUltra": "极致",
+  "modelPickerLevelDefault": "默认",
+  "modelPickerImpactOff": "不推理：回复更快、成本更低。",
+  "modelPickerImpactLight": "简短思考：回复较快，成本较低。",
+  "modelPickerImpactBalanced": "在速度、质量与成本之间取得平衡。",
+  "modelPickerImpactDeep": "深入思考：更慢、更贵。",
+  "modelPickerImpactDefault": "模型使用其通常的级别。",
+  "stepsBarCommands": "{count, plural, other{执行了 {count} 条命令}}",
+  "stepsBarEdits": "{count, plural, other{编辑了 {count} 个文件}}",
+  "stepsBarReads": "{count, plural, other{读取了 {count} 个文件}}",
+  "stepsBarSearches": "{count, plural, other{搜索了 {count} 次网页}}",
+  "stepsBarPages": "{count, plural, other{读取了 {count} 个网页}}",
+  "stepsBarOther": "{count, plural, other{进行了 {count} 次其他调用}}",
+  "stepsBarListPair": "{a}、{b}",
+  "stepsBarListLast": "{head}、{last}",
+  "stepsBarListSeparator": "、",
+  "stepsBarStatusRunning": "进行中",
+  "stepsBarStatusFailed": "失败",
+  "stepsBarStatusDone": "已完成",
+  "stepsBarShowCalls": "显示此步骤的每次调用",
+  "stepsBarHideCalls": "隐藏此步骤的调用",
+  "stepsBarWorkedShow": "显示本轮的步骤",
+  "stepsBarWorkedHide": "隐藏本轮的步骤",
+  "stepsBarWord1": "琢磨中",
+  "stepsBarWord2": "检查中",
+  "stepsBarWord3": "探索中",
+  "stepsBarWord4": "整理中",
+  "stepsBarWord5": "尝试中",
+  "stepsBarWord6": "打磨中",
+  "kanbanSkinSettingTitle": "新的看板设计",
+  "kanbanSkinSettingSubtitle": "按状态分列、带实时计时器的卡片以及批量操作。关闭后可返回之前的设计。",
+  "kanbanSkinHelpTriage": "等待明确规格说明的想法",
+  "kanbanSkinHelpTodo": "尚未准备好的待办工作",
+  "kanbanSkinHelpScheduled": "保留到指定时间",
+  "kanbanSkinHelpReady": "已为调度器准备好的工作",
+  "kanbanSkinHelpRunning": "代理正在执行",
+  "kanbanSkinHelpBlocked": "已停止：需要决定或帮助",
+  "kanbanSkinHelpReview": "已完成，等待决定",
+  "kanbanSkinHelpDone": "已完成并保存以供参考",
+  "kanbanSkinHelpArchived": "已从活动看板移除",
+  "kanbanSkinCount": "{count, plural, =0{没有任务} other{{count} 个任务}}",
+  "kanbanSkinSelect": "选择任务",
+  "kanbanSkinSelectExit": "退出选择",
+  "kanbanSkinSelected": "{count, plural, other{已选择 {count} 个}}",
+  "kanbanSkinBulkAssign": "重新分配",
+  "kanbanSkinBulkDelete": "删除",
+  "kanbanSkinBulkArchiveTitle": "归档任务",
+  "kanbanSkinBulkArchiveConfirm": "{count, plural, other{将归档 {count} 个任务。}}它们会离开活动看板，但仍保留在服务器上。",
+  "kanbanSkinBulkDeleteTitle": "删除任务",
+  "kanbanSkinBulkDeleteConfirm": "{count, plural, other{将从服务器永久删除 {count} 个任务。}}此操作无法撤销。",
+  "kanbanSkinBulkDone": "{count, plural, other{已更新 {count} 个任务}}",
+  "kanbanSkinBulkDeleteFailed": "{count, plural, other{无法删除 {count} 个任务}}",
+  "kanbanSkinColumnEmpty": "此列中没有任务",
+  "kanbanSkinLinksCount": "{count, plural, other{{count} 个链接}}",
+  "kanbanSkinSettingsUnavailable": "此服务器不提供编排设置",
+  "motionCursorTitle": "回复光标",
+  "motionCursorCaption": "回复到达时在文字下方显示光标，绝不会延迟文字显示。",
+  "motionCursorOff": "无光标",
+  "motionCursorLine": "竖线",
+  "motionCursorBlock": "方块",
+  "motionCursorUnderscore": "下划线",
+  "motionTreeExpand": "展开文件夹",
+  "motionTreeCollapse": "折叠文件夹",
+  "memShareEditNode": "编辑",
+  "memShareTitle": "查看已分享的内容",
+  "memShareIntro": "这是分享给应用的内容。请移除不想发送的部分，并选择发送位置。",
+  "memShareRemove": "移除",
+  "memShareTextChars": "文本，{count} 个字符",
+  "@memShareTextChars": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "memShareNothingLeft": "没有可发送的内容。请放弃本次分享。",
+  "memShareDestination": "目标",
+  "memShareDiscard": "放弃",
+  "memShareContinue": "继续",
+  "memShareVerdict": "扫描器结论：{verdict}",
+  "@memShareVerdict": {
+    "placeholders": {
+      "verdict": {
+        "type": "String"
+      }
+    }
+  },
+  "memShareVerdictSafe": "安全",
+  "memShareVerdictCaution": "需谨慎",
+  "memShareVerdictDangerous": "危险",
+  "scanDocMenuLabel": "扫描文档",
+  "scanDocTitle": "扫描文档",
+  "scanDocStartHint": "拍摄文档或选择一张图片。所有处理都在本设备上完成,不会上传任何内容。",
+  "scanDocTakePhoto": "拍照",
+  "scanDocFromGallery": "从相册选择",
+  "scanDocCropHint": "将每个角拖到文档边缘。",
+  "scanDocCropReset": "重置",
+  "scanDocCropContinue": "裁剪",
+  "scanDocCropInvalid": "四个角无法构成有效的四边形,请重新调整。",
+  "scanDocCropArea": "文档区域",
+  "scanDocCorner": "第 {n} 个角(共 4 个)",
+  "scanDocFilterOriginal": "原图",
+  "scanDocFilterGray": "灰度",
+  "scanDocFilterContrast": "对比度",
+  "scanDocFilterBw": "黑白",
+  "scanDocRotate": "旋转",
+  "scanDocDeletePage": "删除页面",
+  "scanDocAddPage": "添加页面",
+  "scanDocPageOf": "第 {n} 页,共 {total} 页",
+  "scanDocAttachImages": "作为图片附加",
+  "scanDocAttachPdf": "作为 PDF 附加",
+  "scanDocProcessing": "处理中…",
+  "scanDocError": "无法处理该图片。",
+  "scanDocPageLimit": "已达到 {max} 页的上限。",
+  "latexFormulaLabel": "公式：{source}",
+  "galleryTitle": "图库",
+  "galleryAction": "图片库",
+  "galleryEmptyTitle": "暂无图片",
+  "galleryEmptyBody": "对话中生成或收到的图片会显示在这里。",
+  "galleryFilterAll": "所有对话",
+  "galleryFilterTitle": "对话",
+  "galleryImageCount": "{count, plural, other{{count} 张图片}}",
+  "galleryToday": "今天",
+  "galleryYesterday": "昨天",
+  "galleryTileLabel": "{name}，来自{conversation}",
+  "onbFlowTitle": "连接智能体",
+  "onbFlowBody": "选择 Console 连接 Hermes 的方式。直接输入 Dashboard 地址是最直接的方法。",
+  "onbFlowServer": "连接到我的服务器",
+  "onbFlowPair": "用设置命令配对",
+  "onbFlowQr": "扫描二维码",
+  "onbFlowGuidedBody": "Console 现在使用 Hermes 的 Dashboard。请在运行 Hermes 的电脑上粘贴这一行命令并扫描显示的二维码，或使用 Dashboard 地址手动连接。你的聊天会保留。",
+  "charactersTitle": "角色",
+  "charactersSettingsSubtitle": "机器人的轮廓、眼睛、头饰和颜色",
+  "charactersAnimateTitle": "动画显示机器人",
+  "charactersAnimateSubtitle": "关闭后机器人的脸保持静止。系统的减少动态效果设置始终有效",
+  "charactersPreview": "预览",
+  "charactersSectionEyes": "眼睛",
+  "charactersSectionTopper": "头顶装饰",
+  "charactersSectionSeed": "种子",
+  "charactersSeedHint": "留空：跟随名称",
+  "charactersSeedInvalid": "仅限小写字母、数字、连字符和下划线（最多 64 个字符）",
+  "charactersAuto": "自动",
+  "charactersEyesSeeded": "随种子",
+  "charactersEyesWide": "大眼睛",
+  "charactersEyesSleepy": "困倦",
+  "charactersEyesHappy": "开心",
+  "charactersTopperNone": "无",
+  "charactersTopperAntenna": "天线",
+  "charactersTopperSprout": "嫩芽",
+  "charactersTopperCrown": "皇冠",
+  "charactersTopperHalo": "光环",
+  "charactersSave": "保存",
+  "charactersReset": "重置",
+  "charactersSaved": "角色已保存",
+  "turnFlowThoughtCount": "{count, plural, =1{思考了 1 次} other{思考了 {count} 次}}",
+  "screenChatsSubtitleLive": "进行中 {count}",
+  "screenChatsSubtitleToday": "今天 {count}",
+  "screenChatsBotFilter": "按机器人筛选",
+  "screenProfileToolsGroups": "{count, plural, other{{count} 个分组}}",
+  "screenSettingsBrand": "HERMES CONSOLE",
+  "turnLineThinking": "思考中",
+  "turnLineWorked": "已工作",
+  "litThoughtRow": "推理过程",
+  "mdlPillSectionProvider": "提供商",
+  "mdlPillSectionModels": "{provider} 的模型",
+  "mdlPillSectionResults": "搜索结果",
+  "mdlPillSectionSettings": "设置",
+  "mdlPillSearchHint": "搜索所有提供商",
+  "mdlPillSearchTooltip": "搜索模型",
+  "mdlPillOpenSettings": "打开 设置 › 模型",
+  "mdlPillProfile": "配置文件 · {name}",
+  "mdlPillTagLocal": "本地",
+  "mdlPillFastUnavailable": "此模型不可用",
+  "livePDone": "完成",
+  "livePWriting": "正在撰写",
+  "livePCoordinating": "正在协调",
+  "livePAgents": "{done}/{total} 个智能体",
+  "@livePAgents": {
+    "placeholders": {
+      "done": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "livePNeedsPermission": "需要你的许可",
+  "livePThought": "思考了 {duration}",
+  "@livePThought": {
+    "placeholders": {
+      "duration": {
+        "type": "String"
+      }
+    }
+  },
+  "subFTitle": "子代理 · {done}/{total}",
+  "@subFTitle": {
+    "placeholders": {
+      "done": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "subFAndMore": "{line} 等另外 {count} 项",
+  "@subFAndMore": {
+    "placeholders": {
+      "line": {
+        "type": "String"
+      },
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "subFGuideHint": "给这个代理指引…",
+  "subFGuideSend": "发送",
+  "subFExpandHint": "显示子代理",
+  "subFCollapseHint": "隐藏子代理",
+  "cnxTitle": "连接",
+  "cnxTabDirect": "直连",
+  "cnxTabSsh": "SSH",
+  "cnxServer": "服务器",
+  "cnxSignIn": "登录",
+  "cnxNameLabel": "名称 · 可选",
+  "cnxNameHint": "家、工作室…",
+  "cnxAddressNote": "仪表盘的完整地址(含端口)。使用 Tailscale 时,请用服务器的 100.x 地址或 Tailscale Serve 地址,并让这部手机保持连接 Tailscale。",
+  "cnxMethod": "方式",
+  "cnxMethodPassword": "密码",
+  "cnxMethodBrowser": "浏览器",
+  "cnxMethodToken": "令牌",
+  "cnxRemember": "记住密码",
+  "cnxRememberNote": "加密保存在这部手机的安全存储中。",
+  "cnxBrowserNote": "浏览器会打开服务器自己的登录页面。当地址位于登录页面之后时使用。",
+  "cnxTokenLabel": "会话令牌",
+  "cnxTokenRejected": "服务器未接受该令牌。",
+  "cnxScanQr": "扫描二维码或安装 Hermes 服务",
+  "cnxSshHost": "SSH 主机",
+  "cnxSshUser": "SSH 用户名",
+  "cnxSshPort": "SSH 端口",
+  "cnxSshAuth": "SSH 认证",
+  "cnxSshAuthPassword": "密码",
+  "cnxSshAuthKey": "私钥",
+  "cnxSshPassword": "SSH 密码",
+  "cnxDashHost": "仪表盘主机",
+  "cnxDashPort": "仪表盘端口",
+  "cnxSshNote": "仪表盘必须已在你的服务器上运行。它通过加密的 SSH 隧道保持私密。",
+  "sshTDashboardRefused": "SSH 服务器没有打开通往仪表板的连接。请检查仪表板的主机和端口。",
+  "sshTPublicKey": "这是公钥。通过 SSH 登录需要私钥。",
+  "sshTPassphraseNeeded": "此密钥已加密。请输入它的口令。",
+  "sshTOtherAddress": "此隧道属于另一个仪表板地址。",
+  "sshTServerNotFound": "找不到 SSH 服务器。请检查主机。",
+  "sshTPassphraseLabel": "密钥口令",
+  "sshTOpening": "正在打开 SSH 隧道…",
+  "cnxSshSoon": "此版本暂不支持通过 SSH 隧道连接。请在“直连”标签中使用这部手机能访问的地址。",
+  "vcrEntryAttachments": "使用语音前，请先发送或移除附件。",
+  "vcrEntryEditing": "使用语音前，请先完成消息的编辑。",
+  "vcrEntryApproval": "使用语音前，请先处理待处理的审批。",
+  "vcrEntryQueued": "有消息正在排队。请等它们发送完毕后再使用语音。",
+  "vcrRetryMessage": "重新发送这条消息",
+  "vcrSendFailed": "你的消息未能发送。已为你保存，可以重试。",
+  "vcrMicBusy": "其他应用或通话正在使用麦克风。请关闭后重试。",
+  "vcrMicUnavailable": "无法打开麦克风。请重试。",
+  "vcrNeedsNetwork": "语音识别需要网络连接，但当前没有。恢复后请重试。",
+  "vcrLanguageFallback": "此识别器不支持你的语音语言，将使用系统语言。",
+  "vcrServerUnavailable": "服务器语音不可用。你可以改用这部手机的语音。",
+  "vcrUseThisPhone": "使用这部手机",
+  "vcrPausedByBackground": "因进入后台而暂停",
+  "vcrContinue": "继续",
+  "vcrRouteRestarted": "音频设备已更换（耳机或蓝牙）。麦克风已重新启动。",
+  "vcrOpenSettings": "打开设置",
+  "vcrTranscriptionTimedOut": "转写耗时过长，已取消。请重试。",
+  "chcFileLabel": "文件 {name}",
+  "chcFolderLabel": "文件夹 {name}",
+  "chcFileOpenHint": "打开文件",
+  "chcFileCopyHint": "复制路径",
+  "chcPathCopied": "已复制路径",
+  "chcFileOpenFailed": "无法打开文件。已复制路径。",
+  "chcCitationLabel": "引用 {n}",
+  "chcCitationSourceLabel": "来源 {n}",
+  "chcCitationOpenHint": "在浏览器中打开来源",
+  "mdpSourcesLabel": "来源：{count} 个",
+  "mdpSourceLabel": "来源 {n}：{title}，{domain}",
+  "mdpSourceOpenHint": "在浏览器中打开来源。长按可复制链接",
+  "mdpOpenLinkHint": "在浏览器中打开链接。长按可复制链接",
+  "mdpLinkChipLabel": "指向 {domain} 的链接",
+  "mdpLinkCopied": "链接已复制",
+  "mdpTablePreparing": "正在准备表格",
+  "msvCurrentUnknown": "选择模型",
+  "msvCurrentHint": "选择其他模型",
+  "msvFavorites": "收藏",
+  "msvFavoritesHint": "在“所有模型”中为模型加星标，即可在此处使用。",
+  "msvFrequent": "常用",
+  "msvThink": "推理",
+  "msvThinkOn": "开",
+  "msvThinkOff": "关",
+  "msvFastNormal": "普通",
+  "msvFastActive": "已开启",
+  "msvPermissions": "权限",
+  "msvPermissionsManual": "手动",
+  "msvFavAdd": "将{model}加入收藏",
+  "@msvFavAdd": {
+    "placeholders": {
+      "model": {
+        "type": "String"
+      }
+    }
+  },
+  "msvFavRemove": "将{model}从收藏中移除",
+  "@msvFavRemove": {
+    "placeholders": {
+      "model": {
+        "type": "String"
+      }
+    }
+  },
+  "msvFavLimit": "收藏最多 {count} 个",
+  "@msvFavLimit": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "sv2Close": "关闭",
+  "sv2CloseHint": "从此聊天中隐藏该组。子代理会继续工作。",
+  "sv2MenuEntry": "子代理 · {count}",
+  "sv2MenuShowHidden": "显示已隐藏的子代理",
+  "sv2TaskSection": "任务",
+  "sv2StepsSection": "步骤",
+  "sv2StepsPartial": "仅显示该组出现在聊天中之后所见的步骤。",
+  "sv2ThoughtSection": "思考",
+  "sv2ResultPartial": "部分结果",
+  "sv2LeftBehind": "未完成。这是它留下的最后内容。",
+  "sv2NoResultYet": "还没有结果。",
+  "sv2LastLog": "最后的日志",
+  "kluKeysTitle": "密钥",
+  "kluKeysLoading": "正在读取密钥…",
+  "kluKeysSearch": "搜索密钥",
+  "kluSummaryAvailable": "可用",
+  "kluSummaryConfigured": "已设置",
+  "kluProfileLabel": "配置文件",
+  "kluProfileDefault": "默认",
+  "kluKeysNote": "Hermes 会把机密保存在所选配置文件的 .env 中。这里只写入，绝不显示或读取。",
+  "kluStatusSet": "已设置",
+  "kluStatusNotSet": "未设置",
+  "kluCategoryCustom": "自定义",
+  "kluKeysEmpty": "此配置文件没有密钥。",
+  "kluKeysNoMatches": "没有匹配的密钥。",
+  "kluKeysLoadError": "无法读取密钥",
+  "kluAddKey": "添加密钥",
+  "kluNameLabel": "变量名",
+  "kluNameInvalid": "仅限大写字母、数字和下划线，以字母开头（最多 128 个字符）。",
+  "kluSheetStatus": "状态",
+  "kluSheetCategory": "类别",
+  "kluValueLabel": "值",
+  "kluValueHint": "新值",
+  "kluSaveKey": "保存密钥",
+  "kluDeleteKey": "删除密钥",
+  "kluRevealValue": "显示输入内容",
+  "kluHideValue": "隐藏输入内容",
+  "kluWriteOnly": "已保存的值不会显示。输入新值将替换当前值。",
+  "kluValueEmpty": "请输入值",
+  "kluValueInvalid": "值不能包含换行或控制字符，开头和结尾也不能有空格。",
+  "kluValueTooLong": "值超过 {max} 个字符",
+  "kluOverwriteTitle": "要替换 {name} 吗？",
+  "kluOverwriteBody": "配置文件 {profile} 中已设置该项。新值将替换当前值，且无法恢复。",
+  "kluOverwriteAction": "替换",
+  "kluDeleteTitle": "要删除 {name} 吗？",
+  "kluDeleteBody": "将从配置文件 {profile} 的 .env 中移除。",
+  "kluDeleteAction": "删除",
+  "kluSaved": "密钥 {name} 已保存",
+  "kluDeleted": "密钥 {name} 已删除",
+  "kluSaveFailed": "无法保存密钥。",
+  "kluDeleteFailed": "无法删除密钥。",
+  "kluCleartextBlocked": "此连接在你的专用网络之外使用未加密的 HTTP。改用 HTTPS 之前无法写入密钥。",
+  "kluCleartextPrivate": "专用网络上的未加密 HTTP 连接：该值将以明文传输。",
+  "kluRowLabel": "{name}，{status}，{category}",
+  "kluTargetProfile": "写入配置文件 {profile}",
+  "kluLogComponent": "组件",
+  "kluLogForComponent": " 组件 {component}",
+  "kluUsageTitle": "用量",
+  "kluUsageLoading": "正在读取用量…",
+  "kluUsagePeriod": "{days} 天",
+  "kluUsageTokens": "令牌",
+  "kluUsageInput": "输入",
+  "kluUsageOutput": "输出",
+  "kluUsageSessions": "会话",
+  "kluUsageCost": "费用",
+  "kluUsageCostEstimated": "预估费用",
+  "kluUsageDaily": "每日令牌",
+  "kluUsageByModel": "按模型",
+  "kluUsageSessionsCount": "{count} 个会话",
+  "kluUsageEmpty": "此期间没有用量记录",
+  "kluUsageLoadError": "无法读取用量",
+  "kluUsageUnsupported": "此服务器不提供用量分析",
+  "fcoCopyPath": "复制路径",
+  "fcoOpenFolder": "打开文件夹",
+  "fcoErrNotFound": "找不到该文件，可能已被移动或删除。",
+  "fcoErrForbidden": "服务器不允许读取此文件。",
+  "fcoErrDenied": "服务器拒绝了此路径。",
+  "fcoErrTooLarge": "文件太大，无法在此查看。",
+  "fcoErrBinary": "这是二进制文件，无法以文本显示。",
+  "fcoErrTimeout": "服务器响应时间过长。",
+  "fcoErrUnreachable": "无法读取该文件，请检查连接。",
+  "fcoErrUnsupported": "此服务器不允许读取文件。",
+  "fcoErrOutside": "服务器返回了此对话文件夹之外的文件，不予显示。",
+  "fcoErrBadPath": "路径无效，因此不会打开。",
+  "fcoErrNoBase": "无法确定该文件所在的文件夹。",
+  "fcoEmpty": "文件为空。",
+  "fcoSensitiveTitle": "敏感文件",
+  "fcoSensitiveBody": "{name} 可能包含密码或密钥。它只会显示在屏幕上，不会保存到设备。",
+  "fcoShow": "显示",
+  "cfxSearchedIn": "查找过的位置（{count}）",
+  "@cfxSearchedIn": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "cfxSeveralMatches": "此对话的文件夹中有多个同名文件。请选择要打开的文件。",
+  "cfxChoose": "选择文件",
+  "sppChangedTitle": "服务器上的技能已更改",
+  "sppChangedBody": "内容已不是你打开时的版本。保存将覆盖当前内容。",
+  "sppCharCount": "{count} / {max}",
+  "@sppCharCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      },
+      "max": {
+        "type": "int"
+      }
+    }
+  },
+  "sppContentErrorTitle": "无法读取 SKILL.md",
+  "sppContentErrorBody": "服务器没有响应，或找不到该技能。请检查连接后重试。",
+  "sppContentHeader": "内容",
+  "sppContentTooLongToEdit": "此文本超出服务器限制，只能阅读。",
+  "sppContinue": "继续",
+  "sppCreate": "创建",
+  "sppCreateConfirmTitle": "创建技能 {name}？",
+  "@sppCreateConfirmTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "sppCreateConfirmBody": "这是智能体在新会话中会遵循的指令。请确认文本无误。",
+  "sppDetailsHeader": "详情",
+  "sppEdit": "编辑",
+  "sppEditorLabel": "SKILL.md 内容",
+  "sppEditTitle": "编辑 {name}",
+  "@sppEditTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "sppEditWarning": "智能体会严格按此指令行事。只保存你理解的更改。",
+  "sppFilterActive": "已启用",
+  "sppFilterAll": "全部",
+  "sppFilterInactive": "未启用",
+  "sppInsecureTitle": "未加密连接",
+  "sppInsecurePublicBody": "该服务器通过你无法控制的网络以 http 访问：传输内容（包括凭据）可能在途中被读取。",
+  "sppInsecurePrivateBody": "通过 http（未加密）访问，但位于私有网络内。",
+  "sppInstallAnyway": "仍然安装",
+  "sppInstalledSummary": "已安装 {total} 项 · 已启用 {on} 项",
+  "@sppInstalledSummary": {
+    "placeholders": {
+      "total": {
+        "type": "int"
+      },
+      "on": {
+        "type": "int"
+      }
+    }
+  },
+  "sppMcpAddConfirmTitle": "添加 MCP 服务器 {name}？",
+  "@sppMcpAddConfirmTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "sppMcpAddConfirmBody": "Hermes 服务器会保存它，并可能运行或连接它。此手机不会运行任何内容。",
+  "sppMcpAdded": "已添加服务器 {name}",
+  "@sppMcpAdded": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "sppMcpAddRejected": "服务器不接受此配置。请检查名称（可能已存在）以及命令或 URL。",
+  "sppMcpNameEmpty": "请输入名称。",
+  "sppMcpNameChars": "请使用字母、数字、点、连字符和下划线，不含空格（最长 64）。",
+  "sppMcpUrlEmpty": "请输入服务器地址。",
+  "sppMcpUrlScheme": "地址必须以 https:// 或 http:// 开头。",
+  "sppMcpUrlHost": "地址中缺少主机名。",
+  "sppMcpUrlUserInfo": "不要在地址中包含用户名或密码，请使用认证字段。",
+  "sppMcpUrlQuery": "不要在地址中带参数（?key=value），它们可能是凭据。",
+  "sppMcpUrlFragment": "请删除地址末尾的 # 部分。",
+  "sppMcpCommandEmpty": "请输入命令。",
+  "sppMcpCommandControl": "命令中含有换行或控制字符。",
+  "sppMcpCommandTooLong": "命令过长（最多 800 个字符）。",
+  "sppMcpCommandSpaces": "这里只填程序，参数请在下方字段中每行填一个。",
+  "sppMcpCommandShell": "服务器不通过 shell 启动程序：重定向和串联符号在此无效。",
+  "sppMcpInsecurePublic": "此地址在私有网络之外使用 http：MCP 服务器的流量将以明文传输。",
+  "sppMcpInsecurePublicToken": "此地址在私有网络之外使用 http，并将发送令牌：它会以明文传输。请使用 https。",
+  "sppMcpInsecurePrivate": "此地址使用 http（未加密）。虽是私有网络，仍建议使用 https。",
+  "sppMenuAddMcp": "添加 MCP 服务器",
+  "sppMenuNewSkill": "新建技能",
+  "sppNewSkillIntro": "请输入名称、简短描述和指令。SKILL.md 头部由手机生成，由服务器验证。",
+  "sppNewSkillTitle": "新建技能",
+  "sppOriginBundled": "内置",
+  "sppOriginUser": "用户",
+  "sppOriginHub": "Hub",
+  "sppOriginGit": "Git",
+  "sppOriginExternal": "外部",
+  "sppOverwrite": "覆盖",
+  "sppReadOnlySkill": "此处只能编辑你自己的技能。来自 Hub 和内置的技能会在更新时被覆盖。",
+  "sppRestoreTitle": "恢复原始副本？",
+  "sppRestoreBody": "将按打开此页面时的原样写回文本。",
+  "sppRestored": "已恢复原始内容",
+  "sppRestoreOriginal": "恢复原始内容",
+  "sppSave": "保存",
+  "sppSaveTitle": "保存对 {name} 的更改？",
+  "@sppSaveTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "sppSaveBody": "该文本将替换整个 SKILL.md。智能体的新会话将遵循这些指令。",
+  "sppSaved": "已保存。新会话将使用此更改。",
+  "sppScanAskTitle": "扫描需要你来决定",
+  "sppScanAskBody": "服务器发现了安装前值得查看的内容。若继续，将由你自行承担风险进行安装。",
+  "sppScanBlockedTitle": "安装已被阻止",
+  "sppScanBlockedBody": "安全扫描不允许安装此技能，因此无需确认。",
+  "sppScanClean": "安全扫描：无发现。",
+  "sppScanFailedTitle": "无法扫描",
+  "sppScanFailedBody": "安全扫描没有响应。若继续，安装仍会经过服务器的扫描，可能被拒绝。",
+  "sppScanFindings": "安全扫描：{count} 项发现。",
+  "@sppScanFindings": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "sppScanMore": "…另有 {count} 项",
+  "@sppScanMore": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "sppScanning": "正在扫描 {name}…",
+  "@sppScanning": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "sppScanUnavailable": "安全扫描：不可用。",
+  "sppSearchingHub": "正在搜索 Hub…",
+  "sppShowMore": "再显示 {count} 项",
+  "@sppShowMore": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "sppShowRest": "显示其余部分（{count} 个字符）",
+  "@sppShowRest": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "sppSkillCategoryChars": "类别为单个名称：小写字母、数字、点、连字符或下划线。",
+  "sppSkillCategoryLabel": "类别（可选）",
+  "sppSkillContentEmpty": "内容为空。",
+  "sppSkillContentNoBody": "头部之后缺少指令。",
+  "sppSkillContentNoDescription": "头部必须包含 description。",
+  "sppSkillContentNoFrontmatter": "SKILL.md 必须以 --- 行包围的头部开头。",
+  "sppSkillContentNoName": "头部必须包含 name。",
+  "sppSkillContentNul": "文本包含空字符。",
+  "sppSkillContentTooLong": "文本超过 {max} 个字符，这是服务器的上限。",
+  "@sppSkillContentTooLong": {
+    "placeholders": {
+      "max": {
+        "type": "int"
+      }
+    }
+  },
+  "sppSkillContentUnclosed": "头部未闭合：缺少第二个 --- 行。",
+  "sppSkillCreated": "已创建技能 {name}",
+  "@sppSkillCreated": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "sppSkillDescriptionEmpty": "请输入简短描述。",
+  "sppSkillDescriptionHelp": "一句话：智能体何时使用它。",
+  "sppSkillDescriptionLabel": "描述",
+  "sppSkillDescriptionTooLong": "新技能的描述最多 {max} 个字符。",
+  "@sppSkillDescriptionTooLong": {
+    "placeholders": {
+      "max": {
+        "type": "int"
+      }
+    }
+  },
+  "sppSkillInstructionsLabel": "指令",
+  "sppSkillNameChars": "使用小写字母、数字、点、连字符和下划线，并以字母或数字开头。",
+  "sppSkillNameEmpty": "请输入名称。",
+  "sppSkillNameHelp": "用作文件夹名称，例如 my-skill。",
+  "sppSkillNameLabel": "名称",
+  "sppSkillNameTooLong": "名称最多 {max} 个字符。",
+  "@sppSkillNameTooLong": {
+    "placeholders": {
+      "max": {
+        "type": "int"
+      }
+    }
+  },
+  "sppStatusFilter": "状态",
+  "sppSwitchLabel": "启用 {name}",
+  "@sppSwitchLabel": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "sppToggleFailed": "无法更改 {name}，已恢复原状。",
+  "@sppToggleFailed": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "sppVersion": "v{version}",
+  "@sppVersion": {
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
+  },
+  "sppViewSkillMd": "查看 SKILL.md",
+  "hdaTitle": "智能体",
+  "hdaFilterAll": "全部",
+  "hdaStatusWorking": "工作中",
+  "hdaStatusBlocked": "等你处理",
+  "hdaStatusIdle": "空闲",
+  "hdaStatusDone": "已完成",
+  "hdaStatusUnknown": "未知",
+  "hdaInState": "已处于此状态 {duration}",
+  "hdaNow": "刚刚",
+  "hdaEmptyTitle": "没有正在运行的智能体",
+  "hdaEmptyBody": "你在此服务器上通过 Herdr 启动的智能体会连同实时状态显示在这里。",
+  "hdaNew": "新建智能体",
+  "hdaProbing": "正在服务器上查找 Herdr…",
+  "hdaServerStoppedTitle": "Herdr 未运行",
+  "hdaServerStoppedBody": "Herdr 服务器没有响应。请在“终端”标签页输入 herdr 启动后再回来。",
+  "hdaConnectionError": "无法与服务器通信。",
+  "hdaTimedOut": "服务器响应超时。",
+  "hdaStale": "显示的是上次读取的内容，正在重试…",
+  "hdaHintLine": "此服务器上未安装 Herdr。",
+  "hdaHowToInstall": "安装方法",
+  "hdaHintDismiss": "关闭提示",
+  "hdaInstallTitle": "安装 Herdr",
+  "hdaInstallBody": "应用不会自行安装任何东西。请在服务器上运行下面的命令，然后回到此页面。",
+  "hdaInstallProject": "GitHub 项目",
+  "hdaInstallCheck": "我已安装",
+  "hdaRecheck": "重新查找 Herdr",
+  "hdaMore": "更多智能体选项",
+  "hdaBack": "返回智能体列表",
+  "hdaRowHint": "打开其输出并发送指令",
+  "hdaFolderUnknown": "未知文件夹",
+  "hdaOutputTitle": "输出",
+  "hdaOutputEmpty": "暂无输出。",
+  "hdaOutputLabel": "{agent} 的实时输出",
+  "hdaOutputFailed": "无法读取输出，正在重试…",
+  "hdaPromptTarget": "发给 {agent} · {folder}",
+  "hdaPromptHint": "为智能体写一条指令",
+  "hdaSend": "发送",
+  "hdaKeysTitle": "按键",
+  "hdaKeyEnter": "回车",
+  "hdaKeySemantics": "发送 {key} 键",
+  "hdaKeySent": "已发送 {key} 键",
+  "hdaSentTo": "已发送给 {agent}",
+  "hdaBlockedTitle": "{agent} 正在等你",
+  "hdaBlockedBody": "它在请求批准或回答。“接受”发送回车，“拒绝”发送 Esc；其他选项请使用按键。",
+  "hdaAccept": "接受",
+  "hdaReject": "拒绝",
+  "hdaReadOnly": "只读：应用无法确定 Herdr 在服务器上的位置。",
+  "hdaGone": "此智能体已不在 Herdr 中。",
+  "hdaErrBlocked": "{agent} 正在等待回答，文本未发送。请使用按键。",
+  "hdaErrNotFound": "该智能体已不存在。",
+  "hdaErrEmpty": "发送前请先输入内容。",
+  "hdaErrTooLong": "文本过长（最多 4 KB）。",
+  "hdaErrChars": "文本包含无法发送的控制字符。",
+  "hdaErrFailed": "无法完成该操作。",
+  "hdaCreateKind": "智能体",
+  "hdaCreateFolder": "服务器上的文件夹",
+  "hdaCreateFolderHint": "/项目的/绝对路径",
+  "hdaCreateRecent": "最近",
+  "hdaCreateContinue": "继续",
+  "hdaCreateConfirmTitle": "创建此智能体？",
+  "hdaCreateConfirmBody": "将在 {server} 的 {folder} 中打开一个 Herdr 工作区并启动 {agent}。这会让一个智能体开始在服务器上工作。",
+  "hdaCreateAction": "创建",
+  "hdaCreated": "智能体已创建",
+  "hdaCreateStartFailed": "工作区已创建，但 {agent} 未能启动。请在“终端”标签页中打开。",
+  "hdaErrFolder": "请输入以 / 开头的绝对路径文件夹。",
+  "hdaUnlockReason": "打开 {server} 的智能体",
+  "hdaRowSemantics": "{agent}，{state}，{folder}",
+  "bstEditorTitle": "角色编辑器",
+  "bstStudioTitle": "角色工作室",
+  "bstUndo": "撤销",
+  "bstRedo": "重做",
+  "bstMore": "更多选项",
+  "bstConfirm": "应用到配置文件",
+  "bstReset": "重置",
+  "bstSaveCharacter": "保存角色",
+  "bstSavedCharacters": "已保存的角色",
+  "bstSharePng": "分享 PNG",
+  "bstDuplicate": "复制角色",
+  "bstNewCharacter": "新建角色",
+  "bstNameTitle": "角色名称",
+  "bstNameHint": "例如：蓝色小猫",
+  "bstDefaultName": "我的角色",
+  "bstCopyName": "{name}（副本）",
+  "@bstCopyName": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "bstSavedToast": "已保存到“我的角色”",
+  "bstAppliedToast": "{name} 现在使用此角色",
+  "@bstAppliedToast": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "bstDiscardTitle": "放弃更改？",
+  "bstDiscardBody": "编辑器中的更改尚未应用到任何配置文件。",
+  "bstDiscard": "放弃",
+  "bstKeepEditing": "继续编辑",
+  "bstShareFailed": "无法分享图片",
+  "bstCanvasSize": "1024 × 1024",
+  "bstPan": "移动画布",
+  "bstZoomOut": "缩小",
+  "bstZoomIn": "放大",
+  "bstZoomValue": "{percent}%",
+  "@bstZoomValue": {
+    "placeholders": {
+      "percent": {
+        "type": "int"
+      }
+    }
+  },
+  "bstZoomResetTip": "缩放到 100%",
+  "bstFit": "适应",
+  "bstCanvasLabel": "角色画布",
+  "bstStateButton": "预览状态",
+  "bstStatePickTitle": "预览状态",
+  "bstStateStill": "静止",
+  "bstStateIdle": "待机",
+  "bstStateListen": "聆听",
+  "bstStateThink": "思考",
+  "bstStateWork": "工作",
+  "bstStateSpeak": "说话",
+  "bstStateCurious": "好奇",
+  "bstStateCelebrate": "庆祝",
+  "bstStateLove": "喜爱",
+  "bstStateOops": "哎呀",
+  "bstStateSleep": "睡觉",
+  "bstStateBounce": "弹跳",
+  "bstStateDance": "跳舞",
+  "bstStateSpin": "旋转",
+  "bstTabShape": "形状",
+  "bstTabEyes": "眼睛",
+  "bstTabPieces": "部件",
+  "bstTabColor": "颜色",
+  "bstFormRound": "圆形",
+  "bstFormOrganic": "有机",
+  "bstFormBoxy": "方形",
+  "bstFormRectangle": "矩形",
+  "bstFormCloud": "云朵",
+  "bstRange": "范围",
+  "bstStrength": "强度",
+  "bstEyeDot": "圆点",
+  "bstEyeOval": "椭圆",
+  "bstEyeJoy": "笑眼",
+  "bstEyeDreamy": "梦幻",
+  "bstEyeGlint": "闪亮",
+  "bstEyeBold": "坚定",
+  "bstEyeLantern": "灯笼",
+  "bstEyeRing": "圆环",
+  "bstEyeWink": "眨眼",
+  "bstEyeAmazed": "惊讶",
+  "bstEyeNarrow": "细长",
+  "bstEyeGrumpy": "不悦",
+  "bstEyeSlit": "竖瞳",
+  "bstEyeUndead": "亡灵",
+  "bstEyeHeart": "爱心",
+  "bstEyeSize": "眼睛大小",
+  "bstEyeColor": "眼睛颜色",
+  "bstColorAuto": "自动",
+  "bstColorCustom": "自定义",
+  "bstColorInk": "黑色",
+  "bstColorWhite": "白色",
+  "bstColorViolet": "紫色",
+  "bstColorBlue": "蓝色",
+  "bstColorRed": "红色",
+  "bstColorGreen": "绿色",
+  "bstHue": "色相",
+  "bstSaturation": "饱和度",
+  "bstBrightness": "亮度",
+  "bstPieceCatEars": "猫耳",
+  "bstPieceBearEars": "熊耳",
+  "bstPieceBunnyEars": "兔耳",
+  "bstPieceCrown": "皇冠",
+  "bstPieceHorn": "犄角",
+  "bstPieceHalo": "光环",
+  "bstPieceSwirl": "漩涡",
+  "bstPieceSprout": "嫩芽",
+  "bstPieceLeaf": "叶子",
+  "bstPieceWing": "翅膀",
+  "bstPieceTail": "尾巴",
+  "bstPieceStar": "星星",
+  "bstPieceHeart": "爱心",
+  "bstPieceBow": "蝴蝶结",
+  "bstPiecePaw": "爪印",
+  "bstPieceFin": "鳍",
+  "bstPieceBolt": "闪电",
+  "bstPieceFlower": "花朵",
+  "bstPieceMoon": "月亮",
+  "bstPieceDrop": "水滴",
+  "bstPiecesAdd": "添加部件",
+  "bstPiecesPlaced": "已放置的部件",
+  "bstPiecesNone": "还没有部件。点按一个即可添加。",
+  "bstPiecesLimit": "已达到部件数量上限",
+  "bstPieceDelete": "删除",
+  "bstPieceRotation": "旋转",
+  "bstPieceSize": "大小",
+  "bstPieceFlip": "翻转",
+  "bstPiecePosition": "位置",
+  "bstPieceAcross": "水平",
+  "bstPieceHeight": "垂直",
+  "bstFur": "毛皮",
+  "bstFinish": "质感",
+  "bstFinishFlat": "平面",
+  "bstFinishMatte": "哑光",
+  "bstFinishSoft": "柔和",
+  "bstFinishGlossy": "光泽",
+  "bstSolidColors": "纯色",
+  "bstColorOriginal": "原色",
+  "bstBodyColor": "身体颜色",
+  "bstGradients": "渐变",
+  "bstGradSunrise": "日出",
+  "bstGradZest": "柑橘",
+  "bstGradBay": "海湾",
+  "bstGradGumdrop": "软糖",
+  "bstGradCinder": "余烬",
+  "bstGradNightfall": "暮色",
+  "bstGradTide": "潮汐",
+  "bstGradApricot": "杏色",
+  "bstGradPlum": "李子",
+  "bstGradSpearmint": "留兰香",
+  "bstGradBorealis": "极光",
+  "bstGradSherbet": "冰沙",
+  "bstGradPetal": "花瓣",
+  "bstGradPearl": "珍珠",
+  "bstGenerateTitle": "用 AI 生成",
+  "bstGenerateHint": "描述角色：一只带翅膀的蓝色小猫",
+  "sagAsk": "请求智能体",
+  "sagCopy": "复制请求",
+  "sagPaste": "粘贴回复",
+  "sagHelp": "会与 {name} 开启一个新聊天，并发送你的描述和角色结构。这会消耗模型的一轮对话，聊天会保留在历史记录中。收到回复后，复制回复并点按“粘贴回复”：它会应用到草稿，并且可以撤销。",
+  "@sagHelp": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "sagOffWhy": "仅在可写入的连接且有活动配置文件时可用。",
+  "sagStatusCopied": "请求已复制。请粘贴到此机器人的聊天中，并复制它的回复。",
+  "sagStatusApplied": "角色已应用到草稿。可以撤销。",
+  "sagStatusInvalid": "没能理解回复，请换一句话再试。",
+  "sagStatusEmpty": "没有可粘贴的内容：请先复制智能体的回复。",
+  "sagStatusNeedPhrase": "请先写一句话。",
+  "sagChatTitle": "角色设计",
+  "bstSavedEmpty": "你还没有保存任何角色。",
+  "bstSavedHint": "点按即可使用角色。长按可编辑、复制或删除。",
+  "bstMoreActions": "更多操作",
+  "bstMyCharacters": "我的角色",
+  "bstPresets": "预设",
+  "bstPresetCoral": "珊瑚",
+  "bstPresetLilac": "丁香",
+  "bstPresetSunny": "阳光",
+  "bstPresetMint": "薄荷",
+  "bstPresetSlate": "石板",
+  "bstPresetKitten": "小猫",
+  "bstPresetEmber": "炭火",
+  "bstPresetRegal": "王室",
+  "bstCustomize": "自定义",
+  "bstUseCharacter": "使用此角色",
+  "bstCurrentCharacter": "当前角色",
+  "bstDeleteTitle": "删除“{name}”？",
+  "@bstDeleteTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "bstOriginalFace": "恢复原始头像",
+  "bstOriginalToast": "已恢复原始头像",
+  "lflTitle": "外观与风格",
+  "lflAppearance": "外观",
+  "lflAppearanceSystem": "系统",
+  "lflAppearanceLight": "浅色",
+  "lflAppearanceDark": "深色",
+  "lflAccent": "强调色",
+  "lflAccentCustom": "自定义颜色",
+  "lflAccentPickerTitle": "强调色",
+  "lflAccentTerracotta": "赤陶色",
+  "lflAccentOrange": "橙色",
+  "lflAccentRose": "玫瑰色",
+  "lflAccentViolet": "紫罗兰",
+  "lflAccentIndigo": "靛蓝",
+  "lflAccentBlue": "蓝色",
+  "lflAccentTeal": "青绿色",
+  "lflAccentGreen": "绿色",
+  "lflAccentSlate": "石板灰",
+  "lflLightBackground": "浅色背景",
+  "lflDarkBackground": "深色背景",
+  "lflBgWhite": "白色",
+  "lflBgPaper": "纸张",
+  "lflBgMidnight": "午夜",
+  "lflBgBlack": "黑色",
+  "lflBgGray": "灰色",
+  "lflFont": "字体",
+  "lflFontSystem": "系统",
+  "lflFontSystemDesc": "Android 系统字体，中性而熟悉。",
+  "lflFontInterDesc": "清晰的无衬线字体，为屏幕和大量阅读而设计。",
+  "lflFontMontserratDesc": "几何感强、字形宽阔，标题更有个性。",
+  "lflFontNunitoDesc": "圆润的无衬线字体，亲切且易读。",
+  "lflFontMonoDesc": "等宽字体，适合代码，带有终端风格。",
+  "lflMoreThemes": "更多主题",
+  "lflMoreThemesBody": "{count} 个完整主题，各具风格",
+  "lflThemeBanner": "主题：{name}",
+  "lflThemeBannerBody": "当前使用的是列表中的主题。更改外观、强调色或背景后，将回到外观与风格。",
+  "lflReturn": "返回外观与风格",
+  "pexChange": "更改",
+  "pexAvatarLabel": "{name} 的视觉形象。点按可更改",
+  "@pexAvatarLabel": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "pexPhoto": "照片",
+  "pexCharacter": "角色",
+  "pexCharacterNote": "角色仅保存在此设备上。",
+  "pexCharacterOpen": "选择或创建角色",
+  "pexReset": "重置",
+  "pexDone": "完成",
+  "pexDescription": "描述",
+  "pexDescriptionHint": "此配置文件的用途",
+  "pexReasoning": "推理",
+  "pexSaveFailed": "无法保存。请检查连接后重试。",
+  "pexDescriptionFailed": "描述未保存。请重试。",
+  "pexReasoningFailed": "无法更改推理级别。",
+  "krhKeysNote": "Hermes 将密钥保存在所选配置文件的 .env 中。列表从不显示数值，你可以按需查看某一项。",
+  "krhWriteOnly": "输入新值会替换当前值。已保存的值只有在你点按“显示值”时才会显示。",
+  "krhRevealAction": "显示值",
+  "krhRevealConfirmTitle": "显示该值？",
+  "krhRevealConfirmBody": "它会在屏幕上显示几秒钟，然后自动隐藏。",
+  "krhRevealConfirmAction": "显示",
+  "krhRevealAuthReason": "请确认是你本人，以查看已保存的值",
+  "krhRevealAuthFailed": "未能验证你的身份。该值仍保持隐藏。",
+  "krhRevealLoading": "正在请求该值…",
+  "krhRevealCountdown": "{seconds} 秒后隐藏",
+  "@krhRevealCountdown": {
+    "placeholders": {
+      "seconds": {
+        "type": "int"
+      }
+    }
+  },
+  "krhRevealHide": "隐藏",
+  "krhRevealCopied": "已复制。30 秒后将从剪贴板清除。",
+  "krhRevealHiddenHint": "值已隐藏",
+  "krhRevealVisibleLabel": "值可见",
+  "krhRevealBlocked": "在你的专用网络之外，无法通过 http 显示该值。请使用 HTTPS。",
+  "krhRevealTooMany": "连续请求过多，请稍等几秒。",
+  "krhRevealNotFound": "该值已不在此配置文件的 .env 中。",
+  "krhRevealFailed": "无法请求该值。",
+  "krhHttpPublicLine": "未加密的 http 连接：传输的内容可能在途中被读取。",
+  "krhPrivateHttpInfo": "专用网络内的 http 连接。",
+  "tplSshRunInHint": "可选,默认关闭:终端就是普通的 shell。若选择 Herdr 或 tmux,连接时会自动启动,网络断开后进程也会继续运行。智能体有自己独立的栏目。",
+  "tplAgentsAddSshTitle": "添加 SSH 连接",
+  "tplAgentsAddSshBody": "智能体通过 SSH 从服务器读取。添加一个连接即可在这里查看。",
+  "tplAgentsPickAgent": "选择一个智能体以查看其屏幕",
+  "tplAgentsServerLabel": "服务器",
+  "tplAgentsProcTitle": "未通过 Herdr 运行:{names}",
+  "@tplAgentsProcTitle": {
+    "placeholders": {
+      "names": {
+        "type": "String"
+      }
+    }
+  },
+  "tplAgentsProcHint": "用 Herdr 打开它们,即可在这里控制。",
+  "navAgents": "智能体",
+  "navSettingsSearch": "搜索设置…",
+  "navGroupConnection": "连接",
+  "navGroupSecurityData": "安全与数据",
+  "navGroupLook": "外观",
+  "navGroupAlerts": "提醒",
+  "navGroupServer": "服务器",
+  "navGroupHelp": "帮助",
+  "navSshStartHint": "添加 SSH 配置后即可使用终端，停靠栏中会出现智能体",
+  "navMaintenanceData": "数据、备份与清理",
+  "navCharactersPets": "吉祥物与角色",
+  "navAppearanceMore": "停靠栏、语言等",
+  "navAlertsSub": "提醒与后台",
+  "navModelsProviders": "模型与提供商",
+  "navAboutHelp": "关于与帮助",
+  "navEditProfile": "编辑配置文件",
+  "navProfileActive": "当前",
+  "navActiveProfileNotice": "当前配置文件：{name}",
+  "navFollowsActiveHint": "跟随当前配置文件；打开后此配置文件将成为当前配置文件",
+  "navSwitchProfile": "切换配置文件",
+  "navSecIntegrations": "集成",
+  "navSecWork": "工作",
+  "navSecAgent": "智能体",
+  "navAdvanced": "高级",
+  "navAdvancedHint": "语音、密钥、日志等",
+  "navMcp": "MCP",
+  "navBotCard": "机器人名片",
+  "navBotCardSub": "当前状态、房间、复制与删除",
+  "psfMakeActive": "设为当前",
+  "psfViewProfile": "查看配置文件",
+  "psfSearchHint": "搜索配置文件",
+  "psfNoMatch": "没有匹配的配置文件",
+  "bstGenerateButton": "生成",
+  "bstGenerateWhy": "目前还没有从编辑器安全地向配置文件 AI 发出请求的途径：这样做会开启一整轮对话。现在请手动设计角色；对回答的校验已经就绪。",
+  "pghOpenDetail": "打开详情",
+  "pghFactVersion": "版本",
+  "pghFactOrigin": "来源",
+  "pghFactState": "状态",
+  "pghFactAuth": "身份验证",
+  "pghFactTransport": "传输方式",
+  "pghFactAddress": "地址",
+  "pghFactTools": "工具",
+  "pghStateOn": "已启用",
+  "pghStateOff": "已停用",
+  "pghHubButton": "插件中心",
+  "pghHubTitle": "插件中心",
+  "pghHubSubtitle": "浏览服务器的插件目录并安装",
+  "pghHubIntro": "服务器精选的插件目录。每个插件安装后默认关闭，需要时再启用。",
+  "pghNoCatalogTitle": "没有插件目录",
+  "pghNoCatalogBody": "此服务器未提供插件目录。如果你知道仓库，可在“扩展”中通过 Git 或 owner/repo 安装。",
+  "pghUpdatesGroup": "可用更新",
+  "pghInstalledDisabled": "已安装但处于关闭状态，需要时可在列表中启用。",
+  "ssxTitleSecurity": "安全",
+  "ssxTitleChat": "聊天",
+  "ssxTitleAppearance": "外观、程序坞与语言",
+  "ssxTitleData": "数据与备份",
+  "ssxTitleSystem": "维护",
+  "ssxTitleConnection": "连接",
+  "ssxTitleAbout": "关于",
+  "hdpSearchHint": "搜索代理或文件夹",
+  "hdpSearchClear": "清除搜索",
+  "hdpFocused": "当前焦点",
+  "hdpShellOnly": "仅终端",
+  "hdpWorkspaceAgents": "{count, plural, other{{count} 个代理}}",
+  "@hdpWorkspaceAgents": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "hdpWorkspaceMenu": "工作区 {name} 的选项",
+  "@hdpWorkspaceMenu": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "hdpNoMatches": "没有符合搜索的内容。",
+  "hdpUpdatedNow": "刚刚更新",
+  "hdpUpdatedSeconds": "{seconds} 秒前更新",
+  "@hdpUpdatedSeconds": {
+    "placeholders": {
+      "seconds": {
+        "type": "int"
+      }
+    }
+  },
+  "hdpUpdatedAgo": "{duration}前更新",
+  "@hdpUpdatedAgo": {
+    "placeholders": {
+      "duration": {
+        "type": "String"
+      }
+    }
+  },
+  "hdpStarting": "正在启动…",
+  "hdpStartingHint": "较慢的代理最多需要半分钟，不必在这里等待。",
+  "hdpStartFailedTitle": "{agent} 未能启动",
+  "@hdpStartFailedTitle": {
+    "placeholders": {
+      "agent": {
+        "type": "String"
+      }
+    }
+  },
+  "hdpStartFailedBody": "工作区已创建，但代理没有及时出现。",
+  "hdpStartReason": "服务器的回应",
+  "hdpRetry": "重试",
+  "hdpOpenTerminal": "在终端中打开",
+  "hdpDismiss": "忽略",
+  "hdpOpenWithHerdr": "用 herdr 打开",
+  "hdpNotInstalled": "未安装",
+  "hdpInstallNote": "变灰的代理不在服务器上。请先在服务器上安装，再重新检查。",
+  "hdpDetectFailed": "无法检查已安装的代理，已显示全部。",
+  "hdpNoneInstalled": "此服务器上没有安装受支持的代理。",
+  "hdpRefreshAgents": "重新检查",
+  "hdpChooseFolder": "选择文件夹",
+  "hdpNameLabel": "工作区名称（可选）",
+  "hdpNameHint": "默认使用文件夹名称",
+  "hdpStart": "启动",
+  "hdpConfirmBody": "在 {server} 的 {folder} 中启动 {agent}。",
+  "@hdpConfirmBody": {
+    "placeholders": {
+      "agent": {
+        "type": "String"
+      },
+      "folder": {
+        "type": "String"
+      },
+      "server": {
+        "type": "String"
+      }
+    }
+  },
+  "hdpFolderTitle": "文件夹",
+  "hdpFolderHome": "主目录",
+  "hdpFolderFavorites": "已固定",
+  "hdpFolderRunning": "已有代理运行的位置",
+  "hdpFolderPin": "固定文件夹",
+  "hdpFolderUnpin": "取消固定",
+  "hdpFolderFilter": "筛选文件夹",
+  "hdpFolderEmpty": "这里没有文件夹。",
+  "hdpFolderGit": "Git 仓库",
+  "hdpFolderCreate": "在此新建文件夹",
+  "hdpFolderNameLabel": "文件夹名称",
+  "hdpFolderUse": "选择此文件夹",
+  "hdpFolderUp": "上级文件夹",
+  "hdpFolderHidden": "显示或隐藏隐藏文件夹",
+  "hdpFolderUnreadable": "无法读取此文件夹。",
+  "hdpFolderMore": "仅显示前 {count} 个。",
+  "@hdpFolderMore": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "hdpFolderAdvanced": "输入路径",
+  "hdpFolderCheck": "使用此路径",
+  "hdpFolderNotFound": "该路径不是服务器上的文件夹。",
+  "hdpFolderNameEmpty": "请输入名称。",
+  "hdpFolderNameSlash": "名称不能包含 / 或 \\。",
+  "hdpFolderNameDots": "名称不能是 . 或 ..。",
+  "hdpFolderNameControl": "名称包含控制字符。",
+  "hdpFolderNameLong": "名称太长。",
+  "hdpFolderCreateFailed": "无法创建文件夹。",
+  "hdpFolderPathLabel": "路径：{path}",
+  "@hdpFolderPathLabel": {
+    "placeholders": {
+      "path": {
+        "type": "String"
+      }
+    }
+  },
+  "hdpJumpToEnd": "跳到末尾",
+  "hdpBlockedBody": "正在等待回应。确认前请先看屏幕：Enter 会选中高亮的选项，而它不一定是“是”。",
+  "hdpKeyEnterMarked": "Enter（高亮项）",
+  "hdpKeyEscCancel": "Esc（取消）",
+  "hdpTerminalLiveTitle": "终端已经打开",
+  "hdpTerminalLiveBody": "命令将输入到该终端。如果那里正在运行 Herdr、编辑器或其他程序，它会收到这段文字。你也可以改为复制。",
+  "hdpTerminalType": "输入到终端",
+  "hdpTerminalCopy": "复制命令",
+  "hdpSessionsTitle": "会话",
+  "hdpTabShell": "Shell",
+  "hdpTabTmux": "Tmux",
+  "hdpTabHerdr": "Herdr",
+  "hdpTabRecent": "最近",
+  "hdpShellRow": "普通 Shell",
+  "hdpShellBody": "终端保持原样。",
+  "hdpNoSessions": "还没有会话。",
+  "hdpNoRecent": "没有仍然存在的最近项目。",
+  "hdpSessionWindows": "{count, plural, other{{count} 个窗口}}",
+  "@hdpSessionWindows": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "hdpSessionInUse": "使用中",
+  "hdpSessionRunning": "运行中",
+  "hdpSessionStopped": "已停止",
+  "hdpSessionDefault": "默认会话",
+  "hdpSessionsFailed": "无法读取会话。",
+  "lasMenuLearn": "学习技能",
+  "lasTitle": "学习技能",
+  "lasSubmit": "学习",
+  "lasFieldLabel": "你希望智能体学习什么？",
+  "lasFieldHelp": "粘贴网址或代码仓库，或描述任务。",
+  "lasAgentNote": "由该配置文件的智能体使用自己的工具，在新聊天中完成。可能需要一些时间并消耗 token。此应用不会下载任何内容。",
+  "lasErrEmpty": "请输入智能体要学习的内容。",
+  "lasErrTooLong": "内容太长，请只保留要点。",
+  "lasLinkHttp": "有一个未加密的 http 链接，建议使用 https。会要求智能体在打开前先向你确认。",
+  "lasLinkOdd": "有一个方案不常见的链接（不是 https）。会要求智能体在打开前先向你确认。",
+  "lasChatTitle": "学习技能",
+  "pfuManageProfiles": "管理配置文件",
+  "pfuManageProfilesSub": "创建、克隆、重命名和删除服务器上的配置文件",
+  "pfuMakeActive": "设为活动",
+  "pfuOpenChat": "打开聊天",
+  "pfuClone": "克隆",
+  "pfuOpenHint": "打开配置文件",
+  "navAllSettings": "全部设置",
+  "navAllSettingsSub": "语音、停靠栏、备份及其他所有选项",
+  "ssxAllBadge": "完整列表",
+  "ssxAllSub": "全部设置的完整列表",
+  "exuTabsLabel": "分区",
+  "exuAddTooltip": "添加或浏览",
+  "exuMenuSkillHub": "浏览技能中心",
+  "exuMenuPluginHub": "浏览插件中心",
+  "exuMenuInstallSource": "从 Git 或 owner/repo 安装",
+  "exuMenuMcpCatalog": "浏览 MCP 目录",
+  "exuMoreTools": "工具",
+  "exuMoreServer": "Webhook 与服务器状态",
+  "exuHubSkillTitle": "技能中心",
+  "exuToolsScopeNote": "工具组适用于整个服务器，而不是单个配置文件。",
+  "exuSearchSkills": "搜索技能",
+  "exuSearchPlugins": "搜索插件",
+  "exuSearchMcp": "搜索 MCP 服务器",
+  "agfTrayTitle": "需要你处理",
+  "agfReasonQuestion": "提问",
+  "agfReasonApproval": "审批",
+  "agfReasonWaiting": "等你处理",
+  "agfStateAnswer": "需要回复",
+  "agfStateWorking": "工作中…",
+  "agfStateFree": "空闲",
+  "agfStateDone": "已完成",
+  "agfDoneTitle": "已完成（{count}）",
+  "@agfDoneTitle": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "agfDoneExpand": "显示已完成",
+  "agfDoneCollapse": "隐藏已完成",
+  "agfServerPick": "切换服务器",
+  "agfCopyPath": "复制路径",
+  "agfLaunchedHere": "↳ 由 Console 启动",
+  "agfAskCommand": "命令",
+  "agfOptionSemantics": "选择 {number}：{label}",
+  "@agfOptionSemantics": {
+    "placeholders": {
+      "number": {
+        "type": "int"
+      },
+      "label": {
+        "type": "String"
+      }
+    }
+  },
+  "agfSending": "发送中…",
+  "agfSent": "已发送 ✓",
+  "agfSendFailed": "发送失败 · 重试",
+  "agfAskKeyHint": "只会发送所选编号对应的按键。",
+  "agfKeysMenu": "快捷键",
+  "agfShellsTitle": "仅终端（{count}）",
+  "@agfShellsTitle": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "agfShowTerminal": "显示终端屏幕",
+  "agfShowConversation": "显示对话",
+  "agfNoTranscript": "终端屏幕：无法确定该智能体的对话。",
+  "agfLoadEarlier": "加载更早的消息",
+  "agfThinking": "思考",
+  "agfStepsMore": "{count, plural, other{另外 {count} 步}}",
+  "@agfStepsMore": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "agfStepRunning": "进行中",
+  "agfStepDone": "已完成",
+  "agfStepFailed": "失败",
+  "nrdAlertsTitle": "通知内容",
+  "nrdMasterTitle": "显示通知",
+  "nrdMasterSub": "所有通知的总开关",
+  "nrdQuestionsTitle": "提问",
+  "nrdQuestionsSub": "Hermes 向你提问并等待回答时",
+  "nrdDoneTitle": "已完成",
+  "nrdDoneSub": "Hermes 回答完毕时",
+  "pekCronSwitchTitle": "Cron",
+  "pekCronSwitchSub": "当计划任务完成或失败时",
+  "pekKanbanSwitchTitle": "Kanban",
+  "pekKanbanSwitchSub": "当卡片完成、被阻塞或需要关注时",
+  "cswRailLabel": "智能体",
+  "cswAgentFace": "{agent}，{count, plural, one {1 个对话} other {{count} 个对话}}",
+  "cswAgentCurrent": "当前：{title}",
+  "cswChatCount": "{count, plural, one {1 个聊天} other {{count} 个聊天}}",
+  "cswChatCountMore": "{count}+ 个聊天",
+  "cswAgentFaceMore": "{agent}，{count}+ 个对话",
+  "cswNoChats": "未加载任何对话",
+  "cswNewChatWith": "与 {agent} 开始新对话",
+  "cswSeeMore": "查看更多（{count}）",
+  "cswClosePanel": "关闭该智能体的对话",
+  "cswCurrentChat": "已打开的对话",
+  "qrcConnecting": "连接中…",
+  "nacLinkTitle": "连接 {name}",
+  "@nacLinkTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "nacLinkPreparing": "正在准备登录…",
+  "nacLinkIntro": "{name} 将在浏览器中打开。如果要求输入代码，请输入：",
+  "@nacLinkIntro": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "nacLinkIntroNoBrowser": "在浏览器中打开 {name} 并输入此代码：",
+  "@nacLinkIntroNoBrowser": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "nacLinkCodeLabel": "你的代码",
+  "nacLinkCopyCode": "复制代码",
+  "nacLinkCodeCopied": "已复制代码",
+  "nacLinkExpiresIn": "代码将在 {time} 后过期",
+  "@nacLinkExpiresIn": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "nacLinkOpen": "打开 {name}",
+  "@nacLinkOpen": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "nacLinkOpenAgain": "再次打开",
+  "nacLinkOpenFailed": "无法打开浏览器。请复制代码并在其他设备上登录。",
+  "nacLinkAddressUnvetted": "应用只会打开 {name} 官方网站上的页面。访问前请先核对此地址。",
+  "@nacLinkAddressUnvetted": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "nacLinkCopyAddress": "复制地址",
+  "nacLinkAddressCopied": "已复制地址",
+  "nacCardExpired": "会话已过期，请重新连接",
+  "nacLinkCheckNow": "立即检查",
+  "nacLinkWaiting": "等待你在浏览器中批准…",
+  "nacLinkApprovedTitle": "{name} 已连接",
+  "@nacLinkApprovedTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "nacLinkApprovedAs": "已以 {email} 身份连接",
+  "@nacLinkApprovedAs": {
+    "placeholders": {
+      "email": {
+        "type": "String"
+      }
+    }
+  },
+  "nacLinkApprovedBody": "其模型现已可在选择器中使用。",
+  "nacLinkDone": "完成",
+  "nacLinkDeniedTitle": "访问被拒绝",
+  "nacLinkDeniedBody": "浏览器中未授予访问权限。你可以重试。",
+  "nacLinkExpiredTitle": "代码已过期",
+  "nacLinkExpiredBody": "获取新代码，并在几分钟内在浏览器中完成。",
+  "nacLinkCancelledTitle": "登录已取消",
+  "nacLinkCancelledBody": "未保存任何内容。",
+  "nacLinkFailedTitle": "登录未完成",
+  "nacLinkFailedBody": "服务器无法完成。请重试。",
+  "nacLinkFailedRetryAfter": "服务要求稍候。请在 {time} 后重试。",
+  "@nacLinkFailedRetryAfter": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "nacLinkFailedNoRetry": "此服务器目前无法完成登录。",
+  "nacLinkOfflineTitle": "无法连接服务器",
+  "nacLinkOfflineBody": "请检查网络后重试。",
+  "nacLinkUnsupportedTitle": "此服务器不可用",
+  "nacLinkUnsupportedBody": "此版本的 Hermes 不支持从应用连接账户。请更新服务器，或在其终端中连接。",
+  "nacLinkReadOnlyTitle": "只读连接",
+  "nacLinkReadOnlyBody": "此连接无法登录或更改账户。",
+  "nacLinkTryAgain": "重试",
+  "nacDurationSeconds": "{count} 秒",
+  "@nacDurationSeconds": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "nacDurationMinutes": "{count} 分钟",
+  "@nacDurationMinutes": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "nacCardPitch": "使用你的 Nous Portal 账户登录，即可在此 Hermes 上使用其模型。连接保存在服务器上。",
+  "nacCardConnect": "通过 Nous Portal 连接",
+  "nacCardConnected": "已连接",
+  "nacCardConnectedTier": "已连接 · {tier}",
+  "@nacCardConnectedTier": {
+    "placeholders": {
+      "tier": {
+        "type": "String"
+      }
+    }
+  },
+  "nacCardValidUntil": "有效期至 {date}",
+  "@nacCardValidUntil": {
+    "placeholders": {
+      "date": {
+        "type": "String"
+      }
+    }
+  },
+  "nacCardNotConnected": "未连接",
+  "nacCardFreeTier": "免费层级，无账户",
+  "nacCardUnsupported": "此服务器不可用",
+  "nacCardUnsupportedBody": "此版本的 Hermes 不提供从应用连接账户的功能。",
+  "nacCardManage": "账户选项",
+  "nacCardReconnect": "切换账户",
+  "nacCardDisconnect": "断开连接",
+  "nacCardDisconnectTitle": "断开 {name} 的连接？",
+  "@nacCardDisconnectTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "nacCardDisconnectBody": "服务器上保存的凭据将被删除。在重新连接账户之前，其模型将不可用。",
+  "nacCardDisconnected": "{name} 已断开连接",
+  "@nacCardDisconnected": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "nacCardStillConnected": "服务器仍显示 {name} 已连接。",
+  "@nacCardStillConnected": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "nacCardUnlockReason": "断开 {name} 账户的连接",
+  "@nacCardUnlockReason": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "nacScreenTitle": "Nous Portal 账户",
+  "nacScreenBody": "使用你的 Nous Portal 账户后，此 Hermes 将使用你订阅中的模型。凭据保存在服务器上，而非手机上。",
+  "nacScreenLoadFailed": "无法读取账户状态。",
+  "nacScreenManageModels": "模型与提供商",
+  "nacSettingsSubtitle": "连接或断开你的账户",
+  "nacOnboardingOffer": "连接你的 Nous Portal 账户以使用其模型",
+  "nacSheetConnect": "连接 Nous Portal",
+  "nacSheetNoAccountHint": "没有可用的模型。连接账户即可使用 Nous Portal 的模型。",
+  "nacContinueWithNous": "使用 Nous 继续",
+  "nacContinueWithProvider": "使用 {name} 继续",
+  "@nacContinueWithProvider": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "lwpAhora": "现在",
+  "lwpChats": "聊天",
+  "lwpCron": "Cron",
+  "lwpTasks": "任务",
+  "lwpNewChat": "新对话",
+  "lwpNewChatLine": "输入或语音",
+  "lwpNewChatSetup": "请先连接 Hermes",
+  "lwpVoice": "语音",
+  "lwpAgent": "Hermes",
+  "lwpNeedsPermission": "需要你的许可",
+  "lwpAsksYou": "有问题问你",
+  "lwpNeedsYou": "需要你",
+  "lwpAllow": "允许",
+  "lwpDeny": "拒绝",
+  "lwpOpen": "打开",
+  "lwpWorking": "工作中",
+  "lwpThinking": "思考中",
+  "lwpResponding": "回复中",
+  "lwpStartedAt": "自 {time}",
+  "@lwpStartedAt": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "lwpCalmTitle": "没有人需要你",
+  "lwpCalmEnd": "一切平静",
+  "lwpLastFinished": "最近：{title} · {time}",
+  "@lwpLastFinished": {
+    "placeholders": {
+      "title": {
+        "type": "String"
+      },
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "lwpOffline": "离线",
+  "lwpOfflineTitle": "{instance} 无响应",
+  "@lwpOfflineTitle": {
+    "placeholders": {
+      "instance": {
+        "type": "String"
+      }
+    }
+  },
+  "lwpOfflineTitleGeneric": "服务器无响应",
+  "lwpLastKnown": "最后已知",
+  "lwpSetupTitle": "设置 Hermes",
+  "lwpSetupLine": "连接你的实例，在这里查看谁需要你。",
+  "lwpSetupButton": "开始",
+  "lwpChatsWaiting": "{count, plural, =0{已全部处理} other{{count} 个等待你}}",
+  "@lwpChatsWaiting": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "lwpChatsRunning": "{count, plural, other{{count} 个进行中}}",
+  "@lwpChatsRunning": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "lwpChatsEmptyTitle": "还没有聊天",
+  "lwpChatsEmptyLine": "连接后会显示在这里。",
+  "lwpChatWaits": "等待你",
+  "lwpChatWriting": "正在输入…",
+  "lwpCronEmptyTitle": "没有计划任务",
+  "lwpCronEmptyLine": "在应用中创建第一个计划。",
+  "lwpCronPaused": "已暂停",
+  "lwpCronFailed": "失败",
+  "lwpCronRunning": "进行中",
+  "lwpCronNoNext": "没有下次运行",
+  "lwpInMinutes": "{count, plural, other{{count} 分钟后}}",
+  "@lwpInMinutes": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "lwpInHours": "{hours} 小时 {minutes} 分钟后",
+  "@lwpInHours": {
+    "placeholders": {
+      "hours": {
+        "type": "int"
+      },
+      "minutes": {
+        "type": "int"
+      }
+    }
+  },
+  "lwpInDays": "{count, plural, other{{count} 天后}}",
+  "@lwpInDays": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "lwpToday": "今天",
+  "lwpTomorrow": "明天",
+  "lwpYesterday": "昨天",
+  "lwpDayTime": "{day} · {time}",
+  "@lwpDayTime": {
+    "placeholders": {
+      "day": {
+        "type": "String"
+      },
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "lwpAgoMinutes": "{count, plural, =0{刚刚} other{{count} 分钟前}}",
+  "@lwpAgoMinutes": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "lwpAgoHours": "{count, plural, other{{count} 小时前}}",
+  "@lwpAgoHours": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "lwpTasksEmptyTitle": "没有看板",
+  "lwpTasksEmptyLine": "连接后显示。",
+  "lwpTasksRunning": "进行中",
+  "lwpTasksAttention": "等待你",
+  "lwpTasksPending": "待办",
+  "lwpTasksNext": "下一个 · {title}",
+  "@lwpTasksNext": {
+    "placeholders": {
+      "title": {
+        "type": "String"
+      }
+    }
+  },
+  "lwpTasksInProgressUnit": "进行中",
+  "lwpTasksPendingCount": "{count, plural, other{{count} 个待办}}",
+  "@lwpTasksPendingCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "lwpTasksAttentionCount": "{count, plural, other{{count} 个等待你}}",
+  "@lwpTasksAttentionCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "lwpA11yNeeds": "{name} 需要你的许可：{what}",
+  "@lwpA11yNeeds": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "what": {
+        "type": "String"
+      }
+    }
+  },
+  "lwpA11yAsks": "{name} 问你：{what}",
+  "@lwpA11yAsks": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "what": {
+        "type": "String"
+      }
+    }
+  },
+  "lwpA11yWorking": "{name} 正在工作：{what}",
+  "@lwpA11yWorking": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "what": {
+        "type": "String"
+      }
+    }
+  },
+  "lwpA11yOffline": "自 {time} 起离线",
+  "@lwpA11yOffline": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "lwpA11ySetup": "设置 Hermes 以在这里查看谁需要你",
+  "lwpA11yNextJob": "下一个计划任务：{name}，{when}",
+  "@lwpA11yNextJob": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "when": {
+        "type": "String"
+      }
+    }
+  },
+  "lwpA11yChats": "{count, plural, =0{没有对话} other{{count} 个对话，第一个：{first}}}",
+  "@lwpA11yChats": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      },
+      "first": {
+        "type": "String"
+      }
+    }
+  },
+  "lwpA11yTasks": "任务：{running} 个进行中，{attention} 个等待你，{pending} 个待办",
+  "@lwpA11yTasks": {
+    "placeholders": {
+      "running": {
+        "type": "int"
+      },
+      "attention": {
+        "type": "int"
+      },
+      "pending": {
+        "type": "int"
+      }
+    }
+  },
+  "lwpA11yOpenChat": "打开 {title}",
+  "@lwpA11yOpenChat": {
+    "placeholders": {
+      "title": {
+        "type": "String"
+      }
+    }
+  },
+  "lwpA11yOpenJob": "打开计划任务 {name}",
+  "@lwpA11yOpenJob": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "lwpA11yNewChat": "与 Hermes 的新对话",
+  "lwpA11yVoice": "新语音对话",
+  "lwpA11yAllow": "允许 {name}",
+  "@lwpA11yAllow": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "lwpA11yDeny": "拒绝 {name} 的请求",
+  "@lwpA11yDeny": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "lwpA11yOpenApp": "打开 Hermes Console",
+  "nacNousWriteAddress": "手动输入地址",
+  "nacNousWaitingAddress": "正在等待你的地址…",
+  "nacNousOpenPortal": "打开 Nous Portal",
+  "nacNousPasteAddress": "粘贴地址",
+  "nacNousPasteNone": "没有复制 Nous Cloud 地址",
+  "subagentUiStatusUnconfirmed": "未确认",
+  "cronNoticeAutomatic": "自动",
+  "cronNoticeAll": "全部",
+  "cronNoticeFailuresOnly": "仅失败",
+  "cronNoticeOff": "关闭",
+  "cronNoticeAutomaticHint": "自动模式会通知所有失败，每个任务每60分钟最多通知一次成功。",
+  "cronNoticeInherit": "遵循设置中的模式",
+  "cronNoticeAutomaticRepliesHint": "只有“全部”模式也会通知内部触发的轮次回复。失败和需要您关注的请求仍会通知。",
+  "biComposerInterruptHint": "中断并发送…",
+  "biComposerSteerHint": "引导智能体…",
+  "biQueueThisMessageHint": "长按将此消息加入队列",
+  "biInterruptFailedQueued": "无法中断；消息仍在队列中",
+  "subagentPillAgents": "代理",
+  "subagentPillWorking": "工作中",
+  "subagentPillRunningTool": "正在运行 {tool}",
+  "@subagentPillRunningTool": {
+    "placeholders": {
+      "tool": {
+        "type": "String"
+      }
+    }
+  },
+  "exuToolGroupsTitle": "工具组",
+  "exuToolGroupsSubtitle": "智能体可使用的 Hermes 内置功能",
+  "exuBuiltinToolsEmpty": "没有可用的内置工具组",
+  "exuBuiltinToolsEmptyBody": "请在扩展的 MCP 标签页中管理 MCP 服务器及其工具。",
+  "turnLineEdited": "{count, plural, other{编辑了 {count} 个文件}}",
+  "turnLineRead": "{count, plural, other{读取了 {count} 个文件}}",
+  "turnLineRan": "{count, plural, other{执行了 {count} 条命令}}",
+  "turnLineSearchedFiles": "{count, plural, other{搜索文件 {count} 次}}",
+  "turnLineSearchedWeb": "{count, plural, other{搜索网页 {count} 次}}",
+  "turnLineOpened": "{count, plural, other{打开了 {count} 个网页}}",
+  "turnLineUsedTools": "{count, plural, other{使用了 {count} 个工具}}",
+  "turnLineFailed": "{count, plural, other{{count} 个失败}}",
+  "turnLineAgents": "{count, plural, other{{count} 个代理}}",
+  "turnLineMore": "另有 {count} 项",
+  "turnLineThought": "已思考",
+  "turnLineDelegated": "{count, plural, other{委派了 {count} 个任务}}",
+  "turnLineReadCalls": "{count, plural, other{读取了 {count} 次}}",
+  "turnLineEditCalls": "{count, plural, other{编辑了 {count} 次}}",
+  "turnLineExecutedCode": "{count, plural, other{执行代码 {count} 次}}",
+  "turnLineSteps": "{count} 步",
+  "@turnLineSteps": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "msvModelLoading": "正在加载模型…",
+  "msvModelUnavailable": "模型不可用",
+  "msvProviderNoUsage": "此提供商未提供用量数据",
+  "msvUsageAvailable": "额度充足",
+  "msvUsageNearLimit": "接近限额",
+  "msvCapabilityUnavailable": "此模型不可用",
+  "queueSheetTitle": "待发送",
+  "queuePillCount": "{count} 条待发送",
+  "@queuePillCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "queuePillPaused": "已暂停",
+  "activitySheetTitle": "活动",
+  "chatDelegatesSheetLive": "后台 · {clock}",
+  "chatDelegatesSheetDone": "已委派 · {clock}",
+  "delegatedCapsuleRunning": "{count, plural, other{已委派给 {count} 个子代理 · {clock} · {done}/{count}}}",
+  "delegatedCapsuleDone": "{count, plural, other{✓ {count} 个子代理已完成 · {clock}}}",
+  "delegatedCapsuleFinished": "{count, plural, other{✓ {count} 个子代理已完成}}",
+  "delegatedCapsuleRunningIdle": "{count, plural, other{正在运行 {count} 个子代理}}",
+  "delegatedChildNoData": "无数据",
+  "activityProcessesTitle": "后台进程",
+  "activityAgentCount": "{count} 个代理",
+  "@activityAgentCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "activityProcessCount": "{count} 个进程",
+  "@activityProcessCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "activityStop": "停止",
+  "activityWaitingAgents": "等待 {count} 个子代理",
+  "@activityWaitingAgents": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "adkTitle": "执行权限",
+  "adkOnce": "仅本次允许",
+  "adkSession": "本次会话中",
+  "adkAlways": "始终允许此类命令",
+  "adkViewFull": "查看全文",
+  "adkAlwaysConfirm": "在此配置中始终允许此类命令",
+  "adkSending": "正在发送决定…",
+  "adkSendError": "无法发送决定，请重试。",
+  "adkWaiting": "等待你的许可",
+  "adkAllowed": "已允许",
+  "adkDenied": "已拒绝",
+  "adkAlwaysHint": "在此配置的所有聊天中允许此类命令。权限保存在服务器上。",
+  "batTitle": "电池",
+  "batStateUnrestricted": "无限制",
+  "batStateOptimized": "已优化",
+  "batStateRestricted": "后台受限",
+  "batOptimizedBody": "手机待机时，Android 可能会延迟通知。在 Samsung 上，还请检查 电池 → 休眠应用。若想即时收到，请选择“无限制”。",
+  "batRestrictedBody": "Android 在后台限制了此应用：通知可能无法送达。请在应用的电池使用中解除限制。",
+  "batOpenSettings": "打开电池设置",
+  "batPromptTitle": "让 Console 在后台保持连接",
+  "batPromptBody": "离开 Console 后，Android 可能会断开连接。请在电池设置中允许不受限制的电池使用。",
+  "batPromptNotNow": "暂不",
+  "batPromptRestore": "在首页重新显示提醒",
+  "batPushBatteryNote": "Android 可能会延迟通知或中断后台连接。请在电池设置中允许不受限制的电池使用。此步骤为可选项。",
+  "chatLiveDelegating": "{count, plural, other{正在委派 {count} 项任务}}",
+  "chatLiveWaitingDelegates": "正在等待子代理",
+  "chatLiveCommands": "{count} 条命令",
+  "chatLiveAgents": "{count} 个子代理",
+  "chatLiveReady": "{count} 个已就绪",
+  "chatLiveSteps": "{count} 个步骤",
+  "assistRowTitle": "数字助理",
+  "assistRowOn": "已设为数字助理：调用时会打开已准备好语音的新聊天",
+  "assistRowOff": "将 Console 选为数字助理后，调用时会打开带语音的新聊天。它不会读取屏幕。",
+  "subagentHistoricalUnavailable": "已保存的对话中不再包含这些子代理的详细信息。",
+  "lflHapticsTitle": "触觉反馈",
+  "lflHapticsSubtitle": "点按、发送和一轮结束时轻轻振动。如果系统的触摸反馈已关闭，则同样不会振动",
+  "notifBgTitle": "后台监听",
+  "notifBgSub": "应用关闭时也接收提醒 · 会显示常驻通知",
+  "notifBgActive": "持续运行，直到你关闭 · 正在监听智能体事件",
+  "notifListenerStartFailed": "无法启动后台监听。请重试。",
+  "notifBgRestartNotice": "从最近任务中移除 Hermes 不会停止监听。强行停止会中断监听，直到你再次打开应用。",
+  "au1215BgNeededForAutomation": "仅在此选项开启时，才能收到 Cron 和看板通知。",
+  "notifFixedCardTitle": "固定通知",
+  "notifFixedCardSub": "在 Android 中最小化“已连接到 Hermes”通知"
 }

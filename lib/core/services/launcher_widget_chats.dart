@@ -25,7 +25,7 @@ const launcherWidgetChatsProvider =
 /// answers off the home screen.
 Future<bool> _storedHideSensitive() async {
   final prefs = await SharedPreferences.getInstance();
-  return prefs.getBool('notif_hide_sensitive_content') ?? false;
+  return prefs.getBool('notif_hide_sensitive_content') ?? true;
 }
 
 /// One line of plain text from a preview: its first non-empty line, with the

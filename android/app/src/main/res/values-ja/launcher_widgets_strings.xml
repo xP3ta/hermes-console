@@ -9,6 +9,7 @@
     <string name="lw_cron_description">次の予約タスクを表示。大きいサイズでは失敗したタスクを含め、すべて表示</string>
     <string name="lw_new">新規</string>
     <string name="lw_ask_hint">Hermesに質問…</string>
+    <string name="lw_ask_hint_named">%1$sに質問…</string>
     <string name="lw_new_description">新しいチャット</string>
     <string name="lw_voice_description">新しい音声チャット</string>
     <string name="lw_camera_description">カメラを使って新しいチャットを開始</string>
@@ -139,4 +140,9 @@
     <string name="lw_sample_room_line">Builderが返信中</string>
     <string name="lw_sample_run_title">Hermes · ターミナル</string>
     <string name="lw_sample_run_about">週次レポート</string>
+
+    <!-- Quick Settings tiles -->
+    <string name="widgets_qs_new_chat_label">新しいチャット</string>
+    <string name="widgets_qs_voice_chat_label">音声チャット</string>
+    <string name="widgets_qs_camera_chat_label">カメラでチャット</string>
 </resources>

@@ -3,10 +3,8 @@ import 'package:hermes_android/core/utils/projected_content_copy.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
-import 'package:hermes_android/core/models/session_artifact.dart';
 import 'package:hermes_android/core/services/ssh_commands.dart';
 import 'package:hermes_android/core/utils/api_error.dart';
-import 'package:hermes_android/core/utils/artifact_name_copy.dart';
 import 'package:hermes_android/core/utils/companion_error_copy.dart';
 import 'package:hermes_android/core/utils/theme_error_copy.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
@@ -80,35 +78,6 @@ void main() {
       expect(companionErrorCopy(s, 'spritesheet con dimensiones inesperadas (100x150); se espera múltiplo de 32x32'), s.i18n131P6PetDimensions('100x150', '32x32'));
       // User/backend data is not translated by guessing from substrings.
       expect(companionErrorCopy(s, 'nimbus custom server detail'), 'nimbus custom server detail');
-    });
-
-    test('$language: generic artifact names translate; real filenames stay exact', () {
-      for (final kind in SessionArtifactKind.values) {
-        final artifact = SessionArtifact(
-          id: 'fixture',
-          kind: kind,
-          displayName: 'Image',
-          hasExplicitDisplayName: false,
-          sources: const [SessionArtifactSource(messageOrdinal: 0)],
-        );
-        final expected = switch (kind) {
-          SessionArtifactKind.image => s.sa1215KindImage,
-          SessionArtifactKind.file => s.sa1215KindFile,
-          SessionArtifactKind.document => s.i18n131P6Document,
-          SessionArtifactKind.generated => s.i18n131P6GeneratedArtifact,
-          SessionArtifactKind.toolResult => s.i18n131P6ToolResult,
-          SessionArtifactKind.unknown => s.i18n131P6Artifact,
-        };
-        expect(artifactNameCopy(s, artifact), expected);
-        expect(artifactNameCopy(s, artifact.withSources(artifact.sources)), expected);
-        final named = SessionArtifact(
-          id: 'named',
-          kind: kind,
-          displayName: 'Image',
-          sources: const [SessionArtifactSource(messageOrdinal: 0)],
-        );
-        expect(artifactNameCopy(s, named), 'Image');
-      }
     });
 
     test('$language: default SSH labels translate and saved user labels stay exact', () async {

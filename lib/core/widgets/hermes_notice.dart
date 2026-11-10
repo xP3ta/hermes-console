@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../theme/app_theme.dart';
+import '../design/liquid_glass.dart';
+import '../design/liquid_sheen.dart';
 import '../theme/motion.dart';
 import '../theme/theme_contrast.dart';
 import 'island.dart';
@@ -1224,21 +1226,29 @@ class HermesNoticeCard extends StatelessWidget {
       container: true,
       button: onTap != null,
       onDismiss: onDismissed,
-      child: Material(
-        color: colors.surface,
-        surfaceTintColor: Colors.transparent,
-        elevation: 10,
-        shadowColor: Colors.black.withValues(alpha: dark ? 0.45 : 0.20),
-        borderRadius: BorderRadius.circular(radius),
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: onTap,
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              border: Border.all(color: colors.divider.withValues(alpha: 0.78)),
-              borderRadius: BorderRadius.circular(radius),
+      child: HermesSheen(
+        liquid: HermesLiquid.notice,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(radius),
+        ),
+        child: Material(
+          color: colors.surface,
+          surfaceTintColor: Colors.transparent,
+          elevation: 10,
+          shadowColor: Colors.black.withValues(alpha: dark ? 0.45 : 0.20),
+          borderRadius: BorderRadius.circular(radius),
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: onTap,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                border: Border.all(
+                  color: colors.divider.withValues(alpha: 0.78),
+                ),
+                borderRadius: BorderRadius.circular(radius),
+              ),
+              child: body,
             ),
-            child: body,
           ),
         ),
       ),

@@ -24,16 +24,10 @@ class HermesControlWidgetProvider : LauncherWidgetProvider(LauncherWidgetSubject
 class HermesCronWidgetProvider : LauncherWidgetProvider(LauncherWidgetSubject.CRON)
 
 /*
- * Bots and Salas were drafted in 1.2.14 as Glance widgets and never enabled in
- * a released manifest. They ship in 1.2.15 in the family's look, under the
- * receiver names the background listener already redraws.
+ * Bots and Salas (drafted in 1.2.14, shipped in 1.2.15) are retired: their
+ * receivers are gone from the manifest, so a launcher drops a placed one on
+ * update, as it does with any widget whose provider no longer exists.
  */
-
-/** Bots: the faces of the team and who waits for you; larger, a row per bot. */
-class HermesBotsWidgetProvider : LauncherWidgetProvider(LauncherWidgetSubject.BOTS)
-
-/** Salas: the live room and who answers; larger, more rooms with their last line. */
-class HermesRoomWidgetProvider : LauncherWidgetProvider(LauncherWidgetSubject.ROOMS)
 
 /** Tareas: the card in progress; larger, in progress first and then the pending ones. New in 1.2.15. */
 class HermesTasksWidgetProvider : LauncherWidgetProvider(LauncherWidgetSubject.TASKS)

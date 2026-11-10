@@ -13,13 +13,18 @@ import 'package:flutter/material.dart';
 import '../../../l10n/app_localizations.dart';
 import '../../bots/ui/roster/living_bot_face.dart';
 import '../../design/schedule_model.dart' show HermesSchedule;
+import '../../design/tokens.dart' show HermesSpace, HermesType;
 import '../../services/connection_status.dart';
 import '../../theme/soft_tokens.dart';
 import '../../utils/relative_time.dart';
+import '../../widgets/profile_face.dart' show ProfileFace;
 import '../../widgets/provider_logo.dart';
 import '../../widgets/face_marks.dart';
 import '../../widgets/activity_pill.dart' show formatTurnElapsed;
 import '../home_now.dart';
+import '../launcher/launcher_widget_geometry.dart';
+import '../launcher/launcher_widget_words.dart';
+import '../launcher/launcher_widget_palette.dart';
 import 'home_limits.dart';
 import 'home_board_data.dart';
 import 'home_board_kit.dart';
@@ -98,9 +103,15 @@ String homeSince(BuildContext context, DateTime at, DateTime now) {
   return strings.i18n131SinceDays(diff.inDays);
 }
 
-String _hhmm(DateTime at) =>
-    '${at.hour.toString().padLeft(2, '0')}:'
-    '${at.minute.toString().padLeft(2, '0')}';
+LwWords _words(BuildContext context, DateTime now) => LwWords(
+  Strings.of(context),
+  locale: Localizations.localeOf(context),
+  use24h: MediaQuery.alwaysUse24HourFormatOf(context),
+  nowMs: now.millisecondsSinceEpoch,
+);
+
+String _time(BuildContext context, DateTime at) =>
+    _words(context, at).time(at.millisecondsSinceEpoch);
 
 bool _sameDay(DateTime a, DateTime b) =>
     a.year == b.year && a.month == b.month && a.day == b.day;
@@ -116,7 +127,7 @@ String homeWhen(BuildContext context, DateTime at, DateTime now) {
   if (now.difference(at).abs() < const Duration(minutes: 1)) {
     return homeAgo(context, now, now);
   }
-  if (_sameDay(at, now)) return _hhmm(at);
+  if (_sameDay(at, now)) return _time(context, at);
   if (now.difference(at).inDays.abs() < 7) {
     return homeDayLabel(Strings.of(context), at);
   }
@@ -126,16 +137,11 @@ String homeWhen(BuildContext context, DateTime at, DateTime now) {
 String homeElapsed(Duration d) =>
     formatTurnElapsed(d.isNegative ? Duration.zero : d);
 
-/// «en 2 h», «en 35 min»: to the nearest hour or day (4 h 56 min is
-/// «en 5 h»).
+/// The launcher calendar's exact hours and minutes, in the app's locale.
 String homeCountdown(BuildContext context, Duration d) {
-  final strings = Strings.of(context);
-  final minutes = math.max(0, d.inMinutes);
-  if (minutes < 60) return strings.i18n131InMinutes(minutes);
-  if (minutes < 60 * 24) {
-    return strings.i18n131InHours((minutes / 60).round());
-  }
-  return strings.i18n131InDays((minutes / (60 * 24)).round());
+  final now = DateTime.fromMillisecondsSinceEpoch(0);
+  return _words(context, now).inTime(math.max(0, d.inMilliseconds)) ??
+      Strings.of(context).lwpInMinutes(0);
 }
 
 /// Elapsed time that ticks once a second on its own (only this text
@@ -191,28 +197,55 @@ class _HomeElapsedState extends State<HomeElapsed> {
   Widget build(BuildContext context) {
     final now = widget.clock();
     _paintedSecond = now.millisecondsSinceEpoch ~/ 1000;
-    return Text(
-      '${widget.prefix ?? ''}'
-      '${homeElapsed(now.difference(widget.since))}',
-      maxLines: 1,
-      softWrap: false,
-      overflow: TextOverflow.clip,
-      style: (widget.style ?? const TextStyle()).copyWith(
-        fontFeatures: const [FontFeature.tabularFigures()],
-      ),
+    final time = homeElapsed(now.difference(widget.since));
+    final style = (widget.style ?? const TextStyle()).copyWith(
+      fontFeatures: const [FontFeature.tabularFigures()],
+    );
+    // A clock is whole or not there: without its prefix when the line has
+    // no room for it (it grew a digit), and left out when it has none for
+    // the time itself.
+    return LayoutBuilder(
+      builder: (context, box) {
+        bool fits(String text) =>
+            _lineWidth(context, text, style) <= box.maxWidth + 0.5;
+        final prefix = widget.prefix;
+        final shown = prefix != null && fits('$prefix$time')
+            ? '$prefix$time'
+            : time;
+        if (!fits(shown)) return const SizedBox.shrink();
+        return Text(
+          shown,
+          maxLines: 1,
+          softWrap: false,
+          overflow: TextOverflow.clip,
+          style: style,
+        );
+      },
     );
   }
 }
 
 // ── faces ──────────────────────────────────────────────────────────────
 
-/// Colour of a bot's state dot: none while idle (calm), the accent while
-/// it works, the soft attention tone while it waits for the user.
-Color? homeBotDotColor(SoftPalette p, HomeBotState state) => switch (state) {
+/// Colour of a bot's state dot: none while idle (calm), the one accent
+/// while it works or waits for the user (the ring tells the two apart).
+Color? homeBotDotColor(HomePalette p, HomeBotState state) => switch (state) {
   HomeBotState.idle => null,
-  HomeBotState.working => HomeType.live(p),
-  HomeBotState.waiting => p.attention,
+  HomeBotState.working || HomeBotState.waiting => HomeType.live(p),
 };
+
+/// Whether the face of a bot in [state] wears the accent ring: the one
+/// that waits for the user («te espera»).
+bool homeFaceRinged(HomeBotState state) => state == HomeBotState.waiting;
+
+/// Stroke of the ring and the gap between it and the face, as the profile
+/// faces wear it.
+const double _ringWidth = ProfileFace.ringWidth;
+const double _ringGap = ProfileFace.ringGap;
+
+/// Room a ringed face needs around its box (the ring hangs outside it),
+/// rounded up to the spacing grid.
+const double _ringRoom = HermesSpace.x1;
 
 /// How a Home widget face moves for [state].
 BotFaceSignal homeBotFaceSignal(HomeBotState state) => switch (state) {
@@ -224,7 +257,9 @@ BotFaceSignal homeBotFaceSignal(HomeBotState state) => switch (state) {
 /// The original bot face inside widgets: alive like on the Bots home
 /// (idle breath and blinks, working scan, a nudge while it waits) on the
 /// shared face clocks, only while its tile is on screen. Its state is a
-/// small soft dot at the corner, never a ring or a glow around the face.
+/// small dot at the corner and, while it waits for the user, the accent
+/// ring the profile faces wear; never a glow. The ring hangs outside the
+/// face's box, so the face keeps its size and place whatever its state.
 class HomeFace extends StatelessWidget {
   const HomeFace({
     super.key,
@@ -245,7 +280,7 @@ class HomeFace extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final p = SoftPalette.ofContext(context);
+    final p = HomePalette.ofContext(context);
     final bot = data.bot(profileName);
     final dot = this.dot ? homeBotDotColor(p, state) : null;
     final face = LivingBotFace(
@@ -261,26 +296,45 @@ class HomeFace extends StatelessWidget {
       signal: homeBotFaceSignal(state),
       semanticLabel: bot?.displayName ?? profileName,
     );
-    if (dot == null) return face;
+    final ringed = homeFaceRinged(state);
+    if (dot == null && !ringed) return face;
     final d = math.max(7.0, (size * 0.22).roundToDouble());
     return SizedBox.square(
       dimension: size,
       child: Stack(
         clipBehavior: Clip.none,
         children: [
-          face,
-          PositionedDirectional(
-            end: -1,
-            bottom: -1,
-            // A plain dot, no ring in the card colour (QA 9494: the same
-            // face sits in sheets and on other cards, where it read as a
-            // dark halo).
-            child: FaceStateDot(
-              key: ValueKey('home-face-dot-$profileName'),
-              color: dot,
-              size: d + 1,
+          if (ringed)
+            Positioned(
+              left: -(_ringWidth + _ringGap),
+              top: -(_ringWidth + _ringGap),
+              right: -(_ringWidth + _ringGap),
+              bottom: -(_ringWidth + _ringGap),
+              child: DecoratedBox(
+                key: ValueKey('home-face-ring-$profileName'),
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: HomeType.live(p),
+                    width: _ringWidth,
+                  ),
+                ),
+              ),
             ),
-          ),
+          face,
+          if (dot != null)
+            PositionedDirectional(
+              end: -1,
+              bottom: -1,
+              // A plain dot, no ring in the card colour (QA 9494: the same
+              // face sits in sheets and on other cards, where it read as a
+              // dark halo).
+              child: FaceStateDot(
+                key: ValueKey('home-face-dot-$profileName'),
+                color: dot,
+                size: d + 1,
+              ),
+            ),
         ],
       ),
     );
@@ -332,7 +386,7 @@ class _FaceStack extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final p = SoftPalette.ofContext(context);
+    final p = HomePalette.ofContext(context);
     final shown = profiles.take(max).toList();
     final more = profiles.length - shown.length;
     const overlap = 5.0;
@@ -405,7 +459,10 @@ Widget _header(HomeTileContext t, BuildContext context, {Widget? trailing}) =>
       trailing: trailing,
     );
 
-/// The quiet note at the end of a header («2 en marcha», «1 falló»).
+/// The note at the end of a header («1 PARA TI», «2 EN MARCHA»): the same
+/// small capitals as the label, a step quieter, never a capsule. [color]
+/// is the state it speaks of (what asks, what failed); without one it is
+/// faint. A [dot] before it says the same without the colour.
 class _HeadNote extends StatelessWidget {
   const _HeadNote(this.text, {this.dot, this.color, super.key});
   final String text;
@@ -414,22 +471,24 @@ class _HeadNote extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final p = SoftPalette.ofContext(context);
+    final p = HomePalette.ofContext(context);
+    final ink = color ?? HomeType.faint(p);
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        if (dot != null) ...[_Dot(dot!, size: 6), const SizedBox(width: 6)],
+        if (dot != null) ...[
+          _Dot(dot!, size: 5),
+          const SizedBox(width: HermesSpace.x1 + 1),
+        ],
         Flexible(
           child: Text(
-            text,
+            text.toUpperCase(),
+            semanticsLabel: text,
             maxLines: 1,
+            softWrap: false,
             overflow: TextOverflow.ellipsis,
-            style: HomeType.when(p).copyWith(
-              fontSize: 12,
-              height: 17 / 12,
-              fontWeight: color == null ? FontWeight.w500 : FontWeight.w600,
-              color: color ?? HomeType.faint(p),
-            ),
+            textScaler: _capped(context, 1.3),
+            style: HomeType.badge(p, ink),
           ),
         ),
       ],
@@ -438,7 +497,7 @@ class _HeadNote extends StatelessWidget {
 }
 
 class _Dot extends StatelessWidget {
-  const _Dot(this.color, {this.size = 7});
+  const _Dot(this.color, {this.size = 7, super.key});
   final Color color;
   final double size;
   @override
@@ -456,24 +515,37 @@ class _Badge extends StatelessWidget {
   final Color color;
   final Color ink;
 
+  static TextStyle _style(BuildContext context, Color ink) =>
+      HomeType.badge(HomePalette.ofContext(context), ink);
+
+  static double heightOf(BuildContext context) {
+    final style = _style(context, HomePalette.ofContext(context).text);
+    return math.max(
+      HermesSpace.x5,
+      (_capped(context, HomeType.hugeScale).scale(style.fontSize!) *
+                  style.height!)
+              .ceilToDouble() +
+          HermesSpace.x1 / 2,
+    );
+  }
+
   @override
   Widget build(BuildContext context) => DecoratedBox(
     decoration: ShapeDecoration(color: color, shape: const StadiumBorder()),
-    child: ConstrainedBox(
-      constraints: const BoxConstraints(minWidth: 19, minHeight: 19),
+    child: SizedBox(
+      height: heightOf(context),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-        child: Text(
-          text,
-          maxLines: 1,
-          textAlign: TextAlign.center,
-          textScaler: _capped(context, 1.3),
-          style: TextStyle(
-            fontSize: 11.5,
-            height: 17 / 11.5,
-            fontWeight: FontWeight.w700,
-            color: ink,
-            fontFeatures: const [FontFeature.tabularFigures()],
+        padding: const EdgeInsets.symmetric(horizontal: HermesSpace.x1),
+        child: Center(
+          widthFactor: 1,
+          child: Text(
+            text,
+            maxLines: 1,
+            softWrap: false,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+            textScaler: _capped(context, HomeType.hugeScale),
+            style: _style(context, ink),
           ),
         ),
       ),
@@ -509,7 +581,7 @@ class _Status extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final p = SoftPalette.ofContext(context);
+    final p = HomePalette.ofContext(context);
     final color = mark == _Mark.failed
         ? p.failure
         : ink
@@ -525,53 +597,74 @@ class _Status extends StatelessWidget {
       _Mark.asks => Icon(Icons.help_rounded, size: 14, color: HomeType.live(p)),
     };
     return LayoutBuilder(
-      builder: (context, box) => Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (lead != null) ...[lead, const SizedBox(width: 6)],
-          Flexible(
-            child: Text(
-              text,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: style,
-            ),
-          ),
-          if (timer != null && clock != null)
-            // The clock keeps its width; the words give way to it, and it
-            // never asks for more than the line has.
-            ConstrainedBox(
-              constraints: BoxConstraints(
-                maxWidth: box.maxWidth.isFinite
-                    ? math.max(0.0, box.maxWidth - (lead == null ? 0 : 20))
-                    : double.infinity,
+      builder: (context, box) {
+        final room = box.maxWidth.isFinite
+            ? math.max(0.0, box.maxWidth - (lead == null ? 0 : 20))
+            : double.infinity;
+        // The clock keeps its width and the words give way to it. Where
+        // the line has no room for « · 0:42», the clock stands alone;
+        // where it has none for «0:42», the line keeps its words (and the
+        // clock, should it grow a digit, gives up its prefix on its own).
+        var withWords = true;
+        var withClock = false;
+        if (timer case final since? when clock != null) {
+          final now = homeElapsed(clock!().difference(since));
+          final clockStyle = style.copyWith(
+            fontFeatures: const [FontFeature.tabularFigures()],
+          );
+          bool fits(String s) =>
+              _lineWidth(context, s, clockStyle) <= room + 0.5;
+          if (text.isNotEmpty && fits(' · $now')) {
+            withClock = true;
+          } else if (fits(now)) {
+            withClock = true;
+            withWords = text.isEmpty;
+          }
+        }
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (lead != null) ...[lead, const SizedBox(width: 6)],
+            if (withWords)
+              Flexible(
+                child: Text(
+                  text,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: style,
+                ),
               ),
-              child: HomeElapsed(
-                since: timer!,
-                clock: clock!,
-                prefix: text.isEmpty ? null : ' · ',
-                style: style,
+            if (withClock)
+              ConstrainedBox(
+                constraints: BoxConstraints(maxWidth: room),
+                child: HomeElapsed(
+                  since: timer!,
+                  clock: clock!,
+                  prefix: withWords && text.isNotEmpty ? ' · ' : null,
+                  style: style,
+                ),
               ),
-            ),
-          if (suffix != null)
-            Flexible(
-              child: Text(
-                ' · $suffix',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: style.copyWith(color: p.textMuted),
+            if (suffix != null && withWords)
+              Flexible(
+                child: Text(
+                  ' · $suffix',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: style.copyWith(color: p.textMuted),
+                ),
               ),
-            ),
-        ],
-      ),
+          ],
+        );
+      },
     );
   }
 }
 
-/// A capsule: the action of a row, or an answer.
+/// A capsule: the action of a row, or an answer ([HomeGelPill]).
 class _Pill extends StatelessWidget {
   const _Pill(
     this.label, {
+    this.icon,
     this.primary = false,
     this.height = 28,
     this.onTap,
@@ -580,6 +673,7 @@ class _Pill extends StatelessWidget {
     super.key,
   });
   final String label;
+  final IconData? icon;
   final bool primary;
   final double height;
 
@@ -589,69 +683,21 @@ class _Pill extends StatelessWidget {
   final bool expand;
 
   @override
-  Widget build(BuildContext context) {
-    final p = SoftPalette.ofContext(context);
-    final pill = Opacity(
-      opacity: enabled ? 1 : 0.5,
-      child: DecoratedBox(
-        decoration: ShapeDecoration(
-          color: primary ? p.primary : p.track,
-          shape: const StadiumBorder(),
-        ),
-        child: SizedBox(
-          height: height,
-          width: expand ? double.infinity : null,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 13),
-            child: Center(
-              widthFactor: expand ? null : 1,
-              child: Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                textScaler: _capped(context, 1.3),
-                style: TextStyle(
-                  fontSize: 13,
-                  height: 1.2,
-                  fontWeight: FontWeight.w600,
-                  color: primary ? p.onPrimary : p.text,
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-    if (onTap == null && enabled) return ExcludeSemantics(child: pill);
-    return Semantics(
-      button: true,
-      enabled: enabled && onTap != null,
-      label: label,
-      excludeSemantics: true,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: enabled ? onTap : null,
-        // The capsule is 32 tall; the touch area takes the room around it.
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(minHeight: 48, minWidth: 48),
-          child: Center(widthFactor: 1, child: pill),
-        ),
-      ),
-    );
-  }
+  Widget build(BuildContext context) => HomeGelPill(
+    label,
+    icon: icon,
+    primary: primary,
+    height: height,
+    onTap: onTap,
+    enabled: enabled,
+    expand: expand,
+  );
 }
 
 /// The text scale of [context], no larger than [max]: a capsule keeps its
 /// height, so its label grows less than the text around it.
 TextScaler _capped(BuildContext context, double max) =>
     MediaQuery.textScalerOf(context).clamp(maxScaleFactor: max);
-
-/// Largest text scale of a figure: it is already big.
-const double _figureScale = 1.3;
-
-/// Height of one line of [style] with the text scale capped at [max].
-double _lineCapped(BuildContext context, TextStyle style, double max) =>
-    _capped(context, max).scale(style.fontSize!) * style.height!;
 
 /// [text] continuing a line: its first letter in lower case.
 String _lowerFirst(String text) =>
@@ -704,8 +750,8 @@ final class _Piece {
 }
 
 /// Shows, top to bottom, the pieces that fit in the height it is given,
-/// and [footer] at the bottom. The first piece always shows; whatever
-/// does not fit whole is left out, never cut.
+/// and [footer] at the bottom. Whatever does not fit whole is left out,
+/// never cut (a cell with no room for one line shows its header alone).
 class _Fit extends StatelessWidget {
   const _Fit({required this.pieces, this.footer, this.design});
   final List<_Piece> pieces;
@@ -750,10 +796,8 @@ class _Fit extends StatelessWidget {
           fitting = piece;
           break;
         }
-        // The first piece shows whatever happens: its shortest version.
-        if (kept.isEmpty && piece.or == null && !piece.withNext) {
-          fitting = piece;
-        }
+        // A first piece whose shortest version has no room is left out
+        // too: the card keeps its header and says less, never a cut line.
       }
       if (fitting == null) break;
       used += (kept.isEmpty ? 0 : fitting.gap) + fitting.height;
@@ -812,7 +856,7 @@ class _Fit extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final p = SoftPalette.ofContext(context);
+    final p = HomePalette.ofContext(context);
     return LayoutBuilder(
       builder: (context, box) {
         final max = box.maxHeight;
@@ -845,11 +889,15 @@ class _Fit extends StatelessWidget {
             ),
           ),
         );
+        // What fits within the half-pixel rounding allowance above may
+        // still be that much taller than the box: the column gets its room
+        // and the clip takes the fraction.
+        final content = used + (showFoot ? foot.gap + foot.height : 0);
         return ClipRect(
           child: OverflowBox(
             alignment: AlignmentDirectional.topStart,
             minHeight: max,
-            maxHeight: math.max(max, used),
+            maxHeight: math.max(max, content),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
@@ -892,6 +940,7 @@ class _Body extends StatelessWidget {
     this.trailing,
     this.onHeader,
     this.gap = 6,
+    this.faded,
     super.key,
   });
   final HomeTileContext t;
@@ -903,6 +952,14 @@ class _Body extends StatelessWidget {
   final VoidCallback? onHeader;
   final double gap;
 
+  /// The pieces step back (old data while the server does not answer).
+  /// By default, whenever the board is offline; a card that only says so
+  /// keeps its line at full strength.
+  final bool? faded;
+
+  /// How far the pieces step back while offline.
+  static const double stale = LauncherWidgetPalette.dimOpacity;
+
   @override
   Widget build(BuildContext context) {
     final header = _header(t, context, trailing: trailing);
@@ -911,7 +968,7 @@ class _Body extends StatelessWidget {
         HomeBoardGridRule.rowHeight * rows +
         HomeBoardGridRule.gap * (rows - 1) -
         HomeCard.contentPadding.vertical -
-        HomeCardHeader.heightOf(context, SoftPalette.ofContext(context)) -
+        HomeCardHeader.heightOf(context, HomePalette.ofContext(context)) -
         gap;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -922,7 +979,10 @@ class _Body extends StatelessWidget {
           _Tap(onTap: _act(t, onHeader!), child: header),
         if (!t.editing) SizedBox(height: gap),
         Expanded(
-          child: _Fit(pieces: pieces, footer: footer, design: design),
+          child: Opacity(
+            opacity: (faded ?? t.data.offline) ? stale : 1,
+            child: _Fit(pieces: pieces, footer: footer, design: design),
+          ),
         ),
       ],
     );
@@ -931,18 +991,19 @@ class _Body extends StatelessWidget {
 
 /// One line of quiet text as a piece.
 _Piece _quietPiece(BuildContext context, String text, {int lines = 2}) {
-  final p = SoftPalette.ofContext(context);
+  final p = HomePalette.ofContext(context);
   final style = HomeType.meta(p);
   return _Piece(
     HomeType.line(context, style) * lines,
     Text(text, maxLines: lines, overflow: TextOverflow.ellipsis, style: style),
     gap: 2,
+    or: lines > 1 ? _quietPiece(context, text, lines: 1) : null,
   );
 }
 
 /// A widget that has nothing to list: one calm line under its header.
 Widget _quiet(HomeTileContext t, BuildContext context, String text) =>
-    _Body(t: t, pieces: [_quietPiece(context, text)]);
+    _Body(t: t, pieces: [_quietPiece(context, text)], faded: false);
 
 /// A widget still waiting for its first read.
 Widget _loading(HomeTileContext t, BuildContext context, {Key? key}) =>
@@ -960,6 +1021,7 @@ Widget _unread(HomeTileContext t, BuildContext context) {
   return _Body(
     key: const ValueKey('home-widget-unread'),
     t: t,
+    faded: false,
     pieces: [_quietPiece(context, s.hwUnread, lines: 1)],
     footer: _Piece(
       48,
@@ -984,6 +1046,7 @@ class _Missing extends StatelessWidget {
   Widget build(BuildContext context) => _Body(
     key: const ValueKey('home-widget-missing'),
     t: t,
+    faded: false,
     pieces: [_quietPiece(context, Strings.of(context).hwMissing)],
   );
 }
@@ -1007,17 +1070,22 @@ class _Row2 extends StatelessWidget {
   /// Height of a two-line row at the text scale of [context].
   static double heightOf(
     BuildContext context,
-    SoftPalette p, {
+    HomePalette p, {
     double pad = 12,
     int titleLines = 1,
-  }) =>
-      HomeType.line(context, HomeType.row(p)) * titleLines +
-      HomeType.line(context, HomeType.meta(p)) +
-      pad;
+  }) => math.max(
+    least,
+    HomeType.line(context, HomeType.row(p)) * titleLines +
+        HomeType.line(context, HomeType.meta(p)) +
+        pad,
+  );
+
+  /// The least a row is: a touch target.
+  static const double least = HermesSpace.tap;
 
   @override
   Widget build(BuildContext context) => ConstrainedBox(
-    constraints: const BoxConstraints(minHeight: 48),
+    constraints: const BoxConstraints(minHeight: least),
     child: Row(
       children: [
         if (lead != null) ...[lead!, SizedBox(width: gap)],
@@ -1072,23 +1140,100 @@ class _Ends extends StatelessWidget {
   }
 }
 
+/// Width of [text] on one line in [style] (over the ambient one), at the
+/// text scale of [context].
+double _lineWidth(BuildContext context, String text, TextStyle style) {
+  final painter = TextPainter(
+    text: TextSpan(
+      text: text,
+      style: DefaultTextStyle.of(context).style.merge(style),
+    ),
+    textDirection: Directionality.of(context),
+    textScaler: MediaQuery.textScalerOf(context),
+    maxLines: 1,
+  )..layout();
+  final width = painter.width;
+  painter.dispose();
+  return width;
+}
+
+/// [items] joined with « · » on lines no wider than [width]: a line breaks
+/// between two items, never after a separator (an item wider than the
+/// line keeps a line of its own and its ellipsis).
+String _sepLines(
+  BuildContext context,
+  List<String> items,
+  TextStyle style,
+  double width,
+) {
+  final lines = <String>[];
+  for (final item in items) {
+    final joined = lines.isEmpty ? item : '${lines.last} · $item';
+    if (lines.isNotEmpty && _lineWidth(context, joined, style) <= width) {
+      lines[lines.length - 1] = joined;
+    } else {
+      lines.add(item);
+    }
+  }
+  return lines.join('\n');
+}
+
+/// The first of [texts] that fits its width whole on one line; nothing
+/// when none does (the line keeps what is before it).
+class _FirstFit extends StatelessWidget {
+  const _FirstFit(this.texts, {required this.style});
+  final List<String> texts;
+  final TextStyle style;
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, box) {
+      for (final text in texts) {
+        if (_lineWidth(context, text, style) <= box.maxWidth) {
+          return Text(
+            text,
+            maxLines: 1,
+            softWrap: false,
+            overflow: TextOverflow.clip,
+            style: style,
+          );
+        }
+      }
+      return const SizedBox.shrink();
+    },
+  );
+}
+
 Text _title(
   BuildContext context,
   String text, {
   int lines = 1,
   TextStyle? style,
-}) => Text(
-  text,
-  maxLines: lines,
-  overflow: TextOverflow.ellipsis,
-  style: style ?? HomeType.row(SoftPalette.ofContext(context)),
-);
+}) {
+  final shown = style ?? HomeType.row(HomePalette.ofContext(context));
+  return Text(
+    text,
+    maxLines: lines,
+    overflow: TextOverflow.ellipsis,
+    style: shown,
+    // Every line exactly as tall as the style says, whatever its glyphs
+    // (an emoji, a fallback font): the rows are measured with it.
+    strutStyle: StrutStyle(
+      fontSize: shown.fontSize,
+      height: shown.height,
+      forceStrutHeight: true,
+    ),
+  );
+}
 
 int _titleLines(BuildContext context, String text, double width) {
   final painter = TextPainter(
+    // Measured in the style the title paints with (the ambient one too).
     text: TextSpan(
       text: text,
-      style: HomeType.row(SoftPalette.ofContext(context)),
+      style: DefaultTextStyle.of(
+        context,
+      ).style.merge(HomeType.row(HomePalette.ofContext(context))),
     ),
     textDirection: Directionality.of(context),
     textScaler: MediaQuery.textScalerOf(context),
@@ -1101,7 +1246,7 @@ int _titleLines(BuildContext context, String text, double width) {
 
 /// «Who · where» on one line: the name in ink, the place muted.
 Widget _whoWhere(BuildContext context, String who, String? where) {
-  final p = SoftPalette.ofContext(context);
+  final p = HomePalette.ofContext(context);
   final place = where == null || where.isEmpty || where == who ? null : where;
   return Text.rich(
     TextSpan(
@@ -1198,12 +1343,13 @@ class _NowTileState extends State<_NowTile> {
         s.hwNowForYou(now.asks.length),
       if (now.running.isNotEmpty) s.hwNowRunning(now.running.length),
     ];
-    final p = SoftPalette.ofContext(context);
+    final p = HomePalette.ofContext(context);
     final trailing = small || notes.isEmpty
         ? null
         : _HeadNote(
             notes.join(' · '),
             key: const ValueKey('home-now-note'),
+            color: now.asks.isNotEmpty ? p.attention : null,
             dot: now.asks.isNotEmpty && now.running.isNotEmpty && !large
                 ? HomeType.live(p)
                 : null,
@@ -1268,7 +1414,7 @@ class _NowTileState extends State<_NowTile> {
   // The small widget: one thing, its face and one action.
   Widget _small(BuildContext context, HomeNow now) {
     final s = Strings.of(context);
-    final p = SoftPalette.ofContext(context);
+    final p = HomePalette.ofContext(context);
     _Piece who(String? profile, String name, String sub) {
       final one = HomeType.line(context, HomeType.row(p));
       final two = one + HomeType.line(context, HomeType.meta(p));
@@ -1415,10 +1561,8 @@ class _NowTileState extends State<_NowTile> {
 
   _Piece _calmPiece(BuildContext context, {bool small = false}) {
     final s = Strings.of(context);
-    final p = SoftPalette.ofContext(context);
-    final style = HomeType.title(
-      p,
-    ).copyWith(fontSize: small ? 14.5 : 16.5, height: 1.25);
+    final p = HomePalette.ofContext(context);
+    final style = small ? HomeType.row(p) : HomeType.title(p);
     final mark = small ? 22.0 : 26.0;
     return _Piece(
       math.max(mark, HomeType.line(context, style)),
@@ -1452,11 +1596,9 @@ class _NowTileState extends State<_NowTile> {
   /// The ask in full: who asks, and the question or command on two lines.
   _Piece _askPiece(BuildContext context, HomeNowAsk ask) {
     final s = Strings.of(context);
-    final p = SoftPalette.ofContext(context);
-    final small = HomeType.meta(
-      p,
-    ).copyWith(fontSize: 13, height: 16 / 13, fontWeight: FontWeight.w500);
-    final big = HomeType.row(p).copyWith(fontSize: 15, height: 19.5 / 15);
+    final p = HomePalette.ofContext(context);
+    final small = HomeType.title(p);
+    final big = HomeType.meta(p);
     final text = _askText(ask);
     final command = ask.kind == HomeNowAskKind.approval && ask.text != null;
     final lines = text == null
@@ -1466,17 +1608,18 @@ class _NowTileState extends State<_NowTile> {
         : 2;
     final body = command
         ? big.copyWith(
-            fontFamily: 'monospace',
-            fontSize: 13,
-            height: 19.5 / 13,
+            fontFamily: HermesType.monoFamily,
+            fontSize: LwGrid.rowLine,
+            height: 1.2,
             fontWeight: FontWeight.w500,
           )
         : big;
-    // [who]: the line that says who asks. Without it, only what is asked
-    // (the face still says who).
-    _Piece piece({required bool who}) => _Piece(
+    // [who]: the line that says who asks, over [lines] of what is asked;
+    // with less room, one line; with the least, only what is asked (the
+    // face still says who).
+    _Piece piece({required bool who, int lines = 2}) => _Piece(
       math.max(
-        34,
+        who ? LwGrid.faceMedium : LwGrid.faceSmall,
         (who ? HomeType.line(context, small) : 0) +
             HomeType.line(context, big) * (who ? lines : math.min(lines, 1)),
       ),
@@ -1488,7 +1631,11 @@ class _NowTileState extends State<_NowTile> {
               ? CrossAxisAlignment.start
               : CrossAxisAlignment.center,
           children: [
-            _Who(profile: ask.profileName, t: t, size: 34),
+            _Who(
+              profile: ask.profileName,
+              t: t,
+              size: who ? LwGrid.faceMedium : LwGrid.faceSmall,
+            ),
             const SizedBox(width: 11),
             Expanded(
               child: Column(
@@ -1515,9 +1662,11 @@ class _NowTileState extends State<_NowTile> {
           ],
         ),
       ),
-      or: who && text != null ? piece(who: false) : null,
+      or: who && text != null
+          ? (lines > 1 ? piece(who: true, lines: 1) : piece(who: false))
+          : null,
     );
-    return piece(who: true);
+    return piece(who: true, lines: lines);
   }
 
   /// The answers of an ask: an approval's Permitir / Rechazar, a
@@ -1525,80 +1674,88 @@ class _NowTileState extends State<_NowTile> {
   _Piece _answersPiece(BuildContext context, HomeNowAsk ask, {double gap = 0}) {
     final s = Strings.of(context);
     final busy = _sending.contains(ask.key) || t.editing;
-    final buttons = <Widget>[];
-    void add(
-      String label,
-      String key,
-      VoidCallback onTap, {
-      bool primary = false,
-    }) {
-      buttons.add(
-        Flexible(
-          child: _Pill(
-            label,
-            key: ValueKey('home-now-$key-${ask.key}'),
-            primary: primary,
-            height: 32,
-            enabled: !busy,
-            onTap: onTap,
-          ),
-        ),
-      );
-    }
-
+    // The answers (label, key, what it does, primary, its mark).
+    final answers = <(String, String, VoidCallback, bool, IconData?)>[];
     switch (ask.target) {
       case final HomeApprovalItem approval:
         if (approval.canAllow) {
-          add(
+          answers.add((
             s.inicioAllow,
             'allow',
             () => _send(ask.key, () => t.actions.answer(approval, allow: true)),
-            primary: true,
-          );
+            true,
+            Icons.check_rounded,
+          ));
         }
         if (approval.canDeny) {
-          add(
+          answers.add((
             s.inicioDeny,
             'deny',
             () =>
                 _send(ask.key, () => t.actions.answer(approval, allow: false)),
-          );
+            false,
+            Icons.close_rounded,
+          ));
         }
       case final HomeQuestionItem question:
         for (final (i, choice) in question.choices.take(2).indexed) {
-          add(
+          answers.add((
             choice,
             'choice$i',
             () => _send(
               ask.key,
               () => t.actions.answerQuestion(question, choice),
             ),
-            primary: i == 0,
-          );
+            i == 0,
+            null,
+          ));
         }
       default:
         break;
     }
-    buttons.add(
-      Flexible(
-        child: _Pill(
-          _askAction(s, ask),
-          key: ValueKey('home-now-open-${ask.key}'),
-          primary: buttons.isEmpty,
-          height: 32,
-          onTap: _act(t, () => _open(ask.target)),
-        ),
-      ),
+    final open = _Pill(
+      _askAction(s, ask),
+      key: ValueKey('home-now-open-${ask.key}'),
+      primary: answers.isEmpty,
+      height: 32,
+      onTap: _act(t, () => _open(ask.target)),
     );
     return _Piece(
       48,
-      Row(
-        children: [
-          for (final (i, button) in buttons.indexed) ...[
-            if (i > 0) const SizedBox(width: 7),
-            button,
-          ],
-        ],
+      LayoutBuilder(
+        builder: (context, box) {
+          // The marks only where the line has room for them: not with big
+          // text, not on the narrowest cell.
+          final marks = !_bigText(context) && box.maxWidth >= _answersMarksFrom;
+          final row = Row(
+            children: [
+              for (final (i, (label, key, onTap, primary, icon))
+                  in answers.indexed) ...[
+                if (i > 0) const SizedBox(width: 7),
+                Flexible(
+                  child: _Pill(
+                    label,
+                    key: ValueKey('home-now-$key-${ask.key}'),
+                    icon: marks ? icon : null,
+                    primary: primary,
+                    height: 34,
+                    enabled: !busy,
+                    onTap: onTap,
+                  ),
+                ),
+              ],
+            ],
+          );
+          if (answers.isEmpty) {
+            return Align(
+              alignment: AlignmentDirectional.centerStart,
+              child: open,
+            );
+          }
+          // The way to the screen keeps its own width (up to a third of
+          // the line); the answers share the rest.
+          return _Ends(gap: 7, share: 0.34, start: row, end: open);
+        },
       ),
       gap: gap,
       center: true,
@@ -1608,7 +1765,7 @@ class _NowTileState extends State<_NowTile> {
   /// Another ask, as a row of the large widget.
   _Piece _askRow(BuildContext context, HomeNowAsk ask, {required bool first}) {
     final s = Strings.of(context);
-    final p = SoftPalette.ofContext(context);
+    final p = HomePalette.ofContext(context);
     final name = _name(ask.who);
     return _Piece(
       _Row2.heightOf(context, p, pad: 10),
@@ -1642,7 +1799,7 @@ class _NowTileState extends State<_NowTile> {
     double height = 48,
   }) {
     final s = Strings.of(context);
-    final p = SoftPalette.ofContext(context);
+    final p = HomePalette.ofContext(context);
     final name = _name(run.who);
     return _Piece(
       math.max(height, _Row2.heightOf(context, p, pad: 12, titleLines: 3)),
@@ -1692,7 +1849,7 @@ class _NowTileState extends State<_NowTile> {
   /// One of the last things that finished: who, what and when.
   Widget _doneLineRow(BuildContext context, HomeNowDone done) {
     final s = Strings.of(context);
-    final p = SoftPalette.ofContext(context);
+    final p = HomePalette.ofContext(context);
     final who = _name(done.who);
     return _Tap(
       onTap: _act(t, () => _open(done.target)),
@@ -1725,13 +1882,12 @@ class _NowTileState extends State<_NowTile> {
                 overflow: TextOverflow.ellipsis,
                 style: HomeType.meta(p),
               ),
-              end: Text(
+              // «hace 20 min», else «21:40» where the phrase has no room,
+              // else nothing: a time is never cut.
+              end: _FirstFit([
                 homeSince(context, done.at, t.clock()),
-                maxLines: 1,
-                softWrap: false,
-                overflow: TextOverflow.clip,
-                style: HomeType.when(p),
-              ),
+                homeWhen(context, done.at, t.clock()),
+              ], style: HomeType.when(p)),
             ),
           ),
         ],
@@ -1741,7 +1897,7 @@ class _NowTileState extends State<_NowTile> {
 
   double _doneHeight(BuildContext context) => math.max(
     25.0,
-    HomeType.line(context, HomeType.meta(SoftPalette.ofContext(context))) + 8,
+    HomeType.line(context, HomeType.meta(HomePalette.ofContext(context))) + 8,
   );
 
   _Piece _doneRow(BuildContext context, HomeNowDone done, {double gap = 0}) =>
@@ -1806,6 +1962,16 @@ class _NowTileState extends State<_NowTile> {
   return (text: join(s.hwChatDone, reply), mark: _Mark.done, ink: chat.unread);
 }
 
+/// The least width of the answers line that shows the marks (the check,
+/// the cross) beside Permitir and Rechazar.
+const double _answersMarksFrom = 300;
+
+/// A row of the chats list: two of them fit the wide cell as designed.
+const double _chatRow = HermesSpace.rowMin;
+
+/// The face at the start of a chats row.
+const double _chatFace = LwGrid.faceSmall;
+
 class _ChatsTile extends StatelessWidget {
   const _ChatsTile(this.t);
   final HomeTileContext t;
@@ -1813,7 +1979,7 @@ class _ChatsTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final s = Strings.of(context);
-    final p = SoftPalette.ofContext(context);
+    final p = HomePalette.ofContext(context);
     final chats = t.data.chats;
     if (chats.isEmpty) {
       // Only the recents are still unknown on a cold start without a
@@ -1840,28 +2006,43 @@ class _ChatsTile extends StatelessWidget {
         ),
         pieces: [
           for (final chat in chats)
-            _Piece(
-              math.max(
-                52.5,
-                _Row2.heightOf(
-                  context,
-                  p,
-                  titleLines: _titleLines(context, chat.title, box.maxWidth),
-                ),
-              ),
-              _row(context, chat),
-              rule: true,
-              center: true,
+            _chatPiece(
+              context,
+              chat,
+              _titleLines(context, chat.title, box.maxWidth - _chatFace - 10),
             ),
         ],
       ),
     );
   }
 
-  Widget _row(BuildContext context, HomeChatItem chat) {
+  /// A chat's row as a piece. The title takes the lines it was measured
+  /// for, never one more (a second line would sit on the state under it);
+  /// with less room, one line of title (large text keeps a row in the
+  /// card instead of an empty one).
+  _Piece _chatPiece(BuildContext context, HomeChatItem chat, int lines) =>
+      _Piece(
+        math.max(
+          _chatRow,
+          _Row2.heightOf(
+            context,
+            HomePalette.ofContext(context),
+            titleLines: lines,
+          ),
+        ),
+        _row(context, chat, lines: lines),
+        rule: true,
+        center: true,
+        or: lines > 1 ? _chatPiece(context, chat, 1) : null,
+      );
+
+  Widget _row(BuildContext context, HomeChatItem chat, {int lines = 2}) {
     final s = Strings.of(context);
-    final p = SoftPalette.ofContext(context);
+    final p = HomePalette.ofContext(context);
     final state = _chatState(context, chat, t.data);
+    final when = _FirstFit([
+      homeWhen(context, chat.at, t.clock()),
+    ], style: HomeType.when(p));
     final Widget end = chat.working
         ? (chat.workingSince == null
               ? const SizedBox.shrink()
@@ -1872,10 +2053,20 @@ class _ChatsTile extends StatelessWidget {
                 ))
         : chat.waitingForUser
         ? _Pill(s.hwNextActReply, primary: true)
-        : Text(
-            homeWhen(context, chat.at, t.clock()),
-            maxLines: 1,
-            style: HomeType.when(p),
+        : !chat.unread
+        ? when
+        // Unread: the time and the one accent dot after it.
+        : Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Flexible(child: when),
+              const SizedBox(width: HermesSpace.x1 + 2),
+              _Dot(
+                HomeType.live(p),
+                size: 8,
+                key: ValueKey('home-chat-unread-${chat.key}'),
+              ),
+            ],
           );
     return _Tap(
       onTap: _act(t, () => t.actions.openChat(chat)),
@@ -1883,7 +2074,11 @@ class _ChatsTile extends StatelessWidget {
       child: KeyedSubtree(
         key: ValueKey('home-continue-${chat.key}'),
         child: _Row2(
-          title: _title(context, chat.title, lines: 2),
+          // Whose chat it is: the face of its bot (the main agent's own
+          // face when it has no bot).
+          lead: _Who(profile: chat.profileName, t: t, size: _chatFace),
+          gap: 10,
+          title: _title(context, chat.title, lines: lines),
           status: KeyedSubtree(
             key: _chatStateKey(chat),
             child: _Status(state.text, mark: state.mark, ink: state.ink),
@@ -1895,9 +2090,9 @@ class _ChatsTile extends StatelessWidget {
   }
 
   Widget _small(BuildContext context, HomeChatItem chat) {
-    final p = SoftPalette.ofContext(context);
+    final p = HomePalette.ofContext(context);
     final state = _chatState(context, chat, t.data, short: true);
-    final titleStyle = HomeType.row(p).copyWith(height: 18.5 / 14);
+    final titleStyle = HomeType.row(p);
     final lines = _bigText(context) ? 2 : 3;
     final meta = HomeType.meta(p);
     return _Tap(
@@ -1933,7 +2128,7 @@ Key? _chatStateKey(HomeChatItem chat) => chat.working
 /// The last line of a chat in a small widget: its state, and its clock
 /// while it works or when it last moved.
 Widget _chatFoot(BuildContext context, HomeTileContext t, HomeChatItem chat) {
-  final p = SoftPalette.ofContext(context);
+  final p = HomePalette.ofContext(context);
   final state = _chatState(context, chat, t.data, short: true);
   return _Ends(
     start: KeyedSubtree(
@@ -1947,13 +2142,9 @@ Widget _chatFoot(BuildContext context, HomeTileContext t, HomeChatItem chat) {
             style: HomeType.timer(p),
           )
         : !chat.working && !chat.waitingForUser
-        ? Text(
+        ? _FirstFit([
             homeWhen(context, chat.at, t.clock()),
-            maxLines: 1,
-            softWrap: false,
-            overflow: TextOverflow.clip,
-            style: HomeType.when(p),
-          )
+          ], style: HomeType.when(p))
         : null,
   );
 }
@@ -1969,9 +2160,11 @@ String _botState(Strings s, HomeBotState state) => switch (state) {
   HomeBotState.waiting => s.hwBotWaiting,
 };
 
-Color _botStateColor(SoftPalette p, HomeBotState state) => switch (state) {
-  HomeBotState.working => HomeType.live(p),
-  HomeBotState.waiting => p.text,
+/// Ink of a bot's state word: the one accent for «te espera», the text ink
+/// for «trabaja», faint for «libre».
+Color _botStateColor(HomePalette p, HomeBotState state) => switch (state) {
+  HomeBotState.working => p.text,
+  HomeBotState.waiting => HomeType.live(p),
   HomeBotState.idle => HomeType.faint(p),
 };
 
@@ -2011,7 +2204,7 @@ class _BotsTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final s = Strings.of(context);
-    final p = SoftPalette.ofContext(context);
+    final p = HomePalette.ofContext(context);
     if (!t.data.botsLoaded && t.data.bots.isEmpty) {
       return t.data.offline
           ? _quiet(t, context, s.hwServerOffline)
@@ -2043,28 +2236,43 @@ class _BotsTile extends StatelessWidget {
         // By their original order here: the faces keep their place while
         // their state changes.
         final shown = _inOrder(bots).take(4).toList();
-        _Piece faces({required bool withState}) => _Piece(
-          30 +
-              7 +
-              HomeType.line(context, name) +
-              (withState ? HomeType.line(context, state) : 0),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              for (final b in shown)
-                Expanded(
-                  child: _BotColumn(bot: b, t: t, withState: withState),
+        // With the ring's room above the faces; with less height, without
+        // the state, then without the names.
+        _Piece faces({required bool withName, required bool withState}) =>
+            _Piece(
+              _ringRoom +
+                  30 +
+                  (withName ? 7 + HomeType.line(context, name) : _ringRoom) +
+                  (withState ? HomeType.line(context, state) : 0),
+              Padding(
+                padding: const EdgeInsets.only(top: _ringRoom),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    for (final b in shown)
+                      Expanded(
+                        child: _BotColumn(
+                          bot: b,
+                          t: t,
+                          withName: withName,
+                          withState: withState,
+                        ),
+                      ),
+                    for (var i = shown.length; i < 4; i++) const Spacer(),
+                  ],
                 ),
-              for (var i = shown.length; i < 4; i++) const Spacer(),
-            ],
-          ),
-          or: withState ? faces(withState: false) : null,
-        );
+              ),
+              or: withState
+                  ? faces(withName: true, withState: false)
+                  : withName
+                  ? faces(withName: false, withState: false)
+                  : null,
+            );
         return _Body(
           t: t,
           trailing: trailing,
           gap: 9,
-          pieces: [faces(withState: true)],
+          pieces: [faces(withName: true, withState: true)],
         );
       case HomeWidgetSize.large:
         final rowH = math.max(52.0, _Row2.heightOf(context, p, pad: 16));
@@ -2088,7 +2296,7 @@ class _BotsTile extends StatelessWidget {
 
   Widget _small(BuildContext context, List<HomeBoardBot> bots) {
     final s = Strings.of(context);
-    final p = SoftPalette.ofContext(context);
+    final p = HomePalette.ofContext(context);
     final faces = _inOrder(bots).take(4).toList();
     final waiting = bots.where((b) => b.state == HomeBotState.waiting);
     final working = bots.where((b) => b.state == HomeBotState.working);
@@ -2131,7 +2339,7 @@ class _BotsTile extends StatelessWidget {
         );
       }
     }
-    final head = HomeType.row(p).copyWith(fontSize: 14.5, height: 19 / 14.5);
+    final head = HomeType.row(p);
     final meta = HomeType.meta(p);
     final open = target;
     return _Tap(
@@ -2141,27 +2349,32 @@ class _BotsTile extends StatelessWidget {
         t: t,
         gap: 9,
         pieces: [
+          // 28 dp faces with the ring's room around them, so a ring is
+          // never cut by the piece's edge.
           _Piece(
-            30,
-            LayoutBuilder(
-              builder: (context, box) {
-                // Four faces across, a little smaller on a narrow phone.
-                final size = math.min(28.0, (box.maxWidth - 9) / 4);
-                return Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    for (final b in faces)
-                      HomeFace(
-                        profileName: b.profileName,
-                        data: t.data,
-                        state: b.state,
-                        size: size,
-                      ),
-                    for (var i = faces.length; i < 4; i++)
-                      SizedBox.square(dimension: size),
-                  ],
-                );
-              },
+            28 + 2 * _ringRoom,
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: _ringRoom),
+              child: LayoutBuilder(
+                builder: (context, box) {
+                  // Four faces across, a little smaller on a narrow phone.
+                  final size = math.min(28.0, (box.maxWidth - 9) / 4);
+                  return Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      for (final b in faces)
+                        HomeFace(
+                          profileName: b.profileName,
+                          data: t.data,
+                          state: b.state,
+                          size: size,
+                        ),
+                      for (var i = faces.length; i < 4; i++)
+                        SizedBox.square(dimension: size),
+                    ],
+                  );
+                },
+              ),
             ),
             center: true,
           ),
@@ -2192,7 +2405,7 @@ class _BotsTile extends StatelessWidget {
   /// One bot: what it does now, or the last thing it did and when.
   Widget _row(BuildContext context, HomeBoardBot b) {
     final s = Strings.of(context);
-    final p = SoftPalette.ofContext(context);
+    final p = HomePalette.ofContext(context);
     final ask = t.data.nowBoard.asks
         .where((a) => a.profileName == b.profileName)
         .firstOrNull;
@@ -2246,11 +2459,9 @@ class _BotsTile extends StatelessWidget {
               )
             : _Status(b.lastTitle!, mark: _Mark.done);
         if (b.lastAt case final at?) {
-          end = Text(
+          end = _FirstFit([
             homeWhen(context, at, t.clock()),
-            maxLines: 1,
-            style: HomeType.when(p),
-          );
+          ], style: HomeType.when(p));
         }
     }
     return _Tap(
@@ -2259,14 +2470,19 @@ class _BotsTile extends StatelessWidget {
       child: KeyedSubtree(
         key: ValueKey('home-bot-row-${b.profileName}'),
         child: _Row2(
-          lead: HomeFace(
-            profileName: b.profileName,
-            data: t.data,
-            state: b.state,
-            size: 32,
-            dot: false,
+          // The ring's room before the face: the row's clip starts at
+          // the card's content edge.
+          lead: Padding(
+            padding: const EdgeInsetsDirectional.only(start: _ringRoom),
+            child: HomeFace(
+              profileName: b.profileName,
+              data: t.data,
+              state: b.state,
+              size: 32,
+              dot: false,
+            ),
           ),
-          gap: 12,
+          gap: 12 - _ringRoom,
           title: title,
           status: status,
           end: end,
@@ -2283,15 +2499,21 @@ class _BotsTile extends StatelessWidget {
 }
 
 class _BotColumn extends StatelessWidget {
-  const _BotColumn({required this.bot, required this.t, this.withState = true});
+  const _BotColumn({
+    required this.bot,
+    required this.t,
+    this.withName = true,
+    this.withState = true,
+  });
   final HomeBoardBot bot;
   final HomeTileContext t;
+  final bool withName;
   final bool withState;
 
   @override
   Widget build(BuildContext context) {
     final s = Strings.of(context);
-    final p = SoftPalette.ofContext(context);
+    final p = HomePalette.ofContext(context);
     final quiet = bot.state == HomeBotState.idle;
     return _Tap(
       onTap: _act(t, () => t.actions.openBot(bot)),
@@ -2306,14 +2528,16 @@ class _BotColumn extends StatelessWidget {
             state: bot.state,
             size: 30,
           ),
-          const SizedBox(height: 7),
-          Text(
-            bot.displayName,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: HomeType.row(p),
-          ),
-          if (withState)
+          if (withName) ...[
+            const SizedBox(height: 7),
+            Text(
+              bot.displayName,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: HomeType.row(p),
+            ),
+          ],
+          if (withName && withState)
             Text(
               _botState(s, bot.state),
               maxLines: 1,
@@ -2341,7 +2565,7 @@ class _RoomsTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final s = Strings.of(context);
-    final p = SoftPalette.ofContext(context);
+    final p = HomePalette.ofContext(context);
     final rooms = t.data.roomsFor(t.item);
     if (rooms.isEmpty) {
       // «No rooms» is a fact only after an answer that says so; the roster
@@ -2396,7 +2620,7 @@ class _RoomsTile extends StatelessWidget {
   void _open(HomeBoardRoom room) => t.actions.openRoom(room.key);
 
   Widget _count(BuildContext context, HomeBoardRoom room) {
-    final p = SoftPalette.ofContext(context);
+    final p = HomePalette.ofContext(context);
     return KeyedSubtree(
       key: const ValueKey('home-room-unread'),
       child: _Badge('${room.unread}', color: p.track, ink: p.text),
@@ -2409,7 +2633,7 @@ class _RoomsTile extends StatelessWidget {
 
   /// The newest line: «Astra: Lo reviso cuando acabe Forja.»
   Widget? _lastLine(BuildContext context, HomeBoardRoom room, {int lines = 1}) {
-    final p = SoftPalette.ofContext(context);
+    final p = HomePalette.ofContext(context);
     final line = room.lines.lastOrNull;
     if (line == null) return null;
     return Text.rich(
@@ -2432,8 +2656,8 @@ class _RoomsTile extends StatelessWidget {
 
   Widget _small(BuildContext context, HomeBoardRoom room) {
     final s = Strings.of(context);
-    final p = SoftPalette.ofContext(context);
-    final head = HomeType.row(p).copyWith(fontSize: 14.5, height: 19 / 14.5);
+    final p = HomePalette.ofContext(context);
+    final head = HomeType.row(p);
     final meta = HomeType.meta(p);
     final last = room.lines.lastOrNull;
     final lines = <Widget>[
@@ -2460,7 +2684,11 @@ class _RoomsTile extends StatelessWidget {
         ),
     ];
     _Piece foot(int count) => _Piece(
-      HomeType.line(context, head) + HomeType.line(context, meta) * count,
+      math.max(
+            HomeType.line(context, head),
+            room.unread > 0 ? _Badge.heightOf(context) : 0,
+          ) +
+          HomeType.line(context, meta) * count,
       Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2488,7 +2716,7 @@ class _RoomsTile extends StatelessWidget {
         gap: 9,
         pieces: [
           _Piece(
-            22,
+            math.max(22.0, HomeType.line(context, HomeType.timer(p))),
             Row(
               children: [
                 _FaceStack(profiles: room.memberProfiles, t: t),
@@ -2573,7 +2801,7 @@ class _RoomsTile extends StatelessWidget {
     maxLines: 1,
     softWrap: false,
     overflow: TextOverflow.fade,
-    style: HomeType.when(SoftPalette.ofContext(context)),
+    style: HomeType.when(HomePalette.ofContext(context)),
   );
 
   /// The room's name with what is unread and, when [mentions], what is
@@ -2584,29 +2812,31 @@ class _RoomsTile extends StatelessWidget {
     bool mentions = false,
   }) {
     final s = Strings.of(context);
-    final p = SoftPalette.ofContext(context);
-    return Row(
+    final p = HomePalette.ofContext(context);
+    final name = Row(
       children: [
-        Flexible(flex: 3, child: _title(context, room.title)),
+        Flexible(child: _title(context, room.title)),
         if (room.unread > 0) ...[
           const SizedBox(width: 8),
           _count(context, room),
         ],
-        if (mentions && room.mentions > 0) ...[
-          const SizedBox(width: 6),
-          Flexible(
-            flex: 2,
-            child: KeyedSubtree(
-              key: const ValueKey('home-room-mentions'),
-              child: _Badge(
-                s.hwNowForYou(room.mentions),
-                color: p.primary,
-                ink: p.onPrimary,
-              ),
-            ),
-          ),
-        ],
       ],
+    );
+    if (!mentions || room.mentions == 0) return name;
+    // The badge keeps its own width (up to half the line); the name gives
+    // way to it.
+    return _Ends(
+      gap: 6,
+      share: 0.5,
+      start: name,
+      end: KeyedSubtree(
+        key: const ValueKey('home-room-mentions'),
+        child: _Badge(
+          s.hwNowForYou(room.mentions),
+          color: HomeType.live(p).withValues(alpha: 0.14),
+          ink: HomeType.live(p),
+        ),
+      ),
     );
   }
 
@@ -2614,7 +2844,7 @@ class _RoomsTile extends StatelessWidget {
   /// is next, and the last line on two lines.
   _Piece _block(BuildContext context, HomeBoardRoom room) {
     final s = Strings.of(context);
-    final p = SoftPalette.ofContext(context);
+    final p = HomePalette.ofContext(context);
     final meta = HomeType.meta(p);
     final lastLines = room.lines.isEmpty || _bigText(context) ? 1 : 2;
     final last = _lastLine(context, room, lines: lastLines);
@@ -2696,7 +2926,7 @@ class _CronTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final s = Strings.of(context);
-    final p = SoftPalette.ofContext(context);
+    final p = HomePalette.ofContext(context);
     final jobs = t.data.automations;
     if (t.data.automationsFailed) return _unread(t, context);
     if (jobs == null) {
@@ -2782,38 +3012,36 @@ class _CronTile extends StatelessWidget {
     Widget? trailing,
   ) {
     final s = Strings.of(context);
-    final p = SoftPalette.ofContext(context);
+    final p = HomePalette.ofContext(context);
     final next = job.nextRun;
     final day = next == null ? null : _day(s, next, now);
-    final big = HomeType.figure(p, size: 27);
-    final name = HomeType.row(p).copyWith(fontSize: 14.5, height: 19 / 14.5);
+    final name = HomeType.row(p);
     final meta = HomeType.meta(p);
     final lines = _bigText(context) ? 1 : 2;
     final countdown0 = next == null
         ? s.hwNextPaused
         : homeCountdown(context, next.difference(now));
-    final when = next == null ? '—' : (day ?? _hhmm(next));
-    // The time, the name right under it (on up to two lines) and how long
-    // is left; with less room, without the last line; with the least, the
-    // time and the name on one line.
+    final when = next == null ? '—' : (day ?? _time(context, next));
+    // A day («lun 12») is words, not a figure: a size under the time.
+    final figureSize = day == null ? HomeType.hugeSize : HermesType.displaySize;
+    // The time, big, the name right under it (on up to two lines) and how
+    // long is left; with less room, without the last line; with the least,
+    // the time and the name on one line.
     _Piece flow({required bool countdown}) => _Piece(
-      _lineCapped(context, big, _figureScale) +
-          3 +
+      HomeFigure.heightOf(context, size: figureSize) +
+          HermesSpace.x1 +
           HomeType.line(context, name) * lines +
           (countdown ? HomeType.line(context, meta) : 0),
       Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
+          HomeFigure(
             when,
-            maxLines: 1,
-            softWrap: false,
-            overflow: TextOverflow.fade,
-            textScaler: _capped(context, _figureScale),
-            style: big,
+            size: figureSize,
+            ink: next == null ? HomeType.faint(p) : null,
           ),
-          const SizedBox(height: 3),
+          const SizedBox(height: HermesSpace.x1),
           Text(
             job.name,
             maxLines: lines,
@@ -2822,7 +3050,9 @@ class _CronTile extends StatelessWidget {
           ),
           if (countdown)
             Text(
-              day == null ? countdown0 : '${_hhmm(next!)} · $countdown0',
+              day == null
+                  ? countdown0
+                  : '${_time(context, next!)} · $countdown0',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: meta,
@@ -2856,10 +3086,15 @@ class _CronTile extends StatelessWidget {
 
   Widget _wideRow(BuildContext context, HomeAutomation job, DateTime now) {
     final s = Strings.of(context);
-    final p = SoftPalette.ofContext(context);
+    final p = HomePalette.ofContext(context);
     final next = job.enabled ? job.nextRun : null;
     final day = next == null ? null : _day(s, next, now);
     final off = next == null;
+    final time = next == null ? '—' : _time(context, next);
+    final style = HomeType.row(p).copyWith(
+      color: off ? HomeType.faint(p) : null,
+      fontFeatures: const [FontFeature.tabularFigures()],
+    );
     return _Tap(
       onTap: _act(t, () => t.actions.openAutomation(job)),
       label: job.name,
@@ -2867,16 +3102,11 @@ class _CronTile extends StatelessWidget {
         key: ValueKey('home-run-${job.key}'),
         children: [
           SizedBox(
-            width: MediaQuery.textScalerOf(context).scale(46),
-            child: Text(
-              next == null ? '—' : _hhmm(next),
-              maxLines: 1,
-              softWrap: false,
-              style: HomeType.row(p).copyWith(
-                color: off ? HomeType.faint(p) : null,
-                fontFeatures: const [FontFeature.tabularFigures()],
-              ),
+            width: math.max(
+              MediaQuery.textScalerOf(context).scale(LwGrid.tap),
+              _lineWidth(context, time, style),
             ),
+            child: Text(time, maxLines: 1, softWrap: false, style: style),
           ),
           const SizedBox(width: 10),
           Expanded(
@@ -2920,7 +3150,7 @@ class _CronTile extends StatelessWidget {
 
   Widget _largeRow(BuildContext context, HomeAutomation job, DateTime now) {
     final s = Strings.of(context);
-    final p = SoftPalette.ofContext(context);
+    final p = HomePalette.ofContext(context);
     final next = job.enabled ? job.nextRun : null;
     final day = next == null ? null : _day(s, next, now);
     final off = next == null;
@@ -2934,8 +3164,6 @@ class _CronTile extends StatelessWidget {
         ? _Status(s.hwAutoNotRun)
         : _Status([s.hwAutoOk, ?lastWhen].join(' · '), mark: _Mark.done);
     final time = HomeType.row(p).copyWith(
-      fontSize: 15,
-      height: 18 / 15,
       color: off ? HomeType.faint(p) : null,
       fontFeatures: const [FontFeature.tabularFigures()],
     );
@@ -2946,13 +3174,20 @@ class _CronTile extends StatelessWidget {
         key: ValueKey('home-run-${job.key}'),
         children: [
           SizedBox(
-            width: MediaQuery.textScalerOf(context).scale(50),
+            width: math.max(
+              MediaQuery.textScalerOf(context).scale(LwGrid.tap),
+              _lineWidth(
+                context,
+                next == null ? '—' : _time(context, next),
+                time,
+              ),
+            ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  next == null ? '—' : _hhmm(next),
+                  next == null ? '—' : _time(context, next),
                   maxLines: 1,
                   softWrap: false,
                   style: time,
@@ -2963,7 +3198,9 @@ class _CronTile extends StatelessWidget {
                     maxLines: 1,
                     softWrap: false,
                     overflow: TextOverflow.fade,
-                    style: HomeType.when(p).copyWith(fontSize: 12, height: 1.2),
+                    style: HomeType.when(
+                      p,
+                    ).copyWith(fontSize: HermesType.subtitleSize, height: 1.2),
                   ),
               ],
             ),
@@ -3023,7 +3260,7 @@ class _TasksTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final s = Strings.of(context);
-    final p = SoftPalette.ofContext(context);
+    final p = HomePalette.ofContext(context);
     final tasks = t.data.tasks;
     if (t.data.tasksFailed) return _unread(t, context);
     if (tasks == null) {
@@ -3137,7 +3374,7 @@ class _TasksTile extends StatelessWidget {
     HomeTaskItem task, {
     required bool running,
   }) {
-    final p = SoftPalette.ofContext(context);
+    final p = HomePalette.ofContext(context);
     final assignee = task.assignee;
     return _Tap(
       onTap: _act(t, () => t.actions.openTasks(task)),
@@ -3190,12 +3427,11 @@ class _TasksTile extends StatelessWidget {
 
   Widget _small(BuildContext context, HomeTasks tasks) {
     final s = Strings.of(context);
-    final p = SoftPalette.ofContext(context);
+    final p = HomePalette.ofContext(context);
     final meta = HomeType.meta(p);
     final running = tasks.running;
     final pending = tasks.pending;
     if (running.isEmpty) {
-      final big = HomeType.figure(p, size: 27);
       final first = pending.first;
       final lines = _bigText(context) ? 1 : 2;
       return _Tap(
@@ -3207,27 +3443,10 @@ class _TasksTile extends StatelessWidget {
           gap: 6,
           pieces: [
             _Piece(
-              _lineCapped(context, big, _figureScale),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.baseline,
-                textBaseline: TextBaseline.alphabetic,
-                children: [
-                  Text(
-                    '${pending.length}',
-                    maxLines: 1,
-                    textScaler: _capped(context, _figureScale),
-                    style: big,
-                  ),
-                  const SizedBox(width: 7),
-                  Flexible(
-                    child: Text(
-                      s.hwTasksPendingWord(pending.length).trim(),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: HomeType.row(p).copyWith(fontSize: 14.5),
-                    ),
-                  ),
-                ],
+              HomeFigure.heightOf(context),
+              HomeFigure(
+                '${pending.length}',
+                unit: s.hwTasksPendingWord(pending.length).trim(),
               ),
             ),
           ],
@@ -3244,7 +3463,7 @@ class _TasksTile extends StatelessWidget {
       );
     }
     final task = running.first;
-    final title = HomeType.row(p).copyWith(height: 18.5 / 14);
+    final title = HomeType.row(p);
     final lines = _bigText(context) ? 1 : 2;
     final assignee = task.assignee;
     return _Tap(
@@ -3259,55 +3478,120 @@ class _TasksTile extends StatelessWidget {
           key: const ValueKey('home-tasks-note'),
         ),
         pieces: [
-          // The title and, right under it, who runs it.
+          _Piece(
+            HomeFigure.heightOf(context),
+            HomeFigure('${running.length}', unit: s.lwpTasksInProgressUnit),
+          ),
+          // The destination stays visible when its full assignee row has
+          // no room under the figure. The tile still opens this exact task.
           _Piece(
             HomeType.line(context, title) * lines +
-                4 +
-                math.max(18.0, HomeType.line(context, meta)),
+                HermesSpace.x1 +
+                HomeType.line(context, meta),
             Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 _title(context, task.title, lines: lines, style: title),
-                const SizedBox(height: 4),
-                Row(
-                  children: [
-                    if (assignee != null) ...[
-                      HomeFace(profileName: assignee, data: t.data, size: 16),
-                      const SizedBox(width: 6),
-                    ],
-                    Flexible(
-                      child: Text(
-                        [
-                          if (assignee != null) _assignee(assignee),
-                          s.hwTasksInProgress.toLowerCase(),
-                        ].join(' · '),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: meta,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-            or: _Piece(
-              HomeType.line(context, title),
-              _title(context, task.title, style: title),
-            ),
-          ),
-        ],
-        footer: pending.isEmpty
-            ? null
-            : _Piece(
-                HomeType.line(context, meta),
+                const SizedBox(height: HermesSpace.x1),
                 Text(
-                  s.hwTasksPending(pending.length),
+                  [
+                    if (assignee != null) _assignee(assignee),
+                    s.lwpTasksInProgressUnit,
+                  ].join(' · '),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: meta,
                 ),
+              ],
+            ),
+            gap: LwGrid.gapTight,
+            or: _Piece(
+              HomeType.line(context, title),
+              _title(context, task.title, style: title),
+              gap: LwGrid.gapTight,
+            ),
+          ),
+        ],
+        // How many wait and, under it, the board as one thin bar: what runs
+        // in the accent, what waits in the track. With less room, the
+        // words alone.
+        footer: pending.isEmpty
+            ? null
+            : _Piece(
+                HomeType.line(context, meta) +
+                    HermesSpace.x1 +
+                    _SplitBar.height,
+                Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      s.hwTasksPending(pending.length),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: meta,
+                    ),
+                    const SizedBox(height: HermesSpace.x1),
+                    _SplitBar(
+                      key: const ValueKey('home-tasks-bar'),
+                      first: running.length,
+                      second: pending.length,
+                    ),
+                  ],
+                ),
+                or: _Piece(
+                  HomeType.line(context, meta),
+                  Text(
+                    s.hwTasksPending(pending.length),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: meta,
+                  ),
+                ),
               ),
+      ),
+    );
+  }
+}
+
+/// A thin bar in two parts: [first] in the accent, [second] in the track,
+/// each as wide as its share. Decoration only: the words above it say the
+/// same.
+class _SplitBar extends StatelessWidget {
+  const _SplitBar({super.key, required this.first, required this.second});
+  final int first;
+  final int second;
+
+  static const double height = 5;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = HomePalette.ofContext(context);
+    return ExcludeSemantics(
+      child: SizedBox(
+        height: height,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(height / 2),
+          child: Row(
+            // Each part fills the bar's height (a box with nothing in it
+            // would be as tall as nothing).
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (first > 0)
+                Expanded(
+                  flex: first,
+                  child: ColoredBox(color: HomeType.live(p)),
+                ),
+              if (first > 0 && second > 0) const SizedBox(width: 2),
+              if (second > 0)
+                Expanded(
+                  flex: second,
+                  child: ColoredBox(color: p.track),
+                ),
+            ],
+          ),
+        ),
       ),
     );
   }

@@ -5,11 +5,14 @@ import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import 'settings_sections.dart';
 
-/// A search result that leads to a section of the main Settings screen: the
-/// section scrolls into view and is highlighted once.
+/// A request for a section of Settings (a search result, a notification, a
+/// widget). Each section has a screen of its own: when Ajustes de la app is
+/// the screen in front it opens that screen (`AppSettingsScreen`). When the
+/// whole list («Todos los ajustes») is open instead, the section scrolls into
+/// view there and is highlighted once.
 abstract final class SettingsDeepLink {
-  /// The section waiting to be shown; the [SettingsDeepLinkScope] of the open
-  /// Settings screen consumes it.
+  /// The section waiting to be shown; Ajustes de la app, or else the
+  /// [SettingsDeepLinkScope] of the open Settings list, consumes it.
   static final ValueNotifier<SettingsSection?> pending = ValueNotifier(null);
 
   static void request(SettingsSection section) => pending.value = section;

@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import '../theme/app_theme.dart';
 import 'attachment_source_sheet.dart';
 import 'hermes_premium_ui.dart';
+import '../feedback/haptics.dart';
 
 /// Composer compacto de Inicio.
 ///
@@ -117,7 +118,7 @@ class _HomePromptComposerState extends State<HomePromptComposer> {
   void _submit() {
     final text = _controller.text.trim();
     if (!widget.enabled || text.isEmpty) return;
-    HapticFeedback.selectionClick();
+    HermesHaptics.selection();
     FocusManager.instance.primaryFocus?.unfocus();
     // Limpia antes de iniciar la navegación. Si el callback abre Chat de forma
     // síncrona, la transición no conserva durante uno o dos frames el texto en

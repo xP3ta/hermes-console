@@ -288,7 +288,7 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
 
-      expect(consent.modeFor(EmbedType.youtube), EmbedMode.ask);
+      expect(consent.storedMode(EmbedType.youtube), EmbedMode.ask);
       expect(_anyNotice, findsNothing);
       expectRoutineFeedback(tester, s.embedSettingsCleared);
     });

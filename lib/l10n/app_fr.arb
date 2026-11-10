@@ -1,6 +1,13 @@
 {
   "@@locale": "fr",
-  "o2FirstChat": "Parler avec Hermes",
+  "mpnFirstChat": "Parler avec {name}",
+  "@mpnFirstChat": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "sInvalidPort": "Le port doit être un nombre de 1 à 65535 ; corrige-le dans les options avancées.",
   "sBackToConnection": "Revenir à la connexion",
   "sBadAddress": "L’adresse n’est pas valide ; colle l’adresse de l’ordinateur et réessaie.",
@@ -72,6 +79,21 @@
   "o2OpenChat": "Ouvrir le chat",
   "o2NeedsModelBody": "Choisis un modèle pour que Hermes puisse répondre",
   "o2ChooseModel": "Choisir un modèle",
+  "nacWayPickTitle": "Comment veux-tu te connecter ?",
+  "nacWayNousTitle": "Compte Nous Portal",
+  "nacWayNousBody": "Ton Hermes tourne dans Nous Cloud : connecte-toi avec ton compte Nous depuis le navigateur.",
+  "nacWayManualTitle": "Dashboard manuel",
+  "nacWayManualBody": "Tu connais l’adresse du Dashboard : accède-y directement ou par un tunnel SSH, puis connecte-toi avec un mot de passe, ton fournisseur d’identité ou Nous.",
+  "nacWayScanTitle": "Scanner un code ou trouver mon serveur",
+  "nacWayScanBody": "Hermes est sur ton réseau ou sur Tailscale : scanne le code d’installation ou saisis le nom de la machine, et l’app vérifie que Hermes répond.",
+  "nacWayRecommended": "Recommandé",
+  "nacWayWhichLink": "Je ne sais pas quoi choisir",
+  "nacWayWhichTitle": "Laquelle est la mienne ?",
+  "nacWayWhichBody": "Compte Nous Portal : Nous héberge ton Hermes et tu te connectes avec ton compte Nous.\nDashboard manuel : utilise une adresse https ou locale, ou un tunnel SSH, puis connecte-toi avec un mot de passe, ton fournisseur d’identité ou Nous.\nScanner ou trouver : le serveur est sur ton réseau ou sur Tailscale et tu as le code d’installation sous la main.",
+  "nacWayNousPageBody": "Connecte-toi à Nous Portal, copie l'adresse de ton agent et reviens ici : l'app l'utilise toute seule.",
+  "nacWayNousAddressHint": "nom.agents.nousresearch.com",
+  "nacWayNousHostOk": "Serveur Nous Cloud",
+  "nacWayEditorForm": "Ou renseigne la connexion à la main ci-dessous",
   "o2MacLinux": "Mac ou Linux",
   "o2Windows": "Windows",
   "o2IssueTitle": "Une erreur s’est produite",
@@ -177,7 +199,72 @@
   "drawerMascots": "Mascottes",
   "drawerKanban": "Kanban",
   "drawerSsh": "SSH / Terminal",
-  "drawerSkills": "Compétences",
+  "screenTitle": "Écran du bot",
+  "botScreenTooltip": "Voir le bureau du bot",
+  "bsaScreen": "Voir l'écran",
+  "bsaNoDesktop": "Pas de bureau",
+  "bsaTitle": "Écran de {bot}",
+  "bsaSubView": "Lecture seule · actualisé toutes les {seconds} s",
+  "bsaSubControl": "Vous avez la main",
+  "bsaSubOff": "Arrêté",
+  "bsaStateOff": "Éteint",
+  "bsaStateOn": "Allumé",
+  "bsaStateControl": "Pilotage",
+  "bsaPowerOff": "Éteindre",
+  "bsaPowerOffTitle": "Éteindre l'ordinateur de {bot} ?",
+  "bsaPowerOffBody": "Ses fenêtres et ce qu'il fait à l'écran sont fermés. Le bot continue de fonctionner ; vous pourrez le rallumer.",
+  "bsaPowerOffFailed": "Impossible d'éteindre l'ordinateur du bot.",
+  "bsaPowerOffHeld": "Quelqu'un d'autre contrôle l'écran. Impossible de l'éteindre maintenant.",
+  "bsaTrackpad": "Trackpad",
+  "bsaKeyboard": "Clavier",
+  "bsaZoomOut": "Dézoomer",
+  "bsaZoomIn": "Zoomer",
+  "bsaClick": "Clic",
+  "bsaWheel": "Molette",
+  "bsaRightClick": "Clic droit",
+  "bsaPadHint": "Déplacez · touchez pour cliquer · deux doigts pour défiler",
+  "bsaPadScroll": "Défiler",
+  "bsaDirectHint": "Touchez directement l'écran",
+  "bsaHttpShort": "Connexion non chiffrée · touchez pour en savoir plus",
+  "bsaStoppedNote": "Seul le bot l'utilise tant qu'il est allumé",
+  "bsaClose": "Fermer",
+  "screenRefresh": "Actualiser maintenant",
+  "screenPollHint": "Actualisé toutes les {seconds} s",
+  "screenSuppressed": "Une personne contrôle l’écran. Les images sont en pause.",
+  "screenSuppressedPartial": "Une personne a le contrôle. La vue est limitée.",
+  "screenStopped": "L’ordinateur du bot est arrêté.",
+  "screenStart": "Démarrer l’ordinateur du bot",
+  "screenUnsupported": "L’affichage n’est pas installé sur cette instance.",
+  "screenFailed": "Impossible de lire l’écran du bot.",
+  "screenStartFailed": "Impossible de démarrer l’ordinateur du bot.",
+  "screenReadOnly": "Connexion en lecture seule. Impossible de prendre le contrôle de l’écran.",
+  "screenStale": "Dernière image — écran injoignable",
+  "screenUnavailable": "Mets à jour le Hermes du bot pour utiliser son écran.",
+  "screenTakeoverTitle": "Contrôler l’écran du bot",
+  "screenTakeover": "Prendre le contrôle",
+  "screenHandBack": "Rendre",
+  "screenShowKeyboard": "Afficher le clavier",
+  "screenHideKeyboard": "Masquer le clavier",
+  "screenSwitchToTouchpad": "Passer en mode pavé tactile",
+  "screenSwitchToTouch": "Passer en mode tactile direct",
+  "screenChecking": "Vérification de l’écran du bot…",
+  "screenStarting": "Démarrage de l’écran sur le serveur…",
+  "screenAcquiring": "Prise de contrôle…",
+  "screenActiveHint": "Tu as le contrôle. Touche, fais glisser et écris normalement.",
+  "screenLeaseLost": "Un autre client a pris le contrôle.",
+  "screenLeaseAgent": "L’agent a toujours l’écran.",
+  "screenRetry": "Réessayer",
+  "screenStartDisplay": "Démarrer l’écran",
+  "screenBlocked": "L’écran est bloqué et ne peut pas démarrer.",
+  "screenUnsupportedDetail": "L’affichage n’est pas installé sur cette instance. Le serveur a besoin de TigerVNC et du cœur de Xfce.",
+  "screenTakeoverFailed": "Impossible de prendre le contrôle de l’écran.",
+  "screenBridgeConnecting": "Connexion…",
+  "screenBridgeMissing": "Adresse de l’écran manquante",
+  "screenBridgeClosed": "Session terminée",
+  "screenBridgeLost": "Connexion perdue. Touche pour te reconnecter.",
+  "screenBridgeSecurity": "Échec de sécurité",
+  "screenBridgeCredentials": "L’écran a demandé des identifiants",
+  "screenUnencrypted": "Connexion non chiffrée (Dashboard en http) : à utiliser seulement via Tailscale ou un VPN.",
   "drawerCron": "Tâches planifiées",
   "drawerSoul": "SOUL",
   "drawerGroupInstance": "instance",
@@ -295,7 +382,6 @@
   "chatAttachCamera": "Appareil photo",
   "chatAttachPhotos": "Galerie",
   "chatAttachFiles": "Fichiers",
-  "chaCantSendApproval": "Impossible d’envoyer l’approbation : {err}",
   "chaTextFileError": "Impossible de lire le fichier texte",
   "chaOutboxUnavailable": "Impossible d’enregistrer le tour de façon sûre. Rien n’a été envoyé ; ton message reste ici pour réessayer.",
   "chaSendNotSentRetry": "Rien n’a été envoyé ; ton message reste ici. Appuie à nouveau sur Envoyer.",
@@ -325,7 +411,6 @@
   "chaMenuTooltip": "Menu",
   "chaProfileChip": "Profil : {name}",
   "chaNewChatTooltip": "Nouveau chat",
-  "chaPermissionsTitle": "Autorisations / mode",
   "chaUpdateTitle": "Mettre à jour",
   "chaSessionDetailsAction": "Voir les détails de la session",
   "chaModelSheetTitle": "Modèle et session",
@@ -367,14 +452,343 @@
   "chaContextNotMeasured": "Sera mesuré quand Hermes affichera le premier texte d’une réponse",
   "chaContextNotPublished": "Hermes ne publie pas cette donnée",
   "chaContextWindowUnavailable": "Hermes n’a pas encore publié la fenêtre de contexte de cette session.",
-  "chaControlTitle": "Paramètres de cette conversation",
-  "chaControlScope": "Cette conversation uniquement",
-  "chaControlSectionSession": "Session",
-  "chaControlSectionTools": "Outils",
-  "chaControlSectionDanger": "Zone sensible",
+  "chaControlTitle": "Cette conversation",
+  "chaControlTerminal": "Terminal",
+  "chaControlDeleteConversation": "Supprimer la conversation",
+  "chaControlBrowser": "Navigateur",
+  "brwBack": "Retour",
+  "brwForward": "Avancer",
+  "brwReload": "Recharger la page",
+  "brwAddress": "Adresse",
+  "brwAddressPlaceholder": "Saisir une adresse",
+  "brwBlankPage": "Saisis une adresse ci-dessus pour naviguer.",
+  "brwOpenExternal": "Ouvrir dans le navigateur",
+  "brwServerNotFound": "Serveur non trouvé",
+  "brwFailedToLoad": "Échec du chargement de la page",
+  "brwUnreachable": "La page n’a pas pu être atteinte.",
+  "brwRemoteLoopback": "Cette adresse pointe vers la machine qui exécute ton agent, pas vers celle-ci. Le navigateur charge les pages localement ; un serveur de développement distant nécessite donc une redirection de port ou un nom d’hôte accessible.",
+  "brwBackToChat": "Retour au chat",
+  "brwAgentOffer": "Hermes veut te montrer une page",
+  "brwAgentOfferOpen": "Voir",
+  "brwAgentOfferDismiss": "Ignorer",
+  "brwAgentReading": "Hermes lit cette page",
+  "brwCleartextTitle": "Cette appli n’ouvre que des pages https",
+  "brwCleartextBody": "La page utilise http, non chiffré, et ne peut pas se charger ici. Ouvre-la dans le navigateur du système.",
+  "brwRendererGone": "La page s’est fermée",
+  "brwRendererGoneBody": "Android a fermé la page pour libérer de la mémoire ou parce qu’elle ne répondait plus. L’appli reste ouverte : recharge-la.",
+  "brwTabNew": "Nouvel onglet",
+  "brwTabBlank": "Nouvel onglet",
+  "brwTabsShow": "{count, plural, =1{Voir l’onglet} other{Voir les {count} onglets}}",
+  "brwTabsCount": "{count, plural, =1{1 onglet} other{{count} onglets}}",
+  "brwTabClose": "Fermer l’onglet {name}",
+  "brwTabsCloseAll": "Tout fermer",
+  "brwTabsCloseAllLabel": "{count, plural, =1{Fermer l’onglet} other{Fermer les {count} onglets}}",
+  "brwTabLabel": "Onglet {index} sur {count}, {name}",
+  "brwTabAgentLabel": "Onglet de Hermes, {name}",
+  "brwTabAgentLiveLabel": "Onglet de Hermes, {name}, en direct",
+  "brwTabHermes": "Hermes",
+  "brwTabClosed": "« {name} » fermé",
+  "brwTabsClosed": "{count, plural, =1{1 onglet fermé} other{{count} onglets fermés}}",
+  "brwTabUndo": "Annuler",
+  "brwTabHermesSees": "Hermes le voit",
+  "brwPipWatch": "Voir {host}",
+  "brwPipWatchLabel": "Voir le navigateur de Hermes, {host}",
+  "brwPipWatchLabelLive": "Voir le navigateur de Hermes, {host}, en direct",
+  "brwPipLive": "EN DIRECT",
+  "brwPipOffline": "HORS LIGNE",
+  "brwPipDone": "TERMINÉ",
+  "brwPipAgentControls": "Hermes pilote",
+  "brwPipYouControl": "Vous pilotez",
+  "brwPipDock": "Ancrer en haut",
+  "brwPipUndock": "Détacher",
+  "brwPipExpand": "Agrandir",
+  "brwPipClose": "Fermer le navigateur",
+  "brwPipRegion": "Navigateur de Hermes",
+  "gitTitle": "Git",
+  "gitNoBranch": "Aucune branche",
+  "gitDetached": "détaché",
+  "gitChanged": "{count, plural, =1{1 modifié} other{{count} modifiés}}",
+  "gitAhead": "{count} en avance",
+  "gitBehind": "{count} en retard",
+  "gitStage": "Indexer",
+  "gitUnstage": "Désindexer",
+  "gitStaged": "Indexé",
+  "gitNotRepo": "Ce n’est pas un dépôt Git",
+  "gitNoDiffs": "Aucune différence",
+  "gitNoDiff": "Aucune différence à afficher",
+  "gitCommit": "Valider",
+  "gitCommitMessage": "Message",
+  "gitDiffTooLarge": "Diff trop volumineux",
+  "gitDiffBinary": "Fichier binaire",
+  "gitFailureUnsupported": "Cette version de Hermes ne publie pas Git.",
+  "gitFailureForbidden": "Cette instance n’autorise pas Git avec cette session.",
+  "gitFailureRejected": "Git n’a pas pu terminer l’action sur le serveur.",
+  "gitFailureUnknown": "Impossible de lire Git.",
+  "gitConflicts": "{count, plural, =1{1 conflit non résolu} other{{count} conflits non résolus}}",
+  "gitProblemConflict": "Il y a des conflits non résolus.",
+  "gitProblemNoIdentity": "Git n’a ni nom ni e-mail d’auteur sur le serveur.",
+  "gitRefresh": "Actualiser l’arbre",
+  "gitStatusModified": "Modifié",
+  "gitStatusAdded": "Ajouté",
+  "gitStatusDeleted": "Supprimé",
+  "gitStatusRenamed": "Renommé",
+  "gitStatusCopied": "Copié",
+  "gitStatusConflicted": "Conflit",
+  "gitStatusUntracked": "Non suivi",
+  "ghtSwitchAction": "Changer",
+  "ghtRemoveAction": "Supprimer",
+  "ghtSearchPaths": "Rechercher des chemins",
+  "ghtScopeUncommitted": "Non validés",
+  "ghtScopeBranch": "Branche",
+  "ghtFileCount": "{count, plural, =1{1 fichier} other{{count} fichiers}}",
+  "@ghtFileCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "ghtCleanTitle": "Arbre de travail propre",
+  "ghtCleanBody": "Rien n'a changé depuis le dernier commit.",
+  "ghtBranchCleanTitle": "La branche ne diffère pas de sa base",
+  "ghtBranchCleanBody": "Aucun commit ne change quoi que ce soit par rapport à la branche de base.",
+  "ghtNoMatches": "Aucun chemin ne correspond à la recherche.",
+  "ghtShipTitle": "Push et pull request",
+  "ghtShipOpen": "Ouvrir push et pull request",
+  "ghtCommitOptions": "Options du commit",
+  "ghtBranchScopeHint": "Modifications de la branche par rapport à sa base ; déjà validées.",
+  "ghtPanelTitle": "Modifications",
+  "ghtNotRepoBody": "Le dossier de cette discussion n'est pas dans un dépôt Git sur le serveur.",
+  "ghtGitHubConnected": "GitHub : connecté",
+  "ghtGitHubSignedOut": "GitHub : non connecté sur le serveur",
+  "ghtGitHubMissing": "GitHub : gh n'est pas installé sur le serveur",
+  "ghtGitHubUnknown": "GitHub : non vérifié",
+  "ghtIdentityMissing": "Aucune identité d'auteur sur le serveur",
+  "ghtRefreshGitHub": "Revérifier GitHub",
+  "ghtMore": "Autres actions Git",
+  "ghtBranchPick": "Changer de branche",
+  "ghtBranchesTitle": "Branches",
+  "ghtBranchCurrent": "Branche actuelle",
+  "ghtBranchRemote": "Distante",
+  "ghtBranchInWorktree": "Dans un autre worktree : {path}",
+  "@ghtBranchInWorktree": {
+    "placeholders": {
+      "path": {
+        "type": "String"
+      }
+    }
+  },
+  "ghtBranchSwitchConfirmTitle": "Passer à {branch} ?",
+  "@ghtBranchSwitchConfirmTitle": {
+    "placeholders": {
+      "branch": {
+        "type": "String"
+      }
+    }
+  },
+  "ghtBranchSwitchConfirmBody": "{count, plural, =1{Il y a 1 modification non validée. Git ne change que sans conflit ; la modification passe sur la nouvelle branche.} other{Il y a {count} modifications non validées. Git ne change que sans conflit ; les modifications passent sur la nouvelle branche.}}",
+  "@ghtBranchSwitchConfirmBody": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "ghtBranchSwitched": "Maintenant sur {branch}",
+  "@ghtBranchSwitched": {
+    "placeholders": {
+      "branch": {
+        "type": "String"
+      }
+    }
+  },
+  "ghtBranchNew": "Nouvelle branche dans un worktree",
+  "ghtBranchNewName": "Nom de la branche",
+  "ghtBranchNewBase": "Branche de base",
+  "ghtBranchNewCreate": "Créer",
+  "ghtBranchNewHint": "Le serveur crée la branche dans un nouveau worktree sous .worktrees.",
+  "ghtBranchNone": "Aucune branche",
+  "ghtWorktrees": "Worktrees",
+  "ghtWorktreeMain": "Principal",
+  "ghtWorktreeLocked": "Verrouillé",
+  "ghtWorktreeDetached": "HEAD détaché",
+  "ghtWorktreeAdd": "Ajouter un worktree",
+  "ghtWorktreeRemove": "Supprimer le worktree",
+  "ghtWorktreeRemoveTitle": "Supprimer le worktree ?",
+  "ghtWorktreeRemoveBody": "Le dossier {path} est supprimé du serveur. La branche reste. Impossible à annuler.",
+  "@ghtWorktreeRemoveBody": {
+    "placeholders": {
+      "path": {
+        "type": "String"
+      }
+    }
+  },
+  "ghtWorktreeRemoveForceTitle": "Le worktree contient des modifications",
+  "ghtWorktreeRemoveForceBody": "Il y a des fichiers modifiés ou non suivis dans {path}. Forcer les supprime définitivement.",
+  "@ghtWorktreeRemoveForceBody": {
+    "placeholders": {
+      "path": {
+        "type": "String"
+      }
+    }
+  },
+  "ghtWorktreeRemoveForce": "Forcer et supprimer",
+  "ghtWorktreeRemoved": "Worktree supprimé",
+  "ghtWorktreeOpen": "Ouvrir Git ici",
+  "ghtWorktreeNone": "Seulement l'arbre principal",
+  "ghtWorktreeCreated": "Worktree créé dans {path}",
+  "@ghtWorktreeCreated": {
+    "placeholders": {
+      "path": {
+        "type": "String"
+      }
+    }
+  },
+  "ghtTabChanges": "Modifications",
+  "ghtTabCommit": "Commit",
+  "ghtTabPullRequests": "PR",
+  "ghtGroupStaged": "Indexés",
+  "ghtGroupUnstaged": "Non indexés",
+  "ghtGroupUntracked": "Non suivis",
+  "ghtStageAll": "Tout indexer",
+  "ghtUnstageAll": "Tout désindexer",
+  "ghtDiscardFile": "Abandonner les modifications",
+  "ghtDiscardAll": "Abandonner toutes les modifications",
+  "ghtDiscardTitle": "Abandonner les modifications de {name} ?",
+  "@ghtDiscardTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "ghtDiscardBody": "Le fichier revient à son dernier commit ; un nouveau est supprimé. Impossible à annuler.",
+  "ghtDiscardAllTitle": "Abandonner toutes les modifications ?",
+  "ghtDiscardAllBody": "{count, plural, =1{1 fichier revient à son dernier commit ; les nouveaux sont supprimés. Impossible à annuler.} other{{count} fichiers reviennent à leur dernier commit ; les nouveaux sont supprimés. Impossible à annuler.}}",
+  "@ghtDiscardAllBody": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "ghtDiscardAction": "Abandonner",
+  "ghtDiscarded": "Modifications abandonnées",
+  "ghtViewDiff": "Voir les différences",
+  "ghtFileActions": "Actions du fichier",
+  "ghtHunkCollapse": "Replier le fragment",
+  "ghtHunkExpand": "Déplier le fragment",
+  "ghtHunkHidden": "{count, plural, =1{1 ligne masquée} other{{count} lignes masquées}}",
+  "@ghtHunkHidden": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "ghtCommitContextTitle": "Contexte du serveur",
+  "ghtCommitContextRecent": "Derniers commits",
+  "ghtCommitContextDiff": "Ce qui entre dans le commit",
+  "ghtCommitContextEmpty": "Le serveur n'a pas de contexte pour ce commit.",
+  "ghtCommitContextTruncated": "Vue tronquée",
+  "ghtCommitContextShow": "Voir le contexte",
+  "ghtCommitContextHide": "Masquer le contexte",
+  "ghtCommitStagesAllHint": "Sans rien d'indexé, le serveur indexe toutes les modifications avant le commit.",
+  "ghtCommitAndPush": "Pousser (push) après le commit",
+  "ghtCommitDone": "Commit effectué",
+  "ghtCommitPushedDone": "Commit effectué et branche poussée",
+  "ghtPush": "Pousser la branche (push)",
+  "ghtPushUpstreamHint": "Sans upstream, le serveur publie la branche sur origin sous le même nom.",
+  "ghtPushAhead": "{count, plural, =1{1 commit à pousser} other{{count} commits à pousser}}",
+  "@ghtPushAhead": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "ghtPushNothing": "Rien à pousser",
+  "ghtPushDone": "Branche poussée",
+  "ghtPushBehindHint": "{count, plural, =1{La branche distante a 1 commit absent ici.} other{La branche distante a {count} commits absents ici.}}",
+  "@ghtPushBehindHint": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "ghtPrTitle": "Pull request de cette branche",
+  "ghtPrNone": "Cette branche n'a pas de pull request.",
+  "ghtPrNumber": "n° {number}",
+  "@ghtPrNumber": {
+    "placeholders": {
+      "number": {
+        "type": "int"
+      }
+    }
+  },
+  "ghtPrStateOpen": "Ouverte",
+  "ghtPrStateMerged": "Fusionnée",
+  "ghtPrStateClosed": "Fermée",
+  "ghtPrStateDraft": "Brouillon",
+  "ghtPrOpenLink": "Ouvrir dans le navigateur",
+  "ghtPrLinkUnsafe": "Ce lien ne s'ouvre pas depuis l'app.",
+  "ghtPrCreate": "Créer une pull request",
+  "ghtPrCreateHint": "Le serveur pousse la branche et crée la PR avec gh : le titre et le corps viennent des commits ; la base est la branche par défaut du dépôt.",
+  "ghtPrCreateBase": "Base : {branch}",
+  "@ghtPrCreateBase": {
+    "placeholders": {
+      "branch": {
+        "type": "String"
+      }
+    }
+  },
+  "ghtPrCreateConfirmTitle": "Créer la pull request ?",
+  "ghtPrCreateConfirmBody": "La branche {branch} est publiée sur GitHub et une pull request est ouverte vers {base}.",
+  "@ghtPrCreateConfirmBody": {
+    "placeholders": {
+      "branch": {
+        "type": "String"
+      },
+      "base": {
+        "type": "String"
+      }
+    }
+  },
+  "ghtPrCreated": "Pull request créée",
+  "ghtPrListTitle": "Pull requests des branches locales",
+  "ghtPrListEmpty": "Aucune pull request sur les branches locales.",
+  "ghtPrListLoad": "Chercher les pull requests",
+  "ghtGhNotReady": "GitHub n'est pas prêt sur le serveur : connectez-vous avec gh là-bas.",
+  "ghtDetachedNoPublish": "Avec un HEAD détaché, il n'y a pas de branche à publier.",
+  "ghtProblemPushRejected": "Le distant a refusé le push : récupérez d'abord les modifications distantes.",
+  "ghtProblemRemoteAuth": "Le serveur n'a pas d'identifiants pour ce distant.",
+  "ghtProblemRemoteUnreachable": "Impossible de joindre le distant.",
+  "ghtProblemNoRemote": "La branche n'a pas de distant où pousser.",
+  "ghtProblemGhNotReady": "gh n'est pas installé ou pas connecté sur le serveur.",
+  "ghtProblemPrExists": "Il existe déjà une pull request pour cette branche.",
+  "ghtProblemPrNoCommits": "Aucun nouveau commit par rapport à la branche de base.",
+  "ghtProblemLocalChanges": "Des modifications locales seraient perdues ; Git s'est arrêté.",
+  "ghtProblemBranchNotFound": "La branche n'existe pas.",
+  "ghtLockReasonDiscard": "Abandonner des modifications Git",
+  "ghtLockReasonPush": "Pousser la branche vers le distant",
+  "ghtLockReasonPr": "Créer une pull request",
+  "ghtLockReasonWorktree": "Supprimer un worktree",
+  "ghtLockReasonSwitch": "Changer de branche avec des modifications non validées",
+  "ghtProjectMenuHint": "Modifications, commits, branches et pull requests",
+  "ghtDrawerDetail": "Modifications, branches et pull requests du serveur",
+  "ghtDefaultFolderMissing": "Le serveur n'a pas indiqué de dossier par défaut. Ouvrez Git depuis un projet ou une conversation.",
+  "ghtUnsupportedBody": "Cette version de Hermes ne publie pas les routes Git. Mettez le serveur à jour pour utiliser Git depuis l'app.",
+  "ghtFolderLabel": "Dossier : {path}",
+  "@ghtFolderLabel": {
+    "placeholders": {
+      "path": {
+        "type": "String"
+      }
+    }
+  },
   "chaControlInherit": "Utiliser la valeur générale",
   "chaControlOff": "Non",
-  "chaControlRecovery": "Récupération de fichiers",
   "chaYoloTitle": "YOLO dans cette session ?",
   "chaYoloBody": "Hermes exécutera TOUTES les actions de cette session sans confirmation, y compris celles à haut risque (supprimer, sudo, redémarrer…). Seul le mode Lecture seule reste prioritaire sur YOLO.",
   "chaActivate": "Activer",
@@ -394,6 +808,27 @@
   "chaVoiceReturnOverlay": "Revenir au mode vocal",
   "chaVoiceActiveElsewhere": "Mode vocal actif dans « {title} »",
   "chaVoiceExitTooltip": "Terminer le mode vocal",
+  "voiceDockHint": "Dites « {phrase} » pour quitter · touchez le sprite pour mettre en pause",
+  "voiceDockHintNoPhrase": "Touchez le sprite pour mettre en pause",
+  "voiceDockType": "Écrire plutôt",
+  "voiceDockSendNow": "Envoyer",
+  "voiceDockInterrupt": "Interrompre",
+  "voiceDockReview": "Vérifier",
+  "voiceCapsuleTitle": "Mode vocal",
+  "voiceCapsuleMinimize": "Réduire",
+  "voiceCapsuleOpen": "Ouvrir le mode vocal",
+  "voiceCapsuleOpenRunning": "Ouvrir ce qui est en cours",
+  "voiceCapsuleExpand": "Agrandir",
+  "voiceModelTitle": "Modèle de la voix",
+  "voiceModelChange": "Changer",
+  "voiceModelMain": "Le principal : {model}",
+  "voiceModelPickerHint": "Celui qui répond quand vous parlez, dans ce profil. Il s’applique dès votre prochain tour.",
+  "voiceModelEmptyTitle": "Aucun modèle prêt",
+  "voiceModelEmptyBody": "Ce serveur n’a encore aucun modèle connecté. La voix utilise le modèle principal.",
+  "voiceModelOpenModels": "Ouvrir Modèles",
+  "voiceModelReadOnly": "Lecture seule",
+  "voiceModelLiveNote": "Avec GPT-Live, c’est son propre modèle qui répond ; celui-ci sert au mode Normale.",
+  "voiceModelLoadError": "Impossible de lire le modèle de la voix.",
   "chaVoiceEnd": "Terminer",
   "chaVoiceComposerHint": "Écris…",
   "chaVoicePause": "Mettre en pause",
@@ -491,13 +926,35 @@
   "chaConnectionLostReconnecting": "Connexion perdue — reconnexion…",
   "chaConnectionRecovered": "Connexion rétablie",
   "chaHintSystem": "Instructions (facultatif)…",
-  "chaHintUser": "Demande à Hermes…",
+  "mpnComposerHint": "Demande à {name}…",
+  "@mpnComposerHint": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "chaHintUserShort": "Demandez…",
   "chaAttachTooltip": "Joindre un fichier",
   "chaSendTooltip": "Envoyer le message",
   "chaStopTooltip": "Arrêter",
-  "chaSteerSupplementsLabel": "Ajouté pendant que Hermes travaillait",
+  "mpnSteerAdded": "Ajouté pendant que {name} travaillait",
+  "@mpnSteerAdded": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "chaSteerFailed": "L’envoi à l’exécution actuelle n’a pas été confirmé. Ton texte est conservé comme brouillon ; à la reconnexion, vérifie-le et réessaie pour éviter les doublons.",
-  "chaSteerQueued": "Message en file d’attente : il sera envoyé au prochain tour quand Hermes aura terminé.",
+  "mpnSteerQueued": "Message en file d’attente : il sera envoyé au prochain tour quand {name} aura terminé.",
+  "@mpnSteerQueued": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "commonAdd": "Ajouter",
   "commonEdit": "Modifier",
   "commonRefresh": "Actualiser",
@@ -720,7 +1177,17 @@
   "cevDeny": "Refuser",
   "cevThisSession": "Cette session",
   "cevAlways": "Toujours",
-  "cevPermissionHeadline": "Hermes demande ton autorisation",
+  "approvalAlwaysTitle": "Toujours autoriser cette commande ?",
+  "approvalAlwaysBody": "Cela ajoute le motif « {pattern} » à votre liste d'autorisation permanente (~/.hermes/config.yaml). Hermes ne redemandera plus pour ce type de commande — que ce soit dans cette session ou dans une session future.",
+  "approvalAlwaysConfirm": "Toujours autoriser",
+  "mpnPermissionHeadline": "{name} demande ton autorisation",
+  "@mpnPermissionHeadline": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "cevRemember": "Mémoriser",
   "cevApprovalRequired": "Approbation requise",
   "cevApprovalPending": "en attente",
@@ -752,7 +1219,6 @@
   "ssh2ForgetHostKey": "Oublier la clé d’hôte",
   "ssh2ForgetHostKeySub": "Revérifier le serveur à la prochaine connexion",
   "ssh2RemoveSshSub": "Supprimer les identifiants de cette instance",
-  "sftpListError": "Impossible de lister {path} : {error}",
   "sftpDownloading": "Téléchargement de {file} en arrière-plan…",
   "sftpReadError": "Impossible de lire le fichier.",
   "sftpDeleteTitle": "Supprimer le fichier",
@@ -762,7 +1228,6 @@
   "sftpOpenOf": "Ouvrir les fichiers (SFTP) de {label}",
   "sftpUpload": "Envoyer un fichier",
   "sftpUpLevel": "Dossier parent",
-  "sftpEmpty": "Dossier vide",
   "sshcNotText": "Impossible de lire le fichier comme texte (est-ce une clé PEM ?).",
   "sshcMissingHost": "L’hôte est manquant.",
   "sshcInvalidPort": "Port non valide.",
@@ -799,7 +1264,7 @@
   "ieNetworkNote": "L’application utilise le réseau du système Android. Si tu utilises un VPN/Tailscale/WireGuard, active-le avant de tester la connexion.",
   "ieCapabilitiesDetected": "CAPACITÉS DÉTECTÉES",
   "setTitle": "Paramètres",
-  "setSecurity": "Sécurité",
+  "setSecurity": "Verrouillage et confidentialité",
   "setSecuritySub": "Verrouillage, confidentialité et protection des identifiants",
   "setPermissions": "Autorisations / Approbations",
   "setPermissionsSub": "Comment Hermes demande l’autorisation : YOLO, interactif, prudent ou lecture seule",
@@ -1052,10 +1517,6 @@
   "notifMasterSub": "Contrôle général de toutes les alertes",
   "notifApprovalsTitle": "Approbations",
   "notifApprovalsSub": "Quand Hermes a besoin de ton autorisation",
-  "notifCronResultsTitle": "Résultats des automatisations",
-  "notifCronResultsSub": "Tâches cron terminées avec résultat ou échec nécessitant une action",
-  "notifKanbanResultsTitle": "Résultats Kanban",
-  "notifKanbanResultsSub": "Tâches du tableau terminées, bloquées ou nécessitant une attention",
   "notifLocalAgentResultsTitle": "Objectifs permanents",
   "notifLocalAgentResultsSub": "Un objectif a été mis en pause, s’est bloqué, s’est mis en attente ou s’est terminé pendant que la session restait connectée",
   "notifRunsTitle": "Exécutions",
@@ -1064,15 +1525,8 @@
   "notifRepliesSub": "Réponses reçues pendant que Hermes est en arrière-plan",
   "notifForegroundTitle": "Alerter aussi au premier plan",
   "notifForegroundSub": "Affiche des alertes même quand tu utilises Hermes",
-  "notifBgTitle": "Écouter en arrière-plan",
-  "notifBgSub": "Reçoit les alertes avec l’application fermée · utilise une notification persistante",
-  "notifBgActive": "Actif jusqu’à désactivation · écoute les événements de l’agent",
-  "notifBgPaused": "En pause · active l’écoute pour recevoir les événements en arrière-plan",
-  "notifBgFiniteNotice": "L’écoute reste active jusqu’à désactivation et affiche une notification Android persistante.",
-  "notifFgsChannelLabel": "Canal du service persistant",
-  "notifBgActivating": "Activation de l’écoute persistante…",
-  "notifBgError": "Erreur au démarrage · appuie pour réessayer",
-  "notifBgRestartNotice": "Retirer Hermes des applications récentes n’arrête pas l’écoute. Forcer l’arrêt l’interrompt jusqu’à la prochaine ouverture de l’application.",
+  "notifKeepAliveTitle": "Garder la connexion pendant le travail en arrière-plan",
+  "notifKeepAliveSub": "Si vous quittez pendant un tour, Hermes continue d’arriver en direct jusqu’à la fin (30 min max.)",
   "notifTestButton": "Tester une notification",
   "notifTestSent": "Notification de test envoyée.",
   "notifTestFailed": "Envoi impossible. Vérifie l’autorisation système.",
@@ -1443,7 +1897,15 @@
   "chaCommandAttachmentsUnsupported": "Retire les pièces jointes avant d’exécuter une commande.",
   "chaCommandUnknown": "La commande /{name} n’est pas disponible sur ce serveur.",
   "chaCompactUnavailable": "/compact n’est pas une commande de Hermes Desktop. Utilise /compress pour condenser le contexte de cette conversation.",
-  "chaCommandFailed": "Hermes n’a pas pu exécuter cette commande.",
+  "cmdErrNoSession": "{command} : ce chat n’a pas encore de session dans Hermes. Envoyez d’abord un message ou réessayez.",
+  "cmdErrBadArgument": "{command} : Hermes n’a pas accepté ce que vous avez écrit après la commande.",
+  "cmdErrNoRuntime": "{command} : Hermes n’a pas de session active pour ce chat. Réessayez dans un instant.",
+  "cmdErrServerRefused": "{command} : Hermes n’a pas pu l’exécuter.",
+  "cmdErrReadOnly": "{command} : cette connexion est en lecture seule.",
+  "cmdErrUnsupported": "{command} : ce serveur Hermes ne le prend pas en charge. Mettez à jour Hermes Agent.",
+  "cmdErrOffline": "{command} : pas de connexion à Hermes.",
+  "cmdErrTimeout": "{command} : Hermes n’a pas répondu à temps.",
+  "cmdErrFailed": "{command} a échoué.",
   "chaCommandAccepted": "Commande {command} acceptée.",
   "chaCompressionAccepted": "Hermes a accepté la compression. La conversation sera actualisée quand le nouveau contexte sera prêt.",
   "chaCompressionCompleted": "La compression du contexte est terminée.",
@@ -1590,7 +2052,6 @@
   "gatewayEraTitle": "Console a changé",
   "gatewayEraAction": "Voir comment",
   "leg3SetupTitle": "Connecte ton Hermes",
-  "leg3SetupBody": "Console utilise désormais le Dashboard de Hermes. Colle cette ligne sur l’ordinateur où Hermes est installé ; un code apparaîtra à la fin : scanne-le. Tes chats sont conservés.",
   "leg3EraBody": "Console utilise désormais le Dashboard de Hermes. Nous te guidons en une étape : colle une ligne sur ton ordinateur et scanne le code. Tes chats sont conservés.",
   "leg3UpdatesExisting": "Mets à jour ta connexion « {name} » : tes chats sont conservés.",
   "dashboardSetupForgotPassword": "Je ne connais pas le mot de passe",
@@ -1783,9 +2244,7 @@
   "chaVoiceNeedsServerTitle": "Configure le serveur vocal",
   "chaVoiceNeedsServerBody": "La reconnaissance par serveur nécessite l’URL (et le jeton) de ton serveur Hermes-STT, ou celui-ci ne répond pas. Vérifie dans Paramètres › Voix.",
   "chaVoiceAllowMic": "Autoriser le microphone",
-  "chaQueuedCount": "EN FILE D’ATTENTE · {count}",
   "chaQueuedNote": "seront envoyés à la fin du tour",
-  "chaQueuedPausedCount": "EN PAUSE · {count}",
   "chaQueueParkedNote": "mise en pause après Stop",
   "chaQueueResume": "Reprendre la file d’attente",
   "chaQueueEdit": "Modifier",
@@ -1827,6 +2286,7 @@
   "chaBackgroundAwaitingResponse": "En attente de la fin de l’exécution actuelle",
   "chaBackgroundDeferredByGoal": "Différé pendant que l’objectif permanent est actif",
   "chaBackgroundActionStop": "Arrêter",
+  "chatRetouchProcessesStopAll": "Tout arrêter",
   "chaBackgroundActionFailed": "Hermes n’a pas confirmé cette action.",
   "chaStopStopping": "Arrêt…",
   "chaStopRetrying": "Nouvelle tentative de Stop…",
@@ -1856,12 +2316,26 @@
   "chaEmptyPrompt": "Écris-moi pour commencer",
   "chaCopyMessage": "Copier le message",
   "chaEditMessage": "Modifier le message",
-  "chaEditHint": "Que devrait répondre Hermes à la place ?",
+  "mpnEditHint": "Que devrait répondre {name} à la place ?",
+  "@mpnEditHint": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "chaEditCancel": "Annuler la modification",
   "chaEditSave": "Enregistrer et renvoyer",
   "chaEditFailed": "Impossible de modifier le message. La conversation d’origine reste disponible.",
   "chaRegenerate": "Régénérer la réponse",
-  "chaRegenerateWarning": "Hermes reviendra avant la dernière réponse et répondra à nouveau au même message. Les actions externes déjà effectuées ne peuvent pas être annulées.",
+  "mpnRegenerateWarning": "{name} reviendra avant la dernière réponse et répondra à nouveau au même message. Les actions externes déjà effectuées ne peuvent pas être annulées.",
+  "@mpnRegenerateWarning": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "chaRegenerateFailed": "Impossible de régénérer la réponse.",
   "chaLoadImageFrom": "Charger l’image de {domain}",
   "chaStopReading": "Arrêter la lecture",
@@ -1880,7 +2354,6 @@
   "setRestartingBanner": "Redémarrage de la passerelle après la mise à jour… L’application se reconnectera automatiquement à son retour.",
   "setHermesAutoUpdateTitle": "Mettre à jour les composants automatiquement",
   "setHermesAutoUpdateSub": "Recherche les mises à jour de Hermes pendant l’utilisation de l’instance.",
-  "notifListenerStartFailed": "Impossible de démarrer l’écoute en arrière-plan. Réessaie.",
   "notifPermManualRoute": "L’autorisation n’est toujours pas accordée. Si Android n’affiche plus la boîte de dialogue (refusée auparavant), active-la manuellement dans Paramètres système › Applications › Console › Notifications.",
   "voiceSherpaLiveLabel": "Dictée rapide",
   "voiceSystemLabel": "Reconnaissance Android",
@@ -2075,9 +2548,30 @@
   "voiceGuidePrivacyNote": "L’audio ne quitte le téléphone que si tu choisis le serveur Hermes. Les clés vocales sont enregistrées sur le serveur, pas sur le téléphone.",
   "cronJobIdInvalid": "L’identifiant de la tâche planifiée n’est pas valide.",
   "cronProfileInvalid": "Le profil de la tâche planifiée n’est pas valide.",
-  "interactiveClarifyTitle": "Hermes a besoin d’une précision",
-  "interactiveSudoTitle": "Hermes a besoin d’une autorisation sudo",
-  "interactiveSecretTitle": "Hermes a besoin d’un secret",
+  "mpnClarifyTitle": "{name} a besoin d’une précision",
+  "@mpnClarifyTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "mpnSudoTitle": "{name} a besoin d’une autorisation sudo",
+  "@mpnSudoTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "mpnSecretTitle": "{name} a besoin d’un secret",
+  "@mpnSecretTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "interactiveTerminalTitle": "Demande de terminal",
   "interactiveAnswerHint": "Saisis ta réponse",
   "interactivePasswordHint": "Mot de passe sudo",
@@ -2085,6 +2579,7 @@
   "interactiveTerminalBody": "Cette application ne possède pas de terminal géré. Elle répondra avec un texte vide, sans lire les fichiers ni les processus du mobile.",
   "interactiveSend": "Envoyer",
   "interactiveCancel": "Arrêter la tâche",
+  "interactiveSkip": "Passer",
   "interactiveRetry": "Réessayer la réponse sécurisée",
   "interactiveRespondFailed": "Impossible de répondre : {error}",
   "interactiveBatchProgress": "{answered} réponses sur {total}",
@@ -2102,51 +2597,8 @@
   "subagentInterruptNotFound": "Hermes ne trouve plus ce sous-agent actif. L’état sera actualisé avec les événements du serveur.",
   "subagentInterruptFailed": "Impossible d’arrêter le sous-agent.",
   "chaArtifactsAction": "Artefacts",
-  "artifactTitle": "Artefacts de la session",
-  "artifactCount": "{count, plural, =1{1 élément} other{{count} éléments}}",
-  "artifactEmptyTitle": "Aucun artefact pour le moment",
-  "artifactEmptyBody": "Les images, documents et résultats générés dans cette session apparaîtront ici.",
-  "artifactImages": "Images",
-  "artifactFiles": "Fichiers",
-  "artifactDocuments": "Documents",
-  "artifactGenerated": "Contenu généré",
-  "artifactToolResults": "Résultats des outils",
-  "artifactOther": "Autres",
-  "artifactAvailable": "Disponible",
-  "artifactMissing": "Indisponible",
-  "artifactExpired": "Expiré",
   "artifactUnknown": "État inconnu",
-  "artifactJumpSource": "Aller au message d’origine",
   "artifactSourceUnavailable": "Impossible de trouver le message d’origine dans l’historique chargé.",
-  "artifactJumpSemantics": "{name}. Aller au message d’origine",
-  "artifactSourceOne": "Origine : message {number}",
-  "artifactSourceMany": "Origine : message {number} · {count} références",
-  "generatedArtifactSection": "Artefacts générés",
-  "generatedArtifactKindCode": "Code",
-  "generatedArtifactKindHtml": "Source HTML",
-  "generatedArtifactKindSvg": "Source SVG",
-  "generatedArtifactVersionCount": "{count, plural, =1{1 version} other{{count} versions}}",
-  "generatedArtifactOpenSemantics": "{name}. Ouvrir l’artefact généré",
-  "generatedArtifactSourceOnly": "Par sécurité, Console affiche HTML et SVG uniquement comme code source. Elle ne les exécute jamais et ne les ouvre jamais dans un WebView.",
-  "generatedArtifactSourceSemantics": "Code source de {title}",
-  "generatedArtifactCharacterCount": "{count} caractères",
-  "generatedArtifactPreviewTruncated": "L’aperçu est limité à {limit} caractères. Copier, partager et enregistrer utilisent toujours la version complète.",
-  "generatedArtifactCopied": "Contenu de l’artefact copié.",
-  "generatedArtifactSaved": "Enregistré sous {name}.",
-  "generatedArtifactExportTooLarge": "Cet artefact dépasse la limite d’exportation de {mb} Mo.",
-  "generatedArtifactExportFailed": "Impossible d’exporter l’artefact.",
-  "generatedArtifactVersionOf": "Version {current} sur {total}",
-  "generatedArtifactPreviousVersion": "Version précédente",
-  "generatedArtifactNextVersion": "Version suivante",
-  "generatedArtifactLatest": "La plus récente",
-  "generatedArtifactMissing": "Cet artefact généré n’est plus disponible dans le registre actuel de la session.",
-  "artifactDownloadSaved": "Artefact enregistré.",
-  "artifactDownloadUnavailable": "Cet artefact n’est plus disponible sur le serveur.",
-  "artifactDownloadExpired": "Cet artefact a expiré. Son message d’origine reste disponible.",
-  "artifactDownloadUnsupported": "Ce serveur n’a pas publié de chemin de téléchargement géré et sécurisé pour l’artefact.",
-  "artifactDownloadAccessDenied": "Hermes a refusé l’accès à l’artefact. Vérifie la session du Dashboard.",
-  "artifactDownloadTooLarge": "Cet artefact dépasse la limite de téléchargement mobile de 25 Mo.",
-  "artifactDownloadFailed": "Impossible de télécharger l’artefact.",
   "desktopCenterServerPathRedacted": "[chemin du serveur]",
   "desktopCenterSecretRedacted": "[secret omis]",
   "recoveryCenterTitle": "Récupération",
@@ -2422,6 +2874,12 @@
   "dockToolsLabel": "Utilitaires",
   "dockCronLabel": "Routines",
   "chaMentionSuggestions": "Mentionner un profil",
+  "chaMentionChipLabel": "Mention de {name}",
+  "chaMentionChipYou": "Mention de toi",
+  "chaMentionChipEveryone": "Mention de tout le monde",
+  "amcAgentChipLabel": "Agent {name}",
+  "chaImageStackCaption": "{count} images · touche pour ouvrir",
+  "chaImageStackSemantics": "{count} images, touche pour ouvrir",
   "botSectionNew": "Nouvelle section…",
   "botSectionRename": "Renommer la section",
   "botSectionDelete": "Supprimer la section",
@@ -2743,14 +3201,8 @@
   "dotsA11yWaiting": "t’attend",
   "dotsA11yIdle": "libre",
   "dotsA11yRoom": "{name}, salle, {detail}",
-  "notifBotModeListenerOn": "Les profils et salles peuvent t’alerter ici : approbations, @mentions, résumés de tour et progression en direct, avec Approuver, Refuser, Répondre et Arrêter depuis la notification.",
-  "notifBotModeListenerOff": "L’écoute en arrière-plan est désactivée : les alertes des profils et salles ainsi que les widgets ne s’actualisent que lorsque Hermes est ouvert.",
   "notifLiveUpdatesTitle": "Mises à jour en direct",
   "notifLiveUpdatesSub": "Affiche les profils et salles au travail dans la barre d’état et sur l’écran verrouillé (Android 16+)",
-  "notifFixedCardTitle": "Notification fixe",
-  "notifFixedCardSub": "Réduit « Connecté à Hermes » dans Android",
-  "notifKanbanDoneTitle": "Aussi lorsqu’une tâche se termine",
-  "notifKanbanDoneSub": "Valeur par défaut pour les tâches sans choix propre",
   "designShowAll": "Tout voir",
   "designShowLess": "Voir moins",
   "designCopied": "Copié",
@@ -2833,7 +3285,6 @@
   "subagentUiAllDone": "tous terminés",
   "subagentUiFailedCount": "{count} ont échoué",
   "subagentUiListTitle": "Sous-agents",
-  "subagentUiListSubtitle": "Travail délégué par ce chat",
   "subagentUiStop": "Arrêter",
   "subagentUiOpenConversation": "Ouvrir la conversation",
   "subagentUiSectionNow": "Ce qu’il fait",
@@ -2864,6 +3315,8 @@
   "subagentUiLiveTruncated": "Seule la sortie la plus récente est affichée.",
   "subagentUiLiveTitle": "Sortie en direct",
   "subagentUiLiveFollow": "Suivre",
+  "subagentUiWaitingChild": "En attente du sous-agent…",
+  "subagentUiGoToEnd": "Aller à la fin",
   "subagentUiGuideHint": "Dis-lui quoi changer…",
   "subagentUiGuideSend": "Envoyer une instruction",
   "subagentUiGuideQueued": "Envoyé · sera appliqué à la prochaine étape",
@@ -2886,6 +3339,8 @@
   "subagentUiTranscriptTitle": "Conversation du sous-agent",
   "subagentUiTranscriptTask": "Mission",
   "subagentUiTranscriptEmpty": "Cette conversation ne contient pas encore de messages.",
+  "subagentRecordParentOnly": "Impossible d'ouvrir la conversation du sous-agent ; voici ce qu'il a indiqué en terminant.",
+  "subagentRecordUnavailable": "Hermes n'a pas conservé ce qu'a fait ce sous-agent : aucune conversation ni aucun résultat à afficher.",
   "subagentUiTranscriptError": "Impossible de charger la conversation.",
   "subagentUiTranscriptReadOnly": "Lecture seule",
   "subagentUiRetry": "Réessayer",
@@ -3202,6 +3657,9 @@
   "mp1215MemoryChip": "mémoire",
   "mp1215ShowMore": "Voir plus",
   "mp1215ShowLess": "Voir moins",
+  "liveMemSaving": "Enregistrement en mémoire",
+  "liveMemRemoving": "Retrait de la mémoire",
+  "liveMemFailed": "Échec de l’enregistrement",
   "pj1215ActionRejected": "Hermes a refusé l’action. Vérifie le nom ou la branche et réessaie.",
   "pj1215ActiveNotice": "« {name} » est désormais le projet actif",
   "pj1215AgoNow": "à l’instant",
@@ -3383,8 +3841,6 @@
   "rr1215KeepAsIs": "Pas maintenant",
   "rr1215Resumed": "La session de {name} est à nouveau ouverte",
   "rr1215ResumeFailed": "Impossible de reprendre le tour de {name}. Réessaie.",
-  "sa1215ContentAction": "Fichiers et liens",
-  "sa1215ContentTitle": "Fichiers et liens",
   "sa1215SearchHint": "Rechercher par nom ou lien",
   "sa1215SearchClear": "Effacer la recherche",
   "sa1215FilterAll": "Tout",
@@ -3400,6 +3856,8 @@
   "sa1215OlderPending": "Ce chat contient des messages plus anciens non chargés.",
   "sa1215LoadOlder": "Charger les plus anciens",
   "sa1215LoadOlderFailed": "Impossible de charger les messages précédents",
+  "sa1215ReadFailed": "Impossible de lire cette conversation",
+  "sa1215ReadPartial": "La conversation n’a pas pu être lue en entier : voici ce qui a été lu.",
   "sa1215OpenFailed": "Impossible d’ouvrir {name}",
   "sa1215NotReachable": "Ce fichier ne peut pas être ouvert depuis le mobile. Appuie longuement pour copier son chemin.",
   "sa1215AgentPreviews": "Aperçus de l’agent",
@@ -3517,7 +3975,6 @@
   "tc1215FilesChanged": "{count, plural, =1{1 fichier modifié} other{{count} fichiers modifiés}}",
   "au1215CronRunViewOnly": "Exécution planifiée non clôturée : lecture seule",
   "au1215CronRunSendBlocked": "Cette exécution planifiée est en lecture seule : envoi impossible.",
-  "au1215BgNeededForAutomation": "Les alertes cron et Kanban arrivent uniquement si cette option est activée.",
   "te1215TitleRateLimit": "Limite d’utilisation atteinte",
   "te1215HintRateLimit": "Attends la levée de la limite ou essaie un autre modèle.",
   "te1215TitleProviderBusy": "Le service d’IA est occupé",
@@ -3804,6 +4261,8 @@
   "cs1215PinnedPromptHide": "Masquer dans ce chat",
   "cs1215PinnedPromptSetting": "Épingler ta question en haut",
   "cs1215PinnedPromptSettingSubtitle": "Une ligne au-dessus du chat avec la question correspondant à la réponse que tu lis. L’activer la réaffiche dans les chats où tu l’avais masquée.",
+  "fluidReasoningCollapsedTitle": "Réduire le raisonnement par défaut",
+  "fluidReasoningCollapsedDesc": "Conserver le raisonnement diffusé en continu sans le développer tant que tu ne l’ouvres pas.",
   "q90PinnedPromptHidden": "Masquée dans ce chat",
   "q90PinnedPromptUndo": "Annuler",
   "q90PinnedPromptShow": "Afficher ta question épinglée",
@@ -3851,11 +4310,8 @@
   "sp1215LimitExtra": "Utilisation supplémentaire : {used} / {limit} {currency}",
   "sp1215LimitLocal": "Modèle local : sans limite d’utilisation ni coût.",
   "sp1215LimitNoData": "Aucune donnée de limite pour ce fournisseur.",
-  "chatNotchLabel": "Paramètres de la conversation et Aller à",
-  "chatNotchGoTo": "Aller à",
-  "chatNotchChats": "Chats",
+  "chatNotchLabel": "Options de cette conversation",
   "chatNotchNeedsYouElsewhere": "Quelque chose a besoin de toi dans une autre conversation",
-  "chatNotchSearchChats": "Rechercher des chats",
   "chatNotchFindInChat": "Rechercher dans ce chat",
   "chatNotchPreviousChat": "Chat précédent",
   "chatNotchNextChat": "Chat suivant",
@@ -3876,6 +4332,7 @@
   "islandEarlierFailed": "Messages manquants",
   "fh1215TasksDoneFlash": "{count, plural, =1{✓ 1 tâche} other{✓ {count} tâches}}",
   "fh1215TasksCompleted": "{count} terminées",
+  "liveTasksEarlierDone": "{count, plural, one{{count} précédente terminée} other{{count} précédentes terminées}}",
   "fh1215TasksHideCompleted": "Masquer les terminées",
   "ctToolPending": "{tool, select, browser_click{ Clique sur un élément de la page} browser_fill{ Remplit un champ du formulaire} browser_navigate{ Ouvre une page} browser_snapshot{ Capture un instantané de la page} browser_take_screenshot{ Effectue une capture d’écran} browser_type{ Écrit dans la page} clarify{ Pose une question} cronjob{ Planifie une tâche cron} edit_file{ Modifie un fichier} execute_code{ Exécute du code} image_generate{ Génère une image} list_files{ Liste les fichiers} memory{ Enregistre en mémoire} patch{ Applique un correctif au fichier} read_file{ Lit un fichier} search_files{ Recherche des fichiers} session_search_recall{ Recherche dans l’historique des sessions} setup_choose{ Pose une question de configuration} start_chat{ Démarre un chat} terminal{ Exécute une commande} todo{ Actualise les tâches} vision_analyze{ Analyse une image} web_extract{ Lit une page web} web_search{ Recherche sur le web} write_file{ Écrit un fichier} delegate_task{ Délègue des tâches} process_manage{ Gère un processus en arrière-plan} skill_manage{ Met à jour un skill} text_to_speech{ Génère une voix} send_message{ Envoie un message} computer_use{ Utilise l’ordinateur} manage_connections{ Gère les connexions} manage_catalog{ Consulte le catalogue} x_search{ Recherche sur X} fact_store{ Utilise les données enregistrées} fact_feedback{ Évalue une donnée} video_generate{ Génère une vidéo} video_analyze{ Analyse une vidéo} xai_video_edit{ Modifie une vidéo} xai_video_extend{ Prolonge une vidéo} browser_scroll{ Fait défiler la page} browser_back{ Revient à la page précédente} browser_press{ Appuie sur une touche} browser_get_images{ Liste les images de la page} browser_vision{ Inspecte la page} browser_console{ Lit la console du navigateur} browser_cdp{ Exécute une commande du navigateur} browser_dialog{ Répond à une boîte de dialogue de la page} browser_exec{ Utilise le navigateur} browser_vault_list{ Consulte les accès enregistrés} browser_vault_unlock{ Déverrouille les accès enregistrés} browser_vault_fill{ Renseigne les informations d’accès} browser_vault_save_login{ Enregistre l’accès} browser_vault_enter_code{ Saisit le code de vérification} kanban_show{ Lit une tâche} kanban_list{ Liste les tâches} kanban_create{ Crée une tâche} kanban_complete{ Termine une tâche} kanban_block{ Bloque une tâche} kanban_unblock{ Débloque une tâche} kanban_request_review{ Demande une révision} kanban_request_changes{ Demande des modifications} kanban_heartbeat{ Informe de la progression} kanban_comment{ Commente la tâche} kanban_link{ Lie des tâches} kanban_attach{ Joint un fichier à la tâche} kanban_attach_url{ Joint un lien à la tâche} kanban_attachments{ Liste les pièces jointes de la tâche} desktop_project{ Change de projet} desktop_preview{ Affiche un aperçu} drive_preview{ Utilise l’aperçu} annotate_preview{ Annote l’aperçu} read_terminal{ Lit le terminal} close_terminal{ Ferme le terminal} read_window_below{ Examine la fenêtre derrière} focus_pane{ Affiche un panneau} apply_layout{ Réorganise l’espace de travail} react_to_message{ Réagit au message} gui_tour{ Démarre une visite} show_tip{ Affiche un conseil} discord{ Utilise Discord} discord_admin{ Gère le serveur Discord} feishu_doc_read{ Lit un document Feishu} feishu_drive_list_comments{ Liste les commentaires Feishu} feishu_drive_list_comment_replies{ Liste les réponses Feishu} feishu_drive_reply_comment{ Répond dans Feishu} feishu_drive_add_comment{ Commente dans Feishu} yb_query_group_info{ Lit le groupe Yuanbao} yb_query_group_members{ Liste les membres Yuanbao} yb_send_dm{ Envoie un message via Yuanbao} yb_search_sticker{ Recherche des stickers Yuanbao} yb_send_sticker{ Envoie un sticker via Yuanbao} other{}}",
   "ctToolAction": "{tool, select, browser_click{ Clique} browser_fill{ Remplit} browser_navigate{ Ouvre} browser_snapshot{ Capture} browser_take_screenshot{ Capture} browser_type{ Écrit} clarify{ Demande} cronjob{ Planifie} edit_file{ Modifie} execute_code{ Exécute} image_generate{ Génère} list_files{ Liste} memory{ Enregistre} patch{ Applique un correctif} read_file{ Lit} search_files{ Recherche} session_search_recall{ Recherche} setup_choose{ Demande} start_chat{ Démarre} terminal{ Exécute} todo{ Actualise} vision_analyze{ Analyse} web_extract{ Lit} web_search{ Recherche} write_file{ Écrit} delegate_task{ Délègue} process_manage{ Gère} skill_manage{ Met à jour} text_to_speech{ Génère} send_message{ Envoie} computer_use{ Utilise} manage_connections{ Gère} manage_catalog{ Consulte} x_search{ Recherche} fact_store{ Utilise} fact_feedback{ Évalue} video_generate{ Génère} video_analyze{ Analyse} xai_video_edit{ Modifie} xai_video_extend{ Prolonge} browser_scroll{ Fait défiler} browser_back{ Revient} browser_press{ Appuie} browser_get_images{ Liste} browser_vision{ Inspecte} browser_console{ Lit} browser_cdp{ Exécute} browser_dialog{ Répond} browser_exec{ Utilise} browser_vault_list{ Consulte} browser_vault_unlock{ Déverrouille} browser_vault_fill{ Renseigne} browser_vault_save_login{ Enregistre} browser_vault_enter_code{ Saisit} kanban_show{ Lit} kanban_list{ Liste} kanban_create{ Crée} kanban_complete{ Termine} kanban_block{ Bloque} kanban_unblock{ Débloque} kanban_request_review{ Demande} kanban_request_changes{ Demande} kanban_heartbeat{ Informe} kanban_comment{ Commente} kanban_link{ Lie} kanban_attach{ Joint} kanban_attach_url{ Joint} kanban_attachments{ Liste} desktop_project{ Change} desktop_preview{ Affiche} drive_preview{ Utilise} annotate_preview{ Annote} read_terminal{ Lit} close_terminal{ Ferme} read_window_below{ Examine} focus_pane{ Affiche} apply_layout{ Réorganise} react_to_message{ Réagit} gui_tour{ Démarre} show_tip{ Affiche} discord{ Utilise} discord_admin{ Gère} feishu_doc_read{ Lit} feishu_drive_list_comments{ Liste} feishu_drive_list_comment_replies{ Liste} feishu_drive_reply_comment{ Répond} feishu_drive_add_comment{ Commente} yb_query_group_info{ Lit} yb_query_group_members{ Liste} yb_send_dm{ Envoie} yb_search_sticker{ Recherche} yb_send_sticker{ Envoie} other{}}",
@@ -3982,6 +4439,8 @@
   "thTaglineGruvboxLight": "rétro chaud · clair",
   "thTaglineSageGarden": "sauge atténuée · serre paisible",
   "thTaglineSageGardenLight": "sauge pâle · serre de jour",
+  "presetIndigoTagline": "indigo de minuit · verre",
+  "presetIndigoLightTagline": "brume lavande · verre",
   "thTaglineNous": "chrome GitHub · bleu Nous",
   "thTaglineNousDark": "GitHub sombre · bleu Nous",
   "thTaglineGithub": "GitHub clair par défaut",
@@ -4245,8 +4704,8 @@
   "gt1215ChatHeaderBody": "Avec qui tu parles et ce qu’il fait actuellement. Appuie pour voir l’activité.",
   "gt1215ChatComposerTitle": "Écris ici",
   "gt1215ChatComposerBody": "Écris ou dicte. Avec +, joins des fichiers et des photos.",
-  "gt1215ChatNotchTitle": "L’onglet du chat",
-  "gt1215ChatNotchBody": "Appuie dessus pour rechercher ou ajuster les paramètres de cette conversation. Fais-le glisser vers le haut pour aller ailleurs.",
+  "gt1215ChatNotchTitle": "Réglages du chat",
+  "gt1215ChatNotchBody": "Appuie dessus pour rechercher dans cette conversation, en commencer une autre ou la régler. Les panneaux sont juste à côté, dans Vues.",
   "gt1215ChatStatusTitle": "Contexte, modèle et autorisations",
   "gt1215ChatStatusBody": "Combien de contexte est utilisé, quel modèle répond et ce qu’il peut faire. Appuie sur chaque partie.",
   "gt1215BotsPinnedTitle": "Épinglés",
@@ -4368,7 +4827,6 @@
   "mascotNoticeGo": "Aller",
   "mascotSuggestNotifications": "Tes notifications sont désactivées",
   "mascotSuggestTurnOn": "Activer",
-  "mascotSuggestBackground": "Je peux te prévenir quand une tâche planifiée se termine avec l’application fermée",
   "mascotSuggestOpenSettings": "Ouvrir les paramètres",
   "connStatusNoNetwork": "Aucun réseau",
   "connStatusAuthRequired": "Connexion requise",
@@ -6433,6 +6891,10 @@
   "@i18n131ChatRecoveryFailed": {
     "description": "i18n131: Phase 3B translated; chat."
   },
+  "i18n140ChatEndedWithoutReply": "Hermes a terminé ce tour sans réponse.",
+  "@i18n140ChatEndedWithoutReply": {
+    "description": "dp140: Notice when Hermes reports the turn over and no reply arrived (Desktop store/session-no-reply.ts NO_REPLY_ERROR)."
+  },
   "i18n131ChatFailureCause": "Impossible de terminer la réponse : {cause}",
   "@i18n131ChatFailureCause": {
     "description": "i18n131: Phase 3B translated; chat.",
@@ -6651,10 +7113,6 @@
       }
     }
   },
-  "i18n131P6Document": "Document",
-  "i18n131P6GeneratedArtifact": "Artefact généré",
-  "i18n131P6ToolResult": "Résultat d’outil",
-  "i18n131P6Artifact": "Artefact",
   "i18n131P6WhisperLocal": "Whisper local",
   "i18n131P6PetDimensions": "Dimensions inattendues ({actual}) : elles doivent être un multiple de {expected}.",
   "@i18n131P6PetDimensions": {
@@ -6675,5 +7133,2367 @@
         "type": "String"
       }
     }
-  }
+  },
+  "sshExpandTerminal": "Agrandir le terminal",
+  "sshShrinkTerminal": "Réduire le terminal",
+  "sshKeyArrowUp": "Flèche haut",
+  "sshKeyArrowDown": "Flèche bas",
+  "sshKeyArrowLeft": "Flèche gauche",
+  "sshKeyArrowRight": "Flèche droite",
+  "sshSessionKind": "Type de session",
+  "sshSessionKindShell": "Shell normal",
+  "sshSessionKindHint": "Herdr et tmux gardent tes processus actifs sur le serveur même si la connexion coupe, et l’appli se rattache à la session à son retour.",
+  "sshProgramMissing": "{program} n’est pas installé sur ce serveur. L’appli n’installe jamais rien d’elle-même.",
+  "sshProgramInstallWith": "Pour l’installer, exécute sur le serveur :",
+  "sshProgramInstallOnServer": "Installe-le sur le serveur. Instructions :",
+  "sshUsePlainShell": "Continuer avec un shell normal",
+  "sshCopied": "Copié",
+  "sshReconnecting": "Reconnexion…",
+  "sshReconnectedFreshShell": "Reconnecté à un nouveau shell : le processus précédent est perdu.",
+  "sshReconnectedReattached": "Reconnecté : session rattachée.",
+  "sshOffline": "Hors ligne",
+  "sshHostKeyNeedsReview": "La clé du serveur doit être vérifiée : reconnecte-toi manuellement.",
+  "sshKeyInterrupt": "Contrôle C, interrompre",
+  "sshKeyEndOfInput": "Contrôle D, fin de saisie",
+  "sshKeyPipe": "Barre verticale",
+  "sshKeyTilde": "Tilde",
+  "sshProtocolLabel": "SSH",
+  "herdrPanelTooltip": "Herdr : espaces et agents",
+  "herdrStatusWorking": "En cours",
+  "herdrStatusBlocked": "A besoin de toi",
+  "herdrStatusIdle": "Prêt pour la prochaine consigne",
+  "herdrStatusDone": "Terminé",
+  "herdrStatusUnknown": "État inconnu",
+  "herdrShell": "Shell",
+  "herdrNoAgent": "Aucun agent détecté dans ce panneau",
+  "herdrKeepsAgentsAlive": "Herdr garde les agents actifs même si tu fermes l’appli.",
+  "herdrServerNotRunning": "Le serveur Herdr n’est pas lancé.",
+  "herdrUnreachable": "Impossible de lire l’état de Herdr.",
+  "herdrEmpty": "Herdr n’a aucun espace ouvert.",
+  "herdrNeedsYouCount": "Agents qui ont besoin de toi : {count}",
+  "cwsWorkspace": "Espace de travail",
+  "cwsFiles": "Fichiers",
+  "cwsCollapsePanel": "Replier le panneau",
+  "cwsExpandWorkspace": "Agrandir",
+  "cwsRestoreSplit": "Revenir à la vue partagée",
+  "cwsCloseTab": "Fermer l’onglet",
+  "cwsMore": "Plus",
+  "cwsLayoutChat": "Chat seul",
+  "cwsLayoutSplit": "Partagé",
+  "cwsLayoutWorkspace": "Espace de travail seul",
+  "cwsOpenTab": "Ouvrir un onglet",
+  "cwsShowChat": "Afficher le chat",
+  "cwsDivider": "Séparateur entre le chat et l’espace de travail",
+  "cwsHideTools": "Masquer les outils",
+  "cwsShowTools": "Afficher les outils",
+  "cwsTerminalKeys": "Clavier",
+  "cwsViews": "Vues",
+  "cwsViewList": "Liste des chats",
+  "cwsViewChat": "Chat",
+  "cwsViewWorkspace": "Panneau de travail",
+  "cwsViewsHintTwo": "Cet écran affiche deux vues à la fois : en ouvrant le panneau de travail, la liste se replie toute seule. Tu ne peux masquer le chat que si le panneau est ouvert.",
+  "cwsViewsState": "Vues : {views}",
+  "cwsOpenList": "Ouvrir la liste des chats",
+  "cwsCloseList": "Fermer la liste des chats",
+  "cwsOpenWorkspace": "Ouvrir le panneau de travail",
+  "cwsLayoutWork": "Travail",
+  "chaControlPanels": "Panneaux",
+  "chaControlPanelOpen": "à l’écran",
+  "cwsPanelExpanded": "{panel} agrandi",
+  "cwsPanelRestored": "{panel} restauré",
+  "cwsCloseWorkspace": "Fermer le panneau de travail",
+  "cwsPickPanel": "Choisir un panneau",
+  "cwsViewsHintNoPanel": "Ouvrez un panneau pour partager l’écran.",
+  "cwsViewsHintStacked": "En vertical, le chat occupe l’écran : la liste s’ouvre par-dessus et chaque onglet du panneau de travail en plein écran.",
+  "cwsChatShare": "Chat à {percent} %",
+  "voz132VoiceProviderError": "Le fournisseur de voix a répondu : {detail}",
+  "@voz132VoiceProviderError": {
+    "description": "voz132: client-direct voice consent and provider error (voice lane).",
+    "placeholders": {
+      "detail": {
+        "type": "String"
+      }
+    }
+  },
+  "voz132DirectConsentTitle": "Voix directe vers le fournisseur",
+  "@voz132DirectConsentTitle": {
+    "description": "voz132: client-direct voice consent and provider error (voice lane)."
+  },
+  "voz132DirectConsentBody": "Ton serveur Hermes permet la voix directe. Si tu l’utilises, ce téléphone envoie l’audio que tu enregistres et le texte des réponses directement au fournisseur de voix configuré pour ce profil (par exemple OpenAI, ElevenLabs ou Groq), sans passer par ton serveur. Pour cela, ton serveur transmet au téléphone la clé de ce fournisseur ; elle reste uniquement en mémoire, jamais dans le stockage du téléphone. Le traitement de ces données dépend des conditions du fournisseur. Si tu refuses, la voix continue de passer par ton serveur, comme maintenant.",
+  "@voz132DirectConsentBody": {
+    "description": "voz132: client-direct voice consent and provider error (voice lane)."
+  },
+  "voz132DirectConsentAccept": "Utiliser la voix directe",
+  "@voz132DirectConsentAccept": {
+    "description": "voz132: client-direct voice consent and provider error (voice lane)."
+  },
+  "voz132DirectConsentAcceptSub": "L’audio et le texte vont du téléphone au fournisseur du profil.",
+  "@voz132DirectConsentAcceptSub": {
+    "description": "voz132: client-direct voice consent and provider error (voice lane)."
+  },
+  "voz132DirectConsentDecline": "Continuer par mon serveur",
+  "@voz132DirectConsentDecline": {
+    "description": "voz132: client-direct voice consent and provider error (voice lane)."
+  },
+  "voz132DirectConsentDeclineSub": "La voix passe par ton serveur Hermes, comme maintenant.",
+  "@voz132DirectConsentDeclineSub": {
+    "description": "voz132: client-direct voice consent and provider error (voice lane)."
+  },
+  "voz132SayStopToEnd": "Dis « {phrase} » pour terminer la conversation vocale.",
+  "@voz132SayStopToEnd": {
+    "description": "voz132: notice when a voice conversation starts; names the first voice.stop_phrases entry (voice lane).",
+    "placeholders": {
+      "phrase": {
+        "type": "String"
+      }
+    }
+  },
+  "sshHostKeyRejected": "La clé du serveur n’est pas fiable : connexion non établie.",
+  "sshPermissionDenied": "Permission refusée.",
+  "sshNoSuchFile": "N’existe pas (supprimé ou déplacé).",
+  "sshHubLoadError": "Impossible de lire la configuration SSH.",
+  "sftpTryAgain": "Réessayer",
+  "sftpUnreadableTitle": "Illisible",
+  "sftpUnreadableBody": "Impossible de lire ce dossier ({error})",
+  "sftpEmptyTitle": "Vide",
+  "sftpEmptyBody": "Ce dossier est vide.",
+  "sftpPreviewLoading": "Chargement de l’aperçu",
+  "sftpPreviewUnavailable": "Aperçu indisponible",
+  "sftpPreviewBinaryTitle": "Ceci ressemble à un fichier binaire",
+  "sftpPreviewBinaryBody": "L’aperçu de {label} peut afficher du texte illisible.",
+  "sftpPreviewLargeTitle": "Ce fichier est volumineux",
+  "sftpPreviewLargeBody": "{label} pèse {size}. Hermes n’affichera que les 512 premiers Ko.",
+  "sftpPreviewAnyway": "Afficher quand même",
+  "sftpPreviewTruncated": "Affichage des 512 premiers Ko.",
+  "sftpDlShow": "Voir",
+  "saveSaved": "Enregistré : {name}",
+  "saveAnotherCopy": "Enregistrer une autre copie…",
+  "saveReadyBody": "Touchez pour l’ouvrir, le partager ou en enregistrer une autre copie.",
+  "saveNoSpace": "Il n’y a pas assez d’espace à cet endroit pour l’enregistrer.",
+  "savePermission": "L’app n’a plus l’autorisation d’écrire à cet endroit. Choisissez de nouveau l’emplacement.",
+  "saveUnsupported": "Cet emplacement n’accepte pas de fichiers. Choisissez-en un autre.",
+  "saveCancelled": "Enregistrement annulé.",
+  "saveSourceMissing": "Le fichier que vous vouliez enregistrer n’existe plus.",
+  "saveNetwork": "La connexion au serveur a été coupée pendant le téléchargement.",
+  "savePickerNotShown": "Android n’a pas ouvert la boîte « Enregistrer sous ». Réessayez.",
+  "saveTimeout": "Android n’a pas répondu à temps pendant l’enregistrement.",
+  "saveUnavailable": "Cette version de l’app ne peut pas enregistrer sur le téléphone.",
+  "saveFailed": "Enregistrement impossible : Android a renvoyé une erreur inattendue.",
+  "sftpShareTooLarge": "« {name} » fait {size} : trop lourd pour le partager sans l’enregistrer. Utilisez Télécharger.",
+  "sftpShareLargeTitle": "Fichier volumineux",
+  "sftpShareLargeBody": "« {name} » fait {size}. Il sera copié en entier sur le téléphone le temps de le partager, puis supprimé quand vous quitterez.",
+  "sftpSharePreparing": "Préparation de « {name} » pour le partage…",
+  "artThumbLoading": "Chargement de l’aperçu",
+  "artKindLink": "Lien",
+  "artCopyPath": "Copier le chemin",
+  "artCopyUrl": "Copier l’URL",
+  "artSectionCount": "{label} · {count}",
+  "artItemSemantics": "{kind} : {name}",
+  "artItemSemanticsAt": "{kind} : {name}, dans {location}",
+  "artTypePdf": "PDF",
+  "artTypeDocument": "Documents",
+  "artTypeSpreadsheet": "Feuilles de calcul",
+  "artTypePresentation": "Présentations",
+  "artTypeArchive": "Archives",
+  "artTypeApp": "Applis Android",
+  "artTypeAudio": "Audio",
+  "artTypeVideo": "Vidéo",
+  "artTypeText": "Texte",
+  "artTypeData": "Données",
+  "artTypeCode": "Code",
+  "artTypeOther": "Autres fichiers",
+  "artChat": "Conversation",
+  "artOpenChat": "Ouvrir la conversation {title}",
+  "brwBackToArtifacts": "Retour aux artefacts",
+  "artGlobalDetail": "Parcourir les sorties générées",
+  "artGlobalSearchHint": "Rechercher des artefacts…",
+  "artGlobalRefresh": "Actualiser les artefacts",
+  "artGlobalIndexing": "Indexation des artefacts de session récents",
+  "artGlobalProgress": "Lecture de la conversation {current} sur {total}",
+  "artGlobalEmptyTitle": "Aucun artefact trouvé",
+  "artGlobalEmptyBody": "Les images générées et les sorties de fichier apparaîtront ici au fur et à mesure que les sessions les produisent.",
+  "artGlobalFailed": "Échec du chargement des artefacts",
+  "artGlobalSkipped": "{skipped} conversations récentes sur {total} ont été ignorées lors de l’indexation des artefacts.",
+  "artGlobalSkippedTooLarge": "{count, plural, =1{1 dépassait la limite de chargement sûre.} other{{count} dépassaient la limite de chargement sûre.}}",
+  "artGlobalTruncated": "{count, plural, =1{1 conversation n’a été lue qu’en partie (très longue ou trop d’éléments).} other{{count} conversations n’ont été lues qu’en partie (très longues ou trop d’éléments).}}",
+  "artGlobalCapped": "Seuls les 3000 artefacts les plus récents sont affichés.",
+  "artGlobalScope": "Issus de {indexed} des {total} conversations les plus récentes. Elles sont lues par 10 pour économiser données et batterie.",
+  "artGlobalLoadMore": "{count, plural, =1{Lire 1 conversation de plus} other{Lire {count} conversations de plus}}",
+  "artGlobalBudget": "Ce lot s’est arrêté après 32 Mo de conversations, pour ne pas consommer de données sans prévenir ; la dernière n’a été lue qu’en partie. « Lire plus » continue avec les suivantes.",
+  "artThumbRemote": "Image distante indisponible",
+  "artThumbInsecure": "Image en http, non chiffrée",
+  "artThumbNoFolder": "Chemin sans dossier",
+  "artThumbNotFound": "Absent du serveur",
+  "artThumbTooLarge": "Trop volumineux",
+  "artThumbDenied": "Hermes ne permet pas de la lire",
+  "artThumbRetry": "Réessayer",
+  "artOpenFailedBecause": "Impossible d’ouvrir {name}. {reason}",
+  "vltSettingsTitle": "Mots de passe et identifiants",
+  "vltSettingsSubtitle": "Ce que l’agent utilise pour te connecter",
+  "vltBlurb": "Dis « connecte-moi à GitHub » et l’agent se connecte pour toi. La première fois qu’il tombe sur une page de connexion, il te demande l’identifiant sur place ; ensuite, tout se fait seul. Les mots de passe sont chiffrés sur le serveur Hermes et saisis directement dans la page : le modèle ne les voit jamais.",
+  "vltCount": "{count, plural, =1{1 enregistré} other{{count} enregistrés}}",
+  "vltLoadFailed": "Impossible de charger les éléments enregistrés.",
+  "vltUnavailable": "Impossible de joindre Hermes.",
+  "vltUnsupported": "Ce serveur Hermes n’a pas les mots de passe et identifiants. Mets Hermes à jour pour les gérer d’ici.",
+  "vltReadOnly": "Connexion en lecture seule : tu peux voir la liste, mais pas la modifier.",
+  "vltEmpty": "Rien d’enregistré pour l’instant",
+  "vltEmptyDesc": "Tu n’as rien à ajouter ici. Demande à l’agent de se connecter à un site et il te demandera l’identifiant une fois, sur le moment. Utilise Ajouter si tu préfères le saisir à l’avance.",
+  "vltAddTitle": "Ajouter un identifiant, une carte ou une adresse",
+  "vltAddDescription": "Enregistré chiffré sur le serveur Hermes. L’agent ne voit jamais le mot de passe.",
+  "vltAdded": "Enregistré.",
+  "vltSaving": "Enregistrement…",
+  "vltKindField": "Type",
+  "vltKindLogin": "Identifiant",
+  "vltKindPayment": "Carte bancaire",
+  "vltKindAddress": "Adresse",
+  "vltLabelField": "Libellé",
+  "vltLabelHint": "par ex. compte GitHub pro",
+  "vltLabelRequired": "Un libellé est requis.",
+  "vltOriginField": "Origine du site",
+  "vltOriginInvalid": "Saisis une URL valide, par exemple https://example.com.",
+  "vltIdTypeField": "Type d’identifiant",
+  "vltIdEmail": "E-mail",
+  "vltIdPhone": "Téléphone",
+  "vltIdUsername": "Nom d’utilisateur",
+  "vltIdentifierField": "Identifiant",
+  "vltLoginFieldsRequired": "L’identifiant et le mot de passe sont requis.",
+  "vltCardNumber": "Numéro de carte",
+  "vltCardNameOptional": "Nom sur la carte (facultatif)",
+  "vltExpMonth": "Mois d’expiration",
+  "vltExpYear": "Année d’expiration",
+  "vltCvc": "CVC",
+  "vltPostal": "Code postal",
+  "vltPostalOptional": "Code postal (facultatif)",
+  "vltPaymentFieldsRequired": "Le numéro, le mois et l’année d’expiration et le CVC sont requis.",
+  "vltLine1": "Adresse ligne 1",
+  "vltLine2Optional": "Adresse ligne 2 (facultatif)",
+  "vltCity": "Ville",
+  "vltStateOptional": "État / région (facultatif)",
+  "vltCountry": "Pays",
+  "vltAddressFieldsRequired": "L’adresse, la ville, le code postal et le pays sont requis.",
+  "vltCreatedOn": "Ajouté le {date}",
+  "vltOtpFieldOptional": "Clé d’authentification (facultatif)",
+  "vltOtpHint": "La « clé de configuration » que le site affiche quand tu actives la 2FA. Une fois enregistrée, Hermes génère lui-même les codes.",
+  "vltOtpPlaceholder": "Secret Base32 ou lien otpauth://",
+  "vltOtpInvalid": "La clé doit être un secret Base32 ou un lien otpauth://totp.",
+  "vltTwoFactorBadge": "2FA auto",
+  "vltDeleteTitle": "Supprimer cet élément ?",
+  "vltDeleteBody": "« {label} » sera supprimé. Impossible d’annuler.",
+  "vltDeleteConfirm": "Supprimer",
+  "vltSaveFailed": "Hermes n’a pas pu l’enregistrer. Vérifie les informations.",
+  "vltRemoveFailed": "Impossible de le supprimer.",
+  "vltSourcesTitle": "Gestionnaires de mots de passe",
+  "vltSourcesBlurb": "Les gestionnaires de mots de passe installés sur le serveur sont détectés automatiquement. L’agent te demande d’en déverrouiller un la première fois qu’il en a besoin (une fois par session) ; seul un jeton de session reste en mémoire, et l’agent ne voit jamais ton mot de passe principal ni aucun identifiant.",
+  "vltSourceToggleFailed": "Impossible de mettre à jour le gestionnaire de mots de passe.",
+  "vltSourceNotInstalled": "Non détecté. Installe l’outil en ligne de commande {name} sur le serveur et connecte-toi ; Hermes le détecte automatiquement.",
+  "vltSourceDisabled": "Détecté mais désactivé pour Hermes.",
+  "vltSourceLockedDesc": "Détecté. L’agent te demandera de le déverrouiller quand il en aura besoin, ou déverrouille-le maintenant.",
+  "vltSourceUnlockedDesc": "Déverrouillé pour cette session. Se verrouille automatiquement après 30 minutes d’inactivité ou à la fermeture de Hermes.",
+  "vltStatusLocked": "Verrouillé",
+  "vltStatusNotDetected": "Non détecté",
+  "vltStatusOff": "Désactivé",
+  "vltStatusUnlocked": "Déverrouillé",
+  "vltUnlock": "Déverrouiller",
+  "vltUnlocking": "Déverrouillage…",
+  "vltLock": "Verrouiller",
+  "vltUnlocked": "{name} déverrouillé pour cette session.",
+  "vltUnlockTitle": "Déverrouiller {name}",
+  "vltUnlockBody": "Saisis ton mot de passe principal. Il est transmis au gestionnaire de mots de passe du serveur puis effacé : il n’est jamais stocké, journalisé ni montré à l’agent.",
+  "vltMasterPassword": "Mot de passe principal",
+  "vltUnlockFailed": "Déverrouillage impossible. Vérifie le mot de passe principal.",
+  "vltProfile": "Profil : {profile}",
+  "vltSourcesUnavailable": "Ce serveur Hermes ne signale aucun gestionnaire de mots de passe.",
+  "mvDetails": "Détails",
+  "mvLocation": "Emplacement",
+  "mvConversation": "Conversation",
+  "mvDate": "Date",
+  "mvPosition": "{index} sur {count}",
+  "mvGoTo": "{name}, {index} sur {count}",
+  "mvZoomIn": "Zoom avant",
+  "mvZoomOut": "Zoom arrière",
+  "mvZoomReset": "Réinitialiser le zoom ({percent})",
+  "mvPlay": "Lire",
+  "mvView": "Voir dans l’app",
+  "mvActionFailed": "Impossible d’effectuer l’action",
+  "mvDimensions": "{width} × {height} px",
+  "mvKindNumbered": "{kind} {index}",
+  "voiceNoAudioHeard": "On n’entend rien. Le micro est-il celui de la voiture ou d’un casque ?",
+  "@voiceNoAudioHeard": {
+    "description": "Voice: the take had nothing in it (too short or no energy), so it was not sent (backlog 1.4.x item 7)."
+  },
+  "voiceMicrophonePhoneTitle": "Toujours utiliser le micro du téléphone",
+  "@voiceMicrophonePhoneTitle": {
+    "description": "Voice settings: record from the phone's own microphone instead of a car kit or Bluetooth headset (backlog 1.4.x item 7)."
+  },
+  "voiceMicrophonePhoneSubtitle": "Même avec une voiture ou un casque Bluetooth connecté. Désactivé, Android choisit.",
+  "@voiceMicrophonePhoneSubtitle": {
+    "description": "Voice settings: explains the phone-microphone switch; off means automatic."
+  },
+  "artThumbUnsupported": "Chemin ou lien non pris en charge",
+  "artThumbUnreachable": "Impossible de joindre Hermes",
+  "artThumbTimedOut": "Trop long à arriver",
+  "artThumbNotImage": "Le fichier n’est pas une image",
+  "artThumbUndecodable": "Impossible d’ouvrir l’image",
+  "artThumbDownloadFailed": "Échec du téléchargement",
+  "artThumbSvg": "Aperçu SVG indisponible dans l’app",
+  "artGlobalSkippedTimedOut": "{count, plural, =1{1 a mis trop de temps à arriver.} other{{count} ont mis trop de temps à arriver.}}",
+  "vltSaveUnsure": "Hermes n’a pas répondu. L’élément a peut-être été enregistré : vérifiez la liste avant de réessayer.",
+  "vltRemoveItem": "Retirer « {label} »",
+  "tk140ThoughtBrief": "Brève réflexion",
+  "tk140ThinkingFor": "Réflexion en cours, {seconds, plural, =1{1 seconde} other{{seconds} secondes}}",
+  "tk140ThoughtFor": "Réflexion, {seconds, plural, =1{1 seconde} other{{seconds} secondes}}",
+  "tk140ToolsCount": "{count, plural, =1{1 outil} other{{count} outils}}",
+  "tk140WorkedFor": "A travaillé {duration}",
+  "tk140SecondsSpoken": "{seconds, plural, =1{1 seconde} other{{seconds} secondes}}",
+  "q9TurnVerbsWork": "Je travaille…|J’y suis…|Calculs en cours…|Je bricole…|Ça mijote…|Les mains dedans…|Je branche tout…|J’avance…|Concentré…|J’y vais à fond…",
+  "q9TurnVerbsThink": "Je réfléchis…|Je lis…|Je relis…|Je médite…|Je relie les points…|J’évalue…|Je suis la piste…|Je rumine…|Je manigance…|Hmm…",
+  "q9ComposerQueueHint": "Mettre en file…",
+  "q9TurnMoreSteps": "{count, plural, =1{+1 étape} other{+{count} étapes}}",
+  "@q9TurnMoreSteps": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "q9TurnOutcomeFailed": "Erreur",
+  "q9TurnOutcomeRecovered": "Terminé après une nouvelle tentative",
+  "constellationTitle": "Ta constellation",
+  "constellationLoading": "Chargement de la mémoire…",
+  "constellationEmpty": "Rien à afficher pour le moment",
+  "constellationHint": "Constellation de la mémoire. Fais glisser pour tourner, touche un nœud pour voir son nom.",
+  "constellationRecenter": "Recentrer",
+  "constellationKindMemory": "Souvenirs",
+  "constellationKindSkill": "Skills",
+  "constellationKindOther": "Autres",
+  "cacheTitle": "Cache",
+  "cacheSubtitle": "Chats et messages conservés sur ce téléphone",
+  "cacheOnDevice": "Conservé sur cet appareil",
+  "cacheChatList": "Liste des chats",
+  "cacheChatListDesc": "Titres, aperçus et dates, pour que la liste soit là avant la réponse du serveur.",
+  "cacheMessages": "Messages",
+  "cacheMessagesDesc": "Les derniers messages de chaque chat, pour qu'il s'ouvre instantanément.",
+  "cacheOffNote": "Désactiver une option supprime ce qui était déjà conservé. Rien n'est supprimé du serveur.",
+  "cacheLimitSection": "Limite",
+  "cacheLimitLabel": "Conserver jusqu'à : {count} chats",
+  "@cacheLimitLabel": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "cacheLimitHint": "Plus de chats prennent plus de place et un peu plus de temps au lancement de l'app.",
+  "cacheUsage": "Utilisation",
+  "cacheOnThisDevice": "Sur cet appareil",
+  "cacheClear": "Vider le cache",
+  "cacheCleared": "Cache vidé",
+  "modelsBotFrequentTitle": "Souvent utilisés",
+  "modelsBotFreeOnly": "Gratuits uniquement",
+  "modelsBotFreeOnlyEmpty": "Aucun modèle gratuit dans cette liste.",
+  "modelsBotInheritMain": "Hériter du principal",
+  "modelsBotInheritMainHint": "Utilise le modèle du slot principal",
+  "modelsBotAutoMainSlot": "Auto utilise le modèle du slot principal",
+  "modelsBotCreateUnconfirmed": "La création n’a pas été confirmée. Vérifie la liste des bots avant d’en créer un autre.",
+  "modelsBotSwitchTitle": "Changer de modèle dans cette conversation ?",
+  "modelsBotSwitchBody": "La conversation est déjà longue. {model} répondra à partir du prochain message et devra relire tout le contexte ; ce tour peut donc être plus long et coûter plus cher.",
+  "@modelsBotSwitchBody": {
+    "placeholders": {
+      "model": {
+        "type": "String"
+      }
+    }
+  },
+  "modelPickerCurrent": "Actuel",
+  "modelPickerAllModels": "Tous les modèles",
+  "modelPickerLevelNone": "Désactivé",
+  "modelPickerLevelMinimal": "Minimal",
+  "modelPickerLevelXhigh": "Très élevé",
+  "modelPickerLevelMax": "Maximum",
+  "modelPickerLevelUltra": "Ultra",
+  "modelPickerLevelDefault": "Par défaut",
+  "modelPickerImpactOff": "Sans raisonnement : réponses plus rapides et moins chères.",
+  "modelPickerImpactLight": "Réfléchit peu : répond vite et coûte moins.",
+  "modelPickerImpactBalanced": "Équilibre entre vitesse, qualité et coût.",
+  "modelPickerImpactDeep": "Réfléchit en profondeur : plus lent et plus cher.",
+  "modelPickerImpactDefault": "Le modèle utilise son niveau habituel.",
+  "stepsBarCommands": "{count, plural, =1{a exécuté une commande} other{a exécuté {count} commandes}}",
+  "stepsBarEdits": "{count, plural, =1{a modifié un fichier} other{a modifié {count} fichiers}}",
+  "stepsBarReads": "{count, plural, =1{a lu un fichier} other{a lu {count} fichiers}}",
+  "stepsBarSearches": "{count, plural, =1{a cherché sur le web une fois} other{a cherché sur le web {count} fois}}",
+  "stepsBarPages": "{count, plural, =1{a lu une page} other{a lu {count} pages}}",
+  "stepsBarOther": "{count, plural, =1{a fait un appel} other{a fait {count} appels}}",
+  "stepsBarListPair": "{a} et {b}",
+  "stepsBarListLast": "{head} et {last}",
+  "stepsBarListSeparator": ", ",
+  "stepsBarStatusRunning": "En cours",
+  "stepsBarStatusFailed": "Échec",
+  "stepsBarStatusDone": "Terminé",
+  "stepsBarShowCalls": "Afficher chaque appel de cette étape",
+  "stepsBarHideCalls": "Masquer les appels de cette étape",
+  "stepsBarWorkedShow": "Afficher les étapes du tour",
+  "stepsBarWorkedHide": "Masquer les étapes du tour",
+  "stepsBarWord1": "Analyse",
+  "stepsBarWord2": "Vérification",
+  "stepsBarWord3": "Exploration",
+  "stepsBarWord4": "Tri",
+  "stepsBarWord5": "Essai",
+  "stepsBarWord6": "Affinage",
+  "kanbanSkinSettingTitle": "Nouveau design du Kanban",
+  "kanbanSkinSettingSubtitle": "Colonnes par statut, cartes avec chronomètre en direct et actions groupées. Désactivez-le pour revenir au design précédent.",
+  "kanbanSkinHelpTriage": "Idées en attente d'une spécification claire",
+  "kanbanSkinHelpTodo": "Travail en attente, pas encore préparé",
+  "kanbanSkinHelpScheduled": "Retenu jusqu'à une heure connue",
+  "kanbanSkinHelpReady": "Travail préparé pour le dispatcher",
+  "kanbanSkinHelpRunning": "Un agent l'exécute en ce moment",
+  "kanbanSkinHelpBlocked": "Arrêtée : a besoin d'une décision ou d'aide",
+  "kanbanSkinHelpReview": "Terminée, en attente de décision",
+  "kanbanSkinHelpDone": "Terminée et conservée comme référence",
+  "kanbanSkinHelpArchived": "Retirée du tableau actif",
+  "kanbanSkinCount": "{count, plural, =0{Aucune tâche} =1{1 tâche} other{{count} tâches}}",
+  "kanbanSkinSelect": "Sélectionner des tâches",
+  "kanbanSkinSelectExit": "Quitter la sélection",
+  "kanbanSkinSelected": "{count, plural, =1{1 sélectionnée} other{{count} sélectionnées}}",
+  "kanbanSkinBulkAssign": "Réassigner",
+  "kanbanSkinBulkDelete": "Supprimer",
+  "kanbanSkinBulkArchiveTitle": "Archiver des tâches",
+  "kanbanSkinBulkArchiveConfirm": "{count, plural, =1{1 tâche sera archivée.} other{{count} tâches seront archivées.}} Elles quittent le tableau actif mais restent sur le serveur.",
+  "kanbanSkinBulkDeleteTitle": "Supprimer des tâches",
+  "kanbanSkinBulkDeleteConfirm": "{count, plural, =1{1 tâche sera supprimée} other{{count} tâches seront supprimées}} définitivement du serveur. Action irréversible.",
+  "kanbanSkinBulkDone": "{count, plural, =1{1 tâche mise à jour} other{{count} tâches mises à jour}}",
+  "kanbanSkinBulkDeleteFailed": "{count, plural, =1{1 tâche n'a pas pu être supprimée} other{{count} tâches n'ont pas pu être supprimées}}",
+  "kanbanSkinColumnEmpty": "Aucune tâche dans cette colonne",
+  "kanbanSkinLinksCount": "{count, plural, =1{1 lien} other{{count} liens}}",
+  "kanbanSkinSettingsUnavailable": "Ce serveur ne propose pas de réglages d'orchestration",
+  "motionCursorTitle": "Curseur de réponse",
+  "motionCursorCaption": "Un curseur sous la réponse pendant qu’elle arrive. Il ne retarde jamais le texte.",
+  "motionCursorOff": "Sans curseur",
+  "motionCursorLine": "Ligne",
+  "motionCursorBlock": "Bloc",
+  "motionCursorUnderscore": "Trait bas",
+  "motionTreeExpand": "Déplier le dossier",
+  "motionTreeCollapse": "Replier le dossier",
+  "memShareEditNode": "Modifier",
+  "memShareTitle": "Vérifier ce qui a été partagé",
+  "memShareIntro": "Voici ce qui a été partagé avec l'application. Retirez ce que vous ne voulez pas envoyer et choisissez la destination.",
+  "memShareRemove": "Retirer",
+  "memShareTextChars": "Texte, {count} caractères",
+  "@memShareTextChars": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "memShareNothingLeft": "Il ne reste rien à envoyer. Abandonnez le partage.",
+  "memShareDestination": "Destination",
+  "memShareDiscard": "Abandonner",
+  "memShareContinue": "Continuer",
+  "memShareVerdict": "Verdict de l'analyseur : {verdict}",
+  "@memShareVerdict": {
+    "placeholders": {
+      "verdict": {
+        "type": "String"
+      }
+    }
+  },
+  "memShareVerdictSafe": "sûr",
+  "memShareVerdictCaution": "prudence",
+  "memShareVerdictDangerous": "dangereux",
+  "scanDocMenuLabel": "Numériser un document",
+  "scanDocTitle": "Numériser un document",
+  "scanDocStartHint": "Prenez le document en photo ou choisissez une image. Tout est traité sur cet appareil et rien n'est envoyé.",
+  "scanDocTakePhoto": "Prendre une photo",
+  "scanDocFromGallery": "Choisir dans la galerie",
+  "scanDocCropHint": "Faites glisser chaque coin jusqu'au bord du document.",
+  "scanDocCropReset": "Réinitialiser",
+  "scanDocCropContinue": "Recadrer",
+  "scanDocCropInvalid": "Les coins ne forment pas un quadrilatère valide. Replacez-les.",
+  "scanDocCropArea": "Zone du document",
+  "scanDocCorner": "Coin {n} sur 4",
+  "scanDocFilterOriginal": "Original",
+  "scanDocFilterGray": "Niveaux de gris",
+  "scanDocFilterContrast": "Contraste",
+  "scanDocFilterBw": "Noir et blanc",
+  "scanDocRotate": "Pivoter",
+  "scanDocDeletePage": "Supprimer la page",
+  "scanDocAddPage": "Ajouter une page",
+  "scanDocPageOf": "Page {n} sur {total}",
+  "scanDocAttachImages": "Joindre comme images",
+  "scanDocAttachPdf": "Joindre comme PDF",
+  "scanDocProcessing": "Traitement en cours…",
+  "scanDocError": "L'image n'a pas pu être traitée.",
+  "scanDocPageLimit": "Vous avez atteint le maximum de {max} pages.",
+  "latexFormulaLabel": "Formule : {source}",
+  "galleryTitle": "Galerie",
+  "galleryAction": "Galerie d'images",
+  "galleryEmptyTitle": "Aucune image pour l'instant",
+  "galleryEmptyBody": "Les images que vos conversations génèrent ou reçoivent apparaîtront ici.",
+  "galleryFilterAll": "Toutes les conversations",
+  "galleryFilterTitle": "Conversation",
+  "galleryImageCount": "{count, plural, =1{1 image} other{{count} images}}",
+  "galleryToday": "Aujourd'hui",
+  "galleryYesterday": "Hier",
+  "galleryTileLabel": "{name}, de {conversation}",
+  "onbFlowTitle": "Connecter un agent",
+  "onbFlowBody": "Choisis comment Console atteint ton Hermes. Saisir l’adresse du Dashboard est la voie la plus directe.",
+  "onbFlowServer": "Me connecter à mon serveur",
+  "onbFlowPair": "Associer avec une commande",
+  "onbFlowQr": "Scanner un code QR",
+  "onbFlowGuidedBody": "Console utilise désormais le Dashboard de Hermes. Colle cette ligne sur l’ordinateur où Hermes est installé et scanne le code affiché, ou connecte-toi à la main avec l’adresse du Dashboard. Tes chats sont conservés.",
+  "charactersTitle": "Personnages",
+  "charactersSettingsSubtitle": "Silhouette, yeux, ornement et couleur de ton bot",
+  "charactersAnimateTitle": "Animer les bots",
+  "charactersAnimateSubtitle": "Désactive pour garder les visages des bots immobiles. Le réglage système de réduction des animations est toujours respecté",
+  "charactersPreview": "Aperçu",
+  "charactersSectionEyes": "Yeux",
+  "charactersSectionTopper": "Ornement du dessus",
+  "charactersSectionSeed": "Graine",
+  "charactersSeedHint": "Vide : suit le nom",
+  "charactersSeedInvalid": "Minuscules, chiffres, tiret et tiret bas uniquement (64 max.)",
+  "charactersAuto": "Automatique",
+  "charactersEyesSeeded": "De la graine",
+  "charactersEyesWide": "Grands",
+  "charactersEyesSleepy": "Endormis",
+  "charactersEyesHappy": "Contents",
+  "charactersTopperNone": "Aucun",
+  "charactersTopperAntenna": "Antenne",
+  "charactersTopperSprout": "Pousse",
+  "charactersTopperCrown": "Couronne",
+  "charactersTopperHalo": "Auréole",
+  "charactersSave": "Enregistrer",
+  "charactersReset": "Réinitialiser",
+  "charactersSaved": "Personnage enregistré",
+  "turnFlowThoughtCount": "{count, plural, =1{A réfléchi 1 fois} other{A réfléchi {count} fois}}",
+  "screenChatsSubtitleLive": "{count} en direct",
+  "screenChatsSubtitleToday": "{count} aujourd'hui",
+  "screenChatsBotFilter": "Filtrer par bot",
+  "screenProfileToolsGroups": "{count, plural, =1{1 groupe} other{{count} groupes}}",
+  "screenSettingsBrand": "HERMES CONSOLE",
+  "turnLineThinking": "Réflexion en cours",
+  "turnLineWorked": "A travaillé",
+  "litThoughtRow": "Raisonnement",
+  "mdlPillSectionProvider": "Fournisseur",
+  "mdlPillSectionModels": "Modèles de {provider}",
+  "mdlPillSectionResults": "Résultats",
+  "mdlPillSectionSettings": "Réglages",
+  "mdlPillSearchHint": "Rechercher chez tous les fournisseurs",
+  "mdlPillSearchTooltip": "Rechercher un modèle",
+  "mdlPillOpenSettings": "Ouvrir Réglages › Modèles",
+  "mdlPillProfile": "Profil · {name}",
+  "mdlPillTagLocal": "Local",
+  "mdlPillFastUnavailable": "Indisponible pour ce modèle",
+  "livePDone": "Terminé",
+  "livePWriting": "Écriture",
+  "livePCoordinating": "Coordination",
+  "livePAgents": "{done}/{total} agents",
+  "@livePAgents": {
+    "placeholders": {
+      "done": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "livePNeedsPermission": "Autorisation requise",
+  "livePThought": "A réfléchi {duration}",
+  "@livePThought": {
+    "placeholders": {
+      "duration": {
+        "type": "String"
+      }
+    }
+  },
+  "subFTitle": "Sous-agents · {done}/{total}",
+  "@subFTitle": {
+    "placeholders": {
+      "done": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "subFAndMore": "{line} et {count} de plus",
+  "@subFAndMore": {
+    "placeholders": {
+      "line": {
+        "type": "String"
+      },
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "subFGuideHint": "Guider cet agent…",
+  "subFGuideSend": "Envoyer",
+  "subFExpandHint": "Afficher les sous-agents",
+  "subFCollapseHint": "Masquer les sous-agents",
+  "cnxTitle": "Se connecter",
+  "cnxTabDirect": "Direct",
+  "cnxTabSsh": "SSH",
+  "cnxServer": "Serveur",
+  "cnxSignIn": "Connexion",
+  "cnxNameLabel": "Nom · facultatif",
+  "cnxNameHint": "Maison, studio…",
+  "cnxAddressNote": "L'adresse complète du dashboard, avec son port. Avec Tailscale, utilisez l'adresse 100.x du serveur ou celle de Tailscale Serve, et gardez Tailscale connecté sur ce téléphone.",
+  "cnxMethod": "Méthode",
+  "cnxMethodPassword": "Mot de passe",
+  "cnxMethodBrowser": "Navigateur",
+  "cnxMethodToken": "Jeton",
+  "cnxRemember": "Retenir le mot de passe",
+  "cnxRememberNote": "Conservé chiffré dans le stockage sécurisé de ce téléphone.",
+  "cnxBrowserNote": "Votre navigateur ouvre la page de connexion du serveur lui-même. À utiliser quand l'adresse est derrière une page de login.",
+  "cnxTokenLabel": "Jeton de session",
+  "cnxTokenRejected": "Le serveur n'a pas accepté ce jeton.",
+  "cnxScanQr": "Scanner un QR ou installer le service Hermes",
+  "cnxSshHost": "Hôte SSH",
+  "cnxSshUser": "Nom d'utilisateur SSH",
+  "cnxSshPort": "Port SSH",
+  "cnxSshAuth": "Authentification SSH",
+  "cnxSshAuthPassword": "Mot de passe",
+  "cnxSshAuthKey": "Clé privée",
+  "cnxSshPassword": "Mot de passe SSH",
+  "cnxDashHost": "Hôte du dashboard",
+  "cnxDashPort": "Port du dashboard",
+  "cnxSshNote": "Le dashboard doit déjà tourner sur votre serveur. Il reste privé grâce à un tunnel SSH chiffré.",
+  "sshTDashboardRefused": "Le serveur SSH n’a pas ouvert la connexion au dashboard. Vérifiez l’hôte et le port du dashboard.",
+  "sshTPublicKey": "Il s’agit d’une clé publique. La connexion SSH exige la clé privée.",
+  "sshTPassphraseNeeded": "Cette clé est chiffrée. Saisissez sa phrase secrète.",
+  "sshTOtherAddress": "Ce tunnel appartient à une autre adresse de dashboard.",
+  "sshTServerNotFound": "Le serveur SSH est introuvable. Vérifiez l’hôte.",
+  "sshTPassphraseLabel": "Phrase secrète de la clé",
+  "sshTOpening": "Ouverture du tunnel SSH…",
+  "cnxSshSoon": "La connexion par tunnel SSH n'est pas encore disponible dans cette version. Utilisez l'onglet Direct avec une adresse que ce téléphone peut joindre.",
+  "vcrEntryAttachments": "Envoyez ou retirez les pièces jointes avant d’utiliser la voix.",
+  "vcrEntryEditing": "Terminez la modification du message avant d’utiliser la voix.",
+  "vcrEntryApproval": "Répondez à l’approbation en attente avant d’utiliser la voix.",
+  "vcrEntryQueued": "Des messages sont en file d’attente. Attendez leur envoi avant d’utiliser la voix.",
+  "vcrRetryMessage": "Renvoyer ce message",
+  "vcrSendFailed": "Votre message n’a pas pu être envoyé. Il est conservé pour que vous le renvoyiez.",
+  "vcrMicBusy": "Une autre appli ou un appel utilise le micro. Fermez-la et réessayez.",
+  "vcrMicUnavailable": "Impossible d’ouvrir le micro. Réessayez.",
+  "vcrNeedsNetwork": "La reconnaissance vocale a besoin d’une connexion et il n’y en a pas. Réessayez quand elle revient.",
+  "vcrLanguageFallback": "Votre langue vocale n’est pas disponible dans ce moteur de reconnaissance ; la langue du système est utilisée.",
+  "vcrServerUnavailable": "La voix du serveur n’est pas disponible. Vous pouvez utiliser celle de ce téléphone.",
+  "vcrUseThisPhone": "Utiliser ce téléphone",
+  "vcrPausedByBackground": "En pause car l’appli est passée en arrière-plan",
+  "vcrContinue": "Continuer",
+  "vcrRouteRestarted": "L’audio a changé (casque ou Bluetooth). Micro relancé.",
+  "vcrOpenSettings": "Ouvrir les réglages",
+  "vcrTranscriptionTimedOut": "La transcription a pris trop de temps et a été annulée. Réessayez.",
+  "chcFileLabel": "Fichier {name}",
+  "chcFolderLabel": "Dossier {name}",
+  "chcFileOpenHint": "Ouvre le fichier",
+  "chcFileCopyHint": "Copie le chemin",
+  "chcPathCopied": "Chemin copié",
+  "chcFileOpenFailed": "Impossible d’ouvrir le fichier. Chemin copié.",
+  "chcCitationLabel": "Citation {n}",
+  "chcCitationSourceLabel": "Source {n}",
+  "chcCitationOpenHint": "Ouvre la source dans le navigateur",
+  "mdpSourcesLabel": "Sources : {count}",
+  "mdpSourceLabel": "Source {n} : {title}, {domain}",
+  "mdpSourceOpenHint": "Ouvre la source dans le navigateur. Appui long : copie le lien",
+  "mdpOpenLinkHint": "Ouvre le lien dans le navigateur. Appui long : copie le lien",
+  "mdpLinkChipLabel": "Lien vers {domain}",
+  "mdpLinkCopied": "Lien copié",
+  "mdpTablePreparing": "Préparation du tableau",
+  "msvCurrentUnknown": "Choisir un modèle",
+  "msvCurrentHint": "Choisir un autre modèle",
+  "msvFavorites": "Favoris",
+  "msvFavoritesHint": "Marquez un modèle d’une étoile dans « Tous les modèles » pour le garder ici.",
+  "msvFrequent": "Fréquents",
+  "msvThink": "Raisonner",
+  "msvThinkOn": "Oui",
+  "msvThinkOff": "Non",
+  "msvFastNormal": "Normal",
+  "msvFastActive": "Actif",
+  "msvPermissions": "Autorisations",
+  "msvPermissionsManual": "Manuel",
+  "msvFavAdd": "Ajouter {model} aux favoris",
+  "@msvFavAdd": {
+    "placeholders": {
+      "model": {
+        "type": "String"
+      }
+    }
+  },
+  "msvFavRemove": "Retirer {model} des favoris",
+  "@msvFavRemove": {
+    "placeholders": {
+      "model": {
+        "type": "String"
+      }
+    }
+  },
+  "msvFavLimit": "Limite de {count} favoris",
+  "@msvFavLimit": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "sv2Close": "Fermer",
+  "sv2CloseHint": "Masque le groupe de ce chat. Les sous-agents continuent de travailler.",
+  "sv2MenuEntry": "Sous-agents · {count}",
+  "sv2MenuShowHidden": "Afficher les sous-agents masqués",
+  "sv2TaskSection": "Mission",
+  "sv2StepsSection": "Étapes",
+  "sv2StepsPartial": "Seules les étapes vues depuis l'apparition de ce groupe dans le chat sont affichées.",
+  "sv2ThoughtSection": "Réflexion",
+  "sv2ResultPartial": "Résultat partiel",
+  "sv2LeftBehind": "Il n'a pas terminé. Voici ce qu'il a laissé en dernier.",
+  "sv2NoResultYet": "Pas encore de résultat.",
+  "sv2LastLog": "Dernier journal",
+  "kluKeysTitle": "Clés",
+  "kluKeysLoading": "Lecture des clés…",
+  "kluKeysSearch": "Rechercher des clés",
+  "kluSummaryAvailable": "Disponibles",
+  "kluSummaryConfigured": "Définies",
+  "kluProfileLabel": "Profil",
+  "kluProfileDefault": "par défaut",
+  "kluKeysNote": "Hermes conserve les secrets dans le .env du profil choisi. Ici, ils sont seulement écrits : jamais affichés ni lus.",
+  "kluStatusSet": "Définie",
+  "kluStatusNotSet": "Non définie",
+  "kluCategoryCustom": "Personnalisée",
+  "kluKeysEmpty": "Ce profil n’a aucune clé.",
+  "kluKeysNoMatches": "Aucune clé ne correspond.",
+  "kluKeysLoadError": "Impossible de lire les clés",
+  "kluAddKey": "Ajouter une clé",
+  "kluNameLabel": "Nom de la variable",
+  "kluNameInvalid": "Utilisez des majuscules, des chiffres et des tirets bas, en commençant par une lettre (128 au plus).",
+  "kluSheetStatus": "État",
+  "kluSheetCategory": "Catégorie",
+  "kluValueLabel": "Valeur",
+  "kluValueHint": "Nouvelle valeur",
+  "kluSaveKey": "Enregistrer la clé",
+  "kluDeleteKey": "Supprimer la clé",
+  "kluRevealValue": "Afficher la saisie",
+  "kluHideValue": "Masquer la saisie",
+  "kluWriteOnly": "La valeur enregistrée n’est jamais affichée. Une nouvelle valeur remplace l’actuelle.",
+  "kluValueEmpty": "Saisissez une valeur",
+  "kluValueInvalid": "La valeur ne peut contenir ni retour à la ligne ni caractère de contrôle, ni espace au début ou à la fin.",
+  "kluValueTooLong": "La valeur dépasse {max} caractères",
+  "kluOverwriteTitle": "Remplacer {name} ?",
+  "kluOverwriteBody": "Elle est déjà définie dans le profil {profile}. La nouvelle valeur remplace l’actuelle, qui ne pourra pas être récupérée.",
+  "kluOverwriteAction": "Remplacer",
+  "kluDeleteTitle": "Supprimer {name} ?",
+  "kluDeleteBody": "Elle est retirée du .env du profil {profile}.",
+  "kluDeleteAction": "Supprimer",
+  "kluSaved": "Clé {name} enregistrée",
+  "kluDeleted": "Clé {name} supprimée",
+  "kluSaveFailed": "La clé n’a pas pu être enregistrée.",
+  "kluDeleteFailed": "La clé n’a pas pu être supprimée.",
+  "kluCleartextBlocked": "Cette connexion utilise HTTP non chiffré hors de votre réseau privé. Les clés ne peuvent pas être écrites tant que vous n’utilisez pas HTTPS.",
+  "kluCleartextPrivate": "Connexion HTTP non chiffrée sur un réseau privé : la valeur circule sans chiffrement.",
+  "kluRowLabel": "{name}, {status}, {category}",
+  "kluTargetProfile": "Écrit dans le profil {profile}",
+  "kluLogComponent": "Composant",
+  "kluLogForComponent": " pour le composant {component}",
+  "kluUsageTitle": "Utilisation",
+  "kluUsageLoading": "Lecture de l’utilisation…",
+  "kluUsagePeriod": "{days} jours",
+  "kluUsageTokens": "Tokens",
+  "kluUsageInput": "Entrée",
+  "kluUsageOutput": "Sortie",
+  "kluUsageSessions": "Sessions",
+  "kluUsageCost": "Coût",
+  "kluUsageCostEstimated": "Coût estimé",
+  "kluUsageDaily": "Tokens par jour",
+  "kluUsageByModel": "Par modèle",
+  "kluUsageSessionsCount": "{count} sessions",
+  "kluUsageEmpty": "Aucune utilisation enregistrée sur cette période",
+  "kluUsageLoadError": "Impossible de lire l’utilisation",
+  "kluUsageUnsupported": "Ce serveur ne propose pas d’analyse d’utilisation",
+  "fcoCopyPath": "Copier le chemin",
+  "fcoOpenFolder": "Ouvrir le dossier",
+  "fcoErrNotFound": "Le fichier est introuvable. Il a peut-être été déplacé ou supprimé.",
+  "fcoErrForbidden": "Le serveur n'autorise pas la lecture de ce fichier.",
+  "fcoErrDenied": "Le serveur a refusé ce chemin.",
+  "fcoErrTooLarge": "Le fichier est trop volumineux pour être affiché ici.",
+  "fcoErrBinary": "C'est un fichier binaire, il ne peut pas être affiché comme du texte.",
+  "fcoErrTimeout": "Le serveur met trop de temps à répondre.",
+  "fcoErrUnreachable": "Impossible de lire le fichier. Vérifiez la connexion.",
+  "fcoErrUnsupported": "Ce serveur ne permet pas de lire des fichiers.",
+  "fcoErrOutside": "Le serveur a renvoyé un fichier situé hors des dossiers de cette conversation. Il n'est pas affiché.",
+  "fcoErrBadPath": "Le chemin n'est pas valide, il n'est donc pas ouvert.",
+  "fcoErrNoBase": "On ne sait pas dans quel dossier se trouve ce fichier.",
+  "fcoEmpty": "Le fichier est vide.",
+  "fcoSensitiveTitle": "Fichier sensible",
+  "fcoSensitiveBody": "{name} peut contenir des mots de passe ou des clés. Il sera affiché seulement à l'écran et ne sera pas enregistré sur l'appareil.",
+  "fcoShow": "Afficher",
+  "cfxSearchedIn": "Où il a été cherché ({count})",
+  "@cfxSearchedIn": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "cfxSeveralMatches": "Plusieurs fichiers de cette conversation portent ce nom. Choisissez lequel ouvrir.",
+  "cfxChoose": "Choisir le fichier",
+  "sppChangedTitle": "La skill a changé sur le serveur",
+  "sppChangedBody": "Son contenu n’est plus celui que vous avez ouvert. Enregistrer écrase l’état actuel.",
+  "sppCharCount": "{count} / {max}",
+  "@sppCharCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      },
+      "max": {
+        "type": "int"
+      }
+    }
+  },
+  "sppContentErrorTitle": "Impossible de lire SKILL.md",
+  "sppContentErrorBody": "Le serveur n’a pas répondu ou n’a pas trouvé la skill. Vérifiez la connexion et réessayez.",
+  "sppContentHeader": "Contenu",
+  "sppContentTooLongToEdit": "Ce texte dépasse la limite du serveur : lecture seule.",
+  "sppContinue": "Continuer",
+  "sppCreate": "Créer",
+  "sppCreateConfirmTitle": "Créer la skill {name} ?",
+  "@sppCreateConfirmTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "sppCreateConfirmBody": "C’est un ensemble d’instructions que l’agent suivra dans les nouvelles sessions. Vérifiez le texte.",
+  "sppDetailsHeader": "Détails",
+  "sppEdit": "Modifier",
+  "sppEditorLabel": "Contenu de SKILL.md",
+  "sppEditTitle": "Modifier {name}",
+  "@sppEditTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "sppEditWarning": "L’agent suit ces instructions à la lettre. N’enregistrez que des changements que vous comprenez.",
+  "sppFilterActive": "Actifs",
+  "sppFilterAll": "Tous",
+  "sppFilterInactive": "Inactifs",
+  "sppInsecureTitle": "Connexion non chiffrée",
+  "sppInsecurePublicBody": "Ce serveur est joint en http sur un réseau que vous ne contrôlez pas : tout ce qui transite, identifiants compris, peut être lu en chemin.",
+  "sppInsecurePrivateBody": "Il est joint en http, sans chiffrement, mais dans un réseau privé.",
+  "sppInstallAnyway": "Installer quand même",
+  "sppInstalledSummary": "{total} installés · {on} actifs",
+  "@sppInstalledSummary": {
+    "placeholders": {
+      "total": {
+        "type": "int"
+      },
+      "on": {
+        "type": "int"
+      }
+    }
+  },
+  "sppMcpAddConfirmTitle": "Ajouter le serveur MCP {name} ?",
+  "@sppMcpAddConfirmTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "sppMcpAddConfirmBody": "Le serveur Hermes l’enregistrera et pourra l’exécuter ou s’y connecter. Ce téléphone n’exécute rien.",
+  "sppMcpAdded": "Serveur {name} ajouté",
+  "@sppMcpAdded": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "sppMcpAddRejected": "Le serveur a refusé cette configuration. Vérifiez le nom (peut-être déjà pris) et la commande ou l’URL.",
+  "sppMcpNameEmpty": "Saisissez un nom.",
+  "sppMcpNameChars": "Utilisez lettres, chiffres, point, tiret et tiret bas, sans espaces (64 max).",
+  "sppMcpUrlEmpty": "Saisissez l’adresse du serveur.",
+  "sppMcpUrlScheme": "L’adresse doit commencer par https:// ou http://.",
+  "sppMcpUrlHost": "Le nom d’hôte manque dans l’adresse.",
+  "sppMcpUrlUserInfo": "Ne mettez ni identifiant ni mot de passe dans l’adresse ; utilisez le champ d’authentification.",
+  "sppMcpUrlQuery": "Ne mettez pas de paramètres (?clé=valeur) dans l’adresse : ce pourraient être des identifiants.",
+  "sppMcpUrlFragment": "Retirez la partie finale avec # de l’adresse.",
+  "sppMcpCommandEmpty": "Saisissez la commande.",
+  "sppMcpCommandControl": "La commande contient des retours à la ligne ou des caractères de contrôle.",
+  "sppMcpCommandTooLong": "La commande est trop longue (800 caractères max).",
+  "sppMcpCommandSpaces": "Indiquez ici seulement le programme ; les arguments vont un par ligne dans le champ ci-dessous.",
+  "sppMcpCommandShell": "Le serveur lance le programme sans shell : les symboles de redirection ou d’enchaînement ne fonctionnent pas ici.",
+  "sppMcpInsecurePublic": "Cette adresse utilise http hors d’un réseau privé : le trafic du serveur MCP circulera sans chiffrement.",
+  "sppMcpInsecurePublicToken": "Cette adresse utilise http hors d’un réseau privé et vous enverriez un jeton : il circulerait sans chiffrement. Utilisez https.",
+  "sppMcpInsecurePrivate": "Cette adresse utilise http, sans chiffrement. C’est un réseau privé, mais https est recommandé.",
+  "sppMenuAddMcp": "Ajouter un serveur MCP",
+  "sppMenuNewSkill": "Nouvelle skill",
+  "sppNewSkillIntro": "Saisissez un nom, une courte description et les instructions. Le téléphone prépare l’en-tête de SKILL.md et le serveur le valide.",
+  "sppNewSkillTitle": "Nouvelle skill",
+  "sppOriginBundled": "Intégré",
+  "sppOriginUser": "Utilisateur",
+  "sppOriginHub": "Hub",
+  "sppOriginGit": "Git",
+  "sppOriginExternal": "Externe",
+  "sppOverwrite": "Écraser",
+  "sppReadOnlySkill": "Seules vos propres skills se modifient ici. Celles du hub et les intégrées sont écrasées à la mise à jour.",
+  "sppRestoreTitle": "Restaurer la copie d’origine ?",
+  "sppRestoreBody": "Le texte est réécrit tel qu’il était à l’ouverture de cet écran.",
+  "sppRestored": "Original restauré",
+  "sppRestoreOriginal": "Restaurer l’original",
+  "sppSave": "Enregistrer",
+  "sppSaveTitle": "Enregistrer les modifications de {name} ?",
+  "@sppSaveTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "sppSaveBody": "Le texte remplace tout le SKILL.md. Les nouvelles sessions de l’agent suivront ces instructions.",
+  "sppSaved": "Enregistré. Les nouvelles sessions utiliseront le changement.",
+  "sppScanAskTitle": "L’analyse attend votre décision",
+  "sppScanAskBody": "Le serveur a relevé des points à lire avant d’installer. Si vous continuez, l’installation se fait sous votre responsabilité.",
+  "sppScanBlockedTitle": "Installation bloquée",
+  "sppScanBlockedBody": "L’analyse de sécurité n’autorise pas cette skill : il n’y a rien à confirmer.",
+  "sppScanClean": "Analyse de sécurité : aucun constat.",
+  "sppScanFailedTitle": "Analyse impossible",
+  "sppScanFailedBody": "L’analyse de sécurité n’a pas répondu. Si vous continuez, l’installation passe quand même par l’analyse du serveur, qui peut la refuser.",
+  "sppScanFindings": "Analyse de sécurité : {count, plural, =1{1 constat} other{{count} constats}}.",
+  "@sppScanFindings": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "sppScanMore": "…et {count} autres",
+  "@sppScanMore": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "sppScanning": "Analyse de {name}…",
+  "@sppScanning": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "sppScanUnavailable": "Analyse de sécurité : indisponible.",
+  "sppSearchingHub": "Recherche dans le hub…",
+  "sppShowMore": "Afficher {count} de plus",
+  "@sppShowMore": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "sppShowRest": "Afficher la suite ({count} caractères)",
+  "@sppShowRest": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "sppSkillCategoryChars": "La catégorie est un seul nom : minuscules, chiffres, point, tiret ou tiret bas.",
+  "sppSkillCategoryLabel": "Catégorie (facultatif)",
+  "sppSkillContentEmpty": "Le contenu est vide.",
+  "sppSkillContentNoBody": "Les instructions après l’en-tête sont absentes.",
+  "sppSkillContentNoDescription": "L’en-tête doit inclure description.",
+  "sppSkillContentNoFrontmatter": "SKILL.md doit commencer par un en-tête entre lignes ---.",
+  "sppSkillContentNoName": "L’en-tête doit inclure name.",
+  "sppSkillContentNul": "Le texte contient un caractère nul.",
+  "sppSkillContentTooLong": "Le texte dépasse {max} caractères, la limite du serveur.",
+  "@sppSkillContentTooLong": {
+    "placeholders": {
+      "max": {
+        "type": "int"
+      }
+    }
+  },
+  "sppSkillContentUnclosed": "L’en-tête n’est pas fermé : la seconde ligne --- manque.",
+  "sppSkillCreated": "Skill {name} créée",
+  "@sppSkillCreated": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "sppSkillDescriptionEmpty": "Saisissez une courte description.",
+  "sppSkillDescriptionHelp": "Une phrase : quand l’agent doit l’utiliser.",
+  "sppSkillDescriptionLabel": "Description",
+  "sppSkillDescriptionTooLong": "La description d’une nouvelle skill admet jusqu’à {max} caractères.",
+  "@sppSkillDescriptionTooLong": {
+    "placeholders": {
+      "max": {
+        "type": "int"
+      }
+    }
+  },
+  "sppSkillInstructionsLabel": "Instructions",
+  "sppSkillNameChars": "Utilisez minuscules, chiffres, point, tiret et tiret bas, en commençant par une lettre ou un chiffre.",
+  "sppSkillNameEmpty": "Saisissez un nom.",
+  "sppSkillNameHelp": "Sert de nom de dossier, par exemple ma-skill.",
+  "sppSkillNameLabel": "Nom",
+  "sppSkillNameTooLong": "Le nom admet jusqu’à {max} caractères.",
+  "@sppSkillNameTooLong": {
+    "placeholders": {
+      "max": {
+        "type": "int"
+      }
+    }
+  },
+  "sppStatusFilter": "État",
+  "sppSwitchLabel": "Activer {name}",
+  "@sppSwitchLabel": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "sppToggleFailed": "Impossible de modifier {name}. Retour à l’état précédent.",
+  "@sppToggleFailed": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "sppVersion": "v{version}",
+  "@sppVersion": {
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
+  },
+  "sppViewSkillMd": "Voir SKILL.md",
+  "hdaTitle": "Agents",
+  "hdaFilterAll": "Tous",
+  "hdaStatusWorking": "Au travail",
+  "hdaStatusBlocked": "Vous attend",
+  "hdaStatusIdle": "Libre",
+  "hdaStatusDone": "Terminé",
+  "hdaStatusUnknown": "Inconnu",
+  "hdaInState": "{duration} dans cet état",
+  "hdaNow": "À l’instant",
+  "hdaEmptyTitle": "Aucun agent en cours",
+  "hdaEmptyBody": "Les agents que vous lancez avec Herdr sur ce serveur apparaîtront ici, avec leur état en direct.",
+  "hdaNew": "Nouvel agent",
+  "hdaProbing": "Recherche de Herdr sur le serveur…",
+  "hdaServerStoppedTitle": "Herdr n’est pas démarré",
+  "hdaServerStoppedBody": "Le serveur Herdr ne répond pas. Lancez-le depuis l’onglet Terminal (tapez herdr) puis revenez ici.",
+  "hdaConnectionError": "Impossible de joindre le serveur.",
+  "hdaTimedOut": "Le serveur a mis trop de temps à répondre.",
+  "hdaStale": "Dernière lecture affichée ; nouvel essai…",
+  "hdaHintLine": "Herdr n’est pas installé sur ce serveur.",
+  "hdaHowToInstall": "Comment l’installer",
+  "hdaHintDismiss": "Masquer l’avis",
+  "hdaInstallTitle": "Installer Herdr",
+  "hdaInstallBody": "L’app n’installe rien toute seule. Exécutez ceci sur le serveur, puis revenez à cet écran.",
+  "hdaInstallProject": "Projet sur GitHub",
+  "hdaInstallCheck": "C’est installé",
+  "hdaRecheck": "Rechercher Herdr à nouveau",
+  "hdaMore": "Plus d’options pour les agents",
+  "hdaBack": "Retour à la liste des agents",
+  "hdaRowHint": "Ouvrir sa sortie et lui envoyer des instructions",
+  "hdaFolderUnknown": "Dossier inconnu",
+  "hdaOutputTitle": "Sortie",
+  "hdaOutputEmpty": "Pas encore de sortie.",
+  "hdaOutputLabel": "Sortie en direct de {agent}",
+  "hdaOutputFailed": "Lecture de la sortie impossible ; nouvel essai…",
+  "hdaPromptTarget": "Pour {agent} · {folder}",
+  "hdaPromptHint": "Écrivez une instruction pour l’agent",
+  "hdaSend": "Envoyer",
+  "hdaKeysTitle": "Touches",
+  "hdaKeyEnter": "Entrée",
+  "hdaKeySemantics": "Envoyer la touche {key}",
+  "hdaKeySent": "Touche {key} envoyée",
+  "hdaSentTo": "Envoyé à {agent}",
+  "hdaBlockedTitle": "{agent} vous attend",
+  "hdaBlockedBody": "Il demande une approbation ou une réponse. Accepter envoie Entrée et Refuser envoie Échap ; pour une autre option, utilisez les touches.",
+  "hdaAccept": "Accepter",
+  "hdaReject": "Refuser",
+  "hdaReadOnly": "Lecture seule : l’app n’a pas pu fixer l’emplacement de Herdr sur le serveur.",
+  "hdaGone": "Cet agent n’est plus dans Herdr.",
+  "hdaErrBlocked": "{agent} attend une réponse : le texte n’a pas été envoyé. Utilisez les touches.",
+  "hdaErrNotFound": "Cet agent n’existe plus.",
+  "hdaErrEmpty": "Écrivez quelque chose avant d’envoyer.",
+  "hdaErrTooLong": "Le texte est trop long (4 Ko au maximum).",
+  "hdaErrChars": "Le texte contient des caractères de contrôle impossibles à envoyer.",
+  "hdaErrFailed": "L’action n’a pas pu aboutir.",
+  "hdaCreateKind": "Agent",
+  "hdaCreateFolder": "Dossier sur le serveur",
+  "hdaCreateFolderHint": "/chemin/absolu/du/projet",
+  "hdaCreateRecent": "Récents",
+  "hdaCreateContinue": "Continuer",
+  "hdaCreateConfirmTitle": "Créer cet agent ?",
+  "hdaCreateConfirmBody": "Un espace Herdr s’ouvrira dans {folder} sur {server} et {agent} y démarrera. Cela met un agent au travail sur le serveur.",
+  "hdaCreateAction": "Créer",
+  "hdaCreated": "Agent créé",
+  "hdaCreateStartFailed": "L’espace a été créé, mais {agent} n’a pas démarré. Ouvrez-le depuis l’onglet Terminal.",
+  "hdaErrFolder": "Saisissez un dossier absolu, commençant par /.",
+  "hdaUnlockReason": "Ouvrir les agents de {server}",
+  "hdaRowSemantics": "{agent}, {state}, {folder}",
+  "bstEditorTitle": "Éditeur de personnages",
+  "bstStudioTitle": "Atelier de personnages",
+  "bstUndo": "Annuler",
+  "bstRedo": "Rétablir",
+  "bstMore": "Plus d’options",
+  "bstConfirm": "Appliquer au profil",
+  "bstReset": "Réinitialiser",
+  "bstSaveCharacter": "Enregistrer le personnage",
+  "bstSavedCharacters": "Personnages enregistrés",
+  "bstSharePng": "Partager en PNG",
+  "bstDuplicate": "Dupliquer le personnage",
+  "bstNewCharacter": "Nouveau personnage",
+  "bstNameTitle": "Nom du personnage",
+  "bstNameHint": "Par exemple, Chaton bleu",
+  "bstDefaultName": "Mon personnage",
+  "bstCopyName": "{name} (copie)",
+  "@bstCopyName": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "bstSavedToast": "Enregistré dans Mes personnages",
+  "bstAppliedToast": "{name} utilise maintenant ce personnage",
+  "@bstAppliedToast": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "bstDiscardTitle": "Abandonner les modifications ?",
+  "bstDiscardBody": "Les modifications de l’éditeur n’ont encore été appliquées à aucun profil.",
+  "bstDiscard": "Abandonner",
+  "bstKeepEditing": "Continuer l’édition",
+  "bstShareFailed": "Impossible de partager l’image",
+  "bstCanvasSize": "1024 × 1024",
+  "bstPan": "Déplacer le canevas",
+  "bstZoomOut": "Dézoomer",
+  "bstZoomIn": "Zoomer",
+  "bstZoomValue": "{percent} %",
+  "@bstZoomValue": {
+    "placeholders": {
+      "percent": {
+        "type": "int"
+      }
+    }
+  },
+  "bstZoomResetTip": "Zoom à 100 %",
+  "bstFit": "Ajuster",
+  "bstCanvasLabel": "Canevas du personnage",
+  "bstStateButton": "État de l’aperçu",
+  "bstStatePickTitle": "Prévisualiser un état",
+  "bstStateStill": "Immobile",
+  "bstStateIdle": "Repos",
+  "bstStateListen": "Écouter",
+  "bstStateThink": "Réfléchir",
+  "bstStateWork": "Travailler",
+  "bstStateSpeak": "Parler",
+  "bstStateCurious": "Curieux",
+  "bstStateCelebrate": "Célébrer",
+  "bstStateLove": "Tendresse",
+  "bstStateOops": "Oups",
+  "bstStateSleep": "Dormir",
+  "bstStateBounce": "Rebondir",
+  "bstStateDance": "Danser",
+  "bstStateSpin": "Tourner",
+  "bstTabShape": "Forme",
+  "bstTabEyes": "Yeux",
+  "bstTabPieces": "Pièces",
+  "bstTabColor": "Couleur",
+  "bstFormRound": "Rond",
+  "bstFormOrganic": "Organique",
+  "bstFormBoxy": "Carré",
+  "bstFormRectangle": "Rectangle",
+  "bstFormCloud": "Nuage",
+  "bstRange": "Portée",
+  "bstStrength": "Intensité",
+  "bstEyeDot": "Point",
+  "bstEyeOval": "Ovale",
+  "bstEyeJoy": "Joyeux",
+  "bstEyeDreamy": "Rêveur",
+  "bstEyeGlint": "Éclat",
+  "bstEyeBold": "Déterminé",
+  "bstEyeLantern": "Lanterne",
+  "bstEyeRing": "Anneau",
+  "bstEyeWink": "Clin d’œil",
+  "bstEyeAmazed": "Émerveillé",
+  "bstEyeNarrow": "Étroit",
+  "bstEyeGrumpy": "Grognon",
+  "bstEyeSlit": "Pupille fendue",
+  "bstEyeUndead": "Mort-vivant",
+  "bstEyeHeart": "Cœur",
+  "bstEyeSize": "Taille des yeux",
+  "bstEyeColor": "Couleur des yeux",
+  "bstColorAuto": "Automatique",
+  "bstColorCustom": "Personnalisé",
+  "bstColorInk": "Noir",
+  "bstColorWhite": "Blanc",
+  "bstColorViolet": "Violet",
+  "bstColorBlue": "Bleu",
+  "bstColorRed": "Rouge",
+  "bstColorGreen": "Vert",
+  "bstHue": "Teinte",
+  "bstSaturation": "Saturation",
+  "bstBrightness": "Luminosité",
+  "bstPieceCatEars": "Oreilles de chat",
+  "bstPieceBearEars": "Oreilles d’ours",
+  "bstPieceBunnyEars": "Oreilles de lapin",
+  "bstPieceCrown": "Couronne",
+  "bstPieceHorn": "Corne",
+  "bstPieceHalo": "Auréole",
+  "bstPieceSwirl": "Tourbillon",
+  "bstPieceSprout": "Pousse",
+  "bstPieceLeaf": "Feuille",
+  "bstPieceWing": "Aile",
+  "bstPieceTail": "Queue",
+  "bstPieceStar": "Étoile",
+  "bstPieceHeart": "Cœur",
+  "bstPieceBow": "Nœud",
+  "bstPiecePaw": "Patte",
+  "bstPieceFin": "Nageoire",
+  "bstPieceBolt": "Éclair",
+  "bstPieceFlower": "Fleur",
+  "bstPieceMoon": "Lune",
+  "bstPieceDrop": "Goutte",
+  "bstPiecesAdd": "Ajouter une pièce",
+  "bstPiecesPlaced": "Pièces placées",
+  "bstPiecesNone": "Aucune pièce pour l’instant. Touche-en une pour l’ajouter.",
+  "bstPiecesLimit": "Nombre maximal de pièces atteint",
+  "bstPieceDelete": "Supprimer",
+  "bstPieceRotation": "Rotation",
+  "bstPieceSize": "Taille",
+  "bstPieceFlip": "Retourner",
+  "bstPiecePosition": "Position",
+  "bstPieceAcross": "Horizontal",
+  "bstPieceHeight": "Vertical",
+  "bstFur": "Fourrure",
+  "bstFinish": "Finition",
+  "bstFinishFlat": "Uni",
+  "bstFinishMatte": "Mat",
+  "bstFinishSoft": "Doux",
+  "bstFinishGlossy": "Brillant",
+  "bstSolidColors": "Couleurs unies",
+  "bstColorOriginal": "Original",
+  "bstBodyColor": "Couleur du corps",
+  "bstGradients": "Dégradés",
+  "bstGradSunrise": "Aube",
+  "bstGradZest": "Zeste",
+  "bstGradBay": "Baie",
+  "bstGradGumdrop": "Bonbon",
+  "bstGradCinder": "Cendre",
+  "bstGradNightfall": "Tombée de la nuit",
+  "bstGradTide": "Marée",
+  "bstGradApricot": "Abricot",
+  "bstGradPlum": "Prune",
+  "bstGradSpearmint": "Menthe verte",
+  "bstGradBorealis": "Boréal",
+  "bstGradSherbet": "Sorbet",
+  "bstGradPetal": "Pétale",
+  "bstGradPearl": "Perle",
+  "bstGenerateTitle": "Générer avec l’IA",
+  "bstGenerateHint": "Décris le personnage : un chaton bleu avec des ailes",
+  "sagAsk": "Demander à l’agent",
+  "sagCopy": "Copier la demande",
+  "sagPaste": "Coller la réponse",
+  "sagHelp": "Ouvre un nouveau chat avec {name} et lui envoie ta phrase avec le schéma du personnage. Cela coûte un tour du modèle et le chat reste dans l’historique. Quand il répond, copie sa réponse et touche « Coller la réponse » : elle est appliquée au brouillon et tu peux l’annuler.",
+  "@sagHelp": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "sagOffWhy": "Disponible uniquement avec une connexion en écriture et un profil actif.",
+  "sagStatusCopied": "Demande copiée. Colle-la dans un chat de ce bot et copie sa réponse.",
+  "sagStatusApplied": "Personnage appliqué au brouillon. Tu peux l’annuler.",
+  "sagStatusInvalid": "Je n’ai pas compris la réponse, essaie une autre phrase.",
+  "sagStatusEmpty": "Rien à coller : copie d’abord la réponse de l’agent.",
+  "sagStatusNeedPhrase": "Écris d’abord une phrase.",
+  "sagChatTitle": "Création de personnage",
+  "bstSavedEmpty": "Tu n’as encore enregistré aucun personnage.",
+  "bstSavedHint": "Touche pour utiliser un personnage. Maintiens pour le modifier, le dupliquer ou le supprimer.",
+  "bstMoreActions": "Autres actions",
+  "bstMyCharacters": "Mes personnages",
+  "bstPresets": "Préréglages",
+  "bstPresetCoral": "Corail",
+  "bstPresetLilac": "Lilas",
+  "bstPresetSunny": "Ensoleillé",
+  "bstPresetMint": "Menthe",
+  "bstPresetSlate": "Ardoise",
+  "bstPresetKitten": "Chaton",
+  "bstPresetEmber": "Braise",
+  "bstPresetRegal": "Royal",
+  "bstCustomize": "Personnaliser",
+  "bstUseCharacter": "Utiliser ce personnage",
+  "bstCurrentCharacter": "Personnage actuel",
+  "bstDeleteTitle": "Supprimer « {name} » ?",
+  "@bstDeleteTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "bstOriginalFace": "Revenir au visage d’origine",
+  "bstOriginalToast": "Visage d’origine rétabli",
+  "lflTitle": "Look & Feel",
+  "lflAppearance": "Apparence",
+  "lflAppearanceSystem": "Système",
+  "lflAppearanceLight": "Clair",
+  "lflAppearanceDark": "Sombre",
+  "lflAccent": "Accent",
+  "lflAccentCustom": "Couleur personnalisée",
+  "lflAccentPickerTitle": "Couleur d’accent",
+  "lflAccentTerracotta": "Terre cuite",
+  "lflAccentOrange": "Orange",
+  "lflAccentRose": "Rose",
+  "lflAccentViolet": "Violet",
+  "lflAccentIndigo": "Indigo",
+  "lflAccentBlue": "Bleu",
+  "lflAccentTeal": "Sarcelle",
+  "lflAccentGreen": "Vert",
+  "lflAccentSlate": "Ardoise",
+  "lflLightBackground": "Fond clair",
+  "lflDarkBackground": "Fond sombre",
+  "lflBgWhite": "Blanc",
+  "lflBgPaper": "Papier",
+  "lflBgMidnight": "Minuit",
+  "lflBgBlack": "Noir",
+  "lflBgGray": "Gris",
+  "lflFont": "Police",
+  "lflFontSystem": "Système",
+  "lflFontSystemDesc": "La police d’Android : neutre et familière.",
+  "lflFontInterDesc": "Une sans-serif nette conçue pour les écrans et la lecture dense.",
+  "lflFontMontserratDesc": "Géométrique et large, avec du caractère dans les titres.",
+  "lflFontNunitoDesc": "Une sans-serif arrondie, aimable et très lisible.",
+  "lflFontMonoDesc": "À chasse fixe, pour le code et une allure de terminal.",
+  "lflMoreThemes": "Plus de thèmes",
+  "lflMoreThemesBody": "{count} thèmes complets, chacun avec son style",
+  "lflThemeBanner": "Thème : {name}",
+  "lflThemeBannerBody": "Vous utilisez un thème de la liste. Si vous changez Apparence, Accent ou Fond, vous revenez au Look & Feel.",
+  "lflReturn": "Revenir au Look & Feel",
+  "pexChange": "Modifier",
+  "pexAvatarLabel": "Identité visuelle de {name}. Touchez pour la modifier",
+  "@pexAvatarLabel": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "pexPhoto": "Photo",
+  "pexCharacter": "Personnage",
+  "pexCharacterNote": "Le personnage reste enregistré uniquement sur cet appareil.",
+  "pexCharacterOpen": "Choisir ou créer un personnage",
+  "pexReset": "Réinitialiser",
+  "pexDone": "Terminé",
+  "pexDescription": "Description",
+  "pexDescriptionHint": "À quoi sert ce profil",
+  "pexReasoning": "Raisonnement",
+  "pexSaveFailed": "Enregistrement impossible. Vérifiez la connexion et réessayez.",
+  "pexDescriptionFailed": "La description n'a pas été enregistrée. Réessayez.",
+  "pexReasoningFailed": "Impossible de modifier le raisonnement.",
+  "krhKeysNote": "Hermes conserve les secrets dans le .env du profil choisi. La liste n'affiche jamais de valeurs : tu peux en voir une en particulier sur demande.",
+  "krhWriteOnly": "Une nouvelle valeur remplace l'actuelle. La valeur enregistrée n'est affichée que si tu touches « Afficher la valeur ».",
+  "krhRevealAction": "Afficher la valeur",
+  "krhRevealConfirmTitle": "Afficher la valeur ?",
+  "krhRevealConfirmBody": "Elle s'affichera à l'écran quelques secondes, puis se masquera d'elle-même.",
+  "krhRevealConfirmAction": "Afficher",
+  "krhRevealAuthReason": "Confirme que c'est bien toi pour voir une valeur enregistrée",
+  "krhRevealAuthFailed": "Ton identité n'a pas été vérifiée. La valeur reste masquée.",
+  "krhRevealLoading": "Demande de la valeur…",
+  "krhRevealCountdown": "Se masque dans {seconds} s",
+  "@krhRevealCountdown": {
+    "placeholders": {
+      "seconds": {
+        "type": "int"
+      }
+    }
+  },
+  "krhRevealHide": "Masquer",
+  "krhRevealCopied": "Copié. Il sera effacé du presse-papiers dans 30 s.",
+  "krhRevealHiddenHint": "Valeur masquée",
+  "krhRevealVisibleLabel": "Valeur visible",
+  "krhRevealBlocked": "La valeur ne peut pas être affichée en http hors de ton réseau privé. Utilise HTTPS.",
+  "krhRevealTooMany": "Trop de requêtes d'affilée. Attends quelques secondes.",
+  "krhRevealNotFound": "Cette valeur n'est plus dans le .env du profil.",
+  "krhRevealFailed": "Impossible de demander la valeur.",
+  "krhHttpPublicLine": "Connexion http non chiffrée : ce qui transite peut être lu en chemin.",
+  "krhPrivateHttpInfo": "Connexion http dans un réseau privé.",
+  "tplSshRunInHint": "Facultatif et désactivé par défaut : le terminal est un shell normal. Si tu choisis Herdr ou tmux, il démarre tout seul à la connexion et garde tes processus en vie si le réseau coupe. Les agents ont leur propre section.",
+  "tplAgentsAddSshTitle": "Ajoute une connexion SSH",
+  "tplAgentsAddSshBody": "Les agents sont lus sur le serveur par SSH. Ajoute une connexion pour les voir ici.",
+  "tplAgentsPickAgent": "Choisis un agent pour voir son écran",
+  "tplAgentsServerLabel": "Serveur",
+  "tplAgentsProcTitle": "En cours sans Herdr : {names}",
+  "@tplAgentsProcTitle": {
+    "placeholders": {
+      "names": {
+        "type": "String"
+      }
+    }
+  },
+  "tplAgentsProcHint": "Ouvre-les avec Herdr pour les contrôler d’ici.",
+  "navAgents": "Agents",
+  "navSettingsSearch": "Rechercher dans les réglages…",
+  "navGroupConnection": "Connexion",
+  "navGroupSecurityData": "Sécurité et données",
+  "navGroupLook": "Apparence",
+  "navGroupAlerts": "Alertes",
+  "navGroupServer": "Serveur",
+  "navGroupHelp": "Aide",
+  "navSshStartHint": "Ajoutez un profil SSH pour utiliser le terminal ; Agents apparaîtra alors dans le dock",
+  "navMaintenanceData": "Données, sauvegarde et nettoyage",
+  "navCharactersPets": "Mascottes et personnages",
+  "navAppearanceMore": "Dock, langue et plus",
+  "navAlertsSub": "Alertes et arrière-plan",
+  "navModelsProviders": "Modèles et fournisseurs",
+  "navAboutHelp": "À propos et aide",
+  "navEditProfile": "Modifier le profil",
+  "navProfileActive": "Actif",
+  "navActiveProfileNotice": "Profil actif : {name}",
+  "navFollowsActiveHint": "Suit le profil actif ; l’ouvrir rend ce profil actif",
+  "navSwitchProfile": "Changer de profil",
+  "navSecIntegrations": "Intégrations",
+  "navSecWork": "Travail",
+  "navSecAgent": "Agent",
+  "navAdvanced": "Avancé",
+  "navAdvancedHint": "Voix, clés, journaux et plus",
+  "navMcp": "MCP",
+  "navBotCard": "Fiche du bot",
+  "navBotCardSub": "Maintenant, salons, dupliquer et supprimer",
+  "psfMakeActive": "Rendre actif",
+  "psfViewProfile": "Voir le profil",
+  "psfSearchHint": "Rechercher un profil",
+  "psfNoMatch": "Aucun profil ne correspond",
+  "bstGenerateButton": "Générer",
+  "bstGenerateWhy": "Il n’existe pas encore de chemin sûr entre l’éditeur et l’IA du profil : la demande ouvrirait un tour de conversation complet. Pour l’instant, le personnage se crée à la main ; la validation de la réponse est déjà prête.",
+  "pghOpenDetail": "Ouvrir les détails",
+  "pghFactVersion": "Version",
+  "pghFactOrigin": "Origine",
+  "pghFactState": "État",
+  "pghFactAuth": "Authentification",
+  "pghFactTransport": "Transport",
+  "pghFactAddress": "Adresse",
+  "pghFactTools": "Outils",
+  "pghStateOn": "Actif",
+  "pghStateOff": "Inactif",
+  "pghHubButton": "Hub de plugins",
+  "pghHubTitle": "Hub de plugins",
+  "pghHubSubtitle": "Parcourir le catalogue de plugins du serveur et installer",
+  "pghHubIntro": "Catalogue de plugins sélectionnés du serveur. Chaque plugin s'installe désactivé : activez-le quand vous voulez.",
+  "pghNoCatalogTitle": "Pas de catalogue de plugins",
+  "pghNoCatalogBody": "Ce serveur ne publie pas de catalogue de plugins. Si vous connaissez le dépôt, installez depuis Git ou owner/repo dans Extensions.",
+  "pghUpdatesGroup": "Mises à jour disponibles",
+  "pghInstalledDisabled": "Installé désactivé : activez-le depuis la liste quand vous voulez.",
+  "ssxTitleSecurity": "Sécurité",
+  "ssxTitleChat": "Chat",
+  "ssxTitleAppearance": "Apparence, dock et langue",
+  "ssxTitleData": "Données et sauvegardes",
+  "ssxTitleSystem": "Maintenance",
+  "ssxTitleConnection": "Connexion",
+  "ssxTitleAbout": "À propos",
+  "hdpSearchHint": "Chercher des agents ou des dossiers",
+  "hdpSearchClear": "Effacer la recherche",
+  "hdpFocused": "Au premier plan",
+  "hdpShellOnly": "Terminaux seulement",
+  "hdpWorkspaceAgents": "{count, plural, =1{1 agent} other{{count} agents}}",
+  "@hdpWorkspaceAgents": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "hdpWorkspaceMenu": "Options de l’espace {name}",
+  "@hdpWorkspaceMenu": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "hdpNoMatches": "Rien ne correspond à la recherche.",
+  "hdpUpdatedNow": "Mis à jour à l’instant",
+  "hdpUpdatedSeconds": "Mis à jour il y a {seconds} s",
+  "@hdpUpdatedSeconds": {
+    "placeholders": {
+      "seconds": {
+        "type": "int"
+      }
+    }
+  },
+  "hdpUpdatedAgo": "Mis à jour il y a {duration}",
+  "@hdpUpdatedAgo": {
+    "placeholders": {
+      "duration": {
+        "type": "String"
+      }
+    }
+  },
+  "hdpStarting": "Démarrage…",
+  "hdpStartingHint": "Un agent lent peut mettre jusqu’à une demi-minute. Inutile d’attendre ici.",
+  "hdpStartFailedTitle": "{agent} n’a pas démarré",
+  "@hdpStartFailedTitle": {
+    "placeholders": {
+      "agent": {
+        "type": "String"
+      }
+    }
+  },
+  "hdpStartFailedBody": "L’espace est créé, mais l’agent n’est pas apparu à temps.",
+  "hdpStartReason": "Ce qu’a dit le serveur",
+  "hdpRetry": "Réessayer",
+  "hdpOpenTerminal": "Ouvrir dans le terminal",
+  "hdpDismiss": "Ignorer",
+  "hdpOpenWithHerdr": "Ouvrir avec herdr",
+  "hdpNotInstalled": "Non installé",
+  "hdpInstallNote": "Les agents grisés ne sont pas sur le serveur. Installez-les là-bas puis revérifiez.",
+  "hdpDetectFailed": "Impossible de vérifier quels agents sont installés ; tous sont affichés.",
+  "hdpNoneInstalled": "Aucun agent compatible n’est installé sur ce serveur.",
+  "hdpRefreshAgents": "Revérifier",
+  "hdpChooseFolder": "Choisir un dossier",
+  "hdpNameLabel": "Nom de l’espace (facultatif)",
+  "hdpNameHint": "Par défaut, le nom du dossier",
+  "hdpStart": "Démarrer",
+  "hdpConfirmBody": "{agent} dans {folder} sur {server}.",
+  "@hdpConfirmBody": {
+    "placeholders": {
+      "agent": {
+        "type": "String"
+      },
+      "folder": {
+        "type": "String"
+      },
+      "server": {
+        "type": "String"
+      }
+    }
+  },
+  "hdpFolderTitle": "Dossier",
+  "hdpFolderHome": "Dossier personnel",
+  "hdpFolderFavorites": "Épinglés",
+  "hdpFolderRunning": "Où des agents tournent déjà",
+  "hdpFolderPin": "Épingler le dossier",
+  "hdpFolderUnpin": "Désépingler le dossier",
+  "hdpFolderFilter": "Filtrer les dossiers",
+  "hdpFolderEmpty": "Aucun dossier ici.",
+  "hdpFolderGit": "Dépôt git",
+  "hdpFolderCreate": "Créer un dossier ici",
+  "hdpFolderNameLabel": "Nom du dossier",
+  "hdpFolderUse": "Choisir ce dossier",
+  "hdpFolderUp": "Dossier parent",
+  "hdpFolderHidden": "Afficher ou masquer les dossiers cachés",
+  "hdpFolderUnreadable": "Impossible de lire ce dossier.",
+  "hdpFolderMore": "Affichage des {count} premiers.",
+  "@hdpFolderMore": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "hdpFolderAdvanced": "Saisir un chemin",
+  "hdpFolderCheck": "Utiliser ce chemin",
+  "hdpFolderNotFound": "Ce chemin n’est pas un dossier du serveur.",
+  "hdpFolderNameEmpty": "Saisissez un nom.",
+  "hdpFolderNameSlash": "Le nom ne peut pas contenir / ni \\.",
+  "hdpFolderNameDots": "Le nom ne peut pas être . ni ..",
+  "hdpFolderNameControl": "Le nom contient des caractères de contrôle.",
+  "hdpFolderNameLong": "Le nom est trop long.",
+  "hdpFolderCreateFailed": "Impossible de créer le dossier.",
+  "hdpFolderPathLabel": "Chemin : {path}",
+  "@hdpFolderPathLabel": {
+    "placeholders": {
+      "path": {
+        "type": "String"
+      }
+    }
+  },
+  "hdpJumpToEnd": "Aller à la fin",
+  "hdpBlockedBody": "Attend une réponse. Regardez l’écran avant de confirmer : Entrée choisit l’option sélectionnée, qui n’est pas toujours « oui ».",
+  "hdpKeyEnterMarked": "Entrée (sélection)",
+  "hdpKeyEscCancel": "Échap (annuler)",
+  "hdpTerminalLiveTitle": "Un terminal est déjà ouvert",
+  "hdpTerminalLiveBody": "La commande y sera saisie. Si Herdr, un éditeur ou un autre programme y tourne, il recevra ce texte. Vous pouvez aussi la copier.",
+  "hdpTerminalType": "Le saisir là",
+  "hdpTerminalCopy": "Copier la commande",
+  "hdpSessionsTitle": "Sessions",
+  "hdpTabShell": "Shell",
+  "hdpTabTmux": "Tmux",
+  "hdpTabHerdr": "Herdr",
+  "hdpTabRecent": "Récents",
+  "hdpShellRow": "Shell normal",
+  "hdpShellBody": "Le terminal reste tel quel.",
+  "hdpNoSessions": "Aucune session pour l’instant.",
+  "hdpNoRecent": "Rien de récent qui existe encore.",
+  "hdpSessionWindows": "{count, plural, =1{1 fenêtre} other{{count} fenêtres}}",
+  "@hdpSessionWindows": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "hdpSessionInUse": "Utilisée",
+  "hdpSessionRunning": "En cours",
+  "hdpSessionStopped": "Arrêtée",
+  "hdpSessionDefault": "Session par défaut",
+  "hdpSessionsFailed": "Impossible de lire les sessions.",
+  "lasMenuLearn": "Apprendre une skill",
+  "lasTitle": "Apprendre une skill",
+  "lasSubmit": "Apprendre",
+  "lasFieldLabel": "Que doit apprendre l'agent ?",
+  "lasFieldHelp": "Colle une URL ou un dépôt, ou décris la tâche.",
+  "lasAgentNote": "L'agent du profil s'en chargera avec ses propres outils, dans un nouveau chat. Cela peut prendre du temps et consommer des tokens. Cette app ne télécharge rien.",
+  "lasErrEmpty": "Écris ce que l'agent doit apprendre.",
+  "lasErrTooLong": "C'est trop long. Garde seulement l'essentiel.",
+  "lasLinkHttp": "Il y a un lien http, non chiffré. Préfère https. On demande à l'agent de te consulter avant de l'ouvrir.",
+  "lasLinkOdd": "Il y a un lien avec un schéma inhabituel (pas https). On demande à l'agent de te consulter avant de l'ouvrir.",
+  "lasChatTitle": "Apprendre une skill",
+  "pfuManageProfiles": "Gérer les profils",
+  "pfuManageProfilesSub": "Créer, cloner, renommer et supprimer les profils du serveur",
+  "pfuMakeActive": "Rendre actif",
+  "pfuOpenChat": "Ouvrir le chat",
+  "pfuClone": "Cloner",
+  "pfuOpenHint": "Ouvrir le profil",
+  "navAllSettings": "Tous les réglages",
+  "navAllSettingsSub": "Voix, dock, sauvegardes et toutes les autres options",
+  "ssxAllBadge": "Liste complète",
+  "ssxAllSub": "La liste complète, tout réuni",
+  "exuTabsLabel": "Sections",
+  "exuAddTooltip": "Ajouter ou explorer",
+  "exuMenuSkillHub": "Explorer le Skill Hub",
+  "exuMenuPluginHub": "Explorer le Hub de plugins",
+  "exuMenuInstallSource": "Installer depuis Git ou owner/repo",
+  "exuMenuMcpCatalog": "Explorer le catalogue MCP",
+  "exuMoreTools": "Outils",
+  "exuMoreServer": "Webhooks et état du serveur",
+  "exuHubSkillTitle": "Skill Hub",
+  "exuToolsScopeNote": "Les groupes d’outils valent pour tout le serveur, pas pour un seul profil.",
+  "exuSearchSkills": "Rechercher des skills",
+  "exuSearchPlugins": "Rechercher des plugins",
+  "exuSearchMcp": "Rechercher des serveurs MCP",
+  "agfTrayTitle": "Ont besoin de vous",
+  "agfReasonQuestion": "Question",
+  "agfReasonApproval": "Approbation",
+  "agfReasonWaiting": "Vous attend",
+  "agfStateAnswer": "Attend une réponse",
+  "agfStateWorking": "Au travail…",
+  "agfStateFree": "Libre",
+  "agfStateDone": "Terminé",
+  "agfDoneTitle": "Terminés ({count})",
+  "@agfDoneTitle": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "agfDoneExpand": "Afficher les terminés",
+  "agfDoneCollapse": "Masquer les terminés",
+  "agfServerPick": "Changer de serveur",
+  "agfCopyPath": "Copier le chemin",
+  "agfLaunchedHere": "↳ lancé depuis Console",
+  "agfAskCommand": "Commande",
+  "agfOptionSemantics": "Répondre {number} : {label}",
+  "@agfOptionSemantics": {
+    "placeholders": {
+      "number": {
+        "type": "int"
+      },
+      "label": {
+        "type": "String"
+      }
+    }
+  },
+  "agfSending": "Envoi…",
+  "agfSent": "Envoyé ✓",
+  "agfSendFailed": "Échec de l'envoi · Réessayer",
+  "agfAskKeyHint": "Seule la touche du numéro choisi est envoyée.",
+  "agfKeysMenu": "Touches rapides",
+  "agfShellsTitle": "Terminaux seuls ({count})",
+  "@agfShellsTitle": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "agfShowTerminal": "Afficher l'écran du terminal",
+  "agfShowConversation": "Afficher la conversation",
+  "agfNoTranscript": "Écran du terminal : la conversation de cet agent n'a pas pu être retrouvée avec certitude.",
+  "agfLoadEarlier": "Charger les messages précédents",
+  "agfThinking": "Réflexion",
+  "agfStepsMore": "{count, plural, =1{1 étape de plus} other{{count} étapes de plus}}",
+  "@agfStepsMore": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "agfStepRunning": "en cours",
+  "agfStepDone": "terminé",
+  "agfStepFailed": "échoué",
+  "nrdAlertsTitle": "Quoi signaler",
+  "nrdMasterTitle": "Afficher les alertes",
+  "nrdMasterSub": "Interrupteur général de toutes les alertes",
+  "nrdQuestionsTitle": "Questions",
+  "nrdQuestionsSub": "Quand Hermes te pose une question et attend ta réponse",
+  "nrdDoneTitle": "Terminé",
+  "nrdDoneSub": "Quand Hermes a fini de répondre",
+  "pekCronSwitchTitle": "Cron",
+  "pekCronSwitchSub": "Quand une tâche planifiée se termine ou échoue",
+  "pekKanbanSwitchTitle": "Kanban",
+  "pekKanbanSwitchSub": "Quand une carte se termine, se bloque ou demande de l’attention",
+  "cswRailLabel": "Agents",
+  "cswAgentFace": "{agent}, {count, plural, one {1 conversation} other {{count} conversations}}",
+  "cswAgentCurrent": "actuelle : {title}",
+  "cswChatCount": "{count, plural, one {1 chat} other {{count} chats}}",
+  "cswChatCountMore": "{count}+ chats",
+  "cswAgentFaceMore": "{agent}, {count}+ conversations",
+  "cswNoChats": "Aucune conversation chargée",
+  "cswNewChatWith": "Nouvelle conversation avec {agent}",
+  "cswSeeMore": "Voir plus ({count})",
+  "cswClosePanel": "Fermer les conversations de l'agent",
+  "cswCurrentChat": "Conversation ouverte",
+  "qrcConnecting": "Connexion…",
+  "nacLinkTitle": "Connecter {name}",
+  "@nacLinkTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "nacLinkPreparing": "Préparation de la connexion…",
+  "nacLinkIntro": "{name} s’ouvre dans votre navigateur. S’il demande un code, saisissez celui-ci :",
+  "@nacLinkIntro": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "nacLinkIntroNoBrowser": "Ouvrez {name} dans un navigateur et saisissez ce code :",
+  "@nacLinkIntroNoBrowser": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "nacLinkCodeLabel": "Votre code",
+  "nacLinkCopyCode": "Copier le code",
+  "nacLinkCodeCopied": "Code copié",
+  "nacLinkExpiresIn": "Le code expire dans {time}",
+  "@nacLinkExpiresIn": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "nacLinkOpen": "Ouvrir {name}",
+  "@nacLinkOpen": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "nacLinkOpenAgain": "Rouvrir",
+  "nacLinkOpenFailed": "Impossible d’ouvrir le navigateur. Copiez le code et connectez-vous depuis un autre appareil.",
+  "nacLinkAddressUnvetted": "L’app n’ouvre les pages de {name} que sur son propre site. Vérifiez cette adresse avant de la visiter.",
+  "@nacLinkAddressUnvetted": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "nacLinkCopyAddress": "Copier l’adresse",
+  "nacLinkAddressCopied": "Adresse copiée",
+  "nacCardExpired": "Session expirée, reconnectez-vous",
+  "nacLinkCheckNow": "Vérifier maintenant",
+  "nacLinkWaiting": "En attente de votre validation dans le navigateur…",
+  "nacLinkApprovedTitle": "{name} connecté",
+  "@nacLinkApprovedTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "nacLinkApprovedAs": "Connecté en tant que {email}",
+  "@nacLinkApprovedAs": {
+    "placeholders": {
+      "email": {
+        "type": "String"
+      }
+    }
+  },
+  "nacLinkApprovedBody": "Ses modèles sont maintenant disponibles dans le sélecteur.",
+  "nacLinkDone": "Terminé",
+  "nacLinkDeniedTitle": "Accès refusé",
+  "nacLinkDeniedBody": "L’accès n’a pas été accordé dans le navigateur. Vous pouvez réessayer.",
+  "nacLinkExpiredTitle": "Le code a expiré",
+  "nacLinkExpiredBody": "Demandez-en un nouveau et terminez dans le navigateur en quelques minutes.",
+  "nacLinkCancelledTitle": "Connexion annulée",
+  "nacLinkCancelledBody": "Rien n’a été enregistré.",
+  "nacLinkFailedTitle": "La connexion n’a pas abouti",
+  "nacLinkFailedBody": "Le serveur n’a pas pu la terminer. Réessayez.",
+  "nacLinkFailedRetryAfter": "Le service demande une pause. Réessayez dans {time}.",
+  "@nacLinkFailedRetryAfter": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "nacLinkFailedNoRetry": "Ce serveur ne peut pas terminer la connexion pour le moment.",
+  "nacLinkOfflineTitle": "Serveur injoignable",
+  "nacLinkOfflineBody": "Vérifiez votre réseau et réessayez.",
+  "nacLinkUnsupportedTitle": "Indisponible sur ce serveur",
+  "nacLinkUnsupportedBody": "Cette version de Hermes ne permet pas de connecter des comptes depuis l’application. Mettez le serveur à jour ou connectez-le depuis son terminal.",
+  "nacLinkReadOnlyTitle": "Connexion en lecture seule",
+  "nacLinkReadOnlyBody": "Depuis cette connexion, impossible de se connecter ou de changer de compte.",
+  "nacLinkTryAgain": "Réessayer",
+  "nacDurationSeconds": "{count} s",
+  "@nacDurationSeconds": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "nacDurationMinutes": "{count} min",
+  "@nacDurationMinutes": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "nacCardPitch": "Connectez-vous avec votre compte Nous Portal pour utiliser ses modèles sur ce Hermes. La connexion est conservée sur le serveur.",
+  "nacCardConnect": "Se connecter avec Nous Portal",
+  "nacCardConnected": "Connecté",
+  "nacCardConnectedTier": "Connecté · {tier}",
+  "@nacCardConnectedTier": {
+    "placeholders": {
+      "tier": {
+        "type": "String"
+      }
+    }
+  },
+  "nacCardValidUntil": "valide jusqu’au {date}",
+  "@nacCardValidUntil": {
+    "placeholders": {
+      "date": {
+        "type": "String"
+      }
+    }
+  },
+  "nacCardNotConnected": "Non connecté",
+  "nacCardFreeTier": "Offre gratuite, sans compte",
+  "nacCardUnsupported": "Indisponible sur ce serveur",
+  "nacCardUnsupportedBody": "Cette version de Hermes ne propose pas de connecter des comptes depuis l’application.",
+  "nacCardManage": "Options du compte",
+  "nacCardReconnect": "Changer de compte",
+  "nacCardDisconnect": "Déconnecter",
+  "nacCardDisconnectTitle": "Déconnecter {name} ?",
+  "@nacCardDisconnectTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "nacCardDisconnectBody": "L’identifiant enregistré sur le serveur sera supprimé. Ses modèles resteront indisponibles jusqu’à ce que vous reconnectiez le compte.",
+  "nacCardDisconnected": "{name} déconnecté",
+  "@nacCardDisconnected": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "nacCardStillConnected": "Le serveur indique toujours {name} comme connecté.",
+  "@nacCardStillConnected": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "nacCardUnlockReason": "Déconnecter le compte {name}",
+  "@nacCardUnlockReason": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "nacScreenTitle": "Compte Nous Portal",
+  "nacScreenBody": "Avec votre compte Nous Portal, ce Hermes utilise les modèles de votre abonnement. L’identifiant reste sur le serveur, pas sur le téléphone.",
+  "nacScreenLoadFailed": "Impossible de lire l’état du compte.",
+  "nacScreenManageModels": "Modèles et fournisseurs",
+  "nacSettingsSubtitle": "Connecter ou déconnecter votre compte",
+  "nacOnboardingOffer": "Connectez votre compte Nous Portal pour utiliser ses modèles",
+  "nacSheetConnect": "Connecter Nous Portal",
+  "nacSheetNoAccountHint": "Aucun modèle disponible. Connectez un compte pour utiliser ceux de Nous Portal.",
+  "nacContinueWithNous": "Continuer avec Nous",
+  "nacContinueWithProvider": "Continuer avec {name}",
+  "@nacContinueWithProvider": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "lwpAhora": "Maintenant",
+  "lwpChats": "Discussions",
+  "lwpCron": "Cron",
+  "lwpTasks": "Tâches",
+  "lwpNewChat": "Nouvelle conversation",
+  "lwpNewChatLine": "Écrire ou dicter",
+  "lwpNewChatSetup": "Connectez d’abord Hermes",
+  "lwpVoice": "Dicter",
+  "lwpAgent": "Hermes",
+  "lwpNeedsPermission": "A besoin de ta permission",
+  "lwpAsksYou": "Te pose une question",
+  "lwpNeedsYou": "A besoin de toi",
+  "lwpAllow": "Autoriser",
+  "lwpDeny": "Refuser",
+  "lwpOpen": "Ouvrir",
+  "lwpWorking": "En cours",
+  "lwpThinking": "Réfléchit",
+  "lwpResponding": "Répond",
+  "lwpStartedAt": "depuis {time}",
+  "@lwpStartedAt": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "lwpCalmTitle": "Personne n’a besoin de toi",
+  "lwpCalmEnd": "tout est calme",
+  "lwpLastFinished": "Dernière : {title} · {time}",
+  "@lwpLastFinished": {
+    "placeholders": {
+      "title": {
+        "type": "String"
+      },
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "lwpOffline": "Hors ligne",
+  "lwpOfflineTitle": "{instance} ne répond pas",
+  "@lwpOfflineTitle": {
+    "placeholders": {
+      "instance": {
+        "type": "String"
+      }
+    }
+  },
+  "lwpOfflineTitleGeneric": "Le serveur ne répond pas",
+  "lwpLastKnown": "dernier état connu",
+  "lwpSetupTitle": "Configurer Hermes",
+  "lwpSetupLine": "Connecte ton instance pour voir ici qui a besoin de toi.",
+  "lwpSetupButton": "Commencer",
+  "lwpChatsWaiting": "{count, plural, =0{à jour} =1{1 t’attend} other{{count} t’attendent}}",
+  "@lwpChatsWaiting": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "lwpChatsRunning": "{count, plural, =1{1 en cours} other{{count} en cours}}",
+  "@lwpChatsRunning": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "lwpChatsEmptyTitle": "Pas encore de discussions",
+  "lwpChatsEmptyLine": "Elles apparaîtront ici une fois connecté.",
+  "lwpChatWaits": "T’attend",
+  "lwpChatWriting": "Écrit…",
+  "lwpCronEmptyTitle": "Rien de programmé",
+  "lwpCronEmptyLine": "Programme la première depuis l’app.",
+  "lwpCronPaused": "en pause",
+  "lwpCronFailed": "a échoué",
+  "lwpCronRunning": "en cours",
+  "lwpCronNoNext": "pas de prochaine exécution",
+  "lwpInMinutes": "{count, plural, =1{dans 1 min} other{dans {count} min}}",
+  "@lwpInMinutes": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "lwpInHours": "dans {hours} h {minutes} min",
+  "@lwpInHours": {
+    "placeholders": {
+      "hours": {
+        "type": "int"
+      },
+      "minutes": {
+        "type": "int"
+      }
+    }
+  },
+  "lwpInDays": "{count, plural, =1{dans 1 jour} other{dans {count} jours}}",
+  "@lwpInDays": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "lwpToday": "Aujourd’hui",
+  "lwpTomorrow": "Demain",
+  "lwpYesterday": "Hier",
+  "lwpDayTime": "{day} · {time}",
+  "@lwpDayTime": {
+    "placeholders": {
+      "day": {
+        "type": "String"
+      },
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "lwpAgoMinutes": "{count, plural, =0{à l’instant} =1{il y a 1 min} other{il y a {count} min}}",
+  "@lwpAgoMinutes": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "lwpAgoHours": "{count, plural, =1{il y a 1 h} other{il y a {count} h}}",
+  "@lwpAgoHours": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "lwpTasksEmptyTitle": "Pas de tableau",
+  "lwpTasksEmptyLine": "Il apparaîtra une fois connecté.",
+  "lwpTasksRunning": "En cours",
+  "lwpTasksAttention": "T’attendent",
+  "lwpTasksPending": "À faire",
+  "lwpTasksNext": "suivante · {title}",
+  "@lwpTasksNext": {
+    "placeholders": {
+      "title": {
+        "type": "String"
+      }
+    }
+  },
+  "lwpTasksInProgressUnit": "en cours",
+  "lwpTasksPendingCount": "{count, plural, =1{1 à faire} other{{count} à faire}}",
+  "@lwpTasksPendingCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "lwpTasksAttentionCount": "{count, plural, =1{1 t’attend} other{{count} t’attendent}}",
+  "@lwpTasksAttentionCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "lwpA11yNeeds": "{name} a besoin de ta permission : {what}",
+  "@lwpA11yNeeds": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "what": {
+        "type": "String"
+      }
+    }
+  },
+  "lwpA11yAsks": "{name} te demande : {what}",
+  "@lwpA11yAsks": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "what": {
+        "type": "String"
+      }
+    }
+  },
+  "lwpA11yWorking": "{name} travaille : {what}",
+  "@lwpA11yWorking": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "what": {
+        "type": "String"
+      }
+    }
+  },
+  "lwpA11yOffline": "Hors ligne depuis {time}",
+  "@lwpA11yOffline": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "lwpA11ySetup": "Configure Hermes pour voir ici qui a besoin de toi",
+  "lwpA11yNextJob": "Prochaine tâche programmée : {name}, {when}",
+  "@lwpA11yNextJob": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "when": {
+        "type": "String"
+      }
+    }
+  },
+  "lwpA11yChats": "{count, plural, =0{Aucune discussion} =1{1 discussion : {first}} other{{count} discussions ; la première, {first}}}",
+  "@lwpA11yChats": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      },
+      "first": {
+        "type": "String"
+      }
+    }
+  },
+  "lwpA11yTasks": "Tâches : {running} en cours, {attention} t’attendent, {pending} à faire",
+  "@lwpA11yTasks": {
+    "placeholders": {
+      "running": {
+        "type": "int"
+      },
+      "attention": {
+        "type": "int"
+      },
+      "pending": {
+        "type": "int"
+      }
+    }
+  },
+  "lwpA11yOpenChat": "Ouvrir {title}",
+  "@lwpA11yOpenChat": {
+    "placeholders": {
+      "title": {
+        "type": "String"
+      }
+    }
+  },
+  "lwpA11yOpenJob": "Ouvrir la tâche programmée {name}",
+  "@lwpA11yOpenJob": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "lwpA11yNewChat": "Nouvelle conversation avec Hermes",
+  "lwpA11yVoice": "Nouvelle conversation vocale",
+  "lwpA11yAllow": "Autoriser {name}",
+  "@lwpA11yAllow": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "lwpA11yDeny": "Refuser la demande de {name}",
+  "@lwpA11yDeny": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "lwpA11yOpenApp": "Ouvrir Hermes Console",
+  "nacNousWriteAddress": "Saisir l’adresse à la main",
+  "nacNousWaitingAddress": "En attente de ton adresse…",
+  "nacNousOpenPortal": "Ouvrir Nous Portal",
+  "nacNousPasteAddress": "Coller l'adresse",
+  "nacNousPasteNone": "Aucune adresse Nous Cloud copiée",
+  "subagentUiStatusUnconfirmed": "Non confirmé",
+  "cronNoticeAutomatic": "Automatique",
+  "cronNoticeAll": "Tous",
+  "cronNoticeFailuresOnly": "Échecs uniquement",
+  "cronNoticeOff": "Désactivé",
+  "cronNoticeAutomaticHint": "Automatique signale tous les échecs et au maximum une réussite par tâche toutes les 60 minutes.",
+  "cronNoticeInherit": "Suivre le mode des réglages",
+  "cronNoticeAutomaticRepliesHint": "Seul Tous signale aussi les réponses aux tours internes. Les échecs et les demandes d’attention restent signalés.",
+  "biComposerInterruptHint": "Interrompre et envoyer…",
+  "biComposerSteerHint": "Guider l’agent…",
+  "biQueueThisMessageHint": "Appuyez longuement pour mettre ce message en attente",
+  "biInterruptFailedQueued": "Impossible d’interrompre ; votre message reste en attente",
+  "subagentPillAgents": "Agents",
+  "subagentPillWorking": "En cours",
+  "subagentPillRunningTool": "Exécution de {tool}",
+  "@subagentPillRunningTool": {
+    "placeholders": {
+      "tool": {
+        "type": "String"
+      }
+    }
+  },
+  "exuToolGroupsTitle": "Groupes d’outils",
+  "exuToolGroupsSubtitle": "Fonctions intégrées à Hermes que l’agent peut utiliser",
+  "exuBuiltinToolsEmpty": "Aucun groupe d’outils intégré disponible",
+  "exuBuiltinToolsEmptyBody": "Gérez les serveurs MCP et leurs outils dans l’onglet MCP des extensions.",
+  "turnLineEdited": "{count, plural, one{A modifié {count} fichier} other{A modifié {count} fichiers}}",
+  "turnLineRead": "{count, plural, one{A lu {count} fichier} other{A lu {count} fichiers}}",
+  "turnLineRan": "{count, plural, one{A exécuté {count} commande} other{A exécuté {count} commandes}}",
+  "turnLineSearchedFiles": "{count, plural, one{A cherché dans les fichiers} other{A cherché dans les fichiers {count} fois}}",
+  "turnLineSearchedWeb": "{count, plural, one{A cherché sur le web} other{A cherché sur le web {count} fois}}",
+  "turnLineOpened": "{count, plural, one{A ouvert {count} page} other{A ouvert {count} pages}}",
+  "turnLineUsedTools": "{count, plural, one{A utilisé {count} outil} other{A utilisé {count} outils}}",
+  "turnLineFailed": "{count, plural, one{{count} échec} other{{count} échecs}}",
+  "turnLineAgents": "{count, plural, one{{count} agent} other{{count} agents}}",
+  "turnLineMore": "+{count} de plus",
+  "turnLineThought": "A réfléchi",
+  "turnLineDelegated": "{count, plural, one{A délégué {count} tâche} other{A délégué {count} tâches}}",
+  "turnLineReadCalls": "{count, plural, one{A lu {count} fois} other{A lu {count} fois}}",
+  "turnLineEditCalls": "{count, plural, one{A modifié {count} fois} other{A modifié {count} fois}}",
+  "turnLineExecutedCode": "{count, plural, one{A exécuté du code} other{A exécuté du code {count} fois}}",
+  "turnLineSteps": "{count, plural, =1{1 étape} other{{count} étapes}}",
+  "@turnLineSteps": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "msvModelLoading": "Chargement du modèle…",
+  "msvModelUnavailable": "Modèle indisponible",
+  "msvProviderNoUsage": "Aucune donnée de ce fournisseur",
+  "msvUsageAvailable": "Quota disponible",
+  "msvUsageNearLimit": "Limite bientôt atteinte",
+  "msvCapabilityUnavailable": "Indisponible pour ce modèle",
+  "queueSheetTitle": "En attente",
+  "queuePillCount": "{count} en attente",
+  "@queuePillCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "queuePillPaused": "En pause",
+  "activitySheetTitle": "Activité",
+  "chatDelegatesSheetLive": "En arrière-plan · {clock}",
+  "chatDelegatesSheetDone": "Délégué · {clock}",
+  "delegatedCapsuleRunning": "{count, plural, =1{Délégué à 1 sous-agent} other{Délégué à {count} sous-agents}} · {clock} · {done}/{count}",
+  "delegatedCapsuleDone": "{count, plural, =1{✓ 1 sous-agent terminé} other{✓ {count} sous-agents terminés}} · {clock}",
+  "delegatedCapsuleFinished": "{count, plural, =1{✓ 1 sous-agent terminé} other{✓ {count} sous-agents terminés}}",
+  "delegatedCapsuleRunningIdle": "{count, plural, =1{1 sous-agent en cours} other{{count} sous-agents en cours}}",
+  "delegatedChildNoData": "aucune donnée",
+  "activityProcessesTitle": "Processus en arrière-plan",
+  "activityAgentCount": "{count, plural, one{1 agent} other{{count} agents}}",
+  "@activityAgentCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "activityProcessCount": "{count, plural, one{1 processus} other{{count} processus}}",
+  "@activityProcessCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "activityStop": "Arrêter",
+  "activityWaitingAgents": "En attente de {count} sous-agents",
+  "@activityWaitingAgents": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "adkTitle": "Autorisation d’exécuter",
+  "adkOnce": "Autoriser cette fois",
+  "adkSession": "Dans cette session",
+  "adkAlways": "Toujours ce type de commande",
+  "adkViewFull": "Voir tout",
+  "adkAlwaysConfirm": "Toujours autoriser ce type de commande dans ce profil",
+  "adkSending": "Envoi de la décision…",
+  "adkSendError": "Impossible d’envoyer la décision. Réessayez.",
+  "adkWaiting": "En attente de votre autorisation",
+  "adkAllowed": "Autorisé",
+  "adkDenied": "Refusé",
+  "adkAlwaysHint": "Ce type de commande dans tous les chats de ce profil. L’autorisation est enregistrée sur le serveur.",
+  "batTitle": "Batterie",
+  "batStateUnrestricted": "Sans restriction",
+  "batStateOptimized": "Optimisée",
+  "batStateRestricted": "Restreinte en arrière-plan",
+  "batOptimizedBody": "Android peut retarder les notifications quand le téléphone est en veille. Sur Samsung, vérifie aussi Batterie → Applications en veille. Pour qu'elles arrivent aussitôt, choisis « Sans restriction ».",
+  "batRestrictedBody": "Android restreint cette app en arrière-plan : les notifications peuvent ne pas arriver. Retire la restriction dans l'utilisation de la batterie de l'app.",
+  "batOpenSettings": "Ouvrir les réglages de batterie",
+  "batPromptTitle": "Gardez Console connectée en arrière-plan",
+  "batPromptBody": "Android peut couper la connexion lorsque vous quittez Console. Dans les paramètres de batterie, autorisez une utilisation sans restriction.",
+  "batPromptNotNow": "Pas maintenant",
+  "batPromptRestore": "Afficher à nouveau le rappel sur l’accueil",
+  "batPushBatteryNote": "Android peut retarder les notifications ou couper la connexion en arrière-plan. Dans les paramètres de batterie, autorisez une utilisation sans restriction. Cette étape est facultative.",
+  "chatLiveDelegating": "{count, plural, =1{Délégation d’1 tâche} other{Délégation de {count} tâches}}",
+  "chatLiveWaitingDelegates": "En attente des sous-agents",
+  "chatLiveCommands": "{count, plural, one{{count} commande} other{{count} commandes}}",
+  "chatLiveAgents": "{count, plural, one{{count} sous-agent} other{{count} sous-agents}}",
+  "chatLiveReady": "{count, plural, one{{count} prêt} other{{count} prêts}}",
+  "chatLiveSteps": "{count, plural, one{{count} étape} other{{count} étapes}}",
+  "assistRowTitle": "Assistant numérique",
+  "assistRowOn": "C’est votre assistant numérique : l’invoquer ouvre une nouvelle discussion avec la voix prête",
+  "assistRowOff": "Choisissez Console comme assistant numérique pour ouvrir une nouvelle discussion vocale à l’invocation. Il ne lit jamais l’écran.",
+  "subagentHistoricalUnavailable": "La conversation enregistrée ne conserve plus le détail de ces sous-agents.",
+  "lflHapticsTitle": "Retour haptique",
+  "lflHapticsSubtitle": "Une vibration douce quand vous touchez, envoyez ou qu'un tour se termine. Si le retour tactile du système est désactivé, elle reste muette aussi",
+  "notifBgTitle": "Écouter en arrière-plan",
+  "notifBgSub": "Reçoit les alertes avec l’application fermée · utilise une notification persistante",
+  "notifBgActive": "Actif jusqu’à désactivation · écoute les événements de l’agent",
+  "notifListenerStartFailed": "Impossible de démarrer l’écoute en arrière-plan. Réessaie.",
+  "notifBgRestartNotice": "Retirer Hermes des applications récentes n’arrête pas l’écoute. Forcer l’arrêt l’interrompt jusqu’à la prochaine ouverture de l’application.",
+  "au1215BgNeededForAutomation": "Les alertes cron et Kanban arrivent uniquement si cette option est activée.",
+  "notifFixedCardTitle": "Notification fixe",
+  "notifFixedCardSub": "Réduit « Connecté à Hermes » dans Android"
 }

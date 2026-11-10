@@ -2,27 +2,21 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../bots/ui/profile/profile_hub_screen.dart';
 import '../capabilities/capabilities_screen.dart';
-import '../screens/activity_screen.dart';
-import '../screens/appearance_screen.dart';
+import '../capabilities/las_chat.dart';
+import '../screens/app_settings_screen.dart';
+import '../screens/artifacts_screen.dart';
 import '../screens/chat_screen.dart';
 import '../screens/cron_screen.dart';
-import '../screens/extensions_center_screen.dart';
 import '../screens/gateway_manager_screen.dart';
-import '../screens/memory_screen.dart';
+import '../screens/herdr_agents_screen.dart';
 import '../screens/mission_control_screen.dart';
-import '../screens/models_screen.dart';
 import '../screens/profiles_screen.dart';
 import '../screens/projects_center_screen.dart';
-import '../screens/soul_screen.dart';
-import '../screens/ssh_screen.dart';
 import '../screens/session_list_screen.dart';
-import '../screens/settings_screen.dart';
 import '../screens/voice_settings_screen.dart';
-import '../screens/companion/mascotas_screen.dart';
-import '../screens/task_center_screen.dart';
 import '../screens/tasks_screen.dart';
-import '../screens/tools_hub_screen.dart';
 import '../services/active_profile_scope.dart';
 import '../services/connection_manager.dart';
 import '../services/connection_status.dart';
@@ -31,11 +25,14 @@ import '../services/session_archive.dart';
 import '../services/tui_gateway_client.dart';
 import '../navigation/chat_route.dart';
 import '../navigation/instance_route_guard.dart';
+import '../design/glass_strip.dart';
+import '../design/tokens.dart' show HermesRadius;
 import '../theme/app_theme.dart';
 import '../utils/home_recent_sessions.dart';
 import '../utils/session_timestamp.dart';
 import '../utils/session_title.dart';
 import '../../l10n/app_localizations.dart';
+import '../config/feature_flags.dart';
 import 'instance_kind_picker.dart';
 import 'menu_back_guard.dart';
 import 'mission_profile_avatar.dart';
@@ -52,11 +49,12 @@ enum DrawerSection {
   appearance,
   mascotas,
   sessions,
+  artifacts,
   // A conversation is below the library, not the library itself.
   chat,
   projects,
   kanban,
-  tools,
+  profileHub,
   gateways,
   models,
   ssh,
@@ -72,8 +70,13 @@ enum DrawerSection {
   settings,
 }
 
-/// Capabilities hub for [connection], shared by the tools catalog and the
-/// chat `/skills` command so both open the same screen with the same options.
+/// The Extensions screen (Skills · Plugins · MCP) for [connection], shared by
+/// the profile hub, the chat `/skills` command and Mission Control so every
+/// entry opens the same screen with the same options.
+///
+/// [initialTab] picks the tab; the legacy [initialSegment] still redirects to
+/// the right one. [profileOverride] fixes the profile (a profile's own hub);
+/// without it the active profile of the connection is used.
 CapabilitiesHub buildCapabilitiesHub({
   required SavedConnection connection,
   required ConnectionManager connManager,
@@ -81,24 +84,22 @@ CapabilitiesHub buildCapabilitiesHub({
   // the call sites do not change in this cleanup.
   required CapabilityMatrix capabilities,
   String? profileOverride,
+  ExtensionsTab? initialTab,
+  CapabilitiesSegment initialSegment = CapabilitiesSegment.installed,
+  String runtimeSessionId = '',
 }) {
   final fixedProfile = profileOverride?.trim();
   final scoped = fixedProfile != null && fixedProfile.isNotEmpty;
+  final profile = scoped
+      ? fixedProfile
+      : connManager.activeProfileFor(connection.id);
   return CapabilitiesHub(
+    initialTab: initialTab,
+    initialSegment: initialSegment,
     connection: connection,
-    profile: scoped
-        ? fixedProfile
-        : connManager.activeProfileFor(connection.id),
-    advancedBuilder: scoped
-        ? null
-        : (_) => OwnedResourceHost<TuiGatewayClient>(
-            create: () => TuiGatewayClient(connection),
-            release: (gateway) => gateway.close(),
-            builder: (_, gateway) => ExtensionsCenterScreen(
-              gateway: gateway,
-              readOnly: connection.readOnly,
-            ),
-          ),
+    profile: profile,
+    learnLauncher: lasChatFor(connection, profile),
+    runtimeSessionId: runtimeSessionId,
   );
 }
 
@@ -108,149 +109,6 @@ CapabilitiesHub buildCapabilitiesHub({
 /// Sections that need a gateway are disabled while [connection] is null.
 /// Navigation pops back to the root first so drawer hops never stack
 /// section screens on top of each other.
-/// Catálogo de destinos de "Herramientas": extraído de [HermesDrawer] como
-/// función de nivel superior (en vez de método privado) para que el acceso
-/// directo opcional "Herramientas" del dock (ver `dock_shortcuts.dart`)
-/// pueda abrir EXACTAMENTE la misma pantalla con los mismos criterios de
-/// capacidades, sin duplicar esta lista.
-List<HermesToolDestination> buildHermesToolDestinations({
-  required BuildContext context,
-  required SavedConnection? connection,
-  required ConnectionManager connManager,
-  required CapabilityMatrix capabilities,
-}) {
-  final strings = Strings.of(context);
-  final conn = connection;
-
-  bool enabled([CapState? capability]) =>
-      conn != null && (capability == null || !capability.isNo);
-
-  String? disabledReason([CapState? capability]) {
-    if (conn == null) return strings.drawerNeedInstance;
-    if (capability?.isNo ?? false) return strings.drawerUnsupported;
-    return null;
-  }
-
-  return [
-    HermesToolDestination(
-      id: 'appearance',
-      group: strings.drawerPersonalization,
-      icon: Icons.palette_outlined,
-      label: strings.setSecAppearance,
-      enabled: enabled(),
-      disabledReason: disabledReason(),
-      builder: (_) => AppearanceScreen(connection: conn!),
-    ),
-    HermesToolDestination(
-      id: 'mascotas',
-      group: strings.drawerPersonalization,
-      icon: Icons.pets_outlined,
-      label: strings.drawerMascots,
-      enabled: enabled(),
-      disabledReason: disabledReason(),
-      builder: (_) => const MascotasScreen(),
-    ),
-    HermesToolDestination(
-      id: 'instances',
-      group: strings.drawerGroupInstance,
-      icon: Icons.router_outlined,
-      label: strings.drawerInstances,
-      builder: (_) => GatewayManagerScreen(connManager: connManager),
-    ),
-    HermesToolDestination(
-      id: 'models',
-      group: strings.drawerGroupInstance,
-      icon: Icons.memory_outlined,
-      label: strings.drawerModels,
-      enabled: enabled(capabilities.modelsRead),
-      disabledReason: disabledReason(capabilities.modelsRead),
-      builder: (_) => ModelsScreen(connection: conn!),
-    ),
-    HermesToolDestination(
-      id: 'ssh',
-      group: strings.drawerGroupInstance,
-      icon: Icons.terminal_outlined,
-      label: strings.drawerSsh,
-      enabled: enabled(),
-      disabledReason: disabledReason(),
-      builder: (_) => SshScreen(connection: conn!),
-    ),
-    HermesToolDestination(
-      id: 'profiles',
-      group: strings.drawerGroupAgent,
-      icon: Icons.account_tree_outlined,
-      label: strings.drawerProfiles,
-      enabled: enabled(),
-      disabledReason: disabledReason(),
-      builder: (_) =>
-          ProfilesScreen(connection: conn!, connManager: connManager),
-    ),
-    // One entry for skills, plugins, MCP and account connectors. The older
-    // Skills and Extensions screens stay reachable from the hub's "More".
-    HermesToolDestination(
-      id: 'capabilities',
-      group: strings.drawerGroupAgent,
-      icon: Icons.extension_outlined,
-      label: strings.cphTitle,
-      enabled: enabled(),
-      disabledReason: disabledReason(),
-      builder: (_) => buildCapabilitiesHub(
-        connection: conn!,
-        connManager: connManager,
-        capabilities: capabilities,
-      ),
-    ),
-    HermesToolDestination(
-      id: 'memory',
-      group: strings.drawerGroupAgent,
-      icon: Icons.psychology_outlined,
-      label: strings.drawerMemory,
-      enabled: enabled(capabilities.memoryRead),
-      disabledReason: disabledReason(capabilities.memoryRead),
-      builder: (_) => MemoryScreen(connection: conn!),
-    ),
-    HermesToolDestination(
-      id: 'cron',
-      group: strings.drawerGroupAgent,
-      icon: Icons.schedule_outlined,
-      label: strings.drawerCron,
-      enabled: enabled(capabilities.cronRead),
-      disabledReason: disabledReason(capabilities.cronRead),
-      builder: (_) => CronScreen(connection: conn!, connManager: connManager),
-    ),
-    HermesToolDestination(
-      id: 'soul',
-      group: strings.drawerGroupAgent,
-      icon: Icons.auto_awesome_outlined,
-      label: strings.drawerSoul,
-      enabled: enabled(),
-      disabledReason: disabledReason(),
-      builder: (_) => SoulScreen(connection: conn!),
-    ),
-    HermesToolDestination(
-      id: 'task-center',
-      group: strings.drawerGroupSystem,
-      icon: Icons.rocket_launch_outlined,
-      label: strings.drawerTaskCenter,
-      enabled: enabled(),
-      disabledReason: disabledReason(),
-      builder: (_) => TaskCenterScreen(
-        connection: conn!,
-        profile: connManager.activeProfileFor(conn.id),
-      ),
-    ),
-    HermesToolDestination(
-      id: 'activity',
-      group: strings.drawerGroupSystem,
-      icon: Icons.receipt_long_outlined,
-      label: strings.drawerActivity,
-      enabled: enabled(capabilities.logsRead),
-      disabledReason: disabledReason(capabilities.logsRead),
-      builder: (_) => ActivityScreen(connection: conn!),
-    ),
-  ];
-}
-
 class HermesDrawer extends StatelessWidget {
   /// Añade una banda táctil propia después del borde reservado por Android.
   ///
@@ -307,7 +165,10 @@ class HermesDrawer extends StatelessWidget {
   ) {
     Navigator.pop(context); // close drawer
     if (section == current) return;
-    final root = Navigator.of(context);
+    // The root navigator, not the nearest one: inside a tablet detail pane the
+    // nearest navigator is the pane's, and a section pushed there nests a whole
+    // second screen (app bar, rail, drawer) inside the first.
+    final root = Navigator.of(context, rootNavigator: true);
     if (current != DrawerSection.home) root.popUntil((r) => r.isFirst);
     root.push(MaterialPageRoute(builder: (_) => builder())).then((_) {
       onSectionReturn?.call();
@@ -317,7 +178,7 @@ class HermesDrawer extends StatelessWidget {
   void _goHome(BuildContext context) {
     Navigator.pop(context);
     if (current == DrawerSection.home) return;
-    Navigator.of(context).popUntil((r) => r.isFirst);
+    Navigator.of(context, rootNavigator: true).popUntil((r) => r.isFirst);
   }
 
   void _goWithConnection(
@@ -369,31 +230,19 @@ class HermesDrawer extends StatelessWidget {
         ),
       );
 
-  List<HermesToolDestination> _toolDestinations(
-    BuildContext context,
-    CapabilityMatrix capabilities,
-  ) => buildHermesToolDestinations(
-    context: context,
-    connection: connection,
-    connManager: connManager,
-    capabilities: capabilities,
-  );
-
-  void _openTools(BuildContext context, CapabilityMatrix capabilities) {
-    final destinations = _toolDestinations(context, capabilities);
-    _go(
-      context,
-      DrawerSection.tools,
-      () => ToolsHubScreen(
-        destinations: destinations,
-        connection: connection,
-        connManager: connManager,
-      ),
+  /// The active profile's page: what is of that bot in one place.
+  Widget _profileHub(SavedConnection active) {
+    final name = connManager.activeProfileFor(active.id).trim();
+    return ProfileHubScreen(
+      connection: active,
+      connManager: connManager,
+      profile: name.isEmpty ? 'default' : name,
     );
   }
 
   Future<void> _selectInstance(BuildContext context, String selectedId) async {
-    final navigator = Navigator.of(context);
+    final drawer = Navigator.of(context);
+    final navigator = Navigator.of(context, rootNavigator: true);
     final activeId =
         connManager.activeConnectionId.value ?? connection?.id ?? '';
     if (selectedId == activeId) return;
@@ -403,7 +252,7 @@ class HermesDrawer extends StatelessWidget {
 
     await connManager.setActiveConnection(selectedId);
     if (!context.mounted) return;
-    navigator.pop(); // drawer
+    drawer.pop(); // drawer
     navigator.popUntil((route) => route.isFirst);
   }
 
@@ -427,8 +276,31 @@ class HermesDrawer extends StatelessWidget {
     );
   }
 
+  /// The selected row's tint, under the ink of the row (see [_DrawerItem]).
+  static Color _selectedTint(HermesThemeColors colors) =>
+      colors.surfaceVariant.withValues(alpha: 0.58);
+
+  /// The drawer is real glass (the smoked tone of a text-heavy panel, one
+  /// blur) where its inks read on it, for every ink of the panel and the
+  /// selected row; otherwise, and without blur, the opaque surface of
+  /// before.
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).hermes;
+    final tint = _selectedTint(colors);
+    return HermesGlassPanel(
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.horizontal(
+          right: Radius.circular(HermesRadius.card),
+        ),
+      ),
+      fallbackFill: colors.surface,
+      overs: [(colors.textPrimary, tint), (colors.accentHover, tint)],
+      builder: (context, fill, glass) => _buildDrawer(context, fill, glass),
+    );
+  }
+
+  Widget _buildDrawer(BuildContext context, Color fill, bool glass) {
     final colors = Theme.of(context).hermes;
     final strings = Strings.of(context);
     final conn = connection;
@@ -441,11 +313,13 @@ class HermesDrawer extends StatelessWidget {
     bool supports(CapState state) => hasConn && !state.isNo;
 
     return Drawer(
-      backgroundColor: colors.surface,
+      backgroundColor: fill,
       surfaceTintColor: Colors.transparent,
-      elevation: 12,
+      elevation: glass ? 0 : 12,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.horizontal(right: Radius.circular(22)),
+        borderRadius: BorderRadius.horizontal(
+          right: Radius.circular(HermesRadius.card),
+        ),
       ),
       clipBehavior: Clip.antiAlias,
       child: SafeArea(
@@ -562,6 +436,28 @@ class HermesDrawer extends StatelessWidget {
                           )
                         : _showNeedsGateway(context),
                   ),
+                  // Desktop's sidebar «Artefactos» («Explora salidas
+                  // generadas»): what the recent conversations produced.
+                  _DrawerItem(
+                    key: const ValueKey('drawer-artifacts'),
+                    icon: Icons.view_in_ar_outlined,
+                    label: strings.chaArtifactsAction,
+                    detail: strings.artGlobalDetail,
+                    selected: current == DrawerSection.artifacts,
+                    enabled: supports(capabilities.sessionsRead),
+                    disabledHint: hasConn
+                        ? strings.drawerUnsupported
+                        : strings.drawerNeedInstance,
+                    onTap: () => !hasConn
+                        ? _showNeedsGateway(context)
+                        : capabilities.sessionsRead.isNo
+                        ? _showUnsupported(context)
+                        : _goWithConnection(
+                            context,
+                            DrawerSection.artifacts,
+                            (active) => ArtifactsScreen(connection: active),
+                          ),
+                  ),
                   _DrawerItem(
                     icon: Icons.schedule_outlined,
                     label: strings.drawerCron,
@@ -607,6 +503,24 @@ class HermesDrawer extends StatelessWidget {
                             ),
                           ),
                   ),
+                  // Herdr's agents on the SSH servers: a section of its own,
+                  // not tied to a chat (it reads its servers itself).
+                  if (FeatureFlags.instance.agentsSection)
+                    _DrawerItem(
+                      key: const ValueKey('drawer-agents'),
+                      icon: Icons.smart_toy_outlined,
+                      label: strings.hdaTitle,
+                      selected: current == DrawerSection.agents,
+                      enabled: hasConn,
+                      disabledHint: strings.drawerNeedInstance,
+                      onTap: () => !hasConn
+                          ? _showNeedsGateway(context)
+                          : _go(
+                              context,
+                              DrawerSection.agents,
+                              () => const AgentsHomeScreen(),
+                            ),
+                    ),
                   _DrawerItem(
                     icon: Icons.graphic_eq_rounded,
                     label: strings.voiceTitle,
@@ -618,16 +532,25 @@ class HermesDrawer extends StatelessWidget {
                       (active) => VoiceSettingsScreen(connection: active),
                     ),
                   ),
+                  // «Herramientas» was split: what is of the app and the server
+                  // is in Ajustes, what is of a bot is in its profile. The
+                  // drawer opens the active profile's.
                   _DrawerItem(
-                    icon: Icons.widgets_outlined,
-                    label: strings.drawerTools,
-                    selected: current == DrawerSection.tools,
+                    key: const ValueKey('drawer-profile'),
+                    icon: Icons.account_circle_outlined,
+                    label: strings.botProfileProfileSection,
+                    selected: current == DrawerSection.profileHub,
+                    enabled: hasConn,
                     trailing: Icon(
                       Icons.chevron_right_rounded,
                       size: 19,
                       color: colors.textDisabled,
                     ),
-                    onTap: () => _openTools(context, capabilities),
+                    onTap: () => _goWithConnection(
+                      context,
+                      DrawerSection.profileHub,
+                      _profileHub,
+                    ),
                   ),
                   if (conn != null && supports(capabilities.sessionsRead))
                     // Recents follow the active profile, even when it is
@@ -666,7 +589,7 @@ class HermesDrawer extends StatelessWidget {
             // como un problema real tras probar el rediseño en el Pixel.
             DecoratedBox(
               decoration: BoxDecoration(
-                color: colors.surface,
+                color: glass ? Colors.transparent : colors.surface,
                 border: Border(
                   top: BorderSide(
                     color: colors.divider.withValues(alpha: 0.44),
@@ -695,13 +618,12 @@ class HermesDrawer extends StatelessWidget {
                         icon: Icons.settings_outlined,
                         label: strings.drawerSettings,
                         selected: current == DrawerSection.settings,
-                        enabled: hasConn,
                         dense: true,
-                        onTap: () => _goWithConnection(
+                        onTap: () => _go(
                           context,
                           DrawerSection.settings,
-                          (active) => SettingsScreen(
-                            connection: active,
+                          () => AppSettingsScreen(
+                            connection: conn,
                             connManager: connManager,
                           ),
                         ),
@@ -912,6 +834,7 @@ class _DrawerHeader extends StatelessWidget {
     final linkDown = link != null && link != ConnectionStatusKind.connected;
     final dotColor = linkDown
         ? ((link == ConnectionStatusKind.reconnecting ||
+                  link == ConnectionStatusKind.connecting ||
                   link == ConnectionStatusKind.starting)
               ? colors.warning
               : colors.textDisabled)
@@ -1165,6 +1088,10 @@ class _DrawerItem extends StatelessWidget {
   final String? disabledHint;
   final VoidCallback onTap;
   final Widget? trailing;
+
+  /// What the destination is for, read by TalkBack after the label
+  /// (Desktop shows it beside the entry in its command palette).
+  final String? detail;
   // Para filas que comparten la mitad del ancho (el pie fijo
   // Instancias/Ajustes): icono, huecos y tipografía más pequeños para que
   // "Instancias" quepa sin recortarse en un ~185px de ancho disponible.
@@ -1178,7 +1105,9 @@ class _DrawerItem extends StatelessWidget {
     this.enabled = true,
     this.disabledHint,
     this.trailing,
+    this.detail,
     this.dense = false,
+    super.key,
   });
 
   @override
@@ -1195,13 +1124,13 @@ class _DrawerItem extends StatelessWidget {
       enabled: enabled,
       selected: selected,
       hint: enabled
-          ? null
+          ? detail
           : disabledHint ?? Strings.of(context).drawerNeedInstance,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 1.5),
         child: Material(
           color: selected
-              ? colors.surfaceVariant.withValues(alpha: 0.58)
+              ? HermesDrawer._selectedTint(colors)
               : Colors.transparent,
           borderRadius: BorderRadius.circular(11),
           clipBehavior: Clip.antiAlias,

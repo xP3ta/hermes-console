@@ -7,7 +7,6 @@ import 'package:hermes_android/core/home/board/home_board_tiles.dart';
 import 'package:hermes_android/core/home/home_now.dart';
 import 'package:hermes_android/core/models/account_usage_limits.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
-import 'package:hermes_android/core/theme/soft_tokens.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 
 /// The world of the approved Home mockups (Sunday 11 October, 22:04): the
@@ -405,7 +404,7 @@ Widget homeTile({
             data: data,
             actions: actions,
             tint: homeWidgetTint(
-              SoftPalette.ofContext(context),
+              HomePalette.ofContext(context),
               item,
               colorful: true,
             ),
@@ -440,6 +439,10 @@ Future<HomeCalls> pumpHomeTile(
   await tester.pumpWidget(
     MaterialApp(
       debugShowCheckedModeBanner: false,
+      builder: (context, child) => MediaQuery(
+        data: MediaQuery.of(context).copyWith(alwaysUse24HourFormat: true),
+        child: child!,
+      ),
       locale: locale,
       theme: AppTheme.fromId('amber'),
       localizationsDelegates: Strings.localizationsDelegates,

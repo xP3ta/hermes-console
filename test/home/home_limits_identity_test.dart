@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/home/board/home_board_model.dart';
 import 'package:hermes_android/core/home/board/home_limits.dart';
 import 'package:hermes_android/core/models/account_usage_limits.dart';
+import 'package:hermes_android/core/models/model_provider.dart';
 import 'package:hermes_android/core/widgets/provider_logo.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 
@@ -64,6 +65,53 @@ void main() {
   group('Home rows carry it', () {
     List<HomeLimitRow> rows(AccountUsageLimits l) =>
         homeLimitRows(l, es, languageCode: 'es');
+
+    for (final withIdentity in [false, true]) {
+      test(
+        'review M2: no-data catalog preserves Home rows and identity ($withIdentity)',
+        () {
+          final session = _limits(
+            account: withIdentity
+                ? codexLines
+                : const [
+                    'Session: 72% remaining (28% used)',
+                    'Weekly: 9% remaining (91% used)',
+                  ],
+            credits: nousLines,
+            bars: barsAvailable,
+          );
+          final fallback = AccountUsageLimits.fromProviderUsage([
+            ModelProvider.fromJson({
+              'slug': 'openai-codex',
+              'name': 'OpenAI Codex',
+              'authenticated': true,
+            }),
+          ], sessionProvider: 'openai-codex');
+          expect(fallback.accountIdentity, isNull);
+          final merged = session.withProviderLines(fallback);
+          expect(merged.accountIdentity, session.accountIdentity);
+          expect(merged.creditsIdentity, session.creditsIdentity);
+          expect(
+            merged.lines.any((l) => l.status == AccountLimitStatus.unknown),
+            isFalse,
+          );
+          List<Object?> snapshot(AccountUsageLimits limits) => [
+            for (final row in rows(limits))
+              (
+                row.window,
+                row.used,
+                row.label,
+                row.detail,
+                row.who,
+                row.name,
+                row.left,
+                row.total,
+              ),
+          ];
+          expect(snapshot(merged), snapshot(session));
+        },
+      );
+    }
 
     test('provider name as Hermes names it, plan as the provider reports', () {
       final who = rows(_limits(account: codexLines)).first.who!;

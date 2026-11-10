@@ -610,89 +610,6 @@ void main() {
     },
   );
 
-  test(
-    'Bots and Salas: previews are the real layouts; faces and line share an edge',
-    () {
-      // Salas in the picker is the one-row layout itself with a sample room.
-      final strip = _xml('$_res/layout/lw_strip.xml');
-      final rooms = _xml('$_res/layout/lw_preview_rooms.xml');
-      const content = {'text', 'src', 'visibility', 'tint'};
-      Map<String, String> layout(XmlElement el) => {
-        for (final attribute in el.attributes)
-          if (!content.contains(attribute.name.local))
-            attribute.name.qualified: attribute.value,
-      };
-      void same(XmlElement a, XmlElement b, {String? childrenAreContentOf}) {
-        expect(b.name.local, a.name.local, reason: _id(a));
-        expect(layout(b), layout(a), reason: _id(a));
-        // The faces of the Bots row are added by the provider: in the preview
-        // they are sample images, which is content.
-        if (_id(a) == childrenAreContentOf) return;
-        final ca = a.childElements.toList();
-        final cb = b.childElements.toList();
-        expect(cb.length, ca.length, reason: _id(a));
-        for (var i = 0; i < ca.length; i++) {
-          same(ca[i], cb[i], childrenAreContentOf: childrenAreContentOf);
-        }
-      }
-
-      same(strip, rooms);
-      // Tareas in the picker: the same one-row layout with a sample card.
-      same(strip, _xml('$_res/layout/lw_preview_tasks.xml'));
-      same(strip, _xml('$_res/layout/lw_preview_chats.xml'));
-      final faces = _xml('$_res/layout/lw_faces.xml');
-      final bots = _xml('$_res/layout/lw_preview_bots.xml');
-      same(faces, bots, childrenAreContentOf: 'lw_faces');
-      // The sample faces are the size and spacing of a real face.
-      final one = _xml('$_res/layout/lw_face.xml');
-      final samples = _byId(bots, 'lw_faces').childElements.toList();
-      expect(samples, hasLength(4));
-      for (final sample in samples) {
-        for (final side in [
-          'layout_width',
-          'layout_height',
-          'layout_marginEnd',
-        ]) {
-          expect(
-            values.attr(sample, side),
-            values.attr(one, side),
-            reason: side,
-          );
-        }
-      }
-      // Four faces fit a two-cell card of the mock-up's grid (171 dp).
-      final step =
-          values.dp('@dimen/lw_face') + values.dp('@dimen/lw_face_gap');
-      final inner = 171 - 2 * values.dp('@dimen/lw_pad_h');
-      expect(((inner + values.dp('@dimen/lw_face_gap')) / step).floor(), 4);
-      // The row of faces and the line under it start at the same edge (the
-      // card's padding; neither has a start margin) and are centred together.
-      expect(values.attr(faces, 'gravity'), 'center_vertical');
-      expect(values.attr(faces, 'orientation'), 'vertical');
-      for (final id in ['lw_faces', 'lw_faces_title']) {
-        final el = _byId(faces, id);
-        expect(values.attr(el, 'layout_marginStart'), isNull, reason: id);
-        expect(values.attr(el, 'layout_width'), 'match_parent', reason: id);
-      }
-      // A room's row centres its faces on its two lines, like any other row.
-      final room = _xml('$_res/layout/lw_row_room.xml');
-      expect(values.attr(room, 'gravity'), 'center_vertical');
-      expect(
-        values.attr(_byId(room, 'lw_row_texts'), 'layout_height'),
-        'wrap_content',
-      );
-      // A narrow card (two cells) keeps the room's name readable: two faces,
-      // no "+2" and no timer beside the name. With them a 171 dp row left
-      // 26 dp for "Console Devs".
-      final renderer = _read('$_kotlin/LauncherWidgets.kt');
-      expect(renderer, contains('if (more > 0 && size.wide) {'));
-      expect(
-        renderer,
-        contains('if (size.wide) timer(row, R.id.lw_row_timer, room.sinceMs)'),
-      );
-    },
-  );
-
   test('cards take the launcher radius and are clipped to it', () {
     final card = _read('$_res/drawable/lw_card.xml');
     expect(card, contains('@dimen/lw_radius'));
@@ -709,7 +626,6 @@ void main() {
       'lw_ask_strip.xml',
       'lw_quick_small.xml',
       'lw_quick_wide.xml',
-      'lw_faces.xml',
       'lw_initial.xml',
     ]) {
       final root = _xml('$_res/layout/$file');
@@ -744,10 +660,6 @@ void main() {
     expect(en['lw_ahora_name'], 'Now');
     expect(en['lw_quick_name'], 'Quick chat');
     expect(en['lw_cron_name'], 'Cron');
-    expect(es['lw_bots_name'], 'Bots');
-    expect(es['lw_rooms_name'], 'Salas');
-    expect(en['lw_bots_name'], 'Bots');
-    expect(en['lw_rooms_name'], 'Rooms');
     expect(es['lw_tasks_name'], 'Tareas');
     expect(en['lw_tasks_name'], 'Tasks');
     expect(es['lw_chats_name'], 'Chats');

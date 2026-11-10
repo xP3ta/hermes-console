@@ -5,7 +5,6 @@
 library;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../../../l10n/app_localizations.dart';
 import '../../theme/soft_tokens.dart';
@@ -15,6 +14,7 @@ import 'home_board_data.dart';
 import 'home_board_kit.dart';
 import 'home_board_model.dart';
 import 'home_board_tiles.dart';
+import '../../feedback/haptics.dart';
 
 /// The board's floating surface (the app's one modal container, never a
 /// bottom sheet): content-capped, scrollable, on the widgets' surface.
@@ -23,7 +23,7 @@ Future<T?> _sheet<T>(BuildContext context, WidgetBuilder builder) =>
       context: context,
       maxHeightFactor: 0.9,
       builder: (context) => ColoredBox(
-        color: SoftPalette.ofContext(context).surface,
+        color: HomePalette.ofContext(context).surface,
         child: builder(context),
       ),
     );
@@ -35,7 +35,7 @@ class _SheetTitle extends StatelessWidget {
   final VoidCallback? onClose;
   @override
   Widget build(BuildContext context) {
-    final p = SoftPalette.ofContext(context);
+    final p = HomePalette.ofContext(context);
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 14, 12, 8),
       child: Row(
@@ -100,8 +100,10 @@ class HomeBoardMeter extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final s = Strings.of(context);
-    final p = SoftPalette.ofContext(context);
-    final accent = HomeType.live(p);
+    final p = HomePalette.ofContext(context);
+    // Neutral: how full the board is is a fact, not a call to act (the
+    // accent stays on «Hecho»).
+    final accent = p.textMuted;
     final capacity = plan.capacity;
     final text = label(s, plan);
     final meter = compact
@@ -144,7 +146,7 @@ class HomeBoardMeter extends StatelessWidget {
                   ).clamp(maxScaleFactor: 1.3),
                   style: HomeType.when(
                     p,
-                  ).copyWith(color: plan.full ? accent : p.textMuted),
+                  ).copyWith(color: plan.full ? p.text : p.textMuted),
                 ),
               ),
             ],
@@ -184,7 +186,7 @@ class HomeSizeControl extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final s = Strings.of(context);
-    final p = SoftPalette.ofContext(context);
+    final p = HomePalette.ofContext(context);
     return DecoratedBox(
       decoration: ShapeDecoration(
         color: p.inset,
@@ -236,7 +238,7 @@ class _SizeChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final p = SoftPalette.ofContext(context);
+    final p = HomePalette.ofContext(context);
     final accent = HomeType.live(p);
     final text = Text(
       label,
@@ -264,7 +266,7 @@ class _SizeChip extends StatelessWidget {
         behavior: HitTestBehavior.opaque,
         onTap: enabled && !current
             ? () {
-                HapticFeedback.selectionClick();
+                HermesHaptics.selection();
                 onTap();
               }
             : null,
@@ -346,7 +348,7 @@ class HomeSegmented<T> extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final p = SoftPalette.ofContext(context);
+    final p = HomePalette.ofContext(context);
     return DecoratedBox(
       decoration: ShapeDecoration(color: p.inset, shape: SoftShapes.capsule()),
       child: Padding(
@@ -367,7 +369,7 @@ class HomeSegmented<T> extends StatelessWidget {
                         behavior: HitTestBehavior.opaque,
                         onTap: on
                             ? () {
-                                HapticFeedback.selectionClick();
+                                HermesHaptics.selection();
                                 onChanged(v);
                               }
                             : null,
@@ -498,7 +500,7 @@ class _GalleryState extends State<_Gallery> {
   @override
   Widget build(BuildContext context) {
     final s = Strings.of(context);
-    final p = SoftPalette.ofContext(context);
+    final p = HomePalette.ofContext(context);
     if (_picking case (final kind, final size)) {
       final option = HomeWidgetCatalog.of(kind).requiredOption!;
       return Column(
@@ -591,7 +593,7 @@ class _GalleryRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final s = Strings.of(context);
-    final p = SoftPalette.ofContext(context);
+    final p = HomePalette.ofContext(context);
     final tint = p.tint(neutral ? SoftHue.neutral : homeWidgetHue(kind));
     return LayoutBuilder(
       builder: (context, box) => ConstrainedBox(
@@ -653,7 +655,7 @@ class _TargetList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final s = Strings.of(context);
-    final p = SoftPalette.ofContext(context);
+    final p = HomePalette.ofContext(context);
     if (targets.isEmpty) {
       return Padding(
         padding: const EdgeInsets.all(20),
@@ -686,7 +688,7 @@ class _Group extends StatelessWidget {
   final List<Widget> children;
   @override
   Widget build(BuildContext context) {
-    final p = SoftPalette.ofContext(context);
+    final p = HomePalette.ofContext(context);
     return DecoratedBox(
       decoration: ShapeDecoration(
         color: p.inset,
@@ -724,7 +726,7 @@ class _OptionRow extends StatelessWidget {
   final bool enabled;
   @override
   Widget build(BuildContext context) {
-    final p = SoftPalette.ofContext(context);
+    final p = HomePalette.ofContext(context);
     final row = Semantics(
       button: true,
       selected: selected,
@@ -776,7 +778,7 @@ class _SwitchRow extends StatelessWidget {
   final Widget? leading;
   @override
   Widget build(BuildContext context) {
-    final p = SoftPalette.ofContext(context);
+    final p = HomePalette.ofContext(context);
     return MergeSemantics(
       child: ConstrainedBox(
         constraints: const BoxConstraints(minHeight: 52),
@@ -797,7 +799,7 @@ class _SwitchRow extends StatelessWidget {
                 value: value,
                 activeTrackColor: p.primary,
                 onChanged: (v) {
-                  HapticFeedback.selectionClick();
+                  HermesHaptics.selection();
                   onChanged(v);
                 },
               ),
@@ -868,7 +870,7 @@ class _ConfigureState extends State<_Configure> {
   @override
   Widget build(BuildContext context) {
     final s = Strings.of(context);
-    final p = SoftPalette.ofContext(context);
+    final p = HomePalette.ofContext(context);
     final kind = _item.kind;
     final spec = HomeWidgetCatalog.of(kind);
     final sections = <Widget>[];
@@ -1076,6 +1078,7 @@ Future<void> showHomeHiddenWidgets(
   BuildContext context, {
   required HomeBoardLayout Function() layout,
   required int rows,
+  int columns = HomeBoardGridRule.columns,
   required void Function(HomeWidgetInstance item, HomeWidgetSize size) onResize,
   required ValueChanged<HomeWidgetInstance> onRemove,
 }) => _sheet<void>(
@@ -1083,6 +1086,7 @@ Future<void> showHomeHiddenWidgets(
   (context) => _Hidden(
     layout: layout,
     rows: rows,
+    columns: columns,
     onResize: onResize,
     onRemove: onRemove,
   ),
@@ -1092,11 +1096,15 @@ class _Hidden extends StatefulWidget {
   const _Hidden({
     required this.layout,
     required this.rows,
+    required this.columns,
     required this.onResize,
     required this.onRemove,
   });
   final HomeBoardLayout Function() layout;
   final int rows;
+
+  /// Columns of the board the widgets did not fit on.
+  final int columns;
   final void Function(HomeWidgetInstance item, HomeWidgetSize size) onResize;
   final ValueChanged<HomeWidgetInstance> onRemove;
 
@@ -1111,7 +1119,11 @@ class _HiddenState extends State<_Hidden> {
     change();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      final plan = HomeBoardPlan.of(widget.layout().items, widget.rows);
+      final plan = HomeBoardPlan.of(
+        widget.layout().items,
+        widget.rows,
+        columns: widget.columns,
+      );
       if (plan.hidden.isEmpty) {
         Navigator.of(context).maybePop();
       } else {
@@ -1123,9 +1135,13 @@ class _HiddenState extends State<_Hidden> {
   @override
   Widget build(BuildContext context) {
     final s = Strings.of(context);
-    final p = SoftPalette.ofContext(context);
+    final p = HomePalette.ofContext(context);
     final layout = widget.layout();
-    final plan = HomeBoardPlan.of(layout.items, widget.rows);
+    final plan = HomeBoardPlan.of(
+      layout.items,
+      widget.rows,
+      columns: widget.columns,
+    );
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -1180,6 +1196,7 @@ class _HiddenState extends State<_Hidden> {
                                   widget.rows,
                                   item.id,
                                   size,
+                                  columns: widget.columns,
                                 ),
                                 outlined: true,
                                 onTap: () =>

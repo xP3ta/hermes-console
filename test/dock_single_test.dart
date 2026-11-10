@@ -487,7 +487,7 @@ void main() {
           GestureDockTab.tasks: strings.drawerKanban,
           GestureDockTab.cron: strings.drawerCron,
           GestureDockTab.bots: 'Bots',
-          GestureDockTab.tools: strings.drawerTools,
+          GestureDockTab.agents: strings.navAgents,
           GestureDockTab.settings: strings.drawerSettings,
         };
         // Actividad is Home's own «De un vistazo»; it has no screen.
@@ -500,8 +500,10 @@ void main() {
             of: find.byType(HermesDrawer),
             matching: find.text(label),
           );
+          // The finder, not `.first`: a row below the built part of the list
+          // is not there yet, and that is what the scroll brings.
           await tester.scrollUntilVisible(
-            row.first,
+            row,
             120,
             scrollable: find
                 .descendant(

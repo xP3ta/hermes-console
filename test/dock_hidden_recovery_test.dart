@@ -190,20 +190,25 @@ void main() {
       final log = <String>[];
       await tester.pumpWidget(_app(_screen(log: log)));
       await _settle(tester);
-      final settings = tester.getCenter(
-        find.byKey(const ValueKey('gesture-dock-tab-settings')),
+      // An item clear of the handle: since dock-final (QA 9709) the dock
+      // is centred and narrower, and the handle, where the dock was, covers
+      // its middle items; a tap there is the handle's.
+      final create = tester.getCenter(
+        find.byKey(const ValueKey('gesture-dock-tab-create')),
       );
       _c.setHidden(true);
       await _settle(tester);
-      await tester.tapAt(settings);
+      expect(tester.getRect(find.byKey(_handle)).contains(create), isFalse);
+      await tester.tapAt(create);
       await tester.pump();
       expect(log, isEmpty);
+      expect(_c.hidden.value, isTrue);
 
       await tester.tap(find.byKey(_handle));
       await _settle(tester);
-      await tester.tapAt(settings);
+      await tester.tapAt(create);
       await tester.pump();
-      expect(log, ['settings']);
+      expect(log, ['create']);
     });
 
     testWidgets('every screen with a dock shows the handle', (tester) async {
