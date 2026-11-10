@@ -281,6 +281,32 @@ void main() {
       expect(_state(tester).debugFrame, glyph.frames - 1);
     });
 
+    testWidgets('it can go live again, and across a glyph change', (
+      tester,
+    ) async {
+      await _preload(tester);
+      Widget icon(ChatLiveGlyph glyph, {required bool live}) =>
+          _host(ChatLiveIcon(glyph, color: Colors.teal, live: live));
+      await tester.pumpWidget(icon(ChatLiveGlyph.reasoning, live: true));
+      await tester.pump();
+      await tester.pumpWidget(icon(ChatLiveGlyph.reasoning, live: false));
+      await tester.pump();
+      // The same state makes a second controller: no ticker error.
+      await tester.pumpWidget(icon(ChatLiveGlyph.reasoning, live: true));
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+      await tester.pump(const Duration(seconds: 1));
+      expect(tester.hasRunningAnimations, isTrue);
+      // A new glyph reloads the strip and animates it again.
+      await tester.pumpWidget(icon(ChatLiveGlyph.responseStream, live: true));
+      await tester.pump();
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+      await tester.pump(const Duration(seconds: 1));
+      expect(tester.hasRunningAnimations, isTrue);
+      await tester.pumpWidget(const SizedBox());
+    });
+
     testWidgets('reduce motion keeps it still even while live', (tester) async {
       await _preload(tester);
       await tester.pumpWidget(

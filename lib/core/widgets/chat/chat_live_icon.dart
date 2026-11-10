@@ -145,8 +145,10 @@ class ChatLiveIcon extends StatefulWidget {
   State<ChatLiveIcon> createState() => _ChatLiveIconState();
 }
 
+// Not SingleTickerProviderStateMixin: the controller is disposed when the
+// icon settles (or the strip reloads) and made again when it goes live.
 class _ChatLiveIconState extends State<ChatLiveIcon>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   ui.Image? _image;
   AnimationController? _controller;
   bool _reduced = false;
