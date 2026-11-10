@@ -1,0 +1,22 @@
+# CodeRabbit settings: review code, not generated or bulk data.
+language: en-US
+reviews:
+  profile: chill
+  high_level_summary: true
+  poem: false
+  auto_review:
+    enabled: true
+    drafts: true
+    base_branches:
+      - ".*"
+  path_filters:
+    - "!test/**"
+    - "!assets/**"
+    - "!lib/l10n/**"
+    - "!docs/**"
+    - "!sbom/**"
+    - "!**/*.lock"
+    - "!**/*.png"
+    - "!**/*.webp"
+    - "!**/*.json"
+    - "!android/app/src/main/res/**"
