@@ -20,13 +20,21 @@ object WebViewRenderGuard {
                 "install" -> {
                     val id = (call.arguments as? Number)?.toLong()
                     val webView = id?.let { WebViewFlutterAndroidExternalApi.getWebView(engine, it) }
+                    val inner = webView?.let { DelegatingWebViewClient.flutterClient(it) }
                     if (id == null || webView == null) {
                         result.error("missing", "Web view is not available", null)
+                    } else if (inner == null) {
+                        // API 24-25 without the WebView feature: the client
+                        // cannot be read, and a wrapper with nothing inside
+                        // would drop the Dart NavigationDelegate and the page
+                        // callbacks. There is no renderer-gone callback below
+                        // API 26 to gain anyway.
+                        result.error("unsupported", "Web view client is not readable", null)
                     } else {
                         webView.webViewClient =
-                            DelegatingWebViewClient(
-                                DelegatingWebViewClient.flutterClient(webView),
-                            ) { channel.invokeMethod("renderGone", id) }
+                            DelegatingWebViewClient(inner) {
+                                channel.invokeMethod("renderGone", id)
+                            }
                         result.success(null)
                     }
                 }
