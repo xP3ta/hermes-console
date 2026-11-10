@@ -16,7 +16,7 @@ import 'package:hermes_android/core/services/secure_storage.dart';
 import 'package:hermes_android/core/services/sftp_transfer_service.dart';
 import 'package:hermes_android/core/services/ssh_manager.dart';
 import 'package:hermes_android/core/services/ssh_session_service.dart';
-import 'package:hermes_android/core/widgets/subagent_activity_card.dart';
+import 'package:hermes_android/core/screens/subagent_detail_screen.dart';
 import 'package:hermes_android/core/services/subagent_live_watch.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:hermes_android/main.dart';
@@ -255,6 +255,37 @@ _mountChat(WidgetTester tester) async {
   return (gateway, chat, activeChats, manager);
 }
 
+// The supplemental pill now opens Activity, even with only one agent.
+// Inspecting the sheet is passive; selecting the child acquires the watch.
+Future<void> _openChildFromActivity(
+  WidgetTester tester,
+  _WatchableGateway gateway,
+) async {
+  await tester.tap(find.byKey(const ValueKey('delegates-capsule')));
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 400));
+  await _selectChildFromActivity(tester, gateway);
+}
+
+Future<void> _selectChildFromActivity(
+  WidgetTester tester,
+  _WatchableGateway gateway,
+) async {
+  expect(find.byKey(const ValueKey('subagent-panel')), findsOneWidget);
+  expect(find.byType(SubagentDetailScreen), findsNothing);
+  expect(gateway.resumes, isEmpty);
+  expect(gateway.tailCalls, 0);
+  await tester.tap(
+    find.descendant(
+      of: find.byKey(const ValueKey('subagent-panel')),
+      matching: find.text('Revisar el proyecto'),
+    ),
+  );
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 400));
+  expect(find.byType(SubagentDetailScreen), findsOneWidget);
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -318,18 +349,7 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
 
-      // The activity pill opens the detail through this controller.
-      tester
-          .widget<SubagentActivityCard>(
-            find.byKey(
-              const ValueKey('chat-subagent-status'),
-              skipOffstage: false,
-            ),
-          )
-          .controller!
-          .open();
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 400));
+      await _openChildFromActivity(tester, gateway);
 
       expect(gateway.resumes, [
         (childId: _childSession, profile: 'parent-profile'),
@@ -362,6 +382,89 @@ void main() {
     },
   );
 
+  for (final entryPoint in ['header failure pill', 'menu']) {
+    testWidgets('$entryPoint opens the child watch on the chat gateway and '
+        'profile without polling', (tester) async {
+      final (gateway, chat, activeChats, _) = await _mountChat(tester);
+      expect(
+        await chat.send(
+          fullText: 'delegar',
+          model: 'hermes-agent',
+          history: chat.messages,
+        ),
+        isTrue,
+      );
+      gateway.emit('message.start', const {});
+      gateway.emit('subagent.start', const {
+        'subagent_id': 'sa-chat',
+        'child_session_id': _childSession,
+        'goal': 'Revisar el proyecto',
+        'status': 'running',
+      });
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      if (entryPoint == 'header failure pill') {
+        // Routine starts belong to Activity; a sibling failure exposes the
+        // actionable «Ver» row while this child and its parent stay live.
+        gateway.emit('subagent.start', const {
+          'subagent_id': 'failed-sibling',
+          'status': 'running',
+        });
+        await tester.pump();
+        await tester.pump();
+        gateway.emit('subagent.complete', const {
+          'subagent_id': 'failed-sibling',
+          'status': 'failed',
+        });
+        await tester.pump();
+        await tester.pump();
+        // Wait for the notice entrance before sending a real pointer tap.
+        for (var frame = 0; frame < 8; frame++) {
+          await tester.pump(const Duration(milliseconds: 50));
+        }
+        expect(chat.isStreaming, isTrue);
+        final see = find.byKey(const ValueKey('delegates-capsule'));
+        expect(tester.getSemantics(see).label, contains('Failed'));
+        expect(see.hitTestable(), findsOneWidget);
+        await tester.tap(see);
+      } else {
+        await tester.tap(find.byKey(const ValueKey('chat-settings-button')));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+        final menuRow = find.byKey(const ValueKey('chat-control-subagents'));
+        await tester.ensureVisible(menuRow);
+        await tester.pump(const Duration(milliseconds: 16));
+        await tester.tap(menuRow);
+      }
+      // Finish the menu's exit before the Activity sheet's entrance.
+      for (var frame = 0; frame < 12; frame++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+      await _selectChildFromActivity(tester, gateway);
+      expect(gateway.resumes, [
+        (childId: _childSession, profile: 'parent-profile'),
+      ]);
+      gateway.emit('message.delta', const {
+        'text': 'directo desde el hijo',
+      }, runtime: 'watch-runtime');
+      await tester.pump();
+      expect(find.text('directo desde el hijo'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 3));
+      expect(gateway.tailCalls, 0);
+
+      tester.state<NavigatorState>(find.byType(Navigator).last).pop();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(gateway.closed, ['watch-runtime']);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      activeChats.dispose();
+      await gateway.close();
+    });
+  }
+
   testWidgets(
     'switching the active profile with the watch open closes it and falls back '
     'to the polled tail without any further event',
@@ -384,17 +487,7 @@ void main() {
       });
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
-      tester
-          .widget<SubagentActivityCard>(
-            find.byKey(
-              const ValueKey('chat-subagent-status'),
-              skipOffstage: false,
-            ),
-          )
-          .controller!
-          .open();
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 400));
+      await _openChildFromActivity(tester, gateway);
       expect(gateway.resumes, hasLength(1));
       expect(gateway.tailCalls, 0);
 

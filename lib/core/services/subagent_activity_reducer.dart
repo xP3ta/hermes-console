@@ -8,16 +8,52 @@ abstract final class SubagentActivityReducer {
     if (state.scope != event.scope || !event.hasStableIdentity) return state;
 
     final eventKey = event.preferredKey;
+    // A `delegate_task` call that names no single child (a batch, or an async
+    // dispatch that only reports a delegation id) is the PARENT's call, not a
+    // child: it must neither fuse sibling native children nor stay beside
+    // them as one more row (the phantom «Subagente 3» of a 2-child request).
+    final parentCallOnly =
+        event.source == SubagentActivitySource.legacyDelegateTask &&
+        event.subagentId == null &&
+        event.childSessionId == null;
     final matches = state.activities
         .where(
           (activity) =>
-              activity.key == eventKey || activity.explicitlyMatches(event),
+              !(parentCallOnly &&
+                  activity.source == SubagentActivitySource.native) &&
+              (activity.key == eventKey || activity.explicitlyMatches(event)),
         )
         .toList(growable: false);
 
     if (matches.isEmpty) {
+      if (parentCallOnly &&
+          state.activities.any(
+            (a) => a.source == SubagentActivitySource.native,
+          )) {
+        return state;
+      }
       final created = _fromEvent(event);
       if (created == null) return state;
+      if (event.source == SubagentActivitySource.native) {
+        // The children are known now: a bare parent-call placeholder that
+        // never learned a child identity stands for them, not for a child.
+        final placeholders = state.activities.where(
+          (a) =>
+              a.source == SubagentActivitySource.legacyDelegateTask &&
+              a.subagentId == null &&
+              a.childSessionId == null,
+        );
+        if (placeholders.isNotEmpty) {
+          final kept = Map<SubagentActivityKey, SubagentActivity>.of(
+            state.entries,
+          );
+          for (final p in placeholders) {
+            kept.remove(p.key);
+          }
+          kept[created.key] = created;
+          return SubagentActivityState.withEntries(state.scope, kept);
+        }
+      }
       if (!created.isTerminal &&
           state.activities.where((activity) => !activity.isTerminal).length >=
               SubagentPayloadLimits.activeActivities) {
@@ -151,6 +187,16 @@ SubagentActivityPhase _terminalPhase(
   if (current.source == SubagentActivitySource.legacyDelegateTask &&
       event.source == SubagentActivitySource.native) {
     return event.phase;
+  }
+  // subagent-roster: a child's own terminal outcome is final (Desktop
+  // store/subagents.ts: upsertSubagent and the roster reconcile skip a row
+  // already completed/failed/interrupted). A later complete may still add
+  // the details it lacked, never turn «completed» into «failed». Hermes
+  // sends no event revision on subagent events, so this only pins what
+  // production already did.
+  if (current.source == SubagentActivitySource.native &&
+      event.source == SubagentActivitySource.native) {
+    return current.phase;
   }
   return newerRevision ? event.phase : current.phase;
 }
@@ -294,6 +340,11 @@ SubagentActivityDetails _mergeDetails(
       current.outputTailPreview,
       incoming.outputTailPreview,
     ),
+    outputTailTools:
+        (overwrite && incoming.outputTailTools.isNotEmpty) ||
+            current.outputTailTools.isEmpty
+        ? incoming.outputTailTools
+        : current.outputTailTools,
     parentId: choose(current.parentId, incoming.parentId),
     depth: choose(current.depth, incoming.depth),
     model: choose(current.model, incoming.model),

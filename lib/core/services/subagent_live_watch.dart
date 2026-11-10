@@ -8,8 +8,10 @@
 // closes the runtime exactly once. It never submits prompts and never opens a
 // socket: it borrows the parent chat's own gateway.
 //
-// Privacy: reasoning deltas, tool arguments and previews are dropped; only
-// public text and public tool names reach [SubagentLiveWatchView].
+// Privacy: reasoning deltas and tool arguments are dropped; public text,
+// public tool names and a bounded one-line tool preview (the command or the
+// target, what the owner's own step list already shows) reach
+// [SubagentLiveWatchView]. The page shows the preview only to the owner.
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
@@ -64,15 +66,63 @@ enum SubagentLiveWatchStatus {
 }
 
 @immutable
+final class SubagentWatchTool {
+  const SubagentWatchTool({
+    required this.id,
+    required this.name,
+    this.preview,
+    this.finished = false,
+    this.failed = false,
+  });
+  final String id;
+  final String name;
+
+  /// One line of what the tool works on (e.g. the command), bounded.
+  final String? preview;
+  final bool finished;
+  final bool failed;
+
+  SubagentWatchTool finish({bool failed = false}) => SubagentWatchTool(
+    id: id,
+    name: name,
+    preview: preview,
+    finished: true,
+    failed: failed,
+  );
+}
+
+/// Public transcript entries keep tool identity separate from assistant prose.
+/// Text entries only grow until sealed; closed entries retain their identity.
+@immutable
+final class SubagentWatchBlock {
+  const SubagentWatchBlock.text(this.id, this.text, {this.closed = false})
+    : tool = null;
+  SubagentWatchBlock.tool(SubagentWatchTool value)
+    : id = 'tool-${value.id}',
+      text = '',
+      closed = true,
+      tool = value;
+
+  final String id;
+  final String text;
+  final bool closed;
+  final SubagentWatchTool? tool;
+}
+
+@immutable
 final class SubagentLiveWatchView {
   final SubagentLiveWatchStatus status;
 
   /// Public text of the child so far: stored history plus mirrored deltas.
   final String text;
+  final List<SubagentWatchTool> tools;
+  final List<SubagentWatchBlock> blocks;
 
   const SubagentLiveWatchView({
     this.status = SubagentLiveWatchStatus.idle,
     this.text = '',
+    this.tools = const [],
+    this.blocks = const [],
   });
 }
 
@@ -120,6 +170,17 @@ class SubagentLiveWatch extends ValueNotifier<SubagentLiveWatchView> {
   /// Bumped by every resume attempt and by [close], so an answer that lost
   /// the race is recognised and discarded.
   int _generation = 0;
+  final List<SubagentWatchTool> _tools = [];
+
+  /// Tools marked done because the child wrote or thought again, before any
+  /// completion of their own arrived.
+  final Set<String> _presumedDone = {};
+  int _toolSequence = 0;
+  int _textSequence = 0;
+  final _publicStream = StreamingPublicAssistantText();
+  final List<SubagentWatchBlock> _blocks = [];
+  int? _openText;
+
   String _history = '';
   String _liveRaw = '';
 
@@ -192,6 +253,16 @@ class SubagentLiveWatch extends ValueNotifier<SubagentLiveWatchView> {
     _history = _publicHistory(snapshot.messages);
     _liveRaw = '';
     _deltaText = '';
+    _publicStream.clear();
+    _tools.clear();
+    _presumedDone.clear();
+    _blocks.clear();
+    _openText = null;
+    if (_history.isNotEmpty) {
+      _blocks.add(
+        SubagentWatchBlock.text('${_textSequence++}', _history, closed: true),
+      );
+    }
     if (!snapshot.running && !childIsLive()) {
       // Nothing is mirrored for a finished child: read once, keep nothing.
       unawaited(_closeRemote(runtime));
@@ -217,31 +288,101 @@ class SubagentLiveWatch extends ValueNotifier<SubagentLiveWatchView> {
       case 'message.delta':
         final text = payload['text'];
         if (text is String) {
-          _deltaText += _take(text, maxLiveChars - _deltaText.length);
+          // The mirror closes a tool only when the next one starts: a child
+          // that writes again has its tool's answer already.
+          final settled = text.isNotEmpty && _finishOpenTools();
+          final kept = _take(text, maxLiveChars - _deltaText.length);
+          _deltaText += kept;
+          _appendPublic(kept);
           _appendRaw(text);
+          if (settled) _publish(value.status);
         }
       case 'tool.start':
         final name = _publicToolName(payload['name']);
         if (name != null) {
+          final id =
+              payload['tool_call_id'] ??
+              payload['tool_id'] ??
+              payload['call_id'] ??
+              payload['id'];
+          if (id is String && _tools.any((tool) => tool.id == id)) return;
+          _sealText();
+          if (_tools.length >= 100) {
+            final oldest = _tools.removeAt(0);
+            _presumedDone.remove(oldest.id);
+            _blocks.removeWhere((block) => block.tool?.id == oldest.id);
+          }
+          final tool = SubagentWatchTool(
+            id: id is String ? id : 'tool-${_toolSequence++}',
+            name: name,
+            preview: _publicPreview(payload['preview']),
+          );
+          _tools.add(tool);
+          _blocks.add(SubagentWatchBlock.tool(tool));
           // A tool line splits the streamed text: keep that boundary as a
           // line break so the summary is compared with the same spacing.
           if (_deltaText.isNotEmpty && !_deltaText.endsWith('\n')) {
-            _deltaText += _take('\n', maxLiveChars - _deltaText.length);
+            final newline = _take('\n', maxLiveChars - _deltaText.length);
+            _deltaText += newline;
+            _publicStream.append(newline);
           }
           _appendRaw('${_onNewLine(_liveRaw)}› $name\n');
+        }
+      case 'tool.complete':
+        final id =
+            payload['tool_call_id'] ??
+            payload['tool_id'] ??
+            payload['call_id'] ??
+            payload['id'];
+        final name = _publicToolName(payload['name']);
+        // A tool only presumed done (the child wrote again) still takes its
+        // own completion: it may say that it failed.
+        final index = _tools.lastIndexWhere(
+          (t) => id is String
+              ? t.id == id && (!t.finished || _presumedDone.contains(t.id))
+              : !t.finished && (name == null || t.name == name),
+        );
+        if (index >= 0) {
+          final tool = _tools[index];
+          _presumedDone.remove(tool.id);
+          _tools[index] = tool.finish(
+            failed:
+                payload['error'] != null && payload['error'] != false ||
+                payload['status'] == 'failed',
+          );
+          final block = _blocks.indexWhere((b) => b.tool?.id == tool.id);
+          if (block >= 0) {
+            _blocks[block] = SubagentWatchBlock.tool(_tools[index]);
+          }
+          _publish(value.status);
+        }
+      case 'reasoning.delta':
+        // Its text stays private; a child that thinks again is past its tool.
+        final text = payload['text'];
+        if (text is String && text.isNotEmpty && _finishOpenTools()) {
+          _publish(value.status);
         }
       case 'message.complete':
         final summary = finalizedPublicAssistantText(
           payload['text'] is String ? payload['text'] as String : '',
         ).trim();
         if (summary.isNotEmpty && !_alreadyShown(summary)) {
+          _sealText();
+          _blocks.add(
+            SubagentWatchBlock.text(
+              '${_textSequence++}',
+              _takeTail(summary, maxLiveChars),
+              closed: true,
+            ),
+          );
+          _trimBlocks();
           _appendFinal('${_onNewLine(_liveRaw)}$summary');
         }
+        _sealText();
         _stopListening();
         _publish(SubagentLiveWatchStatus.finished);
         unawaited(_closeRuntime());
-      // `reasoning.delta` is private by policy; `message.start` and
-      // `tool.complete` carry nothing public to render.
+      // `message.start` carries nothing public to render.
     }
   }
 
@@ -303,6 +444,63 @@ class SubagentLiveWatch extends ValueNotifier<SubagentLiveWatchView> {
     }
   }
 
+  void _appendPublic(String raw) {
+    final delta = _publicStream.append(raw);
+    if (delta == null || delta.isEmpty) return;
+    final index = _openText;
+    if (index == null) {
+      _openText = _blocks.length;
+      _blocks.add(SubagentWatchBlock.text('${_textSequence++}', delta));
+    } else {
+      final old = _blocks[index];
+      _blocks[index] = SubagentWatchBlock.text(old.id, old.text + delta);
+    }
+  }
+
+  /// Marks every running tool as done (never as failed: nothing says so).
+  /// Returns whether one was running.
+  bool _finishOpenTools() {
+    var changed = false;
+    for (var i = 0; i < _tools.length; i++) {
+      final tool = _tools[i];
+      if (tool.finished) continue;
+      _tools[i] = tool.finish();
+      _presumedDone.add(tool.id);
+      final block = _blocks.indexWhere((b) => b.tool?.id == tool.id);
+      if (block >= 0) _blocks[block] = SubagentWatchBlock.tool(_tools[i]);
+      changed = true;
+    }
+    return changed;
+  }
+
+  void _sealText() {
+    final index = _openText;
+    if (index != null) {
+      final old = _blocks[index];
+      _blocks[index] = SubagentWatchBlock.text(old.id, old.text, closed: true);
+      _openText = null;
+    }
+  }
+
+  void _trimBlocks() {
+    var room = maxLiveChars;
+    for (var i = _blocks.length - 1; i >= 0; i--) {
+      final block = _blocks[i];
+      if (block.tool != null) continue;
+      final kept = _takeTail(block.text, room);
+      room -= kept.length;
+      if (kept != block.text) {
+        // A trimmed block gets a new identity: it is a replacement, not an append.
+        _blocks[i] = SubagentWatchBlock.text(
+          '${_textSequence++}',
+          kept,
+          closed: true,
+        );
+      }
+    }
+    _blocks.removeWhere((b) => b.tool == null && b.text.isEmpty);
+  }
+
   void _appendRaw(String text) {
     final kept = _take(text, maxLiveChars - _liveRaw.length);
     if (kept.isEmpty) return;
@@ -362,6 +560,8 @@ class SubagentLiveWatch extends ValueNotifier<SubagentLiveWatchView> {
     value = SubagentLiveWatchView(
       status: status,
       text: [_history, live].where((part) => part.isNotEmpty).join('\n'),
+      tools: List.unmodifiable(_tools),
+      blocks: List.unmodifiable(_blocks),
     );
   }
 
@@ -386,7 +586,26 @@ class SubagentLiveWatch extends ValueNotifier<SubagentLiveWatchView> {
     return parts.join('\n');
   }
 
-  /// A tool's public name only; arguments and previews never reach the view.
+  static const int maxPreviewChars = 160;
+
+  /// First non-empty line of a tool's preview, without control characters and
+  /// bounded; null when there is none.
+  static String? _publicPreview(Object? raw) {
+    if (raw is! String) return null;
+    for (final line in raw.split('\n')) {
+      final clean = line
+          .replaceAll(RegExp(r'[\x00-\x1f\x7f]'), ' ')
+          .replaceAll(RegExp(r' {2,}'), ' ')
+          .trim();
+      if (clean.isEmpty) continue;
+      final runes = clean.runes;
+      if (runes.length <= maxPreviewChars) return clean;
+      return '${String.fromCharCodes(runes.take(maxPreviewChars)).trimRight()}…';
+    }
+    return null;
+  }
+
+  /// A tool's public name only; its arguments never reach the view.
   static String? _publicToolName(Object? raw) {
     if (raw is! String) return null;
     final name = raw.trim();
