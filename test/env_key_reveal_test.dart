@@ -666,6 +666,53 @@ void main() {
       expect(clip.text, isEmpty);
     });
 
+    revealTest('two copies on the wire at once: the later one keeps its 30 s', (
+      tester,
+    ) async {
+      String? text;
+      final gates = <Completer<void>>[];
+      final messenger = tester.binding.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+        switch (call.method) {
+          case 'Clipboard.setData':
+            text = (call.arguments as Map)['text'] as String?;
+          case 'Clipboard.getData':
+            return text == null ? null : <String, dynamic>{'text': text};
+        }
+        return null;
+      });
+      messenger.setMockMethodCallHandler(SensitiveClipboard.channel, (
+        call,
+      ) async {
+        final gate = Completer<void>();
+        gates.add(gate);
+        await gate.future;
+        text = (call.arguments as Map)['text'] as String;
+        return true;
+      });
+      addTearDown(() {
+        messenger.setMockMethodCallHandler(SystemChannels.platform, null);
+        messenger.setMockMethodCallHandler(SensitiveClipboard.channel, null);
+      });
+
+      final first = SensitiveClipboard.copy('first-secret');
+      final second = SensitiveClipboard.copy('second-secret');
+      await tester.pump();
+      expect(gates, hasLength(2));
+      gates[0].complete();
+      await first;
+      await tester.pump(const Duration(seconds: 10));
+      gates[1].complete();
+      await second;
+      expect(text, 'second-secret');
+
+      // The first copy's 30 s are over; the second one's are not.
+      await tester.pump(const Duration(seconds: 21));
+      expect(text, 'second-secret');
+      await tester.pump(const Duration(seconds: 10));
+      expect(text, isEmpty);
+    });
+
     revealTest('does not clear what the user copied meanwhile', (tester) async {
       final clip = _Clip()..install(tester);
       final client = _FakeEnv();
