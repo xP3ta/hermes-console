@@ -170,7 +170,15 @@ class HermesSaveToDeviceHandler(
         runOnExecutor("finish", result) {
             val writer = synchronized(writers) { writers.remove(id) }
                 ?: throw IllegalStateException("no writer")
-            writer.output.use { it.flush() }
+            try {
+                writer.output.use { it.flush() }
+            } catch (error: Throwable) {
+                // The writer is already gone, so Dart's abort cannot remove
+                // the half-written document: remove it here, as copy does.
+                Log.w(TAG, "[save] finish stopped bytes=${writer.bytes}, partial document deleted")
+                deleteDocument(writer.uri)
+                throw error
+            }
             Log.i(TAG, "[save] finish writer=$id bytes=${writer.bytes}")
             writer.bytes
         }
