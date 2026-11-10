@@ -731,6 +731,141 @@ void main() {
       });
     });
 
+    // A hide and show while a call is on the wire: the new run found it busy
+    // and asked nothing, so the old call must hand over when it lands.
+    test('a list read on the wire across a hide and show keeps polling', () {
+      fakeAsync((async) {
+        final gate = Completer<SshRemoteResult>();
+        var armed = false;
+        final c = HerdrAgentsController(
+          run: (command) {
+            if (armed && command.contains("'snapshot'")) {
+              armed = false;
+              return gate.future;
+            }
+            return server.call(command);
+          },
+          store: store,
+          now: () => now,
+        )..setActive(true);
+        async.flushMicrotasks();
+        armed = true;
+        async.elapse(const Duration(seconds: 3));
+        expect(armed, isFalse, reason: 'the next read is on the wire');
+        c.setActive(false);
+        c.setActive(true);
+        async.flushMicrotasks();
+        final before = server.snapshotCalls;
+        gate.complete(
+          const SshRemoteResult(
+            stdout:
+                '{"result":{"snapshot":{"workspaces":[],"panes":[],"agents":[]}}}',
+            exitCode: 0,
+          ),
+        );
+        async.flushMicrotasks();
+        async.elapse(Duration.zero);
+        expect(server.snapshotCalls, before + 1, reason: 'read again now');
+        async.elapse(const Duration(seconds: 30));
+        expect(server.snapshotCalls, greaterThan(before + 3));
+        c.dispose();
+      });
+    });
+
+    test('a probe on the wire across a hide and show still ends ready', () {
+      fakeAsync((async) {
+        final gate = Completer<SshRemoteResult>();
+        var held = true;
+        final c = HerdrAgentsController(
+          run: (command) {
+            if (held && command == sshHerdrProbeCommand) {
+              held = false;
+              return gate.future;
+            }
+            return server.call(command);
+          },
+          store: store,
+          now: () => now,
+        )..setActive(true);
+        async.flushMicrotasks();
+        expect(c.phase, HerdrAgentsPhase.probing);
+        c.setActive(false);
+        c.setActive(true);
+        async.flushMicrotasks();
+        gate.complete(
+          const SshRemoteResult(stdout: '$fakeHerdrPath\n', exitCode: 0),
+        );
+        async.flushMicrotasks();
+        expect(c.phase, HerdrAgentsPhase.ready);
+        c.dispose();
+      });
+    });
+
+    test('a screen read on the wire across a hide and show keeps reading', () {
+      fakeAsync((async) {
+        final gate = Completer<SshRemoteResult>();
+        var armed = false;
+        final c = HerdrAgentsController(
+          run: (command) {
+            if (armed && command.contains("'read'")) {
+              armed = false;
+              return gate.future;
+            }
+            return server.call(command);
+          },
+          store: store,
+          now: () => now,
+        )..setActive(true);
+        async.flushMicrotasks();
+        armed = true;
+        c.openDetail('w1:p1');
+        async.flushMicrotasks();
+        expect(armed, isFalse, reason: 'the first read is on the wire');
+        c.setActive(false);
+        c.setActive(true);
+        async.flushMicrotasks();
+        final before = server.readCalls;
+        gate.completeError(StateError('dropped'));
+        async.flushMicrotasks();
+        async.elapse(Duration.zero);
+        expect(server.readCalls, before + 1, reason: 'read again now');
+        expect(c.detailLoaded, isTrue);
+        c.dispose();
+      });
+    });
+
+    test('another agent opened during a screen read is read too', () {
+      fakeAsync((async) {
+        final gate = Completer<SshRemoteResult>();
+        var armed = false;
+        final c = HerdrAgentsController(
+          run: (command) {
+            if (armed && command.contains("'read'")) {
+              armed = false;
+              return gate.future;
+            }
+            return server.call(command);
+          },
+          store: store,
+          now: () => now,
+        )..setActive(true);
+        async.flushMicrotasks();
+        armed = true;
+        c.openDetail('w1:p1');
+        async.flushMicrotasks();
+        expect(armed, isFalse, reason: 'the first read is on the wire');
+        c.openDetail('w1:p2');
+        async.flushMicrotasks();
+        final before = server.readCalls;
+        gate.completeError(StateError('dropped'));
+        async.flushMicrotasks();
+        async.elapse(Duration.zero);
+        expect(server.readCalls, before + 1, reason: 'the new agent is read');
+        expect(c.detailLoaded, isTrue);
+        c.dispose();
+      });
+    });
+
     test('the open agent: reads its screen, slows down when still, stops', () {
       fakeAsync((async) {
         final c = make()..setActive(true);
