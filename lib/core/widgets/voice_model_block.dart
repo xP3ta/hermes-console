@@ -227,7 +227,8 @@ class _VoiceModelBlockState extends State<VoiceModelBlock> {
     final source = widget.source;
     final load = ++_load;
     if (source == null) return;
-    _failed = false;
+    // Retry: the block waits again («…», nothing to tap) until it lands.
+    if (_failed) setState(() => _failed = false);
     unawaited(
       source.load().then(
         (choice) {
