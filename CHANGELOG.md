@@ -3,7 +3,95 @@
 All notable public changes are documented here. Internal QA/profile artifacts
 are not releases.
 
-## Unreleased
+## 1.4.0 (9812) — 2026-11-10
+
+Console 1.4.0 adds a workspace (terminal, Git, browser, artifacts) next to the
+chat and shows what the agent is doing live. Alerts with the app closed keep
+working as in 1.3.1 (opt-in background listening); Console uses no Firebase or
+third-party service for notifications. It still talks only to the Dashboard.
+
+### New
+
+- *Workspace.* The chat options sheet puts Terminal, Git and an in-app browser
+  one tap away. The SSH terminal is full screen, with an extra key row and
+  automatic reconnection. The Git review screen lists changed files, shows the
+  diff per file and stages, unstages and commits locally (no push, no PR). The
+  browser opens web (http and https) links inside the app and never runs scripts that talk back to it.
+- *Artifacts.* The images, files and links of a conversation in one view, plus a
+  view across recent conversations.
+- *Tablets and foldables.* From 840 dp wide, chat and workspace sit side by side.
+- *Subagents.* Parity with the official app: failed delegations are kept, pause
+  and Retry, nested children, a tappable **Subagents n/N** card in reloaded
+  chats (list, detail, **Open conversation**) and the live detail of a running
+  subagent.
+- *New look for the running turn.* A **Working m:ss · N tools** card with a window
+  of at most four actions, a tree connector, grouped repeated tools, small grey
+  live reasoning and a final **Worked …** fold.
+- *Keep connection while working in the background.* On by default, off with App
+  Lock. A short foreground service of type dataSync, bounded to the running turn
+  (30 minutes at most), with one notification and a Stop action.
+- *Digital assistant.* Console can be chosen under Default apps > Digital
+  assistant app ([#217](https://github.com/xP3ta/hermes-console/issues/217)).
+- *Bot desktop viewer and takeover over noVNC* (experimental; not yet checked on
+  a real bot display).
+- *Haptic feedback* setting in Appearance, on by default.
+
+### Changed
+
+- The chat no longer jumps down while you read earlier messages; **Go to end**
+  appears instead.
+- Connection errors behave like Hermes Desktop: no connection wording before five
+  minutes of real outage, then one persistent notice; unconfirmed messages get a
+  Retry card.
+- Notification handling hardened after two security reviews: lock checks and
+  alerts dated in the future rejected.
+- *Launcher widgets in the app's theme.* Now, Chats, Cron, Tasks and New chat are
+  drawn by the app in the active theme (colours, font and glass), at the exact
+  size of their cells and at the system text size. Allow, Deny and every row are
+  still native buttons that TalkBack reads with their content. New chat can grow
+  to two rows.
+- Home screen widgets load by themselves and no longer show a false working state
+  in the background; with App Lock they only offer **Open**.
+- Fewer loading flickers: lists keep their rows while refreshing and the chat
+  skeleton waits 180 ms.
+
+### Fixed
+
+- Windows native server paths
+  ([#215](https://github.com/xP3ta/hermes-console/issues/215),
+  [#216](https://github.com/xP3ta/hermes-console/pull/216)).
+- The tablet drawer and **Go to** navigation
+  ([#218](https://github.com/xP3ta/hermes-console/pull/218),
+  [#219](https://github.com/xP3ta/hermes-console/pull/219)).
+
+### Restored
+
+- *Opt-in background listening (as in 1.3.1).* Settings > Notifications >
+  "Listen in background" is back with the same preference: Cron, Kanban and room notices reach you with the app
+  closed, and it resumes after a reboot or an update if you had it on. It uses
+  `remoteMessaging` on Android 15+ and `dataSync` on Android 14 and older, and
+  never starts without the switch. With App Lock on, those notices carry no
+  content. The Bots and Rooms launcher widgets stay retired.
+
+### Removed
+
+- *Bots and Rooms launcher widgets.* They leave the widget picker; a launcher
+  removes one already placed when the app updates. Now still shows who needs
+  you and who is working.
+
+### Known limits
+
+- Not yet verified on a real device: the Android 16 Live Update chip, haptic feel
+  and Doze with the screen off.
+
+### Thanks
+
+- **Lucas Oliveira** ([@lucasliet](https://github.com/lucasliet)): the bot desktop
+  viewer over noVNC (PR #210).
+- **mikyan**: Windows native server paths (#215/#216).
+- **xgooz3x**: the tablet drawer and **Go to** fix (#218/#219).
+
+## 1.3.1 (9650) — 2026-10-25
 
 Console 1.3.1 fixes named profiles, completes nine languages and follows Hermes
 0.22.4. It still talks only to the Dashboard.

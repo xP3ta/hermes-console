@@ -54,6 +54,44 @@ class SbomGeneratorTest(unittest.TestCase):
         )
         return binary, pom
 
+    def test_gradle_components_reject_unresolved_tree_in_both_modes(self):
+        output = self.dependency_output(
+            "example.invalid:resolved:1.0.0",
+            "example.invalid:unresolved:2.0.0 FAILED",
+        )
+        for artifact_mode in (False, True):
+            with self.subTest(artifact_mode=artifact_mode):
+                with mock.patch.object(self.sbom, "run", return_value=output):
+                    with self.assertRaisesRegex(ValueError, "unresolved"):
+                        self.sbom.gradle_components(
+                            "playRelease", artifact_mode=artifact_mode, cache=self.directory
+                        )
+
+    def test_selected_coordinates_reject_failure_without_a_version(self):
+        output = self.dependency_output(
+            "example.invalid:resolved:1.0.0", "example.invalid:unresolved FAILED"
+        )
+        with self.assertRaisesRegex(ValueError, "unresolved"):
+            self.sbom.selected_gradle_coordinates(output)
+
+    def test_selected_coordinates_reject_failed_version_selection(self):
+        output = self.dependency_output(
+            "example.invalid:unresolved:1.0.0 -> 2.0.0 FAILED"
+        )
+        with self.assertRaisesRegex(ValueError, "unresolved"):
+            self.sbom.selected_gradle_coordinates(output)
+
+    def test_selected_coordinates_keep_resolved_versions_and_failed_named_artifact(self):
+        output = self.dependency_output(
+            "example.invalid:resolved:1.0.0 -> 2.0.0",
+            "example.invalid:FAILED:1.0.0",
+            "example.invalid:resolved:2.0.0 (*)",
+        )
+        self.assertEqual(
+            self.sbom.selected_gradle_coordinates(output),
+            [("example.invalid", "FAILED", "1.0.0"), ("example.invalid", "resolved", "2.0.0")],
+        )
+
     def test_source_mode_never_reads_gradle_cache(self):
         output = self.dependency_output("example.invalid:source-only:1.0.0")
         with (
@@ -179,6 +217,116 @@ class SbomGeneratorTest(unittest.TestCase):
             rule["evidence"],
             "https://github.com/journeyapps/zxing-android-embedded/blob/master/COPYING",
         )
+
+
+    def test_vendored_components_hash_their_files_and_honour_excludes(self):
+        root = self.directory
+        (root / "lib/core").mkdir(parents=True)
+        (root / "lib/core/a.js").write_text("a", encoding="utf-8")
+        (root / "lib/core/b.js").write_text("b", encoding="utf-8")
+        (root / "lib/LICENSE").write_text("MIT", encoding="utf-8")
+        manifest = root / "tool/sbom/vendored-components.json"
+        manifest.parent.mkdir(parents=True)
+        manifest.write_text(
+            json.dumps(
+                [
+                    {
+                        "name": "lib",
+                        "version": "1.0.0",
+                        "purl": "pkg:github/x/lib@v1.0.0",
+                        "license": "MIT",
+                        "licenseEvidence": "lib/LICENSE",
+                        "paths": ["lib/core"],
+                        "exclude": ["lib/core/b.js"],
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+        with (
+            mock.patch.object(self.sbom, "ROOT", root),
+        ):
+            [component] = self.sbom.vendored_components()
+            files = self.sbom.vendored_files(self.sbom.vendored_entries()[0])
+        self.assertEqual([path.name for path in files], ["a.js"])
+        self.assertEqual(component["bom-ref"], "pkg:github/x/lib@v1.0.0")
+        self.assertEqual(component["licenses"], [{"expression": "MIT"}])
+        self.assertEqual(properties(component)["hermes.vendored.files"], "1")
+        self.assertEqual(properties(component)["hermes.license.evidence"], "lib/LICENSE")
+        relative = b"lib/core/a.js"
+        expected = hashlib.sha256(
+            len(relative).to_bytes(8, "big") + relative + hashlib.sha256(b"a").digest()
+        ).hexdigest()
+        self.assertEqual(component["hashes"], [{"alg": "SHA-256", "content": expected}])
+
+    def test_vendored_component_with_a_missing_path_fails_closed(self):
+        manifest = self.directory / "tool/sbom/vendored-components.json"
+        manifest.parent.mkdir(parents=True)
+        manifest.write_text(
+            json.dumps(
+                [
+                    {
+                        "name": "gone",
+                        "version": "1",
+                        "purl": "pkg:github/x/gone@v1",
+                        "license": "MIT",
+                        "licenseEvidence": "LICENSE",
+                        "paths": ["nowhere"],
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+        with (
+            mock.patch.object(self.sbom, "ROOT", self.directory),
+            self.assertRaises(SystemExit),
+        ):
+            self.sbom.vendored_components()
+
+    def test_every_vendored_novnc_file_belongs_to_one_component(self):
+        """noVNC and pako are inventoried (REVIEW-PR210 P3), each file once."""
+        novnc = ROOT / "assets/novnc"
+        if not novnc.is_dir():
+            self.skipTest("noVNC is not vendored in this tree")
+        owners: dict[str, list[str]] = {}
+        for entry in self.sbom.vendored_entries():
+            for path in self.sbom.vendored_files(entry):
+                owners.setdefault(path.relative_to(ROOT).as_posix(), []).append(entry["name"])
+        code = sorted(
+            path.relative_to(ROOT).as_posix()
+            for base in (novnc / "core", novnc / "vendor")
+            if base.is_dir()
+            for path in base.rglob("*")
+            if path.is_file()
+        )
+        self.assertTrue(code)
+        for relative in code:
+            self.assertEqual(len(owners.get(relative, [])), 1, relative)
+        self.assertEqual(owners["assets/novnc/core/crypto/des.js"], ["noVNC-des"])
+        components = {component["name"]: component for component in self.sbom.vendored_components()}
+        self.assertEqual(components["noVNC"]["purl"], "pkg:github/novnc/noVNC@v1.5.0")
+        self.assertEqual(components["noVNC"]["licenses"], [{"expression": "MPL-2.0"}])
+        self.assertEqual(components["pako"]["licenses"], [{"expression": "MIT"}])
+
+    def test_chat_icon_strips_resolve_to_mit_with_their_notice(self):
+        strips = sorted((ROOT / "assets/chat_icons").glob("*.webp"))
+        self.assertEqual(len(strips), 10)
+        for strip in strips:
+            self.assertEqual(
+                self.sbom.asset_licence(strip),
+                ("MIT", "assets/chat_icons/LICENSE.txt"),
+                strip.name,
+            )
+        # Our own metadata next to them is not claimed as MIT.
+        self.assertEqual(
+            self.sbom.asset_licence(ROOT / "assets/chat_icons/atlas.json"),
+            ("GPL-3.0-only", "assets/chat_icons/LICENSE.txt"),
+        )
+        sources = json.loads((ROOT / "assets/chat_icons/SOURCES.json").read_text())
+        for name, entry in sources["icons"].items():
+            data = (ROOT / entry["atlas"]).read_bytes()
+            self.assertEqual(hashlib.sha256(data).hexdigest(), entry["atlasSha256"], name)
+            self.assertEqual(entry["license"], "MIT", name)
 
 
 if __name__ == "__main__":

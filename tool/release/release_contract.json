@@ -2,7 +2,7 @@
   "schema": 1,
   "source": {
     "authoritativeLock": "pubspec.lock",
-    "authoritativeLockSha256": "e3f8811963c2c1ab5eb7f62fd8ea86c5a3661bc98214017a720680019d6042c8"
+    "authoritativeLockSha256": "48d6da0ead3f18dc1aa599fdfe314b5ff7825fa834653e5aacd94322300cbe35"
   },
   "sourceAuthorization": {
     "forge": "github.com",

@@ -1,0 +1,8 @@
+Novedades de la 1.4.0:
+• Terminal, Git y navegador integrados en las opciones del chat.
+• Artefactos: imágenes, archivos y enlaces de la conversación en una vista.
+• Tablet y plegable: chat y trabajo lado a lado.
+• Subagentes con lista y detalle en vivo; nuevo aspecto del turno en curso.
+• Avisos con la app cerrada: la escucha opcional de Ajustes > Notificaciones, como en la 1.3.1.
+• Hápticos y menos parpadeos.
+• Los widgets Bots y Salas se retiran.

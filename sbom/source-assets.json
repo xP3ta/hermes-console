@@ -58,6 +58,102 @@
     },
     {
       "kind": "asset",
+      "license": "GPL-3.0-only",
+      "licenseEvidence": "assets/chat_icons/LICENSE.txt",
+      "path": "assets/chat_icons/SOURCES.json",
+      "sha256": "ba41164f513060d7e9ae24d06efc82dc807716ecfeb59d27ea6d267b35799df3",
+      "size": 4845
+    },
+    {
+      "kind": "asset",
+      "license": "MIT",
+      "licenseEvidence": "assets/chat_icons/LICENSE.txt",
+      "path": "assets/chat_icons/agent-team.webp",
+      "sha256": "47be6862a5e4ea18f9a15914b24c28023f9fc282d533e97de20438a8d5cb6f97",
+      "size": 992
+    },
+    {
+      "kind": "asset",
+      "license": "GPL-3.0-only",
+      "licenseEvidence": "assets/chat_icons/LICENSE.txt",
+      "path": "assets/chat_icons/atlas.json",
+      "sha256": "6554a84bc808547d45b8ad2bc4315da33ea7541df3e038c6bbbc181afd10bee8",
+      "size": 753
+    },
+    {
+      "kind": "asset",
+      "license": "MIT",
+      "licenseEvidence": "assets/chat_icons/LICENSE.txt",
+      "path": "assets/chat_icons/check.webp",
+      "sha256": "01d75105f3516929c99f871e77a4c41a3f077ac8231d29b7140b31cc9b21deb2",
+      "size": 1756
+    },
+    {
+      "kind": "asset",
+      "license": "MIT",
+      "licenseEvidence": "assets/chat_icons/LICENSE.txt",
+      "path": "assets/chat_icons/delegate-task.webp",
+      "sha256": "ae1f65d1d45f10ece288ad03623af9b72bd6150473d8c34f9b77bfc756415cfb",
+      "size": 3086
+    },
+    {
+      "kind": "asset",
+      "license": "MIT",
+      "licenseEvidence": "assets/chat_icons/LICENSE.txt",
+      "path": "assets/chat_icons/error.webp",
+      "sha256": "d4811cc83471287b948e6e5d9a006d7599956ffc10b99146ac73668009e40522",
+      "size": 832
+    },
+    {
+      "kind": "asset",
+      "license": "MIT",
+      "licenseEvidence": "assets/chat_icons/LICENSE.txt",
+      "path": "assets/chat_icons/parallel-tools.webp",
+      "sha256": "e0ea9677a220eb31f0428d9b30625ca7dc516107a3c136230135eeac0c78a179",
+      "size": 2988
+    },
+    {
+      "kind": "asset",
+      "license": "MIT",
+      "licenseEvidence": "assets/chat_icons/LICENSE.txt",
+      "path": "assets/chat_icons/queued.webp",
+      "sha256": "b7225488bd8c7be630c19c6066952216d962d7e5fae17d8923af8aa56f2f6a0a",
+      "size": 3300
+    },
+    {
+      "kind": "asset",
+      "license": "MIT",
+      "licenseEvidence": "assets/chat_icons/LICENSE.txt",
+      "path": "assets/chat_icons/reasoning.webp",
+      "sha256": "70bf953556b39077fa4738e735f6f459fdb2f98235aa96a2e80eb7218ad6d953",
+      "size": 3434
+    },
+    {
+      "kind": "asset",
+      "license": "MIT",
+      "licenseEvidence": "assets/chat_icons/LICENSE.txt",
+      "path": "assets/chat_icons/response-stream.webp",
+      "sha256": "b53fab9c29cff50773e2f8bdaf01e463bb8580e8cb126ff969ddc09d1008f441",
+      "size": 1152
+    },
+    {
+      "kind": "asset",
+      "license": "MIT",
+      "licenseEvidence": "assets/chat_icons/LICENSE.txt",
+      "path": "assets/chat_icons/terminal-agent.webp",
+      "sha256": "60739bbb2ba285a61067da612c001b7d7b1ab4f442342d76ef02828acd671e4d",
+      "size": 1290
+    },
+    {
+      "kind": "asset",
+      "license": "MIT",
+      "licenseEvidence": "assets/chat_icons/LICENSE.txt",
+      "path": "assets/chat_icons/tool-call.webp",
+      "sha256": "4d38ea5fb9dbadda5f91977a970c4916042b3b18a18087086492395aa928c715",
+      "size": 6130
+    },
+    {
+      "kind": "asset",
       "license": "CC0-1.0",
       "licenseEvidence": "assets/companions/nimbus/pet.json",
       "path": "assets/companions/nimbus/pet.json",
@@ -449,5 +545,5 @@
       "size": 10103
     }
   ],
-  "inputFingerprint": "bf934c907a199f091912a59fef1cc6ff204ba81cb6086be10860dbadbdb1f765"
+  "inputFingerprint": "3eaf15f158c81bd1220f58acc4891abcc803034885aa424320cb8d5fbda60e13"
 }

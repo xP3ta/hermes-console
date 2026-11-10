@@ -124,6 +124,20 @@ de los paquetes empaquetados).
 | webrtc_interface | MIT |
 | logger | MIT |
 
+## Indicador de carga "three-body" (Uiverse, MIT)
+
+El indicador de carga `HermesLoader`
+([`lib/core/widgets/hermes_loader.dart`](lib/core/widgets/hermes_loader.dart))
+reimplementa en Flutter (`CustomPainter` y un único `AnimationController`) la
+geometría y los tiempos del loader "three-body" (`tidy-walrus-92`):
+
+- **Autor**: Gabriel (GitHub: dovatgabriel)
+- **Fuente**: Uiverse.io, https://uiverse.io/dovatgabriel/tidy-walrus-92
+- **Licencia**: MIT (licencia de los elementos de Uiverse.io)
+
+No se incluye código CSS del original; solo se replican su geometría y sus
+tiempos de animación.
+
 ## Artwork propio y companions CC0
 
 La procedencia, licencia y SHA-256 de la identidad visual propia y de los tres
@@ -168,6 +182,15 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+## Marcas de sitios en Artefactos (Simple Icons, CC0)
+
+En «Artefactos», cada enlace lleva la marca monocroma de su sitio, como en
+Hermes Desktop: la misma tabla de dominios de Desktop
+(`apps/desktop/src/lib/brand-icon.ts`) y los trazados de Simple Icons 16.8.0
+(`CC0-1.0`), tal como los empaqueta `@icons-pack/react-simple-icons@13.11.1`,
+sin colores. Detalle en [`ASSET_PROVENANCE.md`](ASSET_PROVENANCE.md). Las
+marcas pertenecen a sus titulares y solo indican qué sitio abre el enlace.
+
 ## Componentes Android transitivos relevantes
 
 - **ZXing Core 3.5.2** — Apache License 2.0; decodifica los QR íntegramente en
@@ -190,6 +213,38 @@ SOFTWARE.
 El escáner QR es local: no envía fotogramas, contenido, resultados ni métricas
 del escáner a XPeta Lab o a otro servicio.
 
+## Pantalla del bot (noVNC)
+
+El visor que asume el control del escritorio del bot incluye el núcleo de
+**noVNC** (https://github.com/novnc/noVNC, v1.5.0), licencia **MPL-2.0**.
+Los avisos originales de cada archivo se conservan. El texto de la licencia
+está en `assets/novnc/LICENSE.txt` y `assets/novnc/docs/LICENSE.MPL-2.0`.
+`assets/novnc/bridge.html` es código de este proyecto (GPL-3.0-only) y solo
+carga ese núcleo.
+
+`assets/novnc/core/crypto/des.js` no es MPL: conserva la concesión BSD-style
+de AT&T Laboratories Cambridge (1999), Widget Workshop (1996) y Jef Poskanzer
+(1996). El texto está en el propio archivo y en
+`LICENSES/LicenseRef-noVNC-DES.txt`.
+
+**pako** (https://github.com/nodeca/pako, Copyright (C) 2014-2016 Vitaly
+Puzrin) se incluye tal como lo vende noVNC, bajo la licencia MIT
+(`assets/novnc/vendor/pako/LICENSE`).
+
+## Motor del navegador del agente (Hermes Desktop)
+
+`lib/core/browser/hermes_preview_engine.g.dart` contiene, tal como Hermes
+Desktop los convierte en texto, el motor que el agente usa para leer, recorrer
+y marcar la página del navegador integrado (`act-in-page.ts`,
+`watch-in-page.ts` de `apps/desktop/src/lib/preview-act` en
+https://github.com/NousResearch/hermes-agent). Licencia **MIT**,
+Copyright (c) 2025 Nous Research. Se regenera con
+`tool/browser/generate_preview_engine.sh`, que aplica un único cambio propio
+(`tool/browser/render_preview_engine.py`): nunca se informa del valor de un
+campo de contraseña, de código de un solo uso o de tarjeta. Las plantillas de
+`lib/core/browser/agent_preview_act.dart` copian las de `preview-act.ts` del
+mismo proyecto y licencia.
+
 ## Tipografías empaquetadas
 
 Inter, JetBrains Mono, Montserrat y Nunito se distribuyen bajo la SIL Open Font
@@ -207,3 +262,15 @@ webview_flutter_platform_interface, url_launcher_platform_interface,
 plugin_platform_interface (estas tres últimas también llegan al APK como
 transitivas de webview_flutter/url_launcher; aquí solo se declaran para los
 dobles de prueba).
+
+## Iconos del chat en vivo
+
+Los diez iconos de la fila viva, la píldora de delegados y el chip de cola
+(`assets/chat_icons/*.webp`) derivan de Generative Icons
+(https://generativeicons.com, LottieFiles), con licencia MIT declarada por el
+catálogo para cada icono. Son tiras de fotogramas pre-renderizadas (blanco
+sobre transparente) que la app tiñe con el tema; no hay reproductor Lottie
+en la app. Licencia y procedencia: `assets/chat_icons/LICENSE.txt`,
+`ASSET_PROVENANCE.md` y `assets/chat_icons/SOURCES.json`. Para regenerarlas
+se usó lottie-web 5.13.0 (MIT) solo en tiempo de compilación; no se
+distribuye.

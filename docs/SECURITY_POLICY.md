@@ -40,10 +40,6 @@ vigilancia/aprobaciones en segundo plano y proveedores configurables de STT/TTS/
 Una entrada persistida antigua o corrupta se descarta antes de leer credenciales.
 LAN, Tailscale, loopback y HTTPS/WSS permanecen compatibles.
 
-El TTS REST personalizado aplica la misma frontera a su URL completa: HTTPS en
-internet o HTTP únicamente en LAN/Tailscale/loopback. La cabecera de
-autenticación se construye en memoria y nunca se incluye en mensajes de error.
-
 Esta doble capa conserva el caso self-hosted privado sin permitir que una
 conexión pública en claro transmita claves, prompts o archivos.
 
@@ -125,9 +121,9 @@ Keystore; la caché en memoria no se persiste.
 
 | Permiso              | Justificación                                  |
 |----------------------|-----------------------------------------------|
-| INTERNET             | Conexión al Gateway (imprescindible)           |
+| INTERNET             | Conexión al servidor Hermes del propio usuario (imprescindible) |
 | ACCESS_NETWORK_STATE | Reintento inmediato al recuperar conectividad  |
-| POST_NOTIFICATIONS   | Notificaciones locales de respuestas, aprobaciones y tareas (sin push de terceros) |
+| POST_NOTIFICATIONS   | Notificaciones locales de respuestas, aprobaciones y preguntas; con la app cerrada solo las de la escucha opt-in (conexión propia con el servidor, sin Firebase ni terceros) |
 | POST_PROMOTED_NOTIFICATIONS | Live Updates de Android 16 para un turno en marcha |
 | RECORD_AUDIO         | Dictado y conversación iniciados por el usuario |
 | MODIFY_AUDIO_SETTINGS | Audio mode of the opt-in GPT-Live WebRTC session (flutter_webrtc); normal permission |
@@ -138,11 +134,12 @@ Keystore; la caché en memoria no se persiste.
 | USE_BIOMETRIC | Optional App Lock; verification is delegated to Android |
 | WRITE_EXTERNAL_STORAGE (`maxSdkVersion` 28) | Saving a generated image on Android 9 and older, only when the user taps Save |
 | WAKE_LOCK, USE_FINGERPRINT | Added by flutter_foreground_task and local_auth; not held without work, no biometric data |
+| FOREGROUND_SERVICE | Permiso base de los tres servicios en primer plano (el servicio Flutter, `HermesExternalDataSyncService` y `HermesTurnKeepAliveService`) |
+| FOREGROUND_SERVICE_REMOTE_MESSAGING | Escucha opt-in en segundo plano en Android 15+ (Cron, Kanban y salas con la app cerrada): conexión propia con el servidor del usuario, apagada por defecto, notificación persistente con Parar; en Android ≤14 la misma escucha usa `dataSync` |
+| RECEIVE_BOOT_COMPLETED | Re-arma tras reinicio o actualización solo la escucha opt-in, y solo si el usuario la había activado (`remoteMessaging` en API ≥35, `dataSync` en API ≤34); nunca arranca Voz, lectura, SSH ni SFTP. `HermesAutomationRebootReceiver` sanea el estado y, sin opt-in, para el servicio |
 | FOREGROUND_SERVICE_MICROPHONE | Continuidad de Voz con opt-in y notificación |
 | FOREGROUND_SERVICE_MEDIA_PLAYBACK | TTS y respuestas de Voz solicitados |
-| FOREGROUND_SERVICE_DATA_SYNC | SSH/SFTP y fallback de escucha opt-in en API ≤34 |
-| FOREGROUND_SERVICE_REMOTE_MESSAGING | Escucha persistente opt-in en API ≥35 |
-| RECEIVE_BOOT_COMPLETED | Restaurar solo esa escucha si seguía activa; nunca audio ni SSH/SFTP |
+| FOREGROUND_SERVICE_DATA_SYNC | SSH/SFTP iniciados por el usuario (servicio nativo en API ≥35, servicio Flutter en API ≤34); conexión de un turno en curso al salir de la app (`HermesTurnKeepAliveService`, acotado al turno, tope 30 min, sin escucha en segundo plano ni boot, nunca con App Lock); también es el tipo de la escucha opt-in en Android ≤14 |
 
 ### NO añadir sin revisión explícita
 
@@ -170,9 +167,9 @@ Keystore; la caché en memoria no se persiste.
   herramienta, error ni texto sintetizado.
 - Pausar, reanudar y terminar ReadAloud no llaman a STT ni abren el micrófono.
   La conversación de voz conserva prioridad y sus controles propios. Al quedar
-  idle se degrada al tipo de red que conserve demanda (`remoteMessaging` para
-  escucha opt-in en API ≥35; `dataSync` para esa escucha en API ≤34 o para
-  SSH/SFTP); tras process death no se promete reanudación del audio.
+  idle se degrada a `dataSync` si una transferencia SSH/SFTP en API ≤34 lo
+  sigue necesitando o se detiene; tras process death no se promete reanudación
+  del audio.
 - El modo conversación es opcional e independiente del STT/TTS del chat.
 - La elección `En este móvil`/`Servidor Hermes` se guarda por identidad del
   Dashboard y se aplica al iniciar Voz manualmente. En la investigación interna
@@ -314,7 +311,7 @@ Esto puede ser logueado por proxies, firewalls y herramientas de debug.
 |----------------------|---------------------------------------------------------|--------|
 | qr_code_scanner_plus / ZXing | QR íntegramente on-device; sin servicios de Google ni telemetría | BSD-2-Clause + Apache-2.0 verificadas |
 | sherpa_onnx / whisper_ggml_plus | STT/TTS local mediante modelos descargables; sin enviar conversación | Verificar hashes/origen de modelos |
-| flutter_foreground_task | Mantiene mensajería remota, Voz, lectura y el fallback dataSync de API ≤34 mediante una notificación Android local | Declarar sus cuatro tipos FGS en Play; SSH/SFTP API ≥35 usa el servicio nativo separado |
+| flutter_foreground_task | Mantiene Voz, lectura y SSH/SFTP de API ≤34 mediante una notificación Android local; sondea el servidor propio solo con la escucha opt-in activada por el usuario (`remoteMessaging` API ≥35 / `dataSync` API ≤34, como 1.3.1) y solo esa se re-arma tras boot | Declarar sus cuatro tipos FGS (`dataSync`, `remoteMessaging`, `microphone`, `mediaPlayback`) en Play; SSH/SFTP API ≥35 usa el servicio nativo separado; su receptor de boot se retira del manifest fusionado y lo sustituye el receptor propio que solo re-arma la escucha opt-in |
 | package_info_plus    | Lee metadatos del paquete (versión, etc.) — sin red    | OK |
 
 ### No añadir sin auditoría previa
