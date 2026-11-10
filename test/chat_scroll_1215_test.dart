@@ -1,7 +1,15 @@
+import 'support/live_chat_v4.dart';
+
+import 'package:hermes_android/core/widgets/chat/chat_pinned_prompt_header.dart';
+import 'package:hermes_android/core/design/floating.dart';
+
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -9,15 +17,27 @@ import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:hermes_android/core/widgets/chat/chat_notch.dart';
+import 'package:hermes_android/core/widgets/chat/console_composer.dart';
+import 'package:hermes_android/core/widgets/chat/live_reply_reveal.dart';
+import 'package:hermes_android/core/design/tokens.dart' show HermesChrome;
+import 'package:hermes_android/core/design/glass_strip.dart'
+    show HermesGlassStrip;
+import 'package:hermes_android/core/widgets/frosted_backdrop.dart'
+    show FrostedBackdrop, FrostedBackdropPolicy, FrostedZone;
 import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
 import 'package:hermes_android/core/screens/chat_screen.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/app_lock.dart';
 import 'package:hermes_android/core/services/approval_policy.dart';
+import 'package:hermes_android/core/services/chat_draft_store.dart';
+import 'package:hermes_android/core/services/chat_stream_trace.dart';
+import 'package:hermes_android/core/models/attachment_draft.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/font_size_service.dart';
 import 'package:hermes_android/core/services/notifications/notification_service.dart';
 import 'package:hermes_android/core/services/pinned_prompt_prefs.dart';
+import 'package:hermes_android/core/services/reasoning_disclosure_prefs.dart';
+import 'package:hermes_android/core/widgets/generated_image_card.dart';
 import 'package:hermes_android/core/widgets/hermes_notice.dart';
 import 'package:hermes_android/core/services/secure_storage.dart';
 import 'package:hermes_android/core/services/sftp_transfer_service.dart';
@@ -29,9 +49,15 @@ import 'package:hermes_android/core/utils/unread_rules.dart';
 import 'package:hermes_android/core/widgets/attachment_card.dart';
 import 'package:hermes_android/main.dart';
 import 'package:hermes_android/core/widgets/floating_chat_header.dart';
+import 'package:hermes_android/core/widgets/island.dart';
+import 'package:hermes_android/core/widgets/workspace/chat_workspace.dart'
+    show chatWorkspaceSplitFits;
 import 'package:hermes_android/core/theme/app_theme.dart';
 
+import 'package:webview_flutter_platform_interface/webview_flutter_platform_interface.dart';
+
 import 'support/bottom_transparency.dart';
+import 'support/fake_webview_platform.dart';
 import 'support/test_api_client.dart';
 
 // ignore: unused_element
@@ -135,6 +161,27 @@ class _StreamingGateway
   }
 }
 
+/// A draft store that always restores [draft]: the composer opens with it.
+class _OneDraftStore extends ChatDraftStore {
+  _OneDraftStore(super.prefs, this.draft);
+
+  final ChatDraft draft;
+
+  @override
+  Future<ChatDraft> load(
+    String connectionId,
+    String sessionId, {
+    String profile = 'default',
+    bool claimUnscopedLegacy = false,
+  }) async => draft;
+}
+
+/// A 1x1 PNG, for an image attachment staged in the composer.
+final _tinyPng = base64Decode(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGA'
+  'WjR9awAAAABJRU5ErkJggg==',
+);
+
 SavedConnection _connection() => SavedConnection(
   id: 'conn-scroll-stress',
   label: 'Scroll stress',
@@ -232,6 +279,7 @@ void main() {
     int Function()? wallClockMs,
     bool earlierAvailable = false,
     Future<void> Function(ActiveChat chat)? beforeOpen,
+    ChatDraftStore Function(SharedPreferences prefs)? draftStore,
   }) async {
     tester.platformDispatcher.localesTestValue = [const Locale('es')];
     addTearDown(tester.platformDispatcher.clearLocalesTestValue);
@@ -287,7 +335,11 @@ void main() {
     final navigatorContext = tester.element(find.byType(Navigator).first);
     Navigator.of(navigatorContext).push(
       MaterialPageRoute(
-        builder: (_) => ChatScreen(connection: connection, session: _session()),
+        builder: (_) => ChatScreen(
+          connection: connection,
+          session: _session(),
+          draftStoreOverride: draftStore?.call(prefs),
+        ),
       ),
     );
     await tester.pump();
@@ -423,6 +475,196 @@ void main() {
     });
   });
 
+  // scroll-follow (Desktop parity: use-stick-to-bottom in
+  // apps/desktop/src/components/assistant-ui/thread/list.tsx follows while
+  // locked to the bottom, escapes on user scroll-up, re-locks at the bottom).
+  // The chat follows only a reader who is pegado al final: one who went up is
+  // never carried back by anything but his own «ir al final» or his own send.
+  group('scroll-follow: only a reader at the bottom is followed', () {
+    Finder jump() => find.byKey(const ValueKey('chat-scroll-to-bottom'));
+
+    Future<void> finishTurn(
+      WidgetTester tester,
+      _StreamingGateway gateway,
+      ActiveChat chat,
+    ) async {
+      gateway.emit('message.complete', {'text': chat.assistantContent});
+      for (var frame = 0; frame < 60 && chat.isStreaming; frame++) {
+        await tester.pump(const Duration(milliseconds: 33));
+      }
+      await settle(tester);
+    }
+
+    Future<void> bounceSettle(WidgetTester tester) async {
+      for (var frame = 0; frame < 90; frame++) {
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+    }
+
+    Future<ActiveChat> startLongTurn(
+      WidgetTester tester,
+      _StreamingGateway gateway,
+    ) async {
+      final chat = await pumpChat(tester, gateway, history: _history());
+      await tester.pump(const Duration(seconds: 1));
+      await chat.send(
+        fullText: 'Cuéntame algo largo',
+        model: 'hermes-agent',
+        history: chat.buildHistory(),
+      );
+      gateway.emit('message.start');
+      gateway.emit('message.delta', {
+        'text': 'Primera línea de la respuesta.',
+      });
+      await settle(tester);
+      return chat;
+    }
+
+    testWidgets('idle: activity that arrives later does not carry a reader '
+        'who went up within one screen', (tester) async {
+      final gateway = _StreamingGateway();
+      final chat = await startLongTurn(tester, gateway);
+      await finishTurn(tester, gateway, chat);
+      await scrollUp(tester, 300);
+      final controller = controllerOf(tester);
+      final before = controller.position.pixels;
+      expect(before, greaterThan(150));
+      for (var i = 0; i < 3; i++) {
+        gateway.emit('subagent.start', {
+          'subagent_id': 'bg-$i',
+          'status': 'running',
+          'goal': 'Tarea en segundo plano $i',
+          'event_id': 'e-$i',
+          'event_revision': 1,
+        });
+        await tester.pump(const Duration(seconds: 2));
+        gateway.emit('subagent.progress', {
+          'subagent_id': 'bg-$i',
+          'status': 'running',
+          'text': 'Avanzando $i',
+          'event_id': 'e-$i-p',
+          'event_revision': 2,
+        });
+        await tester.pump(const Duration(seconds: 2));
+      }
+      await settle(tester);
+      // A row may land under the reader (that moves the offset away from the
+      // tail, never towards it): what must not happen is being carried down.
+      expect(controller.position.pixels, greaterThan(before - 1.5));
+      expect(
+        find.byKey(const ValueKey('scroll-to-bottom-visible')),
+        findsOneWidget,
+      );
+      await tearDownChat(tester, gateway);
+    });
+
+    testWidgets('a reader who went up is not moved by the end of the turn '
+        'and the jump button shows', (tester) async {
+      final gateway = _StreamingGateway();
+      final chat = await startLongTurn(tester, gateway);
+      await scrollUp(tester, 300);
+      final controller = controllerOf(tester);
+      final marker = visibleMarker(tester);
+      final markerTop = tester.getTopLeft(marker).dy;
+      for (var i = 0; i < 4; i++) {
+        gateway.emit('message.delta', {
+          'text': '\n\n${List.filled(20, 'Más texto del turno.').join(' ')}',
+        });
+        await tester.pump(const Duration(seconds: 3));
+        expect(tester.getTopLeft(marker).dy, closeTo(markerTop, 1.5));
+      }
+      await finishTurn(tester, gateway, chat);
+      await tester.pump(const Duration(seconds: 6));
+      expect(tester.getTopLeft(marker).dy, closeTo(markerTop, 1.5));
+      expect(controller.position.pixels, greaterThan(150));
+      expect(jump(), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('scroll-to-bottom-visible')),
+        findsOneWidget,
+      );
+      await tearDownChat(tester, gateway);
+    });
+
+    testWidgets('during the turn: the reader who comes back to the bottom by '
+        'himself is followed again', (tester) async {
+      final gateway = _StreamingGateway();
+      final chat = await startLongTurn(tester, gateway);
+      await scrollUp(tester, 300);
+      final controller = controllerOf(tester);
+      expect(controller.position.pixels, greaterThan(150));
+      await tester.drag(transcript(), const Offset(0, -900));
+      await bounceSettle(tester);
+      expect(controller.position.pixels, closeTo(0, 1.5));
+      for (var i = 0; i < 3; i++) {
+        gateway.emit('message.delta', {
+          'text': '\n\n${List.filled(30, 'Texto nuevo del turno.').join(' ')}',
+        });
+        await settle(tester);
+        expect(
+          controller.position.pixels,
+          closeTo(0, 1.5),
+          reason: 'back at the bottom the turn is followed again',
+        );
+      }
+      expect(
+        find.byKey(const ValueKey('scroll-to-bottom-hidden')),
+        findsOneWidget,
+      );
+      await finishTurn(tester, gateway, chat);
+      expect(controller.position.pixels, closeTo(0, 1.5));
+      await tearDownChat(tester, gateway);
+    });
+
+    testWidgets('idle: a reader who comes back to the bottom by himself is '
+        'followed, and the jump button follows him', (tester) async {
+      final gateway = _StreamingGateway();
+      final chat = await startLongTurn(tester, gateway);
+      await finishTurn(tester, gateway, chat);
+      await scrollUp(tester, 300);
+      await tester.drag(transcript(), const Offset(0, -900));
+      await bounceSettle(tester);
+      final controller = controllerOf(tester);
+      expect(controller.position.pixels, closeTo(0, 1.5));
+      expect(
+        find.byKey(const ValueKey('scroll-to-bottom-hidden')),
+        findsOneWidget,
+      );
+      await chat.send(
+        fullText: 'Otro turno',
+        model: 'hermes-agent',
+        history: chat.buildHistory(),
+      );
+      gateway.emit('message.start');
+      gateway.emit('message.delta', {
+        'text': List.filled(60, 'Respuesta nueva que crece.').join(' '),
+      });
+      await settle(tester);
+      expect(controller.position.pixels, closeTo(0, 1.5));
+      await finishTurn(tester, gateway, chat);
+      await tearDownChat(tester, gateway);
+    });
+    testWidgets('the jump button brings a reader down and resumes the '
+        'follow', (tester) async {
+      final gateway = _StreamingGateway();
+      final chat = await startLongTurn(tester, gateway);
+      await scrollUp(tester, 300);
+      final controller = controllerOf(tester);
+      expect(controller.position.pixels, greaterThan(150));
+      await tester.tap(jump());
+      for (var frame = 0; frame < 30; frame++) {
+        await tester.pump(const Duration(milliseconds: 33));
+      }
+      expect(controller.position.pixels, closeTo(0, 0.5));
+      gateway.emit('message.delta', {
+        'text': '\n\n${List.filled(30, 'Texto tras el botón.').join(' ')}',
+      });
+      await settle(tester);
+      expect(controller.position.pixels, closeTo(0, 0.5));
+      await finishTurn(tester, gateway, chat);
+      await tearDownChat(tester, gateway);
+    });
+  });
+
   group('#1215 edge overscroll', () {
     Future<TestGesture> pullPastBottom(WidgetTester tester) async {
       final gesture = await tester.startGesture(tester.getCenter(transcript()));
@@ -537,6 +779,14 @@ void main() {
   // ct1215: the live turn tells itself in the transcript (status, thought,
   // tool in hand, plan), so its row grows before the reply has any text.
   group('ct1215 the live turn grows without moving the reader', () {
+    // Mock 137 A: by default the thought is one 48 dp line and the live
+    // turn hardly grows. This group needs a turn that grows, so the thought
+    // opens at six lines while it thinks (the setting off, Console before
+    // 1.4.0) and stays open once a tool follows it (Desktop's latch,
+    // message-parts.tsx:242-255): the stress on the anchor is the same.
+    setUp(() => ReasoningDisclosurePrefs.shared.setCollapsedByDefault(false));
+    tearDown(() => ReasoningDisclosurePrefs.debugUse(null));
+
     Map<String, dynamic> plan() => {
       'revision': 1,
       'todos': [
@@ -577,7 +827,7 @@ void main() {
     ];
 
     Finder liveLines() =>
-        find.byKey(const ValueKey('thinking-trace-live'), skipOffstage: false);
+        find.byKey(const ValueKey('chat-inline-activity'), skipOffstage: false);
 
     Future<ActiveChat> startTurn(
       WidgetTester tester,
@@ -604,13 +854,17 @@ void main() {
         'folded turn', (tester) async {
       final gateway = _StreamingGateway();
       final chat = await startTurn(tester, gateway);
-      await scrollUp(tester, 300);
+      work(gateway).first();
+      await settle(tester);
+      await openInlineDetails(tester);
+      await scrollUp(tester, 180);
       final controller = controllerOf(tester);
       expect(controller.position.pixels, greaterThan(150));
       final marker = visibleMarker(tester);
       final before = tester.getTopLeft(marker).dy;
 
-      final steps = work(gateway);
+      await openInlineDetails(tester);
+      final steps = work(gateway).skip(1).toList();
       for (var index = 0; index < steps.length; index++) {
         steps[index]();
         await settle(tester);
@@ -620,9 +874,12 @@ void main() {
           reason: 'step $index moved the text being read',
         );
       }
+      // Q9-CHAT5 v2: the turn grows by step cards (48 dp each) and its
+      // plan; before, by the whole thought (137 A).
+      // Keep the >80 dp stimulus independent of the capsule's painted height.
       expect(
-        tester.getSize(liveLines()).height,
-        greaterThan(150),
+        tester.getSize(find.byKey(const ValueKey('turn-step-cards'))).height,
+        greaterThan(80),
         reason: 'precondition: the live turn really grew under the reader',
       );
 
@@ -660,10 +917,14 @@ void main() {
         'without text', (tester) async {
       final gateway = _StreamingGateway();
       final chat = await startTurn(tester, gateway);
+      work(gateway).first();
+      await settle(tester);
+      await openInlineDetails(tester);
       await scrollUp(tester, 300);
       final marker = visibleMarker(tester);
       final before = tester.getTopLeft(marker).dy;
-      for (final step in work(gateway)) {
+      await openInlineDetails(tester);
+      for (final step in work(gateway).skip(1)) {
         step();
         await settle(tester);
       }
@@ -676,7 +937,7 @@ void main() {
       await settle(tester);
       expect(
         controllerOf(tester).position.pixels,
-        lessThan(pixels - 100),
+        lessThan(pixels - 50),
         reason: 'precondition: the live row folded under the reader',
       );
       expect(chat.isStreaming, isFalse);
@@ -696,27 +957,53 @@ void main() {
       final chat = await startTurn(tester, gateway);
       final controller = controllerOf(tester);
       expect(controller.position.pixels, closeTo(0, 0.5));
+      await openInlineDetails(tester);
       for (final step in work(gateway)) {
         step();
         await settle(tester);
         expect(controller.position.pixels, closeTo(0, 0.5));
       }
+      // The tools are an open timeline while the turn lives; it grows by its rows.
+      final rows = find.byWidgetPredicate(
+        (w) => w is Semantics && '${w.key}'.contains('turn-step-card-'),
+      );
+      final fold = inlineLabel;
+      final inner = find.byWidgetPredicate(
+        (w) => '${w.key}'.contains('turn-inner-thought-'),
+      );
+      if (inner.evaluate().isEmpty && fold.evaluate().isNotEmpty) {
+        await tester.tap(fold);
+        await settle(tester);
+      }
+      expect(rows, findsWidgets);
+      expect(controller.position.pixels, closeTo(0, 0.5));
       final viewport = tester.getRect(transcript());
-      final lines = tester.getRect(liveLines());
-      // The thought is whole: once it is taller than the screen its first
-      // lines go up and away, and what is being written stays in view.
-      expect(lines.height, greaterThan(150));
+      final lines = tester.getRect(
+        find.byKey(const ValueKey('turn-step-cards')),
+      );
+      // Q9-CHAT5 v2: the turn grew by its step rows and its plan; what is
+      // newest stays in view.
+      // This functional threshold stays >80 dp as the capsule gets slimmer.
+      expect(lines.height, greaterThan(80));
       expect(lines.bottom, lessThanOrEqualTo(viewport.bottom));
       // …above the composer and what floats on it, never under them.
       final bars = tester.getRect(
         find.byKey(const ValueKey('chat-bottom-bars')),
       );
       expect(lines.bottom, lessThanOrEqualTo(bars.top));
-      expect(
-        find.textContaining('Pienso en cómo probarlo', findRichText: true),
-        findsWidgets,
-        reason: 'the thought being written is on screen',
+      // A thought followed by a tool is over: ITS row is on screen, and it
+      // opens the thought (not any step's row).
+      final thoughtCard = find.byWidgetPredicate(
+        (w) =>
+            w is Semantics &&
+            ('${w.key}'.contains('turn-thought-card-') ||
+                '${w.key}'.contains('turn-inner-thought-')) &&
+            (w.properties.label ?? '').startsWith('Pens'),
       );
+      expect(thoughtCard, findsOneWidget, reason: 'the thought\'s card');
+      final thought = tester.getSemantics(thoughtCard);
+      expect(thought.label, startsWith('Pens'));
+      expect(thought.flagsCollection.isButton, isTrue);
       expect(
         find.byKey(const ValueKey('scroll-to-bottom-hidden')),
         findsOneWidget,
@@ -757,6 +1044,7 @@ void main() {
       final bars = tester.getRect(
         find.byKey(const ValueKey('chat-bottom-bars')),
       );
+      await openInlineDetails(tester);
       for (final step in work(gateway)) {
         step();
         await settle(tester);
@@ -803,6 +1091,7 @@ void main() {
       final gateway = _StreamingGateway();
       final chat = await startTurn(tester, gateway);
       await scrollUp(tester, 300);
+      await openInlineDetails(tester);
       for (final step in work(gateway)) {
         step();
         await settle(tester);
@@ -836,6 +1125,130 @@ void main() {
       await tearDownChat(tester, gateway);
     });
 
+    // REVIEW-T3-B C2: F5 makes heights change over ~200 ms instead of one
+    // frame. The reader is held in every one of those frames.
+    Future<void> endLiveTurn(
+      WidgetTester tester,
+      _StreamingGateway gateway,
+      ActiveChat chat,
+    ) async {
+      gateway.emit('message.complete', {'text': chat.assistantContent});
+      for (var frame = 0; frame < 60 && chat.isStreaming; frame++) {
+        await tester.pump(const Duration(milliseconds: 33));
+      }
+    }
+
+    testWidgets('F5: an image of the live turn changes size, a reader '
+        'scrolled up stays put frame by frame', (tester) async {
+      final gateway = _StreamingGateway();
+      final chat = await startTurn(tester, gateway);
+      await scrollUp(tester, 300);
+      final marker = visibleMarker(tester);
+      final before = tester.getTopLeft(marker).dy;
+      gateway.emit('message.delta', {
+        'text':
+            'Aquí la tienes:\n\n~/.hermes/cache/images/f5-lector.png\n\n'
+            'Y el texto sigue debajo.',
+      });
+      // Its 16:9 hole, then (no Dashboard here) the error card: another
+      // height, eased over HermesMotion.base. The download is real I/O.
+      final card = find.byType(GeneratedImageCard, skipOffstage: false);
+      final controller = controllerOf(tester);
+      var sawImage = false;
+      var framesAfter = 0;
+      // gint56 moved 5.5 dp in frame 17: each frame's reader, scroll and
+      // card, so a failure says which change was not held (measured, not
+      // guessed).
+      final trace = <String>[];
+      for (var frame = 0; frame < 300 && framesAfter < 20; frame++) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 2)),
+        );
+        await tester.pump(const Duration(milliseconds: 16));
+        final shown = card.evaluate().isNotEmpty;
+        final cardState = shown
+            ? '${tester.widget<GeneratedImageCard>(card).status.name}/'
+                  '${tester.getSize(card).height.toStringAsFixed(1)}'
+            : '-';
+        final position = controller.position;
+        trace.add(
+          'f$frame dy=${tester.getTopLeft(marker).dy.toStringAsFixed(2)} '
+          'px=${position.pixels.toStringAsFixed(2)} '
+          'max=${position.maxScrollExtent.toStringAsFixed(2)} '
+          'card=$cardState',
+        );
+        final recent = trace.skip(math.max(0, trace.length - 24));
+        expect(
+          tester.getTopLeft(marker).dy,
+          closeTo(before, 1.5),
+          reason:
+              'frame $frame moved the text being read\n${recent.join('\n')}',
+        );
+        if (!shown) continue;
+        sawImage = true;
+        if (tester.widget<GeneratedImageCard>(card).status !=
+            GeneratedImageStatus.downloading) {
+          framesAfter++;
+        }
+      }
+      expect(sawImage, isTrue, reason: 'precondition: the image came');
+      expect(framesAfter, 20, reason: 'precondition: it changed size');
+      await endLiveTurn(tester, gateway, chat);
+      expect(tester.takeException(), isNull);
+      await tearDownChat(tester, gateway);
+    });
+
+    for (final readerUp in const [false, true]) {
+      final reader = readerUp
+          ? 'scrolled up stays put'
+          : 'at the bottom stays there';
+      testWidgets('F5: an approval rises over the composer and the reader '
+          '$reader, frame by frame', (tester) async {
+        final gateway = _StreamingGateway();
+        final chat = await startTurn(tester, gateway);
+        gateway.emit('message.delta', {
+          'text': List.filled(30, 'Texto del turno en marcha.').join(' '),
+        });
+        await settle(tester);
+        final controller = controllerOf(tester);
+        // The lower pill reserves more room than the retired header capsule.
+        // Read a historical row beyond this long live reply before testing
+        // the approval's frame-by-frame anchor contract.
+        if (readerUp) await scrollUp(tester, 600);
+        final marker = readerUp ? visibleMarker(tester) : null;
+        final before = marker == null ? 0.0 : tester.getTopLeft(marker).dy;
+        gateway.emit('approval.request', const {
+          'request_id': 'approval-reader',
+          'command': 'rm -rf build',
+          'pattern_key': 'rm',
+        });
+        for (var frame = 0; frame < 30; frame++) {
+          await tester.pump(const Duration(milliseconds: 16));
+          if (marker == null) {
+            expect(
+              controller.position.pixels,
+              closeTo(0, 0.5),
+              reason: 'frame $frame: the reader left the bottom',
+            );
+          } else {
+            final bars = find.byKey(const ValueKey('chat-bottom-bars'));
+            expect(
+              tester.getTopLeft(marker).dy,
+              closeTo(before, 1.5),
+              reason:
+                  'frame $frame moved the text being read '
+                  '(px=${controller.position.pixels.toStringAsFixed(2)}, '
+                  'bars top=${tester.getTopLeft(bars).dy.toStringAsFixed(2)})',
+            );
+          }
+        }
+        expect(chat.pendingApproval, isNotNull, reason: 'precondition');
+        await endLiveTurn(tester, gateway, chat);
+        expect(tester.takeException(), isNull);
+        await tearDownChat(tester, gateway);
+      });
+    }
+
     testWidgets('its timers and its tokens rebuild no older row', (
       tester,
     ) async {
@@ -851,8 +1264,10 @@ void main() {
         final list = tester.element(
           find.descendant(of: transcript(), matching: find.byType(SliverList)),
         );
+        // Q9-CHAT5 v2: the live turn's lines (no status line under the name
+        // any more: the pills above the composer say it).
         final live = find
-            .byKey(const ValueKey('turn-status-line'))
+            .byKey(const ValueKey('chat-inline-activity'))
             .evaluate()
             .single;
         final found = <Element>{};
@@ -918,6 +1333,72 @@ void main() {
       expect(tester.takeException(), isNull);
       await tearDownChat(tester, gateway);
     });
+  });
+
+  // F0 of the fluidity plan (REPORT-AUDITORIA-FLUIDEZ §4): the streaming
+  // path is measured before it changes. A reply streams while the reader
+  // follows the bottom, with an open code fence, then the turn ends. The
+  // counts are printed as the reference baseline (work, not milliseconds); the
+  // assertions only pin that every point is wired. F1-F3 tighten them.
+  testWidgets('F0: every point of the stream is measured (baseline)', (
+    tester,
+  ) async {
+    final gateway = _StreamingGateway();
+    final chat = await pumpChat(tester, gateway, history: _history(turns: 3));
+    await tester.pump(const Duration(seconds: 1));
+    ChatStreamTrace.debugReset();
+    await chat.send(
+      fullText: 'Mide el flujo',
+      model: 'hermes-agent',
+      history: chat.buildHistory(),
+    );
+    gateway.emit('message.start');
+    for (var i = 0; i < 20; i++) {
+      gateway.emit('message.delta', {
+        'text': 'Palabra $i de una respuesta que fluye poco a poco. ',
+      });
+      await tester.pump(const Duration(milliseconds: 40));
+    }
+    gateway.emit('message.delta', {'text': '\n\n```dart\nvoid main() {\n'});
+    await tester.pump(const Duration(milliseconds: 40));
+    final highlightsBefore = ChatStreamTrace.debugCount(
+      ChatStreamPoint.highlight,
+    );
+    for (var i = 0; i < 6; i++) {
+      gateway.emit('message.delta', {'text': '  print($i);\n'});
+      await tester.pump(const Duration(milliseconds: 40));
+    }
+    final highlightsWhileOpen =
+        ChatStreamTrace.debugCount(ChatStreamPoint.highlight) -
+        highlightsBefore;
+    gateway.emit('message.delta', {'text': '}\n```\n\nFin.'});
+    await tester.pump(const Duration(milliseconds: 40));
+    gateway.emit('message.complete', {'text': chat.assistantContent});
+    for (var frame = 0; frame < 60 && chat.isStreaming; frame++) {
+      await tester.pump(const Duration(milliseconds: 33));
+    }
+    await settle(tester);
+
+    int count(ChatStreamPoint point) => ChatStreamTrace.debugCount(point);
+    int chars(ChatStreamPoint point) => ChatStreamTrace.debugChars(point);
+    // ignore: avoid_print
+    print(
+      '[F0] flush=${count(ChatStreamPoint.flush)}/'
+      '${chars(ChatStreamPoint.flush)}c '
+      'reveal=${count(ChatStreamPoint.reveal)}/'
+      '${chars(ChatStreamPoint.reveal)}c '
+      'tailBuild=${count(ChatStreamPoint.tailBuild)} '
+      'highlightWhileOpen=$highlightsWhileOpen '
+      'turnEnd=${count(ChatStreamPoint.turnEnd)} '
+      'turnEndJump=${ChatStreamTrace.debugLastTurnEndChars}c',
+    );
+    expect(count(ChatStreamPoint.flush), greaterThan(0));
+    expect(chars(ChatStreamPoint.flush), greaterThan(0));
+    expect(count(ChatStreamPoint.reveal), greaterThan(0));
+    expect(count(ChatStreamPoint.tailBuild), greaterThan(0));
+    expect(count(ChatStreamPoint.turnEnd), 1);
+    expect(tester.takeException(), isNull);
+    await tearDownChat(tester, gateway);
   });
 
   group('#1215 new messages on the jump button', () {
@@ -1567,9 +2048,124 @@ void main() {
     });
   });
 
+  // the owner, Fold horizontal (APK 9708), the split Samsung keyboard: the
+  // composer with an attachment rose up to the header and no message was
+  // left between them («no se puede trabajar»). With the keyboard up the
+  // header is one thin row and the attachment a chip in the input row.
+  group('open Fold with the keyboard up (APK 9708)', () {
+    for (final withAttachment in [false, true]) {
+      final label = withAttachment ? 'with an attachment' : 'no attachment';
+      testWidgets('2448x1848, 800 px keyboard, $label: four transcript '
+          'lines, nothing overlaps', (tester) async {
+        tester.view.physicalSize = const Size(2448, 1848);
+        tester.view.devicePixelRatio = 2.625;
+        addTearDown(tester.view.reset);
+        final temp = Directory.systemTemp.createTempSync('fold-keyboard-');
+        addTearDown(() {
+          if (temp.existsSync()) temp.deleteSync(recursive: true);
+        });
+        final image = File('${temp.path}/captura.png')
+          ..writeAsBytesSync(_tinyPng);
+        final gateway = _StreamingGateway();
+        await pumpChat(
+          tester,
+          gateway,
+          draftStore: withAttachment
+              ? (prefs) => _OneDraftStore(
+                  prefs,
+                  ChatDraft(
+                    text: '',
+                    attachments: [
+                      AttachmentDraft(
+                        localId: 'shot',
+                        type: AttachmentType.image,
+                        name: 'captura.png',
+                        mimeType: 'image/png',
+                        sizeBytes: image.lengthSync(),
+                        localPath: image.path,
+                      ),
+                    ],
+                  ),
+                )
+              : null,
+        );
+        await settle(tester);
+        tester.view.viewInsets = const FakeViewPadding(bottom: 800);
+        await settle(tester);
+        await settle(tester);
+
+        if (withAttachment) {
+          expect(
+            find.byKey(const ValueKey('composer-attachment-chips')),
+            findsOneWidget,
+          );
+          expect(
+            find.byKey(const ValueKey('composer-attachment-preview')),
+            findsNothing,
+          );
+        }
+        final header = tester.widget<FloatingChatHeader>(
+          find.byType(FloatingChatHeader),
+        );
+        expect(header.compact, isTrue, reason: 'one thin row');
+        final headerBottom = FloatingChatHeader.insetFor(
+          tester.element(transcript()),
+          compact: true,
+        );
+        final composer = tester.getRect(
+          find.byKey(const ValueKey('chat-composer-host')),
+        );
+        // Vistas v3: nothing on the composer's top edge (no notch).
+        final bottomTop = composer.top;
+        final island = tester.getRect(find.byKey(const ValueKey('island')));
+        expect(
+          island.bottom,
+          lessThanOrEqualTo(headerBottom),
+          reason: 'the island stays in the header',
+        );
+        expect(
+          bottomTop,
+          greaterThan(headerBottom),
+          reason: 'the header and the composer overlap',
+        );
+        final lineFinder = find.textContaining('Pregunta histórica 0');
+        final measured = lineFinder.evaluate().isEmpty
+            ? 0.0
+            : tester.getSize(lineFinder.first).height;
+        final line = measured > 0 && measured < 40 ? measured : 24.0;
+        final lines = (bottomTop - headerBottom) / line;
+        debugPrint(
+          '[nav-a] transcript lines with the keyboard ($label): '
+          '${lines.toStringAsFixed(1)}',
+        );
+        expect(lines, greaterThanOrEqualTo(4));
+        // And some of the conversation is really painted there.
+        final visible = find
+            .descendant(of: transcript(), matching: find.byType(RichText))
+            .evaluate()
+            .map((e) {
+              final box = e.renderObject! as RenderBox;
+              return box.localToGlobal(Offset.zero) & box.size;
+            })
+            .where((r) => r.top >= headerBottom && r.bottom <= bottomTop);
+        expect(visible, isNotEmpty);
+        expect(tester.takeException(), isNull);
+        await tearDownChat(tester, gateway);
+      });
+    }
+  });
+
   group('#114 prompts and sticky prompt', () {
     Finder jumpButton() => find.byKey(const ValueKey('chat-scroll-to-bottom'));
     Finder sticky() => find.byKey(const ValueKey('chat-sticky-prompt'));
+
+    // Vistas v3: the header and the pinned chip are one strip of glass.
+    // These tests guard the solid band, which is the glass' fallback
+    // (reduced motion, high contrast, a device that does not blur): they run
+    // without blur. The glass case: «the pinned chip is a piece of the
+    // header's glass» below.
+    setUp(() => FrostedBackdropPolicy.blurAllowed.value = false);
+    tearDown(() => FrostedBackdropPolicy.blurAllowed.value = true);
 
     List<Map<String, dynamic>> longReplyHistory() => [
       {
@@ -1585,11 +2181,12 @@ void main() {
     ];
 
     Future<void> openPrompts(WidgetTester tester) async {
-      await tester.tap(find.byKey(const ValueKey('chat-notch')));
+      await tester.tap(find.byKey(const ValueKey('chat-settings-button')));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 250));
-      // Search and Ir a sit above Session, so Prompts may start below the
-      // fold of the lazily built sheet list: drag the sheet until it shows.
+      // The workspace row and Search sit above the grid, so Prompts may
+      // start below the fold of the lazily built sheet list: drag the sheet
+      // until it shows.
       final row = find.byKey(const ValueKey('chat-control-prompts'));
       final list = find.byKey(const ValueKey('chat-control-sheet'));
       for (var i = 0; i < 20; i++) {
@@ -1630,12 +2227,330 @@ void main() {
       await settle(tester);
       expect(sticky(), findsOneWidget);
       expect(
-        find.descendant(
-          of: sticky(),
-          matching: find.textContaining('Pregunta larga del turno'),
-        ),
-        findsOneWidget,
+        tester.getSemantics(sticky()).label,
+        contains('Pregunta larga del turno'),
       );
+      expect(tester.takeException(), isNull);
+      await tearDownChat(tester, gateway);
+    });
+
+    // the owner (video del Fold): al entrar, el chip «Tú:» aparecía, se iba y
+    // volvía. Se decide una vez, con el primer diseño asentado.
+    testWidgets('opening the chat shows the sticky prompt once and never '
+        'takes it back', (tester) async {
+      final gateway = _StreamingGateway();
+      final visibility = <bool>[];
+      var recording = true;
+      tester.binding.addPersistentFrameCallback((_) {
+        if (!recording) return;
+        final shown = sticky().evaluate().isNotEmpty;
+        if (visibility.isEmpty || visibility.last != shown) {
+          visibility.add(shown);
+        }
+      });
+      addTearDown(() => recording = false);
+      await pumpChat(tester, gateway, history: longReplyHistory());
+      await settle(tester);
+      for (var i = 0; i < 20; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+      expect(sticky(), findsOneWidget);
+      // Hidden until the first settled layout, then shown: one change, and
+      // it never goes away and comes back.
+      expect(visibility.last, isTrue);
+      expect(
+        visibility.length,
+        lessThanOrEqualTo(2),
+        reason: 'visibility changes: $visibility',
+      );
+      expect(tester.takeException(), isNull);
+      await tearDownChat(tester, gateway);
+    });
+
+    // the owner, Fold horizontal (APK 9708): «Tú: El guardar…» floated over the
+    // reply and cut «Pensando». It is a band of the header now, the whole
+    // width: the header's solid band runs down under it, so it never floats
+    // over the text. Gate gint37: it takes that room only while it shows;
+    // the transcript keeps no band of its own for it.
+    testWidgets('the sticky prompt has its own solid band under the header', (
+      tester,
+    ) async {
+      final gateway = _StreamingGateway();
+      await pumpChat(tester, gateway, history: longReplyHistory());
+      await settle(tester);
+      expect(sticky(), findsOneWidget);
+      final band = find.byKey(const ValueKey('chat-pinned-prompt-band'));
+      expect(band, findsOneWidget);
+      final bandRect = tester.getRect(band);
+      expect(bandRect.width, closeTo(tester.getRect(transcript()).width, 1));
+      // QA 9709 (ORDEN-Q9-CHAT 1): the band sits right under the island,
+      // whatever its shape (here at rest, shorter than the header's extent),
+      // and never below the header's extent.
+      expect(
+        bandRect.top,
+        closeTo(tester.getRect(find.byType(ChatIsland)).bottom + 16, 1),
+      );
+      expect(bandRect.top, lessThanOrEqualTo(readableTop(tester) + 0.5));
+      expect(bandRect.height, 48);
+      expect(bandRect.contains(tester.getRect(sticky()).center), isTrue);
+      // The header's band continued: opaque from the header's extent (over
+      // the header's own fade) down to the band's bottom edge, then the
+      // same fade.
+      final backdrop = find.byKey(
+        const ValueKey('chat-pinned-prompt-backdrop'),
+      );
+      final backdropBox = tester.widget<DecoratedBox>(backdrop);
+      final gradient =
+          (backdropBox.decoration as BoxDecoration).gradient! as LinearGradient;
+      final backdropRect = tester.getRect(backdrop);
+      expect(gradient.colors[1].a, 1);
+      expect(backdropRect.top, closeTo(bandRect.top, 0.5));
+      expect(
+        backdropRect.top + gradient.stops![1] * backdropRect.height,
+        closeTo(bandRect.bottom, 0.5),
+      );
+      expect(
+        backdropRect.bottom - bandRect.bottom,
+        FloatingChatHeader.scrimTail,
+      );
+      // Gate gint38: in a layer of its own, not inside the header, which
+      // must not rebuild or repaint as turns scroll under it.
+      expect(
+        find.descendant(
+          of: find.byType(FloatingChatHeader),
+          matching: sticky(),
+        ),
+        findsNothing,
+      );
+      // No room kept for it in the transcript: the rows under it scroll
+      // under the header, as they do with no prompt pinned.
+      final list = tester.widget<ListView>(transcript());
+      expect(
+        (list.padding! as EdgeInsets).top,
+        closeTo(readableTop(tester) - tester.getRect(transcript()).top, 0.5),
+      );
+      expect(tester.takeException(), isNull);
+      await tearDownChat(tester, gateway);
+    });
+
+    // QA 9709 (the owner, captures 1247, 1248, 1254): on the open Fold, a panel
+    // beside the chat, the band sat a status bar below the island (a pane
+    // gives the chat no system padding, and the header's extent was read
+    // above the pane), and with the keyboard up it fell on the composer and
+    // the model pill. Two windows, with the Fold's status bar: the open Fold
+    // (a panel beside the chat) and upright (no panel fits beside it). The
+    // keyboard as an inset, and as the owner's Fold gave it in 1247: the window
+    // ends above it (the panes ended above the keyboard and the header kept
+    // its face, so the chat saw no inset).
+    for (final window in const [Size(933, 704), Size(657, 870)]) {
+      for (final keyboard in _Keyboard.values) {
+        final name = '${window.width.toInt()}x${window.height.toInt()}';
+        testWidgets('the band sits under the island and never over the '
+            'composer: $name, keyboard ${keyboard.name}', (tester) async {
+          tester.view.physicalSize = window;
+          tester.view.devicePixelRatio = 1;
+          tester.view.padding = const FakeViewPadding(top: 45);
+          tester.view.viewPadding = const FakeViewPadding(top: 45);
+          addTearDown(tester.view.reset);
+          WebViewPlatform.instance = FakeWebViewPlatform();
+          final gateway = _StreamingGateway();
+          await pumpChat(tester, gateway, history: longReplyHistory());
+          await settle(tester);
+          if (chatWorkspaceSplitFits(window.width)) {
+            // The browser panel on the right, as in 1248 (the owner's final
+            // windows: a row of Ajustes' «Paneles»).
+            await tester.tap(
+              find.byKey(const ValueKey('chat-settings-button')),
+            );
+            await tester.pump();
+            await tester.pump(
+              kChatNotchSheetOpen + const Duration(milliseconds: 80),
+            );
+            await tester.tap(
+              find.byKey(const ValueKey('chat-control-workspace-browser')),
+            );
+            await tester.pump();
+            await tester.pump(const Duration(milliseconds: 600));
+            expect(
+              find.byKey(const ValueKey('chat-workspace-divider')),
+              findsOneWidget,
+              reason: 'precondition: the panel beside the chat',
+            );
+          }
+          await settle(tester);
+          expect(sticky(), findsOneWidget, reason: 'precondition: pinned');
+          switch (keyboard) {
+            case _Keyboard.none:
+              break;
+            case _Keyboard.inset:
+              tester.view.viewInsets = const FakeViewPadding(bottom: 330);
+            case _Keyboard.resized:
+              tester.view.physicalSize = Size(
+                window.width,
+                window.height - 330,
+              );
+          }
+          await settle(tester);
+          await tester.pump(const Duration(milliseconds: 300));
+          await settle(tester);
+
+          final island = tester.getRect(find.byType(ChatIsland).first);
+          final bars = tester.getRect(
+            find.byKey(const ValueKey('chat-bottom-bars')),
+          );
+          final composer = tester.getRect(
+            find.byKey(const ValueKey('chat-composer-host')),
+          );
+          final band = find.byKey(const ValueKey('chat-pinned-prompt-band'));
+          if (keyboard == _Keyboard.none) {
+            expect(band, findsOneWidget, reason: 'room for it');
+          }
+          if (band.evaluate().isNotEmpty) {
+            final bandRect = tester.getRect(band);
+            final backdrop = tester.getRect(
+              find.byKey(const ValueKey('chat-pinned-prompt-backdrop')),
+            );
+            expect(
+              bandRect.top - island.bottom,
+              inInclusiveRange(0, 20),
+              reason: 'right under the island ($island, band $bandRect)',
+            );
+            // Never over the composer or the model pill (both in the
+            // bottom bars), and the transcript keeps rows between them.
+            expect(backdrop.overlaps(composer), isFalse);
+            expect(backdrop.bottom, lessThanOrEqualTo(bars.top + 0.5));
+            expect(bars.top - backdrop.bottom, greaterThanOrEqualTo(48));
+            final list = tester.getRect(transcript());
+            expect(list.top, lessThanOrEqualTo(backdrop.bottom));
+            expect(list.bottom, greaterThanOrEqualTo(bars.top - 0.5));
+          } else {
+            expect(sticky(), findsNothing);
+          }
+          expect(tester.takeException(), isNull);
+          await tearDownChat(tester, gateway);
+        });
+      }
+    }
+
+    testWidgets('the pinned chip is a piece of the header\'s glass: one '
+        'strip, one blur, the transcript behind it', (tester) async {
+      FrostedBackdropPolicy.blurAllowed.value = true;
+      final gateway = _StreamingGateway();
+      await pumpChat(tester, gateway, history: longReplyHistory());
+      await settle(tester);
+      expect(sticky(), findsOneWidget);
+      final strip = find.byWidgetPredicate(
+        (widget) =>
+            widget is HermesGlassStrip && widget.zone == FrostedZone.top,
+      );
+      expect(strip, findsOneWidget);
+      expect(
+        find.descendant(of: strip, matching: find.byType(HermesGlassStrip)),
+        findsNothing,
+      );
+      final foot = find.byWidgetPredicate(
+        (widget) =>
+            widget is HermesGlassStrip && widget.zone == FrostedZone.bottom,
+      );
+      expect(foot, findsOneWidget);
+      expect(
+        tester.widget<HermesGlassStrip>(foot).key,
+        const ValueKey('chat-foot-glass'),
+      );
+      expect(find.ancestor(of: foot, matching: strip), findsNothing);
+      for (final piece in [
+        find.byKey(const ValueKey('chat-header')),
+        sticky(),
+      ]) {
+        expect(
+          find.ancestor(of: piece, matching: strip),
+          findsOneWidget,
+          reason: '$piece in the strip',
+        );
+      }
+      // The transcript is behind every strip, inside neither header nor foot.
+      expect(
+        find.ancestor(
+          of: transcript(),
+          matching: find.byType(HermesGlassStrip),
+        ),
+        findsNothing,
+      );
+      // No solid band under the chip: the reply shows around it.
+      expect(
+        find.byKey(const ValueKey('chat-pinned-prompt-backdrop')),
+        findsNothing,
+      );
+      final colors = Theme.of(tester.element(sticky())).hermes;
+      final piece = find.descendant(
+        of: sticky(),
+        matching: find.byType(HermesFloatingSurface),
+      );
+      final face = tester.widget<Material>(
+        find.descendant(of: piece, matching: find.byType(Material)).first,
+      );
+      expect(face.color, FrostedBackdrop.glassVeil(colors));
+      final shadow =
+          tester
+                  .widget<DecoratedBox>(
+                    find
+                        .descendant(
+                          of: piece,
+                          matching: find.byType(DecoratedBox),
+                        )
+                        .first,
+                  )
+                  .decoration
+              as ShapeDecoration;
+      expect(
+        shadow.shadows,
+        isEmpty,
+        reason: 'the shared strip owns the surface',
+      );
+      // The strip builds its own render boundary directly below its scope.
+      // Resolve that actual render object, check its owning widget, then
+      // count the filters in its painted layer subtree (not by coordinates).
+      ContainerLayer stripLayer(Finder finder) {
+        final render = tester.renderObject<RenderObject>(finder);
+        final creator = render.debugCreator;
+        expect(creator, isA<DebugCreator>());
+        expect(
+          (creator as DebugCreator).element
+              .findAncestorWidgetOfExactType<HermesGlassStrip>(),
+          same(tester.widget<HermesGlassStrip>(finder)),
+        );
+        expect(render.attached, isTrue);
+        expect(render.isRepaintBoundary, isTrue);
+        final layer = render.debugLayer;
+        expect(layer, isNotNull);
+        return layer!;
+      }
+
+      List<BackdropFilterLayer> filtersIn(Layer layer) {
+        final filters = <BackdropFilterLayer>[];
+        void walk(Layer layer) {
+          if (layer is BackdropFilterLayer) filters.add(layer);
+          if (layer is ContainerLayer) {
+            for (var c = layer.firstChild; c != null; c = c.nextSibling) {
+              walk(c);
+            }
+          }
+        }
+
+        walk(layer);
+        return filters;
+      }
+
+      // Exactly one blur for the header and pinned chip together. The foot
+      // is the grey chrome (the owner): its strip holds no glass piece and so
+      // owns no blur; nothing else in the scene filters.
+      final headerFilters = filtersIn(stripLayer(strip));
+      final footFilters = filtersIn(stripLayer(foot));
+      expect(headerFilters, hasLength(1));
+      expect(footFilters, isEmpty);
+      final rootLayer = tester.binding.renderViews.first.debugLayer;
+      expect(rootLayer, isNotNull);
+      expect(filtersIn(rootLayer!), [headerFilters.single]);
       expect(tester.takeException(), isNull);
       await tearDownChat(tester, gateway);
     });
@@ -1674,6 +2589,23 @@ void main() {
         findsOneWidget,
       );
       expect(sticky(), findsNothing);
+      // Gate gint37: with nothing pinned the band is gone and takes no room;
+      // the header is solid down to its own extent.
+      expect(
+        tester
+            .getSize(find.byKey(const ValueKey('chat-pinned-prompt-room')))
+            .height,
+        0,
+      );
+      final scrim = find.byKey(const ValueKey('floating-header-scrim'));
+      final scrimBox = tester.widget<DecoratedBox>(scrim);
+      final gradient =
+          (scrimBox.decoration as BoxDecoration).gradient! as LinearGradient;
+      final scrimRect = tester.getRect(scrim);
+      expect(
+        scrimRect.top + gradient.stops![1] * scrimRect.height,
+        closeTo(readableTop(tester), 0.5),
+      );
       await tearDownChat(tester, gateway);
     });
 
@@ -1729,11 +2661,8 @@ void main() {
       await settle(tester);
       expect(sticky(), findsOneWidget);
       expect(
-        find.descendant(
-          of: sticky(),
-          matching: find.textContaining('Pregunta larga del turno'),
-        ),
-        findsOneWidget,
+        tester.getSemantics(sticky()).label,
+        contains('Pregunta larga del turno'),
       );
       expect(
         find.descendant(
@@ -1783,46 +2712,37 @@ void main() {
     // left the pinned prompt as a see-through bubble over the reply text.
     // Like Desktop (which clips the transcript behind its sticky prompt), the
     // pinned prompt must sit on an opaque field. QA 9493: that field is the
-    // floating chip's own surface, the header buttons' tint made opaque.
+    // floating chip's own surface; since Ola 3 the solid chrome every
+    // floating piece shares.
     void expectOpaqueStickyBackdrop(WidgetTester tester) {
       final stickyRect = tester.getRect(sticky());
       final colors = Theme.of(tester.element(sticky())).hermes;
-      final background = Color.alphaBlend(
-        colors.surfaceVariant.withValues(alpha: 0.92),
-        colors.background,
+      final face = tester.widget<Material>(
+        find.descendant(of: sticky(), matching: find.byType(Material)).first,
       );
-      final covering = <Color>[];
-      for (final element
-          in find
-              .descendant(
-                of: sticky(),
-                matching: find.byWidgetPredicate(
-                  (w) => w is ColoredBox || w is DecoratedBox,
-                ),
-              )
-              .evaluate()) {
-        final widget = element.widget;
-        final color = widget is ColoredBox
-            ? widget.color
-            : ((widget as DecoratedBox).decoration as BoxDecoration?)?.color;
-        if (color == null) continue;
-        final box = element.renderObject! as RenderBox;
-        final rect = box.localToGlobal(Offset.zero) & box.size;
-        if (rect.left <= stickyRect.left + 0.5 &&
-            rect.right >= stickyRect.right - 0.5 &&
-            rect.top <= stickyRect.top + 0.5 &&
-            rect.bottom >= stickyRect.bottom - 0.5) {
-          covering.add(color);
-        }
-      }
+      expect(face.color, HermesChrome.of(colors).fill);
+      final backdrop = find.byKey(
+        const ValueKey('chat-pinned-prompt-backdrop'),
+      );
+      final rect = tester.getRect(backdrop);
+      final gradient =
+          (tester.widget<DecoratedBox>(backdrop).decoration as BoxDecoration)
+                  .gradient!
+              as LinearGradient;
+      expect(gradient.colors[1].a, 1);
+      expect(rect.left, lessThanOrEqualTo(stickyRect.left));
+      expect(rect.right, greaterThanOrEqualTo(stickyRect.right));
+      expect(rect.top, lessThanOrEqualTo(stickyRect.top));
       expect(
-        covering.where((c) => c.a == 1.0),
-        isNotEmpty,
-        reason:
-            'the pinned prompt needs an opaque backdrop over its whole '
-            'area; found only $covering',
+        rect.top + gradient.stops![1] * rect.height,
+        greaterThanOrEqualTo(stickyRect.bottom),
       );
-      expect(covering.firstWhere((c) => c.a == 1.0), background);
+      expect(
+        tester.getRect(
+          find.descendant(of: sticky(), matching: find.byType(Material)).first,
+        ),
+        stickyRect,
+      );
       for (final element
           in find
               .ancestor(of: sticky(), matching: find.byType(Opacity))
@@ -1871,10 +2791,14 @@ void main() {
         wallMs += 33;
         await tester.pump(const Duration(milliseconds: 33));
       }
-      final pill = find.byKey(const ValueKey('activity-pill'));
-      expect(pill, findsOneWidget, reason: 'precondition: running tool pill');
+      // Queue management is supplemental activity; ordinary tool work
+      // remains in the conversation and does not create this footer.
+      expect(chat.enqueue('PUBLIC_QUEUED_STICKY'), isTrue);
+      await settle(tester);
+      final pill = find.byKey(const ValueKey('chat-queue-chip'));
+      expect(pill, findsOneWidget, reason: 'precondition: queued input pill');
 
-      await tester.tap(pill);
+      await tester.tap(find.byKey(const ValueKey('chat-queue-open')));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
       for (var frame = 0; frame < 10; frame++) {
@@ -1885,15 +2809,10 @@ void main() {
         findsOneWidget,
         reason: 'precondition: the reply spans the top, its prompt is pinned',
       );
-      expect(
-        find.descendant(
-          of: sticky(),
-          matching: find.textContaining('Revisa el perfil'),
-        ),
-        findsOneWidget,
-      );
+      expect(tester.getSemantics(sticky()).label, contains('Revisa el perfil'));
       expectOpaqueStickyBackdrop(tester);
 
+      await chat.cancelQueuedByIdentity(chat.queuedEntries.single.id);
       gateway.emit('tool.complete', const {
         'tool_id': 'call-pill-sticky',
         'name': 'terminal',
@@ -1941,8 +2860,16 @@ void main() {
   // follows the scroll, can be hidden per chat and switched off in Settings.
   group('#1215 slim pinned prompt', () {
     Finder header() => find.byKey(const ValueKey('chat-sticky-prompt'));
-    Finder dismiss() =>
-        find.byKey(const ValueKey('chat-pinned-prompt-dismiss'));
+    Finder dismiss() => find.byKey(const ValueKey('chat-jump-to-prompt'));
+
+    // Vistas v3: the header and the pinned chip are one strip of glass.
+    // These tests guard the solid band, which is the glass' fallback
+    // (reduced motion, high contrast, a device that does not blur): they run
+    // without blur. The glass case: «the pinned chip is a piece of the
+    // header's glass» below.
+    setUp(() => FrostedBackdropPolicy.blurAllowed.value = false);
+    tearDown(() => FrostedBackdropPolicy.blurAllowed.value = true);
+
     const sessionKey = 'conn-scroll-stress.sess-scroll-stress';
     String longReply(String tag) => List.filled(
       40,
@@ -1960,16 +2887,9 @@ void main() {
     /// 'A', 'B' or '' (no header) as painted after the fade settles.
     String headerState(WidgetTester tester) {
       if (header().evaluate().isEmpty) return '';
+      final prompt = tester.widget<ChatPinnedPromptHeader>(header().last);
       for (final tag in ['A', 'B']) {
-        if (find
-            .descendant(
-              of: header(),
-              matching: find.textContaining('Pregunta $tag del turno'),
-            )
-            .evaluate()
-            .isNotEmpty) {
-          return tag;
-        }
+        if (prompt.text.contains('Pregunta $tag del turno')) return tag;
       }
       return '?';
     }
@@ -2055,15 +2975,19 @@ void main() {
       await settleHeader(tester);
       expect(header(), findsOneWidget);
       final box = tester.getRect(header());
-      expect(box.height, lessThanOrEqualTo(36));
-      final text = tester.widget<Text>(
+      expect(box.size, const Size(48, 48));
+      expect(
         find.descendant(
           of: header(),
-          matching: find.textContaining('Pregunta B del turno'),
+          matching: find.byIcon(Icons.arrow_upward_rounded),
         ),
+        findsOneWidget,
       );
-      expect(text.maxLines, 1);
-      expect(text.overflow, TextOverflow.ellipsis);
+      expect(
+        tester.getSemantics(header()).label,
+        contains('Pregunta B del turno larga'),
+      );
+      // The destination is revealed without wrapping when activated.
       expect(
         find.byKey(const ValueKey('chat-load-earlier')),
         findsNothing,
@@ -2093,51 +3017,38 @@ void main() {
       expect(header(), findsOneWidget);
       final screen = tester.getRect(find.byType(ChatScreen));
       final chip = tester.getRect(header());
-      final headerBottom = FloatingChatHeader.insetFor(
-        tester.element(header()),
+      final island = tester.getRect(find.byType(ChatIsland).first);
+      expect(chip.size, const Size(48, 48));
+      expect(chip.right, inInclusiveRange(screen.right - 24, screen.right));
+      expect(chip.top, greaterThanOrEqualTo(island.bottom));
+      expect(chip.top - island.bottom, lessThanOrEqualTo(20));
+      // Never over the composer or the bottom bars, and the reply keeps
+      // rows to read between them.
+      final bars = tester.getRect(
+        find.byKey(const ValueKey('chat-bottom-bars')),
       );
-      expect(chip.width, lessThan(screen.width - 48), reason: '$chip');
-      expect(
-        chip.width,
-        lessThan(200),
-        reason: 'a short prompt gives a short chip that hugs it: $chip',
+      final composer = tester.getRect(
+        find.byKey(const ValueKey('chat-composer-host')),
       );
-      expect(chip.left, greaterThan(screen.left + 24));
-      expect(chip.right, lessThan(screen.right - 24));
-      expect(
-        chip.center.dx,
-        closeTo(screen.center.dx, 1),
-        reason: 'centred under the header pill',
+      final backdrop = tester.getRect(
+        find.byKey(const ValueKey('chat-pinned-prompt-backdrop')),
       );
-      expect(chip.top, greaterThanOrEqualTo(headerBottom - 0.5));
-      expect(chip.top, lessThanOrEqualTo(headerBottom + 10));
-      expect(chip.height, inInclusiveRange(28, 36));
-      final decorated = tester
-          .widgetList<DecoratedBox>(
-            find.descendant(of: header(), matching: find.byType(DecoratedBox)),
-          )
-          .map((d) => d.decoration)
-          .whereType<BoxDecoration>()
-          .where((d) => d.color != null)
-          .first;
-      expect(decorated.borderRadius, isNotNull, reason: 'a rounded chip');
-      expect(decorated.border, isNotNull);
+      expect(chip.overlaps(composer), isFalse);
+      expect(backdrop.overlaps(composer), isFalse);
+      expect(backdrop.bottom, lessThanOrEqualTo(bars.top + 0.5));
+      expect(bars.top - backdrop.bottom, greaterThanOrEqualTo(48));
+      final floating = find.descendant(
+        of: header(),
+        matching: find.byType(HermesFloatingSurface),
+      );
+      expect(floating, findsOneWidget);
+      final face = tester.widget<Material>(
+        find.descendant(of: floating, matching: find.byType(Material)).first,
+      );
       final colors = Theme.of(tester.element(header())).hermes;
-      expect(
-        decorated.color,
-        Color.alphaBlend(
-          colors.surfaceVariant.withValues(alpha: 0.92),
-          colors.background,
-        ),
-        reason: 'the header buttons surface, opaque',
-      );
-      // "Tú" and the × live inside the chip.
-      expect(
-        find.descendant(of: header(), matching: find.byType(Text)).first,
-        findsOneWidget,
-      );
-      final close = tester.getRect(dismiss());
-      expect(close.height, greaterThanOrEqualTo(32));
+      expect(face.color, HermesChrome.of(colors).fill);
+      expect(face.shape, isA<StadiumBorder>());
+      expect(tester.getSemantics(header()).label, contains('Vale'));
       expect(chip.contains(tester.getCenter(dismiss())), isTrue);
       await tearDownChat(tester, gateway);
     });
@@ -2194,13 +3105,10 @@ void main() {
       await settle(tester);
       await settleHeader(tester);
       expect(header(), findsOneWidget);
+      expect(tester.getSemantics(header()).label, contains('📎 2'));
       expect(
-        find.descendant(of: header(), matching: find.byIcon(Icons.attach_file)),
-        findsOneWidget,
-      );
-      expect(
-        find.descendant(of: header(), matching: find.text('2')),
-        findsOneWidget,
+        tester.widget<ChatPinnedPromptHeader>(header()).attachmentCount,
+        2,
       );
       expect(
         find.descendant(of: header(), matching: find.byType(RawImage)),
@@ -2213,42 +3121,45 @@ void main() {
       await tearDownChat(tester, gateway);
     });
 
-    testWidgets('× hides the header for this chat only, and it stays hidden', (
-      tester,
-    ) async {
-      final gateway = _StreamingGateway();
-      await pumpChat(tester, gateway, history: twoLongTurns());
-      await settle(tester);
-      await settleHeader(tester);
-      expect(headerState(tester), 'B');
+    testWidgets(
+      'long press hides the arrow for this chat only, and it stays hidden',
+      (tester) async {
+        final gateway = _StreamingGateway();
+        await pumpChat(tester, gateway, history: twoLongTurns());
+        await settle(tester);
+        await settleHeader(tester);
+        expect(headerState(tester), 'B');
 
-      await tester.tap(dismiss());
-      await settleHeader(tester);
-      expect(header(), findsNothing);
-      expect(PinnedPromptPrefs.shared.isHiddenFor(sessionKey), isTrue);
-      expect(PinnedPromptPrefs.shared.isHiddenFor('conn-x.other'), isFalse);
-      expect(PinnedPromptPrefs.shared.enabled, isTrue);
+        await tester.longPress(dismiss());
+        await settleHeader(tester);
+        expect(header(), findsNothing);
+        expect(PinnedPromptPrefs.shared.isHiddenFor(sessionKey), isTrue);
+        expect(PinnedPromptPrefs.shared.isHiddenFor('conn-x.other'), isFalse);
+        expect(PinnedPromptPrefs.shared.enabled, isTrue);
 
-      // Scrolling into another turn does not bring it back.
-      final states = await walkUp(tester);
-      expect(states.toSet(), {''});
+        // Scrolling into another turn does not bring it back.
+        final states = await walkUp(tester);
+        expect(states.toSet(), {''});
 
-      // Reopening the chat keeps it hidden.
-      final prefs = await SharedPreferences.getInstance();
-      final stored = {for (final key in prefs.getKeys()) key: prefs.get(key)!};
-      await tearDownChat(tester, gateway);
-      final again = _StreamingGateway();
-      await pumpChat(
-        tester,
-        again,
-        history: twoLongTurns(),
-        initialPrefs: stored.cast<String, Object>(),
-      );
-      await settle(tester);
-      await settleHeader(tester);
-      expect(header(), findsNothing);
-      await tearDownChat(tester, again);
-    });
+        // Reopening the chat keeps it hidden.
+        final prefs = await SharedPreferences.getInstance();
+        final stored = {
+          for (final key in prefs.getKeys()) key: prefs.get(key)!,
+        };
+        await tearDownChat(tester, gateway);
+        final again = _StreamingGateway();
+        await pumpChat(
+          tester,
+          again,
+          history: twoLongTurns(),
+          initialPrefs: stored.cast<String, Object>(),
+        );
+        await settle(tester);
+        await settleHeader(tester);
+        expect(header(), findsNothing);
+        await tearDownChat(tester, again);
+      },
+    );
 
     testWidgets('the Settings switch turns the header off everywhere', (
       tester,
@@ -2275,7 +3186,7 @@ void main() {
 
     // QA 9490: once hidden with ×, the pinned prompt could never come back:
     // the Settings switch off/on kept the per-chat hide.
-    testWidgets('× offers Undo in a notice, which shows it again', (
+    testWidgets('long press offers Undo in a notice, which shows it again', (
       tester,
     ) async {
       final gateway = _StreamingGateway();
@@ -2284,7 +3195,7 @@ void main() {
       await settleHeader(tester);
       expect(headerState(tester), 'B');
 
-      await tester.tap(dismiss());
+      await tester.longPress(dismiss());
       await settleHeader(tester);
       expect(header(), findsNothing);
       // The app's notice lane (HermesNotice) stands in for a SnackBar.
@@ -2308,13 +3219,12 @@ void main() {
       await settleHeader(tester);
       expect(headerState(tester), 'B');
 
-      await tester.tap(dismiss());
+      await tester.longPress(dismiss());
       await settleHeader(tester);
       expect(find.text('Oculta en este chat'), findsOneWidget);
       // A routine status notice lands right behind it.
-      HermesNotice.of(
-        tester.element(find.byType(ChatScreen)),
-      ).show(message: 'Aviso de fondo');
+      HermesNotice.of(tester.element(find.byType(ChatScreen)))
+          .show(message: 'Aviso de fondo');
       // Stepped frames so a close animation could actually run.
       for (var t = 0; t < 55; t++) {
         await tester.pump(const Duration(milliseconds: 100));
@@ -2352,7 +3262,7 @@ void main() {
       );
 
       Future<void> openMenu() async {
-        await tester.tap(find.byKey(const ValueKey('chat-notch')));
+        await tester.tap(find.byKey(const ValueKey('chat-settings-button')));
         await settleHeader(tester);
         expect(find.byKey(const ValueKey('chat-control-dialog')), findsOne);
       }
@@ -2362,11 +3272,10 @@ void main() {
       await tester.binding.handlePopRoute();
       await settleHeader(tester);
 
-      await tester.tap(dismiss());
+      await tester.longPress(dismiss());
       await settleHeader(tester);
-      HermesNotice.of(
-        tester.element(find.byType(Scaffold).last),
-      ).removeCurrentSnackBar();
+      HermesNotice.of(tester.element(find.byType(Scaffold).last))
+          .removeCurrentSnackBar();
       await settleHeader(tester);
       expect(header(), findsNothing);
 
@@ -2378,12 +3287,11 @@ void main() {
         ),
         findsOneWidget,
       );
-      final sheet = find.byKey(const ValueKey('chat-control-sheet'));
-      // The new top-level search and Ir a sections put this recovery action
-      // below the compact viewport. Scroll the actual sheet, not the chat.
-      await tester.drag(sheet, const Offset(0, -420));
-      await tester.pump();
+      // On a compact viewport the action may sit low in the sheet: scroll
+      // its own list to it. Ajustes hangs from the header, so a finger
+      // pulling it up takes it away (the way it came): no drag here.
       await tester.ensureVisible(show);
+      await tester.pump();
       await tester.tap(show);
       await tester.pump();
       await tester.pump(
@@ -2404,7 +3312,7 @@ void main() {
       await settle(tester);
       await settleHeader(tester);
       await PinnedPromptPrefs.shared.hideFor('conn-x.other');
-      await tester.tap(dismiss());
+      await tester.longPress(dismiss());
       await settleHeader(tester);
       expect(header(), findsNothing);
 
@@ -2629,12 +3537,10 @@ void main() {
     expect(listRect.bottom, closeTo(bars.bottom, 0.5));
     expect(listRect.bottom, closeTo(800, 0.5));
     expect(bars.top, lessThan(listRect.bottom - 40));
-    // The newest row can always rest above the composer and its notch.
+    // The newest row can always rest above the composer (Vistas v3: no
+    // notch on it any more).
     final padding = tester.widget<ListView>(list).padding! as EdgeInsets;
-    expect(
-      padding.bottom,
-      greaterThanOrEqualTo(bars.height + kChatNotchHeight),
-    );
+    expect(padding.bottom, greaterThan(bars.height));
     // At rest the newest row ends above the composer, close to it.
     final controller = tester.widget<ListView>(list).controller!;
     expect(controller.position.pixels, 0);
@@ -2712,4 +3618,188 @@ void main() {
     );
     await tearDownChat(tester, gateway);
   });
+
+  // REVIEW-T2-A C3: the F3 reveal clock inside the chat. It runs only while
+  // there is text to reveal, it is not used with reduced motion (the whole
+  // text at once), and closing the chat in the middle of a burst leaves no
+  // clock behind. Counted with [debugActiveChatRevealClocks]: a check on
+  // `hasScheduledFrame` would also see the turn's own once-a-second timer
+  // and the status line's beat, which are not the reveal.
+  group('F3 reveal clock in the chat', () {
+    // Q9SUAVE paints a composed reply; Text finders also see its hidden tail.
+    // Keep the visibility assertions on the renderer, including the last
+    // letters' opacity/height, instead of treating source presence as paint.
+    Finder painted(String phrase) => find.byElementPredicate((element) {
+      if (element.widget is! LiveReplyReveal) return false;
+      final render = element.renderObject;
+      return render is RenderLiveReplyReveal &&
+          render.visibleText.contains(phrase) &&
+          render.settled;
+    });
+
+    Future<ActiveChat> start(
+      WidgetTester tester,
+      _StreamingGateway gateway,
+    ) async {
+      final chat = await pumpChat(tester, gateway, history: _history(turns: 3));
+      await tester.pump(const Duration(seconds: 1));
+      await chat.send(
+        fullText: 'Cuéntame algo largo',
+        model: 'hermes-agent',
+        history: chat.buildHistory(),
+      );
+      gateway.emit('message.start');
+      await settle(tester);
+      return chat;
+    }
+
+    /// The service's turn ends as a real one does: its token flush and its
+    /// activity watchdog belong to the turn, which outlives the screen
+    /// (gint48: left streaming, they were the pending timers).
+    Future<void> endTurn(
+      WidgetTester tester,
+      _StreamingGateway gateway,
+      ActiveChat chat,
+    ) async {
+      gateway.emit('message.complete', {'text': chat.assistantContent});
+      for (var frame = 0; frame < 60 && chat.isStreaming; frame++) {
+        await tester.pump(const Duration(milliseconds: 33));
+      }
+      expect(chat.isStreaming, isFalse);
+    }
+
+    final burst = [
+      ...List.filled(60, 'Una frase que se revela palabra a palabra.'),
+      'FIN-DE-RAFAGA.',
+    ].join(' ');
+
+    testWidgets('it runs while there is text to reveal, then stops', (
+      tester,
+    ) async {
+      final gateway = _StreamingGateway();
+      final chat = await start(tester, gateway);
+      expect(debugActiveChatRevealClocks, 0);
+      gateway.emit('message.delta', {'text': burst});
+      var ran = false;
+      for (
+        var frame = 0;
+        frame < 120 && painted('FIN-DE-RAFAGA').evaluate().isEmpty;
+        frame++
+      ) {
+        await tester.pump(const Duration(milliseconds: 33));
+        ran |= debugActiveChatRevealClocks == 1;
+      }
+      expect(painted('FIN-DE-RAFAGA'), findsOneWidget);
+      expect(ran, isTrue, reason: 'a burst is revealed by the clock');
+      // Everything shown, the turn still streaming: the clock has stopped.
+      await tester.pump(const Duration(milliseconds: 33));
+      expect(chat.isStreaming, isTrue);
+      expect(debugActiveChatRevealClocks, 0);
+      await endTurn(tester, gateway, chat);
+      await tearDownChat(tester, gateway);
+    });
+
+    testWidgets('reduced motion: the whole burst in the frame it arrives', (
+      tester,
+    ) async {
+      tester.platformDispatcher.accessibilityFeaturesTestValue =
+          const FakeAccessibilityFeatures(disableAnimations: true);
+      addTearDown(
+        tester.platformDispatcher.clearAccessibilityFeaturesTestValue,
+      );
+      final gateway = _StreamingGateway();
+      final chat = await start(tester, gateway);
+      gateway.emit('message.delta', {'text': burst});
+      // The event reaches the service through the test gateway's stream;
+      // as the other reduced-motion tests do, wait until it has the text
+      // (gint48: one bare pump was not enough for the delta to arrive).
+      for (
+        var frame = 0;
+        frame < 100 && !chat.assistantContent.contains('FIN-DE-RAFAGA');
+        frame++
+      ) {
+        await tester.pump(const Duration(milliseconds: 33));
+        expect(debugActiveChatRevealClocks, 0, reason: 'no reveal clock');
+      }
+      // One frame with no time passing: with motion a step shows about an
+      // eighth of a burst, here the whole of it is already there.
+      await tester.pump();
+      expect(find.textContaining('FIN-DE-RAFAGA'), findsOneWidget);
+      expect(debugActiveChatRevealClocks, 0);
+      await endTurn(tester, gateway, chat);
+      await tearDownChat(tester, gateway);
+    });
+
+    testWidgets('closing the chat in the middle of a burst leaves no clock', (
+      tester,
+    ) async {
+      final gateway = _StreamingGateway();
+      final chat = await start(tester, gateway);
+      gateway.emit('message.delta', {'text': burst});
+      for (
+        var frame = 0;
+        frame < 30 && debugActiveChatRevealClocks == 0;
+        frame++
+      ) {
+        await tester.pump(const Duration(milliseconds: 33));
+      }
+      expect(debugActiveChatRevealClocks, 1, reason: 'mid-burst');
+      expect(painted('FIN-DE-RAFAGA'), findsNothing);
+      // The chat screen goes away mid-burst: its clock goes with it…
+      await tester.pumpWidget(const SizedBox.shrink());
+      expect(debugActiveChatRevealClocks, 0);
+      // …and frames go on with none left (a leaked clock would tick here).
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(debugActiveChatRevealClocks, 0);
+      // The turn itself lives in the service, past the screen; it ends.
+      await endTurn(tester, gateway, chat);
+      await gateway.close();
+    });
+  });
+
+  // Last in the file: the composer send crosses real async work (outbox,
+  // storage) and its leftovers must not reach the tests above.
+  group('scroll-follow: his own message goes down', () {
+    testWidgets('sending from the composer while reading goes down, always', (
+      tester,
+    ) async {
+      final gateway = _StreamingGateway();
+      await pumpChat(tester, gateway, history: _history());
+      await tester.pump(const Duration(seconds: 1));
+      await scrollUp(tester, 300);
+      final controller = controllerOf(tester);
+      expect(controller.position.pixels, greaterThan(150));
+      await tester.enterText(
+        find.descendant(
+          of: find.byType(ConsoleComposer),
+          matching: find.byType(TextField),
+        ),
+        'Mensaje propio',
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('send')));
+      // The ACK crosses real async work (outbox, storage): give it real time.
+      for (var frame = 0; frame < 40; frame++) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 20)),
+        );
+        await tester.pump(const Duration(milliseconds: 33));
+      }
+      expect(find.text('Mensaje propio'), findsWidgets);
+      expect(
+        controller.position.pixels,
+        closeTo(0, 0.5),
+        reason: 'sending his own message goes down, always',
+      );
+      // End the turn the send started, then let its own timers run out.
+      gateway.emit('message.start');
+      gateway.emit('message.complete', {'text': 'Hecho.'});
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(seconds: 40));
+      await tearDownChat(tester, gateway);
+    });
+  });
 }
+
+/// How the keyboard reaches the chat (QA 9709 band tests).
+enum _Keyboard { none, inset, resized }

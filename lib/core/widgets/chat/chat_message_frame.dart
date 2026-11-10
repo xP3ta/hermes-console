@@ -7,6 +7,7 @@ import '../../design/modal.dart';
 import '../hermes_notice.dart';
 import '../message_avatar_header.dart';
 import 'chat_message_selection_area.dart';
+import '../../feedback/haptics.dart';
 
 /// Marco compartido de un mensaje del chat (spec 070, T103): cabecera con
 /// cara/avatar + nombre + acciones, cuerpo libre y hora al pie. El cuerpo vive
@@ -92,6 +93,7 @@ class ChatMessageHeader extends StatelessWidget {
     super.key,
     required this.name,
     this.avatar,
+    this.avatarSize = kAvatarMascotSize,
     this.subtitle,
     this.nameColor,
     this.actions = const [],
@@ -99,6 +101,9 @@ class ChatMessageHeader extends StatelessWidget {
 
   final String name;
   final Widget? avatar;
+
+  /// [MessageAvatarHeader.mascotSize].
+  final double avatarSize;
   final Widget? subtitle;
 
   /// Color del nombre; por defecto el acento del tema.
@@ -109,6 +114,7 @@ class ChatMessageHeader extends StatelessWidget {
   Widget build(BuildContext context) => MessageAvatarHeader(
     name: name,
     mascot: avatar,
+    mascotSize: avatarSize,
     subtitle: subtitle,
     nameColor: nameColor,
     actions: actions,
@@ -234,7 +240,7 @@ class ChatCopyMessageButton extends StatelessWidget {
       _copy(context, scopes.isEmpty ? text() : scopes.single.text());
       return;
     }
-    HapticFeedback.selectionClick();
+    HermesHaptics.selection();
     final chosen = await showHermesMenu<int>(
       context: context,
       surfaceKey: const ValueKey('chat-copy-scopes'),

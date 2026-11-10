@@ -4,7 +4,12 @@ import 'package:hermes_android/core/widgets/chat/embeds/embed_detector.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
-  setUp(() => SharedPreferences.setMockInitialValues({}));
+  setUp(() {
+    SharedPreferences.setMockInitialValues({});
+    EmbedConsentStore.debugAllowThirdPartyEmbeds = true;
+  });
+
+  tearDown(() => EmbedConsentStore.debugAllowThirdPartyEmbeds = false);
 
   test('every type is off by default', () async {
     final store = EmbedConsentStore.forTesting(

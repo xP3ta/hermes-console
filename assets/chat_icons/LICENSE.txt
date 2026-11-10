@@ -1,0 +1,37 @@
+Generative Icons (chat icons)
+=============================
+
+The ten icons in this directory (reasoning, terminal-agent, tool-call,
+delegate-task, parallel-tools, response-stream, check, error, queued,
+agent-team) come from the Generative Icons library published at
+https://generativeicons.com (LottieFiles). The library's catalogue
+(https://generativeicons.com/catalog.json, schema version 1, library version
+0.1.0) declares `"license": "MIT"` for every icon. The catalogue states no
+copyright line; the credit is "Generative Icons, LottieFiles".
+
+What is shipped here is a derivative: each icon (outline style, weight 2,
+"light" motion, `a/<id>.json` of the source `.lottie`) was rasterised frame by
+frame at 64 px with lottie-web 5.13.0 (MIT, build time only, not shipped) and
+packed into one lossless WebP strip, recoloured white so the app tints it at
+paint time. `SOURCES.json` records the SHA-256 of every source asset and every
+strip; `tool/chat_icons/build_atlas.py` rebuilds the strips from the frames.
+
+MIT License terms (as declared by the catalogue)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so, subject to the following conditions:
+
+The above credit and this permission notice shall be included in all copies or
+substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

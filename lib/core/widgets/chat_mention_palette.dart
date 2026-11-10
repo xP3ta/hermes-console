@@ -33,6 +33,31 @@ import 'mission_profile_avatar.dart';
   return (start: start, end: end, query: match.group(2)!);
 }
 
+/// B2: one merged listenable per controller, focus node and roster, so a
+/// rebuild neither allocates a new one nor re-subscribes all three.
+final _paletteListenables =
+    Expando<({FocusNode focus, BotMentionRoster source, Listenable merged})>();
+
+Listenable _paletteListenable(
+  TextEditingController controller,
+  FocusNode focus,
+  BotMentionRoster source,
+) {
+  final cached = _paletteListenables[controller];
+  if (cached != null &&
+      identical(cached.focus, focus) &&
+      identical(cached.source, source)) {
+    return cached.merged;
+  }
+  final merged = Listenable.merge([controller, focus, source]);
+  _paletteListenables[controller] = (
+    focus: focus,
+    source: source,
+    merged: merged,
+  );
+  return merged;
+}
+
 class ChatMentionPalette extends StatelessWidget {
   final TextEditingController controller;
   final FocusNode focusNode;
@@ -53,7 +78,7 @@ class ChatMentionPalette extends StatelessWidget {
   Widget build(BuildContext context) {
     final source = roster ?? BotMentionRoster.shared;
     return ListenableBuilder(
-      listenable: Listenable.merge([controller, focusNode, source]),
+      listenable: _paletteListenable(controller, focusNode, source),
       builder: (context, _) {
         final query = chatMentionQuery(controller.value);
         if (!focusNode.hasFocus || query == null) {
@@ -133,6 +158,7 @@ class ChatMentionPalette extends StatelessWidget {
               profileName: bot.profile,
               hasAvatar: false,
               cache: null,
+              connectionId: bot.connectionId,
               size: 24,
               shape: bot.avatarProfile?.botShape,
               colorHex: bot.avatarProfile?.botFaceColorHex,

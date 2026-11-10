@@ -1,3 +1,6 @@
+import '../utils/approval_display.dart';
+
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 
@@ -6,6 +9,8 @@ import 'package:flutter/services.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../companion/state/companion_controller.dart';
+import '../design/modal.dart'
+    show HermesDialogAction, HermesDialogActionStyle, showHermesDialog;
 import '../models/activity_snapshot.dart';
 import '../models/agent_task_list.dart';
 import '../models/deferred_tool_call.dart';
@@ -13,15 +18,32 @@ import '../models/tool_label.dart';
 import '../models/tool_output.dart';
 import '../services/approval_policy.dart';
 import '../services/command_risk.dart';
+import '../services/reasoning_disclosure_prefs.dart';
 import '../theme/app_theme.dart';
+import '../theme/component_profile.dart' show componentMinimumTapTarget;
+import '../theme/hermes_tokens.dart' show HermesSpace;
+import '../theme/motion.dart' show HermesMotion;
+import 'activity_pill.dart' show formatActivityElapsed, formatStepDuration;
 import 'activity_sections.dart';
+import 'agent_name_scope.dart';
 import 'agent_task_widgets.dart';
 import 'approval_choice_button.dart';
+import 'chat/chat_live_icon.dart';
+import 'chat/chat_markdown_body.dart' show kChatCodeFontFamily;
 import 'chat/tool_output_cards.dart';
+import 'chat/turn_activity_pill.dart';
+import 'chat/tool_steps_summary.dart';
+import 'chat/delegated_child_cards.dart';
+import 'chat/live_turn_window.dart';
+import 'chat/turn_step_cards.dart';
 import 'chat_turn_activity.dart';
 import 'hermes_premium_ui.dart';
+import 'interactive_prompt_card.dart' show blockingRequestSurface;
+import 'workspace/chat_workspace_host.dart' show ChatWorkspaceTokens;
 import '../companion/models/companion_mood.dart';
 import 'hermes_pill.dart';
+import 'thinking_glyph.dart';
+import '../feedback/haptics.dart';
 
 /// Clasificación y renderizado de eventos técnicos del chat.
 ///
@@ -332,7 +354,7 @@ class _CommandPreviewCardState extends State<CommandPreviewCard> {
 
   void _copy() {
     Clipboard.setData(ClipboardData(text: widget.command));
-    HapticFeedback.selectionClick();
+    HermesHaptics.selection();
     setState(() => _copied = true);
     Future.delayed(const Duration(milliseconds: 900), () {
       if (mounted) setState(() => _copied = false);
@@ -533,7 +555,8 @@ class _OutputBlock extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
     final trimmed = output.length > 2000
-        ? Strings.of(context).i18n131P6TruncatedOutput(output.substring(0, 2000))
+        ? Strings.of(context)
+              .i18n131P6TruncatedOutput(output.substring(0, 2000))
         : output;
     return Container(
       width: double.infinity,
@@ -758,9 +781,11 @@ class _ToolStepState extends State<_ToolStep> {
     final isApproval = info.kind == ChatEventKind.approval;
     final exit = info.exitCode;
     final failed = exit != null && exit != 0;
+    // A step that went well keeps the timeline's one quiet ink; only a
+    // failure (and an approval, which needs the reader) takes a colour.
     final color = isApproval
         ? colors.warning
-        : (failed ? colors.error : colors.success);
+        : (failed ? colors.error : colors.textSecondary);
 
     final String label;
     if (isApproval) {
@@ -885,7 +910,7 @@ class _ApprovalCommandBoxState extends State<ApprovalCommandBox> {
 
   void _copy() {
     Clipboard.setData(ClipboardData(text: widget.command));
-    HapticFeedback.selectionClick();
+    HermesHaptics.selection();
     setState(() => _copied = true);
     Future.delayed(const Duration(milliseconds: 900), () {
       if (mounted) setState(() => _copied = false);
@@ -900,28 +925,36 @@ class _ApprovalCommandBoxState extends State<ApprovalCommandBox> {
       width: double.infinity,
       decoration: BoxDecoration(
         color: colors.background.withValues(alpha: 0.5),
-        borderRadius: BorderRadius.circular(9),
+        // TODO(token): HermesRadius.row once Ola 2 lands.
+        borderRadius: BorderRadius.circular(ChatWorkspaceTokens.rowRadius),
         border: Border.all(color: colors.divider.withValues(alpha: 0.55)),
       ),
-      padding: const EdgeInsets.fromLTRB(11, 7, 6, 9),
+      padding: const EdgeInsets.fromLTRB(11, 0, 0, 9),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Cabecera mínima: icono de terminal + copiar (a la derecha).
+          // Cabecera mínima: icono de terminal + copiar (a la derecha), con
+          // su zona táctil de 48 dp y el glifo pequeño (AUDITORIA T8).
           Row(
             children: [
               Icon(Icons.terminal, size: 12, color: colors.textSecondary),
               const Spacer(),
-              _IconAction(
-                icon: _copied ? Icons.check : Icons.content_copy,
-                color: _copied ? colors.accent : colors.textSecondary,
+              IconButton(
+                key: const ValueKey('approval-copy-command'),
+                onPressed: _copy,
                 tooltip: s.cevCopyTooltip,
-                onTap: _copy,
+                iconSize: 14,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints.tightFor(
+                  width: componentMinimumTapTarget,
+                  height: componentMinimumTapTarget,
+                ),
+                color: _copied ? colors.accent : colors.textSecondary,
+                icon: Icon(_copied ? Icons.check : Icons.content_copy),
               ),
             ],
           ),
-          const SizedBox(height: 4),
           ConstrainedBox(
             constraints: const BoxConstraints(maxHeight: 132),
             child: SingleChildScrollView(
@@ -932,7 +965,7 @@ class _ApprovalCommandBoxState extends State<ApprovalCommandBox> {
                 style: TextStyle(
                   fontSize: 12.5,
                   height: 1.4,
-                  fontFamily: 'monospace',
+                  fontFamily: kChatCodeFontFamily,
                   color: colors.textPrimary,
                 ),
               ),
@@ -971,6 +1004,7 @@ class ChatApprovalCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
     final s = Strings.of(context);
+    final agentName = AgentNameScope.of(context);
     final command = (approval['command'] ?? approval['code'] ?? '')
         .toString()
         .trim();
@@ -985,139 +1019,223 @@ class ChatApprovalCard extends StatelessWidget {
     final what = command.isNotEmpty ? command : description;
     final oneLine = !what.contains('\n') && what.length <= 80;
     final allowed = permittedApprovalChoices(approval);
+    // What «Siempre» will allow, as Desktop names it (request.description).
+    final alwaysPattern = description.isNotEmpty
+        ? description
+        : (approval['pattern_key'] ?? what).toString();
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
-      child: Semantics(
-        container: true,
-        label: s.cevPermissionHeadline,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
+      child: DecoratedBox(
+        key: const ValueKey('approval-card-surface'),
+        // v25 `.apv`: the accent's tint, radius 22, like the clarify card.
+        decoration: BoxDecoration(
+          color: blockingRequestSurface(colors),
+          // TODO(token): HermesRadius.card once Ola 2 lands.
+          borderRadius: BorderRadius.circular(ChatWorkspaceTokens.cardRadius),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(18, 14, 18, 14),
+          child: Semantics(
+            container: true,
+            label: s.mpnPermissionHeadline(agentName),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(
-                  Icons.shield_outlined,
-                  size: 20,
-                  color: colors.textSecondary,
-                ),
-                const SizedBox(width: 9),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        s.cevPermissionHeadline,
-                        style: TextStyle(
-                          fontSize: 13.5,
-                          fontWeight: FontWeight.w700,
-                          color: colors.textPrimary,
-                        ),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Icon(
+                      Icons.shield_outlined,
+                      size: 20,
+                      color: colors.textSecondary,
+                    ),
+                    const SizedBox(width: 9),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            s.mpnPermissionHeadline(agentName),
+                            style: TextStyle(
+                              fontSize: 13.5,
+                              fontWeight: FontWeight.w700,
+                              color: colors.textPrimary,
+                            ),
+                          ),
+                          if (description.isNotEmpty &&
+                              description != what) ...[
+                            const SizedBox(height: 2),
+                            Text(
+                              description,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 11.5,
+                                color: colors.textSecondary,
+                              ),
+                            ),
+                          ],
+                        ],
                       ),
-                      if (description.isNotEmpty && description != what) ...[
-                        const SizedBox(height: 2),
-                        Text(
-                          description,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 11.5,
-                            color: colors.textSecondary,
+                    ),
+                    const SizedBox(width: 8),
+                    if (busy)
+                      // The answer is on its way (Desktop's spinner on the
+                      // pressed button): said once, not repeated.
+                      Semantics(
+                        key: const ValueKey('approval-responding'),
+                        label: s.chaStatusWaiting,
+                        liveRegion: true,
+                        child: SizedBox.square(
+                          dimension: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: colors.accent,
                           ),
                         ),
-                      ],
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  risk.label,
-                  style: TextStyle(
-                    color: riskColor,
-                    fontSize: 11.5,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
-            ),
-            if (what.isNotEmpty) ...[
-              const SizedBox(height: 11),
-              ApprovalCommandBox(command: what, oneLine: oneLine),
-            ],
-            const SizedBox(height: 13),
-            if (allowed.contains('once') || allowed.contains('deny'))
-              Row(
-                children: [
-                  if (allowed.contains('once'))
-                    Expanded(
-                      child: Tooltip(
-                        message: s.apx1215ScopeOnceHint,
-                        child: ApprovalChoiceButton(
-                          label: s.cevAllow,
-                          icon: Icons.check_rounded,
-                          color: colors.success,
-                          busy: busy,
-                          onTap: () => onChoice('once'),
+                      )
+                    else
+                      Text(
+                        risk.label,
+                        style: TextStyle(
+                          color: riskColor,
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
-                    ),
-                  if (allowed.contains('once') && allowed.contains('deny'))
-                    const SizedBox(width: 9),
-                  if (allowed.contains('deny'))
-                    Expanded(
-                      child: ApprovalChoiceButton(
-                        label: s.cevDeny,
-                        icon: Icons.close_rounded,
-                        color: colors.error,
-                        busy: busy,
-                        onTap: () => onChoice('deny'),
-                      ),
-                    ),
+                  ],
+                ),
+                if (what.isNotEmpty) ...[
+                  const SizedBox(height: 11),
+                  ApprovalCommandBox(command: what, oneLine: oneLine),
                 ],
-              ),
-            if (allowed.contains('session') || allowed.contains('always'))
-              const SizedBox(height: 10),
-            if (allowed.contains('session') || allowed.contains('always'))
-              Wrap(
-                crossAxisAlignment: WrapCrossAlignment.center,
-                spacing: 4,
-                runSpacing: 2,
-                children: [
-                  Text(
-                    '${s.cevRemember}:',
-                    style: TextStyle(fontSize: 11, color: colors.textTertiary),
+                const SizedBox(height: 13),
+                if (allowed.contains('once') || allowed.contains('deny'))
+                  Row(
+                    children: [
+                      if (allowed.contains('once'))
+                        Expanded(
+                          child: Tooltip(
+                            message: s.apx1215ScopeOnceHint,
+                            child: ApprovalChoiceButton(
+                              key: const ValueKey('approval-allow'),
+                              label: s.cevAllow,
+                              icon: Icons.check_rounded,
+                              // v25: «Permitir» is the primary action.
+                              color: colors.accent,
+                              onColor: colors.onAccent,
+                              filled: true,
+                              busy: busy,
+                              onTap: () => onChoice('once'),
+                            ),
+                          ),
+                        ),
+                      if (allowed.contains('once') && allowed.contains('deny'))
+                        const SizedBox(width: 9),
+                      if (allowed.contains('deny'))
+                        Expanded(
+                          child: ApprovalChoiceButton(
+                            key: const ValueKey('approval-deny'),
+                            label: s.cevDeny,
+                            icon: Icons.close_rounded,
+                            // v25: «Denegar» neutral, not red.
+                            color: colors.textPrimary,
+                            busy: busy,
+                            onTap: () => onChoice('deny'),
+                          ),
+                        ),
+                    ],
                   ),
-                  if (allowed.contains('session'))
-                    Tooltip(
-                      message: s.apx1215ScopeSessionHint,
-                      child: _ScopeChip(
-                        label: s.cevThisSession,
-                        icon: Icons.repeat_rounded,
-                        busy: busy,
-                        semanticHint: s.cevRemember,
-                        onTap: () => onChoice('session'),
+                if (allowed.contains('session') || allowed.contains('always'))
+                  const SizedBox(height: 10),
+                if (allowed.contains('session') || allowed.contains('always'))
+                  Wrap(
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    spacing: 4,
+                    runSpacing: 2,
+                    children: [
+                      Text(
+                        '${s.cevRemember}:',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: colors.textTertiary,
+                        ),
                       ),
-                    ),
-                  if (allowed.contains('always'))
-                    Tooltip(
-                      message: s.apx1215ScopeAlwaysHint,
-                      child: _ScopeChip(
-                        label: s.cevAlways,
-                        icon: Icons.all_inclusive_rounded,
-                        busy: busy,
-                        semanticHint: s.cevRemember,
-                        onTap: () => onChoice('always'),
-                      ),
-                    ),
-                ],
-              ),
-          ],
+                      if (allowed.contains('session'))
+                        Tooltip(
+                          message: s.apx1215ScopeSessionHint,
+                          child: _ScopeChip(
+                            label: s.cevThisSession,
+                            icon: Icons.repeat_rounded,
+                            busy: busy,
+                            semanticHint: s.cevRemember,
+                            onTap: () => onChoice('session'),
+                          ),
+                        ),
+                      if (allowed.contains('always'))
+                        Tooltip(
+                          message: s.apx1215ScopeAlwaysHint,
+                          child: _ScopeChip(
+                            key: const ValueKey('approval-always'),
+                            label: s.cevAlways,
+                            icon: Icons.all_inclusive_rounded,
+                            busy: busy,
+                            semanticHint: s.cevRemember,
+                            onTap: () => unawaited(
+                              _confirmAlways(
+                                context,
+                                command: command,
+                                pattern: alwaysPattern,
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+              ],
+            ),
+          ),
         ),
       ),
     );
+  }
+
+  /// «Siempre» is permanent: Desktop asks first (`tool/approval.tsx:390-416`,
+  /// `alwaysTitle` / `alwaysDescription(request.description)` with the
+  /// command), and only then answers `always`.
+  Future<void> _confirmAlways(
+    BuildContext context, {
+    required String command,
+    required String pattern,
+  }) async {
+    final s = Strings.of(context);
+    final confirmed = await showHermesDialog<bool>(
+      context: context,
+      surfaceKey: const ValueKey('approval-always-dialog'),
+      title: s.approvalAlwaysTitle,
+      message: [
+        s.approvalAlwaysBody(pattern),
+        if (command.isNotEmpty) command,
+      ].join('\n\n'),
+      actions: [
+        HermesDialogAction(
+          key: const ValueKey('approval-always-cancel'),
+          label: s.commonCancel,
+          value: false,
+          style: HermesDialogActionStyle.cancel,
+        ),
+        HermesDialogAction(
+          key: const ValueKey('approval-always-confirm'),
+          label: s.approvalAlwaysConfirm,
+          value: true,
+          style: HermesDialogActionStyle.destructive,
+        ),
+      ],
+    );
+    if (confirmed == true && !busy) onChoice('always');
   }
 }
 
@@ -1130,6 +1248,7 @@ class _ScopeChip extends StatelessWidget {
   final VoidCallback onTap;
 
   const _ScopeChip({
+    super.key,
     required this.label,
     required this.icon,
     required this.busy,
@@ -1184,11 +1303,7 @@ class ApprovalRequestCard extends StatefulWidget {
   /// Abrir el run asociado en Ejecuciones (si hay runId y sigue pendiente).
   final void Function(String runId)? onOpenInRuns;
 
-  const ApprovalRequestCard({
-    required this.info,
-    this.onOpenInRuns,
-    super.key,
-  });
+  const ApprovalRequestCard({required this.info, this.onOpenInRuns, super.key});
 
   @override
   State<ApprovalRequestCard> createState() => _ApprovalRequestCardState();
@@ -1525,8 +1640,8 @@ class _MemorySavedMarkerState extends State<MemorySavedMarker> {
                       ShaderMask(
                         blendMode: BlendMode.srcIn,
                         shaderCallback: palette.shader,
-                        child: Icon(
-                          Icons.psychology_rounded,
+                        // QA 9709: the brain, as Desktop's memory glyph.
+                        child: ThinkingGlyph(
                           key: const ValueKey('memory-saved-icon'),
                           size: 16,
                           shadows: [
@@ -1670,6 +1785,68 @@ class ChatTraceEvent {
   bool get isFailed => status == 'failed' || status == 'error';
 }
 
+/// How long the thought at [index] lasted by the clock: until the step after
+/// it began. Null when either start is unknown.
+Duration? _untilNext(List<ChatTraceEvent> events, int index) {
+  final start = events[index].startedAt;
+  if (start == null || index + 1 >= events.length) return null;
+  final next = events[index + 1].startedAt;
+  if (next == null || next.isBefore(start)) return null;
+  return measuredActivityDuration(next.difference(start));
+}
+
+/// A gateway may retain both a partial thought and its complete snapshot in
+/// one turn. Coalesce those presentation copies, retaining the first key so
+/// an open disclosure is not remounted. The authoritative trace/copy stays
+/// unchanged; distinct thoughts and every tool keep their place.
+List<ChatTraceEvent> coalesceTurnThoughts(Iterable<ChatTraceEvent> source) {
+  final result = <ChatTraceEvent>[];
+  final exact = <String, int>{};
+  final ids = <String, int>{};
+  int? previousThought;
+  for (final event in source) {
+    if (event.kind != ChatTraceEventKind.reasoning) {
+      result.add(event);
+      continue;
+    }
+    final text = event.preview.trim();
+    var at = ids[event.id] ?? exact[text];
+    if (at == null && previousThought != null) {
+      final previous = result[previousThought].preview.trim();
+      // Different IDs can be successive snapshots. Do not infer sameness
+      // from a short generic prefix such as «Voy a revisar».
+      if (math.min(previous.length, text.length) >= 64 &&
+          (text.startsWith(previous) || previous.startsWith(text))) {
+        at = previousThought;
+      }
+    }
+    if (at == null || text.isEmpty) {
+      at = result.length;
+      result.add(event);
+    } else {
+      final previous = result[at];
+      result[at] = ChatTraceEvent(
+        id: previous.id,
+        label: event.label,
+        status: event.status,
+        emoji: event.emoji,
+        kind: ChatTraceEventKind.reasoning,
+        preview: text.length >= previous.preview.trim().length
+            ? event.preview
+            : previous.preview,
+        detail: event.detail,
+        startedAt: previous.startedAt ?? event.startedAt,
+        duration: event.duration ?? previous.duration,
+        title: event.title,
+      );
+    }
+    ids[event.id] = at;
+    exact[text] = at;
+    previousThought = at;
+  }
+  return result;
+}
+
 /// Desenlace de un trace de herramientas, una vez clasificado el conjunto de
 /// pasos. Separa "falló un paso pero el turno se recuperó" (ruido interno, no
 /// accionable) de "el turno terminó en error" (sí accionable). Evita que un
@@ -1736,6 +1913,7 @@ class ThinkingTraceCard extends StatefulWidget {
   final bool stopped;
 
   final Duration? duration;
+  final int delegatedCount;
 
   /// Sin [headerBuilder], el estado vivo del turno lo cuenta la pastilla de
   /// actividad: mientras [active] la tarjeta no pinta NADA (ni fila de estado
@@ -1754,10 +1932,18 @@ class ThinkingTraceCard extends StatefulWidget {
   /// Content owned by one exact tool row, keyed by [ChatTraceEvent.id].
   final Map<String, Widget> rowAttachments;
 
+  /// Q9-CHAT5 v2 (the owner, the reference video): with a [headerBuilder], the
+  /// turn is told as one card per finished step ([TurnStepCards]), live and
+  /// settled; what is live (the step in hand, a thought being written) is
+  /// the pills' above the composer (`LiveTurnPills`), so nothing of it sits
+  /// under the name. Off: the transcript lines of mocks 137 A and 138 v2.
+  final bool stepCards;
+
   const ThinkingTraceCard({
     required this.events,
     required this.active,
     this.headline = 'Pensando…',
+    this.delegatedCount = 0,
     this.activeMood,
     this.waitingForUser = false,
     this.stopped = false,
@@ -1765,6 +1951,7 @@ class ThinkingTraceCard extends StatefulWidget {
     this.liveInPill = false,
     this.headerBuilder,
     this.rowAttachments = const {},
+    this.stepCards = false,
     super.key,
   });
 
@@ -1868,7 +2055,8 @@ class _TraceStateIcon extends StatefulWidget {
     required this.animate,
   });
 
-  final IconData icon;
+  /// Null: the thinking glyph ([ThinkingGlyph]).
+  final IconData? icon;
   final Color color;
   final bool animate;
 
@@ -1919,12 +2107,20 @@ class _TraceStateIconState extends State<_TraceStateIcon>
 
   @override
   Widget build(BuildContext context) {
-    final icon = Icon(
-      widget.icon,
-      key: const ValueKey('thinking-trace-state-icon'),
-      color: widget.color,
-      size: ThinkingTraceCard.statusIconSize,
-    );
+    const key = ValueKey('thinking-trace-state-icon');
+    final glyph = widget.icon;
+    final Widget icon = glyph == null
+        ? ThinkingGlyph(
+            key: key,
+            color: widget.color,
+            size: ThinkingTraceCard.statusIconSize,
+          )
+        : Icon(
+            glyph,
+            key: key,
+            color: widget.color,
+            size: ThinkingTraceCard.statusIconSize,
+          );
     final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
     if (!widget.animate || reduceMotion) return icon;
     return ScaleTransition(scale: _scale, child: icon);
@@ -1944,6 +2140,20 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
   /// curso, colapsado cuando todas terminan). Un toque del usuario fija un
   /// valor explícito que manda a partir de entonces.
   bool? _userExpanded;
+
+  /// The live run opened from its header (Desktop's ToolRun, open).
+  bool _runOpen = false;
+
+  /// True once the card has been on screen for a frame: from then on a
+  /// block that appears slides in (Desktop's enter animation); the ones
+  /// painted with the card do not.
+  bool _shown = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _shown = true);
+  }
 
   /// Desenlace del trace: distingue "falló un paso pero el turno se recuperó"
   /// (ruido interno, no accionable) de "el turno terminó en error" (accionable).
@@ -2020,7 +2230,7 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
         return s.cevTraceRecovered;
       case TraceOutcome.working:
       case TraceOutcome.completed:
-        final duration = widget.duration;
+        final duration = measuredActivityDuration(widget.duration);
         if (duration == null) return s.chatActivityThought;
         if (duration < const Duration(seconds: 1)) {
           return s.chatActivityThoughtBriefly;
@@ -2031,7 +2241,8 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
     }
   }
 
-  ({IconData icon, Color color, bool animate}) _indicatorSpec(
+  /// A null icon is the thinking glyph ([ThinkingGlyph]).
+  ({IconData? icon, Color color, bool animate}) _indicatorSpec(
     HermesThemeColors colors,
   ) {
     if (!widget.active) {
@@ -2090,11 +2301,7 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
           color: colors.success,
           animate: false,
         ),
-        _ => (
-          icon: Icons.psychology_alt_rounded,
-          color: colors.textSecondary,
-          animate: true,
-        ),
+        _ => (icon: null, color: colors.textSecondary, animate: true),
       };
     }
     final current = widget.events.lastWhere(
@@ -2103,7 +2310,7 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
     );
     return switch (current.kind) {
       ChatTraceEventKind.reasoning => (
-        icon: Icons.psychology_alt_rounded,
+        icon: null,
         color: colors.textSecondary,
         animate: true,
       ),
@@ -2129,7 +2336,7 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
         )
         .join('\n');
     Clipboard.setData(ClipboardData(text: text));
-    HapticFeedback.selectionClick();
+    HermesHaptics.selection();
   }
 
   /// Lista de tareas del agente que pertenece a ESTE bloque de actividad (el
@@ -2143,6 +2350,19 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
 
   /// The task list of a finished turn is open.
   bool _tasksExpanded = false;
+
+  /// «Trabajó X» folds the steps of a finished turn; they start unfolded.
+  bool _workedOpen = true;
+  bool _inlineOpen = false;
+  int _inlineAgents = 0;
+
+  /// Where the pill's clock starts when neither the live scope nor an event
+  /// knows it.
+  DateTime? _pillStart;
+  // Preserve the steps/disclosures across the live→settled parent key change.
+  final GlobalKey _stepCardsKey = GlobalKey(
+    debugLabel: 'turn-step-cards-owner',
+  );
 
   /// Rows an opened turn lists; older ones are counted («+12 anteriores»).
   static const int _openStepRows = 30;
@@ -2221,33 +2441,133 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
     ChatTraceEvent? thought;
     ChatTraceEvent? running;
     ChatTraceEvent? latest;
+    // The first tool that came after the thought: the thought is over.
+    ChatTraceEvent? afterThought;
     for (final event in events.reversed) {
       if (event.kind == ChatTraceEventKind.reasoning) {
         if (thought == null && event.preview.trim().isNotEmpty) thought = event;
         continue;
       }
+      if (thought == null) afterThought = event;
       latest ??= event;
       if (running == null && !event.isDone && !event.isFailed) running = event;
     }
+    // Mock 137 A: «Pensando…» only while it is the newest thing in the
+    // turn (the gateway keeps a thought «running» until the turn ends, see
+    // ActivitySnapshot.splitSteps); then «Pensamiento · 4 s», timed up to
+    // the step that followed it.
+    final thoughtLive =
+        thought != null &&
+        afterThought == null &&
+        !thought.isDone &&
+        !thought.isFailed;
+    final thoughtStart = thought?.startedAt;
+    final nextStart = afterThought?.startedAt;
+    final thoughtTime =
+        thought?.duration ??
+        (thoughtStart != null &&
+                nextStart != null &&
+                !nextStart.isBefore(thoughtStart)
+            ? nextStart.difference(thoughtStart)
+            : null);
     final inHand = running ?? latest;
+    final tools = [
+      for (final event in events)
+        if (event.kind != ChatTraceEventKind.reasoning) event,
+    ];
+    // Desktop's ToolRun: a run of two or more calls gets a header that says
+    // what it used; closed it shows only the call in hand (Desktop's
+    // ticker), open every call of the run.
+    final runHeader = tools.length >= 2;
+    final shownTools = runHeader && _runOpen
+        ? tools
+        : [
+            for (final event in tools)
+              if (identical(event, inHand) ||
+                  widget.rowAttachments.containsKey(event.id))
+                event,
+          ];
+    final folded = [
+      for (final event in tools)
+        if (!identical(event, inHand)) event,
+    ];
+    final foldedTime = folded.fold(
+      Duration.zero,
+      (total, event) => total + (event.duration ?? Duration.zero),
+    );
+    final s = Strings.of(context);
     // The plan in flight belongs to the turn in flight; a card on its own
     // (no chat around it) falls back to the list its steps own.
     final tasks = scope != null ? scope.status.tasks : _ownedTasks;
+    // QA 9709 (the owner): «● Pensando · 3s» under the name and «● Pensando… · 1 s
+    // · …» below it. While the thought is live and the status would only
+    // say «Pensando», the thought's line (mock 137 A) is the one row; the
+    // turn's own timer stays on the island.
+    final statusRepeatsThought =
+        thoughtLive &&
+        turnStatusOnlyThinking(
+          s,
+          scope?.status ?? LiveTurnStatus.idle,
+          fallbackState: _summary,
+        );
     return headerBuilder(
       context,
-      TurnStatusLine(fallbackState: _summary),
+      statusRepeatsThought
+          ? const SizedBox.shrink(key: ValueKey('turn-status-yields'))
+          : TurnStatusLine(fallbackState: _summary),
       Column(
         key: const ValueKey('thinking-trace-live'),
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
           if (thought != null)
-            TurnReasoningQuote(text: thought.preview, live: true),
-          for (final event in events)
-            if (event.kind != ChatTraceEventKind.reasoning &&
-                (identical(event, inHand) ||
-                    widget.rowAttachments.containsKey(event.id)))
-              ..._toolRows(event, clock: scope?.clock),
+            TurnEnter(
+              key: ValueKey('turn-enter-thought-${thought.id}'),
+              animationKey: 'thought-${thought.id}',
+              enabled: _shown,
+              child: ThinkingLine(
+                key: ValueKey('turn-thought-${thought.id}'),
+                text: thought.preview,
+                live: thoughtLive,
+                startedAt: thought.startedAt,
+                duration: thoughtLive ? null : thoughtTime,
+                clock: scope?.clock,
+              ),
+            ),
+          if (runHeader)
+            // Mock 138 v2: the calls already made fold into «2 herramientas
+            // · 7s»; only the call in hand has a line of its own. One line,
+            // like Desktop's truncated run header: the live turn never
+            // grows with the run.
+            TurnFoldLine(
+              key: const ValueKey('turn-run-header'),
+              maxLines: 1,
+              leading: Icons.format_list_bulleted_rounded,
+              lead: s.tk140ToolsCount(folded.length),
+              label: foldedTime.inSeconds == 0
+                  ? ''
+                  : formatActivityElapsed(foldedTime),
+              semanticsLabel: foldedTime.inSeconds == 0
+                  ? s.tk140ToolsCount(folded.length)
+                  : '${s.tk140ToolsCount(folded.length)}, '
+                        '${s.tk140SecondsSpoken(foldedTime.inSeconds)}',
+              expanded: _runOpen,
+              onTap: () {
+                HermesHaptics.selection();
+                setState(() => _runOpen = !_runOpen);
+              },
+            ),
+          for (final event in shownTools)
+            TurnEnter(
+              key: ValueKey('turn-enter-step-${event.id}'),
+              animationKey: 'step-${event.id}',
+              enabled: _shown,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: _toolRows(event, clock: scope?.clock),
+              ),
+            ),
           if (tasks != null && tasks.isNotEmpty) TurnTasksLive(tasks: tasks),
           memorySavedMarkers(
             _landedMemory,
@@ -2258,19 +2578,587 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
     );
   }
 
-  /// «Pensó durante 9s · 3 comandos»: how the turn ended and what it used,
-  /// counted by kind in Desktop's order (`run-summary.ts`). Skills go by
-  /// their name.
-  String _foldLabel(Strings s) {
-    final used = summarizeToolRun(
-      _settledToolSteps
-          .where((event) => !isAgentTaskToolLabel(event.label))
-          .map(_summaryStep),
+  /// Q9-CHAT5 v2 ([ThinkingTraceCard.stepCards]): the turn as one card per
+  /// finished step, under the name and before the reply, live and settled
+  /// alike (the owner's decision 2: the cards stay). A tool still running and a
+  /// thought still being written normally belong to the live presenter.
+  /// When liveInPill is false (QA9715 chat), reasoning has one transcript
+  /// disclosure; phase/clock are the header's. Attachments remain visible.
+  Widget _buildStepCardsTurn(
+    BuildContext context,
+    Widget Function(BuildContext context, Widget summary, Widget details)
+    headerBuilder,
+    AgentTaskList? ownedTasks,
+  ) {
+    final s = Strings.of(context);
+    final lang = Localizations.localeOf(context).languageCode;
+    final scope = LiveTurnScope.maybeOf(context);
+    final source = _turnEvents;
+    final events = coalesceTurnThoughts(source);
+    final last = source.lastOrNull;
+    ChatTraceEvent? newest;
+    // A tool following a thought ends that thought's live presentation even
+    // if the gateway retains status=running on its earlier snapshot.
+    if (last != null && last.kind == ChatTraceEventKind.reasoning) {
+      final text = last.preview.trim();
+      for (final event in events.reversed) {
+        if (event.kind != ChatTraceEventKind.reasoning) continue;
+        final candidate = event.preview.trim();
+        if (event.id == last.id ||
+            candidate == text ||
+            (math.min(candidate.length, text.length) >= 64 &&
+                (candidate.startsWith(text) || text.startsWith(candidate)))) {
+          newest = event;
+          break;
+        }
+      }
+    }
+    bool live(ChatTraceEvent event) =>
+        widget.active &&
+        !event.isDone &&
+        !event.isFailed &&
+        (event.kind != ChatTraceEventKind.reasoning ||
+            identical(event, newest));
+    Widget? attachmentOf(ChatTraceEvent event) =>
+        switch (widget.rowAttachments[event.id]) {
+          final attachment? => KeyedSubtree(
+            key: ValueKey('activity-step-attachment-${event.id}'),
+            child: attachment,
+          ),
+          null => null,
+        };
+    final entries = <TurnStepCardEntry>[];
+    final running = <Widget>[];
+    // A thought the gateway did not time lasted until the next step began.
+    final thoughtTimes = <String, Duration>{
+      for (var i = 0; i < events.length; i++)
+        if (events[i].kind == ChatTraceEventKind.reasoning)
+          events[i].id:
+              ?(measuredActivityDuration(events[i].duration) ??
+              _untilNext(events, i)),
+    };
+    for (final event in events) {
+      // Confirmed writes have one actionable receipt after the reply.
+      // Pending/failed calls keep their ordinary activity/error row.
+      if (event.memoryLanded) {
+        if (attachmentOf(event) case final attachment?) running.add(attachment);
+        // While the turn runs, the live window also shows the write that
+        // landed (brain row, «Guardado en memoria»); once it ends only the
+        // receipt after the reply remains.
+        if (widget.active && (scope?.inlineActivity ?? false)) {
+          entries.add(_liveMemoryEntry(event, scope?.clock));
+        }
+        continue;
+      }
+      if (live(event)) {
+        if (widget.active &&
+            (scope?.inlineActivity ?? false) &&
+            isMemoryTool(event.label)) {
+          entries.add(_liveMemoryEntry(event, scope?.clock));
+          continue;
+        }
+        if (!widget.liveInPill &&
+            event.kind == ChatTraceEventKind.reasoning &&
+            event.preview.trim().isNotEmpty) {
+          entries.add(
+            TurnStepCardEntry(
+              id: event.id,
+              kind: TurnStepCardKind.thought,
+              title: s.litThoughtRow,
+              semanticsLabel: s.litThoughtRow,
+              initiallyOpen:
+                  !ReasoningDisclosurePrefs.shared.collapsedByDefault,
+              running: true,
+              text: event.preview,
+              opened: TurnReasoningQuote(
+                text: event.preview,
+                live: true,
+                lines: 6,
+              ),
+            ),
+          );
+        }
+        // A memory write in flight has its receipt after the reply: it is not
+        // a step of the bar.
+        if (!widget.liveInPill &&
+            event.kind != ChatTraceEventKind.reasoning &&
+            event.memory == null &&
+            !isMemoryTool(event.label)) {
+          // The call in hand is part of the turn's summary bar, said as in
+          // progress; its attachment still sits below the bar.
+          final step = _turnStep(event);
+          final title = activityStepTitle(s, step);
+          entries.add(
+            TurnStepCardEntry(
+              id: event.id,
+              kind: TurnStepCardKind.tool,
+              title: title,
+              detail: step.detail,
+              running: true,
+              startedAt: step.startedAt,
+              clock: scope?.clock,
+              toolName: event.label,
+              semanticsLabel: [
+                title,
+                ?step.detail,
+                s.stepsBarStatusRunning,
+              ].join(', '),
+              attachment: attachmentOf(event),
+            ),
+          );
+          continue;
+        }
+        if (attachmentOf(event) case final attachment?) running.add(attachment);
+        continue;
+      }
+      if (event.kind == ChatTraceEventKind.reasoning) {
+        final text = event.preview.trim();
+        if (text.isEmpty) continue;
+        final took = thoughtTimes[event.id];
+        final seconds = took?.inSeconds;
+        final brief = seconds != null && seconds < 1;
+        final title = brief
+            ? s.chatActivityThoughtBriefly
+            : s.chatActivityThought;
+        entries.add(
+          TurnStepCardEntry(
+            id: event.id,
+            kind: TurnStepCardKind.thought,
+            title: title,
+            semanticsLabel: seconds == null || brief
+                ? title
+                : s.livePThought(thinkingTime(s, took!)),
+            durationText: seconds == null || brief
+                ? null
+                : thinkingTime(s, took!),
+            duration: took,
+            opened: TurnReasoningQuote(text: text),
+          ),
+        );
+        continue;
+      }
+      if (!event.isDone && !event.isFailed) {
+        // A turn this device stopped keeps the step it cut short, said as
+        // stopped, never done (REVIEW gint67 r1).
+        if (widget.stopped) {
+          final step = _turnStep(event);
+          final title = activityStepTitle(s, step);
+          final stopped = s.cevTraceStopped;
+          entries.add(
+            TurnStepCardEntry(
+              id: event.id,
+              kind: TurnStepCardKind.outcome,
+              title: title,
+              detail: step.detail,
+              icon: Icons.stop_circle_outlined,
+              // A cut-short call is never «completado»: the bar words it as
+              // failed, and the outcome after it says «detenido».
+              failed: true,
+              toolName: event.label,
+              semanticsLabel: [title, ?step.detail, stopped].join(', '),
+              opened: toolOutputCard(event.output),
+              attachment: attachmentOf(event),
+            ),
+          );
+          continue;
+        }
+        // Otherwise settled steps only, as the folded summary
+        // ([_settledToolSteps]): a call still without a result may belong
+        // to a turn another surface is running, and passive observation
+        // must not reconstruct its tools (gint67, «actividad pasiva»).
+        if (attachmentOf(event) case final attachment?) running.add(attachment);
+        continue;
+      }
+      final step = _turnStep(event);
+      final title = activityStepTitle(s, step);
+      final measured = measuredActivityDuration(step.duration);
+      final duration = measured == null || measured.inSeconds < 1
+          ? null
+          : formatStepDuration(measured, languageCode: lang);
+      entries.add(
+        TurnStepCardEntry(
+          id: event.id,
+          kind: TurnStepCardKind.tool,
+          title: title,
+          detail: step.detail,
+          failed: event.isFailed,
+          toolName: event.label,
+          memory: event.memory,
+          durationText: duration,
+          duration: step.duration,
+          semanticsLabel: [
+            title,
+            ?step.detail,
+            event.isFailed ? s.liveStepFailed : s.liveStepDone,
+            ?duration,
+          ].join(', '),
+          opened: toolOutputCard(event.output),
+          attachment: attachmentOf(event),
+        ),
+      );
+    }
+    // How the turn ended when it did not end well: stopped, failed or
+    // recovered keep their outcome in words, as the folded summary said it
+    // (gint67, «historial fallido»: never the colour alone).
+    final outcomeIcon = widget.active
+        ? null
+        : switch (_outcome) {
+            TraceOutcome.stopped => Icons.stop_circle_outlined,
+            TraceOutcome.failed => Icons.error_outline_rounded,
+            TraceOutcome.recovered => Icons.warning_amber_rounded,
+            TraceOutcome.working || TraceOutcome.completed => null,
+          };
+    if (outcomeIcon != null) {
+      // In words of its own: the folded line's «· ver detalles» invited a
+      // tap this card does not take; the steps above hold the detail.
+      final outcome = switch (_outcome) {
+        TraceOutcome.failed => s.q9TurnOutcomeFailed,
+        TraceOutcome.recovered => s.q9TurnOutcomeRecovered,
+        _ => _cleanTraceStatus(_summary),
+      };
+      entries.add(
+        TurnStepCardEntry(
+          id: 'outcome',
+          kind: TurnStepCardKind.outcome,
+          title: outcome,
+          failed: _outcome == TraceOutcome.failed,
+          icon: outcomeIcon,
+          semanticsLabel: outcome,
+        ),
+      );
+    }
+    if (scope?.inlineActivity ?? false) {
+      final status = scope!.status;
+      final current = status.step;
+      if (widget.active) {
+        _inlineAgents = math.max(_inlineAgents, status.delegatedCount);
+      }
+      final tools = entries.where((entry) => entry.isToolStep).toList();
+      final words = current == null
+          ? (status.headline == s.chaPipelineStreaming
+                ? s.livePWriting
+                : status.headline ?? s.chaPipelineThinking)
+          : isTurnAgentTool(current.label) && status.delegatedCount > 0
+          ? s.chatLiveDelegating(status.delegatedCount)
+          : [
+              activityStepTitle(s, current),
+              ?(current.commandLine ?? current.detail),
+            ].join(' ');
+      final activityLabel = widget.active
+          ? status.noActivityHint
+                ? s.chaTurnStillWorking
+                : status.waitingForUser
+                ? (scope.approvalTool == null
+                      ? s.liveWaitingForUser
+                      : s.adkWaiting)
+                : current == null &&
+                      status.delegatedCount > 0 &&
+                      (status.headline == null ||
+                          status.headline == s.chaPipelineThinking)
+                ? s.chatLiveWaitingDelegates
+                : words
+          : inlineTurnSummary(
+              s,
+              [
+                for (final entry in tools)
+                  (
+                    tool: entry.toolName,
+                    target: entry.detail,
+                    failed: entry.failed,
+                    duration: entry.duration,
+                  ),
+              ],
+              duration: widget.duration,
+              agentCount: math.max(_inlineAgents, widget.delegatedCount),
+            );
+      final label = !widget.active && outcomeIcon != null
+          ? '${entries.last.title} · $activityLabel'
+          : activityLabel;
+      // The approved live look (9 nov): while it runs the card says
+      // «Trabajando»; what is being done is in the window of actions under
+      // it, and the full words stay in the card's spoken label. States that
+      // carry other information (waiting, delegates, writing) keep theirs.
+      final saysWhatItDoes =
+          status.noActivityHint ||
+          status.waitingForUser ||
+          (current == null &&
+              (status.delegatedCount > 0 ||
+                  status.headline == s.chaPipelineStreaming)) ||
+          (current != null &&
+              isTurnAgentTool(current.label) &&
+              status.delegatedCount > 0);
+      final shownLabel = widget.active && !saysWhatItDoes
+          ? s.roomStateWorking
+          : label;
+      // What the row is doing, as one of the chat's ten icons.
+      final liveGlyph = status.noActivityHint || status.waitingForUser
+          ? ChatLiveGlyph.reasoning
+          : current == null
+          ? (status.delegatedCount > 0 &&
+                    (status.headline == null ||
+                        status.headline == s.chaPipelineThinking)
+                ? ChatLiveGlyph.parallelTools
+                : status.headline == s.chaPipelineStreaming
+                ? ChatLiveGlyph.responseStream
+                : ChatLiveGlyph.reasoning)
+          : isTurnAgentTool(current.label) && status.delegatedCount > 0
+          ? ChatLiveGlyph.delegateTask
+          : chatLiveGlyphForTool(current.label);
+      final details = Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TurnStepCards(
+            entries: entries,
+            detailsOnly: true,
+            showAttachments: false,
+          ),
+          if (widget.active && status.tasks != null)
+            TurnTasksLive(tasks: status.tasks!),
+          if (!widget.active &&
+              ownedTasks != null &&
+              ownedTasks.isNotEmpty) ...[
+            TurnFoldLine(
+              key: const ValueKey('thinking-trace-tasks'),
+              label: turnTasksFoldLabel(s, ownedTasks.asHistory),
+              leading: Icons.checklist_rounded,
+              expanded: _tasksExpanded,
+              onTap: () => setState(() => _tasksExpanded = !_tasksExpanded),
+            ),
+            TurnInlineDisclosure(
+              open: _tasksExpanded,
+              child: TurnTasksHistory(tasks: ownedTasks.asHistory),
+            ),
+          ],
+          if (widget.active &&
+              scope.approvalChoice != null &&
+              scope.approvalTool != null)
+            Text(
+              '${scope.approvalChoice == 'deny' ? s.adkDenied : s.adkAllowed} · ${approvalDisplayText(scope.approvalTool, s)}',
+              key: const ValueKey('approval-transcript-line'),
+            ),
+        ],
+      );
+      return headerBuilder(
+        context,
+        TurnInlineActivity(
+          label: shownLabel,
+          spokenLabel: label,
+          startedAt:
+              status.startedAt ??
+              _turnEvents.firstOrNull?.startedAt ??
+              (_pillStart ??= scope.clock()),
+          clock: scope.clock,
+          live: widget.active,
+          failed: outcomeIcon != null || entries.any((entry) => entry.failed),
+          glyph: liveGlyph,
+          steps: tools.length,
+          open: _inlineOpen,
+          onTap: () => setState(() => _inlineOpen = !_inlineOpen),
+        ),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Design B: a card per delegated child under the live row.
+            if (widget.active && status.subagents.isNotEmpty)
+              DelegatedChildCards(
+                subagents: status.subagents,
+                clock: scope.clock,
+              ),
+            // The approved live look: while the turn runs and the list is
+            // closed, the last actions, the thought and the plan are there
+            // without a tap; opening the card shows the whole list instead.
+            if (widget.active && !_inlineOpen)
+              ..._liveBlock(
+                context,
+                tools: [
+                  for (final entry in tools)
+                    if (!isAgentTaskToolLabel(entry.toolName ?? '')) entry,
+                ],
+                tasks: status.tasks,
+              ),
+            TurnInlineDisclosure(open: _inlineOpen, child: details),
+            ...running,
+            for (final entry in entries) ?entry.attachment,
+          ],
+        ),
+      );
+    }
+    final reduceMotion = HermesMotion.reduced(context);
+    Widget folding(Widget? body) {
+      final box = SizedBox(width: double.infinity, child: body);
+      return reduceMotion
+          ? box
+          : AnimatedSize(
+              duration: HermesMotion.base,
+              curve: Curves.easeOut,
+              alignment: AlignmentDirectional.topStart,
+              child: box,
+            );
+    }
+
+    final liveTasks = widget.active
+        ? (scope != null ? scope.status.tasks : _ownedTasks)
+        : null;
+    final history = widget.active ? null : ownedTasks?.asHistory;
+    // Under the name: while it runs, an activity word and the clock; when it
+    // ends, «Trabajó X», which folds the steps. The pills above the composer
+    // ([liveInPill]) keep telling the live state themselves.
+    Widget pill = const SizedBox.shrink(
+      key: ValueKey('turn-step-cards-no-status'),
     );
+    var foldable = false;
+    // A run of steps is its own line, which says «Pensando» or «Trabajó» and
+    // folds the steps; the pills only speak while there is no step yet.
+    final hasStepLine = entries.any(
+      (entry) => entry.isToolStep || entry.kind == TurnStepCardKind.thought,
+    );
+    if (!widget.liveInPill && !hasStepLine) {
+      if (widget.active) {
+        final started =
+            scope?.status.startedAt ??
+            source
+                .map((event) => event.startedAt)
+                .whereType<DateTime>()
+                .fold<DateTime?>(
+                  null,
+                  (first, at) =>
+                      first == null || at.isBefore(first) ? at : first,
+                ) ??
+            (_pillStart ??= (scope?.clock ?? DateTime.now)());
+        pill = TurnActivityPill(
+          key: const ValueKey('turn-activity-pill'),
+          startedAt: started,
+          clock: scope?.clock,
+        );
+      } else if (_foldLabel(s).lead case final worked?) {
+        foldable = true;
+        pill = TurnWorkedPill(
+          key: const ValueKey('turn-worked-pill'),
+          label: worked,
+          open: _workedOpen,
+          onTap: () => setState(() => _workedOpen = !_workedOpen),
+        );
+      }
+    }
+    final details = Column(
+      key: ValueKey(
+        widget.active ? 'thinking-trace-live' : 'thinking-trace-settled',
+      ),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        TurnStepCards(
+          key: _stepCardsKey,
+          entries: entries,
+          animateInitial: widget.active,
+          live: widget.active && !widget.liveInPill,
+          duration: widget.duration,
+        ),
+        ...running,
+        if (liveTasks != null && liveTasks.isNotEmpty)
+          TurnTasksLive(tasks: liveTasks),
+        if (history != null && history.isNotEmpty) ...[
+          TurnFoldLine(
+            key: const ValueKey('thinking-trace-tasks'),
+            label: turnTasksFoldLabel(s, history),
+            leading: Icons.checklist_rounded,
+            expanded: _tasksExpanded,
+            onTap: () {
+              HermesHaptics.selection();
+              setState(() => _tasksExpanded = !_tasksExpanded);
+            },
+          ),
+          folding(_tasksExpanded ? TurnTasksHistory(tasks: history) : null),
+        ],
+      ],
+    );
+    return headerBuilder(
+      context,
+      pill,
+      foldable ? folding(_workedOpen ? details : null) : details,
+    );
+  }
+
+  /// A memory write as a step of the live window: its state is read there
+  /// from [TurnStepCardEntry.memory] and `running`/`failed`.
+  TurnStepCardEntry _liveMemoryEntry(
+    ChatTraceEvent event,
+    DateTime Function()? clock,
+  ) {
+    final s = Strings.of(context);
+    final step = _turnStep(event);
+    return TurnStepCardEntry(
+      id: event.id,
+      kind: TurnStepCardKind.tool,
+      title: activityStepTitle(s, step),
+      detail: event.memory?.preview,
+      running: !event.isDone && !event.isFailed,
+      failed: event.isFailed,
+      startedAt: step.startedAt,
+      clock: clock,
+      toolName: event.label,
+      memory: event.memory,
+      semanticsLabel: activityStepTitle(s, step),
+    );
+  }
+
+  /// The live turn's block under its card (mock `turno3.html`): the window
+  /// of at most four actions with its connector, a fragment of the last
+  /// thought, and the plan.
+  List<Widget> _liveBlock(
+    BuildContext context, {
+    required List<TurnStepCardEntry> tools,
+    required AgentTaskList? tasks,
+  }) {
+    final thought = _turnEvents
+        .where((event) => event.kind == ChatTraceEventKind.reasoning)
+        .lastOrNull
+        ?.preview;
     return [
-      _cleanTraceStatus(_summary),
-      ...toolRunSummaryParts(s, used),
-    ].join(' · ');
+      if (tools.isNotEmpty) LiveTurnWindow(steps: tools),
+      if (thought != null && thought.trim().isNotEmpty)
+        LiveReasoningSnippet(text: thought),
+      if (tasks != null && tasks.isNotEmpty)
+        Padding(
+          padding: const EdgeInsets.only(top: HermesSpace.x2),
+          child: TurnTasksLive(tasks: tasks),
+        ),
+    ];
+  }
+
+  /// «Trabajó 1:12 · 3 comandos»: how the turn ended and what it used,
+  /// counted by kind in Desktop's order (`run-summary.ts`). Skills go by
+  /// their name. Mock 138 v2: a turn that used tools says how long it
+  /// worked, in bold; one that only thought keeps Desktop's «Pensó durante
+  /// 9s», and a stopped, failed or recovered turn its outcome.
+  ({String? lead, String label}) _foldLabel(Strings s) {
+    final parts = toolRunSummaryParts(
+      s,
+      summarizeToolRun(
+        _settledToolSteps
+            .where((event) => !isAgentTaskToolLabel(event.label))
+            .map(_summaryStep),
+      ),
+    );
+    final duration = measuredActivityDuration(widget.duration);
+    final worked =
+        parts.isNotEmpty &&
+        duration != null &&
+        duration >= const Duration(seconds: 1) &&
+        (_outcome == TraceOutcome.completed ||
+            _outcome == TraceOutcome.working);
+    if (worked) {
+      return (
+        lead: s.tk140WorkedFor(thinkingTime(s, duration)),
+        label: parts.join(' · '),
+      );
+    }
+    return (
+      lead: null,
+      label: [_cleanTraceStatus(_summary), ...parts].join(' · '),
+    );
   }
 
   /// The opened turn, oldest first: each thought as a quoted block, each
@@ -2293,10 +3181,15 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
         ),
       for (final event in events.skip(hidden))
         if (event.kind == ChatTraceEventKind.reasoning) ...[
+          // Mock 137 A: a finished thought is its line, «Pensamiento ·
+          // 12 s». The reader opened this turn to see it, so it shows
+          // whole under its line, which folds it.
           if (event.preview.trim().isNotEmpty)
-            TurnReasoningQuote(
+            ThinkingLine(
               key: ValueKey('thinking-trace-step-${event.id}'),
               text: event.preview,
+              duration: event.duration,
+              initiallyOpen: true,
             ),
         ] else
           ..._toolRows(event, outputs: true),
@@ -2336,6 +3229,7 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
     final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
     final hasSteps = _turnEvents.isNotEmpty;
     final tasks = ownedTasks?.asHistory;
+    final fold = _foldLabel(s);
     // What a line opens keeps the full width whether open or closed, so
     // only its height animates: it unfolds downwards from its line instead
     // of growing out of the middle of the row.
@@ -2344,7 +3238,7 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
       return reduceMotion
           ? box
           : AnimatedSize(
-              duration: const Duration(milliseconds: 200),
+              duration: HermesMotion.base,
               curve: Curves.easeOut,
               alignment: AlignmentDirectional.topStart,
               child: box,
@@ -2355,11 +3249,13 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
       context,
       TurnFoldLine(
         key: const ValueKey('thinking-trace-summary'),
-        label: _foldLabel(s),
+        lead: fold.lead,
+        label: fold.label,
+        leading: fold.lead == null ? null : Icons.done_rounded,
         expanded: _expanded,
         onTap: hasSteps
             ? () {
-                HapticFeedback.selectionClick();
+                HermesHaptics.selection();
                 setState(() => _userExpanded = !_expanded);
               }
             : null,
@@ -2390,7 +3286,7 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
               leading: Icons.checklist_rounded,
               expanded: _tasksExpanded,
               onTap: () {
-                HapticFeedback.selectionClick();
+                HermesHaptics.selection();
                 setState(() => _tasksExpanded = !_tasksExpanded);
               },
             ),
@@ -2510,6 +3406,9 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
     final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
 
     final headerBuilder = widget.headerBuilder;
+    if (headerBuilder != null && widget.stepCards) {
+      return _buildStepCardsTurn(context, headerBuilder, tasks);
+    }
     if (headerBuilder != null) {
       return widget.active
           ? _buildLiveTurn(context, headerBuilder)
@@ -2571,7 +3470,7 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
                 borderRadius: BorderRadius.circular(18),
                 onTap: hasEvents
                     ? () {
-                        HapticFeedback.selectionClick();
+                        HermesHaptics.selection();
                         setState(() => _userExpanded = !_expanded);
                       }
                     : null,

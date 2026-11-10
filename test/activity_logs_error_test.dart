@@ -24,6 +24,8 @@ class _FailingLogsClient extends DashboardClient {
     int lines = 200,
     String? level,
     String? search,
+    String? component,
+    String? profile,
   }) async => throw error;
 }
 

@@ -1,0 +1,127 @@
+{
+  "catalogVersion": "0.1.0",
+  "icons": {
+    "agent-team": {
+      "atlas": "assets/chat_icons/agent-team.webp",
+      "atlasBytes": 992,
+      "atlasSha256": "47be6862a5e4ea18f9a15914b24c28023f9fc282d533e97de20438a8d5cb6f97",
+      "category": "AI \u00b7 Agents",
+      "frames": 12,
+      "label": "Agent team",
+      "license": "MIT",
+      "sourceAsset": "assets/agent-team.lottie",
+      "sourceBytes": 14821,
+      "sourceSha256": "b2a3caa70250c4b9f96cf989791142d7e62833d15f1ebebe92e1eff8530bb3b5"
+    },
+    "check": {
+      "atlas": "assets/chat_icons/check.webp",
+      "atlasBytes": 1756,
+      "atlasSha256": "01d75105f3516929c99f871e77a4c41a3f077ac8231d29b7140b31cc9b21deb2",
+      "category": "Essentials",
+      "frames": 12,
+      "label": "Check",
+      "license": "MIT",
+      "sourceAsset": "assets/check.lottie",
+      "sourceBytes": 21957,
+      "sourceSha256": "13b228228577fa755c8dab277da88cce1afa8a42c812c7b05a4dfa48eaed57f0"
+    },
+    "delegate-task": {
+      "atlas": "assets/chat_icons/delegate-task.webp",
+      "atlasBytes": 3086,
+      "atlasSha256": "ae1f65d1d45f10ece288ad03623af9b72bd6150473d8c34f9b77bfc756415cfb",
+      "category": "Teamwork",
+      "frames": 26,
+      "label": "Delegate task",
+      "license": "MIT",
+      "sourceAsset": "assets/delegate-task.lottie",
+      "sourceBytes": 8148,
+      "sourceSha256": "82ef56c5b8a963ee7cd533bb37f7cb97a74aaef2422569e98437e7cd03ddcdc9"
+    },
+    "error": {
+      "atlas": "assets/chat_icons/error.webp",
+      "atlasBytes": 832,
+      "atlasSha256": "d4811cc83471287b948e6e5d9a006d7599956ffc10b99146ac73668009e40522",
+      "category": "Feedback & status",
+      "frames": 16,
+      "label": "Error",
+      "license": "MIT",
+      "sourceAsset": "assets/error.lottie",
+      "sourceBytes": 9529,
+      "sourceSha256": "795042f67f4233369f7dd31d34b8cd51785c64dda0d9e7896c7b17b728b1563f"
+    },
+    "parallel-tools": {
+      "atlas": "assets/chat_icons/parallel-tools.webp",
+      "atlasBytes": 2988,
+      "atlasSha256": "e0ea9677a220eb31f0428d9b30625ca7dc516107a3c136230135eeac0c78a179",
+      "category": "AI \u00b7 Agent operations",
+      "frames": 24,
+      "label": "Parallel tools",
+      "license": "MIT",
+      "sourceAsset": "assets/parallel-tools.lottie",
+      "sourceBytes": 9984,
+      "sourceSha256": "78dc5478da2132d779925121c1a3564f8ef78fc2cfe87838ad33f798db3618e4"
+    },
+    "queued": {
+      "atlas": "assets/chat_icons/queued.webp",
+      "atlasBytes": 3300,
+      "atlasSha256": "b7225488bd8c7be630c19c6066952216d962d7e5fae17d8923af8aa56f2f6a0a",
+      "category": "Feedback & status",
+      "frames": 21,
+      "label": "Queued",
+      "license": "MIT",
+      "sourceAsset": "assets/queued.lottie",
+      "sourceBytes": 9239,
+      "sourceSha256": "2d1ac79f2e075e485848cf1a3ef0441f429253f46be5a7a4b7475d4acaeeef26"
+    },
+    "reasoning": {
+      "atlas": "assets/chat_icons/reasoning.webp",
+      "atlasBytes": 3434,
+      "atlasSha256": "70bf953556b39077fa4738e735f6f459fdb2f98235aa96a2e80eb7218ad6d953",
+      "category": "AI \u00b7 Conversation",
+      "frames": 19,
+      "label": "Reasoning",
+      "license": "MIT",
+      "sourceAsset": "assets/reasoning.lottie",
+      "sourceBytes": 8127,
+      "sourceSha256": "490073626025e523f6f128220937fc1e467df395e2e07d616c5cb28f90627eac"
+    },
+    "response-stream": {
+      "atlas": "assets/chat_icons/response-stream.webp",
+      "atlasBytes": 1152,
+      "atlasSha256": "b53fab9c29cff50773e2f8bdaf01e463bb8580e8cb126ff969ddc09d1008f441",
+      "category": "AI \u00b7 Conversation",
+      "frames": 18,
+      "label": "Response stream",
+      "license": "MIT",
+      "sourceAsset": "assets/response-stream.lottie",
+      "sourceBytes": 8729,
+      "sourceSha256": "acb50a0ce09ca5f9e0bba3d465f38790d2a4a243a77b1d4d5bfda7387ec484d8"
+    },
+    "terminal-agent": {
+      "atlas": "assets/chat_icons/terminal-agent.webp",
+      "atlasBytes": 1290,
+      "atlasSha256": "60739bbb2ba285a61067da612c001b7d7b1ab4f442342d76ef02828acd671e4d",
+      "category": "AI \u00b7 Agent operations",
+      "frames": 28,
+      "label": "Terminal agent",
+      "license": "MIT",
+      "sourceAsset": "assets/terminal-agent.lottie",
+      "sourceBytes": 7327,
+      "sourceSha256": "f000482b945b19d73ce1718434efee9fe8a468b031d092a00cd57d8a0cc3dc5f"
+    },
+    "tool-call": {
+      "atlas": "assets/chat_icons/tool-call.webp",
+      "atlasBytes": 6130,
+      "atlasSha256": "4d38ea5fb9dbadda5f91977a970c4916042b3b18a18087086492395aa928c715",
+      "category": "AI \u00b7 Agents",
+      "frames": 16,
+      "label": "Tool call",
+      "license": "MIT",
+      "sourceAsset": "assets/tool-call.lottie",
+      "sourceBytes": 6976,
+      "sourceSha256": "dca37a37eac2323fefce70410172d1dfc5a7d30a4e9da94aee7cdde6ca79c2d4"
+    }
+  },
+  "license": "MIT",
+  "source": "https://generativeicons.com/catalog.json"
+}

@@ -22,6 +22,8 @@ const Map<String, int> _disabledControlLabels = {
   'lib/core/screens/settings_screen.dart': 1,
   // Voice engine tile while the engine is not installed.
   'lib/core/screens/voice_settings_screen.dart': 1,
+  // «Up one level» in the files pane while at the root (InkWell onTap: null).
+  'lib/core/screens/sftp_browser_screen.dart': 1,
   // Profile quick action without a handler.
   'lib/core/bots/ui/profile/bot_profile_screen.dart': 1,
   // Disabled option in the shared option sheet.
@@ -32,8 +34,8 @@ const Map<String, int> _disabledControlLabels = {
   'lib/core/widgets/dock.dart': 1,
   // New-chat drawer entry while there is no connection.
   'lib/core/widgets/hermes_drawer.dart': 1,
-  // Switch tile title/subtitle and the action button while disabled.
-  'lib/core/widgets/hermes_ui.dart': 3,
+  // Switch tile title and subtitle while disabled.
+  'lib/core/widgets/hermes_ui.dart': 2,
   // Project action while it is not allowed.
   'lib/core/widgets/projects/project_actions.dart': 1,
 };

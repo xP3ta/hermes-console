@@ -1,16 +1,14 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
+import '../../design/floating.dart';
 import '../../theme/app_theme.dart';
+import '../../theme/hermes_tokens.dart';
 
-/// The prompt of the turn being read, pinned under the floating header.
-///
-/// QA 9493 (owner): a small floating chip centred under the header pill,
-/// not a full-width band: "Tú: prompt" on one truncated line and a ×,
-/// on the header buttons' surface made opaque (the reply never shows
-/// through it) with their hairline border. The transcript keeps scrolling
-/// under it at both sides. Never taller than [maxHeight] at normal text
-/// size, never wider than [maxWidth].
-class ChatPinnedPromptHeader extends StatelessWidget {
+/// The off-screen prompt's small glass arrow. The screen owns visibility and
+/// scrolling; this target briefly reveals the destination before shrinking.
+class ChatPinnedPromptHeader extends StatefulWidget {
   const ChatPinnedPromptHeader({
     super.key,
     required this.youLabel,
@@ -22,14 +20,10 @@ class ChatPinnedPromptHeader extends StatelessWidget {
     required this.onHide,
   });
 
-  static const double maxHeight = 32;
+  static const double maxHeight = 48;
   static const double maxWidth = 300;
-
-  /// The chip's fill: the header buttons' tint over the screen background.
-  static Color surfaceOf(HermesThemeColors colors) => Color.alphaBlend(
-    colors.surfaceVariant.withValues(alpha: 0.92),
-    colors.background,
-  );
+  static Color surfaceOf(HermesThemeColors colors) =>
+      HermesChrome.of(colors).opaque;
 
   final String youLabel;
   final String text;
@@ -40,100 +34,92 @@ class ChatPinnedPromptHeader extends StatelessWidget {
   final VoidCallback onHide;
 
   @override
+  State<ChatPinnedPromptHeader> createState() => _ChatPinnedPromptHeaderState();
+}
+
+class _ChatPinnedPromptHeaderState extends State<ChatPinnedPromptHeader> {
+  Timer? _hold;
+  bool _revealed = false;
+
+  void _tap() {
+    _hold?.cancel();
+    setState(() => _revealed = true);
+    _hold = Timer(HermesMotion.promptReveal, () {
+      if (mounted) setState(() => _revealed = false);
+    });
+    widget.onTap();
+  }
+
+  @override
+  void dispose() {
+    _hold?.cancel();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
-    final secondary = TextStyle(
-      fontSize: 11.5,
-      height: 1.2,
-      fontWeight: FontWeight.w700,
-      color: colors.textSecondary,
-    );
-    final radius = BorderRadius.circular(maxHeight / 2);
-    return ConstrainedBox(
+    final button = ConstrainedBox(
       constraints: const BoxConstraints(
-        minHeight: maxHeight,
-        maxWidth: maxWidth,
+        maxWidth: ChatPinnedPromptHeader.maxWidth,
       ),
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: surfaceOf(colors),
-          borderRadius: radius,
-          border: Border.all(color: colors.divider.withValues(alpha: 0.6)),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Flexible(
-              child: Semantics(
-                button: true,
-                label: semanticLabel,
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: onTap,
-                  child: ExcludeSemantics(
-                    child: Padding(
-                      padding: const EdgeInsetsDirectional.only(
-                        start: 14,
-                        top: 4,
-                        bottom: 4,
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text('$youLabel:', maxLines: 1, style: secondary),
-                          const SizedBox(width: 6),
-                          Flexible(
-                            child: Text(
-                              text,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 13,
-                                height: 1.2,
-                                color: colors.textPrimary,
-                              ),
-                            ),
-                          ),
-                          if (attachmentCount > 0) ...[
-                            const SizedBox(width: 6),
-                            Icon(
-                              Icons.attach_file,
-                              size: 13,
-                              color: colors.textSecondary,
-                            ),
-                            Text('$attachmentCount', style: secondary),
-                          ],
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              ),
+      child: _button(context),
+    );
+    return Semantics(
+      container: true,
+      button: true,
+      label:
+          '${widget.semanticLabel}: ${widget.youLabel} · ${widget.text}'
+          '${widget.attachmentCount > 0 ? ' · 📎 ${widget.attachmentCount}' : ''}',
+      onLongPress: widget.onHide,
+      onLongPressHint: widget.hideLabel,
+      onTap: _tap,
+      excludeSemantics: true,
+      child: HermesMotion.reduced(context)
+          ? button
+          : AnimatedSize(
+              duration: HermesMotion.base,
+              curve: HermesMotion.size,
+              alignment: AlignmentDirectional.centerEnd,
+              child: button,
             ),
-            Semantics(
-              button: true,
-              label: hideLabel,
-              child: Tooltip(
-                message: hideLabel,
-                child: GestureDetector(
-                  key: const ValueKey('chat-pinned-prompt-dismiss'),
-                  behavior: HitTestBehavior.opaque,
-                  onTap: onHide,
-                  child: SizedBox(
-                    width: 36,
-                    height: maxHeight,
-                    child: Icon(
-                      Icons.close_rounded,
-                      size: 15,
-                      color: colors.textSecondary,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
     );
   }
+
+  Widget _button(BuildContext context) => SizedBox(
+    key: const ValueKey('chat-jump-to-prompt'),
+    width: _revealed ? ChatPinnedPromptHeader.maxWidth : 48,
+    height: 48,
+    child: HermesFloatingSurface(
+      onTap: _tap,
+      onLongPress: widget.onHide,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (_revealed)
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsetsDirectional.only(start: 12),
+                child: Text(
+                  '${widget.youLabel} · ${widget.text}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Theme.of(context).hermes.textSecondary,
+                  ),
+                ),
+              ),
+            ),
+          if (_revealed && widget.attachmentCount > 0) ...[
+            const Icon(Icons.attach_file, size: 16),
+            Text('${widget.attachmentCount}'),
+          ],
+          const SizedBox.square(
+            dimension: 48,
+            child: Icon(Icons.arrow_upward_rounded, size: 18),
+          ),
+        ],
+      ),
+    ),
+  );
 }

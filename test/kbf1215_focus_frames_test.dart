@@ -377,9 +377,14 @@ void main() {
     await pumpChat(tester, gateway);
     await settle(tester);
     final controller = tester.widget<ListView>(transcript()).controller!;
-    double arrowPadding() =>
+    // The arrow floats over the list (no padding reserved for it) and fades
+    // in and out under one constant key; its state key sits inside.
+    final fade = find.byKey(const ValueKey('chat-scroll-to-bottom-fade'));
+    double arrowOpacity() => tester.widget<AnimatedOpacity>(fade).opacity;
+    double listPadding() =>
         (tester.widget<ListView>(transcript()).padding! as EdgeInsets).bottom;
-    final before = arrowPadding();
+    final before = listPadding();
+    expect(arrowOpacity(), 0);
 
     // Scroll a little first so the jump below only toggles the arrow.
     controller.jumpTo(40);
@@ -388,13 +393,23 @@ void main() {
     controller.jumpTo(160);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 16));
-    expect(arrowPadding(), before + 48, reason: 'the arrow is showing');
+    expect(arrowOpacity(), 1, reason: 'the arrow is showing');
+    expect(
+      find.byKey(const ValueKey('scroll-to-bottom-visible')),
+      findsOneWidget,
+    );
+    expect(listPadding(), before, reason: 'the arrow reserves no padding');
     expect(rows(), 0, reason: 'showing the arrow rebuilt rows');
 
     controller.jumpTo(40);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 16));
-    expect(arrowPadding(), before);
+    expect(arrowOpacity(), 0, reason: 'the arrow is hidden');
+    expect(
+      find.byKey(const ValueKey('scroll-to-bottom-hidden')),
+      findsOneWidget,
+    );
+    expect(listPadding(), before);
     expect(rows(), 0, reason: 'hiding the arrow rebuilt rows');
     expect(tester.takeException(), isNull);
     await tearDownChat(tester, gateway);

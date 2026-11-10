@@ -1,5 +1,7 @@
-// ps1215: PNG capture (412×915, Spanish, dark) of the activity pill of a
-// running chat after leaving and re-entering it, collapsed and expanded.
+import 'support/live_chat_v4.dart';
+
+// ps1215: PNG capture (412×915, Spanish, dark) of ordinary live tool work
+// inside the transcript after leaving and re-entering it, without a footer.
 // Writes PNGs only when PS1215_SHOTS_DIR is set; otherwise it just checks
 // the frames build without exceptions.
 import 'dart:io';
@@ -10,8 +12,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/widgets/chat/turn_activity_pill.dart' show debugInlineClockWhenFolded;
 import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
 import 'package:hermes_android/core/screens/chat_screen.dart';
+import 'package:hermes_android/core/widgets/activity_pill.dart'
+    show formatTurnElapsed;
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/app_lock.dart';
 import 'package:hermes_android/core/services/approval_policy.dart';
@@ -96,16 +101,18 @@ DesktopSessionSnapshot _snapshot({
   method: 'session.resume',
 );
 
-Finder get _pill => find.byKey(const ValueKey('activity-pill'));
-
-/// The pill's elapsed timer, or null when the pill shows none (or is absent).
+/// Read the rendered transcript clock, normalizing its localized seconds to
+/// the m:ss representation used by this re-entry regression.
 String? _elapsed(WidgetTester tester) {
-  final timer = find.descendant(
-    of: _pill,
-    matching: find.byKey(const ValueKey('activity-pill-elapsed')),
-  );
-  if (timer.evaluate().isEmpty) return null;
-  return tester.widget<Text>(timer).data;
+  final clock = find.byKey(const ValueKey('chat-inline-activity-clock'));
+  if (clock.evaluate().isEmpty) return null;
+  final shown = tester.widget<Text>(clock).data!;
+  if (shown.endsWith('s')) {
+    return formatTurnElapsed(
+      Duration(seconds: int.parse(shown.substring(0, shown.length - 1))),
+    );
+  }
+  return shown;
 }
 
 const _shotKey = ValueKey('ps1215-shot');
@@ -126,6 +133,9 @@ Future<void> _save(WidgetTester tester, String name) async {
 }
 
 void main() {
+  // These tests pin the clock itself; the folded row hides it (video).
+  setUp(() => debugInlineClockWhenFolded = true);
+  tearDown(() => debugInlineClockWhenFolded = false);
   TestWidgetsFlutterBinding.ensureInitialized();
 
   setUp(() {
@@ -171,7 +181,7 @@ void main() {
     );
   });
 
-  testWidgets('es dark: pill after re-entry', (tester) async {
+  testWidgets('es dark: live transcript work after re-entry', (tester) async {
     await loadDesignFonts();
     tester.view.physicalSize = const Size(412, 915);
     tester.view.devicePixelRatio = 1;
@@ -267,8 +277,46 @@ void main() {
     push();
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
+    expect(find.byKey(const ValueKey('activity-pill')), findsNothing);
+    // The live look (9 nov): «Trabajando» on the card, the words spoken.
+    expect(
+      tester.widget<Semantics>(inlineActivity).properties.label,
+      contains('informe.md'),
+    );
+    await openInlineDetails(tester);
+    expect(find.byKey(const ValueKey('turn-step-card-t2')), findsOneWidget);
+    expect(find.byKey(const ValueKey('turn-step-mark-t2')), findsOneWidget);
+    expect(wall.now.difference(chat.turnClockOrigin!).inSeconds, 50);
+    await _save(tester, 'ps1215_transcript_reentry_running_tool_es_dark');
+
+    // The ordinary turn clock is in the conversation between tools. Keep
+    // the running-tool assertions above and verify its visible successor too.
+    gateway.emit('tool.complete', {'tool_id': 't2', 'name': 'read_file'});
+    // loadMessages subscribed to this gateway in runAsync; flush that zone
+    // before advancing the widget frames that consume its service events.
+    await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+    for (var frame = 0; frame < 6; frame++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    await tester.pump(const Duration(milliseconds: 300));
+    final status = find.byKey(const ValueKey('chat-inline-activity'));
+    expect(status.hitTestable(), findsOneWidget);
     expect(_elapsed(tester), '0:50');
-    await _save(tester, 'ps1215_pill_reentry_collapsed_es_dark');
+    expect(
+      tester.getRect(status).bottom,
+      lessThan(
+        tester.getRect(find.byKey(const ValueKey('chat-composer-host'))).top,
+      ),
+    );
+    // Still running between tools: the live phase owns the status line.
+    // Worked/Trabajó belongs to the finished-turn summary (3d394d9f).
+    expect(chat.isStreaming, isTrue);
+    // The live look (9 nov): the card says «Trabajando» while it runs.
+    expect(tester.widget<Text>(inlineLabel).data, startsWith('Trabajando'));
+    expect(_elapsed(tester), '0:50');
+    expect(find.textContaining('Trabajó', findRichText: true), findsNothing);
+    expect(find.byKey(const ValueKey('activity-pill')), findsNothing);
+    await _save(tester, 'ps1215_transcript_reentry_es_dark');
 
     await tester.pumpWidget(const SizedBox.shrink());
     service.dispose();

@@ -58,8 +58,7 @@ String escapePathGlobs(String text) {
 String _escapeStarsInPaths(String segment) {
   if (!segment.contains('*')) return segment;
   final openEmphasis = <String>[];
-  return segment.replaceAllMapped(RegExp(r'\S+'), (m) {
-    final token = m.group(0)!;
+  String escapeToken(String token) {
     final leading = RegExp(r'^(\*{1,3})(?!\*)').firstMatch(token);
     final trailing = RegExp(r'(\*{1,3})([.,;:!?)\]]*)$').firstMatch(token);
     String? openingMarker;
@@ -112,6 +111,18 @@ String _escapeStarsInPaths(String segment) {
       );
     }
     return token;
+  }
+
+  // The `/` of a link's address is not a path in its text: `español**](https://x/y)`
+  // would otherwise lose its closing `**` to the glob escape and leave the
+  // opening one orphaned (both showing). Only the text is judged; the
+  // destination, which is literal for Markdown, is never touched.
+  return segment.replaceAllMapped(RegExp(r'\S+'), (m) {
+    final token = m.group(0)!;
+    final dest = token.indexOf('](');
+    if (dest < 0) return escapeToken(token);
+    return escapeToken(token.substring(0, dest + 1)) +
+        token.substring(dest + 1);
   });
 }
 
@@ -156,12 +167,26 @@ String normalizeStreamingMarkdown(String text, {required bool isStreaming}) {
   }
   out.write(
     _repairMarkdownTail(
-      text.substring(tailStart),
+      _holdOpenUrl(text.substring(tailStart)),
       hideMarkerOnlySuffix: isStreaming,
       flattenClosedLinkCandidate: isStreaming,
     ),
   );
   return out.toString();
+}
+
+final RegExp _openUrlToken = RegExp(r'(?:^|\s)[(\"“‘«]?(https?://\S*)$');
+
+/// Una dirección web a medio escribir al final de la cola («… ver https://ef»)
+/// no se enseña: se retiene hasta que algo la cierra (un espacio, una coma).
+/// Así no aparece como texto subrayado y salta luego al chip del enlace. Las
+/// vallas abiertas y los destinos de enlace Markdown (`](https://…`) se
+/// dejan a sus propias reparaciones.
+String _holdOpenUrl(String tail) {
+  if (!tail.contains('://') || _openFenceMarker(tail) != null) return tail;
+  final match = _openUrlToken.firstMatch(tail);
+  if (match == null) return tail;
+  return tail.substring(0, match.end - match.group(1)!.length);
 }
 
 /// Inicio de la cola mutable de un documento en streaming: su último bloque
@@ -171,6 +196,114 @@ String normalizeStreamingMarkdown(String text, {required bool isStreaming}) {
 int streamingMarkdownTailStart(String text) {
   if (text.isEmpty) return 0;
   return _markdownTopLevelBlockStarts(text).last;
+}
+
+/// F1 (REPORT-AUDITORIA-FLUIDEZ §2.3.6): the top-level blocks of a live
+/// answer's closed prefix, each with its own separators, in the same cuts
+/// [normalizeStableStreamingPrefix] repairs. Closing a paragraph adds one
+/// block; the ones before keep the same text, so a cache keyed by the text
+/// projects each block once (Desktop's `markdown-blocks.ts`).
+List<String> streamingMarkdownBlocks(String text) {
+  if (text.isEmpty) return const [];
+  final starts = _markdownTopLevelBlockStarts(text);
+  return [
+    for (var index = 0; index < starts.length; index++)
+      text.substring(
+        starts[index],
+        index + 1 < starts.length ? starts[index + 1] : text.length,
+      ),
+  ];
+}
+
+/// [streamingMarkdownBlocks] grouped so that each group draws as one
+/// Markdown body would draw it (REVIEW-T2-A C2): the items of a loose list
+/// (`1. a`, blank line, `2. b`) and what is indented under them stay in one
+/// group, so the list is still one list; and a prefix with a link
+/// reference or footnote definition (`[r]: url`) is one group, so the
+/// reference still resolves. The groups add up to [text].
+List<String> streamingMarkdownGroups(String text) {
+  final blocks = streamingMarkdownBlocks(text);
+  if (blocks.length < 2 || _referenceDefinition.hasMatch(text)) {
+    return blocks.isEmpty ? const [] : [text];
+  }
+  final groups = <String>[];
+  var lastIsList = false;
+  for (final block in blocks) {
+    final firstLine = block.trimLeft().isEmpty
+        ? ''
+        : block.substring(0, _lineEnd(block, _firstNonBlank(block)));
+    final isListItem = _listItemLine.hasMatch(firstLine);
+    final indented = firstLine.startsWith('  ') || firstLine.startsWith('\t');
+    if (groups.isNotEmpty && lastIsList && (isListItem || indented)) {
+      groups[groups.length - 1] += block;
+      continue;
+    }
+    groups.add(block);
+    lastIsList = isListItem;
+  }
+  return groups;
+}
+
+final RegExp _referenceDefinition = RegExp(
+  r'^ {0,3}\[[^\]\n]+\]:',
+  multiLine: true,
+);
+final RegExp _listItemLine = RegExp(r'^ {0,3}(?:[-+*]|\d{1,9}[.)])(?:[ \t]|$)');
+
+int _firstNonBlank(String text) {
+  var index = 0;
+  while (index < text.length && (text[index] == '\n' || text[index] == '\r')) {
+    index++;
+  }
+  return index;
+}
+
+int _lineEnd(String text, int from) {
+  final end = text.indexOf('\n', from);
+  return end < 0 ? text.length : end;
+}
+
+/// The code of a fence that is still open at the end of [text] (the one
+/// being written), or null when every fence is closed. F1: that code is
+/// drawn plain and highlighted once, when its fence closes (Desktop's
+/// `shiki-highlighter.tsx`).
+String? streamingOpenFenceCode(String text) {
+  var inFence = false;
+  var fenceChar = '';
+  var fenceLength = 0;
+  var codeStart = 0;
+  for (var lineStart = 0; lineStart <= text.length;) {
+    final foundEnd = text.indexOf('\n', lineStart);
+    final lineEnd = foundEnd < 0 ? text.length : foundEnd;
+    var first = lineStart;
+    while (first < lineEnd && (text[first] == ' ' || text[first] == '\t')) {
+      first++;
+    }
+    if (first < lineEnd &&
+        (text[first] == '`' || text[first] == '~') &&
+        first - lineStart <= 3) {
+      var runEnd = first + 1;
+      while (runEnd < lineEnd && text[runEnd] == text[first]) {
+        runEnd++;
+      }
+      final runLength = runEnd - first;
+      if (runLength >= 3) {
+        if (!inFence) {
+          inFence = true;
+          fenceChar = text[first];
+          fenceLength = runLength;
+          codeStart = lineEnd < text.length ? lineEnd + 1 : lineEnd;
+        } else if (text[first] == fenceChar &&
+            runLength >= fenceLength &&
+            text.substring(runEnd, lineEnd).trim().isEmpty) {
+          inFence = false;
+        }
+      }
+    }
+    if (lineEnd >= text.length) break;
+    lineStart = lineEnd + 1;
+  }
+  return inFence ? text.substring(codeStart) : null;
 }
 
 /// Repara los bloques cerrados de [text] exactamente como lo haría

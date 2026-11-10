@@ -14,25 +14,36 @@ import 'package:markdown/markdown.dart' as md;
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../l10n/app_localizations.dart';
+import '../../browser/open_web_link.dart';
+import '../../design/tokens.dart';
 import '../../screens/image_viewer_screen.dart';
+import '../../services/chat_stream_trace.dart';
+import '../../services/media_dimensions.dart' show imageDimensionsFromHeader;
 import '../../theme/app_theme.dart';
 import '../../theme/theme_contrast.dart';
 import '../../utils/assistant_content.dart';
 import '../../utils/byte_bounded_lru_cache.dart';
+import '../../utils/latex/latex_parser.dart';
 import '../../utils/markdown_math.dart';
 import '../../utils/semantic_markdown.dart';
 import '../../utils/streaming_normalizer.dart';
 import '../../utils/transport_privacy.dart';
 import '../artifact_viewer/artifact_viewer_screen.dart';
 import '../callout_card.dart';
+import '../latex/latex_view.dart';
 import '../hermes_file_tree.dart';
 import '../hermes_notice.dart';
 import '../markdown_table.dart';
+import 'chat_inline_chips.dart';
+import 'chat_link_card.dart';
 import 'chat_message_selection_area.dart';
+import 'chat_sources_list.dart';
+import 'mention_chips.dart';
 import 'tool_output_cards.dart' show FileDiffBody;
 import 'embeds/embed_card.dart';
 import 'embeds/embed_consent_store.dart';
 import 'embeds/embed_detector.dart';
+import '../../feedback/haptics.dart';
 
 /// Render compartido del Markdown de las respuestas del chat (spec 070, T102).
 ///
@@ -95,6 +106,7 @@ class ChatMarkdownBody extends StatelessWidget {
               onLinkTap: tap,
               styleSheet: styleSheet,
               embeds: embeds && !isStreaming,
+              sourcesFrom: data,
             ),
             callout: (b) =>
                 CalloutCard(kind: b.kind, title: b.title, body: b.body),
@@ -109,10 +121,14 @@ class ChatMarkdownBody extends StatelessWidget {
             children: blocks,
           );
     if (!selectable) return body;
-    return ChatMessageSelectionArea(
-      enabled: !isStreaming,
-      selectionIdentity: selectionIdentity,
-      child: body,
+    // The region only arrives once the text stops streaming; its tables
+    // are drawn for it from the start, so they keep their height then.
+    return MarkdownTableSelectedByMessage(
+      child: ChatMessageSelectionArea(
+        enabled: !isStreaming,
+        selectionIdentity: selectionIdentity,
+        child: body,
+      ),
     );
   }
 }
@@ -127,9 +143,20 @@ class ChatMarkdownBlock extends StatelessWidget {
     this.onLinkTap,
     this.styleSheet,
     this.embeds = false,
+    this.liveCode,
+    this.sourcesFrom,
   });
 
   final String data;
+
+  /// The whole reply [data] is a block of: where the sources a citation
+  /// number points at are listed, since they may sit in another block.
+  final String? sourcesFrom;
+
+  /// The code of the fence still being written in [data], if any
+  /// ([streamingOpenFenceCode]). F1: it is drawn plain, never folded, and
+  /// highlighted once, when its fence closes.
+  final String? liveCode;
 
   /// Rich embeds (consent-gated). Only for finished messages: a streaming
   /// block never embeds anything.
@@ -143,6 +170,15 @@ class ChatMarkdownBlock extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final code = liveCode;
+    if (code == null) return _build(context);
+    return _LiveCodeScope(
+      code: code,
+      child: Builder(builder: _build),
+    );
+  }
+
+  Widget _build(BuildContext context) {
     if (!embeds) return _markdown(context);
     return ListenableBuilder(
       listenable: EmbedConsentStore.shared,
@@ -171,10 +207,67 @@ class ChatMarkdownBlock extends StatelessWidget {
     );
   }
 
+  /// A finished reply shows a paragraph that is only a link as the L2 link
+  /// card; everything else renders as one Markdown body, as before.
   Widget _markdown(BuildContext context) {
+    final parts = embeds ? splitStandaloneLinks(data) : null;
+    if (parts == null) return _body(context, data);
+    void tap(String href) => onLinkTap != null
+        ? onLinkTap!(href)
+        : unawaited(openChatMarkdownLink(context, href));
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (final (index, part) in parts.indexed)
+          switch (part) {
+            ChatLinkTextPart(:final markdown) => _body(
+              context,
+              markdown,
+              part: index,
+            ),
+            ChatLinkCardPart(:final title, :final url) => Padding(
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              child: ChatLinkCard(
+                title: title,
+                url: url,
+                onTap: () => tap(url.toString()),
+              ),
+            ),
+          },
+      ],
+    );
+  }
+
+  /// [part] tells apart the bodies of one reply split around link cards:
+  /// each needs its own key under the same Column (REVIEW-R5-B #2).
+  Widget _body(BuildContext context, String source, {int part = 0}) {
     final colors = Theme.of(context).hermes;
-    return MarkdownBody(
-      data: data,
+    // Mention chips under a [MentionChipScope]. flutter_markdown re-parses
+    // only when the data changes, so a new roster (a new resolver) gets a
+    // new body; the same one is never parsed again on a rebuild.
+    final mentions = MentionChipScope.maybeOf(context);
+    // A reply also names an agent by its id in inline code (`pi`); the
+    // chip builder hands every other code span to the usual one.
+    final chips = mentionChipMarkdown(
+      mentions,
+      source,
+      names: true,
+      inlineCode: ChatMathInlineBuilder(),
+    );
+    // File references and citation numbers; nothing is added to a block that
+    // holds none, so its parse and its tree stay as they were.
+    final inline = chatInlineChipMarkdown(
+      source,
+      onOpenUrl: (href) => onLinkTap != null
+          ? onLinkTap!(href)
+          : unawaited(openChatMarkdownLink(context, href)),
+    );
+    final syntaxes = [...chips.syntaxes, ...inline.syntaxes];
+    final body = MarkdownBody(
+      // Equal across rebuilds (no re-parse), new with a new roster.
+      key: chips.builders.isEmpty ? null : ValueKey((part, mentions)),
+      data: source,
       selectable: false,
       // CommonMark conserva los párrafos (líneas en blanco) y trata un salto
       // simple como espacio. Mostrar cada salto interno del modelo partía
@@ -189,10 +282,49 @@ class ChatMarkdownBlock extends StatelessWidget {
         height: config.height,
         colors: colors,
       ),
-      styleSheet: styleSheet ?? assistantMarkdownStyleSheet(context, data),
-      builders: {'pre': ChatCodeBlockBuilder(embeds: embeds)},
+      styleSheet: styleSheet ?? assistantMarkdownStyleSheet(context, source),
+      inlineSyntaxes: syntaxes.isEmpty ? null : syntaxes,
+      builders: {
+        'pre': ChatCodeBlockBuilder(embeds: embeds),
+        'code': ChatMathInlineBuilder(),
+        ...chips.builders,
+        ...inline.builders,
+      },
+    );
+    return chatCitationScoped(
+      source: source,
+      data: sourcesFrom ?? data,
+      onOpen: (linkContext, href) => onLinkTap != null
+          ? onLinkTap!(href)
+          : unawaited(openChatMarkdownLink(linkContext, href)),
+      child: body,
     );
   }
+}
+
+/// Hands the code still being written to the code blocks of a live block.
+class _LiveCodeScope extends InheritedWidget {
+  const _LiveCodeScope({required this.code, required super.child});
+
+  final String code;
+
+  /// Whether [code] is the one being written: what the block shows is what
+  /// arrived so far, or that minus the end the normalizer hides (a trailing
+  /// marker or backtick run). An earlier closed block whose code happens to
+  /// start the live one is not it (REVIEW-T2-A): what is left over has to
+  /// be such an end.
+  static bool isLive(BuildContext context, String code) {
+    final scope = context.dependOnInheritedWidgetOfExactType<_LiveCodeScope>();
+    if (scope == null) return false;
+    final shown = code.trimRight();
+    if (shown.isEmpty || !scope.code.startsWith(shown)) return false;
+    return _hiddenEnd.hasMatch(scope.code.substring(shown.length));
+  }
+
+  static final RegExp _hiddenEnd = RegExp(r'^\s*[`~*_\-+>#.)\[!\d]*\s*$');
+
+  @override
+  bool updateShouldNotify(_LiveCodeScope oldWidget) => code != oldWidget.code;
 }
 
 /// Entradas actuales de la caché de resaltado de bloques de código.
@@ -211,9 +343,15 @@ bool isAllowedMarkdownLinkScheme(String? href) {
 
 /// Abre un enlace tocado dentro del markdown del chat (usuario o agente),
 /// validando el esquema con [isAllowedMarkdownLinkScheme] antes de lanzarlo.
+/// Un enlace `http`/`https` se abre dentro de la app, en el navegador
+/// integrado ([openWebLinkInApp], decisión de the owner para 1.4.0; Desktop lo
+/// abre fuera); `mailto:` sigue yendo a la app de correo.
 Future<void> openChatMarkdownLink(BuildContext context, String? href) async {
   if (!isAllowedMarkdownLinkScheme(href)) {
-    debugPrint('Enlace de markdown bloqueado (esquema no permitido): $href');
+    debugPrint(
+      'Enlace de markdown bloqueado (esquema no permitido: '
+      '${Uri.tryParse(href ?? '')?.scheme ?? ''})',
+    );
     if (context.mounted) {
       HermesNotice.of(context).showSnackBar(
         SnackBar(
@@ -225,10 +363,15 @@ Future<void> openChatMarkdownLink(BuildContext context, String? href) async {
     }
     return;
   }
+  final uri = Uri.parse(href!);
+  if (openWebLinkInApp(context, uri)) return;
   try {
-    await launchUrl(Uri.parse(href!), mode: LaunchMode.externalApplication);
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
   } catch (e) {
-    debugPrint('No se pudo abrir el enlace de markdown ($href): $e');
+    debugPrint(
+      'No se pudo abrir el enlace de markdown (${uri.scheme}://${uri.host}): '
+      '${e.runtimeType}',
+    );
   }
 }
 
@@ -277,30 +420,68 @@ List<Widget> buildAssistantAnswerBlocks(
         escaped,
         isStreaming: streamingTail,
       );
-      // Las tablas GFM completas se pintan con un render propio (limpio, con
-      // columnas dimensionadas y scroll horizontal) en vez del MarkdownBody, que
-      // las descuadra. El bloque en streaming NO se trocea: una tabla a medias
-      // parpadearía al llegar las filas, así que cae al Markdown hasta cerrar.
-      if (streamingTail) {
-        widgets.add(markdown(data));
-      } else {
-        var firstSeg = true;
-        for (final seg in splitAnswerTables(data)) {
-          if (!firstSeg) widgets.add(const SizedBox(height: 4));
-          firstSeg = false;
-          if (seg is TableSegment) {
-            widgets.add(MarkdownTable(rows: seg.rows, onLinkTap: onLinkTap));
-          } else if (seg is MarkdownSegment) {
-            widgets.add(markdown(seg.text));
-          }
-        }
-      }
+      // Las tablas GFM completas y la lista de fuentes se pintan con un render
+      // propio. En streaming, la tabla se pinta desde que hay cabecera y
+      // separador (o un esqueleto) y las fuentes cuando están enteras: nunca
+      // las barras ni los `[n] https://…` en bruto (ver [splitAnswerTables]).
+      widgets.addAll(
+        chatAnswerSegmentWidgets(
+          data,
+          live: streamingTail,
+          markdown: markdown,
+          onLinkTap: onLinkTap,
+        ),
+      );
     } else if (b is CalloutContentBlock) {
       widgets.add(callout(b));
     }
   }
   return widgets;
 }
+
+/// The widgets of one stretch of Markdown [data]: its text as [markdown]
+/// blocks, its tables as [MarkdownTable] (or the frame of one that is still
+/// arriving when [live]) and its list of sources as [ChatSourcesList], each
+/// separated by 4 dp. One place for the finished reply and the live one, so
+/// the second is drawn the way the first ends up.
+List<Widget> chatAnswerSegmentWidgets(
+  String data, {
+  required bool live,
+  required Widget Function(String data) markdown,
+  void Function(String? href)? onLinkTap,
+}) {
+  final widgets = <Widget>[];
+  var first = true;
+  for (final seg in splitAnswerTables(data, live: live)) {
+    if (!first) widgets.add(const SizedBox(height: 4));
+    first = false;
+    switch (seg) {
+      case TableSegment(:final rows, live: final arriving):
+        widgets.add(
+          MarkdownTable(
+            rows: rows,
+            onLinkTap: onLinkTap,
+            minBodyRows: arriving ? kLiveTableMinBodyRows : 0,
+          ),
+        );
+      case TableSkeletonSegment():
+        widgets.add(const ChatTableSkeleton());
+      case SourcesSegment(:final entries):
+        widgets.add(
+          ChatSourcesList(
+            entries: entries,
+            onOpen: onLinkTap == null ? null : (href) => onLinkTap(href),
+          ),
+        );
+      case MarkdownSegment(:final text):
+        widgets.add(markdown(text));
+    }
+  }
+  return widgets;
+}
+
+/// Body rows a live table keeps room for while its rows arrive.
+const int kLiveTableMinBodyRows = 2;
 
 /// Primera fase pura del render del asistente. Separarla permite ejecutarla una
 /// sola vez antes de dividir una respuesta larga en hijos virtualizados; la
@@ -353,6 +534,9 @@ class _ChatGatedImageState extends State<ChatGatedImage> {
   bool _loadRequested = false;
   bool _loading = false;
   Uint8List? _bytes;
+
+  /// Pixel size read from [_bytes]'s header (M6).
+  Size? _headerSize;
   Object? _loadError;
   final Object _heroTag = Object();
 
@@ -418,7 +602,11 @@ class _ChatGatedImageState extends State<ChatGatedImage> {
           throw const FormatException('Formato de imagen no permitido');
         }
         if (!mounted) return;
-        setState(() => _bytes = bytes);
+        final size = imageDimensionsFromHeader(bytes);
+        setState(() {
+          _bytes = bytes;
+          _headerSize = size;
+        });
       } finally {
         client.close();
       }
@@ -428,6 +616,28 @@ class _ChatGatedImageState extends State<ChatGatedImage> {
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  /// M6: until its first frame is decoded the picture holds the box its
+  /// header announces, so the reply does not jump when the frame lands.
+  Widget _reserveBox(
+    BuildContext context,
+    Widget child,
+    int? frame,
+    bool wasSynchronouslyLoaded,
+  ) {
+    final size = _headerSize;
+    if (frame != null ||
+        wasSynchronouslyLoaded ||
+        size == null ||
+        widget.width != null ||
+        widget.height != null) {
+      return child;
+    }
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxWidth: size.width),
+      child: AspectRatio(aspectRatio: size.width / size.height, child: child),
+    );
   }
 
   static bool _hasSupportedImageMagic(Uint8List bytes) {
@@ -545,19 +755,17 @@ class _ChatGatedImageState extends State<ChatGatedImage> {
       button: true,
       label: imgLabel,
       child: GestureDetector(
-        onTap: () => Navigator.push(
+        onTap: () => showChatImage(
           context,
-          MaterialPageRoute(
-            builder: (_) => ImageViewerScreen(
-              imageUrl: widget.uri.toString(),
-              imageBytes: _bytes,
-              heroTag: _heroTag,
-            ),
-            fullscreenDialog: true,
-          ),
+          imageUrl: widget.uri.toString(),
+          imageBytes: _bytes,
+          heroTag: _heroTag,
         ),
         child: Hero(
           tag: _heroTag,
+          // The viewer is a sheet over the chat: the picture stays in place
+          // under it instead of leaving a hole.
+          placeholderBuilder: (_, _, child) => child,
           child: ClipRRect(
             borderRadius: BorderRadius.circular(8),
             child: _bytes != null
@@ -567,6 +775,7 @@ class _ChatGatedImageState extends State<ChatGatedImage> {
                     height: widget.height,
                     fit: BoxFit.cover,
                     cacheWidth: 1600,
+                    frameBuilder: _reserveBox,
                   )
                 : Image.network(
                     widget.uri.toString(),
@@ -632,6 +841,87 @@ class _PlainTextBlock extends StatelessWidget {
   }
 }
 
+/// Builder del código en línea que lleva una fórmula (`$...$`): la pinta con
+/// el renderizador TeX nativo, dentro del párrafo y sobre su línea base. El
+/// resto del código en línea no se toca (devuelve null), salvo el que nombra
+/// un archivo o una carpeta, que sale como chip. Si la fórmula no se
+/// puede analizar, queda el código tal cual, sin la marca.
+class ChatMathInlineBuilder extends MarkdownElementBuilder {
+  @override
+  Widget? visitElementAfterWithContext(
+    BuildContext context,
+    md.Element element,
+    TextStyle? preferredStyle,
+    TextStyle? parentStyle,
+  ) {
+    final text = element.textContent;
+    // Plain inline code stays code, unless it names a file or a folder.
+    if (!text.startsWith(kMathInlineMarker)) {
+      return chatInlineCodeChip(text, parentStyle);
+    }
+    final source = text.substring(kMathInlineMarker.length).trim();
+    if (tryParseLatex(source) == null) {
+      return Text.rich(
+        TextSpan(
+          text: source,
+          style: parentStyle == null
+              ? preferredStyle
+              : parentStyle.merge(preferredStyle),
+        ),
+      );
+    }
+    // A WidgetSpan is merged into the paragraph's own spans, so the formula
+    // flows and wraps with the text around it. The paragraph scales inline
+    // widgets by the text scale (from this span's font size), so the formula
+    // is laid out at the unscaled size.
+    return Text.rich(
+      TextSpan(
+        children: [
+          WidgetSpan(
+            alignment: PlaceholderAlignment.baseline,
+            baseline: TextBaseline.alphabetic,
+            style: parentStyle,
+            child: LatexView(
+              source: source,
+              style: parentStyle,
+              scaleText: false,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Fórmula de bloque (valla `math`). Mientras la valla se está escribiendo, o
+/// si no se puede analizar, se queda como bloque de código.
+class _MathBlock extends StatelessWidget {
+  const _MathBlock({required this.code});
+
+  final String code;
+
+  @override
+  Widget build(BuildContext context) {
+    final source = code.trim();
+    if (_LiveCodeScope.isLive(context, code) || tryParseLatex(source) == null) {
+      return _CodeBlockWrapper(code: code, lang: null);
+    }
+    final colors = Theme.of(context).hermes;
+    final size = HermesType.reading.fontSize ?? 15.0;
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: size * 0.75),
+      child: LatexView(
+        source: source,
+        display: true,
+        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+          color: colors.textPrimary,
+          fontSize: size,
+        ),
+      ),
+    );
+  }
+}
+
 /// Builder de `pre` del chat: árbol de ficheros, prosa o bloque de código.
 class ChatCodeBlockBuilder extends MarkdownElementBuilder {
   ChatCodeBlockBuilder({this.embeds = false});
@@ -655,6 +945,9 @@ class ChatCodeBlockBuilder extends MarkdownElementBuilder {
     if (code.endsWith('\n')) code = code.substring(0, code.length - 1);
     final lang = _languageOf(element);
     final normalizedLanguage = (lang ?? '').toLowerCase();
+    if (normalizedLanguage == kMathFenceLanguage) {
+      return _MathBlock(code: code);
+    }
     if (normalizedLanguage == 'tree' || normalizedLanguage == 'filetree') {
       final nodes = parseHermesFileTree(code);
       if (nodes != null) return HermesFileTree(nodes: nodes);
@@ -718,7 +1011,7 @@ class ChatCodeBlockBuilder extends MarkdownElementBuilder {
 /// Monospace family of chat code. Bundled (SIL OFL) so every phone gets the
 /// same advances: Android's system `monospace` has no box-drawing glyphs and
 /// borrowed them from a full-width fallback, which broke trees and diagrams.
-const String kChatCodeFontFamily = 'JetBrainsMono';
+const String kChatCodeFontFamily = HermesType.monoFamily;
 
 /// Tab stops of chat code, in columns.
 const int kChatCodeTabWidth = 4;
@@ -821,7 +1114,7 @@ class _CodeBlockWrapperState extends State<_CodeBlockWrapper> {
 
   void _copy() {
     Clipboard.setData(ClipboardData(text: widget.code));
-    HapticFeedback.selectionClick();
+    HermesHaptics.selection();
     _resetTimer?.cancel();
     setState(() => _copied = true);
     _resetTimer = Timer(const Duration(milliseconds: 800), () {
@@ -874,14 +1167,17 @@ class _CodeBlockWrapperState extends State<_CodeBlockWrapper> {
     } else {
       final display = expandChatCodeTabs(widget.code);
       final lineCount = '\n'.allMatches(display).length + 1;
-      final collapsible = lineCount > kChatCodeCollapsedLines;
+      // F1: the code being written is plain and whole; it is highlighted
+      // (and may fold) once its fence closes.
+      final live = _LiveCodeScope.isLive(context, widget.code);
+      final collapsible = !live && lineCount > kChatCodeCollapsedLines;
       final collapsed = collapsible && !_expanded;
       final visibleLines = collapsed ? kChatCodeCollapsedLines : lineCount;
       final visibleChars = collapsed
           ? _offsetOfLine(display, kChatCodeCollapsedLines) - 1
           : display.length;
       final base = chatCodeTextStyle(colors.textPrimary);
-      final runs = _highlightRuns(display);
+      final runs = live ? null : _highlightRuns(display);
       final Widget codeText = Text.rich(
         TextSpan(
           children: runs == null
@@ -1127,6 +1423,7 @@ class _CodeBlockWrapperState extends State<_CodeBlockWrapper> {
     }
     List<_CodeRun>? runs;
     try {
+      ChatStreamTrace.mark(ChatStreamPoint.highlight, chars: display.length);
       final result = highlight.parse(display, language: lang);
       final nodes = result.nodes;
       if (nodes != null && nodes.isNotEmpty) {
@@ -1236,6 +1533,29 @@ class _CodePalette {
   }
 }
 
+/// A line that could start an ordered list item (in a quote or nested
+/// too). Text without one has no ordinal to measure, so it is not parsed.
+/// A false match only costs the parse it would have cost anyway.
+final RegExp _orderedListMarker = RegExp(
+  r'^[ \t>]*\d{1,9}[.)](?:[ \t]|$)',
+  multiLine: true,
+);
+
+/// Measured indents by text and style: the same reply built again (a
+/// rebuild, the live tail, scrolling back) is not parsed again.
+final LinkedHashMap<String, double> _listIndentCache = LinkedHashMap();
+const int _listIndentCacheSize = 256;
+
+/// How many times the list indent parsed a document (tests).
+@visibleForTesting
+int debugAssistantListIndentParses = 0;
+
+@visibleForTesting
+void debugClearAssistantListIndentCache() {
+  _listIndentCache.clear();
+  debugAssistantListIndentParses = 0;
+}
+
 // flutter_markdown constrains the marker to listIndent (padding is separate).
 // Measure the rendered ordinals, including CommonMark's implicit increments,
 // rather than guessing a fixed gutter or suppressing wrapping/clipping.
@@ -1244,11 +1564,44 @@ double _assistantListIndent(
   String data,
   TextStyle style,
 ) {
-  var width = 16.0;
-  final painter = TextPainter(
-    textDirection: Directionality.of(context),
-    textScaler: MediaQuery.textScalerOf(context),
+  final scaler = MediaQuery.textScalerOf(context);
+  final direction = Directionality.of(context);
+  final ordered = _orderedListMarker.hasMatch(data);
+  // Without an ordinal only the bullet counts, whatever the text.
+  final key = [
+    ordered ? '${data.length}:${data.hashCode}' : '-',
+    style.hashCode,
+    scaler,
+    direction.name,
+  ].join('|');
+  final cached = _listIndentCache.remove(key);
+  if (cached != null) {
+    _listIndentCache[key] = cached;
+    return cached;
+  }
+  final width = _measureAssistantListIndent(
+    data,
+    style,
+    scaler,
+    direction,
+    ordered: ordered,
   );
+  _listIndentCache[key] = width;
+  if (_listIndentCache.length > _listIndentCacheSize) {
+    _listIndentCache.remove(_listIndentCache.keys.first);
+  }
+  return width;
+}
+
+double _measureAssistantListIndent(
+  String data,
+  TextStyle style,
+  TextScaler scaler,
+  TextDirection direction, {
+  required bool ordered,
+}) {
+  var width = 16.0;
+  final painter = TextPainter(textDirection: direction, textScaler: scaler);
   void measure(String marker) {
     painter.text = TextSpan(text: marker, style: style);
     painter.layout();
@@ -1272,6 +1625,8 @@ double _assistantListIndent(
 
   try {
     measure('•');
+    if (!ordered) return width;
+    debugAssistantListIndentParses++;
     for (final node in md.Document(
       extensionSet: md.ExtensionSet.gitHubFlavored,
     ).parseLines(data.split('\n'))) {
@@ -1298,16 +1653,17 @@ MarkdownStyleSheet assistantMarkdownStyleSheet(
     colors.surface,
     colors.surfaceVariant,
   ], minimum: 4.5);
+  // The chat's reading size (the owner, 1.4.0: 15, line 1.5), one token.
   final listBullet = (theme.textTheme.bodyMedium ?? const TextStyle()).copyWith(
-    fontSize: 15,
-    height: 1.5,
+    fontSize: HermesType.reading.fontSize,
+    height: HermesType.reading.height,
     color: colors.textPrimary,
   );
   return MarkdownStyleSheet(
     p: theme.textTheme.bodyMedium?.copyWith(
       color: colors.textPrimary,
-      fontSize: 15,
-      height: 1.5,
+      fontSize: HermesType.reading.fontSize,
+      height: HermesType.reading.height,
     ),
     blockSpacing: 10,
     pPadding: const EdgeInsets.only(bottom: 2),

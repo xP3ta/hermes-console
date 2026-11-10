@@ -8,6 +8,7 @@ import 'package:hermes_android/core/companion/models/companion_mood.dart';
 import 'package:hermes_android/core/widgets/chat_event_cards.dart';
 import 'package:hermes_android/core/widgets/chat_turn_activity.dart';
 import 'package:hermes_android/core/widgets/hermes_pill.dart';
+import 'package:hermes_android/core/widgets/thinking_glyph.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 
 Widget _cardHost({
@@ -105,10 +106,11 @@ void main() {
     expect(find.byKey(const ValueKey('search-wave-indicator')), findsNothing);
     expect(find.byType(CompanionStatusIndicator), findsNothing);
     expect(find.byType(CompanionView), findsNothing);
-    final icon = tester.widget<Icon>(
+    // QA 9709 (the owner): thinking is a brain, drawn ([ThinkingGlyph]), no
+    // longer the head with a question mark of Icons.psychology_alt_rounded.
+    final icon = tester.widget<ThinkingGlyph>(
       find.byKey(const ValueKey('thinking-trace-state-icon')),
     );
-    expect(icon.icon, Icons.psychology_alt_rounded);
     expect(icon.size, 17);
     final status = tester.widget<Text>(find.text('Pensando'));
     expect(status.style?.fontSize, 12);
@@ -383,7 +385,8 @@ void main() {
     await tester.pump();
     expect(find.byType(CompanionView), findsNothing);
     expect(find.byType(HermesStatusPulse), findsNothing);
-    expect(find.byIcon(Icons.psychology_alt_rounded), findsOneWidget);
+    // QA 9709: the brain ([ThinkingGlyph]) for thinking.
+    expect(find.byType(ThinkingGlyph), findsOneWidget);
 
     await tester.pumpWidget(
       _cardHost(card: ThinkingTraceCard(events: const [], active: false)),
@@ -479,6 +482,11 @@ void main() {
     expect(find.textContaining('Primero inspecciono'), findsNothing);
 
     await tester.tap(find.text('Pensó'));
+    await tester.pumpAndSettle();
+    // Mock 137 A: the thought inside is its line, «Pensamiento»; a tap
+    // opens it whole.
+    expect(find.textContaining('Primero inspecciono'), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('turn-thought-toggle')));
     await tester.pumpAndSettle();
     expect(find.text('Primero inspecciono. Luego verifico.'), findsOneWidget);
   });
@@ -688,11 +696,12 @@ void main() {
     expect(find.byKey(const ValueKey('thinking-shimmer')), findsNothing);
     expect(find.byKey(const ValueKey('thinking-trace-summary')), findsNothing);
 
-    // Terminado: «Thought for 1:12 · 1 command ⌄», apagado, y nada vivo.
+    // Terminado: «Worked 1:12 · 1 command ⌄», apagado, y nada vivo.
     await pump(active: false);
     await tester.pump();
     final label = tester.widget<Text>(
-      find.text('Thought for 1:12 · 1 command'),
+      // Mock 138 v2: a turn that used tools ends saying how long it worked.
+      find.text('Worked 1:12 · 1 command'),
     );
     expect(label.style!.color, colors.textSecondary);
     expect(label.style!.fontSize, TurnType.fold);

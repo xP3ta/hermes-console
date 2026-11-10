@@ -157,10 +157,12 @@ void main() {
           'args': {'command': 'echo hola'},
         });
         expect(labels(chat), ['terminal'], reason: 'one step, not two');
+        // The header pill names the executable; the list row and Home carry the
+        // masked complete command (the approved «Completo» wording).
         expect(pill(chat), 'Ejecutando · echo');
         expect(
           sessionLiveStatusLabel(_es, chat.liveStatus),
-          'Ejecutando · echo',
+          'Ejecutando · echo hola',
         );
 
         await emit(gateway, 'tool.complete', {

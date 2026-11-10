@@ -1,7 +1,6 @@
-// ps1215: the activity pill of a running chat keeps counting from the real
-// turn start when the user leaves the chat and comes back, its expanded panel
-// shows what is actually known (running tool, finished steps, tasks) or says
-// honestly that nothing is known yet, and it is on screen on the first frame.
+// ps1215: ordinary work belongs in the transcript. Its status keeps counting
+// from the real turn start across re-entry, including the remembered tool
+// before resume returns, and never adds a redundant footer pill.
 //
 // Every clock in these tests is the injected wall clock of the chat; nothing
 // depends on real time.
@@ -11,6 +10,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/widgets/chat/turn_activity_pill.dart' show debugInlineClockWhenFolded;
 import 'package:hermes_android/core/models/desktop_active_session.dart';
 import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
 import 'package:hermes_android/core/screens/chat_screen.dart';
@@ -100,29 +100,30 @@ DesktopSessionSnapshot _snapshot({
 
 Finder get _pill => find.byKey(const ValueKey('activity-pill'));
 
-/// The pill's elapsed timer, or null when the pill shows none (or is absent).
+/// The transcript owns the ordinary turn clock. Normalize its localized
+/// seconds/minutes representation without relying on the current phase.
 String? _elapsed(WidgetTester tester) {
-  final timer = find.descendant(
-    of: _pill,
-    matching: find.byKey(const ValueKey('activity-pill-elapsed')),
-  );
-  if (timer.evaluate().isEmpty) return null;
-  return tester.widget<Text>(timer).data;
+  expect(_pill, findsNothing, reason: 'ordinary work stays in the transcript');
+  final line = find.byKey(const ValueKey('chat-inline-activity-clock'));
+  if (line.evaluate().isEmpty) return null;
+  expect(find.byKey(const ValueKey('chat-inline-activity')), findsOneWidget);
+  return tester.widget<Text>(line).data;
 }
 
-int _seconds(String? mss) {
-  final parts = mss!.split(':').map(int.parse).toList();
-  return parts.fold(0, (total, part) => total * 60 + part);
+int _seconds(String? elapsed) {
+  if (elapsed!.endsWith('s')) {
+    return int.parse(elapsed.substring(0, elapsed.length - 1));
+  }
+  return elapsed
+      .split(':')
+      .map(int.parse)
+      .fold(0, (total, part) => total * 60 + part);
 }
-
-String _textIn(Finder root) => find
-    .descendant(of: root, matching: find.byType(RichText))
-    .evaluate()
-    .map((e) => (e.widget as RichText).text.toPlainText())
-    .where((text) => text.trim().isNotEmpty)
-    .join(' | ');
 
 void main() {
+  // These tests pin the clock itself; the folded row hides it (video).
+  setUp(() => debugInlineClockWhenFolded = true);
+  tearDown(() => debugInlineClockWhenFolded = false);
   TestWidgetsFlutterBinding.ensureInitialized();
 
   setUp(() {
@@ -265,9 +266,9 @@ void main() {
     await tester.pump(const Duration(minutes: 5));
   }
 
-  group('the pill timer survives leaving the chat', () {
+  group('the transcript timer survives leaving the chat', () {
     testWidgets('gateway turn start: leave at +30 s, back at +50 s shows '
-        '0:50 on the first frame and keeps counting', (tester) async {
+        '50 s on the first frame and keeps counting', (tester) async {
       final wall = _Wall()..advance(const Duration(seconds: 5));
       final service = newService();
       final gateway = peer.PeerGateway(
@@ -362,7 +363,18 @@ void main() {
       await boot(tester, service);
       push(tester);
       await tester.pump();
-      expect(_textIn(_pill), contains('Ejecutando · pytest'));
+      // No transcript tool row has arrived yet: show the remembered tool
+      // in the inline status rather than losing it with the footer.
+      expect(_pill, findsNothing);
+      // The live look (9 nov): «Trabajando» on the card, the words spoken.
+      final inline = tester.widget<Semantics>(
+        find.byKey(const ValueKey('chat-inline-activity')),
+      );
+      expect(inline.properties.label!, contains('pytest'));
+      expect(
+        find.byKey(const ValueKey('chat-inline-activity')),
+        findsOneWidget,
+      );
       expect(
         _seconds(_elapsed(tester)),
         inInclusiveRange(50, 55),

@@ -6,10 +6,22 @@
 /// code or a code block, so the TeX source shows intact in the existing code
 /// style.
 ///
+/// The carriers are what the native renderer (`utils/latex`) recognises:
+/// inline spans start with [kMathInlineMarker] and display blocks are
+/// ```` ```math ```` fences. Anything the renderer cannot parse keeps showing
+/// as the code it is here, so a bad formula never breaks the message.
+///
 /// Rules ported from Desktop's preprocessing: money (`$5 and $10`, `R$ 12.345`)
 /// is prose; fences and code spans are left alone; only a `math` fence would be a
 /// formula and it is already painted as a code block.
 library;
+
+/// First character of the inline code span that carries a formula. A private
+/// use code point: it never occurs in prose and is stripped before display.
+const String kMathInlineMarker = '\uE000';
+
+/// Info string of the fence that carries a display formula.
+const String kMathFenceLanguage = 'math';
 
 const int _cacheLimit = 32;
 
@@ -93,14 +105,16 @@ int _longestBacktickRun(String s) {
 String _inlineCode(String tex) {
   final flat = tex.replaceAll(RegExp(r'\s*\n\s*'), ' ');
   final fence = '`' * (_longestBacktickRun(flat) + 1);
-  final pad = flat.startsWith('`') || flat.endsWith('`') ? ' ' : '';
-  return '$fence$pad$flat$pad$fence';
+  // The marker keeps the start away from the fence; only a trailing backtick
+  // needs a space (the reader trims it).
+  final pad = flat.endsWith('`') ? ' ' : '';
+  return '$fence$kMathInlineMarker$flat$pad$fence';
 }
 
 String _displayBlock(String tex) {
   final longest = _longestBacktickRun(tex);
   final fence = '`' * (longest < 3 ? 3 : longest + 1);
-  return '$fence\n$tex\n$fence';
+  return '$fence$kMathFenceLanguage\n$tex\n$fence';
 }
 
 final RegExp _wordChar = RegExp(r'[\p{L}\p{N}]', unicode: true);

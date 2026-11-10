@@ -1,14 +1,15 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter/semantics.dart';
 
 import '../../design/tokens.dart';
 import '../../services/global_activity_aggregate.dart';
 import '../../theme/app_theme.dart';
+import '../../theme/motion.dart';
 import '../../theme/scroll_behavior.dart';
 import '../pill_morph.dart';
+import '../../feedback/haptics.dart';
 
 /// The notch's slot on the composer's top edge (54×22 dp). pm1215 (owner,
 /// QA 9494): no chevron tab any more; the slot holds a calm grabber
@@ -61,7 +62,7 @@ const double kChatNotchComposerGap = 0;
 /// lights up. Then it rests: an idle chat never keeps a ticker alive (the
 /// mock's endless loop would repaint an idle chat forever).
 const double kChatNotchBreath = 2.5;
-const Duration kChatNotchBreathPeriod = Duration(milliseconds: 2000);
+const Duration kChatNotchBreathPeriod = HermesMotion.breath;
 const int kChatNotchBreathCycles = 1;
 
 /// Sheet motion: the shared pill morph (critically damped, no overshoot),
@@ -76,22 +77,9 @@ const double kChatNotchSheetMaxHeightFactor = 0.85;
 const double kChatNotchDismissDistance = kPillMorphDismissDistance;
 const double kChatNotchDismissVelocity = kPillMorphDismissVelocity;
 
-/// Upward travel on the tab that counts as "drag up to open".
+/// Upward travel on the tab that counts as "drag up to open": it opens the
+/// same sheet as a tap.
 const double _kOpenDragDistance = 12;
-
-/// The "Ir a" destinations: the four dock sections plus the global chat
-/// search (the conversation list opened with its search field focused).
-enum ChatNotchDestination { chats, home, projects, settings, searchChats }
-
-/// Same glyphs as the dock / drawer for each destination.
-IconData chatNotchDestinationIcon(ChatNotchDestination destination) =>
-    switch (destination) {
-      ChatNotchDestination.chats => Icons.forum_outlined,
-      ChatNotchDestination.home => Icons.home_outlined,
-      ChatNotchDestination.projects => Icons.folder_copy_outlined,
-      ChatNotchDestination.settings => Icons.settings_outlined,
-      ChatNotchDestination.searchChats => Icons.manage_search_rounded,
-    };
 
 /// True when some OTHER conversation is waiting for the user (an exact,
 /// live, non-stale "requires action" from the shared activity aggregate).
@@ -115,29 +103,29 @@ bool chatNotchNeedsYouElsewhere(
   return false;
 }
 
-/// Localized labels for the discoverable notch gesture dock.
+/// Localized labels for the notch's gestures, offered to screen readers as
+/// custom actions (a tap and a drag up both open the sheet).
 class ChatNotchGestureLabels {
   const ChatNotchGestureLabels({
-    required this.goTo,
     required this.findInChat,
     required this.previousChat,
     required this.nextChat,
   });
 
-  final String goTo;
   final String findInChat;
   final String previousChat;
   final String nextChat;
 }
 
 /// The glass gesture dock above the composer. Gestures are attached only here,
-/// never to the input or transcript.
+/// never to the input or transcript: a tap or a drag up opens the
+/// conversation sheet, a long press the in-chat search and a horizontal swipe
+/// the previous / next chat.
 class ChatNotch extends StatefulWidget {
   const ChatNotch({
     required this.open,
     required this.semanticLabel,
     required this.onOpen,
-    this.onOpenGoTo,
     this.onFindInChat,
     this.onPreviousChat,
     this.onNextChat,
@@ -156,7 +144,6 @@ class ChatNotch extends StatefulWidget {
   final String semanticLabel;
   final String? attentionLabel;
   final VoidCallback onOpen;
-  final VoidCallback? onOpenGoTo;
   final VoidCallback? onFindInChat;
   final VoidCallback? onPreviousChat;
   final VoidCallback? onNextChat;
@@ -233,19 +220,17 @@ class _ChatNotchState extends State<ChatNotch>
 
   void _open() => widget.onOpen();
 
-  void _openGoTo() => (widget.onOpenGoTo ?? widget.onOpen)();
-
   void _findInChat() => widget.onFindInChat?.call();
 
   void _previousChat() {
     if (widget.onPreviousChat == null) return;
-    HapticFeedback.selectionClick();
+    HermesHaptics.selection();
     widget.onPreviousChat!();
   }
 
   void _nextChat() {
     if (widget.onNextChat == null) return;
-    HapticFeedback.selectionClick();
+    HermesHaptics.selection();
     widget.onNextChat!();
   }
 
@@ -304,7 +289,6 @@ class _ChatNotchState extends State<ChatNotch>
 
     final labels = widget.gestureLabels;
     final actions = <CustomSemanticsAction, VoidCallback>{
-      if (labels != null) CustomSemanticsAction(label: labels.goTo): _openGoTo,
       if (labels != null && widget.onFindInChat != null)
         CustomSemanticsAction(label: labels.findInChat): _findInChat,
       if (labels != null && widget.onPreviousChat != null)
@@ -333,7 +317,7 @@ class _ChatNotchState extends State<ChatNotch>
             _dragUp -= details.delta.dy;
             if (!_dragOpened && _dragUp >= _kOpenDragDistance) {
               _dragOpened = true;
-              _openGoTo();
+              _open();
             }
           },
           onHorizontalDragStart: widget.horizontalSwipeEnabled

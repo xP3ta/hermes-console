@@ -140,7 +140,8 @@ void main() {
   ) async {
     await tester.pumpWidget(_host(_trace(_sixCalls(), active: false)));
     const label =
-        'Pensó durante 1:12 · github-pr-workflow · '
+        // Mock 138 v2: a turn that used tools ends saying how long it worked.
+        'Trabajó 1:12 · github-pr-workflow · '
         '2 archivos explorados · 3 comandos';
     expect(find.text(label), findsOneWidget);
     // No tool id reaches the folded line.
@@ -168,9 +169,14 @@ void main() {
       findsOneWidget,
     );
     expect(
-      find.text('Ejecutó · flutter test', findRichText: true),
+      find.descendant(
+        of: find.byKey(const ValueKey('thinking-trace-step-6')),
+        matching: find.text('Ejecutó · flutter', findRichText: true),
+      ),
       findsOneWidget,
     );
+    expect(find.textContaining('flutter test', findRichText: true), findsNothing);
+    expect(find.textContaining('flutter analyze', findRichText: true), findsNothing);
     final first = tester.getTopLeft(
       find.byKey(const ValueKey('thinking-trace-step-1')),
     );
@@ -198,7 +204,7 @@ void main() {
     // QA 9489: the run never piles up while it is live.
     expect(find.byType(TurnToolRow), findsOneWidget);
     expect(
-      find.text('Ejecutando · flutter test', findRichText: true),
+      find.text('Ejecutando · flutter', findRichText: true),
       findsOneWidget,
     );
     expect(find.byKey(const ValueKey('thinking-trace-summary')), findsNothing);
@@ -215,7 +221,8 @@ void main() {
         ], active: false),
       ),
     );
-    expect(find.text('Pensó durante 1:12 · 1 comando'), findsOneWidget);
+    // Mock 138 v2: a turn that used tools ends saying how long it worked.
+    expect(find.text('Trabajó 1:12 · 1 comando'), findsOneWidget);
     expect(find.textContaining('PRIVATE_TOOL'), findsNothing);
   });
 
@@ -240,7 +247,8 @@ void main() {
     );
     expect(
       find.text(
-        'Pensó durante 1:12 · 2 archivos editados · 2 archivos explorados · '
+        // Mock 138 v2: a turn that used tools ends saying how long it worked.
+        'Trabajó 1:12 · 2 archivos editados · 2 archivos explorados · '
         '1 búsqueda · 1 página leída · 1 comando',
       ),
       findsOneWidget,

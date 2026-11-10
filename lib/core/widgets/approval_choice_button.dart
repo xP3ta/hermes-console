@@ -2,9 +2,9 @@ import 'package:flutter/material.dart';
 
 import '../theme/component_profile.dart';
 
-/// Permitir / Denegar of an agent approval: the one button the chat card
-/// and Home share. Both answers have the same visual weight; only the
-/// semantic tint changes. [busy] disables it while an answer is in flight.
+/// Permitir / Denegar of an agent approval. [color] tints it; [filled]
+/// paints it solid with [onColor] (v25 `.btn.p`: «Permitir» in the accent,
+/// «Denegar» neutral). [busy] disables it while an answer is in flight.
 class ApprovalChoiceButton extends StatelessWidget {
   final String label;
   final IconData icon;
@@ -20,6 +20,10 @@ class ApprovalChoiceButton extends StatelessWidget {
   /// the accessible name.
   final bool iconOnly;
 
+  /// The primary answer: solid [color] with [onColor] text.
+  final bool filled;
+  final Color? onColor;
+
   const ApprovalChoiceButton({
     required this.label,
     required this.icon,
@@ -28,6 +32,8 @@ class ApprovalChoiceButton extends StatelessWidget {
     required this.onTap,
     this.expand = true,
     this.iconOnly = false,
+    this.filled = false,
+    this.onColor,
     super.key,
   });
 
@@ -35,8 +41,8 @@ class ApprovalChoiceButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final style =
         FilledButton.styleFrom(
-          backgroundColor: color.withValues(alpha: 0.14),
-          foregroundColor: color,
+          backgroundColor: filled ? color : color.withValues(alpha: 0.14),
+          foregroundColor: filled ? (onColor ?? Colors.white) : color,
           minimumSize: expand
               ? const Size.fromHeight(componentMinimumTapTarget)
               : const Size(
@@ -50,7 +56,11 @@ class ApprovalChoiceButton extends StatelessWidget {
               : const EdgeInsets.symmetric(horizontal: 16),
           shape: const StadiumBorder(),
         ).copyWith(
-          overlayColor: WidgetStatePropertyAll(color.withValues(alpha: 0.12)),
+          overlayColor: WidgetStatePropertyAll(
+            (filled ? (onColor ?? Colors.white) : color).withValues(
+              alpha: 0.12,
+            ),
+          ),
         );
     final onPressed = busy ? null : onTap;
     if (iconOnly) {

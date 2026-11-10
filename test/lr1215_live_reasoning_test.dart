@@ -1,3 +1,4 @@
+import 'support/live_chat_v4.dart';
 // lr1215: the model's reasoning is shown while it streams, as Hermes Desktop
 // does: in the turn, in the transcript, whole. Decorative `thinking.delta`
 // spinner phrases are never reasoning.
@@ -17,6 +18,7 @@ import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/font_size_service.dart';
 import 'package:hermes_android/core/services/global_activity_aggregate.dart';
 import 'package:hermes_android/core/services/notifications/notification_service.dart';
+import 'package:hermes_android/core/services/reasoning_disclosure_prefs.dart';
 import 'package:hermes_android/core/services/secure_storage.dart';
 import 'package:hermes_android/core/services/sftp_transfer_service.dart';
 import 'package:hermes_android/core/services/ssh_manager.dart';
@@ -49,11 +51,9 @@ Map<String, dynamic> _tool(String label, String status, String id) => {
 /// The thought being written, where the turn tells it: in the transcript.
 Finder get _tail => find.byKey(const ValueKey('turn-reasoning'));
 
-String _tailText(WidgetTester tester) => find
-    .descendant(of: _tail, matching: find.byType(RichText))
-    .evaluate()
-    .map((e) => (e.widget as RichText).text.toPlainText())
-    .join('\n');
+/// The folded row of the thought being written: «Pensamiento ›», closed.
+Finder get _thoughtRow =>
+    find.byKey(const ValueKey('chat-inline-activity-text'));
 
 void main() {
   group('snapshot carries the open reasoning', () {
@@ -265,23 +265,42 @@ void main() {
 
     testWidgets('reasoning deltas grow in the turn, whole, and the final '
         'text is not duplicated', (tester) async {
+      // The live thought stays folded whatever the setting says: one row,
+      // «Pensamiento ›», with no fragment of its words, which a tap opens.
+      await ReasoningDisclosurePrefs.shared.setCollapsedByDefault(false);
+      addTearDown(() => ReasoningDisclosurePrefs.debugUse(null));
       final (service, gateway) = await open(tester);
       gateway.emit('reasoning.delta', {'text': 'First I read '});
       await frames(tester);
-      expect(_tail, findsOneWidget);
-      expect(_tailText(tester), 'First I read');
+      expect(_thoughtRow, findsOneWidget);
+      expect(find.byKey(const ValueKey('turn-thought-tail')), findsNothing);
 
       gateway.emit('reasoning.delta', {'text': 'the config, '});
       await frames(tester);
-      expect(_tailText(tester), 'First I read the config,');
       gateway.emit('reasoning.delta', {'text': 'then I patch it.'});
       await frames(tester);
-      expect(_tailText(tester), 'First I read the config, then I patch it.');
+      expect(_thoughtRow, findsOneWidget);
+      // The live look (9 nov 2026): the folded thought shows a short
+      // quiet fragment of its last line with a cursor (once, not a block).
+      expect(
+        find.textContaining('First I read', findRichText: true),
+        findsOneWidget,
+      );
       gateway.emit('reasoning.available', {
         'text': 'First I read the config, then I patch it.',
       });
       await frames(tester);
-      expect(_tailText(tester), 'First I read the config, then I patch it.');
+      await openInlineDetails(tester);
+      final thought = find.byWidgetPredicate(
+        (w) => w is Semantics && '${w.key}'.startsWith("[<'turn-thought-card-"),
+      );
+      expect(thought, findsOneWidget);
+      tester.widget<Semantics>(thought).properties.onTap!();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(
+        find.textContaining('then I patch it.', findRichText: true),
+        findsOneWidget,
+      );
       await close(tester, service);
     });
 

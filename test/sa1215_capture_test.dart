@@ -1,4 +1,4 @@
-// sa1215 visual evidence: «Archivos y enlaces» at 412×915, Spanish, dark and
+// sa1215 visual evidence: «Artefactos» at 412×915, Spanish, dark and
 // light. Writes PNGs only when SA1215_SHOTS_DIR is set (otherwise a layout
 // smoke test). Fixtures are synthetic.
 import 'dart:convert';
@@ -81,7 +81,7 @@ void main() {
               transcript: _transcript,
               hasOlder: () => true,
               loadOlder: () async {},
-              onOpenFile: (_) async {},
+              onOpenFile: (_, _) async {},
               launchExternal: (_) async => true,
             ),
           ),

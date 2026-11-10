@@ -6,6 +6,43 @@ import 'package:flutter/services.dart';
 import '../../../l10n/app_localizations.dart';
 import '../hermes_notice.dart';
 import 'quick_reaction_bar.dart';
+import '../../feedback/haptics.dart';
+
+/// Which messages of a chat hold a text selection right now. A plain object
+/// the chat screen owns and reads at the moment it would move the list on its
+/// own (follow the tail, land at the bottom): a reader holding text is not
+/// carried away from it. It never notifies and never rebuilds anything.
+class ChatSelectionHold {
+  final Set<Object> _holders = Set<Object>.identity();
+
+  /// A selection is held in some message of this chat.
+  bool get active => _holders.isNotEmpty;
+
+  void set(Object holder, {required bool holding}) {
+    if (holding) {
+      _holders.add(holder);
+    } else {
+      _holders.remove(holder);
+    }
+  }
+}
+
+/// Gives the messages below it the chat's [ChatSelectionHold].
+class ChatSelectionHoldScope extends InheritedWidget {
+  const ChatSelectionHoldScope({
+    super.key,
+    required this.hold,
+    required super.child,
+  });
+
+  final ChatSelectionHold hold;
+
+  static ChatSelectionHold? maybeOf(BuildContext context) =>
+      context.getInheritedWidgetOfExactType<ChatSelectionHoldScope>()?.hold;
+
+  @override
+  bool updateShouldNotify(ChatSelectionHoldScope oldWidget) => false;
+}
 
 /// Frontera estable de selección para un único mensaje terminado.
 ///
@@ -42,8 +79,28 @@ class _ChatMessageSelectionAreaState extends State<ChatMessageSelectionArea> {
   final GlobalKey<SelectionAreaState> _selectionAreaKey =
       GlobalKey<SelectionAreaState>();
   String _selectedText = '';
+  ChatSelectionHold? _hold;
+
+  void _report(String text) {
+    _selectedText = text;
+    // Never a setState: the hold is read when the list is about to move.
+    _hold?.set(this, holding: _selectedText.isNotEmpty);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final hold = ChatSelectionHoldScope.maybeOf(context);
+    if (!identical(hold, _hold)) {
+      _hold?.set(this, holding: false);
+      _hold = hold;
+      _hold?.set(this, holding: _selectedText.isNotEmpty);
+    }
+  }
 
   void _clearSelection() {
+    _selectedText = '';
+    _hold?.set(this, holding: false);
     final area = _selectionAreaKey.currentState;
     if (area == null) return;
     final region = area.selectableRegion;
@@ -63,6 +120,7 @@ class _ChatMessageSelectionAreaState extends State<ChatMessageSelectionArea> {
   @override
   void dispose() {
     _clearSelection();
+    _hold?.set(this, holding: false);
     super.dispose();
   }
 
@@ -75,7 +133,7 @@ class _ChatMessageSelectionAreaState extends State<ChatMessageSelectionArea> {
     final box = context.findRenderObject();
     if (scope == null || box is! RenderBox || !box.hasSize) return;
     _clearSelection();
-    HapticFeedback.selectionClick();
+    HermesHaptics.selection();
     final choice = await showMessageActions(
       context: context,
       message: box.localToGlobal(Offset.zero) & box.size,
@@ -165,9 +223,7 @@ class _ChatMessageSelectionAreaState extends State<ChatMessageSelectionArea> {
     return SelectionArea(
       key: _selectionAreaKey,
       magnifierConfiguration: TextMagnifierConfiguration.disabled,
-      onSelectionChanged: ask
-          ? (content) => _selectedText = content?.plainText ?? ''
-          : null,
+      onSelectionChanged: (content) => _report(content?.plainText ?? ''),
       contextMenuBuilder: ask
           ? (context, region) => _menu(context, region, scope, onAsk)
           : _defaultMenu,

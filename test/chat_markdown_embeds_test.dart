@@ -29,6 +29,7 @@ void main() {
   late EmbedConsentStore consent;
 
   setUp(() async {
+    EmbedConsentStore.debugAllowThirdPartyEmbeds = true;
     SharedPreferences.setMockInitialValues({});
     consent = EmbedConsentStore.forTesting(
       await SharedPreferences.getInstance(),
@@ -39,6 +40,7 @@ void main() {
   });
 
   tearDown(() {
+    EmbedConsentStore.debugAllowThirdPartyEmbeds = false;
     EmbedConsentStore.debugUse(null);
     final owner = EmbedLiveRegistry.instance.owner;
     if (owner != null) EmbedLiveRegistry.instance.drop(owner);

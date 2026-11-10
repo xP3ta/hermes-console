@@ -319,6 +319,79 @@ void main() {
     );
   });
 
+  testWidgets('entry: a pending usage paints no number and the zone keeps '
+      'the width of a percentage, so the real value changes it once', (
+    tester,
+  ) async {
+    final metrics = ValueNotifier(SessionContextMetrics.unknown);
+    final pending = ValueNotifier(true);
+    addTearDown(metrics.dispose);
+    addTearDown(pending.dispose);
+    await tester.pumpWidget(
+      _TestApp(
+        child: ChatStatusPill(
+          metrics: metrics,
+          contextPending: pending,
+          onOpenContext: () {},
+          modelLabel: 'Sonnet 5',
+          onOpenModel: () {},
+        ),
+      ),
+    );
+    // What a reader can read in the zone: the texts that are painted.
+    List<String> readable() => [
+      for (final text in tester.widgetList<Text>(
+        find.descendant(
+          of: find.byKey(_contextZone),
+          matching: find.byType(Text),
+        ),
+      ))
+        if ((text.style?.color?.a ?? 1) > 0) text.data ?? '',
+    ];
+    double width() => tester.getSize(find.byKey(_contextZone)).width;
+    String label() =>
+        tester.getSemantics(find.byKey(_contextZone)).getSemanticsData().label;
+
+    expect(readable(), isEmpty, reason: 'no default dressed as a value');
+    expect(find.text('—'), findsNothing);
+    expect(label(), 'Open context usage');
+    final waiting = width();
+
+    // The three steps of an opening: what was cached, the persisted
+    // snapshot (never painted: the screen keeps the cached window) and the
+    // live window. Only the first and the last differ.
+    final seen = <(List<String>, double)>[(readable(), waiting)];
+    metrics.value = const SessionContextMetrics(
+      contextUsed: 250,
+      contextMax: 1000,
+      percent: 25,
+    );
+    pending.value = false;
+    await tester.pump();
+    seen.add((readable(), width()));
+    metrics.value = const SessionContextMetrics(
+      contextUsed: 250,
+      contextMax: 1000,
+      percent: 25,
+      cumulativeTotal: 150000,
+    );
+    await tester.pump();
+    seen.add((readable(), width()));
+    await tester.pump(const Duration(milliseconds: 300));
+    seen.add((readable(), width()));
+
+    expect(seen[1].$1, ['25%']);
+    expect(
+      seen.skip(1).every((s) => s.$1.length == 1 && s.$1[0] == '25%'),
+      isTrue,
+    );
+    expect(
+      seen.map((s) => s.$2).toSet().length,
+      1,
+      reason: 'the zone is as wide pending as with a two-digit percentage',
+    );
+  });
+
   testWidgets('compacted sessions keep the compacted mark', (tester) async {
     final metrics = ValueNotifier(
       const SessionContextMetrics(contextUsed: 8, contextMax: 100, percent: 8),
@@ -408,6 +481,110 @@ void main() {
       expect(find.text('Conservative'), findsOneWidget);
     });
   }
+
+  // ORDEN-WS-FIDELIDAD point 6: in a chat pane about 330 dp wide the model
+  // was cut («Sonne…»): the bare shield, a second Flexible, held half of
+  // the free room.
+  testWidgets('a narrow chat keeps the whole model name', (tester) async {
+    tester.view.physicalSize = const Size(330, 700);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final metrics = ValueNotifier(const SessionContextMetrics(percent: 10));
+    addTearDown(metrics.dispose);
+    await tester.pumpWidget(
+      _TestApp(
+        child: ChatStatusPill(
+          metrics: metrics,
+          onOpenContext: () {},
+          modelLabel: 'Sonnet 4.5',
+          onOpenModel: () {},
+          permissionsLabel: 'Ask',
+          onOpenPermissions: () {},
+        ),
+      ),
+    );
+    final label = tester.renderObject<RenderParagraph>(find.text('Sonnet 4.5'));
+    expect(label.didExceedMaxLines, isFalse);
+    expect(find.byKey(_permissionsZone), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  group('model detail', () {
+    test('level and fast mark, joined; nothing when neither applies', () {
+      expect(statusPillModelDetail(), isNull);
+      expect(statusPillModelDetail(level: '', fast: ''), isNull);
+      expect(statusPillModelDetail(level: 'High'), 'High');
+      expect(statusPillModelDetail(fast: 'Fast'), 'Fast');
+      expect(statusPillModelDetail(level: 'High', fast: 'Fast'), 'High · Fast');
+    });
+
+    Future<void> pumpDetail(
+      WidgetTester tester, {
+      String? detail,
+      double width = 420,
+      double textScale = 1,
+    }) async {
+      tester.view.physicalSize = Size(width, 700);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final metrics = ValueNotifier(const SessionContextMetrics(percent: 14));
+      addTearDown(metrics.dispose);
+      await tester.pumpWidget(
+        _TestApp(
+          textScale: textScale,
+          child: ChatStatusPill(
+            metrics: metrics,
+            onOpenContext: () {},
+            modelLabel: 'Sonnet 5',
+            modelDetail: detail,
+            onOpenModel: () {},
+            permissionsLabel: 'YOLO',
+            permissionsFlag: 'YOLO',
+            onOpenPermissions: () {},
+          ),
+        ),
+      );
+    }
+
+    testWidgets('the pill reads «model · level · fast» in one line', (
+      tester,
+    ) async {
+      final handle = tester.ensureSemantics();
+      await pumpDetail(tester, detail: 'High · Fast', width: 800);
+      expect(find.text('Sonnet 5 · High · Fast'), findsOneWidget);
+      final label = tester.renderObject<RenderParagraph>(
+        find.text('Sonnet 5 · High · Fast'),
+      );
+      expect(label.didExceedMaxLines, isFalse);
+      expect(
+        tester.getSemantics(find.byKey(_modelZone)).label,
+        contains('High · Fast'),
+      );
+      handle.dispose();
+    });
+
+    testWidgets('without detail the name stays a plain keyed text', (
+      tester,
+    ) async {
+      await pumpDetail(tester);
+      expect(find.byKey(const ValueKey('Sonnet 5')), findsOneWidget);
+      expect(find.text('Sonnet 5'), findsOneWidget);
+    });
+
+    testWidgets('narrow and large text: the detail yields, no overflow', (
+      tester,
+    ) async {
+      await pumpDetail(
+        tester,
+        detail: 'Very high · Fast',
+        width: 320,
+        textScale: 2,
+      );
+      expect(tester.takeException(), isNull);
+      final pill = tester.getRect(find.byType(ChatStatusPill));
+      expect(pill.right, lessThanOrEqualTo(320));
+    });
+  });
 }
 
 class _TestApp extends StatelessWidget {

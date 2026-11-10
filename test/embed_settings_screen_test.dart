@@ -55,14 +55,14 @@ void main() {
     await tester.pumpWidget(app());
     await tester.tap(find.byKey(const ValueKey('embed-type-youtube-switch')));
     await tester.pump();
-    expect(consent.modeFor(EmbedType.youtube), EmbedMode.ask);
+    expect(consent.storedMode(EmbedType.youtube), EmbedMode.ask);
     expect(find.text('Ask each time'), findsOneWidget);
     await tester.tap(
       find.byKey(const ValueKey('embed-type-youtube-always-switch')),
     );
     await tester.pump();
-    expect(consent.modeFor(EmbedType.youtube), EmbedMode.always);
-    expect(consent.modeFor(EmbedType.vimeo), EmbedMode.off);
+    expect(consent.storedMode(EmbedType.youtube), EmbedMode.always);
+    expect(consent.storedMode(EmbedType.vimeo), EmbedMode.off);
   });
 
   testWidgets('Clear allowed services sends always back to ask', (
@@ -76,7 +76,7 @@ void main() {
     );
     await tester.tap(find.byKey(const ValueKey('embed-clear-allowed')));
     await tester.pump();
-    expect(consent.modeFor(EmbedType.youtube), EmbedMode.ask);
+    expect(consent.storedMode(EmbedType.youtube), EmbedMode.ask);
     expect(find.byKey(const ValueKey('embed-clear-allowed')), findsNothing);
   });
 
@@ -89,7 +89,7 @@ void main() {
     );
     await tester.tap(find.byKey(const ValueKey('embed-type-spotify-switch')));
     await tester.pump();
-    expect(consent.modeFor(EmbedType.spotify), EmbedMode.off);
+    expect(consent.storedMode(EmbedType.spotify), EmbedMode.off);
     expect(
       find.byKey(const ValueKey('embed-type-spotify-always')),
       findsNothing,

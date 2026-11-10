@@ -462,7 +462,7 @@ void main() {
   });
 
   group('detalle seguro', () {
-    test('comando: solo ejecutable, nunca flags ni secretos', () {
+    test('comando: completo y enmascarado, nunca secretos', () {
       expect(activityToolDetail('terminal', {'command': 'date'}), 'date');
       expect(
         activityToolDetail('terminal', {
@@ -477,11 +477,11 @@ void main() {
       );
       expect(
         activityToolDetail('terminal', {'command': '/usr/bin/git status'}),
-        'git',
+        'git status',
       );
     });
 
-    test('rutas → nombre; URLs → host; consultas acotadas y sin secretos', () {
+    test('rutas → nombre; URLs → host; consultas descartadas', () {
       expect(
         activityToolDetail('read_file', {'path': '/home/u/proyecto/main.dart'}),
         'main.dart',
@@ -490,10 +490,7 @@ void main() {
         activityToolDetail('web', {'url': 'https://example.com/a?token=1'}),
         'example.com',
       );
-      expect(
-        activityToolDetail('web_search', {'query': 'x' * 200})!.length,
-        48,
-      );
+      expect(activityToolDetail('web_search', {'query': 'x' * 200}), isNull);
       expect(
         activityToolDetail('web_search', {'query': 'mi token es abc'}),
         isNull,
@@ -564,7 +561,11 @@ void main() {
             'function': {'name': 'x', 'arguments': 'no es json'},
           },
         ], status: 'completed');
-        expect(steps.map((s) => s['detail']), ['git', 'c.md', null]);
+        expect(steps.map((s) => s['detail']), [
+          'git status --porcelain',
+          'c.md',
+          null,
+        ]);
       },
     );
 
@@ -580,8 +581,8 @@ void main() {
             'label': 'terminal',
             'status': 'completed',
             'detail': 'sleep',
-            'timestamp': 1000.0,
-            'completed_at': 1002.5,
+            'timestamp': 1780000000.0,
+            'completed_at': 1780000002.5,
           },
         ]);
         expect(split.current, isNull);
@@ -592,8 +593,8 @@ void main() {
           'kind': 'tool',
           'label': 'x',
           'status': 'completed',
-          'timestamp': 5,
-          'completed_at': 5,
+          'timestamp': 1780000005,
+          'completed_at': 1780000005,
         })!;
         expect(equal.duration, isNull, reason: 'una duración 0 no se inventa');
       },
@@ -607,12 +608,12 @@ void main() {
           'tool_call_id': 'c2',
           'tool_name': 'tool_call',
           'content': '',
-          'timestamp': 1013.0,
+          'timestamp': 1780000013.0,
         },
         {
           'role': 'assistant',
           'content': '',
-          'timestamp': 1010.0,
+          'timestamp': 1780000010.0,
           'tool_calls': [
             {
               'id': 'c2',
@@ -629,12 +630,12 @@ void main() {
           'tool_call_id': 'c1',
           'tool_name': 'tool_call',
           'content': '',
-          'timestamp': 1007.0,
+          'timestamp': 1780000007.0,
         },
         {
           'role': 'assistant',
           'content': '',
-          'timestamp': 1000.0,
+          'timestamp': 1780000000.0,
           'tool_calls': [
             {
               'id': 'c0',

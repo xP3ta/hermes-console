@@ -12,6 +12,10 @@ enum CompactMarkdownTone {
 
   /// Primary ink everywhere (a question the user must answer, a task body).
   body,
+
+  /// A thought being read (look, 9 nov 2026): the muted ink, a little fainter,
+  /// in italic, with no title or bold louder than the text around it.
+  quiet,
 }
 
 /// rt1215: the chat's own Markdown renderer ([ChatMarkdownBody]) with a
@@ -60,24 +64,33 @@ MarkdownStyleSheet compactMarkdownStyleSheet(
 }) {
   final theme = Theme.of(context);
   final colors = theme.hermes;
-  final ink = tone == CompactMarkdownTone.muted
-      ? colors.textSecondary
-      : colors.textPrimary;
+  final quiet = tone == CompactMarkdownTone.quiet;
+  final ink = switch (tone) {
+    CompactMarkdownTone.muted => colors.textSecondary,
+    CompactMarkdownTone.body => colors.textPrimary,
+    CompactMarkdownTone.quiet => colors.textSecondary.withValues(alpha: 0.85),
+  };
   final body = (theme.textTheme.bodyMedium ?? const TextStyle()).copyWith(
     fontSize: fontSize,
     height: 1.45,
     color: ink,
+    fontStyle: quiet ? FontStyle.italic : null,
   );
-  final heading = body.copyWith(
-    color: colors.textPrimary,
-    fontWeight: FontWeight.w700,
-    height: 1.35,
-  );
+  final heading = quiet
+      ? body.copyWith(fontWeight: FontWeight.w600, height: 1.4)
+      : body.copyWith(
+          color: colors.textPrimary,
+          fontWeight: FontWeight.w700,
+          height: 1.35,
+        );
+  final step = quiet ? 0.0 : 1.0;
   return MarkdownStyleSheet(
     p: body,
     pPadding: EdgeInsets.zero,
     blockSpacing: 6,
-    strong: TextStyle(color: colors.textPrimary, fontWeight: FontWeight.w700),
+    strong: quiet
+        ? TextStyle(color: ink, fontWeight: FontWeight.w600)
+        : TextStyle(color: colors.textPrimary, fontWeight: FontWeight.w700),
     em: const TextStyle(fontStyle: FontStyle.italic),
     del: const TextStyle(decoration: TextDecoration.lineThrough),
     code: TextStyle(
@@ -98,9 +111,9 @@ MarkdownStyleSheet compactMarkdownStyleSheet(
       decoration: TextDecoration.underline,
       decorationColor: colors.accentText.withValues(alpha: 0.5),
     ),
-    h1: heading.copyWith(fontSize: fontSize + 2),
-    h2: heading.copyWith(fontSize: fontSize + 1.5),
-    h3: heading.copyWith(fontSize: fontSize + 1),
+    h1: heading.copyWith(fontSize: fontSize + 2 * step),
+    h2: heading.copyWith(fontSize: fontSize + 1.5 * step),
+    h3: heading.copyWith(fontSize: fontSize + step),
     h4: heading,
     h5: heading,
     h6: heading,

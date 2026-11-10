@@ -1,0 +1,15 @@
+<!doctype html><meta charset="utf-8"><body style="margin:0;background:transparent">
+<div id="box" style="width:64px;height:64px"></div>
+<script src="lottie.min.js"></script>
+<script>
+window.renderAll=async function(id,size){
+  const data=await (await fetch('anims/'+id+'.json')).json();
+  const box=document.getElementById('box'); box.innerHTML=''; box.style.width=size+'px'; box.style.height=size+'px';
+  const a=lottie.loadAnimation({container:box,renderer:'canvas',loop:false,autoplay:false,animationData:data,
+    rendererSettings:{clearCanvas:true,preserveAspectRatio:'xMidYMid meet'}});
+  await new Promise(r=>a.addEventListener('DOMLoaded',r));
+  const out=[]; const total=Math.floor(a.totalFrames);
+  for(let f=0;f<total;f++){ a.goToAndStop(f,true); const c=box.querySelector('canvas'); out.push(c.toDataURL('image/png')); }
+  a.destroy(); return out;
+};
+</script>

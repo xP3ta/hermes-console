@@ -5,6 +5,7 @@ import 'package:markdown/markdown.dart' as md;
 import '../../models/composer_reference.dart';
 import '../../models/reference_directive.dart';
 import '../../theme/app_theme.dart';
+import 'mention_chips.dart';
 
 const String _referenceTag = 'hermes-ref';
 
@@ -29,15 +30,22 @@ class UserMessageText extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // `@file:` references first: a directive is never read as a mention.
+    final mentions = MentionChipScope.maybeOf(context);
+    final chips = mentionChipMarkdown(mentions, data);
     return MarkdownBody(
+      key: chips.builders.isEmpty ? null : ObjectKey(mentions),
       data: data,
       selectable: false,
       // Respeta los saltos de línea simples (CommonMark los colapsaría).
       softLineBreak: true,
       onTapLink: (text, href, title) => onTapLink?.call(href),
       styleSheet: styleSheet,
-      inlineSyntaxes: [_ReferenceSyntax()],
-      builders: {_referenceTag: _ReferenceChipBuilder(onTapLink)},
+      inlineSyntaxes: [_ReferenceSyntax(), ...chips.syntaxes],
+      builders: {
+        _referenceTag: _ReferenceChipBuilder(onTapLink),
+        ...chips.builders,
+      },
     );
   }
 }
@@ -151,6 +159,12 @@ class ReferenceChip extends StatelessWidget {
       ),
     );
     final tappable = kind == ComposerReferenceKind.url && onTapLink != null;
+    // Scaled once, by the WidgetSpan that holds it (REVIEW-R5-B #6).
+    final unscaled = MediaQuery.withClampedTextScaling(
+      minScaleFactor: 1,
+      maxScaleFactor: 1,
+      child: body,
+    );
     return Semantics(
       key: ValueKey('user-reference-chip-${kind.name}'),
       link: kind == ComposerReferenceKind.url,
@@ -161,9 +175,9 @@ class ReferenceChip extends StatelessWidget {
           ? GestureDetector(
               behavior: HitTestBehavior.opaque,
               onTap: () => onTapLink!(value),
-              child: body,
+              child: unscaled,
             )
-          : body,
+          : unscaled,
     );
   }
 }
