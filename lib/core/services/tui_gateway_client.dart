@@ -1,4 +1,5 @@
 import '../bots/data/gateway_socket_meter.dart';
+import '../browser/agent_preview_protocol.dart';
 import '../bots/state/bot_chat_target.dart';
 import 'bot_room_link.dart';
 import 'connection_status.dart';
@@ -47,19 +48,27 @@ import 'connection_request_gateway.dart';
 import 'delegation_control.dart';
 import 'desktop_control_gateway.dart';
 import '../models/foreign_session.dart';
+import '../models/git_hub.dart';
+import '../models/git_review.dart';
 import '../models/message_reaction.dart';
 import 'session_pull_requests.dart';
+import 'git_hub_gateway.dart';
+import 'git_review_gateway.dart';
 import 'desktop_gateway_capabilities.dart';
 import 'json_rpc_wire.dart';
+import 'transcript_rehydrate_cost.dart' show kJsonDecodeOffMainBytes;
 import 'prompt_client_surface.dart';
 import 'recovery_proof.dart';
 import 'replay_batch_proof.dart';
 import 'replay_coordinator.dart';
 import 'server_restart_signal.dart';
+import 'session_authority.dart';
 import 'subagent_live_watch.dart';
 import '../utils/transport_privacy.dart';
+import '../utils/server_path.dart';
 
 class TuiGatewayRpcError implements Exception {
+  static const int steerRejectedCode = -32901;
   final String method;
   final int? code;
   final String message;
@@ -110,6 +119,10 @@ abstract final class SanitizedRpcFailureFactory {
   static const Set<String> sensitiveMethods = {
     'sudo.respond',
     'secret.respond',
+    // Credential vault: a login / card secret or a master password rides
+    // the params, so a refusal keeps only its code (never Hermes' text).
+    'vault.add',
+    'vault.unlock',
   };
 
   static TuiGatewayRpcError remote(String method, {int? safeCode}) {
@@ -193,6 +206,13 @@ abstract final class TuiGatewayCloseCodes {
 /// health, never for a single good read.
 class GatewayReconnectBackoff {
   static const stableInterval = Duration(seconds: 30);
+
+  /// conn-registry E5: a socket that stayed open this long resets the ladder
+  /// when it is lost. Desktop `RECONNECT_STABLE_OPEN_MS` = 5 000
+  /// (apps/shared/src/reconnect-backoff.ts:33): with 30 s a network that
+  /// drops every few seconds pushed every gap to the 15 s ceiling and kept
+  /// the chat disconnected longer than the outage itself.
+  static const stableOpenInterval = Duration(seconds: 5);
   static const baseDelay = Duration(milliseconds: 300);
   static const foregroundCap = Duration(seconds: 15);
   static const backgroundCap = Duration(seconds: 60);
@@ -245,6 +265,11 @@ class TuiGatewayEvent {
   final Object? producerChannel;
   final Map<String, dynamic> payload;
 
+  /// dp-G: delivered from a reconnect replay batch (`session.events.since`
+  /// plus the live frames held while it ran), not produced live on this
+  /// socket after the chat was listening.
+  final bool replayed;
+
   const TuiGatewayEvent({
     required this.type,
     required this.sessionId,
@@ -252,7 +277,20 @@ class TuiGatewayEvent {
     this.transportGeneration,
     this.producerChannel,
     required this.payload,
+    this.replayed = false,
   });
+}
+
+/// dp-G: a gateway that can tell whether an event came live on the socket it
+/// holds now, and which replay epoch numbers its per-session sequences.
+abstract interface class HermesDesktopLiveTransportGateway {
+  /// [generation]/[producerChannel] are the socket this client holds now and
+  /// it is connected.
+  bool isCurrentLiveTransport(int? generation, Object? producerChannel);
+
+  /// Epoch of the server's per-session sequence numbers (they restart when
+  /// it rotates).
+  String get currentReplayEpoch;
 }
 
 int? _protocolInteger(Object? value, {bool positive = false}) {
@@ -553,6 +591,15 @@ abstract class HermesDesktopRosterBoundRecoveryGateway {
   bool consumeRosterBoundViewerAttachment(DesktopRosterBoundRecovery recovery);
 }
 
+/// Proof carried by a canonical recovery: the exact socket the snapshot was
+/// cut on. A snapshot from another socket cannot be consumed.
+final class _CanonicalRecoveryProof {
+  final int generation;
+  final WebSocketChannel channel;
+  final int token;
+  const _CanonicalRecoveryProof(this.generation, this.channel, this.token);
+}
+
 final class DesktopRosterBoundRecovery {
   final DesktopSessionSnapshot snapshot;
   final Object _issuer;
@@ -655,6 +702,12 @@ abstract class HermesDesktopInteractivePromptGateway {
     String answer, {
     String? questionId,
   });
+
+  /// Skips the whole question and only it: the turn goes on (Desktop
+  /// `skipClarify`, `store/clarify.ts:231-249`, answers the server request
+  /// with `{}`). Hermes settles a reply without `answers` as `cancelled`
+  /// and keeps the answers already locked (`tools/clarify_batch.py:15-31`).
+  Future<DesktopPromptResponse> skipClarify(String requestId);
 
   Future<DesktopPromptResponse> respondToSudo(
     String requestId,
@@ -1064,6 +1117,73 @@ final class DesktopSubagentSnapshot {
 
   @override
   String toString() => 'DesktopSubagentSnapshot(status: $status)';
+}
+
+/// A delegation task that ended badly, as `subagent.list` persists it in
+/// `delegations` (the live roster forgets ended children and dies with a
+/// renderer reload). One entry per failed task; a batch can carry several
+/// under the same [delegationId].
+final class DesktopFailedDelegation {
+  final String delegationId;
+  final int taskIndex;
+  final String status;
+  final String goal;
+  final String? error;
+  final DateTime? dispatchedAt;
+  final DateTime? completedAt;
+
+  const DesktopFailedDelegation({
+    required this.delegationId,
+    required this.taskIndex,
+    required this.status,
+    required this.goal,
+    this.error,
+    this.dispatchedAt,
+    this.completedAt,
+  });
+
+  /// `delegation_id` + `task_index`: unique within one list.
+  String get stableId => '$delegationId#$taskIndex';
+
+  Duration? get duration {
+    final start = dispatchedAt;
+    final end = completedAt;
+    if (start == null || end == null || end.isBefore(start)) return null;
+    return end.difference(start);
+  }
+
+  static DesktopFailedDelegation? tryParse(Object? raw) {
+    if (raw is! Map) return null;
+    final json = <String, dynamic>{};
+    for (final entry in raw.entries) {
+      if (entry.key is String) json[entry.key as String] = entry.value;
+    }
+    final delegationId = _subagentOpaqueId(json['delegation_id']);
+    if (delegationId == null) return null;
+    final index = _subagentNonNegativeInt(json['task_index']) ?? 0;
+    final status = _boundedSubagentText(json['status'], 32)?.toLowerCase();
+    return DesktopFailedDelegation(
+      delegationId: delegationId,
+      taskIndex: index,
+      status: status ?? 'failed',
+      goal: _boundedSubagentText(json['goal'], 1024) ?? '',
+      error: _boundedSubagentText(json['error'], 2048),
+      dispatchedAt: _subagentTimestamp(json['dispatched_at']),
+      completedAt: _subagentTimestamp(json['completed_at']),
+    );
+  }
+
+  @override
+  String toString() => 'DesktopFailedDelegation(status: $status)';
+}
+
+/// Failed delegations persisted by the server (`subagent.list` →
+/// `delegations`). Separate from [HermesDesktopSubagentGateway] so older
+/// gateways and fakes keep working: absent field means no rows.
+abstract class HermesDesktopFailedDelegationGateway {
+  Future<List<DesktopFailedDelegation>> listFailedDelegations(
+    String runtimeSessionId,
+  );
 }
 
 final class DesktopSubagentTailResult {
@@ -1484,6 +1604,7 @@ class TuiGatewayClient
     implements
         ConnectionLinkSource,
         ServerStartingLinkSource,
+        LinkHistorySource,
         HermesConnectionRequestGateway,
         HermesDelegationGateway,
         HermesDesktopGateway,
@@ -1505,6 +1626,7 @@ class TuiGatewayClient
         HermesDesktopRecoverySessionLifecycleGateway,
         HermesDesktopRosterBoundRecoveryGateway,
         HermesDesktopTypedRecoveryGateway,
+        HermesDesktopLiveTransportGateway,
         HermesDesktopConfiguredSessionLifecycleGateway,
         HermesDesktopLifecycleGateway,
         HermesDesktopIdempotentGateway,
@@ -1530,12 +1652,15 @@ class TuiGatewayClient
         HermesDesktopCompressionGateway,
         HermesDesktopApprovalResultGateway,
         HermesDesktopSubagentGateway,
+        HermesDesktopFailedDelegationGateway,
         HermesDesktopProcessStopGateway,
         HermesDesktopControlGateway,
         HermesDesktopTurnSideGateway,
         HermesDesktopSessionControlGateway,
         HermesProjectManagementGateway,
         HermesPullRequestGateway,
+        HermesGitReviewGateway,
+        HermesGitHubGateway,
         HermesForeignSessionGateway,
         HermesMessageReactionGateway,
         HermesProjectCreationGateway,
@@ -1580,6 +1705,10 @@ class TuiGatewayClient
   static const sessionCompressRpcTimeout = Duration(seconds: 690);
 
   final SavedConnection _connection;
+
+  /// The saved connection this client talks to; screens opened from a
+  /// gateway (the Plugin Hub of Extensions) build their own transports from it.
+  SavedConnection get connection => _connection;
 
   /// `[QA-NET]` labels only (never behaviour): the pool sets the lane
   /// (`chat`, `observer`; a client of its own is `own`) and chat profile.
@@ -1780,8 +1909,7 @@ class TuiGatewayClient
   int? _authLatchEpoch;
 
   bool get _authLatched =>
-      _authLatchEpoch != null &&
-      _authLatchEpoch == _dashboard.credentialEpoch;
+      _authLatchEpoch != null && _authLatchEpoch == _dashboard.credentialEpoch;
 
   @override
   Listenable get linkListenable => _link;
@@ -1796,6 +1924,8 @@ class TuiGatewayClient
   @override
   bool get linkParked => _parked;
   bool _parked = false;
+  @override
+  bool get linkHasBeenUp => _hasBeenUp;
 
   /// The one redial this client schedules for the current backoff gap. Owners
   /// that call [connect] meanwhile wait on [_redialGate]; nothing else dials.
@@ -1811,9 +1941,39 @@ class TuiGatewayClient
   String? _replayEpoch;
 
   /// Current replay authority domain; rotates with every socket generation.
+  @override
   String get currentReplayEpoch => _replayEpoch ?? 'legacy:$_socketGeneration';
+
+  @override
+  bool isCurrentLiveTransport(int? generation, Object? producerChannel) =>
+      _connected &&
+      generation == _socketGeneration &&
+      producerChannel != null &&
+      identical(producerChannel, _channel);
   bool _connectionReplayCapable = false;
   bool _connectionChangeEvents = false;
+
+  /// `gateway.ready.session_authority` of the CURRENT connection. Reset on
+  /// every dial: a redial can land on an endpoint with another capability.
+  SessionAuthorityCapability _sessionAuthority =
+      SessionAuthorityCapability.unknown;
+
+  /// What the current connection announced about the canonical session
+  /// authority. Only [SessionAuthorityCapability.supported] selects the
+  /// canonical wire; every other value keeps the standalone behaviour.
+  SessionAuthorityCapability get sessionAuthority => _sessionAuthority;
+
+  bool get usesCanonicalSessions => _sessionAuthority.isCanonical;
+
+  /// Synchronization state of every canonical session attached on the
+  /// current connection, keyed by durable session id. Dropped with the
+  /// connection: the authority detaches a closed socket's subscriptions.
+  final Map<String, CanonicalSessionLedger> _canonicalLedgers =
+      <String, CanonicalSessionLedger>{};
+
+  @visibleForTesting
+  CanonicalSessionLedger? canonicalLedgerForTesting(String sessionId) =>
+      _canonicalLedgers[sessionId];
 
   /// `gateway.ready.change_events` of the current connection: the backend
   /// broadcasts sessions/cron/process changes, so polls can be demoted to slow
@@ -1832,6 +1992,7 @@ class TuiGatewayClient
     Duration heartbeatInterval = const Duration(seconds: 15),
     Duration heartbeatDeadline = defaultHeartbeatDeadline,
     Duration probeNowDeadline = const Duration(seconds: 5),
+    Duration probeNowStaleDeadline = const Duration(seconds: 2),
     Duration probeNowRecentInbound = const Duration(seconds: 3),
     Duration probeNowRetryDelay = const Duration(seconds: 3),
     Duration? fanoutInactivityDeadline,
@@ -1846,6 +2007,7 @@ class TuiGatewayClient
        _heartbeatInterval = heartbeatInterval,
        _heartbeatDeadline = heartbeatDeadline,
        _probeNowDeadline = probeNowDeadline,
+       _probeNowStaleDeadline = probeNowStaleDeadline,
        _probeNowRecentInbound = probeNowRecentInbound,
        _probeNowRetryDelay = probeNowRetryDelay,
        _fanoutInactivityDeadline =
@@ -1888,6 +2050,33 @@ class TuiGatewayClient
   /// True while the owner is waiting out a reconnect backoff.
   bool get isBackingOff => reconnectBackoffRemaining > Duration.zero;
 
+  bool _backgroundParked = false;
+
+  /// A chat owner parked in the background cannot be dialled by a poller,
+  /// network wake, or an old backoff timer. Resume releases the gate so
+  /// explicit actions can dial while the coalesced idle read is pending.
+  /// Keep a healthy stream through brief pickers without redialling a loss.
+  void suspendBackgroundReconnects() {
+    if (_closed || _backgroundParked) return;
+    _backgroundParked = true;
+    _cancelRedial(const TuiGatewayRpcError(
+      'connect', 'Background transport suspended',
+      failureKind: TuiGatewayRpcFailureKind.connectionLost,
+    ));
+  }
+
+  void setBackgroundParked(bool parked) {
+    if (_closed) return;
+    if (_backgroundParked == parked && (!parked || _parked)) return;
+    _backgroundParked = parked;
+    if (parked) {
+      unawaited(disconnectIdle().catchError((Object _) {}));
+    } else {
+      _reconnectBackoff.markHealthy();
+      _backoffUntil = null;
+    }
+  }
+
   /// The platform reported a new default network (rl1215). The backoff ladder
   /// measured the old path (a Wi-Fi/cellular switch kills every socket and
   /// can push it to its ceiling); keeping it would make lazy RPCs fail fast
@@ -1895,13 +2084,37 @@ class TuiGatewayClient
   /// It never closes a socket (a half-open one is the probe's job) and only
   /// redials for owners already waiting on the gap.
   void resetReconnectBackoffForNetworkChange() {
-    if (_closed) return;
+    if (_closed || _backgroundParked) return;
     _reconnectBackoff.markHealthy();
     _backoffUntil = null;
-    // Owners already waiting for the gap redial on the new path at once.
-    if (_redialGate != null) {
+    // Owners already waiting for the gap, and a chat socket's own redial
+    // timer (which may hold a background gap of up to 60 s), redial on the
+    // new path at once.
+    if (_redialGate != null || _redialTimer != null) {
       unawaited(_dialAndRelease().catchError((Object _) {}));
     }
+  }
+
+  /// A socket parked by [disconnectIdle] comes back with the app: one dial
+  /// without a loss noted (the status registry keeps the last state, and
+  /// only a failed dial changes it). The chats riding a multiplexed socket
+  /// learn first that their runtimes went with the parked socket, so they
+  /// re-attach over the new one by their usual recovery path instead of
+  /// waiting on a runtime that no longer exists.
+  Future<void> redialParked() {
+    if (_closed || _backgroundParked || !_parked || _connected) {
+      return Future<void>.value();
+    }
+    if (_multiplexed && !_events.isClosed) {
+      _events.addError(
+        const TuiGatewayRpcError(
+          'gateway.transport',
+          'Hermes Desktop socket was parked in the background',
+          failureKind: TuiGatewayRpcFailureKind.connectionLost,
+        ),
+      );
+    }
+    return connect().then<void>((_) {}, onError: (Object _) {});
   }
 
   /// Explicit connect of an owner (ActiveChat recovery, warm-up, the Home and
@@ -1951,10 +2164,25 @@ class TuiGatewayClient
       return Future.error(StateError('Hermes Desktop gateway is closed'));
     }
     if (_connected) return Future.value();
+    if (_backgroundParked) {
+      return Future.error(const TuiGatewayRpcError(
+        'connect', 'Background transport parked',
+        failureKind: TuiGatewayRpcFailureKind.connectionLost,
+      ));
+    }
     return _connecting;
   }
 
   Future<void> _dialNow() {
+    if (_backgroundParked) {
+      return Future.error(
+        const TuiGatewayRpcError(
+          'connect',
+          'Background transport parked',
+          failureKind: TuiGatewayRpcFailureKind.connectionLost,
+        ),
+      );
+    }
     if (_authLatched) return Future.error(_authLatchError());
     final future = _connectOnce();
     _connecting = future;
@@ -2021,14 +2249,17 @@ class TuiGatewayClient
 
   /// Arms the reconnect backoff once per socket generation. The attempt
   /// counter only resets when the lost socket had been up for
-  /// [GatewayReconnectBackoff.stableInterval].
+  /// [GatewayReconnectBackoff.stableOpenInterval].
   void _noteTransportLoss(int generation) {
-    if (_closed || _lossNotedGeneration == generation) return;
+    if (_closed || _backgroundParked || _lossNotedGeneration == generation) {
+      return;
+    }
     _lossNotedGeneration = generation;
     final since = _connectedAt;
     _connectedAt = null;
     if (since != null &&
-        _now().difference(since) >= GatewayReconnectBackoff.stableInterval) {
+        _now().difference(since) >=
+            GatewayReconnectBackoff.stableOpenInterval) {
       _reconnectBackoff.markHealthy();
     }
     final delay = _reconnectBackoff.nextDelay();
@@ -2067,7 +2298,8 @@ class TuiGatewayClient
   /// ([_cancelRedial]) and bump the socket generation, so no loss is noted
   /// for a socket they retired.
   void _armOwnRedial(Duration delay) {
-    if (!redialWhenIdle ||
+    if (_backgroundParked ||
+        !redialWhenIdle ||
         !_hasBeenUp ||
         _authLatched ||
         _redialTimer != null) {
@@ -2125,6 +2357,9 @@ class TuiGatewayClient
     try {
       auth = await _dashboard.webSocketAuth();
     } catch (error, stackTrace) {
+      if (_closed || generation != _socketGeneration) {
+        throw StateError('Hermes Desktop connection was cancelled');
+      }
       // Only a rejected credential is an auth failure; a ticket request that
       // timed out or never reached the Dashboard is transport.
       GatewaySocketMeter.instance.recordTicketFailure(
@@ -2177,6 +2412,8 @@ class TuiGatewayClient
     }
     _connectionReplayCapable = false;
     _connectionChangeEvents = false;
+    _sessionAuthority = SessionAuthorityCapability.unknown;
+    _canonicalLedgers.clear();
     final gatewayReady = Completer<void>();
     // Socket callbacks may fail readiness before channel.ready settles. Attach a
     // handler immediately so the original upgrade error remains the connect
@@ -2288,6 +2525,8 @@ class TuiGatewayClient
     if (generation != _socketGeneration || !identical(_channel, channel)) {
       return;
     }
+    // A new socket: until this backend says it counts declines, none is sent.
+    _backendCountsDeclines = false;
     try {
       final advertisement = _requestConnected(
         'client.capabilities',
@@ -2295,7 +2534,13 @@ class TuiGatewayClient
         timeout: const Duration(seconds: 10),
       );
       unawaited(
-        advertisement.then<void>((_) {}, onError: (Object _, StackTrace _) {}),
+        advertisement.then<void>((result) {
+          if (generation != _socketGeneration ||
+              !identical(_channel, channel)) {
+            return;
+          }
+          _backendCountsDeclines = result['declines_not_shown'] == true;
+        }, onError: (Object _, StackTrace _) {}),
       );
     } catch (_) {
       // Capability discovery is optional and must not own transport readiness.
@@ -2314,24 +2559,88 @@ class TuiGatewayClient
     return error.runtimeType.toString();
   }
 
+  /// Frames still being decoded off the main isolate, or queued behind one
+  /// so this socket's frames are delivered in wire order.
+  int _inboundDeferred = 0;
+  Future<void> _inboundTail = Future<void>.value();
+
   void _handleFrame(int generation, WebSocketChannel channel, dynamic raw) {
     if (generation != _socketGeneration || !identical(_channel, channel)) {
       return;
     }
-    try {
-      final decodeWatch = GatewaySocketMeter.instance.enabled
-          ? (Stopwatch()..start())
-          : null;
-      final parsed = JsonRpcWireDecoder.decodeTransportFrame(
-        raw,
-        replayCapable: _connectionReplayCapable,
-      );
-      if (decodeWatch != null && raw is String && raw.length > 4096) {
-        GatewaySocketMeter.instance.recordDecode(
-          decodeWatch.elapsedMilliseconds,
-          raw.length,
-        );
+    final offMain = raw is String && raw.length > kJsonDecodeOffMainBytes;
+    if (!offMain && _inboundDeferred == 0) {
+      _deliverFrame(generation, channel, () => _decodeFrame(raw));
+      return;
+    }
+    // A large frame (the transcript of a long session, a big replay batch)
+    // is parsed in a short-lived isolate, as the HTTP reads above the same
+    // size are: the main isolate is the UI thread. Every frame after it on
+    // this socket waits behind it, small or not, so a notification of the
+    // same session cannot overtake the response it follows. The frame itself
+    // already proves the socket alive, whatever it decodes to.
+    _lastInboundAt = _now();
+    _lastFrameAt = _lastInboundAt;
+    _heartbeatAwaitingReply = false;
+    final replayCapable = _connectionReplayCapable;
+    _inboundDeferred += 1;
+    _inboundTail = _inboundTail.then((_) async {
+      JsonRpcWireFrame? parsed;
+      Object? failure;
+      StackTrace? failureTrace;
+      try {
+        parsed = offMain
+            ? await JsonRpcWireDecoder.decodeTransportFrameOffMain(
+                raw,
+                replayCapable: replayCapable,
+              )
+            : JsonRpcWireDecoder.decodeTransportFrame(
+                raw,
+                replayCapable: replayCapable,
+              );
+      } catch (error, stackTrace) {
+        failure = error;
+        failureTrace = stackTrace;
       }
+      _inboundDeferred -= 1;
+      if (generation != _socketGeneration || !identical(_channel, channel)) {
+        return;
+      }
+      final failed = failure;
+      final failedTrace = failureTrace;
+      _deliverFrame(generation, channel, () {
+        if (failed != null) Error.throwWithStackTrace(failed, failedTrace!);
+        return parsed;
+      });
+    });
+  }
+
+  JsonRpcWireFrame? _decodeFrame(dynamic raw) {
+    final decodeWatch = GatewaySocketMeter.instance.enabled
+        ? (Stopwatch()..start())
+        : null;
+    final parsed = JsonRpcWireDecoder.decodeTransportFrame(
+      raw,
+      replayCapable: _connectionReplayCapable,
+    );
+    if (decodeWatch != null && raw is String && raw.length > 4096) {
+      GatewaySocketMeter.instance.recordDecode(
+        decodeWatch.elapsedMilliseconds,
+        raw.length,
+      );
+    }
+    return parsed;
+  }
+
+  /// Delivers one decoded frame; [decode] throws for a malformed one, which
+  /// drops the socket as before.
+  void _deliverFrame(
+    int generation,
+    WebSocketChannel channel,
+    JsonRpcWireFrame? Function() decode,
+  ) {
+    try {
+      final parsed = decode();
       if (parsed == null) return;
       _lastInboundAt = _now();
       _lastFrameAt = _lastInboundAt;
@@ -2422,6 +2731,9 @@ class TuiGatewayClient
           _replayEpoch = null;
         }
         _connectionChangeEvents = payload['change_events'] == true;
+        _sessionAuthority = SessionAuthorityCapability.fromReadyPayload(
+          payload,
+        );
         if (payload['heartbeat'] == true) _startHeartbeat(generation, channel);
         final ready = _gatewayReadyCompleter;
         if (ready != null && !ready.isCompleted) ready.complete();
@@ -2446,6 +2758,10 @@ class TuiGatewayClient
       }
       final sessionEvent = parsedEvent as SessionGatewayEvent;
       if (_releasedRuntimes[sessionEvent.sessionId] == generation) return;
+      if (_sessionAuthority.isCanonical) {
+        _deliverCanonicalSessionEvent(sessionEvent, generation, channel);
+        return;
+      }
       if (sessionEvent.sequence == null) {
         _dispatchSessionEvent(sessionEvent, generation, channel);
         return;
@@ -2470,8 +2786,9 @@ class TuiGatewayClient
   void _dispatchSessionEvent(
     SessionGatewayEvent sessionEvent,
     int generation,
-    WebSocketChannel channel,
-  ) {
+    WebSocketChannel channel, {
+    bool replayed = false,
+  }) {
     _observeWatchdogEvent(sessionEvent, _now());
     if (_events.isClosed) return;
     _events.add(
@@ -2483,6 +2800,7 @@ class TuiGatewayClient
           transportGeneration: generation,
           producerChannel: channel,
           payload: sessionEvent.payload,
+          replayed: replayed,
         ),
       ),
     );
@@ -2490,6 +2808,19 @@ class TuiGatewayClient
 
   /// Legacy event type each server request kind used to arrive as. The chat
   /// service still consumes those shapes; the transport adapts the v7 frames.
+  /// Answers `preview.read` / `preview.act` for every client (the app's
+  /// agent browser bridge). Null keeps Console's old `no handler` answer.
+  static PreviewRequestBridge? previewRequestBridge;
+
+  /// Ids of `preview.read` / `preview.act` requests the bridge is answering.
+  final Set<String> _previewInFlight = {};
+
+  /// This backend answered `client.capabilities` with `declines_not_shown`:
+  /// it counts a 4404 as one client declining. An older one settles on the
+  /// first error, so Console then sends no decline at all, as Desktop
+  /// (`json-rpc-channel.ts` `decline`, REVIEW-R5-B #10).
+  bool _backendCountsDeclines = false;
+
   static const Map<String, String> _serverRequestLegacyEvents = {
     'approval': 'approval.request',
     'clarify': 'clarify.request',
@@ -2538,6 +2869,13 @@ class TuiGatewayClient
   ) {
     final rawSession = frame.params['session_id'];
     final sessionId = rawSession is String ? rawSession.trim() : '';
+    final bridge = previewRequestBridge;
+    if (bridge != null &&
+        sessionId.isNotEmpty &&
+        previewBridgeMethods.contains(frame.method)) {
+      _answerPreviewBridge(bridge, frame, sessionId, generation, channel);
+      return;
+    }
     final legacyType = _serverRequestLegacyEvents[frame.method];
     if (legacyType == null || sessionId.isEmpty) {
       // Same as Desktop's `no handler` path: fail the request so the backend
@@ -2588,6 +2926,69 @@ class TuiGatewayClient
         payload: Map<String, dynamic>.unmodifiable(payload),
       ),
     );
+  }
+
+  /// Answers the in-app browser's window-owned bridges (`preview.read`,
+  /// `preview.act`). Without a [previewRequestBridge] they keep the `no
+  /// handler` answer above. The request is tracked as open so a
+  /// `request.cancel` withdraws it before anything is read; a decline is
+  /// Desktop's NOT_SHOWN answer, so a Desktop window showing the same chat
+  /// can still answer it.
+  void _answerPreviewBridge(
+    PreviewRequestBridge bridge,
+    JsonRpcServerRequestFrame frame,
+    String sessionId,
+    int generation,
+    WebSocketChannel channel,
+  ) {
+    _openServerRequests[frame.id] = _OpenServerRequest(
+      id: frame.id,
+      method: frame.method,
+      sessionId: sessionId,
+      generation: generation,
+      channel: channel,
+    );
+    // Hermes re-delivers `open_requests` after an idle probe or a reconnect.
+    // A preview request still running here is never run a second time (a
+    // second click or form send, REVIEW-R5-B #9): the running one answers,
+    // on the socket just registered above.
+    if (!_previewInFlight.add(frame.id)) return;
+    final params = Map<String, dynamic>.from(frame.params)
+      ..remove('session_id');
+    unawaited(() async {
+      PreviewBridgeAnswer answer;
+      try {
+        answer = await bridge.answer(
+          PreviewBridgeRequest(
+            method: frame.method,
+            connectionId: _connection.id,
+            sessionId: sessionId,
+            params: Map<String, dynamic>.unmodifiable(params),
+            isOpen: () => _openServerRequests.containsKey(frame.id),
+          ),
+        );
+      } catch (_) {
+        answer = const PreviewBridgeAnswer.notShown();
+      } finally {
+        _previewInFlight.remove(frame.id);
+      }
+      final open = _openServerRequests.remove(frame.id);
+      if (open == null) return;
+      // An older backend would take the decline as the answer and fail a
+      // Desktop window that does show the page: stay silent there.
+      if (answer.notShown && !_backendCountsDeclines) return;
+      _writeServerRequestFrame(open.generation, open.channel, {
+        'jsonrpc': '2.0',
+        'id': frame.id,
+        if (answer.notShown)
+          'error': {
+            'code': previewNotShownCode,
+            'message': 'This window is not showing the session.',
+          }
+        else
+          'result': {'value': answer.value},
+      });
+    }());
   }
 
   void _deliverOpenServerRequests(
@@ -2824,7 +3225,12 @@ class TuiGatewayClient
             if (decision is ReplayBatchCommit &&
                 !_replayCoordinator.isQuarantined(entry.key)) {
               for (final replayed in [...decision.replay, ...decision.held]) {
-                _dispatchSessionEvent(replayed, generation, channel);
+                _dispatchSessionEvent(
+                  replayed,
+                  generation,
+                  channel,
+                  replayed: true,
+                );
               }
             }
           } catch (_) {
@@ -2977,6 +3383,7 @@ class TuiGatewayClient
       debugPrint(
         '[tui-gateway] WebSocket closed '
         '(reason=on_done, closeCode=${channel.closeCode ?? 'none'}, '
+        'origin=unknown, background=$_backgroundParked, '
         'generation=$generation)',
       );
     }
@@ -2994,7 +3401,10 @@ class TuiGatewayClient
           channel,
           subscription,
           closeCode: TuiGatewayCloseCodes.normal,
-          closeReason: 'peer_closed',
+          // dart:io also ends the stream with 1002 for a local decoder/read
+          // error, without forwarding onError. onDone does not identify the
+          // initiator; deliberate app closes are generation-fenced above.
+          closeReason: 'stream_done',
         ),
       );
     }
@@ -3079,6 +3489,18 @@ class TuiGatewayClient
   int _probeNowFlightGeneration = -1;
   final Duration _probeNowDeadline;
 
+  /// The probe's deadline when no frame arrived for a whole heartbeat
+  /// deadline: the isolate was frozen (or the socket died in silence) and
+  /// the usual 5 s would only delay the redial the screens are waiting for.
+  final Duration _probeNowStaleDeadline;
+
+  /// No frame for [_heartbeatDeadline] while still «connected»: only a frozen
+  /// isolate (or a socket that died without a close) gets here, since the
+  /// heartbeat would otherwise have cut the socket.
+  bool get _inboundStale =>
+      _heartbeatDeadline > Duration.zero &&
+      _now().difference(_lastFrameAt) >= _heartbeatDeadline;
+
   /// Un frame recibido hace menos de esto ya prueba que el socket vive.
   final Duration _probeNowRecentInbound;
 
@@ -3154,11 +3576,12 @@ class TuiGatewayClient
     bool retried = false,
   }) async {
     final probeStartedAt = _now();
+    final stale = _inboundStale;
     try {
       await _requestConnected(
         'gateway.ping',
         const <String, dynamic>{},
-        timeout: _probeNowDeadline,
+        timeout: stale ? _probeNowStaleDeadline : _probeNowDeadline,
       );
       GatewaySocketMeter.instance.recordProbe(ok: true);
       return true;
@@ -3642,9 +4065,679 @@ class TuiGatewayClient
     return _requestConnected(method, params, timeout: timeout);
   }
 
+  // ---------------------------------------------------------------------
+  // Canonical session authority (negotiated per connection; see
+  // session_authority.dart). Nothing below runs unless the CURRENT
+  // connection announced `gateway.ready.session_authority: true`.
+  // ---------------------------------------------------------------------
+
+  int _canonicalSubmissionCounter = 0;
+
+  /// Images staged by `image.attach_bytes` that no admitted submit named yet,
+  /// per session. They are references to files on the server, so they outlive
+  /// a redial; the submit that carries them consumes them.
+  final Map<String, List<Map<String, String>>> _canonicalStagedImages = {};
+  static const int _maxStagedCanonicalImages = 32;
+
+  String _newCanonicalSubmissionId() {
+    _canonicalSubmissionCounter += 1;
+    return 'sub-${DateTime.now().microsecondsSinceEpoch.toRadixString(36)}'
+        '-${_canonicalSubmissionCounter.toRadixString(36)}';
+  }
+
+  Future<bool> _canonicalNow() async {
+    if (_sessionAuthority == SessionAuthorityCapability.unknown) {
+      await _connectForRequest('gateway.connect');
+    }
+    return _sessionAuthority.isCanonical;
+  }
+
+  /// The prompts the authority still holds open for [runtime], read from a
+  /// fresh attach (its snapshot is one atomic cut), never from a guess.
+  Future<List<Map<String, dynamic>>> _canonicalOpenRequests(
+    String runtime,
+  ) async {
+    final known = _canonicalLedgers[runtime];
+    if (known == null) return const [];
+    await _resumeCanonical(runtime, profile: known.profile, omitMessages: true);
+    final fresh = _canonicalLedgers[runtime];
+    if (fresh == null || !fresh.isReady) return const [];
+    return [
+      for (final prompt in fresh.prompts.values)
+        <String, dynamic>{
+          'id': prompt.promptId,
+          'method': prompt.kind,
+          'params': <String, dynamic>{
+            'session_id': runtime,
+            ...prompt.toLegacyRequestPayload(),
+          },
+        },
+    ];
+  }
+
+  /// Answers one canonical prompt. The identity and generation come from the
+  /// ledger entry that was shown; an unknown or retired prompt is `expired`
+  /// locally and nothing is sent.
+  Future<Map<String, dynamic>?> _answerCanonicalPrompt({
+    required String method,
+    required String kind,
+    required String? session,
+    required String promptId,
+    required String value,
+  }) async {
+    CanonicalSessionLedger? ledger;
+    if (session != null) {
+      ledger = _readyCanonicalLedger(method, session);
+    } else {
+      for (final candidate in _canonicalLedgers.values) {
+        if (candidate.isReady && candidate.prompts.containsKey(promptId)) {
+          ledger = candidate;
+        }
+      }
+    }
+    final prompt = ledger?.prompts[promptId];
+    if (ledger == null || prompt == null || prompt.kind != kind) return null;
+    final generation = _socketGeneration;
+    final result = await _requestConnected(
+      method,
+      kind == 'approval'
+          ? CanonicalWire.approval(
+              sessionId: ledger.sessionId,
+              generation: prompt.executionGeneration,
+              promptId: promptId,
+              choice: value,
+              profile: ledger.profile,
+            )
+          : CanonicalWire.clarify(
+              sessionId: ledger.sessionId,
+              generation: prompt.executionGeneration,
+              promptId: promptId,
+              answer: value,
+              profile: ledger.profile,
+            ),
+    );
+    if (generation == _socketGeneration &&
+        result['prompt_id'] == promptId &&
+        (result['status'] == 'resolved' ||
+            result['status'] == 'already_resolved')) {
+      ledger.prompts.remove(promptId);
+    }
+    return result;
+  }
+
+  TuiGatewayRpcError _canonicalExpired(String method) => TuiGatewayRpcError(
+    method,
+    'The question is no longer open',
+    data: const <String, dynamic>{'reason': 'prompt_expired'},
+    origin: CompressionFailureOrigin.localPreflight,
+  );
+
+  TuiGatewayRpcError _canonicalUnsupported(String method, String detail) =>
+      TuiGatewayRpcError(
+        method,
+        'Not available on the canonical session authority: $detail',
+        data: <String, dynamic>{'reason': 'canonical_operation_unsupported'},
+        origin: CompressionFailureOrigin.localPreflight,
+      );
+
+  CanonicalSessionLedger _readyCanonicalLedger(String method, String session) {
+    final ledger = _canonicalLedgers[session.trim()];
+    if (ledger == null || !ledger.isSendReady) {
+      // A socket that is merely connected is not hydrated: the authority
+      // refuses a submitter it never attached (`permission_denied`).
+      throw TuiGatewayRpcError(
+        method,
+        'Canonical session is not synchronized',
+        code: 4001,
+        data: const <String, dynamic>{'reason': 'session_not_hydrated'},
+        origin: CompressionFailureOrigin.localPreflight,
+      );
+    }
+    return ledger;
+  }
+
+  /// `session.create` on the authority (`CanonicalCreateParams`: a closed key
+  /// set and a creating surface; Desktop's own is `gui`). It answers the same
+  /// snapshot as a resume and attaches the caller, so the new session starts
+  /// with a proven cut. Settings with no canonical field (fast mode, seeded
+  /// rows) are never sent under another name: seeded rows are refused, fast
+  /// mode is not applied at creation.
+  Future<DesktopSessionSnapshot> _createCanonical({
+    required String profile,
+    required List<Map<String, dynamic>> seedMessages,
+    String? model,
+    DesktopSessionCreateConfig config = const DesktopSessionCreateConfig(),
+  }) async {
+    const method = 'session.create';
+    if (seedMessages.isNotEmpty) {
+      throw _canonicalUnsupported(method, 'creating a session from seed rows');
+    }
+    String? safe(String? value, int max) {
+      final text = value?.trim() ?? '';
+      return text.isNotEmpty &&
+              text.length <= max &&
+              !text.codeUnits.any((unit) => unit < 0x20 || unit == 0x7f)
+          ? text
+          : null;
+    }
+
+    final selection = config.model;
+    final title = safe(config.title, 256);
+    final workspace = safe(config.workspace, 4096);
+    final modelId = selection?.modelId ?? model;
+    final wireProfile = profile.trim();
+    final generation = _socketGeneration;
+    final channel = _channel;
+    final result = await _requestConnected(method, <String, dynamic>{
+      'source': 'gui',
+      'request_id': _newCanonicalSubmissionId(),
+      if (wireProfile.isNotEmpty) 'profile': wireProfile,
+      'title': ?title,
+      if (workspace != null) ...{'cwd': workspace, 'cwd_explicit': true},
+      if (config.hidden) 'hidden': true,
+      if (config.followProfileConfig) 'follow_profile_config': true,
+      'model': ?modelId,
+      if (selection != null) 'provider': selection.providerSlug,
+      if (config.reasoningEffort case final effort?) 'reasoning': effort.wire,
+    });
+    if (generation != _socketGeneration || !identical(_channel, channel)) {
+      throw const TuiGatewayRpcError(
+        method,
+        'Connection lost before JSON-RPC response',
+        failureKind: TuiGatewayRpcFailureKind.connectionLost,
+      );
+    }
+    final CanonicalSnapshot snapshot;
+    try {
+      snapshot = CanonicalSnapshot.parse(result);
+    } on FormatException {
+      throw const TuiGatewayRpcError(
+        method,
+        'Hermes returned an invalid session snapshot',
+        origin: CompressionFailureOrigin.malformed,
+      );
+    }
+    final ledger = CanonicalSessionLedger(
+      sessionId: snapshot.sessionId,
+      profile: wireProfile,
+    );
+    _canonicalLedgers[snapshot.sessionId] = ledger;
+    ledger.beginHydration();
+    final held = ledger.completeHydration(snapshot);
+    final typed = _parseSessionSnapshot(
+      snapshot.toBindingJson(result),
+      requestedStoredSessionId: '',
+      created: true,
+      method: method,
+      rememberLegacyRuntime: false,
+    );
+    _dispatchHeldCanonicalFrames(held, generation, channel!);
+    return typed;
+  }
+
+  Future<DesktopSessionBinding> _resumeCanonical(
+    String storedSessionId, {
+    required String profile,
+    bool omitMessages = false,
+    bool deferHistory = false,
+    bool deferDispatch = false,
+  }) async {
+    final snapshot = await _resumeCanonicalSnapshot(
+      storedSessionId,
+      profile: profile,
+      omitMessages: omitMessages,
+      deferHistory: deferHistory,
+      deferDispatch: deferDispatch,
+    );
+    final binding = DesktopSessionBinding.fromSnapshot(snapshot);
+    final token = _adoptionTokens[snapshot];
+    if (token != null) _adoptionTokens[binding] = token;
+    return binding;
+  }
+
+  /// Adoption tokens of deferred canonical attaches, by the typed snapshot the
+  /// owner received. Only the owner that holds that exact snapshot can commit
+  /// or release it.
+  final Expando<int> _adoptionTokens = Expando<int>('canonical adoption');
+
+  /// Chats that own the recovery of a canonical session (they listen to this
+  /// client's events and re-attach themselves after a loss). While a session
+  /// has an owner, its attaches are held until the owner adopts them and the
+  /// client never re-attaches it on its own: one recovery owner. A client
+  /// without an owner (standalone, directly constructed) keeps both duties.
+  final Map<String, Object> _canonicalOwners = <String, Object>{};
+
+  void claimCanonicalOwner(String sessionId, Object owner) {
+    if (sessionId.isEmpty) return;
+    _canonicalOwners[sessionId] = owner;
+  }
+
+  /// The owner went away: drops its claims and any adoption it still owed.
+  void releaseCanonicalOwner(Object owner) {
+    final ids = [
+      for (final e in _canonicalOwners.entries)
+        if (identical(e.value, owner)) e.key,
+    ];
+    for (final id in ids) {
+      _canonicalOwners.remove(id);
+      final ledger = _canonicalLedgers[id];
+      if (ledger != null && ledger.awaitingAdoption) {
+        ledger.releaseAdoption(ledger.adoptionToken);
+      }
+    }
+  }
+
+  bool hasCanonicalOwner(String sessionId) =>
+      _canonicalOwners.containsKey(sessionId);
+
+  /// The owner applied the snapshot it holds: the frames held since its cut
+  /// are judged now. A stale snapshot (a newer attach superseded it) is a
+  /// no-op and returns false.
+  bool commitCanonicalAdoption(
+    DesktopSessionSnapshot snapshot, {
+    bool requirePending = false,
+  }) {
+    final token = _adoptionTokens[snapshot];
+    // Default callers retain the no-op success; idle following needs proof
+    // that this exact snapshot actually owned a deferred adoption.
+    if (token == null) return !requirePending;
+    final id = snapshot.storedSessionId;
+    final ledger = _canonicalLedgers[id];
+    if (ledger == null || ledger.adoptionToken != token) return false;
+    _commitCanonicalAdoption(id, token: token);
+    return true;
+  }
+
+  /// The chat's own admission (submitted here and followed by the ledger) has
+  /// not reached its terminal: nothing queued may be admitted behind it yet.
+  bool canonicalOwnTurnAwaitsTerminal(String sessionId) {
+    final ledger = _canonicalLedgers[sessionId];
+    return ledger != null && ledger.isReady && ledger.trackedAdmission != null;
+  }
+
+  /// The owner gave a deferred snapshot up without adopting it.
+  void releaseCanonicalAdoption(DesktopSessionSnapshot snapshot) {
+    final token = _adoptionTokens[snapshot];
+    if (token == null) return;
+    _canonicalLedgers[snapshot.storedSessionId]?.releaseAdoption(token);
+  }
+
+  /// A re-attach the owner asks for (an in-place rehydration keeps its
+  /// runtime): the same bounded attach the client used to start by itself.
+  void reattachCanonicalForOwner(String sessionId) {
+    final ledger = _canonicalLedgers[sessionId];
+    final channel = _channel;
+    if (ledger == null || channel == null || !_connected) return;
+    unawaited(_reattachCanonical(ledger, _socketGeneration, channel));
+  }
+
+  /// The canonical attach, as the typed snapshot. With [deferDispatch] the
+  /// frames that follow the cut stay held by the ledger until the owner calls
+  /// [_commitCanonicalAdoption] (roster-bound recovery commits through
+  /// `consumeRosterBoundRecovery`): a terminal or a question must not be
+  /// consumed before the chat can apply it.
+  Future<DesktopSessionSnapshot> _resumeCanonicalSnapshot(
+    String storedSessionId, {
+    required String profile,
+    bool omitMessages = false,
+    bool deferHistory = false,
+    bool deferDispatch = false,
+  }) async {
+    const method = 'session.resume';
+    final id = storedSessionId.trim();
+    if (id.isEmpty || id != storedSessionId) {
+      throw const TuiGatewayRpcError(
+        method,
+        'Invalid durable session identity',
+      );
+    }
+    final generation = _socketGeneration;
+    final channel = _channel;
+    var ledger = _canonicalLedgers[id];
+    if (ledger == null || ledger.profile != profile.trim()) {
+      // Profile isolation: another profile's state is never reused.
+      ledger = CanonicalSessionLedger(sessionId: id, profile: profile.trim());
+      _canonicalLedgers[id] = ledger;
+    }
+    ledger.beginHydration();
+    final Map<String, dynamic> result;
+    try {
+      result = await _requestConnected(
+        method,
+        CanonicalWire.resume(
+          id,
+          profile: profile,
+          omitMessages: omitMessages,
+          deferHistory: deferHistory,
+        ),
+      );
+    } catch (_) {
+      // Nothing was proven: stay fail-closed until a snapshot lands.
+      if (identical(_canonicalLedgers[id], ledger)) {
+        ledger.requireSnapshot('attach failed');
+      }
+      rethrow;
+    }
+    if (generation != _socketGeneration ||
+        !identical(_channel, channel) ||
+        !identical(_canonicalLedgers[id], ledger)) {
+      throw const TuiGatewayRpcError(
+        method,
+        'Connection lost before JSON-RPC response',
+        failureKind: TuiGatewayRpcFailureKind.connectionLost,
+      );
+    }
+    final CanonicalSnapshot snapshot;
+    try {
+      snapshot = CanonicalSnapshot.parse(result);
+      if (snapshot.sessionId != id) {
+        throw const FormatException('canonical session mismatch');
+      }
+    } on FormatException {
+      ledger.requireSnapshot('invalid snapshot');
+      throw const TuiGatewayRpcError(
+        method,
+        'Hermes returned an invalid session snapshot',
+        origin: CompressionFailureOrigin.malformed,
+      );
+    }
+    final held = ledger.completeHydration(
+      snapshot,
+      deferDispatch: deferDispatch,
+    );
+    final typed = _parseSessionSnapshot(
+      snapshot.toBindingJson(result),
+      requestedStoredSessionId: id,
+      created: false,
+      method: method,
+      rememberLegacyRuntime: false,
+    );
+    _dispatchHeldCanonicalFrames(held, generation, channel!);
+    if (deferDispatch) _adoptionTokens[typed] = ledger.adoptionToken;
+    return typed;
+  }
+
+  void _dispatchHeldCanonicalFrames(
+    List<SessionGatewayEvent> held,
+    int generation,
+    WebSocketChannel channel,
+  ) {
+    if (held.isEmpty) return;
+    // After the caller applied the snapshot, in arrival order, each one
+    // judged against the proven cut (older ones are dropped there).
+    Timer.run(() {
+      if (generation != _socketGeneration || !identical(_channel, channel)) {
+        return;
+      }
+      for (final frame in held) {
+        _deliverCanonicalSessionEvent(frame, generation, channel);
+      }
+    });
+  }
+
+  /// The owner applied the snapshot it got from a deferred attach.
+  void _commitCanonicalAdoption(String sessionId, {int? token}) {
+    final ledger = _canonicalLedgers[sessionId];
+    final channel = _channel;
+    if (ledger == null || channel == null) return;
+    _dispatchHeldCanonicalFrames(
+      ledger.commitAdoption(token: token),
+      _socketGeneration,
+      channel,
+    );
+  }
+
+  void _deliverCanonicalSessionEvent(
+    SessionGatewayEvent event,
+    int generation,
+    WebSocketChannel channel,
+  ) {
+    final ledger = _canonicalLedgers[event.sessionId];
+    if (ledger == null) return; // never attached on this connection
+    switch (ledger.judge(event)) {
+      case CanonicalFrameDisposition.dispatch:
+        _dispatchCanonicalEvent(event, generation, channel);
+      case CanonicalFrameDisposition.drop:
+      case CanonicalFrameDisposition.hold:
+        return;
+      case CanonicalFrameDisposition.snapshotRequired:
+        _requestCanonicalRehydration(ledger.sessionId);
+        // One recovery owner: a chat that owns the session re-attaches it
+        // itself (retiring or keeping its runtime as the state demands).
+        if (!_canonicalOwners.containsKey(ledger.sessionId)) {
+          unawaited(_reattachCanonical(ledger, generation, channel));
+        }
+    }
+  }
+
+  /// Re-attaches a session whose live stream could not be proven, so the
+  /// connection does not stay fail-closed after the owner re-read the durable
+  /// transcript. The fresh snapshot is the new proven cut; prompts it adds or
+  /// retires are surfaced once through the same request events.
+  Future<void> _reattachCanonical(
+    CanonicalSessionLedger ledger,
+    int generation,
+    WebSocketChannel channel,
+  ) async {
+    if (ledger.autoReattaches >= CanonicalSessionLedger.maxAutoReattaches) {
+      return;
+    }
+    ledger.autoReattaches += 1;
+    final before = Map<String, CanonicalPrompt>.of(ledger.prompts);
+    try {
+      await _resumeCanonical(
+        ledger.sessionId,
+        profile: ledger.profile,
+        omitMessages: true,
+      );
+    } catch (_) {
+      return; // still fail-closed; the owner's explicit resume recovers
+    }
+    final fresh = _canonicalLedgers[ledger.sessionId];
+    if (fresh == null ||
+        generation != _socketGeneration ||
+        !identical(_channel, channel) ||
+        _events.isClosed) {
+      return;
+    }
+    for (final prompt in fresh.prompts.values) {
+      if (before.containsKey(prompt.promptId)) continue;
+      _events.add(
+        TuiGatewayEvent(
+          type: '${prompt.kind}.request',
+          sessionId: fresh.sessionId,
+          transportGeneration: generation,
+          producerChannel: channel,
+          payload: Map<String, dynamic>.unmodifiable(
+            prompt.toLegacyRequestPayload(),
+          ),
+        ),
+      );
+    }
+    for (final prompt in before.values) {
+      if (fresh.prompts.containsKey(prompt.promptId)) continue;
+      _events.add(
+        TuiGatewayEvent(
+          type: prompt.isApproval ? 'approval.responded' : 'clarify.expire',
+          sessionId: fresh.sessionId,
+          transportGeneration: generation,
+          producerChannel: channel,
+          payload: Map<String, dynamic>.unmodifiable({
+            'request_id': prompt.promptId,
+            'reason': 'settled',
+          }),
+        ),
+      );
+    }
+  }
+
+  void _dispatchCanonicalEvent(
+    SessionGatewayEvent event,
+    int generation,
+    WebSocketChannel channel,
+  ) {
+    final type = event.type;
+    final promptId = event.payload['prompt_id'];
+    if (type == 'approval.request' || type == 'clarify.request') {
+      final prompt = _canonicalLedgers[event.sessionId]?.prompts[promptId];
+      if (prompt == null || _events.isClosed) return;
+      _events.add(
+        TuiGatewayEvent(
+          type: type,
+          sessionId: event.sessionId,
+          sequence: event.sequence,
+          transportGeneration: generation,
+          producerChannel: channel,
+          payload: Map<String, dynamic>.unmodifiable(
+            prompt.toLegacyRequestPayload(),
+          ),
+        ),
+      );
+      return;
+    }
+    if ((type == 'approval.settled' || type == 'clarify.settled') &&
+        promptId is String) {
+      if (_events.isClosed) return;
+      _events.add(
+        TuiGatewayEvent(
+          type: type == 'approval.settled'
+              ? 'approval.responded'
+              : 'clarify.expire',
+          sessionId: event.sessionId,
+          sequence: event.sequence,
+          transportGeneration: generation,
+          producerChannel: channel,
+          payload: Map<String, dynamic>.unmodifiable({
+            'request_id': promptId,
+            'reason': 'settled',
+          }),
+        ),
+      );
+      return;
+    }
+    _dispatchSessionEvent(event, generation, channel);
+  }
+
+  /// The ledger could not prove contiguity/ownership: the owning chat is told
+  /// (same signal as a withheld live subscription) to re-attach from a fresh
+  /// snapshot. Nothing of the unproven frame was projected.
+  void _requestCanonicalRehydration(String sessionId) {
+    GatewaySocketMeter.instance.noteRehydration('canonical_snapshot_required');
+    if (_events.isClosed) return;
+    _events.addError(
+      TuiGatewayRpcError(
+        'session.events.since',
+        'Hermes Desktop live subscription requires rehydration',
+        failureKind: TuiGatewayRpcFailureKind.connectionLost,
+        data: <String, dynamic>{'session_id': sessionId},
+      ),
+    );
+  }
+
+  /// `prompt.submit` on the canonical wire. The reply is an ADMISSION
+  /// receipt: it is surfaced in the legacy ack shape (`accepted`, never
+  /// `terminal` unless the authority says so) and never starts or ends a turn
+  /// by itself.
+  Future<Map<String, dynamic>> _submitCanonical(
+    Map<String, dynamic> params,
+  ) async {
+    const method = 'prompt.submit';
+    final session = params['session_id'];
+    final text = params['text'];
+    if (session is! String || text is! String) {
+      throw const TuiGatewayRpcError(method, 'Invalid prompt submission');
+    }
+    const routing = {'session_id', 'text', 'client_turn_id', 'queued'};
+    for (final key in params.keys) {
+      if (!routing.contains(key) &&
+          !CanonicalWire.allowedSubmitKeys.contains(key)) {
+        throw _canonicalUnsupported(method, 'submit option "$key"');
+      }
+    }
+    final ledger = _readyCanonicalLedger(method, session);
+    final stagedImages = <Map<String, String>>[
+      if (params['attachments'] == null)
+        ...?_canonicalStagedImages[session.trim()],
+    ];
+    final submission = params['client_turn_id'] is String
+        ? params['client_turn_id'] as String
+        : _newCanonicalSubmissionId();
+    final queued = params['queued'] == true;
+    final generation = _socketGeneration;
+    final result = await _requestConnected(
+      method,
+      CanonicalWire.submit(
+        sessionId: session,
+        text: text,
+        submissionId: submission,
+        profile: ledger.profile,
+        queued: queued,
+        extra: {
+          ...params,
+          if (stagedImages.isNotEmpty) 'attachments': stagedImages,
+        },
+      ),
+    );
+    if (result['voice_stopped'] == true) {
+      throw _canonicalUnsupported(method, 'voice stop is not a turn');
+    }
+    final CanonicalAdmissionReceipt receipt;
+    try {
+      receipt = CanonicalAdmissionReceipt.parse(result);
+    } on FormatException {
+      throw const TuiGatewayRpcError(
+        method,
+        'Hermes returned an invalid admission receipt',
+        origin: CompressionFailureOrigin.malformed,
+      );
+    }
+    if (generation == _socketGeneration &&
+        identical(_canonicalLedgers[session], ledger)) {
+      ledger.noteReceipt(receipt, queued: queued);
+    }
+    if (stagedImages.isNotEmpty && receipt.status != 'unknown') {
+      // Admitted: the authority holds the references now. An `unknown` receipt
+      // keeps them staged for the retry.
+      _canonicalStagedImages[session.trim()]?.removeWhere(
+        stagedImages.contains,
+      );
+    }
+    if (receipt.status == 'unknown') {
+      // The authority lost track of the turn across a restart: the honest
+      // answer is "unresolved", never a success or a failure.
+      throw TuiGatewayRpcError(
+        method,
+        'Hermes could not resolve this admission',
+        data: <String, dynamic>{
+          'reason': 'admission_unknown',
+          'admission_id': receipt.admissionId,
+        },
+      );
+    }
+    return <String, dynamic>{
+      'accepted': true,
+      'client_turn_id': submission,
+      'server_turn_id': receipt.admissionId,
+      'state': switch (receipt.status) {
+        'started' => 'running',
+        'terminal' => 'terminal',
+        _ => 'accepted',
+      },
+      'duplicate': false,
+      'admission_id': receipt.admissionId,
+      'execution_generation': receipt.executionGeneration,
+    };
+  }
+
   Future<Map<String, dynamic>> _requestPromptSubmit(
     Map<String, dynamic> params,
   ) async {
+    // The capability is known once this connection announced `gateway.ready`;
+    // before that the dial is what the standalone path would await anyway.
+    if (_sessionAuthority == SessionAuthorityCapability.unknown) {
+      await _connectForRequest('gateway.connect');
+    }
+    if (_sessionAuthority.isCanonical) return _submitCanonical(params);
     final generation = _socketGeneration;
     final result = await _requestExclusiveSessionMutation(
       'prompt.submit',
@@ -3668,7 +4761,7 @@ class TuiGatewayClient
   /// reasoning and deltas stream again. Only on the socket generation that sent
   /// the request. `session.redirect` is deliberately not a release: it does
   /// not start a new turn (interrupt_control.py:280), so lifting quarantine
-  /// there would be mid-turn after an unproven gap (needs José's OK).
+  /// there would be mid-turn after an unproven gap (needs the owner's OK).
   void _releaseQuarantineForNewTurn(Object? runtime, int generation) {
     if (runtime is! String || generation != _socketGeneration) return;
     if (_replayCoordinator.releaseForNewTurn(runtime)) {
@@ -4937,6 +6030,95 @@ class TuiGatewayClient
         (!readOnly && _capabilityWrites.contains(method));
   }
 
+  static const Set<String> _displayReads = {
+    'display.status',
+    'display.thumbnail',
+  };
+
+  static const Set<String> _displayWrites = {
+    'display.start',
+    'display.observe',
+    'display.lease.acquire',
+    'display.lease.release',
+    'display.stop',
+  };
+
+  /// Whether [method] may run on a display socket.
+  ///
+  /// Status and thumbnail are reads. Starting the desktop, minting a VNC
+  /// ticket and changing the lease are writes, so a read-only connection
+  /// cannot take the screen.
+  static bool displayRpcAllowed(String method, {required bool readOnly}) {
+    if (_displayReads.contains(method)) return true;
+    return !readOnly && _displayWrites.contains(method);
+  }
+
+  /// `display.*` calls for the bot-screen viewer.
+  ///
+  /// A read-only connection can poll status and thumbnails. Anything that
+  /// starts the desktop or mints a control ticket is refused before the
+  /// socket is dialed.
+  Future<Map<String, dynamic>> displayRequest(
+    String method,
+    Map<String, dynamic> params,
+  ) async {
+    if (!displayRpcAllowed(method, readOnly: _connection.readOnly)) {
+      throw TuiGatewayRpcError(method, 'Display request unavailable');
+    }
+    final profile = params['profile'];
+    if (profile != null &&
+        (profile is! String ||
+            !RegExp(r'^[a-z0-9][a-z0-9_-]{0,63}$').hasMatch(profile))) {
+      throw TuiGatewayRpcError(method, 'Invalid profile name');
+    }
+    await _connectForRequest('gateway.connect');
+    return _request(method, params);
+  }
+
+  static const Set<String> _vaultReads = {'vault.list', 'vault.sources'};
+
+  static const Set<String> _vaultWrites = {
+    'vault.add',
+    'vault.remove',
+    'vault.source.set',
+    'vault.unlock',
+    'vault.lock',
+  };
+
+  /// Whether [method] may run for the Settings vault page. Listing the
+  /// saved items and the password managers is a read; adding, removing,
+  /// toggling a manager and unlocking or locking it are writes, so a
+  /// read-only connection can look but never change anything.
+  static bool vaultRpcAllowed(String method, {required bool readOnly}) {
+    if (_vaultReads.contains(method)) return true;
+    return !readOnly && _vaultWrites.contains(method);
+  }
+
+  /// `vault.*` calls of the Settings page «Contraseñas e inicios de sesión»
+  /// (Hermes Desktop's Settings → Passwords & Logins). The vault lives on
+  /// the server; nothing is stored here. `vault.add` and `vault.unlock`
+  /// carry a secret, so a refusal comes back with its code only, and no
+  /// param is ever logged on this path.
+  Future<Map<String, dynamic>> vaultRequest(
+    String method,
+    Map<String, dynamic> params,
+  ) async {
+    if (!vaultRpcAllowed(method, readOnly: _connection.readOnly)) {
+      throw TuiGatewayRpcError(method, 'Vault request unavailable');
+    }
+    final profile = params['profile'];
+    if (profile != null &&
+        (profile is! String ||
+            !RegExp(r'^[a-z0-9][a-z0-9_-]{0,63}$').hasMatch(profile))) {
+      throw TuiGatewayRpcError(method, 'Invalid profile name');
+    }
+    await _connectForRequest('gateway.connect');
+    if (SanitizedRpcFailureFactory.sensitiveMethods.contains(method)) {
+      return _requestConnected(method, params, redactRemoteError: true);
+    }
+    return _request(method, params);
+  }
+
   late final BotProfileClient _botProfiles = BotProfileClient((
     method,
     params,
@@ -5451,6 +6633,16 @@ class TuiGatewayClient
     bool omitMessages = false,
     bool deferHistory = false,
   }) async {
+    await _connectForRequest('gateway.connect');
+    if (_sessionAuthority.isCanonical) {
+      return _resumeCanonical(
+        storedSessionId,
+        profile: profile,
+        omitMessages: omitMessages,
+        deferHistory: deferHistory,
+        deferDispatch: _canonicalOwners.containsKey(storedSessionId),
+      );
+    }
     final result = await _requestExclusiveSessionMutation('session.resume', {
       'session_id': storedSessionId,
       'source': 'desktop',
@@ -5494,6 +6686,17 @@ class TuiGatewayClient
     String storedSessionId, {
     String profile = '',
   }) async {
+    await _connectForRequest('gateway.connect');
+    if (_sessionAuthority.isCanonical) {
+      // A typed snapshot, not a legacy binding: the recovery owner decides by
+      // capability, never by the type of the answer.
+      return _resumeCanonicalSnapshot(
+        storedSessionId,
+        profile: profile,
+        omitMessages: true,
+        deferDispatch: _canonicalOwners.containsKey(storedSessionId),
+      );
+    }
     final result = await _requestExclusiveSessionMutation('session.resume', {
       'session_id': storedSessionId,
       'source': 'desktop',
@@ -5529,9 +6732,46 @@ class TuiGatewayClient
         'Invalid durable session identity',
       );
     }
-    if (!_capabilityCache.canAttempt(
+    final rosterCachedUnsupported = !_capabilityCache.canAttempt(
       DesktopGatewayCapability.sessionActiveList,
-    )) {
+    );
+    if (!rosterCachedUnsupported ||
+        _sessionAuthority == SessionAuthorityCapability.unknown) {
+      // The capability is only known once the socket is ready: a cached
+      // standalone verdict must not pre-empt a canonical endpoint.
+      await _connectForRequest('gateway.connect');
+    }
+    if (_sessionAuthority.isCanonical) {
+      // The canonical snapshot IS the ownership proof (subscription id,
+      // epochs and a cut taken under the stream lock); the roster read is a
+      // standalone-only transaction. The frames after the cut stay held
+      // until the owner consumes this recovery.
+      final generation = _socketGeneration;
+      final channel = _channel;
+      final snapshot = await _resumeCanonicalSnapshot(
+        storedSessionId,
+        profile: profile,
+        omitMessages: true,
+        deferDispatch: true,
+      );
+      if (generation != _socketGeneration || !identical(_channel, channel)) {
+        throw const TuiGatewayRpcError(
+          resumeMethod,
+          'Connection lost before JSON-RPC response',
+          failureKind: TuiGatewayRpcFailureKind.connectionLost,
+        );
+      }
+      return DesktopRosterBoundRecovery._(
+        snapshot,
+        this,
+        _CanonicalRecoveryProof(
+          generation,
+          channel!,
+          _adoptionTokens[snapshot] ?? 0,
+        ),
+      );
+    }
+    if (rosterCachedUnsupported) {
       throw const TuiGatewayRpcError(
         activeMethod,
         'Hermes Desktop capability is unavailable',
@@ -5636,6 +6876,22 @@ class TuiGatewayClient
   @override
   bool consumeRosterBoundRecovery(DesktopRosterBoundRecovery recovery) {
     if (recovery._consumed || !identical(recovery._issuer, this)) return false;
+    final canonicalProof = recovery._transportProof;
+    if (canonicalProof is _CanonicalRecoveryProof) {
+      final sessionId = recovery.snapshot.storedSessionId;
+      final ledger = _canonicalLedgers[sessionId];
+      if (canonicalProof.generation != _socketGeneration ||
+          !_connected ||
+          !identical(canonicalProof.channel, _channel) ||
+          ledger == null ||
+          !ledger.isReady ||
+          ledger.adoptionToken != canonicalProof.token) {
+        return false;
+      }
+      recovery._consumed = true;
+      _commitCanonicalAdoption(sessionId, token: canonicalProof.token);
+      return true;
+    }
     try {
       final lease = recovery._transportProof;
       if (lease is! _SessionRosterSocketLease) return false;
@@ -5648,9 +6904,26 @@ class TuiGatewayClient
     return true;
   }
 
+  /// The recovery owner left without consuming [recovery] (settled from the
+  /// durable transcript, failed run, stale identity): the held frames of that
+  /// canonical attach are released, never left waiting for an owner.
+  void releaseCanonicalRecovery(DesktopRosterBoundRecovery recovery) {
+    final proof = recovery._transportProof;
+    if (recovery._consumed ||
+        !identical(recovery._issuer, this) ||
+        proof is! _CanonicalRecoveryProof) {
+      return;
+    }
+    recovery._consumed = true;
+    _canonicalLedgers[recovery.snapshot.storedSessionId]?.releaseAdoption(
+      proof.token,
+    );
+  }
+
   @override
   bool consumeRosterBoundViewerAttachment(DesktopRosterBoundRecovery recovery) {
     if (!consumeRosterBoundRecovery(recovery)) return false;
+    if (recovery._transportProof is _CanonicalRecoveryProof) return true;
     _rememberLegacyEventRuntime(recovery.snapshot.runtimeSessionId);
     return true;
   }
@@ -5759,6 +7032,23 @@ class TuiGatewayClient
     List<Map<String, dynamic>> seedMessages = const [],
     String model = '',
   }) async {
+    if (_sessionAuthority.isCanonical ||
+        (_sessionAuthority == SessionAuthorityCapability.unknown &&
+            await _canonicalNow())) {
+      // The canonical create has its own closed key set and answers a
+      // snapshot; the standalone shape is never sent to an authority.
+      final requested = model.trim();
+      return DesktopSessionBinding.fromSnapshot(
+        await _createCanonical(
+          profile: profile,
+          seedMessages: seedMessages,
+          model:
+              requested.isNotEmpty && requested.toLowerCase() != 'hermes-agent'
+              ? requested
+              : null,
+        ),
+      );
+    }
     final requestedModel = model.trim();
     // `hermes-agent` es el id OpenAI-compatible que anuncia el API Server,
     // no un modelo aceptado por proveedores como openai-codex. Persistirlo en
@@ -5789,6 +7079,17 @@ class TuiGatewayClient
     List<Map<String, dynamic>> seedMessages = const [],
     required DesktopSessionCreateConfig config,
   }) async {
+    if (_sessionAuthority.isCanonical ||
+        (_sessionAuthority == SessionAuthorityCapability.unknown &&
+            await _canonicalNow())) {
+      return DesktopSessionBinding.fromSnapshot(
+        await _createCanonical(
+          profile: profile,
+          seedMessages: seedMessages,
+          config: config,
+        ),
+      );
+    }
     final selection = config.model;
     final requestedTitle = config.title?.trim();
     final safeTitle =
@@ -6297,7 +7598,7 @@ class TuiGatewayClient
       throw const TuiGatewayRpcError(method, 'Invalid command name');
     }
     final argument = arg.trim();
-    if (argument.length > 4096 ||
+    if (argument.length > commandArgumentMaxLength ||
         argument.contains(RegExp(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]'))) {
       throw const TuiGatewayRpcError(method, 'Invalid command argument');
     }
@@ -6350,6 +7651,26 @@ class TuiGatewayClient
       rawRows
           .map(DesktopSubagentSnapshot.tryParse)
           .whereType<DesktopSubagentSnapshot>(),
+    );
+  }
+
+  @override
+  Future<List<DesktopFailedDelegation>> listFailedDelegations(
+    String runtimeSessionId,
+  ) async {
+    const method = 'subagent.list';
+    final result = await _request(method, {
+      'session_id': _validatedRuntimeId(method, runtimeSessionId),
+    });
+    final raw = result['delegations'];
+    if (raw is! List) return const [];
+    final seen = <String>{};
+    return List<DesktopFailedDelegation>.unmodifiable(
+      raw
+          .map(DesktopFailedDelegation.tryParse)
+          .whereType<DesktopFailedDelegation>()
+          .where((row) => seen.add(row.stableId))
+          .take(20),
     );
   }
 
@@ -6680,6 +8001,12 @@ class TuiGatewayClient
         if (runtime.isNotEmpty)
           'session_id': _validatedControlValue(runtime, maxLength: 512),
       }, capability: DesktopGatewayCapability.extensionsCenter),
+      // Optional classification data: old gateways can still publish built-in
+      // groups even when they do not implement the MCP inventory contract.
+      _controlRequest(
+        'mcp.servers.list',
+        const {},
+      ).catchError((_) => <String, dynamic>{}),
     ]);
     try {
       if (results[0]['plugins'] is! List || results[1]['toolsets'] is! List) {
@@ -6690,6 +8017,7 @@ class TuiGatewayClient
       return ExtensionsInventory.fromJson(
         plugins: results[0],
         toolsets: results[1],
+        mcp: results[2],
       );
     } catch (_) {
       return _invalidControlResponse(DesktopGatewayCapability.extensionsCenter);
@@ -7584,7 +8912,9 @@ class TuiGatewayClient
         () => _dashboard.apiGet('fs/default-cwd'),
       );
       final cwd = result['cwd'];
-      return cwd is String && cwd.trim().startsWith('/') ? cwd.trim() : null;
+      return cwd is String && isAbsoluteServerPath(cwd)
+          ? normalizeServerPath(cwd)
+          : null;
     } catch (_) {
       return null;
     }
@@ -7843,6 +9173,408 @@ class TuiGatewayClient
       _invalidControlResponse(DesktopGatewayCapability.foreignSessions);
     }
     return parsed;
+  }
+
+  // Git review: Desktop's review pane over `/api/git/review/*`.
+
+  /// A diff past this budget is not loaded (the screen says it is too large).
+  static const int _gitDiffMaxBytes = 512 * 1024;
+
+  /// A commit runs status, identity, add and commit on the server, each with
+  /// its own 30 s limit there (hooks included).
+  static const Duration _gitCommitTimeout = Duration(minutes: 2);
+
+  /// Reads, diffs and stage / unstage: Desktop's fetch deadline
+  /// (`apps/desktop/electron/hardening.ts`, `DEFAULT_FETCH_TIMEOUT_MS`), the
+  /// same 30 s each git step has on the server (`hermes_cli/web_git.py`).
+  /// The Dashboard client's 10 s default gave up on a large repository
+  /// that Desktop reads, and could report a failed `git add` that the
+  /// server then finished.
+  static const Duration gitRouteTimeout = Duration(seconds: 30);
+
+  @override
+  bool get gitWritesAllowed => !_connection.readOnly;
+
+  @override
+  bool get gitReviewKnownUnsupported =>
+      !_capabilityCache.canAttempt(DesktopGatewayCapability.gitReview);
+
+  /// A refused git action (400) keeps only its classified reason
+  /// ([GitActionFailure]); everything else maps like the other git routes.
+  Future<T> _gitReviewRequest<T>(Future<T> Function() request) async {
+    GitActionProblem? problem;
+    try {
+      return await _projectGitRequest(() async {
+        try {
+          return await request();
+        } on DashboardHttpException catch (error) {
+          if (error.statusCode == 400) {
+            problem = classifyGitFailureDetail(error.body);
+          }
+          rethrow;
+        }
+      }, capability: DesktopGatewayCapability.gitReview);
+    } on DesktopControlFailure catch (failure) {
+      final reason = problem;
+      if (reason != null &&
+          failure.kind == DesktopControlFailureKind.rejected) {
+        throw GitActionFailure(reason);
+      }
+      rethrow;
+    }
+  }
+
+  String _gitPath(String repoPath) =>
+      _validatedControlValue(repoPath, maxLength: 4096);
+
+  @override
+  Future<GitRepoStatus?> gitRepoStatus(String repoPath) {
+    final endpoint = _gitQuery('status', repoPath);
+    return _gitReviewRequest(
+      () async => GitRepoStatus.tryParse(
+        await _dashboard.apiGetWithin(endpoint, timeout: gitRouteTimeout),
+      ),
+    );
+  }
+
+  @override
+  Future<GitReviewList> gitReviewList(
+    String repoPath, {
+    GitReviewScope scope = GitReviewScope.uncommitted,
+  }) {
+    final endpoint =
+        '${_gitQuery('review/list', repoPath)}'
+        '&scope=${Uri.encodeQueryComponent(scope.wire)}';
+    return _gitReviewRequest(
+      () async => GitReviewList.fromJson(
+        await _dashboard.apiGetWithin(endpoint, timeout: gitRouteTimeout),
+      ),
+    );
+  }
+
+  @override
+  Future<GitReviewDiff> gitReviewDiff(
+    String repoPath,
+    GitReviewFile file, {
+    GitReviewScope scope = GitReviewScope.uncommitted,
+  }) {
+    final path = _validatedControlValue(file.path, maxLength: 4096);
+    final endpoint =
+        '${_gitQuery('review/diff', repoPath)}'
+        '&file=${Uri.encodeQueryComponent(path)}'
+        '&scope=${Uri.encodeQueryComponent(scope.wire)}'
+        '&staged=${file.staged}';
+    return _gitReviewRequest(() async {
+      final Map<String, dynamic> result;
+      try {
+        result = await _dashboard.apiGetBoundedWithin(
+          endpoint,
+          maxBytes: _gitDiffMaxBytes,
+          timeout: gitRouteTimeout,
+        );
+      } on SessionTranscriptTooLargeException {
+        return const GitReviewDiff(tooLarge: true);
+      }
+      final diff = result['diff'];
+      return parseGitDiff(diff is String ? diff : '');
+    });
+  }
+
+  @override
+  Future<void> gitStage(String repoPath, String file) =>
+      _gitFileMutation('review/stage', repoPath, file);
+
+  @override
+  Future<void> gitUnstage(String repoPath, String file) =>
+      _gitFileMutation('review/unstage', repoPath, file);
+
+  Future<void> _gitFileMutation(String route, String repoPath, String file) {
+    _requireWritableControlConnection();
+    final body = {
+      'path': _gitPath(repoPath),
+      'file': _validatedControlValue(file, maxLength: 4096),
+    };
+    return _gitReviewRequest(() async {
+      await _dashboard.apiPost(
+        'git/$route',
+        body: body,
+        timeout: gitRouteTimeout,
+      );
+    });
+  }
+
+  @override
+  Future<void> gitCommit(String repoPath, String message) {
+    _requireWritableControlConnection();
+    final body = {
+      'path': _gitPath(repoPath),
+      'message': _validatedControlValue(message, maxLength: 20000),
+    };
+    return _gitReviewRequest(() async {
+      await _dashboard.apiPost(
+        'git/review/commit',
+        body: body,
+        timeout: _gitCommitTimeout,
+      );
+    });
+  }
+
+  // Git hub: the rest of `/api/git/*` (`hermes_cli/web_routers/git.py`),
+  // under the same capability flag and error mapping as the review pane.
+
+  @override
+  Future<GitGhAuth> gitGhAuth({bool refresh = false}) {
+    final endpoint = refresh ? 'git/gh-auth?refresh=true' : 'git/gh-auth';
+    return _gitReviewRequest(
+      () async => GitGhAuth.fromJson(
+        await _dashboard.apiGetWithin(endpoint, timeout: gitRouteTimeout),
+      ),
+    );
+  }
+
+  @override
+  Future<List<GitWorktree>> gitWorktrees(String repoPath) {
+    final endpoint = _gitQuery('worktrees', repoPath);
+    return _gitReviewRequest(() async {
+      final result = await _dashboard.apiGetWithin(
+        endpoint,
+        timeout: gitRouteTimeout,
+      );
+      final rows = result['worktrees'];
+      return List.unmodifiable([
+        if (rows is List)
+          for (final row in rows) ?GitWorktree.tryParse(row),
+      ]);
+    });
+  }
+
+  @override
+  Future<List<ProjectGitBranch>> gitBranches(String repoPath) {
+    final endpoint = _gitQuery('branches', repoPath);
+    return _gitReviewRequest(() async {
+      final result = await _dashboard.apiGetWithin(
+        endpoint,
+        timeout: gitRouteTimeout,
+      );
+      return _extensionRows(result['branches'])
+          .map(ProjectGitBranch.tryParse)
+          .whereType<ProjectGitBranch>()
+          .toList(growable: false);
+    });
+  }
+
+  @override
+  Future<List<ProjectGitBaseBranch>> gitBaseBranches(String repoPath) {
+    final endpoint = _gitQuery('base-branches', repoPath);
+    return _gitReviewRequest(() async {
+      final result = await _dashboard.apiGetWithin(
+        endpoint,
+        timeout: gitRouteTimeout,
+      );
+      return _extensionRows(result['branches'])
+          .map(ProjectGitBaseBranch.tryParse)
+          .whereType<ProjectGitBaseBranch>()
+          .toList(growable: false);
+    });
+  }
+
+  @override
+  Future<GitCommitContext> gitCommitContext(String repoPath) {
+    final endpoint = _gitQuery('review/commit-context', repoPath);
+    return _gitReviewRequest(() async {
+      try {
+        return GitCommitContext.fromJson(
+          await _dashboard.apiGetBoundedWithin(
+            endpoint,
+            maxBytes: _gitDiffMaxBytes,
+            timeout: gitRouteTimeout,
+          ),
+        );
+      } on SessionTranscriptTooLargeException {
+        // The server caps the diff at 120k characters; past the app's
+        // budget the help is simply not shown.
+        return const GitCommitContext();
+      }
+    });
+  }
+
+  @override
+  Future<GitShipInfo> gitShipInfo(String repoPath) {
+    final endpoint = _gitQuery('review/ship-info', repoPath);
+    return _gitReviewRequest(
+      () async => GitShipInfo.fromJson(
+        await _dashboard.apiGetWithin(endpoint, timeout: gitRouteTimeout),
+      ),
+    );
+  }
+
+  @override
+  Future<PullRequestList> gitPullRequests(
+    String repoPath, {
+    required List<String> branches,
+  }) {
+    final body = {
+      'path': _gitPath(repoPath),
+      'branches': [
+        for (final b in branches) _validatedControlValue(b, maxLength: 512),
+      ],
+      'numbers': const <int>[],
+    };
+    return _gitReviewRequest(
+      () async => PullRequestList.fromJson(
+        await _dashboard.apiPost(
+          'git/review/pr-list',
+          body: body,
+          timeout: gitRouteTimeout,
+        ),
+      ),
+    );
+  }
+
+  /// `stage` / `unstage` / `revert` on the whole tree: the body carries
+  /// only the folder (the server then runs `-A` / `HEAD` / `.`).
+  Future<void> _gitTreeMutation(
+    String route,
+    String repoPath, {
+    Duration timeout = gitRouteTimeout,
+  }) {
+    _requireWritableControlConnection();
+    final body = {'path': _gitPath(repoPath)};
+    return _gitReviewRequest(() async {
+      await _dashboard.apiPost('git/$route', body: body, timeout: timeout);
+    });
+  }
+
+  @override
+  Future<void> gitStageAll(String repoPath) =>
+      _gitTreeMutation('review/stage', repoPath);
+
+  @override
+  Future<void> gitUnstageAll(String repoPath) =>
+      _gitTreeMutation('review/unstage', repoPath);
+
+  @override
+  Future<void> gitRevert(String repoPath, {String? file}) => file == null
+      ? _gitTreeMutation('review/revert', repoPath)
+      : _gitFileMutation('review/revert', repoPath, file);
+
+  @override
+  Future<void> gitCommitAndPush(String repoPath, String message) {
+    _requireWritableControlConnection();
+    final body = {
+      'path': _gitPath(repoPath),
+      'message': _validatedControlValue(message, maxLength: 20000),
+      'push': true,
+    };
+    return _gitReviewRequest(() async {
+      await _dashboard.apiPost(
+        'git/review/commit',
+        body: body,
+        timeout: _gitCommitTimeout,
+      );
+    });
+  }
+
+  @override
+  Future<void> gitPush(String repoPath) =>
+      _gitTreeMutation('review/push', repoPath, timeout: _gitCommitTimeout);
+
+  @override
+  Future<GitCreatedPullRequest> gitCreatePullRequest(String repoPath) {
+    _requireWritableControlConnection();
+    final body = {'path': _gitPath(repoPath)};
+    return _gitReviewRequest(
+      () async => GitCreatedPullRequest.fromJson(
+        await _dashboard.apiPost(
+          'git/review/create-pr',
+          body: body,
+          timeout: _gitCommitTimeout,
+        ),
+      ),
+    );
+  }
+
+  @override
+  Future<ProjectWorktreeResult> gitWorktreeAdd(
+    String repoPath, {
+    String? branch,
+    String? base,
+    String? existingBranch,
+  }) {
+    _requireWritableControlConnection();
+    final path = _gitPath(repoPath);
+    String? ref(String? value) {
+      final trimmed = value?.trim() ?? '';
+      if (trimmed.isEmpty) return null;
+      return _validatedControlValue(trimmed, maxLength: 255);
+    }
+
+    final newBranch = ref(branch);
+    final existing = ref(existingBranch);
+    if (newBranch == null && existing == null) {
+      throw const DesktopControlFailure(DesktopControlFailureKind.rejected);
+    }
+    final body = <String, dynamic>{
+      'path': path,
+      if (newBranch != null) ...{'name': newBranch, 'branch': newBranch},
+      'base': ?ref(base),
+      'existingBranch': ?existing,
+    };
+    return _gitReviewRequest(() async {
+      final result = await _dashboard.apiPost(
+        'git/worktree/add',
+        body: body,
+        timeout: _gitCommitTimeout,
+      );
+      final created = result['path'];
+      if (created is! String || created.trim().isEmpty) {
+        throw const DesktopControlFailure(
+          DesktopControlFailureKind.invalidResponse,
+        );
+      }
+      final createdBranch = result['branch'];
+      return ProjectWorktreeResult(
+        path: created.trim(),
+        branch: createdBranch is String ? createdBranch : (newBranch ?? ''),
+      );
+    });
+  }
+
+  @override
+  Future<void> gitWorktreeRemove(
+    String repoPath,
+    String worktreePath, {
+    bool force = false,
+  }) {
+    _requireWritableControlConnection();
+    final body = {
+      'path': _gitPath(repoPath),
+      'worktreePath': _validatedControlValue(worktreePath, maxLength: 4096),
+      'force': force,
+    };
+    return _gitReviewRequest(() async {
+      await _dashboard.apiPost(
+        'git/worktree/remove',
+        body: body,
+        timeout: gitRouteTimeout,
+      );
+    });
+  }
+
+  @override
+  Future<void> gitBranchSwitch(String repoPath, String branch) {
+    _requireWritableControlConnection();
+    final body = {
+      'path': _gitPath(repoPath),
+      'branch': _validatedControlValue(branch, maxLength: 255),
+    };
+    return _gitReviewRequest(() async {
+      await _dashboard.apiPost(
+        'git/branch/switch',
+        body: body,
+        timeout: gitRouteTimeout,
+      );
+    });
   }
 
   @override
@@ -8516,19 +10248,50 @@ class TuiGatewayClient
     required String filename,
     required String contentBase64,
   }) async {
-    final result =
-        await _requestExclusiveSessionMutation('image.attach_bytes', {
-          'session_id': runtimeSessionId,
-          'filename': filename,
-          'content_base64': contentBase64,
-        });
+    final canonical =
+        _sessionAuthority.isCanonical ||
+        (_sessionAuthority == SessionAuthorityCapability.unknown &&
+            await _canonicalNow());
+    final params = <String, dynamic>{
+      'session_id': runtimeSessionId,
+      'filename': filename,
+      'content_base64': contentBase64,
+    };
+    // The authority only STAGES the upload: the image reaches the model when
+    // the next `prompt.submit` names it in `attachments`.
+    final result = canonical
+        ? await _requestConnected('image.attach_bytes', params)
+        : await _requestExclusiveSessionMutation('image.attach_bytes', params);
     if (result['attached'] != true) {
       throw const TuiGatewayRpcError(
         'image.attach_bytes',
         'Hermes did not attach the image',
       );
     }
-    return DesktopAttachmentResult(path: result['path']?.toString());
+    final path = result['path']?.toString();
+    if (canonical) {
+      final mime = result['mime'];
+      if (path == null || path.isEmpty || mime is! String || mime.isEmpty) {
+        throw const TuiGatewayRpcError(
+          'image.attach_bytes',
+          'Hermes omitted the staged image reference',
+          origin: CompressionFailureOrigin.malformed,
+        );
+      }
+      final staged = _canonicalStagedImages.putIfAbsent(
+        runtimeSessionId.trim(),
+        () => <Map<String, String>>[],
+      );
+      if (staged.length >= _maxStagedCanonicalImages) {
+        throw const TuiGatewayRpcError(
+          'image.attach_bytes',
+          'Too many staged images',
+        );
+      }
+      staged.removeWhere((item) => item['path'] == path);
+      staged.add(<String, String>{'path': path, 'mime': mime});
+    }
+    return DesktopAttachmentResult(path: path);
   }
 
   @override
@@ -8538,12 +10301,20 @@ class TuiGatewayClient
     required String mimeType,
     required String contentBase64,
   }) async {
-    final result = await _requestExclusiveSessionMutation('file.attach', {
+    final params = <String, dynamic>{
       'session_id': runtimeSessionId,
       'path': filename,
       'name': filename,
       'data_url': 'data:$mimeType;base64,$contentBase64',
-    });
+    };
+    final canonical =
+        _sessionAuthority.isCanonical ||
+        (_sessionAuthority == SessionAuthorityCapability.unknown &&
+            await _canonicalNow());
+    // The reply carries the `@file:` reference the prompt text embeds.
+    final result = canonical
+        ? await _requestConnected('file.attach', params)
+        : await _requestExclusiveSessionMutation('file.attach', params);
     if (result['attached'] != true || result['ref_text'] == null) {
       throw const TuiGatewayRpcError(
         'file.attach',
@@ -8558,22 +10329,56 @@ class TuiGatewayClient
 
   @override
   Future<void> detachImage(String runtimeSessionId, String path) async {
+    if (_sessionAuthority.isCanonical) {
+      // Staging only: dropping the reference keeps the image out of the next
+      // submit; there is no server-side attachment state to undo.
+      _canonicalStagedImages[runtimeSessionId.trim()]?.removeWhere(
+        (item) => item['path'] == path,
+      );
+      return;
+    }
     await _requestExclusiveSessionMutation('image.detach', {
       'session_id': runtimeSessionId,
       'path': path,
     }, timeout: const Duration(seconds: 10));
   }
 
-  @override
-  Future<void> steer(String runtimeSessionId, String text) async {
-    final result = await _requestExclusiveSessionMutation('session.steer', {
+  /// `session.steer` / `session.redirect`: on the authority they are bound to
+  /// the execution generation the chat proved (`CanonicalCorrectionParams`).
+  Future<Map<String, dynamic>> _correction(
+    String method,
+    String runtimeSessionId,
+    String text,
+  ) async {
+    if (_sessionAuthority.isCanonical ||
+        (_sessionAuthority == SessionAuthorityCapability.unknown &&
+            await _canonicalNow())) {
+      final ledger = _readyCanonicalLedger(
+        method,
+        _validatedRuntimeId(method, runtimeSessionId),
+      );
+      return _requestConnected(method, <String, dynamic>{
+        'session_id': ledger.sessionId,
+        'execution_generation': ledger.currentGeneration,
+        'text': text,
+        if (ledger.profile.isNotEmpty) 'profile': ledger.profile,
+      }, timeout: const Duration(seconds: 10));
+    }
+    return _requestExclusiveSessionMutation(method, {
       'session_id': runtimeSessionId,
       'text': text,
     }, timeout: const Duration(seconds: 10));
+  }
+
+  @override
+  Future<void> steer(String runtimeSessionId, String text) async {
+    final result = await _correction('session.steer', runtimeSessionId, text);
     if (result['status'] != 'queued') {
-      throw const TuiGatewayRpcError(
+      throw TuiGatewayRpcError(
         'session.steer',
         'Hermes rejected the steering instruction',
+        code: result['status'] == 'rejected'
+            ? TuiGatewayRpcError.steerRejectedCode : null,
       );
     }
   }
@@ -8584,10 +10389,7 @@ class TuiGatewayClient
     String text,
   ) async {
     const method = 'session.redirect';
-    final result = await _requestExclusiveSessionMutation(method, {
-      'session_id': runtimeSessionId,
-      'text': text,
-    }, timeout: const Duration(seconds: 10));
+    final result = await _correction(method, runtimeSessionId, text);
     return switch (result['status']) {
       'redirected' => DesktopRedirectDisposition.redirected,
       'queued' => DesktopRedirectDisposition.queued,
@@ -8597,6 +10399,25 @@ class TuiGatewayClient
 
   @override
   Future<void> interrupt(String runtimeSessionId) async {
+    if (_sessionAuthority.isCanonical ||
+        (_sessionAuthority == SessionAuthorityCapability.unknown &&
+            await _canonicalNow())) {
+      const method = 'session.interrupt';
+      final ledger = _readyCanonicalLedger(
+        method,
+        _validatedRuntimeId(method, runtimeSessionId),
+      );
+      await _requestConnected(
+        method,
+        CanonicalWire.interrupt(
+          sessionId: ledger.sessionId,
+          generation: ledger.currentGeneration,
+          profile: ledger.profile,
+        ),
+        timeout: const Duration(seconds: 10),
+      );
+      return;
+    }
     await _request('session.interrupt', {
       'session_id': runtimeSessionId,
     }, timeout: const Duration(seconds: 10));
@@ -8638,6 +10459,9 @@ class TuiGatewayClient
     const method = 'session.events.since';
     final runtime = _validatedRuntimeId(method, runtimeSessionId);
     await _connectForRequest(method);
+    if (_sessionAuthority.isCanonical) {
+      return _canonicalOpenRequests(runtime);
+    }
     // `last_seen` above any sequence: no event is replayed, only the open
     // requests, which the response handler also registers on this socket so
     // the answer goes back as a response frame.
@@ -8675,7 +10499,8 @@ class TuiGatewayClient
 
   String _validatedSlashCommand(String method, String raw) {
     final trimmed = raw.trim();
-    if (trimmed.isEmpty || trimmed.length > 4096) {
+    // A name (at most 64) and a space before the argument.
+    if (trimmed.isEmpty || trimmed.length > commandArgumentMaxLength + 66) {
       throw TuiGatewayRpcError(method, 'Invalid slash command');
     }
     final firstSpace = trimmed.indexOf(RegExp(r'\s'));
@@ -8687,7 +10512,10 @@ class TuiGatewayClient
     final arguments = firstSpace < 0
         ? ''
         : trimmed.substring(firstSpace).trim();
-    if (arguments.contains(RegExp(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]'))) {
+    // The argument, not the whole line, takes the bound: the same as
+    // command.dispatch and the chat's own check (commandArgumentMaxLength).
+    if (arguments.length > commandArgumentMaxLength ||
+        arguments.contains(RegExp(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]'))) {
       throw TuiGatewayRpcError(method, 'Invalid slash command');
     }
     return arguments.isEmpty ? name : '$name $arguments';
@@ -8763,6 +10591,34 @@ class TuiGatewayClient
     String? questionId,
   }) async {
     const method = 'clarify.respond';
+    if (_sessionAuthority.isCanonical ||
+        (_sessionAuthority == SessionAuthorityCapability.unknown &&
+            await _canonicalNow())) {
+      if (questionId != null) {
+        throw _canonicalUnsupported(method, 'batch clarify answers');
+      }
+      final result = await _answerCanonicalPrompt(
+        method: method,
+        kind: 'clarify',
+        session: null,
+        promptId: _interactiveRequestId(method, requestId),
+        value: answer,
+      );
+      if (result == null) {
+        return DesktopPromptResponse.fromJson(
+          const <String, dynamic>{'status': 'expired'},
+          method: method,
+          allowExpired: true,
+        );
+      }
+      return DesktopPromptResponse.fromJson(
+        <String, dynamic>{
+          'status': result['status'] == 'resolved' ? 'ok' : 'expired',
+        },
+        method: method,
+        allowExpired: true,
+      );
+    }
     if (_openServerRequests.containsKey(requestId)) {
       if (questionId != null) {
         // Batch clarify: answers lock one at a time; the last lock resolves the
@@ -8837,6 +10693,58 @@ class TuiGatewayClient
     };
     if (questionId != null) params['question_id'] = questionId;
     final result = await _request(method, params);
+    return DesktopPromptResponse.fromJson(
+      result,
+      method: method,
+      allowExpired: true,
+    );
+  }
+
+  @override
+  Future<DesktopPromptResponse> skipClarify(String requestId) async {
+    if (_sessionAuthority.isCanonical ||
+        (_sessionAuthority == SessionAuthorityCapability.unknown &&
+            await _canonicalNow())) {
+      throw _canonicalUnsupported('clarify.respond', 'skipping a question');
+    }
+    if (_openServerRequests.containsKey(requestId)) {
+      // Desktop `respondToServerRequest(request.requestId, {})`.
+      if (!_respondServerRequest(requestId, const <String, Object?>{})) {
+        // As an answer: the backend re-delivers the request on resume.
+        throw const TuiGatewayRpcError(
+          'clarify',
+          'Hermes Desktop WebSocket was replaced',
+        );
+      }
+      return const DesktopPromptResponse._(
+        DesktopPromptResponseStatus.ok,
+        deliveryAcknowledged: false,
+      );
+    }
+    if (requestId.startsWith(_serverRequestIdPrefix)) {
+      // Not open on this socket: the `request.answer` proxy settles it from
+      // any connection, with the same empty result.
+      try {
+        const answerMethod = 'request.answer';
+        final result = await _request(answerMethod, {
+          'id': requestId,
+          'result': const <String, Object?>{},
+        });
+        return DesktopPromptResponse.fromJson(
+          result,
+          method: answerMethod,
+          allowExpired: true,
+        );
+      } on TuiGatewayRpcError catch (error) {
+        if (error.code != -32601) rethrow;
+      }
+    }
+    // Hermes before server requests: an empty answer is its only skip.
+    const method = 'clarify.respond';
+    final result = await _request(method, {
+      'request_id': _interactiveRequestId(method, requestId),
+      'answer': '',
+    });
     return DesktopPromptResponse.fromJson(
       result,
       method: method,
@@ -8971,6 +10879,37 @@ class TuiGatewayClient
     bool resolveAll = false,
     String? requestId,
   }) async {
+    if (_sessionAuthority.isCanonical ||
+        (_sessionAuthority == SessionAuthorityCapability.unknown &&
+            await _canonicalNow())) {
+      const method = 'approval.respond';
+      if (resolveAll) {
+        throw _canonicalUnsupported(
+          method,
+          'approve-all has no canonical form',
+        );
+      }
+      final id = requestId == null || requestId.isEmpty ? null : requestId;
+      final ledger = _readyCanonicalLedger(
+        method,
+        _validatedRuntimeId(method, runtimeSessionId),
+      );
+      final promptId =
+          id ??
+          (ledger.prompts.values.where((p) => p.isApproval).length == 1
+              ? ledger.prompts.values.firstWhere((p) => p.isApproval).promptId
+              : null);
+      if (promptId == null) throw _canonicalExpired(method);
+      final result = await _answerCanonicalPrompt(
+        method: method,
+        kind: 'approval',
+        session: ledger.sessionId,
+        promptId: promptId,
+        value: choice,
+      );
+      if (result == null) throw _canonicalExpired(method);
+      return;
+    }
     if (requestId != null && requestId.isNotEmpty) {
       final serverRequestId = _approvalServerRequestIds[requestId];
       if (serverRequestId != null &&
@@ -9017,6 +10956,26 @@ class TuiGatewayClient
     required String requestId,
   }) async {
     const method = 'approval.respond';
+    if (_sessionAuthority.isCanonical ||
+        (_sessionAuthority == SessionAuthorityCapability.unknown &&
+            await _canonicalNow())) {
+      final request = _subagentOpaqueId(requestId);
+      if (request == null ||
+          !const {'once', 'session', 'always', 'deny'}.contains(choice)) {
+        throw const TuiGatewayRpcError(method, 'Invalid approval response');
+      }
+      final result = await _answerCanonicalPrompt(
+        method: method,
+        kind: 'approval',
+        session: _validatedRuntimeId(method, runtimeSessionId),
+        promptId: request,
+        value: choice,
+      );
+      if (result == null) throw _canonicalExpired(method);
+      return DesktopApprovalResult(
+        resolved: result['status'] == 'resolved' ? 1 : 0,
+      );
+    }
     final request = _subagentOpaqueId(requestId);
     if (request == null ||
         !const {'once', 'session', 'always', 'deny'}.contains(choice)) {
@@ -9064,6 +11023,17 @@ class TuiGatewayClient
       _awaitResponses[owedChannel] = _OwedResponses(owed);
     }
     _socketGeneration++;
+    // A parked in-flight ticket/handshake must not hold the next resume dial
+    // hostage. Its generation is fenced; late completion owns no new state.
+    _connecting = null;
+    final ready = _gatewayReadyCompleter;
+    _gatewayReadyCompleter = null;
+    if (ready != null && !ready.isCompleted) {
+      ready.completeError(const TuiGatewayRpcError(
+        'gateway.ready', 'Background transport parked',
+        failureKind: TuiGatewayRpcFailureKind.connectionLost,
+      ));
+    }
     _cancelProbeRetry();
     _cancelRedial(StateError('Hermes Desktop gateway closed'));
     _parked = reason == 'client_background_idle';
@@ -9096,7 +11066,7 @@ class TuiGatewayClient
       final readyAt = _channelReadyAt[channel];
       if (readyAt != null) {
         _channelReadyAt[channel] = null;
-        final peerCode = closeReason == 'peer_closed'
+        final peerCode = closeReason == 'stream_done'
             ? channel.closeCode
             : null;
         GatewaySocketMeter.instance.recordClose(

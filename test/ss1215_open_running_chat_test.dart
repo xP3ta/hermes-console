@@ -1,5 +1,9 @@
+import 'support/live_chat_v4.dart';
+
+import 'package:hermes_android/core/widgets/chat_turn_activity.dart';
+
 // ss1215: opening a chat that is already running on the server paints the
-// pill (running tool, «n/m» tasks) on its first frame, the resume snapshot
+// transcript (running tool, «n/m» tasks) on its first frame, the resume snapshot
 // replaces it without an empty frame, and the headline never claims
 // «Ejecutando herramientas…» while no tool runs.
 import 'dart:async';
@@ -21,7 +25,6 @@ import 'package:hermes_android/core/services/secure_storage.dart';
 import 'package:hermes_android/core/services/sftp_transfer_service.dart';
 import 'package:hermes_android/core/services/ssh_manager.dart';
 import 'package:hermes_android/core/services/ssh_session_service.dart';
-import 'package:hermes_android/core/widgets/activity_pill.dart';
 import 'package:hermes_android/main.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -78,23 +81,26 @@ DesktopSessionSnapshot _snapshot({required bool running}) =>
 /// The turn's task progress («1/3») as the chat hands it to the activity
 /// panel. The island's line carries no counter.
 String? _tasks(WidgetTester tester) {
-  final host = find.byType(ActivityPillHost);
+  final host = find.byType(LiveTurnScope);
   if (host.evaluate().isEmpty) return null;
-  final tasks = tester.widget<ActivityPillHost>(host).snapshot.tasks;
+  final tasks = tester.widget<LiveTurnScope>(host).status.tasks;
   return tasks == null ? null : '${tasks.done}/${tasks.total}';
 }
 
-/// What the island says about the running turn (its line), or null when it
-/// says nothing.
-String? _pill(WidgetTester tester) {
-  final pill = find.byKey(const ValueKey('activity-pill'));
-  if (pill.evaluate().isEmpty) return null;
-  return find
-      .descendant(of: pill, matching: find.byType(RichText))
-      .evaluate()
-      .map((e) => (e.widget as RichText).text.toPlainText())
-      .where((text) => text.trim().isNotEmpty && !text.contains(':'))
-      .join(' | ');
+/// Ordinary work is visible in the reply, never in a redundant footer.
+String? _inlineStatus(WidgetTester tester) {
+  expect(find.byKey(const ValueKey('activity-pill')), findsNothing);
+  // The live look (9 nov): the card says «Trabajando»; what the turn is
+  // doing is in its spoken label.
+  final line = find.byKey(const ValueKey('chat-inline-activity'));
+  if (line.evaluate().isEmpty) return null;
+  return tester.widget<Semantics>(line).properties.label!;
+}
+
+String? _state(WidgetTester tester) {
+  final status = find.byKey(const ValueKey('chat-inline-activity'));
+  if (status.evaluate().isEmpty) return null;
+  return tester.widget<Text>(inlineLabel).data!.replaceAll('…', '');
 }
 
 void main() {
@@ -214,6 +220,7 @@ void main() {
       'snapshot without an empty frame; headline never «Ejecutando»', (
     tester,
   ) async {
+    final semantics = tester.ensureSemantics();
     final service = ActiveChatService(
       attachDesktopRuntimeOnLoad: true,
       compressionRestoreStore: testCompressionRestoreStore(),
@@ -234,25 +241,33 @@ void main() {
     roster(service, 'working');
     final gateway = peer.PeerGateway(_snapshot(running: true))
       ..resumeHold = Completer<void>();
-    attach(service, gateway);
+    final resumed = attach(service, gateway)
+      ..internalMessagesForTesting = [
+        {'role': 'user', 'content': 'PUBLIC_CACHED_REQUEST'},
+      ]
+      ..messagesLoaded = true;
+    expect(resumed.provisionalLiveStatus, isNotNull);
+    unawaited(resumed.loadMessages());
     await boot(tester, service);
     push(tester);
     await tester.pump();
 
+    expect(find.textContaining('PUBLIC_CACHED_REQUEST'), findsOneWidget);
     final frames = <String?>[];
-    frames.add(_pill(tester));
-    expect(frames.first, contains('Ejecutando · pytest'));
+    frames.add(_inlineStatus(tester));
+    expect(frames.first, contains('pytest'));
     expect(_tasks(tester), '1/3');
 
     gateway.resumeHold!.complete();
     for (var i = 0; i < 6; i++) {
       await tester.pump(const Duration(milliseconds: 16));
-      frames.add(_pill(tester));
+      frames.add(_inlineStatus(tester));
     }
     expect(frames, everyElement(isNotNull), reason: 'never an empty frame');
-    // The snapshot has no tool running: the island names the task instead.
-    expect(frames.last, contains('Trabajando · Arreglar'));
-    expect(frames.last, isNot(contains('Ejecutando')));
+    // The resumed snapshot has no tool: the inline state loses its stale
+    // target while the plan stays in the conversation.
+    expect(_state(tester), anyOf('Pensando', 'Trabajando'));
+    expect(frames.last, isNot(contains('pytest')));
     expect(_tasks(tester), '1/3');
     expect(frames.join(), isNot(contains('Ejecutando herramientas')));
 
@@ -262,13 +277,24 @@ void main() {
       'args': {'path': '/tmp/a/informe.md'},
     });
     await tester.pump(const Duration(milliseconds: 16));
-    expect(_pill(tester), contains('Leyendo · informe.md'));
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(
+      _inlineStatus(tester),
+      contains('informe.md'),
+      reason: 'v4 changes the single inline row to the live tool',
+    );
+    await openInlineDetails(tester);
+    final tool = find.byKey(const ValueKey('turn-step-card-t2'));
+    expect(tool, findsOneWidget);
+    expect(tester.getSemantics(tool).label, contains('informe.md'));
+    expect(find.byKey(const ValueKey('turn-step-mark-t2')), findsOneWidget);
     gateway.emit('tool.complete', {'tool_id': 't2', 'name': 'read_file'});
     gateway.emit('reasoning.delta', {'text': 'pienso'});
-    await tester.pump(const Duration(milliseconds: 16));
-    expect(_pill(tester), contains('Trabajando'));
-    expect(_pill(tester), isNot(contains('Leyendo')));
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(_state(tester), anyOf('Pensando', 'Trabajando'));
+    expect(_inlineStatus(tester), isNot(contains('informe.md')));
 
+    semantics.dispose();
     await tester.pumpWidget(const SizedBox.shrink());
     service.dispose();
     await tester.pump(const Duration(minutes: 5));
@@ -286,11 +312,11 @@ void main() {
     await boot(tester, service);
     push(tester);
     await tester.pump();
-    expect(_pill(tester), isNull);
+    expect(_inlineStatus(tester), isNull);
     gateway.resumeHold!.complete();
     await tester.pump(const Duration(milliseconds: 16));
     await tester.pump(const Duration(seconds: 3));
-    expect(_pill(tester), isNull);
+    expect(_inlineStatus(tester), isNull);
     await tester.pumpWidget(const SizedBox.shrink());
     service.dispose();
     await tester.pump(const Duration(minutes: 5));

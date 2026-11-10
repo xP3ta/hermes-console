@@ -6,6 +6,7 @@ import 'agent_task_list.dart';
 import 'desktop_control_center.dart' show safeCommandProjection;
 import 'session_activity.dart';
 import 'subagent_activity.dart';
+import 'tool_name.dart' show canonicalToolName;
 
 /// Herramientas puente de Hermes (búsqueda diferida de herramientas): el
 /// modelo las llama para encontrar/describir/invocar la herramienta real. No
@@ -22,6 +23,19 @@ bool isInternalActivityLabel(String label) {
 bool isSkillLoadTool(String label) =>
     label.trim().toLowerCase() == 'skill_view';
 
+/// Activity traces use seconds in history and milliseconds on the live wire.
+/// Reject epoch/sentinel instants before subtracting or converting to DateTime.
+DateTime? activityInstant(Object? raw) {
+  if (raw is! num || !raw.isFinite || raw <= 0) return null;
+  final ms = raw < 1e11 ? raw * 1000 : raw;
+  if (ms < 1e12 || ms > 8640000000000000) return null;
+  return DateTime.fromMillisecondsSinceEpoch(ms.round());
+}
+
+/// A missing/implausible measurement is unknown, never a clamped duration.
+Duration? measuredActivityDuration(Duration? value) =>
+    value == null || value.isNegative || value.inHours >= 24 ? null : value;
+
 enum ActivityStepKind { reasoning, tool, skill }
 
 enum ActivityStepStatus { running, done, failed }
@@ -33,12 +47,14 @@ final class ActivityStep {
     required this.kind,
     required this.label,
     required this.status,
-    this.detail,
+    // Preserve the public argument and const snapshots while projecting on read.
+    String? detail,
     this.startedAt,
     this.duration,
     this.text,
     this.title,
-  });
+    // ignore: prefer_initializing_formals
+  }) : _detail = detail;
 
   final String id;
   final ActivityStepKind kind;
@@ -49,8 +65,24 @@ final class ActivityStep {
   /// issue»), when its event carried one; the screen prefers it to [label].
   final String? title;
 
-  /// Detalle ya proyectado y seguro (ver [activityToolDetail]); nunca crudo.
-  final String? detail;
+  final String? _detail;
+
+  /// Client-projected detail, including snapshots that arrived unfiltered.
+  String? get detail => kind == ActivityStepKind.reasoning
+      ? null
+      : sanitizeActivityDetail(
+          kind == ActivityStepKind.skill ? 'skill_view' : label,
+          _detail,
+        );
+
+  /// The command in full for the live row («uname -a»), masked; null for a
+  /// step that is not a command or whose command is not safe to show.
+  String? get commandLine => kind == ActivityStepKind.tool &&
+          _commandDetailTool(_detailTool(label)) &&
+          _detail != null
+      ? maskedCommandLine(_detail)
+      : null;
+
   final DateTime? startedAt;
 
   /// Duración medida, solo en pasos terminados.
@@ -80,25 +112,18 @@ final class ActivityStep {
       'failed' || 'error' => ActivityStepStatus.failed,
       _ => ActivityStepStatus.done,
     };
-    // Los pasos vivos guardan milisegundos; los reconstruidos del historial de
-    // Desktop, segundos. Nada real llega a 1e11 s (año 5138).
-    DateTime? instant(Object? raw) {
-      if (raw is! num || !raw.isFinite || raw <= 0) return null;
-      return DateTime.fromMillisecondsSinceEpoch(
-        (raw < 1e11 ? raw * 1000 : raw).round(),
-      );
-    }
-
-    final started = instant(step['timestamp']);
-    final ended = instant(step['completed_at']);
+    final started = activityInstant(step['timestamp']);
+    final ended = activityInstant(step['completed_at']);
     Duration? duration;
     if (status != ActivityStepStatus.running &&
         started != null &&
         ended != null &&
         ended.isAfter(started)) {
-      duration = ended.difference(started);
+      duration = measuredActivityDuration(ended.difference(started));
     }
-    final detail = step['detail']?.toString().trim();
+    final detail = step['detail'] is String
+        ? (step['detail'] as String).trim()
+        : null;
     final text = kind == ActivityStepKind.reasoning
         ? step['text']?.toString().trim()
         : null;
@@ -144,46 +169,220 @@ String _basename(String value) {
   return parts.isEmpty ? '' : parts.last;
 }
 
-/// Detalle corto y SEGURO de una herramienta para la pastilla/el panel.
+final _detailControls = RegExp(r'[\x00-\x1f\x7f\u202a-\u202e\u2066-\u2069]');
+final _detailIdentifier = RegExp(r'^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$');
+final _detailShellSyntax = RegExp(r'(^|\s)-{1,2}\S|[;|`$<>]');
+
+String _detailTool(String tool) =>
+    canonicalToolName(tool.trim().toLowerCase().replaceAll('-', '_'));
+
+bool _commandDetailTool(String name) => const {
+  'terminal',
+  'bash',
+  'shell',
+  'exec_command',
+  'execute_code',
+}.any((tool) => name == tool || name.startsWith('${tool}_'));
+
+bool _fileDetailTool(String name) => const {
+  'read_file',
+  'open_file',
+  'edit_file',
+  'write_file',
+  'patch',
+  'apply_patch',
+}.any((tool) => name == tool || name.startsWith('${tool}_'));
+
+String? _detailHost(String value) {
+  final uri = Uri.tryParse(value);
+  final host = uri?.host ?? '';
+  return host.isEmpty || _secretLike.hasMatch(host) ? null : _cap(host);
+}
+
+String? _detailFile(String value) {
+  // Never turn a signed URL into a filename containing its query string.
+  if (value.contains('://') || value.contains('?') || value.contains('&')) {
+    return _detailHost(value);
+  }
+  final name = _basename(value);
+  if (name.isEmpty ||
+      _secretLike.hasMatch(name) ||
+      _detailShellSyntax.hasMatch(name) ||
+      name.contains('=') ||
+      name.startsWith('-')) {
+    return null;
+  }
+  return _cap(name);
+}
+
+/// Catalogue IDs may be category/name; each segment is still an identifier,
+/// never an absolute path, traversal, free text or a secret.
+bool _detailSkillId(String value) {
+  final segments = value.split('/');
+  return segments.length <= 2 &&
+      segments.every(_detailIdentifier.hasMatch) &&
+      !_secretLike.hasMatch(value);
+}
+
+String? _detailExecutable(String value) {
+  final projection = safeCommandProjection(value);
+  final executable = projection.split(RegExp(r'\s+')).first;
+  if (!_detailIdentifier.hasMatch(executable) ||
+      _secretLike.hasMatch(executable)) {
+    return null;
+  }
+  return _cap(executable);
+}
+
+/// Strings that look like a credential even without a telling name: provider
+/// key prefixes, JWTs and long unbroken key-like runs.
+final RegExp _credentialShape = RegExp(
+  r'(sk-[A-Za-z0-9_\-]{8,}|gh[pousr]_[A-Za-z0-9]{8,}|xox[abprs]-|AKIA[0-9A-Z]{8,}|'
+  r'eyJ[A-Za-z0-9_\-]{8,}\.|(?<![A-Za-z0-9/._\-])[A-Za-z0-9_\-]{32,}={0,2}'
+  r'(?![A-Za-z0-9/._\-]))',
+);
+
+/// One display token of a command or a goal, with what must not be shown
+/// masked: userinfo and query strings of URLs and `NAME=value` assignments.
+String? _maskDisplayToken(String token) {
+  if (token.contains('://')) {
+    final uri = Uri.tryParse(token);
+    if (uri == null || uri.userInfo.isNotEmpty) return null;
+    if (uri.hasQuery || uri.hasFragment) {
+      final bare = uri.replace(query: '', fragment: '').toString();
+      final cut = bare.indexOf('?');
+      return '${cut < 0 ? bare : bare.substring(0, cut)}?…';
+    }
+    return token;
+  }
+  final assignment = RegExp(r'^([A-Za-z_][A-Za-z0-9_]*)=(.*)$').firstMatch(token);
+  if (assignment != null && assignment.group(2)!.isNotEmpty) {
+    return '${assignment.group(1)}=•••';
+  }
+  return token;
+}
+
+String? _maskDisplayLine(String line) {
+  final out = <String>[];
+  for (final token in line.split(RegExp(r'\s+'))) {
+    if (token.isEmpty) continue;
+    final masked = _maskDisplayToken(token);
+    if (masked == null) return null;
+    out.add(masked);
+  }
+  return out.join(' ');
+}
+
+/// The command the user can read in the live row, «uname -a» or «ls /tmp».
 ///
-/// Reglas (privacidad primero, nunca el argumento crudo):
-///  * comandos: solo la proyección del ejecutable de `safeCommandProjection`
-///    (la misma de la pastilla «En segundo plano»), sin flags ni argumentos;
-///  * rutas: solo el nombre del archivo, nunca el directorio;
-///  * URLs: solo el host;
-///  * consultas/patrones de búsqueda: texto corto, y se descartan si parecen
-///    contener un secreto (claves, tokens, `Bearer …`, contraseñas).
-/// Devuelve `null` cuando no hay nada presentable.
+/// Complete (the approved v4 video) but never a secret: the first line only;
+/// a command that names a secret anywhere (`token`, `password`, `Bearer`,
+/// `API_KEY=…`) or carries a credential-shaped string, a URL with userinfo or
+/// anything unreadable shows nothing here and the caller falls back to the
+/// executable alone. URL queries and `NAME=value` values are masked. The
+/// executable is shown by name, never by absolute path.
+String? maskedCommandLine(String raw, {int max = 64}) {
+  if (raw.length > 4096) return null;
+  final first = raw.split(RegExp(r'[\r\n]')).first.trim();
+  if (first.isEmpty || _detailControls.hasMatch(first)) return null;
+  if (_secretLike.hasMatch(first) || _credentialShape.hasMatch(first)) {
+    return null;
+  }
+  final tokens = first.split(RegExp(r'\s+'));
+  final executable = tokens.first.split(RegExp(r'[/\\]')).last;
+  if (!_detailIdentifier.hasMatch(executable) ||
+      _secretLike.hasMatch(executable)) {
+    return null;
+  }
+  final rest = _maskDisplayLine(tokens.skip(1).join(' '));
+  if (rest == null) return null;
+  return _cap(rest.isEmpty ? executable : '$executable $rest', max);
+}
+
+/// The one-line description of a delegated task under its name: the public
+/// goal's first line, with the same masking; null when it is not safe to show.
+String? maskedGoalLine(String? raw, {int max = 72}) {
+  if (raw == null || raw.length > 4096) return null;
+  final first = raw.split(RegExp(r'[\r\n]')).first.trim();
+  if (first.isEmpty || _detailControls.hasMatch(first)) return null;
+  if (_secretLike.hasMatch(first) || _credentialShape.hasMatch(first)) {
+    return null;
+  }
+  final masked = _maskDisplayLine(first);
+  return masked == null || masked.isEmpty ? null : _cap(masked, max);
+}
+
+/// Revalidate even an allegedly projected snapshot detail at the client
+/// boundary. Only executables, filenames, hosts and catalogue skill IDs survive.
+/// Queries/patterns are not display-safe targets, including old stored traces.
+String? sanitizeActivityDetail(String tool, Object? raw) {
+  if (raw is! String || raw.length > 4096 || _detailControls.hasMatch(raw)) {
+    return null;
+  }
+  final value = raw.trim();
+  if (value.isEmpty) return null;
+  final name = _detailTool(tool);
+  if (_commandDetailTool(name)) return _detailExecutable(value);
+  if (value.contains('://') || value.contains('?') || value.contains('&')) {
+    return _detailHost(value);
+  }
+  if (isSkillLoadTool(name)) {
+    final parts = value.split(' → ');
+    if (parts.length > 2 || !_detailSkillId(parts.first)) {
+      return null;
+    }
+    final file = parts.length == 2 ? _detailFile(parts.last) : null;
+    return _cap(file == null ? parts.first : '${parts.first} → $file');
+  }
+  if (_fileDetailTool(name)) return _detailFile(value);
+  if (name.contains('search') || name == 'grep' || name == 'glob') return null;
+  if (const {
+        'web_extract',
+        'web_fetch',
+        'web_read',
+        'browser_navigate',
+      }.contains(name) &&
+      _detailIdentifier.hasMatch(value) &&
+      !_secretLike.hasMatch(value)) {
+    return _cap(value);
+  }
+  // Unknown tools may carry a path or a host, never arbitrary free text.
+  if (value.contains('/') || value.contains(r'\')) return _detailFile(value);
+  if (_detailIdentifier.hasMatch(value) &&
+      value.contains('.') &&
+      !_secretLike.hasMatch(value)) {
+    return _cap(value);
+  }
+  return null;
+}
+
+/// Project arguments to an executable, filename or host. Never return queries,
+/// patterns, command flags, URL paths, userinfo or signed query strings.
 String? activityToolDetail(String tool, Object? args) {
   if (args is! Map) return null;
   String? text(String key) {
     final value = args[key];
-    if (value is! String) return null;
-    final trimmed = value.trim();
-    return trimmed.isEmpty ? null : trimmed;
+    if (value is! String ||
+        value.length > 4096 ||
+        _detailControls.hasMatch(value)) {
+      return null;
+    }
+    return value.trim().isEmpty ? null : value.trim();
   }
 
-  // tp1216: a skill load names its skill (`skill_view {name, file_path?}`),
-  // as Hermes Desktop titles it («github-pr-workflow → api.md»). Skill
-  // names are catalogue identifiers, still capped and secret-screened.
-  if (isSkillLoadTool(tool)) {
+  if (isSkillLoadTool(_detailTool(tool))) {
     final name = text('name');
-    if (name != null && !_secretLike.hasMatch(name)) {
+    if (name != null && _detailSkillId(name)) {
       final file = text('file_path');
-      final fileName = file == null ? '' : _basename(file);
-      return _cap(
-        fileName.isEmpty || _secretLike.hasMatch(fileName)
-            ? name
-            : '$name → $fileName',
-      );
+      final projected = file == null ? null : _detailFile(file);
+      return _cap(projected == null ? name : '$name → $projected');
     }
   }
-
   for (final key in const ['command', 'cmd', 'script']) {
     final command = text(key);
-    if (command == null) continue;
-    final projection = safeCommandProjection(command);
-    return projection.isEmpty ? null : _cap(projection);
+    if (command != null) {
+      return maskedCommandLine(command) ?? _detailExecutable(command);
+    }
   }
   for (final key in const [
     'path',
@@ -194,31 +393,45 @@ String? activityToolDetail(String tool, Object? args) {
     'target',
   ]) {
     final path = text(key);
-    if (path == null) continue;
-    final name = _basename(path);
-    if (name.isEmpty || _secretLike.hasMatch(name)) return null;
-    return _cap(name);
+    if (path != null) return _detailFile(path);
   }
   final url = text('url');
-  if (url != null) {
-    final host = Uri.tryParse(url)?.host ?? '';
-    return host.isEmpty ? null : _cap(host);
-  }
-  for (final key in const ['query', 'q', 'pattern']) {
-    final value = text(key);
-    if (value == null) continue;
-    if (_secretLike.hasMatch(value)) return null;
-    return _cap(value);
-  }
-  return null;
+  return url == null ? null : _detailHost(url);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // mp1215 · Escrituras de memoria que aterrizaron
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// The Hermes tool that writes the agent's persistent memory/user profile.
-bool isMemoryTool(String label) => label.trim().toLowerCase() == 'memory';
+/// The tools that write the agent's persistent memory (or user profile), by
+/// canonical name (lowercase, words joined by `_`). The ONE place to extend
+/// when another memory tool shows up: `memory` is Hermes' own; `omh_remember`
+/// is the OMH plugin's save/recall tool (shown as «Omh Remember»).
+const Set<String> memoryToolNames = {'memory', 'omh_remember'};
+
+/// The OMH plugin's save/recall tool, which answers with `status` rather
+/// than `success`.
+const String omhRememberTool = 'omh_remember';
+
+final RegExp _toolNameBreaks = RegExp(r'[\s\-.]+');
+
+/// `Omh Remember`, `omh-remember` and `omh_remember` are the same tool.
+String canonicalMemoryToolName(String label) =>
+    label.trim().toLowerCase().replaceAll(_toolNameBreaks, '_');
+
+bool isMemoryTool(String label) =>
+    memoryToolNames.contains(canonicalMemoryToolName(label));
+
+bool _isOmhRemember(String tool) =>
+    canonicalMemoryToolName(tool) == omhRememberTool;
+
+/// OMH `status` values that mean the record is now stored. `pending_review`
+/// (queued), `refused` and `error` are NOT stored.
+const Set<String> _omhLandedStatuses = {
+  'remembered',
+  'corrected',
+  'already_remembered',
+};
 
 enum MemoryWriteAction { add, replace, remove }
 
@@ -256,6 +469,7 @@ final class MemoryWrite {
     required this.userTarget,
     required this.landed,
     this.preview,
+    this.rejected = false,
   });
 
   final MemoryWriteAction action;
@@ -264,6 +478,11 @@ final class MemoryWrite {
   final bool userTarget;
   final bool landed;
 
+  /// The result said, in so many words, that nothing was stored (`success:
+  /// false`, an OMH `refused`/`error`). Not set while a write is merely
+  /// queued for approval, nor when there was no parsable result.
+  final bool rejected;
+
   /// Lo guardado (add/replace) o lo quitado (remove), si viene en los args.
   final String? preview;
 
@@ -271,6 +490,7 @@ final class MemoryWrite {
     'action': action.name,
     'target': userTarget ? 'user' : 'memory',
     'landed': landed,
+    if (rejected) 'rejected': true,
     'preview': ?preview,
   });
 
@@ -290,6 +510,7 @@ final class MemoryWrite {
       action: action,
       userTarget: raw['target'] == 'user',
       landed: raw['landed'] == true,
+      rejected: raw['rejected'] == true && raw['landed'] != true,
       preview: _memoryPreview(raw['preview']),
     );
   }
@@ -300,6 +521,20 @@ final class MemoryWrite {
     if (!isMemoryTool(tool)) return null;
     final record = _memoryRecord(args);
     if (record == null) return null;
+    if (_isOmhRemember(tool)) {
+      // `recall` only reads; a save with `replaces` updates a record.
+      final act = (record['action'] ?? 'save').toString().trim().toLowerCase();
+      if (act != 'save') return null;
+      final replaces = record['replaces'];
+      return MemoryWrite(
+        action: replaces is String && replaces.trim().isNotEmpty
+            ? MemoryWriteAction.replace
+            : MemoryWriteAction.add,
+        userTarget: false,
+        landed: false,
+        preview: _memoryPreview(record['summary']),
+      );
+    }
     String? previewOf(Map op, MemoryWriteAction action) => _memoryPreview(
       action == MemoryWriteAction.remove
           ? op['old_text']
@@ -343,6 +578,23 @@ final class MemoryWrite {
   static MemoryWrite? settle(MemoryWrite? call, Object? result) {
     final record = _memoryRecord(result);
     if (record == null) return call;
+    if (_isOmhResult(record)) {
+      // A recall reads; it never earns a write.
+      if (record['action'] == 'recall') return call;
+      final replaced =
+          record['status'] == 'corrected' ||
+          (record['replaces'] is String &&
+              (record['replaces'] as String).isNotEmpty);
+      return MemoryWrite(
+        action:
+            call?.action ??
+            (replaced ? MemoryWriteAction.replace : MemoryWriteAction.add),
+        userTarget: false,
+        landed: memoryResultLanded(record),
+        rejected: _memoryRejected(record),
+        preview: call?.preview,
+      );
+    }
     final landed = memoryResultLanded(record);
     final target = record['target'];
     final replaced =
@@ -364,9 +616,18 @@ final class MemoryWrite {
           ? target == 'user'
           : call?.userTarget == true,
       landed: landed,
+      rejected: _memoryRejected(record),
       preview: call?.preview,
     );
   }
+}
+
+/// The result is a clear «not stored»: not landed and not just queued.
+bool _memoryRejected(Map record) {
+  if (memoryResultLanded(record)) return false;
+  return !(record['staged'] == true ||
+      record['proposal_staged'] == true ||
+      record['status'] == 'pending_review');
 }
 
 Map? _memoryRecord(Object? raw) {
@@ -390,11 +651,23 @@ Map? _memoryRecord(Object? raw) {
   return null;
 }
 
+/// An `omh_remember` answer: it carries `status` (and its plugin/schema
+/// marks) instead of `success`.
+bool _isOmhResult(Map record) =>
+    record['plugin_tool'] == omhRememberTool ||
+    (record['schema_version'] is String &&
+        (record['schema_version'] as String).startsWith('omh_memory_') &&
+        !record.containsKey('success'));
+
 /// El resultado de `memory` confirma que la escritura quedó guardada: el
 /// gateway devuelve `success: true` y no la dejó en espera de aprobación.
 bool memoryResultLanded(Object? result) {
   final record = _memoryRecord(result);
   if (record == null) return false;
+  if (_isOmhResult(record)) {
+    return record['action'] != 'recall' &&
+        _omhLandedStatuses.contains(record['status']);
+  }
   return record['success'] == true &&
       record['staged'] != true &&
       record['proposal_staged'] != true;
@@ -494,6 +767,13 @@ final class ActivitySnapshot {
       : subagentGenericCount;
 
   bool get hasSubagents => subagentCount > 0 || passiveRemote;
+
+  /// Finished / total subagents of this snapshot, for whoever paints
+  /// «n/N agentes». «Finished» includes the ones that failed or were
+  /// stopped; the total is [subagentCount] (a number-only roster counts as
+  /// 0/N).
+  SubagentGroupCount get subagentGroupCount =>
+      SubagentGroupCount.of(subagents, genericTotal: subagentGenericCount);
 
   /// Hay subagentes vivos (o solo conocidos por contador).
   bool get subagentsRunning =>

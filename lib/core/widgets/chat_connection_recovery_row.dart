@@ -5,7 +5,6 @@ import 'package:flutter/material.dart';
 import '../services/active_chat_service.dart';
 import '../services/connection_status.dart';
 import '../theme/app_theme.dart';
-import 'hermes_notice.dart';
 
 @visibleForTesting
 const chatConnectionActiveGrace = Duration(seconds: 3);
@@ -16,6 +15,12 @@ const chatConnectionIdleGrace = Duration(minutes: 5);
 @visibleForTesting
 const chatConnectionHealthyHysteresis = Duration(seconds: 2);
 
+/// After the app returns from the background the sockets have to be opened
+/// again, which is not a loss the user needs to hear about: the grace then
+/// runs from the return, not from the moment the dead socket was noticed.
+@visibleForTesting
+const chatConnectionResumeGrace = Duration(seconds: 6);
+
 /// «Reconnected» at most once per this long, however often the link flaps.
 @visibleForTesting
 const chatConnectionRecoveredNoticeSpacing = Duration(seconds: 60);
@@ -23,6 +28,14 @@ const chatConnectionRecoveredNoticeSpacing = Duration(seconds: 60);
 /// The transport the chat shows: its own state, overridden by the connection
 /// supervisor when that knows the socket is down (an idle chat has not
 /// noticed yet). Never connected over a down socket.
+///
+/// conn-registry E1: only facts the user can act on are «offline» (no
+/// network, a refused credential); in the chat they still wait its
+/// five-minute silence, except the refused credential (REVISION-4 BAJO 2).
+/// A server that does not answer or is
+/// booting is a redial in progress, like Desktop's status pill, which
+/// mirrors the socket's `connecting` state while it retries
+/// (apps/desktop/src/app/shell/hooks/use-statusbar-items.tsx:376-407).
 ChatTransportStatus chatTransportWithLink(
   ChatTransportStatus chat,
   ConnectionStatus? link,
@@ -34,10 +47,10 @@ ChatTransportStatus chatTransportWithLink(
       ? chat.disconnectedSince
       : link.since;
   return ChatTransportStatus(
-    link.kind == ConnectionStatusKind.reconnecting ||
-        link.kind == ConnectionStatusKind.starting
-        ? ChatTransportState.reconnecting
-        : ChatTransportState.offline,
+    link.kind == ConnectionStatusKind.noNetwork ||
+            link.kind == ConnectionStatusKind.authRequired
+        ? ChatTransportState.offline
+        : ChatTransportState.reconnecting,
     disconnectedSince: since,
   );
 }
@@ -69,6 +82,7 @@ class ChatTransportVisibility extends ChangeNotifier {
     this.healthyHysteresis = chatConnectionHealthyHysteresis,
     this.noticeSpacing = chatConnectionRecoveredNoticeSpacing,
     this.persistentAfter = connectionPersistentNoticeAfter,
+    this.resumeGrace = chatConnectionResumeGrace,
     DateTime Function()? clock,
   }) : _clock = clock ?? DateTime.now;
 
@@ -77,7 +91,12 @@ class ChatTransportVisibility extends ChangeNotifier {
   final Duration healthyHysteresis;
   final Duration noticeSpacing;
   final Duration persistentAfter;
+  final Duration resumeGrace;
   final DateTime Function() _clock;
+
+  /// When the app last came back to the foreground (null: it has not left).
+  DateTime? _resumedAt;
+  bool _resumedFromBackground = false;
 
   Timer? _enterTimer;
   Timer? _leaveTimer;
@@ -89,6 +108,13 @@ class ChatTransportVisibility extends ChangeNotifier {
   int _lossEpoch = 0;
   DateTime? _lastRecoveryNoticeAt;
   ConnectionStatusKind? _linkKind;
+
+  /// The grace the current loss waited: one as long as [persistentAfter]
+  /// (the chat's five-minute silence) already is the persistent outage.
+  Duration _enteredAfter = Duration.zero;
+
+  /// The current loss was shown with no grace because of a refused credential.
+  bool _enteredForAuth = false;
   ChatTransportState _displayState = ChatTransportState.offline;
   ({
     ChatTransportStatus status,
@@ -98,6 +124,10 @@ class ChatTransportVisibility extends ChangeNotifier {
     ConnectionStatus? link,
   })?
   _inputs;
+
+  /// The chat has just been opened (from a notification, say) and its
+  /// transport is still being opened: the resume grace counts from now.
+  void markOpening() => _resumedAt = _clock();
 
   /// Whether a transport loss is currently shown to the user.
   bool get visible => _visible;
@@ -138,6 +168,10 @@ class ChatTransportVisibility extends ChangeNotifier {
         previous.link == link) {
       return;
     }
+    if (previous != null && !previous.foreground && appForeground) {
+      _resumedAt = _clock();
+      _resumedFromBackground = true;
+    }
     _inputs = (
       status: status,
       activeTurn: activeTurn,
@@ -157,11 +191,18 @@ class ChatTransportVisibility extends ChangeNotifier {
     _leaveTimer = null;
     _linkKind = inputs.link?.isConnected == false ? inputs.link!.kind : null;
 
-    if (inputs.auth) {
+    if (inputs.auth || !inputs.foreground) {
       _setVisible(false);
       return;
     }
     if (!inputs.status.isConnected) {
+      final authLink =
+          inputs.link?.isConnected == false &&
+          inputs.link!.kind == ConnectionStatusKind.authRequired;
+      // REVISION-4 BAJO 8: a loss shown at once only because the credential
+      // was refused becomes an ordinary redial when the link says so: it
+      // waits the remaining grace like any other loss.
+      if (_visible && _enteredForAuth && !authLink) _setVisible(false);
       final stateChanged = _displayState != inputs.status.state;
       _displayState = inputs.status.state;
       if (_visible) {
@@ -171,8 +212,23 @@ class ChatTransportVisibility extends ChangeNotifier {
       if (!inputs.foreground) return;
       // A supervisor that knows the socket is down needs no 5 min wait.
       final linkDown = inputs.link?.isConnected == false;
-      final grace = inputs.activeTurn || linkDown ? activeGrace : idleGrace;
-      final since = inputs.status.disconnectedSince ?? _clock();
+      var grace = inputs.activeTurn || linkDown ? activeGrace : idleGrace;
+      // A refused credential is a fact, not a redial: no grace (Desktop:
+      // the sign-out notice once its token retries are done,
+      // use-gateway-boot.ts:564-585; AUDITORIA C3/C21).
+      _enteredForAuth = authLink;
+      if (authLink) grace = Duration.zero;
+      var since = inputs.status.disconnectedSince ?? _clock();
+      // A socket that died while the app was away is reopened on return:
+      // count the grace from the return so a normal redial stays silent.
+      final resumedAt = _resumedAt;
+      if (resumedAt != null &&
+          (since.isBefore(resumedAt) ||
+              (_resumedFromBackground && _clock().difference(resumedAt) < resumeGrace))) {
+        since = resumedAt;
+        if (grace < resumeGrace) grace = resumeGrace;
+      }
+      _enteredAfter = grace;
       final remaining = grace - _clock().difference(since);
       if (remaining <= Duration.zero) {
         _setVisible(true);
@@ -220,7 +276,7 @@ class ChatTransportVisibility extends ChangeNotifier {
     if (value) {
       final since = _inputs?.status.disconnectedSince ?? _clock();
       final remaining = persistentAfter - _clock().difference(since);
-      if (remaining <= Duration.zero) {
+      if (remaining <= Duration.zero || _enteredAfter >= persistentAfter) {
         _persistent = true;
       } else {
         _persistentTimer = Timer(remaining, () {
@@ -253,7 +309,6 @@ class ChatConnectionRecoveryRow extends StatefulWidget {
     required this.appForeground,
     required this.offlineLabel,
     required this.reconnectingLabel,
-    required this.recoveredLabel,
     this.visibility,
     this.activeGrace = chatConnectionActiveGrace,
     this.idleGrace = chatConnectionIdleGrace,
@@ -268,7 +323,6 @@ class ChatConnectionRecoveryRow extends StatefulWidget {
   final bool appForeground;
   final String offlineLabel;
   final String reconnectingLabel;
-  final String recoveredLabel;
 
   /// Shared debounced state. When omitted the row owns a private one built
   /// from the grace/hysteresis parameters below.
@@ -286,7 +340,6 @@ class ChatConnectionRecoveryRow extends StatefulWidget {
 class _ChatConnectionRecoveryRowState extends State<ChatConnectionRecoveryRow> {
   ChatTransportVisibility? _owned;
   late ChatTransportVisibility _visibility;
-  late int _seenRecoveries;
 
   @override
   void initState() {
@@ -317,7 +370,6 @@ class _ChatConnectionRecoveryRowState extends State<ChatConnectionRecoveryRow> {
           healthyHysteresis: widget.healthyHysteresis,
           clock: widget.clock,
         ));
-    _seenRecoveries = _visibility.recoveries;
     if (listen) _visibility.addListener(_onVisibility);
   }
 
@@ -330,17 +382,11 @@ class _ChatConnectionRecoveryRowState extends State<ChatConnectionRecoveryRow> {
     appForeground: widget.appForeground,
   );
 
+  // conn-registry E2: a recovered loss says nothing (Desktop has no
+  // «reconnected» notice).
   void _onVisibility() {
     if (!mounted) return;
     setState(() {});
-    if (_visibility.recoveries != _seenRecoveries) {
-      _seenRecoveries = _visibility.recoveries;
-      HermesNotice.of(context).show(
-        message: widget.recoveredLabel,
-        kind: HermesNoticeKind.success,
-        id: 'chat-transport-reconnected',
-      );
-    }
   }
 
   @override

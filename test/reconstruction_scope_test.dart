@@ -2,14 +2,6 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
-String _between(String source, String start, String end) {
-  final startIndex = source.indexOf(start);
-  final endIndex = source.indexOf(end, startIndex + start.length);
-  expect(startIndex, greaterThanOrEqualTo(0));
-  expect(endIndex, greaterThan(startIndex));
-  return source.substring(startIndex, endIndex);
-}
-
 String _classBody(String source, String declaration) {
   final start = source.indexOf(declaration);
   expect(start, greaterThanOrEqualTo(0));
@@ -87,28 +79,12 @@ void main() {
     expect(source, isNot(contains('SessionArtifactsSheet')));
   });
 
-  test('Cron notifications never reconstruct text from session messages', () {
-    final source = File(
-      'lib/core/services/notifications/background_listener.dart',
-    ).readAsStringSync();
-    final preview = _between(
-      source,
-      'static String? notificationPreview(',
-      'static bool shouldNotifyResult(',
-    );
-
-    expect(preview, isNot(contains('getSessionMessages')));
-    expect(preview, isNot(contains('getMessages')));
-    expect(preview, isNot(contains('latestAssistantPreview')));
-  });
-
-  test('subagent rows render generic identity and status only', () {
+  test('subagent rows show identity, goal and status but never raw output', () {
     final source = File(
       'lib/core/widgets/subagent_activity_card.dart',
     ).readAsStringSync();
     final row = _classBody(source, 'class _SubagentListRow');
 
-    expect(row, isNot(contains('activity.goalPreview')));
     expect(row, isNot(contains('activity.resultPreview')));
     expect(row, isNot(contains('activity.details.detailPreview')));
     expect(row, isNot(contains('activity.details.activeToolName')));

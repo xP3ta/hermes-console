@@ -53,10 +53,8 @@ final _secure = <String, String>{};
 
 /// The Dashboard's session list holding [rows].
 http.Client _listServer(List<Map<String, dynamic>> rows) => MockClient(
-  (_) async => http.Response(
-    jsonEncode({'sessions': rows, 'total': rows.length}),
-    200,
-  ),
+  (_) async =>
+      http.Response(jsonEncode({'sessions': rows, 'total': rows.length}), 200),
 );
 
 class _HomeClient extends ApiClient {
@@ -214,6 +212,13 @@ Future<void> _pumpDrawer(
   );
   scaffoldKey.currentState!.openDrawer();
   await tester.pumpAndSettle();
+  // The recents come after the sections: scroll them into the built part
+  // of the list (each section row added pushes them further down).
+  await tester.drag(
+    find.byKey(const ValueKey('drawer-scroll')),
+    const Offset(0, -700),
+  );
+  await tester.pumpAndSettle();
 }
 
 Future<void> _saveDraft(
@@ -350,6 +355,11 @@ void main() {
     await tester.runAsync(
       () => _saveDraft(connection.id, _serverId, _followUp),
     );
+    // Tall enough for the drawer's whole list (Perfil and Agentes rows
+    // come before the recents).
+    tester.view.physicalSize = const Size(800, 1400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
     await _pumpDrawer(tester, connection, [_serverRow()]);
     expect(
       find.byKey(

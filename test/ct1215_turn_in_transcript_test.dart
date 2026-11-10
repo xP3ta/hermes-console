@@ -5,6 +5,7 @@ import 'package:flutter/rendering.dart' show RenderParagraph;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/models/activity_snapshot.dart';
 import 'package:hermes_android/core/models/agent_task_list.dart';
+import 'package:hermes_android/core/services/reasoning_disclosure_prefs.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/agent_task_widgets.dart';
 import 'package:hermes_android/core/widgets/chat_event_cards.dart';
@@ -12,6 +13,7 @@ import 'package:hermes_android/core/widgets/chat_turn_activity.dart';
 import 'package:hermes_android/core/widgets/compact_markdown.dart';
 import 'package:hermes_android/core/widgets/message_avatar_header.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/design_shots.dart' show loadDesignFonts;
 
@@ -216,14 +218,14 @@ void main() {
           status: _live(step: _runningStep('terminal')),
         ),
       );
-      expect(_statusText(tester), 'Trabajando · Ejecutando comando · 0:07');
+      expect(_statusText(tester), 'Trabajando · Ejecutando comando · 7s');
       // If the line wraps, the timer goes down with the last word.
       expect(
         tester
             .widget<Text>(find.byKey(const ValueKey('turn-status-text')))
             .textSpan!
             .toPlainText(),
-        endsWith('comando\u00A0·\u00A00:07'),
+        endsWith('comando\u00A0·\u00A07s'),
       );
       // English, Desktop's own words.
       await tester.pumpWidget(
@@ -234,7 +236,7 @@ void main() {
         ),
       );
       await tester.pump();
-      expect(_statusText(tester), 'Working · Running command · 0:07');
+      expect(_statusText(tester), 'Working · Running command · 7s');
     });
 
     testWidgets('thinking, replying, waiting for the user, still working', (
@@ -247,16 +249,16 @@ void main() {
         return _statusText(tester);
       }
 
-      expect(await text(_live()), 'Pensando · 0:07');
+      expect(await text(_live()), 'Pensando · 7s');
       expect(
         await text(_live(headline: 'Respondiendo…')),
-        'Respondiendo · 0:07',
+        'Respondiendo · 7s',
       );
       expect(
         await text(_live(waitingForUser: true)),
-        'Esperando tu respuesta · 0:07',
+        'Esperando tu respuesta · 7s',
       );
-      expect(await text(_live(noActivityHint: true)), 'Sigo trabajando · 0:07');
+      expect(await text(_live(noActivityHint: true)), 'Sigo trabajando · 7s');
     });
 
     testWidgets('a skill goes by its name, a connector by its own label', (
@@ -273,14 +275,14 @@ void main() {
           ),
         ),
       );
-      expect(_statusText(tester), 'Trabajando · github-pr-workflow · 0:07');
+      expect(_statusText(tester), 'Trabajando · github-pr-workflow · 7s');
       await tester.pumpWidget(
         _host(
           _turn(const [], active: true),
           status: _live(step: _runningStep('mcp__linear__list_issues')),
         ),
       );
-      expect(_statusText(tester), 'Trabajando · Linear · list issues · 0:07');
+      expect(_statusText(tester), 'Trabajando · Linear · list issues · 7s');
       // No id with underscores reaches the line.
       expect(_statusText(tester), isNot(contains('_')));
     });
@@ -302,6 +304,36 @@ void main() {
       expect(node.label, isNot(contains('0:')));
     });
 
+    // QA 9709 (the owner, capture 1248): «● Pensando · 3s» under the name and the
+    // thought's «● Pensando… · 1 s · …» below it. The thought's line is the
+    // one row; anything else the status says (replying, a tool) stays.
+    testWidgets('a live thought is the one «Pensando» row', (tester) async {
+      final thinking = [
+        _thought('r', 'El usuario pregunta si puede', running: true),
+      ];
+      Finder rows() => find.textContaining(
+        RegExp('^Pensando'),
+        findRichText: true,
+      );
+      await tester.pumpWidget(
+        _host(_turn(thinking, active: true), status: _live()),
+      );
+      await tester.pump();
+      expect(rows(), findsOneWidget);
+      expect(find.byKey(const ValueKey('turn-status-line')), findsNothing);
+      expect(find.byKey(const ValueKey('turn-thought-toggle')), findsOneWidget);
+      // Replying while the thought is still open: two different things.
+      await tester.pumpWidget(
+        _host(
+          _turn(thinking, active: true),
+          status: _live(headline: 'Respondiendo…'),
+        ),
+      );
+      await tester.pump();
+      expect(_statusText(tester), 'Respondiendo · 7s');
+      expect(rows(), findsOneWidget);
+    });
+
     testWidgets('the timer counts in place', (tester) async {
       var elapsed = const Duration(seconds: 7);
       Widget build() => _host(
@@ -310,7 +342,7 @@ void main() {
         elapsed: elapsed,
       );
       await tester.pumpWidget(build());
-      expect(_statusText(tester), 'Pensando · 0:07');
+      expect(_statusText(tester), 'Pensando · 7s');
       elapsed = const Duration(seconds: 68);
       await tester.pumpWidget(build());
       await tester.pump(const Duration(seconds: 1));
@@ -319,6 +351,17 @@ void main() {
   });
 
   group('while it works', () {
+    // Mock 137 A: by default the thought is one line the reader opens. These
+    // tests read its body, so they run with the setting off: open at six
+    // lines while it thinks (Console before 1.4.0).
+    setUp(() async {
+      SharedPreferences.setMockInitialValues({
+        ReasoningDisclosurePrefs.key: false,
+      });
+      await ReasoningDisclosurePrefs.load();
+    });
+    tearDown(() => ReasoningDisclosurePrefs.debugUse(null));
+
     testWidgets('thought, tool in hand and plan, in that order, no card', (
       tester,
     ) async {
@@ -338,6 +381,12 @@ void main() {
           status: _live(step: _runningStep('terminal'), tasks: _fourOfFive),
         ),
       );
+      // Mock 137 A: a tool came after the thought, so it is over and shows
+      // as its line, «Pensamiento»; a tap opens it (a thought that mounts
+      // already over never opens on its own: Desktop's sawLivePreview,
+      // message-parts.tsx:242-255).
+      await tester.tap(find.byKey(const ValueKey('turn-thought-toggle')));
+      await tester.pump(const Duration(milliseconds: 300));
       final lines = find.byKey(const ValueKey('thinking-trace-live'));
       final thought = find.byKey(const ValueKey('turn-reasoning'));
       final row = find.byType(TurnToolRow);
@@ -345,7 +394,7 @@ void main() {
       expect(find.descendant(of: lines, matching: thought), findsOneWidget);
       expect(row, findsOneWidget, reason: 'only the tool in hand');
       expect(find.text('Ejecutando · df', findRichText: true), findsOneWidget);
-      expect(find.text('0:02'), findsOneWidget);
+      expect(find.text('2s'), findsOneWidget);
       expect(
         tester.getTopLeft(thought).dy,
         lessThan(tester.getTopLeft(row).dy),
@@ -370,7 +419,11 @@ void main() {
                   .decoration
               as BoxDecoration;
       expect(quote.color, isNull);
-      expect((quote.border! as BorderDirectional).start.width, 2);
+      // Look of 9 nov 2026: a hairline, no thick bar (Desktop draws none).
+      expect(
+        (quote.border! as BorderDirectional).start.width,
+        TurnReasoningQuote.ruleWidth,
+      );
       expect((quote.border! as BorderDirectional).top, BorderSide.none);
     });
 
@@ -386,6 +439,12 @@ void main() {
           status: _live(step: _runningStep('terminal'), tasks: _fourOfFive),
         ),
       );
+      // Mock 137 A: a tool came after the thought, so it is over and shows
+      // as its line, «Pensamiento»; a tap opens it (a thought that mounts
+      // already over never opens on its own: Desktop's sawLivePreview,
+      // message-parts.tsx:242-255).
+      await tester.tap(find.byKey(const ValueKey('turn-thought-toggle')));
+      await tester.pump(const Duration(milliseconds: 300));
       expect(find.byKey(const ValueKey('assistant-avatar-slot')), findsNothing);
       final edge = tester
           .getTopLeft(find.byKey(const ValueKey('assistant-header-name')))
@@ -415,6 +474,12 @@ void main() {
           status: _live(step: _runningStep('terminal'), tasks: _fourOfFive),
         ),
       );
+      // Mock 137 A: a tool came after the thought, so it is over and shows
+      // as its line, «Pensamiento»; a tap opens it (a thought that mounts
+      // already over never opens on its own: Desktop's sawLivePreview,
+      // message-parts.tsx:242-255).
+      await tester.tap(find.byKey(const ValueKey('turn-thought-toggle')));
+      await tester.pump(const Duration(milliseconds: 300));
       expect(tester.takeException(), isNull);
       final lines = tester.getRect(
         find.byKey(const ValueKey('thinking-trace-live')),
@@ -425,17 +490,22 @@ void main() {
             .right,
         closeTo(lines.right, 0.5),
       );
-      // The tool's icon leads from the right, the thought's rule is there.
+      // The tool's pill and its glyph lead from the right, the thought's
+      // rule is there. Mock 138 v2: the glyph sits inside the round pill.
+      expect(
+        tester.getRect(find.byType(TurnToolRow)).right,
+        closeTo(lines.right, 0.5),
+      );
       expect(
         tester
             .getRect(
               find.descendant(
                 of: find.byType(TurnToolRow),
-                matching: find.byType(Icon),
+                matching: find.byKey(const ValueKey('turn-tool-glyph')),
               ),
             )
             .right,
-        closeTo(lines.right, 0.5),
+        closeTo(lines.right - TurnToolRow.glyphInset, 0.5),
       );
       final quote =
           tester
@@ -449,10 +519,16 @@ void main() {
                   )
                   .decoration
               as BoxDecoration;
-      expect((quote.border! as BorderDirectional).start.width, 2);
+      // Look of 9 nov 2026: a hairline, no thick bar (Desktop draws none).
+      expect(
+        (quote.border! as BorderDirectional).start.width,
+        TurnReasoningQuote.ruleWidth,
+      );
     });
 
-    testWidgets('the thought is read at the size of the reply', (tester) async {
+    testWidgets('the thought is small and quiet (9 nov live look)', (
+      tester,
+    ) async {
       await tester.pumpWidget(
         _host(
           _turn([
@@ -462,7 +538,10 @@ void main() {
         ),
       );
       expect(_paintedSize(tester, 'Monto cinco'), TurnType.reasoning);
-      expect(TurnType.reasoning, greaterThanOrEqualTo(14));
+      // Look of 9 nov 2026: ~12.5 sp (12-13), under the 15 sp reply; Desktop
+      // message-parts.tsx:326,346 sets the thought at the tool font size.
+      expect(TurnType.reasoning, inInclusiveRange(12, 13));
+      expect(TurnType.reasoning, lessThan(15));
     });
 
     testWidgets('a long thought is shown whole, from its first word', (
@@ -482,7 +561,19 @@ void main() {
       final medium = height();
       await pumpThought('PRIMERA_FRASE. $body\n\n$body\n\n$body ULTIMA_FRASE.');
       expect(medium, lessThan(height() + 1));
-      expect(height(), 288, reason: 'a long thought stops at the cap');
+      // Mock 137 A: the box a thought opens to is six lines (it was 35 % of
+      // the screen); 4 + 4 of the quote's padding around it.
+      expect(
+        height(),
+        closeTo(
+          TurnType.reasoning *
+                  TurnReasoningQuote.lineHeight *
+                  ThinkingLine.previewLines +
+              8,
+          0.5,
+        ),
+        reason: 'a long thought stops at the cap',
+      );
       expect(
         find.textContaining('PRIMERA_FRASE', findRichText: true),
         findsOneWidget,
@@ -627,20 +718,23 @@ void main() {
         tester
             .getSize(find.byKey(const ValueKey('turn-tasks-progress')))
             .height,
-        3,
+        4,
       );
+      // The live look (9 nov): the last done, the one in hand and the
+      // next ones; the earlier done ones fold.
       expect(find.byKey(const ValueKey('turn-task-1')), findsNothing);
+      expect(find.byKey(const ValueKey('turn-task-3')), findsOneWidget);
       expect(find.byKey(const ValueKey('turn-task-4')), findsOneWidget);
       expect(find.byKey(const ValueKey('turn-task-5')), findsOneWidget);
       expect(
         find.descendant(
           of: find.byKey(const ValueKey('turn-task-4')),
-          matching: find.byType(CircularProgressIndicator),
+          matching: find.byKey(const ValueKey('live-ring-spinner')),
         ),
         findsOneWidget,
       );
       final toggle = find.byKey(const ValueKey('turn-tasks-done-toggle'));
-      expect(tester.getSemantics(toggle).label, '3 completadas');
+      expect(tester.getSemantics(toggle).label, '2 anteriores completadas');
       expect(tester.getSemantics(toggle).flagsCollection.isButton, isTrue);
       expect(
         tester.getSemantics(toggle).flagsCollection.isExpanded,
@@ -716,7 +810,8 @@ void main() {
           ownerStepId: 'todo',
         ),
       );
-      expect(find.text('Pensó durante 9s · 3 comandos'), findsOneWidget);
+      // Mock 138 v2: a turn that used tools ends saying how long it worked.
+      expect(find.text('Trabajó 9 s · 3 comandos'), findsOneWidget);
       expect(find.text('Tareas 3 de 5 · 2 sin hacer'), findsOneWidget);
       expect(find.byKey(const ValueKey('turn-status-line')), findsNothing);
       expect(find.byKey(const ValueKey('thinking-trace-live')), findsNothing);
@@ -742,6 +837,15 @@ void main() {
       );
       await tester.tap(find.byKey(const ValueKey('thinking-trace-summary')));
       await tester.pump(const Duration(milliseconds: 300));
+      // Mock 137 A: a finished thought is its line, «Pensamiento · …», and
+      // in a turn the reader opened it shows whole under that line.
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('thinking-trace-step-r')),
+          matching: find.byKey(const ValueKey('turn-thought-toggle')),
+        ),
+        findsOneWidget,
+      );
       expect(find.byKey(const ValueKey('turn-reasoning')), findsOneWidget);
       expect(_paintedSize(tester, 'Me pide probar'), TurnType.reasoning);
       expect(find.byType(TurnToolRow), findsNWidgets(3));
@@ -825,7 +929,7 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('thinking-trace-tasks')));
       await tester.pump(const Duration(milliseconds: 300));
       await tester.pump(const Duration(milliseconds: 300));
-      expect(left(find.byKey(const ValueKey('turn-reasoning'))), edge);
+      expect(left(find.byKey(const ValueKey('thinking-trace-step-r'))), edge);
       expect(left(find.byType(TurnToolRow).first), edge);
       expect(left(find.byKey(const ValueKey('turn-tasks-history'))), edge);
     });
@@ -915,7 +1019,8 @@ void main() {
           ], active: false),
         ),
       );
-      expect(find.text('Pensó durante 9s · 1 herramienta'), findsOneWidget);
+      // Mock 138 v2: a turn that used tools ends saying how long it worked.
+      expect(find.text('Trabajó 9 s · 1 herramienta'), findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('thinking-trace-summary')));
       await tester.pump(const Duration(milliseconds: 300));
       expect(
@@ -1043,7 +1148,7 @@ void main() {
           isFalse,
           reason: 'with $actions header buttons the timer is cut off',
         );
-        expect(_statusText(tester), 'Trabajando · Ejecutando comando · 0:07');
+        expect(_statusText(tester), 'Trabajando · Ejecutando comando · 7s');
       }
     });
   });

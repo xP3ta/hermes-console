@@ -15,6 +15,10 @@ import '../utils/session_title.dart';
 ///
 ///  - `archived_sessions_<connectionId>` — sesiones archivadas (intencional).
 ///  - `pinned_sessions_<connectionId>` — sesiones fijadas (aparecen primero).
+///    It is what the screens show: the server's pins when it publishes them,
+///    plus the user's own pins and unpins until the server confirms them.
+///  - `pinned_sync_<connectionId>` — which of those pins the server is known
+///    to hold (schema `v2`); see [SessionPinSync].
 ///  - `hidden_sessions_<connectionId>` — sesiones OCULTAS localmente cuando el
 ///    servidor no permitió borrarlas (PRIORIDAD 4): salida visual sin tocar el
 ///    backend. Difiere de "archivada": ocultar = "limpiar la vista".
@@ -44,6 +48,7 @@ import '../utils/session_title.dart';
 class SessionArchive extends ChangeNotifier {
   static const _prefix = 'archived_sessions_';
   static const _pinnedPrefix = 'pinned_sessions_';
+  static const _pinSyncPrefix = 'pinned_sync_';
   static const _hiddenPrefix = 'hidden_sessions_';
   static const _hiddenRowsPrefix = 'hidden_rows_';
   static const _titlePrefix = 'session_titles_';
@@ -57,6 +62,17 @@ class SessionArchive extends ChangeNotifier {
   Set<String> _archived = {};
   Set<String> _pinned = {};
   Set<String> _hidden = {};
+
+  /// Pin ids the server is known to hold (it said so, or acknowledged our
+  /// PATCH). [_pinned] minus this is what still has to be pushed; this minus
+  /// [_pinned] are unpins still to push. Persisted so a restart does not
+  /// forget what was already agreed (see [SessionPinSync]).
+  Set<String> _pinConfirmed = {};
+
+  /// Pins kept by builds before the confirmed set existed: nobody knows
+  /// whether the server holds them, so they are shown but never pushed; the
+  /// first server row that carries `pinned` settles each one.
+  Set<String> _pinLegacy = {};
 
   /// Snapshots of the chats hidden from this device, by logical id. A
   /// snapshot with `hidden: true` is hidden on the server (confirmed).
@@ -136,6 +152,7 @@ class SessionArchive extends ChangeNotifier {
 
   String get _key => '$_prefix$_connectionId';
   String get _pinnedKey => '$_pinnedPrefix$_connectionId';
+  String get _pinSyncKey => '$_pinSyncPrefix$_connectionId';
   String get _hiddenKey => '$_hiddenPrefix$_connectionId';
   String get _hiddenRowsKey => '$_hiddenRowsPrefix$_connectionId';
   String get _titleKey => '$_titlePrefix$_connectionId';
@@ -145,6 +162,7 @@ class SessionArchive extends ChangeNotifier {
   void _read() {
     _archived = (_prefs.getStringList(_key) ?? []).toSet();
     _pinned = (_prefs.getStringList(_pinnedKey) ?? []).toSet();
+    _readPinSync();
     _hidden = (_prefs.getStringList(_hiddenKey) ?? []).toSet();
     _hiddenRows = _decodeHiddenRows(
       _prefs.getStringList(_hiddenRowsKey) ?? const [],
@@ -160,9 +178,43 @@ class SessionArchive extends ChangeNotifier {
     _deletedScope = deleted.scopes;
   }
 
+  /// Schema marker of `pinned_sync_<id>`; its entries are `c:<id>`
+  /// (confirmed) and `l:<id>` (legacy). Unknown entries are ignored.
+  static const _pinSyncSchema = 'v2';
+
+  void _readPinSync() {
+    final stored = _prefs.getStringList(_pinSyncKey);
+    if (stored == null) {
+      // Written by a build without the confirmed set: whatever is pinned
+      // here is of unknown standing against the server.
+      _pinConfirmed = {};
+      _pinLegacy = {..._pinned};
+      return;
+    }
+    _pinConfirmed = {};
+    _pinLegacy = {};
+    for (final entry in stored) {
+      if (entry.length < 3) continue;
+      final id = entry.substring(2);
+      if (entry.startsWith('c:')) {
+        _pinConfirmed.add(id);
+      } else if (entry.startsWith('l:') && _pinned.contains(id)) {
+        _pinLegacy.add(id);
+      }
+    }
+  }
+
+  List<String> _encodePinSync() => [
+    _pinSyncSchema,
+    for (final id in _pinConfirmed) 'c:$id',
+    for (final id in _pinLegacy) 'l:$id',
+  ];
+
   void _resync() {
     final archived = _archived;
     final pinned = _pinned;
+    final pinConfirmed = _pinConfirmed;
+    final pinLegacy = _pinLegacy;
     final hidden = _hidden;
     final hiddenRows = _encodeHiddenRows(_hiddenRows);
     final titles = _titles;
@@ -172,6 +224,8 @@ class SessionArchive extends ChangeNotifier {
     _read();
     if (setEquals(archived, _archived) &&
         setEquals(pinned, _pinned) &&
+        setEquals(pinConfirmed, _pinConfirmed) &&
+        setEquals(pinLegacy, _pinLegacy) &&
         setEquals(hidden, _hidden) &&
         listEquals(hiddenRows, _encodeHiddenRows(_hiddenRows)) &&
         mapEquals(titles, _titles) &&
@@ -204,7 +258,7 @@ class SessionArchive extends ChangeNotifier {
   /// espacio de "fijadas" arriba.
   Future<void> archive(String sessionId) async {
     _archived.add(sessionId);
-    _pinned.remove(sessionId);
+    _releasePins([sessionId]);
     await _flush();
   }
 
@@ -234,19 +288,30 @@ class SessionArchive extends ChangeNotifier {
   /// excluyentes: una sesión archivada no debería seguir fijada arriba.
   Future<void> pin(String sessionId) async {
     _pinned.add(sessionId);
+    _pinLegacy.remove(sessionId);
     _archived.remove(sessionId);
     await _flush();
   }
 
   Future<void> unpin(String sessionId) async {
-    _pinned.remove(sessionId);
+    _releasePins([sessionId]);
     await _flush();
+  }
+
+  /// Removes [ids] from the pins shown. A legacy pin's standing on the
+  /// server is unknown, so its release is kept to be pushed (as the release
+  /// of a confirmed pin is) instead of being forgotten with the pin.
+  void _releasePins(Iterable<String> ids) {
+    for (final id in ids) {
+      _pinned.remove(id);
+      if (_pinLegacy.remove(id)) _pinConfirmed.add(id);
+    }
   }
 
   Future<void> pinSession(Session session) => pin(session.logicalId);
 
   Future<void> unpinSession(Session session) async {
-    _pinned.removeAll({
+    _releasePins({
       session.logicalId,
       session.id,
       if (session.lineageRootId != null &&
@@ -463,6 +528,10 @@ class SessionArchive extends ChangeNotifier {
       if (previous == null || previous < watermark) _deleted[id] = watermark;
       _deletedAfterRead[id] = _listReadSeq;
       _confirmedGone.remove(id);
+      // A deleted chat has nothing left to pin or unpin on the server.
+      _pinned.remove(id);
+      _pinConfirmed.remove(id);
+      _pinLegacy.remove(id);
     }
     return _flush();
   }
@@ -689,6 +758,10 @@ class SessionArchive extends ChangeNotifier {
       changed = true;
     }
     if (physicalIds.any(_pinned.contains) && _pinned.add(logicalId)) {
+      // The logical id inherits the standing of the physical pin it replaces
+      // (a legacy one must not turn into an unsent pin of the user's).
+      if (physicalIds.any(_pinLegacy.contains)) _pinLegacy.add(logicalId);
+      if (physicalIds.any(_pinConfirmed.contains)) _pinConfirmed.add(logicalId);
       changed = true;
     }
     if (physicalIds.any(_hidden.contains) && _hidden.add(logicalId)) {
@@ -1176,6 +1249,7 @@ class SessionArchive extends ChangeNotifier {
     final writes = Future.wait<bool>([
       _prefs.setStringList(_key, _archived.toList()),
       _prefs.setStringList(_pinnedKey, _pinned.toList()),
+      _prefs.setStringList(_pinSyncKey, _encodePinSync()),
       _prefs.setStringList(_hiddenKey, _hidden.toList()),
       if (_hiddenRows.isNotEmpty || _prefs.containsKey(_hiddenRowsKey))
         _prefs.setStringList(_hiddenRowsKey, _encodeHiddenRows(_hiddenRows)),
@@ -1273,16 +1347,47 @@ typedef RemoteSessionPinWriter =
 /// contract. Local intent is pushed before a remote page is pulled, so a page
 /// captured before an in-flight PATCH cannot silently undo the user's toggle.
 /// A missing `pinned` field is a legacy server with no opinion.
+///
+/// Source of truth: when the server publishes `pinned`, it decides. The pins
+/// shown ([SessionArchive.pinnedIds]) follow it, and what is still to be
+/// pushed is only the difference between them and the pins the server is
+/// known to hold (the archive's confirmed set, persisted): a pin or unpin
+/// made here that no acknowledged PATCH has settled yet. Pins that the server
+/// reports are confirmed on sight, so they are shown but never become local
+/// intent and are never sent back; a pin the server released while the app
+/// was closed is released here too. The set therefore needs no replay on a
+/// cold start or reconnect, and cannot grow past what the server (plus the
+/// user's own unsent pins) holds. Without server support the local set is
+/// the only truth, as before.
 final class SessionPinSync {
+  /// Most pins kept for chats not in the page being read (see [_bound]).
+  static const defaultMaxPinned = 400;
+
+  /// After the n-th consecutive failure of a pin write, the wait before the
+  /// write may be retried by a refresh (the first retry is immediate). After
+  /// the last one the id stays quiet until the user toggles it or the app
+  /// restarts.
+  static const retryDelays = <Duration>[
+    Duration.zero,
+    Duration(seconds: 15),
+    Duration(minutes: 1),
+    Duration(minutes: 5),
+    Duration(minutes: 15),
+  ];
+
   final SessionArchive _archive;
   final RemoteSessionPinWriter? _writeRemote;
   final bool Function(Object error) _isUnsupported;
+  final DateTime Function() _now;
+  final int maxPinned;
 
   List<Session> _sessions = const [];
-  final Set<String> _mirrored = {};
-  final Set<String> _pending = {};
+
+  /// Rows of the last read are from the server (not a cold-start cache).
+  bool _liveRows = false;
   final Map<String, bool> _unconfirmed = {};
   final Map<String, bool> _localIntents = {};
+  final Map<String, _PinRetry> _retries = {};
   final Map<String, _AcknowledgedPinWrite> _acknowledged = {};
   int _nextWriteRevision = 0;
   int _lastAcknowledgedRevision = 0;
@@ -1292,8 +1397,11 @@ final class SessionPinSync {
     this._archive, {
     RemoteSessionPinWriter? writeRemote,
     bool Function(Object error)? isUnsupported,
+    DateTime Function()? now,
+    this.maxPinned = defaultMaxPinned,
   }) : _writeRemote = writeRemote,
        _isUnsupported = isUnsupported ?? _neverUnsupported,
+       _now = now ?? DateTime.now,
        _remoteUnsupported = writeRemote == null;
 
   bool get remoteUnsupported => _remoteUnsupported;
@@ -1302,11 +1410,15 @@ final class SessionPinSync {
   /// The returned fence must travel with that page until [updateSessions].
   int beginRemoteRead() => _lastAcknowledgedRevision;
 
+  /// [readFence] marks [sessions] as a fresh server read (see
+  /// [beginRemoteRead]); without it they may come from a cache.
   Future<void> updateSessions(
     Iterable<Session> sessions, {
     int? readFence,
   }) async {
     _sessions = List<Session>.unmodifiable(sessions);
+    _liveRows = readFence != null;
+    _settleDrafts();
     _pushLocalState();
     await _pullRemoteState(readFence: readFence);
   }
@@ -1314,46 +1426,84 @@ final class SessionPinSync {
   Future<void> setLocalPinned(Session session, bool pinned) async {
     final pinId = session.logicalId;
     _localIntents[pinId] = pinned;
+    _retries.remove(pinId);
     if (!_sessions.any((row) => _matches(row, pinId))) {
       _sessions = List<Session>.unmodifiable([..._sessions, session]);
     }
     try {
+      final aliases = _aliasesFor(session);
       if (pinned) {
         _archive._pinned.add(pinId);
         _archive._archived.remove(pinId);
+        _archive._pinLegacy.removeAll(aliases);
       } else {
-        _archive._pinned.removeAll(_aliasesFor(session));
+        // The release must reach the server even for a pin never confirmed.
+        if (!_remoteUnsupported) _archive._pinConfirmed.add(pinId);
+        _archive._pinLegacy.removeAll(aliases);
+        _archive._pinned.removeAll(aliases);
       }
+      _bound();
       await _archive._flush();
-      _pushLocalState();
+      _pushLocalState(forced: pinId);
       await _pullRemoteState();
     } finally {
       _localIntents.remove(pinId);
     }
   }
 
-  void _pushLocalState() {
+  /// A pin shown for a chat that still has no persisted row could never be
+  /// sent: it is the user's own, so it becomes pending instead of legacy.
+  void _settleDrafts() {
+    var changed = false;
+    for (final row in _sessions) {
+      if (!row.isUnpersistedMobileDraft) continue;
+      for (final id in _aliasesFor(row)) {
+        if (_archive._pinLegacy.remove(id)) changed = true;
+      }
+    }
+    if (changed) unawaited(_archive._flush());
+  }
+
+  void _pushLocalState({String? forced}) {
     if (_remoteUnsupported) return;
     final current = _normalizedCurrentPins();
+    final confirmed = _archive._pinConfirmed;
+    final legacy = {for (final id in _archive._pinLegacy) _normalize(id)};
+    final now = _now();
+    var settled = false;
 
-    for (final id in <String>{..._mirrored, ..._pending}) {
-      if (current.contains(id)) continue;
-      _mirrored.remove(id);
-      _pending.remove(id);
-      _writePin(id, false, _profileFor(id));
-    }
-
-    for (final id in current) {
-      if (!_mirrored.contains(id)) _pending.add(id);
-    }
-
-    for (final id in _pending.toList(growable: false)) {
+    final wanted = <String, bool>{
+      for (final id in current)
+        if (!confirmed.contains(id) && !legacy.contains(id)) id: true,
+      for (final id in confirmed)
+        if (!current.contains(id)) id: false,
+    };
+    for (final MapEntry(key: id, value: pinned) in wanted.entries) {
+      if (_unconfirmed.containsKey(id)) continue;
       final row = _writableRowFor(id);
       if (row == null) continue;
-      _pending.remove(id);
-      _mirrored.add(id);
-      _writePin(id, true, row.profile);
+      if (id != forced) {
+        // A row without `pinned` has no opinion: a write there is only a
+        // probe for support, made when the user acts, not on every launch.
+        if (row.pinned == null) continue;
+        // A fresh page that already shows the wanted state needs no write.
+        if (_liveRows &&
+            row.pinned == pinned &&
+            !_acknowledged.containsKey(id)) {
+          if (pinned) {
+            _archive._pinConfirmed.add(id);
+          } else {
+            _archive._pinConfirmed.remove(id);
+          }
+          settled = true;
+          continue;
+        }
+        final retry = _retries[id];
+        if (retry != null && !retry.mayRetry(now)) continue;
+      }
+      _writePin(id, pinned, row.profile);
     }
+    if (settled) unawaited(_archive._flush());
   }
 
   Future<void> _pullRemoteState({int? readFence}) async {
@@ -1367,7 +1517,6 @@ final class SessionPinSync {
       if (localIntent != null) continue;
       final awaited = _unconfirmed[pinId] ?? _unconfirmed[row.id];
       if (awaited != null && awaited != remote) continue;
-      if (_pending.contains(pinId) || _pending.contains(row.id)) continue;
       final acknowledged = _acknowledged[pinId] ?? _acknowledged[row.id];
       if (readFence != null && acknowledged != null) {
         if (acknowledged.revision > readFence &&
@@ -1384,28 +1533,78 @@ final class SessionPinSync {
 
       final aliases = _aliasesFor(row);
       final heldLocally = aliases.any(_archive._pinned.contains);
+      final legacy = aliases.any(_archive._pinLegacy.contains);
+      final confirmed = aliases.any(_archive._pinConfirmed.contains);
+      // A pin or unpin of the user's that the server has not settled yet
+      // (never acknowledged, or failed) outranks what the page says.
+      if (!legacy && heldLocally != confirmed && heldLocally != remote) {
+        continue;
+      }
+
       if (remote) {
-        _mirrored.add(pinId);
         if (!heldLocally || !_archive._pinned.contains(pinId)) {
           _archive._pinned.add(pinId);
           _archive._archived.remove(pinId);
           changed = true;
         }
-      } else if (heldLocally) {
-        _mirrored.removeAll(aliases);
-        _pending.removeAll(aliases);
-        final pinnedCount = _archive._pinned.length;
+        if (_archive._pinConfirmed.add(pinId)) changed = true;
+      } else {
+        final before = _archive._pinned.length;
         _archive._pinned.removeAll(aliases);
-        if (_archive._pinned.length != pinnedCount) changed = true;
+        if (_archive._pinned.length != before) changed = true;
+        changed |= _removeAll(_archive._pinConfirmed, aliases);
       }
+      changed |= _removeAll(_archive._pinLegacy, aliases);
     }
+    if (_bound()) changed = true;
     if (changed) await _archive._flush();
+  }
+
+  /// Keeps the persisted sets as small as the truth they follow: forgets pins
+  /// of deleted chats and legacy ids no longer shown, and, past the maximum,
+  /// the oldest settled pins of chats that are not in the page being read
+  /// (the server publishes them again when their rows come back).
+  bool _bound() {
+    final archive = _archive;
+    var changed = false;
+    bool drop(String id) =>
+        archive._pinned.remove(id) |
+        archive._pinConfirmed.remove(id) |
+        archive._pinLegacy.remove(id);
+    for (final id in {...archive._pinned, ...archive._pinConfirmed}) {
+      if (archive.isSessionIdDeleted(id) && drop(id)) changed = true;
+    }
+    final legacyBefore = archive._pinLegacy.length;
+    archive._pinLegacy.removeWhere((id) => !archive._pinned.contains(id));
+    if (archive._pinLegacy.length != legacyBefore) changed = true;
+    final shown = {for (final row in _sessions) ...row.identityIds};
+    var excess = archive._pinned.length - maxPinned;
+    for (final id in archive._pinned.toList()) {
+      if (excess <= 0) break;
+      final settled =
+          archive._pinConfirmed.contains(id) || archive._pinLegacy.contains(id);
+      if (!settled || shown.contains(id)) continue;
+      drop(id);
+      excess--;
+      changed = true;
+    }
+    // Unpins still to push are bounded by the pins released by hand; the
+    // ones for chats that never come back are cut at twice the maximum.
+    var stale = archive._pinConfirmed.length - 2 * maxPinned;
+    for (final id in archive._pinConfirmed.toList()) {
+      if (stale <= 0) break;
+      if (archive._pinned.contains(id) || shown.contains(id)) continue;
+      archive._pinConfirmed.remove(id);
+      stale--;
+      changed = true;
+    }
+    return changed;
   }
 
   Set<String> _normalizedCurrentPins() {
     final current = <String>{};
     for (final id in _archive._pinned) {
-      current.add(_rowFor(id)?.logicalId ?? id);
+      current.add(_normalize(id));
     }
     for (final entry in _localIntents.entries) {
       if (entry.value) {
@@ -1416,6 +1615,8 @@ final class SessionPinSync {
     }
     return current;
   }
+
+  String _normalize(String id) => _rowFor(id)?.logicalId ?? id;
 
   Session? _rowFor(String id) {
     for (final row in _sessions) {
@@ -1430,8 +1631,6 @@ final class SessionPinSync {
     }
     return null;
   }
-
-  String? _profileFor(String id) => _rowFor(id)?.profile;
 
   Set<String> _aliasesFor(Session session) => {
     session.logicalId,
@@ -1457,6 +1656,7 @@ final class SessionPinSync {
       Future<void>.sync(() => writer(id, pinned, profile)).then<void>(
         (_) {
           if (_unconfirmed[id] == pinned) _unconfirmed.remove(id);
+          _retries.remove(id);
           final current = _acknowledged[id];
           if (current == null || revision > current.revision) {
             _acknowledged[id] = _AcknowledgedPinWrite(revision, pinned);
@@ -1464,28 +1664,56 @@ final class SessionPinSync {
           if (revision > _lastAcknowledgedRevision) {
             _lastAcknowledgedRevision = revision;
           }
+          // The server now holds what was sent: settled, nothing to replay.
+          final archive = _archive;
+          final legacy = archive._pinLegacy.remove(id);
+          final settled = pinned
+              ? archive._pinConfirmed.add(id)
+              : archive._pinConfirmed.remove(id);
+          if (settled || legacy) unawaited(archive._flush());
+          // The user may have toggled it again while this write was in flight.
+          _pushLocalState();
         },
         onError: (Object error, StackTrace _) {
           if (_unconfirmed[id] == pinned) _unconfirmed.remove(id);
           if (_isUnsupported(error)) {
             _remoteUnsupported = true;
-            _pending.clear();
-            _mirrored.clear();
+            _retries.clear();
             return;
           }
-          if (pinned && _archive._pinned.contains(id)) {
-            _mirrored.remove(id);
-            _pending.add(id);
-          }
+          final failures = (_retries[id]?.failures ?? 0) + 1;
+          final delay = failures <= retryDelays.length
+              ? retryDelays[failures - 1]
+              : Duration.zero;
+          _retries[id] = _PinRetry(failures, _now().add(delay));
         },
       ),
     );
+  }
+
+  /// Removes [ids] from [set]; true when any was there.
+  static bool _removeAll(Set<String> set, Iterable<String> ids) {
+    final before = set.length;
+    set.removeAll(ids);
+    return set.length != before;
   }
 
   static bool _matches(Session row, String id) =>
       row.id == id || row.logicalId == id;
 
   static bool _neverUnsupported(Object _) => false;
+}
+
+/// Consecutive failures of the write for one pin, and when a refresh may try
+/// again; see [SessionPinSync.retryDelays].
+final class _PinRetry {
+  const _PinRetry(this.failures, this.nextAt);
+
+  final int failures;
+  final DateTime nextAt;
+
+  bool mayRetry(DateTime now) =>
+      failures <= SessionPinSync.retryDelays.length && !now.isBefore(nextAt);
 }
 
 /// A local value shown over the server's until a list read that began after

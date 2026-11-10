@@ -230,6 +230,17 @@ final class DesktopToolsetEntry {
     required this.tools,
   });
 
+  /// Hermes uses this description for MCP registry aliases, including ones
+  /// left behind after a server was removed from the configured inventory.
+  String? mcpServerName(Set<String> serverNames) {
+    final match = RegExp(
+      r"^MCP server '(.+)' tools$",
+      caseSensitive: false,
+    ).firstMatch(description.trim());
+    if (match != null) return match.group(1);
+    return serverNames.contains(name) ? name : null;
+  }
+
   static DesktopToolsetEntry? tryParse(Map<String, dynamic> json) {
     final name = _cleanText(json['name'], max: 160);
     if (name.isEmpty) return null;
@@ -257,16 +268,36 @@ final class DesktopToolsetEntry {
 final class ExtensionsInventory {
   final List<DesktopPluginEntry> plugins;
   final List<DesktopToolsetEntry> toolsets;
+  final List<DesktopMcpServerEntry> mcpServers;
 
-  const ExtensionsInventory({required this.plugins, required this.toolsets});
+  const ExtensionsInventory({
+    required this.plugins,
+    required this.toolsets,
+    this.mcpServers = const [],
+  });
+
+  /// MCP aliases can also occur as registry toolsets with a different name.
+  /// The server description is authoritative; older inventories need the
+  /// configured server name as a fallback.
+  List<DesktopToolsetEntry> get builtinToolsets {
+    final names = mcpServers.map((server) => server.name).toSet();
+    return toolsets
+        .where((toolset) => toolset.mcpServerName(names) == null)
+        .toList(growable: false);
+  }
 
   factory ExtensionsInventory.fromJson({
     required Map<String, dynamic> plugins,
     required Map<String, dynamic> toolsets,
+    Map<String, dynamic> mcp = const {},
   }) => ExtensionsInventory(
     plugins: _objectRows(plugins['plugins'])
         .map(DesktopPluginEntry.tryParse)
         .whereType<DesktopPluginEntry>()
+        .toList(growable: false),
+    mcpServers: _objectRows(mcp['servers'])
+        .map(DesktopMcpServerEntry.tryParse)
+        .whereType<DesktopMcpServerEntry>()
         .toList(growable: false),
     toolsets: _objectRows(toolsets['toolsets'])
         .map(DesktopToolsetEntry.tryParse)

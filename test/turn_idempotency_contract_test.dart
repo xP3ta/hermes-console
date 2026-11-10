@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/widgets.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -519,6 +520,18 @@ class _RuntimeReleaseGateway extends _RecheckOwnershipGateway
     if (!closeEntered.isCompleted) closeEntered.complete();
     return closeGate?.future ?? closeResult;
   }
+}
+
+class _ParkedReleaseGateway extends _RuntimeReleaseGateway
+    implements HermesDesktopLifecycleGateway {
+  _ParkedReleaseGateway({required super.activeLists});
+  bool socketUp = true;
+  @override
+  bool get isConnected => socketUp;
+  @override
+  Future<void> connect() async { socketUp = true; }
+  @override
+  Future<void> disconnectIdle() async { socketUp = false; }
 }
 
 /// Gateway de liberación que además publica el terminal de interrupción, que
@@ -1733,6 +1746,36 @@ void main() {
       }
     },
   );
+
+  test('resume deferred behind runtime release reconciles when release settles', () async {
+    const idle = DesktopActiveSessionList(sessions: [
+      DesktopActiveSession(runtimeSessionId: 'runtime-owned', storedSessionId: 'session-modern',
+        current: true, status: 'idle'),
+    ]);
+    final gateway = _ParkedReleaseGateway(activeLists: const [idle]);
+    final fixture = _fixture(gateway, capability: () async => true);
+    final chat = fixture.chat;
+    addTearDown(chat.dispose);
+    await _primeProductionReleaseOwnership(fixture, gateway);
+    gateway.closeGate = Completer<bool>();
+    final release = chat.releaseRuntimeForDesktop();
+    await gateway.closeEntered.future;
+    await gateway.disconnectIdle();
+    chat.didChangeAppLifecycleState(AppLifecycleState.hidden);
+    final settledBefore = chat.resumeReconciliationSettled.value;
+    chat.didChangeAppLifecycleState(AppLifecycleState.resumed);
+    await pumpEventQueue();
+    expect(chat.runtimeReleaseInFlight, isTrue);
+    expect(chat.resumeReconciliationSettled.value, settledBefore);
+    gateway.closeGate!.complete(false);
+    expect(await release, isFalse);
+    for (var i = 0; i < 30 && chat.resumeReconciliationSettled.value == settledBefore; i++) {
+      await pumpEventQueue();
+    }
+    expect(chat.resumeReconciliationSettled.value, greaterThan(settledBefore));
+    expect(chat.transportStatus.isConnected, isTrue);
+    expect(chat.runtimeReleaseInFlight, isFalse);
+  });
 
   test('release bloquea submit que compite con session.close', () async {
     const idle = DesktopActiveSessionList(

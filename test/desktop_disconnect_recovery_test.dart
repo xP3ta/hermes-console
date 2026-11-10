@@ -6,6 +6,7 @@ import 'dart:io';
 // ignore: depend_on_referenced_packages
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/widgets.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -21,18 +22,25 @@ import 'package:hermes_android/core/services/desktop_gateway_capabilities.dart';
 import 'package:hermes_android/core/services/compression_restore_store.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/models/prepared_turn.dart';
+import 'package:hermes_android/core/models/subagent_activity.dart';
 
 import 'package:hermes_android/core/services/connection_manager.dart';
+import 'package:hermes_android/core/services/notifications/bot_face_bitmap.dart';
+import 'package:hermes_android/core/services/notifications/notification_service.dart';
+import 'package:hermes_android/core/services/notifications/rich_notifications.dart';
 import 'package:hermes_android/core/services/connection_status.dart';
 import 'package:hermes_android/core/services/recovery_proof.dart';
 import 'package:hermes_android/core/services/replay_coordinator.dart';
 import 'package:hermes_android/core/services/session_reconciler.dart';
+import 'package:hermes_android/core/services/session_turn_registry.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
+import 'package:hermes_android/core/services/turn_keepalive_hold.dart';
 import 'package:hermes_android/core/services/turn_outbox_store.dart';
 import 'package:hermes_android/core/utils/chat_turn.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
 import 'support/test_api_client.dart';
+import 'support/qrc_fake_gateway_socket.dart';
 
 class _DroppingDesktopGateway implements HermesDesktopGateway {
   _DroppingDesktopGateway({this.canonicalStoredId});
@@ -155,6 +163,17 @@ class _DroppingDesktopGateway implements HermesDesktopGateway {
   Future<void> steer(String runtimeSessionId, String text) async {}
 }
 
+class _BackgroundRecoveryGateway extends _LifecycleRecoverableGateway
+    implements HermesDesktopLifecycleGateway {
+  int parks = 0;
+
+  @override
+  Future<void> disconnectIdle() async {
+    parks++;
+    _connected = false;
+  }
+}
+
 class _NativeHistoryRecoveryGateway extends _LifecycleRecoverableGateway
     implements HermesDesktopSessionHistoryGateway {
   final historyRequests = <({String sessionId, String? profile})>[];
@@ -209,9 +228,12 @@ class _RecoverableDesktopGateway extends _DroppingDesktopGateway
   Completer<void>? recoveryStatusGate;
   final recoveryResumeStarted = Completer<void>();
   DesktopTurnState recoveredState = DesktopTurnState.running;
+  bool recoveredKnown = true;
+  String? recoveredClientTurnId;
   int recoveryConnectFailuresRemaining = 0;
   Object? recoveryConnectError;
   int statusCalls = 0;
+  final idempotentSubmissions = <({String clientTurnId, String text})>[];
 
   void invalidateRecoveryAuthority() => _recovery.rotateEpoch();
 
@@ -317,6 +339,7 @@ class _RecoverableDesktopGateway extends _DroppingDesktopGateway
     String clientTurnId,
   ) async {
     submitCalls++;
+    idempotentSubmissions.add((clientTurnId: clientTurnId, text: text));
     submittedRuntimeIds.add(runtimeSessionId);
     return DesktopTurnAck(
       accepted: true,
@@ -335,10 +358,10 @@ class _RecoverableDesktopGateway extends _DroppingDesktopGateway
     statusCalls++;
     await recoveryStatusGate?.future;
     return DesktopTurnStatus(
-      known: true,
-      clientTurnId: clientTurnId,
+      known: recoveredKnown,
+      clientTurnId: recoveredClientTurnId ?? clientTurnId,
       serverTurnId: 'server-turn',
-      state: recoveredState,
+      state: recoveredKnown ? recoveredState : null,
     );
   }
 }
@@ -429,9 +452,20 @@ class _LifecycleRecoverableGateway extends _RecoverableDesktopGateway
   Object? resumeExistingError;
   int? resumeExistingFailuresRemaining;
   final List<Future<DesktopSessionSnapshot>> scriptedResumeExisting = [];
+  final List<Object> scriptedRecoveryResults = [];
   DesktopSessionSnapshot? initialSnapshot;
   DesktopSessionSnapshot? recoverySnapshot;
   final List<({String runtimeId, String text})> steers = [];
+
+  /// A resume that fails with `connectionLost` means the socket went down
+  /// (REVISION-4 A: the chat reads the socket, not the error, to say
+  /// «reconnecting»); the fake mirrors that.
+  void _dropOnConnectionLost(Object error) {
+    if (error is TuiGatewayRpcError &&
+        error.failureKind == TuiGatewayRpcFailureKind.connectionLost) {
+      _connected = false;
+    }
+  }
 
   @override
   Future<DesktopSessionSnapshot> resumeExisting(
@@ -451,6 +485,7 @@ class _LifecycleRecoverableGateway extends _RecoverableDesktopGateway
         resumeExistingFailuresRemaining = remaining - 1;
         if (remaining <= 1) resumeExistingError = null;
       }
+      _dropOnConnectionLost(error);
       throw error;
     }
     return initialSnapshot ??
@@ -483,6 +518,12 @@ class _LifecycleRecoverableGateway extends _RecoverableDesktopGateway
   }) {
     resumeExistingCalls++;
     resumeExistingStoredIds.add(storedSessionId);
+    if (scriptedRecoveryResults.isNotEmpty) {
+      final result = scriptedRecoveryResults.removeAt(0);
+      return result is DesktopSessionSnapshot
+          ? Future.value(result)
+          : Future.error(result);
+    }
     if (scriptedResumeExisting.isNotEmpty) {
       return scriptedResumeExisting.removeAt(0);
     }
@@ -492,6 +533,7 @@ class _LifecycleRecoverableGateway extends _RecoverableDesktopGateway
         resumeExistingFailuresRemaining = remaining - 1;
         if (remaining <= 1) resumeExistingError = null;
       }
+      _dropOnConnectionLost(error);
       return Future.error(error);
     }
     return recoveryExistingGate?.future ??
@@ -649,7 +691,7 @@ class _NonIdempotentLifecycleGateway extends _DroppingDesktopGateway
     return recoverySnapshot ??
         DesktopSessionBinding(
           runtimeSessionId: 'runtime-recovered-$resumeExistingCalls',
-          storedSessionId: storedSessionId,
+          storedSessionId: canonicalStoredId!,
           created: false,
         );
   }
@@ -829,6 +871,16 @@ class _ActivityLifecycleRecoverableGateway extends _LifecycleRecoverableGateway
         ),
       ],
     );
+  }
+}
+
+/// REVISION-4 E: `prompt.submit` was sent and never acknowledged.
+class _UnackedSubmitGateway extends _ActivityLifecycleRecoverableGateway {
+  @override
+  Future<void> submitPrompt(String runtimeSessionId, String text) {
+    submitCalls++;
+    submittedRuntimeIds.add(runtimeSessionId);
+    return Completer<void>().future;
   }
 }
 
@@ -1618,9 +1670,8 @@ ActiveTurnDelivery _delivery(
 
 Future<void> _expectRecoveryErrorClassification(
   String id,
-  Object error, {
-  required bool terminal,
-}) async {
+  Object error,
+) async {
   final gateway = _RecoverableDesktopGateway()..recoveryConnectError = error;
   final chat = _recoverableChat(
     id,
@@ -1640,19 +1691,12 @@ Future<void> _expectRecoveryErrorClassification(
     await Future<void>.delayed(const Duration(milliseconds: 40));
     expect(
       chat.state,
-      terminal ? ChatPipelineState.failed : ChatPipelineState.connecting,
+      ChatPipelineState.connecting,
     );
     expect(gateway.connectCalls, 2);
-    if (terminal) {
-      final failure = chat.messages.firstWhere(
-        (message) => message['role'] == 'assistant_error',
-      );
-      expect(
-        failure['content'],
-        'No se pudo recuperar el turno. Inténtalo de nuevo.',
-      );
-      expect(failure['content'], isNot(contains(error.toString())));
-    }
+    expect(chat.isStreaming, isTrue);
+    expect(chat.noActivityHint, isFalse);
+    expect(chat.messages.where((row) => row['role'] == 'assistant_error'), isEmpty);
   } finally {
     chat.dispose();
   }
@@ -1677,6 +1721,8 @@ ActiveChat _recoverableChat(
   StoredSessionMessageLoader? storedMessageLoader,
   bool turnIdempotencySupported = true,
   bool attachDesktopRuntimeOnLoad = false,
+  Duration desktopRecoveryConfirmationInterval = Duration.zero,
+  int Function()? wallClockMs,
 }) => ActiveChat(
   compressionRestoreStore: testCompressionRestoreStore(),
   connection: _connection(id),
@@ -1697,6 +1743,8 @@ ActiveChat _recoverableChat(
   terminalReconcileBudget: terminalReconcileBudget,
   desktopRecoveryAttemptTimeout: desktopRecoveryAttemptTimeout,
   desktopRecoveryBackoff: desktopRecoveryBackoff,
+  desktopRecoveryConfirmationInterval: desktopRecoveryConfirmationInterval,
+  wallClockMs: wallClockMs,
   desktopRecoveryRandom: desktopRecoveryRandom,
   initialCancelledTurnTombstones: initialCancelledTurnTombstones,
   onCancelledTurn: onCancelledTurn,
@@ -1810,6 +1858,1474 @@ void main() {
   tearDownAll(() => GatewayReconnectBackoff.debugBaseOverride = null);
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  test('brief picker keeps its stream; sustained background parks once; dispose cancels', () {
+    fakeAsync((time) {
+      final gateway = _BackgroundRecoveryGateway();
+      final chat = _recoverableChat('background-grace', gateway);
+      unawaited(chat.send(fullText: 'continue', model: 'hermes-agent', history: const []));
+      time.flushMicrotasks();
+      final runtime = chat.desktopRuntimeSessionId;
+      chat.didChangeAppLifecycleState(AppLifecycleState.hidden);
+      time.elapse(const Duration(seconds: 29));
+      expect(gateway.parks, 0);
+      chat.didChangeAppLifecycleState(AppLifecycleState.resumed);
+      time.elapse(const Duration(seconds: 2));
+      expect(gateway.isConnected, isTrue);
+      expect(chat.desktopRuntimeSessionId, runtime);
+      expect(chat.isStreaming, isTrue);
+      expect(gateway.parks, 0);
+      chat.didChangeAppLifecycleState(AppLifecycleState.hidden);
+      chat.didChangeAppLifecycleState(AppLifecycleState.paused);
+      time.elapse(chatTransportBackgroundGrace);
+      expect(gateway.parks, 1);
+      expect(gateway.isConnected, isFalse);
+      time.elapse(const Duration(minutes: 1));
+      expect(gateway.parks, 1);
+      chat.dispose();
+      time.flushMicrotasks();
+      expect(time.nonPeriodicTimerCount, 0);
+      final other = _BackgroundRecoveryGateway();
+      final disposed = _recoverableChat('dispose-grace', other);
+      disposed.didChangeAppLifecycleState(AppLifecycleState.hidden);
+      disposed.dispose();
+      time.elapse(chatTransportBackgroundGrace);
+      time.flushMicrotasks();
+      expect(other.parks, 0);
+    });
+  });
+
+  test('a turn keep-alive hold keeps the chat socket past the grace; the '
+      'next round after it lets go parks it', () {
+    fakeAsync((time) {
+      addTearDown(TurnKeepAliveHold.resetForTesting);
+      final gateway = _BackgroundRecoveryGateway();
+      final chat = _recoverableChat('keepalive-grace', gateway);
+      unawaited(chat.send(fullText: 'continue', model: 'hermes-agent', history: const []));
+      time.flushMicrotasks();
+      final runtime = chat.desktopRuntimeSessionId;
+      TurnKeepAliveHold.held = true;
+      chat.didChangeAppLifecycleState(AppLifecycleState.hidden);
+      chat.didChangeAppLifecycleState(AppLifecycleState.paused);
+      time.elapse(chatTransportBackgroundGrace * 3);
+      expect(gateway.parks, 0);
+      expect(gateway.isConnected, isTrue);
+      expect(chat.desktopRuntimeSessionId, runtime);
+      expect(chat.isStreaming, isTrue);
+      TurnKeepAliveHold.held = false;
+      time.elapse(chatTransportBackgroundGrace);
+      expect(gateway.parks, 1);
+      expect(gateway.isConnected, isFalse);
+      chat.dispose();
+      time.flushMicrotasks();
+      expect(time.nonPeriodicTimerCount, 0);
+    });
+  });
+
+  test('idle resume permits an immediate submit while durable history is pending', () {
+    fakeAsync((time) {
+      final channels = <QrcFakeChannel>[];
+      final client = TuiGatewayClient(_connection('resume-action'),
+        dashboard: QrcTickets(), heartbeatInterval: Duration.zero,
+        channelFactory: (_, _) {
+          final channel = QrcFakeChannel();
+          channels.add(channel);
+          return channel;
+        },
+      );
+      final history = Completer<List<Map<String, dynamic>>>();
+      var reads = 0;
+      final chat = _recoverableChat('resume-action', client,
+        storedMessageLoader: (_, _) { reads++; return history.future; },
+        turnIdempotencySupported: false);
+      chat.messagesLoaded = true;
+      unawaited(client.connect());
+      time.flushMicrotasks();
+      chat.didChangeAppLifecycleState(AppLifecycleState.hidden);
+      time.elapse(chatTransportBackgroundGrace);
+      time.flushMicrotasks();
+      expect(client.isConnected, isFalse);
+      chat.didChangeAppLifecycleState(AppLifecycleState.resumed);
+      time.flushMicrotasks();
+      expect(reads, 1);
+      expect(history.isCompleted, isFalse);
+      Object? failure;
+      var sent = false;
+      chat.send(fullText: 'send immediately', model: 'hermes-agent', history: const []).then(
+        (accepted) => sent = accepted, onError: (Object error) { failure = error; });
+      final answered = <Object?>{};
+      for (var step = 0; step < 20 && !sent && failure == null; step++) {
+        time.flushMicrotasks();
+        for (final channel in channels.toList()) {
+          for (final raw in channel.sent.toList()) {
+            final frame = jsonDecode(raw) as Map<String, dynamic>;
+            final id = frame['id'];
+            if (id == null || !answered.add(id)) continue;
+            final result = switch (frame['method']) {
+              'gateway.capabilities' => {'per_session_exclusive_submit': true},
+              'session.resume' => {'session_id': 'runtime-immediate',
+                'stored_session_id': chat.serverSessionId, 'status': 'idle',
+                'running': false, 'messages': <Object>[]},
+              'prompt.submit' => {'status': 'streaming'},
+              _ => <String, Object>{},
+            };
+            channel.push(jsonEncode({'jsonrpc': '2.0', 'id': id, 'result': result}));
+          }
+        }
+      }
+      time.flushMicrotasks();
+      expect(failure, isNull);
+      expect(sent, isTrue);
+      expect(history.isCompleted, isFalse);
+      time.elapse(const Duration(seconds: 4));
+      chat.probeTransportNow();
+      time.flushMicrotasks();
+      expect(channels.last.sent.any((raw) => raw.contains('gateway.ping')), isFalse,
+        reason: 'passive probes wait for the durable reconciliation');
+      history.complete(const []);
+      time.flushMicrotasks();
+      expect(chat.isStreaming, isTrue);
+      expect(chat.messages.any((row) => row['role'] == 'assistant_error'), isFalse);
+      chat.dispose();
+      time.elapse(const Duration(seconds: 2));
+      time.flushMicrotasks();
+    });
+  });
+
+  test('unconfirmed identity rounds soften to 30 s and keep polling automatically', () {
+    fakeAsync((time) {
+      final gateway = _LifecycleRecoverableGateway()..recoveredClientTurnId = 'other';
+      final chat = _recoverableChat('soft-poll', gateway,
+        desktopRecoveryBackoff: const [Duration.zero, Duration(milliseconds: 10)],
+        desktopRecoveryRandom: () => 1);
+      unawaited(chat.send(fullText: 'continue', model: 'hermes-agent', history: const [],
+        delivery: _delivery('soft-poll', _NoopOutbox())));
+      time.flushMicrotasks();
+      gateway.drop();
+      time.flushMicrotasks();
+      time.elapse(const Duration(milliseconds: 100));
+      for (var round = 0; round < 3; round++) {
+        time.elapse(const Duration(seconds: 15, milliseconds: 100));
+      }
+      final calls = gateway.statusCalls;
+      expect(calls, greaterThanOrEqualTo(24));
+      time.elapse(const Duration(seconds: 29));
+      expect(gateway.statusCalls, calls);
+      gateway.recoveredClientTurnId = null;
+      time.elapse(const Duration(seconds: 2));
+      time.flushMicrotasks();
+      expect(gateway.statusCalls, greaterThan(calls));
+      expect(chat.transportStatus.isConnected, isTrue);
+      chat.dispose();
+      time.flushMicrotasks();
+      expect(time.nonPeriodicTimerCount, 0);
+    });
+  });
+
+  test(
+    'background transport loss parks recovery until automatic resume',
+    () async {
+      final binding = TestWidgetsFlutterBinding.ensureInitialized();
+      final gateway = _BackgroundRecoveryGateway();
+      final chat = _recoverableChat(
+        'background-transport',
+        gateway,
+        turnIdempotencySupported: false,
+        desktopRecoveryBackoff: const [
+          Duration.zero,
+          Duration(milliseconds: 10),
+        ],
+      );
+      addTearDown(() {
+        chat.dispose();
+        binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      });
+      await chat.send(
+        fullText: 'continue',
+        model: 'hermes-agent',
+        history: const [],
+      );
+      final snapshotsBeforeBackground = gateway.resumeExistingCalls;
+      binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      gateway.drop();
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      final connects = gateway.connectCalls;
+      final snapshots = gateway.resumeExistingCalls;
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      expect(gateway.parks, 0, reason: 'still within background grace');
+      expect(gateway.connectCalls, connects, reason: 'no dials while parked');
+      expect(
+        gateway.resumeExistingCalls,
+        snapshots,
+        reason: 'no background recovery',
+      );
+      expect(snapshots, snapshotsBeforeBackground);
+      gateway.recoverySnapshot = DesktopSessionSnapshot.fromJson({
+        'session_id': 'runtime-resumed',
+        'stored_session_id': chat.serverSessionId,
+        'running': false,
+        'status': 'idle',
+        'messages': [
+          {'role': 'user', 'content': 'continue'},
+          {'role': 'assistant', 'content': 'finished'},
+        ],
+      },
+        requestedStoredSessionId: chat.serverSessionId,
+        created: false,
+        method: 'session.resume',
+      );
+      binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await _waitUntil(
+        () => chat.transportStatus.isConnected && !chat.isStreaming,
+      );
+      expect(
+        gateway.resumeExistingCalls,
+        snapshotsBeforeBackground + 1,
+        reason: 'one coalesced resume snapshot',
+      );
+      expect(chat.state, ChatPipelineState.completed);
+      expect(chat.desktopRecoveryUnconfirmed, isFalse);
+      expect(chat.dashboardAuthRequired, isFalse);
+      expect(
+        chat.messages.where((m) => m['role'] == 'assistant_error'),
+        isEmpty,
+      );
+      expect(gateway.submitCalls, 1);
+    },
+  );
+
+  test('transient foreground ticket failure preserves turn and retries within 1 s', () {
+    fakeAsync((time) {
+      final gateway = _LifecycleRecoverableGateway()
+        ..recoveryConnectError = const DashboardWebSocketAuthException(
+          DashboardWebSocketAuthFailureCode.unavailable,
+          cause: DashboardWebSocketAuthFailureCause.transport,
+        );
+      final chat = _recoverableChat('transient-ticket', gateway,
+        desktopRecoveryBackoff: const [Duration.zero, Duration(milliseconds: 100)],
+        desktopRecoveryRandom: () => 1,
+      );
+      final outbox = _NoopOutbox();
+      unawaited(chat.send(fullText: 'continue', model: 'hermes-agent', history: const [],
+        delivery: _delivery('transient-ticket', outbox)));
+      time.flushMicrotasks();
+      gateway.drop();
+      time.flushMicrotasks();
+      expect(chat.dashboardAuthRequired, isFalse);
+      expect(chat.messages.where((m) => m['role'] == 'assistant_error'), isEmpty);
+      gateway.recoveryConnectError = null;
+      time.elapse(const Duration(seconds: 1));
+      time.flushMicrotasks();
+      expect(chat.transportStatus.isConnected, isTrue);
+      expect(chat.isStreaming, isTrue);
+      expect(chat.dashboardAuthRequired, isFalse);
+      expect(outbox.deleteCalls, 0);
+      expect(chat.messages.where((m) => m['role'] == 'assistant_error'), isEmpty);
+      expect(gateway.submitCalls, 1);
+      chat.dispose();
+      time.flushMicrotasks();
+    });
+  });
+
+  test('unconfirmed foreground recovery polls again without Retry within 15 s', () {
+    fakeAsync((time) {
+      final gateway = _LifecycleRecoverableGateway()
+        ..recoveredClientTurnId = 'other-client';
+      final chat = _recoverableChat('periodic-recovery', gateway,
+        desktopRecoveryBackoff: const [Duration.zero, Duration(milliseconds: 10)],
+        desktopRecoveryRandom: () => 1,
+      );
+      unawaited(chat.send(fullText: 'continue', model: 'hermes-agent',
+        history: const [], delivery: _delivery('periodic-recovery', _NoopOutbox())));
+      time.flushMicrotasks();
+      gateway.drop();
+      time.flushMicrotasks();
+      time.elapse(const Duration(milliseconds: 100));
+      // conn-registry C8: no «Sin confirmar» (Desktop session-states.ts:
+      // 515-544); the recovery keeps polling in silence.
+      expect(chat.desktopRecoveryUnconfirmed, isFalse);
+      expect(gateway.statusCalls, greaterThanOrEqualTo(6));
+      final calls = gateway.statusCalls;
+      gateway.recoveredClientTurnId = null;
+      time.elapse(const Duration(seconds: 15));
+      time.flushMicrotasks();
+      expect(gateway.statusCalls, greaterThan(calls));
+      expect(chat.transportStatus.isConnected, isTrue);
+      expect(chat.desktopRecoveryUnconfirmed, isFalse);
+      expect(gateway.submitCalls, 1);
+      chat.dispose();
+      time.flushMicrotasks();
+      expect(time.nonPeriodicTimerCount, 0);
+    });
+  });
+
+  // REVISION-4 A: a recovery that cannot name the turn on a socket that is
+  // back used to poll forever while publishing «reconnecting»: endless
+  // «Trabajando» and, at 5 min, a false «Sigue sin conexión». The socket is
+  // up, so the chat is connected; after six rounds Hermes is asked once
+  // (session-states.ts:515-544): `ended` settles the turn without an error,
+  // `working` keeps it.
+  for (final verdict in ['ended', 'working']) {
+    test('a recovery that cannot converge on a healthy socket stays '
+        'connected and asks Hermes ($verdict)', () {
+      fakeAsync((time) {
+        final gateway = _ActivityLifecycleRecoverableGateway()
+          ..recoveredClientTurnId = 'other-client';
+        final chat = _recoverableChat(
+          'non-converge-$verdict',
+          gateway,
+          desktopRecoveryBackoff: const [
+            Duration.zero,
+            Duration(milliseconds: 10),
+          ],
+          desktopRecoveryRandom: () => 1,
+        );
+        unawaited(
+          chat.send(
+            fullText: 'continue',
+            model: 'hermes-agent',
+            history: const [],
+            delivery: _delivery('non-converge-$verdict', _NoopOutbox()),
+          ),
+        );
+        time.flushMicrotasks();
+        gateway.recoverySnapshot = DesktopSessionBinding(
+          runtimeSessionId: 'runtime-held',
+          storedSessionId: 'session-non-converge-$verdict',
+          created: false,
+        );
+        gateway.activeListOverride = verdict == 'ended'
+            ? const DesktopActiveSessionList()
+            : const DesktopActiveSessionList(
+                sessions: [
+                  DesktopActiveSession(
+                    runtimeSessionId: 'runtime-held',
+                    status: 'working',
+                  ),
+                ],
+              );
+        gateway.drop();
+        time.flushMicrotasks();
+        time.elapse(const Duration(milliseconds: 20));
+        expect(gateway.isConnected, isTrue);
+        expect(
+          chat.transportStatus.state,
+          ChatTransportState.connected,
+          reason: 'a healthy socket is never «reconnecting»',
+        );
+        final asked = gateway.listActiveSessionsCalls;
+        time.elapse(const Duration(seconds: 1));
+        time.flushMicrotasks();
+        expect(gateway.listActiveSessionsCalls, greaterThan(asked));
+        if (verdict == 'ended') {
+          time.elapse(const Duration(seconds: 16));
+          expect(chat.isStreaming, isFalse);
+          expect(
+            chat.messages.where(
+              (m) =>
+                  m['role'] == 'assistant_error' &&
+                  m['content'] ==
+                      'No se pudo recuperar el turno. Inténtalo de nuevo.',
+            ),
+            isEmpty,
+          );
+        } else {
+          expect(chat.isStreaming, isTrue);
+          time.elapse(const Duration(minutes: 5));
+          expect(chat.transportStatus.state, ChatTransportState.connected);
+        }
+        chat.dispose();
+        time.flushMicrotasks();
+      });
+    });
+  }
+
+  // REVISION-4 A in Hermes' own path (no turn_idempotency_v1 -> snapshot
+  // loop): a resume that keeps failing transiently on a live socket used to
+  // poll forever. Every sixth round Hermes is asked for this session (by
+  // stored id, the cut retired the runtime): absent -> settled without an
+  // error; working -> kept, the chat connected past 5 min.
+  for (final verdict in ['ended', 'working']) {
+    test('the snapshot loop that cannot resume on a healthy socket asks '
+        'Hermes ($verdict)', () {
+      fakeAsync((time) {
+        final gateway = _ActivityLifecycleRecoverableGateway();
+        final chat = _recoverableChat(
+          'snapshot-stall-$verdict',
+          gateway,
+          turnIdempotencySupported: false,
+          desktopRecoveryBackoff: const [
+            Duration.zero,
+            Duration(milliseconds: 10),
+          ],
+          desktopRecoveryRandom: () => 1,
+        );
+        unawaited(
+          chat.send(fullText: 'continue', model: 'hermes-agent', history: const []),
+        );
+        time.flushMicrotasks();
+        gateway
+          ..resumeExistingError = const TuiGatewayRpcError(
+            'session.resume',
+            'try again',
+            code: 5001,
+          )
+          ..activeListOverride = verdict == 'ended'
+              ? const DesktopActiveSessionList()
+              : const DesktopActiveSessionList(
+                  sessions: [
+                    DesktopActiveSession(
+                      runtimeSessionId: 'runtime-other',
+                      storedSessionId: 'session-snapshot-stall-working',
+                      status: 'working',
+                    ),
+                  ],
+                );
+        gateway.drop();
+        time.flushMicrotasks();
+        time.elapse(const Duration(seconds: 2));
+        expect(gateway.isConnected, isTrue);
+        expect(chat.transportStatus.state, ChatTransportState.connected);
+        if (verdict == 'ended') {
+          time.elapse(const Duration(seconds: 20));
+          expect(chat.isStreaming, isFalse);
+          expect(
+            chat.messages.where(
+              (m) =>
+                  m['role'] == 'assistant_error' &&
+                  m['content'] ==
+                      'No se pudo recuperar el turno. Inténtalo de nuevo.',
+            ),
+            isEmpty,
+          );
+        } else {
+          time.elapse(const Duration(seconds: 30));
+          expect(chat.isStreaming, isTrue);
+          expect(chat.transportStatus.state, ChatTransportState.connected);
+        }
+        chat.dispose();
+        time.flushMicrotasks();
+      });
+    });
+  }
+
+  for (final legacyBinding in [false, true]) {
+    test(
+      'legacy sin prueba ofrece acciones acotadas (binding: $legacyBinding)',
+      () async {
+        final gateway = legacyBinding
+            ? _LifecycleRecoverableGateway()
+            : _DroppingDesktopGateway();
+        final chat = _recoverableChat(
+          'legacy-review-$legacyBinding',
+          gateway,
+          desktopRecoveryBackoff: const [
+            Duration.zero,
+            Duration(milliseconds: 10),
+          ],
+        );
+        addTearDown(chat.dispose);
+        await chat.send(
+          fullText: 'sigue',
+          model: 'hermes-agent',
+          history: const [],
+        );
+        gateway.drop();
+        // conn-registry C8: «Sin confirmar» is retired; Desktop keeps a turn the
+        // backend reports working without any notice
+        // (apps/desktop/src/store/session-states.ts:515-544).
+        await _waitUntil(() => gateway.connectCalls >= 8);
+        expect(chat.desktopRecoveryUnconfirmed, isFalse);
+        expect(chat.isStreaming, isTrue);
+        expect(chat.noActivityHint, isFalse);
+        expect(
+          chat.messages.where((row) => row['role'] == 'assistant_error'),
+          isEmpty,
+        );
+        expect(gateway.submitCalls, 1);
+        await chat.cancel();
+        expect(chat.desktopRecoveryUnconfirmed, isFalse);
+      },
+    );
+  }
+
+  test('Stop previo y reinicio no reanudan FIFO al probar entrega', () async {
+    final store = _NoopOutbox();
+    final firstGateway = _LifecycleRecoverableGateway();
+    final first = _recoverableChat('old-stop', firstGateway);
+    await first.send(
+      fullText: 'primero',
+      model: 'hermes-agent',
+      history: const [],
+    );
+    final delivery = ActiveTurnDelivery(
+      prepared: const PreparedTurn(
+        connectionId: 'old-stop',
+        sessionId: 'session-old-stop',
+        clientTurnId: 'old-stop-followup',
+        createdAtMs: 1,
+        updatedAtMs: 1,
+        text: 'despues',
+        attachments: [],
+        model: 'hermes-agent',
+        profile: '',
+        queued: true,
+        queueOrder: 0,
+        restoresComposer: false,
+      ),
+      store: store,
+    );
+    expect(await first.enqueuePreparedTurn(delivery), isTrue);
+    await first.cancel();
+    expect(first.queueParked, isTrue);
+    final saved = PreparedTurn.fromJson(delivery.current.toJson());
+    first.dispose();
+    // Simulate losing both process-only registries, as an actual restart does.
+    ActiveChat.resetQueueProcessMemoryForTesting();
+    final gateway = _LifecycleRecoverableGateway();
+    final chat = _recoverableChat(
+      'old-stop',
+      gateway,
+      storedMessageLoader: (_, _) async => [
+        {'message_id': 'old-first-user', 'role': 'user', 'content': 'primero'},
+        {
+          'message_id': 'old-first-answer',
+          'role': 'assistant',
+          'content': 'ya termine',
+        },
+      ],
+    );
+    addTearDown(chat.dispose);
+    chat.internalMessagesForTesting = [
+      {
+        'role': 'assistant_error',
+        'content': activeChatDesktopRecoveryUiMessage(''),
+        '_prompt': 'primero',
+      },
+      {'message_id': 'old-first-user', 'role': 'user', 'content': 'primero'},
+    ];
+    chat.state = ChatPipelineState.failed;
+    chat.messagesLoaded = true;
+    await chat.restoreQueuedTurns([saved], store, scheduleDrain: false);
+    expect(chat.queueParkedFromPreviousSession, isTrue);
+    expect(await chat.reconcileAfterResume(), isTrue);
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+    expect(
+      chat.messages.where((row) => row['role'] == 'assistant_error'),
+      isEmpty,
+    );
+    expect(chat.queueParked, isTrue);
+    expect(gateway.submitCalls, 0);
+    expect(chat.queuedTurns.single.turn.clientTurnId, 'old-stop-followup');
+  });
+
+  test(
+    'foreground repetido no gasta confirmaciones antes de cinco segundos',
+    () async {
+      var clock = 0;
+      final gateway = _LifecycleRecoverableGateway()
+        ..recoveredState = DesktopTurnState.failed;
+      final outbox = _NoopOutbox();
+      final chat = _recoverableChat(
+        'wake-proof-review',
+        gateway,
+        desktopRecoveryConfirmationInterval: const Duration(seconds: 5),
+        wallClockMs: () => clock,
+        desktopRecoveryRandom: () => 1,
+        desktopRecoveryBackoff: const [Duration.zero, Duration(seconds: 15)],
+      );
+      addTearDown(chat.dispose);
+      await chat.send(
+        fullText: 'sigue',
+        model: 'hermes-agent',
+        history: const [],
+        delivery: _delivery('wake-proof-review', outbox),
+      );
+      gateway.drop();
+      await _waitUntil(() => gateway.statusCalls == 1);
+      for (var i = 2; i <= 4; i++) {
+        await chat.reconcileAfterResume();
+        await _waitUntil(() => gateway.statusCalls >= i);
+      }
+      expect(chat.state, ChatPipelineState.connecting);
+      expect(outbox.deleteCalls, 0);
+      clock = 5000;
+      chat.requestImmediateTransportRecovery();
+      await _waitUntil(() => gateway.statusCalls >= 5);
+      expect(chat.state, ChatPipelineState.connecting);
+      clock = 10000;
+      chat.requestImmediateTransportRecovery();
+      await _waitUntil(() => chat.state == ChatPipelineState.failed);
+      expect(
+        chat.messages.where((row) => row['role'] == 'assistant_error'),
+        hasLength(1),
+      );
+      expect(gateway.submitCalls, 1);
+    },
+  );
+
+  for (final durableFinal in [true, false]) {
+    test(
+      'known false lee un transcript antes del terminal (final: $durableFinal)',
+      () async {
+        final gateway = _LifecycleRecoverableGateway()..recoveredKnown = false;
+        var recoveryReads = 0;
+        final chat = _recoverableChat(
+          'unknown-review-$durableFinal',
+          gateway,
+          desktopRecoveryBackoff: const [
+            Duration.zero,
+            Duration(milliseconds: 10),
+          ],
+          storedMessageLoader: (_, _) async {
+            if (gateway.statusCalls >= 3) recoveryReads++;
+            return [
+              {
+                'message_id': 'unknown-user',
+                'role': 'user',
+                'content': 'mensaje',
+              },
+              if (durableFinal)
+                {
+                  'message_id': 'unknown-answer',
+                  'role': 'assistant',
+                  'content': 'ya termine',
+                },
+            ];
+          },
+        );
+        addTearDown(chat.dispose);
+        await chat.send(
+          fullText: 'mensaje',
+          model: 'hermes-agent',
+          history: const [],
+          delivery: _delivery('unknown-review-$durableFinal', _NoopOutbox()),
+        );
+        gateway.drop();
+        // dp-A: an unknown turn on a binding that is not live is over; it
+        // settles without error and, with no durable reply, carries the
+        // «sin respuesta» notice instead of «No se pudo recuperar el turno».
+        await _waitUntil(
+          () => durableFinal
+              ? chat.state == ChatPipelineState.completed
+              : chat.messages.any(
+                  (row) =>
+                      row['content'] == activeChatTurnEndedWithoutReplyMessage,
+                ),
+        );
+        expect(chat.state, isNot(ChatPipelineState.failed));
+        // dp-A: plus the one transcript re-read after settling.
+        expect(recoveryReads, durableFinal ? 1 : 2);
+        expect(gateway.statusCalls, 3);
+        final errors = chat.messages
+            .where((row) => row['role'] == 'assistant_error')
+            .toList();
+        expect(errors, durableFinal ? isEmpty : hasLength(1));
+        if (!durableFinal) {
+          expect(errors.single['content'], activeChatTurnEndedWithoutReplyMessage);
+        }
+        expect(gateway.submitCalls, 1);
+      },
+    );
+  }
+
+  for (final wrongClient in [true, false]) {
+    test(
+      'identidad discordante ofrece aviso y permite recuperar (client: $wrongClient)',
+      () async {
+        final gateway = _LifecycleRecoverableGateway();
+        if (wrongClient) {
+          gateway.recoveredClientTurnId = 'foreign-client';
+        } else {
+          gateway.recoverySnapshot = const DesktopSessionSnapshot(
+            runtimeSessionId: 'foreign-runtime',
+            storedSessionId: 'foreign-session',
+            created: false,
+            running: true,
+          );
+        }
+        final outbox = _NoopOutbox();
+        final chat = _recoverableChat(
+          'mismatch-review-$wrongClient',
+          gateway,
+          desktopRecoveryBackoff: const [
+            Duration.zero,
+            Duration(milliseconds: 10),
+          ],
+        );
+        addTearDown(chat.dispose);
+        await chat.send(
+          fullText: 'sigue',
+          model: 'hermes-agent',
+          history: const [],
+          delivery: _delivery('mismatch-review-$wrongClient', outbox),
+        );
+        gateway.drop();
+        // conn-registry C8: «Sin confirmar» is retired; Desktop keeps a turn the
+        // backend reports working without any notice
+        // (apps/desktop/src/store/session-states.ts:515-544).
+        await _waitUntil(() => gateway.statusCalls >= 6);
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        expect(chat.desktopRecoveryUnconfirmed, isFalse);
+        expect(chat.state, ChatPipelineState.connecting);
+        expect(outbox.deleteCalls, 0);
+        final callsAtNotice = gateway.statusCalls;
+        await Future<void>.delayed(const Duration(milliseconds: 40));
+        expect(gateway.statusCalls, callsAtNotice,
+          reason: 'wrong identities wait for a wake instead of polling forever');
+        expect(
+          chat.messages.where((row) => row['role'] == 'assistant_error'),
+          isEmpty,
+        );
+        gateway.recoveredClientTurnId = null;
+        gateway.recoverySnapshot = DesktopSessionSnapshot(
+          runtimeSessionId: 'owned-runtime',
+          storedSessionId: 'session-mismatch-review-$wrongClient',
+          created: false,
+          running: true,
+        );
+        await chat.retryConnectionNow();
+        await _waitUntil(() => chat.state == ChatPipelineState.executing);
+        expect(chat.desktopRecoveryUnconfirmed, isFalse);
+        expect(gateway.submitCalls, 1);
+      },
+    );
+  }
+
+  test(
+    'errores estructurales repetidos ofrecen aviso sin falso terminal',
+    () async {
+      final errors = <Object>[
+        for (final code in [401, 403])
+          DashboardWebSocketAuthException(
+            DashboardWebSocketAuthFailureCode.unavailable,
+            statusCode: code,
+          ),
+        const DashboardHttpException(404),
+        const TuiGatewayRpcError('session.resume', 'malformed'),
+        const TuiGatewayRpcError(
+          'session.resume',
+          'denied',
+          data: {'reason': 'EXCLUSIVE_SUBMIT_CAPABILITY_DENIED'},
+          origin: CompressionFailureOrigin.localPreflight,
+        ),
+      ];
+      for (var i = 0; i < errors.length; i++) {
+        final gateway = _RecoverableDesktopGateway()
+          ..recoveryConnectError = errors[i];
+        final chat = _recoverableChat(
+          'structural-review-$i',
+          gateway,
+          desktopRecoveryBackoff: const [
+            Duration.zero,
+            Duration(milliseconds: 10),
+          ],
+        );
+        try {
+          await chat.send(
+            fullText: 'sigue',
+            model: 'hermes-agent',
+            history: const [],
+            delivery: _delivery('structural-review-$i', _NoopOutbox()),
+          );
+          gateway.drop();
+          // conn-registry C8: «Sin confirmar» is retired (Desktop
+          // session-states.ts:515-544); the outcome stays: no false terminal.
+          await _waitUntil(() => gateway.connectCalls >= 8);
+          expect(chat.desktopRecoveryUnconfirmed, isFalse);
+          expect(chat.isStreaming, isTrue);
+          expect(
+            chat.messages.where((row) => row['role'] == 'assistant_error'),
+            isEmpty,
+          );
+          expect(gateway.submitCalls, 1);
+        } finally {
+          chat.dispose();
+        }
+      }
+    },
+  );
+
+  // conn-registry C8: the three-minute «Sin confirmar» is retired; Desktop
+  // shows nothing while the backend has not said the turn ended
+  // (apps/desktop/src/store/session-states.ts:515-544).
+  test('una operacion colgada no muestra aviso a los tres minutos', () {
+    fakeAsync((clock) {
+      final gateway = _RecoverableDesktopGateway()
+        ..recoveryConnectGate = Completer<void>();
+      final chat = _recoverableChat(
+        'window-review',
+        gateway,
+        desktopRecoveryAttemptTimeout: const Duration(hours: 1),
+      );
+      chat.send(
+        fullText: 'sigue',
+        model: 'hermes-agent',
+        history: const [],
+        delivery: _delivery('window-review', _NoopOutbox()),
+      );
+      clock.flushMicrotasks();
+      gateway.drop();
+      clock.flushMicrotasks();
+      clock.elapse(
+        const Duration(minutes: 3) - const Duration(milliseconds: 1),
+      );
+      expect(chat.desktopRecoveryUnconfirmed, isFalse);
+      clock.elapse(const Duration(milliseconds: 1));
+      expect(chat.desktopRecoveryUnconfirmed, isFalse);
+      expect(chat.isStreaming, isTrue);
+      chat.dispose();
+      clock.flushMicrotasks();
+      expect(clock.nonPeriodicTimerCount, 0);
+    });
+  });
+
+  test('fallo probado del padre termina actividad antes incierta', () async {
+    final gateway = _LifecycleRecoverableGateway()
+      ..recoveredState = DesktopTurnState.failed;
+    final chat = _recoverableChat(
+      'failed-child-review',
+      gateway,
+      desktopRecoveryBackoff: const [Duration.zero, Duration(milliseconds: 10)],
+    );
+    addTearDown(chat.dispose);
+    await chat.send(
+      fullText: 'sigue',
+      model: 'hermes-agent',
+      history: const [],
+      delivery: _delivery('failed-child-review', _NoopOutbox()),
+    );
+    gateway.emit(
+      'subagent.start',
+      sessionId: chat.desktopRuntimeSessionId,
+      payload: const {
+        'subagent_id': 'child-failed-parent',
+        'status': 'running',
+      },
+    );
+    await _waitUntil(() => chat.subagentAggregate.activeCount == 1);
+    gateway.drop();
+    await _waitUntil(() => chat.state == ChatPipelineState.failed);
+    expect(chat.subagentAggregate.terminalCount, 1);
+    expect(chat.subagentAggregate.unknownCount, 0);
+  });
+
+  test('respuesta de otra identidad no retira error ni reanuda cola', () async {
+    final gateway = _RecoverableDesktopGateway();
+    final outbox = _NoopOutbox();
+    final chat = _recoverableChat(
+      'foreign-proof',
+      gateway,
+      storedMessageLoader: (_, _) async => [
+        {
+          'message_id': 'foreign-user',
+          'role': 'user',
+          'content': 'mismo texto',
+        },
+        {
+          'message_id': 'foreign-answer',
+          'role': 'assistant',
+          'content': 'otra respuesta',
+        },
+      ],
+    );
+    addTearDown(chat.dispose);
+    chat.internalMessagesForTesting = [
+      {
+        'role': 'assistant_error',
+        'content': activeChatDesktopRecoveryUiMessage(''),
+        '_prompt': 'mismo texto',
+      },
+      {'message_id': 'owned-user', 'role': 'user', 'content': 'mismo texto'},
+    ];
+    chat.state = ChatPipelineState.failed;
+    chat.messagesLoaded = true;
+    await chat.restoreQueuedTurns(
+      [
+        _delivery('foreign-proof', outbox).current.copyWith(
+          queued: true,
+          queueOrder: 0,
+          restoresComposer: false,
+        ),
+      ],
+      outbox,
+      scheduleDrain: false,
+    );
+    expect(await chat.reconcileAfterResume(), isFalse);
+    expect(chat.messages.first['role'], 'assistant_error');
+    expect(chat.queueParked, isTrue);
+    expect(gateway.submitCalls, 0);
+  });
+
+  for (final refresh in [false, true]) {
+    test(
+      'respuesta final retira error heredado y drena FIFO actual (refresh: $refresh)',
+      () async {
+        final gateway = _LifecycleRecoverableGateway();
+        final outbox = _NoopOutbox();
+        var transcript = <Map<String, dynamic>>[];
+        final chat = _recoverableChat(
+          'recovery-queue-success',
+          gateway,
+          storedMessageLoader: (_, _) async => transcript,
+        );
+        addTearDown(chat.dispose);
+        PreparedTurn turn(String id, String text, {int? order}) => PreparedTurn(
+          connectionId: 'recovery-queue-success',
+          sessionId: 'session-recovery-queue-success',
+          clientTurnId: id,
+          createdAtMs: 1,
+          updatedAtMs: 1,
+          text: text,
+          attachments: const [],
+          model: 'hermes-agent',
+          profile: '',
+          queued: order != null,
+          queueOrder: order,
+          restoresComposer: order == null,
+        );
+        await chat.send(
+          fullText: 'primero',
+          model: 'hermes-agent',
+          history: const [],
+          delivery: ActiveTurnDelivery(
+            prepared: turn('turn-first', 'primero'),
+            store: outbox,
+          ),
+        );
+        expect(
+          await chat.enqueuePreparedTurn(
+            ActiveTurnDelivery(
+              prepared: turn('turn-second', 'segundo', order: 0),
+              store: outbox,
+            ),
+          ),
+          isTrue,
+        );
+        expect(
+          await chat.enqueuePreparedTurn(
+            ActiveTurnDelivery(
+              prepared: turn('turn-third', 'tercero', order: 1),
+              store: outbox,
+            ),
+          ),
+          isTrue,
+        );
+        chat.internalMessagesForTesting = [
+          {
+            'role': 'assistant_error',
+            'content': activeChatDesktopRecoveryUiMessage(''),
+            '_prompt': 'primero',
+          },
+          {'message_id': 'first-user', 'role': 'user', 'content': 'primero'},
+        ];
+        chat.state = ChatPipelineState.failed;
+        chat.messagesLoaded = true;
+        expect(chat.queueParked, isFalse);
+        transcript = [
+          {'message_id': 'first-user', 'role': 'user', 'content': 'primero'},
+          {
+            'message_id': 'first-answer',
+            'role': 'assistant',
+            'content': 'ya termine',
+          },
+        ];
+        if (refresh) {
+          await chat.loadMessages(passiveOnly: true);
+        } else {
+          await Future.wait([
+            chat.reconcileAfterResume(),
+            chat.reconcileAfterResume(),
+          ]);
+        }
+        await _waitUntil(() => gateway.submitCalls == 2);
+        expect(
+          chat.messages.where((row) => row['role'] == 'assistant_error'),
+          isEmpty,
+        );
+        expect(chat.queueParked, isFalse);
+        expect(gateway.idempotentSubmissions, [
+          (clientTurnId: 'turn-first', text: 'primero'),
+          (clientTurnId: 'turn-second', text: 'segundo'),
+        ]);
+        expect(chat.queuedMessages, ['tercero']);
+        transcript = [
+          ...transcript,
+          {'message_id': 'second-user', 'role': 'user', 'content': 'segundo'},
+          {
+            'message_id': 'second-answer',
+            'role': 'assistant',
+            'content': 'segundo listo',
+          },
+        ];
+        gateway.emit(
+          'message.complete',
+          sessionId: gateway.submittedRuntimeIds.last,
+          payload: const {'text': 'segundo listo'},
+        );
+        await _waitUntil(() => gateway.submitCalls == 3);
+        await chat.reconcileAfterResume();
+        expect(gateway.idempotentSubmissions, [
+          (clientTurnId: 'turn-first', text: 'primero'),
+          (clientTurnId: 'turn-second', text: 'segundo'),
+          (clientTurnId: 'turn-third', text: 'tercero'),
+        ]);
+        expect(chat.queuedMessages, isEmpty);
+        expect(
+          chat.messages.where((row) => row['role'] == 'assistant_error'),
+          isEmpty,
+        );
+      },
+    );
+  }
+
+  test(
+    'resume malformado luego running conserva outbox cola y envio unico',
+    () async {
+      final gateway = _LifecycleRecoverableGateway()
+        ..scriptedRecoveryResults.add(
+          const TuiGatewayRpcError('session.resume', 'malformed response'),
+        )
+        ..recoverySnapshot = DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-uncertain',
+          storedSessionId: 'session-uncertain',
+          created: false,
+          messagesProvided: false,
+          running: true,
+          inflight: DesktopInflightTurn(user: 'continua', streaming: true),
+        );
+      final outbox = _NoopOutbox();
+      final delivery = _delivery('uncertain', outbox);
+      final chat = _recoverableChat(
+        'uncertain',
+        gateway,
+        desktopRecoveryBackoff: const [Duration.zero, Duration(seconds: 15)],
+        desktopRecoveryRandom: () => 1,
+      );
+      addTearDown(chat.dispose);
+      await chat.send(
+        fullText: 'continua',
+        model: 'hermes-agent',
+        history: const [],
+        delivery: delivery,
+      );
+      gateway.drop();
+      await _waitUntil(() => gateway.resumeExistingCalls == 2);
+      chat.enqueue('despues');
+      expect(chat.state, ChatPipelineState.connecting);
+      expect(chat.noActivityHint, isFalse);
+      expect(
+        chat.messages.where((row) => row['role'] == 'assistant_error'),
+        isEmpty,
+      );
+      expect(chat.queuedMessages, contains('despues'));
+      expect(outbox.deleteCalls, 0);
+
+      await Future.wait([
+        chat.reconcileAfterResume(),
+        chat.retryConnectionNow(),
+        chat.reconcileAfterResume(),
+      ]);
+      await _waitUntil(() => chat.state == ChatPipelineState.executing);
+      expect(gateway.submitCalls, 1);
+      expect(gateway.statusCalls, 1);
+      expect(delivery.current.state, PreparedTurnState.running);
+      expect(outbox.deleteCalls, 0);
+      expect(chat.queuedMessages, contains('despues'));
+      expect(
+        chat.messages.where((row) => row['role'] == 'assistant_error'),
+        isEmpty,
+      );
+    },
+  );
+
+  // dp-F (Desktop store/session-states.ts liveTurnVerdict,
+  // use-background-sync.ts rehydrateLiveSessionStatuses): back in the
+  // foreground one session.active_list per gateway withdraws the live row of
+  // a runtime listed idle or no longer listed; a busy one keeps it.
+  test('dp-F: el roster al volver retira la fila viva de un runtime ausente',
+      () async {
+    SharedPreferences.setMockInitialValues({
+      'app_locale': 'es',
+      'notif_hide_sensitive_content': false,
+    });
+    final prefs = await SharedPreferences.getInstance();
+    final dir = await Directory.systemTemp.createTemp('dp-f-');
+    addTearDown(() => dir.delete(recursive: true));
+    final sink = _DpLiveSink();
+    final notifications = NotificationService(prefs)
+      ..setRichForTesting(
+        sink,
+        faces: BotFaceBitmapCache(directory: () async => dir),
+      )
+      ..appInForeground = false;
+    final service = ActiveChatService(
+      notifications: notifications,
+      compressionRestoreStore: testCompressionRestoreStore(),
+    );
+    addTearDown(service.dispose);
+    final gateway = _ActivityLifecycleRecoverableGateway();
+    final chat = service.attach(
+      connection: _connection('dp-f'),
+      sessionId: 'session-dp-f',
+      sessionTitle: 'dp-f',
+      desktopGateway: gateway,
+      disableForegroundKeepAlive: true,
+      attachDesktopRuntimeOnLoad: false,
+      allowUnownedDesktopSnapshotForTesting: true,
+      turnIdempotencyCapability: () async => false,
+      storedMessageLoader: (_, _) async => [],
+      api: testApiClient(
+        baseUrl: 'http://127.0.0.1:1',
+        httpClient: MockClient((_) async => http.Response('not found', 404)),
+      ),
+    );
+    // A turn this phone sent: only its own turn has a live row.
+    await chat.send(fullText: 'sigue', model: 'hermes-agent', history: const []);
+    final runtime = chat.desktopRuntimeSessionId!;
+    gateway
+      ..emit('message.start', sessionId: runtime)
+      ..activeListOverride = DesktopActiveSessionList(
+        sessions: [
+          DesktopActiveSession(
+            runtimeSessionId: runtime,
+            storedSessionId: 'session-dp-f',
+            status: 'working',
+          ),
+        ],
+      );
+    await _waitUntil(() => chat.isStreaming && sink.live.isNotEmpty);
+
+    expect(await service.settleLiveTurnRowsFromRoster(), 0);
+    expect(sink.cancelled, isEmpty);
+
+    service.liveRowRosterRetryDelay = const Duration(milliseconds: 50);
+    gateway.activeListError = StateError('roster unavailable');
+    expect(await service.settleLiveTurnRowsFromRoster(), 0);
+    expect(sink.cancelled, isEmpty);
+
+    // Resume edge: the socket is still parked for the first read; the one
+    // retry, once it redialled, sees the runtime gone.
+    gateway.activeListOverride = const DesktopActiveSessionList();
+    final settling = service.settleLiveTurnRowsFromRoster();
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+    gateway.activeListError = null;
+    expect(await settling, 1);
+    expect(sink.cancelled, isNotEmpty);
+  });
+
+  test(
+    'foreground del servicio despierta recovery quiet sin otro transcript',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      final service = ActiveChatService(
+        compressionRestoreStore: testCompressionRestoreStore(),
+      );
+      addTearDown(service.dispose);
+      final gateway = _LifecycleRecoverableGateway()
+        ..scriptedRecoveryResults.add(
+          const TuiGatewayRpcError('session.resume', 'malformed response'),
+        )
+        ..recoverySnapshot = DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-service-wake',
+          storedSessionId: 'session-service-wake',
+          created: false,
+          running: true,
+          messagesProvided: false,
+          inflight: DesktopInflightTurn(user: 'continua', streaming: true),
+        );
+      var reads = 0;
+      final chat = service.attach(
+        connection: _connection('service-wake'),
+        sessionId: 'session-service-wake',
+        sessionTitle: 'service-wake',
+        desktopGateway: gateway,
+        allowUnownedDesktopSnapshotForTesting: true,
+        turnIdempotencyCapability: () async => false,
+        storedMessageLoader: (_, _) async {
+          reads++;
+          return [];
+        },
+        api: testApiClient(
+          baseUrl: 'http://127.0.0.1:1',
+          httpClient: MockClient((_) async => http.Response('not found', 404)),
+        ),
+      );
+      await chat.send(
+        fullText: 'continua',
+        model: 'hermes-agent',
+        history: const [],
+      );
+      // Both the roster resume and its direct fallback must fail this attempt.
+      gateway.scriptedRecoveryResults.add(
+        const TuiGatewayRpcError('session.resume', 'malformed response'),
+      );
+      gateway.drop();
+      await _waitUntil(() => gateway.resumeExistingCalls >= 3);
+      expect(chat.recoveryReadsQuiet, isTrue);
+      final readsBeforeWake = reads;
+      await service.reconcileAfterResume();
+      await _waitUntil(
+        () => chat.state == ChatPipelineState.executing,
+        timeout: const Duration(milliseconds: 800),
+      );
+      expect(reads, readsBeforeWake);
+      expect(gateway.submitCalls, 1);
+      expect(
+        chat.messages.where((row) => row['role'] == 'assistant_error'),
+        isEmpty,
+      );
+    },
+  );
+
+  test(
+    'confirmaciones se reinician al cambiar la identidad del turno',
+    () async {
+      DesktopSessionSnapshot observed(String runtime, {bool running = false}) =>
+          DesktopSessionSnapshot(
+            runtimeSessionId: runtime,
+            storedSessionId: 'session-identity-confirmation',
+            created: false,
+            messagesProvided: false,
+            running: running,
+            inflight: DesktopInflightTurn(
+              user: 'continua',
+              streaming: running,
+              error: running ? null : 'failed',
+            ),
+          );
+      final gateway = _LifecycleRecoverableGateway()
+        ..initialSnapshot = observed('runtime-a', running: true)
+        ..scriptedRecoveryResults.addAll([
+          observed('runtime-a'),
+          observed('runtime-a'),
+          observed('runtime-b'),
+          observed('runtime-b'),
+          observed('runtime-b'),
+        ]);
+      final chat = _recoverableChat(
+        'identity-confirmation',
+        gateway,
+        desktopRecoveryBackoff: const [Duration.zero, Duration(seconds: 15)],
+        desktopRecoveryRandom: () => 1,
+      );
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+      chat.markCurrentTurnClientSubmittedForTesting();
+      gateway.drop();
+      for (var attempt = 1; attempt <= 5; attempt++) {
+        await _waitUntil(() => gateway.resumeExistingCalls >= attempt + 1);
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+        if (attempt < 5) {
+          expect(chat.state, ChatPipelineState.connecting);
+          chat.requestImmediateTransportRecovery();
+        }
+      }
+      await _waitUntil(() => chat.state == ChatPipelineState.failed);
+      expect(gateway.resumeExistingCalls, 6);
+      expect(
+        chat.messages.where((row) => row['role'] == 'assistant_error'),
+        hasLength(1),
+      );
+    },
+  );
+
+  test(
+    '404 de canal y timeouts locales no confirman ausencia en resume',
+    () async {
+      final errors = <Object>[
+        const DashboardHttpException(404),
+        const TuiGatewayRpcError(
+          'session.resume',
+          'timeout',
+          code: 4007,
+          failureKind: TuiGatewayRpcFailureKind.timeout,
+        ),
+        const TuiGatewayRpcError(
+          'session.resume',
+          'preflight',
+          code: 4007,
+          origin: CompressionFailureOrigin.localPreflight,
+        ),
+      ];
+      for (var index = 0; index < errors.length; index++) {
+        final gateway = _LifecycleRecoverableGateway();
+        final chat = _recoverableChat(
+          'ambiguous-absence-$index',
+          gateway,
+          desktopRecoveryBackoff: const [
+            Duration.zero,
+            Duration(milliseconds: 10),
+          ],
+          desktopRecoveryRandom: () => 1,
+        );
+        try {
+          await chat.send(
+            fullText: 'sigue',
+            model: 'hermes-agent',
+            history: const [],
+            delivery: _delivery('ambiguous-absence-$index', _NoopOutbox()),
+          );
+          gateway.resumeExistingError = errors[index];
+          gateway.drop();
+          await _waitUntil(() => gateway.resumeExistingCalls >= 4);
+          expect(chat.state, ChatPipelineState.connecting);
+          expect(
+            chat.messages.where((row) => row['role'] == 'assistant_error'),
+            isEmpty,
+          );
+          expect(gateway.submitCalls, 1);
+        } finally {
+          chat.dispose();
+        }
+      }
+    },
+  );
+
+  test('timeouts no gastan las tres confirmaciones frescas de fallo', () async {
+    final failed = DesktopSessionSnapshot(
+      runtimeSessionId: 'runtime-confirmed',
+      storedSessionId: 'session-confirmed',
+      created: false,
+      messagesProvided: false,
+      running: false,
+      inflight: DesktopInflightTurn(
+        user: 'continua',
+        status: 'error',
+        error: 'failed',
+      ),
+    );
+    final gateway = _LifecycleRecoverableGateway()
+      ..initialSnapshot = DesktopSessionSnapshot(
+        runtimeSessionId: 'runtime-confirmed',
+        storedSessionId: 'session-confirmed',
+        created: false,
+        messagesProvided: false,
+        running: true,
+        inflight: DesktopInflightTurn(user: 'continua', streaming: true),
+      )
+      ..scriptedRecoveryResults.addAll([
+        failed,
+        TimeoutException('unread'),
+        TimeoutException('unread'),
+        failed,
+        TimeoutException('unread'),
+        TimeoutException('unread'),
+        failed,
+      ]);
+    var errorEvents = 0;
+    final chat = _recoverableChat(
+      'confirmed',
+      gateway,
+      desktopRecoveryBackoff: const [Duration.zero, Duration(seconds: 15)],
+      desktopRecoveryRandom: () => 1,
+      onEvent: (event) {
+        if (event == ActiveChatEvent.error) errorEvents++;
+      },
+    );
+    addTearDown(chat.dispose);
+    await chat.loadMessages();
+    chat.markCurrentTurnClientSubmittedForTesting();
+    gateway.drop();
+    const resumeCounts = [2, 4, 5, 7, 8];
+    for (var attempt = 1; attempt <= 5; attempt++) {
+      await _waitUntil(
+        () => gateway.resumeExistingCalls >= resumeCounts[attempt - 1],
+      );
+      // Let the awaited RPC settle before waking its next backoff.
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      if (attempt < 5) {
+        expect(
+          chat.state,
+          ChatPipelineState.connecting,
+          reason: 'attempt $attempt',
+        );
+        expect(errorEvents, 0);
+        expect(
+          chat.messages.where((row) => row['role'] == 'assistant_error'),
+          isEmpty,
+        );
+        chat.requestImmediateTransportRecovery();
+      }
+    }
+    await _waitUntil(() => chat.state == ChatPipelineState.failed);
+    expect(gateway.resumeExistingCalls, 8);
+    expect(errorEvents, 1);
+    expect(
+      chat.messages.where((row) => row['role'] == 'assistant_error'),
+      hasLength(1),
+    );
+  });
+
+  test(
+    'snapshot running con error no falla al abrir ni al recuperar',
+    () async {
+      final liveWithError = DesktopSessionSnapshot(
+        runtimeSessionId: 'runtime-running-error',
+        storedSessionId: 'session-running-error',
+        created: false,
+        messagesProvided: false,
+        running: true,
+        inflight: DesktopInflightTurn(
+          user: 'continua',
+          error: 'stale error',
+          status: 'error',
+        ),
+      );
+      final gateway = _LifecycleRecoverableGateway()
+        ..initialSnapshot = liveWithError
+        ..recoverySnapshot = liveWithError;
+      final chat = _recoverableChat('running-error', gateway);
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+      expect(chat.state, ChatPipelineState.executing);
+      expect(
+        chat.messages.where((row) => row['role'] == 'assistant_error'),
+        isEmpty,
+      );
+      chat.markCurrentTurnClientSubmittedForTesting();
+      gateway.drop();
+      await _waitUntil(() => gateway.turnRecoveryCommits == 1);
+      expect(chat.state, ChatPipelineState.executing);
+      expect(
+        chat.messages.where((row) => row['role'] == 'assistant_error'),
+        isEmpty,
+      );
+    },
+  );
+
+  test(
+    'padre incierto conserva hijo sin confirmar y cola sin drenarla',
+    () async {
+      final gateway = _DroppingDesktopGateway();
+      final chat = _recoverableChat('uncertain-child', gateway);
+      addTearDown(chat.dispose);
+      await chat.send(
+        fullText: 'continua',
+        model: 'hermes-agent',
+        history: const [],
+      );
+      gateway.emit(
+        'subagent.start',
+        payload: const {'subagent_id': 'child-live', 'status': 'running'},
+      );
+      await _waitUntil(() => chat.subagentAggregate.activeCount == 1);
+      chat.enqueue('despues');
+      gateway.drop();
+      await _waitUntil(() => chat.awaitingDurableTurnRecovery);
+      expect(chat.subagentAggregate.phase, SubagentAggregatePhase.unknown);
+      expect(chat.subagentAggregate.unknownCount, 1);
+      expect(chat.subagentAggregate.terminalCount, 0);
+      expect(chat.isStreaming, isTrue);
+      expect(chat.noActivityHint, isFalse);
+      expect(chat.queuedMessages, contains('despues'));
+      expect(gateway.submitCalls, 1);
+      expect(
+        chat.messages.where((row) => row['role'] == 'assistant_error'),
+        isEmpty,
+      );
+    },
+  );
   test(
     'idle attached socket drop automatically resumes exact durable id',
     () async {
@@ -1976,6 +3492,49 @@ void main() {
       expect(gateway.resumeCalls, 0);
     },
   );
+
+  test('resume does not wait for a viewer RPC suspended in background', () async {
+    final binding = TestWidgetsFlutterBinding.ensureInitialized();
+    final held = Completer<DesktopSessionSnapshot>();
+    final gateway = _ActivityLifecycleRecoverableGateway()
+      ..initialSnapshot = const DesktopSessionSnapshot(
+        runtimeSessionId: 'runtime-viewer-before-background',
+        storedSessionId: 'session-viewer-background', created: false,
+        messagesProvided: true, running: false, status: 'completed',
+      )
+      ..recoverySnapshot = const DesktopSessionSnapshot(
+        runtimeSessionId: 'runtime-viewer-after-background',
+        storedSessionId: 'session-viewer-background', created: false,
+        messagesProvided: true, running: false, status: 'completed',
+      );
+    final chat = _productionAttachChat('viewer-background', gateway,
+      storedMessageLoader: (_, _) async => const [
+        {'message_id': 'viewer-answer', 'role': 'assistant', 'content': 'finished'},
+      ],
+    );
+    addTearDown(() {
+      chat.dispose();
+      binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    });
+    await chat.loadMessages(profile: 'owner-profile');
+    gateway.scriptedResumeExisting.add(held.future);
+    gateway.drop();
+    await _waitUntil(() => gateway.resumeExistingCalls == 1);
+    binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await _waitUntil(() => chat.desktopRuntimeSessionId == 'runtime-viewer-after-background');
+    expect(gateway.resumeExistingCalls, 2);
+    expect(chat.transportStatus.isConnected, isTrue);
+    held.complete(const DesktopSessionSnapshot(
+      runtimeSessionId: 'stale-viewer-must-not-bind',
+      storedSessionId: 'session-viewer-background', created: false,
+      messagesProvided: true, running: false,
+    ));
+    await pumpEventQueue();
+    expect(chat.desktopRuntimeSessionId, 'runtime-viewer-after-background');
+    expect(gateway.committedRecoveryRuntimeIds, ['runtime-viewer-after-background']);
+    expect(gateway.submitCalls, 0);
+  });
 
   test('disposed chat rejects held automatic reattach response', () async {
     final recoveryGate = Completer<DesktopSessionSnapshot>();
@@ -4595,6 +6154,7 @@ void main() {
       expect(chat.assistantContent, 'respuesta durable final');
       expect(chat.trace.single.status, 'completed');
       expect(chat.subagentAggregate.terminalCount, 1);
+      expect(chat.subagentAggregate.unknownCount, 0);
       expect(chat.subagentActivities, isEmpty);
       expect(
         chat.messages.any(
@@ -5456,13 +7016,23 @@ void main() {
       final readsAtSettle = loaderCalls - readsBeforeLoss;
       expect(
         readsAtSettle,
-        lessThanOrEqualTo(4),
+        // dp-A: +1, the single transcript re-read after settling.
+        lessThanOrEqualTo(5),
         reason: 'an idle server bounds the transcript re-reads',
+      );
+      // dp-A: settled without «No se pudo recuperar el turno».
+      expect(
+        chat.messages.where(
+          (m) =>
+              m['content'] ==
+              'No se pudo recuperar el turno. Inténtalo de nuevo.',
+        ),
+        isEmpty,
       );
       expect(chat.isStreaming, isFalse);
       expect(chat.sending, isFalse);
       expect(chat.transportStatus.state, ChatTransportState.connected);
-      expect(chat.awaitingDurableTurnRecovery, isTrue);
+      expect(chat.awaitingDurableTurnRecovery, isFalse);
       expect(
         chat.messages.where(
           (message) =>
@@ -5641,8 +7211,9 @@ void main() {
       );
       // The unconditional first read and the first idle re-read fail; only
       // the three complete idle reads that follow spend the budget.
-      expect(loaderCalls - readsBeforeLoss, 5);
-      expect(chat.awaitingDurableTurnRecovery, isTrue);
+      // dp-A: +1, the single transcript re-read after settling.
+      expect(loaderCalls - readsBeforeLoss, 6);
+      expect(chat.awaitingDurableTurnRecovery, isFalse);
       expect(
         chat.messages.where(
           (m) => m['role'] == 'user' && m['content'] == prompt,
@@ -5650,7 +7221,7 @@ void main() {
         hasLength(1),
       );
       await Future<void>.delayed(const Duration(milliseconds: 200));
-      expect(loaderCalls - readsBeforeLoss, 5);
+      expect(loaderCalls - readsBeforeLoss, 6);
     },
   );
 
@@ -5984,7 +7555,8 @@ void main() {
   // only re-reading the transcript. The chat must not keep saying
   // "connection lost" for that sync.
   test(
-    'rl1215 transcript re-sync over a healthy socket reads as connected',
+    'rl1215 transcript re-sync incierto con socket sano: conectado '
+    '(REVISION-4 A)',
     () async {
       const storedId = 'session-rl1215-resync';
       const prompt = 'resincroniza sin decir que no hay conexión';
@@ -6028,16 +7600,22 @@ void main() {
       gateway.failWith(const SocketException('Connection attempt cancelled'));
       await heldReached.future.timeout(const Duration(seconds: 5));
 
+      // REVISION-4 A: the socket is up, so the chat says connected while the
+      // re-sync reconciles the turn (use-statusbar-items.tsx:376-407).
       expect(gateway.isConnected, isTrue);
       expect(chat.transportStatus.state, ChatTransportState.connected);
 
-      // The network drops again mid re-sync: the chat is honest about it.
+      // The network drops again mid re-sync. conn-registry E1: the chat keeps
+      // redialling quietly and says «reconnecting», never a red «offline» per
+      // failed attempt (Desktop's pill mirrors the socket's `connecting`
+      // state while it retries: use-statusbar-items.tsx:376-407; the screen
+      // still turns a platform «no network» into offline through the link).
+      final dialsBefore = gateway.connectCalls;
       gateway.networkAvailable = false;
       gateway.failWith(const SocketException('Connection attempt cancelled'));
       held.complete();
-      await _waitUntil(
-        () => chat.transportStatus.state == ChatTransportState.offline,
-      );
+      await _waitUntil(() => gateway.connectCalls > dialsBefore + 1);
+      expect(chat.transportStatus.state, ChatTransportState.reconnecting);
       expect(chat.isStreaming, isTrue);
 
       gateway.networkAvailable = true;
@@ -6291,7 +7869,7 @@ void main() {
       final resumesBeforeDrop = gateway.resumeExistingCalls;
       gateway.drop();
       await _waitUntil(
-        () => chat.state == ChatPipelineState.failed,
+        () => chat.awaitingDurableTurnRecovery,
         timeout: const Duration(seconds: 10),
       );
 
@@ -6583,7 +8161,10 @@ void main() {
         running: false,
         status: 'error',
       );
-    final chat = _recoverableChat('private-recovery-failure', gateway);
+    final chat = _recoverableChat(
+      'private-recovery-failure', gateway,
+      desktopRecoveryBackoff: const [Duration.zero, Duration(milliseconds: 10)],
+    );
     addTearDown(chat.dispose);
 
     await chat.loadMessages();
@@ -6602,6 +8183,470 @@ void main() {
       chat.messages.expand((message) => message.values).join(' '),
       isNot(contains(secret)),
     );
+  });
+
+  group('rec-error: recovery propia con fallo retenido tras el final', () {
+    const prompt = 'revisa el parche';
+    const finalText = 'He comprobado el parche.';
+    const marker = '[ASYNC DELEGATION COMPLETE — deleg_0a1b2c3d]';
+    final userRow = {'id': 1, 'role': 'user', 'content': prompt};
+    final delegationRows = [
+      {
+        'id': 2,
+        'role': 'assistant',
+        'content': '',
+        'tool_calls': [
+          {
+            'id': 'call-rec',
+            'type': 'function',
+            'function': {'name': 'delegate_task', 'arguments': '{}'},
+          },
+        ],
+      },
+      {
+        'id': 3,
+        'role': 'tool',
+        'tool_call_id': 'call-rec',
+        'tool_name': 'delegate_task',
+        'content': jsonEncode({
+          'status': 'dispatched',
+          'delegation_id': 'deleg_0a1b2c3d',
+          'subagent_ids': ['sa-rec-1', 'sa-rec-2', 'sa-rec-3'],
+        }),
+      },
+    ];
+    final finalRow = {'id': 4, 'role': 'assistant', 'content': finalText};
+    final eventRow = {
+      'id': 5,
+      'role': 'user',
+      'content': '$marker\n3 tareas terminadas',
+      'display_kind': 'async_delegation_complete',
+      'display_metadata': {
+        'delegation_id': 'deleg_0a1b2c3d',
+        'task_count': 3,
+        'completed_count': 3,
+        'failed_count': 0,
+      },
+    };
+
+    _LifecycleRecoverableGateway gatewayFor(String id, {String user = ''}) =>
+        _LifecycleRecoverableGateway()
+          ..initialSnapshot = DesktopSessionSnapshot(
+            runtimeSessionId: 'runtime-$id-1',
+            storedSessionId: 'session-$id',
+            created: false,
+            messagesProvided: true,
+            inflight: DesktopInflightTurn(user: prompt, streaming: true),
+            running: true,
+          )
+          ..recoverySnapshot = DesktopSessionSnapshot(
+            runtimeSessionId: 'runtime-$id-2',
+            storedSessionId: 'session-$id',
+            created: false,
+            messagesProvided: false,
+            inflight: DesktopInflightTurn(
+              user: user,
+              error: 'AttributeError: post-turn bookkeeping failed',
+              status: 'error',
+              recoverable: true,
+            ),
+            running: false,
+            status: 'error',
+          );
+
+    void expectSettled(ActiveChat chat) {
+      expect(chat.state, ChatPipelineState.completed);
+      expect(
+        chat.messages.where((row) => row['role'] == 'assistant_error'),
+        isEmpty,
+      );
+      expect(
+        chat.messages.where((row) => row['content'] == finalText),
+        hasLength(1),
+      );
+    }
+
+    test('(b) socket cortado en segundo plano, resume y lectura durable '
+        'fallidas una vez: adopta el final, sin Error', () async {
+      final gateway = gatewayFor('rec-owner-b');
+      var rows = <Map<String, dynamic>>[];
+      var failReads = 0;
+      final chat = _recoverableChat(
+        'rec-owner-b',
+        gateway,
+        desktopRecoveryBackoff: const [
+          Duration.zero,
+          Duration(milliseconds: 10),
+        ],
+        storedMessageLoader: (_, _) async {
+          if (failReads > 0) {
+            failReads--;
+            throw StateError('tail read failed');
+          }
+          return rows;
+        },
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages();
+      chat.markCurrentTurnClientSubmittedForTesting();
+      rows = [userRow, finalRow];
+      failReads = 1;
+      // session.resume fails once before the retained-failure snapshot.
+      gateway.scriptedRecoveryResults.add(
+        const TuiGatewayRpcError(
+          'session.resume',
+          'Hermes Desktop connection lost',
+          failureKind: TuiGatewayRpcFailureKind.connectionLost,
+        ),
+      );
+      gateway.drop();
+      await _waitUntil(
+        () =>
+            chat.state == ChatPipelineState.completed ||
+            chat.state == ChatPipelineState.failed,
+      );
+
+      expectSettled(chat);
+    });
+
+    test('(d) 3 subagentes asíncronos: el turno de evento falla tras el '
+        'final; sin Error y la cápsula no queda Detenido', () async {
+      final gateway = gatewayFor(
+        'rec-owner-d',
+        user: '$marker\n3 tareas terminadas',
+      );
+      var rows = <Map<String, dynamic>>[];
+      final chat = _recoverableChat(
+        'rec-owner-d',
+        gateway,
+        desktopRecoveryBackoff: const [
+          Duration.zero,
+          Duration(milliseconds: 10),
+        ],
+        storedMessageLoader: (_, _) async => rows,
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages();
+      chat.markCurrentTurnClientSubmittedForTesting();
+      for (final id in ['sa-rec-1', 'sa-rec-2', 'sa-rec-3']) {
+        gateway.emit(
+          'subagent.start',
+          sessionId: chat.desktopRuntimeSessionId,
+          payload: {
+            'subagent_id': id,
+            'delegation_id': 'deleg_0a1b2c3d',
+            'status': 'running',
+          },
+        );
+      }
+      await _waitUntil(() => chat.subagentAggregate.activeCount == 3);
+      rows = [userRow, ...delegationRows, finalRow, eventRow];
+      gateway.drop();
+      await _waitUntil(
+        () =>
+            chat.state == ChatPipelineState.completed ||
+            chat.state == ChatPipelineState.failed,
+      );
+
+      expectSettled(chat);
+      // Sealed by the adopted durable final (completed), never by the
+      // retained failure (which would read «Detenido»).
+      expect(chat.subagentPhasesForTesting, hasLength(3));
+      expect(
+        chat.subagentPhasesForTesting,
+        everyElement(SubagentActivityPhase.completed),
+      );
+    });
+
+    test('un fallo real sin final durable conserva Error con Reintentar',
+        () async {
+      final gateway = gatewayFor('rec-owner-real', user: prompt);
+      final chat = _recoverableChat(
+        'rec-owner-real',
+        gateway,
+        desktopRecoveryBackoff: const [
+          Duration.zero,
+          Duration(milliseconds: 10),
+        ],
+        storedMessageLoader: (_, _) async => [userRow],
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages();
+      chat.markCurrentTurnClientSubmittedForTesting();
+      gateway.drop();
+      await _waitUntil(
+        () =>
+            chat.state == ChatPipelineState.completed ||
+            chat.state == ChatPipelineState.failed,
+      );
+
+      expect(chat.state, ChatPipelineState.failed);
+      final error = chat.messages.firstWhere(
+        (row) => row['role'] == 'assistant_error',
+      );
+      expect(
+        error['content'],
+        'No se pudo recuperar el turno. Inténtalo de nuevo.',
+      );
+    });
+
+    // dp-A (Desktop store/session-states.ts settleEndedLiveTurn +
+    // markTurnWithoutReply): a recovery that gives up after Hermes reported
+    // the turn idle never writes «No se pudo recuperar el turno».
+    _LifecycleRecoverableGateway idleGatewayFor(String id) =>
+        gatewayFor(id)
+          ..recoverySnapshot = DesktopSessionSnapshot(
+            runtimeSessionId: 'runtime-$id-2',
+            storedSessionId: 'session-$id',
+            created: false,
+            messagesProvided: false,
+            running: false,
+            status: 'idle',
+          );
+
+    bool recoveryError(Map<String, dynamic> row) =>
+        row['role'] == 'assistant_error' &&
+        row['content'] == 'No se pudo recuperar el turno. Inténtalo de nuevo.';
+
+    bool noReplyNotice(Map<String, dynamic> row) =>
+        row['role'] == 'assistant_error' &&
+        row['content'] == activeChatTurnEndedWithoutReplyMessage;
+
+    // dp-B: the failed-snapshot branch of _applyDesktopRecoverySnapshot reads
+    // durable history first, like the loop's retained-failure branch.
+    // (The adopting outcome of that check is the loop's own, covered by
+    // (b) and (d) above.)
+    test('dp-B: el fallo retenido consulta el historial durable antes de '
+        'fallar; sin final durable se conserva', () async {
+      final gateway = gatewayFor('dp-b-real');
+      var reads = 0;
+      final chat = _recoverableChat(
+        'dp-b-real',
+        gateway,
+        storedMessageLoader: (_, _) async {
+          reads++;
+          return [userRow];
+        },
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages();
+      chat.markCurrentTurnClientSubmittedForTesting();
+      final readsBefore = reads;
+      await chat.applyDesktopRecoverySnapshotForTesting(
+        gateway.recoverySnapshot!,
+      );
+
+      expect(reads, greaterThan(readsBefore));
+
+      expect(chat.state, ChatPipelineState.failed);
+      expect(
+        chat.messages.where((row) => row['role'] == 'assistant_error'),
+        hasLength(1),
+      );
+    });
+
+    test('dp-A: idle sin respuesta durable cierra sin error y avisa '
+        '«sin respuesta» (reintentable)', () async {
+      final gateway = idleGatewayFor('dp-a-noreply');
+      final chat = _recoverableChat(
+        'dp-a-noreply',
+        gateway,
+        desktopRecoveryBackoff: const [
+          Duration.zero,
+          Duration(milliseconds: 10),
+        ],
+        storedMessageLoader: (_, _) async => [userRow],
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages();
+      chat.markCurrentTurnClientSubmittedForTesting();
+      gateway.drop();
+      await _waitUntil(() => !chat.isStreaming);
+      await _waitUntil(() => chat.messages.any(noReplyNotice));
+
+      expect(chat.state, isNot(ChatPipelineState.failed));
+      expect(chat.messages.where(recoveryError), isEmpty);
+      final notice = chat.messages.singleWhere(noReplyNotice);
+      expect(notice['_prompt'], prompt);
+      expect(identical(chat.messages.first, notice), isTrue);
+    });
+
+    test('dp-A: con texto ya recibido, sin error y aviso solo si no queda '
+        'respuesta', () async {
+      final gateway = idleGatewayFor('dp-a-partial');
+      final chat = _recoverableChat(
+        'dp-a-partial',
+        gateway,
+        desktopRecoveryBackoff: const [
+          Duration.zero,
+          Duration(milliseconds: 10),
+        ],
+        storedMessageLoader: (_, _) async => [userRow],
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages();
+      chat.markCurrentTurnClientSubmittedForTesting();
+      gateway.emit(
+        'message.delta',
+        sessionId: chat.desktopRuntimeSessionId,
+        payload: const {'text': 'respuesta parcial'},
+      );
+      await _waitUntil(() => chat.assistantContent == 'respuesta parcial');
+      gateway.drop();
+      await _waitUntil(() => !chat.isStreaming);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      expect(chat.state, isNot(ChatPipelineState.failed));
+      expect(chat.messages.where(recoveryError), isEmpty);
+      // Desktop markTurnWithoutReply: the transcript after the re-read
+      // decides; the partial and the notice never show together.
+      final partialShown = chat.messages.any(
+        (row) => row['content'] == 'respuesta parcial',
+      );
+      expect(chat.messages.any(noReplyNotice), !partialShown);
+    });
+
+    test('dp-A: el aviso se retira cuando la respuesta durable llega después',
+        () async {
+      final gateway = idleGatewayFor('dp-a-late');
+      var rows = <Map<String, dynamic>>[userRow];
+      final events = <ActiveChatEvent>[];
+      final chat = _recoverableChat(
+        'dp-a-late',
+        gateway,
+        desktopRecoveryBackoff: const [
+          Duration.zero,
+          Duration(milliseconds: 10),
+        ],
+        onEvent: events.add,
+        storedMessageLoader: (_, _) async => rows,
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages();
+      chat.markCurrentTurnClientSubmittedForTesting();
+      gateway.drop();
+      await _waitUntil(() => chat.messages.any(noReplyNotice));
+
+      rows = [userRow, finalRow];
+      final eventsBefore = events.length;
+      await chat.loadMessages(passiveOnly: true);
+      await _waitUntil(
+        () => chat.messages.any((row) => row['content'] == finalText),
+      );
+
+      final shown = [
+        for (final row in chat.internalMessagesForTesting)
+          '${row['role']}:${row['content']}'
+              ' id=${row['id'] ?? row['message_id']}'
+              ' pair=${row['_localTranscriptPairId']}'
+              ' notice=${row['_noReplyNotice']}'
+              ' proj=${row['_localTranscriptProjectionId']}',
+        'events=${events.skip(eventsBefore).map((e) => e.name).join(',')}',
+      ].join(' | ');
+      expect(chat.messages.where(noReplyNotice), isEmpty, reason: shown);
+      expect(chat.messages.where(recoveryError), isEmpty);
+      expect(
+        chat.messages.where(
+          (row) => row['role'] == 'user' && row['content'] == prompt,
+        ),
+        hasLength(1),
+        reason: shown,
+      );
+    });
+  });
+
+  // dp-D: one turn clock: existing ?? server turn_started_at ?? now
+  // (Desktop gateway-event/message-stream.ts:212, session-info.ts:379-393).
+  group('dp-D turn clock', () {
+    final serverStart = DateTime.utc(2026, 11, 8, 10);
+    final phoneNow = DateTime.utc(2026, 11, 8, 10, 5);
+
+    _LifecycleRecoverableGateway runningGateway(
+      String id, {
+      DateTime? turnStartedAt,
+    }) => _LifecycleRecoverableGateway()
+      ..initialSnapshot = DesktopSessionSnapshot(
+        runtimeSessionId: 'runtime-$id-1',
+        storedSessionId: 'session-$id',
+        created: false,
+        messagesProvided: true,
+        inflight: DesktopInflightTurn(user: 'hola', streaming: true),
+        running: true,
+        turnStartedAt: turnStartedAt,
+      );
+
+    test('message.start keeps the server start adopted from the resume',
+        () async {
+      final gateway = runningGateway('dp-d-start', turnStartedAt: serverStart);
+      final chat = _recoverableChat(
+        'dp-d-start',
+        gateway,
+        wallClockMs: () => phoneNow.millisecondsSinceEpoch,
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages();
+      expect(chat.desktopTurnStartedAt, serverStart);
+      gateway.emit('message.start', sessionId: chat.desktopRuntimeSessionId);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(chat.desktopTurnStartedAt, serverStart);
+    });
+
+    test('message.start with no known start arms at the phone clock',
+        () async {
+      final gateway = runningGateway('dp-d-none');
+      final chat = _recoverableChat(
+        'dp-d-none',
+        gateway,
+        wallClockMs: () => phoneNow.millisecondsSinceEpoch,
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages();
+      expect(chat.desktopTurnStartedAt, isNull);
+      gateway.emit('message.start', sessionId: chat.desktopRuntimeSessionId);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(
+        chat.desktopTurnStartedAt?.millisecondsSinceEpoch,
+        phoneNow.millisecondsSinceEpoch,
+      );
+    });
+
+    test('session.info running takes the gateway turn_started_at', () async {
+      final gateway = runningGateway('dp-d-info');
+      final chat = _recoverableChat(
+        'dp-d-info',
+        gateway,
+        wallClockMs: () => phoneNow.millisecondsSinceEpoch,
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages();
+      expect(chat.desktopTurnStartedAt, isNull);
+      gateway.emit(
+        'session.info',
+        sessionId: chat.desktopRuntimeSessionId,
+        payload: {
+          'running': true,
+          'turn_started_at': serverStart.millisecondsSinceEpoch / 1000,
+        },
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      expect(
+        chat.desktopTurnStartedAt?.millisecondsSinceEpoch,
+        serverStart.millisecondsSinceEpoch,
+      );
+    });
   });
 
   test('snapshot fallido de recovery conserva el error_surface', () async {
@@ -6641,7 +8686,10 @@ void main() {
         running: false,
         status: 'error',
       );
-    final chat = _recoverableChat('surface-recovery-failure', gateway);
+    final chat = _recoverableChat(
+      'surface-recovery-failure', gateway,
+      desktopRecoveryBackoff: const [Duration.zero, Duration(milliseconds: 10)],
+    );
     addTearDown(chat.dispose);
 
     await chat.loadMessages();
@@ -7700,12 +9748,12 @@ void main() {
       await chat.loadMessages(expectedMessageCount: 300);
       expect(chat.hasEarlierMessages, isTrue);
       chat.markCurrentTurnClientSubmittedForTesting();
+      final resumesBeforeDrop = gateway.resumeExistingCalls;
       gateway.drop();
-      await _waitUntil(
-        () => gateway.committedRecoveryRuntimeIds.contains(
-          'runtime-terminal-empty-2',
-        ),
-      );
+      await _waitUntil(() => gateway.resumeExistingCalls > resumesBeforeDrop);
+      expect(gateway.committedRecoveryRuntimeIds, isEmpty);
+      expect(chat.state, ChatPipelineState.connecting);
+      expect(chat.messages.where((row) => row['role'] == 'assistant_error'), isEmpty);
 
       expect(chat.hasEarlierMessages, isTrue);
       expect(
@@ -10015,7 +12063,7 @@ void main() {
   );
 
   test(
-    'tras un corte Desktop el siguiente envío reanuda una sesión nueva',
+    'tras un corte legacy conserva el turno hasta una parada explícita',
     () async {
       final gateway = _DroppingDesktopGateway(
         canonicalStoredId: '20260716_canonical',
@@ -10048,14 +12096,10 @@ void main() {
       expect(gateway.resumeCalls, 1);
 
       gateway.drop();
-      await _waitUntil(() => chat.state == ChatPipelineState.failed);
+      await _waitUntil(() => chat.awaitingDurableTurnRecovery);
 
-      expect(chat.messages.first['role'], 'assistant_error');
-      expect(
-        chat.messages.first['content'],
-        'No se pudo recuperar el turno. Inténtalo de nuevo.',
-      );
-      expect(chat.messages.first['content'], isNot(contains('socket dropped')));
+      expect(chat.messages.where((row) => row['role'] == 'assistant_error'), isEmpty);
+      await chat.cancel();
 
       chat.send(fullText: 'segundo', model: 'hermes-agent', history: const []);
       await _waitUntil(() => gateway.submitCalls == 2);
@@ -10606,7 +12650,7 @@ void main() {
     },
   );
 
-  test('active turn ticket 401 and 403 stop with sign-in required', () async {
+  test('active turn ticket 401 and 403 preserve turn with sign-in required', () async {
     for (final status in const [401, 403]) {
       final gateway = _RecoverableDesktopGateway()
         ..recoveryConnectError = DashboardWebSocketAuthException(
@@ -10627,15 +12671,16 @@ void main() {
         delivery: _delivery('coverage-ticket-auth-$status', _NoopOutbox()),
       );
       gateway.drop();
-      await _waitUntil(() => chat.state == ChatPipelineState.failed);
+      await _waitUntil(() => chat.state == ChatPipelineState.connecting);
+      await Future<void>.delayed(const Duration(milliseconds: 40));
 
-      expect(gateway.connectCalls, 2, reason: 'HTTP $status');
+      expect(gateway.connectCalls, greaterThanOrEqualTo(2), reason: 'HTTP $status');
       expect(chat.dashboardAuthRequired, isTrue, reason: 'HTTP $status');
       expect(gateway.submitCalls, 1, reason: 'HTTP $status');
     }
   });
 
-  test('HTTP 404 de sesión es terminal para recovery', () async {
+  test('HTTP 404 al conectar deja recovery incierto', () async {
     final gateway = _RecoverableDesktopGateway()
       ..recoveryConnectError = const DashboardHttpException(404);
     final chat = _recoverableChat(
@@ -10654,11 +12699,11 @@ void main() {
     gateway.drop();
     await Future<void>.delayed(const Duration(milliseconds: 40));
 
-    expect(chat.state, ChatPipelineState.failed);
-    expect(gateway.connectCalls, 2);
+    expect(chat.state, ChatPipelineState.connecting);
+    expect(gateway.connectCalls, greaterThanOrEqualTo(2));
   });
 
-  test('RPC malformado sin código es terminal para recovery', () async {
+  test('RPC malformado sin código deja recovery incierto', () async {
     final gateway = _RecoverableDesktopGateway()
       ..recoveryConnectError = const TuiGatewayRpcError(
         'session.resume',
@@ -10680,11 +12725,11 @@ void main() {
     gateway.drop();
     await Future<void>.delayed(const Duration(milliseconds: 40));
 
-    expect(chat.state, ChatPipelineState.failed);
-    expect(gateway.connectCalls, 2);
+    expect(chat.state, ChatPipelineState.connecting);
+    expect(gateway.connectCalls, greaterThanOrEqualTo(2));
   });
 
-  test('fallos estructurales HTTP y RPC son terminales', () async {
+  test('fallos estructurales HTTP y RPC no confirman turno fallido', () async {
     final cases = <Object>[
       const DashboardHttpException(400),
       const DashboardHttpException(422),
@@ -10710,7 +12755,6 @@ void main() {
       await _expectRecoveryErrorClassification(
         'terminal-classification-$index',
         cases[index],
-        terminal: true,
       );
     }
   });
@@ -10729,13 +12773,12 @@ void main() {
         await _expectRecoveryErrorClassification(
           'transient-classification-$index',
           cases[index],
-          terminal: false,
         );
       }
     },
   );
 
-  test('un rechazo de autenticación no entra en reconexión infinita', () async {
+  test('un rechazo de autenticación conserva el turno pendiente', () async {
     final gateway = _RecoverableDesktopGateway()
       ..recoveryConnectError = const DashboardAuthException(
         DashboardAuthFailureCode.invalidCredentials,
@@ -10755,9 +12798,10 @@ void main() {
       delivery: _delivery('coverage-auth', _NoopOutbox()),
     );
     gateway.drop();
-    await _waitUntil(() => chat.state == ChatPipelineState.failed);
+    await _waitUntil(() => chat.state == ChatPipelineState.connecting);
+      await Future<void>.delayed(const Duration(milliseconds: 40));
 
-    expect(gateway.connectCalls, 2);
+    expect(gateway.connectCalls, greaterThanOrEqualTo(2));
     expect(gateway.submitCalls, 1);
   });
 
@@ -10827,7 +12871,9 @@ void main() {
     'recovery 4007 moderno no cae en resume legacy ni crea una sesión',
     () async {
       final gateway = _LifecycleRecoverableGateway();
-      final chat = _recoverableChat('recovery-missing-modern', gateway);
+      final chat = _recoverableChat('recovery-missing-modern', gateway,
+        desktopRecoveryBackoff: const [Duration.zero, Duration(milliseconds: 10)],
+      );
       addTearDown(chat.dispose);
 
       await chat.send(
@@ -10846,10 +12892,19 @@ void main() {
         code: 4007,
       );
       gateway.drop();
-      await _waitUntil(() => chat.state == ChatPipelineState.failed);
+      // dp-A: a stored session Hermes no longer has ends the turn without
+      // an error; no transcript read, no notice.
+      await _waitUntil(() => !chat.isStreaming);
+      expect(chat.state, isNot(ChatPipelineState.failed));
+      expect(
+        chat.messages.where((row) => row['role'] == 'assistant_error'),
+        isEmpty,
+      );
 
-      expect(gateway.resumeExistingCalls, 2);
+      expect(gateway.resumeExistingCalls, 4);
       expect(gateway.resumeExistingStoredIds, [
+        'session-recovery-missing-modern',
+        'session-recovery-missing-modern',
         'session-recovery-missing-modern',
         'session-recovery-missing-modern',
       ]);
@@ -11225,33 +13280,69 @@ void main() {
     expect(chat.state, ChatPipelineState.completed);
   });
 
-  test('un capability denial permanente termina recovery sin reintentar ni '
-      'duplicar submit', () async {
-    final gateway = _PermanentCapabilityDenialRecoveryGateway();
-    final chat = _recoverableChat(
-      'recovery-permanent-capability-denial',
-      gateway,
-      desktopRecoveryBackoff: const [Duration.zero],
-    );
-    addTearDown(chat.dispose);
-
-    final send = chat.send(
-      fullText: 'turno aceptado antes del denial permanente',
-      model: 'hermes-agent',
-      history: const [],
-      delivery: _delivery(
+  test('un capability denial permanente conserva recovery sin '
+      'duplicar submit', () {
+    fakeAsync((clock) {
+      final gateway = _PermanentCapabilityDenialRecoveryGateway();
+      final outbox = _NoopOutbox();
+      final chat = _recoverableChat(
         'recovery-permanent-capability-denial',
-        _NoopOutbox(),
-      ),
-    );
-    await _waitUntil(() => gateway.submitCalls == 1);
-    gateway.drop();
+        gateway,
+        desktopRecoveryBackoff: const [Duration.zero],
+        desktopRecoveryRandom: () => 1.0,
+      );
+      bool? accepted;
+      try {
+        unawaited(
+          chat.send(
+            fullText: 'turno aceptado antes del denial permanente',
+            model: 'hermes-agent',
+            history: const [],
+            delivery: _delivery(
+              'recovery-permanent-capability-denial',
+              outbox,
+            ),
+          ).then((value) => accepted = value),
+        );
+        clock.flushMicrotasks();
+        expect(gateway.submitCalls, 1);
+        gateway.drop();
+        clock.flushMicrotasks();
 
-    await _waitUntil(() => chat.state == ChatPipelineState.failed);
-    await send;
+        // A zero-only configuration normalizes to a one-second retry cap.
+        // Fix both jitter and time: a real 40 ms sleep can cross a random
+        // retry boundary even when the host is otherwise healthy.
+        clock.elapse(const Duration(milliseconds: 40));
+        clock.flushMicrotasks();
+        expect(accepted, isTrue);
+        expect(chat.state, ChatPipelineState.connecting);
+        expect(gateway.recoveryResumeCalls, 1);
+        expect(gateway.submitCalls, 1);
 
-    expect(gateway.recoveryResumeCalls, 1);
-    expect(gateway.submitCalls, 1);
+        clock.elapse(const Duration(milliseconds: 959));
+        clock.flushMicrotasks();
+        expect(gateway.recoveryResumeCalls, 1);
+        clock.elapse(const Duration(milliseconds: 1));
+        clock.flushMicrotasks();
+        expect(gateway.recoveryResumeCalls, 2);
+        expect(gateway.submitCalls, 1);
+        expect(outbox.deleteCalls, 0);
+        expect(chat.state, ChatPipelineState.connecting);
+        expect(chat.isStreaming, isTrue);
+        expect(
+          chat.messages.where((row) => row['role'] == 'assistant_error'),
+          isEmpty,
+        );
+      } finally {
+        chat.dispose();
+        clock.flushMicrotasks();
+      }
+      clock.elapse(const Duration(seconds: 2));
+      clock.flushMicrotasks();
+      expect(gateway.recoveryResumeCalls, 2);
+      expect(gateway.submitCalls, 1);
+      expect(clock.nonPeriodicTimerCount, 0);
+    });
   });
 
   test('un timeout tipado de capability durante recovery reintenta sin '
@@ -11387,7 +13478,7 @@ void main() {
 
       await _waitUntil(
         () =>
-            api.requests.length == 3 || chat.state == ChatPipelineState.failed,
+            api.requests.length == 3 || chat.awaitingDurableTurnRecovery,
       );
       // R3 starts legacy GET A here. The retired route performs no such read.
       if (api.requests.length == 3) {
@@ -11423,7 +13514,7 @@ void main() {
         () =>
             api.requests.length == 4 ||
             (api.requests.length == 3 &&
-                chat.state == ChatPipelineState.failed),
+                chat.awaitingDurableTurnRecovery),
       );
       final refreshRequest = api.requests.last;
       if (!refreshRequest.isCompleted) {
@@ -11453,11 +13544,11 @@ void main() {
       );
       await _waitUntil(
         () =>
-            chat.state == ChatPipelineState.failed ||
+            chat.awaitingDurableTurnRecovery ||
             events.contains(ActiveChatEvent.done),
       );
 
-      expect(chat.state, ChatPipelineState.failed);
+      expect(chat.state, ChatPipelineState.connecting);
       expect(chat.awaitingDurableTurnRecovery, isTrue);
       expect(events.where((event) => event == ActiveChatEvent.done), isEmpty);
       expect(gateway.submitCalls, 2);
@@ -12474,10 +14565,10 @@ void main() {
 
       gateway.drop();
 
-      await _waitUntil(() => chat.state == ChatPipelineState.failed);
+      await _waitUntil(() => chat.awaitingDurableTurnRecovery);
       expect(chat.awaitingDurableTurnRecovery, isTrue);
       expect(api.calls, 0);
-      expect(chat.messages.first['role'], 'assistant_error');
+      expect(chat.messages.where((row) => row['role'] == 'assistant_error'), isEmpty);
       expect(
         chat.messages.any(
           (message) => message['content'] == 'Aquí están las noticias.',
@@ -12528,7 +14619,7 @@ void main() {
     await _waitUntil(() => chat.assistantContent == 'Aquí están');
 
     gateway.drop();
-    await _waitUntil(() => chat.state == ChatPipelineState.failed);
+    await _waitUntil(() => chat.awaitingDurableTurnRecovery);
 
     expect(chat.awaitingDurableTurnRecovery, isTrue);
     expect(api.calls, 0);
@@ -12571,7 +14662,7 @@ void main() {
       );
 
       gateway.drop();
-      await _waitUntil(() => chat.state == ChatPipelineState.failed);
+      await _waitUntil(() => chat.awaitingDurableTurnRecovery);
 
       expect(chat.awaitingDurableTurnRecovery, isTrue);
       expect(api.calls, 0);
@@ -12786,12 +14877,419 @@ void main() {
       _expectNoViewerAttachmentMutations(gateway, api);
     });
   });
+
+  // conn-registry (desktop-parity point 2): a live turn that goes 45 s without
+  // a runtime event asks `session.active_list` once (15 s bound). Desktop:
+  // apps/desktop/src/store/session-states.ts:347-546 (`onEventSilence`).
+  group('conn-registry silent-turn probe', () {
+    ({ActiveChat chat, _ActivityLifecycleRecoverableGateway gateway, String runtime})
+    startTurn(FakeAsync time, String id) {
+      final gateway = _ActivityLifecycleRecoverableGateway();
+      final chat = _recoverableChat(id, gateway, turnIdempotencySupported: false);
+      unawaited(
+        chat.send(fullText: 'sigue', model: 'hermes-agent', history: const []),
+      );
+      time.flushMicrotasks();
+      final runtime = chat.desktopRuntimeSessionId!;
+      gateway.emit('message.start', sessionId: runtime);
+      time.flushMicrotasks();
+      expect(chat.isStreaming, isTrue);
+      return (chat: chat, gateway: gateway, runtime: runtime);
+    }
+
+    DesktopActiveSessionList listing(String runtime, String status) =>
+        DesktopActiveSessionList(
+          sessions: [
+            DesktopActiveSession(
+              runtimeSessionId: runtime,
+              storedSessionId: 'session-probe',
+              status: status,
+            ),
+          ],
+        );
+
+    // DISENO-REGISTRO R2: the registry follows the server's frames in shadow
+    // and agrees with the pipeline on an ordinary turn (no divergence).
+    test('R2 shadow registry follows an ordinary turn without diverging', () {
+      final logs = <String>[];
+      final original = debugPrint;
+      debugPrint = (message, {wrapWidth}) {
+        if (message != null) logs.add(message);
+      };
+      addTearDown(() => debugPrint = original);
+      fakeAsync((time) {
+        final t = startTurn(time, 'registry-shadow');
+        expect(t.chat.turnRegistry.value.busy, isTrue);
+        expect(t.chat.turnRegistry.value.turnLive, isTrue);
+        t.gateway.emit(
+          'message.delta',
+          sessionId: t.runtime,
+          payload: const {'text': 'hola'},
+        );
+        time.elapse(const Duration(seconds: 3));
+        t.gateway.emit(
+          'message.complete',
+          sessionId: t.runtime,
+          payload: const {'text': 'hola'},
+        );
+        time.elapse(const Duration(seconds: 1));
+        expect(t.chat.isStreaming, isFalse);
+        expect(t.chat.turnRegistry.value.busy, isFalse);
+        expect(
+          t.chat.turnRegistry.value.lastClose,
+          TurnCloseReason.complete,
+        );
+        t.chat.dispose();
+        time.flushMicrotasks();
+      });
+      expect(logs.where((l) => l.contains('[turn-registry] diverge')), isEmpty);
+    });
+
+    // R4 (flag HERMES_SESSION_TURN_REGISTRY): Hermes says running:false; the
+    // pipeline ignores that frame, the registry closes and active_list is
+    // asked at once (Desktop: session-info.ts:188-193 «running=false is a
+    // terminal fact»; the verdict fences a frame of another execution).
+    for (final enabled in [true, false]) {
+      test('R4 info running:false is checked at once (flag $enabled)', () {
+        addTearDown(() => debugSessionTurnRegistryOverride = null);
+        debugSessionTurnRegistryOverride = enabled;
+        fakeAsync((time) {
+          final t = startTurn(time, 'registry-close-$enabled');
+          t.gateway.activeListOverride = const DesktopActiveSessionList();
+          final before = t.gateway.listActiveSessionsCalls;
+          t.gateway.emit(
+            'session.info',
+            sessionId: t.runtime,
+            payload: const {'running': false},
+          );
+          time.elapse(const Duration(seconds: 1));
+          if (enabled) {
+            expect(t.gateway.listActiveSessionsCalls, before + 1);
+            time.elapse(const Duration(seconds: 16));
+            expect(t.chat.isStreaming, isFalse);
+            expect(t.chat.state, isNot(ChatPipelineState.failed));
+          } else {
+            expect(t.gateway.listActiveSessionsCalls, before);
+            expect(t.chat.isStreaming, isTrue);
+          }
+          t.chat.dispose();
+          time.flushMicrotasks();
+        });
+      });
+    }
+
+    test('R4 a late running:false the server contradicts keeps the turn', () {
+      addTearDown(() => debugSessionTurnRegistryOverride = null);
+      debugSessionTurnRegistryOverride = true;
+      fakeAsync((time) {
+        final t = startTurn(time, 'registry-close-stale');
+        t.gateway.activeListOverride = listing(t.runtime, 'working');
+        t.gateway.emit(
+          'session.info',
+          sessionId: t.runtime,
+          payload: const {'running': false},
+        );
+        time.elapse(const Duration(seconds: 2));
+        expect(t.chat.isStreaming, isTrue);
+        expect(
+          t.chat.messages.where((m) => m['role'] == 'assistant_error'),
+          isEmpty,
+        );
+        t.chat.dispose();
+        time.flushMicrotasks();
+      });
+    });
+
+    // REVISION-4 E (1b): Hermes says the turn ended, but its stored history
+    // never got this prompt (cut before the ack). The user's message must
+    // never vanish: it stays with a «no se confirmó» card and Reintentar
+    // (AUDITORIA A.4, send failure MANTENER; Desktop keeps the message in
+    // local state until the server confirms it and marks the failure:
+    // submit.ts:1373-1411).
+    test('an ended verdict for a prompt the server never stored keeps it '
+        'with a retry card', () {
+      fakeAsync((time) {
+        // The prompt went out but Hermes never acknowledged it.
+        final gateway = _UnackedSubmitGateway();
+        final chat = _recoverableChat(
+          'probe-unsent',
+          gateway,
+          turnIdempotencySupported: false,
+          storedMessageLoader: (_, _) async => [
+            {'id': 1, 'role': 'user', 'content': 'antes', 'timestamp': 1.0},
+            {
+              'id': 2,
+              'role': 'assistant',
+              'content': 'respuesta de antes',
+              'timestamp': 2.0,
+            },
+          ],
+        );
+        unawaited(
+          chat.send(
+            fullText: 'mensaje que no llegó',
+            model: 'hermes-agent',
+            history: const [],
+          ),
+        );
+        time.flushMicrotasks();
+        gateway.activeListOverride = const DesktopActiveSessionList();
+        time.elapse(const Duration(seconds: 46));
+        time.elapse(const Duration(seconds: 16));
+        expect(chat.isStreaming, isFalse);
+        expect(
+          chat.messages.where(
+            (m) => m['role'] == 'user' && m['content'] == 'mensaje que no llegó',
+          ),
+          hasLength(1),
+          reason: 'the unsent message is never lost',
+        );
+        final card = chat.messages.firstWhere(
+          (m) => m['role'] == 'assistant_error',
+          orElse: () => const <String, dynamic>{},
+        );
+        expect(card['_prompt'], 'mensaje que no llegó');
+        expect(
+          card['content'],
+          isNot(activeChatTurnEndedWithoutReplyMessage),
+          reason: 'not «sin respuesta»: the server never had it',
+        );
+        chat.dispose();
+        time.flushMicrotasks();
+      });
+    });
+
+    // REVISION-4 G + MEDIO 1: with the app away and the keep-alive holding,
+    // the probe still asks Hermes; an ended turn whose reply the passive
+    // read brings is settled there and announced once («respuesta lista»),
+    // like the normal end of a turn (_completeRunOnce).
+    test('in the background under the hold an ended turn settles and its '
+        'reply is announced once', () async {
+      SharedPreferences.setMockInitialValues({});
+      final prefs = await SharedPreferences.getInstance();
+      addTearDown(TurnKeepAliveHold.resetForTesting);
+      fakeAsync((time) {
+        final notifications = _CountingReplies(prefs)..appInForeground = false;
+        final gateway = _ActivityLifecycleRecoverableGateway();
+        final chat = ActiveChat(
+          compressionRestoreStore: testCompressionRestoreStore(),
+          connection: _connection('probe-bg'),
+          sessionId: 'session-probe-bg',
+          sessionTitle: 'probe-bg',
+          notifications: notifications,
+          onTerminal: () {},
+          api: testApiClient(
+            baseUrl: 'http://127.0.0.1:1',
+            httpClient: MockClient((_) async => http.Response('nope', 404)),
+          ),
+          desktopGateway: gateway,
+          allowUnownedDesktopSnapshotForTesting: true,
+          turnIdempotencyCapability: () async => false,
+          storedMessageLoader: (_, _) async => [
+            {'id': 1, 'role': 'user', 'content': 'sigue', 'timestamp': 1.0},
+            {
+              'id': 2,
+              'role': 'assistant',
+              'content': 'respuesta guardada',
+              'timestamp': 2.0,
+            },
+          ],
+        );
+        unawaited(
+          chat.send(fullText: 'sigue', model: 'hermes-agent', history: const []),
+        );
+        time.flushMicrotasks();
+        final runtime = chat.desktopRuntimeSessionId!;
+        gateway.emit('message.start', sessionId: runtime);
+        time.flushMicrotasks();
+        chat.didChangeAppLifecycleState(AppLifecycleState.hidden);
+        chat.didChangeAppLifecycleState(AppLifecycleState.paused);
+        TurnKeepAliveHold.held = true;
+        time.flushMicrotasks();
+        gateway.activeListOverride = const DesktopActiveSessionList();
+        final asked = gateway.listActiveSessionsCalls;
+        time.elapse(const Duration(seconds: 46));
+        expect(gateway.listActiveSessionsCalls, greaterThan(asked));
+        time.elapse(const Duration(seconds: 16));
+        expect(chat.isStreaming, isFalse);
+        expect(notifications.replies, 1);
+        chat.dispose();
+        time.flushMicrotasks();
+      });
+    });
+
+    // REVISION-3 BAJO 11: a new turn starts with a fresh clock, never the
+    // previous turn's server start (message.start seeds it with ??=).
+    test('the next turn never inherits the previous turn clock', () {
+      fakeAsync((time) {
+        final t = startTurn(time, 'clock-fresh');
+        final old = DateTime.utc(2020);
+        t.gateway.emit(
+          'message.start',
+          sessionId: t.runtime,
+          payload: {'turn_started_at': old.millisecondsSinceEpoch / 1000},
+        );
+        t.gateway.emit(
+          'message.complete',
+          sessionId: t.runtime,
+          payload: const {'text': 'uno'},
+        );
+        time.elapse(const Duration(seconds: 2));
+        expect(t.chat.isStreaming, isFalse);
+        unawaited(
+          t.chat.send(fullText: 'dos', model: 'hermes-agent', history: const []),
+        );
+        time.flushMicrotasks();
+        t.gateway.emit('message.start', sessionId: t.chat.desktopRuntimeSessionId);
+        time.flushMicrotasks();
+        expect(t.chat.desktopTurnStartedAt, isNot(old));
+        t.chat.dispose();
+        time.flushMicrotasks();
+      });
+    });
+
+    test('working keeps the turn and asks again after the next window', () {
+      fakeAsync((time) {
+        final t = startTurn(time, 'probe-working');
+        t.gateway.activeListOverride = listing(t.runtime, 'working');
+        final before = t.gateway.listActiveSessionsCalls;
+        time.elapse(const Duration(seconds: 44));
+        expect(t.gateway.listActiveSessionsCalls, before, reason: 'not yet');
+        time.elapse(const Duration(seconds: 2));
+        expect(t.gateway.listActiveSessionsCalls, before + 1);
+        expect(t.chat.isStreaming, isTrue);
+        time.elapse(const Duration(seconds: 46));
+        expect(t.gateway.listActiveSessionsCalls, before + 2);
+        expect(t.chat.isStreaming, isTrue);
+        expect(
+          t.chat.messages.where((m) => m['role'] == 'assistant_error'),
+          isEmpty,
+        );
+        t.chat.dispose();
+        time.flushMicrotasks();
+      });
+    });
+
+    test('no answer keeps the turn without any error', () {
+      fakeAsync((time) {
+        final t = startTurn(time, 'probe-unanswered');
+        t.gateway.activeListError = StateError('roster unavailable');
+        time.elapse(const Duration(seconds: 46));
+        expect(t.chat.isStreaming, isTrue);
+        t.gateway.activeListError = null;
+        t.gateway.activeListOverride = listing(t.runtime, 'mystery');
+        time.elapse(const Duration(seconds: 46));
+        expect(t.chat.isStreaming, isTrue, reason: 'unknown status keeps it');
+        expect(
+          t.chat.messages.where((m) => m['role'] == 'assistant_error'),
+          isEmpty,
+        );
+        t.chat.dispose();
+        time.flushMicrotasks();
+      });
+    });
+
+    test('an event inside the window restarts the silence clock', () {
+      fakeAsync((time) {
+        final t = startTurn(time, 'probe-event');
+        t.gateway.activeListOverride = const DesktopActiveSessionList();
+        final before = t.gateway.listActiveSessionsCalls;
+        time.elapse(const Duration(seconds: 30));
+        t.gateway.emit(
+          'message.delta',
+          sessionId: t.runtime,
+          payload: const {'text': 'parcial'},
+        );
+        time.elapse(const Duration(seconds: 16));
+        expect(t.gateway.listActiveSessionsCalls, before);
+        expect(t.chat.isStreaming, isTrue);
+        t.chat.dispose();
+        time.flushMicrotasks();
+      });
+    });
+
+    test('ended settles the turn without an error row', () {
+      fakeAsync((time) {
+        final t = startTurn(time, 'probe-ended');
+        t.gateway.emit(
+          'message.delta',
+          sessionId: t.runtime,
+          payload: const {'text': 'respuesta parcial'},
+        );
+        time.flushMicrotasks();
+        // Hermes no longer lists the runtime: its turn is over.
+        t.gateway.activeListOverride = const DesktopActiveSessionList();
+        time.elapse(const Duration(seconds: 46));
+        time.elapse(const Duration(seconds: 16));
+        expect(t.chat.isStreaming, isFalse);
+        expect(t.chat.state, isNot(ChatPipelineState.failed));
+        expect(
+          t.chat.messages.where(
+            (m) =>
+                m['role'] == 'assistant_error' &&
+                m['content'] != activeChatTurnEndedWithoutReplyMessage,
+          ),
+          isEmpty,
+          reason: 'no «No se pudo recuperar el turno»',
+        );
+        t.chat.dispose();
+        time.flushMicrotasks();
+      });
+    });
+  });
 }
 
 class _NoopOutbox implements TurnOutboxPersistence {
+  int deleteCalls = 0;
+
   @override
-  Future<void> delete(PreparedTurn turn) async {}
+  Future<void> delete(PreparedTurn turn) async {
+    deleteCalls++;
+  }
 
   @override
   Future<void> save(PreparedTurn turn) async {}
+}
+
+class _CountingReplies extends NotificationService {
+  _CountingReplies(super.prefs);
+  int replies = 0;
+
+  @override
+  Future<void> replyReady({
+    required String preview,
+    String? instance,
+    String? session,
+    String? connId,
+    String? sessionId,
+    NotificationChatSurface surface = NotificationChatSurface.normal,
+    String? profile,
+    String? roomId,
+    bool replyable = false,
+  }) async {
+    replies += 1;
+  }
+}
+
+final class _DpLiveSink implements RichNotificationSink {
+  final live = <Map<String, Object?>>[];
+  final cancelled = <String?>[];
+  @override
+  Future<void> cancel({required int id, String? tag}) async =>
+      cancelled.add(tag);
+  @override
+  Future<void> confirm({
+    required int id,
+    String? tag,
+    String? title,
+    required String text,
+    int timeoutMs = 4000,
+    bool onlyIfActive = false,
+  }) async {}
+  @override
+  Future<bool> postConversation(Map<String, Object?> args) async => true;
+
+  @override
+  Future<void> postLiveUpdate(Map<String, Object?> args) async =>
+      live.add(args);
 }

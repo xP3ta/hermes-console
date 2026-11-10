@@ -18,6 +18,68 @@ void main() {
     method: 'session.resume',
   );
 
+  for (final durablePending in [false, true]) {
+    test(
+      'accepted pending input never advances live anchors on repeated omitted snapshots (durable: $durablePending)',
+      () {
+        final snap = snapshot({
+          'session_id': 'runtime-accepted-anchor',
+          'session_key': 'stored-1',
+          'messages': [
+            {'role': 'user', 'content': 'Prompt', 'row_id': 10},
+            {
+              'role': 'tool',
+              'content': 'Synthetic lookup',
+              'name': 'terminal',
+              'row_id': 11,
+            },
+          ],
+          'running': true,
+          'inflight': {
+            'user': 'Prompt',
+            'assistant': 'working',
+            'streaming': true,
+            'corrections': ['Como va?'],
+          },
+          'queued': {'user': 'Next prompt'},
+        });
+        final first = reconciler.project(snap, bridgeOwnedLiveUser: true);
+        final previous = <Map<String, dynamic>>[
+          {
+            'role': 'user',
+            'content': 'Next prompt',
+            '_desktopAcceptedQueued': true,
+            if (durablePending)
+              '_desktopRowId': 30
+            else
+              '_desktopSnapshotKind': 'queued',
+          },
+          ...first.messagesNewestFirst,
+        ];
+        final second = reconciler.project(
+          snap.withoutPersistedMessages(),
+          fallbackNewestFirst: previous,
+          previousNewestFirst: previous,
+          bridgeOwnedLiveUser: true,
+        );
+        final third = reconciler.project(
+          snap.withoutPersistedMessages(),
+          fallbackNewestFirst: second.messagesNewestFirst,
+          previousNewestFirst: second.messagesNewestFirst,
+          bridgeOwnedLiveUser: true,
+        );
+        expect(third.messagesNewestFirst, second.messagesNewestFirst);
+        for (final text in ['Prompt', 'Como va?', 'Next prompt']) {
+          expect(
+            third.messagesNewestFirst.where((row) => row['content'] == text),
+            hasLength(1),
+          );
+        }
+        expect(third.queuedUser, 'Next prompt');
+      },
+    );
+  }
+
   test('un turno durable fragmentado se proyecta como un solo assistant', () {
     final result = reconciler.project(
       snapshot({
@@ -1074,6 +1136,34 @@ void main() {
     expect(result.queuedSyntheticId, 'user-queued-runtime-live');
   });
 
+  for (final running in [true, false]) {
+    test('error contradictorio con actividad vigente (running: $running)', () {
+      final result = reconciler.project(
+        snapshot({
+          'session_id': 'runtime-running-error',
+          'session_key': 'stored-1',
+          'running': running,
+          'status': 'error',
+          'inflight': {
+            'user': 'haz la tarea',
+            'assistant': 'sigo trabajando',
+            'streaming': !running,
+            'error': 'stale error',
+            'status': 'error',
+          },
+        }),
+      );
+      expect(result.running, isTrue);
+      expect(result.failed, isFalse);
+      expect(result.messagesNewestFirst.first['content'], 'sigo trabajando');
+      expect(
+        result.messagesNewestFirst.where(
+          (row) => row['role'] == 'assistant_error',
+        ),
+        isEmpty,
+      );
+    });
+  }
   test('proyecta inflight fallido como error terminal recuperable', () {
     final result = reconciler.project(
       snapshot({
@@ -1881,7 +1971,13 @@ void main() {
         expect(assistant, isNot(contains('reasoning')));
         expect(assistant, isNot(contains('tool_calls')));
         expect(assistant.toString(), isNot(contains('uso el shell')));
-        expect(assistant.toString(), isNot(contains('ls -la')));
+        // The step's detail is the masked command line (the approved «Completo»
+        // row); the tool input itself is never carried.
+        expect(assistant.toString(), isNot(contains('input')));
+        expect(assistant.toString(), isNot(contains('"command"')));
+        final trace = assistant['_activity_trace'] as List;
+        expect(trace, hasLength(1));
+        expect((trace.single as Map)['detail'], 'ls -la');
       },
     );
 
@@ -2110,6 +2206,78 @@ void main() {
       expect(
         users(projection).where((message) => message['_optimistic'] == true),
         hasLength(1),
+      );
+    });
+  });
+
+  group('retainedFailureIsSettledByDurableFinal: the same prompt text', () {
+    final rows = <Map<String, dynamic>>[
+      {'id': 1, 'role': 'user', 'content': 'sí', 'timestamp': 1000},
+      {'id': 2, 'role': 'assistant', 'content': 'Hecho.', 'timestamp': 1001},
+    ];
+    DesktopInflightTurn failed(String user, {int? startedAtSeconds}) =>
+        DesktopInflightTurn(
+          user: user,
+          error: 'Your message was not processed',
+          status: 'error',
+          startedAt: startedAtSeconds == null
+              ? null
+              : DateTime.fromMillisecondsSinceEpoch(startedAtSeconds * 1000),
+        );
+
+    test('began before (or at) the saved final: settled', () {
+      expect(
+        retainedFailureIsSettledByDurableFinal(
+          rows,
+          failed('sí', startedAtSeconds: 1000),
+        ),
+        isTrue,
+      );
+      expect(
+        retainedFailureIsSettledByDurableFinal(
+          rows,
+          failed('sí', startedAtSeconds: 1001),
+        ),
+        isTrue,
+      );
+    });
+
+    test('began after the saved final (a second, unsaved «sí»): not settled',
+        () {
+      expect(
+        retainedFailureIsSettledByDurableFinal(
+          rows,
+          failed('sí', startedAtSeconds: 1002),
+        ),
+        isFalse,
+      );
+    });
+
+    test('a missing time is not settled', () {
+      expect(
+        retainedFailureIsSettledByDurableFinal(rows, failed('sí')),
+        isFalse,
+      );
+      expect(
+        retainedFailureIsSettledByDurableFinal([
+          rows.first,
+          {'id': 2, 'role': 'assistant', 'content': 'Hecho.'},
+        ], failed('sí', startedAtSeconds: 1000)),
+        isFalse,
+      );
+    });
+
+    test('an empty user keeps the old rule (no time needed)', () {
+      expect(
+        retainedFailureIsSettledByDurableFinal(rows, failed('')),
+        isTrue,
+      );
+      expect(
+        retainedFailureIsSettledByDurableFinal(
+          rows,
+          failed('', startedAtSeconds: 5000),
+        ),
+        isTrue,
       );
     });
   });

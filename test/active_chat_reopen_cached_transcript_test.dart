@@ -92,6 +92,103 @@ void main() {
     expect(reopened.messages, hasLength(4));
   });
 
+  // dp-C: a recovery notice (and a retained inflight.error projection) is
+  // live state, not transcript. Desktop never caches it; the cold-start tail
+  // and the warm cache leave it out. A real failed send stays (below).
+  group('dp-C local turn errors stay out of the reopen/cold-start cache', () {
+    final localError = <String, dynamic>{
+      'role': 'assistant_error',
+      'content': 'No se pudo recuperar el turno. Inténtalo de nuevo.',
+      '_prompt': 'pregunta guardada',
+      '_localTranscriptProjectionId': 'local-assistant-error-1',
+    };
+    final taggedUser = <String, dynamic>{
+      'id': 1,
+      'role': 'user',
+      'content': 'pregunta guardada',
+      '_localTranscriptPairId': 'local-assistant-error-1',
+    };
+
+    test('reopenTranscriptSnapshot drops the error and its pairing tag', () {
+      final chat = attach(loader: (_, _) async => List.of(_rows));
+      chat.internalMessagesForTesting = [
+        localError,
+        taggedUser,
+        {'id': 0, 'role': 'assistant', 'content': 'respuesta anterior'},
+      ];
+      chat.messagesLoaded = true;
+
+      final rows = chat.reopenTranscriptSnapshot()!;
+
+      expect(rows.where((row) => row['role'] == 'assistant_error'), isEmpty);
+      expect(rows.map((row) => row['content']), [
+        'pregunta guardada',
+        'respuesta anterior',
+      ]);
+      expect(rows.first.containsKey('_localTranscriptPairId'), isFalse);
+      // The live chat keeps its own rows untouched.
+      expect(chat.messages.first['role'], 'assistant_error');
+    });
+
+    test('a tail cached by an older build is seeded without the error', () {
+      final chat = attach(
+        sessionId: 'stored-old-tail',
+        loader: (_, _) => Completer<List<Map<String, dynamic>>>().future,
+      );
+      chat.seedReopenTranscript([localError, taggedUser], fromDisk: true);
+
+      expect(chat.messages.map((row) => row['role']), ['user']);
+      expect(
+        chat.messages.single.containsKey('_localTranscriptPairId'),
+        isFalse,
+      );
+    });
+
+    // conn-registry (REVISION-3 #5, the owner's default): only the recovery
+    // notices are live state the server regenerates (utils.ts:1181,1207);
+    // a real failure of this client keeps its card and its Reintentar.
+    test('a failed send keeps its card and pairing tag on reopen', () {
+      final chat = attach(loader: (_, _) async => List.of(_rows));
+      final sendFailure = <String, dynamic>{
+        'role': 'assistant_error',
+        'content': 'Se perdió la conexión. El mensaje no se confirmó.',
+        '_prompt': 'pregunta guardada',
+        '_localTranscriptProjectionId': 'local-send-failure-1',
+      };
+      chat.internalMessagesForTesting = [
+        sendFailure,
+        {...taggedUser, '_localTranscriptPairId': 'local-send-failure-1'},
+        {'id': 0, 'role': 'assistant', 'content': 'respuesta anterior'},
+      ];
+      chat.messagesLoaded = true;
+
+      final rows = chat.reopenTranscriptSnapshot()!;
+
+      expect(rows.map((row) => row['role']), [
+        'assistant_error',
+        'user',
+        'assistant',
+      ]);
+      expect(rows.first['content'], sendFailure['content']);
+      expect(rows[1]['_localTranscriptPairId'], 'local-send-failure-1');
+    });
+
+    test('the «sin respuesta» notice is dropped like a recovery notice', () {
+      final chat = attach(
+        sessionId: 'stored-no-reply',
+        loader: (_, _) => Completer<List<Map<String, dynamic>>>().future,
+      );
+      chat.seedReopenTranscript([
+        {
+          'role': 'assistant_error',
+          'content': activeChatTurnEndedWithoutReplyMessage,
+        },
+        {'id': 1, 'role': 'user', 'content': 'pregunta guardada'},
+      ]);
+      expect(chat.messages.map((row) => row['role']), ['user']);
+    });
+  });
+
   test('a deleted session is not shown from the reopen cache', () async {
     await openAndClose();
     await service.clearCancelledTurnsForSession(

@@ -18,6 +18,7 @@ import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/desktop_control_gateway.dart';
 import 'package:hermes_android/core/services/desktop_gateway_capabilities.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
+import 'package:hermes_android/core/services/turn_keepalive_controller.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
@@ -382,6 +383,30 @@ void main() {
     },
   );
 
+  // conn-registry (REVISION-3 #2): a child still running after its parent
+  // turn closed keeps the background hold (and so the socket) for the
+  // successor turn, as Desktop keeps its socket open while hidden
+  // (apps/desktop/src/store/gateway.ts:1103). The composer still reads the
+  // parent alone.
+  test('a live child after the parent turn keeps the background hold', () async {
+    final gateway = _RetainingGateway()
+      ..subagents = const [
+        DesktopSubagentSnapshot(subagentId: 'child-hold', status: 'running'),
+      ];
+    final chat = await _boundWithLiveWork(gateway);
+    addTearDown(chat.dispose);
+    gateway.emit('subagent.start', const {
+      'subagent_id': 'child-hold',
+      'status': 'running',
+      'event_id': 'e-hold',
+      'event_revision': 1,
+    });
+    await Future<void>.delayed(Duration.zero);
+    expect(chat.isStreaming, isFalse, reason: 'the parent turn ended');
+    expect(chat.safeActiveSubagentCount, 1);
+    expect(chatHoldsBackgroundWork(chat), isTrue);
+  });
+
   test(
     'P2-2 Stop sin runtime vivo no afirma haber parado lo conservado',
     () async {
@@ -406,6 +431,11 @@ void main() {
       expect(chat.backgroundProcesses, hasLength(1));
       expect(chat.safeActiveSubagentCount, 1);
       expect(chat.canStopSessionWork, isTrue);
+      // REVISION-4 BAJO 3: a count retained from the lost runtime is shown
+      // as last known, but it does not hold the background keep-alive.
+      expect(chat.subagentLivenessStale, isTrue);
+      expect(chat.confirmedActiveSubagentCount, 0);
+      expect(chatHoldsBackgroundWork(chat), isFalse);
 
       final result = await chat.stopSessionWork();
 

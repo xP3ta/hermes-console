@@ -169,6 +169,9 @@ void main() {
         await pump(tester, profile: profile);
         await duplicate(tester);
         await until(tester, () => log.any((l) => l.startsWith('getSession')));
+        // The child opens after its read: wait for the screen, not only
+        // for the read to start.
+        await until(tester, () => opened.evaluate().isNotEmpty);
         final params = branches().single;
         expect(params, containsPair('parent_session_id', 'parent-stored'));
         expect(params['idempotency_key'], startsWith('branch-'));
@@ -215,9 +218,13 @@ void main() {
     ) async {
       await pump(tester);
       hermes.errors['session.branch_stored'] = code;
+      final s = await Strings.delegate.load(const Locale('es'));
       await duplicate(tester);
       await until(tester, () => branches().isNotEmpty);
-      final s = await Strings.delegate.load(const Locale('es'));
+      // The notice comes with Hermes' answer, which arrives over a real
+      // socket after the request is seen: wait for the notice itself.
+      final failed = find.textContaining(s.sesDuplicateFailed('').trim());
+      await until(tester, () => failed.evaluate().isNotEmpty);
       expect(
         find.textContaining(s.sesDuplicateFailed('').trim()),
         findsWidgets,

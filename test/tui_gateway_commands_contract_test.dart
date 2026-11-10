@@ -34,6 +34,13 @@ TuiGatewayClient _clientFor(HttpServer server) => TuiGatewayClient(
   dashboard: _CommandTicketDashboard(),
 );
 
+/// A long `/goal` as the owner pasted it: past the old limits (500 in the
+/// chat, 4096 in the client), several lines, quotes, accents and emoji.
+final String _longGoal = [
+  'Objetivo: «revisar» la app — "comillas", \'simples\', áéíóú ñ, 🚀👩🏽‍💻',
+  for (var i = 0; i < 80; i++) 'Línea $i: ${'palabra ' * 8}fin.',
+].join('\n');
+
 void main() {
   test('usa los cuatro JSON-RPC Desktop con parámetros exactos', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
@@ -211,5 +218,116 @@ void main() {
       matchesRoot: (_) => true,
     );
     expect(result.evidence.outcome, DesktopCompressionOutcome.acceptedPending);
+  });
+
+  test('a long, multiline command travels whole, and so does its '
+      'prompt', () async {
+    // ORDEN-COMANDOS: neither Hermes nor Desktop limit the argument; the
+    // kickoff prompt the server sends back is never cut either.
+    expect(_longGoal.length, greaterThan(4096));
+    expect(_longGoal, contains('\n'));
+    final kickoff = List<String>.filled(2000, 'kickoff ').join() + _longGoal;
+    expect(kickoff.length, greaterThan(8000));
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(server.close);
+    final requests = <Map<String, dynamic>>[];
+    server.listen((request) async {
+      final socket = await WebSocketTransformer.upgrade(request);
+      socket.add(
+        jsonEncode({
+          'jsonrpc': '2.0',
+          'method': 'event',
+          'params': {'type': 'gateway.ready', 'payload': <String, dynamic>{}},
+        }),
+      );
+      await for (final raw in socket) {
+        final frame = jsonDecode(raw as String) as Map<String, dynamic>;
+        if (isClientCapabilitiesFrame(frame)) {
+          socket.add(jsonEncode(clientCapabilitiesResponse(frame)));
+          continue;
+        }
+        requests.add(frame);
+        final result = switch (frame['method']) {
+          'gateway.capabilities' => {'per_session_exclusive_submit': true},
+          'slash.exec' || 'command.dispatch' => {
+            'type': 'send',
+            'notice': '⊙ Goal set (20-turn budget)',
+            'message': kickoff,
+          },
+          _ => <String, dynamic>{},
+        };
+        socket.add(
+          jsonEncode({'jsonrpc': '2.0', 'id': frame['id'], 'result': result}),
+        );
+      }
+    });
+    final client = _clientFor(server);
+    addTearDown(client.close);
+
+    final slash = await client.slashExec('runtime-goal', '/goal $_longGoal');
+    final dispatch = await client.commandDispatch(
+      'runtime-goal',
+      name: 'goal',
+      arg: _longGoal,
+    );
+
+    final sent = requests.where(
+      (request) => request['method'] != 'gateway.capabilities',
+    );
+    expect(sent.map((request) => request['method']), [
+      'slash.exec',
+      'command.dispatch',
+    ]);
+    expect(sent.first['params'], {
+      'session_id': 'runtime-goal',
+      'command': 'goal $_longGoal',
+    });
+    expect(sent.last['params'], {
+      'session_id': 'runtime-goal',
+      'name': 'goal',
+      'arg': _longGoal,
+    });
+    for (final result in [slash, dispatch]) {
+      expect(result.kind, DesktopCommandDispatchKind.send);
+      expect(result.message, kickoff);
+      expect(result.notice, '⊙ Goal set (20-turn budget)');
+    }
+
+    // Past the safety bound (64 Ki units) nothing is sent at all.
+    final tooLong = 'x' * (commandArgumentMaxLength + 1);
+    await expectLater(
+      client.slashExec('runtime-goal', '/goal $tooLong'),
+      throwsA(isA<TuiGatewayRpcError>()),
+    );
+    await expectLater(
+      client.commandDispatch('runtime-goal', name: 'goal', arg: tooLong),
+      throwsA(isA<TuiGatewayRpcError>()),
+    );
+    // The bound itself still goes (checked above with the 4096+ goal);
+    // what was refused before still is: a control character, an empty
+    // command, a name that is not a command name.
+    await expectLater(
+      client.slashExec('runtime-goal', '/goal a\u0007b'),
+      throwsA(isA<TuiGatewayRpcError>()),
+    );
+    for (final invalid in ['', '   ', '/', '/go;al x', '/${'n' * 65} x']) {
+      await expectLater(
+        client.slashExec('runtime-goal', invalid),
+        throwsA(isA<TuiGatewayRpcError>()),
+        reason: invalid,
+      );
+    }
+    await expectLater(
+      client.commandDispatch('runtime-goal', name: 'go;al', arg: 'x'),
+      throwsA(isA<TuiGatewayRpcError>()),
+    );
+    await expectLater(
+      client.commandDispatch('runtime-goal', name: 'goal', arg: 'a\u0007b'),
+      throwsA(isA<TuiGatewayRpcError>()),
+    );
+    expect(
+      requests.where((request) => request['method'] != 'gateway.capabilities'),
+      hasLength(2),
+    );
   });
 }

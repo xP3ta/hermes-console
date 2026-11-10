@@ -33,6 +33,10 @@ class RestartableHermes {
   /// Every JSON-RPC method the client sent, in order.
   final methods = <String>[];
 
+  /// Optional live recovery evidence and reply barrier for transport tests.
+  Map<String, Object?>? recoveryInflight;
+  Future<void>? recoveryReplyGate;
+
   Future<void> start() async {
     epoch += 1;
     _server = await HttpServer.bind(InternetAddress.loopbackIPv4, port);
@@ -93,12 +97,15 @@ class RestartableHermes {
         'payload': {'heartbeat': false, 'replay_epoch': 'epoch-$epoch'},
       },
     });
-    socket.listen((raw) {
+    socket.listen((raw) async {
       final frame = jsonDecode(raw as String) as Map<String, dynamic>;
       final method = frame['method'];
       if (method is! String) return;
       methods.add(method);
       final params = (frame['params'] as Map?) ?? const {};
+      if (method == 'session.resume' || method == 'session.activate') {
+        await recoveryReplyGate;
+      }
       // A server with a new, empty state knows no stored session: Hermes
       // answers the resume of a missing one with 4007.
       send({
@@ -110,8 +117,9 @@ class RestartableHermes {
             'session.resume' => {
               'session_id': 'runtime-a',
               'stored_session_id': params['session_id'],
-              'status': 'idle',
-              'running': false,
+              'status': recoveryInflight == null ? 'idle' : 'streaming',
+              'running': recoveryInflight != null,
+              if (recoveryInflight != null) 'inflight': recoveryInflight,
             },
             'session.create' => {
               'session_id': 'runtime-new',
@@ -123,8 +131,9 @@ class RestartableHermes {
             'session.activate' => {
               'session_id': params['session_id'],
               'stored_session_id': advertised.isEmpty ? null : advertised.first,
-              'status': 'idle',
-              'running': false,
+              'status': recoveryInflight == null ? 'idle' : 'streaming',
+              'running': recoveryInflight != null,
+              if (recoveryInflight != null) 'inflight': recoveryInflight,
               'messages': <Object>[],
               'message_count': 0,
             },
@@ -134,7 +143,7 @@ class RestartableHermes {
                   {
                     'id': 'runtime-a',
                     'session_key': id,
-                    'status': 'idle',
+                    'status': recoveryInflight == null ? 'idle' : 'working',
                     'message_count': 0,
                   },
               ],

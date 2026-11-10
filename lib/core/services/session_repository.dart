@@ -286,6 +286,28 @@ final class SessionRepository {
     }
   }
 
+  /// The first Dashboard page of [query], read on the side: the library's
+  /// own query, rows, epoch and cursor are left untouched (the agent rail
+  /// peeks at the profiles the list is not scoped to). [more] says whether
+  /// the query has rows past this page, by the same rule the list's own
+  /// paging stops on. The server's `total` is no count of these rows (it
+  /// also counts rows the page never carries), so it is not handed out. No
+  /// gateway fallback: a failure is the caller's to keep its previous
+  /// values.
+  Future<({List<Session> sessions, bool more})> peekFirstPage(
+    SessionLibraryQuery query,
+  ) async {
+    final page = await _loadDashboardPage(query, 0);
+    return (
+      sessions: List<Session>.unmodifiable(
+        page.sessions.where(
+          (row) => !_matchesAliases(row, _deletionTombstones),
+        ),
+      ),
+      more: !page.last,
+    );
+  }
+
   Future<SessionLibrarySnapshot> loadNext() {
     if (_source != SessionLibrarySource.dashboard || _exhausted) {
       return Future.value(_snapshot());
@@ -517,9 +539,7 @@ final class SessionRepository {
     // Agent back-fills pinned rows after the LIMIT/OFFSET window. Advancing by
     // rawCount would therefore skip ordinary rows whenever a pin is appended.
     _nextOffset = page.offset + page.limit;
-    _exhausted =
-        (page.total != null && _nextOffset >= page.total!) ||
-        (page.rawCount > 0 && page.rawCount < page.limit);
+    _exhausted = page.last;
   }
 
   static Set<String> _sessionIdentityAliases(Session session) => {
@@ -711,6 +731,16 @@ final class _SessionPage {
     required this.limit,
     required this.offset,
   });
+
+  /// Whether this page is the last of its query: the server's total is
+  /// reached, or the window came back short. Agent back-fills pinned rows
+  /// after the LIMIT/OFFSET window, so the next offset is [offset] +
+  /// [limit], not + [rawCount].
+  bool get last {
+    final total = this.total;
+    return (total != null && offset + limit >= total) ||
+        (rawCount > 0 && rawCount < limit);
+  }
 }
 
 int? _nonNegativeInt(Object? value) {

@@ -73,6 +73,28 @@ class DesktopChatSocket extends RecordingDesktopGateway
     emit('tool.start', {'tool_id': id, 'name': name, 'context': context});
   }
 
+  /// Assistant commentary of [turn] sealed beside a tool call:
+  /// `prompt_turn.py` `_interim_assistant_cb` (`text`, `already_streamed`).
+  void interim(int turn, String text, {bool alreadyStreamed = false}) {
+    _begin(turn);
+    emit('message.interim', {
+      'text': text,
+      'already_streamed': alreadyStreamed,
+    });
+  }
+
+  /// A tool of [turn] finishes: `tool_progress.py` `_on_tool_complete`
+  /// (`tool_id`, `name`, `args`, then the result metadata).
+  void toolCompleted(int turn, String name, {String id = 'call-1'}) {
+    _begin(turn);
+    emit('tool.complete', {
+      'tool_id': id,
+      'name': name,
+      'args': <String, dynamic>{},
+      'result': 'ok',
+    });
+  }
+
   /// Hermes asks the user to approve a command during [turn].
   void approval(
     int turn, {

@@ -71,6 +71,7 @@ final class _Dashboard extends DashboardClient {
     String? profile,
     bool retried = false,
     Duration timeout = const Duration(minutes: 3),
+    Duration? deadline,
     void Function(int received, int? total)? onProgress,
     bool Function()? isCancelled,
   }) async {

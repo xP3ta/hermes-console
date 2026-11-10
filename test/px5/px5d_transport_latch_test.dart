@@ -121,7 +121,6 @@ Future<void> _stopDuringRecovery(_Rig rig, {bool queued = false}) async {
     'PX5D after stop: ${rig.transport} socket=${rig.gateway.isConnected} '
     '${rig.chat.state}',
   );
-
 }
 
 /// The network comes back: same server, same state (not a restart).
@@ -153,17 +152,20 @@ void main() {
     expect(rig.chat.transportStatus.disconnectedSince, isNull);
   });
 
-  test('T2 «Retry» with the socket already alive clears the stale loss', () async {
-    final rig = await _rig();
-    await _stopDuringRecovery(rig);
-    await _networkBack(rig);
-    await Future<void>.delayed(const Duration(milliseconds: 300));
-    debugPrint('PX5D T2 before retry: ${rig.chat.transportStatus.state}');
-    await rig.chat.retryConnectionNow();
-    await Future<void>.delayed(const Duration(milliseconds: 300));
-    debugPrint('PX5D T2: ${rig.transport}');
-    expect(rig.chat.transportStatus.isConnected, isTrue);
-  });
+  test(
+    'T2 «Retry» with the socket already alive clears the stale loss',
+    () async {
+      final rig = await _rig();
+      await _stopDuringRecovery(rig);
+      await _networkBack(rig);
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      debugPrint('PX5D T2 before retry: ${rig.chat.transportStatus.state}');
+      await rig.chat.retryConnectionNow();
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      debugPrint('PX5D T2: ${rig.transport}');
+      expect(rig.chat.transportStatus.isConnected, isTrue);
+    },
+  );
 
   test('T3 queue paused after Stop: connected with no new send', () async {
     final rig = await _rig();
@@ -191,8 +193,11 @@ void main() {
     expect(rig.chat.transportStatus.isConnected, isFalse);
   });
 
-  test('a reattach still working keeps saying reconnecting when the link '
-      'comes back (no loop owner is settled)', () async {
+  // REVISION-4 A: a socket that is up is never «reconnecting» (Desktop's
+    // status pill mirrors the socket: use-statusbar-items.tsx:376-407); the
+    // loop keeps reconciling behind a connected chat.
+  test('a reattach still working on a live socket says connected and keeps '
+      'resuming', () async {
     final rig = await _rig(resumeError: {'code': 5001, 'message': 'busy'});
     await rig.hermes.stop();
     await _until(() => !rig.gateway.isConnected, reason: 'socket noticed');
@@ -202,18 +207,24 @@ void main() {
       () => rig.hermes.methods.contains('session.resume'),
       reason: 'the reattach loop resumes on the live socket',
     );
+    final resumes = rig.hermes.methods.where((m) => m == 'session.resume').length;
     await Future<void>.delayed(const Duration(milliseconds: 800));
     expect(rig.gateway.isConnected, isTrue);
-    expect(rig.chat.transportStatus.state, ChatTransportState.reconnecting);
-    expect(
-      rig.transport.skip(since),
-      isNot(contains(ChatTransportState.connected)),
-      reason: 'the socket edge must not settle a loss the loop still owns',
+    expect(rig.chat.transportStatus.state, ChatTransportState.connected);
+    expect(rig.transport.skip(since), contains(ChatTransportState.connected));
+    await _until(
+      () =>
+          rig.hermes.methods.where((m) => m == 'session.resume').length >
+          resumes,
+      reason: 'the loop still owns the reattach and retries it',
     );
   });
 
-  test('a turn recovery still working is not settled by the link: connected '
-      'only once it has resumed', () async {
+  // REVISION-4 A: a socket that is up is never «reconnecting» (Desktop's
+    // status pill mirrors the socket: use-statusbar-items.tsx:376-407); the
+    // loop keeps reconciling behind a connected chat.
+  test('a turn recovery still working on a live socket is connected and the '
+      'turn stays live until it has resumed', () async {
     final rig = await _rig();
     expect(
       await rig.chat.send(fullText: 'hola', model: 'm', history: const []),
@@ -221,22 +232,44 @@ void main() {
     );
     await _until(() => rig.hermes.methods.contains('prompt.submit'));
     final before = rig.hermes.methods.length;
-    final resumedFirst = <bool>[];
-    rig.chat.transportStatusListenable.addListener(() {
-      if (!rig.chat.transportStatus.isConnected) return;
-      resumedFirst.add(
-        rig.hermes.methods.skip(before).contains('session.resume'),
-      );
+    final since = rig.transport.length;
+    final reply = Completer<void>();
+    addTearDown(() {
+      if (!reply.isCompleted) reply.complete();
     });
+    // An idle snapshot without a final transcript is unconfirmed recovery,
+    // not a resumed turn. Return actual live evidence and hold its ACK so the
+    // socket edge can be checked independently of recovery convergence.
+    rig.hermes
+      ..recoveryInflight = {
+        'user': 'hola',
+        'assistant': 'sigo trabajando',
+        'streaming': true,
+      }
+      ..recoveryReplyGate = reply.future;
     await rig.hermes.stop();
     await _until(() => !rig.chat.transportStatus.isConnected);
     await _networkBack(rig);
+    await _until(
+      () => rig.hermes.methods
+          .skip(before)
+          .any(
+            (method) =>
+                method == 'session.resume' || method == 'session.activate',
+          ),
+    );
+    expect(rig.gateway.isConnected, isTrue);
+    await _until(() => rig.chat.transportStatus.isConnected);
+    expect(rig.transport.skip(since), contains(ChatTransportState.connected));
+    expect(rig.chat.isStreaming, isTrue);
+    reply.complete();
     await _until(
       () => rig.chat.transportStatus.isConnected,
       timeout: const Duration(seconds: 10),
     );
     debugPrint('PX5D owner: ${rig.transport} ${rig.hermes.methods}');
-    expect(resumedFirst.first, isTrue, reason: 'no connected before resume');
+    expect(rig.chat.isStreaming, isTrue, reason: 'live turn actually resumed');
+    expect(rig.chat.state, isNot(ChatPipelineState.failed));
   });
 
   test('the reattach loop leaves silently (the stored session is gone) on a '
@@ -246,9 +279,9 @@ void main() {
     await _until(() => !rig.gateway.isConnected, reason: 'socket noticed');
     await rig.hermes.start();
     await _until(() => rig.hermes.methods.contains('session.resume'));
-    await _until(
-      () => rig.chat.transportStatus.state == ChatTransportState.reconnecting,
-    );
+    // REVISION-4 A: on the live socket the chat is already connected while
+    // the loop retries.
+    await _until(() => rig.chat.transportStatus.isConnected);
     // What the chat screen does once the stored session answers 404.
     rig.chat.markStoredSessionGone();
     rig.chat.requestImmediateTransportRecovery();

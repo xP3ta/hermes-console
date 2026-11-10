@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:clock/clock.dart';
 import 'package:flutter/foundation.dart';
 
 import '../models/connection.dart';
@@ -137,7 +138,12 @@ class SharedGatewayPool {
       if (chatLinger != null) {
         ConnectionStatusRegistry.instance.bind(connection.id, client);
       }
-      entry = _PoolEntry(client, connection.id, linger: chatLinger);
+      entry = _PoolEntry(
+        client,
+        connection.id,
+        linger: chatLinger,
+        chatProfile: chatLinger == null ? null : meterProfile,
+      );
       _entries[key] = entry;
     }
     entry.linger?.cancel();
@@ -197,6 +203,50 @@ class SharedGatewayPool {
     }
   }
 
+  /// The app is staying in the background: parks (does not close) every
+  /// leased socket whose owners have nothing live on it, the way
+  /// [disconnectIdle] already retires the lingering ones. A parked socket
+  /// closes with `client_background_idle`, is no outage for the status
+  /// registry, and comes back with [wakeAfterResume] as a plain connect
+  /// instead of being found dead and redialled as a loss. [canPark] decides
+  /// per socket: a chat socket with a turn in flight or queued work stays.
+  void parkIdleLeased({
+    required bool Function({
+      required String connectionId,
+      required bool chatLane,
+      String? profile,
+    })
+    canPark,
+  }) {
+    for (final entry in _entries.values.toList()) {
+      final client = entry.client;
+      if (entry.refs <= 0 || client.isClosed || !client.isConnected) continue;
+      final chatLane = entry.ownLinger != null;
+      if (!canPark(
+        connectionId: entry.connectionId,
+        chatLane: chatLane,
+        profile: entry.chatProfile,
+      )) {
+        continue;
+      }
+      unawaited(client.disconnectIdle().catchError((Object _) {}));
+    }
+  }
+
+  /// Back in the foreground, as Desktop on focus (`reconnectNow`,
+  /// use-gateway-boot.ts): the parked sockets redial at once and quietly;
+  /// the live ones are probed and any backoff ladder built in the
+  /// background is forgotten (grouped once per holdoff, as [probeAll]).
+  Future<void> wakeAfterResume() {
+    for (final entry in _entries.values.toList()) {
+      final client = entry.client;
+      if (!client.isClosed && client.linkParked) {
+        unawaited(client.redialParked());
+      }
+    }
+    return probeAll();
+  }
+
   /// Cierra ya los sockets de chat sin préstamo (en su gracia tras soltar el
   /// último chat): cambio de red, presión de memoria o segundo plano.
   void disconnectIdleChats() {
@@ -229,16 +279,33 @@ class SharedGatewayPool {
   /// Like Desktop's `forceReconnectNow` (use-gateway-boot.ts), the backoff
   /// reset is grouped once per holdoff window and seals it only when it
   /// cleared a running backoff; the probe is cheap and always runs.
-  Future<void> probeAll() {
+  /// [networkChanged] supersedes the holdoff for a newly validated VPN/path.
+  static const networkChangeMinInterval = Duration(seconds: 3);
+  DateTime? _lastNetworkChangeAt;
+
+  Future<void> probeAll({bool networkChanged = false}) {
     final entries = _entries.values.toList();
     var resetBackoff = false;
-    if (_networkBackoffHoldoff == null) {
-      resetBackoff = true;
-      if (entries.any((e) => !e.client.isClosed && e.client.isBackingOff)) {
-        _networkBackoffHoldoff = Timer(networkBackoffHoldoff, () {
-          _networkBackoffHoldoff = null;
-        });
+    // The package clock: the tests drive it; in the app it is the wall clock.
+    // A seal in the future (the clock went back) is no window either.
+    final now = clock.now();
+    if (networkChanged) {
+      final last = _lastNetworkChangeAt;
+      if (last != null && !now.isBefore(last) &&
+          now.difference(last) < networkChangeMinInterval) {
+        return Future<void>.value();
       }
+      _lastNetworkChangeAt = now;
+    }
+    final sealedAt = _networkBackoffSealedAt;
+    if (networkChanged || sealedAt == null ||
+        now.isBefore(sealedAt) ||
+        now.difference(sealedAt) >= networkBackoffHoldoff) {
+      resetBackoff = true;
+      _networkBackoffSealedAt =
+          entries.any((e) => !e.client.isClosed && e.client.isBackingOff)
+          ? now
+          : null;
     }
     return _probe(entries, resetBackoff: resetBackoff);
   }
@@ -256,7 +323,10 @@ class SharedGatewayPool {
   /// Desktop's `WAKE_RECONNECT_HOLDOFF_MS`.
   @visibleForTesting
   Duration networkBackoffHoldoff = const Duration(seconds: 15);
-  Timer? _networkBackoffHoldoff;
+
+  /// When the last reset that cleared a running backoff happened (a
+  /// timestamp, not a timer: a resume leaves nothing pending behind it).
+  DateTime? _networkBackoffSealedAt;
 
   /// [probeAll] for the sockets of one connection only: its server just
   /// restarted the gateway (a finished `hermes update`).
@@ -285,8 +355,8 @@ class SharedGatewayPool {
 
   /// Cierra todo (fin del isolate o tests).
   Future<void> closeAll() async {
-    _networkBackoffHoldoff?.cancel();
-    _networkBackoffHoldoff = null;
+    _networkBackoffSealedAt = null;
+    _lastNetworkChangeAt = null;
     final entries = _entries.values.toList();
     _entries.clear();
     for (final entry in entries) {
@@ -303,11 +373,18 @@ class SharedGatewayPool {
 }
 
 class _PoolEntry {
-  _PoolEntry(this.client, this.connectionId, {Duration? linger})
-    : ownLinger = linger;
+  _PoolEntry(
+    this.client,
+    this.connectionId, {
+    Duration? linger,
+    this.chatProfile,
+  }) : ownLinger = linger;
 
   final TuiGatewayClient client;
   final String connectionId;
+
+  /// Profile of a chat socket (null for an observer socket).
+  final String? chatProfile;
 
   /// Linger of this entry after its last release (chat sockets); null uses
   /// the pool default.

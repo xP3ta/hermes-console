@@ -5,6 +5,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../models/session.dart';
+import 'cache_settings.dart';
+import 'transcript_rehydrate_cost.dart' show decodeJsonOffMain;
 
 /// Key/value boundary of [ColdStartStore]. Production writes through
 /// `flutter_secure_storage` (Android Keystore-backed encryption), the same
@@ -175,20 +177,27 @@ final class ColdStartTail {
 /// network. Bounds: [maxTails] chats × [maxRows] newest rows, at most
 /// [maxEntryBytes] each and [maxTotalBytes] together, [maxAge] old.
 class ColdStartStore {
-  ColdStartStore({ColdStartStorage? storage, int Function()? nowMs})
-    : _storage = storage ?? const SecureColdStartStorage(),
-      _nowMs = nowMs ?? (() => DateTime.now().millisecondsSinceEpoch);
+  ColdStartStore({
+    ColdStartStorage? storage,
+    int Function()? nowMs,
+    this.settings,
+  }) : _storage = storage ?? const SecureColdStartStorage(),
+       _nowMs = nowMs ?? (() => DateTime.now().millisecondsSinceEpoch);
 
-  static const int maxTails = 8;
+  /// Chats whose tail survives a relaunch by default (the user picks 10, 20,
+  /// 50 or 100 in Settings → Cache). Raised from 8 so that a chat opened days
+  /// ago still opens on its rows, not on a skeleton.
+  static const int maxTails = 20;
   static const int maxRows = 120;
   static const int maxEntryBytes = 1024 * 1024;
-  static const int maxTotalBytes = 4 * 1024 * 1024;
+  static const int maxTotalBytes = 16 * 1024 * 1024;
   static const Duration maxAge = Duration(days: 30);
 
   static const indexKey = 'cold_start_index_v1';
   static const Duration _routeRenewal = Duration(hours: 1);
   static const _tailPrefix = 'cold_start_tail_v1.';
   static const _recentsPrefix = 'cold_start_recents_v1.';
+  static const _listPrefix = 'cold_start_list_v1.';
 
   /// Rows kept per Home recents snapshot.
   static const int maxRecentRows = 24;
@@ -201,6 +210,11 @@ class ColdStartStore {
   /// kept. Secure Storage loads every snapshot at launch.
   static const int maxRecentsBytes = 64 * 1024;
 
+  /// The Chats list's own snapshot (what Conversaciones paints before the
+  /// server answers): more rows than Home's, same row and encryption rules.
+  static const int maxListRows = 100;
+  static const int maxListBytes = 256 * 1024;
+
   final ColdStartStorage _storage;
   final int Function() _nowMs;
 
@@ -209,6 +223,27 @@ class ColdStartStore {
 
   /// Last persisted encoding per tail key: an unchanged tail is not rewritten.
   final Map<String, String> _written = {};
+
+  /// What the user chose to keep (Settings → Data → Cache); null keeps the
+  /// defaults (everything on, [maxTails] chats).
+  final CacheSettings? settings;
+
+  /// Chats whose messages are kept now.
+  int get tailLimit => settings?.maxChats ?? maxTails;
+
+  bool get _messagesOn => settings?.messages ?? true;
+  bool get _listOn => settings?.chatList ?? true;
+
+  static const _recentsKind = _SnapshotKind(
+    _recentsPrefix,
+    maxRecentRows,
+    maxRecentsBytes,
+  );
+  static const _listKind = _SnapshotKind(
+    _listPrefix,
+    maxListRows,
+    maxListBytes,
+  );
 
   static String _hex(String value) => value.codeUnits
       .map((unit) => unit.toRadixString(16).padLeft(4, '0'))
@@ -224,6 +259,10 @@ class ColdStartStore {
 
   static String recentsKey(String connectionId, String profile) =>
       '$_recentsPrefix${_hex(connectionId)}.'
+      '${_hex(Session.profileOwner(profile))}';
+
+  static String listKey(String connectionId, String profile) =>
+      '$_listPrefix${_hex(connectionId)}.'
       '${_hex(Session.profileOwner(profile))}';
 
   Future<T> _serial<T>(Future<T> Function() action) {
@@ -312,10 +351,52 @@ class ColdStartStore {
     required String connectionId,
     required String profile,
     required List<Session> sessions,
-  }) => _serial(() async {
+  }) => _saveSnapshot(_recentsKind, connectionId, profile, sessions);
+
+  /// The recents of this scope this process already read or wrote, decoded
+  /// synchronously from memory (no storage access), or null. Lets Home's
+  /// first frame paint them when bootstrap decrypted them before runApp.
+  List<Session>? peekRecents({
+    required String connectionId,
+    required String profile,
+  }) => _peekSnapshot(_recentsKind, connectionId, profile);
+
+  /// The recents saved by [saveRecents] for this scope, or null.
+  Future<List<Session>?> loadRecents({
+    required String connectionId,
+    required String profile,
+  }) => _loadSnapshot(_recentsKind, connectionId, profile);
+
+  /// Persists the Chats list (default view) of one connection and profile,
+  /// the way [saveRecents] does Home's: list fields only, never a transcript.
+  Future<void> saveList({
+    required String connectionId,
+    required String profile,
+    required List<Session> sessions,
+  }) => _saveSnapshot(_listKind, connectionId, profile, sessions);
+
+  /// [peekRecents] for the Chats list.
+  List<Session>? peekList({
+    required String connectionId,
+    required String profile,
+  }) => _peekSnapshot(_listKind, connectionId, profile);
+
+  /// [loadRecents] for the Chats list.
+  Future<List<Session>?> loadList({
+    required String connectionId,
+    required String profile,
+  }) => _loadSnapshot(_listKind, connectionId, profile);
+
+  Future<void> _saveSnapshot(
+    _SnapshotKind kind,
+    String connectionId,
+    String profile,
+    List<Session> sessions,
+  ) => _serial(() async {
+    if (!_listOn) return;
     final owner = Session.profileOwner(profile);
-    final key = recentsKey(connectionId, owner);
-    final rows = _boundedRecentRows(sessions, connectionId, owner);
+    final key = kind.key(connectionId, owner);
+    final rows = _boundedRecentRows(sessions, connectionId, owner, kind);
     if (rows.isEmpty) {
       _written.remove(key);
       await _storage.delete(key);
@@ -328,31 +409,31 @@ class ColdStartStore {
     _written[key] = payload;
   });
 
-  /// The recents of this scope this process already read or wrote, decoded
-  /// synchronously from memory (no storage access), or null. Lets Home's
-  /// first frame paint them when bootstrap decrypted them before runApp.
-  List<Session>? peekRecents({
-    required String connectionId,
-    required String profile,
-  }) {
+  List<Session>? _peekSnapshot(
+    _SnapshotKind kind,
+    String connectionId,
+    String profile,
+  ) {
+    if (!_listOn) return null;
     final owner = Session.profileOwner(profile);
-    final raw = _written[recentsKey(connectionId, owner)];
-    if (raw == null || _oversized(raw)) return null;
-    return _decodeRecents(raw, connectionId, owner);
+    final raw = _written[kind.key(connectionId, owner)];
+    if (raw == null || _oversized(raw, kind)) return null;
+    return _decodeRecents(raw, connectionId, owner, kind);
   }
 
-  /// The recents saved by [saveRecents] for this scope, or null.
-  Future<List<Session>?> loadRecents({
-    required String connectionId,
-    required String profile,
-  }) => _serial(() async {
+  Future<List<Session>?> _loadSnapshot(
+    _SnapshotKind kind,
+    String connectionId,
+    String profile,
+  ) => _serial(() async {
+    if (!_listOn) return null;
     final owner = Session.profileOwner(profile);
-    final key = recentsKey(connectionId, owner);
+    final key = kind.key(connectionId, owner);
     final raw = await _storage.read(key);
     if (raw == null) return null;
-    final rows = _oversized(raw)
+    final rows = _oversized(raw, kind)
         ? null
-        : _decodeRecents(raw, connectionId, owner);
+        : _decodeRecents(raw, connectionId, owner, kind);
     if (rows == null) {
       _written.remove(key);
       await _storage.delete(key);
@@ -368,13 +449,14 @@ class ColdStartStore {
   static List<String> _boundedRecentRows(
     Iterable<Session> sessions,
     String connectionId,
-    String owner,
-  ) {
+    String owner, [
+    _SnapshotKind kind = _recentsKind,
+  ]) {
     final rows = <String>[];
     // The envelope, then each row and the comma before it (none first).
     var bytes = utf8.encode(_recentsPayload(connectionId, owner, [])).length;
     for (final session in sessions) {
-      if (rows.length >= maxRecentRows) break;
+      if (rows.length >= kind.maxRows) break;
       if (session.id.isEmpty) continue;
       final String encoded;
       try {
@@ -385,7 +467,7 @@ class ColdStartStore {
       final rowBytes = utf8.encode(encoded).length;
       if (rowBytes > maxRecentRowBytes) continue;
       final cost = rowBytes + (rows.isEmpty ? 0 : 1);
-      if (bytes + cost > maxRecentsBytes) break;
+      if (bytes + cost > kind.maxBytes) break;
       bytes += cost;
       rows.add(encoded);
     }
@@ -393,8 +475,8 @@ class ColdStartStore {
   }
 
   /// A stored snapshot no [saveRecents] could have written.
-  static bool _oversized(String raw) =>
-      raw.length > maxRecentsBytes || utf8.encode(raw).length > maxRecentsBytes;
+  static bool _oversized(String raw, [_SnapshotKind kind = _recentsKind]) =>
+      raw.length > kind.maxBytes || utf8.encode(raw).length > kind.maxBytes;
 
   static String _recentsPayload(
     String connectionId,
@@ -429,8 +511,9 @@ class ColdStartStore {
   static List<Session>? _decodeRecents(
     String raw,
     String connectionId,
-    String owner,
-  ) {
+    String owner, [
+    _SnapshotKind kind = _recentsKind,
+  ]) {
     try {
       final data = jsonDecode(raw);
       if (data is! Map || data['v'] != 1) return null;
@@ -438,7 +521,7 @@ class ColdStartStore {
       final rows = data['rows'];
       if (rows is! List) return null;
       return [
-        for (final row in rows.take(maxRecentRows)) ?Session.tryParse(row),
+        for (final row in rows.take(kind.maxRows)) ?Session.tryParse(row),
       ];
     } catch (_) {
       return null;
@@ -457,15 +540,16 @@ class ColdStartStore {
       if (!_inRecentsScope(key, connectionId, owner)) continue;
       final raw = await _storage.read(key);
       if (raw == null) continue;
+      final kind = key.startsWith(_listPrefix) ? _listKind : _recentsKind;
       Object? keyOwner;
-      if (!_oversized(raw)) {
+      if (!_oversized(raw, kind)) {
         try {
           final data = jsonDecode(raw);
           keyOwner = data is Map ? data['p'] : null;
         } catch (_) {}
       }
       final rows = keyOwner is String
-          ? _decodeRecents(raw, connectionId, keyOwner)
+          ? _decodeRecents(raw, connectionId, keyOwner, kind)
           : null;
       if (keyOwner is! String || rows == null) {
         _written.remove(key);
@@ -478,7 +562,7 @@ class ColdStartStore {
       ];
       if (kept.length == rows.length) continue;
       _written.remove(key);
-      final keptRows = _boundedRecentRows(kept, connectionId, keyOwner);
+      final keptRows = _boundedRecentRows(kept, connectionId, keyOwner, kind);
       if (keptRows.isEmpty) {
         await _storage.delete(key);
       } else {
@@ -491,10 +575,17 @@ class ColdStartStore {
 
   /// A recents key of [connectionId] (every connection when null), of one
   /// profile when [owner] is set.
+  /// The Chats list snapshots ([listKey]) follow the same scopes.
   static bool _inRecentsScope(String key, String? connectionId, String? owner) {
-    if (connectionId == null) return key.startsWith(_recentsPrefix);
-    if (owner != null) return key == recentsKey(connectionId, owner);
-    return key.startsWith('$_recentsPrefix${_hex(connectionId)}.');
+    if (connectionId == null) {
+      return key.startsWith(_recentsPrefix) || key.startsWith(_listPrefix);
+    }
+    if (owner != null) {
+      return key == recentsKey(connectionId, owner) ||
+          key == listKey(connectionId, owner);
+    }
+    return key.startsWith('$_recentsPrefix${_hex(connectionId)}.') ||
+        key.startsWith('$_listPrefix${_hex(connectionId)}.');
   }
 
   // ── Transcript tails ────────────────────────────────────────────────────
@@ -510,6 +601,7 @@ class ColdStartStore {
     required Set<String> aliases,
     required List<Map<String, dynamic>> newestFirst,
   }) => _serial(() async {
+    if (!_messagesOn) return;
     final owner = Session.profileOwner(profile);
     final key = tailKey(connectionId, owner, storedSessionId);
     final encodedRows = <String>[];
@@ -551,7 +643,7 @@ class ColdStartStore {
       savedAtMs: _nowMs(),
     );
     final evicted = <String>{};
-    while (index.tails.length > maxTails || index.totalBytes > maxTotalBytes) {
+    while (index.tails.length > tailLimit || index.totalBytes > maxTotalBytes) {
       final oldest = index.tails.keys.first;
       if (oldest == key && index.tails.length == 1) break;
       index.tails.remove(oldest);
@@ -580,6 +672,7 @@ class ColdStartStore {
     bool Function(String connectionId, String profile, Set<String> aliases)?
     where,
   }) => _serial(() async {
+    if (!_messagesOn) return const <ColdStartTail>[];
     final index = await _loadIndex();
     final now = _nowMs();
     final out = <ColdStartTail>[];
@@ -597,7 +690,12 @@ class ColdStartStore {
       }
       try {
         final raw = await _storage.read(entry.key);
-        final tail = raw == null ? null : _decodeTail(raw, meta);
+        // Up to 1 MB per tail, read while the app starts: a large one is
+        // decoded off the main isolate so the first frames keep their
+        // input.
+        final tail = raw == null
+            ? null
+            : _tailFrom(await decodeJsonOffMain(raw), meta);
         if (tail == null) {
           drop.add(entry.key);
           continue;
@@ -612,8 +710,7 @@ class ColdStartStore {
     return out;
   });
 
-  ColdStartTail? _decodeTail(String raw, _TailMeta meta) {
-    final data = jsonDecode(raw);
+  ColdStartTail? _tailFrom(Object? data, _TailMeta meta) {
     if (data is! Map || data['v'] != 1) return null;
     if (data['c'] != meta.connectionId ||
         data['p'] != meta.profile ||
@@ -763,6 +860,30 @@ class ColdStartStore {
         await _deleteRecents(listed, connectionId: connectionId, owner: owner);
       });
 
+  /// Settings → Cache: deletes every kept chat message tail (the remembered
+  /// route stays: it is where the app reopens, not a copy of a chat).
+  Future<void> clearMessages() => _serial(() async {
+    final index = await _loadIndex();
+    await _deleteTails(index, index.tails.keys.toSet());
+    await _sweepUnindexedTails(index);
+  });
+
+  /// Settings → Cache: deletes every kept Chats list and Home recents.
+  Future<void> clearLists() => _serial(() async {
+    await _deleteRecents(await _storage.keys());
+  });
+
+  /// Settings → Cache: bytes this device holds for the three caches.
+  Future<int> usedBytes() => _serial(() async {
+    final index = await _loadIndex();
+    var total = index.totalBytes;
+    for (final key in (await _storage.keys()).toList()) {
+      if (!_inRecentsScope(key, null, null)) continue;
+      total += utf8.encode(await _storage.read(key) ?? '').length;
+    }
+    return total;
+  });
+
   /// Removes everything this store ever wrote.
   Future<void> clearAll() => _serial(() async {
     final index = await _loadIndex();
@@ -889,4 +1010,17 @@ final class _ColdStartIndex {
         {'k': entry.key, ...entry.value.toJson()},
     ],
   });
+}
+
+/// A session-list snapshot family: where it lives and how much it may keep.
+final class _SnapshotKind {
+  const _SnapshotKind(this.prefix, this.maxRows, this.maxBytes);
+
+  final String prefix;
+  final int maxRows;
+  final int maxBytes;
+
+  String key(String connectionId, String owner) =>
+      '$prefix${ColdStartStore._hex(connectionId)}.'
+      '${ColdStartStore._hex(Session.profileOwner(owner))}';
 }

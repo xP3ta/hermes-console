@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/browser/agent_preview_protocol.dart';
 import 'package:hermes_android/core/models/interactive_prompt.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
@@ -23,6 +24,9 @@ class _Gateway {
   bool sendReadyImmediately = true;
   bool answerClientCapabilities = true;
   bool rejectClientCapabilities = false;
+
+  /// What the backend says about 4404 declines (current Hermes: true).
+  bool declinesNotShown = true;
   Map<String, dynamic> Function(Map<String, dynamic> frame) resumeResult =
       (_) => {'session_id': 'runtime-1', 'stored_session_id': 'stored-1'};
 
@@ -53,6 +57,7 @@ class _Gateway {
         final result = switch (method) {
           'client.capabilities' => {
             'server_requests': ['approval', 'clarify', 'sudo', 'secret'],
+            if (declinesNotShown) 'declines_not_shown': true,
           },
           'gateway.capabilities' => {'per_session_exclusive_submit': true},
           'session.resume' => resumeResult(frame),
@@ -168,6 +173,19 @@ Future<TuiGatewayEvent> _eventOfType(
     await Future<void>.delayed(const Duration(milliseconds: 10));
   }
   fail('no $type event; got ${events.map((e) => e.type).toList()}');
+}
+
+class _PreviewBridge implements PreviewRequestBridge {
+  _PreviewBridge(this.reply);
+
+  final Future<PreviewBridgeAnswer> Function(PreviewBridgeRequest) reply;
+  final requests = <PreviewBridgeRequest>[];
+
+  @override
+  Future<PreviewBridgeAnswer> answer(PreviewBridgeRequest request) {
+    requests.add(request);
+    return reply(request);
+  }
 }
 
 Future<void> _waitUntil(bool Function() condition) async {
@@ -367,6 +385,52 @@ void main() {
       // The transport survived: same socket, and RPCs still flow.
       await client.resumeExisting('stored-1');
       expect(gateway.sockets, hasLength(1));
+    },
+  );
+
+  // Ola 5: «Omitir» is Desktop's skipClarify — the same response frame with
+  // an empty result (`store/clarify.ts:231-249`). Hermes settles it as
+  // `cancelled` and the turn goes on (`tools/clarify_batch.py:15-31`).
+  test('skipping a clarify answers its frame with an empty result', () async {
+    final (client, events) = await _connect(gateway);
+    gateway.pushServerRequest('srq-clarifyskp1', 'clarify', {
+      'questions': [
+        {
+          'qid': 'q0',
+          'question': '¿Qué color?',
+          'choices': ['rojo', 'azul'],
+        },
+      ],
+    });
+    await _eventOfType(events, 'clarify.request');
+
+    final response = await client.skipClarify('srq-clarifyskp1');
+    expect(response.status, DesktopPromptResponseStatus.ok);
+    final answer = await gateway.nextFrame(
+      (frame) => frame['id'] == 'srq-clarifyskp1',
+    );
+    expect(answer, {
+      'jsonrpc': '2.0',
+      'id': 'srq-clarifyskp1',
+      'result': <String, dynamic>{},
+    });
+    expect(gateway.rpcCalls('clarify.respond'), isEmpty);
+    expect(gateway.rpcCalls('clarify.lock'), isEmpty);
+    expect(gateway.rpcCalls('session.interrupt'), isEmpty);
+  });
+
+  test(
+    'a clarify open on another socket is skipped through request.answer',
+    () async {
+      final (client, _) = await _connect(gateway);
+      final response = await client.skipClarify('srq-elsewhere01');
+      expect(response.status, DesktopPromptResponseStatus.ok);
+      final params =
+          gateway.rpcCalls('request.answer').single['params']
+              as Map<String, dynamic>;
+      expect(params['id'], 'srq-elsewhere01');
+      expect(params['result'], <String, dynamic>{});
+      expect(gateway.rpcCalls('session.interrupt'), isEmpty);
     },
   );
 
@@ -607,4 +671,127 @@ void main() {
       );
     },
   );
+
+  group('in-app browser bridge (preview.read / preview.act)', () {
+    tearDown(() => TuiGatewayClient.previewRequestBridge = null);
+
+    test('preview.read goes to the bridge; its value is the result', () async {
+      final bridge = _PreviewBridge(
+        (_) async => const PreviewBridgeAnswer.value('{"kind":"url"}'),
+      );
+      TuiGatewayClient.previewRequestBridge = bridge;
+      await _connect(gateway);
+      gateway.pushServerRequest('srq-read00000001', 'preview.read', {
+        'start': 0,
+        'count': 9,
+      });
+      final frame = await gateway.nextFrame(
+        (frame) => frame['id'] == 'srq-read00000001',
+      );
+      expect(frame['result'], {'value': '{"kind":"url"}'});
+      expect(frame.containsKey('error'), isFalse);
+      final request = bridge.requests.single;
+      expect(request.method, 'preview.read');
+      // Scoped to this connection: the same runtime id elsewhere is another
+      // chat (REVIEW-R4 P2-a3).
+      expect(request.connectionId, 'conn-server-requests');
+      expect(request.sessionId, 'runtime-1');
+      expect(request.params, {'start': 0, 'count': 9});
+    });
+
+    test('a decline is Desktop\'s NOT_SHOWN error (4404)', () async {
+      TuiGatewayClient.previewRequestBridge = _PreviewBridge(
+        (_) async => const PreviewBridgeAnswer.notShown(),
+      );
+      await _connect(gateway);
+      gateway.pushServerRequest('srq-act000000001', 'preview.act', {
+        'action': 'elements',
+      });
+      final frame = await gateway.nextFrame(
+        (frame) => frame['id'] == 'srq-act000000001',
+      );
+      expect((frame['error'] as Map)['code'], previewNotShownCode);
+      expect(frame.containsKey('result'), isFalse);
+    });
+
+    test('an older backend gets no decline at all (REVIEW-R5-B #10)', () async {
+      gateway.declinesNotShown = false;
+      final bridge = _PreviewBridge(
+        (_) async => const PreviewBridgeAnswer.notShown(),
+      );
+      TuiGatewayClient.previewRequestBridge = bridge;
+      await _connect(gateway);
+      gateway.pushServerRequest('srq-act-old00001', 'preview.act', {
+        'action': 'elements',
+      });
+      await _waitUntil(() => bridge.requests.isNotEmpty);
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+      // It would settle on the first error and fail a Desktop window that
+      // shows the page: Console stays silent, as Desktop does.
+      expect(
+        gateway.frames.where((frame) => frame['id'] == 'srq-act-old00001'),
+        isEmpty,
+      );
+    });
+
+    test('without a bridge preview.read keeps -32601', () async {
+      await _connect(gateway);
+      gateway.pushServerRequest('srq-none00000001', 'preview.read', {});
+      final frame = await gateway.nextFrame(
+        (frame) => frame['id'] == 'srq-none00000001',
+      );
+      expect((frame['error'] as Map)['code'], -32601);
+    });
+
+    test('a re-delivered request never runs twice (REVIEW-R5-B #9)', () async {
+      final answer = Completer<PreviewBridgeAnswer>();
+      final bridge = _PreviewBridge((_) => answer.future);
+      TuiGatewayClient.previewRequestBridge = bridge;
+      await _connect(gateway);
+      gateway.pushServerRequest('srq-act-dup00001', 'preview.act', {
+        'action': 'click',
+        'ref': 'btn-buy',
+      });
+      await _waitUntil(() => bridge.requests.isNotEmpty);
+      // Hermes hands open_requests over again (idle probe, reconnect).
+      gateway.pushServerRequest('srq-act-dup00001', 'preview.act', {
+        'action': 'click',
+        'ref': 'btn-buy',
+      });
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      expect(bridge.requests, hasLength(1), reason: 'one click, not two');
+      answer.complete(const PreviewBridgeAnswer.value('{"success":true}'));
+      final frame = await gateway.nextFrame(
+        (frame) => frame['id'] == 'srq-act-dup00001',
+      );
+      expect(frame['result'], {'value': '{"success":true}'});
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      expect(
+        gateway.frames.where((frame) => frame['id'] == 'srq-act-dup00001'),
+        hasLength(1),
+      );
+    });
+
+    test('a request withdrawn before the answer is never answered', () async {
+      final answer = Completer<PreviewBridgeAnswer>();
+      final bridge = _PreviewBridge((_) => answer.future);
+      TuiGatewayClient.previewRequestBridge = bridge;
+      await _connect(gateway);
+      gateway.pushServerRequest('srq-cancel000001', 'preview.read', {});
+      await _waitUntil(() => bridge.requests.isNotEmpty);
+      expect(bridge.requests.single.isOpen(), isTrue);
+      gateway.pushSessionEvent('request.cancel', {
+        'id': 'srq-cancel000001',
+        'method': 'preview.read',
+        'reason': 'timeout',
+      });
+      await _waitUntil(() => !bridge.requests.single.isOpen());
+      answer.complete(const PreviewBridgeAnswer.value('late'));
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      expect(
+        gateway.frames.where((frame) => frame['id'] == 'srq-cancel000001'),
+        isEmpty,
+      );
+    });
+  });
 }

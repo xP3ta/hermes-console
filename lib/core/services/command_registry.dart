@@ -165,10 +165,7 @@ final class CommandRegistry {
           surface: known?.surface ?? CommandSurface.remote,
           argumentSpec:
               known?.argumentSpec ??
-              CommandArgumentSpec(
-                kind: CommandArgumentKind.freeText,
-                maxLength: 500,
-              ),
+              CommandArgumentSpec(kind: CommandArgumentKind.freeText),
           executor: known?.executor ?? CommandExecutorKind.slashExec,
           capabilityKey: known?.capabilityKey ?? 'slash.exec',
           scope: known?.scope ?? OperationScope.session,

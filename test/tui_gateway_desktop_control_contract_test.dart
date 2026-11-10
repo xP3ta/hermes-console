@@ -140,6 +140,16 @@ void main() {
             jsonDecode(raw as String) as Map,
           );
           requests.add(frame);
+          if (frame['method'] == 'mcp.servers.list') {
+            socket.add(
+              jsonEncode({
+                'jsonrpc': '2.0',
+                'id': frame['id'],
+                'error': {'code': -32601, 'message': 'unsupported'},
+              }),
+            );
+            continue;
+          }
           final params = Map<String, dynamic>.from(frame['params'] as Map);
           final result = switch (frame['method']) {
             'rollback.list' => {
@@ -288,6 +298,8 @@ void main() {
       expect(restore.historyRemoved, 2);
       expect(inventory.plugins.single.name, 'plugin-a');
       expect(inventory.toolsets.single.name, 'web');
+      expect(inventory.mcpServers, isEmpty);
+      expect(inventory.builtinToolsets.single.name, 'web');
       expect(agents.snapshots.single.count, 1);
       expect(agents.processes.single.opaqueId, 'process-a');
       expect(agents.processes.single.status.name, 'running');
@@ -324,6 +336,7 @@ void main() {
         ),
         {'action': 'toggle', 'name': 'plugin-a', 'enable': false},
       );
+      expect(paramsFor('mcp.servers.list'), isEmpty);
       expect(paramsFor('tools.configure'), {
         'action': 'disable',
         'names': ['web'],

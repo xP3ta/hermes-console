@@ -722,24 +722,19 @@ void main() {
         await open(id);
       }
       final socketsBefore = gateway.sockets.length;
+      final liveBefore = gateway.liveSockets;
       final handshakesBefore = gateway.rpcCalls('client.capabilities').length;
       for (final socket in gateway.sockets.toList()) {
         await socket.close(1001);
       }
-      await _waitUntil(
-        () => ['a', 'b', 'c'].every(
-          (id) =>
-              service
-                  .of('conn-one-socket', 'stored-$id', profile: 'default')
-                  ?.desktopRuntimeSessionId ==
-              null,
-        ),
-        reason: 'every chat saw the drop',
-      );
       service.requestImmediateTransportRecovery();
       await _waitUntil(
+        // The redial backoff is random (3 ms to 250 ms): a chat may already be
+        // back before it could be seen without a runtime. Recovery is every
+        // socket that was open being open again, on new connections.
         () =>
-            gateway.liveSockets >= 1 &&
+            gateway.sockets.length > socketsBefore &&
+            gateway.liveSockets == liveBefore &&
             ['a', 'b', 'c'].every(
               (id) =>
                   service

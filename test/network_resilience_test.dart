@@ -160,6 +160,26 @@ void main() {
     });
   });
 
+  test('network availability in background defers exactly once until resume', () {
+    fakeAsync((time) {
+      final events = StreamController<dynamic>.broadcast();
+      var foreground = false;
+      var wakes = 0;
+      final listener = NetworkAvailabilityRecoveryListener(events: events.stream,
+        isForeground: () => foreground, onAvailable: () => wakes++);
+      events.add('available');
+      time.elapse(NetworkAvailabilityRecoveryListener.debounce);
+      expect(wakes, 0);
+      foreground = true;
+      listener.resume();
+      listener.resume();
+      expect(wakes, 1);
+      unawaited(listener.dispose());
+      unawaited(events.close());
+      time.flushMicrotasks();
+    });
+  });
+
   test('online events wake recovery and stop after listener disposal', () {
     fakeAsync((async) {
       final events = StreamController<dynamic>.broadcast();
