@@ -9,6 +9,7 @@ import 'package:video_player/video_player.dart';
 import '../../l10n/app_localizations.dart';
 import '../theme/app_theme.dart';
 import '../theme/motion.dart';
+import 'accessible_fade.dart';
 import 'attachment_card.dart' show saveMediaToGallery, shareMediaFile;
 import 'video_player_controls.dart';
 
@@ -25,7 +26,15 @@ import 'video_player_controls.dart';
 class GeneratedVideoCard extends StatefulWidget {
   final File file;
 
-  const GeneratedVideoCard({super.key, required this.file});
+  /// Starts playing once ready: the user already asked for it (the media
+  /// viewer's «Reproducir» fetched it first).
+  final bool autoplay;
+
+  const GeneratedVideoCard({
+    super.key,
+    required this.file,
+    this.autoplay = false,
+  });
 
   static const int _positionMemoCapacity = 24;
 
@@ -60,7 +69,7 @@ class _GeneratedVideoCardState extends State<GeneratedVideoCard> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) unawaited(_initialize(autoplay: false));
+      if (mounted) unawaited(_initialize(autoplay: widget.autoplay));
     });
   }
 
@@ -185,6 +194,33 @@ class _GeneratedVideoCardState extends State<GeneratedVideoCard> {
 
   @override
   Widget build(BuildContext context) {
+    final content = _content(context);
+    // F5 (REPORT-AUDITORIA-FLUIDEZ §3, A5): the placeholder already holds the
+    // player's 16:9 box; a clip of another shape eases into its own instead
+    // of jumping, and the player fades in. Instant with reduced motion.
+    if (MediaQuery.maybeDisableAnimationsOf(context) ?? false) return content;
+    final ready = _controller?.value.isInitialized ?? false;
+    return AnimatedSize(
+      duration: HermesMotion.base,
+      curve: HermesMotion.emphasized,
+      alignment: AlignmentDirectional.topStart,
+      child: AnimatedSwitcher(
+        duration: HermesMotion.fast,
+        // TalkBack hears what comes in from its first frame (gint58).
+        transitionBuilder: accessibleFadeTransition,
+        layoutBuilder: (current, previous) => Stack(
+          alignment: AlignmentDirectional.topStart,
+          children: [...previous, ?current],
+        ),
+        child: KeyedSubtree(
+          key: ValueKey(('generated-video-state', ready)),
+          child: content,
+        ),
+      ),
+    );
+  }
+
+  Widget _content(BuildContext context) {
     final strings = Strings.of(context);
     final controller = _controller;
     if (_initializing) {
@@ -228,10 +264,7 @@ class _GeneratedVideoCardState extends State<GeneratedVideoCard> {
                   : 300.0;
               // Tall enough for the three control rows even for a very wide
               // clip; capped so a portrait clip does not fill the chat.
-              final height = math.max(
-                _inlineMinHeight,
-                math.min(width / ratio, _inlineMaxHeight),
-              );
+              final height = _inlinePlayerHeight(width, ratio);
               return SizedBox(
                 width: width,
                 height: height,
@@ -279,6 +312,11 @@ class _GeneratedVideoCardState extends State<GeneratedVideoCard> {
 const double _inlineMinHeight = 200;
 const double _inlineMaxHeight = 480;
 
+/// Height of the inline player for [width] and an aspect [ratio]: tall
+/// enough for its three control rows, never taller than [_inlineMaxHeight].
+double _inlinePlayerHeight(double width, double ratio) =>
+    math.max(_inlineMinHeight, math.min(width / ratio, _inlineMaxHeight));
+
 class _VideoFrame extends StatelessWidget {
   final Widget child;
   const _VideoFrame({required this.child});
@@ -286,15 +324,23 @@ class _VideoFrame extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
-    return Container(
-      constraints: const BoxConstraints(minHeight: 150, maxHeight: 360),
-      width: double.infinity,
-      decoration: BoxDecoration(
-        color: colors.surfaceVariant,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: colors.divider),
+    // A5: the player's own box for a 16:9 clip (the most common), so the
+    // usual video takes its place without moving the chat.
+    return LayoutBuilder(
+      builder: (context, constraints) => Container(
+        key: const ValueKey('generated-video-placeholder'),
+        height: _inlinePlayerHeight(
+          constraints.hasBoundedWidth ? constraints.maxWidth : 300,
+          16 / 9,
+        ),
+        width: double.infinity,
+        decoration: BoxDecoration(
+          color: colors.surfaceVariant,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: colors.divider),
+        ),
+        child: child,
       ),
-      child: child,
     );
   }
 }

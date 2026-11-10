@@ -8,17 +8,24 @@ import '../services/connection_manager.dart';
 import '../services/ssh_manager.dart';
 import '../theme/app_theme.dart';
 import '../widgets/hermes_app_bar.dart';
+import '../widgets/hermes_premium_ui.dart' show HermesEmptyState;
 import 'sftp_browser_screen.dart';
 import 'ssh_credentials_screen.dart';
 import 'ssh_terminal_screen.dart';
 import '../widgets/console_loader.dart';
+import '../widgets/workspace/chat_workspace_host.dart'
+    show ChatWorkspaceMenuEntry, ChatWorkspacePaneScope, ChatWorkspaceToolbar;
 import '../design/hermes_design.dart'
     show HermesDialogAction, HermesDialogActionStyle, showHermesDialog;
 import '../feedback/feedback_policy.dart';
 
 class SshScreen extends StatefulWidget {
   final SavedConnection connection;
-  const SshScreen({required this.connection, super.key});
+
+  /// Set when the hub was opened from a chat: Files gets a notch back to it.
+  final VoidCallback? onBackToChat;
+
+  const SshScreen({required this.connection, this.onBackToChat, super.key});
 
   @override
   State<SshScreen> createState() => _SshScreenState();
@@ -27,6 +34,10 @@ class SshScreen extends StatefulWidget {
 class _SshScreenState extends State<SshScreen> {
   SshConfig? _config;
   bool _loading = true;
+
+  /// The settings could not be read (secure storage failed). Desktop's
+  /// pattern: say it could not be read and offer «Intentar de nuevo».
+  bool _loadFailed = false;
 
   SshManager get _mgr =>
       context.findAncestorStateOfType<HermesAppState>()!.sshManager;
@@ -38,12 +49,28 @@ class _SshScreenState extends State<SshScreen> {
   }
 
   Future<void> _load() async {
-    final cfg = await _mgr.loadConfig(widget.connection.id);
+    SshConfig? cfg;
+    var failed = false;
+    try {
+      cfg = await _mgr.loadConfig(widget.connection.id);
+    } catch (e) {
+      debugPrint('[ssh-screen] settings unreadable (${e.runtimeType})');
+      failed = true;
+    }
     if (!mounted) return;
     setState(() {
       _config = cfg;
+      _loadFailed = failed;
       _loading = false;
     });
+  }
+
+  void _retryLoad() {
+    setState(() {
+      _loading = true;
+      _loadFailed = false;
+    });
+    _load();
   }
 
   Future<void> _configure() async {
@@ -63,7 +90,10 @@ class _SshScreenState extends State<SshScreen> {
 
   void _sftp() => Navigator.of(context).push(
     MaterialPageRoute(
-      builder: (_) => SftpBrowserScreen(connection: widget.connection),
+      builder: (_) => SftpBrowserScreen(
+        connection: widget.connection,
+        onBackToChat: widget.onBackToChat,
+      ),
     ),
   );
 
@@ -109,11 +139,69 @@ class _SshScreenState extends State<SshScreen> {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
+    // In the workspace pane (v25) the Terminal tab is the terminal itself,
+    // not this hub: what the hub offers around it moves to the floating
+    // bar's «⋯». Without SSH set up, the hub's empty state stays.
+    final inPane = ChatWorkspacePaneScope.isInPane(context);
+    final config = _config;
+    if (inPane && !_loading && !_loadFailed && config != null) {
+      return SshTerminalScreen(
+        key: ValueKey('ssh-pane-terminal-${config.target}'),
+        connection: widget.connection,
+        paneTitle: config.target,
+        paneMenu: [
+          ChatWorkspaceMenuEntry(
+            key: const ValueKey('ssh-pane-menu-credentials'),
+            label: Strings.of(context).ssh2EditCreds,
+            icon: Icons.edit_outlined,
+            onSelected: _configure,
+          ),
+          ChatWorkspaceMenuEntry(
+            key: const ValueKey('ssh-pane-menu-host-key'),
+            label: Strings.of(context).ssh2ForgetHostKey,
+            icon: Icons.gpp_maybe_outlined,
+            onSelected: _forgetHostKey,
+          ),
+          ChatWorkspaceMenuEntry(
+            key: const ValueKey('ssh-pane-menu-remove'),
+            label: Strings.of(context).ssh2RemoveSsh,
+            icon: Icons.delete_outline,
+            onSelected: _remove,
+            destructive: true,
+          ),
+        ],
+      );
+    }
+    if (inPane) {
+      // Nothing of a terminal's on the bar while there is none.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          ChatWorkspacePaneScope.publish(context, ChatWorkspaceToolbar.none);
+        }
+      });
+    }
     return Scaffold(
-      backgroundColor: colors.background,
-      appBar: HermesAppBar(title: const Text('SSH')),
+      backgroundColor: ChatWorkspacePaneScope.backgroundOf(
+        context,
+        colors.background,
+      ),
+      // In the pane the tab already says what this is; a header pill of its
+      // own sat over the first card there.
+      appBar: inPane ? null : HermesAppBar(title: const Text('SSH')),
       body: _loading
           ? const Center(child: ConsoleLoader.large())
+          : _loadFailed
+          ? Center(
+              child: HermesEmptyState(
+                key: const ValueKey('ssh-hub-load-error'),
+                icon: Icons.error_outline,
+                title: Strings.of(context).sftpUnreadableTitle,
+                body: Strings.of(context).sshHubLoadError,
+                primaryLabel: Strings.of(context).sftpTryAgain,
+                primaryIcon: Icons.refresh,
+                onPrimary: _retryLoad,
+              ),
+            )
           : _config == null
           ? _empty(colors)
           : _configured(colors, _config!),
@@ -192,7 +280,9 @@ class _SshScreenState extends State<SshScreen> {
                         context,
                       ).sshAuthMethodLabel(switch (cfg.method) {
                         SshAuthMethod.key => Strings.of(context).sshcPrivateKey,
-                        SshAuthMethod.password => Strings.of(context).commonPassword,
+                        SshAuthMethod.password => Strings.of(
+                          context,
+                        ).commonPassword,
                       }),
                       style: TextStyle(
                         fontSize: 12,
@@ -300,7 +390,7 @@ class _SshScreenState extends State<SshScreen> {
                     ],
                   ),
                 ),
-                Icon(Icons.chevron_right, size: 18, color: colors.textDisabled),
+                Icon(Icons.chevron_right, size: 18, color: colors.textTertiary),
               ],
             ),
           ),

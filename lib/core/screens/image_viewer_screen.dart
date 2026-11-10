@@ -1,9 +1,21 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import '../../l10n/app_localizations.dart';
-import '../widgets/hermes_app_bar.dart';
+import '../widgets/media_viewer/media_viewer.dart';
 
+/// Opens one image of the chat (a Markdown image, already on screen) in
+/// the media viewer, over the chat.
+Future<void> showChatImage(
+  BuildContext context, {
+  required String imageUrl,
+  Uint8List? imageBytes,
+  Object? heroTag,
+}) {
+  final image = _chatImage(imageUrl, imageBytes, heroTag ?? imageUrl);
+  return showMediaViewer(context, [image]);
+}
+
+/// [showChatImage] as a page of its own.
 class ImageViewerScreen extends StatelessWidget {
   final String imageUrl;
   final Uint8List? imageBytes;
@@ -18,52 +30,26 @@ class ImageViewerScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      appBar: HermesAppBar(
-        backgroundColor: Colors.black,
-        foregroundColor: Colors.white,
-        elevation: 0,
-        // Solo brillo de iconos: con edge-to-edge forzado (Android 15+ /
-        // targetSdk 35+) los colores de barra son parámetros deprecated e
-        // ignorados; pasarlos dispara el aviso de compatibilidad de Play.
-        systemOverlayStyle: const SystemUiOverlayStyle(
-          statusBarIconBrightness: Brightness.light,
-          statusBarBrightness: Brightness.dark,
-          systemNavigationBarIconBrightness: Brightness.light,
-        ),
-        leading: Semantics(
-          label: Strings.of(context).commonClose,
-          button: true,
-          onTap: () => Navigator.pop(context),
-          excludeSemantics: true,
-          child: IconButton(
-            icon: const Icon(Icons.close),
-            tooltip: Strings.of(context).commonClose,
-            onPressed: () => Navigator.pop(context),
-          ),
-        ),
-      ),
-      body: Center(
-        child: Hero(
-          tag: heroTag ?? imageUrl,
-          child: InteractiveViewer(
-            minScale: 0.5,
-            maxScale: 4.0,
-            child: imageBytes != null
-                ? Image.memory(imageBytes!, fit: BoxFit.contain)
-                : Image.network(
-                    imageUrl,
-                    fit: BoxFit.contain,
-                    errorBuilder: (context, error, stackTrace) => const Icon(
-                      Icons.broken_image_outlined,
-                      color: Colors.white38,
-                      size: 64,
-                    ),
-                  ),
-          ),
-        ),
-      ),
+    return MediaViewerScreen(
+      items: [_chatImage(imageUrl, imageBytes, heroTag ?? imageUrl)],
     );
   }
+}
+
+/// Its bytes when the chat holds them, its address otherwise; named after
+/// the last segment of the address.
+MediaViewerItem _chatImage(String url, Uint8List? bytes, Object heroTag) {
+  final uri = Uri.tryParse(url);
+  final web = uri != null && (uri.scheme == 'https' || uri.scheme == 'http');
+  final segments = uri?.pathSegments.where((s) => s.isNotEmpty);
+  final name = segments == null || segments.isEmpty ? uri?.host : segments.last;
+  return MediaViewerItem(
+    kind: MediaViewerKind.image,
+    name: name == null || name.isEmpty ? null : name,
+    bytes: bytes,
+    imageUrl: bytes == null ? url : null,
+    location: web ? url : null,
+    locationIsUrl: web,
+    heroTag: heroTag,
+  );
 }

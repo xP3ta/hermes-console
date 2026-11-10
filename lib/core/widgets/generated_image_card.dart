@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import '../../l10n/app_localizations.dart';
 import '../services/media_dimensions.dart';
 import '../theme/app_theme.dart';
+import '../theme/hermes_tokens.dart';
+import 'accessible_fade.dart';
 import 'attachment_card.dart';
 import 'stacked_image_cards.dart';
 
@@ -44,16 +46,47 @@ class GeneratedImageCard extends StatelessWidget {
   /// [file] is probed (memoized), so the box is final on the first layout.
   final Size? intrinsicSize;
 
+  /// The image's own name, for the viewer; null when it has none.
+  final String? name;
+
   const GeneratedImageCard({
     required this.status,
     this.file,
     this.onRetry,
     this.intrinsicSize,
+    this.name,
     super.key,
   });
 
   @override
   Widget build(BuildContext context) {
+    final content = _content(context);
+    // F5 (REPORT-AUDITORIA-FLUIDEZ §3, A1): the placeholder keeps the
+    // image's box, and what changes (the box once the real size is known,
+    // the placeholder giving way to the picture) eases instead of jumping
+    // ~200 dp in one frame. Instant with reduced motion.
+    if (MediaQuery.maybeDisableAnimationsOf(context) ?? false) return content;
+    return AnimatedSize(
+      duration: HermesMotion.base,
+      curve: HermesMotion.emphasized,
+      alignment: AlignmentDirectional.topStart,
+      child: AnimatedSwitcher(
+        duration: HermesMotion.fast,
+        // TalkBack hears what comes in from its first frame (gint58).
+        transitionBuilder: accessibleFadeTransition,
+        layoutBuilder: (current, previous) => Stack(
+          alignment: AlignmentDirectional.topStart,
+          children: [...previous, ?current],
+        ),
+        child: KeyedSubtree(
+          key: ValueKey(('generated-image-state', status)),
+          child: content,
+        ),
+      ),
+    );
+  }
+
+  Widget _content(BuildContext context) {
     final colors = Theme.of(context).hermes;
     final s = Strings.of(context);
     final readyFile = file;
@@ -64,21 +97,25 @@ class GeneratedImageCard extends StatelessWidget {
         builder: (box) => _thumbnail(context, s, readyFile, box),
       );
     }
-    final child = switch (status) {
-      GeneratedImageStatus.ready => const SizedBox.shrink(),
-      GeneratedImageStatus.downloading => _statusCard(
-        context,
-        colors,
-        leading: SizedBox(
-          width: 15,
-          height: 15,
-          child: CircularProgressIndicator(
-            strokeWidth: 1.8,
-            color: colors.accent,
+    if (status == GeneratedImageStatus.downloading) {
+      // A1: the image's own box while it downloads (16:9 until its size is
+      // known), not a one-line card the picture then pushes ~200 dp down.
+      // TalkBack still hears what is happening.
+      return Semantics(
+        key: const ValueKey('generated-image-status'),
+        label: s.genImgDownloading,
+        liveRegion: true,
+        child: ExcludeSemantics(
+          child: GeneratedImageSkeleton(
+            intrinsicSize: intrinsicSize,
+            loading: true,
           ),
         ),
-        text: s.genImgDownloading,
-      ),
+      );
+    }
+    final child = switch (status) {
+      GeneratedImageStatus.ready ||
+      GeneratedImageStatus.downloading => const SizedBox.shrink(),
       GeneratedImageStatus.error => _statusCard(
         context,
         colors,
@@ -140,7 +177,7 @@ class GeneratedImageCard extends StatelessWidget {
     // In a stack the card fills it (cover) and a tap opens the gallery of
     // the whole stack at this image.
     final stack = ImageStackScope.maybeOf(context);
-    stack?.controller.report(stack.index, f);
+    stack?.controller.report(stack.index, f, name: name);
     return Semantics(
       label: s.genImgSemanticLabel,
       image: true,
@@ -148,7 +185,7 @@ class GeneratedImageCard extends StatelessWidget {
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: () => stack == null
-            ? showImageViewer(context, f)
+            ? showImageViewer(context, f, name: name)
             : stack.controller.open(stack.index),
         child: Material(
           key: const ValueKey('generated-image-thumbnail'),

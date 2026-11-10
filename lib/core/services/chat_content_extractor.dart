@@ -16,11 +16,13 @@
 /// - `::preview{file="…"}` directives and `_generatedImages` metadata are
 ///   explicit deliveries.
 ///
-/// Pure and synchronous: no I/O, no Flutter.
+/// Synchronous and without I/O. An item or a row that cannot be read is
+/// left out and its error type logged ([AppErrorLog]), never the whole list.
 library;
 
 import 'dart:convert';
 
+import 'app_error_log.dart';
 import 'session_reconciler.dart' show assistantToolResultEvidenceKey;
 import 'transcript_directive_parser.dart';
 import '../widgets/user_server_attachment_card.dart'
@@ -157,6 +159,8 @@ String _artifactPathForFiltering(String value) {
         return Uri.decodeFull(uri.path).toLowerCase();
       } on ArgumentError {
         // Malformed escape: fall through to plain normalization.
+      } on FormatException {
+        // An escape that is not UTF-8 (`%FF`, a cut `%E2%80`): the same.
       }
     }
   }
@@ -208,6 +212,9 @@ String? _mediaPathFromMarkdownHref(String href) {
   try {
     return Uri.decodeComponent(href.substring('#media:'.length));
   } on ArgumentError {
+    return null;
+  } on FormatException {
+    // `#media:%FF`: Desktop's `decodeURIComponent` throws and returns null.
     return null;
   }
 }
@@ -283,7 +290,11 @@ String _artifactHref(String value) {
   if (value.startsWith('file://')) return value;
   if (value.startsWith('/')) return Uri.file(value).toString();
   if (_isWindowsPath(value)) {
-    return Uri.file(value, windows: true).toString();
+    try {
+      return Uri.file(value, windows: true).toString();
+    } on ArgumentError {
+      // A character Windows does not allow in a path (`*`, `?`, `|`…).
+    }
   }
   return value;
 }
@@ -296,7 +307,17 @@ String _artifactLabel(String value) {
   if (RegExp(r'^(?:https?|file):', caseSensitive: false).hasMatch(value)) {
     final uri = Uri.tryParse(value);
     if (uri != null) {
-      final segments = uri.pathSegments.where((s) => s.isNotEmpty);
+      List<String>? decoded;
+      try {
+        decoded = uri.pathSegments;
+      } on ArgumentError {
+        // Malformed escape: the undecoded segments below.
+      } on FormatException {
+        // `pathSegments` decodes, and `%FF` is not UTF-8: Desktop's
+        // undecoded `pathname` segment instead.
+      }
+      final all = decoded ?? uri.path.split('/');
+      final segments = all.where((s) => s.isNotEmpty);
       return segments.isEmpty ? value : segments.last;
     }
   }
@@ -492,44 +513,91 @@ void _collectFromAssistant(Map<String, dynamic> message, _PushValue push) {
   }
 }
 
-/// Collects shared content from [newestFirst] (Console transcript order).
-/// Returns items newest first; a value seen in several messages keeps its
-/// first (oldest) sighting, like Desktop.
+/// Collects shared content from [newestFirst] (Console transcript order),
+/// as Desktop's Artifacts page lists it: newest message first, and inside
+/// one message in the order the message names them (Desktop sorts
+/// `collectArtifactsForSession` by timestamp with a stable sort). A value
+/// seen in several messages keeps its first (oldest) sighting.
 List<ChatContentItem> collectChatContent(
   List<Map<String, dynamic>> newestFirst,
 ) {
-  final found = <String, ChatContentItem>{};
-  for (final message in newestFirst.reversed) {
-    final role = message['role']?.toString().trim().toLowerCase();
-    final timestamp = _artifactTimestamp(message['timestamp']);
-    void push(String candidate, {bool explicit = false}) {
-      final value = _normalizeValue(_decodeMediaHrefValue(candidate));
-      if (value.isEmpty || !_looksLikeArtifact(value, explicit: explicit)) {
-        return;
-      }
-      found.putIfAbsent(
-        value,
-        () => ChatContentItem(
-          kind: _artifactKind(value),
-          value: value,
-          href: _artifactHref(value),
-          label: _artifactLabel(value),
-          timestamp: timestamp,
-        ),
-      );
+  final chronological = _collectChronological(newestFirst);
+  final result = <ChatContentItem>[];
+  var end = chronological.length;
+  while (end > 0) {
+    // One message's items, kept in their own order.
+    final message = chronological[end - 1].$2;
+    var start = end - 1;
+    while (start > 0 && chronological[start - 1].$2 == message) {
+      start--;
     }
+    for (var i = start; i < end; i++) {
+      result.add(chronological[i].$1);
+    }
+    end = start;
+  }
+  return result;
+}
 
-    switch (role) {
-      case 'assistant':
-        _collectFromAssistant(message, push);
-      case 'tool':
-        _collectFromTool(message, push);
-      case 'user':
-        final kind = message['display_kind']?.toString().trim() ?? '';
-        if (kind.isEmpty) _collectFromUser(_messageText(message), push);
+/// Desktop `collectArtifactsForSession`: oldest message first, each item in
+/// the order its message names it.
+List<ChatContentItem> collectChatContentChronological(
+  List<Map<String, dynamic>> newestFirst,
+) => [for (final (item, _) in _collectChronological(newestFirst)) item];
+
+/// Items in first-sighting order, each with the index of its message
+/// (oldest message 0).
+List<(ChatContentItem, int)> _collectChronological(
+  List<Map<String, dynamic>> newestFirst,
+) {
+  final found = <String, (ChatContentItem, int)>{};
+  var messageIndex = -1;
+  for (final message in newestFirst.reversed) {
+    messageIndex++;
+    // A row that cannot be read is left out and its error type logged; the
+    // other rows still list what they share.
+    try {
+      final role = message['role']?.toString().trim().toLowerCase();
+      final timestamp = _artifactTimestamp(message['timestamp']);
+      void push(String candidate, {bool explicit = false}) {
+        // The same for one item: the rest of its message still counts.
+        try {
+          final value = _normalizeValue(_decodeMediaHrefValue(candidate));
+          if (value.isEmpty || !_looksLikeArtifact(value, explicit: explicit)) {
+            return;
+          }
+          found.putIfAbsent(
+            value,
+            () => (
+              ChatContentItem(
+                kind: _artifactKind(value),
+                value: value,
+                href: _artifactHref(value),
+                label: _artifactLabel(value),
+                timestamp: timestamp,
+              ),
+              messageIndex,
+            ),
+          );
+        } catch (error) {
+          AppErrorLog.record('artifacts', error);
+        }
+      }
+
+      switch (role) {
+        case 'assistant':
+          _collectFromAssistant(message, push);
+        case 'tool':
+          _collectFromTool(message, push);
+        case 'user':
+          final kind = message['display_kind']?.toString().trim() ?? '';
+          if (kind.isEmpty) _collectFromUser(_messageText(message), push);
+      }
+    } catch (error) {
+      AppErrorLog.record('artifacts', error);
     }
   }
-  return found.values.toList(growable: false).reversed.toList();
+  return found.values.toList(growable: false);
 }
 
 /// Desktop `visibleArtifacts`: kind filter plus a case-insensitive substring

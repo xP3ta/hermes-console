@@ -10,11 +10,15 @@ import '../../l10n/app_localizations.dart';
 import '../../main.dart';
 import '../services/connection_manager.dart';
 import '../services/ssh_manager.dart';
+import '../services/ssh_session_kind.dart';
 import '../utils/ssh_error.dart';
 import '../theme/app_theme.dart';
+import '../design/tokens.dart' show HermesSpace;
 import '../widgets/hermes_app_bar.dart';
 import '../widgets/hermes_ui.dart';
 import '../widgets/ssh_host_key_dialog.dart';
+import '../widgets/ssh_session_kind_picker.dart';
+import '../widgets/secure_screen_scope.dart';
 import '../feedback/feedback_policy.dart';
 
 class SshCredentialsScreen extends StatefulWidget {
@@ -34,6 +38,11 @@ class _SshCredentialsScreenState extends State<SshCredentialsScreen> {
   final _passphraseCtrl = TextEditingController();
 
   SshAuthMethod _method = SshAuthMethod.key;
+  SshSessionKind _sessionKind = SshSessionKind.shell;
+
+  /// The Advanced tile opens by itself once if the saved profile picked
+  /// Herdr or tmux (a new key rebuilds it open when the config loads).
+  int _advancedLoads = 0;
   bool _hadConfig = false;
   bool _obscurePass = true;
   bool _saving = false;
@@ -61,6 +70,8 @@ class _SshCredentialsScreenState extends State<SshCredentialsScreen> {
       _portCtrl.text = '${cfg?.port ?? SshManager.defaultPort}';
       _userCtrl.text = cfg?.username ?? '';
       _method = cfg?.method ?? SshAuthMethod.key;
+      _sessionKind = cfg?.sessionKind ?? SshSessionKind.shell;
+      _advancedLoads++;
     });
   }
 
@@ -86,7 +97,7 @@ class _SshCredentialsScreenState extends State<SshCredentialsScreen> {
       setState(() => _keyCtrl.text = text.trim());
     } catch (e) {
       debugPrint(
-        '[ssh-credentials] excepción silenciada (se avisa al usuario y se sigue): $e',
+        '[ssh-credentials] excepción silenciada (se avisa al usuario y se sigue): ${e.runtimeType}',
       );
       _snack(s.sshcNotText);
     }
@@ -139,6 +150,7 @@ class _SshCredentialsScreenState extends State<SshCredentialsScreen> {
       port: int.parse(_portCtrl.text.trim()),
       username: _userCtrl.text.trim(),
       method: _method,
+      sessionKind: _sessionKind,
       password: _method == SshAuthMethod.password && hasNewPass
           ? _passwordCtrl.text
           : null,
@@ -197,8 +209,12 @@ class _SshCredentialsScreenState extends State<SshCredentialsScreen> {
     }
   }
 
+  // H4: FLAG_SECURE mientras esta página está montada.
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) =>
+      SecureScreenScope(child: Builder(builder: _buildPage));
+
+  Widget _buildPage(BuildContext context) {
     final colors = Theme.of(context).hermes;
     final isKey = _method == SshAuthMethod.key;
     return Scaffold(
@@ -273,6 +289,30 @@ class _SshCredentialsScreenState extends State<SshCredentialsScreen> {
           if (isKey) ..._keyFields(colors) else _passwordField(colors),
           const SizedBox(height: 14),
           _securityNote(colors, isKey),
+          const SizedBox(height: 18),
+          // Advanced and off by default: the terminal is a plain shell
+          // unless the user picks Herdr or tmux here by hand.
+          ExpansionTile(
+            key: ValueKey('ssh-advanced-$_advancedLoads'),
+            initiallyExpanded: _sessionKind != SshSessionKind.shell,
+            tilePadding: EdgeInsets.zero,
+            childrenPadding: const EdgeInsets.only(bottom: HermesSpace.x1),
+            shape: const Border(),
+            collapsedShape: const Border(),
+            iconColor: colors.textSecondary,
+            collapsedIconColor: colors.textDisabled,
+            expandedCrossAxisAlignment: CrossAxisAlignment.start,
+            title: Text(
+              Strings.of(context).sAdvanced,
+              style: TextStyle(fontSize: 12.5, color: colors.textSecondary),
+            ),
+            children: [
+              SshSessionKindPicker(
+                value: _sessionKind,
+                onChanged: (kind) => setState(() => _sessionKind = kind),
+              ),
+            ],
+          ),
           if (_testOk != null) ...[
             const SizedBox(height: 14),
             _resultBox(colors, ok: true, text: _testOk!),
@@ -324,13 +364,18 @@ class _SshCredentialsScreenState extends State<SshCredentialsScreen> {
 
   List<Widget> _keyFields(HermesThemeColors colors) {
     return [
-      Row(
+      // The same editor also lives in the workspace pane. Keep its label
+      // and import action visible when their natural widths do not fit.
+      Wrap(
+        alignment: WrapAlignment.spaceBetween,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        spacing: 8,
+        runSpacing: 4,
         children: [
           Text(
             Strings.of(context).sshcPrivateKeyPem,
             style: TextStyle(fontSize: 12.5, color: colors.textSecondary),
           ),
-          const Spacer(),
           TextButton.icon(
             onPressed: _importKeyFile,
             icon: const Icon(Icons.upload_file_outlined, size: 16),

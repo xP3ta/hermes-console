@@ -122,6 +122,9 @@ AgentPreviewTarget? _fileUrl(String value) {
     path = Uri.decodeComponent(uri.path);
   } on ArgumentError {
     return null;
+  } on FormatException {
+    // An escape that is not UTF-8 (`%FF`): no file to name.
+    return null;
   }
   if (!path.startsWith('/') ||
       path.length < 2 ||

@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-zew0KSrCN8UNrJk4Myrj3UNxG87HqAaKLQ+yUqAVNH8='; connect-src ws: wss:; base-uri 'none'; form-action 'none'">
+<title>Hermes screen relay</title>
+</head>
+<body>
+<script>
+// Opens the screen's WebSocket from this sandboxed frame (opaque origin, so
+// the handshake carries Origin: null) and relays it to bridge.html over the
+// MessagePort it is given once. See null-origin-socket.js.
+(function () {
+  'use strict';
+  var used = false;
+  window.addEventListener('message', function (event) {
+    var data = event.data;
+    if (used || event.source !== window.parent || !event.ports || !event.ports[0]) return;
+    if (!data || data.t !== 'connect' || typeof data.url !== 'string') return;
+    if (!/^wss?:\/\//i.test(data.url)) return;
+    used = true;
+    var port = event.ports[0];
+    var ws;
+    try {
+      ws = new WebSocket(data.url);
+    } catch (err) {
+      port.postMessage({ t: 'error' });
+      port.postMessage({ t: 'close', code: 1006, reason: '', wasClean: false });
+      return;
+    }
+    ws.binaryType = 'arraybuffer';
+    ws.onopen = function () {
+      port.postMessage({ t: 'open', protocol: ws.protocol });
+    };
+    ws.onmessage = function (e) {
+      if (e.data instanceof ArrayBuffer) {
+        port.postMessage({ t: 'message', data: e.data }, [e.data]);
+      } else {
+        port.postMessage({ t: 'message', data: e.data });
+      }
+    };
+    ws.onerror = function () {
+      port.postMessage({ t: 'error' });
+    };
+    ws.onclose = function (e) {
+      port.postMessage({ t: 'close', code: e.code, reason: e.reason, wasClean: e.wasClean });
+      port.close();
+    };
+    port.onmessage = function (e) {
+      var m = e.data;
+      if (!m) return;
+      if (m.t === 'send') {
+        if (ws.readyState === 1) ws.send(m.data);
+      } else if (m.t === 'close') {
+        try {
+          ws.close(m.code, m.reason);
+        } catch (err) {
+          ws.close();
+        }
+      }
+    };
+  });
+})();
+</script>
+</body>
+</html>

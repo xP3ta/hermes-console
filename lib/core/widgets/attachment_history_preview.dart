@@ -261,6 +261,8 @@ class _AttachmentBytesPreviewScreenState
     final strings = Strings.of(context);
     return Scaffold(
       appBar: HermesAppBar(
+        // No glass (Q9-CRISTAL): nothing scrolls under it.
+        glass: false,
         title: Text(widget.name),
         actions: [
           if (widget.onOpenExternal != null)

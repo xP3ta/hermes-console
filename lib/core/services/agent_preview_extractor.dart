@@ -9,6 +9,7 @@ import 'dart:convert';
 
 import '../models/deferred_tool_call.dart';
 import 'agent_preview_target.dart';
+import 'app_error_log.dart';
 
 const String agentPreviewToolName = 'desktop_preview';
 
@@ -30,31 +31,41 @@ List<AgentPreview> collectAgentPreviews(
 ) {
   final open = <String, AgentPreview>{};
   for (final message in newestFirst.reversed) {
-    if (message['role']?.toString().trim().toLowerCase() != 'assistant') {
-      continue;
-    }
-    final calls = message['tool_calls'];
-    if (calls is! List) continue;
-    for (final raw in calls) {
-      if (raw is! Map) continue;
-      final function = raw['function'];
-      final name = (function is Map ? function['name'] : raw['name'])
-          ?.toString();
-      if (name == null) continue;
-      final arguments = function is Map
-          ? function['arguments']
-          : raw['arguments'];
-      final unwrapped = unwrapDeferredToolCall(name, arguments);
-      final entries =
-          unwrapped ??
-          [(name: name, arguments: decodeToolArguments(arguments))];
-      for (final entry in entries) {
-        if (entry.name.trim().toLowerCase() != agentPreviewToolName) continue;
-        _apply(open, entry.arguments);
+    // A row or a call that cannot be read is skipped and its error type
+    // logged; the other calls still open and close their previews.
+    try {
+      if (message['role']?.toString().trim().toLowerCase() != 'assistant') {
+        continue;
       }
+      final calls = message['tool_calls'];
+      if (calls is! List) continue;
+      for (final raw in calls) {
+        try {
+          _replay(open, raw);
+        } catch (error) {
+          AppErrorLog.record('artifacts', error);
+        }
+      }
+    } catch (error) {
+      AppErrorLog.record('artifacts', error);
     }
   }
   return List.unmodifiable(open.values);
+}
+
+void _replay(Map<String, AgentPreview> open, Object? raw) {
+  if (raw is! Map) return;
+  final function = raw['function'];
+  final name = (function is Map ? function['name'] : raw['name'])?.toString();
+  if (name == null) return;
+  final arguments = function is Map ? function['arguments'] : raw['arguments'];
+  final unwrapped = unwrapDeferredToolCall(name, arguments);
+  final entries =
+      unwrapped ?? [(name: name, arguments: decodeToolArguments(arguments))];
+  for (final entry in entries) {
+    if (entry.name.trim().toLowerCase() != agentPreviewToolName) continue;
+    _apply(open, entry.arguments);
+  }
 }
 
 void _apply(Map<String, AgentPreview> open, Object? arguments) {

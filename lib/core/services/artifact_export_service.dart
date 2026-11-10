@@ -1,10 +1,11 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
+
+import 'save_to_device.dart';
 
 enum ArtifactSaveResult { saved, cancelled }
 
@@ -35,6 +36,13 @@ abstract interface class ArtifactExportActions {
     required String fileName,
     required Uint8List bytes,
   });
+
+  /// Saves the app's file [file] as [fileName], copied by blocks (never
+  /// read whole into memory). Throws [SaveFailure] saying why it failed.
+  Future<ArtifactSaveResult> saveFile({
+    required String fileName,
+    required File file,
+  });
 }
 
 /// Exportación iniciada explícitamente por el usuario. Nunca publica contenido
@@ -42,7 +50,10 @@ abstract interface class ArtifactExportActions {
 final class PlatformArtifactExportActions implements ArtifactExportActions {
   static const int maximumBytes = 25 * 1024 * 1024;
 
-  const PlatformArtifactExportActions();
+  const PlatformArtifactExportActions({this.device = const SaveToDevice()});
+
+  /// Android's «Guardar como» and the block-by-block write.
+  final SaveToDevice device;
 
   @override
   Future<void> copyText(String content) =>
@@ -79,12 +90,24 @@ final class PlatformArtifactExportActions implements ArtifactExportActions {
     required Uint8List bytes,
   }) async {
     _checkSize(bytes.length);
-    final path = await FilePicker.platform.saveFile(
-      dialogTitle: 'Console',
-      fileName: sanitizeFileName(fileName),
-      bytes: bytes,
+    saveLog('tap source=artifact_bytes');
+    final saved = await device.saveBytes(
+      bytes,
+      name: sanitizeFileName(fileName),
     );
-    return path == null
+    return saved == null
+        ? ArtifactSaveResult.cancelled
+        : ArtifactSaveResult.saved;
+  }
+
+  @override
+  Future<ArtifactSaveResult> saveFile({
+    required String fileName,
+    required File file,
+  }) async {
+    saveLog('tap source=artifact_file');
+    final saved = await device.saveFile(file, name: sanitizeFileName(fileName));
+    return saved == null
         ? ArtifactSaveResult.cancelled
         : ArtifactSaveResult.saved;
   }

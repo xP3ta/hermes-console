@@ -173,6 +173,8 @@ class _ProjectTextEditorScreenState extends State<ProjectTextEditorScreen> {
       },
       child: Scaffold(
         appBar: HermesAppBar(
+          // No glass (Q9-CRISTAL): an editor, not a list, sits under it.
+          glass: false,
           title: Text(
             widget.name,
             maxLines: 1,

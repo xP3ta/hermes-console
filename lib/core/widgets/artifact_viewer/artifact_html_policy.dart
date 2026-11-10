@@ -76,7 +76,10 @@ class ArtifactHtmlNavigationPolicy {
     try {
       await _launchExternal(uri);
     } catch (error) {
-      debugPrint('Artifact viewer: external link failed ($uri): $error');
+      debugPrint(
+        'Artifact viewer: external link failed '
+        '(${uri.scheme}://${uri.host}): ${error.runtimeType}',
+      );
     }
   }
 

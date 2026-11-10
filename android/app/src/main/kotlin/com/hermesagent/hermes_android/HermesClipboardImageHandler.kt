@@ -1,10 +1,13 @@
 package com.hermesagent.hermes_android
 
+import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.net.Uri
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.PersistableBundle
 import android.provider.OpenableColumns
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
@@ -22,6 +25,10 @@ import java.util.concurrent.Executors
  *   `{mimeType, name, tooLarge: true}` when it exceeds [MAX_BYTES] (checked
  *   against the provider's size and again while reading, so an oversized
  *   stream is never buffered in full), or `null` when there is no image.
+ *
+ * - `setSensitiveText`: puts `text` on the clipboard flagged as sensitive on
+ *   Android 13+ (the system then hides it from the paste preview). Answers
+ *   `false` when there is no clipboard; Dart falls back to the plain one.
  *
  * The foreground app may read its clipboard without any permission; the
  * clip's content URI read grant comes with `primaryClip`. Dart decides type
@@ -47,6 +54,18 @@ class HermesClipboardImageHandler(context: Context) : MethodChannel.MethodCallHa
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
             "hasImage" -> result.success(hasImage())
+            "setSensitiveText" -> {
+                val text = call.argument<String>("text")
+                if (text == null) {
+                    result.error("bad_arguments", null, null)
+                    return
+                }
+                try {
+                    result.success(setSensitiveText(text))
+                } catch (_: Exception) {
+                    result.error("clipboard_write_failed", null, null)
+                }
+            }
             "readImage" -> {
                 // Clipboard access must happen on the main thread while the
                 // app has focus; only the stream read moves off it.
@@ -73,6 +92,18 @@ class HermesClipboardImageHandler(context: Context) : MethodChannel.MethodCallHa
             }
             else -> result.notImplemented()
         }
+    }
+
+    private fun setSensitiveText(text: String): Boolean {
+        val manager = clipboard ?: return false
+        val clip = ClipData.newPlainText("", text)
+        if (Build.VERSION.SDK_INT >= 33) {
+            clip.description.extras = PersistableBundle().apply {
+                putBoolean("android.content.extra.IS_SENSITIVE", true)
+            }
+        }
+        manager.setPrimaryClip(clip)
+        return true
     }
 
     fun close() {

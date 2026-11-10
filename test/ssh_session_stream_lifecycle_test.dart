@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:dartssh2/dartssh2.dart';
@@ -116,6 +117,57 @@ void main() {
     final text = session.terminal.buffer.lines.toList().join('\n');
     expect(text, contains('hello-out'));
     expect(text, contains('hello-err'));
+  });
+
+  group('output split across packets (UTF-8)', () {
+    Future<(SshTerminalSession, _FakeShell)> open() async {
+      final clients = <_FakeClient>[];
+      final service = SshSessionService(_FakeSshManager(clients));
+      final session = await service.connect('c1', onHostKey: (_) async => true);
+      return (session, clients.single.shellSession);
+    }
+
+    String screen(SshTerminalSession session) =>
+        session.terminal.buffer.lines.toList().join('\n');
+
+    test('a character split between two packets reaches it whole', () async {
+      final (session, shell) = await open();
+      final bytes = utf8.encode('mañana 😀');
+      // «ñ» is two bytes: the first packet ends between them.
+      shell.stdoutController
+        ..add(Uint8List.fromList(bytes.sublist(0, 3)))
+        ..add(Uint8List.fromList(bytes.sublist(3)));
+      await Future<void>.delayed(Duration.zero);
+
+      expect(screen(session), contains('mañana 😀'));
+      expect(screen(session), isNot(contains('\uFFFD')));
+    });
+
+    test('stdout and stderr do not complete each other', () async {
+      final (session, shell) = await open();
+      final enye = utf8.encode('ñ');
+      shell.stdoutController.add(Uint8List.fromList(enye.sublist(0, 1)));
+      await Future<void>.delayed(Duration.zero);
+      shell.stderrController.add(Uint8List.fromList(utf8.encode('x')));
+      await Future<void>.delayed(Duration.zero);
+      shell.stdoutController.add(Uint8List.fromList(enye.sublist(1)));
+      await Future<void>.delayed(Duration.zero);
+
+      expect(screen(session), contains('xñ'));
+      expect(screen(session), isNot(contains('\uFFFD')));
+    });
+
+    test('an output that ends half-way shows one U+FFFD', () async {
+      final (session, shell) = await open();
+      shell.stdoutController.add(Uint8List.fromList([0x6F, 0x6B, 0xE2, 0x82]));
+      await Future<void>.delayed(Duration.zero);
+      expect(screen(session), contains('ok'));
+      expect(screen(session), isNot(contains('\uFFFD')));
+
+      await shell.stdoutController.close();
+      await Future<void>.delayed(Duration.zero);
+      expect('\uFFFD'.allMatches(screen(session)), hasLength(1));
+    });
   });
 
   test(

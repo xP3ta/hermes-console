@@ -1,28 +1,33 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../theme/app_theme.dart';
 import 'hermes_premium_ui.dart';
 import 'menu_back_guard.dart';
+import '../feedback/haptics.dart';
 
 enum AttachmentSourceChoice { camera, photos, files }
 
 /// Menú de fuentes anclado al mismo botón `+` que lo abre.
 ///
 /// [MenuAnchor] reposiciona la superficie dentro del viewport y conserva
-/// navegación por teclado/TalkBack. El contrato se mantiene deliberadamente
-/// cerrado a las tres fuentes de adjuntos reales.
+/// navegación por teclado/TalkBack. Las fuentes son las tres de adjuntos
+/// reales; "Escanear documento" solo aparece cuando la superficie aporta
+/// [onScanDocument].
 class AttachmentSourceMenuButton extends StatelessWidget {
   const AttachmentSourceMenuButton({
     required this.semanticLabel,
     required this.onSelected,
+    this.onScanDocument,
     this.enabled = true,
     super.key,
   });
 
   final String semanticLabel;
   final ValueChanged<AttachmentSourceChoice> onSelected;
+
+  /// Abre el escáner de documentos. `null` oculta la entrada del menú.
+  final VoidCallback? onScanDocument;
   final bool enabled;
 
   @override
@@ -32,7 +37,7 @@ class AttachmentSourceMenuButton extends StatelessWidget {
     final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
 
     MenuItemButton item({
-      required AttachmentSourceChoice source,
+      required VoidCallback onTap,
       required IconData icon,
       required String label,
     }) {
@@ -45,8 +50,8 @@ class AttachmentSourceMenuButton extends StatelessWidget {
           ),
         ),
         onPressed: () {
-          HapticFeedback.selectionClick();
-          onSelected(source);
+          HermesHaptics.selection();
+          onTap();
         },
         child: Text(
           label,
@@ -83,20 +88,26 @@ class AttachmentSourceMenuButton extends StatelessWidget {
         ),
         menuChildren: [
           item(
-            source: AttachmentSourceChoice.camera,
+            onTap: () => onSelected(AttachmentSourceChoice.camera),
             icon: Icons.photo_camera_outlined,
             label: strings.chatAttachCamera,
           ),
           item(
-            source: AttachmentSourceChoice.photos,
+            onTap: () => onSelected(AttachmentSourceChoice.photos),
             icon: Icons.photo_library_outlined,
             label: strings.chatAttachPhotos,
           ),
           item(
-            source: AttachmentSourceChoice.files,
+            onTap: () => onSelected(AttachmentSourceChoice.files),
             icon: Icons.attach_file_rounded,
             label: strings.chatAttachFiles,
           ),
+          if (onScanDocument != null)
+            item(
+              onTap: onScanDocument!,
+              icon: Icons.document_scanner_outlined,
+              label: strings.scanDocMenuLabel,
+            ),
         ],
         builder: (context, controller, child) {
           return HermesTactileAction(
@@ -106,7 +117,7 @@ class AttachmentSourceMenuButton extends StatelessWidget {
             onPressed: !enabled
                 ? null
                 : () {
-                    HapticFeedback.selectionClick();
+                    HermesHaptics.selection();
                     if (controller.isOpen) {
                       controller.close();
                     } else {

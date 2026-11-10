@@ -480,6 +480,55 @@ class GeneratedMediaService {
     return _parseDirective('MEDIA:$source');
   }
 
+  /// An item of «Artefactos» to fetch the way Hermes Desktop does
+  /// (`downloadGatewayMediaFile`, `/api/fs/download` with the session): an
+  /// `https` URL as [referenceFromSource] takes it, or a path on the Hermes
+  /// machine in any form Desktop hands to the gateway (absolute, `~/…`,
+  /// relative to the conversation's folder, `file:`, a Windows path), which
+  /// the gateway resolves against that session's folder and guards. The
+  /// same sensitive-path refusal as `MEDIA:` applies. Null for anything
+  /// else: `http:`, `data:`, other schemes, credentials in the query, a
+  /// sensitive path.
+  static GeneratedMediaReference? artifactReference(String rawValue) {
+    final value = rawValue.trim();
+    if (value.isEmpty ||
+        value.length > 2048 ||
+        value.contains(RegExp(r'[\x00-\x1f\x7f]'))) {
+      return null;
+    }
+    if (value.toLowerCase().startsWith('https:')) {
+      return referenceFromSource(value);
+    }
+    final windows = RegExp(r'^[A-Za-z]:[\\/]').hasMatch(value);
+    final scheme = windows ? null : Uri.tryParse(value)?.scheme.toLowerCase();
+    var path = value;
+    if (scheme != null && scheme.isNotEmpty) {
+      if (scheme != 'file') return null;
+      final uri = Uri.tryParse(value);
+      if (uri == null) return null;
+      path = uri.path;
+    }
+    if (_isSensitivePath(path)) return null;
+    final rawName = _decodedBasename(path);
+    if (rawName.isEmpty || _isSensitiveName(rawName)) return null;
+    final displayName = _displayName(rawName);
+    final lower = rawName.toLowerCase();
+    final kind = _imageExtensions.any(lower.endsWith)
+        ? GeneratedMediaKind.image
+        : _videoExtensions.any(lower.endsWith)
+        ? GeneratedMediaKind.video
+        : _audioExtensions.any(lower.endsWith)
+        ? GeneratedMediaKind.audio
+        : GeneratedMediaKind.file;
+    return GeneratedMediaReference(
+      source: value,
+      kind: kind,
+      sourceKind: GeneratedMediaSourceKind.serverPath,
+      displayName: displayName,
+      mimeType: _mimeType(displayName, kind),
+    );
+  }
+
   /// One transcript line: a `MEDIA:` directive or a whole-line
   /// `::preview{file="…"}` directive (Desktop contract). Any other `::name`
   /// stays prose.
@@ -948,6 +997,8 @@ class GeneratedMediaService {
     GeneratedMediaProgress? onProgress,
     bool Function()? isCancelled,
     Directory? baseDir,
+    bool followCrossOriginRedirects = false,
+    Duration? deadline,
   }) {
     if (reference.sourceKind == GeneratedMediaSourceKind.serverPath &&
         fetchServerPath == null &&
@@ -968,6 +1019,8 @@ class GeneratedMediaService {
       onProgress: onProgress,
       isCancelled: isCancelled,
       baseDir: baseDir,
+      followCrossOriginRedirects: followCrossOriginRedirects,
+      deadline: deadline,
     );
     _inFlight[key] = future;
     unawaited(
@@ -992,6 +1045,8 @@ class GeneratedMediaService {
     GeneratedMediaProgress? onProgress,
     bool Function()? isCancelled,
     Directory? baseDir,
+    bool followCrossOriginRedirects = false,
+    Duration? deadline,
   }) async {
     if (isCancelled?.call() ?? false) {
       throw const GeneratedMediaDownloadCancelled();
@@ -1056,6 +1111,8 @@ class GeneratedMediaService {
           temporary,
           onProgress: onProgress,
           isCancelled: isCancelled,
+          followCrossOriginRedirects: followCrossOriginRedirects,
+          deadline: deadline,
         );
       }
 
@@ -1201,16 +1258,32 @@ class GeneratedMediaService {
         String.fromCharCodes(bytes.sublist(8, 12)) == 'AVI ';
   }
 
+  /// [followCrossOriginRedirects] lets an `https` redirect move to another
+  /// `https` host, as a browser image does (a GitHub file answers from
+  /// `raw.githubusercontent.com`). Only «Artefactos» asks for it; the bytes
+  /// are still capped and must look like [kind]. [deadline] bounds the
+  /// whole download: past it the connection is closed and a
+  /// [TimeoutException] is thrown, so a host that trickles bytes cannot hold
+  /// it forever.
   static Future<void> _downloadHttpsToFile(
     String source,
     GeneratedMediaKind kind,
     File target, {
     GeneratedMediaProgress? onProgress,
     bool Function()? isCancelled,
+    bool followCrossOriginRedirects = false,
+    Duration? deadline,
   }) async {
     var uri = Uri.parse(source);
     final client = HttpClient()
       ..connectionTimeout = const Duration(seconds: 15);
+    var expired = false;
+    final timer = deadline == null
+        ? null
+        : Timer(deadline, () {
+            expired = true;
+            client.close(force: true);
+          });
     try {
       for (var redirect = 0; redirect <= _maxRedirects; redirect++) {
         if (isCancelled?.call() ?? false) {
@@ -1237,7 +1310,8 @@ class GeneratedMediaService {
             throw const HttpException('invalid media redirect');
           }
           final next = uri.resolve(location);
-          if (next.scheme != 'https' || next.origin != uri.origin) {
+          if (next.scheme != 'https' ||
+              (!followCrossOriginRedirects && next.origin != uri.origin)) {
             throw const HttpException('cross-origin media redirect rejected');
           }
           uri = next;
@@ -1278,6 +1352,11 @@ class GeneratedMediaService {
         } finally {
           await sink.close();
         }
+        // Closed by the deadline: a body without a length just ends, and
+        // must not be kept as if it were whole.
+        if (expired) {
+          throw TimeoutException('media download took too long', deadline);
+        }
         if (received <= 0) {
           throw const HttpException('generated media is empty');
         }
@@ -1287,7 +1366,13 @@ class GeneratedMediaService {
         return;
       }
       throw const HttpException('too many media redirects');
+    } catch (_) {
+      if (expired) {
+        throw TimeoutException('media download took too long', deadline);
+      }
+      rethrow;
     } finally {
+      timer?.cancel();
       client.close(force: true);
     }
   }
