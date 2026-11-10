@@ -81,7 +81,7 @@ jobs:
         run: |
           docker run --rm \
             -v "$RUNNER_TEMP/scan:/repo:ro" \
-            trufflesecurity/trufflehog@sha256:ff4c95e9df7d645daf2140e3ca1039031c63106268d5fbb25feb43ceca1bcc33 \
+            trufflesecurity/trufflehog@sha256:674b2f187620a19df77f44cf9a7d77efcc581a5662accef2f2739cbb46ba4a3a \
             --no-update --fail --fail-on-scan-errors \
             --exclude-detectors=URI --exclude-paths=/repo/tool/security/trufflehog_exclude_paths.txt --results=verified,unknown \
             --json git file:///repo \
