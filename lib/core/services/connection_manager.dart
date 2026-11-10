@@ -1752,7 +1752,7 @@ class ApiClient {
   /// True when the Dashboard answered, even to refuse: a 401/403 means the
   /// server is there and the login is what is missing, never an outage.
   Future<bool> _dashboardReachable(DashboardClient dashboard) =>
-      _sharedStatusProbe(() async {
+      _sharedStatusProbe(dashboard, () async {
         try {
           await dashboard.getServerStatus().timeout(
             const Duration(seconds: 10),
@@ -1772,11 +1772,16 @@ class ApiClient {
   /// the drawer each own a client of the same connection and all re-probe
   /// on the same resume, while the server answers in series. A probe that
   /// is still running serves them all; a result is never reused, so the
-  /// next probe after it asks the server again.
+  /// next probe after it asks the server again. The key adds the Dashboard
+  /// the probe runs on to the gateway and its key: two connections on one
+  /// gateway may point at different Dashboards.
   static final Map<String, Future<bool>> _statusProbesInFlight = {};
 
-  Future<bool> _sharedStatusProbe(Future<bool> Function() probe) {
-    final key = '$baseUrl|${_apiKey.hashCode}';
+  Future<bool> _sharedStatusProbe(
+    DashboardClient dashboard,
+    Future<bool> Function() probe,
+  ) {
+    final key = '${dashboard.baseUrl}|$baseUrl|${_apiKey.hashCode}';
     final existing = _statusProbesInFlight[key];
     if (existing != null) return existing;
     late final Future<bool> flight;
