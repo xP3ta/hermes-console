@@ -74,12 +74,20 @@ jobs:
           set -Eeuo pipefail
           # A clean scan only counts if the same config still catches a fresh token.
           tool/security/gitleaks_canary.sh
+          # Scan only the history of the commit under test: a clone that holds
+          # nothing but that commit and its ancestors (other remote branches
+          # are not part of this build).
+          rm -rf "$RUNNER_TEMP/scan" && mkdir "$RUNNER_TEMP/scan"
+          git -C "$RUNNER_TEMP/scan" init -q
+          git -C "$RUNNER_TEMP/scan" fetch -q --no-tags "$GITHUB_WORKSPACE" HEAD
+          git -C "$RUNNER_TEMP/scan" checkout -q --detach FETCH_HEAD
+          cp "$GITHUB_WORKSPACE/.gitleaks.toml" "$RUNNER_TEMP/scan/.gitleaks.toml" 2>/dev/null || true
           docker run --rm \
-            -v "$GITHUB_WORKSPACE:/repo:ro" \
+            -v "$RUNNER_TEMP/scan:/repo:ro" \
             "$GITLEAKS_IMAGE" \
-            git /repo --config /repo/.gitleaks.toml --no-banner --redact=100 --log-opts=HEAD
+            git /repo --config /repo/.gitleaks.toml --no-banner --redact=100
           docker run --rm \
-            -v "$GITHUB_WORKSPACE:/repo:ro" \
+            -v "$RUNNER_TEMP/scan:/repo:ro" \
             trufflesecurity/trufflehog@sha256:ff4c95e9df7d645daf2140e3ca1039031c63106268d5fbb25feb43ceca1bcc33 \
             --no-update --fail --fail-on-scan-errors \
             --exclude-detectors=URI --results=verified,unknown \
