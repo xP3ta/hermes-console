@@ -2,6 +2,8 @@
 // answers when you speak, first in Settings › Voice: its name large,
 // «Cambiar» opening the list with the current one marked, its reasoning
 // below; nothing to pick, read only and GPT-Live say so.
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/design/hermes_design.dart'
@@ -32,10 +34,12 @@ class _Source implements VoiceModelSource {
   final List<String> efforts = [];
   bool fail = false;
   int loads = 0;
+  Completer<void>? hold;
 
   @override
   Future<VoiceModelChoice> load() async {
     loads++;
+    if (hold case final gate?) await gate.future;
     if (fail) throw StateError('down');
     return choice;
   }
@@ -297,6 +301,29 @@ void main() {
     await tester.pump();
     await tester.pump();
     expect(source.loads, 2);
+    expect(find.text('gpt-6-luna'), findsOneWidget);
+  });
+
+  testWidgets('Retry shows the wait at once and cannot be tapped twice', (
+    tester,
+  ) async {
+    final source = _luna()..fail = true;
+    await tester.pumpWidget(_app(VoiceModelBlock(source: source)));
+    await tester.pump();
+    expect(find.text('Reintentar'), findsOneWidget);
+    source
+      ..fail = false
+      ..hold = Completer<void>();
+    await tester.tap(_key('voice-model-change'));
+    await tester.pump();
+    expect(find.text('No se pudo leer el modelo de la voz.'), findsNothing);
+    expect(find.text('…'), findsOneWidget);
+    await tester.tap(_key('voice-model-change'), warnIfMissed: false);
+    await tester.pump();
+    expect(source.loads, 2, reason: 'one Retry, one load');
+    source.hold!.complete();
+    await tester.pump();
+    await tester.pump();
     expect(find.text('gpt-6-luna'), findsOneWidget);
   });
 }
