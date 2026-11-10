@@ -85,6 +85,29 @@ void main() {
     expect(provenance, contains('simple-icons@16.8.0'));
   });
 
+  test('the host table is credited to Hermes Desktop (MIT) too', () {
+    final reuse = File('REUSE.toml').readAsStringSync();
+    final start = reuse.indexOf(
+      'path = "lib/core/widgets/link_brand_glyphs.dart"',
+    );
+    expect(start, isNot(-1));
+    final annotation = reuse.substring(start, reuse.indexOf('\n\n', start));
+    expect(annotation, contains('Simple Icons contributors'));
+    expect(annotation, contains('Copyright (c) 2025 Nous Research'));
+    expect(annotation, contains('"CC0-1.0 AND MIT"'));
+    final notices = File('THIRD_PARTY_NOTICES.md').readAsStringSync();
+    final section = notices.substring(
+      notices.indexOf('## Marcas de sitios en Artefactos'),
+    );
+    final credit = section
+        .substring(0, section.indexOf('\n## '))
+        .replaceAll('\n', ' ');
+    expect(
+      credit,
+      contains('licencia **MIT**, Copyright (c) 2025 Nous Research'),
+    );
+  });
+
   testWidgets('a known site draws its glyph; others the link icon', (
     tester,
   ) async {

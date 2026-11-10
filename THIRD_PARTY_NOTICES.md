@@ -186,9 +186,10 @@ SOFTWARE.
 
 En «Artefactos», cada enlace lleva la marca monocroma de su sitio, como en
 Hermes Desktop: la misma tabla de dominios de Desktop
-(`apps/desktop/src/lib/brand-icon.ts`) y los trazados de Simple Icons 16.8.0
-(`CC0-1.0`), tal como los empaqueta `@icons-pack/react-simple-icons@13.11.1`,
-sin colores. Detalle en [`ASSET_PROVENANCE.md`](ASSET_PROVENANCE.md). Las
+(`apps/desktop/src/lib/brand-icon.ts` de
+https://github.com/NousResearch/hermes-agent, licencia **MIT**, Copyright (c)
+2025 Nous Research) y los trazados de Simple Icons 16.8.0 (`CC0-1.0`), tal como
+los empaqueta `@icons-pack/react-simple-icons@13.11.1`, sin colores. Detalle en [`ASSET_PROVENANCE.md`](ASSET_PROVENANCE.md). Las
 marcas pertenecen a sus titulares y solo indican qué sitio abre el enlace.
 
 ## Componentes Android transitivos relevantes
