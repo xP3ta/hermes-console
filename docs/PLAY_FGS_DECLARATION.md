@@ -132,11 +132,12 @@ camino.
 
 > Hermes Console is a client for the user's own Hermes agent server. When the
 > user turns on "Listen in background" in Settings > Notifications (off by
-> default), a foreground service with an ongoing notification and a Stop action
-> checks only the user's own server, every 30 seconds to 3 minutes, so
-> scheduled-job results, task-board changes and room notices reach the user as
-> local notifications while the app is closed. It runs as `remoteMessaging` on
-> Android 15 or later and as `dataSync` on Android 14 or earlier. It resumes
+> default), a foreground service checks only the user's own server, every 30
+> seconds to 3 minutes, so scheduled-job results, task-board changes and room
+> notices reach the user as local notifications while the app is closed.
+> Listening lasts until the user turns it off, and
+> a persistent notification includes a Stop action. It runs as `remoteMessaging`
+> on Android 15 or later and as `dataSync` on Android 14 or earlier. It resumes
 > after a reboot or an app update only if the user had turned it on. Alerts hide
 > their content by default and carry none when App Lock is on. No data is sent
 > to any XPeta Lab server and Google Play Services are not required.
