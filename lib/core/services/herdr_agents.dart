@@ -1615,6 +1615,11 @@ class HerdrAgentsController extends ChangeNotifier {
       }
     } finally {
       _probing = false;
+      // A hide and show (or a recheck) while this probe was on the wire
+      // found it busy and asked nothing: ask now, under the current run.
+      if (generation != _generation && _active && !_disposed && !_probeDone) {
+        unawaited(_probe());
+      }
     }
   }
 
@@ -1711,6 +1716,14 @@ class HerdrAgentsController extends ChangeNotifier {
       if (_active && !_disposed && generation == _generation) {
         _listTimer?.cancel();
         _listTimer = Timer(next, () => unawaited(_readList(generation)));
+      } else if (_active &&
+          !_disposed &&
+          _probeDone &&
+          !(_listTimer?.isActive ?? false)) {
+        // A hide and show while this read was on the wire found it busy and
+        // read nothing: read now, under the current run (HerdrMonitor._read).
+        final current = _generation;
+        _listTimer = Timer(Duration.zero, () => unawaited(_readList(current)));
       }
     }
   }
@@ -1832,6 +1845,19 @@ class HerdrAgentsController extends ChangeNotifier {
           _readTimer?.cancel();
           _readTimer = Timer(next, () => unawaited(_readDetail(generation)));
         }
+      }
+      if (_active &&
+          !_disposed &&
+          _detail != null &&
+          !(_readTimer?.isActive ?? false) &&
+          (generation != _generation || _detail != paneId)) {
+        // A hide and show, or another agent opened, while this read was on
+        // the wire found it busy and read nothing: read now.
+        final current = _generation;
+        _readTimer = Timer(
+          Duration.zero,
+          () => unawaited(_readDetail(current)),
+        );
       }
     }
   }
