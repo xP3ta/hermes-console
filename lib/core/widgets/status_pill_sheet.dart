@@ -22,7 +22,10 @@ const double kStatusSheetCloseVelocity = kPillMorphDismissVelocity;
 ///   Esc, on the screen reader's dismiss action, and by dragging it down:
 ///   from the header always, from the content only once its scroll is at
 ///   the top. Released short of the threshold it springs back.
-/// * The content scrolls inside the sheet.
+/// * The content scrolls inside the sheet, unless [scrollBody] is false: the
+///   content then gets the room under the header and lays out its own fixed
+///   and scrolling parts (the model sheet keeps its providers and its
+///   reasoning pill in view and scrolls only its list of models).
 /// * Closing never brings back a keyboard the user had already hidden.
 /// * Reduced motion: no geometry morph and no spring, only a short fade.
 /// * [onRoute] hands the pushed route to its owner, so a screen that goes
@@ -34,6 +37,7 @@ Future<T?> showStatusPillSheet<T>({
   required WidgetBuilder builder,
   String? subtitle,
   double maxHeightFactor = 0.85,
+  bool scrollBody = true,
   Rect? Function()? origin,
   ValueChanged<Route<T>>? onRoute,
 }) {
@@ -74,6 +78,7 @@ Future<T?> showStatusPillSheet<T>({
           child: _StatusSheetBody(
             title: title,
             subtitle: subtitle,
+            scrollBody: scrollBody,
             child: Builder(builder: builder),
           ),
         ),
@@ -114,11 +119,13 @@ class _StatusSheetBody extends StatelessWidget {
   const _StatusSheetBody({
     required this.title,
     required this.subtitle,
+    required this.scrollBody,
     required this.child,
   });
 
   final String title;
   final String? subtitle;
+  final bool scrollBody;
   final Widget child;
 
   @override
@@ -168,13 +175,19 @@ class _StatusSheetBody extends StatelessWidget {
       children: [
         header,
         Flexible(
-          child: SingleChildScrollView(
-            key: const ValueKey('status-sheet-scroll'),
-            primary: false,
-            physics: const ClampingScrollPhysics(),
-            padding: const EdgeInsets.fromLTRB(18, 4, 18, 18),
-            child: child,
-          ),
+          child: scrollBody
+              ? SingleChildScrollView(
+                  key: const ValueKey('status-sheet-scroll'),
+                  primary: false,
+                  physics: const ClampingScrollPhysics(),
+                  padding: const EdgeInsets.fromLTRB(18, 4, 18, 18),
+                  child: child,
+                )
+              : Padding(
+                  key: const ValueKey('status-sheet-fixed'),
+                  padding: const EdgeInsets.fromLTRB(18, 4, 18, 14),
+                  child: child,
+                ),
         ),
       ],
     );

@@ -30,6 +30,8 @@ SubagentActivity _sub(
   String id, {
   SubagentActivityPhase phase = SubagentActivityPhase.running,
   String goal = 'Revisar las copias del servidor',
+  String? tool,
+  String? toolArguments,
 }) => SubagentActivity(
   key: SubagentActivityKey(
     scope: _scope,
@@ -39,7 +41,11 @@ SubagentActivity _sub(
   source: SubagentActivitySource.native,
   phase: phase,
   subagentId: id,
-  details: SubagentActivityDetails(goalPreview: goal),
+  details: SubagentActivityDetails(
+    goalPreview: goal,
+    activeToolName: tool,
+    activeToolPreview: toolArguments,
+  ),
 );
 
 SessionActivityProcess _process(
@@ -83,6 +89,7 @@ Future<ValueNotifier<ActivitySnapshot>> _pump(
   double textScale = 1,
   ThemeData? theme,
   bool title = true,
+  bool showSubagents = true,
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
@@ -112,6 +119,7 @@ Future<ValueNotifier<ActivitySnapshot>> _pump(
             snapshot: notifier,
             actions: actions,
             title: title,
+            showSubagents: showSubagents,
             clock: () => _t0.add(const Duration(seconds: 75)),
           ),
         ),
@@ -135,6 +143,43 @@ Iterable<RenderParagraph> _paragraphs(WidgetTester tester) => find
     .map((element) => element.renderObject! as RenderParagraph);
 
 void main() {
+  testWidgets('unconfirmed count keeps its total without claiming live work', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      const ActivitySnapshot(subagentGenericCount: 2, subagentsStale: true),
+    );
+    expect(find.text('Sin confirmar'), findsOneWidget);
+    expect(find.text(StringsEs().liveSubagentsWorking(2)), findsNothing);
+    expect(_key('running-subagents-count'), findsOneWidget);
+  });
+
+  testWidgets('without subagent rows: the group lists them, this card keeps '
+      'what is not a subagent', (tester) async {
+    // While the chat shows the subagents in their group, repeating each one
+    // here (task and «Ver») is the duplicate; processes, loops and the goal
+    // stay.
+    await _pump(tester, _everything(), showSubagents: false);
+    expect(_key('running-subagent-a'), findsNothing);
+    expect(_key('running-subagent-open-a'), findsNothing);
+    expect(_key('running-process-p1'), findsOneWidget);
+    expect(RunningWork.hasContent(_everything(), subagents: false), isTrue);
+    // Only subagents: nothing of this card is left to show.
+    final only = ActivitySnapshot(subagents: [_sub('a')]);
+    expect(RunningWork.hasContent(only), isTrue);
+    expect(RunningWork.hasContent(only, subagents: false), isFalse);
+    await _pump(tester, only, showSubagents: false);
+    expect(_key('running-work-empty'), findsOneWidget);
+    // A roster known only by its number is not listed either.
+    await _pump(
+      tester,
+      const ActivitySnapshot(subagentGenericCount: 2),
+      showSubagents: false,
+    );
+    expect(_key('running-subagents-count'), findsNothing);
+  });
+
   testWidgets('with nothing alive it draws nothing', (tester) async {
     final snapshot = await _pump(tester, ActivitySnapshot.idle);
     expect(_key('running-work'), findsNothing);
@@ -231,6 +276,52 @@ void main() {
       findsNothing,
     );
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('two or more processes offer to stop them all at once', (
+    tester,
+  ) async {
+    var all = 0;
+    final one = <String>[];
+    await _pump(
+      tester,
+      ActivitySnapshot(processes: [_process('p1'), _process('p2')]),
+      actions: RunningWorkActions(
+        stopProcess: (process) => one.add(process.id),
+        stopAllProcesses: () => all++,
+      ),
+    );
+    expect(_key('running-process-stop-p1'), findsOneWidget);
+    expect(_key('running-process-stop-p2'), findsOneWidget);
+    expect(find.text('Detener todos'), findsOneWidget);
+    await tester.tap(_key('running-processes-stop-all'));
+    await tester.pump();
+    expect(all, 1);
+    expect(one, isEmpty);
+    await tester.tap(_key('running-process-stop-p2'));
+    await tester.pump();
+    expect(one, ['p2']);
+    expect(all, 1);
+  });
+
+  testWidgets('stop all is not offered for one process or without the '
+      'action', (tester) async {
+    final snapshot = await _pump(
+      tester,
+      ActivitySnapshot(processes: [_process('p1')]),
+      actions: RunningWorkActions(stopAllProcesses: () => fail('not offered')),
+    );
+    expect(_key('running-processes-stop-all'), findsNothing);
+    snapshot.value = ActivitySnapshot(
+      processes: [_process('p1'), _process('p2')],
+    );
+    await tester.pumpWidget(const SizedBox.shrink());
+    await _pump(
+      tester,
+      snapshot.value,
+      actions: RunningWorkActions(stopProcess: (_) {}),
+    );
+    expect(_key('running-processes-stop-all'), findsNothing);
   });
 
   testWidgets('a paused goal offers to resume it', (tester) async {
@@ -366,6 +457,159 @@ void main() {
     expect(
       RunningWork.aliveCount(const ActivitySnapshot(subagentGenericCount: 3)),
       3,
+    );
+  });
+
+  // QA 9709: the subagents live in the pill. The island says how many of
+  // them work when nothing else is alive, and how they ended once none is.
+  test('what the island says it has to open', () {
+    final s = StringsEs();
+    String? mark(ActivitySnapshot snapshot) =>
+        RunningWork.islandMark(s, snapshot);
+    const completed = SubagentActivityPhase.completed;
+    const failed = SubagentActivityPhase.failed;
+    expect(mark(ActivitySnapshot.idle), isNull);
+    // Only subagents alive: how many of them.
+    expect(
+      mark(ActivitySnapshot(subagents: [_sub('a'), _sub('b')])),
+      '2 subagentes',
+    );
+    expect(
+      mark(const ActivitySnapshot(subagentGenericCount: 1)),
+      '1 subagente',
+    );
+    // Unidentified remote work is not a confirmed subagent.
+    expect(mark(const ActivitySnapshot(passiveRemote: true)), '1 en marcha');
+    // One that ended does not count while another works.
+    expect(
+      mark(
+        ActivitySnapshot(
+          subagents: [
+            _sub('a'),
+            _sub('b', phase: failed),
+          ],
+        ),
+      ),
+      '1 subagente',
+    );
+    // Anything else alive too: how many things.
+    expect(mark(_everything()), '4 en marcha');
+    expect(
+      mark(
+        ActivitySnapshot(subagents: [_sub('a')], processes: [_process('p1')]),
+      ),
+      '2 en marcha',
+    );
+    // None alive: how the ones still there ended.
+    expect(
+      mark(
+        ActivitySnapshot(
+          subagents: [
+            _sub('a', phase: completed),
+            _sub('b', phase: completed),
+            _sub('c', phase: failed),
+          ],
+        ),
+      ),
+      '2 completados · 1 falló',
+    );
+    expect(
+      mark(ActivitySnapshot(subagents: [_sub('a', phase: completed)])),
+      '1 completado',
+    );
+    expect(
+      mark(
+        ActivitySnapshot(
+          subagents: [
+            _sub('a', phase: failed),
+            _sub('b', phase: failed),
+          ],
+        ),
+      ),
+      '2 fallaron',
+    );
+    // One was stopped: how many ended, as before.
+    expect(
+      mark(
+        ActivitySnapshot(
+          subagents: [
+            _sub('a', phase: completed),
+            _sub('b', phase: SubagentActivityPhase.cancelled),
+          ],
+        ),
+      ),
+      '2 terminados',
+    );
+  });
+
+  test('passive remote counts stay generic without a confirmed roster', () {
+    final s = StringsEs();
+    for (final count in const [1, 3]) {
+      final snapshot = ActivitySnapshot(
+        subagentGenericCount: count,
+        passiveRemote: true,
+      );
+      expect(RunningWork.aliveCount(snapshot), count);
+      expect(RunningWork.islandMark(s, snapshot), '$count en marcha');
+    }
+    // A process still contributes to the same generic total.
+    expect(
+      RunningWork.islandMark(
+        s,
+        ActivitySnapshot(
+          subagentGenericCount: 2,
+          passiveRemote: true,
+          processes: [_process('p1')],
+        ),
+      ),
+      '3 en marcha',
+    );
+  });
+
+  test('a remote roster still identifies living subagents', () {
+    expect(
+      RunningWork.islandMark(
+        StringsEs(),
+        ActivitySnapshot(
+          subagentGenericCount: 9,
+          passiveRemote: true,
+          subagents: [
+            _sub('a'),
+            _sub('b'),
+            _sub('c', phase: SubagentActivityPhase.failed),
+          ],
+        ),
+      ),
+      '2 subagentes',
+    );
+  });
+
+  testWidgets('a subagent using a tool says which, never its arguments', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      ActivitySnapshot(
+        subagents: [
+          _sub(
+            't',
+            phase: SubagentActivityPhase.tool,
+            tool: 'read_file',
+            toolArguments: 'notas-privadas.txt',
+          ),
+          _sub('g', phase: SubagentActivityPhase.tool),
+        ],
+      ),
+    );
+    expect(
+      _in('running-subagent-t', 'Subagente · Usando read_file'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('notas-privadas.txt'), findsNothing);
+    // Without its name, the words of before.
+    expect(
+      _in('running-subagent-g', 'Subagente · Usando una herramienta'),
+      findsOneWidget,
     );
   });
 

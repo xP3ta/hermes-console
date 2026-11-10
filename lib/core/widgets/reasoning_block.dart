@@ -4,8 +4,8 @@ import 'reasoning_panel.dart';
 
 /// Bloque de razonamiento del asistente, claramente separado de la respuesta
 /// final. rt1215: es el mismo bloque «Pensamiento» del panel de actividad
-/// ([ReasoningPanel]): cabecera con icono, superficie propia y Markdown
-/// compacto, plegado a unas líneas con «Ver todo».
+/// ([ReasoningPanel]): desde 1.4.0 (maqueta 137 A) una línea fina
+/// «Pensamiento · 12 s» que se abre con un toque.
 ///
 /// Recibe el texto de razonamiento ya extraído de `<think>…</think>` por
 /// `splitReasoning`. Es solo presentación: no muta contenido ni lo persiste.

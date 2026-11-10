@@ -4,6 +4,7 @@ import 'package:hermes_android/core/screens/chat_screen.dart';
 import 'package:hermes_android/core/services/session_reconciler.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/utils/streaming_normalizer.dart';
+import 'package:hermes_android/core/widgets/chat/chat_inline_chips.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 
 TextSpan _markdownSpanContaining(WidgetTester tester, String text) {
@@ -207,8 +208,19 @@ void main() {
     );
 
     expect(find.textContaining('aprox. 955 GB'), findsOneWidget);
-    final span = _markdownSpanContaining(tester, '/home/backups/keys');
-    expect(span.toPlainText(), contains('/home/backups/keys, locks'));
+    // The two paths are chips with their short names; `locks` stays code.
+    expect(
+      [
+        for (final chip in tester.widgetList<ChatFileChip>(
+          find.byType(ChatFileChip),
+        ))
+          chip.ref.name,
+      ],
+      ['backups', 'keys'],
+    );
+    final span = _markdownSpanContaining(tester, ', locks');
+    expect(span.toPlainText(), contains('mantiene'));
+    expect(span.toPlainText(), contains(', locks'));
     expect(tester.takeException(), isNull);
   });
 

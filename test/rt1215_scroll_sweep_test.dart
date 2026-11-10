@@ -255,8 +255,10 @@ void main() {
     );
     expect(tester.takeException(), isNull);
     final list = tester.state<ScrollableState>(find.byType(Scrollable).first);
+    // Mock 137 A: the reasoning is one line now (its body opens on a tap);
+    // a drag that starts on it still scrolls the page.
     await tester.drag(
-      find.byKey(const ValueKey('reasoning-panel-surface')),
+      find.byKey(const ValueKey('reasoning-panel')),
       const Offset(0, -300),
     );
     await tester.pump();

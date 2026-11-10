@@ -202,16 +202,20 @@ void main() {
     return chat;
   }
 
-  // Find moved from the header into the notch sheet ("Buscar en este chat").
+  // Find moved from the header into the notch sheet ("Buscar en este chat"),
+  // which Vistas v3 made «Ajustes», opened from its header button.
   Future<void> openFindFromAppBar(WidgetTester tester) async {
     expect(find.byKey(const ValueKey('chat-find-trigger')), findsNothing);
-    final trigger = find.byKey(const ValueKey('chat-notch'));
+    final trigger = find.byKey(const ValueKey('chat-settings-button'));
     expect(tester.getSize(trigger).height, greaterThanOrEqualTo(48));
     await tester.tap(trigger);
     await tester.pump();
     await tester.pump(kChatNotchSheetOpen);
+    // Vistas v3: Ajustes has «Buscar» as an icon of its quick pill, named
+    // by its tooltip (the notch's sheet had a row of text).
     final row = find.byKey(const ValueKey('chat-control-find'));
-    expect(find.text('Buscar en este chat'), findsOneWidget);
+    expect(find.byTooltip('Buscar en este chat'), findsOneWidget);
+    expect(row, findsOneWidget);
     await tester.tap(row);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 350));

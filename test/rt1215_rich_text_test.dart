@@ -24,6 +24,7 @@ import 'package:hermes_android/core/widgets/running_work.dart';
 import 'package:hermes_android/core/widgets/interactive_prompt_card.dart';
 import 'package:hermes_android/core/widgets/reasoning_block.dart';
 import 'package:hermes_android/core/widgets/reasoning_panel.dart';
+import 'package:hermes_android/core/widgets/thinking_glyph.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 
 final DateTime _t0 = DateTime(2026, 10, 6, 12);
@@ -97,14 +98,20 @@ void _expectHeading(WidgetTester tester, Finder root, String heading) {
     run.first.style.fontWeight!.value,
     greaterThanOrEqualTo(FontWeight.w600.value),
   );
-  expect(run.first.style.color, colors.textPrimary);
+  // The thought's titles keep its quiet ink (9 nov live look); other
+  // Markdown bodies keep the primary one.
+  expect(
+    run.first.style.color,
+    anyOf(colors.textPrimary, colors.textSecondary.withValues(alpha: 0.85)),
+  );
 }
 
 void _expectSecondaryBody(WidgetTester tester, Finder root, String fragment) {
   final colors = AppTheme.hermesRedDark.hermes;
   final run = _runs(tester, root).where((r) => r.text.contains(fragment));
   expect(run, isNotEmpty, reason: 'body "$fragment"');
-  expect(run.first.style.color, colors.textSecondary);
+  // The thought is a notch fainter (9 nov live look).
+  expect(run.first.style.color, anyOf(colors.textSecondary, colors.textSecondary.withValues(alpha: 0.85)));
   expect(run.first.style.height, greaterThanOrEqualTo(1.35));
 }
 
@@ -155,41 +162,74 @@ void main() {
     });
   });
 
+  // Mock 137 A (the owner, 1.4.0): the reasoning block is the same thin line as
+  // the chat's trace, «Thinking… · 12 s» live and «Thinking · 12 s» once
+  // finished; its body, a quote with one 2 dp rule and no surface, opens on
+  // a tap. Before 1.4.0 it was a header over a six-line box with «Show all»,
+  // open from the first token (mock 137, «Hoy»).
   group('reasoning is its own labelled block', () {
     Finder panel() => find.byKey(const ValueKey('reasoning-panel'));
+    Finder line() => find.descendant(
+      of: panel(),
+      matching: find.byKey(const ValueKey('turn-thought-toggle')),
+    );
+    Finder body() => find.descendant(
+      of: panel(),
+      matching: find.byKey(const ValueKey('turn-reasoning')),
+    );
 
     void expectIdentified(WidgetTester tester, {required bool live}) {
-      final colors = AppTheme.hermesRedDark.hermes;
       expect(panel(), findsOneWidget);
-      final header = find.byKey(const ValueKey('reasoning-panel-header'));
+      expect(line(), findsOneWidget);
+      expect(tester.getSize(line()).height, 48);
+      expect(_plain(tester, line()), contains('Thinking'));
+      // Live: the beating dot; finished: the thought's glyph.
       expect(
-        find.descendant(of: header, matching: find.byIcon(reasoningPanelIcon)),
-        findsOneWidget,
-      );
-      expect(_plain(tester, header), contains('Thinking'));
-      expect(
-        find.byKey(const ValueKey('reasoning-panel-live')),
+        find.descendant(of: line(), matching: find.byType(TurnStatusPulse)),
         live ? findsOneWidget : findsNothing,
       );
-      final surface = tester.widget<Container>(
-        find.byKey(const ValueKey('reasoning-panel-surface')),
+      expect(
+        // QA 9709: the thought's glyph is the brain ([ThinkingGlyph]).
+        find.descendant(of: line(), matching: find.byType(ThinkingGlyph)),
+        live ? findsNothing : findsOneWidget,
       );
-      final decoration = surface.decoration! as BoxDecoration;
-      expect(decoration.color, isNotNull);
-      expect(decoration.color, isNot(colors.surface));
-      expect(decoration.color, isNot(colors.background));
-      final border = decoration.border! as Border;
-      expect(border.left.width, greaterThanOrEqualTo(2));
-      expect(border.top, BorderSide.none);
-      expect(surface.padding, const EdgeInsets.all(12));
+      // Folded until the reader opens it.
+      expect(body(), findsNothing);
     }
 
-    testWidgets('live: header, icon, live dot and an inset surface', (
+    Future<void> open(WidgetTester tester) async {
+      await tester.tap(line());
+      await tester.pumpAndSettle();
+    }
+
+    void expectQuote(WidgetTester tester) {
+      final quote =
+          tester
+                  .widget<DecoratedBox>(
+                    find
+                        .descendant(
+                          of: body(),
+                          matching: find.byType(DecoratedBox),
+                        )
+                        .first,
+                  )
+                  .decoration
+              as BoxDecoration;
+      expect(quote.color, isNull, reason: 'no surface behind the quote');
+      // Look of 9 nov 2026: a hairline, no thick bar (Desktop draws none).
+      expect((quote.border! as BorderDirectional).start.width, 1);
+      expect((quote.border! as BorderDirectional).top, BorderSide.none);
+    }
+
+    testWidgets('live: one line with the live dot; a tap opens the quote', (
       tester,
     ) async {
       await tester.pumpWidget(_app(ReasoningPanel(text: _owner, live: true)));
       await tester.pump();
       expectIdentified(tester, live: true);
+      await open(tester);
+      expect(body(), findsOneWidget);
+      expectQuote(tester);
     });
 
     Widget done(String text) => ActivityDoneSection(
@@ -219,8 +259,9 @@ void main() {
       await tester.pumpWidget(_app(done(_owner)));
       await tester.pump();
       expectIdentified(tester, live: false);
-      final header = find.byKey(const ValueKey('reasoning-panel-header'));
-      expect(_plain(tester, header), contains('12'));
+      expect(_plain(tester, line()), contains('12'));
+      await open(tester);
+      expectQuote(tester);
       _expectNoMarkdownSyntax(_plain(tester, panel()));
       _expectHeading(tester, panel(), 'Clarifying homelab choices');
       _expectSecondaryBody(tester, panel(), 'The user wants');
@@ -230,7 +271,7 @@ void main() {
       }
     });
 
-    testWidgets('long reasoning: folded with a fade, Show all, header folds', (
+    testWidgets('long reasoning: one tap opens it whole, another folds it', (
       tester,
     ) async {
       final long = [
@@ -239,29 +280,29 @@ void main() {
       ].join('\n\n');
       await tester.pumpWidget(_app(SingleChildScrollView(child: done(long))));
       await tester.pump();
-      await tester.pump();
-      final surface = find.byKey(const ValueKey('reasoning-panel-surface'));
-      final folded = tester.getSize(surface).height;
-      expect(folded, lessThan(220));
+      final folded = tester.getSize(panel()).height;
+      expect(folded, 48, reason: 'the line, nothing else');
+      await open(tester);
+      // Finished: the whole thought, no box of its own.
       expect(
-        find.byKey(const ValueKey('reasoning-panel-fade')),
-        findsOneWidget,
+        find.descendant(of: body(), matching: find.byType(Scrollable)),
+        findsNothing,
       );
-      await tester.tap(find.byKey(const ValueKey('reasoning-panel-toggle')));
-      await tester.pumpAndSettle();
-      expect(tester.getSize(surface).height, greaterThan(folded * 2));
-      expect(find.text('Show less'), findsOneWidget);
-
-      await tester.tap(find.byKey(const ValueKey('reasoning-panel-header')));
-      await tester.pumpAndSettle();
-      expect(surface, findsNothing);
-      expect(find.byKey(const ValueKey('reasoning-panel-header')), findsOne);
+      expect(tester.getSize(panel()).height, greaterThan(folded * 10));
+      expect(
+        _plain(tester, panel()),
+        contains('Paragraph 40 of the plan.'),
+      );
+      await open(tester);
+      expect(body(), findsNothing);
+      expect(tester.getSize(panel()).height, folded);
     });
 
     testWidgets('the reasoning disclosure uses the same block', (tester) async {
       await tester.pumpWidget(_app(const ReasoningBlock(reasoning: _owner)));
       await tester.pump();
       expectIdentified(tester, live: false);
+      await open(tester);
       _expectNoMarkdownSyntax(_plain(tester, panel()));
       _expectHeading(tester, panel(), 'Clarifying homelab choices');
     });

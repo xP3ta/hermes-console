@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -8,14 +9,19 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 
 import '../../../l10n/app_localizations.dart';
+import '../../design/liquid_glass.dart';
+import '../../models/agent_profile.dart' show kMainProfileFallbackName;
 import '../../models/attachment_draft.dart';
 import '../../utils/large_paste.dart';
+import '../../utils/responsive.dart';
 import '../../theme/app_theme.dart';
+import '../../theme/hermes_tokens.dart' show HermesMotion, HermesType;
 import '../attachment_card.dart';
 import '../attachment_source_sheet.dart';
 import '../hermes_premium_ui.dart';
 import 'composer_clipboard_menu.dart';
 import 'composer_pasted_image.dart';
+import '../../feedback/haptics.dart';
 
 /// Dictado del composer. El host conserva el motor de voz; aquí solo se pinta
 /// el estado y se enrutan las acciones (mic, detener, cancelar, enviar).
@@ -31,10 +37,16 @@ class ConsoleComposerDictation {
     this.cancelEnabled = true,
     this.sendEnabled = false,
     this.level,
+    this.partial = '',
   });
 
   final bool recording;
   final bool transcribing;
+
+  /// Live text of the take while it is spoken (Hermes `stt.streaming`);
+  /// empty shows only the wave. Desktop shows it in its dictation pill
+  /// (`voice-activity.tsx:195-196`).
+  final String partial;
 
   /// Muestra el micrófono cuando no se está grabando.
   final bool interactive;
@@ -96,6 +108,7 @@ class ConsoleComposer extends StatelessWidget {
     required this.focusNode,
     required this.onSend,
     this.onAttach,
+    this.onScanDocument,
     this.attachEnabled = true,
     this.attachments = const [],
     this.onRemoveAttachment,
@@ -107,8 +120,12 @@ class ConsoleComposer extends StatelessWidget {
     this.stopEnabled = true,
     this.busy = false,
     this.onQueue,
+    this.sendLabel,
     this.voiceModeAction,
     this.voiceControls,
+    this.voiceDock,
+    this.voiceDockShown = false,
+    this.voiceDockHint,
     this.locked = false,
     this.showBotModeToggle = true,
     this.footer,
@@ -122,11 +139,16 @@ class ConsoleComposer extends StatelessWidget {
     this.inputFormatters,
     this.onOpenPastedText,
     this.topPadding = 4,
+    this.material,
   });
 
   /// Air above the composer surface. A chat passes 0 so the notch tab,
   /// drawn just above the composer, sits ON the surface's top edge.
   final double topPadding;
+
+  /// Optional shared edge finish; the composer keeps its opaque reading fill.
+  /// Null preserves callers that have not opted into the chat material.
+  final HermesLiquid? material;
 
   final TextEditingController controller;
   final FocusNode focusNode;
@@ -136,6 +158,9 @@ class ConsoleComposer extends StatelessWidget {
 
   /// Fuente de adjunto elegida en el menú `+`; `null` oculta el `+`.
   final ValueChanged<AttachmentSourceChoice>? onAttach;
+
+  /// Entrada "Escanear documento" del menú `+`; `null` la oculta.
+  final VoidCallback? onScanDocument;
   final bool attachEnabled;
 
   /// Adjuntos preparados (tira de vistas previas sobre el campo).
@@ -157,6 +182,7 @@ class ConsoleComposer extends StatelessWidget {
 
   /// Pulsación larga en enviar: poner en cola.
   final VoidCallback? onQueue;
+  final String? sendLabel;
 
   /// Acción primaria alternativa (p. ej. modo voz del chat principal) que
   /// sustituye a enviar cuando no hay nada que enviar.
@@ -166,6 +192,22 @@ class ConsoleComposer extends StatelessWidget {
   /// trailing end and the dictation microphone steps aside, since the
   /// conversation holds the microphone. Typing and sending are unchanged.
   final ConsoleComposerVoiceControls? voiceControls;
+
+  /// Voz inline: the voice dock, laid over the input row in the composer
+  /// field's own footprint and material while [voiceDockShown]. The input
+  /// row stays mounted under it (the field keeps its text, focus and IME
+  /// connection, and its height is the dock's), so the swap is a 250 ms
+  /// cross-fade and nothing above the composer moves.
+  final Widget? voiceDock;
+  final bool voiceDockShown;
+
+  /// One muted line under the dock («Di «stop» para salir…»). It is drawn
+  /// in the composer's bottom margin and never adds height: it only shows
+  /// where that margin has room for it and the text scale is under 1.3.
+  final String? voiceDockHint;
+
+  /// The dock's cross-fade with the input row.
+  static const Duration voiceDockSwap = HermesMotion.voiceSwap;
 
   /// Disables the composer's own controls (attach, field, dictation, send or
   /// stop, footer) and leaves [voiceControls] live. For a host that locks the
@@ -278,6 +320,46 @@ class ConsoleComposer extends StatelessWidget {
     return const SizedBox.shrink(key: ValueKey('no-mic'));
   }
 
+  /// The recording area: the wave, and the live text over it dimmed so the
+  /// level still shows without competing with the words.
+  Widget _dictationArea(
+    BuildContext context,
+    HermesThemeColors colors,
+    ValueListenable<double> level, {
+    required bool transcribing,
+    required String partial,
+  }) {
+    final dimmed = partial.isNotEmpty;
+    return IgnorePointer(
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          ConsoleDictationVisualizer(
+            key: const ValueKey('dictation-visualizer'),
+            level: level,
+            color: dimmed
+                ? colors.textSecondary.withValues(alpha: 0.28)
+                : colors.textSecondary,
+            mutedColor: dimmed
+                ? colors.textDisabled.withValues(alpha: 0.28)
+                : colors.textDisabled,
+            transcribing: transcribing,
+            listeningLabel: Strings.of(context).chaVoiceListeningLabel,
+            transcribingLabel: Strings.of(context).chaVoiceTranscribingLabel,
+          ),
+          if (dimmed)
+            Positioned.fill(
+              child: ConsoleDictationPartial(
+                key: const ValueKey('dictation-partial'),
+                text: partial,
+                color: colors.textPrimary,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   Widget _dictationCancel(
     BuildContext context,
     HermesThemeColors colors,
@@ -314,10 +396,12 @@ class ConsoleComposer extends StatelessWidget {
           iconSize: 23,
           semanticLabel: Strings.of(context).chaSendTooltip,
           onPressed: enabled ? dictation.onSend : null,
+          // Like the main send (AUDITORIA-PULIDO §2.3): white on a light
+          // grey read as nothing in the light theme.
           backgroundColor: enabled
-              ? Colors.white
+              ? colors.accent
               : colors.surfaceVariant.withValues(alpha: 0.72),
-          foregroundColor: enabled ? Colors.black : colors.textDisabled,
+          foregroundColor: enabled ? colors.onAccent : colors.textDisabled,
           enabled: enabled,
           size: 42,
         ),
@@ -354,6 +438,7 @@ class ConsoleComposer extends StatelessWidget {
                 enabled: !locked && (showStop ? stopEnabled : sendEnabled),
                 onSend: _send,
                 onQueue: locked ? null : onQueue,
+                sendLabel: sendLabel,
                 onStop: onStop ?? () {},
               ),
             ),
@@ -367,21 +452,25 @@ class ConsoleComposer extends StatelessWidget {
     final recording = dictation?.recording ?? false;
     final transcribing = dictation?.transcribing ?? false;
     final level = dictation?.level;
+    final livePartial = dictation?.partial.trim() ?? '';
     final footer = showBotModeToggle ? this.footer : null;
     final voiceControls = showBotModeToggle ? this.voiceControls : null;
     final voiceTakesPrimarySlot = voiceControls?.takesPrimarySlot ?? false;
-    // La lectura de `viewInsets`/orientación vive en un `Builder` propio: así
+    final voiceDock = showBotModeToggle ? this.voiceDock : null;
+    final dockShown = voiceDock != null && voiceDockShown;
+    final swap = reduceMotion ? Duration.zero : voiceDockSwap;
+    // La lectura del teclado/orientación vive en un builder propio: así
     // solo este subárbol se reconstruye con cada frame de la animación del
     // teclado, en vez de suscribir al host (y con él el transcript) a
     // `MediaQuery.of`.
-    return Builder(
-      builder: (imeContext) {
+    return _KeyboardUpBuilder(
+      builder: (imeContext, keyboardUp) {
         // En horizontal el IME ocupa más de media pantalla. El composer normal
         // (campo de hasta cuatro líneas + fila de acciones + SafeArea) puede
         // quedar más alto que el viewport restante y provocar un RenderFlex
         // overflow.
         final compactIme =
-            MediaQuery.viewInsetsOf(imeContext).bottom > 0 &&
+            keyboardUp &&
             MediaQuery.orientationOf(imeContext) == Orientation.landscape;
         var voiceMaxWidth = 0.0;
         var voiceComfortWidth = 0.0;
@@ -401,6 +490,19 @@ class ConsoleComposer extends StatelessWidget {
           voiceOwnRow = voiceMaxWidth < voiceControls.minWidth;
           if (voiceOwnRow) voiceMaxWidth = voiceComfortWidth = rowWidth;
         }
+        // A chat pane beside the workspace (an open Fold) left the field
+        // narrower than its hint, which broke over four lines and grew the
+        // composer («Pregunta / a / Hermes / …»). There it stays on one line.
+        // A phone keeps its composer as it was.
+        final narrowField =
+            voiceControls == null &&
+            _besideWorkspace(imeContext) &&
+            _hintWouldWrap(
+              imeContext,
+              compactIme: compactIme,
+              recording: recording,
+              primaryVisible: !recording && !voiceTakesPrimarySlot,
+            );
         return Container(
           key: const ValueKey('chat-composer-host'),
           padding: compactIme
@@ -431,139 +533,209 @@ class ConsoleComposer extends StatelessWidget {
                     // Focus styling listens to the node itself, so a focus
                     // flip never needs a host (screen) rebuild.
                     listenable: focusNode,
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
+                    // The input row is always under the same Stack, so the
+                    // dock coming or going never remounts the field.
+                    child: Stack(
                       children: [
-                        if (attachments.isNotEmpty)
-                          ConsoleAttachmentPreviewStrip(
-                            key: const ValueKey('composer-attachment-preview'),
-                            // QA 9493: the tray sits flush at the composer's
-                            // own start inset, in the column of the leading
-                            // `+` glyph (the text start without one), never
-                            // after the `+` with a gap its width.
-                            textStart: recording || onAttach != null
-                                ? _leadingGlyphInset
-                                : _fieldStartPadding,
-                            attachments: attachments,
-                            onRemove: locked ? null : onRemoveAttachment,
-                            onRetry: locked ? null : onRetryAttachment,
-                            onOpenPastedText: locked ? null : onOpenPastedText,
-                          ),
-                        if (voiceControls != null && voiceOwnRow)
-                          Align(
-                            key: const ValueKey('composer-voice-row'),
-                            alignment: AlignmentDirectional.centerEnd,
-                            child: voiceControls.builder(
-                              imeContext,
-                              voiceMaxWidth,
-                              voiceComfortWidth,
-                            ),
-                          ),
-                        Row(
-                          key: const ValueKey('composer-input-row'),
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: [
-                            if (!recording && onAttach != null)
-                              AttachmentSourceMenuButton(
-                                key: const ValueKey('composer-add'),
-                                semanticLabel: Strings.of(
-                                  context,
-                                ).chaAttachTooltip,
-                                onSelected: onAttach!,
-                                enabled: attachEnabled && !locked,
-                              ),
-                            if (recording)
-                              _dictationCancel(context, colors, dictation!),
-                            Expanded(
-                              child: SizedBox(
-                                height: recording
-                                    ? kConsoleDictationComposerHeight
-                                    : null,
-                                child: Stack(
-                                  alignment: Alignment.center,
-                                  children: [
-                                    ExcludeSemantics(
-                                      excluding: recording,
-                                      child: CallbackShortcuts(
-                                        bindings: {
-                                          const SingleActivator(
-                                            LogicalKeyboardKey.enter,
-                                            control: true,
-                                          ): onKeyboardSubmit ?? _send,
-                                          const SingleActivator(
-                                            LogicalKeyboardKey.enter,
-                                            meta: true,
-                                          ): onKeyboardSubmit ?? _send,
-                                        },
-                                        child: _buildField(
-                                          context,
-                                          colors,
-                                          compactIme: compactIme,
-                                          recording: recording,
-                                          singleLineHint: voiceControls != null,
-                                        ),
-                                      ),
+                        _ComposerSwap(
+                          key: const ValueKey('composer-input-swap'),
+                          shown: !dockShown,
+                          duration: swap,
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              // the owner (Fold horizontal, APK 9708): with the
+                              // keyboard up in landscape the tray of 60 dp thumbs
+                              // grew the composer up to the header and no message
+                              // was left. There the attachments are chips in the
+                              // input row (ConsoleAttachmentChips).
+                              if (attachments.isNotEmpty && !compactIme)
+                                ConsoleAttachmentPreviewStrip(
+                                  key: const ValueKey(
+                                    'composer-attachment-preview',
+                                  ),
+                                  // QA 9493: the tray sits flush at the composer's
+                                  // own start inset, in the column of the leading
+                                  // `+` glyph (the text start without one), never
+                                  // after the `+` with a gap its width.
+                                  textStart: recording || onAttach != null
+                                      ? _leadingGlyphInset
+                                      : _fieldStartPadding,
+                                  attachments: attachments,
+                                  onRemove: locked ? null : onRemoveAttachment,
+                                  onRetry: locked ? null : onRetryAttachment,
+                                  onOpenPastedText: locked
+                                      ? null
+                                      : onOpenPastedText,
+                                ),
+                              if (voiceControls != null && voiceOwnRow)
+                                Align(
+                                  key: const ValueKey('composer-voice-row'),
+                                  alignment: AlignmentDirectional.centerEnd,
+                                  child: voiceControls.builder(
+                                    imeContext,
+                                    voiceMaxWidth,
+                                    voiceComfortWidth,
+                                  ),
+                                ),
+                              Row(
+                                key: const ValueKey('composer-input-row'),
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                children: [
+                                  if (!recording && onAttach != null)
+                                    AttachmentSourceMenuButton(
+                                      key: const ValueKey('composer-add'),
+                                      semanticLabel: Strings.of(
+                                        context,
+                                      ).chaAttachTooltip,
+                                      onSelected: onAttach!,
+                                      onScanDocument: onScanDocument,
+                                      enabled: attachEnabled && !locked,
                                     ),
-                                    if (recording && level != null)
-                                      SizedBox(
-                                        key: const ValueKey(
-                                          'dictation-recording-area',
-                                        ),
-                                        height: kConsoleDictationComposerHeight,
-                                        child: Center(
-                                          child: IgnorePointer(
-                                            child: ConsoleDictationVisualizer(
-                                              key: const ValueKey(
-                                                'dictation-visualizer',
+                                  if (recording)
+                                    _dictationCancel(
+                                      context,
+                                      colors,
+                                      dictation!,
+                                    ),
+                                  if (attachments.isNotEmpty && compactIme)
+                                    ConsoleAttachmentChips(
+                                      key: const ValueKey(
+                                        'composer-attachment-chips',
+                                      ),
+                                      attachments: attachments,
+                                      onRemove: locked
+                                          ? null
+                                          : onRemoveAttachment,
+                                    ),
+                                  Expanded(
+                                    child: SizedBox(
+                                      height: recording
+                                          ? kConsoleDictationComposerHeight
+                                          : null,
+                                      child: Stack(
+                                        alignment: Alignment.center,
+                                        children: [
+                                          ExcludeSemantics(
+                                            excluding: recording,
+                                            child: CallbackShortcuts(
+                                              bindings: {
+                                                const SingleActivator(
+                                                  LogicalKeyboardKey.enter,
+                                                  control: true,
+                                                ): onKeyboardSubmit ?? _send,
+                                                const SingleActivator(
+                                                  LogicalKeyboardKey.enter,
+                                                  meta: true,
+                                                ): onKeyboardSubmit ?? _send,
+                                              },
+                                              child: _buildField(
+                                                context,
+                                                colors,
+                                                compactIme: compactIme,
+                                                recording: recording,
+                                                singleLineHint:
+                                                    voiceControls != null ||
+                                                    narrowField,
+                                                shortHint: narrowField,
                                               ),
-                                              level: level,
-                                              color: colors.textSecondary,
-                                              mutedColor: colors.textDisabled,
-                                              transcribing: transcribing,
-                                              listeningLabel: Strings.of(
-                                                context,
-                                              ).chaVoiceListeningLabel,
-                                              transcribingLabel: Strings.of(
-                                                context,
-                                              ).chaVoiceTranscribingLabel,
                                             ),
                                           ),
-                                        ),
+                                          if (recording && level != null)
+                                            SizedBox(
+                                              key: const ValueKey(
+                                                'dictation-recording-area',
+                                              ),
+                                              height:
+                                                  kConsoleDictationComposerHeight,
+                                              child: _dictationArea(
+                                                context,
+                                                colors,
+                                                level,
+                                                transcribing: transcribing,
+                                                partial: livePartial,
+                                              ),
+                                            ),
+                                        ],
                                       ),
+                                    ),
+                                  ),
+                                  if (dictation != null &&
+                                      (voiceControls == null || recording))
+                                    _dictationAction(
+                                      context,
+                                      colors,
+                                      dictation,
+                                    ),
+                                  if (recording)
+                                    _dictationSend(context, colors, dictation!),
+                                  if (voiceControls != null && !voiceOwnRow)
+                                    voiceControls.builder(
+                                      imeContext,
+                                      voiceMaxWidth,
+                                      voiceComfortWidth,
+                                    ),
+                                  if (!recording && !voiceTakesPrimarySlot) ...[
+                                    const SizedBox(width: 2),
+                                    SizedBox.square(
+                                      dimension: 48,
+                                      child: Center(child: _primaryAction()),
+                                    ),
                                   ],
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                        if (voiceDock != null)
+                          Positioned.fill(
+                            child: _ComposerSwap(
+                              key: const ValueKey('voice-dock-swap'),
+                              shown: dockShown,
+                              duration: swap,
+                              child: voiceDock,
+                            ),
+                          ),
+                      ],
+                    ),
+                    builder: (context, child) {
+                      final surface = HermesComposerSurface(
+                        material: material,
+                        focused: focusNode.hasFocus,
+                        unfocusedHorizontalInset: kConsoleComposerSurfaceInset,
+                        padding: compactIme
+                            ? const EdgeInsets.symmetric(horizontal: 4)
+                            : EdgeInsets.zero,
+                        child: child!,
+                      );
+                      final hint =
+                          voiceDock == null || compactIme || footer != null
+                          ? null
+                          : _voiceDockHintLine(imeContext, colors);
+                      // Always the same Stack, so the hint coming or going
+                      // never remounts the composer.
+                      return Stack(
+                        clipBehavior: Clip.none,
+                        children: [
+                          surface,
+                          if (hint != null)
+                            Positioned(
+                              left: 0,
+                              right: 0,
+                              bottom: -hint.height - _voiceDockHintGap,
+                              height: hint.height,
+                              child: IgnorePointer(
+                                child: AnimatedOpacity(
+                                  key: const ValueKey('voice-dock-hint'),
+                                  opacity: dockShown ? 1 : 0,
+                                  duration: swap,
+                                  child: hint.line,
                                 ),
                               ),
                             ),
-                            if (dictation != null &&
-                                (voiceControls == null || recording))
-                              _dictationAction(context, colors, dictation),
-                            if (recording)
-                              _dictationSend(context, colors, dictation!),
-                            if (voiceControls != null && !voiceOwnRow)
-                              voiceControls.builder(
-                                imeContext,
-                                voiceMaxWidth,
-                                voiceComfortWidth,
-                              ),
-                            if (!recording && !voiceTakesPrimarySlot) ...[
-                              const SizedBox(width: 2),
-                              SizedBox.square(
-                                dimension: 48,
-                                child: Center(child: _primaryAction()),
-                              ),
-                            ],
-                          ],
-                        ),
-                      ],
-                    ),
-                    builder: (context, child) => HermesComposerSurface(
-                      focused: focusNode.hasFocus,
-                      unfocusedHorizontalInset: kConsoleComposerSurfaceInset,
-                      padding: compactIme
-                          ? const EdgeInsets.symmetric(horizontal: 4)
-                          : EdgeInsets.zero,
-                      child: child!,
-                    ),
+                        ],
+                      );
+                    },
                   ),
                 ),
                 if (footer != null)
@@ -576,6 +748,41 @@ class ConsoleComposer extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+
+  /// Space between the composer surface and the dock's hint line.
+  static const double _voiceDockHintGap = 2;
+
+  /// The dock's hint line, or null where it has no room: under the surface
+  /// there are the composer's 10 dp of margin and the system's bottom inset,
+  /// and a text scale of 1.3 or more never gets it.
+  ({Widget line, double height})? _voiceDockHintLine(
+    BuildContext context,
+    HermesThemeColors colors,
+  ) {
+    final text = voiceDockHint;
+    if (text == null || text.isEmpty) return null;
+    final scaler = MediaQuery.textScalerOf(context);
+    if (scaler.scale(1) >= 1.3) return null;
+    final style = TextStyle(
+      fontSize: HermesType.caption.fontSize,
+      height: 1.25,
+      color: colors.textSecondary,
+    );
+    final height = scaler.scale(style.fontSize! * style.height!).ceilToDouble();
+    final room = 10 + MediaQuery.paddingOf(context).bottom;
+    if (height + _voiceDockHintGap > room) return null;
+    return (
+      height: height,
+      line: Text(
+        text,
+        key: const ValueKey('voice-dock-hint-text'),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        textAlign: TextAlign.center,
+        style: style,
+      ),
     );
   }
 
@@ -592,8 +799,12 @@ class ConsoleComposer extends StatelessWidget {
         : theme.textTheme.titleMedium;
     final painter = TextPainter(
       text: TextSpan(
-        text: hintText ?? Strings.of(context).chaHintUser,
-        style: (base ?? const TextStyle()).copyWith(fontSize: 14),
+        text:
+            hintText ??
+            Strings.of(context).mpnComposerHint(kMainProfileFallbackName),
+        style: (base ?? const TextStyle()).copyWith(
+          fontSize: HermesType.text.fontSize,
+        ),
       ),
       textDirection: Directionality.of(context),
       textScaler: MediaQuery.textScalerOf(context),
@@ -632,6 +843,31 @@ class ConsoleComposer extends StatelessWidget {
     return math.max(0, rowWidth - taken - field);
   }
 
+  /// This chat is a pane narrower than an expanded window: beside the
+  /// workspace (the panes get their own size as the screen size).
+  static bool _besideWorkspace(BuildContext context) {
+    final view = View.of(context);
+    final window = view.physicalSize.width / view.devicePixelRatio;
+    return window >= Responsive.expandedBreakpoint &&
+        MediaQuery.sizeOf(context).width < window - 0.5;
+  }
+
+  /// The field, between its controls, is narrower than its hint on one
+  /// line (measured like the room the voice controls get).
+  bool _hintWouldWrap(
+    BuildContext context, {
+    required bool compactIme,
+    required bool recording,
+    required bool primaryVisible,
+  }) {
+    var taken = 0.0;
+    if (recording || onAttach != null) taken += _leadingExtent;
+    if (dictation != null) taken += 48;
+    if (primaryVisible) taken += 2 + 48;
+    final field = _inputRowWidth(context, compactIme: compactIme) - taken;
+    return field < _hintFieldWidth(context);
+  }
+
   /// Width of the leading control (attach `+`, or cancel while dictating).
   static const double _leadingExtent = 48;
 
@@ -654,21 +890,36 @@ class ConsoleComposer extends StatelessWidget {
     required bool compactIme,
     required bool recording,
     bool singleLineHint = false,
+    bool shortHint = false,
   }) {
     final onContentInserted = this.onContentInserted;
     return TextField(
       controller: controller,
       focusNode: focusNode,
-      style: recording ? const TextStyle(color: Colors.transparent) : null,
+      // What is written keeps the hint's size: it jumped from 14 to M3's 16
+      // at the first letter (AUDITORIA-PULIDO §2.3).
+      style: TextStyle(
+        fontSize: HermesType.text.fontSize,
+        color: recording ? Colors.transparent : null,
+      ),
       cursorColor: recording ? Colors.transparent : null,
       decoration: InputDecoration(
-        hintText: hintText ?? Strings.of(context).chaHintUser,
+        // Beside the workspace the default hint is the short one (mock 134
+        // «Pregunta…») instead of a cut «Pregunta a Herme…».
+        hintText:
+            hintText ??
+            (shortHint
+                ? Strings.of(context).chaHintUserShort
+                : Strings.of(
+                    context,
+                  ).mpnComposerHint(kMainProfileFallbackName)),
         hintStyle: TextStyle(
           color: recording ? Colors.transparent : colors.textSecondary,
-          fontSize: 14,
+          fontSize: HermesType.text.fontSize,
         ),
-        // Beside the voice controls the field is narrow: its hint stays on
-        // one line instead of growing the composer.
+        // A narrow field (beside the voice controls, or in a chat pane
+        // beside the workspace) keeps its hint on one line instead of
+        // growing the composer; past the field's width it ends in "…".
         hintMaxLines: singleLineHint ? 1 : null,
         filled: false,
         border: InputBorder.none,
@@ -776,6 +1027,207 @@ class _ConsoleComposerPaletteOverlayState
           link: _link,
           child: widget.child,
         ),
+      ),
+    );
+  }
+}
+
+/// Whether the on-screen keyboard is up. A Scaffold that makes room for the
+/// keyboard takes its inset out of its body's MediaQuery, and the composer
+/// lives in that body: there the inset reads 0 with the keyboard up (gate
+/// gint37: the chips never showed). The view's own inset says it. Only the
+/// builder is rebuilt, and only when the keyboard comes or goes.
+class _KeyboardUpBuilder extends StatefulWidget {
+  const _KeyboardUpBuilder({required this.builder});
+
+  final Widget Function(BuildContext context, bool keyboardUp) builder;
+
+  @override
+  State<_KeyboardUpBuilder> createState() => _KeyboardUpBuilderState();
+}
+
+class _KeyboardUpBuilderState extends State<_KeyboardUpBuilder>
+    with WidgetsBindingObserver {
+  ui.FlutterView? _view;
+  bool _up = false;
+
+  bool get _viewKeyboardUp => (_view?.viewInsets.bottom ?? 0) > 0;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _view = View.maybeOf(context);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeMetrics() {
+    if (mounted && _viewKeyboardUp != _up) setState(() {});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    _up = MediaQuery.viewInsetsOf(context).bottom > 0 || _viewKeyboardUp;
+    return widget.builder(context, _up);
+  }
+}
+
+/// The staged attachments as chips inside the input row, for the keyboard
+/// up in landscape (the owner, Fold horizontal, APK 9708): a 28 dp thumb or file
+/// glyph and the name, in a 40 dp pill with a 48 dp remove target. The
+/// composer stays one row: chips, field, send. Scrolls sideways when there
+/// are more than fit in [maxWidth].
+class ConsoleAttachmentChips extends StatelessWidget {
+  const ConsoleAttachmentChips({
+    required this.attachments,
+    required this.onRemove,
+    super.key,
+  });
+
+  final List<AttachmentDraft> attachments;
+  final ValueChanged<String>? onRemove;
+
+  /// Widest the chips get beside the field.
+  static const double maxWidth = 180;
+  static const double height = 40;
+  static const double target = 48;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).hermes;
+    final strings = Strings.of(context);
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: maxWidth),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (final attachment in attachments) ...[
+              _chip(context, colors, strings, attachment),
+              const SizedBox(width: 4),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _chip(
+    BuildContext context,
+    HermesThemeColors colors,
+    Strings strings,
+    AttachmentDraft attachment,
+  ) {
+    final image =
+        attachment.isImage &&
+        attachment.localPath.isNotEmpty &&
+        File(attachment.localPath).existsSync();
+    final remove = attachment.localId.isEmpty || onRemove == null
+        ? null
+        : () => onRemove!(attachment.localId);
+    final name = isPastedContentName(attachment.name)
+        ? strings.t1215PastedContent
+        : attachment.name;
+    return SizedBox(
+      key: ValueKey('composer-attachment-chip-${attachment.localId}'),
+      height: target,
+      child: Stack(
+        alignment: AlignmentDirectional.centerStart,
+        children: [
+          Semantics(
+            label: name,
+            child: Container(
+              height: height,
+              padding: EdgeInsetsDirectional.only(
+                start: 6,
+                end: remove == null ? 12 : target - 4,
+              ),
+              decoration: ShapeDecoration(
+                color: colors.surfaceVariant,
+                shape: StadiumBorder(side: BorderSide(color: colors.divider)),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(14),
+                    child: SizedBox.square(
+                      dimension: 28,
+                      child: image
+                          ? Image.file(
+                              File(attachment.localPath),
+                              fit: BoxFit.cover,
+                              cacheWidth: 84,
+                            )
+                          : ColoredBox(
+                              color: colors.background,
+                              child: Icon(
+                                Icons.insert_drive_file_outlined,
+                                size: 16,
+                                color: colors.textSecondary,
+                              ),
+                            ),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 72),
+                    child: ExcludeSemantics(
+                      child: Text(
+                        name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: colors.textPrimary,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (remove != null)
+            PositionedDirectional(
+              end: 0,
+              top: 0,
+              bottom: 0,
+              width: target,
+              child: Semantics(
+                button: true,
+                label: strings.chaRemoveAttachment,
+                excludeSemantics: true,
+                child: Tooltip(
+                  message: strings.chaRemoveAttachment,
+                  child: GestureDetector(
+                    key: ValueKey(
+                      'composer-attachment-chip-remove-${attachment.localId}',
+                    ),
+                    behavior: HitTestBehavior.opaque,
+                    onTap: remove,
+                    child: Icon(
+                      Icons.close_rounded,
+                      size: 16,
+                      color: colors.textSecondary,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }
@@ -925,6 +1377,7 @@ class ConsoleSendButton extends StatefulWidget {
   final bool busy;
   final VoidCallback onSend;
   final VoidCallback? onQueue;
+  final String? sendLabel;
   final VoidCallback onStop;
 
   const ConsoleSendButton({
@@ -933,6 +1386,7 @@ class ConsoleSendButton extends StatefulWidget {
     required this.onSend,
     required this.onStop,
     this.onQueue,
+    this.sendLabel,
     this.enabled = true,
     this.busy = false,
   });
@@ -944,10 +1398,12 @@ class ConsoleSendButton extends StatefulWidget {
 class _ConsoleSendButtonState extends State<ConsoleSendButton> {
   void _handleTap() {
     if (!widget.enabled) return;
-    HapticFeedback.lightImpact();
     if (widget.mode == ConsoleSendMode.stop) {
+      // Stopping a turn is a light press; sending commits.
+      HermesHaptics.tap();
       widget.onStop();
     } else {
+      HermesHaptics.confirm();
       widget.onSend();
     }
   }
@@ -960,15 +1416,27 @@ class _ConsoleSendButtonState extends State<ConsoleSendButton> {
     final tooltip = widget.busy
         ? s.chaUploadingAttachment
         : switch (widget.mode) {
-            ConsoleSendMode.send => s.chaSendTooltip,
+            ConsoleSendMode.send => widget.sendLabel ?? s.chaSendTooltip,
             ConsoleSendMode.stop => s.chaStopTooltip,
           };
     final icon = switch (widget.mode) {
       ConsoleSendMode.send => Icons.arrow_upward,
       ConsoleSendMode.stop => Icons.stop_rounded,
     };
-    final bg = !widget.enabled ? colors.surfaceVariant : colors.accent;
-    final fg = !widget.enabled ? colors.textDisabled : colors.onAccent;
+    // Q9-CHAT5 v2 (the owner, decision 5): stop is red, the theme's error tone,
+    // with the ink that reads on it.
+    final bg = !widget.enabled
+        ? colors.surfaceVariant
+        : isStop
+        ? colors.error
+        : colors.accent;
+    final fg = !widget.enabled
+        ? colors.textDisabled
+        : isStop
+        ? (ThemeData.estimateBrightnessForColor(colors.error) == Brightness.dark
+              ? Colors.white
+              : Colors.black)
+        : colors.onAccent;
     if (widget.busy) {
       return Semantics(
         label: tooltip,
@@ -987,21 +1455,26 @@ class _ConsoleSendButtonState extends State<ConsoleSendButton> {
     }
 
     final onQueue = widget.onQueue;
-    return HermesTactileAction(
-      icon: icon,
-      iconSize: isStop ? 21 : 19,
-      semanticLabel: tooltip,
-      onPressed: widget.enabled ? _handleTap : null,
-      onLongPress: isStop || !widget.enabled || onQueue == null
-          ? null
-          : () {
-              HapticFeedback.lightImpact();
-              onQueue();
-            },
-      backgroundColor: bg,
-      foregroundColor: fg,
-      enabled: widget.enabled,
-      size: 42,
+    return Semantics(
+      onLongPressHint: !isStop && widget.enabled && onQueue != null
+          ? s.biQueueThisMessageHint
+          : null,
+      child: HermesTactileAction(
+        icon: icon,
+        iconSize: isStop ? 21 : 19,
+        semanticLabel: tooltip,
+        onPressed: widget.enabled ? _handleTap : null,
+        onLongPress: isStop || !widget.enabled || onQueue == null
+            ? null
+            : () {
+                HermesHaptics.tap();
+                onQueue();
+              },
+        backgroundColor: bg,
+        foregroundColor: fg,
+        enabled: widget.enabled,
+        size: 42,
+      ),
     );
   }
 }
@@ -1050,6 +1523,49 @@ class ConsoleComposerBand extends StatelessWidget {
           bottom,
         ),
         child: child,
+      ),
+    );
+  }
+}
+
+/// The live text of a dictation in one line. When it does not fit, the
+/// newest words stay in view and the start is clipped; large text never
+/// overflows the row.
+class ConsoleDictationPartial extends StatelessWidget {
+  const ConsoleDictationPartial({
+    required this.text,
+    required this.color,
+    super.key,
+  });
+
+  final String text;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+    final style = textTheme.bodyMedium?.copyWith(color: color);
+    // Its own node: without `container` the label folds into the area's
+    // node beside the listening status, and a screen reader never reads the
+    // words on their own.
+    return Semantics(
+      container: true,
+      label: text,
+      excludeSemantics: true,
+      child: LayoutBuilder(
+        builder: (context, constraints) => SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          reverse: true,
+          physics: const NeverScrollableScrollPhysics(),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minWidth: constraints.maxWidth),
+            child: Align(
+              alignment: AlignmentDirectional.centerStart,
+              widthFactor: 1,
+              child: Text(text, maxLines: 1, softWrap: false, style: style),
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -1351,4 +1867,30 @@ class _ConsoleDictationBarsPainter extends CustomPainter {
       oldDelegate.color != color ||
       oldDelegate.mutedColor != mutedColor ||
       oldDelegate.transcribing != transcribing;
+}
+
+/// One side of the composer's swap with the voice dock: it fades in or out
+/// in its place and, hidden, takes neither touches nor TalkBack's focus. It
+/// keeps its size and its subtree either way.
+class _ComposerSwap extends StatelessWidget {
+  const _ComposerSwap({
+    required this.shown,
+    required this.duration,
+    required this.child,
+    super.key,
+  });
+
+  final bool shown;
+  final Duration duration;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => AnimatedOpacity(
+    opacity: shown ? 1 : 0,
+    duration: duration,
+    child: IgnorePointer(
+      ignoring: !shown,
+      child: ExcludeSemantics(excluding: !shown, child: child),
+    ),
+  );
 }

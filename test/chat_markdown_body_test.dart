@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/chat/chat_markdown_body.dart';
 import 'package:hermes_android/core/widgets/chat/chat_message_selection_area.dart';
+import 'package:hermes_android/core/widgets/latex/latex_view.dart';
 import 'package:hermes_android/core/widgets/markdown_table.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 
@@ -107,7 +108,7 @@ print("hola")
     expect(find.byType(ChatMarkdownBlock), findsNothing);
   });
 
-  testWidgets('ChatMarkdownBody keeps TeX source out of emphasis parsing', (
+  testWidgets('ChatMarkdownBody paints TeX natively, out of emphasis parsing', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -118,7 +119,8 @@ print("hola")
         ),
       ),
     );
-    expect(_leafStyle(tester, 'a_1 * b_2')?.fontFamily, 'JetBrainsMono');
+    expect(find.byType(LatexFormula), findsOneWidget);
+    expect(find.text(r'$a_1 * b_2$'), findsOneWidget);
     expect(find.textContaining(r'$5 and $10'), findsOneWidget);
   });
 }

@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:hermes_android/core/design/ambient_backdrop.dart';
 import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
 import 'package:hermes_android/core/screens/chat_screen.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
@@ -356,9 +357,27 @@ void main() {
 
     // Tabla con el render propio.
     expect(find.byType(MarkdownTable), findsOneWidget);
-    // Las celdas de la tabla son el único Markdown seleccionable propio.
-    expect(_selectableContains(tester, 'modo'), isTrue);
-    expect(_selectableContains(tester, 'local'), isTrue);
+    // Las celdas de la tabla se seleccionan con la región del mensaje, como
+    // el resto del Markdown: texto normal dentro de ella, sin SelectableText
+    // propio (su línea más alta y el hueco del cursor movían la tabla al
+    // terminar la respuesta).
+    final tableInRegion = find.descendant(
+      of: find.byType(ChatMessageSelectionArea),
+      matching: find.byType(MarkdownTable),
+    );
+    for (final cell in ['modo', 'local']) {
+      expect(_selectableContains(tester, cell), isFalse);
+      expect(
+        find.descendant(
+          of: tableInRegion,
+          matching: find.byWidgetPredicate(
+            (widget) =>
+                widget is RichText && widget.text.toPlainText().contains(cell),
+          ),
+        ),
+        findsWidgets,
+      );
+    }
 
     // Marco del mensaje: nombre en acento, acción copiar y selección parcial
     // vía región estable (sin SelectableText).
@@ -433,6 +452,10 @@ void main() {
         await MascotAtlas.load(kind);
       }
     });
+    // The golden is the chat on its own page colour: the ambient light is a
+    // layer behind the page that this photograph does not include.
+    HermesAmbient.enabled = false;
+    addTearDown(() => HermesAmbient.enabled = true);
     await pumpChat(tester);
     await expectLater(
       find.byType(ChatScreen),

@@ -1,6 +1,10 @@
 // think1216: the model's thinking in the chat stops at a height of its own and
 // scrolls inside, so a very long thought no longer fills the screen. A short
 // one keeps the height it has always had, and the chat never feels the scroll.
+//
+// Mock 137 A (the owner, 1.4.0) sets that height: the box a thought opens to is
+// six lines, whatever the screen or the keyboard (it was 35 % of the screen,
+// 160 to 320 dp). The whole thought, a second tap, has no cap.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -12,6 +16,12 @@ import 'package:hermes_android/l10n/app_localizations.dart';
 
 // The quote adds 4 + 4 of vertical padding around the capped box.
 const double _pad = 8;
+
+// Six lines of the thought's text (mock 137 A).
+const double _six =
+    TurnType.reasoning *
+    TurnReasoningQuote.lineHeight *
+    ThinkingLine.previewLines;
 
 Widget _app(Widget child) => MaterialApp(
   locale: const Locale('en'),
@@ -64,13 +74,12 @@ void main() {
         await tester.pumpWidget(
           _app(
             SingleChildScrollView(
-              child: TurnReasoningQuote(text: _long(120), live: live),
+              child: TurnReasoningQuote(text: _long(120), live: live, lines: 6),
             ),
           ),
         );
         await tester.pump();
-        // 35% of 800 is 280, inside the 160..320 band.
-        expect(tester.getSize(_quote).height, 280 + _pad);
+        expect(tester.getSize(_quote).height, closeTo(_six + _pad, 0.5));
         expect(_inner, findsOneWidget);
         expect(_innerPosition(tester).maxScrollExtent, greaterThan(0));
       });
@@ -83,7 +92,7 @@ void main() {
         await tester.pumpWidget(
           _app(
             SingleChildScrollView(
-              child: TurnReasoningQuote(text: text, live: live),
+              child: TurnReasoningQuote(text: text, live: live, lines: 6),
             ),
           ),
         );
@@ -108,7 +117,7 @@ void main() {
         await tester.pumpWidget(
           _app(
             SingleChildScrollView(
-              child: TurnReasoningQuote(text: text, live: live),
+              child: TurnReasoningQuote(text: text, live: live, lines: 6),
             ),
           ),
         );
@@ -121,7 +130,11 @@ void main() {
         await tester.pumpWidget(
           _app(
             SingleChildScrollView(
-              child: TurnReasoningQuote(text: 'Short thought.', live: live),
+              child: TurnReasoningQuote(
+                text: 'Short thought.',
+                live: live,
+                lines: 6,
+              ),
             ),
           ),
         );
@@ -132,35 +145,47 @@ void main() {
     });
   }
 
-  testWidgets('the cap follows the keyboard and never passes 320', (
+  testWidgets('the cap is six lines whatever the screen or the keyboard', (
     tester,
   ) async {
     final text = _long(200);
-    _screen(tester, w: 1200, h: 2000);
-    await tester.pumpWidget(
-      _app(SingleChildScrollView(child: TurnReasoningQuote(text: text))),
-    );
-    await tester.pump();
-    expect(tester.getSize(_quote).height, 320 + _pad);
-
-    _screen(tester);
-    Widget withKeyboard(double bottom) => _app(
+    Widget quote({double keyboard = 0, double scale = 1}) => _app(
       Builder(
         builder: (context) => MediaQuery(
-          data: MediaQuery.of(
-            context,
-          ).copyWith(viewInsets: EdgeInsets.only(bottom: bottom)),
-          child: SingleChildScrollView(child: TurnReasoningQuote(text: text)),
+          data: MediaQuery.of(context).copyWith(
+            viewInsets: EdgeInsets.only(bottom: keyboard),
+            textScaler: TextScaler.linear(scale),
+          ),
+          child: SingleChildScrollView(
+            child: TurnReasoningQuote(text: text, lines: 6),
+          ),
         ),
       ),
     );
-    await tester.pumpWidget(withKeyboard(300));
+    _screen(tester, w: 1200, h: 2000);
+    await tester.pumpWidget(quote());
     await tester.pump();
-    // (800 - 300) * 0.35 = 175.
-    expect(tester.getSize(_quote).height, 175 + _pad);
-    await tester.pumpWidget(withKeyboard(700));
+    expect(tester.getSize(_quote).height, closeTo(_six + _pad, 0.5));
+    _screen(tester);
+    await tester.pumpWidget(quote(keyboard: 300));
     await tester.pump();
-    expect(tester.getSize(_quote).height, 160 + _pad);
+    expect(tester.getSize(_quote).height, closeTo(_six + _pad, 0.5));
+    // The six lines are lines of the reader's text size.
+    await tester.pumpWidget(quote(scale: 2));
+    await tester.pump();
+    expect(tester.getSize(_quote).height, closeTo(_six * 2 + _pad, 0.5));
+  });
+
+  testWidgets('the whole thought has no cap and no box of its own', (
+    tester,
+  ) async {
+    _screen(tester);
+    await tester.pumpWidget(
+      _app(SingleChildScrollView(child: TurnReasoningQuote(text: _long(40)))),
+    );
+    await tester.pump();
+    expect(_inner, findsNothing);
+    expect(tester.getSize(_quote).height, greaterThan(_six + _pad));
   });
 
   testWidgets('streaming follows the end inside and never moves the chat', (
@@ -180,7 +205,7 @@ void main() {
               reverse: true,
               controller: outer,
               children: [
-                TurnReasoningQuote(text: text, live: true),
+                TurnReasoningQuote(text: text, live: true, lines: 6),
                 const SizedBox(height: 3000),
               ],
             );
@@ -189,7 +214,11 @@ void main() {
       ),
     );
     await tester.pump();
-    outer.jumpTo(100);
+    // The chat is scrolled a little, with the thought still on screen
+    // (gint48: at 100 the six-line box of mock 137 A, ~130 dp, had its
+    // centre below the screen and the drags below missed it).
+    const scrolled = 20.0;
+    outer.jumpTo(scrolled);
     await tester.pump();
 
     Future<void> stream(int from, int to) async {
@@ -203,7 +232,7 @@ void main() {
     var inner = _innerPosition(tester);
     expect(inner.maxScrollExtent, greaterThan(0));
     expect(inner.pixels, inner.maxScrollExtent);
-    expect(outer.offset, 100);
+    expect(outer.offset, scrolled);
 
     // The reader scrolls up inside the thought: the stream stops following.
     await tester.drag(_quote, const Offset(0, 120));
@@ -214,7 +243,7 @@ void main() {
     await stream(6, 12);
     inner = _innerPosition(tester);
     expect(inner.pixels, held);
-    expect(outer.offset, 100);
+    expect(outer.offset, scrolled);
 
     // Back at the end, it follows again.
     await tester.drag(_quote, const Offset(0, -5000));
@@ -222,7 +251,7 @@ void main() {
     await stream(12, 15);
     inner = _innerPosition(tester);
     expect(inner.pixels, inner.maxScrollExtent);
-    expect(outer.offset, 100);
+    expect(outer.offset, scrolled);
   });
 
   testWidgets('a scroll inside the thought is not heard by the chat', (
@@ -238,7 +267,7 @@ void main() {
             return false;
           },
           child: SingleChildScrollView(
-            child: TurnReasoningQuote(text: _long(120)),
+            child: TurnReasoningQuote(text: _long(120), lines: 6),
           ),
         ),
       ),

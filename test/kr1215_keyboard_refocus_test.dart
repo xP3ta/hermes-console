@@ -6,7 +6,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/design/modal.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
-import 'package:hermes_android/core/widgets/island_card.dart';
+import 'support/legacy_island_card.dart';
 import 'package:hermes_android/core/widgets/pill_morph.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 

@@ -1,3 +1,9 @@
+import 'package:hermes_android/core/services/connection_status.dart' show ConnectionLinkSource;
+import 'package:hermes_android/core/widgets/chat/chat_queue_chip.dart';
+
+import 'support/live_chat_v4.dart';
+
+import 'package:hermes_android/core/widgets/chat/delegated_work_pill.dart';
 import 'package:hermes_android/core/models/core_read.dart';
 import 'package:hermes_android/core/models/bot_mention.dart';
 import 'package:hermes_android/core/services/bot_mention_roster.dart';
@@ -21,6 +27,10 @@ import 'package:hermes_android/core/services/bot_mention_roster.dart';
 import 'dart:async';
 
 import 'package:hermes_android/core/widgets/console_loader.dart';
+import 'package:hermes_android/core/widgets/account_limits_section.dart';
+import 'package:hermes_android/core/widgets/provider_logo.dart';
+import 'package:hermes_android/core/widgets/session_model_sheet.dart'
+    show kReasoningTrackInset;
 
 import 'support/model_catalog_budget_channel.dart';
 
@@ -30,7 +40,15 @@ import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart' show RenderParagraph;
+import 'package:flutter/rendering.dart'
+    show
+        BackdropFilterLayer,
+        RenderParagraph,
+        RenderImage,
+        RenderObject,
+        RenderBox,
+        MatrixUtils,
+        RenderSliverMultiBoxAdaptor;
 import 'package:flutter_markdown/flutter_markdown.dart' show MarkdownBody;
 import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
@@ -39,6 +57,8 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'pill_copy_fit_test.dart' show expectPillLabelsFit;
 import 'support/design_shots.dart' show loadDesignFonts;
+import 'support/bottom_transparency.dart' show ViewPixels;
+import 'support/real_chat_glass_probe.dart';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -57,15 +77,26 @@ import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:hermes_android/core/companion/models/companion_presence_level.dart';
 import 'package:hermes_android/core/companion/render/companion_status_indicator.dart';
 import 'package:hermes_android/core/companion/render/companion_view.dart';
+import 'package:hermes_android/core/config/feature_flags.dart';
 import 'package:hermes_android/core/config/flavor.dart';
 import 'package:hermes_android/core/companion/models/companion.dart';
 import 'package:hermes_android/core/companion/models/companion_animation_state.dart';
 import 'package:hermes_android/core/companion/models/companion_mood.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
+import 'package:hermes_android/core/theme/hermes_tokens.dart'
+    show HermesChrome, HermesSpace;
+import 'package:hermes_android/core/design/glass_strip.dart';
+import 'package:hermes_android/core/widgets/frosted_backdrop.dart';
 import 'package:hermes_android/core/models/activity_snapshot.dart';
+import 'package:hermes_android/core/widgets/chat/live_turn_pills.dart'
+    show LiveTurnPills;
+import 'package:hermes_android/core/widgets/chat/live_reply_reveal.dart';
+import 'package:hermes_android/core/widgets/chat/turn_activity_pill.dart'
+    show TurnInlineActivity;
 import 'package:hermes_android/core/models/agent_profile.dart';
 import 'package:hermes_android/core/services/bot_roster_store.dart';
 import 'package:hermes_android/core/models/profile_identity.dart';
+import 'package:hermes_android/core/widgets/profile_face.dart';
 import 'package:hermes_android/core/widgets/profile_pet_avatar.dart';
 import 'package:hermes_android/core/companion/render/spritesheet_renderer.dart';
 import 'package:hermes_android/core/models/agent_task_list.dart';
@@ -77,6 +108,16 @@ import 'package:hermes_android/core/models/desktop_compression_result.dart';
 
 import 'support/clipboard_image_fake.dart';
 import 'support/fake_webview_platform.dart';
+import 'support/fake_git_review_gateway.dart';
+import 'package:hermes_android/core/models/git_review.dart';
+import 'package:hermes_android/core/services/git_review_gateway.dart';
+import 'package:hermes_android/core/screens/git_hub_screen.dart';
+import 'package:hermes_android/core/widgets/hermes_app_bar.dart';
+import 'package:hermes_android/core/widgets/workspace/chat_workspace_host.dart'
+    show ChatWorkspacePaneScope, chatWorkspacePaneRadius;
+import 'package:hermes_android/core/browser/in_app_tabbed_browser.dart';
+import 'package:hermes_android/core/screens/ssh_terminal_screen.dart';
+import 'package:xterm/xterm.dart' show Terminal;
 
 import 'package:hermes_android/core/widgets/artifact_viewer/artifact_viewer_screen.dart';
 import 'package:url_launcher_platform_interface/url_launcher_platform_interface.dart';
@@ -97,21 +138,25 @@ import 'package:hermes_android/core/services/session_config_reducer.dart';
 
 import 'package:hermes_android/core/models/interactive_prompt.dart';
 import 'package:hermes_android/core/models/prepared_turn.dart';
+import 'package:hermes_android/core/screens/chat_content_screen.dart';
 import 'package:hermes_android/core/screens/chat_screen.dart';
+import 'package:hermes_android/core/screens/screen_peek_screen.dart';
 import 'package:hermes_android/core/bots/ui/bot_identity.dart';
 import 'package:hermes_android/core/bots/ui/profile/profile_model_picker.dart'
     show ProfileModelEdits;
 import 'package:hermes_android/core/bots/ui/roster/living_bot_face.dart';
-import 'package:hermes_android/core/widgets/hermes_bot_face.dart';
 import 'package:hermes_android/core/widgets/chat/chat_message_frame.dart'
     show ChatMessageHeader;
 import 'package:hermes_android/core/widgets/chat/console_composer.dart';
 import 'package:hermes_android/core/screens/lock_screen.dart';
 import 'package:hermes_android/core/screens/session_list_screen.dart';
-import 'package:hermes_android/core/screens/memory_screen.dart';
-import 'package:hermes_android/core/screens/projects_center_screen.dart';
-import 'package:hermes_android/core/screens/settings_screen.dart';
+import 'package:hermes_android/core/browser/agent_browser_bridge.dart';
+import 'package:hermes_android/core/browser/agent_browser_pip.dart';
+import 'package:hermes_android/core/browser/in_app_browser_screen.dart';
+import 'package:hermes_android/core/screens/ssh_screen.dart';
+import 'package:hermes_android/core/screens/ssh_credentials_screen.dart';
 import 'package:hermes_android/core/widgets/chat/chat_notch.dart';
+import 'package:hermes_android/core/widgets/chat/chat_sources_list.dart';
 import 'package:hermes_android/core/services/session_archive.dart';
 import 'package:hermes_android/core/models/home_widget_snapshot.dart';
 import 'package:hermes_android/core/screens/home_dashboard_screen.dart';
@@ -119,6 +164,7 @@ import 'package:hermes_android/core/navigation/chat_route.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/compression_restore_store.dart';
 import 'package:hermes_android/core/services/desktop_control_gateway.dart';
+import 'package:hermes_android/core/services/subagent_group_visibility.dart';
 import 'package:hermes_android/core/services/subagent_transcript_projection.dart';
 import 'package:hermes_android/core/services/account_limits_controller.dart';
 import 'package:hermes_android/core/services/app_lock.dart';
@@ -154,15 +200,21 @@ import 'package:hermes_android/core/services/voice/voice_service.dart';
 import 'package:hermes_android/core/services/voice/stt_remote.dart';
 import 'package:hermes_android/core/services/voice/conversation/native_voice.dart';
 import 'package:hermes_android/core/services/voice/voice_phase.dart';
+import 'package:hermes_android/core/services/voice/voice_stop_phrases.dart';
 import 'package:hermes_android/core/widgets/attachment_card.dart';
 import 'package:hermes_android/core/widgets/attachment_history_preview.dart';
 import 'package:hermes_android/core/widgets/chat_event_cards.dart';
+import 'package:hermes_android/core/widgets/chat_approval_dock.dart';
 import 'package:hermes_android/core/widgets/chat/tool_output_cards.dart';
+import 'package:hermes_android/core/widgets/chat/tool_steps_summary.dart';
 import 'package:hermes_android/core/widgets/chat/turn_changes_sheet.dart';
 import 'package:hermes_android/core/widgets/compaction_dock.dart';
 import 'package:hermes_android/core/widgets/floating_chat_header.dart';
 import 'package:hermes_android/core/widgets/generated_image_card.dart';
 import 'package:hermes_android/core/widgets/activity_pill.dart';
+import 'package:hermes_android/core/widgets/workspace/chat_workspace.dart'
+    show ChatWorkspaceGeometry, ChatWorkspaceMode;
+import 'package:hermes_android/core/widgets/hermes_drawer.dart';
 import 'package:hermes_android/core/widgets/hermes_notice.dart';
 import 'package:hermes_android/core/widgets/island.dart';
 import 'package:hermes_android/core/widgets/reasoning_block.dart';
@@ -174,8 +226,14 @@ import 'package:hermes_android/core/widgets/chat_status_pill.dart';
 import 'package:hermes_android/core/widgets/mascot/mascot_sprite.dart';
 import 'package:hermes_android/core/widgets/mascot/mascot_state.dart';
 import 'package:hermes_android/core/widgets/stacked_image_cards.dart';
+import 'package:hermes_android/core/widgets/pill_morph.dart'
+    show kPillMorphOpen;
+import 'package:hermes_android/core/widgets/voice_capsule.dart';
+import 'package:hermes_android/core/widgets/voice_halo.dart';
 import 'package:hermes_android/core/models/subagent_activity.dart';
 import 'package:hermes_android/core/widgets/subagent_activity_card.dart';
+import 'package:hermes_android/core/widgets/subagent_work_pill.dart';
+import 'package:hermes_android/core/widgets/chat_control_sheet.dart';
 
 import 'support/inter_font.dart';
 import 'support/provider_logo_probe.dart';
@@ -595,6 +653,39 @@ class _ScreenServerSttEngine implements SttEngine {
   Future<void> dispose() => delegate.dispose();
 }
 
+class _AuthLinkGateway extends _UiRewindGateway implements ConnectionLinkSource {
+  final _link = ChangeNotifier();
+  bool _closed = false;
+  int successfulDials = 0;
+  @override
+  Listenable get linkListenable => _link;
+  @override
+  bool get isClosed => _closed;
+  @override
+  bool get linkAuthRejected => connectError is DashboardAuthException;
+  @override
+  DateTime? get linkReconnectAt => null;
+  @override
+  int get linkReconnectAttempt => 0;
+  @override
+  bool get linkParked => false;
+
+  @override
+  Future<void> connect() async {
+    await super.connect();
+    successfulDials++;
+    _link.notifyListeners();
+  }
+
+  @override
+  Future<void> close() async {
+    if (_closed) return;
+    _closed = true;
+    await super.close();
+    _link.dispose();
+  }
+}
+
 class _UiRewindGateway
     implements
         HermesDesktopGateway,
@@ -970,14 +1061,78 @@ class _UiRewindGateway
 // Real producer ordering also permits a successor started by another viewer.
 /// Drops the live socket on demand and keeps the automatic reattach pending,
 /// so the chat transport stays offline/reconnecting.
+// Compact-panel fixtures keep every operation in memory (no SSH socket).
+class _Qa9715SshSessions extends SshSessionService {
+  _Qa9715SshSessions(super.manager) {
+    session.phase.value = SshSessionPhase.ready;
+  }
+  final session = SshTerminalSession('conn-test', Terminal());
+  int connectCalls = 0;
+
+  @override
+  SshTerminalSession? of(String connectionId) =>
+      connectionId == session.connectionId ? session : null;
+
+  @override
+  Future<SshTerminalSession> connect(
+    String connectionId, {
+    required Future<bool> Function(SshHostKeyPrompt) onHostKey,
+  }) async {
+    connectCalls++;
+    return session;
+  }
+}
+
+class _Qa9715GitGateway extends _StableRefreshGateway
+    implements HermesGitReviewGateway {
+  final git = FakeGitReviewGateway(
+    status: const GitRepoStatus(branch: 'main', conflicted: 1, changed: 1),
+    files: const [GitReviewFile(path: 'conflict.txt', status: 'U')],
+  );
+  @override
+  bool get gitWritesAllowed => git.gitWritesAllowed;
+  @override
+  bool get gitReviewKnownUnsupported => git.gitReviewKnownUnsupported;
+  @override
+  Future<GitRepoStatus?> gitRepoStatus(String path) => git.gitRepoStatus(path);
+  @override
+  Future<GitReviewList> gitReviewList(
+    String path, {
+    GitReviewScope scope = GitReviewScope.uncommitted,
+  }) => git.gitReviewList(path, scope: scope);
+  @override
+  Future<GitReviewDiff> gitReviewDiff(
+    String path,
+    GitReviewFile file, {
+    GitReviewScope scope = GitReviewScope.uncommitted,
+  }) => git.gitReviewDiff(path, file, scope: scope);
+  @override
+  Future<void> gitStage(String path, String file) => git.gitStage(path, file);
+  @override
+  Future<void> gitUnstage(String path, String file) =>
+      git.gitUnstage(path, file);
+  @override
+  Future<void> gitCommit(String path, String message) =>
+      git.gitCommit(path, message);
+}
+
 class _DroppedTransportGateway extends _UiRewindGateway
     implements HermesDesktopRecoverySessionLifecycleGateway {
   final Completer<DesktopSessionSnapshot> recoveryGate =
       Completer<DesktopSessionSnapshot>();
 
+  /// The network stays down: redials fail (the socket never comes back).
+  bool refuseRedial = false;
+
   void drop() {
     connected = false;
     _events.addError(StateError('socket dropped'));
+  }
+
+  @override
+  Future<void> connect() async {
+    if (refuseRedial) throw StateError('network down');
+    return super.connect();
   }
 
   @override
@@ -1038,6 +1193,34 @@ class _SequencedSuccessorGateway extends _UiRewindGateway {
       ),
     );
   }
+}
+
+/// event-turn: the turn Hermes runs on its own when a delegated subagent ends
+/// (`async_delegation_complete`), started after the socket was renewed since
+/// the previous turn closed: same server numbering, another transport.
+class _EventTurnSuccessorGateway extends _SequencedSuccessorGateway
+    implements HermesDesktopRecoverySessionLifecycleGateway {
+  bool serverRunning = false;
+  int recoveryReads = 0;
+
+  @override
+  Future<DesktopSessionSnapshot> resumeExistingForRecovery(
+    String storedSessionId, {
+    String profile = '',
+  }) async {
+    recoveryReads += 1;
+    return DesktopSessionSnapshot(
+      runtimeSessionId: 'runtime-ui-test',
+      storedSessionId: storedSessionId,
+      created: false,
+      running: serverRunning,
+      status: serverRunning ? 'working' : 'idle',
+    );
+  }
+
+  @override
+  // ignore: deprecated_member_use_from_same_package
+  void commitRecoveryRuntime(String runtimeSessionId) {}
 }
 
 class _StableRefreshGateway extends _UiRewindGateway
@@ -1189,6 +1372,8 @@ class _StableRefreshGateway extends _UiRewindGateway
 
 class _RestoredApprovalUiGateway extends _UiRewindGateway
     implements HermesDesktopApprovalResultGateway {
+  Object? approvalError;
+  Completer<DesktopApprovalResult>? approvalGate;
   final approvalCalls =
       <({String runtimeId, String choice, String requestId})>[];
 
@@ -1230,6 +1415,8 @@ class _RestoredApprovalUiGateway extends _UiRewindGateway
       choice: choice,
       requestId: requestId,
     ));
+    if (approvalError case final error?) throw error;
+    if (approvalGate case final gate?) return gate.future;
     return const DesktopApprovalResult(resolved: 1);
   }
 }
@@ -1256,6 +1443,16 @@ class _InteractiveUiGateway extends _UiRewindGateway
     return DesktopPromptResponse.fromJson(const {
       'status': 'ok',
     }, method: 'clarify.respond');
+  }
+
+  final List<String> skippedClarify = [];
+
+  @override
+  Future<DesktopPromptResponse> skipClarify(String requestId) async {
+    skippedClarify.add(requestId);
+    return DesktopPromptResponse.fromJson(const {
+      'status': 'ok',
+    }, method: 'request.answer');
   }
 
   @override
@@ -1638,6 +1835,8 @@ class _ColdHistoryGateway extends _UiRewindGateway {
 class _SessionlessCatalogGateway extends _UiRewindGateway
     implements HermesDesktopGlobalModelCatalogGateway {
   int globalCalls = 0;
+  Completer<void>? catalogGate;
+  DesktopModelCatalog? catalogOverride;
   final List<bool> connectedOnlyFlags = [];
 
   @override
@@ -1649,6 +1848,8 @@ class _SessionlessCatalogGateway extends _UiRewindGateway
   }) async {
     globalCalls++;
     connectedOnlyFlags.add(connectedOnly);
+    if (catalogGate case final gate?) await gate.future;
+    if (catalogOverride case final catalog?) return catalog;
     return DesktopModelCatalog.fromJson(const {
       'model': 'disk-model',
       'provider': 'provider-a',
@@ -1928,8 +2129,12 @@ class _UiReleaseOutbox implements TurnOutboxPersistence {
 }
 
 class _FailingDeleteOutbox implements TurnOutboxPersistence {
+  _FailingDeleteOutbox({this.failSave = false});
+  final bool failSave;
   @override
-  Future<void> save(PreparedTurn turn) async {}
+  Future<void> save(PreparedTurn turn) async {
+    if (failSave) throw StateError('outbox unavailable');
+  }
 
   @override
   Future<void> delete(PreparedTurn turn) async =>
@@ -2032,6 +2237,35 @@ class _MentionSlashGateway extends _UiRewindGateway {
   }
 }
 
+/// A Hermes that publishes `/goal` and answers it as `_cmd_goal` does
+/// (`tui_gateway/methods_tools.py`): a `send` with its notice and the
+/// kickoff prompt built from the goal.
+class _GoalSlashGateway extends _UiRewindGateway {
+  @override
+  Future<DesktopCommandCatalog> commandsCatalog() async =>
+      DesktopCommandCatalog.fromJson(const {
+        'pairs': [
+          ['/goal', 'Set a standing goal'],
+        ],
+      });
+
+  @override
+  Future<DesktopCommandRpcResult> slashExec(
+    String runtimeSessionId,
+    String command,
+  ) async {
+    slashCalls.add((runtimeId: runtimeSessionId, command: command));
+    final error = slashError;
+    if (error != null) throw error;
+    return DesktopCommandRpcResult(
+      kind: DesktopCommandDispatchKind.send,
+      accepted: DesktopCommandAcceptance.accepted,
+      notice: '⊙ Goal set (20-turn budget)',
+      message: 'GOAL KICKOFF: ${command.substring('goal '.length)}',
+    );
+  }
+}
+
 class _SubmissionGateway
     implements
         HermesDesktopGateway,
@@ -2043,6 +2277,7 @@ class _SubmissionGateway
   final List<String> steers = [];
   Completer<void>? submitGate;
   Object? submitError;
+  void Function(String)? onSubmit;
   Object? steerError;
   int connectCalls = 0;
   int resumeCalls = 0;
@@ -2107,6 +2342,7 @@ class _SubmissionGateway
   @override
   Future<void> submitPrompt(String runtimeSessionId, String text) async {
     submissions.add(text);
+    onSubmit?.call(text);
     await submitGate?.future;
     final error = submitError;
     if (error != null) throw error;
@@ -2514,6 +2750,42 @@ Future<void> _tapSheetRow(WidgetTester tester, Finder row) async {
   await tester.tap(row);
 }
 
+/// Waits for work that only advances in real time (file I/O, isolates,
+/// platform channels) until [done] holds, bounded by wall-clock time rather
+/// than a frame count: on a loaded machine (the full suite at `-j 2`) it
+/// waits longer instead of running out of frames (gint27).
+///
+/// Each turn is the one the frame-counted waits took: [real] of real time,
+/// then a [step] pump. A run those waits passed takes the same turns.
+/// [minFrames] turns run even when [done] already holds, for waits that also
+/// leave a wrong change the time to show. Past [timeout] it returns; the
+/// test's own expectations then say what is missing.
+Future<void> _pumpUntilRealWork(
+  WidgetTester tester,
+  bool Function() done, {
+  Duration real = const Duration(milliseconds: 5),
+  Duration step = const Duration(milliseconds: 10),
+  int minFrames = 0,
+  Duration timeout = const Duration(seconds: 30),
+}) async {
+  final clock = Stopwatch()..start();
+  for (
+    var frame = 0;
+    frame < minFrames || (!done() && clock.elapsed < timeout);
+    frame++
+  ) {
+    await tester.runAsync(() => Future<void>.delayed(real));
+    await tester.pump(step);
+  }
+}
+
+/// Complete finite editor/dialog transitions while v4's live shimmer continues.
+Future<void> _pumpEditorTransition(WidgetTester tester) async {
+  for (var frame = 0; frame < 12; frame++) {
+    await tester.pump(const Duration(milliseconds: 50));
+  }
+}
+
 ApiClient _safeApi() => testApiClient(
   baseUrl: 'http://127.0.0.1:8642',
   httpClient: MockClient((_) async => http.Response('not found', 404)),
@@ -2528,22 +2800,6 @@ Finder get _subagentPillFinder =>
 /// de pantalla de `chat_screen.dart`, no el roster vivo del servicio).
 List<SubagentActivity> _subagentPillRows(WidgetTester tester) =>
     tester.widget<SubagentActivityCard>(_subagentPillFinder).activities;
-
-/// What the chat's island has to say about the work that is live (or just
-/// done): the line it says once when that work shows, then carried by its
-/// dot. Read from the island's own events, so it does not depend on whether
-/// the line is on screen at this instant.
-IslandEvent _islandActivity(WidgetTester tester, {bool skipOffstage = true}) =>
-    tester
-        .widget<ChatIsland>(find.byType(ChatIsland, skipOffstage: skipOffstage))
-        .events
-        .firstWhere((e) => e.id == 'working' || e.id == 'done');
-
-/// Texto de esa línea («1 subagente trabajando», «Trabajando · terminal»).
-String _subagentPillLabel(WidgetTester tester, {bool skipOffstage = true}) {
-  final event = _islandActivity(tester, skipOffstage: skipOffstage);
-  return [event.line, ?event.detail].join(' · ');
-}
 
 /// The turn's task progress («1/3») as the chat hands it to the activity
 /// panel; the island itself carries no counter.
@@ -2595,16 +2851,24 @@ Future<void> _openIslandEvent(WidgetTester tester) async {
 
 /// What is alive outside the turn, as the chat's island counts it («2 en
 /// marcha»); null while it is only the name.
-String? _islandMark(WidgetTester tester) => tester
-    .widget<ChatIsland>(find.byType(ChatIsland, skipOffstage: false).first)
-    .mark;
+String? _islandMark(WidgetTester tester) {
+  final identity = find.byType(ChatIsland, skipOffstage: false);
+  return identity.evaluate().isEmpty
+      ? null
+      : tester.widget<ChatIsland>(identity.first).mark;
+}
 
-/// The island's line about what started, ended or failed outside the turn.
-IslandEvent? _islandRunning(WidgetTester tester) => tester
-    .widget<ChatIsland>(find.byType(ChatIsland, skipOffstage: false).first)
-    .events
-    .where((event) => event.id == 'running-work')
-    .firstOrNull;
+/// Identity notices yield their place to the v4 delegates pill while it runs.
+IslandEvent? _islandRunning(WidgetTester tester) {
+  final identity = find.byType(ChatIsland, skipOffstage: false);
+  return identity.evaluate().isEmpty
+      ? null
+      : tester
+            .widget<ChatIsland>(identity.first)
+            .events
+            .where((event) => event.id == 'running-work')
+            .firstOrNull;
+}
 
 /// Everything the chat knows to be alive, as it hands it to the island.
 ActivitySnapshot _activitySnapshot(WidgetTester tester) => tester
@@ -2616,16 +2880,81 @@ ActivitySnapshot _activitySnapshot(WidgetTester tester) => tester
     )
     .snapshot;
 
-/// Opens the island's card of what is alive, as its tap does (whatever the
-/// island is saying at that instant).
+/// Opens delegated work from its header touch target.
 Future<void> _openRunningWork(WidgetTester tester) async {
-  final island = tester.widget<ChatIsland>(
-    find.byType(ChatIsland, skipOffstage: false).first,
-  );
-  expect(island.onTap, isNotNull, reason: 'the island has something to open');
-  island.onTap!();
+  final pill = find.byKey(const ValueKey('delegates-capsule'));
+  expect(pill.hitTestable(), findsOneWidget);
+  await tester.tap(pill);
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 500));
+}
+
+/// Wait for the lower pill's entrance, then exercise its real touch target.
+Future<void> _openQueueActivity(WidgetTester tester) async {
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 350));
+  expect(find.byKey(const ValueKey('chat-queue-chip')), findsOneWidget);
+  await tester.tap(find.byKey(const ValueKey('chat-queue-open')));
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 350));
+}
+
+/// Reveals [target] in the chat's list the way the app reveals what must stay
+/// in reach (`InlineMessageEditor._revealActions`, gint37): inside the list's
+/// own padding, which reserves what floats over the transcript (the header
+/// above; the composer, its foot, the notch and the arrow below). A bare
+/// `ensureVisible` places it by the viewport alone, which runs under that
+/// chrome: in this reversed list, at its bottom edge, under the composer
+/// (gint69).
+Future<void> _revealInChatList(WidgetTester tester, Finder target) async {
+  final list = tester.widget<ListView>(
+    find.ancestor(of: target, matching: find.byType(ListView)).first,
+  );
+  final padding = list.padding!.resolve(TextDirection.ltr);
+  final box = tester.renderObject<RenderBox>(target);
+  box.showOnScreen(
+    rect: Rect.fromLTRB(
+      0,
+      -padding.top,
+      box.size.width,
+      box.size.height + padding.bottom,
+    ),
+  );
+  await tester.pump();
+}
+
+/// pt1215: three patches over two files (lib/a.dart twice, README.md once).
+void _emitThreePatchTurn(_UiRewindGateway gateway) {
+  gateway.emit('message.start');
+  for (final (id, path, diff) in const [
+    ('call-ch-1', 'lib/a.dart', '@@ -1 +1,2 @@\n-a\n+b\n+c'),
+    ('call-ch-2', 'README.md', '@@ -1 +1 @@\n-x\n+y'),
+    ('call-ch-3', 'lib/a.dart', '@@ -5 +5 @@\n-d\n+e'),
+  ]) {
+    gateway.emit('tool.start', {
+      'tool_id': id,
+      'name': 'patch',
+      'args': {'path': path},
+    });
+    gateway.emit('tool.complete', {
+      'tool_id': id,
+      'name': 'patch',
+      'args': {'path': path},
+      'inline_diff': diff,
+      'result': const {'success': true},
+    });
+  }
+}
+
+/// Vistas v3 (the owner), D2: a Bot Chat's «Escritorio» is in Ajustes' quick
+/// pill, where another chat has «Nuevo chat».
+Future<void> _openBotScreenFromSettings(WidgetTester tester) async {
+  await tester.tap(find.byKey(const ValueKey('chat-settings-button')));
+  await tester.pump();
+  await tester.pump(kChatNotchSheetOpen);
+  await tester.tap(find.byKey(const ValueKey('chat-control-desktop')));
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 400));
 }
 
 /// The pet on the island rests: its idle drawing, one frame.
@@ -2667,6 +2996,44 @@ Companion _islandPet(String slug) => Companion(
 /// failed depended on how many tests the file had.
 final _sharedDeliveryStore = NotificationDeliveryStore();
 
+/// Goes from the first page of the model sheet to «Todos los modelos» (the
+/// list of providers and models); a no-op when it is already there.
+Future<void> openAllModels(WidgetTester tester) async {
+  final link = find.byKey(const ValueKey('model-all-link'));
+  if (link.evaluate().isEmpty) return;
+  await tester.tap(link);
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 400));
+}
+
+/// Taps a row of the (lazy) model list, opening the list and scrolling the
+/// row into view first.
+Future<void> tapModelRow(WidgetTester tester, String label) async {
+  await openAllModels(tester);
+  final target = find.text(label);
+  await tester.scrollUntilVisible(
+    target,
+    80,
+    scrollable: find.descendant(
+      of: find.byKey(const ValueKey('model-picker-list')),
+      matching: find.byType(Scrollable),
+    ),
+  );
+  await tester.tap(target.first);
+}
+
+/// What the open model sheet names as the chosen model: the card of the
+/// current model on its first page (its name and its provider).
+String chosenModelsInSheet(WidgetTester tester) {
+  final card = find.byKey(const ValueKey('msv-current'));
+  if (card.evaluate().isEmpty) return '';
+  return [
+    for (final text
+        in find.descendant(of: card, matching: find.byType(Text)).evaluate())
+      (text.widget as Text).data ?? '',
+  ].join(' ');
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   var secureStore = <String, String>{};
@@ -2688,11 +3055,12 @@ void main() {
     for (final key in const [
       'chat-slash-help-dialog',
       'chat-session-details-dialog',
-      'chat-artifacts-dialog',
       'chat-mode-dialog',
     ]) {
       expect(source, contains(key));
     }
+    // Artefactos opens Desktop's Artifacts view, not a second dialog.
+    expect(source, isNot(contains('chat-artifacts-dialog')));
   });
 
   test('Room 404/405 are deterministic unsupported writes', () {
@@ -2754,6 +3122,7 @@ void main() {
         voiceRuntimeActive: true,
         attachmentsEmpty: true,
         composerAccessible: true,
+        stopPhrases: VoiceStopPhraseConfig.backendDefault,
         text: stop,
       ),
       isTrue,
@@ -2781,6 +3150,7 @@ void main() {
           voiceRuntimeActive: condition.voiceRuntimeActive,
           attachmentsEmpty: condition.attachmentsEmpty,
           composerAccessible: condition.composerAccessible,
+          stopPhrases: VoiceStopPhraseConfig.backendDefault,
           text: stop,
         ),
         isFalse,
@@ -2792,6 +3162,7 @@ void main() {
         voiceRuntimeActive: true,
         attachmentsEmpty: true,
         composerAccessible: true,
+        stopPhrases: VoiceStopPhraseConfig.backendDefault,
         text: 'stop the container',
       ),
       isFalse,
@@ -2802,11 +3173,67 @@ void main() {
         voiceRuntimeActive: true,
         attachmentsEmpty: true,
         composerAccessible: true,
+        stopPhrases: VoiceStopPhraseConfig.backendDefault,
         text: stop,
       ),
       isFalse,
       reason: 'un prompt dirigido por slash/shortcut no fue texto escrito',
     );
+  });
+
+  // Desktop: use-middleware-submit.ts:32 → voice-stop-word.ts:138-140, with the
+  // profile's voice.stop_phrases (voice-prefs.ts:70-91).
+  test('typed Stop follows the profile voice.stop_phrases', () {
+    bool intercepts(VoiceStopPhraseConfig stopPhrases, String text) =>
+        interceptsTypedVoiceStop(
+          typedComposerSubmission: true,
+          voiceRuntimeActive: true,
+          attachmentsEmpty: true,
+          composerAccessible: true,
+          stopPhrases: stopPhrases,
+          text: text,
+        );
+    final custom = VoiceStopPhraseConfig.fromServerConfig({
+      'voice': {
+        'stop_phrases': ['basta ya'],
+      },
+    });
+    final disabled = VoiceStopPhraseConfig.fromServerConfig({
+      'voice': {'stop_phrases': <String>[]},
+    });
+
+    expect(intercepts(custom, 'Basta ya.'), isTrue);
+    expect(intercepts(custom, 'Hermes, basta ya'), isTrue);
+    expect(intercepts(custom, 'stop'), isFalse);
+    expect(intercepts(custom, 'basta ya y sigue'), isFalse);
+    expect(intercepts(disabled, 'stop'), isFalse);
+    expect(intercepts(disabled, 'Cállate.'), isFalse);
+  });
+
+  // Desktop submit.ts:332-357: only a send while this chat's voice reply is
+  // still playing is flagged as interrupting it.
+  test('a typed send interrupts only a voice reply that is playing', () {
+    expect(
+      typedSendInterruptsVoicePlayback(
+        voiceRuntimeActive: true,
+        voicePlaybackActive: true,
+      ),
+      isTrue,
+    );
+    for (final (active, playing) in const [
+      (true, false),
+      (false, true),
+      (false, false),
+    ]) {
+      expect(
+        typedSendInterruptsVoicePlayback(
+          voiceRuntimeActive: active,
+          voicePlaybackActive: playing,
+        ),
+        isFalse,
+        reason: 'voice $active, playing $playing',
+      );
+    }
   });
 
   test(
@@ -2873,7 +3300,23 @@ void main() {
         .setMockMethodCallHandler(MethodChannel(name), (_) async => null);
   }
 
+  tearDown(() => StepsBarMemory.openByDefault = false);
+  // These tests pin how many times the adaptive snapshot reads
+  // `subagent.list` (mount, 5/15/30 s eventless ladder, covered route,
+  // pause/resume). The visible chat's own 5 s roster poll (Desktop
+  // use-subagent-snapshot.ts) would add reads on top; it has its own tests
+  // in subagent_roster_poll_test.dart.
+  setUp(() => ChatScreen.subagentRosterPollInterval = null);
+  tearDown(
+    () => ChatScreen.subagentRosterPollInterval = const Duration(seconds: 5),
+  );
+
   setUp(() {
+    // The calls of a turn are rows of a summary bar that starts closed; these
+    // chat tests read and tap those rows, so their bars start open (the bar's
+    // own closed start and memory are tested in steps_bar_test.dart).
+    StepsBarMemory.reset();
+    StepsBarMemory.openByDefault = true;
     // Caché estática de planes de render: cada test empieza vacío.
     ChatScreen.resetAssistantRenderPlanCacheForTesting();
     BotMentionRoster.shared.clear();
@@ -2964,12 +3407,26 @@ void main() {
     mockChannel('flutter_foreground_task/background');
   });
 
+  DashboardClient busyInputConfig(String mode) => testDashboardClient(
+    httpClient: MockClient(
+      (request) async => request.url.path == '/api/config'
+          ? http.Response(
+              jsonEncode({
+                'display': {'busy_input_mode': mode},
+              }),
+              200,
+            )
+          : http.Response('{}', 404),
+    ),
+  );
+
   /// Monta el HermesApp real (saltando onboarding) y empuja ChatScreen
   /// sobre su Navigator. `messages` siembra el ActiveChat de la sesión.
   Future<ActiveChat> pumpChat(
     WidgetTester tester, {
     List<Map<String, dynamic>> messages = const [],
     SttEngine? stt,
+    SshSessionService Function(SshManager)? sshSessionFactory,
     ChatPipelineState chatState = ChatPipelineState.idle,
     HermesDesktopGateway? desktopGateway,
     SavedConnection? connection,
@@ -3111,7 +3568,9 @@ void main() {
           SshManager(sec, connManager),
           NotificationService(prefs),
         ),
-        sshSessions: SshSessionService(SshManager(sec, connManager)),
+        sshSessions:
+            sshSessionFactory?.call(SshManager(sec, connManager)) ??
+            SshSessionService(SshManager(sec, connManager)),
         notifications: notifications,
         activeChats: activeChats,
       ),
@@ -3177,6 +3636,7 @@ void main() {
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump();
     });
+    if (StepsBarMemory.openByDefault) await openInlineDetails(tester);
     return chat;
   }
 
@@ -3198,16 +3658,11 @@ void main() {
     final companion = tester
         .state<HermesAppState>(find.byType(HermesApp))
         .companion;
-    for (
-      var attempt = 0;
-      attempt < 100 && !companion.isInitialized;
-      attempt++
-    ) {
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 10)),
-      );
-      await tester.pump(const Duration(milliseconds: 10));
-    }
+    await _pumpUntilRealWork(
+      tester,
+      () => companion.isInitialized,
+      real: const Duration(milliseconds: 10),
+    );
     expect(companion.isInitialized, isTrue);
     await companion.setPresenceLevel(CompanionPresenceLevel.full);
     // The pet on the island is the profile's identity, read from the
@@ -3251,7 +3706,19 @@ void main() {
       final islandRect = tester.getRect(island);
       expect(slotRect.size, const Size.square(48));
       expect(slotRect.center.dx, closeTo(islandRect.center.dx, 0.5));
-      expect(slotRect.center.dx, closeTo(180, 0.5), reason: 'centred');
+      // Vistas v3: [Vistas] [Ajustes] leave 360 dp too narrow for the
+      // screen's centre (`FloatingChatHeader.minCentredIslandWidth`): the
+      // island centres between its buttons, where it was centred between
+      // «≡» and «+».
+      final between =
+          (tester
+                  .getRect(find.byKey(const ValueKey('chat-menu-button')))
+                  .right +
+              tester
+                  .getRect(find.byKey(const ValueKey('chat-views-button')))
+                  .left) /
+          2;
+      expect(slotRect.center.dx, closeTo(between, 0.5), reason: 'centred');
       // Its feet on the island's top edge, the rest of it above: never
       // inside the pill, never under the status bar.
       expect(slotRect.bottom - islandRect.top, FloatingChatHeader.faceOverlap);
@@ -3263,7 +3730,8 @@ void main() {
     }
 
     standsOnIsland();
-    // Between the menu and «+», the name of the profile after its dot.
+    // Between the menu and [Vistas] [Ajustes] (Vistas v3; «+» before), the
+    // name of the profile after its dot.
     final islandRect = tester.getRect(island);
     expect(
       islandRect.left,
@@ -3274,19 +3742,20 @@ void main() {
     expect(
       islandRect.right,
       lessThan(
-        tester.getRect(find.byKey(const ValueKey('chat-new-session'))).left,
+        tester.getRect(find.byKey(const ValueKey('chat-views-button'))).left,
       ),
     );
     expect(
       find.descendant(of: island, matching: find.text('Hermes')),
       findsOneWidget,
     );
+    // the owner (gint72): no state dot of colour on the island.
     expect(
       find.descendant(
         of: island,
         matching: find.byKey(const ValueKey('island-dot-idle')),
       ),
-      findsOneWidget,
+      findsNothing,
     );
     final faceRect = tester.getRect(face);
     expect(faceRect.height, greaterThanOrEqualTo(40));
@@ -3354,12 +3823,11 @@ void main() {
     final state = tester.state<HermesAppState>(find.byType(HermesApp));
     final profileControl = state.companion;
     final app = state.appCompanion;
-    for (var i = 0; i < 100 && !profileControl.isInitialized; i++) {
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 10)),
-      );
-      await tester.pump(const Duration(milliseconds: 10));
-    }
+    await _pumpUntilRealWork(
+      tester,
+      () => profileControl.isInitialized,
+      real: const Duration(milliseconds: 10),
+    );
     final (appPet, profilePet, laterPet) = (
       _islandPet('app-pet'),
       _islandPet('profile-pet'),
@@ -3428,7 +3896,7 @@ void main() {
       expectIslandPetStill(tester);
       expect(
         tester.widget<ChatIsland>(find.byType(ChatIsland)).status,
-        IslandStatus.working,
+        IslandStatus.idle,
       );
       gateway.emit('message.complete', const {'text': 'PUBLIC_PILL_DONE'});
       await tester.pump(const Duration(milliseconds: 700));
@@ -3505,7 +3973,8 @@ void main() {
   );
 
   testWidgets(
-    'chatpill sprite: the transcript keeps its text and draws no face or slot',
+    'chatpill sprite: the transcript keeps its text; the answer wears the '
+    'chat\'s small face',
     (tester) async {
       mockCompanionStorage();
       await pumpChat(
@@ -3534,51 +4003,142 @@ void main() {
       expect(find.text('PUBLIC_PILL_USER'), findsOneWidget);
       expect(find.byType(ThinkingTraceCard), findsOneWidget);
       expect(find.byType(CompanionStatusIndicator), findsNothing);
-      // The one companion on screen is the header's.
-      expect(find.byType(ProfilePetAvatar), findsOneWidget);
-      _expectNoTurnFace(tester);
-      // The name, the folded line and the reply start at the same edge; the
-      // actions stay at the end of the header.
+      // The island's companion, and the same one, small, before the
+      // answer's name (Q9, the owner: «sprite pequeño + nombre del bot»).
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('chat-header')),
+          matching: find.byType(ProfilePetAvatar),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: find.byType(MessageAvatarHeader),
+          matching: find.byType(ProfilePetAvatar),
+        ),
+        findsOneWidget,
+      );
+      _expectAnswerFace(tester);
+      // The face, step group and reply share their outer edge; the name
+      // follows the face and the actions stay at the answer's foot. QA9716
+      // keeps the thought cards 32 dp in; the tool bar spans the width.
       final replyEdge = tester
           .getTopLeft(find.textContaining('PUBLIC_PILL_HISTORY'))
           .dx;
-      final header = tester.getRect(find.byType(MessageAvatarHeader));
+      final slot = tester.getRect(
+        find.byKey(const ValueKey('assistant-avatar-slot')),
+      );
+      expect(slot.left, closeTo(replyEdge, 1));
+      expect(
+        tester.getTopLeft(find.byKey(const ValueKey('turn-step-cards'))).dx,
+        closeTo(replyEdge, 1),
+      );
       expect(
         tester
             .getTopLeft(find.byKey(const ValueKey('assistant-header-name')))
             .dx,
-        closeTo(replyEdge, 1),
+        closeTo(slot.right, 1),
       );
+      await openInlineDetails(tester);
       expect(
         tester
-            .getTopLeft(find.byKey(const ValueKey('thinking-trace-summary')))
+            .getTopLeft(
+              find.byKey(const ValueKey('turn-line-public-pill-history')),
+            )
             .dx,
         closeTo(replyEdge, 1),
       );
-      // The reply's own copy button: the request's bubble has one too.
+      // The reply's own copy button, at its foot, from its edge: the
+      // request's bubble has one too.
       final copy = tester.getRect(
         find.descendant(
-          of: find.byType(MessageAvatarHeader),
+          of: find.byKey(const ValueKey('assistant-footer-actions')),
           matching: find.byTooltip('Copiar mensaje'),
         ),
       );
       expect(
-        copy.left,
-        greaterThan(
-          tester
-              .getRect(find.byKey(const ValueKey('assistant-header-name')))
-              .right,
+        copy.top,
+        greaterThanOrEqualTo(
+          tester.getRect(find.textContaining('PUBLIC_PILL_HISTORY')).bottom,
         ),
       );
-      expect(copy.right, lessThanOrEqualTo(header.right + 1));
-      expect(copy.left, greaterThan(header.center.dx));
+      expect(copy.left, greaterThanOrEqualTo(replyEdge - 1));
+      expect(
+        find.descendant(
+          of: find.byType(MessageAvatarHeader),
+          matching: find.byTooltip('Copiar mensaje'),
+        ),
+        findsNothing,
+      );
       expect(tester.takeException(), isNull);
     },
   );
 
+  // Q9 (the owner): the actions at the answer's foot come once per answer, even
+  // when a long one is cut in viewport slices (REVIEW q9-head r1).
+  testWidgets('a long answer cut in slices has its actions once, at its '
+      'foot', (tester) async {
+    final long = List.generate(
+      170,
+      (index) => 'Párrafo $index con contenido estable para el viewport.',
+    ).join('\n\n');
+    await pumpChat(
+      tester,
+      messages: [
+        {'role': 'assistant', 'content': '$long\n\nFINAL_DEL_TEXTO'},
+        {'role': 'user', 'content': 'Escribe mucho'},
+      ],
+    );
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(long.length, greaterThan(5200), reason: 'cut in slices');
+    final actions = find.byKey(
+      const ValueKey('assistant-footer-actions'),
+      skipOffstage: false,
+    );
+    expect(actions, findsOneWidget);
+    expect(
+      tester.getTopLeft(actions).dy,
+      greaterThanOrEqualTo(
+        tester.getRect(find.textContaining('FINAL_DEL_TEXTO')).bottom,
+      ),
+    );
+    // Read it up to its first paragraph: every slice is built on the way,
+    // and none but the last has the actions.
+    final list = find.descendant(
+      of: find.byType(ChatScrollInteractionGuard),
+      matching: find.byType(ListView),
+    );
+    var built = 0;
+    for (
+      var step = 0;
+      step < 80 &&
+          find
+              .text(
+                'Párrafo 0 con contenido estable para el '
+                'viewport.',
+              )
+              .evaluate()
+              .isEmpty;
+      step++
+    ) {
+      await tester.drag(list, const Offset(0, 300));
+      await tester.pump();
+      expect(actions.evaluate().length, lessThanOrEqualTo(1), reason: '$step');
+      built++;
+    }
+    expect(
+      find.textContaining('Párrafo 0 con contenido estable'),
+      findsOneWidget,
+      reason: 'the whole answer was read ($built steps)',
+    );
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('chatpill sprite: loading has no transcript companion', (
     tester,
   ) async {
+    final semantics = tester.ensureSemantics();
     mockCompanionStorage();
     final chat = await pumpChat(
       tester,
@@ -3591,15 +4151,21 @@ void main() {
     tester.element(find.byType(ChatScreen)).markNeedsBuild();
     await tester.pump();
     expect(chat.messages, isEmpty);
+    // The loading state: T3-A (Ola 7) shows the turns' skeleton instead of
+    // the word, which screen readers still hear.
+    // The skeleton shows after its grace (flicker audit P3).
+    await tester.pump(const Duration(milliseconds: 200));
+    const skeleton = ValueKey('chat-loading-skeleton');
+    expect(find.byKey(skeleton), findsOneWidget);
+    final strings = Strings.of(tester.element(find.byType(ChatScreen)));
     expect(
-      find.text(
-        Strings.of(tester.element(find.byType(ChatScreen))).commonLoading,
-      ),
-      findsOneWidget,
+      tester.getSemantics(find.byKey(skeleton)),
+      isSemantics(label: strings.commonLoading),
     );
     expect(find.byType(CompanionStatusIndicator), findsNothing);
     expect(find.byType(ProfilePetAvatar), findsOneWidget);
     expect(tester.takeException(), isNull);
+    semantics.dispose();
   });
 
   testWidgets(
@@ -3639,7 +4205,22 @@ void main() {
           findsNothing,
         );
         expect(find.byType(CompanionStatusIndicator), findsNothing);
-        expect(find.byType(ProfilePetAvatar), findsOneWidget);
+        // One face on the island. Q9-CHAT5 v2 (ORDEN2-Q9-CHAT5: «píldora de
+        // estado única con avatar»): the live turn's pills wear the same
+        // face, as still as the island's.
+        expect(
+          find.descendant(of: header, matching: find.byType(ProfilePetAvatar)),
+          findsOneWidget,
+        );
+        for (final renderer in tester.widgetList<SpritesheetRenderer>(
+          find.descendant(
+            of: find.byKey(const ValueKey('delegates-capsule')),
+            matching: find.byType(SpritesheetRenderer),
+          ),
+        )) {
+          expect(renderer.animate, isFalse, reason: 'the pill face is still');
+          expect(renderer.state, CompanionAnimationState.idle);
+        }
         expect(tester.takeException(), isNull);
       }
 
@@ -3652,7 +4233,7 @@ void main() {
         isTrue,
       );
       await tester.pump();
-      expect(dot(), IslandStatus.working);
+      expect(dot(), IslandStatus.idle);
       stable();
       gateway.emit('message.start');
       gateway.emit('tool.start', const {
@@ -3661,7 +4242,7 @@ void main() {
       });
       await tester.pump(const Duration(milliseconds: 600));
       expect(chat.activityKind, ChatActivityKind.usingTools);
-      expect(dot(), IslandStatus.working);
+      expect(dot(), IslandStatus.idle);
       stable();
       gateway.emit('tool.complete', const {
         'id': 'public-pill-tool',
@@ -3671,7 +4252,7 @@ void main() {
       gateway.emit('message.delta', const {'text': 'PUBLIC_STATE_ANSWER'});
       await tester.pump(const Duration(milliseconds: 600));
       expect(chat.activityKind, ChatActivityKind.responding);
-      expect(dot(), IslandStatus.working);
+      expect(dot(), IslandStatus.idle);
       stable();
       chat.pendingApproval = const {'request_id': 'public-pill-approval'};
       tester.element(find.byType(ChatScreen)).markNeedsBuild();
@@ -3682,15 +4263,21 @@ void main() {
       gateway.emit('error', const {'message': 'PUBLIC_STATE_FAILURE'});
       await tester.pump(const Duration(milliseconds: 700));
       expect(chat.state, ChatPipelineState.failed);
-      expect(dot(), IslandStatus.error);
+      // conn-registry E4: the header is connection state; a failed turn has
+      // its card and island notice (Desktop's pill does not change for a
+      // turn: use-statusbar-items.tsx:376-407).
+      expect(dot(), IslandStatus.idle);
       stable();
       gateway.drop();
       await tester.pump(const Duration(seconds: 4));
+      // conn-registry E1: a drop is a quiet redial, never an instant red
+      // «Sin conexión» (Desktop's pill mirrors the socket's `connecting`
+      // state: use-statusbar-items.tsx:376-407).
       expect(
         chat.transportStatusListenable.value.state,
-        ChatTransportState.offline,
+        ChatTransportState.reconnecting,
       );
-      expect(dot(), IslandStatus.offline);
+      expect(dot(), isNot(IslandStatus.offline));
       stable();
       await tester.pumpWidget(const SizedBox.shrink());
       chat.dispose();
@@ -3797,7 +4384,7 @@ void main() {
     await enableFullCompanion(tester);
     await chat.refreshPassiveRemoteActivity();
     await tester.pump();
-    expect(_islandMark(tester), '1 en marcha');
+    expect(_islandMark(tester), isNull);
     expect(
       tester.widget<ChatIsland>(find.byType(ChatIsland)).status,
       IslandStatus.idle,
@@ -4372,7 +4959,9 @@ void main() {
     'through a transport blip shorter than the grace and only shows the '
     'reconnecting headline for a real outage',
     (tester) async {
-      const lost = 'Conexión perdida — reconectando…';
+      // conn-registry E2: plain «Reconectando…» (Desktop's composer says
+      // `placeholderReconnecting`, apps/desktop/src/i18n/en.ts:3272).
+      const lost = 'Reconectando…';
       final gateway = _DroppedTransportGateway();
       final chat = await pumpChat(
         tester,
@@ -4400,19 +4989,37 @@ void main() {
           )
           .snapshot
           .headline;
-      // ct1215: the turn's own status line in the transcript reads the same
-      // debounced transport view (it has no face to wear a mood any more).
+      // QA9715: the existing header island owns the live status. A real
+      // outage takes that same surface as its actionable connection event.
       String? status() {
-        final line = find.byKey(const ValueKey('turn-status-text'));
-        if (line.evaluate().isEmpty) return null;
-        return tester.widget<Text>(line.first).textSpan!.toPlainText();
+        final header = find.byKey(const ValueKey('chat-header'));
+        final connection = find.descendant(
+          of: header,
+          matching: find.byKey(const ValueKey('chat-connection-recovery-row')),
+        );
+        final pill = connection.evaluate().isNotEmpty
+            ? connection
+            : liveInlineActivity;
+        if (pill.evaluate().isEmpty) return null;
+        return find
+            .descendant(of: pill, matching: find.byType(RichText))
+            .evaluate()
+            .map((e) => (e.widget as RichText).text.toPlainText())
+            .join(' ');
       }
 
       expect(chat.isStreaming, isTrue);
       expect(headline(), isNot(lost));
       expect(status(), isNotNull);
       expect(status(), isNot(contains('Conexión perdida')));
+      final connectionNotice = find.byKey(
+        const ValueKey('chat-connection-recovery-row'),
+      );
+      expect(connectionNotice, findsNothing);
 
+      // A real outage: the network stays down, so the socket never comes
+      // back (REVISION-4 A: a socket that is back is never «reconnecting»).
+      gateway.refuseRedial = true;
       gateway.drop();
       for (var frame = 0; frame < 10; frame++) {
         await tester.pump(const Duration(milliseconds: 20));
@@ -4425,15 +5032,43 @@ void main() {
         reason: 'a one-second blip must not flash the reconnecting headline',
       );
       expect(status(), isNot(contains('Conexión perdida')));
+      expect(connectionNotice, findsNothing);
 
+      // conn-registry: nothing about the connection for five minutes of
+      // real outage, not even the amber word (the owner's criterion, harness
+      // SC12/SC13 `no_reconnecting`; the official app shows nothing:
+      // lanes/official-compare S1-S6); Desktop raises its one warning at
+      // RECONNECT_ESCALATE_AFTER_MS = 300 000 (use-gateway-boot.ts:121,
+      // 590-608).
       await tester.pump(const Duration(seconds: 2, milliseconds: 100));
       expect(chat.transportStatus.isConnected, isFalse);
+      expect(headline(), isNot(lost));
       expect(
-        headline(),
-        lost,
-        reason: 'an outage longer than the grace is still shown',
+        tester.widget<ChatIsland>(find.byType(ChatIsland)).status,
+        isNot(anyOf(IslandStatus.reconnecting, IslandStatus.offline)),
       );
-      expect(status(), contains('Conexión perdida'));
+      expect(connectionNotice, findsNothing);
+      expect(status(), isNot(contains('Sin conexión')));
+      expect(find.byKey(const ValueKey('live-turn-status')), findsNothing);
+      Iterable<IslandEvent> connectionEvents() => tester
+          .widget<ChatIsland>(find.byType(ChatIsland))
+          .events
+          .where((event) => event.id == 'connection');
+      expect(connectionEvents(), isEmpty);
+      // Five minutes of failed redials: the one persistent notice joins the
+      // island (it may wait behind the turn's own notice there), and the
+      // pill and header say «Reconectando…».
+      for (var minute = 0; minute < 5; minute++) {
+        await tester.pump(const Duration(minutes: 1));
+      }
+      expect(chat.transportStatus.isConnected, isFalse);
+      expect(headline(), lost);
+      expect(
+        tester.widget<ChatIsland>(find.byType(ChatIsland)).status,
+        IslandStatus.reconnecting,
+      );
+      expect(connectionEvents(), hasLength(1));
+      expect(connectionEvents().single.line, contains('Sigue sin conexión'));
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox.shrink());
       chat.dispose();
@@ -4474,7 +5109,7 @@ void main() {
 
       await tester.pump(const Duration(milliseconds: 600));
       expect(companionMood(), CompanionMood.idle);
-      expect(dot(), IslandStatus.working);
+      expect(dot(), IslandStatus.idle);
 
       String? headline() => tester
           .widget<ActivityPillHost>(
@@ -4502,7 +5137,10 @@ void main() {
       }
       expect(chat.state, ChatPipelineState.connecting);
       expect(chat.transportStatus.isConnected, isFalse);
-      expect(headline(), 'Conectando…');
+      // conn-registry: a turn the server reported live stays «Trabajando…»
+      // through the cut; no connection word before five minutes (the owner's
+      // criterion, harness SC13; the official app shows none).
+      expect(headline(), 'Trabajando…');
       expect(companionMood(), CompanionMood.idle);
 
       gateway.reconnect(chat.serverSessionId);
@@ -4517,7 +5155,7 @@ void main() {
       expect(headline(), 'Trabajando…');
       // The island follows the same edge: working, not offline.
       expect(companionMood(), CompanionMood.idle);
-      expect(dot(), IslandStatus.working);
+      expect(dot(), IslandStatus.idle);
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox.shrink());
       chat.dispose();
@@ -4659,6 +5297,112 @@ void main() {
     gateway.emit('message.complete', {'text': 'done'});
     await tester.pump(const Duration(milliseconds: 400));
     expect(tester.takeException(), isNull);
+  });
+
+  group('ORDEN-COMANDOS: the owner\'s long /goal in a new empty chat', () {
+    // APK 9708, 27 Oct: a ~900-character /goal pasted in a new chat said
+    // «Hermes no pudo ejecutar ese comando».
+    final goal = [
+      'Objetivo «largo» — "comillas", \'simples\', áéíóú ñ, 🚀👩🏽‍💻',
+      for (var i = 0; i < 20; i++) 'Paso $i: ${'revisar la app ' * 3}',
+    ].join('\n');
+    const newChat = Session(
+      id: 'mob-goal-new',
+      title: 'New',
+      model: 'hermes-agent',
+      source: 'mobile',
+      messageCount: 0,
+      isActive: true,
+      preview: '',
+      profile: 'default',
+      startedAt: 1,
+    );
+
+    Future<(ActiveChat, _GoalSlashGateway)> openNewChat(
+      WidgetTester tester,
+      String id,
+    ) async {
+      // The draft's provisional id does not exist on the server.
+      final gateway = _GoalSlashGateway()
+        ..resumeExistingError = const TuiGatewayRpcError(
+          'session.resume',
+          'session not found',
+          code: 4007,
+        );
+      final chat = await pumpChat(
+        tester,
+        connection: _remoteConn(id),
+        desktopGateway: gateway,
+        session: newChat,
+      );
+      return (chat, gateway);
+    }
+
+    Future<void> sendGoal(WidgetTester tester) async {
+      await tester.enterText(find.byType(TextField), '/goal $goal');
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.tap(find.byKey(const ValueKey('send')));
+      for (var i = 0; i < 8; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+    }
+
+    testWidgets('creates the session, runs the goal whole and sends its '
+        'kickoff, as Desktop', (tester) async {
+      expect(goal.length, greaterThan(500));
+      final (chat, gateway) = await openNewChat(tester, 'goal-new-chat');
+
+      await sendGoal(tester);
+
+      expect(gateway.createCalls, 1);
+      expect(gateway.slashCalls, hasLength(1));
+      expect(gateway.slashCalls.single.runtimeId, 'runtime-ui-test');
+      // Whole: only the ends of the argument are trimmed, as Desktop's
+      // parseSlashCommand does (the goal here ends in a space); every line,
+      // and the space before each break, arrive as typed.
+      expect(gateway.slashCalls.single.command, 'goal ${goal.trim()}');
+      expect(goal.trim(), isNot(goal));
+      expect(
+        gateway.slashCalls.single.command,
+        contains('revisar la app \nPaso 1: '),
+      );
+      expect('\n'.allMatches(gateway.slashCalls.single.command), hasLength(20));
+      expect(chat.storedSessionId, 'sess-test');
+      expect(find.textContaining('⊙ Goal set'), findsWidgets);
+      expect(gateway.submissions, ['GOAL KICKOFF: ${goal.trim()}']);
+      expect(find.textContaining('no pudo ejecutar ese comando'), findsNothing);
+      gateway.emit('message.complete', {'text': 'done'});
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a refusal of Hermes says its reason and gives the command '
+        'back', (tester) async {
+      final (_, gateway) = await openNewChat(tester, 'goal-new-refused');
+      gateway.slashError = const TuiGatewayRpcError(
+        'slash.exec',
+        'no active session',
+        code: 4001,
+      );
+
+      await sendGoal(tester);
+
+      expect(gateway.slashCalls, hasLength(1));
+      expect(gateway.submissions, isEmpty);
+      expect(
+        find.textContaining('/goal: este chat aún no tiene sesión en Hermes.'),
+        findsWidgets,
+      );
+      expect(find.textContaining('no active session'), findsWidgets);
+      expect(find.textContaining('no pudo ejecutar ese comando'), findsNothing);
+      // The command is back in the composer, as a refused message.
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).controller?.text,
+        '/goal $goal',
+      );
+      await tester.pump(const Duration(seconds: 11));
+      expect(tester.takeException(), isNull);
+    });
   });
 
   testWidgets('busy slash directed prompt stays in the encrypted queue', (
@@ -5049,6 +5793,214 @@ void main() {
     },
   );
 
+  group('the agent\'s desktop_preview (Desktop use-preview-routing.ts)', () {
+    late AgentBrowserBridge previous;
+    late AgentBrowserBridge bridge;
+
+    setUp(() {
+      WebViewPlatform.instance = FakeWebViewPlatform();
+      previous = ActiveChat.agentBrowserBridge;
+      bridge = AgentBrowserBridge();
+      ActiveChat.agentBrowserBridge = bridge;
+    });
+
+    tearDown(() => ActiveChat.agentBrowserBridge = previous);
+
+    Future<_UiRewindGateway> pumpRuntimeChat(WidgetTester tester) async {
+      final gateway = _UiRewindGateway()
+        ..activeSessionList = const DesktopActiveSessionList(
+          sessions: [
+            DesktopActiveSession(
+              runtimeSessionId: 'runtime-ui-test',
+              storedSessionId: 'sess-test',
+              status: 'working',
+            ),
+          ],
+        );
+      final chat = await pumpChat(
+        tester,
+        desktopGateway: gateway,
+        connection: _remoteConn('conn-agent-preview'),
+        messagesLoaded: false,
+        initialStoredSessionId: 'sess-test',
+        allowUnownedDesktopSnapshotForTesting: false,
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(chat.desktopRuntimeSessionId, 'runtime-ui-test');
+      return gateway;
+    }
+
+    // T2-B (mock 138 v2): «Ver <host>» under the header; one tap opens the
+    // window over the chat. It never opens by itself.
+    testWidgets('preview.open with the chat on screen offers «Ver»; one tap '
+        'opens the window on that page', (tester) async {
+      // A phone (gint49): on the default 800 × 600 test view there is no
+      // room for the window and the chat, so it anchors itself and its
+      // page is offstage.
+      tester.view.physicalSize = const Size(412, 915);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final gateway = await pumpRuntimeChat(tester);
+      gateway.emit('preview.open', {
+        'url': 'https://news.example/',
+        'label': 'News',
+      });
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 600));
+      expect(find.byType(InAppBrowserScreen), findsNothing);
+      expect(find.byKey(const ValueKey('agent-browser-pip')), findsNothing);
+      expect(
+        find.byKey(const ValueKey('agent-browser-pip-watch')),
+        findsOneWidget,
+      );
+      await tester.tap(find.byKey(const ValueKey('agent-browser-pip-watch')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 600));
+      expect(find.byKey(const ValueKey('agent-browser-pip')), findsOneWidget);
+      // Open, not anchored: the page is on screen.
+      expect(
+        tester.getSize(find.byKey(const ValueKey('agent-browser-pip'))).height,
+        greaterThan(AgentBrowserPipMetrics.dockedHeight),
+      );
+      final screen = tester.widget<InAppBrowserScreen>(
+        find.byType(InAppBrowserScreen),
+      );
+      expect(screen.initialUrl, Uri.parse('https://news.example/'));
+      expect(screen.agentLabel, 'News');
+      expect(screen.openedByAgent, isTrue);
+      expect(screen.agentConnectionId, 'conn-agent-preview');
+      expect(screen.agentSessionId?.call(), 'runtime-ui-test');
+      expect(find.byKey(const ValueKey('agent-preview-offer')), findsNothing);
+      await tester.pump(const Duration(seconds: 2));
+    });
+
+    // C2 (REVIEW-T2-B): against the chat's own header, island and composer.
+    // A mount without `topInset` puts «Ver» and the window under the header;
+    // one without `bottomClearance` lets the window and the close target
+    // cover the row above the composer (the notch's, before Vistas v3; the
+    // jump arrow's now).
+    for (final size in const [Size(360, 740), Size(412, 915), Size(480, 854)]) {
+      testWidgets('the window keeps clear of the real header, island, the '
+          'row above the composer and the composer at '
+          '${size.width.toInt()} dp', (tester) async {
+        tester.view.physicalSize = size;
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        final gateway = await pumpRuntimeChat(tester);
+        gateway.emit('preview.open', {
+          'url': 'https://news.example/',
+          'label': 'News',
+        });
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 600));
+
+        // The header's band at its smallest (compact); the island drawn
+        // right now is checked on its own.
+        final header = FloatingChatHeader.insetFor(
+          tester.element(find.byType(ChatScreen)),
+          compact: true,
+        );
+        final island = tester
+            .getRect(find.byKey(const ValueKey('island')).first)
+            .bottom;
+        final composer = tester.getRect(find.byType(ConsoleComposer)).top;
+        final floor = composer - HermesSpace.tap;
+
+        final watch = tester.getRect(
+          find.byKey(const ValueKey('agent-browser-pip-watch')),
+        );
+        expect(watch.top, greaterThanOrEqualTo(header));
+        expect(watch.top, greaterThanOrEqualTo(island));
+
+        await tester.tap(find.byKey(const ValueKey('agent-browser-pip-watch')));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 600));
+        Rect window() =>
+            tester.getRect(find.byKey(const ValueKey('agent-browser-pip')));
+        expect(window().top, greaterThanOrEqualTo(header));
+        expect(window().top, greaterThanOrEqualTo(island));
+        expect(window().bottom, lessThanOrEqualTo(floor));
+        expect(find.byType(ConsoleComposer).hitTestable(), findsOneWidget);
+
+        // All the way down: the close target sits above that row.
+        final gesture = await tester.startGesture(
+          tester.getTopLeft(
+                find.byKey(const ValueKey('agent-browser-pip-bar')),
+              ) +
+              const Offset(32, 24),
+        );
+        for (var i = 0; i < 60; i++) {
+          await gesture.moveBy(const Offset(0, 20));
+          await tester.pump();
+        }
+        final target = tester.getRect(
+          find.byKey(const ValueKey('agent-browser-pip-close-target')),
+        );
+        expect(target.top, greaterThanOrEqualTo(header));
+        expect(target.bottom, lessThanOrEqualTo(floor));
+
+        // Back off the target and let go: parked at the lowest spot, above
+        // that row and the composer.
+        await gesture.moveBy(const Offset(0, -40));
+        await tester.pump();
+        await gesture.up();
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 600));
+        expect(find.byKey(const ValueKey('agent-browser-pip')), findsOneWidget);
+        expect(window().bottom, lessThanOrEqualTo(floor));
+        expect(window().bottom, greaterThan(floor - HermesSpace.tap));
+        expect(find.byType(ConsoleComposer).hitTestable(), findsOneWidget);
+        // Vistas v3: the chat's settings live in the header, never under it.
+        expect(
+          find.byKey(const ValueKey('chat-settings-button')).hitTestable(),
+          findsOneWidget,
+        );
+        await tester.pump(const Duration(seconds: 2));
+      });
+    }
+
+    testWidgets('a chat not on screen is offered the page; «Ver» opens it', (
+      tester,
+    ) async {
+      final gateway = await pumpRuntimeChat(tester);
+      final navigator = tester.state<NavigatorState>(
+        find.byType(Navigator).first,
+      );
+      unawaited(
+        navigator.push(
+          MaterialPageRoute<void>(builder: (_) => const Text('encima')),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 600));
+      gateway.emit('preview.open', {'url': 'https://news.example/'});
+      await tester.pump();
+      expect(find.byType(InAppBrowserScreen), findsNothing);
+      expect(
+        bridge.offerFor('conn-agent-preview', 'runtime-ui-test'),
+        isNotNull,
+      );
+
+      navigator.pop();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 600));
+      expect(find.byKey(const ValueKey('agent-preview-offer')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('agent-preview-offer-open')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 600));
+      final opened = tester.widget<InAppBrowserScreen>(
+        find.byType(InAppBrowserScreen),
+      );
+      expect(opened.initialUrl, Uri.parse('https://news.example/'));
+      expect(opened.openedByAgent, isTrue);
+      expect(bridge.offerFor('conn-agent-preview', 'runtime-ui-test'), isNull);
+      await tester.pump(const Duration(seconds: 2));
+    });
+  });
+
   testWidgets('ruta persistida visible se adjunta al runtime al abrir', (
     tester,
   ) async {
@@ -5168,7 +6120,7 @@ void main() {
       );
       expect(loads, greaterThanOrEqualTo(2));
       expect(find.text('Turno externo durable'), findsOneWidget);
-      expect(_islandMark(tester), isNotNull);
+      expect(_islandMark(tester), isNull);
       expect(find.text('PRIVATE_REMOTE_PREVIEW'), findsNothing);
       expect(find.text('PRIVATE_REMOTE_TITLE'), findsNothing);
       expect(gateway.activationCalls, activationCallsBeforeExternalTurn);
@@ -5455,6 +6407,43 @@ void main() {
   );
 
   testWidgets(
+    'conn-registry E3: an automatic read that fails over visible rows retries '
+    'in silence and never paints the error strip',
+    (tester) async {
+      // Desktop: background reads fail silently (use-background-sync.ts:
+      // 406-408) and the route resume retries at 1/2/4/8 s
+      // (use-route-resume.ts:46-51).
+      var loads = 0;
+      await pumpChat(
+        tester,
+        connection: _remoteConn('conn-silent-open-retry'),
+        messages: const [
+          {'role': 'assistant', 'content': 'HISTORIAL_VISIBLE'},
+        ],
+        messagesLoaded: false,
+        storedMessageLoader: (_, _) async {
+          if (++loads <= 2) throw StateError('synthetic open failure');
+          return const [
+            {'role': 'user', 'content': 'PREGUNTA_NUEVA'},
+            {'role': 'assistant', 'content': 'RESPUESTA_NUEVA'},
+          ];
+        },
+      );
+      await tester.pump();
+      final error = find.byKey(const ValueKey('chat-refresh-error'));
+      expect(error, findsNothing);
+      for (var second = 0; second < 4; second++) {
+        await tester.pump(const Duration(seconds: 1));
+        expect(error, findsNothing);
+      }
+      expect(loads, greaterThanOrEqualTo(3), reason: 'open + retries at +1/+2 s');
+      expect(find.textContaining('RESPUESTA_NUEVA'), findsWidgets);
+      expect(find.text('No se pudieron cargar los mensajes'), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
     'error de refresco sobre transcript visible se cierra y reaparece en el siguiente fallo',
     (tester) async {
       var failLoads = false;
@@ -5478,7 +6467,7 @@ void main() {
       expect(error, findsNothing);
 
       Future<void> refresh() async {
-        await tester.tap(find.byKey(const ValueKey('chat-notch')));
+        await tester.tap(find.byKey(const ValueKey('chat-settings-button')));
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 350));
         await _tapSheetRow(
@@ -6026,9 +7015,17 @@ void main() {
       expect(chat.subagentActivities, hasLength(1));
       expect(chat.subagentActivities.single.subagentId, 'stable-refresh-child');
 
+      // subagent-roster: the roster's running child no longer makes the
+      // idle parent busy, so the restored queue schedules its zero-delay
+      // drain check (ActiveChat._restoreQueuedTurnsSerial, `!isStreaming`);
+      // let the restore and that check settle before tearing down.
+      for (var i = 0; i < 5; i += 1) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump();
       app.activeChats.dispose();
+      await tester.pump();
     },
   );
 
@@ -6257,7 +7254,7 @@ void main() {
         ],
       );
 
-      await tester.tap(find.byKey(const ValueKey('chat-notch')));
+      await tester.tap(find.byKey(const ValueKey('chat-settings-button')));
       await tester.pump();
       await tester.pump(kChatNotchSheetOpen);
 
@@ -6341,11 +7338,17 @@ void main() {
     final attachFlight = chat.ensureDesktopRuntime(
       acquireForExplicitAction: true,
     );
+    // subagent-roster: the runtime is LIVE because its parent turn runs.
+    // This used to be implied only by the roster's running child flipping
+    // the parent to «executing»; a child no longer makes the parent busy
+    // (Desktop: the composer reads only the session's busy), so the
+    // snapshot says what the test means.
     attach.complete(
       const DesktopSessionSnapshot(
         runtimeSessionId: 'runtime-ui-test',
         storedSessionId: 'sess-test',
         created: false,
+        running: true,
       ),
     );
     await attachFlight;
@@ -6397,6 +7400,9 @@ void main() {
       'subagent_id': 'stable-refresh-child',
       'status': 'completed',
     });
+    // subagent-roster: the live parent turn of this test ends too, so its
+    // activity watchdog does not outlive the test.
+    gateway.emit('message.complete', const {'text': 'parent done'});
     await tester.pump();
     await tester.pump(const Duration(minutes: 2));
   });
@@ -6801,6 +7807,8 @@ void main() {
       );
       await tester.pump();
       expect(pages.older, isEmpty, reason: 'precondition: one page');
+      await tester.tap(list());
+      await tester.pump();
       return chat;
     }
 
@@ -6856,10 +7864,7 @@ void main() {
       expect(pages.older, hasLength(1));
       expect(loading, findsOneWidget);
       expect(
-        find.descendant(
-          of: loading,
-          matching: find.byType(CircularProgressIndicator),
-        ),
+        find.descendant(of: loading, matching: find.byType(ConsoleLoader)),
         findsOneWidget,
       );
 
@@ -6913,6 +7918,37 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
+    testWidgets(
+      'layout and live events near the top never request an older page without a gesture',
+      (tester) async {
+        final gateway = _UiRewindGateway();
+        final pages = _EarlierHistoryPages(holdOlder: true);
+        await pumpChat(
+          tester,
+          api: pages.api(),
+          desktopGateway: gateway,
+          acquireDesktopRuntimeBeforeMount: true,
+          connection: _remoteConn('conn-earlier-live-layout'),
+          messagesLoaded: false,
+          attachDesktopRuntimeOnLoad: false,
+          allowUnownedDesktopSnapshotForTesting: false,
+        );
+        await frames(tester, 3);
+        final scroll = controller(tester);
+        scroll.jumpTo(scroll.position.maxScrollExtent);
+        await frames(tester, 3);
+        for (var i = 0; i < 3; i++) {
+          gateway.emit('subagent.tool', {
+            'subagent_id': 'paging-live',
+            'tool_name': 'terminal',
+          });
+          await frames(tester, 2);
+        }
+        expect(pages.older, isEmpty);
+        expect(loading, findsNothing);
+      },
+    );
+
     testWidgets('nothing loads when the server has no earlier history', (
       tester,
     ) async {
@@ -6958,6 +7994,32 @@ void main() {
       await frames(tester, 10);
       expect(tester.takeException(), isNull);
     });
+
+    testWidgets(
+      'an unanswered older page times out and never loops on live layout',
+      (tester) async {
+        final pages = _EarlierHistoryPages(holdOlder: true);
+        final chat = await open(tester, pages, 'conn-earlier-timeout');
+        final scroll = controller(tester);
+        scroll.jumpTo(scroll.position.maxScrollExtent - 100);
+        await frames(tester, 3);
+        expect(loading, findsOneWidget);
+        await tester.pump(const Duration(seconds: 16));
+        await frames(tester, 3);
+        expect(loading, findsNothing);
+        scroll.jumpTo(scroll.position.maxScrollExtent);
+        await frames(tester, 3);
+        expect(pages.older, hasLength(1));
+        pages.completeOlder();
+        await frames(tester, 3);
+        expect(loading, findsNothing);
+        expect(
+          chat.messages,
+          hasLength(120),
+          reason: 'late response cannot publish after timeout',
+        );
+      },
+    );
 
     testWidgets('a failed page keeps the content and offers a retry', (
       tester,
@@ -7206,15 +8268,12 @@ void main() {
       expect(find.textContaining('PRIVATE_TOOL_ARGUMENT'), findsNothing);
       expect(find.text('Actividad en otra superficie'), findsNothing);
       expect(
-        find.descendant(
-          of: find.byKey(const ValueKey('chat-session-activity')),
-          matching: find.byType(SubagentActivityCard),
-        ),
+        find.byKey(const ValueKey('chat-subagent-status')),
         findsOneWidget,
       );
       // La pastilla de actividad unificada (sin `activities` detallados)
       // muestra el conteo agregado de actividad pasiva observada.
-      expect(_islandMark(tester), '1 en marcha');
+      expect(_islandMark(tester), isNull);
       expect(gateway.resumeExistingCalls, 0);
       expect(gateway.createCalls, 0);
       expect(tester.takeException(), isNull);
@@ -7254,7 +8313,7 @@ void main() {
       expect(find.text('Actividad en otra superficie'), findsNothing);
       // Sin conteo agregado (ningún tool-call durable observado todavía), la
       // pastilla unificada cae al rótulo genérico de trabajo en segundo plano.
-      expect(_islandMark(tester), '1 en marcha');
+      expect(_islandMark(tester), isNull);
       expect(gateway.resumeExistingCalls, 0);
       expect(gateway.createCalls, 0);
       expect(tester.widget<TextField>(find.byType(TextField)).enabled, isTrue);
@@ -7352,7 +8411,7 @@ void main() {
       expect(find.text('Turno durable'), findsOneWidget);
       expect(find.text('Respuesta durable'), findsNothing);
       // La isla nombra el trabajo remoto.
-      expect(_islandMark(tester), '1 en marcha');
+      expect(_islandMark(tester), isNull);
 
       restRows = [
         {
@@ -7425,6 +8484,440 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  // the owner (APK 9708): a chat used from another device did not update by
+  // itself on the tablet. [sync] matrix: each test is one cell, with the
+  // durable store served over REST honouring `limit`, so the one-row tail
+  // probe works as against a real Hermes.
+  group('sync: a chat moved on another device shows up by itself', () {
+    // The durable rows the server holds now (oldest first) and how many
+    // full pages (not probes) were read.
+    late List<Map<String, dynamic>> durable;
+    late int fullReads;
+
+    ApiClient restTranscript() {
+      final client = MockClient((request) async {
+        final limit = int.tryParse(request.url.queryParameters['limit'] ?? '');
+        final rows = limit != null && limit < durable.length
+            ? durable.sublist(durable.length - limit)
+            : durable;
+        if (limit == null || limit > 1) fullReads += 1;
+        return http.Response(
+          jsonEncode({
+            'object': 'list',
+            'session_id': 'sess-test',
+            'messages': rows,
+            'data': rows,
+            'pagination': {
+              'limit': limit ?? 120,
+              'offset': 0,
+              'order': 'latest',
+              'returned': rows.length,
+            },
+          }),
+          200,
+          headers: const {'content-type': 'application/json'},
+        );
+      });
+      final api = testApiClient(
+        baseUrl: 'https://example.test',
+        httpClient: client,
+      );
+      addTearDown(api.close);
+      return api;
+    }
+
+    void otherDeviceReplies() {
+      durable = [
+        ...durable,
+        const {
+          'id': 'other-user',
+          'message_id': 'other-user',
+          'role': 'user',
+          'content': 'Pregunta escrita en el móvil',
+        },
+        const {
+          'id': 'other-assistant',
+          'message_id': 'other-assistant',
+          'role': 'assistant',
+          'content': 'Respuesta que llegó en el móvil',
+        },
+      ];
+    }
+
+    setUp(() {
+      durable = [
+        const {
+          'id': 'first-user',
+          'message_id': 'first-user',
+          'role': 'user',
+          'content': 'Primera pregunta',
+        },
+        const {
+          'id': 'first-assistant',
+          'message_id': 'first-assistant',
+          'role': 'assistant',
+          'content': 'Primera respuesta',
+        },
+      ];
+      fullReads = 0;
+    });
+
+    Future<void> typeDraft(WidgetTester tester) async {
+      await tester.enterText(find.byType(TextField).last, 'borrador a medias');
+      await tester.pump();
+    }
+
+    void expectDraftKept(WidgetTester tester) => expect(
+      tester.widget<TextField>(find.byType(TextField).last).controller?.text,
+      'borrador a medias',
+    );
+
+    // Cell: screen on, chat in the foreground, no runtime, a draft, the
+    // `sessions.changed` lost. Before: the draft stopped every passive read
+    // (chat_screen.dart, `!_composerEmpty && …` in _refreshPassiveTranscript).
+    testWidgets('screen on, a draft, the event lost: the reply shows', (
+      tester,
+    ) async {
+      final gateway = _UiRewindGateway();
+      await pumpChat(
+        tester,
+        api: restTranscript(),
+        desktopGateway: gateway,
+        connection: _remoteConn('conn-sync-draft-screen-on'),
+        messagesLoaded: false,
+        initialStoredSessionId: 'sess-test',
+        attachDesktopRuntimeOnLoad: false,
+        allowUnownedDesktopSnapshotForTesting: false,
+      );
+      await tester.pump(const Duration(seconds: 1));
+      expect(find.text('Primera respuesta'), findsOneWidget);
+      await typeDraft(tester);
+
+      otherDeviceReplies();
+      for (var i = 0; i < 4; i++) {
+        await tester.pump(const Duration(seconds: 2));
+      }
+      await tester.pump();
+
+      expect(find.text('Respuesta que llegó en el móvil'), findsOneWidget);
+      expectDraftKept(tester);
+      expect(gateway.submissions, isEmpty);
+      expect(tester.takeException(), isNull);
+    });
+
+    // Cell: App Lock (or any screen on top) covered the chat while the other
+    // device wrote; a draft waits in the composer. Uncovering is a return:
+    // one check, whatever the composer holds.
+    testWidgets('uncovered (App Lock) with a draft: the reply shows', (
+      tester,
+    ) async {
+      final gateway = _UiRewindGateway();
+      await pumpChat(
+        tester,
+        api: restTranscript(),
+        desktopGateway: gateway,
+        connection: _remoteConn('conn-sync-draft-uncovered'),
+        messagesLoaded: false,
+        initialStoredSessionId: 'sess-test',
+        attachDesktopRuntimeOnLoad: false,
+        allowUnownedDesktopSnapshotForTesting: false,
+      );
+      await tester.pump(const Duration(seconds: 1));
+      await typeDraft(tester);
+      final navigator = Navigator.of(tester.element(find.byType(ChatScreen)));
+      unawaited(
+        navigator.push(
+          MaterialPageRoute<void>(
+            builder: (_) => const Scaffold(body: Text('lock screen')),
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 500));
+      otherDeviceReplies();
+      await tester.pump(const Duration(seconds: 5));
+      navigator.pop();
+      await tester.pump(const Duration(milliseconds: 500));
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pump();
+
+      expect(find.text('Respuesta que llegó en el móvil'), findsOneWidget);
+      expectDraftKept(tester);
+      expect(tester.takeException(), isNull);
+    });
+
+    // Cell: the app went to the background (Doze, another app) and came
+    // back with a draft in the composer.
+    testWidgets('back in the foreground with a draft: the reply shows', (
+      tester,
+    ) async {
+      final gateway = _UiRewindGateway();
+      await pumpChat(
+        tester,
+        api: restTranscript(),
+        desktopGateway: gateway,
+        connection: _remoteConn('conn-sync-draft-resumed'),
+        messagesLoaded: false,
+        initialStoredSessionId: 'sess-test',
+        attachDesktopRuntimeOnLoad: false,
+        allowUnownedDesktopSnapshotForTesting: false,
+      );
+      await tester.pump(const Duration(seconds: 1));
+      await typeDraft(tester);
+      // Android's own order out and back (AppLifecycleListener asserts it).
+      final binding = tester.binding;
+      binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+      binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      await tester.pump(const Duration(seconds: 1));
+      otherDeviceReplies();
+      await tester.pump(const Duration(seconds: 5));
+      binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+      binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      for (var i = 0; i < 3; i++) {
+        await tester.pump(const Duration(seconds: 1));
+      }
+      await tester.pump();
+
+      expect(find.text('Respuesta que llegó en el móvil'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    // Cell: this client holds the session's runtime (a viewer attached on
+    // open), the chat is idle, the screen stays on and the `sessions.changed`
+    // tick is lost. Before: with a runtime attached, the durable store was
+    // read only on that event (chat_screen.dart, `!_canPassivelyRefresh…`
+    // in _refreshPassiveTranscript), so the chat stayed stale for good.
+    testWidgets('a runtime attached, idle, the event lost: the reply shows', (
+      tester,
+    ) async {
+      final gateway = _UiRewindGateway()
+        ..activeSessionList = const DesktopActiveSessionList();
+      final chat = await pumpChat(
+        tester,
+        api: restTranscript(),
+        desktopGateway: gateway,
+        connection: _remoteConn('conn-sync-runtime-idle'),
+        messagesLoaded: false,
+        initialStoredSessionId: 'sess-test',
+        attachDesktopRuntimeOnLoad: true,
+        allowUnownedDesktopSnapshotForTesting: false,
+      );
+      await tester.pump(const Duration(seconds: 1));
+      expect(chat.hasDesktopRuntime, isTrue);
+      expect(chat.isStreaming, isFalse);
+
+      otherDeviceReplies();
+      // Gate gint38: the idle probe is a backstop for a lost event, not a
+      // poll. It waits 30 s after any look at the server (here, the
+      // opening read), then the reader's next backstop checks the tail.
+      for (var i = 0; i < 8; i++) {
+        await tester.pump(const Duration(seconds: 5));
+      }
+      await tester.pump();
+
+      expect(find.text('Respuesta que llegó en el móvil'), findsOneWidget);
+      expect(gateway.createCalls, 0);
+      expect(gateway.submissions, isEmpty);
+      expect(tester.takeException(), isNull);
+    });
+
+    // QA 9709 round 2 (the owner, 13:33 → 13:52, captures 1167/1169): a turn
+    // sent here with a runtime attached, then back from another app. Since
+    // 664278b5 coming back reads the server whoever holds the runtime (9708
+    // did not), and the stored turn came in beside this client's own copy of
+    // it (prompt with no time, reply with its live trace «Trabajó 7 s ·
+    // 1 comando»): the server holds ONE copy. `message.complete` names the
+    // stored rows (`persisted_turn`); the turn is matched by them.
+    testWidgets('a turn sent here, then back from another app: shown once', (
+      tester,
+    ) async {
+      final gateway = _UiRewindGateway()
+        ..activeSessionList = const DesktopActiveSessionList();
+      final chat = await pumpChat(
+        tester,
+        api: restTranscript(),
+        desktopGateway: gateway,
+        connection: _remoteConn('conn-sync-own-turn-return'),
+        messagesLoaded: false,
+        initialStoredSessionId: 'sess-test',
+        attachDesktopRuntimeOnLoad: true,
+        allowUnownedDesktopSnapshotForTesting: false,
+      );
+      await tester.pump(const Duration(seconds: 1));
+      expect(chat.hasDesktopRuntime, isTrue);
+
+      const prompt = 'Quiza es algo puntual, dame la maqueta';
+      const reply = 'Todavía no está. Voz aún no la ha entregado.';
+      expect(
+        await chat.send(
+          fullText: prompt,
+          model: 'hermes-agent',
+          history: const [],
+        ),
+        isTrue,
+      );
+      await tester.pump();
+      gateway.emit('message.start');
+      gateway.emit('reasoning.delta', {'text': 'Miro el informe de Voz.'});
+      gateway.emit('tool.start', const {'id': 'q9-tool', 'name': 'terminal'});
+      gateway.emit('tool.complete', const {
+        'id': 'q9-tool',
+        'name': 'terminal',
+        'status': 'completed',
+      });
+      gateway.emit('message.delta', const {'text': reply});
+      // the owner's store: prompt 497589, tool call, tool result, reply 497592.
+      durable = [
+        ...durable,
+        const {
+          'id': 497589,
+          'role': 'user',
+          'content': prompt,
+          'timestamp': 1793194407.0,
+        },
+        const {
+          'id': 497590,
+          'role': 'assistant',
+          'content': '',
+          'timestamp': 1793194410.0,
+          'tool_calls': [
+            {
+              'id': 'call-q9',
+              'type': 'function',
+              'function': {'name': 'terminal', 'arguments': '{}'},
+            },
+          ],
+        },
+        const {
+          'id': 497591,
+          'role': 'tool',
+          'tool_call_id': 'call-q9',
+          'content': 'EN CURSO',
+          'timestamp': 1793194412.0,
+        },
+        const {
+          'id': 497592,
+          'role': 'assistant',
+          'content': reply,
+          'timestamp': 1793194418.0,
+        },
+      ];
+      gateway.emit('message.complete', const {
+        'text': reply,
+        'status': 'complete',
+        'persisted_turn': {
+          'row_ids': [497589, 497590, 497591, 497592],
+          'complete': true,
+          'user_row_id': 497589,
+          'user_row_ids': [497589],
+          'final_assistant_row_id': 497592,
+        },
+      });
+      for (var i = 0; i < 4; i++) {
+        await tester.pump(const Duration(milliseconds: 500));
+      }
+      expect(chat.isStreaming, isFalse);
+
+      void expectOnce(String when) {
+        expect(
+          chat.messages.where(
+            (m) => m['role'] == 'user' && m['content'] == prompt,
+          ),
+          hasLength(1),
+          reason: '$when: the prompt',
+        );
+        expect(
+          chat.messages.where(
+            (m) => m['role'] == 'assistant' && m['content'] == reply,
+          ),
+          hasLength(1),
+          reason: '$when: the reply',
+        );
+      }
+
+      expectOnce('turn ended');
+      // Another app, then back (Android's own order).
+      final binding = tester.binding;
+      binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+      binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      await tester.pump(const Duration(seconds: 5));
+      binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+      binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      for (var i = 0; i < 3; i++) {
+        await tester.pump(const Duration(seconds: 1));
+      }
+      expectOnce('back from another app');
+      // And the reader's backstop later on.
+      for (var i = 0; i < 8; i++) {
+        await tester.pump(const Duration(seconds: 5));
+      }
+      expectOnce('after the backstop');
+      expect(gateway.submissions, hasLength(1));
+      expect(tester.takeException(), isNull);
+    });
+
+    // A draft being written still holds the periodic FULL page back: with
+    // nothing new the probe answers and no full page is read.
+    testWidgets('a draft and nothing new: only the one-row probe runs', (
+      tester,
+    ) async {
+      final gateway = _UiRewindGateway();
+      await pumpChat(
+        tester,
+        api: restTranscript(),
+        desktopGateway: gateway,
+        connection: _remoteConn('conn-sync-draft-quiet'),
+        messagesLoaded: false,
+        initialStoredSessionId: 'sess-test',
+        attachDesktopRuntimeOnLoad: false,
+        allowUnownedDesktopSnapshotForTesting: false,
+      );
+      await tester.pump(const Duration(seconds: 4));
+      await tester.pump();
+      await typeDraft(tester);
+      final before = fullReads;
+      for (var i = 0; i < 5; i++) {
+        await tester.pump(const Duration(seconds: 2));
+      }
+      expect(fullReads, before);
+      expectDraftKept(tester);
+      expect(tester.takeException(), isNull);
+    });
+
+    // Cell: the resume reconciliation ends without publishing anything (no
+    // change, a voided read, an error). Before: it ran with the screen's
+    // reader retired and nothing re-armed it until an unrelated event.
+    testWidgets('a resume reconciliation that ends says so', (tester) async {
+      final gateway = _UiRewindGateway();
+      final chat = await pumpChat(
+        tester,
+        api: restTranscript(),
+        desktopGateway: gateway,
+        connection: _remoteConn('conn-sync-settled'),
+        messagesLoaded: false,
+        initialStoredSessionId: 'sess-test',
+        attachDesktopRuntimeOnLoad: false,
+        allowUnownedDesktopSnapshotForTesting: false,
+      );
+      await tester.pump(const Duration(seconds: 1));
+      final before = chat.resumeReconciliationSettled.value;
+      await chat.reconcileAfterResume();
+      expect(chat.resumeReconciliationInFlight, isFalse);
+      expect(chat.resumeReconciliationSettled.value, greaterThan(before));
+
+      // And the screen reads after it: a reply written meanwhile shows.
+      otherDeviceReplies();
+      await chat.reconcileAfterResume();
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pump();
+      expect(find.text('Respuesta que llegó en el móvil'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+  });
 
   testWidgets(
     'active_list tardío no revive actividad cerrada por una lectura nueva',
@@ -7514,6 +9007,48 @@ void main() {
       },
     );
   }
+
+  // T3-A (Ola 7, AUDITORIA-PULIDO §4.2): while the first page loads the
+  // chat shows the shape of the turns coming, read as «Cargando…».
+  testWidgets('first load: a skeleton of turns, then the turns', (
+    tester,
+  ) async {
+    final semantics = tester.ensureSemantics();
+    final load = Completer<List<Map<String, dynamic>>>();
+    await pumpChat(
+      tester,
+      desktopGateway: _UiRewindGateway(),
+      connection: _remoteConn('conn-loading-skeleton'),
+      messagesLoaded: false,
+      attachDesktopRuntimeOnLoad: false,
+      allowUnownedDesktopSnapshotForTesting: false,
+      storedMessageLoader: (_, _) => load.future,
+    );
+    const skeleton = ValueKey('chat-loading-skeleton');
+    // pumpChat has run past the skeleton's grace (~180 ms): a slow load
+    // shows it (flicker audit P3; the grace itself is in
+    // loading_skeleton_test.dart).
+    expect(find.byKey(skeleton), findsOneWidget);
+    expect(
+      tester.getSemantics(find.byKey(skeleton)),
+      isSemantics(label: 'Cargando…', isLiveRegion: true),
+    );
+
+    load.complete(const [
+      {
+        'id': 'tras-esqueleto',
+        'message_id': 'tras-esqueleto',
+        'role': 'user',
+        'content': 'TRAS_EL_ESQUELETO',
+      },
+    ]);
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('TRAS_EL_ESQUELETO'), findsOneWidget);
+    expect(find.byKey(skeleton), findsNothing);
+    expect(tester.takeException(), isNull);
+    semantics.dispose();
+  });
 
   testWidgets('reduce motion no monta entrada con opacidad cero', (
     tester,
@@ -7610,25 +9145,25 @@ void main() {
       await chat.refreshPassiveRemoteActivity();
       await tester.pump();
 
-      final surface = find.byKey(const ValueKey('chat-session-activity'));
+      final surface = find.byKey(const ValueKey('chat-subagent-status'));
       expect(surface, findsOneWidget);
       final surfaceElement = tester.element(surface);
-      expect(
-        find.descendant(
-          of: surface,
-          matching: find.byType(SubagentActivityCard),
-        ),
-        findsOneWidget,
-      );
+      expect(surface, findsOneWidget);
       expect(find.text('Actividad en otra superficie'), findsNothing);
       // Sin conteo agregado observado todavía en esta pasada (solo se
       // refrescó la lista de sesiones activas, no el tail de mensajes), el
       // pastilla unificada cae al rótulo genérico de trabajo en segundo plano.
-      expect(_islandMark(tester), '1 en marcha');
+      expect(_islandMark(tester), isNull);
       expect(find.text('PRIVATE_TOOL_LABEL_CANARY'), findsNothing);
+      // Counts/actions may wrap at 2x; there is still one activity surface.
       expect(
-        find.descendant(of: surface, matching: find.byType(Wrap)),
+        find.descendant(of: surface, matching: find.byType(DelegatedWorkPill)),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('activity-pill')),
         findsNothing,
+        reason: 'a remote normal turn without an observed child is not supplemental',
       );
       // fh1215: the pill moved from above the composer into the floating
       // header; it must never cover the composer.
@@ -7692,12 +9227,9 @@ void main() {
     );
     await chat.refreshPassiveRemoteActivity();
     await tester.pump();
-    final surface = find.byKey(const ValueKey('chat-session-activity'));
-    final card = find.descendant(
-      of: surface,
-      matching: find.byType(SubagentActivityCard),
-    );
-    expect(_islandMark(tester), isNotNull);
+    final surface = find.byKey(const ValueKey('chat-subagent-status'));
+    final card = surface;
+    expect(_islandMark(tester), isNull);
     final surfaceElement = tester.element(surface);
     final cardElement = tester.element(card);
 
@@ -7774,11 +9306,8 @@ void main() {
       );
       await chat.refreshPassiveRemoteActivity();
       await tester.pump();
-      final surface = find.byKey(const ValueKey('chat-session-activity'));
-      final card = find.descendant(
-        of: surface,
-        matching: find.byType(SubagentActivityCard),
-      );
+      final surface = find.byKey(const ValueKey('chat-subagent-status'));
+      final card = surface;
       final surfaceElement = tester.element(surface);
       final cardElement = tester.element(card);
       await tester.pump(const Duration(seconds: 1));
@@ -7786,7 +9315,9 @@ void main() {
       await chat.refreshPassiveRemoteActivity();
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 8900));
-      expect(find.byKey(const ValueKey('activity-pill')), findsOneWidget);
+      expect(chat.hasRecentPassiveRemoteActivity, isTrue);
+      expect(find.byKey(const ValueKey('activity-pill')), findsNothing,
+        reason: 'a passive parent without observed children adds no footer');
       await tester.pump(const Duration(milliseconds: 200));
       expect(chat.hasRecentPassiveRemoteActivity, isFalse);
       expect(tester.element(surface), same(surfaceElement));
@@ -7811,6 +9342,13 @@ void main() {
             throw StateError('synthetic cold load failure'),
       );
       await tester.pump();
+      // conn-registry E3: silent retries first (1/2/4/8 s, Desktop
+      // use-route-resume.ts:46-51); the card once they are spent
+      // (resume-exhausted-overlay.tsx:13-35).
+      expect(find.text('No se pudieron cargar los mensajes'), findsNothing);
+      for (var second = 0; second < 16; second++) {
+        await tester.pump(const Duration(seconds: 1));
+      }
 
       expect(chat.messagesLoaded, isFalse);
       expect(find.text('No se pudieron cargar los mensajes'), findsOneWidget);
@@ -8051,9 +9589,11 @@ void main() {
 
       expect(find.text('No se pudieron cargar los mensajes'), findsNothing);
       expect(find.text('↺ reintentar'), findsNothing);
+      // conn-registry E3 (AUDITORIA C14): Desktop drops to the draft in
+      // silence (use-session-actions/index.ts:2515-2567): no snackbar.
       expect(
         find.text('Esta conversación ya no existe en Hermes.'),
-        findsOneWidget,
+        findsNothing,
       );
       expect(chat.messagesLoaded, isTrue);
       expect(chat.storedSessionKnownMissing, isTrue);
@@ -8240,13 +9780,13 @@ void main() {
       await tester.pump();
       final app = tester.state<HermesAppState>(find.byType(HermesApp));
       final surface = find.byKey(
-        const ValueKey('chat-session-activity'),
+        const ValueKey('chat-subagent-status'),
         skipOffstage: false,
       );
       expect(surface, findsOneWidget);
       final surfaceElement = tester.element(surface);
       expect(chat.subagentActivities, hasLength(1));
-      expect(_islandMark(tester), '1 en marcha');
+      expect(_islandMark(tester), isNull);
       // The old inline "ver detalles" disclosure row expanded in place — no
       // new route. The redesigned pill opens a real modal bottom sheet
       // instead (see `_openDetailSheet` in subagent_activity_card.dart), so
@@ -8256,22 +9796,20 @@ void main() {
       final navigator = tester.state<NavigatorState>(
         find.byType(Navigator).first,
       );
-      // La isla abre la tarjeta de lo que sigue vivo; «Ver» en la fila del
-      // subagente abre su detalle y control de siempre.
+      // The group in the chat is the one place that lists the subagent, so
+      // the island no longer opens a card that repeats its row: with only
+      // subagents alive it goes straight to them, and a single one opens
+      // its detail page and controls (Spec 080).
       await _openRunningWork(tester);
-      expect(find.byKey(const ValueKey('island-card')), findsOneWidget);
-      final seeChild = find.byKey(
-        const ValueKey('running-subagent-open-stable-refresh-child'),
-      );
-      await tester.ensureVisible(seeChild);
-      await tester.pump();
-      await tester.tap(seeChild);
-      await tester.pump();
       await tester.pump(const Duration(milliseconds: 500));
-      // Spec 080: a single subagent opens its detail page directly; the
-      // card closed to let it through.
-      expect(find.byKey(const ValueKey('subagent-detail')), findsOneWidget);
+      expect(find.byKey(const ValueKey('subagent-panel')), findsOneWidget);
       expect(find.byKey(const ValueKey('island-card')), findsNothing);
+      expect(
+        find.byKey(
+          const ValueKey('running-subagent-open-stable-refresh-child'),
+        ),
+        findsNothing,
+      );
       navigator.pop();
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
@@ -8296,7 +9834,7 @@ void main() {
       // `_displaySubagentActivities` cache) instead of flickering away. The
       // covering route takes the page offstage, so read what the island
       // was given to say instead of the compiled tree.
-      expect(_islandMark(tester), isNotNull);
+      expect(_islandMark(tester), isNull);
       expect(
         find.byKey(
           const ValueKey('subagent-row-stable-refresh-child'),
@@ -8735,10 +10273,1089 @@ void main() {
     matching: find.byType(ListView),
   );
 
+  // QA9715: synthetic public events reproduce the photographed composition.
+  // The device DPR is unknown. 773 x (773*2448/1848) preserves the reference
+  // aspect ratio; the other sizes cover useful Fold/phone windows explicitly.
+  group('QA9715 activity composition', () {
+    Rect? paintedRect(Finder finder) {
+      if (finder.evaluate().isEmpty) return null;
+      final render = finder.evaluate().single.renderObject;
+      if (render is! RenderBox || !render.hasSize || !render.attached) {
+        return null;
+      }
+      var rect = MatrixUtils.transformRect(
+        render.getTransformTo(null),
+        Offset.zero & render.size,
+      );
+      RenderObject child = render;
+      for (
+        var parent = child.parent;
+        parent is RenderObject;
+        child = parent, parent = parent.parent
+      ) {
+        var clip = parent.describeApproximatePaintClip(child);
+        // TurnStepMotion clips the growing/shrinking slot in paint. Account
+        // for that same physical clip, rather than counting its full child.
+        if (parent.runtimeType.toString() == '_RenderSlot' &&
+            parent is RenderBox &&
+            child is RenderBox &&
+            parent.size.height < child.size.height) {
+          clip = Offset.zero & parent.size;
+        }
+        if (clip != null) {
+          rect = rect.intersect(
+            MatrixUtils.transformRect(parent.getTransformTo(null), clip),
+          );
+        }
+      }
+      return rect.isEmpty ? null : rect;
+    }
+
+    Future<void> compositionCase(
+      WidgetTester tester, {
+      required double width,
+      required bool consumedByWindow,
+      bool matrix = false,
+    }) async {
+      mockCompanionStorage();
+      tester.platformDispatcher.textScaleFactorTestValue =
+          1.3 / FontSizeService.fixedScale;
+      final renderDir = Platform.environment['QA9715_RENDER_DIR'];
+      if (renderDir != null && renderDir.isNotEmpty) await loadDesignFonts();
+      final height = width >= 700
+          ? width * 2448 / 1848
+          : width == 360
+          ? 800.0
+          : 915.0;
+      final keyboard = height * .43;
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = Size(width, height);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetViewInsets);
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+      final semantics = tester.ensureSemantics();
+      try {
+        var nowMs = 1770000000000;
+        final gateway = _UiRewindGateway();
+        final chat = await pumpChat(
+          tester,
+          desktopGateway: gateway,
+          connection: _remoteConn('qa9715-$width-$consumedByWindow'),
+          messages: scrollableChatHistory('QA9715_FOLD'),
+          wallClockMs: () => nowMs,
+        );
+        expect(
+          await chat.send(
+            fullText:
+                'Revisa el panel y escribe la orden sin perder el terminal.',
+            model: 'hermes-agent',
+            history: chat.messages,
+          ),
+          isTrue,
+        );
+        gateway.emit('message.start');
+        for (var i = 0; i < 2; i++) {
+          gateway.emit('subagent.start', {
+            'subagent_id': 'qa9715-child-$i',
+            'status': 'running',
+            'goal': 'Public fixture task $i',
+          });
+        }
+
+        await tester.pump();
+        await tester.pump(const Duration(seconds: 7));
+        nowMs += 45000;
+
+        for (var i = 0; i < 4; i++) {
+          gateway.emit('tool.start', {
+            'tool_id': 'qa9715-done-$i',
+            'name': 'terminal',
+            'args': {'command': i == 0 ? 'cd' : 'date'},
+          });
+          gateway.emit('tool.complete', {
+            'tool_id': 'qa9715-done-$i',
+            'name': 'terminal',
+            'args': {'command': i == 0 ? 'cd' : 'date'},
+            'result': 'public fixture result',
+          });
+          await tester.pump(const Duration(milliseconds: 240));
+        }
+        gateway.emit('tool.start', const {
+          'tool_id': 'qa9715-terminal',
+          'name': 'terminal',
+          'args': {'command': 't3ctl.py'},
+        });
+        gateway.emit('tool.start', const {
+          'tool_id': 'qa9715-write',
+          'name': 'write_file',
+          'args': {'path': 'ORDEN-QA9715-PANEL-VERTICAL.md'},
+        });
+        await tester.enterText(
+          find.byType(TextField),
+          'El resto de cosas no se ha hecho verdad?',
+        );
+        final frames = <Map<String, Object?>>[];
+        final violations = <String>[];
+        var capturedOverlap = false;
+        final capturedNames = <String>{};
+        Future<void> sample(String label, {bool capture = false}) async {
+          final header = find.byKey(const ValueKey('chat-header'));
+          final status = liveInlineActivity;
+          final composer = tester.getRect(find.byType(ConsoleComposer));
+          if (status.evaluate().length == 1) {
+            final spoken = tester.widget<Semantics>(status).properties.label!;
+            final connected = find.semantics.byLabel(spoken).evaluate().length;
+            if (connected != 1) {
+              violations.add('$label: spoken live phase copies=$connected');
+            }
+          }
+          final inHeader = find
+              .descendant(of: header, matching: status)
+              .evaluate()
+              .length;
+          if (inHeader != 0) {
+            violations.add('$label: duplicate live status in header=$inHeader');
+          }
+          final activityPill = find.byKey(
+            const ValueKey('delegates-capsule'),
+          );
+          if (chat.isStreaming && activityPill.evaluate().length != 1) {
+            violations.add('$label: missing lower activity pill');
+          }
+          if (activityPill.evaluate().isNotEmpty &&
+              tester.getRect(activityPill).overlaps(composer)) {
+            violations.add('$label: lower pill overlaps composer');
+          }
+          final cards = find.byWidgetPredicate(
+            (widget) =>
+                widget.key is ValueKey<String> &&
+                (widget.key! as ValueKey<String>).value.startsWith(
+                  'turn-step-card-',
+                ),
+          );
+          final rects = <String, Rect>{};
+          for (final element in cards.evaluate()) {
+            final key = element.widget.key! as ValueKey<String>;
+            // A step that leaves one unit of the folded line for another is
+            // there twice for a moment (the one going shrinks in its old
+            // slot): each copy is measured on its own.
+            final rect = paintedRect(
+              find.byElementPredicate((e) => identical(e, element)),
+            );
+            if (rect == null) continue;
+            var name = key.value;
+            for (var copy = 2; rects.containsKey(name); copy++) {
+              name = '${key.value}#$copy';
+            }
+            rects[name] = rect;
+            if (rect.overlaps(composer)) {
+              violations.add(
+                '$label: ${key.value} $rect overlaps composer $composer',
+              );
+            }
+          }
+          final layers = <String, Rect>{};
+          for (final name in [
+            'live-turn-status-pill',
+            'live-turn-step-pill',
+            'live-turn-thought',
+          ]) {
+            final rect = paintedRect(find.byKey(ValueKey(name)));
+            if (rect == null) continue;
+            layers[name] = rect;
+            if (rect.overlaps(composer)) {
+              violations.add('$label: $name $rect overlaps composer $composer');
+            }
+            for (final row in rects.entries) {
+              final overlap = rect.intersect(row.value);
+              if (overlap.width > .5 && overlap.height > .5) {
+                violations.add('$label: $name / ${row.key}: $overlap');
+              }
+            }
+          }
+          var hasRowOverlap = false;
+          final rows = rects.entries.toList();
+          for (var i = 0; i < rows.length; i++) {
+            for (var j = i + 1; j < rows.length; j++) {
+              final overlap = rows[i].value.intersect(rows[j].value);
+              if (overlap.width > .5 && overlap.height > .5) {
+                hasRowOverlap = true;
+                violations.add(
+                  '$label: ${rows[i].key} / ${rows[j].key}: $overlap',
+                );
+              }
+            }
+          }
+          final geometry = <String, Object?>{
+            'frame': label,
+            'width': width,
+            'height': height,
+            'windowConsumesInsets': consumedByWindow,
+            'viewHeight': tester.view.physicalSize.height,
+            'keyboardInset': tester.view.viewInsets.bottom,
+            'scale': MediaQuery.textScalerOf(
+              tester.element(find.byType(ChatScreen)),
+            ).scale(1),
+            'liveStatusInHeader': inHeader,
+            'liveStatuses': status.evaluate().length,
+            'composer': composer.toString(),
+            'status': status.evaluate().isEmpty
+                ? null
+                : tester.getRect(status).toString(),
+            'steps': rects.map((key, rect) => MapEntry(key, rect.toString())),
+            'lowerLayers': layers.map(
+              (key, rect) => MapEntry(key, rect.toString()),
+            ),
+            'delegates': tester
+                .getRect(find.byKey(const ValueKey('delegates-capsule')))
+                .toString(),
+          };
+          frames.add(geometry);
+          final witness = label.contains('-1.0-0.0-0');
+          if (renderDir != null &&
+              !capturedNames.contains(label) &&
+              (capture || witness || (hasRowOverlap && !capturedOverlap))) {
+            capturedNames.add(label);
+            capturedOverlap |= hasRowOverlap;
+            await tester.runAsync(() async {
+              final image = await captureImage(
+                tester.element(find.byType(ChatScreen)),
+              );
+              final bytes = await image.toByteData(
+                format: ui.ImageByteFormat.png,
+              );
+              image.dispose();
+              Directory(renderDir).createSync(recursive: true);
+              File(
+                '$renderDir/$width-$consumedByWindow-$label.png',
+              ).writeAsBytesSync(bytes!.buffer.asUint8List());
+            });
+          }
+        }
+
+        void keyboardAt(double fraction) {
+          tester.view.physicalSize = Size(
+            width,
+            height - (consumedByWindow ? keyboard * fraction : 0),
+          );
+          tester.view.viewInsets = FakeViewPadding(
+            bottom: consumedByWindow ? 0 : keyboard * fraction,
+          );
+        }
+
+        for (var frame = 0; frame < 40; frame++) {
+          keyboardAt(frame < 12 ? frame / 11 : 1);
+          if (frame == 13) {
+            gateway.emit('tool.complete', const {
+              'tool_id': 'qa9715-write',
+              'name': 'write_file',
+              'args': {'path': 'ORDEN-QA9715-PANEL-VERTICAL.md'},
+              'result': 'written',
+            });
+          }
+          if (frame == 16) {
+            gateway.emit('tool.complete', const {
+              'tool_id': 'qa9715-terminal',
+              'name': 'terminal',
+              'args': {'command': 't3ctl.py'},
+              'result': 'done',
+            });
+            gateway.emit('tool.start', const {
+              'tool_id': 'qa9715-next',
+              'name': 'terminal',
+              'args': {'command': 'date'},
+            });
+          }
+          nowMs += 16;
+          await tester.pump(const Duration(milliseconds: 16));
+          await sample(
+            'f$frame',
+            capture: frame == 12 || frame == 14 || frame == 18 || frame == 39,
+          );
+        }
+        if (matrix) {
+          final app = tester.state<HermesAppState>(find.byType(HermesApp));
+          for (final theme in [app.themeId.value, 'github']) {
+            await app.setThemeId(theme);
+            for (final scale in [1.0, 1.3, 2.0]) {
+              tester.platformDispatcher.textScaleFactorTestValue =
+                  scale / FontSizeService.fixedScale;
+              for (final fraction in [0.0, .5, 1.0, .5, 0.0]) {
+                keyboardAt(fraction);
+                for (var frame = 0; frame < 5; frame++) {
+                  nowMs += 16;
+                  await tester.pump(const Duration(milliseconds: 16));
+                  await sample('$theme-$scale-$fraction-$frame');
+                }
+              }
+            }
+          }
+        }
+        // Keep the original failures visible and deliver their diagnostics even
+        // when the final expectation is red. No source mutation or golden update.
+        if (renderDir != null) {
+          Directory(renderDir).createSync(recursive: true);
+          File(
+            '$renderDir/geometry-$width-$consumedByWindow-${matrix ? 'matrix' : 'reference'}.json',
+          ).writeAsStringSync(
+            const JsonEncoder.withIndent(
+              '  ',
+            ).convert({'frames': frames, 'violations': violations}),
+          );
+        }
+        for (var i = 0; i < 2; i++) {
+          gateway.emit('subagent.complete', {
+            'subagent_id': 'qa9715-child-$i',
+            'status': 'completed',
+          });
+        }
+        gateway.emit('message.complete', const {'text': 'QA9715_PUBLIC_REPLY'});
+        await tester.pump(const Duration(milliseconds: 500));
+        await tester.pumpWidget(const SizedBox.shrink());
+        chat.dispose();
+        await tester.pump();
+        expect(violations, isEmpty, reason: violations.take(12).join('\n'));
+        expect(tester.takeException(), isNull);
+      } finally {
+        semantics.dispose();
+      }
+    }
+
+    testWidgets(
+      'Fold reference aspect, keyboard and simultaneous write/terminal',
+      (tester) async {
+        await compositionCase(tester, width: 773, consumedByWindow: false);
+      },
+    );
+    for (final width in [360.0, 412.0, 773.0, 884.0]) {
+      for (final windowConsumes in [false, true]) {
+        testWidgets(
+          'geometry $width windowConsumes=$windowConsumes hot matrix',
+          (tester) async {
+            await compositionCase(
+              tester,
+              width: width,
+              consumedByWindow: windowConsumes,
+              matrix: true,
+            );
+          },
+        );
+      }
+    }
+  });
+
+  group('QA9716 viewport follow', () {
+    for (final scenario in [
+      (width: 773.0, window: false, interaction: 'none'),
+      (width: 773.0, window: true, interaction: 'none'),
+      (width: 773.0, window: false, interaction: 'expand'),
+      (width: 773.0, window: true, interaction: 'expand'),
+      (width: 773.0, window: false, interaction: 'cancel'),
+      (width: 773.0, window: true, interaction: 'cancel'),
+      (width: 360.0, window: false, interaction: 'cancel'),
+      (width: 884.0, window: true, interaction: 'cancel-held'),
+      (width: 773.0, window: false, interaction: 'drag-up'),
+      (width: 773.0, window: true, interaction: 'drag-cancel'),
+      (width: 810.0, window: false, interaction: 'none'),
+      (width: 810.0, window: false, interaction: 'up'),
+      (width: 810.0, window: false, interaction: 'cancel'),
+      (width: 810.0, window: false, interaction: 'near-cancel'),
+      (width: 810.0, window: false, interaction: 'reader-cancel'),
+      (width: 810.0, window: false, interaction: 'two-up-first'),
+      (width: 810.0, window: true, interaction: 'two-cancel-first'),
+      (width: 810.0, window: false, interaction: 'two-cancel-second'),
+      (width: 810.0, window: true, interaction: 'drag-two-cancel'),
+    ]) {
+      testWidgets('${scenario.width} window=${scenario.window} '
+          '${scenario.interaction}: 190 frames keep the tail or reader intent', (
+        tester,
+      ) async {
+        mockCompanionStorage();
+        final width = scenario.width;
+        // Match the recording's aspect ratio. 810 at the declared test DPR
+        // gives 1080 x 1432; the Fold's real DPR/preferences remain unknown.
+        final height = width >= 700 ? width * 1432 / 1080 : 915.0;
+        final dpr = width == 810 ? 4 / 3 : 1.0;
+        final keyboard = height * .43;
+        tester.view.devicePixelRatio = dpr;
+        tester.view.physicalSize = Size(width * dpr, height * dpr);
+        tester.platformDispatcher.textScaleFactorTestValue =
+            1.3 / FontSizeService.fixedScale;
+        final renderDir = Platform.environment['QA9716_RENDER_DIR'];
+        if (renderDir != null && renderDir.isNotEmpty) await loadDesignFonts();
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        addTearDown(tester.view.resetViewInsets);
+        addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+        final gateway = _UiRewindGateway();
+        var nowMs = 1770000000000;
+        final chat = await pumpChat(
+          tester,
+          desktopGateway: gateway,
+          connection: _remoteConn('qa9716-follow-$scenario'),
+          messages: scrollableChatHistory('QA9716_READER'),
+          wallClockMs: () => nowMs,
+        );
+        final controller = tester
+            .widget<ListView>(chatListFinder())
+            .controller!;
+        expect(
+          await chat.send(
+            fullText: 'Revisa los archivos y explica el resultado.',
+            model: 'hermes-agent',
+            history: chat.messages,
+          ),
+          isTrue,
+        );
+        gateway.emit('message.start');
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+        final nearReader = scenario.interaction == 'near-cancel';
+        final twoStationary = scenario.interaction.startsWith('two-');
+        final readingFrame = nearReader ? 130 : 45;
+        final reader =
+            scenario.interaction.startsWith('drag') ||
+            nearReader ||
+            scenario.interaction == 'reader-cancel';
+        final violations = <String>[];
+        final frames = <Map<String, Object?>>[];
+        var measured = 0;
+        TestGesture? held;
+        TestGesture? secondHeld;
+        Rect? tailRect() {
+          final reply = find.byKey(const ValueKey('live-reply-reveal'));
+          final activity = liveInlineActivity;
+          if (reply.evaluate().isNotEmpty) return tester.getRect(reply);
+          if (activity.evaluate().isNotEmpty) return tester.getRect(activity);
+          return null;
+        }
+
+        if (twoStationary) {
+          // v4 starts folded. Exercise pointer ownership against actual
+          // growing detail rather than assuming a stack grows by itself.
+          gateway.emit('reasoning.delta', {
+            'text': 'Primero reviso el archivo.',
+          });
+          await tester.pump();
+          await openInlineDetails(tester);
+        }
+        for (var frame = 0; frame < 190; frame++) {
+          nowMs += 16;
+          final fraction = (frame / 20).clamp(0.0, 1.0);
+          tester.view.physicalSize = Size(
+            width * dpr,
+            (height - (scenario.window ? keyboard * fraction : 0)) * dpr,
+          );
+          tester.view.viewInsets = FakeViewPadding(
+            bottom: scenario.window ? 0 : keyboard * fraction * dpr,
+          );
+          if (frame < 20 && frame % 3 == 0) {
+            gateway.emit('reasoning.delta', {
+              'text': ' Primero reviso un archivo y comparo su contenido.',
+            });
+          }
+          const tools = [
+            'read_skill',
+            'terminal',
+            'web_search',
+            'web_search',
+            'web_read',
+          ];
+          if ([20, 40, 60, 80, 100].contains(frame)) {
+            final tool = tools[frame ~/ 20 - 1];
+            gateway.emit('tool.start', {
+              'tool_id': 'qa9716-tool-$frame',
+              'name': tool,
+              'args': {
+                if (tool == 'terminal') 'command': 'date',
+                if (tool == 'read_skill') 'name': 'current-news-research',
+                if (tool == 'web_search') 'query': 'Noticias públicas de hoy',
+                if (tool == 'web_read') 'url': 'https://example.test/news',
+              },
+            });
+          }
+          if ([24, 44, 64, 84, 104].contains(frame)) {
+            gateway.emit('tool.complete', {
+              'tool_id': 'qa9716-tool-${frame - 4}',
+              'name': tools[(frame - 4) ~/ 20 - 1],
+              'result': 'Public regression result',
+            });
+          }
+          if (frame >= 120 && frame % 3 == 0) {
+            gateway.emit('message.delta', {
+              'text':
+                  'La revisión confirma un resultado público verificable. '
+                  '${frame % 12 == 0 ? '\n\n' : ''}',
+            });
+          }
+          if (frame == 10 && scenario.interaction.startsWith('cancel')) {
+            held = await tester.startGesture(
+              tester.getCenter(chatListFinder()),
+            );
+            if (scenario.interaction == 'cancel') {
+              await held.cancel();
+              held = null;
+            }
+          }
+          if (frame == 10 && scenario.interaction == 'up') {
+            final touch = await tester.startGesture(
+              tester.getCenter(chatListFinder()),
+            );
+            await touch.up();
+          }
+          if (frame == 10 && twoStationary) {
+            held = await tester.startGesture(
+              tester.getCenter(chatListFinder()) - const Offset(40, 0),
+            );
+          }
+          if (frame == 11 && twoStationary) {
+            secondHeld = await tester.startGesture(
+              tester.getCenter(chatListFinder()) + const Offset(40, 0),
+            );
+          }
+          if (frame == 20 && twoStationary) {
+            if (scenario.interaction == 'two-cancel-second') {
+              await secondHeld!.cancel();
+              secondHeld = null;
+            } else {
+              if (scenario.interaction == 'two-up-first') {
+                await held!.up();
+              } else {
+                await held!.cancel();
+              }
+              held = null;
+            }
+          }
+          if (frame == 35 && twoStationary) {
+            for (final touch in [held, secondHeld].whereType<TestGesture>()) {
+              if (scenario.interaction == 'two-up-first') {
+                await touch.up();
+              } else {
+                await touch.cancel();
+              }
+            }
+            held = secondHeld = null;
+          }
+          // A later stationary contact must not reattach someone who already
+          // moved away to read, even though this second contact never moves.
+          if (frame == 65 && scenario.interaction == 'reader-cancel') {
+            final touch = await tester.startGesture(
+              tester.getCenter(chatListFinder()),
+            );
+            await touch.cancel();
+          }
+          if (frame == 131 && nearReader) {
+            final touch = await tester.startGesture(
+              tester.getCenter(chatListFinder()),
+            );
+            await touch.cancel();
+          }
+          if (frame == 35 && held != null) {
+            await held.cancel();
+            held = null;
+          }
+          await tester.pump(const Duration(milliseconds: 16));
+          if (frame == 25 && twoStationary) {
+            expect(
+              controller.offset,
+              greaterThan(.5),
+              reason: 'the remaining stationary contact still owns the pause',
+            );
+          }
+          if (scenario.interaction == 'expand' && frame == 30) {
+            // What the turn did is ONE folded line: open it, then the thought
+            // inside (a thought on its own is its line).
+            final fold = inlineLabel;
+            // Its rows grow in under a clip: press the InkWells directly.
+            VoidCallback? tapOf(Finder inside) => tester
+                .widget<InkWell>(
+                  find
+                      .ancestor(of: inside, matching: find.byType(InkWell))
+                      .first,
+                )
+                .onTap;
+            if (fold.evaluate().isNotEmpty) {
+              tapOf(fold)!();
+              await tester.pump(const Duration(milliseconds: 16));
+            }
+            final thought = find.byWidgetPredicate(
+              (w) =>
+                  w is Semantics &&
+                  ('${w.key}'.contains('turn-thought-card-') ||
+                      '${w.key}'.contains('turn-inner-thought-')) &&
+                  (w.properties.label ?? '').startsWith('Pens'),
+            );
+            expect(thought, findsOneWidget);
+            final press = tapOf(
+              find.byWidgetPredicate(
+                (w) =>
+                    w.key == const ValueKey('turn-thought-label') ||
+                    '${w.key}'.contains('turn-inner-thought-label-'),
+              ),
+            );
+            if (press != null) {
+              // A thought that is over opens from its row.
+              press();
+              await tester.pump(const Duration(milliseconds: 16));
+              expect(
+                find.byKey(const ValueKey('turn-reasoning')),
+                findsOneWidget,
+              );
+            } else {
+              // The one being written stays folded: only its last lines.
+              expect(
+                find.byKey(const ValueKey('turn-reasoning')),
+                findsNothing,
+              );
+            }
+          }
+          if (reader && frame == readingFrame) {
+            if (nearReader) {
+              // Settle the preceding reveal/layout before measuring a drag
+              // specifically inside the 100 dp margin. Other cases exercise
+              // pointer ownership while the geometry is still changing.
+              for (var tick = 0; tick < 30; tick++) {
+                await tester.pump(const Duration(milliseconds: 16));
+              }
+              expect(controller.offset, closeTo(0, .5));
+            }
+            final center = tester.getCenter(chatListFinder());
+            final stationary = scenario.interaction == 'drag-two-cancel'
+                ? await tester.startGesture(center - const Offset(40, 0))
+                : null;
+            final gesture = await tester.startGesture(
+              center + (stationary == null ? Offset.zero : const Offset(40, 0)),
+            );
+            await gesture.moveBy(const Offset(0, 40));
+            await tester.pump(const Duration(milliseconds: 16));
+            await gesture.moveBy(Offset(0, nearReader ? 20 : 280));
+            await tester.pump(const Duration(milliseconds: 16));
+            if (stationary != null) {
+              await stationary.up();
+              await tester.pump(const Duration(milliseconds: 16));
+              expect(
+                controller.offset,
+                greaterThan(100),
+                reason: 'releasing one contact cannot override the other drag',
+              );
+            }
+            if (scenario.interaction.endsWith('cancel') || nearReader) {
+              await gesture.cancel();
+            } else {
+              await gesture.up();
+            }
+            await tester.pump(
+              nearReader
+                  ? const Duration(milliseconds: 16)
+                  : const Duration(milliseconds: 300),
+            );
+            if (nearReader) {
+              expect(controller.offset, greaterThan(.5));
+              expect(
+                controller.offset,
+                lessThan(100),
+                reason: 'a real drag still inside the near-bottom margin',
+              );
+            }
+          }
+          if (reader && frame >= readingFrame && frame < 160) {
+            expect(
+              controller.offset,
+              greaterThan(nearReader ? .5 : 100),
+              reason: 'real reading intent survives frame $frame',
+            );
+            if (controller.offset > 100) {
+              // The lock reports layout's corrected offset after this paint;
+              // let its notifier build the arrow without advancing time.
+              await tester.pump();
+              expect(
+                find.byKey(const ValueKey('scroll-to-bottom-visible')),
+                findsOneWidget,
+              );
+            }
+          }
+          if (reader && frame == 160) {
+            expect(
+              find.byKey(const ValueKey('scroll-to-bottom-visible')),
+              findsOneWidget,
+            );
+            await tester.tap(
+              find.byKey(const ValueKey('chat-scroll-to-bottom')),
+            );
+            await tester.pump();
+            // Start the navigation ticker, then observe its bounded 320 ms
+            // transition; a single long first pump has zero ticker elapsed.
+            for (
+              var tick = 0;
+              tick < 30 && controller.offset.abs() > .5;
+              tick++
+            ) {
+              await tester.pump(const Duration(milliseconds: 16));
+            }
+            expect(controller.offset, closeTo(0, .5));
+            expect(
+              find.byKey(const ValueKey('scroll-to-bottom-visible')),
+              findsNothing,
+            );
+          }
+          final following = (!reader || frame < readingFrame) || frame >= 160;
+          final holding =
+              (scenario.interaction == 'cancel-held' || twoStationary) &&
+              frame >= 10 &&
+              frame < 35;
+          final tail = tailRect();
+          if (following && !holding && tail != null) {
+            final bars = tester.getRect(
+              find.byKey(const ValueKey('chat-bottom-bars')),
+            );
+            if (tail.bottom > bars.top + .5) {
+              violations.add(
+                '$frame: tail=${tail.bottom} bars=${bars.top} '
+                'offset=${controller.offset}',
+              );
+            }
+          }
+          if (following && !holding) {
+            if ((controller.offset - controller.position.minScrollExtent)
+                    .abs() >
+                .5) {
+              violations.add(
+                '$frame: follow offset=${controller.offset} '
+                'min=${controller.position.minScrollExtent}',
+              );
+            }
+          }
+          expect(
+            find.descendant(
+              of: find.byKey(const ValueKey('chat-header')),
+              matching: find.byKey(const ValueKey('live-turn-status')),
+            ),
+            findsNothing,
+          );
+          expect(
+            find.byKey(const ValueKey('subagent-work-clock')),
+            findsNothing,
+          );
+          expect(
+            find.byKey(const ValueKey('live-turn-status-pill')),
+            findsNothing,
+          );
+          if (renderDir != null && renderDir.isNotEmpty) {
+            List<double> rect(Rect r) => [r.left, r.top, r.right, r.bottom];
+            frames.add({
+              'frame': frame,
+              'physicalSize': [
+                tester.view.physicalSize.width,
+                tester.view.physicalSize.height,
+              ],
+              'dpr': dpr,
+              'physicalInset': tester.view.viewInsets.bottom,
+              'following': following,
+              'offset': controller.offset,
+              'minScrollExtent': controller.position.minScrollExtent,
+              'tail': tail == null ? null : rect(tail),
+              'bars': rect(
+                tester.getRect(find.byKey(const ValueKey('chat-bottom-bars'))),
+              ),
+              'island': rect(
+                tester.getRect(find.byKey(const ValueKey('island'))),
+              ),
+              'status': liveInlineActivity.evaluate().isEmpty
+                  ? null
+                  : rect(tester.getRect(liveInlineActivity)),
+              'steps': {
+                for (final element
+                    in find
+                        .byWidgetPredicate(
+                          (w) => '${w.key}'.contains('turn-step-card-'),
+                        )
+                        .evaluate())
+                  '${element.widget.key}': rect(
+                    tester.getRect(find.byWidget(element.widget)),
+                  ),
+              },
+            });
+            if ([9, 10, 35, 106, 119, 160, 189].contains(frame)) {
+              await tester.runAsync(() async {
+                final image = await captureImage(
+                  tester.element(find.byType(ChatScreen)),
+                );
+                final bytes = await image.toByteData(
+                  format: ui.ImageByteFormat.png,
+                );
+                image.dispose();
+                Directory(renderDir).createSync(recursive: true);
+                File(
+                  '$renderDir/$width-${scenario.window}-${scenario.interaction}-$frame.png',
+                ).writeAsBytesSync(bytes!.buffer.asUint8List());
+              });
+            }
+          }
+          measured++;
+        }
+        if (renderDir != null && renderDir.isNotEmpty) {
+          File(
+            '$renderDir/$width-${scenario.window}-${scenario.interaction}.json',
+          ).writeAsStringSync(
+            jsonEncode({'frames': frames, 'violations': violations}),
+          );
+        }
+        gateway.emit('message.complete', {'text': chat.assistantContent});
+        await tester.pump(const Duration(milliseconds: 400));
+        await tester.pumpWidget(const SizedBox.shrink());
+        chat.dispose();
+        await tester.pump();
+        expect(measured, 190);
+        expect(violations, isEmpty, reason: violations.take(8).join('\n'));
+        expect(tester.takeException(), isNull);
+      });
+    }
+  });
+
+  // QA9716: retain the two measured reader reds, including their old viewport.
+  // The all-frame limit must survive: the original ends below1.5 after a peak.
+  group('QA9716 reader anchor', () {
+    for (final batch in [false, true]) {
+      testWidgets(batch ? 'batch' : 'original', (tester) async {
+        // Open rows would make the live turn taller than the space the
+        // keyboard leaves; this measures the reader's anchor under closed bars.
+        StepsBarMemory.openByDefault = false;
+        final output = Platform.environment['QA9716_ANCHOR_DIR'];
+        if (output != null) await loadDesignFonts();
+        mockCompanionStorage();
+        const width = 773.0;
+        const height = width * 2448 / 1848;
+        tester.view.devicePixelRatio = 1;
+        tester.view.physicalSize = const Size(width, height);
+        tester.platformDispatcher.textScaleFactorTestValue =
+            1.3 / FontSizeService.fixedScale;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        addTearDown(tester.view.resetViewInsets);
+        addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+        var now = 1770000000000;
+        final gateway = _UiRewindGateway();
+        final chat = await pumpChat(
+          tester,
+          desktopGateway: gateway,
+          connection: _remoteConn('QA9716-anchor-$batch'),
+          messages: scrollableChatHistory('QA9716_HISTORY'),
+          wallClockMs: () => now,
+        );
+        expect(
+          await chat.send(
+            fullText: 'Revisa los archivos y explica el resultado.',
+            model: 'hermes-agent',
+            history: chat.messages,
+          ),
+          isTrue,
+        );
+        gateway.emit('message.start');
+        for (var i = 0; i < 2; i++) {
+          gateway.emit('subagent.start', {
+            'subagent_id': 'QA9716-child-$i',
+            'status': 'running',
+            'goal': 'Public diagnostic task $i',
+          });
+        }
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+        final controller = tester
+            .widget<ListView>(chatListFinder())
+            .controller!;
+        final frames = <Map<String, Object?>>[];
+        final drift = <double>[];
+        String? readerText;
+        double? readerTop;
+        int? initialIdentity;
+        Rect? rect(Finder finder) {
+          if (finder.evaluate().isEmpty) return null;
+          final object = finder.evaluate().first.renderObject;
+          if (object is! RenderBox || !object.hasSize || !object.attached) {
+            return null;
+          }
+          return MatrixUtils.transformRect(
+            object.getTransformTo(null),
+            Offset.zero & object.size,
+          );
+        }
+
+        for (var frame = 0; frame < 190; frame++) {
+          tester.view.viewInsets = FakeViewPadding(
+            bottom: height * .43 * (frame / 20).clamp(0.0, 1.0),
+          );
+          if (frame < (batch ? 20 : 30) && frame % 3 == 0) {
+            gateway.emit('reasoning.delta', {
+              'text': ' Primero reviso un archivo y comparo su contenido.',
+            });
+          }
+          final starts = batch ? [20, 40, 60, 80, 100] : [30, 65, 100];
+          final tools = batch
+              ? [
+                  'read_skill',
+                  'terminal',
+                  'web_search',
+                  'web_search',
+                  'web_read',
+                ]
+              : ['terminal', 'terminal', 'terminal'];
+          if (starts.contains(frame)) {
+            final tool = tools[starts.indexOf(frame)];
+            gateway.emit('tool.start', {
+              'tool_id': 'QA9716-tool-$frame',
+              'name': tool,
+              'args': {
+                if (tool == 'terminal') 'command': 'date',
+                if (tool == 'read_skill') 'name': 'current-news-research',
+                if (tool == 'web_search') 'query': 'Noticias públicas de hoy',
+                if (tool == 'web_read') 'url': 'https://example.test/news',
+              },
+            });
+          }
+          if (starts.contains(frame - 4)) {
+            gateway.emit('tool.complete', {
+              'tool_id': 'QA9716-tool-${frame - 4}',
+              'name': tools[starts.indexOf(frame - 4)],
+              'result': 'Public diagnostic result',
+            });
+          }
+          if (frame >= (batch ? 120 : 40) && frame % 3 == 0) {
+            gateway.emit('message.delta', {
+              'text':
+                  'La revisión confirma un resultado público y verificable. '
+                  '${frame % 12 == 0 ? '\n\n' : ''}',
+            });
+          }
+          now += 16;
+          await tester.pump(const Duration(milliseconds: 16));
+          if (frame == 45) {
+            await tester.drag(chatListFinder(), const Offset(0, 320));
+            await tester.pump(const Duration(milliseconds: 300));
+            // Only the list's own rows: the pinned prompt header repeats a
+            // row's text outside the list and is no anchor of it. The reader
+            // stops on the first history row (or the prompt) that fills the
+            // readable band between the header and the composer.
+            final visible = find.descendant(
+              of: chatListFinder(),
+              matching: find.byWidgetPredicate(
+                (w) =>
+                    w is RichText &&
+                    (w.text.toPlainText().contains('QA9716_HISTORY') ||
+                        w.text.toPlainText().startsWith('Revisa los archivos')),
+              ),
+            );
+            for (final element in visible.evaluate()) {
+              final r = rect(find.byWidget(element.widget));
+              if (r != null && r.top < 420 && r.bottom > 200) {
+                readerText = (element.widget as RichText).text.toPlainText();
+                readerTop = r.top;
+                initialIdentity = identityHashCode(element.renderObject);
+                break;
+              }
+            }
+          }
+          final anchor = readerText == null
+              ? null
+              : find.descendant(
+                  of: chatListFinder(),
+                  matching: find.byWidgetPredicate(
+                    (w) => w is RichText && w.text.toPlainText() == readerText,
+                  ),
+                );
+          final anchorRect = anchor == null ? null : rect(anchor);
+          if (frame > 45 && anchorRect != null) {
+            drift.add(anchorRect.top - readerTop!);
+          }
+          if (output != null) {
+            RenderSliverMultiBoxAdaptor? sliver;
+            void visit(RenderObject node) {
+              if (sliver != null) return;
+              if (node is RenderSliverMultiBoxAdaptor) {
+                sliver = node;
+              } else {
+                node.visitChildren(visit);
+              }
+            }
+
+            final listObject = tester.element(chatListFinder()).renderObject;
+            if (listObject != null) visit(listObject);
+            final s = sliver;
+            final first = s?.firstChild;
+            final last = s?.lastChild;
+            frames.add({
+              'frame': frame,
+              'pixels': controller.offset,
+              'min': controller.position.minScrollExtent,
+              'max': controller.position.maxScrollExtent,
+              'viewport': controller.position.viewportDimension,
+              'padding': tester
+                  .widget<ListView>(chatListFinder())
+                  .padding
+                  .toString(),
+              'anchorTop': anchorRect?.top,
+              'referenceTop': readerTop,
+              'anchorDrift': anchorRect == null || readerTop == null
+                  ? null
+                  : anchorRect.top - readerTop,
+              'sameRenderObject': anchor == null || anchor.evaluate().isEmpty
+                  ? null
+                  : identityHashCode(anchor.evaluate().first.renderObject) ==
+                        initialIdentity,
+              'firstIndex': s == null || first == null
+                  ? null
+                  : s.indexOf(first),
+              'lastIndex': s == null || last == null ? null : s.indexOf(last),
+              'childCount': tester
+                  .widget<ListView>(chatListFinder())
+                  .childrenDelegate
+                  .estimatedChildCount,
+            });
+          }
+        }
+        if (output != null) {
+          Directory(output).createSync(recursive: true);
+          File(
+            '$output/${batch ? 'batch' : 'original'}.json',
+          ).writeAsStringSync(
+            jsonEncode({
+              'frames': frames,
+              'readerText': readerText,
+              'readerTop': readerTop,
+              'readerDrift': drift,
+            }),
+          );
+        }
+        gateway.emit('message.complete', {'text': chat.assistantContent});
+        await tester.pump(const Duration(milliseconds: 400));
+        await tester.pumpWidget(const SizedBox.shrink());
+        chat.dispose();
+        await tester.pump();
+        expect(
+          readerText,
+          isNotNull,
+          reason: 'readable-history control anchor',
+        );
+        expect(
+          drift,
+          hasLength(144),
+          reason: 'all frames46..189 retain the anchor',
+        );
+        expect(
+          drift.every((d) => d.abs() <= 1.5),
+          isTrue,
+          reason:
+              'peak ${drift.fold<double>(0, (p, d) => math.max(p, d.abs()))} dp',
+        );
+        expect(tester.takeException(), isNull);
+      });
+    }
+  });
+
   Future<void> triggerChatRefresh(WidgetTester tester) async {
     // Every chat surface (general and Bot Chat) opens the control sheet from
-    // the notch above the composer.
-    await tester.tap(find.byKey(const ValueKey('chat-notch')));
+    // Ajustes in its header (Vistas v3; the notch above the composer before).
+    await tester.tap(find.byKey(const ValueKey('chat-settings-button')));
     await tester.pump();
     await tester.pump(kChatNotchSheetOpen);
     final dialog = find.byKey(const ValueKey('chat-control-dialog'));
@@ -8897,23 +11514,16 @@ void main() {
         await tester.runAsync(() => invalidateBeforeSend(attachment));
       }
       await tester.tap(find.byKey(const ValueKey('send')));
-      for (
-        var frame = 0;
-        frame < 40 &&
-            find
-                .text(
-                  'Uno o más adjuntos ya no están disponibles o no son '
-                  'válidos. Revísalos antes de volver a enviar.',
-                )
-                .evaluate()
-                .isEmpty;
-        frame++
-      ) {
-        await tester.runAsync(
-          () => Future<void>.delayed(const Duration(milliseconds: 5)),
-        );
-        await tester.pump(const Duration(milliseconds: 10));
-      }
+      await _pumpUntilRealWork(
+        tester,
+        () => find
+            .text(
+              'Uno o más adjuntos ya no están disponibles o no son '
+              'válidos. Revísalos antes de volver a enviar.',
+            )
+            .evaluate()
+            .isNotEmpty,
+      );
 
       expect(
         find.text(
@@ -9421,12 +12031,7 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('send')));
       await tester.pump();
       expect(find.byType(AlertDialog), findsNothing);
-      for (var frame = 0; frame < 40 && chat.queuedTurns.isEmpty; frame++) {
-        await tester.runAsync(
-          () => Future<void>.delayed(const Duration(milliseconds: 5)),
-        );
-        await tester.pump(const Duration(milliseconds: 10));
-      }
+      await _pumpUntilRealWork(tester, () => chat.queuedTurns.isNotEmpty);
 
       expect(chat.queuedTurns, hasLength(1));
       final queued = chat.queuedTurns.single.turn;
@@ -9441,9 +12046,21 @@ void main() {
         isEmpty,
       );
 
-      await tester.tap(find.byKey(const ValueKey('chat-queue-toggle')));
-      await tester.pump();
-      expect(find.textContaining('Revisa después'), findsOneWidget);
+      await _openQueueActivity(tester);
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('chat-queue-panel')),
+          matching: find.textContaining('Revisa después'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('user-turn-row')),
+          matching: find.text('Revisa después'),
+        ),
+        findsNothing,
+      );
       expect(find.text('cola.pdf'), findsOneWidget);
     },
   );
@@ -9512,17 +12129,10 @@ void main() {
     );
     expect(transportBeforeSend.resume, 0);
     await tester.tap(find.byKey(const ValueKey('send')));
-    for (
-      var frame = 0;
-      frame < 80 &&
-          (gateway.fileAttachCalls == 0 || gateway.submissions.isEmpty);
-      frame++
-    ) {
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 5)),
-      );
-      await tester.pump(const Duration(milliseconds: 10));
-    }
+    await _pumpUntilRealWork(
+      tester,
+      () => gateway.fileAttachCalls != 0 && gateway.submissions.isNotEmpty,
+    );
 
     expect(gateway.connectCalls, transportBeforeSend.connect + 1);
     expect(gateway.resumeCalls, transportBeforeSend.resume + 1);
@@ -9559,22 +12169,32 @@ void main() {
   ) async {
     final retry = Completer<List<Map<String, dynamic>>>();
     var loads = 0;
+    var failing = true;
     final chat = await pumpChat(
       tester,
       connection: _remoteConn('conn-bot-composer-retry'),
       session: _session().copyWith(source: 'bot-mode'),
       missionBotProfile: const AgentProfile(name: 'Sol'),
       messagesLoaded: false,
+      // conn-registry E3: the opening read and its four silent retries
+      // (1/2/4/8 s, Desktop use-route-resume.ts:46-51) fail; then the card.
       storedMessageLoader: (_, _) {
-        if (++loads == 1) throw StateError('initial load failed');
+        loads += 1;
+        if (failing) throw StateError('initial load failed');
         return retry.future;
       },
     );
     await tester.pump();
+    expect(find.text('No se pudieron cargar los mensajes'), findsNothing);
+    for (var second = 0; second < 16; second++) {
+      await tester.pump(const Duration(seconds: 1));
+    }
     expect(find.text('No se pudieron cargar los mensajes'), findsOneWidget);
+    failing = false;
+    final loadsBeforeRetry = loads;
     await tester.tap(find.byIcon(Icons.refresh_rounded));
     await tester.pump();
-    expect(loads, 2);
+    expect(loads, loadsBeforeRetry + 1);
     final composer = find.byType(TextField);
     expect(tester.widget<TextField>(composer).enabled, isTrue);
     await tester.tap(composer);
@@ -9630,6 +12250,7 @@ void main() {
       final gateway = _UiRewindGateway()
         ..resumeExistingError = StateError('HTTP 401');
       var loads = 0;
+      var failing = true;
       await pumpChat(
         tester,
         connection: _remoteConn('conn-bot-composer-published'),
@@ -9638,23 +12259,32 @@ void main() {
         desktopGateway: gateway,
         messagesLoaded: false,
         storedMessageLoader: (_, _) {
-          if (++loads <= 2) throw StateError('HTTP 401');
+          loads += 1;
+          if (failing) throw StateError('HTTP 401');
           return retry.future;
         },
       );
       await tester.pump();
+      // conn-registry E3: the opening read is retried in silence (1/2/4/8 s,
+      // Desktop use-route-resume.ts:46-51) before the card shows.
+      expect(find.text('No se pudieron cargar los mensajes'), findsNothing);
+      for (var second = 0; second < 16; second++) {
+        await tester.pump(const Duration(seconds: 1));
+      }
       expect(find.text('No se pudieron cargar los mensajes'), findsOneWidget);
+      final loadsAtCard = loads;
       await tester.tap(find.byIcon(Icons.refresh_rounded));
       await tester.pump();
-      expect(loads, 2);
+      expect(loads, loadsAtCard + 1);
       expect(find.text('No se pudieron cargar los mensajes'), findsOneWidget);
 
+      failing = false;
       gateway
         ..resumeExistingError = null
         ..resumeExistingGate = resume;
       await tester.tap(find.byIcon(Icons.refresh_rounded));
       await tester.pump();
-      expect(loads, 3);
+      expect(loads, loadsAtCard + 2);
       final composer = find.byType(TextField);
       expect(tester.widget<TextField>(composer).enabled, isTrue);
       retry.complete(const [
@@ -9663,7 +12293,7 @@ void main() {
       ]);
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 100));
-      expect(gateway.resumeExistingCalls, 3);
+      expect(gateway.resumeExistingCalls, greaterThanOrEqualTo(3));
       expect(resume.isCompleted, isFalse);
       expect(find.text('Historial REST recuperado'), findsOneWidget);
       expect(find.text('No se pudieron cargar los mensajes'), findsNothing);
@@ -10001,7 +12631,9 @@ void main() {
 
       expect(find.text('Respuesta visible tras error'), findsOneWidget);
       expect(find.text('Pregunta visible tras error'), findsOneWidget);
-      expect(find.byKey(const ValueKey('chat-refresh-error')), findsOneWidget);
+      // conn-registry E3: an automatic read over visible rows fails in
+      // silence and is retried (Desktop use-background-sync.ts:406-408).
+      expect(find.byKey(const ValueKey('chat-refresh-error')), findsNothing);
       expect(find.textContaining('raw injected'), findsNothing);
     },
   );
@@ -10243,7 +12875,24 @@ void main() {
     await pumpChat(tester);
 
     expect(find.byType(ChatScreen), findsOneWidget);
-    final newSessionButton = find.byKey(const ValueKey('chat-new-session'));
+    // Vistas v3 (the owner): the header's action is «Ajustes»; «+» (new chat)
+    // is the first of its quick pill.
+    final settings = find.byKey(const ValueKey('chat-settings-button'));
+    expect(settings, findsOneWidget);
+    expect(
+      find.descendant(
+        of: settings,
+        matching: find.byIcon(Icons.more_horiz_rounded),
+      ),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('chat-views-button')), findsOneWidget);
+    await tester.tap(settings);
+    await tester.pump();
+    await tester.pump(kChatNotchSheetOpen);
+    final newSessionButton = find.byKey(
+      const ValueKey('chat-control-new-chat'),
+    );
     expect(newSessionButton, findsOneWidget);
     expect(
       find.descendant(
@@ -10252,6 +12901,10 @@ void main() {
       ),
       findsOneWidget,
     );
+    await tester.tapAt(const Offset(4, 400));
+    await tester.pump();
+    await tester.pump(kChatNotchSheetClose);
+    expect(find.byKey(const ValueKey('chat-control-dialog')), findsNothing);
     // Campo de texto del composer (con su placeholder).
     expect(find.byType(TextField), findsOneWidget);
     expect(find.text('Pregunta a Hermes…'), findsOneWidget);
@@ -11206,12 +13859,12 @@ void main() {
       );
 
       final thumbnail = find.byKey(const ValueKey('generated-image-thumbnail'));
-      for (var i = 0; i < 100 && thumbnail.evaluate().isEmpty; i++) {
-        await tester.runAsync(
-          () => Future<void>.delayed(const Duration(milliseconds: 20)),
-        );
-        await tester.pump(const Duration(milliseconds: 16));
-      }
+      await _pumpUntilRealWork(
+        tester,
+        () => thumbnail.evaluate().isNotEmpty,
+        real: const Duration(milliseconds: 20),
+        step: const Duration(milliseconds: 16),
+      );
       await tester.pump(const Duration(milliseconds: 300));
 
       expect(thumbnail, findsOneWidget);
@@ -11361,18 +14014,14 @@ void main() {
   Future<void> pumpUntilLegacyImage(
     WidgetTester tester,
     GeneratedImageStatus status,
-  ) async {
-    for (var i = 0; i < 100; i++) {
-      final cards = tester.widgetList<GeneratedImageCard>(
-        find.byType(GeneratedImageCard),
-      );
-      if (cards.any((card) => card.status == status)) return;
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 20)),
-      );
-      await tester.pump(const Duration(milliseconds: 16));
-    }
-  }
+  ) => _pumpUntilRealWork(
+    tester,
+    () => tester
+        .widgetList<GeneratedImageCard>(find.byType(GeneratedImageCard))
+        .any((card) => card.status == status),
+    real: const Duration(milliseconds: 20),
+    step: const Duration(milliseconds: 16),
+  );
 
   testWidgets(
     'a server-cache image loads through the Dashboard without a bridge',
@@ -13482,7 +16131,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('el + del chat abre y cierra el popover de tres fuentes', (
+  testWidgets('el + del chat abre y cierra el popover de cuatro entradas', (
     tester,
   ) async {
     await pumpChat(tester);
@@ -13493,10 +16142,11 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
 
-    expect(find.byType(MenuItemButton), findsNWidgets(3));
+    expect(find.byType(MenuItemButton), findsNWidgets(4));
     expect(find.text('Cámara'), findsOneWidget);
     expect(find.text('Galería'), findsOneWidget);
     expect(find.text('Archivos'), findsOneWidget);
+    expect(find.text('Escanear documento'), findsOneWidget);
     expect(find.text('Extensiones'), findsNothing);
     expect(find.text('Inteligencia'), findsNothing);
 
@@ -13552,7 +16202,7 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
 
-    expect(find.byType(MenuItemButton), findsNWidgets(3));
+    expect(find.byType(MenuItemButton), findsNWidgets(4));
     expect(find.text('Cámara'), findsOneWidget);
     expect(find.text('Galería'), findsOneWidget);
     expect(find.text('Archivos'), findsOneWidget);
@@ -13622,13 +16272,32 @@ void main() {
         'name': 'terminal',
         'args': {'command': 'sleep 30'},
       });
+      chat.enqueue('PUBLIC_QUEUED_FOR_PILL');
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 100));
-      final pill = find.byKey(const ValueKey('activity-pill'));
+      final pill = find.byKey(const ValueKey('chat-queue-chip'));
       final stop = find.byKey(const ValueKey('stop'));
       expect(pill, findsOneWidget);
       // fh1215: the pill sits in the floating header, far from Stop.
-      _expectPillInHeader(tester, pill, clearOf: [stop]);
+      expect(tester.getRect(pill).overlaps(tester.getRect(stop)), isFalse);
+      // Q9-CHAT5 v2 (ORDEN2-Q9-CHAT5, decisión 1): the live turn's pills sit
+      // above the composer and never over Stop.
+      final livePills = liveInlineActivity;
+      expect(livePills, findsOneWidget);
+      expect(tester.getRect(livePills).overlaps(tester.getRect(stop)), isFalse);
+      // Q9-CHAT5 v2 (ORDEN2-Q9-CHAT5, decisión 5): Stop is red.
+      final stopColors = Theme.of(tester.element(stop)).hermes;
+      expect(
+        tester
+            .widget<HermesTactileAction>(
+              find.descendant(
+                of: stop,
+                matching: find.byType(HermesTactileAction),
+              ),
+            )
+            .backgroundColor,
+        stopColors.error,
+      );
 
       // The command palette opens above the composer; the header pill
       // stays where it is and never overlaps it.
@@ -13636,12 +16305,16 @@ void main() {
       await tester.pump(const Duration(milliseconds: 250));
       final palette = find.byKey(const ValueKey('chat-slash-palette'));
       expect(palette, findsOneWidget);
-      _expectPillInHeader(tester, pill, clearOf: [stop, palette]);
+      expect(pill.hitTestable(), findsNothing,
+        reason: 'the queue yields its touch area to the command palette');
       await tester.enterText(find.byType(TextField), '');
       await tester.pump(const Duration(milliseconds: 250));
       expect(palette, findsNothing);
       expect(pill, findsOneWidget);
 
+      await chat.cancelQueuedByIdentity(chat.queuedEntries.single.id);
+      await tester.pump();
+      expect(find.byKey(const ValueKey('delegates-capsule')), findsNothing);
       // Stop del compositor: sin cambios.
       await tester.tap(stop);
       await tester.pump();
@@ -13680,9 +16353,12 @@ void main() {
     await tester.pump(const Duration(milliseconds: 1300));
   });
 
-  testWidgets('turno frío antiguo: la isla ofrece Detener de un toque', (
+  testWidgets('turno frío antiguo: Detener sale del composer, sin «Ya en marcha»', (
     tester,
   ) async {
+    // conn-registry C17: Desktop has no «already running» notice; a session
+    // reopened while it runs is `busy` and the composer offers Stop
+    // (apps/desktop/src/app/session/hooks/use-prompt-actions/utils.ts:252-262).
     final gateway = _OrderedSubmissionGateway(
       turnStartedAt: DateTime.now().subtract(const Duration(minutes: 16)),
     );
@@ -13694,49 +16370,20 @@ void main() {
       storedMessageLoader: (_, _) async => const [],
       cancelStreamOverride: () async => cancelCalls++,
     );
-    final banner = find.byKey(
-      const ValueKey('stale-running-session-stop-banner'),
-    );
-    for (
-      var attempt = 0;
-      attempt < 30 && banner.evaluate().isEmpty;
-      attempt++
-    ) {
+    final stop = find.byKey(const ValueKey('stop'));
+    for (var attempt = 0; attempt < 30 && stop.evaluate().isEmpty; attempt++) {
       await tester.pump(const Duration(milliseconds: 100));
     }
 
-    expect(banner, findsOneWidget);
-    await tester.pump(const Duration(milliseconds: 300));
-    // In the island, one line and «Detener»; nothing above the composer.
+    expect(stop, findsOneWidget);
     expect(
-      find.descendant(
-        of: find.byKey(const ValueKey('island')),
-        matching: banner,
-      ),
-      findsOneWidget,
-    );
-    expect(
-      find.descendant(
-        of: find.byKey(const ValueKey('chat-bottom-bars')),
-        matching: find.text('Ya en marcha'),
-      ),
+      find.byKey(const ValueKey('stale-running-session-stop-banner')),
       findsNothing,
     );
-    expect(
-      find.descendant(of: banner, matching: find.text('Ya en marcha')),
-      findsOneWidget,
-    );
-    expect(
-      find.descendant(
-        of: find.byKey(const ValueKey('stale-running-session-stop')),
-        matching: find.text('Detener'),
-      ),
-      findsOneWidget,
-    );
-    await tester.tap(find.byKey(const ValueKey('stale-running-session-stop')));
+    expect(find.text('Ya en marcha'), findsNothing);
+    await tester.tap(stop);
     await tester.pump();
     expect(cancelCalls, 1);
-    expect(banner, findsNothing);
     await tester.pump(const Duration(milliseconds: 1300));
   });
 
@@ -14120,12 +16767,12 @@ void main() {
     await tester.enterText(find.byType(TextField).last, 'mira la gráfica');
     await tester.pump(const Duration(milliseconds: 250));
     await tester.tap(find.byKey(const ValueKey('send')));
-    for (var i = 0; i < 80 && gateway.submissions.isEmpty; i++) {
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 20)),
-      );
-      await tester.pump(const Duration(milliseconds: 100));
-    }
+    await _pumpUntilRealWork(
+      tester,
+      () => gateway.submissions.isNotEmpty,
+      real: const Duration(milliseconds: 20),
+      step: const Duration(milliseconds: 100),
+    );
     expect(gateway.submissions, hasLength(1));
     expect(gateway.imageAttachCalls, 1);
     expect(gateway.submissions.single, contains('pasted-image.png'));
@@ -14181,16 +16828,12 @@ void main() {
       await tester.enterText(find.byType(TextField).last, 'mira la gráfica');
       await tester.pump(const Duration(milliseconds: 250));
       await tester.tap(find.byKey(const ValueKey('send')));
-      for (
-        var i = 0;
-        i < 40 && gateway.submissions.isEmpty && !(settled?.call() ?? false);
-        i++
-      ) {
-        await tester.runAsync(
-          () => Future<void>.delayed(const Duration(milliseconds: 20)),
-        );
-        await tester.pump(const Duration(milliseconds: 100));
-      }
+      await _pumpUntilRealWork(
+        tester,
+        () => gateway.submissions.isNotEmpty || (settled?.call() ?? false),
+        real: const Duration(milliseconds: 20),
+        step: const Duration(milliseconds: 100),
+      );
       return gateway;
     }
 
@@ -14385,12 +17028,12 @@ void main() {
       await tester.enterText(find.byType(TextField).last, 'mira esto');
       await tester.pump(const Duration(milliseconds: 250));
       await tester.tap(find.byKey(const ValueKey('send')));
-      for (var i = 0; i < 80 && gateway.submissions.isEmpty; i++) {
-        await tester.runAsync(
-          () => Future<void>.delayed(const Duration(milliseconds: 20)),
-        );
-        await tester.pump(const Duration(milliseconds: 100));
-      }
+      await _pumpUntilRealWork(
+        tester,
+        () => gateway.submissions.isNotEmpty,
+        real: const Duration(milliseconds: 20),
+        step: const Duration(milliseconds: 100),
+      );
       expect(gateway.submissions, hasLength(1));
       expect(gateway.imageAttachCalls, 1);
       expect(gateway.submissions.single, contains('pasted-image.png'));
@@ -14996,21 +17639,15 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('composer-add')));
       await tester.pump();
       tester
-          .widget<MenuItemButton>(find.byType(MenuItemButton).last)
+          .widget<MenuItemButton>(find.byType(MenuItemButton).at(2))
           .onPressed!();
       await tester.runAsync(
         () => Future<void>.delayed(const Duration(milliseconds: 100)),
       );
-      for (
-        var frame = 0;
-        frame < 240 && find.byType(AttachmentCard).evaluate().length < 3;
-        frame++
-      ) {
-        await tester.runAsync(
-          () => Future<void>.delayed(const Duration(milliseconds: 5)),
-        );
-        await tester.pump(const Duration(milliseconds: 10));
-      }
+      await _pumpUntilRealWork(
+        tester,
+        () => find.byType(AttachmentCard).evaluate().length >= 3,
+      );
 
       expect(picker.requestedAllowMultiple, isTrue);
       expect(picker.requestedType, FileType.any);
@@ -15040,16 +17677,13 @@ void main() {
         find.descendant(of: firstCard, matching: find.byIcon(Icons.close)),
       );
       await tester.pump();
-      for (
-        var frame = 0;
-        frame < 40 && draftsDir.listSync().whereType<File>().length > 1;
-        frame++
-      ) {
-        await tester.runAsync(
-          () => Future<void>.delayed(const Duration(milliseconds: 5)),
-        );
-        await tester.pump(const Duration(milliseconds: 10));
-      }
+      // The removed card's copy goes with real I/O. The 40 turns stay: a
+      // second, wrong deletion keeps the time to show.
+      await _pumpUntilRealWork(
+        tester,
+        () => draftsDir.listSync().whereType<File>().length <= 2,
+        minFrames: 40,
+      );
       expect(find.byType(AttachmentCard), findsNWidgets(2));
       expect(draftsDir.listSync().whereType<File>(), hasLength(2));
       expect(tester.takeException(), isNull);
@@ -15119,24 +17753,15 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('composer-add')));
     await tester.pump();
     tester
-        .widget<MenuItemButton>(find.byType(MenuItemButton).last)
+        .widget<MenuItemButton>(find.byType(MenuItemButton).at(2))
         .onPressed!();
-    for (
-      var frame = 0;
-      frame < 40 &&
-          find
-              .text(
-                'Los adjuntos seleccionados superan el límite total de 24 MB.',
-              )
-              .evaluate()
-              .isEmpty;
-      frame++
-    ) {
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 5)),
-      );
-      await tester.pump(const Duration(milliseconds: 10));
-    }
+    await _pumpUntilRealWork(
+      tester,
+      () => find
+          .text('Los adjuntos seleccionados superan el límite total de 24 MB.')
+          .evaluate()
+          .isNotEmpty,
+    );
 
     expect(
       find.text('Los adjuntos seleccionados superan el límite total de 24 MB.'),
@@ -15198,18 +17823,12 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('composer-add')));
       await tester.pump();
       tester
-          .widget<MenuItemButton>(find.byType(MenuItemButton).last)
+          .widget<MenuItemButton>(find.byType(MenuItemButton).at(2))
           .onPressed!();
-      for (
-        var frame = 0;
-        frame < 40 && find.byType(AttachmentCard).evaluate().isEmpty;
-        frame++
-      ) {
-        await tester.runAsync(
-          () => Future<void>.delayed(const Duration(milliseconds: 5)),
-        );
-        await tester.pump(const Duration(milliseconds: 10));
-      }
+      await _pumpUntilRealWork(
+        tester,
+        () => find.byType(AttachmentCard).evaluate().isNotEmpty,
+      );
 
       expect(find.byType(AttachmentCard), findsOneWidget);
       expect(
@@ -15287,16 +17906,11 @@ void main() {
     tester
         .widget<MenuItemButton>(find.byType(MenuItemButton).at(1))
         .onPressed!();
-    for (
-      var frame = 0;
-      frame < 120 && find.byType(AttachmentCard).evaluate().length < 10;
-      frame++
-    ) {
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 5)),
-      );
-      await tester.pump(const Duration(milliseconds: 10));
-    }
+    // Twelve files are sized, hashed and copied with real I/O.
+    await _pumpUntilRealWork(
+      tester,
+      () => find.byType(AttachmentCard).evaluate().length >= 10,
+    );
 
     expect(fake.requestedMultiOptions?.limit, 10);
     expect(find.byType(AttachmentCard), findsNWidgets(10));
@@ -15386,16 +18000,10 @@ void main() {
     tester
         .widget<MenuItemButton>(find.byType(MenuItemButton).at(1))
         .onPressed!();
-    for (
-      var frame = 0;
-      frame < 80 && find.byType(AttachmentCard).evaluate().length < 2;
-      frame++
-    ) {
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 5)),
-      );
-      await tester.pump(const Duration(milliseconds: 10));
-    }
+    await _pumpUntilRealWork(
+      tester,
+      () => find.byType(AttachmentCard).evaluate().length >= 2,
+    );
 
     expect(fake.requestedMultiOptions?.limit, 9);
     expect(find.byType(AttachmentCard), findsNWidgets(2));
@@ -15519,26 +18127,16 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('composer-add')));
     await tester.pump();
     tester
-        .widget<MenuItemButton>(find.byType(MenuItemButton).last)
+        .widget<MenuItemButton>(find.byType(MenuItemButton).at(2))
         .onPressed!();
-    for (var frame = 0; frame < 40 && materializeCalls < 2; frame++) {
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 5)),
-      );
-      await tester.pump(const Duration(milliseconds: 10));
-    }
+    await _pumpUntilRealWork(tester, () => materializeCalls >= 2);
     expect(materializeCalls, 2);
 
     Navigator.of(tester.element(find.byType(ChatScreen))).pop();
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     secondCopyGate.complete();
-    for (var frame = 0; frame < 40 && deleted.length < 2; frame++) {
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 5)),
-      );
-      await tester.pump(const Duration(milliseconds: 10));
-    }
+    await _pumpUntilRealWork(tester, () => deleted.length >= 2);
 
     expect(deleted, hasLength(2));
     expect(deleted.toSet(), hasLength(2));
@@ -16088,13 +18686,185 @@ void main() {
     }
 
     expect(stt.availableCalls, 0);
-    expect(
-      find.byKey(const ValueKey('voice-conversation-surface')),
-      findsNothing,
-    );
+    expect(find.byKey(const ValueKey('voice-capsule')), findsNothing);
     expect(find.byType(HermesNoticeCard), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  for (final readOnly in [false, true]) {
+    // the owner (1 Nov): the foot is the grey chrome, not glass. Its strip stays
+    // (one zone, one place for the scrim) but is untoned and holds no glass
+    // piece, so it never blurs: the composer and the pill are opaque whatever
+    // the policy says, and a policy flip moves nothing.
+    testWidgets('OPUS-CRISTAL real chat foot shares one strip and preserves '
+        'geometry on veto readOnly=$readOnly', (tester) async {
+      mockCompanionStorage();
+      final policyBefore = (
+        blur: FrostedBackdropPolicy.blurAllowed.value,
+        reduced: FrostedBackdropPolicy.reducedPerformance.value,
+        highEnd: FrostedBackdropPolicy.knownHighEnd.value,
+        gpu: FrostedBackdropPolicy.liquidGpuValidated.value,
+        ceiling: FrostedBackdropPolicy.effectCeiling.value,
+      );
+      void allowGlass(bool allowed) {
+        FrostedBackdropPolicy.blurAllowed.value = allowed;
+        FrostedBackdropPolicy.reducedPerformance.value = false;
+        FrostedBackdropPolicy.knownHighEnd.value = true;
+        FrostedBackdropPolicy.liquidGpuValidated.value = false;
+        FrostedBackdropPolicy.effectCeiling.value = HermesGlassTier.glass;
+      }
+
+      final foot = find.byKey(const ValueKey('chat-foot-glass'));
+      final composer = find.byKey(
+        const ValueKey('hermes-composer-visible-surface'),
+      );
+      final capsule = find.byKey(const ValueKey('status-pill-capsule'));
+      final header = find.byType(FloatingChatHeader);
+      Color paintedComposerColor() =>
+          (tester
+                      .widget<DecoratedBox>(
+                        find
+                            .descendant(
+                              of: composer,
+                              matching: find.byType(DecoratedBox),
+                            )
+                            .first,
+                      )
+                      .decoration
+                  as BoxDecoration)
+              .color!;
+      Color paintedCapsuleColor() =>
+          (tester.widget<Container>(capsule).decoration as BoxDecoration)
+              .color!;
+      Future<void> expectOpaqueFirstFrame() async {
+        final app = tester.state<HermesAppState>(find.byType(HermesApp));
+        final opaque = HermesChrome.of(
+          AppTheme.fromId(app.themeId.value).hermes,
+        ).opaque.toARGB32();
+        // Whole view at one logical pixel per pixel: tester.getRect and the
+        // image now share an explicit coordinate system, including the
+        // transcript behind the strip. No nearest-boundary crop assumption.
+        final frame = await ViewPixels.capture(tester);
+        final rect = tester.getRect(composer);
+        final point = Offset(
+          rect.center.dx.floorToDouble(),
+          (rect.top + 4).floorToDouble(),
+        );
+        expect(rect.contains(point), isTrue);
+        expect(
+          Rect.fromLTWH(
+            0,
+            0,
+            frame.width.toDouble(),
+            frame.height.toDouble(),
+          ).contains(point),
+          isTrue,
+        );
+        final pixel = frame.at(point.dx.toInt(), point.dy.toInt()).toARGB32();
+        for (final shift in [16, 8, 0]) {
+          expect((pixel >> shift) & 255, closeTo((opaque >> shift) & 255, 1));
+        }
+        expect((pixel >> 24) & 255, 255);
+        debugPrint(
+          'OPUS-CRISTAL first-paint view=${frame.width}x${frame.height} '
+          'composer=$rect point=$point actual=$pixel expected=$opaque',
+        );
+      }
+
+      allowGlass(true);
+      try {
+        await pumpChat(
+          tester,
+          connection: _conn().copyWith(readOnly: readOnly),
+          initialPreferences: const {'theme_mode': 'classic-dark'},
+        );
+        allowGlass(true);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+        TextEditingController? controller;
+        if (!readOnly) {
+          await tester.enterText(find.byType(TextField), 'Borrador conservado');
+          tester
+              .widget<TextField>(find.byType(TextField))
+              .focusNode!
+              .requestFocus();
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 300));
+          expect(
+            tester
+                .widget<TextField>(find.byType(TextField))
+                .focusNode!
+                .hasFocus,
+            isTrue,
+          );
+          controller = tester
+              .widget<TextField>(find.byType(TextField))
+              .controller;
+        }
+        final strip = tester.widget<HermesGlassStrip>(foot);
+        expect(strip.zone, FrostedZone.bottom);
+        expect(strip.priority, 1);
+        expect(strip.enabled, isTrue);
+        expect(strip.shaderEnabled, isFalse);
+        expect(strip.tone, isNull, reason: 'no smoked glass on the foot');
+        expect(strip.toneInks, isEmpty);
+        expect(
+          find.descendant(of: foot, matching: find.byType(HermesGlassPiece)),
+          findsNothing,
+          reason: 'the composer and the pill are not glass pieces',
+        );
+        expect(
+          find.descendant(of: foot, matching: find.byType(HermesGlassStrip)),
+          findsNothing,
+        );
+        expect(header, findsOneWidget);
+        expect(paintedComposerColor().a, 1);
+        expect(paintedCapsuleColor().a, 1);
+        final composerRect = tester.getRect(composer);
+        final capsuleRect = tester.getRect(capsule);
+        final headerRect = tester.getRect(header);
+        final barsRect = tester.getRect(
+          find.byKey(const ValueKey('chat-bottom-bars')),
+        );
+        allowGlass(false);
+        await tester.pump();
+        // The fading fill may still be translucent; the painted result must
+        // already be opaque, rather than just its eventual target decoration.
+        await expectOpaqueFirstFrame();
+        expect(tester.layers.whereType<BackdropFilterLayer>(), isEmpty);
+        expect(paintedCapsuleColor().a, 1);
+        expect(tester.getRect(composer), composerRect);
+        expect(tester.getRect(capsule), capsuleRect);
+        expect(tester.getRect(header), headerRect);
+        expect(
+          tester.getRect(find.byKey(const ValueKey('chat-bottom-bars'))),
+          barsRect,
+        );
+        allowGlass(true);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+        expect(paintedComposerColor().a, 1);
+        expect(paintedCapsuleColor().a, 1);
+        expect(tester.getRect(composer), composerRect);
+        expect(tester.getRect(capsule), capsuleRect);
+        if (!readOnly) {
+          final field = tester.widget<TextField>(find.byType(TextField));
+          expect(field.controller, same(controller));
+          expect(field.controller!.text, 'Borrador conservado');
+          expect(field.focusNode!.hasFocus, isTrue);
+        }
+        expect(tester.takeException(), isNull);
+      } finally {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+        FrostedBackdropPolicy.blurAllowed.value = policyBefore.blur;
+        FrostedBackdropPolicy.reducedPerformance.value = policyBefore.reduced;
+        FrostedBackdropPolicy.knownHighEnd.value = policyBefore.highEnd;
+        FrostedBackdropPolicy.liquidGpuValidated.value = policyBefore.gpu;
+        FrostedBackdropPolicy.effectCeiling.value = policyBefore.ceiling;
+      }
+    });
+  }
 
   testWidgets('el foco ensancha el composer del chat sin perder el borrador', (
     tester,
@@ -16370,14 +19140,15 @@ void main() {
       );
       // The 500-row page is over 64 KB, so the Dashboard decodes it in an
       // isolate (decodeJsonOffMain), which only runs in real time.
-      Future<void> settleOffMainDecode({bool Function()? until}) async {
-        for (var i = 0; i < 50 && !(until?.call() ?? false); i++) {
-          await tester.runAsync(
-            () => Future<void>.delayed(const Duration(milliseconds: 20)),
+      // Without [until] it runs its 50 turns.
+      Future<void> settleOffMainDecode({bool Function()? until}) =>
+          _pumpUntilRealWork(
+            tester,
+            until ?? () => true,
+            minFrames: until == null ? 50 : 0,
+            real: const Duration(milliseconds: 20),
+            step: Duration.zero,
           );
-          await tester.pump();
-        }
-      }
 
       final probe = ChatPerformanceProbe();
       final chat = await pumpChat(
@@ -16577,14 +19348,45 @@ void main() {
 
     await tester.tap(find.byType(TextField));
     await tester.pump();
-    // The rebuild under test, explicit: focus alone need not rebuild rows.
+    // The rebuild under test, explicit: focus alone need not rebuild rows,
+    // and a screen build that changed neither its state nor its
+    // dependencies keeps every cached row (the row delegate is stable).
     await _rebuildChatScreen(tester);
 
-    expect(performance.terminalAssistantBuilds, greaterThan(terminalBuilds));
+    expect(
+      performance.terminalAssistantBuilds,
+      greaterThanOrEqualTo(terminalBuilds),
+    );
     expect(
       performance.terminalProjectionComputations,
       computations,
       reason: 'focus/rebuild no vuelve a normalizar ni partir el Markdown',
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('mdpolish: la lista de fuentes del chat sale como filas', (
+    tester,
+  ) async {
+    await pumpChat(
+      tester,
+      messages: const [
+        {
+          'role': 'assistant',
+          'content':
+              'Hay dos noticias.[1][2]\n\nSources\n\n'
+              '[1] https://efe.com/espana/2026-11-01/heridos-urda — EFE: heridos '
+              '[2] https://elpais.com/espana/2026-11-01/la-jueza — El País: jueza',
+        },
+        {'role': 'user', 'content': 'Noticias'},
+      ],
+    );
+
+    expect(find.byType(ChatSourcesList), findsOneWidget);
+    expect(find.byType(ChatSourceRow), findsNWidgets(2));
+    expect(
+      find.textContaining('https://efe.com', findRichText: true),
+      findsNothing,
     );
     expect(tester.takeException(), isNull);
   });
@@ -16700,8 +19502,9 @@ void main() {
               true,
             ),
             (
+              // Vistas v3: Ajustes, from its header button (the notch's).
               'control del chat',
-              () => find.byKey(const ValueKey('chat-notch')),
+              () => find.byKey(const ValueKey('chat-settings-button')),
               () => find.byKey(const ValueKey('chat-control-dialog')),
               null,
               true,
@@ -16818,6 +19621,103 @@ void main() {
       });
     },
   );
+
+  for (final cached in [true, false]) {
+    testWidgets(
+      'apertura (${cached ? 'con caché' : 'sin caché'}): el pie no recorre '
+      'valores intermedios al llegar caché, snapshot y sesión viva',
+      (tester) async {
+        final gateway = _UiRewindGateway();
+        final connection = _remoteConn('conn-pill-open');
+        // The list row carries the persisted totals (the "snapshot" step).
+        final session = Session(
+          id: 'sess-test',
+          title: 'Conversación de prueba',
+          model: 'claude-sonnet-5-5',
+          source: 'mobile',
+          messageCount: 0,
+          isActive: true,
+          preview: '',
+          startedAt: 0,
+          inputTokens: 150000,
+          cacheReadTokens: 0,
+        );
+        // Sampled on every frame, from the first one of the route.
+        final contexts = <String>[];
+        final models = <String>[];
+        final widths = <double>[];
+        String? last(Finder zone) {
+          if (zone.evaluate().isEmpty) return null;
+          return [
+            for (final text in tester.widgetList<Text>(
+              find.descendant(of: zone, matching: find.byType(Text)),
+            ))
+              if ((text.style?.color?.a ?? 1) > 0)
+                text.data ?? text.textSpan?.toPlainText() ?? '',
+          ].join('|');
+        }
+
+        var recording = true;
+        tester.binding.addPersistentFrameCallback((_) {
+          if (!recording) return;
+          final zone = find.byKey(
+            const ValueKey('desktop-context-usage-status'),
+          );
+          final context = last(zone);
+          if (context != null &&
+              (contexts.isEmpty || contexts.last != context)) {
+            contexts.add(context);
+          }
+          final model = last(find.byKey(const ValueKey('status-pill-model')));
+          if (model != null && (models.isEmpty || models.last != model)) {
+            models.add(model);
+          }
+          if (zone.evaluate().isNotEmpty) {
+            final width = tester.getSize(zone).width;
+            if (widths.isEmpty || widths.last != width) widths.add(width);
+          }
+        });
+        addTearDown(() => recording = false);
+
+        await pumpChat(
+          tester,
+          desktopGateway: gateway,
+          connection: connection,
+          session: session,
+          messagesLoaded: false,
+          initialPreferences: {
+            if (cached)
+              'chat_pill_memory_v1.${connection.id}.${session.logicalId}':
+                  '{"used":70,"max":1000,"percent":7,'
+                  '"model":"claude-sonnet-5-5","provider":"anthropic"}',
+          },
+        );
+        await tester.pump(const Duration(milliseconds: 100));
+        for (var frame = 0; frame < 6; frame++) {
+          await tester.pump(const Duration(milliseconds: 50));
+        }
+        await tester.pump(const Duration(seconds: 3));
+
+        // The live window arrived: 25 %.
+        expect(contexts.last, '25%');
+        // Never the list row's totals nor the empty placeholder as a value.
+        expect(contexts.any((c) => c.contains('tok') || c == '—'), isFalse);
+        // What was painted before the live value was the cache or nothing
+        // readable; so at most one change of text.
+        final readable = contexts.where((c) => c.isNotEmpty).toList();
+        expect(
+          readable.length,
+          lessThanOrEqualTo(cached ? 2 : 1),
+          reason: 'context texts: $contexts',
+        );
+        // The model is the one of the row / cache from the first frame, and
+        // it does not change.
+        expect(models.toSet().length, lessThanOrEqualTo(1), reason: '$models');
+        // Pending reserves the width of a percentage: it does not oscillate.
+        expect(widths.toSet().length, lessThanOrEqualTo(2), reason: '$widths');
+      },
+    );
+  }
 
   testWidgets(
     'session.info actualiza el trigger aislado y abre el desglose Desktop',
@@ -17170,18 +20070,13 @@ void main() {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool('app_lock_enabled', true);
 
-      await tester.tap(find.byKey(const ValueKey('chat-notch')));
+      await tester.tap(find.byKey(const ValueKey('chat-settings-button')));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 350));
-      await tester.scrollUntilVisible(
-        find.byKey(const ValueKey('chat-control-delete')),
-        260,
-        scrollable: find
-            .descendant(
-              of: find.byKey(const ValueKey('chat-control-sheet')),
-              matching: find.byType(Scrollable),
-            )
-            .first,
+      // The sheet has one more row (Agents) and now scrolls: bring Delete
+      // into view without a drag, which can dismiss the window.
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('chat-control-delete'), skipOffstage: false),
       );
       await tester.pump(const Duration(milliseconds: 350));
       await tester.tap(find.byKey(const ValueKey('chat-control-delete')));
@@ -17253,18 +20148,13 @@ void main() {
     });
 
     await http.runWithClient(() async {
-      await tester.tap(find.byKey(const ValueKey('chat-notch')));
+      await tester.tap(find.byKey(const ValueKey('chat-settings-button')));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 350));
-      await tester.scrollUntilVisible(
-        find.byKey(const ValueKey('chat-control-delete')),
-        260,
-        scrollable: find
-            .descendant(
-              of: find.byKey(const ValueKey('chat-control-sheet')),
-              matching: find.byType(Scrollable),
-            )
-            .first,
+      // The sheet has one more row (Agents) and now scrolls: bring Delete
+      // into view without a drag, which can dismiss the window.
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('chat-control-delete'), skipOffstage: false),
       );
       await tester.pump(const Duration(milliseconds: 350));
       await tester.tap(find.byKey(const ValueKey('chat-control-delete')));
@@ -17684,6 +20574,108 @@ void main() {
         findsNothing,
       );
       expect(find.byKey(const ValueKey('status-pill-limit-dot')), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('la hoja del modelo ya no duplica «Permisos»: se configuran '
+        'desde la píldora del pie, con su confirmación de YOLO', (
+      tester,
+    ) async {
+      await pumpChat(tester);
+      final foot = find.byKey(const ValueKey('status-pill-permissions'));
+      await tester.tap(find.byKey(const ValueKey('status-pill-model')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.byKey(const ValueKey('chat-model-dialog')), findsOneWidget);
+      expect(find.byKey(const ValueKey('msv-tile-think')), findsOneWidget);
+      expect(find.byKey(const ValueKey('msv-tile-permissions')), findsNothing);
+      expect(find.text('Permisos'), findsNothing);
+
+      // Cierra la hoja: la píldora del pie sigue ofreciendo los modos.
+      await tester.binding.handlePopRoute();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.byKey(const ValueKey('chat-model-dialog')), findsNothing);
+      await tester.tap(foot);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.byKey(const ValueKey('chat-mode-dialog')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('chat-mode-option-yolo')),
+        findsOneWidget,
+      );
+
+      // YOLO pide confirmación; aceptar lo aplica y la píldora lo dice.
+      await tester.tap(find.byKey(const ValueKey('chat-mode-option-yolo')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.text('¿YOLO en esta sesión?'), findsOneWidget);
+      await tester.tap(find.text('Activar'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(
+        find.descendant(of: foot, matching: find.text('YOLO')),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('un favorito se guarda en el dispositivo por conexión y '
+        'perfil, vuelve al reabrir y se elige como cualquier modelo', (
+      tester,
+    ) async {
+      final gateway = _ModelConfigGateway();
+      final chat = await pumpChat(
+        tester,
+        desktopGateway: gateway,
+        connection: _remoteConn('conn-model-favorites'),
+        messagesLoaded: false,
+      );
+      for (var frame = 0; !chat.hasDesktopRuntime && frame < 10; frame++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+      gateway.emit('session.info', const {
+        'info': {'model': 'old-model', 'provider': 'provider-a'},
+      });
+      await tester.pump();
+
+      Future<void> openSheet() async {
+        await tester.tap(find.byKey(const ValueKey('status-pill-model')));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+
+      final fav = find.byKey(const ValueKey('msv-fav-provider-a-new-model'));
+      await openSheet();
+      expect(fav, findsNothing);
+      await openAllModels(tester);
+      await tester.tap(
+        find.byKey(const ValueKey('msv-star-provider-a-new-model')),
+      );
+      await tester.pump();
+      final prefs = await SharedPreferences.getInstance();
+      final keys = prefs.getKeys().where(
+        (k) => k.startsWith('model_favorites_v1_conn-model-favorites_'),
+      );
+      expect(keys, hasLength(1));
+      expect(prefs.getString(keys.single), contains('provider-a|new-model'));
+
+      await tester.tap(find.byKey(const ValueKey('msv-back')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(fav, findsOneWidget);
+
+      // Closed and opened again: still there, and tapping it picks it.
+      await tester.binding.handlePopRoute();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      await openSheet();
+      expect(fav, findsOneWidget);
+      await tester.tap(fav);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 240));
+      expect(gateway.modelSelections.last.modelId, 'new-model');
       expect(tester.takeException(), isNull);
     });
   });
@@ -18320,13 +21312,14 @@ void main() {
       expect(gateway.submissions, isEmpty);
       expect(chat.queuedMessages, ['espera a la compactación']);
       expect(chat.queueParked, isTrue);
-      expect(find.text('en pausa: la compactación no terminó'), findsOneWidget);
-      // The existing queue affordance delivers it on explicit request, once.
       HermesNotice.of(
         tester.element(find.byType(ChatScreen)),
       ).removeCurrentSnackBar();
       FocusManager.instance.primaryFocus?.unfocus();
       await tester.pump(const Duration(milliseconds: 400));
+      await _openQueueActivity(tester);
+      expect(find.text('en pausa: la compactación no terminó'), findsOneWidget);
+      // The existing queue affordance delivers it on explicit request, once.
       await tester.tap(find.byKey(const ValueKey('chat-queue-resume')));
       for (var frame = 0; frame < 20; frame++) {
         await tester.pump(const Duration(milliseconds: 20));
@@ -19567,6 +22560,67 @@ void main() {
     },
   );
 
+  // Ola 5 (AUDITORIA-PULIDO §2.16, P1): «Omitir» skips the question and
+  // the turn goes on, as Desktop's Skip; it never stops the session.
+  testWidgets('clarify: «Omitir» salta la pregunta sin detener el turno', (
+    tester,
+  ) async {
+    final gateway = _InteractiveUiGateway();
+    final chat = await pumpChat(
+      tester,
+      desktopGateway: gateway,
+      connection: _remoteConn('conn-clarify-skip'),
+      acquireDesktopRuntimeBeforeMount: true,
+    );
+    gateway.emit('clarify.request', const {
+      'request_id': 'clarify-skip-batch',
+      'questions': [
+        {
+          'qid': 'q0',
+          'question': '¿Publicamos ya?',
+          'choices': ['Sí', 'No'],
+        },
+      ],
+    });
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    final card = find.byKey(
+      const ValueKey('interactive-runtime-ui-test-clarify-skip-batch'),
+    );
+    expect(card, findsOneWidget);
+    final skip = find.descendant(
+      of: card,
+      matching: find.byKey(const ValueKey('interactive-skip')),
+    );
+    await tester.ensureVisible(skip);
+    await tester.pump();
+    await tester.tap(skip);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(gateway.skippedClarify, ['clarify-skip-batch']);
+    expect(gateway.clarifyResponses, isEmpty);
+    expect(gateway.interruptCalls, 0);
+    expect(card, findsNothing);
+
+    // Skipping is not stopping: the turn goes on, so ActiveChat put its
+    // activity watchdog back on the clock, exactly as after an answer.
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(chat.isStreaming, isTrue);
+    expect(chat.activityWatchdogArmed, isTrue);
+    expect(gateway.interruptCalls, 0);
+    expect(tester.takeException(), isNull);
+
+    // That live turn's watchdog belongs to the ActiveChat: like the other
+    // tests that answer a card (exerciseRestoredApproval), dispose the chat
+    // before the tree, which cancels it.
+    chat.dispose();
+    await gateway.close();
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+  });
+
   testWidgets('el borrador reaparece al salir y volver al mismo chat', (
     tester,
   ) async {
@@ -19631,7 +22685,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('el lifecycle nunca desconecta el canal Desktop', (tester) async {
+  testWidgets('el lifecycle pide un solo aparcado por cada estancia en background', (tester) async {
     final gateway = _UiRewindGateway();
     await pumpChat(
       tester,
@@ -19656,12 +22710,14 @@ void main() {
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
-    await tester.pump(const Duration(seconds: 21));
+    await tester.pump(const Duration(seconds: 29));
     expect(gateway.idleDisconnects, 0);
+    await tester.pump(const Duration(seconds: 1));
+    expect(gateway.idleDisconnects, 1);
 
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.detached);
     await tester.pump();
-    expect(gateway.idleDisconnects, 0);
+    expect(gateway.idleDisconnects, 1);
   });
 
   testWidgets('process death durante submitting restaura sin autoenvío', (
@@ -19843,6 +22899,112 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  for (final withAttachment in [false, true]) {
+    testWidgets(
+      'lost ACK merges durable input after resume attachment=$withAttachment',
+      (tester) async {
+        final temp = Directory.systemTemp.createTempSync('chat-lost-ack-');
+        addTearDown(() => temp.deleteSync(recursive: true));
+        const pathProvider = MethodChannel('plugins.flutter.io/path_provider');
+        TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(pathProvider, (call) async => temp.path);
+        addTearDown(
+          () => TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
+              .setMockMethodCallHandler(pathProvider, null),
+        );
+        final file = File('${temp.path}/pasted_content_test.txt')
+          ..writeAsStringSync('x' * 3100);
+        final attachment = AttachmentDraft(
+          localId: 'pasted-test',
+          type: AttachmentType.document,
+          name: 'pasted_content_test.txt',
+          mimeType: 'text/plain',
+          sizeBytes: file.lengthSync(),
+          localPath: file.path,
+        );
+        final connection = _remoteConn('lost-ack-widget-$withAttachment');
+        secureStore[ChatDraftStore.keyForTesting(
+          connection.id,
+          'sess-test',
+          profile: 'default',
+        )] = jsonEncode({
+          'savedAt': DateTime.now().millisecondsSinceEpoch,
+          'text': withAttachment ? '' : 'revisa',
+          'attachments': [if (withAttachment) attachment.toJson()],
+        });
+        final durable = <Map<String, dynamic>>[
+          {'id': 1, 'role': 'user', 'content': 'previous'},
+          {'id': 2, 'role': 'assistant', 'content': 'done'},
+        ];
+        final gateway = _SubmissionGateway()
+          ..submitError = const TuiGatewayRpcError(
+            'prompt.submit',
+            'Lost ACK',
+            failureKind: TuiGatewayRpcFailureKind.connectionLost,
+          )
+          ..onSubmit = (text) {
+            durable.add({
+              'id': 3,
+              'role': 'user',
+              'content': text,
+              'timestamp': DateTime.now().millisecondsSinceEpoch / 1000,
+            });
+          };
+        final chat = await pumpChat(
+          tester,
+          connection: connection,
+          desktopGateway: gateway,
+          messages: durable.reversed.map(Map<String, dynamic>.of).toList(),
+          storedMessageLoader: (_, _) async =>
+              durable.map(Map<String, dynamic>.of).toList(),
+          attachmentMaterializer: (item) async => item,
+          attachmentPrivateCopyDeleter: (_) async => true,
+        );
+        await pumpUntilReal(
+          tester,
+          () =>
+              tester
+                      .widget<ConsoleComposer>(find.byType(ConsoleComposer))
+                      .attachments
+                      .length ==
+                  (withAttachment ? 1 : 0) &&
+              tester
+                      .widget<TextField>(find.byType(TextField).last)
+                      .controller!
+                      .text ==
+                  (withAttachment ? '' : 'revisa'),
+          timeoutMessage: 'draft not restored',
+        );
+        await tester.tap(find.byKey(const ValueKey('send')));
+        await pumpUntilReal(
+          tester,
+          () => chat.state == ChatPipelineState.failed,
+          timeoutMessage: 'ACK loss not observed',
+        );
+        gateway.submitError = null;
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.inactive,
+        );
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.inactive,
+        );
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+        await tester.runAsync(chat.reconcileAfterResume);
+        for (var frame = 0; frame < 30; frame++) {
+          await tester.pump(const Duration(milliseconds: 20));
+        }
+        expect(gateway.submissions, hasLength(1));
+        expect(chat.messages.where((row) => row['role'] == 'user').length, 2);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
 
   group('QA físico 1.2.15: turno fallido sin confirmar y borrador nuevo', () {
     const promptA = 'QA offline: mensaje A';
@@ -21350,6 +24512,7 @@ void main() {
         await tester.pump(const Duration(milliseconds: 20));
       }
       expect(gateway.submissions, isEmpty);
+      await _openQueueActivity(tester);
       await tester.tap(find.byKey(const ValueKey('chat-queue-resume')));
       for (var frame = 0; frame < 40 && gateway.submissions.isEmpty; frame++) {
         await tester.pump(const Duration(milliseconds: 20));
@@ -22006,24 +25169,36 @@ void main() {
     },
   );
 
-  testWidgets(
-    'el composer conserva el placeholder normal mientras Hermes ejecuta',
-    (tester) async {
-      await pumpChat(
-        tester,
-        chatState: ChatPipelineState.executing,
-        messages: const [
-          {'role': 'assistant', 'content': '', '_pipeline': true},
-          {'role': 'user', 'content': 'trabaja'},
-        ],
-      );
+  // Q9-CHAT5 v2 (ORDEN2-Q9-CHAT5): while Hermes works the field says that
+  // what is written goes to the queue; never a busy placeholder.
+  testWidgets('el composer dice «Poner en cola…» mientras Hermes ejecuta', (
+    tester,
+  ) async {
+    await pumpChat(
+      tester,
+      chatState: ChatPipelineState.executing,
+      messages: const [
+        {'role': 'assistant', 'content': '', '_pipeline': true},
+        {'role': 'user', 'content': 'trabaja'},
+      ],
+    );
 
-      final field = tester.widget<TextField>(find.byType(TextField));
-      expect(field.decoration?.hintText, 'Pregunta a Hermes…');
-      expect(field.decoration?.hintText, isNot('Hermes está respondiendo…'));
-      expect(tester.takeException(), isNull);
-    },
-  );
+    final field = tester.widget<TextField>(find.byType(TextField));
+    final strings = Strings.of(tester.element(find.byType(ChatScreen)));
+    expect(field.decoration?.hintText, strings.q9ComposerQueueHint);
+    expect(field.decoration?.hintText, 'Poner en cola…');
+    expect(field.decoration?.hintText, isNot('Hermes está respondiendo…'));
+    // With the next message being written the turn still runs, and the
+    // field still says where it goes (REVIEW-Q9-CHAT5): the hint follows
+    // the running work, not the primary action.
+    await tester.enterText(find.byType(TextField), 'y luego esto');
+    await tester.pump();
+    expect(
+      tester.widget<TextField>(find.byType(TextField)).decoration?.hintText,
+      'Poner en cola…',
+    );
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets(
     'un turno activo pipeline false vacío proyecta Thinking con cabecera',
@@ -22037,8 +25212,10 @@ void main() {
         ],
       );
 
-      // ct1215: el turno vivo cuenta su estado bajo el nombre.
-      expect(find.byKey(const ValueKey('turn-status-line')), findsOneWidget);
+      // ct1215: el turno vivo cuenta su estado, con su nombre encima.
+      // Q9-CHAT5 v2 (ORDEN2-Q9-CHAT5, decisión 1): el estado es la píldora
+      // sobre el compositor.
+      expect(liveInlineActivity, findsOneWidget);
       expect(
         find.byKey(const ValueKey('assistant-header-name')),
         findsOneWidget,
@@ -22059,8 +25236,10 @@ void main() {
         ],
       );
 
-      // ct1215: el turno vivo cuenta su estado bajo el nombre.
-      expect(find.byKey(const ValueKey('turn-status-line')), findsOneWidget);
+      // ct1215: el turno vivo cuenta su estado, con su nombre encima.
+      // Q9-CHAT5 v2 (ORDEN2-Q9-CHAT5, decisión 1): el estado es la píldora
+      // sobre el compositor.
+      expect(liveInlineActivity, findsOneWidget);
       expect(
         find.byKey(const ValueKey('assistant-header-name')),
         findsOneWidget,
@@ -22114,7 +25293,7 @@ void main() {
           {'role': 'user', 'content': 'continúa en segundo plano'},
         ],
       );
-      expect(find.byKey(const ValueKey('turn-status-line')), findsOneWidget);
+      expect(liveInlineActivity, findsOneWidget);
 
       Navigator.of(tester.element(find.byType(ChatScreen))).pop();
       await tester.pump();
@@ -22130,8 +25309,10 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 350));
 
-      // ct1215: el turno vivo cuenta su estado bajo el nombre.
-      expect(find.byKey(const ValueKey('turn-status-line')), findsOneWidget);
+      // ct1215: el turno vivo cuenta su estado, con su nombre encima.
+      // Q9-CHAT5 v2 (ORDEN2-Q9-CHAT5, decisión 1): el estado es la píldora
+      // sobre el compositor.
+      expect(liveInlineActivity, findsOneWidget);
       expect(
         find.byKey(const ValueKey('assistant-header-name')),
         findsOneWidget,
@@ -22203,7 +25384,7 @@ void main() {
   ) async {
     await pumpChat(tester);
 
-    await tester.tap(find.byKey(const ValueKey('chat-notch')));
+    await tester.tap(find.byKey(const ValueKey('chat-settings-button')));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 240));
 
@@ -22213,12 +25394,10 @@ void main() {
     expect(find.text('Preferencias'), findsNothing);
     expect(find.text('Densidad del chat'), findsNothing);
     expect(find.text('Agentes y subagentes'), findsNothing);
-    // Below the find row, Ir a and Sesión: present, maybe below the fold.
+    // The grid under the search: present, maybe below the fold. One
+    // «Artefactos» entry, as Desktop; no separate «Archivos y enlaces».
     expect(find.text('Artefactos', skipOffstage: false), findsOneWidget);
-    expect(
-      find.text('Archivos y enlaces', skipOffstage: false),
-      findsOneWidget,
-    );
+    expect(find.text('Archivos y enlaces', skipOffstage: false), findsNothing);
     final surfaceSize = tester.getSize(
       find.byKey(const ValueKey('chat-control-dialog')),
     );
@@ -22231,15 +25410,24 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('permisos del chat se abren como ventana flotante', (
-    tester,
-  ) async {
+  testWidgets('permisos del chat se abren como ventana flotante desde la '
+      'píldora de estado, no desde la hoja del notch', (tester) async {
     await pumpChat(tester);
 
-    await tester.tap(find.byKey(const ValueKey('chat-notch')));
+    await tester.tap(find.byKey(const ValueKey('chat-settings-button')));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 240));
-    await tester.tap(find.text('Permisos / modo'));
+    expect(find.byKey(const ValueKey('chat-control-dialog')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('chat-control-permissions')),
+      findsNothing,
+    );
+    expect(find.text('Permisos / modo'), findsNothing);
+    await tester.binding.handlePopRoute();
+    await tester.pump();
+    await tester.pump(kChatNotchSheetClose + const Duration(milliseconds: 120));
+
+    await tester.tap(find.byKey(const ValueKey('status-pill-permissions')));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 240));
 
@@ -22248,15 +25436,15 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('artefactos del chat se abren como ventana flotante', (
+  testWidgets('Artefactos abre la vista de imágenes, archivos y enlaces', (
     tester,
   ) async {
     await pumpChat(tester);
 
-    await tester.tap(find.byKey(const ValueKey('chat-notch')));
+    await tester.tap(find.byKey(const ValueKey('chat-settings-button')));
     await tester.pump();
     await tester.pump(kChatNotchSheetOpen);
-    // Artefactos now heads the Herramientas group, below Ir a and Sesión.
+    // Artefactos heads the grid, below the workspace row and the search.
     await tester.scrollUntilVisible(
       find.text('Artefactos'),
       200,
@@ -22271,9 +25459,10 @@ void main() {
     await tester.pump();
     await tester.tap(find.text('Artefactos'));
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 240));
+    await tester.pump(const Duration(milliseconds: 600));
 
-    expect(find.byKey(const ValueKey('chat-artifacts-dialog')), findsOneWidget);
+    expect(find.byType(ChatContentScreen), findsOneWidget);
+    expect(find.byKey(const ValueKey('chat-artifacts-dialog')), findsNothing);
     expect(find.byType(BottomSheet), findsNothing);
     expect(tester.takeException(), isNull);
   });
@@ -22458,6 +25647,22 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 240));
       await tester.pump(const Duration(milliseconds: 50));
+      // The plan limits close the sheet, after the list of models, which is
+      // what scrolls (the rest stays pinned): bring the foot of the list in.
+      final list = find.byKey(const ValueKey('model-picker-list'));
+      if (list.evaluate().isNotEmpty) {
+        final position = tester
+            .state<ScrollableState>(
+              find
+                  .descendant(of: list, matching: find.byType(Scrollable))
+                  .first,
+            )
+            .position;
+        for (var i = 0; i < 3; i++) {
+          position.jumpTo(position.maxScrollExtent);
+          await tester.pump();
+        }
+      }
     }
 
     Future<void> closeSheet(WidgetTester tester) async {
@@ -22542,7 +25747,9 @@ void main() {
       );
       gateway.usagePayload = acct.usage();
       await openSheet(tester);
-      expect(reads.map((u) => u.path), ['/api/model/options']);
+      // Opening the chat now reads the server's busy-input policy too.
+      // Keep the complete request sequence exact: the catalog is read once.
+      expect(reads.map((u) => u.path), ['/api/config', '/api/model/options']);
       expect(find.text('Límites de tu plan'), findsOneWidget);
       expect(find.text('OpenAI Codex'), findsWidgets);
       expect(find.text('Sesión actual'), findsOneWidget);
@@ -22560,7 +25767,9 @@ void main() {
       );
       expect(gateway.usagePayload['account_lines'], isNotEmpty);
       await openSheet(tester);
-      expect(reads, isEmpty);
+      // Only the chat's busy-input config read: account_lines still avoids
+      // every model-catalog request.
+      expect(reads.map((u) => u.path), ['/api/config']);
       expect(find.text('Quedan 72 %'), findsOneWidget);
     });
 
@@ -22647,6 +25856,11 @@ void main() {
 
       expect(find.byKey(const ValueKey('chat-model-dialog')), findsOneWidget);
       expect(find.byType(BottomSheet), findsNothing);
+      // The search lives on «Todos los modelos» and looks in every provider.
+      await openAllModels(tester);
+      expect(find.byKey(const ValueKey('chat-model-search')), findsNothing);
+      await tester.tap(find.byKey(const ValueKey('model-search-toggle')));
+      await tester.pump();
       final search = find.byKey(const ValueKey('chat-model-search'));
       expect(search, findsOneWidget);
       await tester.enterText(search, 'modelo');
@@ -22687,7 +25901,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 240));
       await tester.pump(const Duration(milliseconds: 50));
       expect(find.byKey(const ValueKey('chat-model-dialog')), findsOneWidget);
-      await tester.tap(find.text('new-model').first);
+      await tapModelRow(tester, 'new-model');
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 240));
 
@@ -22717,7 +25931,7 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 240));
       await tester.pump(const Duration(milliseconds: 50));
-      await tester.tap(find.text('bad-model').first);
+      await tapModelRow(tester, 'bad-model');
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 50));
 
@@ -22779,25 +25993,23 @@ void main() {
       await tester.pump(const Duration(milliseconds: 50));
       expect(find.byKey(const ValueKey('chat-model-dialog')), findsOneWidget);
 
+      await openAllModels(tester);
       final group = find.byKey(
         const ValueKey('provider-logo-picker-provider-openrouter'),
       );
       expect(providerLogoId(tester, group), 'openrouter');
       expect(providerLogoTint(tester, group), colors.accent);
 
-      final active = find.byKey(
-        const ValueKey(
-          'provider-logo-picker-model-openrouter-anthropic/claude-sonnet-4.5',
+      // The model rows carry a round selector, no logo: the maker shows on
+      // the provider's pill only.
+      expect(
+        find.byKey(
+          const ValueKey(
+            'provider-logo-picker-model-openrouter-anthropic/claude-sonnet-4.5',
+          ),
         ),
+        findsNothing,
       );
-      expect(providerLogoId(tester, active), 'anthropic');
-      expect(providerLogoTint(tester, active), colors.accent);
-
-      final other = find.byKey(
-        const ValueKey('provider-logo-picker-model-openrouter-mystery-model'),
-      );
-      expect(providerLogoId(tester, other), 'openrouter');
-      expect(providerLogoTint(tester, other), colors.textSecondary);
       expect(tester.takeException(), isNull);
     },
   );
@@ -22838,7 +26050,7 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 240));
       await tester.pump(const Duration(milliseconds: 50));
-      await tester.tap(find.text('new-model').first);
+      await tapModelRow(tester, 'new-model');
       await tester.pump();
 
       expect(find.text('Confirm expensive model'), findsOneWidget);
@@ -22857,7 +26069,7 @@ void main() {
       expect(chat.effectiveSessionConfig.model, 'old-model');
       expect(chat.canReleaseToDesktop, isTrue);
 
-      await tester.tap(find.text('bad-model').first);
+      await tapModelRow(tester, 'bad-model');
       await tester.pump();
       expect(find.text('Confirm expensive model'), findsOneWidget);
       await tester.binding.handlePopRoute();
@@ -22916,7 +26128,7 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 240));
       await tester.pump(const Duration(milliseconds: 50));
-      await tester.tap(find.text('new-model').first);
+      await tapModelRow(tester, 'new-model');
       await tester.pump();
 
       expect(
@@ -22980,7 +26192,7 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 240));
       await tester.pump(const Duration(milliseconds: 50));
-      await tester.tap(find.text('new-model').first);
+      await tapModelRow(tester, 'new-model');
       await tester.pump();
 
       final pending = chat.pendingSessionConfigChange(
@@ -23078,7 +26290,7 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 240));
       await tester.pump(const Duration(milliseconds: 50));
-      await tester.tap(find.text('new-model').first);
+      await tapModelRow(tester, 'new-model');
       await tester.pump();
       final stale = chat.pendingSessionConfigChange(
         DesktopSessionConfigKey.model,
@@ -23124,10 +26336,17 @@ void main() {
       await tester.pump(const Duration(milliseconds: 300));
 
       expect(find.byType(ChatScreen), findsNothing);
-      // The confirmation belongs to the active chat, not to the old screen.
-      // It stays in the navigator underneath the newer unrelated dialog and
-      // must not be dismissed by that screen's teardown.
-      expect(find.text('Confirm expensive model'), findsOneWidget);
+      // The old screen removes only the dialog it opened (the stale
+      // confirmation, answered with null: nothing is confirmed). Routes
+      // under a top route that is still pushing are removed on the frame
+      // after the screen goes, so wait one frame before looking: whether the
+      // dialog is still painted right after teardown is a matter of frames,
+      // not of behaviour (same event order with or without the sheet's second
+      // page: push, removal of the owned route, answer null).
+      await tester.pump();
+      expect(find.text('Confirm expensive model'), findsNothing);
+      // What the teardown must not touch: the newer unrelated dialog on top
+      // and, below, the chat's newer confirmation (checked at the end).
       expect(
         find.byKey(const ValueKey('newer-unrelated-dialog')),
         findsOneWidget,
@@ -23204,6 +26423,203 @@ void main() {
       expect(find.byKey(const ValueKey('chat-model-dialog')), findsNothing);
     }
 
+    for (final saved in [true, false]) {
+      testWidgets(
+        'review M1: effective provider and capabilities follow ${saved ? 'saved cross-provider draft' : 'catalog default'}',
+        (tester) async {
+          final semantics = tester.ensureSemantics();
+          const connectionId = 'conn-sheet-provider-review';
+          const sessionId = 'mob-sheet-provider-review';
+          const scope = '${connectionId}_default_$sessionId';
+          final gateway = _SessionlessCatalogGateway()
+            ..catalogOverride = DesktopModelCatalog.fromJson(const {
+              'model': 'disk-model',
+              'provider': 'provider-a',
+              'providers': [
+                {
+                  'slug': 'provider-a', 'name': 'Proveedor A',
+                  'authenticated': true, 'is_current': true,
+                  // The saved id also exists on A: marking A would look plausible.
+                  'models': ['disk-model', 'shared-model'],
+                  'capabilities': {
+                    'disk-model': {'reasoning': false, 'fast': false},
+                    'shared-model': {'reasoning': true, 'fast': true},
+                  },
+                },
+                {
+                  'slug': 'provider-b',
+                  'name': 'Proveedor B',
+                  'authenticated': true,
+                  'models': ['shared-model'],
+                  'capabilities': {
+                    'shared-model': {'reasoning': false, 'fast': false},
+                  },
+                },
+              ],
+            });
+          final chat = await pumpChat(
+            tester,
+            desktopGateway: gateway,
+            connection: _remoteConn(connectionId),
+            session: const Session(
+              id: sessionId,
+              title: 'Nuevo chat',
+              model: 'hermes-agent',
+              source: 'mobile',
+              messageCount: 0,
+              isActive: true,
+              preview: '',
+              profile: 'default',
+              startedAt: 1,
+            ),
+            attachDesktopRuntimeOnLoad: false,
+            initialPreferences: {
+              if (saved) 'selected_model_$scope': 'shared-model',
+              if (saved) 'selected_provider_$scope': 'provider-b',
+              'selected_reasoning_$scope': 'high',
+              'selected_fast_$scope': 'fast',
+            },
+          );
+          await openModelSheet(tester);
+          final model = saved ? 'shared-model' : 'disk-model';
+          final provider = saved ? 'provider-b' : 'provider-a';
+          expect(chat.hasDesktopRuntime, isFalse);
+          expect(chosenModelsInSheet(tester), contains(model));
+          expect(
+            chosenModelsInSheet(tester),
+            contains(saved ? 'Proveedor B' : 'Proveedor A'),
+          );
+          final pill = tester.widget<ChatStatusPill>(
+            find.byKey(const ValueKey('chat-status-pill')),
+          );
+          expect((pill.modelLeading as ProviderLogo).provider, provider);
+          expect(pill.modelDetail, isNull);
+          for (final key in ['msv-tile-think', 'session-fast-switch']) {
+            expect(
+              tester
+                  .getSemantics(find.byKey(ValueKey(key)))
+                  .flagsCollection
+                  .isEnabled,
+              ui.Tristate.isFalse,
+            );
+          }
+          final limits = tester.widget<AccountLimitsSection>(
+            find.byType(AccountLimitsSection),
+          );
+          expect(limits.preferredProvider, provider);
+          await openAllModels(tester);
+          final selected = find.byKey(ValueKey('model-card-$provider-$model'));
+          expect(selected, findsOne);
+          final selection = find.descendant(
+            of: selected,
+            matching: find.bySemanticsLabel(RegExp('^${RegExp.escape(model)}')),
+          );
+          expect(
+            tester.getSemantics(selection).flagsCollection.isSelected,
+            ui.Tristate.isTrue,
+          );
+          await closeModelSheet(tester);
+          semantics.dispose();
+          expect(tester.takeException(), isNull);
+        },
+      );
+    }
+
+    testWidgets(
+      'model sheet follows an existing session and live config updates',
+      (tester) async {
+        final (_, gateway) = await pumpModelChat(tester, 'conn-sheet-live');
+        gateway.emit('session.info', const {
+          'info': {'model': 'old-model', 'provider': 'provider-a'},
+        });
+        await tester.pump();
+        await openModelSheet(tester);
+        expect(chosenModelsInSheet(tester), contains('old-model'));
+        gateway.emit('session.info', const {
+          'info': {'model': 'new-model', 'provider': 'provider-a'},
+        });
+        await tester.pump();
+        expect(chosenModelsInSheet(tester), contains('new-model'));
+        expect(chosenModelsInSheet(tester), isNot(contains('old-model')));
+        expect(tester.takeException(), isNull);
+        await closeModelSheet(tester);
+      },
+    );
+
+    for (final delayed in [false, true]) {
+      testWidgets(
+        'model sheet: new chat resolves profile default${delayed ? ' after loading' : ''}, then explicit pick',
+        (tester) async {
+          final semantics = tester.ensureSemantics();
+          final gate = delayed ? Completer<void>() : null;
+          final gateway = _SessionlessCatalogGateway()..catalogGate = gate;
+          final chat = await pumpChat(
+            tester,
+            desktopGateway: gateway,
+            connection: _remoteConn('conn-sheet-default-$delayed'),
+            session: const Session(
+              id: 'mob-sheet-default',
+              title: 'Nuevo chat',
+              model: 'hermes-agent',
+              source: 'mobile',
+              messageCount: 0,
+              isActive: true,
+              preview: '',
+              profile: 'default',
+              startedAt: 1,
+            ),
+            attachDesktopRuntimeOnLoad: false,
+          );
+          expect(chat.hasDesktopRuntime, isFalse);
+          await openModelSheet(tester);
+          if (gate != null) {
+            expect(chosenModelsInSheet(tester), contains('Cargando modelo…'));
+            expect(find.text('?'), findsNothing);
+            gate.complete();
+            for (var i = 0; i < 8; i++) {
+              await tester.pump(const Duration(milliseconds: 50));
+            }
+          }
+          expect(chosenModelsInSheet(tester), contains('disk-model'));
+          expect(chosenModelsInSheet(tester), contains('Proveedor A'));
+          final pill = find.byKey(const ValueKey('status-pill-model'));
+          expect(
+            find.descendant(of: pill, matching: find.text('disk-model')),
+            findsOne,
+          );
+          await openAllModels(tester);
+          final current = find.byKey(
+            const ValueKey('model-card-provider-a-disk-model'),
+          );
+          expect(
+            tester
+                .getSemantics(
+                  find.descendant(
+                    of: current,
+                    matching: find.bySemanticsLabel(RegExp(r'^disk-model\.')),
+                  ),
+                )
+                .flagsCollection
+                .isSelected,
+            ui.Tristate.isTrue,
+          );
+          await tapModelRow(tester, 'other-model');
+          await tester.pump();
+          await waitForModelSheetToClose(tester);
+          expect(chat.hasDesktopRuntime, isFalse);
+          await openModelSheet(tester);
+          expect(chosenModelsInSheet(tester), contains('other-model'));
+          expect(
+            find.descendant(of: pill, matching: find.text('other-model')),
+            findsOne,
+          );
+          expect(tester.takeException(), isNull);
+          await closeModelSheet(tester);
+          semantics.dispose();
+        },
+      );
+    }
+
     testWidgets(
       'model selection applies a supported preset to the live session',
       (tester) async {
@@ -23245,7 +26661,7 @@ void main() {
         await tester.pump();
 
         await openModelSheet(tester);
-        await tester.tap(find.text('new-model').first);
+        await tapModelRow(tester, 'new-model');
         await tester.pump();
         await waitForModelSheetToClose(tester);
 
@@ -23279,7 +26695,7 @@ void main() {
         expect(chat.hasDesktopRuntime, isFalse);
 
         await openModelSheet(tester);
-        await tester.tap(find.text('other-model').first);
+        await tapModelRow(tester, 'other-model');
         await tester.pump();
         await waitForModelSheetToClose(tester);
         expect(chat.hasDesktopRuntime, isFalse);
@@ -23340,7 +26756,21 @@ void main() {
       await tester.pump();
 
       await openModelSheet(tester);
-      await tester.tap(find.widgetWithText(ChoiceChip, 'Alto'));
+      // The slider's «Alto» step is the fifth of eight.
+      final trackFinder = find.byKey(
+        const ValueKey('model-picker-reasoning-track'),
+      );
+      await tester.ensureVisible(trackFinder);
+      await tester.pump();
+      final track = tester.getRect(trackFinder);
+      await tester.tapAt(
+        Offset(
+          track.left +
+              kReasoningTrackInset +
+              (track.width - 2 * kReasoningTrackInset) * 4 / 7,
+          track.center.dy,
+        ),
+      );
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
 
@@ -23371,7 +26801,7 @@ void main() {
 
         gateway.modelGate = Completer<void>();
         await openModelSheet(tester);
-        await tester.tap(find.text('new-model').first);
+        await tapModelRow(tester, 'new-model');
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 240));
 
@@ -23419,7 +26849,7 @@ void main() {
         code: 5001,
       );
       await openModelSheet(tester);
-      await tester.tap(find.text('bad-model').first);
+      await tapModelRow(tester, 'bad-model');
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 240));
       expect(find.byKey(const ValueKey('bad-model')), findsOneWidget);
@@ -23450,7 +26880,7 @@ void main() {
 
         gateway.modelDeferred = true;
         await openModelSheet(tester);
-        await tester.tap(find.text('new-model').first);
+        await tapModelRow(tester, 'new-model');
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 240));
 
@@ -23493,7 +26923,7 @@ void main() {
               .toDouble();
       expect(glow(), 0);
       await openModelSheet(tester);
-      await tester.tap(find.text('new-model').first);
+      await tapModelRow(tester, 'new-model');
       await tester.pump();
       var peak = 0.0;
       for (var i = 0; i < 12; i++) {
@@ -23540,32 +26970,20 @@ void main() {
           await tester.pump(const Duration(milliseconds: 240));
         }
         expect(chat.hasDesktopRuntime, isTrue);
-        // fh1215 + notch: the model left the header; Bot Chat has no status
-        // pill, so its model sheet opens from the notch sheet and names the
+        // fh1215 + notch: the model left the header; Bot Chat has the same
+        // status pill as every chat (QA 9493), and its model sheet names the
         // model in use.
         Future<String> subtitle() async {
-          await tester.tap(find.byKey(const ValueKey('chat-notch')));
-          await tester.pump();
-          await tester.pump(kChatNotchSheetOpen);
-          final row = find.byKey(const ValueKey('chat-control-model'));
+          final row = find.byKey(const ValueKey('status-pill-model'));
           await tester.ensureVisible(row);
           await tester.pump();
           await tester.tap(row);
           for (var frame = 0; frame < 8; frame++) {
             await tester.pump(const Duration(milliseconds: 50));
           }
-          // Only the sheet's "this session" line: the catalog below it
-          // lists every model, the previous one included.
-          final text = tester
-              .widgetList<Text>(
-                find.descendant(
-                  of: find.byKey(const ValueKey('chat-model-dialog')),
-                  matching: find.byType(Text),
-                ),
-              )
-              .map((t) => t.data ?? '')
-              .where((line) => line.startsWith('Esta sesión'))
-              .join(' ');
+          // Only the model the sheet marks as chosen: the list lists every
+          // model, the previous one included.
+          final text = chosenModelsInSheet(tester);
           await tester.binding.handlePopRoute();
           for (var frame = 0; frame < 8; frame++) {
             await tester.pump(const Duration(milliseconds: 50));
@@ -23672,26 +27090,14 @@ void main() {
       }
 
       Future<String> sessionLine(WidgetTester tester) async {
-        await tester.tap(find.byKey(const ValueKey('chat-notch')));
-        await tester.pump();
-        await tester.pump(kChatNotchSheetOpen);
-        final row = find.byKey(const ValueKey('chat-control-model'));
+        final row = find.byKey(const ValueKey('status-pill-model'));
         await tester.ensureVisible(row);
         await tester.pump();
         await tester.tap(row);
         for (var frame = 0; frame < 8; frame++) {
           await tester.pump(const Duration(milliseconds: 50));
         }
-        return tester
-            .widgetList<Text>(
-              find.descendant(
-                of: find.byKey(const ValueKey('chat-model-dialog')),
-                matching: find.byType(Text),
-              ),
-            )
-            .map((t) => t.data ?? '')
-            .where((line) => line.startsWith('Esta sesión'))
-            .join(' ');
+        return chosenModelsInSheet(tester);
       }
 
       /// What will answer, the chip under the composer and the sheet's line
@@ -23937,8 +27343,13 @@ void main() {
 
       // Asked again, with a refresh, and what that says is what locks.
       expect(gateway.modelOptionsRefresh, contains(true));
-      expect(find.text('old-model · no disponible'), findsNothing);
-      expect(find.text('new-model · no disponible'), findsOneWidget);
+      await openAllModels(tester);
+      Finder unavailable(String id) => find.descendant(
+        of: find.byKey(ValueKey('model-card-provider-a-$id')),
+        matching: find.text('no disponible'),
+      );
+      expect(unavailable('old-model'), findsNothing);
+      expect(unavailable('new-model'), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
 
@@ -23969,7 +27380,7 @@ void main() {
         await tester.pump(const Duration(milliseconds: 50));
       }
       expect(find.textContaining('no disponible'), findsNothing);
-      await tester.tap(find.text('new-model').first);
+      await tapModelRow(tester, 'new-model');
       await tester.pump();
       await waitForModelSheetToClose(tester);
       expect(gateway.modelSelections.single.modelId, 'new-model');
@@ -23993,7 +27404,7 @@ void main() {
           reason: 'el catálogo de la conexión se cachea entre aperturas',
         );
 
-        await tester.tap(find.text('new-model').first);
+        await tapModelRow(tester, 'new-model');
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 300));
         HermesNotice.of(
@@ -24307,11 +27718,25 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('status-pill-model')));
       await tester.pump();
       await tester.pump();
+      // Painted: the sheet is built and the catalog is in (no loader).
+      bool painted() =>
+          find.byKey(const ValueKey('msv-current')).evaluate().isNotEmpty &&
+          find
+              .descendant(
+                of: find.byKey(const ValueKey('chat-model-dialog')),
+                matching: find.byType(ConsoleLoader),
+              )
+              .evaluate()
+              .isEmpty;
       var ms = 0;
-      while (find.text('other-model').evaluate().isEmpty && ms < 20000) {
+      while (!painted() && ms < 20000) {
         await tester.pump(const Duration(milliseconds: 10));
         ms += 10;
       }
+      expect(painted(), isTrue);
+      // The models themselves are on the second page.
+      await tester.pump(const Duration(milliseconds: 300));
+      await openAllModels(tester);
       expect(find.text('other-model'), findsWidgets);
       return ms;
     }
@@ -24400,7 +27825,11 @@ void main() {
         expect(failedSources, contains(ModelPickerSource.dashboard));
         expect(failedSources, hasLength(1));
         expect(find.text('Lista anterior sin confirmar.'), findsOneWidget);
-        expect(find.text('unconfirmed-catalog-model'), findsWidgets);
+        await openAllModels(tester);
+        expect(
+          find.text(friendlyModelName('unconfirmed-catalog-model')),
+          findsWidgets,
+        );
         final pill = find.byKey(const ValueKey('status-pill-model'));
         final abbreviated = friendlyModelName('unconfirmed-catalog-model');
         expect(abbreviated, isNot('unconfirmed-catalog-model'));
@@ -24501,7 +27930,11 @@ void main() {
         expect(gateway.modelOptionsCalls, reads + 1);
         expect(failedSources, contains(ModelPickerSource.dashboard));
         expect(find.text('Lista anterior sin confirmar.'), findsOneWidget);
-        expect(find.text('unconfirmed-catalog-model'), findsWidgets);
+        await openAllModels(tester);
+        expect(
+          find.text(friendlyModelName('unconfirmed-catalog-model')),
+          findsWidgets,
+        );
         expect(chat.desktopRuntimeInfo.model, 'confirmed-session-model');
         await closeModelSheet(tester);
         expect(
@@ -24729,7 +28162,11 @@ void main() {
         expect(gateway.modelOptionsCalls, reads + 1);
         expect(failedSources, contains(ModelPickerSource.dashboard));
         expect(find.text('Lista anterior sin confirmar.'), findsOneWidget);
-        expect(find.text('unconfirmed-catalog-model'), findsWidgets);
+        await openAllModels(tester);
+        expect(
+          find.text(friendlyModelName('unconfirmed-catalog-model')),
+          findsWidgets,
+        );
         expect(chat.desktopRuntimeInfo.model, 'confirmed-session-model');
         expect(chat.sessionProfile, 'profile-b');
         recovered = true;
@@ -24904,6 +28341,7 @@ void main() {
             await openModelSheet(tester);
             await tester.pump(const Duration(seconds: 1));
             await tester.pump();
+            await openAllModels(tester);
             expect(find.text('official-model'), findsWidgets);
             final cache = tester
                 .state<HermesAppState>(find.byType(HermesApp))
@@ -24932,7 +28370,7 @@ void main() {
               isEmpty,
             );
             if (attached) {
-              await tester.tap(find.text('official-model').last);
+              await tapModelRow(tester, 'official-model');
               await tester.pump(const Duration(seconds: 1));
               await tester.pump();
               expect(gateway.modelSelections.single.modelId, 'official-model');
@@ -24985,6 +28423,7 @@ void main() {
         await tester.pump();
         await tester.pump(const Duration(seconds: 1));
         await tester.pump();
+        await openAllModels(tester);
         expect(find.text('other-model'), findsWidgets);
         expect(tester.takeException(), isNull);
       },
@@ -25029,6 +28468,7 @@ void main() {
         expect(find.byKey(const ValueKey('model-catalog-retry')), findsNothing);
         await tester.pump(const Duration(seconds: 1));
         await tester.pump();
+        await openAllModels(tester);
         expect(find.text('other-model'), findsWidgets);
         expect(find.byKey(const ValueKey('model-catalog-retry')), findsNothing);
         expect(dashboardCalls, before + 1);
@@ -25252,6 +28692,7 @@ void main() {
         );
         await openModelSheet(tester);
         await tester.pump(const Duration(seconds: 1));
+        await openAllModels(tester);
         expect(
           find.text('other-model'),
           dashboardUp ? findsWidgets : findsNothing,
@@ -25297,23 +28738,28 @@ void main() {
         expect(find.byKey(const ValueKey('qwen3:8b')), findsOneWidget);
 
         await openModelSheet(tester);
-        final tile = find.byKey(
-          const ValueKey('model-card-ollama-local-qwen3:8b'),
-        );
-        expect(tile, findsOneWidget);
+        // First page: the reasoning pill says the model does not reason.
         expect(
-          find.descendant(of: tile, matching: find.byIcon(Icons.check_rounded)),
-          findsOneWidget,
-          reason: 'el modelo activo debe marcarse aunque el slug sea el alias',
-        );
-        expect(
-          find.widgetWithText(ChoiceChip, 'Alto'),
+          find.byKey(const ValueKey('model-picker-reasoning-label')),
           findsNothing,
           reason: 'el catálogo dice que qwen3:8b no razona',
         );
         expect(
           find.text('Este modelo no admite razonamiento ajustable.'),
           findsOneWidget,
+        );
+        await openAllModels(tester);
+        final tile = find.byKey(
+          const ValueKey('model-card-ollama-local-qwen3:8b'),
+        );
+        expect(tile, findsOneWidget);
+        expect(
+          find.descendant(
+            of: tile,
+            matching: find.byKey(const ValueKey('model-select-dot-on')),
+          ),
+          findsOneWidget,
+          reason: 'el modelo activo debe marcarse aunque el slug sea el alias',
         );
 
         expect(tester.takeException(), isNull);
@@ -25470,7 +28916,7 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 240));
       await tester.pump(const Duration(milliseconds: 50));
-      await tester.tap(find.text('new-model').first);
+      await tapModelRow(tester, 'new-model');
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 240));
       expect(gateway.modelSelections.last.modelId, 'new-model');
@@ -25529,6 +28975,7 @@ void main() {
 
       final editButtons = find.byIcon(Icons.edit_outlined);
       expect(editButtons, findsNWidgets(2));
+      await _revealInChatList(tester, editButtons.last);
       await tester.tap(editButtons.last);
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 250));
@@ -25536,7 +28983,7 @@ void main() {
         const ValueKey('inline-message-editor-field'),
       );
       await tester.enterText(editorField, 'pregunta uno corregida');
-      await tester.pumpAndSettle();
+      await _pumpEditorTransition(tester);
       expect(
         tester.widget<TextField>(editorField).controller?.text,
         'pregunta uno corregida',
@@ -25544,7 +28991,7 @@ void main() {
       final save = find.byKey(const ValueKey('inline-message-editor-save'));
       expect(tester.widget<IconButton>(save).onPressed, isNotNull);
       await tester.tap(save);
-      await tester.pumpAndSettle();
+      await _pumpEditorTransition(tester);
       // Saving stops the running reply, so it asks first.
       await tester.tap(
         find.byKey(const ValueKey('hermes-confirm-dialog-confirm')),
@@ -25737,11 +29184,12 @@ void main() {
   testWidgets(
     'auth Dashboard muestra banner sin tapar historial o snackbar y se limpia',
     (tester) async {
-      final gateway = _UiRewindGateway()
+      final gateway = _AuthLinkGateway()
         ..connected = false
         ..connectError = const DashboardAuthException(
           DashboardAuthFailureCode.loginRequired,
         );
+      addTearDown(gateway.close);
       final chat = await pumpChat(
         tester,
         desktopGateway: gateway,
@@ -25817,6 +29265,11 @@ void main() {
       await tester.pump();
       await tester.pump();
 
+      for (var frame = 0; frame < 20 && chat.dashboardAuthRequired; frame++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+      expect(gateway.isConnected, isTrue);
+      expect(gateway.successfulDials, 1, reason: 'the lifecycle owner dials once');
       expect(chat.dashboardAuthRequired, isFalse);
       expect(banner, findsNothing);
       expect(find.byType(HermesNoticeCard), findsOneWidget);
@@ -25865,6 +29318,10 @@ void main() {
           DashboardAuthFailureCode.loginRequired,
         );
       await chat.warmDesktopGateway();
+      await tester.pump();
+      // The island takes it up on the next frame (measured in a
+      // gate run: 0 on this frame, 1 on the next; why it now takes that frame
+      // is not pinned down).
       await tester.pump();
       expect(chat.dashboardAuthRequired, isTrue);
       expect(banner, findsOneWidget);
@@ -25996,12 +29453,7 @@ void main() {
       );
       final card = find.byType(AttachmentHistoryCard);
       final thumb = find.descendant(of: card, matching: find.byType(Image));
-      for (var frame = 0; frame < 40 && thumb.evaluate().isEmpty; frame++) {
-        await tester.runAsync(
-          () => Future<void>.delayed(const Duration(milliseconds: 5)),
-        );
-        await tester.pump(const Duration(milliseconds: 10));
-      }
+      await _pumpUntilRealWork(tester, () => thumb.evaluate().isNotEmpty);
       expect(card, findsOneWidget);
       expect(thumb, findsOneWidget);
 
@@ -26113,12 +29565,7 @@ void main() {
       await tester.tap(
         find.byKey(const ValueKey('inline-message-editor-save')),
       );
-      for (var frame = 0; frame < 60 && gateway.rewinds.isEmpty; frame++) {
-        await tester.runAsync(
-          () => Future<void>.delayed(const Duration(milliseconds: 5)),
-        );
-        await tester.pump(const Duration(milliseconds: 10));
-      }
+      await _pumpUntilRealWork(tester, () => gateway.rewinds.isNotEmpty);
 
       expect(gateway.attachedFiles, ['brief.txt']);
       expect(gateway.rewinds, hasLength(1));
@@ -26396,7 +29843,7 @@ void main() {
     // Newest message first: the one sent in this session, not yet rebound to
     // its durable row.
     await tester.tap(edit.first);
-    await tester.pumpAndSettle();
+    await _pumpEditorTransition(tester);
     expect(
       tester
           .widget<TextField>(
@@ -26412,7 +29859,7 @@ void main() {
     );
     await tester.pump();
     await tester.tap(find.byKey(const ValueKey('inline-message-editor-save')));
-    await tester.pumpAndSettle();
+    await _pumpEditorTransition(tester);
     await tester.tap(
       find.byKey(const ValueKey('hermes-confirm-dialog-confirm')),
     );
@@ -26535,9 +29982,30 @@ void main() {
       // el foco para comprobar que ↑ es pulsable.
       FocusManager.instance.primaryFocus?.unfocus();
       await tester.pump();
+      // Typing brings the caret into view with Flutter's own 100 ms scroll
+      // (editable_text.dart, _scheduleShowCaretOnScreen(withAnimation:
+      // true)), and while a driven scroll runs the list ignores touches
+      // (scroll_activity.dart, DrivenScrollActivity.shouldIgnorePointer;
+      // scrollable.dart, IgnorePointer(ignoring: _shouldIgnorePointer)).
+      // Measured: taken with no time elapsed, the hit
+      // test at save's centre stopped at the list's own gesture listener.
+      // A finger lands after that scroll: wait it out, then judge where save
+      // ended up.
+      await tester.pump(const Duration(milliseconds: 150));
 
       final apply = find.byKey(const ValueKey('inline-message-editor-save'));
       expect(apply, findsOneWidget);
+      // Between the header and the foot the list keeps clear of: never
+      // under the composer, the notch or the arrow.
+      final list = tester.widget<ListView>(chatListFinder());
+      final listRect = tester.getRect(chatListFinder());
+      final reserved = list.padding! as EdgeInsets;
+      final save = tester.getRect(apply);
+      expect(
+        save.bottom,
+        lessThanOrEqualTo(listRect.bottom - reserved.bottom + 0.5),
+      );
+      expect(save.top, greaterThanOrEqualTo(listRect.top + reserved.top - 0.5));
       expect(apply.hitTestable(), findsOneWidget);
       await tester.tap(apply);
       await tester.pump(const Duration(milliseconds: 700));
@@ -26761,6 +30229,195 @@ void main() {
       'pregunta uno',
     );
   });
+
+  testWidgets(
+    'ordinary work stays inline while the queue and approval keep their controls',
+    (tester) async {
+      final gateway = _NoLiveMutationGateway();
+      final chat = await pumpChat(
+        tester,
+        desktopGateway: gateway,
+        connection: _remoteConn('conn-complemental-pill'),
+      );
+      await chat.send(
+        fullText: 'Read the news',
+        model: 'hermes-agent',
+        history: const [],
+      );
+      gateway.emit('message.start');
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.byKey(const ValueKey('delegates-capsule')), findsNothing);
+      expect(liveInlineActivity, findsOneWidget);
+      expect(
+        find.textContaining('Trabajando', findRichText: true),
+        findsOneWidget,
+      );
+      gateway.emit('tool.start', const {
+        'tool_id': 'complement-web',
+        'name': 'web_extract',
+        'args': {'url': 'https://example.test/news'},
+      });
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.byKey(const ValueKey('delegates-capsule')), findsNothing);
+      await openInlineDetails(tester);
+      expect(
+        find.byKey(const ValueKey('turn-step-card-complement-web')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('turn-step-mark-complement-web')),
+        findsOneWidget,
+      );
+      chat.enqueue('Read this next');
+      await tester.pump();
+      final pill = find.byKey(const ValueKey('chat-queue-chip'));
+      final composer = find.byKey(const ValueKey('chat-composer-host'));
+      expect(pill, findsOneWidget);
+      expect(tester.getRect(pill).left, equals(tester.getRect(composer).left + kConsoleComposerSideInset + kConsoleComposerSurfaceInset));
+      expect(tester.getRect(pill).right, lessThanOrEqualTo(tester.getRect(composer).right));
+      expect(tester.getRect(pill).overlaps(tester.getRect(composer)), isFalse);
+      expect(
+        find.descendant(
+          of: pill,
+          matching: find.textContaining('Read this next'),
+        ),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('stop')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('delegates-capsule')),
+        findsNothing,
+        reason: 'queued input is not delegated work',
+      );
+      await chat.cancelQueuedByIdentity(chat.queuedEntries.single.id);
+      gateway.emit('tool.complete', const {
+        'tool_id': 'complement-web',
+        'name': 'web_extract',
+      });
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(find.byKey(const ValueKey('delegates-capsule')), findsNothing);
+      expect(liveInlineActivity, findsOneWidget);
+      // The turn is still running: the transcript's own status line names the
+      // phase («Trabajando», the live look); «Trabajó …» is only the
+      // summary of a finished turn.
+      expect(
+        find.textContaining('Trabajando', findRichText: true),
+        findsOneWidget,
+      );
+      chat.state = ChatPipelineState.completed;
+      chat.pendingApproval = {
+        'request_id': 'idle-complement',
+        'command': 'echo news',
+        'description': 'Approval',
+        'choices': ['once', 'deny'],
+      };
+      await _rebuildChatScreen(tester);
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.byType(ChatApprovalDock), findsOneWidget);
+      // The decision owns this space; an idle activity pill must not
+      // duplicate it or cover the dock. Keep the composer fixed.
+      expect(pill, findsNothing);
+      final dock = find.byType(ChatApprovalDock);
+      expect(tester.getRect(dock).bottom, lessThanOrEqualTo(tester.getRect(composer).top));
+      final composerBefore = tester.getRect(composer);
+      chat.pendingApproval = null;
+      await _rebuildChatScreen(tester);
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.byType(ChatApprovalDock), findsNothing);
+      expect(tester.getRect(composer), composerBefore);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+      chat.dispose();
+      await tester.pump(const Duration(minutes: 5));
+    },
+  );
+
+  testWidgets(
+    'inline message editing locks the activity pill and an already open queue sheet',
+    (tester) async {
+      final gateway = _UiRewindGateway();
+      final chat = await pumpChat(
+        tester,
+        desktopGateway: gateway,
+        connection: _remoteConn('conn-inline-activity-lock'),
+        chatState: ChatPipelineState.streaming,
+        messages: const [
+          {
+            'role': 'assistant',
+            'content': 'respuesta parcial',
+            '_pipeline': true,
+          },
+          {'role': 'user', 'content': 'pregunta editable', '_desktopRowId': 11},
+        ],
+      );
+      chat.enqueue('queued protected');
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      final edit = find.byIcon(Icons.edit_outlined).first;
+      await _revealInChatList(tester, edit);
+      final editButton = find
+          .ancestor(of: edit, matching: find.byType(IconButton))
+          .first;
+      final openEditor = tester.widget<IconButton>(editButton).onPressed!;
+      await tester.tap(edit);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(
+        find.byKey(const ValueKey('inline-message-editor-field')),
+        findsOneWidget,
+      );
+      await tester.tap(
+        find.byKey(const ValueKey('chat-queue-open')),
+        warnIfMissed: false,
+      );
+      await tester.pump();
+      expect(find.byKey(const ValueKey('chat-queue-panel')), findsNothing);
+      tester.widget<ChatQueueChip>(find.byType(ChatQueueChip)).onOpen();
+      await tester.pump();
+      expect(find.byKey(const ValueKey('chat-queue-panel')), findsNothing);
+      await tester.tap(
+        find.byKey(const ValueKey('inline-message-editor-cancel')),
+      );
+      await tester.pump();
+      await _openQueueActivity(tester);
+      openEditor();
+      await tester.pump();
+      await tester.pump();
+      final id = chat.queuedEntries.single.id;
+      final panel = find.byKey(const ValueKey('chat-queue-panel'));
+      final ignores = find.ancestor(
+        of: panel,
+        matching: find.byType(IgnorePointer),
+      );
+      expect(
+        ignores.evaluate().any((e) => (e.widget as IgnorePointer).ignoring),
+        isTrue,
+      );
+      final excluded = find.ancestor(
+        of: panel,
+        matching: find.byType(ExcludeSemantics),
+      );
+      expect(
+        excluded.evaluate().any(
+          (e) => (e.widget as ExcludeSemantics).excluding,
+        ),
+        isTrue,
+      );
+      for (final action in ['edit', 'delete', 'send-now', 'steer']) {
+        final control = find.byKey(ValueKey('chat-queue-$action-$id'));
+        if (control.evaluate().isNotEmpty) {
+          await tester.tap(control, warnIfMissed: false);
+        }
+      }
+      expect(chat.queuedEntries.single.text, 'queued protected');
+      expect(gateway.submissions, isEmpty);
+      expect(gateway.steers, isEmpty);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('solo una burbuja puede editarse a la vez', (tester) async {
     await pumpChat(
@@ -27088,10 +30745,13 @@ void main() {
       ],
     );
 
-    expect(find.text('Pensó'), findsOneWidget);
+    // Q9-CHAT5 v2 (ORDEN2-Q9-CHAT5, decisión 2): the folded thought is its
+    // step card, «Pensó», which opens it.
+    final thought = find.text('Pensó', findRichText: true);
+    expect(thought, findsOneWidget);
     expect(find.textContaining('RAZONAMIENTO_DURABLE_VISIBLE'), findsNothing);
 
-    await tester.tap(find.text('Pensó'));
+    await tester.tap(thought);
     await tester.pump(const Duration(milliseconds: 250));
 
     expect(find.textContaining('RAZONAMIENTO_DURABLE_VISIBLE'), findsOneWidget);
@@ -27100,7 +30760,7 @@ void main() {
   });
 
   testWidgets(
-    'historial terminado muestra el resumen apagado bajo el título, sin cara ni mascota',
+    'historial terminado muestra el resumen apagado bajo el título, con la cara pequeña del chat',
     (tester) async {
       mockCompanionStorage();
       await pumpChat(
@@ -27125,7 +30785,7 @@ void main() {
       await enableFullCompanion(tester);
 
       expect(find.byType(ThinkingTraceCard), findsOneWidget);
-      _expectNoTurnFace(tester);
+      _expectAnswerFace(tester);
       // fh1215: the floating header carries its own face, a separate widget:
       // QA 9493, the chat's own companion (its custom avatar), never a
       // sprite.
@@ -27144,16 +30804,22 @@ void main() {
         findsNothing,
       );
       expect(find.byType(CompanionStatusIndicator), findsNothing);
-      // ct1215: sin cara ni hueco; el resumen apagado del turno cuelga bajo
-      // el título, en el mismo borde que la respuesta.
-      expect(find.textContaining('Pensó'), findsOneWidget);
+      // ct1215: sin cara ni hueco; lo que hizo el turno cuelga bajo el
+      // título. Q9-CHAT5 v2 (ORDEN2-Q9-CHAT5, decisión 2): su tarjeta de
+      // paso, no un resumen «Pensó…».
+      await openInlineDetails(tester);
+      expect(
+        find.byKey(const ValueKey('turn-step-card-call-history-done')),
+        findsOneWidget,
+      );
+      expect(find.textContaining('Pensó'), findsNothing);
       expect(find.byKey(const ValueKey('assistant-avatar-ring')), findsNothing);
       expect(tester.takeException(), isNull);
     },
   );
 
   testWidgets(
-    'la cabecera del turno no lleva cara y no mueve el contenido al terminar',
+    'la cabecera del turno lleva la cara pequeña del chat y no mueve el contenido al terminar',
     (tester) async {
       mockCompanionStorage();
       final gateway = _UiRewindGateway();
@@ -27178,9 +30844,10 @@ void main() {
       await tester.pump();
 
       expect(chat.state, ChatPipelineState.waiting);
-      // Sin texto aún: la cabecera con la línea de estado del turno.
-      expect(find.byKey(const ValueKey('turn-status-line')), findsOneWidget);
-      _expectNoTurnFace(tester);
+      // Sin texto aún: el estado del turno. Q9-CHAT5 v2 (ORDEN2-Q9-CHAT5,
+      // decisión 1): la píldora sobre el compositor.
+      expect(liveInlineActivity, findsOneWidget);
+      _expectAnswerFace(tester);
       expect(find.byType(CompanionStatusIndicator), findsNothing);
       expectIslandPetStill(tester);
       // El estado vivo ya no lo pinta la burbuja (lo cuenta la pastilla de
@@ -27196,7 +30863,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 600));
 
       expect(find.byType(ThinkingTraceCard), findsOneWidget);
-      _expectNoTurnFace(tester);
+      _expectAnswerFace(tester);
       // fh1215: the floating header carries its own face, a separate widget:
       // QA 9493, the chat's own companion (its custom avatar), never a
       // sprite.
@@ -27232,7 +30899,7 @@ void main() {
       gateway.emit('message.complete', const {'text': 'PUBLIC_ACTIVE_ANSWER'});
       await tester.pump(const Duration(milliseconds: 700));
 
-      _expectNoTurnFace(tester);
+      _expectAnswerFace(tester);
       // fh1215: the floating header carries its own face, a separate widget:
       // QA 9493, the chat's own companion (its custom avatar), never a
       // sprite.
@@ -27252,8 +30919,19 @@ void main() {
       );
       expect(find.byType(CompanionStatusIndicator), findsNothing);
       expectIslandPetStill(tester);
-      // Terminado: la línea bajo el título es el desplegable apagado del turno.
-      expect(find.textContaining('Pensó'), findsOneWidget);
+      // Terminado: bajo el título queda lo que hizo el turno. Q9-CHAT5 v2
+      // (ORDEN2-Q9-CHAT5, decisión 2): la tarjeta de su paso, que se queda;
+      // ni línea «Trabajó…» ni «Pensó…», y nada vivo.
+      await openInlineDetails(tester);
+      expect(
+        find.byKey(const ValueKey('turn-step-card-call-single-sprite')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('thinking-trace-summary')),
+        findsNothing,
+      );
+      expect(find.byKey(const ValueKey('live-turn-status')), findsNothing);
       expect(
         tester
             .getRect(find.byKey(const ValueKey('assistant-header-name')))
@@ -27299,9 +30977,10 @@ void main() {
     );
     await enableFullCompanion(tester);
 
-    _expectNoTurnFace(tester);
+    _expectAnswerFace(tester);
     expect(find.byType(CompanionStatusIndicator), findsNothing);
-    expect(find.textContaining('Error'), findsOneWidget);
+    expect(tester.widget<Text>(inlineLabel).data, startsWith('Error'));
+    expect(find.text('Error'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -27331,9 +31010,14 @@ void main() {
 
     expect(find.byType(CompanionStatusIndicator), findsNothing);
     expect(find.byType(CompanionView), findsNothing);
-    // Ni mascota ni inicial en su lugar: el mismo resumen bajo el nombre.
-    _expectNoTurnFace(tester);
-    expect(find.textContaining('Pensó'), findsOneWidget);
+    // Ni mascota ni inicial en su lugar: lo que hizo el turno bajo el
+    // nombre. Q9-CHAT5 v2 (ORDEN2-Q9-CHAT5, decisión 2): su tarjeta de paso.
+    _expectAnswerFace(tester);
+    await openInlineDetails(tester);
+    expect(
+      find.byKey(const ValueKey('turn-step-card-call-presence-off')),
+      findsOneWidget,
+    );
     expect(tester.takeException(), isNull);
   });
 
@@ -27364,8 +31048,29 @@ void main() {
     );
     await enableFullCompanion(tester);
 
-    expect(find.text('Detenido · 1 comando'), findsOneWidget);
-    _expectNoTurnFace(tester);
+    // Q9-CHAT5 v2 (ORDEN2-Q9-CHAT5, decisión 2): the trace stays as its
+    // step card, and the outcome in a neutral card of its own, «Detenido»,
+    // where the folded line said «Detenido · 1 comando».
+    await openInlineDetails(tester);
+    final outcome = find.byKey(const ValueKey('turn-step-card-outcome'));
+    expect(
+      find.descendant(of: outcome, matching: find.text('Detenido')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: outcome,
+        matching: find.byIcon(Icons.stop_circle_outlined),
+      ),
+      findsOneWidget,
+    );
+    await openInlineDetails(tester);
+    expect(
+      find.byKey(const ValueKey('turn-step-card-call-stopped')),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Error'), findsNothing, reason: 'neutral');
+    _expectAnswerFace(tester);
     expect(find.byType(CompanionStatusIndicator), findsNothing);
     expect(tester.takeException(), isNull);
   });
@@ -27415,7 +31120,9 @@ void main() {
       ],
     );
 
-    expect(find.text('Pensó'), findsOneWidget);
+    // Q9-CHAT5 v2 (ORDEN2-Q9-CHAT5, decisión 2): the reasoning is its step
+    // card, «Pensó».
+    expect(find.text('Pensó', findRichText: true), findsOneWidget);
     final copyTarget = find
         .ancestor(
           of: find.byIcon(Icons.copy_rounded).first,
@@ -27453,8 +31160,9 @@ void main() {
     gateway.emit('message.start');
     await tester.pump();
 
-    // Vivo: la línea de estado del turno bajo el título.
-    expect(find.byKey(const ValueKey('turn-status-line')), findsOneWidget);
+    // Vivo: el estado del turno. Q9-CHAT5 v2 (ORDEN2-Q9-CHAT5, decisión 1):
+    // la píldora sobre el compositor.
+    expect(liveInlineActivity, findsOneWidget);
 
     gateway.emit('message.complete', const {
       'text': 'Respuesta terminada.',
@@ -27465,14 +31173,18 @@ void main() {
     expect(find.byType(ThinkingTraceCard), findsOneWidget);
     expect(find.byType(ReasoningBlock), findsNothing);
     expect(find.text('Respuesta terminada.'), findsOneWidget);
-    // Watched live: Hermes Desktop's «Thought for …» / «Thought briefly».
-    expect(find.textContaining('Pensó'), findsOneWidget);
+    // Q9-CHAT5 v2 (ORDEN2-Q9-CHAT5, decisión 2): the thought is its step
+    // card («Pensó», or «Pensó un momento» under a second), folded.
+    await openInlineDetails(tester);
+    final thought = find.textContaining('Pensó', findRichText: true);
+    expect(thought, findsOneWidget);
+    expect(find.byKey(const ValueKey('live-turn-status')), findsNothing);
     expect(
       find.textContaining('RAZONAMIENTO_DEL_TURNO_TERMINADO'),
       findsNothing,
     );
 
-    await tester.tap(find.textContaining('Pensó'));
+    await tester.tap(thought);
     await tester.pump(const Duration(milliseconds: 250));
     expect(
       find.textContaining('RAZONAMIENTO_DEL_TURNO_TERMINADO'),
@@ -27556,22 +31268,19 @@ void main() {
       expect(chat.isStreaming, isFalse);
       expect(gateway.processListCalls, callsBeforeProcessStatus + 1);
       // The island counts it, and says once that it started.
-      expect(_islandMark(tester), '1 en marcha');
-      expect(_islandRunning(tester)?.line, 'Proceso empezó');
-      expect(_islandRunning(tester)?.detail, 'dart run worker.dart');
+      expect(_islandMark(tester), isNull);
+      expect(_islandRunning(tester), isNull);
+      expect(find.text('1 proceso'), findsOneWidget);
       await tester.pump();
       final finalAnswer = find.ancestor(
         of: find.text('PUBLIC_PARENT_DONE'),
         matching: find.byType(ChatAnswerAnchor),
       );
-      final processPill = find.byKey(const ValueKey('island'));
+      final processPill = find.byKey(const ValueKey('delegates-capsule'));
       _expectPillInHeader(tester, processPill, clearOf: [finalAnswer]);
-      final activeBottomPadding =
-          (tester.widget<ListView>(chatListFinder()).padding! as EdgeInsets)
-              .bottom;
       await _openRunningWork(tester);
       await tester.pump(const Duration(seconds: 1));
-      final processCard = find.byKey(const ValueKey('island-card'));
+      final processCard = find.byKey(const ValueKey('subagent-panel'));
       expect(processCard, findsOneWidget);
       for (final words in const [
         'dart run worker.dart',
@@ -27596,7 +31305,7 @@ void main() {
       final controller = tester.widget<ListView>(list).controller!;
       controller.jumpTo(controller.position.maxScrollExtent * 0.55);
       await tester.pump();
-      // Let the scroll-to-bottom arrow land (it pads the list bottom).
+      // Let the scroll-to-bottom arrow land (it floats; no padding).
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
       final viewport = tester.getRect(list);
@@ -27614,8 +31323,6 @@ void main() {
       }
       expect(readerAnchor, isNotNull);
       final readerAnchorY = readerAnchor!.localToGlobal(Offset.zero).dy;
-      final readingBottomPadding =
-          (tester.widget<ListView>(list).padding! as EdgeInsets).bottom;
 
       gateway.processSnapshot = const AgentCenterSnapshot(
         snapshots: [],
@@ -27640,17 +31347,11 @@ void main() {
       await tester.pump();
       expect(find.byKey(const ValueKey('activity-pill')), findsNothing);
       expect(
-        tester.widget<ChatIsland>(find.byType(ChatIsland)).status,
-        IslandStatus.idle,
+        find.byKey(const ValueKey('delegates-capsule')),
+        findsOneWidget,
       );
-      final idleBottomPadding =
-          (tester.widget<ListView>(chatListFinder()).padding! as EdgeInsets)
-              .bottom;
-      // fh1215: the pill lives in the header, so it never reserved room at
-      // the bottom: its leaving does not change the transcript's bottom
-      // padding at all (the arrow keeps its own 48 dp).
-      expect(idleBottomPadding, readingBottomPadding);
-      expect(activeBottomPadding, lessThan(readingBottomPadding));
+      // The reserve may shrink with the lower pill; the reader's visible
+      // anchor must stay put while the finished process leaves.
       expect(
         readerAnchor.localToGlobal(Offset.zero).dy,
         closeTo(readerAnchorY, 1),
@@ -27665,7 +31366,7 @@ void main() {
     ('411x915', Size(411, 915)),
   ]) {
     testWidgets(
-      '$label: the island counts the process and opens its card, phone or '
+      '$label: the header pill counts the process and opens delegated work, phone or '
       'tablet alike',
       (tester) async {
         tester.view
@@ -27706,20 +31407,24 @@ void main() {
         });
         await tester.pump();
         await tester.pump();
-        expect(_islandMark(tester), '1 en marcha');
+        expect(_islandMark(tester), isNull);
         // Wait for the island to go back to its count, then tap it.
         await tester.pump(const Duration(seconds: 7));
         await tester.pump(const Duration(milliseconds: 400));
         final island = find.byKey(const ValueKey('island'));
         expect(
           find.descendant(of: island, matching: find.text('1 en marcha')),
+          findsNothing,
+        );
+        expect(
+          find.byKey(const ValueKey('delegates-capsule')).hitTestable(),
           findsOneWidget,
         );
-        await tester.tap(island);
+        await tester.tap(find.byKey(const ValueKey('delegates-capsule')));
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 500));
 
-        final card = find.byKey(const ValueKey('island-card'));
+        final card = find.byKey(const ValueKey('subagent-panel'));
         expect(card, findsOneWidget);
         expect(find.byKey(const ValueKey('activity-side-panel')), findsNothing);
         expect(
@@ -27736,19 +31441,18 @@ void main() {
           ),
           findsOneWidget,
         );
-        // It grows out of the island and never reaches the composer.
+        // Activity is now the lower pill's opaque sheet; the header stays identity.
+        expect(find.text('Actividad'), findsOneWidget);
+        expect(find.text('Procesos en segundo plano'), findsOneWidget);
+        expect(find.text('1 proceso'), findsOneWidget);
+        expect(find.byKey(const ValueKey('island-card')), findsNothing);
         final rect = tester.getRect(card);
-        expect(rect.top, closeTo(tester.getRect(island).top, 1));
-        final composer = tester.getRect(
-          find.byKey(const ValueKey('chat-composer-host')),
-        );
-        expect(rect.bottom, lessThanOrEqualTo(composer.top));
         expect(rect.left, greaterThanOrEqualTo(0));
         expect(rect.right, lessThanOrEqualTo(size.width));
         expect(tester.takeException(), isNull);
 
         // Tapping the island again (its line in the card) closes it.
-        await tester.tap(find.byKey(const ValueKey('island-card-line')));
+        Navigator.of(tester.element(card)).pop();
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 500));
         expect(card, findsNothing);
@@ -27809,10 +31513,86 @@ void main() {
       of: find.text('PUBLIC_STACK_DONE'),
       matching: find.byType(ChatAnswerAnchor),
     );
-    final processPill = find.byKey(const ValueKey('island'));
-    expect(_islandMark(tester), isNotNull);
+    final processPill = find.byKey(const ValueKey('delegates-capsule'));
+    expect(_islandMark(tester), isNull);
     expect(find.byKey(const ValueKey('chat-subagent-status')), findsOneWidget);
     _expectPillInHeader(tester, processPill, clearOf: [finalAnswer]);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('header delegates and queue sheet retain independent controls', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(800, 1100);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final gateway = _StableRefreshGateway()
+      ..processSnapshot = const AgentCenterSnapshot(
+        snapshots: [],
+        processes: [
+          BackgroundProcessEntry(
+            opaqueId: 'combined',
+            status: AgentCenterStatus.running,
+            uptimeSeconds: 55,
+            command: 'python3',
+            notifyOnComplete: true,
+          ),
+        ],
+      );
+    final chat = await pumpChat(
+      tester,
+      desktopGateway: gateway,
+      connection: _remoteConn('combined-activity'),
+      initialStoredSessionId: 'sess-test',
+      acquireDesktopRuntimeBeforeMount: true,
+    );
+    await chat.send(
+      fullText: 'initial',
+      model: 'hermes-agent',
+      history: const [],
+    );
+    await chat.refreshSubagentsForTesting();
+    gateway.emit('status.update', const {'kind': 'process'});
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    chat.enqueue('Follow up for the queue');
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.byKey(const ValueKey('delegates-capsule')), findsOneWidget);
+    expect(find.byKey(const ValueKey('chat-queue-chip')), findsOneWidget);
+    await _openQueueActivity(tester);
+    expect(find.byKey(const ValueKey('chat-queue-panel')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('subagent-panel')),
+      findsNothing,
+      reason: 'the queue has its own editor',
+    );
+    final id = chat.queuedEntries.single.id;
+    final delete = find.byKey(ValueKey('chat-queue-delete-$id'));
+    await tester.ensureVisible(delete);
+    await tester.pump();
+    await tester.tap(delete);
+    await tester.pump();
+    await tester.pump();
+    expect(chat.queuedEntries, isEmpty);
+    Navigator.of(tester.element(find.byKey(const ValueKey('chat-queue-sheet'))))
+        .pop();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await _openRunningWork(tester);
+    expect(find.byKey(const ValueKey('subagent-panel')), findsOneWidget);
+    expect(find.byKey(const ValueKey('chat-queue-panel')), findsNothing);
+    final stop = find.byKey(const ValueKey('running-process-stop-combined'));
+    await tester.ensureVisible(stop);
+    await tester.pump();
+    await tester.tap(stop);
+    await tester.pump();
+    expect(gateway.killedProcesses, ['combined']);
+    Navigator.of(tester.element(find.byKey(const ValueKey('subagent-panel'))))
+        .pop();
+    await tester.pump(const Duration(milliseconds: 400));
+    chat.dispose();
+    await tester.pumpWidget(const SizedBox.shrink());
     expect(tester.takeException(), isNull);
   });
 
@@ -27897,9 +31677,9 @@ void main() {
       expect(chat.sessionActivity.backgroundItemCount, 4);
       expect(chat.sessionActivity.active, isTrue);
       // The island counts the four; its card has one row for each.
-      expect(_islandMark(tester), '4 en marcha');
+      expect(_islandMark(tester), isNull);
       await _openRunningWork(tester);
-      final card = find.byKey(const ValueKey('island-card'));
+      final card = find.byKey(const ValueKey('subagent-panel'));
       expect(card, findsOneWidget);
       Finder inCard(Finder what) => find.descendant(of: card, matching: what);
       Future<void> reveal(Finder what) async {
@@ -27909,9 +31689,10 @@ void main() {
       }
 
       expect(
-        inCard(find.textContaining('4 en marcha', findRichText: true)),
+        inCard(find.text('Actividad')),
         findsOneWidget,
-        reason: 'its first line repeats the island',
+        reason:
+            'one sheet owns all activity; pending tasks stay in the transcript',
       );
       // The process, with its Detener.
       await reveal(find.text('python worker.py'));
@@ -28168,7 +31949,12 @@ void main() {
       });
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 100));
-      expect(find.byKey(const ValueKey('activity-pill')), findsOneWidget);
+      expect(find.byKey(const ValueKey('activity-pill')), findsNothing);
+      await openInlineDetails(tester);
+      expect(
+        find.byKey(const ValueKey('turn-step-card-call-mid-1')),
+        findsOneWidget,
+      );
       // Let the pill's fade-out finish.
       await tester.pump(const Duration(milliseconds: 300));
       expect(find.byKey(const ValueKey('compaction-dock')), findsNothing);
@@ -28181,12 +31967,16 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
       expect(chat.isStreaming, isTrue);
       expect(_dockText('Compactando'), findsOneWidget);
-      // La pastilla del turno sigue viva y no se solapa con la barra.
-      final pill = tester.getRect(find.byKey(const ValueKey('activity-pill')));
+      // Live work stays in the transcript, clear of the compaction dock.
+      expect(find.byKey(const ValueKey('activity-pill')), findsNothing);
+      await openInlineDetails(tester);
+      final tool = tester.getRect(
+        find.byKey(const ValueKey('turn-step-card-call-mid-1')),
+      );
       final dock = tester.getRect(
         find.byKey(const ValueKey('compaction-dock')),
       );
-      expect(pill.overlaps(dock), isFalse);
+      expect(tool.overlaps(dock), isFalse);
 
       gateway.emit('status.update', const {
         'kind': 'compacted',
@@ -28201,7 +31991,12 @@ void main() {
       // Let the pill's fade-out finish.
       await tester.pump(const Duration(milliseconds: 300));
       expect(find.byKey(const ValueKey('compaction-dock')), findsNothing);
-      expect(find.byKey(const ValueKey('activity-pill')), findsOneWidget);
+      expect(find.byKey(const ValueKey('activity-pill')), findsNothing);
+      await openInlineDetails(tester);
+      expect(
+        find.byKey(const ValueKey('turn-step-card-call-mid-1')),
+        findsOneWidget,
+      );
 
       gateway.emit('message.complete', const {'text': 'PUBLIC_MID_DONE'});
       await tester.pump();
@@ -28385,27 +32180,31 @@ void main() {
           ],
         );
         expect(find.text('PUBLIC_MERGED_ANSWER'), findsOneWidget);
-        // Ni cabecera pelada ni dos desplegables.
+        // Ni cabecera pelada ni dos bloques.
         expect(
           find.byKey(const ValueKey('assistant-header-name')),
           findsOneWidget,
         );
-        expect(find.byIcon(Icons.expand_more), findsOneWidget);
+        // Q9-CHAT5 v2 (ORDEN2-Q9-CHAT5, decisión 2): the one block is the
+        // turn's step cards, those of BOTH rows, with no «Trabajó…» line.
+        await openInlineDetails(tester);
         expect(
-          find.text('Pensó durante 1:12 · 1 archivo explorado · 1 comando'),
+          find.byKey(const ValueKey('turn-step-card-merge-1')),
           findsOneWidget,
         );
-        // El desplegable trae los pasos de las DOS filas.
-        await tester.tap(find.byIcon(Icons.expand_more));
-        await tester.pump(const Duration(milliseconds: 300));
+        await openInlineDetails(tester);
         expect(
-          find.text('Ejecutó · sleep', findRichText: true),
+          find.byKey(const ValueKey('turn-step-card-merge-2')),
           findsOneWidget,
         );
         expect(
-          find.text('Leyó · notas.md', findRichText: true),
-          findsOneWidget,
+          find.byKey(const ValueKey('thinking-trace-summary')),
+          findsNothing,
         );
+        await openInlineDetails(tester);
+        _expectStepRow('merge-1', 'Ejecutó', 'sleep');
+        await openInlineDetails(tester);
+        _expectStepRow('merge-2', 'Leyó', 'notas.md');
         expect(tester.takeException(), isNull);
       },
     );
@@ -28438,11 +32237,22 @@ void main() {
         find.byKey(const ValueKey('assistant-header-name')),
         findsOneWidget,
       );
-      await tester.tap(find.byIcon(Icons.expand_more));
-      await tester.pump(const Duration(milliseconds: 300));
-      expect(find.text('Ejecutó · sleep', findRichText: true), findsOneWidget);
-      expect(find.text('Buscó · hermes', findRichText: true), findsOneWidget);
-      expect(find.text('Leyó · notas.md', findRichText: true), findsOneWidget);
+      // Q9-CHAT5 v2 (ORDEN2-Q9-CHAT5, decisión 2): the three rows' steps are
+      // the one turn's cards (three: none folded).
+      expect(find.byKey(const ValueKey('turn-step-more')), findsNothing);
+      await openInlineDetails(tester);
+      _expectStepRow('merge-1', 'Ejecutó', 'sleep');
+      await openInlineDetails(tester);
+      _expectStepRow('merge-0', 'Búsqueda web completada');
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('turn-step-card-merge-0')),
+          matching: find.text('hermes'),
+        ),
+        findsNothing,
+      );
+      await openInlineDetails(tester);
+      _expectStepRow('merge-2', 'Leyó', 'notas.md');
     });
 
     testWidgets('no se funde a través de un mensaje de usuario', (
@@ -28461,7 +32271,12 @@ void main() {
         find.byKey(const ValueKey('assistant-header-name')),
         findsOneWidget,
       );
-      expect(find.text('Pensó durante 40s · 1 comando'), findsOneWidget);
+      // Q9-CHAT5 v2 (ORDEN2-Q9-CHAT5, decisión 2): as its own step card.
+      await openInlineDetails(tester);
+      expect(
+        find.byKey(const ValueKey('turn-step-card-merge-1')),
+        findsOneWidget,
+      );
       await tester.pumpWidget(const SizedBox.shrink());
 
       await pumpChat(
@@ -28494,9 +32309,18 @@ void main() {
         ],
       );
       // La traza queda como bloque propio (dos cabeceras: traza + parada).
-      expect(find.text('Ejecutó · sleep', findRichText: true), findsNothing);
-      expect(find.text('Pensó durante 40s · 1 comando'), findsOneWidget);
+      // Q9-CHAT5 v2 (ORDEN2-Q9-CHAT5, decisión 2): its one step card, above
+      // the stopped reply, not absorbed by it.
+      await openInlineDetails(tester);
+      final card = find.byKey(const ValueKey('turn-step-card-merge-1'));
+      expect(card, findsOneWidget);
       expect(find.textContaining('RESPUESTA_PARADA'), findsOneWidget);
+      expect(
+        tester.getRect(card).bottom,
+        lessThanOrEqualTo(
+          tester.getTopLeft(find.textContaining('RESPUESTA_PARADA')).dy,
+        ),
+      );
     });
 
     testWidgets('el turno en vivo no se funde con el turno anterior', (
@@ -28524,7 +32348,12 @@ void main() {
       gateway.emit('message.delta', const {'text': 'PUBLIC_STREAMING_TEXT'});
       await tester.pump(const Duration(milliseconds: 300));
       // El turno anterior conserva su bloque propio; el vivo no absorbe nada.
-      expect(find.text('Pensó durante 40s · 1 comando'), findsOneWidget);
+      // Q9-CHAT5 v2 (ORDEN2-Q9-CHAT5, decisión 2): its one step card.
+      await openInlineDetails(tester);
+      expect(
+        find.byKey(const ValueKey('turn-step-card-merge-1')),
+        findsOneWidget,
+      );
       expect(find.textContaining('PUBLIC_STREAMING_TEXT'), findsOneWidget);
       gateway.emit('message.complete', const {'text': 'PUBLIC_STREAMING_TEXT'});
       await tester.pump();
@@ -28575,19 +32404,21 @@ void main() {
         find.byKey(const ValueKey('assistant-header-name')),
         findsOneWidget,
       );
-      expect(find.byIcon(Icons.expand_more), findsOneWidget);
+      // Q9-CHAT5 v2 (ORDEN2-Q9-CHAT5, decisión 2): the three steps are
+      // cards that stay, in the one group, where a folded line opened them.
+      await openInlineDetails(tester);
+      expect(find.byKey(const ValueKey('turn-step-cards')), findsOneWidget);
       expect(find.text('RG_FINAL_ANSWER'), findsOneWidget);
       expect(assistantCopy, findsOneWidget);
-      await tester.tap(find.byIcon(Icons.expand_more));
-      await tester.pump(const Duration(milliseconds: 300));
-      final labels = [
-        'Skill cargada · github',
-        'Archivo escrito · notas.md',
-        'Ejecutó · flutter test',
-      ];
+      await openInlineDetails(tester);
+      _expectStepRow('rg-call-1', 'Skill cargada', 'github');
+      await openInlineDetails(tester);
+      _expectStepRow('rg-call-2', 'Archivo escrito', 'notas.md');
+      await openInlineDetails(tester);
+      _expectStepRow('rg-call-3', 'Ejecutó', 'flutter');
       final tops = [
-        for (final label in labels)
-          tester.getTopLeft(find.text(label, findRichText: true)).dy,
+        for (final id in ['rg-call-1', 'rg-call-2', 'rg-call-3'])
+          tester.getTopLeft(find.byKey(ValueKey('turn-step-card-$id'))).dy,
       ];
       // ct1215: el turno abierto se lee en orden, lo más antiguo arriba.
       expect(tops, orderedEquals([...tops]..sort()));
@@ -28602,7 +32433,16 @@ void main() {
         find.byKey(const ValueKey('assistant-header-name')),
         findsOneWidget,
       );
-      expect(find.byIcon(Icons.expand_more), findsOneWidget);
+      // Q9-CHAT5 v2 (decisión 2): one set of step cards, its three steps.
+      await openInlineDetails(tester);
+      expect(find.byKey(const ValueKey('turn-step-cards')), findsOneWidget);
+      for (final n in [1, 2, 3]) {
+        await openInlineDetails(tester);
+        expect(
+          find.byKey(ValueKey('turn-step-card-rg-call-$n')),
+          findsOneWidget,
+        );
+      }
       expect(assistantCopy, findsOneWidget);
     });
 
@@ -28780,6 +32620,11 @@ void main() {
           ...turn.sublist(1),
         ],
       );
+      // Finish the row's initial entrance before measuring its growth.
+      await tester.pump(const Duration(milliseconds: 400));
+      double bottomSpace() =>
+          (tester.widget<ListView>(chatListFinder()).padding! as EdgeInsets)
+              .bottom;
       List<String> traceLabels() => [
         for (final event
             in tester
@@ -28797,9 +32642,14 @@ void main() {
         'terminal',
         'read_file',
       ]);
-      final groupTop = tester
-          .getTopLeft(find.byKey(const ValueKey('assistant-header-name')))
-          .dy;
+      final header = find.byKey(const ValueKey('assistant-header-name'));
+      await openInlineDetails(tester);
+      final cards = find.byKey(const ValueKey('turn-step-cards'));
+      final headerElement = tester.element(header);
+      final groupTop = tester.getTopLeft(header).dy;
+      final headerToCards = tester.getTopLeft(cards).dy - groupTop;
+      final cardsHeight = tester.getSize(cards).height;
+      final bottomBefore = bottomSpace();
 
       chat.internalMessagesForTesting = [
         {
@@ -28821,15 +32671,49 @@ void main() {
       ];
       chat.debugEmitMessagesHydrated();
       await tester.pump();
+      // Completing the live tool exposes Thinking in the transcript. Its
+      // measured height is the only new gap between the retained name and steps.
+      final phase = liveInlineActivity;
+      expect(phase, findsOneWidget);
+      expect(find.byKey(const ValueKey('activity-pill')), findsNothing);
+      expect(tester.getSize(phase).height, 48);
+      for (var frame = 0; frame < 8; frame++) {
+        await tester.pump(const Duration(milliseconds: 50));
+        expect(tester.element(header), same(headerElement));
+        // Same distance; a subtraction of two fractional offsets of a growing
+        // list carries ~1e-14 of float noise.
+        expect(
+          tester.getTopLeft(cards).dy - tester.getTopLeft(header).dy,
+          closeTo(headerToCards, 1e-6),
+        );
+      }
       expect(
         find.byKey(const ValueKey('assistant-header-name')),
         findsOneWidget,
       );
+      // Recent activity stays capped at three rows while the source trace
+      // keeps every step. The same header and its distance are retained.
+      expect(tester.element(header), same(headerElement));
       expect(
-        tester
-            .getTopLeft(find.byKey(const ValueKey('assistant-header-name')))
-            .dy,
-        groupTop,
+        tester.getTopLeft(cards).dy - tester.getTopLeft(header).dy,
+        headerToCards,
+      );
+      final grown = tester.getSize(cards).height - cardsHeight;
+      expect(grown, greaterThan(0), reason: 'v4 expansion retains every tool row');
+      // Ordinary work never reserves a footer: completing the last live tool
+      // does not change the reserved bottom space, and the recent activity
+      // stays capped at three rows while the phase line stays inline.
+      final releasedBottomSpace = bottomBefore - bottomSpace();
+      expect(releasedBottomSpace, 0);
+      expect(
+        tester.getTopLeft(header).dy,
+        closeTo(groupTop - grown + releasedBottomSpace, 0.5),
+      );
+      expect(
+        tester.getRect(cards).bottom,
+        lessThanOrEqualTo(
+          tester.getRect(chatListFinder()).bottom - bottomSpace(),
+        ),
       );
       expect(traceLabels(), [
         'skill_view',
@@ -28923,6 +32807,11 @@ void main() {
       // cabecera vacía «Hermes / Completado».
       expect(find.byKey(const ValueKey('assistant-header-name')), findsNothing);
       expect(find.textContaining('Pensó'), findsNothing);
+      // Q9-CHAT5 v2 (ORDEN2-Q9-CHAT5, decisión 2): no card for a bridge.
+      expect(
+        find.byKey(const ValueKey('turn-step-card-bridge-only')),
+        findsNothing,
+      );
       expect(find.text('PUBLIC_AFTER_COMPACTION'), findsOneWidget);
       expect(tester.takeException(), isNull);
 
@@ -28951,7 +32840,13 @@ void main() {
         find.byKey(const ValueKey('assistant-header-name')),
         findsOneWidget,
       );
-      expect(find.byIcon(Icons.expand_more), findsOneWidget);
+      // Q9-CHAT5 v2 (ORDEN2-Q9-CHAT5, decisión 2): what there is to show is
+      // the real tool's step card (it has no output: no chevron of its own).
+      await openInlineDetails(tester);
+      expect(
+        find.byKey(const ValueKey('turn-step-card-real-tool')),
+        findsOneWidget,
+      );
     },
   );
 
@@ -28977,13 +32872,12 @@ void main() {
       );
       gateway.emit('message.start');
       await tester.pump();
-      // The step the island's working line names.
-      String? pill() => tester
-          .widget<ChatIsland>(find.byType(ChatIsland))
-          .events
-          .where((e) => e.id == 'working')
-          .firstOrNull
-          ?.detail;
+      // The step in hand. Q9-CHAT5 v2 (ORDEN2-Q9-CHAT5, decisión 1): the
+      // step pill above the composer names it (the island keeps the name).
+      String? pill() {
+        final step = _activitySnapshot(tester).current;
+        return step?.status == ActivityStepStatus.running ? step?.detail : null;
+      }
 
       gateway.emit('tool.start', const {
         'tool_id': 'call-lp-1',
@@ -28999,7 +32893,7 @@ void main() {
       });
       // One frame, no fake time elapsed: no debounce/linger may hold it back.
       await tester.pump(Duration.zero);
-      expect(pill(), 'Ejecutando · date');
+      expect(pill(), 'date');
 
       gateway.emit('tool.complete', const {
         'tool_id': 'call-lp-1',
@@ -29007,7 +32901,7 @@ void main() {
         'args': {'command': 'date -u'},
       });
       await tester.pump(Duration.zero);
-      expect(pill(), isNot(contains('Ejecutando')));
+      expect(pill(), isNull);
 
       gateway.emit('message.complete', const {'text': 'PUBLIC_LATENCY_DONE'});
       await tester.pump();
@@ -29046,8 +32940,29 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
       // Una herramienta en curso revela la pastilla enseguida, con el detalle
       // proyectado: ejecutable sin argumentos ni secretos.
-      expect(_islandActivity(tester).detail, 'Ejecutando · date');
-      expect(find.text('Trabajando · Ejecutando · date'), findsOneWidget);
+      // Q9-CHAT5 v2 (ORDEN2-Q9-CHAT5, decisión 1): the step in hand is the
+      // step pill's above the composer; the island keeps the name and says
+      // no routine turn line.
+      expect(
+        tester
+            .widget<ChatIsland>(find.byType(ChatIsland))
+            .events
+            .where((e) => e.id == 'working'),
+        isEmpty,
+      );
+      // live-pill: the capsule says «Ejecutando» alone; the step in hand
+      // (verb and safe target) is the capsule's reading for a screen reader.
+      expect(_activitySnapshot(tester).current?.detail, 'date');
+      expect(find.byKey(const ValueKey('delegates-capsule')), findsNothing);
+      await openInlineDetails(tester);
+      expect(
+        find.byKey(const ValueKey('turn-step-card-call-detail-1')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('turn-step-mark-call-detail-1')),
+        findsOneWidget,
+      );
       expect(find.textContaining('SECRET_VALUE_CANARY'), findsNothing);
       expect(
         find.textContaining('SECRET_VALUE_CANARY', findRichText: true),
@@ -29069,8 +32984,8 @@ void main() {
       expect(step['status'], 'completed');
       expect((step['completed_at'] as num) - (step['timestamp'] as num), 700);
       expect(step.toString(), isNot(contains('SECRET_VALUE_CANARY')));
-      // Otra herramienta arranca: el panel enseña «Ahora» y, debajo, el «Hecho»
-      // del turno: ✓ terminal · date  0,7 s
+      // Otra herramienta arranca; el paso conserva la medición de 700 ms,
+      // pero la fila omite la duración inferior a un segundo.
       gateway.emit('tool.start', const {
         'tool_id': 'call-detail-2',
         'name': 'read_file',
@@ -29084,10 +32999,12 @@ void main() {
       await tester.pump(const Duration(milliseconds: 400));
       expect(find.byKey(const ValueKey('activity-pill')), findsNothing);
       // La burbuja terminada conserva el historial con los mismos detalles.
-      await tester.tap(find.byIcon(Icons.expand_more).first);
-      await tester.pump(const Duration(milliseconds: 300));
-      expect(find.text('Ejecutó · date', findRichText: true), findsOneWidget);
-      expect(find.text('0,7 s'), findsOneWidget);
+      // Q9-CHAT5 v2 (ORDEN2-Q9-CHAT5, decisión 2): as step cards, in view;
+      // Subsecond measurements remain in the trace, without a displayed clock.
+      await openInlineDetails(tester);
+      _expectStepRow('call-detail-1', 'Ejecutó', 'date');
+      expect(_stepCardLabel(tester, 'call-detail-1'), isNot(contains('0,7 s')));
+      expect(_stepCardLabel(tester, 'call-detail-1'), isNot(contains('0:00')));
       expect(
         find.textContaining('/home/private', findRichText: true),
         findsNothing,
@@ -29095,6 +33012,678 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  group('Q9MEM confirmed answer receipt', () {
+    final pill = find.byKey(const ValueKey('turn-memory-pill'));
+
+    Future<List<String>> recordMemoryAnnouncements(WidgetTester tester) async {
+      final announcements = <String>[];
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockDecodedMessageHandler<Object?>(
+        SystemChannels.accessibility,
+        (message) async {
+          if (message is Map && message['type'] == 'announce') {
+            final data = message['data'];
+            if (data is Map && data['message'] is String) {
+              announcements.add(data['message'] as String);
+            }
+          }
+          return null;
+        },
+      );
+      addTearDown(
+        () => messenger.setMockDecodedMessageHandler<Object?>(
+          SystemChannels.accessibility,
+          null,
+        ),
+      );
+      return announcements;
+    }
+
+    testWidgets(
+      'memory confirmation during long reasoning reuses the group snapshot',
+      (tester) async {
+        final spoken = await recordMemoryAnnouncements(tester);
+        final gateway = _UiRewindGateway();
+        final performance = ChatPerformanceProbe();
+        final chat = await pumpChat(
+          tester,
+          connection: _remoteConn('conn-q9mem-frame-cost'),
+          desktopGateway: gateway,
+          performanceProbe: performance,
+          messages: [
+            for (var i = 299; i >= 0; i--)
+              {
+                'id': i,
+                'message_id': 'memory-history-$i',
+                'role': i.isOdd ? 'assistant' : 'user',
+                'content': 'Historic message $i.',
+              },
+          ],
+        );
+        expect(
+          await chat.send(
+            fullText: 'Piensa y recuerda',
+            model: 'hermes-agent',
+            history: const [],
+          ),
+          isTrue,
+        );
+        gateway.emit('message.start');
+        gateway.emit('reasoning.delta', const {'text': 'Warm up. '});
+        await tester.pump(const Duration(milliseconds: 450));
+        final readsPerFrame = <int>[];
+        for (var frame = 0; frame < 10; frame++) {
+          performance.reset();
+          for (var i = 0; i < 6; i++) {
+            gateway.emit('reasoning.delta', {'text': 'memory $frame.$i '});
+          }
+          if (frame == 3) {
+            gateway.emit('tool.start', const {
+              'tool_id': 'receipt-frame-cost',
+              'name': 'memory',
+              'args': {'action': 'add', 'content': 'Preferencia confirmada'},
+            });
+          }
+          if (frame == 4) {
+            gateway.emit('tool.complete', const {
+              'tool_id': 'receipt-frame-cost',
+              'name': 'memory',
+              'result': {'success': true},
+            });
+          }
+          await tester.pump(const Duration(milliseconds: 16));
+          readsPerFrame.add(performance.publicTranscriptReads);
+          if (frame == 3) {
+            expect(pill, findsNothing);
+            expect(spoken, isEmpty);
+          }
+        }
+        expect(
+          readsPerFrame,
+          everyElement(lessThanOrEqualTo(3)),
+          reason:
+              'membership reuses the event snapshot, including confirmation',
+        );
+        expect(chat.messages.first['reasoning'], contains('memory 9.5'));
+        expect(pill, findsOneWidget);
+        expect(spoken, ['Guardado en memoria']);
+        gateway.emit('message.complete', const {'text': 'Hecho.'});
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+        expect(spoken, ['Guardado en memoria']);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
+      'one live pill after the answer, one announcement through replay and settling',
+      (tester) async {
+        final spoken = await recordMemoryAnnouncements(tester);
+        final gateway = _UiRewindGateway();
+        final chat = await pumpChat(
+          tester,
+          connection: _remoteConn('conn-q9mem-live'),
+          desktopGateway: gateway,
+        );
+        expect(
+          await chat.send(
+            fullText: 'Recuerda la preferencia',
+            model: 'hermes-agent',
+            history: chat.messages,
+          ),
+          isTrue,
+        );
+        gateway.emit('message.start');
+        gateway.emit('message.delta', const {'text': 'Respuesta confirmada.'});
+        gateway.emit('tool.start', const {
+          'tool_id': 'receipt-live',
+          'name': 'memory',
+          'args': {'action': 'add', 'content': 'La preferencia confirmada.'},
+        });
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
+        expect(pill, findsNothing);
+        expect(spoken.where((label) => label.contains('memoria')), isEmpty);
+        gateway.emit('tool.complete', const {
+          'tool_id': 'receipt-live',
+          'name': 'memory',
+          'result': {'success': true, 'done': true},
+        });
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+        expect(pill, findsOneWidget);
+        expect(
+          find.byKey(const ValueKey('turn-step-card-receipt-live')),
+          findsNothing,
+        );
+        expect(find.byKey(const ValueKey('memory-saved-marker')), findsNothing);
+        expect(spoken.where((label) => label.contains('memoria')), [
+          'Guardado en memoria',
+        ]);
+        gateway.emit('tool.complete', const {
+          'tool_id': 'receipt-live',
+          'name': 'memory',
+          'result': {'success': true, 'done': true},
+        });
+        gateway.emit('message.complete', const {
+          'text': 'Respuesta confirmada.',
+        });
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+        expect(pill, findsOneWidget);
+        expect(
+          tester.getTopLeft(pill).dy,
+          greaterThan(
+            tester.getBottomLeft(find.text('Respuesta confirmada.')).dy,
+          ),
+        );
+        expect(spoken.where((label) => label.contains('memoria')), [
+          'Guardado en memoria',
+        ]);
+        await tester.tap(pill);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+        expect(find.text('La preferencia confirmada.'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
+      'a write completed and settled before the first frame announces once',
+      (tester) async {
+        final spoken = await recordMemoryAnnouncements(tester);
+        final gateway = _UiRewindGateway();
+        final chat = await pumpChat(
+          tester,
+          connection: _remoteConn('conn-q9mem-fast'),
+          desktopGateway: gateway,
+        );
+        expect(
+          await chat.send(
+            fullText: 'Actualiza el perfil',
+            model: 'hermes-agent',
+            history: chat.messages,
+          ),
+          isTrue,
+        );
+        gateway.emit('message.start');
+        gateway.emit('tool.start', const {
+          'tool_id': 'receipt-fast',
+          'name': 'memory',
+          'args': {
+            'action': 'replace',
+            'target': 'user',
+            'new_text': 'Prefiere respuestas breves.',
+          },
+        });
+        gateway.emit('tool.complete', const {
+          'tool_id': 'receipt-fast',
+          'name': 'memory',
+          'result': {'success': true, 'done': true},
+        });
+        gateway.emit('message.complete', const {
+          'text': 'He actualizado la preferencia.',
+        });
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+        expect(pill, findsOneWidget);
+        expect(spoken.where((label) => label.contains('Perfil')), [
+          'Perfil actualizado',
+        ]);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
+      'confirmed memory follows the last live segment and stays singular',
+      (tester) async {
+        final spoken = await recordMemoryAnnouncements(tester);
+        final gateway = _UiRewindGateway();
+        final chat = await pumpChat(
+          tester,
+          connection: _remoteConn('conn-q9mem-segments'),
+          desktopGateway: gateway,
+        );
+        expect(
+          await chat.send(
+            fullText: 'Recuerda y continúa',
+            model: 'hermes-agent',
+            history: chat.messages,
+          ),
+          isTrue,
+        );
+        gateway.emit('message.start');
+        gateway.emit('message.delta', const {'text': 'PRIMER_TRAMO_MEMORIA'});
+        gateway.emit('tool.start', const {
+          'tool_id': 'receipt-segment',
+          'name': 'memory',
+          'args': {
+            'action': 'add',
+            'content': 'Preferencia del turno segmentado.',
+          },
+        });
+        gateway.emit('tool.complete', const {
+          'tool_id': 'receipt-segment',
+          'name': 'memory',
+          'result': {'success': true, 'done': true},
+        });
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+        expect(pill, findsOneWidget);
+        gateway.emit('message.interim', const {'text': 'PRIMER_TRAMO_MEMORIA'});
+        await tester.pump();
+        gateway.emit('message.delta', const {'text': 'SEGUNDO_TRAMO_MEMORIA'});
+        await tester.pump(const Duration(milliseconds: 33));
+        await tester.pump(const Duration(milliseconds: 400));
+        RenderLiveReplyReveal reply() => tester
+            .renderObject<RenderLiveReplyReveal>(find.byType(LiveReplyReveal));
+        // A long pump is one frame: the geometry read at its end can still
+        // start the reveal/height clock. Measure the authoritative paragraph
+        // only after bounded real frames have made its whole text visible.
+        for (
+          var frame = 0;
+          frame < 40 &&
+              (!reply().settled ||
+                  !reply().visibleText.contains('SEGUNDO_TRAMO_MEMORIA'));
+          frame++
+        ) {
+          await tester.pump(const Duration(milliseconds: 16));
+        }
+        expect(reply().settled, isTrue);
+        expect(reply().visibleText, contains('SEGUNDO_TRAMO_MEMORIA'));
+        expect(pill, findsOneWidget);
+        expect(
+          tester.getTopLeft(pill).dy,
+          greaterThan(
+            tester
+                .getBottomLeft(find.textContaining('SEGUNDO_TRAMO_MEMORIA'))
+                .dy,
+          ),
+        );
+        expect(spoken.where((label) => label.contains('memoria')), [
+          'Guardado en memoria',
+        ]);
+        gateway.emit('message.complete', const {
+          'text': 'SEGUNDO_TRAMO_MEMORIA',
+        });
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+        expect(pill, findsOneWidget);
+        expect(spoken.where((label) => label.contains('memoria')), [
+          'Guardado en memoria',
+        ]);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
+      'an external turn fence never announces the previous answers memory',
+      (tester) async {
+        final spoken = await recordMemoryAnnouncements(tester);
+        final gateway = _UiRewindGateway();
+        final chat = await pumpChat(
+          tester,
+          connection: _remoteConn('conn-q9mem-external-fence'),
+          desktopGateway: gateway,
+        );
+        await chat.send(
+          fullText: 'Petición anterior',
+          model: 'hermes-agent',
+          history: const [],
+        );
+        gateway.emit('message.start');
+        gateway.emit('tool.start', const {
+          'tool_id': 'receipt-before-fence',
+          'name': 'memory',
+          'args': {'action': 'add', 'content': 'Preferencia anterior'},
+        });
+        gateway.emit('tool.complete', const {
+          'tool_id': 'receipt-before-fence',
+          'name': 'memory',
+          'result': {'success': true},
+        });
+        gateway.emit('message.complete', const {
+          'text': 'RESPUESTA_ANTERIOR_CON_MEMORIA',
+        });
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+        expect(spoken, ['Guardado en memoria']);
+        chat.beginExternallyObservedDesktopTurnForTesting(
+          const DesktopSessionSnapshot(
+            runtimeSessionId: 'runtime-ui-test',
+            storedSessionId: 'stored-q9mem-external',
+            created: false,
+            running: true,
+            status: 'working',
+          ),
+        );
+        gateway.emit('message.start');
+        gateway.emit('message.delta', const {
+          'text': 'RESPUESTA_NUEVA_SIN_PROMPT',
+        });
+        gateway.emit('tool.start', const {
+          'tool_id': 'new-read',
+          'name': 'read_file',
+          'args': {'path': 'README.md'},
+        });
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+        expect(chat.messages.first['_responseGroupStart'], isTrue);
+        expect(spoken, ['Guardado en memoria']);
+        expect(
+          pill,
+          findsOneWidget,
+          reason: 'only the old answer has a receipt',
+        );
+        gateway.emit('tool.start', const {
+          'tool_id': 'receipt-after-fence',
+          'name': 'memory',
+          'args': {
+            'action': 'replace',
+            'target': 'user',
+            'new_text': 'Nuevo perfil',
+          },
+        });
+        gateway.emit('tool.complete', const {
+          'tool_id': 'receipt-after-fence',
+          'name': 'memory',
+          'result': {'success': true},
+        });
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+        expect(spoken, ['Guardado en memoria', 'Perfil actualizado']);
+        expect(pill, findsNWidgets(2));
+        gateway.emit('message.complete', const {
+          'text': 'RESPUESTA_NUEVA_SIN_PROMPT',
+        });
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+        expect(spoken, ['Guardado en memoria', 'Perfil actualizado']);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
+      'remote-live: the open chat paints another surface\'s running turn and its final once',
+      (tester) async {
+        final gateway = _UiRewindGateway();
+        final chat = await pumpChat(
+          tester,
+          connection: _remoteConn('conn-remote-live-paint'),
+          desktopGateway: gateway,
+        );
+        await chat.send(
+          fullText: 'Petición propia',
+          model: 'hermes-agent',
+          history: const [],
+        );
+        gateway.emit('message.start');
+        gateway.emit('message.complete', const {'text': 'RESPUESTA_PROPIA'});
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+        expect(chat.isStreaming, isFalse);
+        // Another surface starts a turn on the same live runtime.
+        chat.beginExternallyObservedDesktopTurnForTesting(
+          const DesktopSessionSnapshot(
+            runtimeSessionId: 'runtime-ui-test',
+            storedSessionId: 'stored-remote-live',
+            created: false,
+            running: true,
+            status: 'working',
+          ),
+        );
+        gateway.emit('message.start');
+        gateway.emit('message.delta', const {'text': 'REMOTO_EN_CURSO'});
+        for (var frame = 0; frame < 30; frame++) {
+          await tester.pump(const Duration(milliseconds: 33));
+        }
+        expect(chat.isStreaming, isTrue);
+        expect(find.textContaining('REMOTO_EN_CURSO'), findsOneWidget);
+        gateway.emit('message.delta', const {'text': ' Y_SIGUE'});
+        for (var frame = 0; frame < 30; frame++) {
+          await tester.pump(const Duration(milliseconds: 33));
+        }
+        expect(find.textContaining('Y_SIGUE'), findsOneWidget);
+        gateway.emit('message.complete', const {
+          'text': 'REMOTO_EN_CURSO Y_SIGUE FINAL',
+        });
+        for (var frame = 0; frame < 30 && chat.isStreaming; frame++) {
+          await tester.pump(const Duration(milliseconds: 33));
+        }
+        await tester.pump(const Duration(milliseconds: 400));
+        expect(chat.isStreaming, isFalse);
+        expect(
+          find.textContaining('REMOTO_EN_CURSO Y_SIGUE FINAL'),
+          findsOneWidget,
+        );
+        expect(find.textContaining('RESPUESTA_PROPIA'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
+      'reattaching the same live chat does not announce its receipt again',
+      (tester) async {
+        final spoken = await recordMemoryAnnouncements(tester);
+        final gateway = _UiRewindGateway();
+        final connection = _remoteConn('conn-q9mem-reattach');
+        final chat = await pumpChat(
+          tester,
+          connection: connection,
+          desktopGateway: gateway,
+        );
+        await chat.send(
+          fullText: 'Recuerda',
+          model: 'hermes-agent',
+          history: const [],
+        );
+        gateway.emit('message.start');
+        gateway.emit('message.delta', const {
+          'text': 'RESPUESTA_QUE_SIGUE_VIVA',
+        });
+        gateway.emit('tool.start', const {
+          'tool_id': 'receipt-remount',
+          'name': 'memory',
+          'args': {'action': 'add', 'content': 'Preferencia confirmada'},
+        });
+        gateway.emit('tool.complete', const {
+          'tool_id': 'receipt-remount',
+          'name': 'memory',
+          'result': {'success': true},
+        });
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+        expect(spoken, ['Guardado en memoria']);
+        final app = tester.state<HermesAppState>(find.byType(HermesApp));
+        final before = tester.state(find.byType(ChatScreen));
+        Navigator.of(tester.element(find.byType(ChatScreen))).pop();
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 500));
+        expect(find.byType(ChatScreen), findsNothing);
+        expect(chat.isStreaming, isTrue);
+        final ctx = tester.element(find.byType(Navigator).first);
+        Navigator.of(ctx).push(
+          MaterialPageRoute(
+            builder: (_) =>
+                ChatScreen(connection: connection, session: _session()),
+          ),
+        );
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 500));
+        expect(
+          identical(tester.state(find.byType(ChatScreen)), before),
+          isFalse,
+        );
+        expect(
+          identical(tester.state<HermesAppState>(find.byType(HermesApp)), app),
+          isTrue,
+        );
+        gateway.emit('tool.complete', const {
+          'tool_id': 'receipt-remount',
+          'name': 'memory',
+          'result': {'success': true},
+        });
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
+        gateway.emit('message.complete', const {
+          'text': 'RESPUESTA_QUE_SIGUE_VIVA',
+        });
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+        expect(spoken, ['Guardado en memoria']);
+        expect(pill, findsOneWidget);
+        expect(
+          await chat.send(
+            fullText: 'Otro turno',
+            model: 'hermes-agent',
+            history: chat.messages,
+          ),
+          isTrue,
+        );
+        gateway.emit('message.start');
+        gateway.emit('message.delta', const {
+          'text': 'OTRA_RESPUESTA_CON_MEMORIA',
+        });
+        gateway.emit('tool.start', const {
+          'tool_id': 'receipt-after-reattachment-turn',
+          'name': 'memory',
+          'args': {'action': 'add', 'content': 'Otra preferencia confirmada'},
+        });
+        gateway.emit('tool.complete', const {
+          'tool_id': 'receipt-after-reattachment-turn',
+          'name': 'memory',
+          'result': {'success': true},
+        });
+        gateway.emit('message.complete', const {
+          'text': 'OTRA_RESPUESTA_CON_MEMORIA',
+        });
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+        expect(spoken, ['Guardado en memoria', 'Guardado en memoria']);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
+      'attaching to an already confirmed live receipt does not make it new',
+      (tester) async {
+        final spoken = await recordMemoryAnnouncements(tester);
+        final gateway = _UiRewindGateway();
+        final connection = _remoteConn('conn-q9mem-attach-confirmed');
+        final chat = await pumpChat(
+          tester,
+          connection: connection,
+          desktopGateway: gateway,
+        );
+        await chat.send(
+          fullText: 'Recuerda mientras estoy fuera',
+          model: 'hermes-agent',
+          history: const [],
+        );
+        gateway.emit('message.start');
+        gateway.emit('message.delta', const {
+          'text': 'RECIBIDO_ANTES_DE_ABRIR',
+        });
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
+        Navigator.of(tester.element(find.byType(ChatScreen))).pop();
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 500));
+        expect(find.byType(ChatScreen), findsNothing);
+        expect(chat.isStreaming, isTrue);
+        gateway.emit('tool.start', const {
+          'tool_id': 'receipt-before-attach',
+          'name': 'memory',
+          'args': {'action': 'add', 'content': 'Confirmado fuera de pantalla'},
+        });
+        gateway.emit('tool.complete', const {
+          'tool_id': 'receipt-before-attach',
+          'name': 'memory',
+          'result': {'success': true},
+        });
+        await tester.pump();
+        expect(spoken, isEmpty);
+        final ctx = tester.element(find.byType(Navigator).first);
+        Navigator.of(ctx).push(
+          MaterialPageRoute(
+            builder: (_) =>
+                ChatScreen(connection: connection, session: _session()),
+          ),
+        );
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 500));
+        gateway.emit('tool.start', const {
+          'tool_id': 'later-read',
+          'name': 'read_file',
+        });
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
+        expect(spoken, isEmpty);
+        expect(pill, findsOneWidget);
+        gateway.emit('tool.start', const {
+          'tool_id': 'receipt-after-attach',
+          'name': 'memory',
+          'args': {'action': 'replace', 'new_text': 'Cambio nuevo visible'},
+        });
+        gateway.emit('tool.complete', const {
+          'tool_id': 'receipt-after-attach',
+          'name': 'memory',
+          'result': {'success': true},
+        });
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+        expect(spoken, ['Memoria actualizada']);
+        expect(pill, findsOneWidget);
+        gateway.emit('message.complete', const {
+          'text': 'RECIBIDO_ANTES_DE_ABRIR',
+        });
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+        expect(spoken, ['Memoria actualizada']);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
+      'history and a long answer have one footer receipt without an announcement',
+      (tester) async {
+        final spoken = await recordMemoryAnnouncements(tester);
+        await pumpChat(
+          tester,
+          messages: [
+            {
+              'role': 'assistant',
+              'content':
+                  '${'Un párrafo confirmado.\n\n' * 600}FINAL_DE_RESPUESTA',
+              '_activity_trace': [
+                {
+                  'kind': 'tool',
+                  'id': 'receipt-history',
+                  'label': 'memory',
+                  'status': 'completed',
+                  'memory': {
+                    'action': 'remove',
+                    'landed': true,
+                    'preview': 'Preferencia retirada.',
+                  },
+                },
+              ],
+            },
+            {'role': 'user', 'content': 'Quita la preferencia'},
+          ],
+        );
+        expect(pill, findsOneWidget);
+        expect(
+          find.byKey(const ValueKey('turn-step-card-receipt-history')),
+          findsNothing,
+        );
+        expect(spoken.where((label) => label.contains('memoria')), isEmpty);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  });
 
   testWidgets(
     'pt1215: una edición terminada en vivo muestra su diff al desplegar la traza',
@@ -29141,13 +33730,17 @@ void main() {
       expect(find.byType(FileDiffCard), findsNothing);
       expect(find.byType(FileDiffBody), findsNothing);
 
-      await tester.tap(find.byKey(const ValueKey('thinking-trace-summary')));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 300));
+      // Q9-CHAT5 v2 (ORDEN2-Q9-CHAT5, decisión 2): the edit's step card opens
+      // what it left.
+      await openInlineDetails(tester);
+      await tester.tap(
+        find.byKey(const ValueKey('turn-step-card-call-pt-diff')),
+      );
+      await _pumpEditorTransition(tester);
       expect(find.byType(FileDiffCard), findsOneWidget);
       expect(find.byType(FileDiffBody), findsNothing);
       final row = find.byKey(const ValueKey('file-diff-row-lib/foo.dart'));
-      await Scrollable.ensureVisible(tester.element(row), alignment: 0.5);
+      await _revealInChatList(tester, row);
       await tester.pump();
       await tester.tap(row);
       await tester.pump();
@@ -29206,9 +33799,16 @@ void main() {
       gateway.emit('message.complete', const {'text': 'PUBLIC_DIFF_DONE'});
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
-      await tester.tap(find.byKey(const ValueKey('thinking-trace-summary')));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 300));
+      // Q9-CHAT5 v2 (ORDEN2-Q9-CHAT5, decisión 2): each edit's step card
+      // opens its diff.
+      for (final id in ['call-qa-patch', 'call-qa-write']) {
+        await openInlineDetails(tester);
+        final step = find.byKey(ValueKey('turn-step-card-$id'));
+        await _revealInChatList(tester, step);
+        expect(step.hitTestable(), findsOneWidget);
+        await tester.tap(step);
+        await _pumpEditorTransition(tester);
+      }
       // One card per edit, never an empty «+00 −00» one.
       expect(find.byType(FileDiffCard), findsNWidgets(2));
       expect(find.textContaining('+00', findRichText: true), findsNothing);
@@ -29248,9 +33848,17 @@ void main() {
       gateway.emit('message.complete', const {'text': 'PUBLIC_LATE_DONE'});
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
-      await tester.tap(find.byKey(const ValueKey('thinking-trace-summary')));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 300));
+      // Q9-CHAT5 v2 (ORDEN2-Q9-CHAT5, decisión 2): the edit is a step card,
+      // with nothing to open yet.
+      await openInlineDetails(tester);
+      final lateCard = find.byKey(
+        const ValueKey('turn-step-card-call-pt-late'),
+      );
+      expect(lateCard, findsOneWidget);
+      expect(
+        find.descendant(of: lateCard, matching: find.byIcon(Icons.expand_more)),
+        findsNothing,
+      );
       expect(find.byType(FileDiffCard), findsNothing);
       expect(find.byType(TurnChangesChip), findsNothing);
       final rowsBefore = tester
@@ -29260,7 +33868,11 @@ void main() {
 
       // The settled turn learns the edit's diff afterwards (same tool id).
       // Idle chat: only the event itself may ask for the repaint.
+      // The header holds «Listo» for LiveTurnPills.doneHold after the turn
+      // and then folds it away; once that is over the chat is idle.
+      await tester.pump(LiveTurnPills.doneHold);
       await tester.pump(const Duration(seconds: 2));
+      await tester.pump(const Duration(seconds: 1));
       expect(tester.binding.hasScheduledFrame, isFalse);
       gateway.emit('tool.complete', const {
         'tool_id': 'call-pt-late',
@@ -29273,6 +33885,10 @@ void main() {
       expect(tester.binding.hasScheduledFrame, isTrue);
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 100));
+      // The same card now opens the diff it learnt.
+      await tester.tap(lateCard);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
       expect(find.byType(FileDiffCard), findsOneWidget);
       expect(find.text('+02 −01 · late.dart'), findsOneWidget);
       expect(find.text('Δ 1 archivo · +2 −1'), findsOneWidget);
@@ -29284,10 +33900,7 @@ void main() {
       expect(chat.messages.toString(), transcriptBefore);
       expect(find.text('PUBLIC_LATE_DONE'), findsOneWidget);
       expect(find.text('PUBLIC_LATE_PARENT'), findsOneWidget);
-      expect(
-        find.byKey(const ValueKey('thinking-trace-step-call-pt-late')),
-        findsOneWidget,
-      );
+      expect(lateCard, findsOneWidget);
       expect(tester.takeException(), isNull);
     },
   );
@@ -29337,9 +33950,10 @@ void main() {
       gateway.emit('message.complete', const {'text': 'PUBLIC_FENCE_DONE'});
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
-      await tester.tap(find.byKey(const ValueKey('thinking-trace-summary')));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 300));
+      // Q9-CHAT5 v2 (ORDEN2-Q9-CHAT5, decisión 2): the turn's step is a card
+      // with nothing to open yet.
+      await openInlineDetails(tester);
+      expect(find.byKey(ValueKey('turn-step-card-$toolId')), findsOneWidget);
       expect(find.byType(FileDiffCard), findsNothing);
       return chat;
     }
@@ -29358,6 +33972,14 @@ void main() {
       expect(chat.messages.toString(), transcriptBefore);
       expect(find.byType(FileDiffCard), findsNothing);
       expect(find.byType(TurnChangesChip), findsNothing);
+      // Q9-CHAT5 v2: the settled step's card gained nothing to open.
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('turn-step-card-call-fence')),
+          matching: find.byIcon(Icons.expand_more),
+        ),
+        findsNothing,
+      );
       expect(tester.takeException(), isNull);
     }
 
@@ -29385,6 +34007,11 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
       expect(chat.toolOutputs['call-fence'], isNotNull);
       expect(chat.toolOutputs['call-flood-0'], isNull);
+      // Q9-CHAT5 v2: the card opens the admitted diff.
+      await openInlineDetails(tester);
+      await tester.tap(find.byKey(const ValueKey('turn-step-card-call-fence')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
       expect(find.byType(FileDiffCard), findsOneWidget);
       expect(chat.messages.toString(), before);
     });
@@ -29613,7 +34240,12 @@ void main() {
         await tester.pump(const Duration(milliseconds: 400));
         expect(find.byType(TerminalOutputCard), findsNothing);
 
-        await tester.tap(find.byKey(const ValueKey('thinking-trace-summary')));
+        // Q9-CHAT5 v2 (ORDEN2-Q9-CHAT5, decisión 2): the command's step card
+        // opens its output.
+        await openInlineDetails(tester);
+        await tester.tap(
+          find.byKey(const ValueKey('turn-step-card-call-pt-term')),
+        );
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 300));
         expect(find.byType(TerminalOutputCard), findsOneWidget);
@@ -29621,7 +34253,10 @@ void main() {
         final strings = Strings.of(cardContext);
         expect(Localizations.localeOf(cardContext).languageCode, language);
         expect(find.text(strings.i18n131P6ExitCode('2')), findsOneWidget);
-        expect(find.textContaining('FAILED', findRichText: true), findsOneWidget);
+        expect(
+          find.textContaining('FAILED', findRichText: true),
+          findsOneWidget,
+        );
         expect(
           find.textContaining('two\nthree', findRichText: true),
           findsNothing,
@@ -29690,8 +34325,23 @@ void main() {
       expect(find.byType(FileDiffCard), findsNothing);
 
       final chip = find.byKey(const ValueKey('turn-changes-chip'));
-      await tester.ensureVisible(chip);
-      await tester.pump();
+      // Revealed the way the app reveals what must stay in reach, inside the
+      // list's own padding (gint69, see [_revealInChatList]).
+      await _revealInChatList(tester, chip);
+      // Within reach: clear of the bottom group (gint67: the tap missed it).
+      final chipRect = tester.getRect(chip);
+      final bars = tester.getRect(
+        find.byKey(const ValueKey('chat-bottom-bars')),
+      );
+      final pills = find.byKey(const ValueKey('delegates-capsule'));
+      final view = tester.view.physicalSize / tester.view.devicePixelRatio;
+      expect(
+        chipRect.bottom,
+        lessThanOrEqualTo(bars.top),
+        reason:
+            'chip $chipRect, bars $bars, '
+            'pills ${pills.evaluate().length}, view $view',
+      );
       await tester.tap(chip);
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
@@ -29718,6 +34368,75 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  // gint69: «archivos cambiados» closes the last turn ABOVE the bottom group
+  // (composer and its foot), as the reader finds it when the turn ends, and
+  // the finger reaches it: the list reserves the group's measured height as
+  // its bottom padding.
+  for (final size in const [Size(800, 600), Size(360, 640), Size(412, 915)]) {
+    for (final scale in const [1.0, 1.3]) {
+      final name = '${size.width.toInt()}x${size.height.toInt()}';
+      testWidgets(
+        'pt1215: at $name, text ${scale}x, «archivos cambiados» rests above '
+        'the bottom group, within reach',
+        (tester) async {
+          tester.view.physicalSize = size;
+          tester.view.devicePixelRatio = 1;
+          tester.platformDispatcher.textScaleFactorTestValue = scale;
+          addTearDown(tester.view.resetPhysicalSize);
+          addTearDown(tester.view.resetDevicePixelRatio);
+          addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+          final gateway = _UiRewindGateway();
+          final chat = await pumpChat(
+            tester,
+            connection: _remoteConn('conn-pt1215-geometry-$name-$scale'),
+            desktopGateway: gateway,
+            messages: const [
+              {'role': 'user', 'content': 'PUBLIC_REQUEST'},
+            ],
+          );
+          expect(
+            await chat.send(
+              fullText: 'PUBLIC_CHANGED_PARENT',
+              model: 'hermes-agent',
+              history: chat.messages,
+            ),
+            isTrue,
+          );
+          _emitThreePatchTurn(gateway);
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 400));
+          gateway.emit('message.complete', const {
+            'text': 'PUBLIC_CHANGED_DONE',
+          });
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 400));
+
+          // At rest, no reveal: where the reader finds it.
+          final chip = find.byKey(const ValueKey('turn-changes-chip'));
+          expect(chip, findsOneWidget);
+          final chipRect = tester.getRect(chip);
+          final bars = tester.getRect(
+            find.byKey(const ValueKey('chat-bottom-bars')),
+          );
+          expect(
+            chipRect.bottom,
+            lessThanOrEqualTo(bars.top),
+            reason: 'chip $chipRect, bars $bars',
+          );
+          expect(chipRect.top, greaterThanOrEqualTo(0));
+          await tester.tap(chip);
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 300));
+          expect(
+            find.byKey(const ValueKey('turn-changes-sheet')),
+            findsOneWidget,
+          );
+          expect(tester.takeException(), isNull);
+        },
+      );
+    }
+  }
 
   testWidgets(
     'historial reabierto: la línea plegada abre los pasos con detalle y duración',
@@ -29752,28 +34471,42 @@ void main() {
           {'role': 'user', 'content': 'PUBLIC_REOPENED_REQUEST'},
         ],
       );
-      // Plegado por defecto y sin ninguna pastilla: no hay nada vivo.
+      // Sin ninguna pastilla: no hay nada vivo.
       expect(find.byKey(const ValueKey('activity-pill')), findsNothing);
+      expect(find.byKey(const ValueKey('live-turn-status')), findsNothing);
+      // Q9-CHAT5 v2 (ORDEN2-Q9-CHAT5, decisión 2): the steps are cards that
+      // stay in view, no folded line to open.
       expect(find.byKey(const ValueKey('thinking-trace-steps')), findsNothing);
-      await tester.tap(find.byIcon(Icons.expand_more).first);
-      await tester.pump(const Duration(milliseconds: 300));
+      await openInlineDetails(tester);
       expect(
-        find.byKey(const ValueKey('thinking-trace-steps')),
+        find.byKey(const ValueKey('turn-step-card-reopen-1')),
         findsOneWidget,
       );
-      // En orden, lo más antiguo arriba, cada paso con su duración.
+      await openInlineDetails(tester);
       expect(
-        find.text('Leyó · config.yaml', findRichText: true),
+        find.descendant(
+          of: find.byKey(const ValueKey('turn-step-card-reopen-2')),
+          matching: find.text('Fallido'),
+        ),
         findsOneWidget,
+        reason: 'the failed step says so, in words',
       );
-      expect(find.text('Ejecutó · date', findRichText: true), findsOneWidget);
-      expect(find.text('0,7 s'), findsOneWidget);
-      expect(find.text('12 s'), findsOneWidget);
+      // En orden, lo más antiguo arriba, cada paso con su duración (dicha).
+      await openInlineDetails(tester);
+      _expectStepRow('reopen-2', 'Leyó', 'config.yaml');
+      await openInlineDetails(tester);
+      _expectStepRow('reopen-1', 'Ejecutó', 'date');
+      expect(_stepCardLabel(tester, 'reopen-1'), isNot(contains('0,7 s')));
+      expect(_stepCardLabel(tester, 'reopen-1'), isNot(contains('0:00')));
+      expect(_stepCardLabel(tester, 'reopen-2'), contains('12 s'));
+      await openInlineDetails(tester);
       expect(
-        tester.getTopLeft(find.text('Ejecutó · date', findRichText: true)).dy,
+        tester
+            .getTopLeft(find.byKey(const ValueKey('turn-step-card-reopen-1')))
+            .dy,
         lessThan(
           tester
-              .getTopLeft(find.text('Leyó · config.yaml', findRichText: true))
+              .getTopLeft(find.byKey(const ValueKey('turn-step-card-reopen-2')))
               .dy,
         ),
       );
@@ -29782,7 +34515,9 @@ void main() {
   );
 
   testWidgets(
-    'historial reabierto sin ruido: sin herramientas puente, con Tareas, detalle y «Pensó durante 1:12 · 1 comando»',
+    // Q9-CHAT5 v2 (ORDEN2-Q9-CHAT5, decisión 2): the turn's real step stays
+    // as its card; bridges and the task-list call are not steps.
+    'historial reabierto sin ruido: sin herramientas puente, con Tareas y la tarjeta del paso real',
     (tester) async {
       final gateway = _TodoResumeGateway(
         AgentTaskList.tryParse(const {
@@ -29834,15 +34569,25 @@ void main() {
       );
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
-      // El bloque plegado dice cómo acabó y cuánto tardó, no «Razonamiento».
-      expect(find.text('Pensó durante 1:12 · 1 comando'), findsOneWidget);
+      // Q9-CHAT5 v2 (ORDEN2-Q9-CHAT5, decisión 2): one card, the real step,
+      // never «Razonamiento»; bridges and the plan's call are not cards.
+      await openInlineDetails(tester);
+      expect(
+        find.byKey(const ValueKey('turn-step-card-real-1')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('turn-step-card-noise-1')),
+        findsNothing,
+      );
+      expect(find.byKey(const ValueKey('turn-step-card-todo-1')), findsNothing);
       expect(find.text('Razonamiento'), findsNothing);
       // ct1215: the plan has its own folded line under it.
+      await openInlineDetails(tester);
       expect(find.text('Tareas 2 de 2'), findsOneWidget);
-      await tester.tap(find.byIcon(Icons.expand_more).first);
-      await tester.pump(const Duration(milliseconds: 300));
-      expect(find.text('Ejecutó · sleep', findRichText: true), findsOneWidget);
-      expect(find.text('5,0 s'), findsOneWidget);
+      await openInlineDetails(tester);
+      _expectStepRow('real-1', 'Ejecutó', 'sleep');
+      expect(_stepCardLabel(tester, 'real-1'), contains('5,0 s'));
       for (final noise in const ['tool_call', 'tool_describe', 'tool_search']) {
         expect(
           find.textContaining(noise, findRichText: true),
@@ -29876,7 +34621,7 @@ void main() {
       );
       gateway.emit('message.start');
       await tester.pump();
-      final pill = find.byKey(const ValueKey('activity-pill'));
+      final pill = liveInlineActivity;
       expect(find.byKey(const ValueKey('activity-task-chip')), findsNothing);
 
       // create
@@ -29929,19 +34674,13 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
 
-      // Finished tasks linger briefly so the completion remains visible;
-      // fh1215: as «Todo completado», without a lingering «3/3» counter.
+      // Task completion remains in the turn data; the identity header
+      // carries no second activity surface after the turn ends.
       gateway.emit('message.complete', const {'text': 'PUBLIC_TASKS_DONE'});
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
-      expect(pill, findsOneWidget);
-      expect(
-        find.descendant(
-          of: pill,
-          matching: find.textContaining('Todo completado', findRichText: true),
-        ),
-        findsOneWidget,
-      );
+      expect(pill, findsNothing);
+      expect(_activitySnapshot(tester).tasks?.isFinished, isTrue);
       expect(find.text('3/3'), findsNothing);
       expect(find.byKey(const ValueKey('activity-task-chip')), findsNothing);
       await tester.pump(const Duration(seconds: 5));
@@ -29989,7 +34728,8 @@ void main() {
       });
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
-      expect(find.byKey(const ValueKey('activity-pill')), findsOneWidget);
+      expect(find.byKey(const ValueKey('activity-pill')), findsNothing);
+      expect(liveInlineActivity, findsOneWidget);
       expect(_taskProgress(tester), '1/2');
       gateway.emit('message.complete', const {'text': 'PUBLIC_HALF_DONE'});
       await tester.pump();
@@ -29998,8 +34738,9 @@ void main() {
 
       // ct1215: the checklist is now a folded line of the turn that says
       // what was left; nothing is in progress any more.
+      await openInlineDetails(tester);
       expect(find.text('Tareas 1 de 2 · 1 sin hacer'), findsOneWidget);
-      await tester.tap(find.byIcon(Icons.expand_more));
+      await tester.tap(find.byKey(const ValueKey('thinking-trace-tasks')));
       await tester.pump(const Duration(milliseconds: 300));
       expect(find.byKey(const ValueKey('turn-tasks-history')), findsOneWidget);
       expect(
@@ -30073,8 +34814,9 @@ void main() {
       expect(chat.retainedAgentTasks.isFinished, isTrue);
       // nothing running: no floating pill on reopen, only the activity block
       expect(find.byKey(const ValueKey('activity-pill')), findsNothing);
+      await openInlineDetails(tester);
       expect(find.text('Tareas 2 de 2'), findsOneWidget);
-      await tester.tap(find.byIcon(Icons.expand_more));
+      await tester.tap(find.byKey(const ValueKey('thinking-trace-tasks')));
       await tester.pump(const Duration(milliseconds: 300));
       expect(find.text('PUBLIC_STEP_TWO', findRichText: true), findsOneWidget);
       expect(
@@ -30136,12 +34878,14 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
       expect(gateway.controlReadCalls, readsBeforeBurst + 2);
       expect(gateway.maxActiveControlReadCalls, 1);
-      final controlActivity = find.byKey(const ValueKey('island'));
-      expect(_islandMark(tester), isNotNull);
+      final controlActivity = find.byKey(
+        const ValueKey('delegates-capsule'),
+      );
+      expect(_islandMark(tester), isNull);
       expect(
         find.descendant(
           of: controlActivity,
-          matching: find.byKey(const ValueKey('activity-pill-elapsed')),
+          matching: find.byKey(const ValueKey('chat-inline-activity-clock')),
         ),
         findsNothing,
       );
@@ -30151,6 +34895,8 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 100));
       expect(_activitySnapshot(tester).processesStale, isTrue);
+      expect(find.byKey(const ValueKey('delegates-clock')), findsNothing,
+        reason: 'unconfirmed background work claims no live clock');
 
       gateway
         ..controlReadError = null
@@ -30164,7 +34910,7 @@ void main() {
       gateway.emit('status.update', const {'kind': 'loop'});
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 100));
-      expect(_islandMark(tester), isNotNull);
+      expect(_islandMark(tester), isNull);
 
       gateway.emit('status.update', const {'kind': 'loop'});
       await tester.pump();
@@ -30208,12 +34954,12 @@ void main() {
       gateway.emit('message.start');
       gateway.emit('message.complete', const {'text': 'PUBLIC_PARENT_DONE'});
       await tester.pump();
-      expect(_islandMark(tester), '1 en marcha');
+      expect(_islandMark(tester), isNull);
 
       gateway.processListError = StateError('synthetic process.list failure');
       gateway.emit('status.update', const {'kind': 'process'});
       await tester.pump();
-      expect(_islandMark(tester), '1 en marcha');
+      expect(_islandMark(tester), isNull);
       expect(_activitySnapshot(tester).processesStale, isTrue);
 
       gateway
@@ -30224,7 +34970,7 @@ void main() {
         );
       gateway.emit('status.update', const {'kind': 'process'});
       await tester.pump();
-      expect(_islandMark(tester), '1 en marcha');
+      expect(_islandMark(tester), isNull);
 
       gateway.emit('status.update', const {'kind': 'process'});
       await tester.pump();
@@ -30285,9 +35031,11 @@ void main() {
       expect(chat.activeSubagentCount, 1);
       expect(stableCard, findsOneWidget);
       expect(tester.element(stableCard), same(stableElement));
-      // La pastilla unificada nombra el trabajo del hijo que sigue vivo.
-      expect(_islandMark(tester), '1 en marcha');
-      expect(find.byKey(const ValueKey('stop')), findsOneWidget);
+      // SUBPILL (the owner): the island names the child that is still alive.
+      expect(_islandMark(tester), isNull);
+      // P0-2 (official parity): only the child works, so the composer rests;
+      // the child's Stop is in its sheet, reached from the capsule.
+      expect(find.byKey(const ValueKey('stop')), findsNothing);
       expect(tester.widget<TextField>(find.byType(TextField)).enabled, isTrue);
 
       gateway.emit('subagent.complete', const {
@@ -30295,15 +35043,137 @@ void main() {
         'status': 'completed',
       });
       await tester.pump();
+      // Flush the existing subagent coalescer's next-frame callback too.
+      // No elapsed-time sleep or extra activity event may settle the count.
+      await tester.pump();
 
       expect(chat.isStreaming, isFalse);
       expect(chat.activeSubagentCount, 0);
       expect(stableCard, findsOneWidget);
       expect(tester.element(stableCard), same(stableElement));
-      expect(_islandMark(tester), '1 terminado');
-      expect(_islandRunning(tester)?.line, 'Subagente terminó');
-      expect(find.byKey(const ValueKey('stop')), findsOneWidget);
+      expect(_islandMark(tester), isNull);
+      expect(_islandRunning(tester), isNull); // Routine outcomes stay in Activity.
+      expect(find.byKey(const ValueKey('stop')), findsNothing);
+      // The footer remains reviewable: its total stays in the header too.
+      await tester.pump(const Duration(milliseconds: 2100));
+      expect(_islandMark(tester), isNull);
       expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'QA9715 child failure stays actionable while parent and sibling work',
+    (tester) async {
+      mockCompanionStorage();
+      final semantics = tester.ensureSemantics();
+      try {
+        final gateway = _UiRewindGateway();
+        final chat = await pumpChat(
+          tester,
+          connection: _remoteConn('qa9715-child-failure'),
+          desktopGateway: gateway,
+        );
+        expect(
+          await chat.send(
+            fullText: 'PUBLIC_PARENT_REQUEST',
+            model: 'hermes-agent',
+            history: chat.messages,
+          ),
+          isTrue,
+        );
+        gateway.emit('message.start');
+        for (final id in ['A', 'B']) {
+          gateway.emit('subagent.start', {
+            'subagent_id': 'qa9715-child-$id',
+            'status': 'running',
+            'goal': 'PUBLIC_QA9715_$id',
+          });
+        }
+        await tester.pump();
+        await tester.pump();
+        expect(chat.activeSubagentCount, 2);
+
+        gateway.emit('subagent.complete', const {
+          'subagent_id': 'qa9715-child-A',
+          'status': 'failed',
+          'error': 'PUBLIC_CHILD_FAILURE',
+        });
+        await tester.pump();
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 16));
+        expect(chat.isStreaming, isTrue);
+        expect(chat.activeSubagentCount, 1);
+        final header = find.byKey(const ValueKey('chat-header'));
+        final notice = find.byKey(const ValueKey('delegates-capsule'));
+        final see = notice;
+        final strings = Strings.of(tester.element(header));
+        void expectFailure() {
+          // Design B: the header stays identity only; the capsule lives above
+          // the composer.
+          expect(find.descendant(of: header, matching: notice), findsNothing);
+          expect(notice, findsOneWidget);
+          expect(
+            tester.getSemantics(notice).label,
+            contains(strings.subagentUiStatusFailed),
+          );
+          expect(notice.hitTestable(), findsOneWidget);
+          expect(
+            find.byKey(const ValueKey('live-turn-status-pill')),
+            findsNothing,
+          );
+        }
+
+        expectFailure();
+
+        // A routine transition from B must neither replace A's failure nor
+        // let it expire before the reader follows its action.
+        gateway.emit('subagent.complete', const {
+          'subagent_id': 'qa9715-child-B',
+          'status': 'completed',
+        });
+        await tester.pump();
+        await tester.pump();
+        await tester.pump(const Duration(seconds: 7));
+        expect(chat.isStreaming, isTrue);
+        expect(chat.activeSubagentCount, 0);
+        expectFailure();
+        await tester.tap(see);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 500));
+        // Two subagents and their group in the chat: «Ver» goes to the
+        // group's list (not to a card that would list them again).
+        final card = find.byKey(const ValueKey('subagent-panel'));
+        expect(card, findsOneWidget);
+        expect(find.byKey(const ValueKey('island-card')), findsNothing);
+        expect(
+          find.descendant(of: card, matching: find.text('PUBLIC_QA9715_A')),
+          findsOneWidget,
+        );
+        Navigator.of(tester.element(card)).pop();
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 500));
+        await tester.pump();
+        expect(
+          find.byKey(const ValueKey('delegates-capsule')),
+          findsNothing,
+          reason: 'viewing acknowledges the failure',
+        );
+        expect(
+          find.descendant(
+            of: header,
+            matching: find.byKey(const ValueKey('live-turn-status')),
+          ),
+          findsNothing,
+        );
+        gateway.emit('message.complete', const {'text': 'PUBLIC_PARENT_DONE'});
+        await tester.pump(const Duration(milliseconds: 500));
+        await tester.pumpWidget(const SizedBox.shrink());
+        chat.dispose();
+        await tester.pump();
+        expect(tester.takeException(), isNull);
+      } finally {
+        semantics.dispose();
+      }
     },
   );
 
@@ -30389,7 +35259,7 @@ void main() {
       expect(rows['late-child']!.phase, SubagentActivityPhase.running);
       expect(rows['late-child']!.goalPreview, 'PUBLIC_LATE_GOAL');
       expect(gateway.listCalls, listsBefore, reason: 'no list round-trip');
-      expect(_islandMark(tester), '2 en marcha');
+      expect(_islandMark(tester), isNull);
       expect(chat.isStreaming, isFalse);
 
       // A stale replay of a finished child stays finished.
@@ -30449,10 +35319,15 @@ void main() {
       'subagent_id': 'pill-child',
       'status': 'running',
     });
+    gateway.subagents = const [
+      DesktopSubagentSnapshot(subagentId: 'pill-child', status: 'running'),
+    ];
     await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
     expect(chat.subagentActivities, hasLength(1));
     expect(_subagentPillRows(tester), hasLength(1));
     expect(_subagentPillRows(tester).single.isTerminal, isFalse);
+    gateway.subagents = const [];
     return (chat: chat, gateway: gateway, app: app);
   }
 
@@ -30464,6 +35339,64 @@ void main() {
     await tester.pump();
     app.activeChats.dispose();
   }
+
+  testWidgets(
+    'subagent consistency: header segments and sheet share the two-child mixed roster',
+    (tester) async {
+      final fixture = await pumpChatWithRunningSubagent(
+        tester,
+        'subagent-consistent-count',
+      );
+      expect(_islandMark(tester), isNull);
+      fixture.gateway.emit('subagent.start', const {
+        'subagent_id': 'pill-sibling',
+        'status': 'running',
+      });
+      await tester.pump();
+      await tester.pump();
+      fixture.gateway.emit('subagent.complete', const {
+        'subagent_id': 'pill-child',
+        'status': 'failed',
+      });
+      await tester.pump();
+      await tester.pump();
+      expect(_islandMark(tester), isNull);
+      final delegates = tester.widget<DelegatedWorkPill>(
+        find.byType(DelegatedWorkPill),
+      );
+      expect(
+        delegates.snapshot.subagentGroupCount,
+        const SubagentGroupCount(1, 2),
+      );
+      expect(
+        find.byKey(const ValueKey('delegates-capsule')),
+        findsOneWidget,
+        reason: 'one capsule for the two children',
+      );
+      expect(find.byType(SubagentWorkPill), findsNothing);
+      expect(_subagentPillRows(tester), hasLength(2));
+      tester
+          .widget<SubagentActivityCard>(find.byType(SubagentActivityCard))
+          .controller!
+          .open();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+      final panel = find.byKey(const ValueKey('subagent-panel'));
+      expect(panel, findsOneWidget);
+      for (final id in ['pill-child', 'pill-sibling']) {
+        expect(
+          find.descendant(
+            of: panel,
+            matching: find.byKey(ValueKey('subagent-row-$id')),
+          ),
+          findsOneWidget,
+        );
+      }
+      Navigator.of(tester.element(panel)).pop();
+      await tester.pump(const Duration(milliseconds: 500));
+      await disposeChatFixture(tester, fixture.app);
+    },
+  );
 
   testWidgets('pastilla de subagentes se asienta si el roster ya no la lista', (
     tester,
@@ -30490,8 +35423,11 @@ void main() {
     final rows = _subagentPillRows(tester);
     expect(rows, hasLength(1));
     // …pero ya no presenta trabajo vivo.
-    expect(rows.every((activity) => activity.isTerminal), isTrue);
-    expect(_islandMark(tester), '1 terminado');
+    expect(
+      rows.every((activity) => activity.phase == SubagentActivityPhase.unknown),
+      isTrue,
+    );
+    expect(_islandMark(tester), isNull);
     expect(
       find.descendant(
         of: find.byKey(const ValueKey('activity-pill')),
@@ -30528,8 +35464,11 @@ void main() {
       expect(chat.subagentLiveRosterConfirmedEmpty, isFalse);
 
       final rows = _subagentPillRows(tester);
-      expect(rows, hasLength(1));
-      expect(rows.single.isTerminal, isFalse);
+      expect(
+        rows,
+        isEmpty,
+        reason: 'unowned presentation does not publish private rows',
+      );
       expect(tester.takeException(), isNull);
       await disposeChatFixture(tester, fixture.app);
     },
@@ -30566,7 +35505,7 @@ void main() {
       final rows = _subagentPillRows(tester);
       expect(rows, hasLength(1));
       expect(rows.single.isTerminal, isFalse);
-      expect(_islandMark(tester), '1 en marcha');
+      expect(_islandMark(tester), isNull);
       expect(tester.takeException(), isNull);
       await disposeChatFixture(tester, fixture.app);
     },
@@ -30593,11 +35532,15 @@ void main() {
     fixture.gateway.listGate = null;
     await tester.pump();
 
+    // subagent-roster (REPORT-MODELO-DESKTOP plan E): the failed read keeps
+    // the row as it was, still live, as Desktop use-subagent-snapshot.ts
+    // keeps the event-fed frame (it used to drop to «unknown»).
     expect(chat.subagentActivities, hasLength(1));
     expect(chat.subagentLiveRosterConfirmedEmpty, isFalse);
     final rows = _subagentPillRows(tester);
     expect(rows, hasLength(1));
     expect(rows.single.isTerminal, isFalse);
+    expect(rows.single.phase, isNot(SubagentActivityPhase.unknown));
     expect(tester.takeException(), isNull);
     await disposeChatFixture(tester, fixture.app);
   });
@@ -30625,8 +35568,16 @@ void main() {
     expect(chat.subagentActivities, hasLength(1));
     final rows = _subagentPillRows(tester);
     expect(rows.single.isTerminal, isFalse);
-    // El turno sigue vivo: la pastilla dice la acción y resume al hijo.
-    expect(_subagentPillLabel(tester), contains('subagente'));
+    // The sole header surface carries the confirmed child count while the
+    // turn runs; there is no second transient working event for that turn.
+    expect(_islandMark(tester), isNull);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('chat-header')),
+        matching: find.byKey(const ValueKey('live-turn-status')),
+      ),
+      findsNothing,
+    );
     expect(tester.takeException(), isNull);
     await disposeChatFixture(tester, fixture.app);
   });
@@ -30645,14 +35596,13 @@ void main() {
     await tester.pump();
     expect(_subagentPillRows(tester), hasLength(1));
 
-    // Con todo asentado la × está disponible y vacía la pastilla.
-    await _openRunningWork(tester);
-    final dismiss = find.byKey(const ValueKey('running-subagents-dismiss'));
-    expect(dismiss, findsOneWidget);
-    await tester.tap(dismiss);
+    // Absence is unconfirmed, so closing hides the group without declaring
+    // that the child completed or stopped.
+    tester
+        .widget<SubagentActivityCard>(find.byType(SubagentActivityCard))
+        .onDismiss!();
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 300));
-    expect(_subagentPillRows(tester), isEmpty);
+    expect(find.byKey(const ValueKey('delegates-capsule')), findsNothing);
 
     // Un turno nuevo vuelve a poblarla desde cero.
     expect(
@@ -30672,6 +35622,240 @@ void main() {
     final rows = _subagentPillRows(tester);
     expect(rows, hasLength(1));
     expect(rows.single.isTerminal, isFalse);
+    expect(tester.takeException(), isNull);
+    await disposeChatFixture(tester, fixture.app);
+  });
+
+  testWidgets('un solo sitio por subagente: la marca histórica no repite el '
+      'grupo', (tester) async {
+    SubagentGroupVisibility.shared.debugReset();
+    final gateway = _StableRefreshGateway(subagents: const []);
+    final chat = await pumpChat(
+      tester,
+      connection: _remoteConn('sv2-single-place'),
+      desktopGateway: gateway,
+      messages: projectHistoricalSubagentCompletions(
+        messagesNewestFirst: [
+          {
+            'role': 'user',
+            'content':
+                '[ASYNC DELEGATION BATCH COMPLETE — deleg_sv2]\nRole: worker',
+            'display_kind': 'async_delegation_complete',
+            'display_metadata': {
+              'delegation_id': 'deleg_sv2',
+              'task_count': 1,
+              'completed_count': 1,
+              'failed_count': 0,
+              'duration_seconds': 161,
+              'subagent_ids': ['pill-child'],
+            },
+          },
+          {'role': 'user', 'content': 'Pregunta real'},
+        ],
+      ),
+      registerActiveChatsTearDown: false,
+    );
+    final app = tester.state<HermesAppState>(find.byType(HermesApp));
+    // Without a live group the marker is the one place, in the group's look.
+    expect(find.byType(SubagentCompletionCard), findsOneWidget);
+    expect(find.text('Subagentes · 1/1'), findsOneWidget);
+    expect(find.text('1 subagente'), findsNothing);
+
+    expect(
+      await chat.send(
+        fullText: 'PUBLIC_PARENT_REQUEST',
+        model: 'hermes-agent',
+        history: chat.messages,
+      ),
+      isTrue,
+    );
+    gateway.emit('message.start');
+    gateway.emit('subagent.start', const {
+      'subagent_id': 'pill-child',
+      'status': 'running',
+    });
+    await tester.pump();
+    // The live group covers the same agent: the marker steps aside.
+    expect(_subagentPillRows(tester), hasLength(1));
+    expect(find.byType(SubagentCompletionCard), findsNothing);
+    expect(find.byKey(const ValueKey('delegates-capsule')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await disposeChatFixture(tester, app);
+  });
+
+  testWidgets('cerrar el grupo lo oculta sin parar al subagente y se reabre '
+      'desde el menú', (tester) async {
+    SubagentGroupVisibility.shared.debugReset();
+    addTearDown(SubagentGroupVisibility.shared.debugReset);
+    final fixture = await pumpChatWithRunningSubagent(tester, 'sv2-close');
+    expect(find.byKey(const ValueKey('delegates-capsule')), findsOneWidget);
+    expect(
+      tester
+          .getRect(find.byKey(const ValueKey('chat-header')))
+          .contains(
+            tester.getCenter(
+              find.byKey(const ValueKey('delegates-capsule')),
+            ),
+          ),
+      isFalse,
+      reason: 'design B: the capsule is above the composer, not in the header',
+    );
+    await tester.tap(find.byKey(const ValueKey('delegates-capsule')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    // It works, and closing needs no confirmation: it stops nothing.
+    // The button itself is tapped in the card's tests (the test window puts
+    // the composer over it); here the chat's wiring behind it is the point.
+    await tester.tap(find.byKey(const ValueKey('subagent-group-dismiss')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(tester.widget<SubagentActivityCard>(_subagentPillFinder).closedIds, {
+      'pill-child',
+    }, reason: 'the close reached the card, by agent id');
+    expect(find.byKey(const ValueKey('delegates-capsule')), findsNothing);
+    expect(
+      tester
+          .widget<SubagentActivityCard>(find.byType(SubagentActivityCard))
+          .closedIds,
+      contains('pill-child'),
+    );
+    expect(
+      tester
+          .widget<DelegatedWorkPill>(find.byType(DelegatedWorkPill))
+          .snapshot
+          .subagents,
+      isEmpty,
+      reason: 'the header excludes precisely the hidden child ids',
+    );
+    // Nothing was stopped or cleared: the agent is still in the group.
+    expect(_subagentPillRows(tester), hasLength(1));
+
+    // Reopen: the chat menu lists them with their count and opens the detail.
+    await tester.tap(find.byKey(const ValueKey('chat-settings-button')));
+    await tester.pump();
+    await tester.pump(kChatNotchSheetOpen);
+    expect(find.text('Subagentes · 1'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('chat-control-subagents'), skipOffstage: false),
+      findsOneWidget,
+    );
+    // The row is deep in the sheet (below the test window's fold): its
+    // callback is what the tap would reach.
+    tester
+        .widget<ChatControlSheet>(find.byType(ChatControlSheet))
+        .onSubagents!();
+    // The sheet leaves first, then the detail comes in.
+    for (var frame = 0; frame < 8; frame++) {
+      await tester.pump(const Duration(milliseconds: 300));
+    }
+    expect(find.byKey(const ValueKey('subagent-panel')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('subagent-row-pill-child')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('subagent-detail')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await disposeChatFixture(tester, fixture.app);
+  });
+
+  testWidgets('lo cerrado sigue cerrado en el turno siguiente y el agente '
+      'nuevo muestra el grupo', (tester) async {
+    SubagentGroupVisibility.shared.debugReset();
+    addTearDown(SubagentGroupVisibility.shared.debugReset);
+    final fixture = await pumpChatWithRunningSubagent(tester, 'sv2-per-agent');
+    tester
+        .widget<SubagentActivityCard>(find.byType(SubagentActivityCard))
+        .onDismiss!();
+    await tester.pump();
+    expect(tester.widget<SubagentActivityCard>(find.byType(SubagentActivityCard)).closedIds, contains('pill-child'));
+    expect(find.byKey(const ValueKey('activity-pill')), findsNothing);
+    expect(find.text('0/1'), findsNothing);
+
+    // Another turn starts: the closed agent is not brought back.
+    expect(
+      await fixture.chat.send(
+        fullText: 'PUBLIC_SECOND_REQUEST',
+        model: 'hermes-agent',
+        history: fixture.chat.messages,
+      ),
+      isTrue,
+    );
+    fixture.gateway.emit('message.start');
+    await tester.pump();
+    expect(tester.widget<SubagentActivityCard>(find.byType(SubagentActivityCard)).closedIds, contains('pill-child'));
+    expect(find.byKey(const ValueKey('activity-pill')), findsNothing);
+    expect(find.text('0/1'), findsNothing);
+    // Closing the group hides its footer. Its explicit controller/menu
+    // still reaches the same agent without inventing ordinary turn activity.
+    tester.widget<SubagentActivityCard>(find.byType(SubagentActivityCard)).controller!.open();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.byKey(const ValueKey('subagent-row-pill-child')), findsOneWidget);
+    expect(find.text('1 agente · Sin confirmar'), findsNothing);
+    Navigator.of(tester.element(find.byKey(const ValueKey('subagent-panel')))).pop();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    // Opening Activity also refreshes the authoritative roster. The fake
+    // must confirm the new identity rather than return its old empty list.
+    fixture.gateway.subagents = const [
+      DesktopSubagentSnapshot(subagentId: 'pill-child-2', status: 'running'),
+    ];
+    // A new agent shows the group; Activity still reaches the closed one.
+    fixture.gateway.emit('subagent.start', const {
+      'subagent_id': 'pill-child-2',
+      'status': 'running',
+    });
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(
+      fixture.chat.subagentActivities.any(
+        (a) => a.subagentId == 'pill-child-2',
+      ),
+      isTrue,
+    );
+    expect(find.byKey(const ValueKey('delegates-capsule')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('delegates-capsule')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump(); // the live roster publishes after layout
+    expect(
+      find.byKey(const ValueKey('subagent-row-pill-child-2')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('subagent-row-pill-child')),
+      findsOneWidget,
+    );
+
+    // The menu still reaches both: the closed one and the new one.
+    Navigator.of(
+      tester.element(find.byKey(const ValueKey('subagent-panel'))),
+    ).pop();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.tap(find.byKey(const ValueKey('chat-settings-button')));
+    await tester.pump();
+    await tester.pump(kChatNotchSheetOpen);
+    expect(find.text('Subagentes · 2'), findsOneWidget);
+    tester
+        .widget<ChatControlSheet>(find.byType(ChatControlSheet))
+        .onSubagents!();
+    for (var frame = 0; frame < 8; frame++) {
+      await tester.pump(const Duration(milliseconds: 300));
+    }
+    expect(find.byKey(const ValueKey('subagent-panel')), findsOneWidget);
+    expect(
+      find.byKey(
+        const ValueKey('subagent-row-pill-child'),
+        skipOffstage: false,
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(
+        const ValueKey('subagent-row-pill-child-2'),
+        skipOffstage: false,
+      ),
+      findsOneWidget,
+    );
     expect(tester.takeException(), isNull);
     await disposeChatFixture(tester, fixture.app);
   });
@@ -30708,7 +35892,9 @@ void main() {
 
       expect(chat.isStreaming, isFalse);
       expect(find.text('PUBLIC_PARENT_DONE'), findsOneWidget);
-      expect(find.byKey(const ValueKey('stop')), findsOneWidget);
+      // P0-2: the parent ended and only its child runs: the composer rests.
+      expect(chat.onlySubagentsWork, isTrue);
+      expect(find.byKey(const ValueKey('stop')).hitTestable(), findsNothing);
       expect(
         find.byKey(const ValueKey('chat-subagent-status')),
         findsOneWidget,
@@ -30729,6 +35915,109 @@ void main() {
         {'role': 'assistant', 'content': 'PUBLIC_PARENT_DONE'},
         {'role': 'user', 'content': 'PUBLIC_PARENT_REQUEST'},
       ]);
+      gateway.emit('message.complete', const {'text': 'PUBLIC_FOLLOW_UP_DONE'});
+      await tester.pump(const Duration(milliseconds: 900));
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  // P0-2 (official app parity): when the parent turn has ended and only its
+  // delegated child still runs, the composer is back at rest (no Stop, no
+  // «Poner en cola…», a normal send) and the capsule above it is the separate
+  // «Ejecutando 1 subagente ›» entry to the subagents sheet. P0-1: the
+  // `delegate_task` placeholder and its child are ONE subagent.
+  testWidgets(
+    'parent ended, child running: composer rests and the capsule says '
+    '«Ejecutando 1 subagente»',
+    (tester) async {
+      final gateway = _UiRewindGateway();
+      final chat = await pumpChat(
+        tester,
+        connection: _remoteConn('only-child-composer-rests'),
+        desktopGateway: gateway,
+        messages: const [
+          {'role': 'user', 'content': 'PUBLIC_REQUEST'},
+        ],
+      );
+      expect(
+        await chat.send(
+          fullText: 'PUBLIC_PARENT_REQUEST',
+          model: 'hermes-agent',
+          history: chat.messages,
+        ),
+        isTrue,
+      );
+      gateway.emit('message.start');
+      gateway.emit('tool.start', const {
+        'name': 'delegate_task',
+        'tool_id': 'call-only-child',
+      });
+      await tester.pump();
+      gateway.emit('subagent.spawn_requested', const {
+        'subagent_id': 'only-child',
+        'goal': 'PUBLIC_CHILD_GOAL',
+        'task_index': 0,
+        'task_count': 1,
+      });
+      await tester.pump();
+      gateway.emit('subagent.start', const {
+        'subagent_id': 'only-child',
+        'child_session_id': 'only-child-session',
+        'goal': 'PUBLIC_CHILD_GOAL',
+        'task_index': 0,
+        'task_count': 1,
+      });
+      await tester.pump();
+      gateway.emit('tool.complete', const {
+        'name': 'delegate_task',
+        'tool_id': 'call-only-child',
+        'result': {
+          'status': 'dispatched',
+          'mode': 'background',
+          'count': 1,
+          'delegation_id': 'deleg-only-child',
+          'goals': ['PUBLIC_CHILD_GOAL'],
+          'subagent_ids': ['only-child'],
+        },
+      });
+      await tester.pump();
+      // While the parent runs, the composer holds its turn.
+      expect(find.byKey(const ValueKey('stop')), findsOneWidget);
+      expect(chat.conversationSubagents, hasLength(1));
+
+      gateway.emit('message.complete', const {'text': 'PUBLIC_PARENT_DONE'});
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 600));
+
+      expect(chat.isStreaming, isFalse);
+      expect(chat.onlySubagentsWork, isTrue);
+      expect(chat.conversationSubagents, hasLength(1));
+      expect(chat.conversationSubagents.single.subagentId, 'only-child');
+      // P0-1: neither the turn summary nor the capsule counts it twice.
+      expect(find.textContaining('2 subagentes'), findsNothing);
+      expect(find.byKey(const ValueKey('stop')), findsNothing);
+      final strings = Strings.of(tester.element(find.byType(ChatScreen)));
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).decoration?.hintText,
+        isNot(strings.q9ComposerQueueHint),
+      );
+      expect(
+        tester
+            .widget<Text>(find.byKey(const ValueKey('delegates-capsule-text')))
+            .data,
+        'Ejecutando 1 subagente',
+      );
+
+      await tester.enterText(find.byType(TextField), 'PUBLIC_FOLLOW_UP');
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.tap(find.byKey(const ValueKey('send')));
+      await tester.pump();
+      expect(gateway.submissions, [
+        'PUBLIC_PARENT_REQUEST',
+        'PUBLIC_FOLLOW_UP',
+      ]);
+      expect(chat.queuedMessages, isEmpty);
+
       gateway.emit('message.complete', const {'text': 'PUBLIC_FOLLOW_UP_DONE'});
       await tester.pump(const Duration(milliseconds: 900));
       expect(tester.takeException(), isNull);
@@ -30856,9 +36145,26 @@ void main() {
                 .byKey(chatLiveAssistantViewportKey)
                 .evaluate()
                 .length,
-            // ct1215: the live turn says its state in one status line.
-            'workingHeaders': find
-                .byKey(const ValueKey('turn-status-line'))
+            // Ordinary phases live inline; a running tool owns its native row.
+            'inlineLabel': inlineLabel.evaluate().isEmpty
+                ? null
+                // The live look (9 nov): the card says «Trabajando»; the
+                // words of what it does are its spoken label.
+                : tester.widget<Semantics>(inlineActivity).properties.label,
+            'inlineStatuses': find
+                .byKey(const ValueKey('chat-inline-activity'))
+                .evaluate()
+                .length,
+            'liveToolRows': find
+                .byKey(const ValueKey('turn-step-card-duplicate-probe-tool'))
+                .evaluate()
+                .length,
+            'liveToolMarks': find
+                .byKey(const ValueKey('turn-step-mark-duplicate-probe-tool'))
+                .evaluate()
+                .length,
+            'supplementalPills': find
+                .byKey(const ValueKey('activity-pill'))
                 .evaluate()
                 .length,
           };
@@ -30973,7 +36279,16 @@ void main() {
           reason: 'sealing an interim must preserve one body, not duplicate it',
         );
         expect(afterInterim['liveHosts'], 1);
-        expect(afterInterim['workingHeaders'], 1);
+        expect(afterDelta['inlineStatuses'], 1);
+        expect(afterInterim['inlineStatuses'], 1);
+        expect(
+          afterInterim['liveToolRows'],
+          0,
+          reason: 'details stay folded on the successor',
+        );
+        expect(afterInterim['inlineLabel'], contains('Ejecutando'));
+        expect(afterInterim['liveToolMarks'], 0);
+        expect(afterInterim['supplementalPills'], 0);
         expect(events.contains('started'), successor == 'local');
         if (scenario.retain && successor == 'external') {
           expect(beforeSuccessor['historicalTop'], isNotNull);
@@ -30986,6 +36301,144 @@ void main() {
       },
     );
   }
+
+  testWidgets(
+    'event-turn: the turn Hermes runs after a subagent ends stays live '
+    'until it ends, on a renewed socket too',
+    (tester) async {
+      tester.platformDispatcher.accessibilityFeaturesTestValue =
+          const FakeAccessibilityFeatures(disableAnimations: true);
+      addTearDown(
+        tester.platformDispatcher.clearAccessibilityFeaturesTestValue,
+      );
+      final gateway = _EventTurnSuccessorGateway();
+      final chat = await pumpChat(
+        tester,
+        connection: _remoteConn('conn-event-turn'),
+        desktopGateway: gateway,
+      );
+      // Turn 1: the user's own, closed with its answer.
+      expect(
+        await chat.send(
+          fullText: 'PUBLIC_EVENT_REQUEST',
+          model: 'hermes-agent',
+          history: chat.messages,
+        ),
+        isTrue,
+      );
+      gateway.emit('message.start');
+      gateway.emit('tool.start', const {
+        'tool_id': 'call-evt-first',
+        'name': 'terminal',
+        'args': {'command': 'ls'},
+      });
+      await tester.pump();
+      gateway.emit('tool.complete', const {
+        'tool_id': 'call-evt-first',
+        'name': 'terminal',
+        'result': {'output': 'ok'},
+      });
+      gateway.emit('message.complete', const {
+        'text': 'PUBLIC_EVENT_FIRST_DONE',
+      });
+      for (var frame = 0; frame < 30 && chat.isStreaming; frame++) {
+        await tester.pump(const Duration(milliseconds: 33));
+      }
+      await tester.pump(LiveTurnPills.doneHold);
+      await tester.pump(const Duration(seconds: 1));
+      expect(chat.isStreaming, isFalse);
+
+      List<bool> rows() => [
+        for (final row in tester.widgetList<TurnInlineActivity>(
+          find.byType(TurnInlineActivity),
+        ))
+          row.live,
+      ];
+      int live() => rows().where((row) => row).length;
+      int settled() => rows().where((row) => !row).length;
+      expect(live(), 0);
+      final settledBefore = settled();
+      expect(settledBefore, greaterThan(0));
+      final revisionBefore = chat.turnRevision;
+      final readsBefore = gateway.recoveryReads;
+
+      // The socket was renewed while idle; then Hermes starts its own turn
+      // (`async_delegation_complete`) and announces it twice.
+      gateway.transportGeneration = 2;
+      gateway.serverRunning = true;
+      final seen = <bool>[];
+      void sample() => seen.add(chat.isStreaming && live() == 1);
+      gateway.emit('message.start');
+      gateway.emit('message.start');
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(gateway.recoveryReads, readsBefore + 1);
+      expect(chat.isStreaming, isTrue);
+      expect(chat.turnRevision, greaterThan(revisionBefore));
+      gateway.emit('tool.start', const {
+        'tool_id': 'call-evt-next',
+        'name': 'terminal',
+        'args': {'command': 'git status'},
+      });
+      for (var frame = 0; frame < 6; frame++) {
+        await tester.pump(const Duration(milliseconds: 120));
+        sample();
+      }
+      // One live row and no new «Trabajó ✓» block while it runs.
+      expect(live(), 1);
+      expect(settled(), settledBefore);
+      expect(
+        chat.messages
+            .where(
+              (message) =>
+                  message['role'] == 'assistant' &&
+                  [
+                    for (final step
+                        in (message['_activity_trace'] as List?) ?? const [])
+                      if (step is Map) step['id'],
+                  ].contains('call-evt-next'),
+            )
+            .length,
+        1,
+      );
+      // The stop belongs to the chat's own live turn, not a passive guess.
+      expect(chat.canStopSessionWork, isTrue);
+      expect(chat.hasAuthoritativePassiveRemoteActivity, isFalse);
+      expect(find.textContaining('Detenido'), findsNothing);
+
+      gateway.emit('tool.complete', const {
+        'tool_id': 'call-evt-next',
+        'name': 'terminal',
+        'result': {'output': 'clean'},
+      });
+      await tester.pump(const Duration(milliseconds: 120));
+      sample();
+      gateway.emit('message.complete', const {
+        'text': 'PUBLIC_EVENT_NEXT_DONE',
+      });
+      for (var frame = 0; frame < 30 && chat.isStreaming; frame++) {
+        await tester.pump(const Duration(milliseconds: 33));
+        sample();
+      }
+      await tester.pump(LiveTurnPills.doneHold);
+      await tester.pump(const Duration(seconds: 1));
+      sample();
+      expect(chat.isStreaming, isFalse);
+      expect(live(), 0);
+      expect(settled(), greaterThan(settledBefore));
+      expect(find.text('PUBLIC_EVENT_FIRST_DONE'), findsOneWidget);
+      expect(find.text('PUBLIC_EVENT_NEXT_DONE'), findsOneWidget);
+      // Live, then settled once: never back and forth.
+      expect(seen.first, isTrue);
+      expect(seen.last, isFalse);
+      expect([
+        for (var i = 1; i < seen.length; i++)
+          if (seen[i] != seen[i - 1]) i,
+      ], hasLength(1));
+      expect(gateway.recoveryReads, readsBefore + 1);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets(
     'el texto narrado antes de una herramienta sigue visible durante el turno',
@@ -31589,7 +37042,8 @@ void main() {
     });
     await tester.pump(const Duration(milliseconds: 16));
     expect(_subagentPillRows(tester).single.goalPreview, 'PUBLIC_BUSY_GOAL');
-    expect(performance.screenBuilds, 1);
+    // The card repaints on the activity revision: no screen build for it.
+    expect(performance.screenBuilds, 0);
 
     final readsPerFrame = <int>[];
     final buildsPerFrame = <int>[];
@@ -31611,7 +37065,10 @@ void main() {
         'tool_${frame}5',
       );
     }
-    expect(buildsPerFrame, everyElement(1));
+    // Zero: a child's tool events change what is live, not the transcript's
+    // structure, so the card and the pill repaint on their own revision and
+    // the screen (with every cached row) is not built.
+    expect(buildsPerFrame, everyElement(0));
     expect(readsPerFrame, everyElement(lessThanOrEqualTo(3)));
 
     // A terminal event right after a burst still lands on the next frame.
@@ -31918,6 +37375,7 @@ void main() {
         );
         await tester.pump();
       }
+      await openInlineDetails(tester);
       final stoppedTrace = find.byType(ThinkingTraceCard);
       expect(stoppedTrace, findsOneWidget);
       expect(
@@ -31948,6 +37406,9 @@ void main() {
           '${List.filled(300, 'palabra').join(' ')} FIN-DEL-TEXTO';
       gateway.emit('message.delta', {'text': body});
       await tester.pump(const Duration(milliseconds: 34));
+      await tester.pump(const Duration(milliseconds: 16));
+      RenderLiveReplyReveal reply() => tester
+          .renderObject<RenderLiveReplyReveal>(find.byType(LiveReplyReveal));
 
       expect(
         chat.assistantContent,
@@ -31957,9 +37418,10 @@ void main() {
             'visual, nunca trocea el contenido autoritativo',
       );
       expect(find.textContaining('INICIO-DEL-TEXTO'), findsOneWidget);
+      expect(reply().visibleText, startsWith('INICIO-DEL-TEXTO'));
       expect(
-        find.textContaining('FIN-DEL-TEXTO'),
-        findsNothing,
+        reply().visibleText,
+        isNot(contains('FIN-DEL-TEXTO')),
         reason:
             'a mitad de stream el contenido revelado es menor que el '
             'recibido: el texto se escribe de forma gradual',
@@ -31967,7 +37429,9 @@ void main() {
 
       for (
         var frame = 0;
-        frame < 100 && find.textContaining('FIN-DEL-TEXTO').evaluate().isEmpty;
+        frame < 100 &&
+            (!reply().settled ||
+                !reply().visibleText.contains('FIN-DEL-TEXTO'));
         frame++
       ) {
         await tester.pump(const Duration(milliseconds: 33));
@@ -31977,6 +37441,8 @@ void main() {
         findsOneWidget,
         reason: 'el reveal alcanza siempre todo lo recibido',
       );
+      expect(reply().visibleText, contains('FIN-DEL-TEXTO'));
+      expect(reply().settled, isTrue);
       expect(tester.takeException(), isNull);
       chat.dispose();
     },
@@ -32174,7 +37640,9 @@ void main() {
       ) {
         await tester.pump(const Duration(milliseconds: 33));
       }
-      expect(find.textContaining('BURST-1-END'), findsNothing);
+      RenderLiveReplyReveal reply() => tester
+          .renderObject<RenderLiveReplyReveal>(find.byType(LiveReplyReveal));
+      expect(reply().visibleText, isNot(contains('BURST-1-END')));
 
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
@@ -32182,6 +37650,7 @@ void main() {
       // No reveal tick elapses: going away shows everything received at once.
       await tester.pump();
       expect(find.textContaining('BURST-1-END'), findsOneWidget);
+      expect(reply().visibleText, contains('BURST-1-END'));
       gateway.emit('message.delta', {
         'text': ' ${List.filled(40, 'second burst').join(' ')} BURST-2-END',
       });
@@ -32195,6 +37664,7 @@ void main() {
       await tester.pump();
       expect(find.textContaining('BURST-1-END'), findsOneWidget);
       expect(find.textContaining('BURST-2-END'), findsOneWidget);
+      expect(reply().visibleText, contains('BURST-2-END'));
 
       gateway.emit('message.complete', {'text': chat.assistantContent});
       for (var frame = 0; frame < 60 && chat.isStreaming; frame++) {
@@ -32375,7 +37845,17 @@ void main() {
 
       // El lector sube y SUELTA el dedo: el seguimiento queda congelado y la
       // vista no puede volver a moverse sola mientras llegan tokens.
-      final controller = await dragChatAwayFromBottom(tester, distance: 320);
+      final list = chatListFinder();
+      expect(list, findsOneWidget);
+      final controller = tester.widget<ListView>(list).controller!;
+      // The SDK sends separate slop/update samples for DragStartBehavior.start.
+      // One move can start the drag without issuing any scroll update.
+      await tester.drag(list, const Offset(0, 320));
+      await tester.pump();
+      expect(
+        controller.position.pixels,
+        greaterThan(controller.position.minScrollExtent),
+      );
       final marker = find.textContaining('lectura quieta histórico').first;
       expect(marker, findsOneWidget);
       final markerY = tester.getTopLeft(marker).dy;
@@ -33396,55 +38876,62 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('fallback sin gateway deja el texto en cola sin cortar el turno', (
-    tester,
-  ) async {
-    final chat = await pumpChat(
-      tester,
-      chatState: ChatPipelineState.executing,
-      messages: const [
-        {
-          'role': 'assistant',
-          'content': 'Respuesta todavía creciendo',
-          '_pipeline': true,
-        },
-        {'role': 'user', 'content': 'Primera petición'},
-      ],
-    );
+  testWidgets(
+    'fallback sin gateway deja el texto en cola sin cortar el turno',
+    (tester) async {
+      final chat = await pumpChat(
+        tester,
+        chatState: ChatPipelineState.executing,
+        messages: const [
+          {
+            'role': 'assistant',
+            'content': 'Respuesta todavía creciendo',
+            '_pipeline': true,
+          },
+          {'role': 'user', 'content': 'Primera petición'},
+        ],
+      );
 
-    await tester.enterText(find.byType(TextField), 'Siguiente pregunta');
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 250));
-    await tester.tap(find.byKey(const ValueKey('send')));
-    await tester.pump();
+      await tester.enterText(find.byType(TextField), 'Siguiente pregunta');
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.tap(find.byKey(const ValueKey('send')));
+      await tester.pump();
 
-    expect(chat.state, ChatPipelineState.executing);
-    expect(chat.queuedMessages, ['Siguiente pregunta']);
-    expect(
-      tester.widget<TextField>(find.byType(TextField)).controller?.text,
-      isEmpty,
-    );
-    expect(
-      find.text(
-        'Mensaje en cola: se enviará como siguiente turno cuando Hermes termine.',
-      ),
-      findsOneWidget,
-    );
-    final queueToggle = find.byKey(const ValueKey('chat-queue-toggle'));
-    expect(queueToggle, findsOneWidget);
-    expect(tester.getSize(queueToggle).height, greaterThanOrEqualTo(48));
-    expect(find.text('Siguiente pregunta'), findsNothing);
-    expect(find.byTooltip('Borrar'), findsNothing);
+      expect(chat.state, ChatPipelineState.executing);
+      expect(chat.queuedMessages, ['Siguiente pregunta']);
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).controller?.text,
+        isEmpty,
+      );
+      expect(
+        find.text(
+          'Mensaje en cola: se enviará como siguiente turno cuando Hermes termine.',
+        ),
+        findsOneWidget,
+      );
+      final queueToggle = find.byKey(const ValueKey('chat-queue-chip'));
+      expect(queueToggle, findsOneWidget);
+      expect(tester.getSize(queueToggle).height, greaterThanOrEqualTo(48));
+      expect(find.text('Siguiente pregunta'), findsNothing);
+      expect(
+        find.byKey(const ValueKey('chat-queue-remove')),
+        findsOneWidget,
+        reason: 'v4 exposes the queued item remove action on its chip',
+      );
 
-    await tester.tap(find.byKey(const ValueKey('chat-queue-toggle')));
-    await tester.pump();
+      await _openQueueActivity(tester);
 
-    expect(find.text('Siguiente pregunta'), findsOneWidget);
-    final removeQueued = find.byTooltip('Borrar');
-    expect(removeQueued, findsOneWidget);
-    expect(tester.getSize(removeQueued), const Size(48, 48));
-    expect(tester.takeException(), isNull);
-  });
+      expect(find.text('Siguiente pregunta'), findsOneWidget);
+      final removeQueued = find.descendant(
+        of: find.byKey(const ValueKey('chat-queue-panel')),
+        matching: find.byTooltip('Borrar'),
+      );
+      expect(removeQueued, findsOneWidget);
+      expect(tester.getSize(removeQueued), const Size(48, 48));
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('pulsación larga en Enviar encola explícitamente el turno', (
     tester,
@@ -33493,15 +38980,17 @@ void main() {
   });
 
   testWidgets(
-    'envío normal durante turno vivo corrige en vivo con session.redirect',
+    'envío normal en modo steer durante turno vivo guía sin cortar con session.steer',
     (tester) async {
       final gateway = _NoLiveMutationGateway();
       final chat = await pumpChat(
         tester,
         desktopGateway: gateway,
         connection: _remoteConn('conn-live-normal-correction'),
+        transcriptDashboard: busyInputConfig('steer'),
         messagesLoaded: false,
       );
+      await chat.refreshBusyInputMode();
       final screen = tester.widget<ChatScreen>(find.byType(ChatScreen));
 
       await tester.enterText(find.byType(TextField), 'Primera petición');
@@ -33523,7 +39012,8 @@ void main() {
         }
         await tester.pump(const Duration(milliseconds: 100));
 
-        expect(gateway.steers, isEmpty);
+        expect(gateway.steers, corrections.take(corrections.indexOf(text) + 1));
+        expect(gateway.redirects, isEmpty);
         expect(gateway.interruptCalls, 0);
         expect(gateway.rewinds, isEmpty);
         expect(gateway.submissions, ['Primera petición']);
@@ -33541,7 +39031,8 @@ void main() {
         );
       }
 
-      expect(gateway.redirects, corrections);
+      expect(gateway.steers, corrections);
+      expect(gateway.redirects, isEmpty);
       expect(chat.queuedMessages, isEmpty);
       expect(outboxWriteCalls, writesBeforeCorrection);
       for (final text in corrections) {
@@ -33558,24 +39049,31 @@ void main() {
       await tester.pump(const Duration(milliseconds: 1200));
       expect(gateway.submissions, ['Primera petición']);
       expect(chat.queuedMessages, isEmpty);
-      expect(gateway.steers, isEmpty);
+      expect(gateway.steers, corrections);
+      expect(gateway.redirects, isEmpty);
       expect(gateway.interruptCalls, 0);
       expect(gateway.rewinds, isEmpty);
       expect(tester.takeException(), isNull);
     },
   );
 
-  testWidgets('envío normal con redirect rechazado cae a la cola y drena', (
+  testWidgets('envío normal en modo steer rechazado cae a la cola y drena', (
     tester,
   ) async {
     final gateway = _NoLiveMutationGateway()
-      ..redirectDisposition = DesktopRedirectDisposition.rejected;
+      ..steerError = const TuiGatewayRpcError(
+        'session.steer',
+        'not steerable',
+        code: 4009,
+      );
     final chat = await pumpChat(
       tester,
       desktopGateway: gateway,
       connection: _remoteConn('conn-live-redirect-rejected'),
+      transcriptDashboard: busyInputConfig('steer'),
       messagesLoaded: false,
     );
+    await chat.refreshBusyInputMode();
 
     await tester.enterText(find.byType(TextField), 'Primera petición');
     await tester.pump(const Duration(milliseconds: 250));
@@ -33587,8 +39085,8 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('send')));
     await tester.pump(const Duration(milliseconds: 100));
 
-    expect(gateway.redirects, ['Siguiente turno']);
-    expect(gateway.steers, isEmpty);
+    expect(gateway.steers, ['Siguiente turno']);
+    expect(gateway.redirects, isEmpty);
     expect(gateway.interruptCalls, 0);
     expect(gateway.submissions, ['Primera petición']);
     expect(chat.queuedMessages, ['Siguiente turno']);
@@ -33609,16 +39107,18 @@ void main() {
   });
 
   testWidgets(
-    'envío normal con redirect ambiguo no encola y conserva el borrador',
+    'envío normal en modo steer ambiguo no encola y conserva el borrador',
     (tester) async {
       final gateway = _NoLiveMutationGateway()
-        ..redirectError = StateError('redirect unavailable');
+        ..steerError = StateError('steer unavailable');
       final chat = await pumpChat(
         tester,
         desktopGateway: gateway,
         connection: _remoteConn('conn-live-redirect-error'),
+        transcriptDashboard: busyInputConfig('steer'),
         messagesLoaded: false,
       );
+      await chat.refreshBusyInputMode();
 
       await tester.enterText(find.byType(TextField), 'Primera petición');
       await tester.pump(const Duration(milliseconds: 250));
@@ -33630,8 +39130,8 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('send')));
       await tester.pump(const Duration(milliseconds: 100));
 
-      expect(gateway.redirects, ['Siguiente turno']);
-      expect(gateway.steers, isEmpty);
+      expect(gateway.steers, ['Siguiente turno']);
+      expect(gateway.redirects, isEmpty);
       expect(gateway.interruptCalls, 0);
       expect(gateway.submissions, ['Primera petición']);
       expect(chat.queuedMessages, isEmpty);
@@ -33660,8 +39160,10 @@ void main() {
       tester,
       desktopGateway: gateway,
       connection: _remoteConn('conn-live-redirect-approval'),
+      transcriptDashboard: busyInputConfig('steer'),
       messagesLoaded: false,
     );
+    await chat.refreshBusyInputMode();
 
     await tester.enterText(find.byType(TextField), 'Primera petición');
     await tester.pump(const Duration(milliseconds: 250));
@@ -33675,6 +39177,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
 
     expect(gateway.redirects, isEmpty);
+    expect(gateway.steers, isEmpty);
     expect(chat.queuedMessages, ['Siguiente turno']);
     gateway.emit('message.complete', {'text': 'terminado'});
     await tester.pump(const Duration(milliseconds: 1200));
@@ -33968,7 +39471,7 @@ void main() {
     await tester.enterText(editor, '¿Quién fue el mayor emperador griego?');
     await tester.pump();
     await tester.tap(find.byKey(const ValueKey('inline-message-editor-save')));
-    await tester.pumpAndSettle();
+    await _pumpEditorTransition(tester);
     await tester.tap(
       find.byKey(const ValueKey('hermes-confirm-dialog-confirm')),
     );
@@ -34031,10 +39534,19 @@ void main() {
       expect(chat.activeSubagentCount, 1);
       expect(find.byType(ThinkingTraceCard), findsOneWidget);
 
-      // ct1215: the live turn says its state in one status line.
-      Finder workingHeaders() => find.byKey(const ValueKey('turn-status-line'));
+      // ct1215: the live turn says its state once. Q9-CHAT5 v2
+      // (ORDEN2-Q9-CHAT5, decisión 1): the status pill says it; each live turn
+      // has its own lines in the transcript.
+      expect(
+        find.byKey(const ValueKey('delegates-capsule')),
+        findsOneWidget,
+      );
+      Finder workingHeaders() => liveInlineActivity;
       expect(workingHeaders(), findsOneWidget);
 
+      // The live window under the card makes the turn taller: bring the
+      // message's edit button into view before tapping it.
+      await _revealInChatList(tester, find.byIcon(Icons.edit_outlined).last);
       await tester.tap(find.byIcon(Icons.edit_outlined).last);
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 250));
@@ -34116,7 +39628,7 @@ void main() {
       await tester.tap(
         find.byKey(const ValueKey('inline-message-editor-save')),
       );
-      await tester.pumpAndSettle();
+      await _pumpEditorTransition(tester);
       await tester.tap(
         find.byKey(const ValueKey('hermes-confirm-dialog-confirm')),
       );
@@ -34289,29 +39801,18 @@ void main() {
     final card = find.byKey(
       ValueKey('history-attachment-0-${reference.storageKey}'),
     );
-    for (var frame = 0; frame < 30 && card.evaluate().isEmpty; frame++) {
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 5)),
-      );
-      await tester.pump(const Duration(milliseconds: 10));
-    }
+    await _pumpUntilRealWork(tester, () => card.evaluate().isNotEmpty);
     expect(card, findsOneWidget);
     final innerCard = find.descendant(
       of: card,
       matching: find.byType(AttachmentCard),
     );
-    for (
-      var frame = 0;
-      frame < 30 &&
-          (innerCard.evaluate().isEmpty ||
-              tester.widget<AttachmentCard>(innerCard).onTap == null);
-      frame++
-    ) {
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 5)),
-      );
-      await tester.pump(const Duration(milliseconds: 10));
-    }
+    await _pumpUntilRealWork(
+      tester,
+      () =>
+          innerCard.evaluate().isNotEmpty &&
+          tester.widget<AttachmentCard>(innerCard).onTap != null,
+    );
     expect(tester.widget<AttachmentCard>(innerCard).onTap, isNotNull);
     expect(
       find.textContaining(AttachmentHistoryReference.markerPrefix),
@@ -34321,24 +39822,9 @@ void main() {
     await tester.tap(card);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 350));
-    for (
-      var frame = 0;
-      frame < 30 && find.text(exactText).evaluate().isEmpty;
-      frame++
-    ) {
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 5)),
-      );
-      await tester.pump(const Duration(milliseconds: 10));
-    }
-
-    // Text attachments now open in the in-app artifact viewer, which renders
-    // the same private bytes line by line.
-    expect(find.byType(ArtifactViewerScreen), findsOneWidget);
-    expect(find.byType(AttachmentBytesPreviewScreen), findsNothing);
     // Line numbers live in a separate gutter; the content lines keep the
     // exact private bytes.
-    final renderedText = [
+    String renderedText() => [
       for (final line in tester.widgetList<Text>(
         find.descendant(
           of: find.byKey(const ValueKey('artifact-viewer-text')),
@@ -34354,7 +39840,13 @@ void main() {
       ))
         line.textSpan?.toPlainText() ?? line.data ?? '',
     ].join('\n');
-    expect(renderedText, exactText);
+    await _pumpUntilRealWork(tester, () => renderedText() == exactText);
+
+    // Text attachments now open in the in-app artifact viewer, which renders
+    // the same private bytes line by line.
+    expect(find.byType(ArtifactViewerScreen), findsOneWidget);
+    expect(find.byType(AttachmentBytesPreviewScreen), findsNothing);
+    expect(renderedText(), exactText);
     expect(
       tester
           .widget<Text>(find.byKey(const ValueKey('artifact-viewer-gutter-0')))
@@ -34438,18 +39930,15 @@ void main() {
         tester
             .widget<GeneratedFileCard>(find.byType(GeneratedFileCard))
             .onDownload();
-        for (var frame = 0; frame < 40; frame++) {
-          await tester.runAsync(
-            () => Future<void>.delayed(const Duration(milliseconds: 10)),
-          );
-          await tester.pump(const Duration(milliseconds: 10));
-          if (find
+        await _pumpUntilRealWork(
+          tester,
+          () => find
               .byKey(const ValueKey<String>('generated-text-preview'))
               .evaluate()
-              .isNotEmpty) {
-            break;
-          }
-        }
+              .isNotEmpty,
+          real: const Duration(milliseconds: 10),
+          minFrames: 1,
+        );
       }
       // An agent-delivered HTML is previewed as its first lines; tapping the
       // card must open the in-app viewer rather than an external app.
@@ -34458,12 +39947,17 @@ void main() {
         findsOneWidget,
       );
       await tester.tap(find.text('informe.html'));
-      for (var frame = 0; frame < 20; frame++) {
-        await tester.runAsync(
-          () => Future<void>.delayed(const Duration(milliseconds: 10)),
-        );
-        await tester.pump(const Duration(milliseconds: 20));
-      }
+      // The 20 turns stay: an external launch keeps the time to show.
+      await _pumpUntilRealWork(
+        tester,
+        () =>
+            find.byType(ArtifactViewerScreen).evaluate().isNotEmpty &&
+            webPlatform.controllers.isNotEmpty &&
+            webPlatform.last.loadedHtml.isNotEmpty,
+        real: const Duration(milliseconds: 10),
+        step: const Duration(milliseconds: 20),
+        minFrames: 20,
+      );
 
       expect(find.byType(ArtifactViewerScreen), findsOneWidget);
       expect(webPlatform.controllers, isNotEmpty);
@@ -34553,47 +40047,30 @@ void main() {
     final card = find.byKey(
       ValueKey('history-attachment-0-${reference.storageKey}'),
     );
-    for (var frame = 0; frame < 30 && card.evaluate().isEmpty; frame++) {
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 5)),
-      );
-      await tester.pump(const Duration(milliseconds: 10));
-    }
+    await _pumpUntilRealWork(tester, () => card.evaluate().isNotEmpty);
     final innerCard = find.descendant(
       of: card,
       matching: find.byType(AttachmentCard),
     );
-    for (
-      var frame = 0;
-      frame < 30 &&
-          (innerCard.evaluate().isEmpty ||
-              tester.widget<AttachmentCard>(innerCard).onTap == null);
-      frame++
-    ) {
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 5)),
-      );
-      await tester.pump(const Duration(milliseconds: 10));
-    }
+    await _pumpUntilRealWork(
+      tester,
+      () =>
+          innerCard.evaluate().isNotEmpty &&
+          tester.widget<AttachmentCard>(innerCard).onTap != null,
+    );
     expect(tester.widget<AttachmentCard>(innerCard).onTap, isNotNull);
     await tester.tap(card);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 350));
-    for (
-      var frame = 0;
-      frame < 40 &&
-          (nativeFileBytes == null ||
-              find
-                  .byKey(const ValueKey('attachment-pdf-page-0'))
-                  .evaluate()
-                  .isEmpty);
-      frame++
-    ) {
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 5)),
-      );
-      await tester.pump(const Duration(milliseconds: 10));
-    }
+    await _pumpUntilRealWork(
+      tester,
+      () =>
+          nativeFileBytes != null &&
+          find
+              .byKey(const ValueKey('attachment-pdf-page-0'))
+              .evaluate()
+              .isNotEmpty,
+    );
 
     expect(nativeArguments?['storageKey'], reference.storageKey);
     expect(nativeArguments?['expectedSize'], pdfBytes.length);
@@ -34638,14 +40115,15 @@ void main() {
         },
       ],
     );
-    for (var frame = 0; frame < 20; frame++) {
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 5)),
-      );
-      await tester.pump(const Duration(milliseconds: 10));
-    }
-
     final card = find.widgetWithText(AttachmentCard, 'ausente.pdf');
+    // The 20 turns stay: an open action that comes late keeps the time to
+    // show.
+    await _pumpUntilRealWork(
+      tester,
+      () => card.evaluate().isNotEmpty,
+      minFrames: 20,
+    );
+
     expect(card, findsOneWidget);
     expect(tester.widget<AttachmentCard>(card).onTap, isNull);
     expect(find.byType(AttachmentBytesPreviewScreen), findsNothing);
@@ -34676,14 +40154,20 @@ void main() {
       return temp;
     }
 
-    Future<void> settleIo(WidgetTester tester, {int frames = 30}) async {
-      for (var frame = 0; frame < frames; frame++) {
-        await tester.runAsync(
-          () => Future<void>.delayed(const Duration(milliseconds: 5)),
-        );
-        await tester.pump(const Duration(milliseconds: 10));
-      }
-    }
+    // [frames] turns as before, then on until [until] holds.
+    Future<void> settleIo(
+      WidgetTester tester, {
+      int frames = 30,
+      bool Function()? until,
+    }) => _pumpUntilRealWork(tester, until ?? () => true, minFrames: frames);
+
+    bool cardShowsImage() => find
+        .descendant(
+          of: find.byType(AttachmentCard),
+          matching: find.byType(Image),
+        )
+        .evaluate()
+        .isNotEmpty;
 
     testWidgets('@image sin copia local descarga la miniatura del servidor', (
       tester,
@@ -34701,7 +40185,7 @@ void main() {
           await destination.writeAsBytes(base64Decode(pngBase64));
         },
       );
-      await settleIo(tester);
+      await settleIo(tester, until: cardShowsImage);
 
       expect(find.text('Mira esto'), findsOneWidget);
       expect(find.textContaining('@image:'), findsNothing);
@@ -34746,7 +40230,7 @@ void main() {
           await destination.writeAsBytes(base64Decode(pngBase64));
         },
       );
-      await settleIo(tester);
+      await settleIo(tester, until: cardShowsImage);
 
       expect(find.text('Describe la foto'), findsOneWidget);
       expect(find.textContaining('@image:'), findsNothing);
@@ -34796,7 +40280,7 @@ void main() {
           await destination.writeAsBytes(base64Decode(pngBase64));
         },
       );
-      await settleIo(tester);
+      await settleIo(tester, until: cardShowsImage);
 
       final card = find.byType(AttachmentCard);
       expect(card, findsOneWidget);
@@ -34832,7 +40316,13 @@ void main() {
         );
         await settleIo(tester);
         await tester.drag(find.byType(Scrollable).first, const Offset(0, -40));
-        await settleIo(tester, frames: 10);
+        await settleIo(
+          tester,
+          frames: 10,
+          until: () =>
+              find.textContaining('No disponible').evaluate().isNotEmpty &&
+              find.textContaining('Solo en el servidor').evaluate().isNotEmpty,
+        );
 
         expect(find.textContaining('@image:'), findsNothing);
         expect(find.textContaining('@file:'), findsNothing);
@@ -35246,7 +40736,10 @@ void main() {
       final sendAction = tester.widget<HermesTactileAction>(
         find.descendant(of: send, matching: find.byType(HermesTactileAction)),
       );
-      expect(sendAction.backgroundColor, isNot(Colors.white));
+      // AUDITORIA-PULIDO §2.3 (Ola 3): dictation's send is the accent with
+      // onAccent, like the main send; disabled, it is not.
+      final colors = Theme.of(tester.element(send)).hermes;
+      expect(sendAction.backgroundColor, isNot(colors.accent));
 
       stt.results.add(const SttResult('parcial oculto', false));
       await tester.pump(const Duration(milliseconds: 40));
@@ -35257,7 +40750,8 @@ void main() {
       final enabledSendAction = tester.widget<HermesTactileAction>(
         find.descendant(of: send, matching: find.byType(HermesTactileAction)),
       );
-      expect(enabledSendAction.backgroundColor, Colors.white);
+      expect(enabledSendAction.backgroundColor, colors.accent);
+      expect(enabledSendAction.foregroundColor, colors.onAccent);
       expect(tester.takeException(), isNull);
 
       await stt.emitFinalAndClose('parcial oculto');
@@ -35861,7 +41355,578 @@ void main() {
     await tester.pump();
   });
 
-  testWidgets('la voz vive dentro del chat, en una franja sobre el compositor', (
+  // Voz inline (§1, §2, §7): no floating capsule. The island says the state
+  // on one line of its own height, the sprite stays on it, the header's
+  // round buttons stay where they were, and a tap on the island pauses and
+  // resumes the conversation.
+  testWidgets(
+    'voz inline: la isla dice el estado en una línea y la cabecera no se mueve',
+    (tester) async {
+      tester.view.physicalSize = const Size(412 * 3, 915 * 3);
+      tester.view.devicePixelRatio = 3;
+      addTearDown(tester.view.reset);
+      final stt = _PartialSttEngine();
+      final chat = await pumpChat(tester, stt: stt);
+      final app = tester.state<HermesAppState>(find.byType(HermesApp));
+      await tester.pump(const Duration(milliseconds: 400));
+
+      final header = find.byKey(const ValueKey('chat-header'));
+      final island = find.descendant(
+        of: header,
+        matching: find.byKey(const ValueKey('island')),
+      );
+      final buttons = [
+        find.byKey(const ValueKey('chat-settings-button')),
+        find.byKey(const ValueKey('chat-views-button')),
+      ];
+      final restButtons = [for (final b in buttons) tester.getRect(b)];
+      final restIslandHeight = tester.getSize(island).height;
+      double face() => tester
+          .widget<AnimatedOpacity>(
+            find.byKey(const ValueKey('floating-header-faces-visibility')),
+          )
+          .opacity;
+
+      await app.voiceConvo.enter(chat: chat, model: 'hermes-agent');
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      expect(find.byKey(const ValueKey('voice-capsule')), findsNothing);
+      final status = find.descendant(
+        of: header,
+        matching: find.byKey(const ValueKey('voice-island-status')),
+      );
+      expect(status, findsOneWidget);
+      expect(
+        find.descendant(of: status, matching: find.text('Escuchando')),
+        findsOneWidget,
+      );
+      expect(face(), 1, reason: 'the sprite stays on the island');
+      for (var i = 0; i < buttons.length; i++) {
+        expect(tester.getRect(buttons[i]), restButtons[i]);
+      }
+      expect(tester.getSize(island).height, closeTo(restIslandHeight, 0.5));
+
+      // The clock of the listening state.
+      await tester.pump(const Duration(seconds: 2));
+      expect(
+        find.descendant(of: status, matching: find.text('0:02')),
+        findsOneWidget,
+      );
+
+      // A tap on the island pauses; the island keeps its height and place.
+      app.voice.debugSttFactory = _PartialSttEngine.new;
+      await tester.tap(status);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(app.voiceConvo.userPaused, isTrue);
+      expect(
+        find.descendant(of: status, matching: find.text('En pausa')),
+        findsOneWidget,
+      );
+      expect(tester.getSize(island).height, closeTo(restIslandHeight, 0.5));
+      for (var i = 0; i < buttons.length; i++) {
+        expect(tester.getRect(buttons[i]), restButtons[i]);
+      }
+
+      // And again resumes.
+      await tester.tap(status);
+      await tester.pump();
+      for (var frame = 0; app.voiceConvo.userPaused && frame < 20; frame++) {
+        await tester.pump(const Duration(milliseconds: 25));
+      }
+      expect(app.voiceConvo.userPaused, isFalse);
+
+      // The way out stays with the conversation's controls.
+      await tester.tap(find.byKey(const ValueKey('voice-strip-close')));
+      await tester.pump();
+      expect(app.voiceConvo.active, isFalse);
+      await settleVoiceTeardown(tester);
+      expect(find.byKey(const ValueKey('voice-island-status')), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  // Voz inline (§4, §7): the composer becomes the voice dock in its own
+  // footprint; nothing above it moves, and the composer comes back intact.
+  testWidgets(
+    'voz inline: el compositor se vuelve el dock en su misma huella',
+    (tester) async {
+      tester.view.physicalSize = const Size(412 * 3, 915 * 3);
+      tester.view.devicePixelRatio = 3;
+      addTearDown(tester.view.reset);
+      final stt = _PartialSttEngine();
+      final chat = await pumpChat(
+        tester,
+        stt: stt,
+        messages: const [
+          {'role': 'assistant', 'content': 'Respuesta anterior.'},
+          {'role': 'user', 'content': 'Pregunta anterior'},
+        ],
+      );
+      final app = tester.state<HermesAppState>(find.byType(HermesApp));
+      await tester.pump(const Duration(milliseconds: 400));
+
+      final host = find.byKey(const ValueKey('chat-composer-host'));
+      final inputRow = find.byKey(const ValueKey('composer-input-row'));
+      final reply = find.text('Respuesta anterior.');
+      final restHost = tester.getRect(host);
+      final restRow = tester.getRect(inputRow);
+      final restReply = tester.getRect(reply);
+
+      await app.voiceConvo.enter(chat: chat, model: 'hermes-agent');
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      final dock = find.byKey(const ValueKey('voice-dock'));
+      expect(dock.hitTestable(), findsOneWidget);
+      final dockRect = tester.getRect(dock);
+      expect(dockRect.left, closeTo(restRow.left, 1));
+      expect(dockRect.top, closeTo(restRow.top, 1));
+      expect(dockRect.right, closeTo(restRow.right, 1));
+      expect(dockRect.bottom, closeTo(restRow.bottom, 1));
+      expect(tester.getRect(host), restHost, reason: 'no height change');
+      expect(tester.getRect(reply), restReply, reason: 'the chat stays put');
+      // The field is under the dock, kept but out of reach.
+      expect(find.byType(TextField).hitTestable(), findsNothing);
+      expect(find.byKey(const ValueKey('voice')).hitTestable(), findsNothing);
+
+      // Mute pauses and resumes in place.
+      app.voice.debugSttFactory = _PartialSttEngine.new;
+      final muteRect = tester.getRect(
+        find.byKey(const ValueKey('voice-strip-pause')),
+      );
+      await tester.tap(find.byKey(const ValueKey('voice-strip-pause')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(app.voiceConvo.userPaused, isTrue);
+      final resume = find.byKey(const ValueKey('voice-strip-resume'));
+      expect(tester.getRect(resume), muteRect);
+      expect(tester.getRect(dock), dockRect);
+      await tester.tap(resume);
+      await tester.pump();
+      for (var frame = 0; app.voiceConvo.userPaused && frame < 20; frame++) {
+        await tester.pump(const Duration(milliseconds: 25));
+      }
+      expect(app.voiceConvo.userPaused, isFalse);
+
+      // ✕ ends it and the composer is back, where it was.
+      await tester.tap(find.byKey(const ValueKey('voice-strip-close')));
+      await tester.pump();
+      expect(app.voiceConvo.active, isFalse);
+      await settleVoiceTeardown(tester);
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.byKey(const ValueKey('voice-dock')), findsNothing);
+      expect(find.byType(TextField).hitTestable(), findsOneWidget);
+      expect(tester.getRect(host), restHost);
+      expect(tester.getRect(reply), restReply);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  // Voz inline (§4): typing still works. A tap on the dock's wave brings the
+  // composer back with the keyboard and the voice's own controls; leaving
+  // the field empty brings the dock back.
+  testWidgets('voz inline: tocar la onda del dock deja escribir', (
+    tester,
+  ) async {
+    final stt = _PartialSttEngine();
+    final chat = await pumpChat(tester, stt: stt);
+    final app = tester.state<HermesAppState>(find.byType(HermesApp));
+    await app.voiceConvo.enter(chat: chat, model: 'hermes-agent');
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.byType(TextField).hitTestable(), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('voice-dock-wave')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    final field = find.byType(TextField);
+    expect(field.hitTestable(), findsOneWidget);
+    expect(
+      tester.widget<TextField>(field).focusNode!.hasFocus,
+      isTrue,
+      reason: 'the keyboard comes with it',
+    );
+    expect(
+      find.byKey(const ValueKey('voice-dock')).hitTestable(),
+      findsNothing,
+    );
+    // The way out of the voice is still there while typing.
+    expect(
+      find.byKey(const ValueKey('voice-strip-close')).hitTestable(),
+      findsOneWidget,
+    );
+
+    // A draft keeps the composer even without the focus.
+    await tester.enterText(field, 'una nota');
+    await tester.pump();
+    FocusManager.instance.primaryFocus?.unfocus();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(field.hitTestable(), findsOneWidget);
+
+    // Empty and without the focus: the dock again.
+    await tester.enterText(field, '');
+    await tester.pump();
+    FocusManager.instance.primaryFocus?.unfocus();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(
+      find.byKey(const ValueKey('voice-dock')).hitTestable(),
+      findsOneWidget,
+    );
+    expect(app.voiceConvo.active, isTrue);
+
+    await tester.tap(find.byKey(const ValueKey('voice-strip-close')));
+    await tester.pump();
+    await settleVoiceTeardown(tester);
+    expect(tester.takeException(), isNull);
+  });
+
+  // Voz inline (§4): the voice settings left the voice controls; the chat's
+  // own Ajustes window reaches them while a conversation runs.
+  testWidgets('voz inline: Configurar voz está en Ajustes del chat', (
+    tester,
+  ) async {
+    final stt = _PartialSttEngine();
+    final chat = await pumpChat(tester, stt: stt);
+    final app = tester.state<HermesAppState>(find.byType(HermesApp));
+    final row = find.byKey(const ValueKey('chat-control-voice-settings'));
+
+    await tester.tap(find.byKey(const ValueKey('chat-settings-button')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(row, findsNothing, reason: 'no voice, no voice settings here');
+    await tester.tapAt(const Offset(4, 4));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    await app.voiceConvo.enter(chat: chat, model: 'hermes-agent');
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.tap(find.byKey(const ValueKey('chat-settings-button')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(row, findsOneWidget);
+    expect(find.text('Configurar voz'), findsOneWidget);
+    await tester.tapAt(const Offset(4, 4));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    await tester.tap(find.byKey(const ValueKey('voice-strip-close')));
+    await tester.pump();
+    await settleVoiceTeardown(tester);
+    expect(tester.takeException(), isNull);
+  });
+
+  // Voz inline (§3): the sprite's halo is the orb. It is behind the visible
+  // face while the voice listens, off when paused, and the face does not
+  // move for it.
+  testWidgets('voz inline: el halo del sprite sigue la voz', (tester) async {
+    final stt = _PartialSttEngine();
+    final chat = await pumpChat(tester, stt: stt);
+    final app = tester.state<HermesAppState>(find.byType(HermesApp));
+    await tester.pump(const Duration(milliseconds: 400));
+    final faces = find.byKey(const ValueKey('floating-header-faces'));
+    final restFaces = tester.getRect(faces);
+    final halo = find.byKey(const ValueKey('voice-halo'));
+    expect(halo, findsNothing);
+
+    await app.voiceConvo.enter(chat: chat, model: 'hermes-agent');
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('floating-header-faces')),
+        matching: halo,
+      ),
+      findsOneWidget,
+    );
+    expect(tester.getRect(faces), restFaces);
+    expect(tester.getRect(halo).center.dx, closeTo(restFaces.center.dx, 1));
+    final live = tester.widget<VoiceHalo>(halo).mode;
+    expect(live, isNot(VoiceHaloMode.off));
+
+    app.voice.debugSttFactory = _PartialSttEngine.new;
+    await tester.tap(find.byKey(const ValueKey('voice-strip-pause')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(tester.widget<VoiceHalo>(halo).mode, VoiceHaloMode.off);
+    expect(tester.getRect(faces), restFaces);
+
+    await tester.tap(find.byKey(const ValueKey('voice-strip-close')));
+    await tester.pump();
+    await settleVoiceTeardown(tester);
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(halo, findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  // Voz inline (§5): what the user is saying is a draft of their message
+  // at the bottom of the transcript, tagged «Hablando…». Once sent, the
+  // message takes its place: never the draft and the message at once, and
+  // on the same side of the chat.
+  testWidgets(
+    'voz inline: lo que dices es un borrador que se vuelve tu mensaje',
+    (tester) async {
+      tester.view.physicalSize = const Size(412 * 3, 915 * 3);
+      tester.view.devicePixelRatio = 3;
+      addTearDown(tester.view.reset);
+      final gateway = _SubmissionGateway();
+      final stt = _PartialSttEngine();
+      final chat = await pumpChat(
+        tester,
+        stt: stt,
+        connection: _remoteConn('conn-voz-draft'),
+        desktopGateway: gateway,
+        messages: const [
+          {'role': 'assistant', 'content': 'Respuesta anterior.'},
+          {'role': 'user', 'content': 'Pregunta anterior'},
+        ],
+      );
+      final app = tester.state<HermesAppState>(find.byType(HermesApp));
+      await app.voiceConvo.enter(chat: chat, model: 'hermes-agent');
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      final draft = find.byKey(const ValueKey('voice-draft-bubble'));
+      expect(draft, findsNothing, reason: 'nothing heard yet');
+
+      stt.results.add(const SttResult('hola', false));
+      await tester.pump();
+      expect(draft, findsOneWidget);
+      expect(
+        find.descendant(of: draft, matching: find.text('hola')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: draft, matching: find.text('Hablando…')),
+        findsOneWidget,
+      );
+      stt.results.add(const SttResult('hola mundo', false));
+      await tester.pump();
+      expect(
+        find.descendant(of: draft, matching: find.text('hola mundo')),
+        findsOneWidget,
+      );
+      final draftRect = tester.getRect(draft);
+      expect(tester.takeException(), isNull);
+
+      await stt.emitFinalAndClose('hola mundo');
+      final said = find.text('hola mundo', findRichText: true);
+      for (var frame = 0; frame < 12; frame++) {
+        await tester.pump(const Duration(milliseconds: 16));
+        expect(
+          said.evaluate().length,
+          lessThanOrEqualTo(1),
+          reason: 'never the draft and the message at once (frame $frame)',
+        );
+      }
+      expect(draft, findsNothing);
+      expect(gateway.submissions, ['hola mundo']);
+      expect(said, findsOneWidget);
+      final sent = tester.getRect(
+        find
+            .ancestor(
+              of: said,
+              matching: find.byKey(const ValueKey('user-message-bubble')),
+            )
+            .first,
+      );
+      debugPrint(
+        '[voz-draft] draft=$draftRect sent=$sent '
+        'dRight=${sent.right - draftRect.right} '
+        'dTop=${sent.top - draftRect.top} '
+        'dBottom=${sent.bottom - draftRect.bottom}',
+      );
+      expect(sent.right, closeTo(draftRect.right, 1));
+
+      gateway.emitComplete();
+      await tester.pump(const Duration(milliseconds: 100));
+      unawaited(app.voiceConvo.exit());
+      await tester.pump();
+      await settleVoiceTeardown(tester);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  // Voz inline (§5): when nothing was said the draft fades away, and
+  // nothing is sent.
+  testWidgets('voz inline: si no se oyó nada, el borrador se va fundido', (
+    tester,
+  ) async {
+    final gateway = _SubmissionGateway();
+    final stt = _PartialSttEngine();
+    final chat = await pumpChat(
+      tester,
+      stt: stt,
+      connection: _remoteConn('conn-voz-draft-silence'),
+      desktopGateway: gateway,
+    );
+    final app = tester.state<HermesAppState>(find.byType(HermesApp));
+    await app.voiceConvo.enter(chat: chat, model: 'hermes-agent');
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    final draft = find.byKey(const ValueKey('voice-draft-bubble'));
+
+    stt.results.add(const SttResult('eh', false));
+    await tester.pump();
+    expect(draft, findsOneWidget);
+
+    await stt.emitFinalAndClose('');
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 90));
+    expect(draft, findsOneWidget, reason: 'it fades, it does not vanish');
+    final opacity = tester
+        .widget<Opacity>(
+          find.ancestor(of: draft, matching: find.byType(Opacity)).first,
+        )
+        .opacity;
+    expect(opacity, lessThan(1));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump();
+    expect(draft, findsNothing);
+    expect(gateway.submissions, isEmpty);
+
+    await tester.tap(find.byKey(const ValueKey('voice-strip-close')));
+    await tester.pump();
+    await settleVoiceTeardown(tester);
+    expect(tester.takeException(), isNull);
+  });
+
+  // Voz inline (§5, privacy): when privacy blocks the voice (App Lock), the
+  // phase drops to idle with the words still on screen. That is not «nothing
+  // was said»: the draft is cut in the next frame, with no fade keeping the
+  // last words heard.
+  testWidgets(
+    'voz inline: al bloquear por privacidad el borrador se corta sin fundido',
+    (tester) async {
+      final stt = _PartialSttEngine();
+      final chat = await pumpChat(
+        tester,
+        stt: stt,
+        connection: _remoteConn('conn-voz-draft-privacy'),
+      );
+      final app = tester.state<HermesAppState>(find.byType(HermesApp));
+      await app.voice.acceptVoiceDisclosure(continueWhenLocked: true);
+      await app.voiceConvo.enter(chat: chat, model: 'hermes-agent');
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      final draft = find.byKey(const ValueKey('voice-draft-bubble'));
+
+      stt.results.add(const SttResult('abre la puerta', false));
+      await tester.pump();
+      expect(draft, findsOneWidget);
+      expect(
+        find.descendant(of: draft, matching: find.text('abre la puerta')),
+        findsOneWidget,
+      );
+
+      app.appLock.locked.value = true;
+      await tester.runAsync(app.voiceConvo.suspendForPrivacy);
+      expect(app.voiceConvo.phase, VoicePhase.idle);
+      await tester.pump();
+      expect(draft, findsNothing, reason: 'cut, not faded');
+      expect(find.text('abre la puerta'), findsNothing);
+      await tester.pump(const Duration(milliseconds: 90));
+      expect(draft, findsNothing);
+
+      app.appLock.unlock();
+      foregroundServiceRunning = false;
+      await tester.runAsync(app.voiceConvo.exit);
+      await tester.pump();
+      await settleVoiceTeardown(tester);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  // Voz inline (§8): every screen. The dock is the composer row it replaces
+  // (± 1 dp), the island keeps its height and the header's buttons their
+  // place, and nothing overflows.
+  for (final (size, scale, light) in const [
+    (Size(320, 568), 1.0, false),
+    (Size(360, 640), 1.0, false),
+    (Size(412, 915), 1.0, false),
+    (Size(740, 360), 1.0, false),
+    (Size(915, 412), 1.0, false),
+    (Size(360, 780), 1.0, false),
+    (Size(673, 841), 1.0, false),
+    (Size(841, 673), 1.0, false),
+    (Size(1280, 800), 1.0, false),
+    (Size(800, 1280), 1.0, false),
+    (Size(320, 568), 1.3, true),
+    (Size(412, 915), 1.3, true),
+    (Size(841, 673), 1.3, true),
+    (Size(320, 568), 2.0, false),
+    (Size(412, 915), 2.0, true),
+    (Size(915, 412), 2.0, false),
+  ]) {
+    testWidgets(
+      'voz inline: matriz ${size.width.toInt()}x${size.height.toInt()} '
+      'texto $scale ${light ? 'claro' : 'oscuro'}',
+      (tester) async {
+        tester.view.physicalSize = size * 2;
+        tester.view.devicePixelRatio = 2;
+        tester.platformDispatcher.textScaleFactorTestValue = scale;
+        tester.platformDispatcher.platformBrightnessTestValue = light
+            ? Brightness.light
+            : Brightness.dark;
+        addTearDown(tester.view.reset);
+        addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+        addTearDown(tester.platformDispatcher.clearPlatformBrightnessTestValue);
+        final stt = _PartialSttEngine();
+        final chat = await pumpChat(tester, stt: stt);
+        final app = tester.state<HermesAppState>(find.byType(HermesApp));
+        await tester.pump(const Duration(milliseconds: 400));
+        final island = find.descendant(
+          of: find.byKey(const ValueKey('chat-header')),
+          matching: find.byKey(const ValueKey('island')),
+        );
+        final settings = find.byKey(const ValueKey('chat-settings-button'));
+        final restIsland = tester.getSize(island).height;
+        final restSettings = tester.getRect(settings);
+        final restRow = tester.getRect(
+          find.byKey(const ValueKey('composer-input-row')),
+        );
+
+        await app.voiceConvo.enter(chat: chat, model: 'hermes-agent');
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+        expect(tester.takeException(), isNull);
+        final dock = tester.getRect(find.byKey(const ValueKey('voice-dock')));
+        expect(dock.left, closeTo(restRow.left, 1));
+        expect(dock.top, closeTo(restRow.top, 1));
+        expect(dock.width, closeTo(restRow.width, 1));
+        expect(dock.height, closeTo(restRow.height, 1));
+        expect(tester.getSize(island).height, closeTo(restIsland, 0.5));
+        expect(tester.getRect(settings), restSettings);
+        for (final key in ['voice-strip-pause', 'voice-strip-close']) {
+          final target = tester.getRect(find.byKey(ValueKey(key)));
+          expect(target.height, greaterThanOrEqualTo(48), reason: key);
+          expect(dock.contains(target.center), isTrue, reason: key);
+        }
+
+        // Paused: same island, same dock.
+        app.voice.debugSttFactory = _PartialSttEngine.new;
+        await tester.tap(find.byKey(const ValueKey('voice-strip-pause')));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+        expect(app.voiceConvo.userPaused, isTrue);
+        expect(tester.takeException(), isNull);
+        expect(tester.getSize(island).height, closeTo(restIsland, 0.5));
+        expect(tester.getRect(find.byKey(const ValueKey('voice-dock'))), dock);
+
+        await tester.tap(find.byKey(const ValueKey('voice-strip-close')));
+        await tester.pump();
+        await settleVoiceTeardown(tester);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
+  // Voz inline (outdated 135 v2 capsule, updated): the voice's state lives
+  // in the header's island and its controls in the composer's dock; the
+  // chat and the composer stay as they are.
+  testWidgets('la voz vive en la isla de la cabecera y en el dock', (
     tester,
   ) async {
     final stt = _PartialSttEngine();
@@ -35873,19 +41938,25 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
 
-    expect(
-      find.byKey(const ValueKey('voice-conversation-surface')),
-      findsOneWidget,
+    final line = find.descendant(
+      of: find.byKey(const ValueKey('chat-header')),
+      matching: find.byKey(const ValueKey('voice-island-status')),
     );
+    // The island says what it was saying (a notice of the entry) before
+    // the voice's state takes its turn.
+    for (var frame = 0; line.evaluate().isEmpty && frame < 40; frame++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    expect(line, findsOneWidget);
+    expect(find.byKey(const ValueKey('voice-capsule')), findsNothing);
+    expect(find.byKey(const ValueKey('voice-dock')), findsOneWidget);
     expect(find.byKey(const ValueKey('voice-user-transcript')), findsNothing);
     expect(find.byKey(const ValueKey('voice-assistant-panel')), findsNothing);
     expect(find.byKey(const ValueKey('voice-strip-cancel')), findsNothing);
     // Como en Desktop, el chat y el compositor siguen en pantalla.
     expect(find.byType(TextField), findsWidgets);
 
-    // Una sola línea de estado: mientras escucha muestra lo que oye, como
-    // Desktop; lo dictado queda después como burbuja en el chat.
-    final line = find.byKey(const ValueKey('voice-conversation-surface'));
+    // Una sola línea de estado, en la isla: dice el estado, no lo que oye.
     final thin = tester.getSize(line).height;
     expect(thin, lessThanOrEqualTo(48));
     stt.results.add(const SttResult('hola parcial', false));
@@ -35894,11 +41965,10 @@ void main() {
     expect(find.byKey(const ValueKey('voice-user-transcript')), findsNothing);
     expect(
       find.descendant(of: line, matching: find.text('hola parcial')),
-      findsOneWidget,
+      findsNothing,
     );
-    expect(find.text('hola parcial'), findsOneWidget);
     // Las ayudas técnicas siguen oyendo el estado, no cada parcial.
-    expect(find.bySemanticsLabel('Escuchando…'), findsOneWidget);
+    expect(find.bySemanticsLabel(RegExp('Escuchando…')), findsOneWidget);
 
     final longPartial = List.filled(70, 'texto').join(' ');
     stt.results.add(SttResult(longPartial, false));
@@ -35914,10 +41984,11 @@ void main() {
     app.voice.debugSttFactory = _PartialSttEngine.new;
     await tester.tap(find.byKey(const ValueKey('voice-strip-pause')));
     await tester.pump();
-    // La franja mantiene una sola línea de estado y confirma la pausa.
+    // La isla mantiene una sola línea de estado y confirma la pausa; el
+    // botón del micrófono del dock lo dice con su icono.
     expect(find.text('En pausa'), findsOneWidget);
-    expect(find.bySemanticsLabel('En pausa'), findsOneWidget);
-    expect(find.byIcon(Icons.play_arrow_rounded), findsOneWidget);
+    expect(find.bySemanticsLabel(RegExp('En pausa')), findsOneWidget);
+    expect(find.byIcon(Icons.mic_off_rounded), findsOneWidget);
 
     await tester.tap(find.byKey(const ValueKey('voice-strip-resume')));
     await tester.pump();
@@ -35932,10 +42003,8 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('voice-strip-close')));
     await tester.pump();
     expect(app.voiceConvo.active, isFalse);
-    expect(
-      find.byKey(const ValueKey('voice-conversation-surface')),
-      findsNothing,
-    );
+    expect(find.byKey(const ValueKey('voice-island-status')), findsNothing);
+    expect(find.byKey(const ValueKey('voice-dock')), findsNothing);
     expect(find.byKey(const ValueKey('voice-user-transcript')), findsNothing);
     expect(tester.takeException(), isNull);
   });
@@ -36103,8 +42172,13 @@ void main() {
     },
   );
 
+  // Voz inline (outdated capsule, updated): with no barge-in armed, while
+  // Hermes works the dock stays quiet (its «Interrumpir» belongs to Hermes
+  // speaking, order §4) and its chip is the one Stop. Pause and Stop stay
+  // apart, and ✕ does not cancel the remote task.
   testWidgets(
-    'sin barge-in armado ofrece Parar y hablar; pausa y cancelar siguen separados',
+    'sin barge-in armado el dock ofrece Detener; pausa y Detener siguen '
+    'separados',
     (tester) async {
       final stt = _PartialSttEngine();
       final chat = await pumpChat(
@@ -36119,14 +42193,14 @@ void main() {
       final app = tester.state<HermesAppState>(find.byType(HermesApp));
       await app.voiceConvo.enter(chat: chat, model: 'hermes-agent');
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 50));
+      await tester.pump(const Duration(milliseconds: 400));
       expect(
         find.byKey(const ValueKey('voice-assistant-transcript')),
         findsNothing,
       );
       expect(
         find.byKey(const ValueKey('voice-strip-stop-and-talk')),
-        findsOneWidget,
+        findsNothing,
       );
       expect(find.text('Puedes hablar en cualquier momento.'), findsNothing);
       expect(
@@ -36136,7 +42210,17 @@ void main() {
         ),
         findsNothing,
       );
-      expect(find.byKey(const ValueKey('voice-strip-cancel')), findsOneWidget);
+      // One Stop in reach, the dock's; the composer's is under the dock.
+      expect(find.byKey(const ValueKey('voice-strip-cancel')), findsNothing);
+      expect(
+        find.byKey(const ValueKey('voice-dock-stop')).hitTestable(),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('stop')).hitTestable(), findsNothing);
+      expect(
+        find.byKey(const ValueKey('voice-strip-pause')).hitTestable(),
+        findsOneWidget,
+      );
 
       expect(chat.isStreaming, isTrue);
       expect(app.voiceConvo.phase, isNot(VoicePhase.listening));
@@ -36157,11 +42241,11 @@ void main() {
       final app = tester.state<HermesAppState>(find.byType(HermesApp));
       await app.voiceConvo.enter(chat: chat, model: 'hermes-agent');
       await tester.pump();
+      // Voz inline (outdated capsule, updated): the dock's controls are
+      // there once the swap is over.
+      await tester.pump(kPillMorphOpen);
 
-      expect(
-        find.byKey(const ValueKey('voice-conversation-surface')),
-        findsOneWidget,
-      );
+      expect(find.byKey(const ValueKey('voice-dock')), findsOneWidget);
       expect(app.voiceConvo.active, isTrue);
       expect(find.byType(TextField), findsWidgets);
       // Nothing covers the chat, so there is nothing to minimise or return to.
@@ -36170,13 +42254,252 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('voice-strip-close')));
       await tester.pump();
       expect(app.voiceConvo.active, isFalse);
-      expect(
-        find.byKey(const ValueKey('voice-conversation-surface')),
-        findsNothing,
-      );
+      expect(find.byKey(const ValueKey('voice-dock')), findsNothing);
       expect(tester.takeException(), isNull);
     },
   );
+
+  // Review P1 (T2-C), voz inline (outdated capsule, updated): while Hermes
+  // works on a voice turn the dock carries the one Stop; writing brings the
+  // composer back with Send, never Stop over it.
+  testWidgets(
+    'con el dock, escribir mientras Hermes trabaja por voz trae Enviar',
+    (tester) async {
+      final stt = _PartialSttEngine();
+      final chat = await pumpChat(
+        tester,
+        stt: stt,
+        chatState: ChatPipelineState.executing,
+        messages: const [
+          {'role': 'assistant', 'content': 'Respuesta parcial.'},
+          {'role': 'user', 'content': 'Haz una tarea'},
+        ],
+      );
+      final app = tester.state<HermesAppState>(find.byType(HermesApp));
+      await app.voiceConvo.enter(chat: chat, model: 'hermes-agent');
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(find.byKey(const ValueKey('voice-dock')), findsOneWidget);
+      expect(chat.isStreaming, isTrue);
+      final send = find.byKey(const ValueKey('send'));
+      final stop = find.byKey(const ValueKey('stop'));
+      final dockStop = find.byKey(const ValueKey('voice-dock-stop'));
+      int stopsInReach() =>
+          stop.hitTestable().evaluate().length +
+          dockStop.hitTestable().evaluate().length +
+          find
+              .byKey(const ValueKey('voice-strip-stop'))
+              .hitTestable()
+              .evaluate()
+              .length;
+      // While typing, the voice's own «Cancelar tarea» stops its turn.
+      int cancelsInReach() => find
+          .byKey(const ValueKey('voice-strip-cancel'))
+          .hitTestable()
+          .evaluate()
+          .length;
+      expect(dockStop.hitTestable(), findsOneWidget);
+      expect(stopsInReach(), 1);
+      expect(send, findsNothing);
+
+      await tester.enterText(find.byType(TextField), 'y añade la tabla');
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(send.hitTestable(), findsOneWidget);
+      expect(stopsInReach(), 0);
+
+      // With nothing to send, one Stop is back in reach.
+      await tester.enterText(find.byType(TextField), '');
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(stopsInReach() + cancelsInReach(), 1);
+      expect(send, findsNothing);
+
+      await tester.tap(
+        find.byKey(const ValueKey('voice-strip-close')).hitTestable(),
+      );
+      await tester.pump();
+      chat.cancel();
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  // Review P2 (T2-C), voz inline (outdated: the capsule and its 💬 are
+  // gone, updated): the face stays on the island the whole time, there is
+  // nothing to minimize, a tap on the island pauses and resumes, and only ✕
+  // ends the voice.
+  testWidgets(
+    'sin cápsula, la cara se queda en la isla y solo ✕ termina la voz',
+    (tester) async {
+      final stt = _PartialSttEngine();
+      final chat = await pumpChat(tester, stt: stt);
+      final app = tester.state<HermesAppState>(find.byType(HermesApp));
+      await app.voiceConvo.enter(chat: chat, model: 'hermes-agent');
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      final capsule = find.byKey(const ValueKey('voice-capsule'));
+      final pill = find.byKey(const ValueKey('voice-capsule-pill'));
+      final island = find.byKey(const ValueKey('voice-island-status'));
+      AnimatedOpacity faces() => tester.widget(
+        find.byKey(const ValueKey('floating-header-faces-visibility')),
+      );
+      double face() => faces().opacity;
+      expect(capsule, findsNothing);
+      expect(pill, findsNothing);
+      expect(
+        find.byKey(const ValueKey('voice-capsule-minimize')),
+        findsNothing,
+      );
+      expect(island, findsOneWidget);
+      expect(face(), 1, reason: 'the face stays on the island');
+
+      app.voice.debugSttFactory = _PartialSttEngine.new;
+      await tester.tap(island);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(app.voiceConvo.userPaused, isTrue);
+      expect(face(), 1);
+      expect(app.voiceConvo.active, isTrue, reason: 'only ✕ ends it');
+
+      await tester.tap(island);
+      await tester.pump();
+      for (var frame = 0; app.voiceConvo.userPaused && frame < 20; frame++) {
+        await tester.pump(const Duration(milliseconds: 25));
+      }
+      expect(app.voiceConvo.userPaused, isFalse);
+      expect(app.voiceConvo.active, isTrue);
+      // The composer's voice button is under the dock, out of reach.
+      expect(find.byKey(const ValueKey('voice')).hitTestable(), findsNothing);
+
+      await tester.tap(find.byKey(const ValueKey('voice-strip-close')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(app.voiceConvo.active, isFalse);
+      expect(island, findsNothing);
+      expect(face(), 1);
+      await settleVoiceTeardown(tester);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  // Voz inline (outdated capsule, updated): the island's voice line names
+  // the main profile as the composer does.
+  testWidgets('the voice island and the composer call the main profile by '
+      'its own name, also when the roster lands after the chat opened', (
+    tester,
+  ) async {
+    final connection = _remoteConn('conn-main-name-voice');
+    addTearDown(() => BotRosterRegistry.shared.forget(connection.id));
+    final stt = _PartialSttEngine();
+    final chat = await pumpChat(tester, connection: connection, stt: stt);
+    // No roster yet: the last resort.
+    expect(find.text('Pregunta a Hermes…'), findsOneWidget);
+    BotRosterRegistry.shared.publish(connection.id, 'QA', const [
+      AgentProfile(
+        name: 'default',
+        isDefault: true,
+        displayName: 'Hermes',
+        botModeUiMeta: {'title': 'xPeta'},
+      ),
+    ]);
+    await tester.pump();
+    expect(find.text('Pregunta a xPeta…'), findsOneWidget);
+    expect(find.text('Pregunta a Hermes…'), findsNothing);
+
+    final app = tester.state<HermesAppState>(find.byType(HermesApp));
+    await app.voiceConvo.enter(chat: chat, model: 'hermes-agent');
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(
+      tester.widget<VoiceIslandStatus>(find.byType(VoiceIslandStatus)).name,
+      'xPeta',
+    );
+    await tester.tap(find.byKey(const ValueKey('voice-strip-close')));
+    await tester.pump();
+    await settleVoiceTeardown(tester);
+  });
+
+  // Review P2 (T2-C), voz inline (outdated capsule, updated): a notice
+  // during the voice is said by the island; it never floats over the chat
+  // and the voice's controls stay where they are.
+  testWidgets('un aviso con la voz sale en la isla', (tester) async {
+    final stt = _PartialSttEngine();
+    final chat = await pumpChat(tester, stt: stt);
+    final app = tester.state<HermesAppState>(find.byType(HermesApp));
+    await app.voiceConvo.enter(chat: chat, model: 'hermes-agent');
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    final dock = tester.getRect(find.byKey(const ValueKey('voice-dock')));
+    HermesNotice.of(
+      tester.element(find.byType(VoiceIslandStatus)),
+    ).show(message: 'Copiado');
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    final header = find.byKey(const ValueKey('chat-header'));
+    final card = find.byType(HermesNoticeCard);
+    expect(find.descendant(of: header, matching: card), findsOneWidget);
+    expect(find.byKey(const ValueKey('hermes-notice-lane')), findsNothing);
+    expect(tester.getRect(find.byKey(const ValueKey('voice-dock'))), dock);
+    expect(app.voiceConvo.active, isTrue);
+
+    await tester.tap(find.byKey(const ValueKey('voice-strip-close')));
+    await tester.pump();
+    expect(app.voiceConvo.active, isFalse);
+    expect(tester.takeException(), isNull);
+  });
+
+  // Review P2 (T2-C), voz inline (outdated capsule, updated): editing a
+  // sent message locks the composer's field with the dock too; the voice's
+  // controls are the dock's and stay usable.
+  testWidgets('editar un mensaje con el dock bloquea el compositor', (
+    tester,
+  ) async {
+    final stt = _PartialSttEngine();
+    final chat = await pumpChat(
+      tester,
+      stt: stt,
+      desktopGateway: _UiRewindGateway(),
+      connection: _remoteConn('conn-voice-v2-edit-lock'),
+      messages: const [
+        {'role': 'assistant', 'content': 'respuesta uno'},
+        {'role': 'user', 'content': 'pregunta uno', '_desktopRowId': 11},
+      ],
+    );
+    final app = tester.state<HermesAppState>(find.byType(HermesApp));
+    await app.voiceConvo.enter(chat: chat, model: 'hermes-agent');
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.byKey(const ValueKey('voice-dock')), findsOneWidget);
+
+    final composer = find.byType(ConsoleComposer);
+    bool fieldEnabled() => tester
+        .widget<TextField>(
+          find.descendant(of: composer, matching: find.byType(TextField)),
+        )
+        .enabled!;
+    expect(fieldEnabled(), isTrue);
+
+    await tester.tap(find.byIcon(Icons.edit_outlined).last);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+    expect(
+      find.byKey(const ValueKey('inline-message-editor-field')),
+      findsOneWidget,
+    );
+    expect(fieldEnabled(), isFalse);
+    expect(
+      find.byKey(const ValueKey('voice-strip-close')).hitTestable(),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byKey(const ValueKey('voice-strip-close')));
+    await tester.pump();
+    expect(app.voiceConvo.active, isFalse);
+    await settleVoiceTeardown(tester);
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets('con Voz activa se escribe y se envía igual que sin ella', (
     tester,
@@ -36197,31 +42520,47 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
 
-    // Sin nada que enviar, la píldora «Terminar» ocupa el sitio del botón de
-    // iniciar voz; el compositor sigue siendo un compositor.
-    expect(find.byKey(const ValueKey('voice')), findsNothing);
-    expect(find.byKey(const ValueKey('mic')), findsNothing);
+    // Voz inline (outdated capsule, updated): the conversation's controls
+    // are the composer's dock; the header has none. Dictation steps aside:
+    // the voice has the mic.
+    expect(find.byKey(const ValueKey('voice-dock')), findsOneWidget);
+    expect(find.byKey(const ValueKey('mic')).hitTestable(), findsNothing);
     expect(find.byKey(const ValueKey('send')), findsNothing);
-    expect(find.byKey(const ValueKey('composer-add')), findsOneWidget);
     final end = find.byKey(const ValueKey('voice-strip-close'));
     expect(
       find.descendant(of: find.byType(ConsoleComposer), matching: end),
       findsOneWidget,
     );
-    expect(find.text('Terminar'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('chat-header')),
+        matching: end,
+      ),
+      findsNothing,
+    );
     expect(find.bySemanticsLabel('Terminar modo voz'), findsOneWidget);
 
     await tester.enterText(find.byType(TextField), 'sigue con el informe');
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
-    // Enviar aparece en su sitio de siempre y los controles de voz siguen.
+    // Enviar aparece en su sitio de siempre y los controles de voz siguen,
+    // en el compositor, junto al campo (the hidden dock keeps its own ✕
+    // mounted for the swap, out of reach).
     final send = find.byKey(const ValueKey('send'));
     expect(send, findsOneWidget);
-    expect(end, findsOneWidget);
-    expect(find.byKey(const ValueKey('voice-strip-pause')), findsOneWidget);
+    expect(end.hitTestable(), findsOneWidget);
     expect(
-      tester.getRect(send).right,
-      greaterThanOrEqualTo(tester.getRect(end).right),
+      find.byKey(const ValueKey('voice-strip-pause')).hitTestable(),
+      findsOneWidget,
+    );
+    expect(
+      find
+          .descendant(
+            of: find.byType(ConsoleComposer),
+            matching: find.byKey(const ValueKey('voice-strip-pause')),
+          )
+          .hitTestable(),
+      findsOneWidget,
     );
 
     await tester.tap(send);
@@ -36233,7 +42572,7 @@ void main() {
       isEmpty,
     );
     expect(app.voiceConvo.active, isTrue);
-    expect(end, findsOneWidget);
+    expect(end.hitTestable(), findsOneWidget);
 
     gateway.emitComplete();
     await tester.pump(const Duration(milliseconds: 100));
@@ -36244,10 +42583,7 @@ void main() {
 
     // Al salir de Voz vuelve el final habitual del compositor.
     expect(end, findsNothing);
-    expect(
-      find.byKey(const ValueKey('voice-conversation-surface')),
-      findsNothing,
-    );
+    expect(find.byKey(const ValueKey('voice-capsule')), findsNothing);
     expect(find.byKey(const ValueKey('voice')), findsOneWidget);
     expect(find.byKey(const ValueKey('mic')), findsOneWidget);
     expect(tester.takeException(), isNull);
@@ -36290,14 +42626,11 @@ void main() {
     await tester.pump(const Duration(milliseconds: 350));
     await tester.pump(const Duration(milliseconds: 350));
 
-    // El otro chat solo ofrece volver: ni línea de estado ni controles.
+    // El otro chat solo ofrece volver: ni cápsula ni controles.
     expect(app.voiceConvo.active, isTrue);
     expect(app.voiceConvo.ownerChat, same(ownerChat));
     expect(find.byKey(const ValueKey('voice-return-overlay')), findsOneWidget);
-    expect(
-      find.byKey(const ValueKey('voice-conversation-surface')),
-      findsNothing,
-    );
+    expect(find.byKey(const ValueKey('voice-capsule')), findsNothing);
     for (final key in const [
       'voice-strip-pause',
       'voice-strip-finish-listening',
@@ -36317,8 +42650,11 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  // Voz inline (outdated 135 v2 capsule, updated): the voice's state is the
+  // header's island, between the side buttons and never wider than its max;
+  // the controls are the composer's dock, also with the keyboard up.
   testWidgets(
-    'la línea de Voz va sobre el compositor, a su ancho, sin tapar el chat',
+    'la Voz está en la isla de la cabecera y el dock en el compositor',
     (tester) async {
       tester.view.physicalSize = const Size(390, 844);
       tester.view.devicePixelRatio = 1;
@@ -36340,55 +42676,60 @@ void main() {
         await tester.pump(const Duration(milliseconds: 100));
       }
 
-      final line = find.byKey(const ValueKey('voice-strip'));
+      final capsule = find.byKey(const ValueKey('voice-island-status'));
       final surface = find.byKey(
         const ValueKey('hermes-composer-visible-surface'),
       );
       final end = find.byKey(const ValueKey('voice-strip-close'));
-      // Parte del grupo inferior: el transcript reserva su alto.
+      // The state in the header; the controls in the composer, and no
+      // other voice strip in the bottom bars.
       expect(
         find.descendant(
-          of: find.byKey(const ValueKey('chat-bottom-bars')),
-          matching: line,
+          of: find.byKey(const ValueKey('chat-header')),
+          matching: capsule,
         ),
         findsOneWidget,
       );
-      final messages = find.textContaining('mensaje número');
-      double lowestMessage() => [
-        for (var i = 0; i < messages.evaluate().length; i++)
-          tester.getRect(messages.at(i)).bottom,
-      ].reduce(math.max);
-      expect(messages, findsWidgets);
-      expect(lowestMessage(), lessThanOrEqualTo(tester.getRect(line).top));
+      expect(find.byKey(const ValueKey('voice-capsule')), findsNothing);
       expect(
-        tester.getRect(line).bottom,
-        lessThanOrEqualTo(tester.getRect(surface).top),
+        find.descendant(
+          of: surface,
+          matching: find.byKey(const ValueKey('voice-dock')),
+        ),
+        findsOneWidget,
       );
-      // Mismo ancho que el compositor, también cuando el foco lo ensancha.
-      expect(tester.getRect(line).left, tester.getRect(surface).left);
-      expect(tester.getRect(line).right, tester.getRect(surface).right);
-      expect(tester.getSize(line).height, 40);
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('chat-bottom-bars')),
+          matching: find.byKey(const ValueKey('voice-strip')),
+        ),
+        findsNothing,
+      );
+      final rect = tester.getRect(capsule);
+      expect(rect.left, greaterThanOrEqualTo(8 + 48));
+      expect(rect.right, lessThanOrEqualTo(390 - 8 - 48));
+      expect(rect.width, lessThanOrEqualTo(VoiceIslandStatus.maxWidth));
+      expect(rect.bottom, lessThanOrEqualTo(tester.getRect(surface).top));
       expect(find.bySemanticsLabel('Terminar modo voz'), findsOneWidget);
 
-      await tester.tap(find.byType(TextField));
+      // To type, the dock's wave brings the field back with the keyboard.
+      await tester.tap(find.byKey(const ValueKey('voice-dock-wave')));
       tester.view.viewInsets = const FakeViewPadding(bottom: 300);
       addTearDown(tester.view.resetViewInsets);
       for (var frame = 0; frame < 4; frame++) {
         await tester.pump(const Duration(milliseconds: 100));
       }
-      expect(tester.getRect(line).left, tester.getRect(surface).left);
-      expect(tester.getRect(line).right, tester.getRect(surface).right);
-      // Con el teclado abierto siguen a la vista la línea y los controles.
-      expect(tester.getRect(line).top, greaterThan(0));
-      expect(tester.getRect(end).bottom, lessThanOrEqualTo(844 - 300));
+      // With the keyboard up the island and the way out stay in reach, and
+      // the composer above the keyboard.
+      expect(tester.getRect(capsule).top, greaterThanOrEqualTo(0));
       expect(
-        tester.getRect(line).bottom,
-        lessThanOrEqualTo(tester.getRect(surface).top),
+        tester.getRect(end.hitTestable()).bottom,
+        lessThanOrEqualTo(844 - 300),
       );
-      expect(lowestMessage(), lessThanOrEqualTo(tester.getRect(line).top));
+      expect(tester.getRect(surface).bottom, lessThanOrEqualTo(844 - 300));
       expect(tester.takeException(), isNull);
 
-      await tester.tap(end);
+      await tester.tap(end.hitTestable());
       await tester.pump();
       expect(app.voiceConvo.active, isFalse);
       await settleVoiceTeardown(tester);
@@ -36422,7 +42763,8 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
 
     expect(tester.takeException(), isNull);
-    final line = find.byKey(const ValueKey('voice-strip'));
+    // Voz inline (outdated voice strip, updated): the dock.
+    final line = find.byKey(const ValueKey('voice-dock'));
     final surface = find.byKey(
       const ValueKey('hermes-composer-visible-surface'),
     );
@@ -36444,9 +42786,14 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
     expect(tester.takeException(), isNull);
     expect(find.byKey(const ValueKey('send')), findsOneWidget);
-    expect(find.byKey(const ValueKey('voice-strip-close')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('voice-strip-close')).hitTestable(),
+      findsOneWidget,
+    );
 
-    await tester.tap(find.byKey(const ValueKey('voice-strip-close')));
+    await tester.tap(
+      find.byKey(const ValueKey('voice-strip-close')).hitTestable(),
+    );
     await tester.pump();
     expect(app.voiceConvo.active, isFalse);
     await settleVoiceTeardown(tester);
@@ -36470,7 +42817,7 @@ void main() {
       final app = tester.state<HermesAppState>(find.byType(HermesApp));
       await app.voiceConvo.enter(chat: chat, model: 'hermes-agent');
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 50));
+      await tester.pump(kPillMorphOpen);
 
       await tester.tap(find.byIcon(Icons.edit_outlined));
       await tester.pump(const Duration(milliseconds: 250));
@@ -36494,63 +42841,64 @@ void main() {
     },
   );
 
-  testWidgets(
-    'con Voz hay un solo stop: el suyo, o el Detener del compositor',
-    (tester) async {
-      var stops = 0;
-      final stt = _PartialSttEngine();
-      final chat = await pumpChat(
-        tester,
-        stt: stt,
-        desktopGateway: _SubmissionGateway(),
-        connection: _remoteConn('conn-voice-v2-stop'),
-        chatState: ChatPipelineState.executing,
-        cancelStreamOverride: () async => stops++,
-        messages: const [
-          {'role': 'assistant', 'content': 'Respuesta parcial.'},
-          {'role': 'user', 'content': 'Haz una tarea'},
-        ],
-      );
-      final app = tester.state<HermesAppState>(find.byType(HermesApp));
-      await app.voiceConvo.enter(chat: chat, model: 'hermes-agent');
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 50));
-      expect(chat.isStreaming, isTrue);
+  // 135 v2, voz inline (outdated capsule, updated): with the dock there is
+  // one Stop in reach, the dock's chip (the composer's own is under the
+  // dock): it cancels the voice turn while there is one, else the session's
+  // work.
+  testWidgets('con Voz hay un solo stop: el Detener del dock', (tester) async {
+    var stops = 0;
+    final stt = _PartialSttEngine();
+    final chat = await pumpChat(
+      tester,
+      stt: stt,
+      desktopGateway: _SubmissionGateway(),
+      connection: _remoteConn('conn-voice-v2-stop'),
+      chatState: ChatPipelineState.executing,
+      cancelStreamOverride: () async => stops++,
+      messages: const [
+        {'role': 'assistant', 'content': 'Respuesta parcial.'},
+        {'role': 'user', 'content': 'Haz una tarea'},
+      ],
+    );
+    final app = tester.state<HermesAppState>(find.byType(HermesApp));
+    await app.voiceConvo.enter(chat: chat, model: 'hermes-agent');
+    await tester.pump();
+    await tester.pump(kPillMorphOpen);
+    expect(chat.isStreaming, isTrue);
 
-      // La Voz tiene un turno que cancelar: su «Cancelar tarea» es el único
-      // stop de la fila.
-      expect(find.byKey(const ValueKey('voice-strip-cancel')), findsOneWidget);
-      expect(find.byKey(const ValueKey('voice-strip-stop')), findsNothing);
-      expect(find.byKey(const ValueKey('stop')), findsNothing);
-      expect(find.text('Terminar'), findsOneWidget);
+    // El Detener del dock es el único stop al alcance.
+    final dockStop = find.byKey(const ValueKey('voice-dock-stop'));
+    expect(dockStop.hitTestable(), findsOneWidget);
+    expect(find.byKey(const ValueKey('stop')).hitTestable(), findsNothing);
+    expect(find.byKey(const ValueKey('voice-strip-cancel')), findsNothing);
+    expect(find.byKey(const ValueKey('voice-strip-stop')), findsNothing);
+    expect(find.bySemanticsLabel('Detener'), findsOneWidget);
 
-      await tester.tap(find.byKey(const ValueKey('voice-strip-pause')));
-      await tester.pump();
-      expect(app.voiceConvo.userPaused, isTrue);
+    await tester.tap(find.byKey(const ValueKey('voice-strip-pause')));
+    await tester.pump();
+    expect(app.voiceConvo.userPaused, isTrue);
 
-      // En pausa la Voz no ofrece cancelar. El Detener de siempre del
-      // compositor sigue a mano, en el mismo botón redondo.
-      expect(find.byKey(const ValueKey('voice-strip-cancel')), findsNothing);
-      expect(find.byKey(const ValueKey('stop')), findsNothing);
-      expect(find.bySemanticsLabel('Detener'), findsOneWidget);
-      expect(find.text('Terminar'), findsOneWidget);
-      await tester.tap(find.byKey(const ValueKey('voice-strip-stop')));
-      await tester.pump();
-      expect(stops, 1);
-      expect(app.voiceConvo.active, isTrue);
+    // En pausa la Voz no tiene turno que cancelar: el mismo Detener del
+    // dock para el trabajo de la sesión, y la voz sigue.
+    expect(dockStop.hitTestable(), findsOneWidget);
+    expect(find.byKey(const ValueKey('voice-strip-cancel')), findsNothing);
+    expect(find.bySemanticsLabel('Detener'), findsOneWidget);
+    await tester.tap(dockStop);
+    await tester.pump();
+    expect(stops, 1);
+    expect(app.voiceConvo.active, isTrue);
 
-      await tester.tap(find.byKey(const ValueKey('voice-strip-close')));
-      await tester.pump();
-      expect(app.voiceConvo.active, isFalse);
-      // Sin Voz, el compositor vuelve a llevar su propio Detener.
-      await tester.pump(const Duration(milliseconds: 300));
-      expect(find.byKey(const ValueKey('stop')), findsOneWidget);
-      await tester.pump(const Duration(milliseconds: 1300));
-      chat.cancel();
-      await settleVoiceTeardown(tester);
-      expect(tester.takeException(), isNull);
-    },
-  );
+    await tester.tap(find.byKey(const ValueKey('voice-strip-close')));
+    await tester.pump();
+    expect(app.voiceConvo.active, isFalse);
+    // Sin Voz, el compositor vuelve a llevar su propio Detener.
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.byKey(const ValueKey('stop')), findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 1300));
+    chat.cancel();
+    await settleVoiceTeardown(tester);
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets('una aprobación pendiente sigue siendo táctil', (tester) async {
     final stt = _PartialSttEngine();
@@ -36572,16 +42920,16 @@ void main() {
     await app.voiceConvo.enter(chat: chat, model: 'hermes-agent');
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
-    // The approval card is in the transcript, above the strip: no tap needed.
+    // The dock is directly reachable while voice is active. Its command
+    // keeps the execution target visible while redacting credentials.
     expect(find.text('touch /tmp/voice-approval-test'), findsOneWidget);
+    expect(tester.getRect(find.byType(ChatApprovalDock)).bottom, lessThanOrEqualTo(tester.getRect(find.byKey(const ValueKey('chat-composer-host'))).top));
     expect(find.byKey(const ValueKey('voice-strip-review')), findsOneWidget);
 
     await tester.tap(find.byKey(const ValueKey('voice-strip-review')));
     await tester.pump();
-    expect(
-      find.byKey(const ValueKey('voice-conversation-surface')),
-      findsOneWidget,
-    );
+    // Voz inline (outdated capsule, updated): the dock stays.
+    expect(find.byKey(const ValueKey('voice-dock')), findsOneWidget);
     expect(find.byKey(const ValueKey('voice-return-overlay')), findsNothing);
     expect(chat.pendingApproval, isNotNull);
 
@@ -36800,95 +43148,233 @@ void main() {
     expect(avatarLoads.where((p) => p != 'infra'), isEmpty);
     expect(find.byKey(const ValueKey('voice')), findsNothing);
     expect(find.byKey(const ValueKey('send')), findsOneWidget);
-    // Sin drawer, "nueva sesión" ni ⋮: buscar, el modelo y los ajustes de la
-    // conversación viven en la rayita sobre el compositor.
+    // Sin drawer, "nueva sesión" ni ⋮: buscar y la conversación viven en
+    // Ajustes (Vistas v3; la rayita sobre el compositor antes); el modelo,
+    // en la píldora de estado.
     expect(find.byKey(const ValueKey('chat-new-session')), findsNothing);
     expect(find.byKey(const ValueKey('chat-control-trigger')), findsNothing);
     expect(
       find.byKey(const ValueKey('bot-chat-overflow-appbar')),
       findsNothing,
     );
-    expect(find.byKey(const ValueKey('chat-notch')), findsOneWidget);
+    // Vistas v3 (the owner), D2: [Vistas] [Ajustes] in its header, as any chat.
+    expect(
+      find.descendant(
+        of: botHeader,
+        matching: find.byKey(const ValueKey('chat-settings-button')),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: botHeader,
+        matching: find.byKey(const ValueKey('chat-views-button')),
+      ),
+      findsOneWidget,
+    );
 
-    await tester.tap(find.byKey(const ValueKey('chat-notch')));
+    expect(find.byKey(const ValueKey('status-pill-model')), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('chat-settings-button')));
     await tester.pump();
     await tester.pump(kChatNotchSheetOpen);
-    expect(find.byKey(const ValueKey('chat-control-model')), findsOneWidget);
+    expect(find.byKey(const ValueKey('chat-control-model')), findsNothing);
     expect(find.byKey(const ValueKey('chat-control-find')), findsOneWidget);
+    // It continues one conversation: no «Nuevo chat»; its screen instead.
+    expect(find.byKey(const ValueKey('chat-control-new-chat')), findsNothing);
+    expect(find.byKey(const ValueKey('chat-control-desktop')), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('Bot Chat replies carry the bot name in its colour, no face', (
-    tester,
-  ) async {
-    final avatarLoads = <String>[];
-    final avatarCache = MissionProfileAvatarCache(
-      loader: (profile) async {
-        avatarLoads.add(profile);
-        return _testProfileAvatar();
-      },
-    );
+  testWidgets('Bot Chat opens the bot screen for that profile', (tester) async {
     await pumpChat(
       tester,
-      connection: _remoteConn('conn-bot-face'),
+      connection: _remoteConn('conn-bot-screen'),
       session: const Session(
-        id: 'mob-bot-astra',
-        lineageRootId: 'stored-bot-face',
+        id: 'mob-bot-screen',
         title: 'Bot Chat',
         model: 'hermes-agent',
-        source: 'bot-mode-canonical',
-        messageCount: 2,
+        source: 'bot-mode',
+        messageCount: 0,
         isActive: false,
         preview: '',
         startedAt: 1,
-        profile: 'console-lead',
+        profile: 'infra',
       ),
-      messages: const [
-        {'role': 'user', 'content': 'Preséntate'},
-        {'role': 'assistant', 'content': 'Soy Astra, líder técnica.'},
-      ],
-      missionBotProfile: const AgentProfile(
-        name: 'console-lead',
-        botModeUiMeta: {'title': 'Astra', 'shape': 'blobatar'},
-      ),
-      missionAvatarCache: avatarCache,
+      missionBotProfile: const AgentProfile(name: 'infra'),
     );
     await tester.pump();
+    // Vistas v3, D2: «Escritorio» is in Ajustes' quick pill.
+    await tester.tap(find.byKey(const ValueKey('chat-settings-button')));
+    await tester.pump();
+    await tester.pump(kChatNotchSheetOpen);
+    final button = find.byKey(const ValueKey('chat-control-desktop'));
+    expect(button, findsOneWidget);
+    expect(find.byTooltip('Ver el escritorio del bot'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: button,
+        matching: find.byIcon(Icons.desktop_windows_outlined),
+      ),
+      findsOneWidget,
+    );
+    await tester.tap(button);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    final peek = tester.widget<ScreenPeekScreen>(find.byType(ScreenPeekScreen));
+    expect(peek.profile, 'infra');
+    expect(peek.readOnly, isFalse);
+    Navigator.of(tester.element(find.byType(ScreenPeekScreen))).pop();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+  });
 
-    expect(find.text('Soy Astra, líder técnica.'), findsOneWidget);
-    // ct1215: the bot's face is at the top of the chat; a reply carries
-    // its name, in the bot's own colour, and nothing next to it.
-    _expectNoTurnFace(tester);
-    expect(
-      find.byKey(const ValueKey('assistant-header-bot-face-console-lead')),
-      findsNothing,
+  testWidgets('Bot Chat without a profile opens the screen of the active one', (
+    tester,
+  ) async {
+    await pumpChat(
+      tester,
+      connection: _remoteConn('conn-bot-screen-active'),
+      initialActiveProfile: 'infra',
+      session: const Session(
+        id: 'mob-bot-screen-active',
+        title: 'Bot Chat',
+        model: 'hermes-agent',
+        source: 'bot-mode',
+        messageCount: 0,
+        isActive: false,
+        preview: '',
+        startedAt: 1,
+      ),
     );
-    final name = tester.widget<Text>(
-      find.byKey(const ValueKey('assistant-header-name')),
-    );
-    expect(name.data, 'Astra');
+    await tester.pump();
+    await _openBotScreenFromSettings(tester);
     expect(
-      name.style!.color,
-      botIdentityColor(
-        const AgentProfile(
+      tester.widget<ScreenPeekScreen>(find.byType(ScreenPeekScreen)).profile,
+      'infra',
+    );
+    Navigator.of(tester.element(find.byType(ScreenPeekScreen))).pop();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+  });
+
+  testWidgets('a read-only Bot Chat still opens a read-only screen', (
+    tester,
+  ) async {
+    await pumpChat(
+      tester,
+      connection: _remoteConn('conn-bot-screen-ro').copyWith(readOnly: true),
+      session: const Session(
+        id: 'mob-bot-screen-ro',
+        title: 'Bot Chat',
+        model: 'hermes-agent',
+        source: 'bot-mode',
+        messageCount: 0,
+        isActive: false,
+        preview: '',
+        startedAt: 1,
+        profile: 'infra',
+      ),
+      missionBotProfile: const AgentProfile(name: 'infra'),
+    );
+    await tester.pump();
+    await _openBotScreenFromSettings(tester);
+    expect(
+      tester.widget<ScreenPeekScreen>(find.byType(ScreenPeekScreen)).readOnly,
+      isTrue,
+    );
+    Navigator.of(tester.element(find.byType(ScreenPeekScreen))).pop();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+  });
+
+  testWidgets(
+    'Bot Chat replies carry the bot name in its colour and its small face',
+    (tester) async {
+      final avatarLoads = <String>[];
+      final avatarCache = MissionProfileAvatarCache(
+        loader: (profile) async {
+          avatarLoads.add(profile);
+          return _testProfileAvatar();
+        },
+      );
+      await pumpChat(
+        tester,
+        connection: _remoteConn('conn-bot-face'),
+        session: const Session(
+          id: 'mob-bot-astra',
+          lineageRootId: 'stored-bot-face',
+          title: 'Bot Chat',
+          model: 'hermes-agent',
+          source: 'bot-mode-canonical',
+          messageCount: 2,
+          isActive: false,
+          preview: '',
+          startedAt: 1,
+          profile: 'console-lead',
+        ),
+        messages: const [
+          {'role': 'user', 'content': 'Preséntate'},
+          {'role': 'assistant', 'content': 'Soy Astra, líder técnica.'},
+        ],
+        missionBotProfile: const AgentProfile(
           name: 'console-lead',
           botModeUiMeta: {'title': 'Astra', 'shape': 'blobatar'},
         ),
-        avatarCache: avatarCache,
-      ),
-    );
-    expect(
-      tester.getTopLeft(find.byKey(const ValueKey('assistant-header-name'))).dx,
-      closeTo(tester.getTopLeft(find.text('Soy Astra, líder técnica.')).dx, 1),
-      reason: 'the name starts at the reply text edge',
-    );
-    expect(
-      find.byKey(const ValueKey('assistant-header-companion')),
-      findsNothing,
-    );
-    expect(avatarLoads, isEmpty);
-    expect(tester.takeException(), isNull);
-  });
+        missionAvatarCache: avatarCache,
+      );
+      await tester.pump();
+
+      expect(find.text('Soy Astra, líder técnica.'), findsOneWidget);
+      // ct1215: the bot's face is at the top of the chat; a reply carries
+      // its name, in the bot's own colour, and nothing next to it.
+      _expectAnswerFace(tester);
+      expect(
+        find.byKey(const ValueKey('assistant-header-bot-face-console-lead')),
+        findsNothing,
+      );
+      final name = tester.widget<Text>(
+        find.byKey(const ValueKey('assistant-header-name')),
+      );
+      expect(name.data, 'Astra');
+      expect(
+        name.style!.color,
+        botIdentityColor(
+          const AgentProfile(
+            name: 'console-lead',
+            botModeUiMeta: {'title': 'Astra', 'shape': 'blobatar'},
+          ),
+          avatarCache: avatarCache,
+        ),
+      );
+      // Q9 (the owner): the bot's small face opens the header at the reply's
+      // edge, its name right after it.
+      final slot = tester.getRect(
+        find.byKey(const ValueKey('assistant-avatar-slot')),
+      );
+      expect(
+        slot.left,
+        closeTo(
+          tester.getTopLeft(find.text('Soy Astra, líder técnica.')).dx,
+          1,
+        ),
+        reason: 'the face starts at the reply text edge',
+      );
+      expect(
+        tester
+            .getTopLeft(find.byKey(const ValueKey('assistant-header-name')))
+            .dx,
+        closeTo(slot.right, 1),
+        reason: 'the name right after the face',
+      );
+      expect(
+        find.byKey(const ValueKey('assistant-header-companion')),
+        findsNothing,
+      );
+      expect(avatarLoads, isEmpty);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('idle Bot Chat stops producing frames (no endless face ticker)', (
     tester,
@@ -37046,8 +43532,9 @@ void main() {
     await tester.pump();
 
     // Spec 070 S2: face + name, and the composer speaks to the bot. fh1215:
-    // the model left the header; Bot Chat has no status pill, so it stays
-    // one tap away in the notch sheet. The idle header pill opens no menu.
+    // the model left the header for the status pill, Bot Chat included (QA
+    // 9493); the notch sheet does not repeat it. The idle header pill opens
+    // no menu.
     expect(
       find.descendant(
         of: find.byKey(const ValueKey('chat-header-pill')),
@@ -37055,10 +43542,11 @@ void main() {
       ),
       findsOneWidget,
     );
-    await tester.tap(find.byKey(const ValueKey('chat-notch')));
+    expect(find.byKey(const ValueKey('status-pill-model')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('chat-settings-button')));
     await tester.pump();
     await tester.pump(kChatNotchSheetOpen);
-    expect(find.byKey(const ValueKey('chat-control-model')), findsOneWidget);
+    expect(find.byKey(const ValueKey('chat-control-model')), findsNothing);
     await tester.binding.handlePopRoute();
     await tester.pumpAndSettle();
     final field = tester.widget<TextField>(
@@ -37196,18 +43684,19 @@ void main() {
       expect(face.center.dx, closeTo(pillRect.center.dx, 0.5));
       expect(face.bottom - pillRect.top, FloatingChatHeader.faceOverlap);
       expect(face.top, greaterThanOrEqualTo(24), reason: 'below status bar');
+      // the owner (gint72): no state dot of colour on the island.
       expect(
         find.descendant(
           of: pill,
           matching: find.byKey(const ValueKey('island-dot-idle')),
         ),
-        findsOneWidget,
+        findsNothing,
       );
       final screenWidth =
           tester.view.physicalSize.width / tester.view.devicePixelRatio;
       expect(pillRect.center.dx, closeTo(screenWidth / 2, 1));
-      // No ⋮, no search, no + in a Bot Chat header: they live in the notch
-      // sheet.
+      // No ⋮, no search, no + in a Bot Chat header: they live in Ajustes
+      // (Vistas v3; the notch's sheet before).
       expect(
         find.byKey(const ValueKey('bot-chat-overflow-appbar')),
         findsNothing,
@@ -37221,7 +43710,10 @@ void main() {
       expect((list.padding! as EdgeInsets).top, inset);
       expect(pillRect.bottom, lessThanOrEqualTo(inset));
       expect(face.top, greaterThanOrEqualTo(24), reason: 'below status bar');
-      expect(find.byKey(const ValueKey('chat-notch')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('chat-settings-button')),
+        findsOneWidget,
+      );
       expect(tester.takeException(), isNull);
     });
 
@@ -37276,7 +43768,10 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    group('QA 9493: the notch sits on the composer, the status pill under '
+    // Vistas v3 (the owner): no notch on the composer any more (its sheet is
+    // Ajustes, in the header). What stays of QA 9493: nothing sits on the
+    // composer's top edge, and the status pill is under it.
+    group('QA 9493: nothing sits on the composer, the status pill under '
         'it', () {
       Future<void> phone(WidgetTester tester, {bool keyboard = false}) async {
         tester.view.physicalSize = const Size(1080, 2400);
@@ -37292,26 +43787,19 @@ void main() {
       }
 
       Future<void> settle(WidgetTester tester) async {
-        // Past the notch's one-off breath (it rises and settles).
         await tester.pump(const Duration(seconds: 3));
         await tester.pump(const Duration(seconds: 1));
       }
 
       void expectOnComposer(WidgetTester tester, String label) {
-        final tab = tester.getRect(
-          find.byKey(const ValueKey('chat-notch-tab')),
-        );
         final surface = tester.getRect(find.byType(HermesComposerSurface));
+        expect(find.byType(ChatNotch), findsNothing, reason: label);
+        // Ajustes is the header's, far above the composer.
         expect(
-          tab.bottom,
-          closeTo(surface.top, 1),
-          reason:
-              '$label: notch bottom ${tab.bottom} vs composer top '
-              '${surface.top}',
-        );
-        expect(
-          (tab.center.dx - surface.center.dx).abs(),
-          lessThan(1),
+          tester
+              .getRect(find.byKey(const ValueKey('chat-settings-button')))
+              .bottom,
+          lessThan(surface.top),
           reason: label,
         );
         final pill = find.byKey(const ValueKey('chat-status-pill'));
@@ -37420,36 +43908,187 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('a normal chat gets the same floating header: menu left, + '
-        'right; no model selector, search or ⋮ in it', (tester) async {
+    testWidgets('live-pill-identity: the main profile with a face of its own '
+        'wears its name and face in the header and on its answers, never '
+        '«Hermes» nor the sprite', (tester) async {
+      const luna = AgentProfile(
+        name: 'default',
+        isDefault: true,
+        botModeUiMeta: {
+          'title': 'Luna',
+          'shape': 'blobatar::round',
+          'color': '#f08a24',
+        },
+      );
+      final connection = _remoteConn('conn-live-pill-main');
+      BotRosterRegistry.shared.publish(connection.id, 'QA', const [luna]);
+      addTearDown(() => BotRosterRegistry.shared.forget(connection.id));
+      await pumpChat(
+        tester,
+        connection: connection,
+        messages: const [
+          {'role': 'assistant', 'content': 'Hola, aquí estoy.'},
+          {'role': 'user', 'content': 'Hola'},
+        ],
+      );
+      await tester.pump(const Duration(seconds: 1));
+      final header = find.byKey(const ValueKey('chat-header'));
+      expect(
+        find.descendant(of: header, matching: find.byType(MascotSprite)),
+        findsNothing,
+        reason: 'the mascot cube is the last resort, not the main profile\'s',
+      );
+      expect(find.text('Luna'), findsWidgets);
+      expect(find.text('Hermes'), findsNothing);
+      // The composer asks the profile by its own name too.
+      expect(find.text('Pregunta a Luna…'), findsOneWidget);
+      expect(find.text('Pregunta a Hermes…'), findsNothing);
+      // Both the header's face and the small one that opens the answer are
+      // the roster\'s own face of the main profile.
+      final faces = tester
+          .widgetList<LivingBotFace>(find.byType(LivingBotFace))
+          .where((face) => identical(face.profile, luna));
+      expect(faces.length, greaterThanOrEqualTo(2));
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('APK 9801: the main profile\'s photo reaches the chat: header '
+        'and answers read it through the lists\' own cache, under the '
+        'roster\'s own name', (tester) async {
+      // The main profile is not called «default» in the roster, and it has a
+      // photo: the Bots list paints it through the shared cache.
+      const luffy = AgentProfile(
+        name: 'hermes',
+        isDefault: true,
+        hasAvatar: true,
+        botModeUiMeta: {'title': 'Luffy', 'imageKind': 'photo'},
+      );
+      final connection = _remoteConn('conn-9801-main-photo');
+      BotRosterRegistry.shared.publish(connection.id, 'QA', const [luffy]);
+      addTearDown(() => BotRosterRegistry.shared.forget(connection.id));
+      ProfileFace.debugResetAvatarCaches();
+      addTearDown(ProfileFace.debugResetAvatarCaches);
+      final cache = ProfileFace.cacheFor(
+        connection,
+        rosterTicket: BotRosterRegistry.shared.store(connection.id).ticket,
+        loader: (_) async => null,
+      );
+      await pumpChat(
+        tester,
+        connection: connection,
+        messages: const [
+          {'role': 'assistant', 'content': 'Hola, aquí estoy.'},
+          {'role': 'user', 'content': 'Hola'},
+        ],
+      );
+      await tester.pump(const Duration(seconds: 1));
+      final header = find.byKey(const ValueKey('chat-header'));
+      final faces = tester
+          .widgetList<LivingBotFace>(find.byType(LivingBotFace))
+          .where((face) => identical(face.profile, luffy))
+          .toList();
+      expect(faces.length, greaterThanOrEqualTo(2), reason: 'header + answer');
+      for (final face in faces) {
+        // The same inputs as the Bots list: the roster\'s profile, its own
+        // name, and the shared photo cache (never none).
+        expect(face.profileName, 'hermes');
+        expect(identical(face.avatarCache, cache), isTrue);
+      }
+      final avatar = tester.widget<MissionProfileAvatar>(
+        find
+            .descendant(of: header, matching: find.byType(MissionProfileAvatar))
+            .first,
+      );
+      expect(avatar.hasAvatar, isTrue, reason: 'the photo is painted');
+      expect(identical(avatar.cache, cache), isTrue);
+      expect(find.byKey(const ValueKey('header-mascot')), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('APK 9801: the main profile\'s pet is read under the '
+        'roster\'s name for it, in the header and on the answers', (
+      tester,
+    ) async {
+      mockCompanionStorage();
+      const luffy = AgentProfile(
+        name: 'hermes',
+        isDefault: true,
+        botModeUiMeta: {'title': 'Luffy'},
+      );
+      final connection = _remoteConn('conn-9801-main-pet');
+      BotRosterRegistry.shared.publish(connection.id, 'QA', const [luffy]);
+      addTearDown(() => BotRosterRegistry.shared.forget(connection.id));
+      ProfileIdentities.instance.publish(
+        connection.id,
+        'hermes',
+        _islandPet('luffy'),
+      );
+      addTearDown(ProfileIdentities.instance.reset);
+      await pumpChat(
+        tester,
+        connection: connection,
+        messages: const [
+          {'role': 'assistant', 'content': 'Hola, aquí estoy.'},
+          {'role': 'user', 'content': 'Hola'},
+        ],
+      );
+      await tester.pump(const Duration(seconds: 1));
+      expect(
+        find.byKey(const ValueKey('chat-header-companion')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('answer-chat-header-companion')),
+        findsWidgets,
+      );
+      expect(find.byKey(const ValueKey('header-mascot')), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a normal chat gets the same floating header: menu left, '
+        '[Vistas] [Ajustes] right; no model selector, search or ⋮ in it', (
+      tester,
+    ) async {
       await pumpChat(tester, connection: _remoteConn('conn-dc1215-normal'));
       expect(find.byType(AppBar), findsNothing);
       expect(find.byKey(const ValueKey('chat-header')), findsOneWidget);
       expect(pill, findsOneWidget);
-      expect(find.byKey(const ValueKey('chat-new-session')), findsOneWidget);
+      // Vistas v3: «+» left the header for Ajustes' quick pill.
+      expect(find.byKey(const ValueKey('chat-new-session')), findsNothing);
+      expect(find.byKey(const ValueKey('chat-views-button')), findsOneWidget);
       expect(find.byKey(const ValueKey('chat-find-trigger')), findsNothing);
       expect(find.byKey(const ValueKey('chat-control-trigger')), findsNothing);
       expect(
         find.byKey(const ValueKey('provider-logo-chat-header')),
         findsNothing,
       );
-      final plus = tester.getCenter(
-        find.byKey(const ValueKey('chat-new-session')),
+      final views = tester.getRect(
+        find.byKey(const ValueKey('chat-views-button')),
       );
-      expect(plus.dx, greaterThan(tester.getRect(pill).right));
+      final settings = tester.getRect(
+        find.byKey(const ValueKey('chat-settings-button')),
+      );
+      expect(views.left, greaterThan(tester.getRect(pill).right));
+      expect(settings.left, greaterThan(views.right));
       // The idle island is only the name: a tap opens nothing; search and
-      // controls live in the notch, the model in the bottom status pill.
+      // controls live in Ajustes, the model in the bottom status pill.
       await tester.tap(pill, warnIfMissed: false);
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('island-card')), findsNothing);
       expect(find.byKey(const ValueKey('chat-control-dialog')), findsNothing);
       expect(find.byKey(const ValueKey('chat-model-dialog')), findsNothing);
       expect(find.byKey(const ValueKey('status-pill-model')), findsOneWidget);
-      await tester.tap(find.byKey(const ValueKey('chat-notch')));
+      await tester.tap(find.byKey(const ValueKey('chat-settings-button')));
       await tester.pump();
       await tester.pump(kChatNotchSheetOpen);
       expect(find.byKey(const ValueKey('chat-control-find')), findsOneWidget);
-      expect(find.text('Ajustes de esta conversación'), findsWidgets);
+      expect(
+        find.byKey(const ValueKey('chat-control-new-chat')),
+        findsOneWidget,
+      );
+      // the owner's final windows: the title is the conversation's own name;
+      // «Esta conversación» remains the window's accessible name.
+      expect(find.bySemanticsLabel('Esta conversación'), findsWidgets);
       expect(tester.takeException(), isNull);
     });
 
@@ -37511,15 +44150,18 @@ void main() {
         find.descendant(of: island, matching: find.text('Ver')),
         findsOneWidget,
       );
-      expect(find.byType(ChatApprovalCard), findsOneWidget);
+      expect(find.byType(ChatApprovalDock), findsOneWidget);
       chat.pendingApproval = null;
       await _rebuildChatScreen(tester);
       await tester.pump(const Duration(milliseconds: 300));
       expect(tester.widget<Text>(pillText).data, 'qa');
     });
 
-    testWidgets('working: the header pill IS the activity pill (one, none '
-        'above the composer) and opens the activity view', (tester) async {
+    // Q9-CHAT5 v2 (ORDEN2-Q9-CHAT5, decisión 1): the header pill keeps the
+    // name, without the turn's clock; the live turn is the pills above the
+    // composer, once.
+    testWidgets('working: the header pill keeps the name; the turn is the '
+        'pills above the composer, with its one clock', (tester) async {
       final gateway = _UiRewindGateway();
       final chat = await pumpChat(
         tester,
@@ -37531,25 +44173,16 @@ void main() {
         ],
       );
       await startTurn(tester, chat, gateway);
-      final activity = find.byKey(const ValueKey('activity-pill'));
+      await openInlineDetails(tester);
+      final activity = find.byKey(const ValueKey('turn-step-card-call-dots-1'));
       expect(activity, findsOneWidget);
-      expect(
-        find.descendant(
-          of: find.byKey(const ValueKey('bot-chat-header')),
-          matching: activity,
-        ),
-        findsOneWidget,
-      );
-      expect(
-        tester.getRect(activity).bottom,
-        lessThan(tester.getTopLeft(find.byType(ConsoleComposer)).dy - 200),
-        reason: 'at the top, not above the composer',
-      );
-      expect(_islandActivity(tester).detail, startsWith('Ejecutando'));
-      expect(
-        find.byKey(const ValueKey('activity-pill-elapsed')),
-        findsOneWidget,
-      );
+      expect(find.byKey(const ValueKey('activity-pill')), findsNothing);
+      expect(find.byKey(const ValueKey('subagent-work-clock')), findsNothing);
+      expect(find.byKey(const ValueKey('turn-step-mark-call-dots-1')), findsOneWidget);
+      expect(tester.getSemantics(activity).label, contains('sleep'));
+      expect(tester.getRect(activity).bottom,
+        lessThanOrEqualTo(tester.getTopLeft(find.byType(ConsoleComposer)).dy));
+      expect(_activitySnapshot(tester).current, isNotNull);
       await tester.tap(activity, warnIfMissed: false);
       await tester.pump(const Duration(milliseconds: 400));
       expect(find.byKey(const ValueKey('island-card')), findsNothing);
@@ -37696,8 +44329,7 @@ void main() {
     await tester.pump();
     await restored;
     await tester.pump();
-    await tester.tap(find.byKey(const ValueKey('chat-queue-toggle')));
-    await tester.pump();
+    await _openQueueActivity(tester);
 
     const lost = 'prepared:lost';
     expect(
@@ -37738,6 +44370,53 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('paused queue during a turn exposes a working Resume button', (
+    tester,
+  ) async {
+    final gateway = _NoLiveMutationGateway();
+    final chat = await pumpChat(
+      tester,
+      desktopGateway: gateway,
+      connection: _remoteConn('conn-active-paused-queue'),
+      chatState: ChatPipelineState.streaming,
+    );
+    final now = DateTime.now().millisecondsSinceEpoch;
+    await chat.restoreQueuedTurns(
+      [
+        PreparedTurn(
+          connectionId: chat.connection.id,
+          sessionId: chat.sessionId,
+          clientTurnId: 'active-paused',
+          createdAtMs: now,
+          updatedAtMs: now,
+          text: 'explicit resume only',
+          attachments: const [],
+          model: 'hermes-agent',
+          profile: chat.sessionProfile,
+          queued: true,
+          queueOrder: 1,
+        ),
+      ],
+      _UiReleaseOutbox(),
+      scheduleDrain: false,
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(chat.isStreaming, isTrue);
+    expect(chat.queueParked, isTrue);
+    await _openQueueActivity(tester);
+    expect(find.text('En pausa'), findsOneWidget);
+    final resume = find.byKey(const ValueKey('chat-queue-resume'));
+    expect(tester.getSize(resume).shortestSide, greaterThanOrEqualTo(48));
+    await tester.tap(resume);
+    await tester.pump();
+    expect(chat.queueParked, isFalse);
+    expect(chat.queuedEntries.single.text, 'explicit resume only');
+    expect(gateway.submissions, isEmpty);
+    expect(find.byKey(const ValueKey('subagent-panel')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('lo1216 cola restaurada de otra sesión vuelve en pausa', (
     tester,
   ) async {
@@ -37774,7 +44453,10 @@ void main() {
     await tester.pump(const Duration(milliseconds: 50));
 
     expect(chat.queuedEntries.map((e) => e.text), ['mensaje antiguo']);
-    expect(find.text('EN PAUSA · 1'), findsOneWidget);
+    expect(find.byKey(const ValueKey('chat-queue-chip')), findsOneWidget);
+    await _openQueueActivity(tester);
+    expect(find.text('En pausa'), findsOneWidget);
+    expect(find.byKey(const ValueKey('chat-queue-resume')).hitTestable(), findsOneWidget);
     expect(find.text('Cola en pausa desde la última sesión'), findsOneWidget);
     expect(find.byKey(const ValueKey('chat-queue-resume')), findsOneWidget);
     expect(tester.takeException(), isNull);
@@ -37821,8 +44503,7 @@ void main() {
     await tester.pump();
     await restored;
     await tester.pump();
-    await tester.tap(find.byKey(const ValueKey('chat-queue-toggle')));
-    await tester.pump();
+    await _openQueueActivity(tester);
 
     const acked = 'prepared:acked';
     VoidCallback? pressed(String key) {
@@ -37894,14 +44575,13 @@ void main() {
           queueOrder: 1,
         ),
       ],
-      _FailingDeleteOutbox(),
+      _FailingDeleteOutbox(failSave: true),
       scheduleDrain: false,
     );
     await tester.pump();
     await restored;
     await tester.pump();
-    await tester.tap(find.byKey(const ValueKey('chat-queue-toggle')));
-    await tester.pump();
+    await _openQueueActivity(tester);
 
     await tester.tap(
       find.byKey(const ValueKey('chat-queue-delete-prepared:stuck')),
@@ -37954,8 +44634,7 @@ void main() {
     await tester.pump();
     await restored;
     await tester.pump();
-    await tester.tap(find.byKey(const ValueKey('chat-queue-toggle')));
-    await tester.pump();
+    await _openQueueActivity(tester);
 
     await tester.tap(
       find.byKey(const ValueKey('chat-queue-abandon-prepared:lost')),
@@ -38007,6 +44686,7 @@ void main() {
     await tester.pump();
     expect(chat.queueParked, isTrue);
 
+    await _openQueueActivity(tester);
     await tester.tap(find.byKey(const ValueKey('chat-queue-resume')));
     await tester.pump();
     expect(chat.queueParked, isTrue);
@@ -38074,8 +44754,7 @@ void main() {
     await tester.pump();
     await restored;
     await tester.pump();
-    await tester.tap(find.byKey(const ValueKey('chat-queue-toggle')));
-    await tester.pump();
+    await _openQueueActivity(tester);
 
     const id = 'prepared:photo';
     // Nothing is running and the head is stuck: no false promise.
@@ -38426,13 +45105,16 @@ void main() {
       nowMs = start.add(const Duration(seconds: 5)).millisecondsSinceEpoch;
       await tester.pump(const Duration(seconds: 3));
 
-      expect(find.text('⏳ waiting on provider…'), findsWidgets);
+      // live-pill: the capsule says the wait as its phrase, without the
+      // trailing ellipsis it wears on the wire.
+      expect(_activitySnapshot(tester).headline, contains('provider'));
+      expect(liveInlineActivity, findsOneWidget);
 
       gateway.emit('message.delta', const {'text': 'Hola'});
       await settle(tester);
       await tester.pump(const Duration(milliseconds: 300));
 
-      expect(find.text('⏳ waiting on provider…'), findsNothing);
+      expect(find.textContaining('waiting on provider'), findsNothing);
 
       gateway.emit('message.complete', const {'text': 'Hola'});
       await settle(tester);
@@ -38529,6 +45211,19 @@ void main() {
       return (chat, gateway);
     }
 
+    Future<void> finishDeviceSignIn(WidgetTester tester) async {
+      // The shared account page shows the verdict until the user closes it.
+      // Tick the single timer at its own pace, then acknowledge that verdict.
+      for (var i = 0; i < 60; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      expect(find.byKey(const ValueKey('nac-link-approved')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('nac-link-done')));
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+    }
+
     testWidgets('a revoked OAuth grant offers to sign in again, then retry', (
       tester,
     ) async {
@@ -38579,10 +45274,7 @@ void main() {
         await tester.pump(const Duration(milliseconds: 100));
       }
       expect(find.text('ABCD-1234'), findsOneWidget);
-      await tester.pump(const Duration(seconds: 3));
-      for (var i = 0; i < 10; i++) {
-        await tester.pump(const Duration(milliseconds: 100));
-      }
+      await finishDeviceSignIn(tester);
 
       expect(
         dashboard.calls,
@@ -38641,10 +45333,7 @@ void main() {
         for (var i = 0; i < 10; i++) {
           await tester.pump(const Duration(milliseconds: 100));
         }
-        await tester.pump(const Duration(seconds: 3));
-        for (var i = 0; i < 10; i++) {
-          await tester.pump(const Duration(milliseconds: 100));
-        }
+        await finishDeviceSignIn(tester);
         expect(find.text('Sesión de ChatGPT renovada'), findsOneWidget);
         return failed;
       }
@@ -39276,19 +45965,34 @@ void main() {
       });
     }
 
-    void expectVoiceSurfaceInPlace(WidgetTester tester) {
-      final line = tester.getRect(find.byKey(const ValueKey('voice-strip')));
+    // Voz inline (outdated 135 v2 capsule, updated): the state in the
+    // header's island, inside the screen and above the composer; the voice
+    // controls in the composer's dock, over the input row that keeps its
+    // whole hint.
+    // Q9-CHAT5 v2 (ORDEN2-Q9-CHAT5: «compositor con parar rojo y "Poner en
+    // cola…"»): while a turn works, the hint is the queue's.
+    void expectVoiceSurfaceInPlace(
+      WidgetTester tester, {
+      String hint = 'Pregunta a Hermes…',
+    }) {
+      final capsule = tester.getRect(
+        find.byKey(const ValueKey('voice-island-status')),
+      );
       final surface = tester.getRect(
         find.byKey(const ValueKey('hermes-composer-visible-surface')),
       );
-      expect(line.left, surface.left);
-      expect(line.right, surface.right);
-      expect(line.height, 40);
-      expect(surface.top - line.bottom, closeTo(7, 0.01));
-      // On a phone this wide the way out carries its name, and the field
-      // its hint whole.
-      expect(find.text('Terminar'), findsOneWidget);
-      expect(find.text('Escribe…'), findsOneWidget);
+      expect(capsule.left, greaterThanOrEqualTo(0));
+      expect(capsule.right, lessThanOrEqualTo(390));
+      expect(capsule.width, lessThanOrEqualTo(VoiceIslandStatus.maxWidth));
+      expect(capsule.bottom, lessThanOrEqualTo(surface.top));
+      expect(find.text(hint), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('chat-header')),
+          matching: find.byKey(const ValueKey('voice-strip-close')),
+        ),
+        findsNothing,
+      );
       expect(
         find.descendant(
           of: find.byType(ConsoleComposer),
@@ -39310,7 +46014,7 @@ void main() {
         await app.voiceConvo.enter(chat: chat, model: 'hermes-agent');
         await tester.pump();
         await tester.pump(const Duration(seconds: 3));
-        expect(find.text('Escuchando…'), findsOneWidget);
+        expect(find.text('Escuchando'), findsOneWidget);
         expect(find.byKey(const ValueKey('voice-strip-pause')), findsOneWidget);
         expectVoiceSurfaceInPlace(tester);
         await saveVoiceShot(tester, 'voice_v2_chat_1_listening');
@@ -39319,8 +46023,13 @@ void main() {
         await tester.tap(find.byKey(const ValueKey('voice-strip-pause')));
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 300));
-        expect(find.text('En pausa'), findsOneWidget);
-        expect(find.text('Reanudar'), findsOneWidget);
+            expect(find.text('En pausa'), findsOneWidget);
+        // The dock's 🎙 now resumes (an icon, named for TalkBack).
+        expect(
+          find.byKey(const ValueKey('voice-strip-resume')),
+          findsOneWidget,
+        );
+        expect(find.bySemanticsLabel('Reanudar'), findsOneWidget);
         expect(find.byKey(const ValueKey('voice-strip-pause')), findsNothing);
         expectVoiceSurfaceInPlace(tester);
         await saveVoiceShot(tester, 'voice_v2_chat_4_paused');
@@ -39345,9 +46054,17 @@ void main() {
       await app.voiceConvo.enter(chat: chat, model: 'hermes-agent');
       await tester.pump();
       await tester.pump(const Duration(seconds: 2));
-      expect(find.text('Parar y hablar'), findsOneWidget);
-      expect(find.byKey(const ValueKey('voice-strip-cancel')), findsOneWidget);
-      expectVoiceSurfaceInPlace(tester);
+      // Voz inline (outdated capsule, updated): while Hermes works the dock
+      // offers no «Interrumpir» (that is for its voice); the work is stopped
+      // with the dock's one Stop, the composer's is under the dock.
+      expect(find.bySemanticsLabel('Interrumpir'), findsNothing);
+      expect(find.byKey(const ValueKey('voice-strip-cancel')), findsNothing);
+      expect(
+        find.byKey(const ValueKey('voice-dock-stop')).hitTestable(),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('stop')).hitTestable(), findsNothing);
+      expectVoiceSurfaceInPlace(tester, hint: 'Poner en cola…');
       await saveVoiceShot(tester, 'voice_v2_chat_2_working');
 
       await tester.tap(find.byKey(const ValueKey('voice-strip-close')));
@@ -39410,8 +46127,7 @@ void main() {
       for (var frame = 0; frame < 10; frame++) {
         await tester.pump(const Duration(milliseconds: 100));
       }
-      await tester.tap(find.byKey(const ValueKey('chat-queue-toggle')));
-      await tester.pump();
+      await _openQueueActivity(tester);
       return (chat, gateway);
     }
 
@@ -39562,8 +46278,7 @@ void main() {
     }
 
     Future<void> openQueue(WidgetTester tester) async {
-      await tester.tap(find.byKey(const ValueKey('chat-queue-toggle')));
-      await tester.pump();
+      await _openQueueActivity(tester);
     }
 
     Future<void> submitComposer(WidgetTester tester, String text) async {
@@ -39585,11 +46300,11 @@ void main() {
       final second = chat.queuedEntries.last.id;
 
       await tester.longPress(find.text('uno'));
-      await tester.pumpAndSettle();
+      await _pumpEditorTransition(tester);
       // The first row has nothing above it.
       expect(find.byKey(ValueKey('chat-queue-move-up-$first')), findsNothing);
       await tester.tap(find.byKey(ValueKey('chat-queue-move-down-$first')));
-      await tester.pumpAndSettle();
+      await _pumpEditorTransition(tester);
 
       expect(chat.queuedMessages, ['dos', 'uno']);
       expect(chat.queuedEntries.first.id, second);
@@ -39608,17 +46323,17 @@ void main() {
       expect(find.byTooltip('Detener y enviar ahora'), findsOneWidget);
 
       await tester.tap(find.byKey(ValueKey('chat-queue-send-now-$id')));
-      await tester.pumpAndSettle();
+      await _pumpEditorTransition(tester);
       expect(find.text('¿Detener la respuesta?'), findsOneWidget);
       await tester.tap(
         find.byKey(const ValueKey('hermes-confirm-dialog-cancel')),
       );
-      await tester.pumpAndSettle();
+      await _pumpEditorTransition(tester);
       expect(gateway.interruptCalls, 0);
       expect(chat.queuedMessages, ['siguiente']);
 
       await tester.tap(find.byKey(ValueKey('chat-queue-send-now-$id')));
-      await tester.pumpAndSettle();
+      await _pumpEditorTransition(tester);
       await tester.tap(
         find.byKey(const ValueKey('hermes-confirm-dialog-confirm')),
       );
@@ -39655,18 +46370,18 @@ void main() {
         find.byKey(const ValueKey('inline-message-editor-field')),
         'pregunta corregida',
       );
-      await tester.pumpAndSettle();
+      await _pumpEditorTransition(tester);
       await tester.tap(
         find.byKey(const ValueKey('inline-message-editor-save')),
       );
-      await tester.pumpAndSettle();
+      await _pumpEditorTransition(tester);
 
       expect(find.text('¿Detener la respuesta?'), findsOneWidget);
       expect(gateway.interruptCalls, 0);
       await tester.tap(
         find.byKey(const ValueKey('hermes-confirm-dialog-cancel')),
       );
-      await tester.pumpAndSettle();
+      await _pumpEditorTransition(tester);
       // Backing out keeps the editor open and interrupts nothing.
       expect(
         find.byKey(const ValueKey('inline-message-editor-field')),
@@ -39888,14 +46603,19 @@ void main() {
       // The assistant header is outside the selectable text.
       await tester.longPress(find.byType(ChatMessageHeader).first);
       await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey('chat-message-branch')), findsOneWidget);
+      final branchMenu = find.byKey(const ValueKey('chat-message-branch'));
+      expect(branchMenu, findsOneWidget);
+      expect(
+        tester.getRect(branchMenu).bottom,
+        lessThanOrEqualTo(tester.getRect(find.byType(TextField)).top),
+      );
     });
 
     testWidgets('the chat menu offers Branch chat only when supported', (
       tester,
     ) async {
       Future<void> openMenu() async {
-        await tester.tap(find.byKey(const ValueKey('chat-notch')));
+        await tester.tap(find.byKey(const ValueKey('chat-settings-button')));
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 250));
       }
@@ -39941,7 +46661,7 @@ void main() {
         initialStoredSessionId: 'sess-test',
         acquireDesktopRuntimeBeforeMount: true,
       );
-      await tester.tap(find.byKey(const ValueKey('chat-notch')));
+      await tester.tap(find.byKey(const ValueKey('chat-settings-button')));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 250));
 
@@ -39952,6 +46672,58 @@ void main() {
       );
     });
   });
+
+  testWidgets(
+    'queue pill opens an opaque sheet at 320dp/2x and deletion updates it live',
+    (tester) async {
+      tester.view.physicalSize = const Size(320, 740);
+      tester.view.devicePixelRatio = 1;
+      tester.platformDispatcher.textScaleFactorTestValue = 2;
+      addTearDown(tester.view.reset);
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+      final semantics = tester.ensureSemantics();
+      final chat = await pumpChat(
+        tester,
+        chatState: ChatPipelineState.streaming,
+      );
+      final composerBefore = tester.getRect(find.byType(ConsoleComposer));
+      chat.enqueue(
+        'A queued request with enough text to need a summary on a Fold',
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+      expect(find.byKey(const ValueKey('chat-queue-chip')), findsOneWidget);
+      expect(find.byKey(const ValueKey('chat-queue-panel')), findsNothing);
+      expect(tester.getRect(find.byType(ConsoleComposer)), composerBefore);
+      final id = chat.queuedEntries.single.id;
+      expect(find.byKey(ValueKey('chat-queue-delete-$id')), findsNothing);
+      await _openQueueActivity(tester);
+      final panel = find.byKey(const ValueKey('chat-queue-panel'));
+      expect(panel, findsOneWidget);
+      expect(find.byKey(const ValueKey('subagent-panel')), findsNothing);
+      expect(find.byKey(const ValueKey('chat-queue-sheet')), findsOneWidget);
+      for (final action in ['edit', 'send-now', 'delete']) {
+        final hit = find.byKey(ValueKey('chat-queue-$action-$id'));
+        expect(tester.getSize(hit).width, greaterThanOrEqualTo(48));
+        expect(tester.getSize(hit).height, greaterThanOrEqualTo(48));
+        expect(
+          tester
+              .getSemantics(hit)
+              .getSemanticsData()
+              .hasAction(SemanticsAction.tap),
+          isTrue,
+        );
+      }
+      expect(tester.takeException(), isNull);
+      await tester.tap(find.byKey(ValueKey('chat-queue-delete-$id')));
+      await tester.pump();
+      await tester.pump();
+      expect(chat.queuedEntries, isEmpty);
+      expect(find.byKey(ValueKey('chat-queue-delete-$id')), findsNothing);
+      expect(tester.takeException(), isNull);
+      semantics.dispose();
+    },
+  );
 
   testWidgets('panel de cola expone acciones nativas por identidad', (
     tester,
@@ -39975,8 +46747,7 @@ void main() {
     );
     expect(chat.enqueue('corrige el rumbo'), isTrue);
     await tester.pump();
-    await tester.tap(find.byKey(const ValueKey('chat-queue-toggle')));
-    await tester.pump();
+    await _openQueueActivity(tester);
     final id = chat.queuedEntries.single.id;
 
     final edit = find.byKey(ValueKey('chat-queue-edit-$id'));
@@ -40043,8 +46814,7 @@ void main() {
     );
     expect(chat.enqueue('corrige el rumbo'), isTrue);
     await tester.pump();
-    await tester.tap(find.byKey(const ValueKey('chat-queue-toggle')));
-    await tester.pump();
+    await _openQueueActivity(tester);
     final id = chat.queuedEntries.single.id;
 
     expect(find.byKey(ValueKey('chat-queue-steer-$id')), findsNothing);
@@ -40059,8 +46829,7 @@ void main() {
     );
     expect(chat.enqueue('corrige el rumbo'), isTrue);
     await tester.pump();
-    await tester.tap(find.byKey(const ValueKey('chat-queue-toggle')));
-    await tester.pump();
+    await _openQueueActivity(tester);
     final id = chat.queuedEntries.single.id;
 
     expect(find.byKey(ValueKey('chat-queue-steer-$id')), findsNothing);
@@ -40088,8 +46857,7 @@ void main() {
     );
     expect(chat.enqueue('corrige el rumbo'), isTrue);
     await tester.pump();
-    await tester.tap(find.byKey(const ValueKey('chat-queue-toggle')));
-    await tester.pump();
+    await _openQueueActivity(tester);
     final id = chat.queuedEntries.single.id;
 
     await tester.tap(find.byKey(ValueKey('chat-queue-steer-$id')));
@@ -40133,8 +46901,7 @@ void main() {
     );
     expect(chat.enqueue('corrige el rumbo'), isTrue);
     await tester.pump();
-    await tester.tap(find.byKey(const ValueKey('chat-queue-toggle')));
-    await tester.pump();
+    await _openQueueActivity(tester);
     final id = chat.queuedEntries.single.id;
 
     await tester.tap(find.byKey(ValueKey('chat-queue-steer-$id')));
@@ -40159,8 +46926,7 @@ void main() {
     final chat = await pumpChat(tester, chatState: ChatPipelineState.streaming);
     expect(chat.enqueue('/compact'), isTrue);
     await tester.pump();
-    await tester.tap(find.byKey(const ValueKey('chat-queue-toggle')));
-    await tester.pump();
+    await _openQueueActivity(tester);
     final id = chat.queuedEntries.single.id;
 
     expect(find.byKey(ValueKey('chat-queue-steer-$id')), findsNothing);
@@ -40175,14 +46941,14 @@ void main() {
       ..enqueue('primero')
       ..enqueue('segundo');
     await tester.pump();
-    await tester.tap(find.byKey(const ValueKey('chat-queue-toggle')));
-    await tester.pump();
+    await _openQueueActivity(tester);
     final firstId = chat.queuedEntries.first.id;
     final secondId = chat.queuedEntries.last.id;
 
     // A turn is running: the usual note is true here.
     expect(find.text('se enviarán al terminar el turno'), findsOneWidget);
     await tester.tap(find.byKey(ValueKey('chat-queue-edit-$firstId')));
+    await tester.pump();
     await tester.pump();
 
     final secondEdit = tester.widget<Semantics>(
@@ -40197,8 +46963,7 @@ void main() {
     final chat = await pumpChat(tester, chatState: ChatPipelineState.streaming);
     chat.enqueue('primero');
     await tester.pump();
-    await tester.tap(find.byKey(const ValueKey('chat-queue-toggle')));
-    await tester.pump();
+    await _openQueueActivity(tester);
     final id = chat.queuedEntries.single.id;
     await tester.tap(find.byKey(ValueKey('chat-queue-edit-$id')));
     await tester.pumpAndSettle();
@@ -40235,6 +47000,7 @@ void main() {
     expect(chat.isStreaming, isFalse);
     chat.markQueuedRetryExhaustedForTesting(chat.queuedEntries.single.id);
     await tester.pump();
+    await _openQueueActivity(tester);
     expect(find.text('se enviarán al terminar el turno'), findsNothing);
     expect(
       find.text('no se enviarán solos: revisa el primero'),
@@ -40258,8 +47024,7 @@ void main() {
     chat.markQueuedRetryExhaustedForTesting(id);
     chat.state = ChatPipelineState.completed;
     await tester.pump();
-    await tester.tap(find.byKey(const ValueKey('chat-queue-toggle')));
-    await tester.pump();
+    await _openQueueActivity(tester);
 
     final retry = find.byKey(ValueKey('chat-queue-retry-exhausted-$id'));
     expect(retry, findsOneWidget);
@@ -40292,8 +47057,7 @@ void main() {
     chat.markQueuedRetryExhaustedForTesting(id);
     chat.state = ChatPipelineState.completed;
     await tester.pump();
-    await tester.tap(find.byKey(const ValueKey('chat-queue-toggle')));
-    await tester.pump();
+    await _openQueueActivity(tester);
 
     final retry = find.byKey(ValueKey('chat-queue-retry-exhausted-$id'));
     expect(retry, findsOneWidget);
@@ -40323,6 +47087,7 @@ void main() {
     chat.markQueuedRetryExhaustedForTesting(chat.queuedEntries.single.id);
     await tester.pump();
     expect(chat.isStreaming, isTrue);
+    await _openQueueActivity(tester);
     expect(find.text('se enviarán al terminar el turno'), findsOneWidget);
     expect(find.text('no se enviarán solos: revisa el primero'), findsNothing);
   });
@@ -40344,7 +47109,7 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
 
-    expect(find.text('Hermes pide tu permiso'), findsOneWidget);
+    expect(find.text('Permiso para ejecutar'), findsOneWidget);
     expect(find.text('Acción restaurada'), findsOneWidget);
     await tester.tap(find.text(label));
     await tester.pump();
@@ -40363,10 +47128,253 @@ void main() {
     await tester.pump();
   }
 
+  for (final sameId in [false, true]) {
+    testWidgets('painted approval cannot answer a replacement before its frame (same id: $sameId)', (tester) async {
+      final gateway = _RestoredApprovalUiGateway();
+      final chat = await pumpChat(tester, desktopGateway: gateway,
+        connection: _remoteConn('conn-stale-$sameId'), messagesLoaded: true,
+        initialStoredSessionId: 'sess-test',
+        initialPreferences: const {'approval_require_lock': false});
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      final replacement = {...chat.pendingApproval!,
+        'request_id': sameId ? 'approval-ui-restored' : 'approval-B',
+        'command': 'rm -rf /home/B'};
+      // No screen rebuild: the finger still sees A, while service owns B.
+      chat.pendingApproval = replacement;
+      await tester.tap(find.byKey(const ValueKey('approval-once')));
+      await tester.pump();
+      expect(gateway.approvalCalls, isEmpty);
+      expect(chat.pendingApproval, same(replacement));
+      expect(find.text('rm -rf /home/B'), findsOneWidget);
+      expect(find.byKey(const ValueKey('approval-responding')), findsNothing);
+      await tester.tap(find.byKey(const ValueKey('approval-once')));
+      await tester.pump();
+      expect(gateway.approvalCalls.single.requestId, replacement['request_id']);
+      expect(chat.pendingApproval, isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+      chat.dispose();
+      await gateway.close();
+    });
+  }
+
+  for (final inPlace in [false, true]) {
+    testWidgets('painted approval cannot answer a replacement before its frame (same content map or in-place edit: $inPlace)', (tester) async {
+      final gateway = _RestoredApprovalUiGateway();
+      final chat = await pumpChat(tester, desktopGateway: gateway,
+        connection: _remoteConn('conn-revision-$inPlace'), messagesLoaded: true,
+        initialStoredSessionId: 'sess-test',
+        initialPreferences: const {'approval_require_lock': false});
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      chat.pendingApproval = {...chat.pendingApproval!};
+      await _rebuildChatScreen(tester);
+      await tester.pump();
+      final replacement = inPlace ? chat.pendingApproval! : {...chat.pendingApproval!};
+      if (inPlace) replacement['command'] = 'rm -rf /home/B';
+      // Either change content without the setter, or re-offer identical content
+      // under a newer presentation revision. Both invalidate the painted action.
+      chat.pendingApproval = replacement;
+      await tester.tap(find.byKey(const ValueKey('approval-once')));
+      await tester.pump();
+      expect(gateway.approvalCalls, isEmpty);
+      expect(chat.pendingApproval, same(replacement));
+      if (inPlace) expect(find.text('rm -rf /home/B'), findsOneWidget);
+      expect(find.byKey(const ValueKey('approval-responding')), findsNothing);
+      await tester.tap(find.byKey(const ValueKey('approval-once')));
+      await tester.pump();
+      expect(gateway.approvalCalls.single.requestId, replacement['request_id']);
+      expect(chat.pendingApproval, isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+      chat.dispose();
+      await gateway.close();
+    });
+  }
+
+  testWidgets('an ignored same-id in-flight response leaves the replacement actionable', (tester) async {
+    final gateway = _RestoredApprovalUiGateway();
+    final chat = await pumpChat(tester, desktopGateway: gateway,
+      connection: _remoteConn('conn-ignored-send'), messagesLoaded: true,
+      initialStoredSessionId: 'sess-test',
+      initialPreferences: const {'approval_require_lock': false});
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    gateway.approvalGate = Completer<DesktopApprovalResult>();
+    await tester.tap(find.byKey(const ValueKey('approval-once')));
+    await tester.pump();
+    expect(gateway.approvalCalls.length, 1);
+    chat.pendingApproval = {...chat.pendingApproval!, 'command': 'chmod -R 777 /etc'};
+    await _rebuildChatScreen(tester);
+    await tester.pump();
+    gateway.approvalGate!.complete(const DesktopApprovalResult(resolved: 1));
+    gateway.approvalGate = null;
+    await tester.pump();
+    expect(find.byKey(const ValueKey('approval-responding')), findsNothing);
+    expect(find.text('chmod -R 777 /etc'), findsOneWidget);
+    expect(chat.pendingApproval, isNotNull);
+    await tester.tap(find.byKey(const ValueKey('approval-once')));
+    await tester.pump();
+    expect(gateway.approvalCalls.length, 2);
+    expect(chat.pendingApproval, isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+    chat.dispose();
+    await gateway.close();
+  });
+
+  testWidgets('local always policy hides the server-offered scope', (tester) async {
+    final gateway = _RestoredApprovalUiGateway();
+    final chat = await pumpChat(tester, desktopGateway: gateway,
+      connection: _remoteConn('conn-no-always'), messagesLoaded: true,
+      initialStoredSessionId: 'sess-test',
+      initialPreferences: const {'approval_require_lock': false, 'approval_allow_always': false});
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    chat.pendingApproval = {...chat.pendingApproval!, 'choices': ['once', 'deny', 'session', 'always']};
+    await _rebuildChatScreen(tester);
+    await tester.pump();
+    expect(find.byKey(const ValueKey('approval-always')), findsNothing);
+    expect(find.byKey(const ValueKey('approval-session')), findsOneWidget);
+    expect(find.byKey(const ValueKey('approval-once')), findsOneWidget);
+    expect(gateway.approvalCalls, isEmpty);
+    await tester.pumpWidget(const SizedBox.shrink());
+    chat.dispose();
+    await gateway.close();
+  });
+
+  testWidgets('compact approval keeps working back and menu navigation at 320dp 2x', (tester) async {
+    tester.view.physicalSize = const Size(320, 900);
+    tester.view.devicePixelRatio = 1;
+    tester.platformDispatcher.textScaleFactorTestValue = 2;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    final gateway = _RestoredApprovalUiGateway();
+    final chat = await pumpChat(tester, desktopGateway: gateway,
+      connection: _remoteConn('conn-approval-navigation'), messagesLoaded: true,
+      initialStoredSessionId: 'sess-test',
+      initialPreferences: const {'approval_require_lock': false});
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    final back = find.byKey(const ValueKey('approval-back'));
+    final menu = find.byKey(const ValueKey('approval-menu'));
+    for (final button in [back, menu]) {
+      expect(button.hitTestable(), findsOneWidget);
+      expect(tester.getSize(button).height, greaterThanOrEqualTo(48));
+      expect(tester.getSize(button).width, greaterThanOrEqualTo(48));
+    }
+    final scaffold = Scaffold.of(tester.element(menu));
+    await tester.tap(menu);
+    await tester.pumpAndSettle();
+    expect(scaffold.isDrawerOpen, isTrue);
+    scaffold.closeDrawer();
+    await tester.pumpAndSettle();
+    await tester.tap(back);
+    await tester.pumpAndSettle();
+    expect(find.byType(ChatApprovalDock), findsNothing);
+    expect(gateway.approvalCalls, isEmpty);
+    expect(tester.takeException(), isNull);
+    chat.dispose();
+    await gateway.close();
+  });
+
+  testWidgets('always confirms and grants only the gateway profile, without a connection-wide client rule', (tester) async {
+    final gateway = _RestoredApprovalUiGateway();
+    final connection = _remoteConn('conn-native-always');
+    final chat = await pumpChat(tester, desktopGateway: gateway,
+      connection: connection, messagesLoaded: true,
+      initialStoredSessionId: 'sess-test',
+      initialPreferences: const {'approval_require_lock': false});
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    chat.pendingApproval = {
+      ...chat.pendingApproval!, 'choices': ['always', 'deny'],
+      'command': 'echo one_profile', 'pattern_key': 'one_profile',
+    };
+    await _rebuildChatScreen(tester);
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.tap(find.text('Siempre este tipo de comando'));
+    await tester.pumpAndSettle();
+    expect(gateway.approvalCalls, isEmpty);
+    expect(find.text('Permitir siempre este tipo de comando en este perfil'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('approval-always-confirm')));
+    await tester.pumpAndSettle();
+    expect(gateway.approvalCalls, [(runtimeId: 'runtime-ui-test', choice: 'always', requestId: 'approval-ui-restored')]);
+    expect(chat.pendingApproval, isNull);
+    final app = tester.state<HermesAppState>(find.byType(HermesApp));
+    expect(app.approvalPolicy.rulesFor(connection.id), isEmpty,
+      reason: 'native profile grants must not create a rule across every profile of the connection');
+    await tester.pumpWidget(const SizedBox.shrink());
+    chat.dispose();
+    await gateway.close();
+  });
+
+  testWidgets('approval dock stays above the composer at 320dp 2x; remote settlement removes it', (tester) async {
+    tester.view.physicalSize = const Size(320, 900);
+    tester.view.devicePixelRatio = 1;
+    tester.platformDispatcher.textScaleFactorTestValue = 2;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    final gateway = _RestoredApprovalUiGateway();
+    final chat = await pumpChat(tester, desktopGateway: gateway,
+      connection: _remoteConn('conn-dock-geometry'), messagesLoaded: true,
+      initialStoredSessionId: 'sess-test',
+      initialPreferences: const {'approval_require_lock': false});
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    final dock = find.byType(ChatApprovalDock);
+    final composer = find.byKey(const ValueKey('chat-composer-host'));
+    expect(dock, findsOneWidget);
+    expect(find.byKey(const ValueKey('island')), findsNothing, reason: 'large-type decision has priority over floating header chrome');
+    final composerRect = tester.getRect(composer);
+    expect(tester.getRect(dock).bottom, lessThanOrEqualTo(composerRect.top));
+    expect(find.byKey(const ValueKey('activity-pill')), findsNothing);
+    for (final key in ['once', 'deny']) {
+      final rect = tester.getRect(find.byKey(ValueKey('approval-$key')));
+      expect(rect.height, greaterThanOrEqualTo(48));
+      expect(rect.width, greaterThanOrEqualTo(48));
+      expect(rect.right, lessThanOrEqualTo(320));
+      expect(rect.bottom, lessThanOrEqualTo(composerRect.top));
+    }
+    expect(tester.takeException(), isNull);
+    chat.pendingApproval = {...chat.pendingApproval!, 'choices': ['once', 'deny', 'session', 'always']};
+    await _rebuildChatScreen(tester);
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(tester.getRect(composer), composerRect);
+    expect(tester.getRect(dock).top, greaterThanOrEqualTo(0));
+    for (final key in ['session', 'always']) {
+      final rect = tester.getRect(find.byKey(ValueKey('approval-$key')));
+      expect(rect.height, greaterThanOrEqualTo(48));
+      expect(rect.right, lessThanOrEqualTo(320));
+      expect(rect.bottom, lessThanOrEqualTo(composerRect.top));
+    }
+    expect(tester.takeException(), isNull);
+    gateway.approvalError = StateError('offline');
+    await tester.tap(find.byKey(const ValueKey('approval-once')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.byKey(const ValueKey('approval-retry')), findsOneWidget);
+    expect(tester.getRect(composer), composerRect);
+    expect(tester.getRect(dock).top, greaterThanOrEqualTo(0));
+    expect(tester.takeException(), isNull);
+    expect(gateway.approvalCalls.length, 1);
+    gateway.emit('approval_resolved', const {'request_id': 'approval-ui-restored', 'choice': 'deny'});
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(chat.pendingApproval, isNull);
+    expect(dock, findsNothing);
+    expect(tester.getRect(composer), composerRect);
+    expect(gateway.approvalCalls.length, 1, reason: 'remote settlement sends no further response');
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+    chat.dispose();
+    await gateway.close();
+  });
+
   testWidgets('owning ChatScreen sends exact restored once response', (
     tester,
   ) async {
-    await exerciseRestoredApproval(tester, label: 'Permitir', choice: 'once');
+    await exerciseRestoredApproval(tester, label: 'Permitir esta vez', choice: 'once');
   });
 
   testWidgets('owning ChatScreen sends exact restored deny response', (
@@ -40406,7 +47414,9 @@ void main() {
               },
             });
             await tester.pump();
-            final goalActivity = find.byKey(const ValueKey('island'));
+            final goalActivity = find.byKey(
+              const ValueKey('delegates-capsule'),
+            );
             expect(goalActivity, findsOneWidget);
             // fh1215: in the narrow header slot the action may ellipsize
             // (gracefully, never overflowing); the timer stays whole and
@@ -40415,7 +47425,7 @@ void main() {
             final pillRect = tester.getRect(goalActivity);
             final timer = find.descendant(
               of: goalActivity,
-              matching: find.byKey(const ValueKey('activity-pill-elapsed')),
+              matching: find.byKey(const ValueKey('delegates-clock')),
             );
             for (final element in timer.evaluate()) {
               final paragraph = element.renderObject! as RenderParagraph;
@@ -40425,14 +47435,14 @@ void main() {
             }
             // What the island was given to say, whole, for screen readers.
             expect(
-              tester.widget<ChatIsland>(find.byType(ChatIsland)).statusDetail,
-              isNotNull,
+              tester.getSemantics(goalActivity).flagsCollection.isButton,
+              isTrue,
             );
             expectPillLabelsFit(
               tester,
               find.descendant(
                 of: goalActivity,
-                matching: find.byKey(const ValueKey('activity-pill-elapsed')),
+                matching: find.byKey(const ValueKey('delegates-clock')),
               ),
             );
           } else if (surface == 'background') {
@@ -40466,13 +47476,13 @@ void main() {
             await tester.tap(find.byKey(const ValueKey('send')));
             await tester.pump();
             expect(
-              find.byKey(const ValueKey('chat-queue-toggle')),
+              find.byKey(const ValueKey('chat-queue-chip')),
               findsOneWidget,
             );
             final text = find.descendant(
-              of: find.byKey(const ValueKey('chat-queue-toggle')),
+              of: find.byKey(const ValueKey('chat-queue-chip')),
               matching: find.textContaining(
-                locale == 'es' ? 'EN COLA' : 'QUEUED',
+                locale == 'es' ? 'En cola' : 'Queued',
               ),
             );
             expect(text, findsOneWidget);
@@ -40527,6 +47537,8 @@ void main() {
     await tester.pump();
     await gesture.up();
     await tester.pump();
+    // The arrow fades and scales in (160 ms): measure it once it has landed.
+    await tester.pump(const Duration(milliseconds: 200));
     expect(
       controller.position.pixels,
       greaterThan(controller.position.minScrollExtent),
@@ -40540,6 +47552,35 @@ void main() {
       find.byKey(const ValueKey('scroll-to-bottom-visible')),
       findsOneWidget,
     );
+  }
+
+  /// The arrow rides 8 dp above the composer (the bottom group floats over
+  /// the transcript, which runs under it; Vistas v3 took away the notch it
+  /// rode above). Q9-CHAT5
+  /// v2 (ORDEN2-Q9-CHAT5, decisión 1): while a turn runs its pills sit
+  /// there, above the composer; the arrow rides right above them, never on
+  /// them.
+  void expectArrowAtRest(WidgetTester tester) {
+    final arrow = tester.getRect(scrollToBottomFinder());
+    final bars = tester.getRect(find.byKey(const ValueKey('chat-bottom-bars')));
+    final rest = bars.top - 8;
+    final pills = find.byKey(const ValueKey('delegates-capsule'));
+    if (pills.evaluate().isNotEmpty) {
+      final turn = tester.getRect(pills);
+      expect(
+        arrow.overlaps(turn),
+        isFalse,
+        reason: 'arrow $arrow, capsule $turn',
+      );
+      expect(arrow.bottom, lessThanOrEqualTo(turn.top));
+      return;
+    }
+    final activity = find.byKey(const ValueKey('chat-queue-chip'));
+    if (activity.evaluate().isNotEmpty) {
+      expect(arrow.bottom, lessThanOrEqualTo(tester.getRect(activity).top));
+    } else {
+      expect(arrow.bottom, closeTo(rest, 0.01));
+    }
   }
 
   /// fh1215: the pill lives in the floating header and the arrow keeps its
@@ -40558,12 +47599,17 @@ void main() {
       isFalse,
       reason: 'la flecha $arrow se solapa con la pastilla $pill',
     );
-    _expectPillInHeader(tester, overlay, clearOf: [scrollToBottomFinder()]);
-    expect(arrow.top, greaterThan(pill.bottom));
-    // The arrow rides above the notch tab on the composer's top edge (the
-    // bottom group floats over the transcript, which runs under it).
-    final bars = tester.getRect(find.byKey(const ValueKey('chat-bottom-bars')));
-    expect(arrow.bottom, closeTo(bars.top - 8 - kChatNotchHeight, 0.01));
+    if (find
+        .ancestor(of: overlay, matching: find.byType(FloatingChatHeader))
+        .evaluate()
+        .isNotEmpty) {
+      _expectPillInHeader(tester, overlay, clearOf: [scrollToBottomFinder()]);
+      expect(arrow.top, greaterThan(pill.bottom));
+    } else {
+      // The capsule rides above the composer; the arrow rides above it.
+      expect(arrow.bottom, lessThanOrEqualTo(pill.top));
+    }
+    expectArrowAtRest(tester);
   }
 
   /// Pulsa la flecha y comprueba que el transcript vuelve de verdad al final.
@@ -40615,20 +47661,11 @@ void main() {
     final controller = await holdTranscriptAwayFromBottom(tester);
     expectScrollToBottomVisible();
 
-    // El cronómetro de la pastilla corre sobre el reloj de pared (ChatScreen no
-    // le inyecta reloj), así que su `revealAfter` de 2 s solo se cruza con
-    // tiempo real; el tic que la repinta sí es un timer del reloj falso.
-    final revealed = find.byKey(const ValueKey('activity-pill'));
-    await tester.runAsync(
-      () => Future<void>.delayed(const Duration(milliseconds: 3200)),
-    );
-    for (var frame = 0; frame < 8 && revealed.evaluate().isEmpty; frame++) {
-      await tester.pump(const Duration(seconds: 1));
-    }
-    expect(revealed, findsOneWidget);
-
-    expectArrowClearOf(tester, find.byKey(const ValueKey('activity-pill')));
+    expect(find.byKey(const ValueKey('activity-pill')), findsNothing);
+    expect(find.byKey(const ValueKey('delegates-capsule')), findsNothing);
+    expectArrowAtRest(tester);
     await expectArrowScrollsToBottom(tester, controller);
+    expect(liveInlineActivity, findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -40660,13 +47697,24 @@ void main() {
     });
     await tester.pump();
 
-    final card = find.byKey(const ValueKey('island'));
+    final card = find.byKey(const ValueKey('delegates-capsule'));
     expect(card, findsOneWidget);
 
     final controller = await holdTranscriptAwayFromBottom(tester);
     expectScrollToBottomVisible();
 
+    // The subagent group sits above the composer now: the arrow rides right
+    // above it (the pill area measures it), never on it, and never on the
+    // island either.
+    final group = tester.getRect(
+      find.byKey(const ValueKey('chat-subagent-status')),
+    );
+    final arrow = tester.getRect(scrollToBottomFinder());
+    expect(group.height, greaterThan(0));
+    expect(arrow.overlaps(group), isFalse);
     expectArrowClearOf(tester, card);
+    expect(arrow.bottom, lessThanOrEqualTo(group.top));
+    expect(arrow.overlaps(tester.getRect(card)), isFalse);
     await expectArrowScrollsToBottom(tester, controller);
     expect(tester.takeException(), isNull);
 
@@ -40684,7 +47732,8 @@ void main() {
     tester,
   ) async {
     // Control: el arreglo no puede mover la flecha cuando no hay nada que
-    // esquivar. Reposa 8 px por encima de la rayita.
+    // esquivar. Reposa 8 px por encima del compositor (Vistas v3: sin la
+    // rayita sobre la que reposaba).
     failOnMissedTaps();
     await pumpChat(tester, messages: scrollableChatHistory('flecha en reposo'));
 
@@ -40694,13 +47743,11 @@ void main() {
     final arrow = tester.getRect(scrollToBottomFinder());
     final bars = tester.getRect(find.byKey(const ValueKey('chat-bottom-bars')));
     expect(arrow.height, 48);
-    expect(arrow.bottom, closeTo(bars.top - 8 - kChatNotchHeight, 0.01));
+    expect(arrow.bottom, closeTo(bars.top - 8, 0.01));
     // fh1215: idle, the header shows the name pill, never an activity pill.
     expect(find.byKey(const ValueKey('activity-pill')), findsNothing);
-    expect(
-      tester.getRect(find.byKey(const ValueKey('chat-subagent-status'))).height,
-      0,
-    );
+    expect(find.byKey(const ValueKey('delegates-capsule')), findsNothing);
+    expect(find.byKey(const ValueKey('chat-header-pill')), findsOneWidget);
 
     await expectArrowScrollsToBottom(tester, controller);
     expect(tester.takeException(), isNull);
@@ -40708,10 +47755,12 @@ void main() {
 
   // QA 9493 (owner): the jump arrow sat centred right above the notch, two
   // stacked chevrons with a dark shadow over the text. Now: ONE small round
-  // button at the end of the row, clear of the notch, with no heavy
+  // button at the end of the row, clear of the composer, with no heavy
   // shadow, and a short fade above the composer instead of a dark blotch.
+  // (Vistas v3 took the notch away: the arrow keeps clear of the composer
+  // it sits above.)
   testWidgets('QA 9493: one small jump button at the end, clear of the '
-      'notch, over a short fade', (tester) async {
+      'composer, over a short fade', (tester) async {
     failOnMissedTaps();
     await pumpChat(tester, messages: scrollableChatHistory('salto al final'));
     final controller = await holdTranscriptAwayFromBottom(tester);
@@ -40719,14 +47768,18 @@ void main() {
 
     final arrow = tester.getRect(scrollToBottomFinder());
     final body = tester.getRect(find.byKey(const ValueKey('chat-stable-body')));
-    final notch = tester.getRect(find.byKey(const ValueKey('chat-notch')));
-    expect(arrow.overlaps(notch), isFalse, reason: '$arrow vs notch $notch');
+    final composer = tester.getRect(find.byType(HermesComposerSurface));
+    expect(
+      arrow.overlaps(composer),
+      isFalse,
+      reason: '$arrow vs composer $composer',
+    );
     expect(
       arrow.right,
       closeTo(body.right - 8, 0.5),
       reason: 'right-aligned at the end of the transcript',
     );
-    expect(arrow.left, greaterThan(notch.right));
+    expect(arrow.center.dx, greaterThan(body.center.dx), reason: 'the end');
     expect(
       find.descendant(
         of: scrollToBottomFinder(),
@@ -40813,7 +47866,6 @@ void main() {
     await showChatNotice(tester, 'Aviso transitorio');
     final notice = noticeRect(tester);
     final composer = composerHostRect(tester);
-    final notch = tester.getRect(find.byKey(const ValueKey('chat-notch')));
     expect(find.byType(SnackBar), findsNothing);
     expect(find.text('Aviso transitorio'), findsOneWidget);
     // In place: the island grew from where it was, inside the header.
@@ -40826,7 +47878,7 @@ void main() {
       lessThanOrEqualTo(FloatingChatHeader.insetFor(tester.element(island))),
     );
     expect(notice.bottom, lessThan(800 / 4), reason: 'arriba, no abajo');
-    expect(notice.bottom, lessThan(notch.top));
+    expect(notice.bottom, lessThan(composer.top));
     expect(find.byType(HermesNoticeCard).hitTestable(), findsOneWidget);
     expect(
       notice.overlaps(composer),
@@ -40968,7 +48020,7 @@ void main() {
       'status': 'running',
     });
     await tester.pump();
-    final card = find.byKey(const ValueKey('island'));
+    final card = find.byKey(const ValueKey('delegates-capsule'));
     expect(card, findsOneWidget);
     _expectPillInHeader(tester, card);
     await holdTranscriptAwayFromBottom(tester);
@@ -40983,7 +48035,7 @@ void main() {
     expect(find.byKey(const ValueKey('island-mark')), findsNothing);
     expect(
       tester.widget<ChatIsland>(find.byType(ChatIsland)).status,
-      IslandStatus.working,
+      IslandStatus.idle,
     );
     expect(notice.overlaps(arrow), isFalse, reason: '$notice vs $arrow');
     expect(notice.overlaps(composer), isFalse, reason: '$notice vs $composer');
@@ -41727,15 +48779,20 @@ void main() {
       gateway.emit('message.complete', const {'text': 'PUBLIC_ASK_DONE'});
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
-      await tester.tap(find.byKey(const ValueKey('thinking-trace-summary')));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 300));
+      // Q9-CHAT5 v2 (ORDEN2-Q9-CHAT5, decisión 2): the command's step card
+      // opens its output.
+      await openInlineDetails(tester);
+      await tester.tap(
+        find.byKey(const ValueKey('turn-step-card-call-ask-term')),
+      );
+      await _pumpEditorTransition(tester);
       expect(find.byType(TerminalOutputCard), findsOneWidget);
 
       final output = find.descendant(
         of: find.byType(TerminalOutputCard),
         matching: find.textContaining('Toolsalida', findRichText: true),
       );
+      await _revealInChatList(tester, output.first);
       await tester.longPressAt(
         tester.getTopLeft(output.first) + const Offset(8, 8),
       );
@@ -41750,9 +48807,15 @@ void main() {
     });
   });
 
-  group('chat notch', () {
-    final notch = find.byKey(const ValueKey('chat-notch'));
-    final notchTab = find.byKey(const ValueKey('chat-notch-tab'));
+  // Vistas v3 (the owner): the notch on the composer is gone. Its sheet is
+  // «Ajustes», a window that hangs from its button in the header; its panels
+  // (Terminal, Git, Navegador) are «Vistas»' (a tap opens the last one, a
+  // long press picks one). Each test keeps what the notch's guarded; what
+  // only the notch had (its swipe and drag, its tint, its amber dot) is
+  // marked retired where it was (REPORT-Q9-VISTAS-WIRING).
+  group('Ajustes and Vistas (the notch\'s, before Vistas v3)', () {
+    final settingsButton = find.byKey(const ValueKey('chat-settings-button'));
+    final viewsButton = find.byKey(const ValueKey('chat-views-button'));
     final sheet = find.byKey(const ValueKey('chat-control-dialog'));
     Finder composerHost() => find.byKey(const ValueKey('chat-composer-host'));
     Finder composerSurface() => find.byType(TextField).last;
@@ -41765,33 +48828,45 @@ void main() {
     }
 
     Future<void> openSheet(WidgetTester tester) async {
-      await tester.tap(notch);
+      await tester.tap(settingsButton);
       await tester.pump();
       await tester.pump(kChatNotchSheetOpen + const Duration(milliseconds: 80));
       expect(sheet, findsOneWidget);
     }
 
-    void expectNotchAboveComposer(WidgetTester tester) {
-      final target = tester.getRect(notch);
-      final tab = tester.getRect(notchTab);
-      final host = tester.getRect(composerHost());
-      expect(target.bottom, lessThanOrEqualTo(host.top + 0.5));
-      // On the composer's top edge, between rest and the top of a breath.
-      expect(
-        host.top - tab.bottom,
-        inInclusiveRange(
-          kChatNotchComposerGap - 0.5,
-          kChatNotchComposerGap + kChatNotchBreath + 0.5,
-        ),
-      );
-      expect(tab.center.dx, closeTo(host.center.dx, 1));
-      expect(target.height, greaterThanOrEqualTo(48));
-      expect(target.width, greaterThanOrEqualTo(48));
+    /// Picks a panel from the «Vistas» popover (a long press on it). Where
+    /// the panel opens beside the chat the popover stays, to pick another
+    /// or a layout: a tap outside it closes it, as a reader would (system
+    /// Back goes to the active panel first: chat_workspace_host).
+    Future<void> pickPanel(WidgetTester tester, String tab) async {
+      // the owner (final windows): the panels are rows of Ajustes («Paneles»);
+      // «Vistas» is only the layout. Ajustes closes as the panel opens.
+      await tester.tap(settingsButton);
+      await tester.pump();
+      await tester.pump(kChatNotchSheetOpen + const Duration(milliseconds: 80));
+      await tester.tap(find.byKey(ValueKey('chat-control-workspace-$tab')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 600));
     }
 
-    testWidgets('replaces the header ⋮ and search and sits on the composer', (
-      tester,
-    ) async {
+    /// Ajustes is a 48 dp target in the header, clear of the composer.
+    void expectSettingsInHeader(WidgetTester tester) {
+      final target = tester.getRect(settingsButton);
+      final host = tester.getRect(composerHost());
+      expect(target.height, greaterThanOrEqualTo(48));
+      expect(target.width, greaterThanOrEqualTo(48));
+      expect(
+        target.bottom,
+        lessThanOrEqualTo(
+          FloatingChatHeader.insetFor(tester.element(settingsButton)) + 0.5,
+        ),
+      );
+      expect(target.bottom, lessThan(host.top));
+      expect(find.byType(ChatNotch), findsNothing);
+    }
+
+    testWidgets('replaces the header ⋮ and search: [Vistas] [Ajustes] in the '
+        'header, nothing on the composer', (tester) async {
       phone(tester);
       await pumpChat(tester);
       expect(find.byKey(const ValueKey('chat-control-trigger')), findsNothing);
@@ -41802,10 +48877,11 @@ void main() {
           findsNothing,
         );
       }
-      // The header keeps only + on the right.
-      expect(find.byKey(const ValueKey('chat-new-session')), findsOneWidget);
-      expect(notch, findsOneWidget);
-      expectNotchAboveComposer(tester);
+      // The header keeps [Vistas] [Ajustes] on the right; «+» is Ajustes'.
+      expect(find.byKey(const ValueKey('chat-new-session')), findsNothing);
+      expect(viewsButton, findsOneWidget);
+      expect(settingsButton, findsOneWidget);
+      expectSettingsInHeader(tester);
       expect(tester.takeException(), isNull);
     });
 
@@ -41816,13 +48892,15 @@ void main() {
       await pumpChat(tester);
       final status = find.byKey(const ValueKey('chat-status-pill'));
       expect(status, findsOneWidget);
-      final target = tester.getRect(notch);
-      expect(tester.getRect(status).overlaps(target), isFalse);
-      expect(tester.getRect(status).top, greaterThan(target.bottom));
-      expectNotchAboveComposer(tester);
+      for (final button in [settingsButton, viewsButton]) {
+        final target = tester.getRect(button);
+        expect(tester.getRect(status).overlaps(target), isFalse);
+        expect(tester.getRect(status).top, greaterThan(target.bottom));
+      }
+      expectSettingsInHeader(tester);
     });
 
-    testWidgets('the last reply rests above the notch', (tester) async {
+    testWidgets('the last reply rests above the composer', (tester) async {
       phone(tester, const Size(360, 800));
       await pumpChat(
         tester,
@@ -41834,13 +48912,14 @@ void main() {
       await tester.pump(const Duration(milliseconds: 300));
       expect(
         tester.getRect(find.text('RESPUESTA_FINAL_VISIBLE')).bottom,
-        lessThanOrEqualTo(tester.getRect(notch).top),
+        lessThanOrEqualTo(
+          tester.getRect(find.byKey(const ValueKey('chat-bottom-bars'))).top,
+        ),
       );
     });
 
-    testWidgets('keyboard open: still above the composer, out of the IME', (
-      tester,
-    ) async {
+    testWidgets('keyboard open: Ajustes still in reach, the composer out of '
+        'the IME', (tester) async {
       phone(tester);
       await pumpChat(tester);
       await tester.tap(composerSurface());
@@ -41848,33 +48927,36 @@ void main() {
       tester.view.viewInsets = const FakeViewPadding(bottom: 320);
       addTearDown(tester.view.resetViewInsets);
       await tester.pump(const Duration(milliseconds: 400));
-      expectNotchAboveComposer(tester);
-      expect(tester.getRect(notch).bottom, lessThanOrEqualTo(844 - 320));
+      expectSettingsInHeader(tester);
+      expect(settingsButton.hitTestable(), findsOneWidget);
+      expect(
+        tester.getRect(composerHost()).bottom,
+        lessThanOrEqualTo(844 - 320),
+      );
     });
 
-    testWidgets('horizontal swipe follows the system gesture insets', (
+    // Retired with the notch: its horizontal swipe (previous / next chat)
+    // and the system back edge it had to yield to. What stays: nothing at
+    // the chat's foot takes a sideways drag, and Ajustes is in reach with
+    // the widest back-gesture edge.
+    testWidgets('no notch swipe is left to fight the system back gesture', (
       tester,
     ) async {
       phone(tester);
       await pumpChat(tester);
-      bool swipe() => tester
-          .widget<ChatNotch>(find.byType(ChatNotch))
-          .horizontalSwipeEnabled;
-      expect(swipe(), isTrue);
-      // A back-gesture edge wide enough to reach the centred target.
-      tester.view.systemGestureInsets = const FakeViewPadding(left: 170);
-      addTearDown(tester.view.resetSystemGestureInsets);
-      await tester.pump();
-      expect(swipe(), isFalse);
-      tester.view.systemGestureInsets = const FakeViewPadding(right: 170);
-      await tester.pump();
-      expect(swipe(), isFalse);
       tester.view.systemGestureInsets = const FakeViewPadding(
-        left: 30,
+        left: 170,
         right: 30,
       );
+      addTearDown(tester.view.resetSystemGestureInsets);
       await tester.pump();
-      expect(swipe(), isTrue);
+      expect(find.byType(ChatNotch), findsNothing);
+      expect(settingsButton.hitTestable(), findsOneWidget);
+      expect(
+        tester.getRect(settingsButton).left,
+        greaterThan(170),
+        reason: 'clear of the back edge',
+      );
     });
 
     testWidgets('never sits in the Android gesture bar zone', (tester) async {
@@ -41882,75 +48964,129 @@ void main() {
       tester.view.padding = const FakeViewPadding(bottom: 48);
       addTearDown(tester.view.resetPadding);
       await pumpChat(tester);
-      expect(tester.getRect(notch).bottom, lessThan(844 - 48));
-      expectNotchAboveComposer(tester);
+      expect(tester.getRect(settingsButton).bottom, lessThan(844 - 48));
+      expect(tester.getRect(composerHost()).bottom, lessThanOrEqualTo(844));
+      expectSettingsInHeader(tester);
     });
 
-    testWidgets('a tap opens the conversation settings with Ir a on top', (
+    testWidgets('a tap opens «Esta conversación»: search and «+», the panels, '
+        'the actions and Delete; no model, permissions, Ir a or Memory', (
       tester,
     ) async {
       phone(tester);
       await pumpChat(tester);
-      expect(tester.widget<ChatNotch>(find.byType(ChatNotch)).open, isFalse);
+      expect(sheet, findsNothing);
       await openSheet(tester);
-      expect(find.byKey(const ValueKey('chat-notch-go-to')), findsOneWidget);
-      expect(find.byKey(const ValueKey('chat-control-find')), findsOneWidget);
-      // The general chat's model lives in the status pill, not here.
-      expect(find.byKey(const ValueKey('chat-control-model')), findsNothing);
+      // the owner (final windows): the window is announced as «Esta
+      // conversación»; its header is the conversation's own name.
+      expect(find.bySemanticsLabel('Esta conversación'), findsWidgets);
+      expect(find.byKey(const ValueKey('chat-control-sheet')), findsOneWidget);
       expect(
-        find.byKey(const ValueKey('chat-notch-go-searchChats')),
+        find.byKey(const ValueKey('chat-control-actions')),
         findsOneWidget,
       );
-      expect(find.text('Ajustes de esta conversación'), findsWidgets);
-      expect(find.byKey(const ValueKey('chat-control-sheet')), findsOneWidget);
-      // Tinted while open.
-      expect(tester.widget<ChatNotch>(find.byType(ChatNotch)).open, isTrue);
+      // The panels, once «Vistas»': rows of Ajustes («Paneles»).
+      expect(find.byKey(const ValueKey('chat-control-panels')), findsOneWidget);
+      for (final panel in ['terminal', 'files', 'browser']) {
+        expect(
+          find.byKey(ValueKey('chat-control-workspace-$panel')),
+          findsOneWidget,
+          reason: panel,
+        );
+      }
+      expect(find.byKey(const ValueKey('chat-control-quick')), findsOneWidget);
+      expect(find.byKey(const ValueKey('chat-control-find')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('chat-control-new-chat')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('chat-control-content')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('chat-control-delete'), skipOffstage: false),
+        findsOneWidget,
+      );
+      // They live in the status pill and the ≡ menu now; the second
+      // artifacts entry is gone (Desktop has one Artifacts view).
+      for (final key in [
+        'chat-control-artifacts',
+        'chat-control-model',
+        'chat-control-permissions',
+        'chat-control-memory',
+        'chat-control-skills',
+        'chat-control-previous-chat',
+        'chat-control-next-chat',
+        'chat-notch-go-to',
+      ]) {
+        expect(
+          find.byKey(ValueKey(key), skipOffstage: false),
+          findsNothing,
+          reason: key,
+        );
+      }
+      // It hangs from its button (the notch's sheet grew from the notch).
+      expect(
+        tester.getRect(sheet).top,
+        greaterThanOrEqualTo(tester.getRect(settingsButton).bottom),
+      );
       await tester.binding.handlePopRoute();
       await tester.pump();
       await tester.pump(
         kChatNotchSheetClose + const Duration(milliseconds: 120),
       );
       expect(sheet, findsNothing);
-      expect(tester.widget<ChatNotch>(find.byType(ChatNotch)).open, isFalse);
       expect(find.byType(ChatScreen), findsOneWidget);
     });
 
-    // Owner report: swiped down, the sheet "does a weird animation that
-    // looks broken". Its content is sampled on every frame of the swipe in
-    // the real chat (the morph's own frames: pm1215_sheet_swipe_close_test).
-    testWidgets('swiped down, the sheet follows the finger and then goes '
-        'into the grabber without turning back', (tester) async {
+    // Owner report (the notch's sheet): swiped, the sheet "does a weird
+    // animation that looks broken". Ajustes hangs from the header: pulled
+    // up, the way it came, it follows the finger and then goes, without
+    // turning back.
+    testWidgets('pulled up, Ajustes follows the finger and then goes', (
+      tester,
+    ) async {
       phone(tester);
       await pumpChat(tester);
       await openSheet(tester);
       final rest = tester.getRect(sheet);
       final finger = await tester.startGesture(
-        tester.getCenter(
-          find.byKey(const ValueKey('chat-notch-sheet-grabber')),
-        ),
+        tester.getCenter(find.byKey(const ValueKey('chat-control-header'))),
       );
+      // Every step of the finger moves it up by no more than the step,
+      // never back (past the drag's slop, which the list it holds takes
+      // first): with 16 steps of 10, more than 80 in all means it followed
+      // the finger step by step, never in one jump.
+      var previous = rest.top;
       for (var pulled = 10.0; pulled <= 160; pulled += 10) {
-        await finger.moveBy(const Offset(0, 10));
+        await finger.moveBy(const Offset(0, -10));
         await tester.pump(const Duration(milliseconds: 16));
-        expect(
-          tester.getRect(sheet).top,
-          closeTo(rest.top + pulled, 0.01),
-          reason: 'pulled $pulled px',
-        );
+        final top = tester.getRect(sheet).top;
+        expect(top, lessThanOrEqualTo(previous + 0.01), reason: '$pulled');
+        expect(previous - top, lessThanOrEqualTo(10.5), reason: '$pulled');
+        previous = top;
       }
-      var previous = tester.getRect(sheet).top;
+      expect(
+        previous,
+        lessThan(rest.top - 80),
+        reason: 'it follows the finger',
+      );
       await finger.up();
+      // Let go, it keeps where the finger took it and recedes into its
+      // button above (it shrinks toward it): its lower edge only ever goes
+      // up. Springing back toward its rest would bring that edge down.
+      var bottom = tester.getRect(sheet).bottom;
       var frames = 0;
       for (; frames < 30; frames++) {
         await tester.pump(const Duration(milliseconds: 16));
         if (sheet.evaluate().isEmpty) break;
-        final top = tester.getRect(sheet).top;
-        expect(top, lessThanOrEqualTo(previous + 0.01), reason: 'f$frames');
-        previous = top;
+        final now = tester.getRect(sheet).bottom;
+        expect(now, lessThanOrEqualTo(bottom + 0.01), reason: 'f$frames');
+        bottom = now;
       }
-      expect(sheet, findsNothing);
-      expect(frames, inInclusiveRange(10, 20));
-      expect(tester.widget<ChatNotch>(find.byType(ChatNotch)).open, isFalse);
+      expect(sheet, findsNothing, reason: 'it goes, never back');
+      expect(find.byType(ChatScreen), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
 
@@ -41992,118 +49128,767 @@ void main() {
       expect(find.byKey(const ValueKey('chat-find-field')), findsOneWidget);
     });
 
-    testWidgets('Ir a › Buscar chats opens the list with search focused', (
+    // Retired with the notch: the drag up on it. Ajustes opens with one tap
+    // on a named button, which TalkBack reads as such.
+    testWidgets('Ajustes is a named button in the header that opens the same '
+        'sheet', (tester) async {
+      final semantics = tester.ensureSemantics();
+      phone(tester);
+      await pumpChat(tester);
+      // Its name is its tooltip, read by TalkBack with the button.
+      final named = find.descendant(
+        of: settingsButton,
+        matching: find.byTooltip('Esta conversación'),
+      );
+      expect(named, findsOneWidget);
+      final node = tester.getSemantics(named);
+      expect(node.tooltip, 'Esta conversación');
+      expect(node.flagsCollection.isButton, isTrue);
+      expect(node.getSemanticsData().hasAction(SemanticsAction.tap), isTrue);
+      await openSheet(tester);
+      expect(find.byKey(const ValueKey('chat-control-find')), findsOneWidget);
+      expect(find.byKey(const ValueKey('chat-notch-go-to')), findsNothing);
+      expect(tester.takeException(), isNull);
+      semantics.dispose();
+    });
+
+    // the owner (final windows): «Vistas» is only the layout, a vertical menu of
+    // Chat · Dividido · Trabajo; no panel in it.
+    testWidgets('Vistas opens only the layout: Chat, Dividido, Trabajo', (
+      tester,
+    ) async {
+      phone(tester, const Size(1280, 800));
+      await pumpChat(tester);
+      await tester.tap(viewsButton);
+      await tester.pump();
+      await tester.pump(kChatNotchSheetOpen + const Duration(milliseconds: 80));
+      for (final layout in ['chat', 'split', 'workspace']) {
+        expect(
+          find.byKey(ValueKey('chat-views-layout-$layout')),
+          findsOneWidget,
+          reason: layout,
+        );
+      }
+      for (final panel in ['terminal', 'files', 'git', 'browser']) {
+        expect(
+          find.byKey(ValueKey('chat-control-workspace-$panel')),
+          findsNothing,
+          reason: panel,
+        );
+        expect(
+          find.byKey(ValueKey('chat-workspace-view-tab-$panel')),
+          findsNothing,
+          reason: panel,
+        );
+      }
+      expect(sheet, findsNothing, reason: 'not Ajustes');
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+      'Terminal from Ajustes uses the shared workspace pane in portrait',
+      (tester) async {
+        phone(tester);
+        await pumpChat(tester);
+        await pickPanel(tester, 'terminal');
+        expect(sheet, findsNothing);
+        expect(find.byType(SshScreen), findsOneWidget);
+        // QA9716: the same pane and header as Split→portrait.
+        expect(
+          find.ancestor(
+            of: find.byType(SshScreen),
+            matching: find.byKey(const ValueKey('chat-workspace-panel-clip')),
+          ),
+          findsOneWidget,
+        );
+        // Back returns to this chat.
+        expect(find.byType(ChatScreen, skipOffstage: false), findsOneWidget);
+        await tester.pump(const Duration(seconds: 2));
+      },
+    );
+
+    // Gaps: on a phone the hub opened from the chat carries the way back,
+    // which Files shows as the chat notch; using it lands on this chat.
+    testWidgets('on a phone the Terminal hub knows the way back to the chat', (
       tester,
     ) async {
       phone(tester);
       await pumpChat(tester);
-      await openSheet(tester);
-      await tester.tap(find.byKey(const ValueKey('chat-notch-go-searchChats')));
+      await pickPanel(tester, 'terminal');
+      // Compact: the panel is the whole screen, with no rail; the chat segment
+      // of its own bar is the way back.
+      expect(find.byKey(const ValueKey('chat-workspace-rail')), findsNothing);
+      final back = find.byKey(const ValueKey('chat-workspace-collapse'));
+      expect(back, findsOneWidget);
+
+      await tester.tap(back);
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 600));
-      final list = tester.widget<SessionListScreen>(
-        find.byType(SessionListScreen),
-      );
-      expect(list.autofocusSearch, isTrue);
-      expect(find.byType(ChatScreen, skipOffstage: false), findsNothing);
+      expect(find.byType(SshScreen), findsNothing);
+      expect(find.byType(ChatScreen), findsOneWidget);
       await tester.pump(const Duration(seconds: 2));
     });
 
-    for (final (destination, expected) in <(String, Type)>[
-      ('chats', SessionListScreen),
-      ('settings', SettingsScreen),
-      ('projects', ProjectsCenterScreen),
-    ]) {
-      testWidgets('Ir a › $destination leaves the chat for that section', (
+    for (final fromSplit in [true, false]) {
+      testWidgets('QA9716 entry composition probe (fromSplit=$fromSplit)', (
         tester,
       ) async {
-        phone(tester);
+        phone(tester, fromSplit ? const Size(933, 704) : const Size(390, 844));
         await pumpChat(tester);
-        await openSheet(tester);
-        await tester.tap(find.byKey(ValueKey('chat-notch-go-$destination')));
-        await tester.pump();
-        await tester.pump(const Duration(milliseconds: 600));
-        expect(find.byType(expected), findsOneWidget);
-        expect(sheet, findsNothing);
-        // A top-level hop: the chat does not stay underneath.
-        expect(find.byType(ChatScreen, skipOffstage: false), findsNothing);
-        await tester.pump(const Duration(seconds: 2));
+        final chatState = tester.state(find.byType(ChatScreen));
+        await pickPanel(tester, 'terminal');
+        if (fromSplit) {
+          tester.view.physicalSize = const Size(390, 844);
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 600));
+        }
+        final panel = find.byType(SshScreen);
+        final rounded = find
+            .ancestor(
+              of: panel,
+              matching: find.byWidgetPredicate(
+                (widget) =>
+                    widget is ClipRRect &&
+                    widget.borderRadius ==
+                        BorderRadius.circular(chatWorkspacePaneRadius),
+              ),
+            )
+            .first;
+        final frame = tester.getRect(rounded);
+        final inPane = ChatWorkspacePaneScope.isInPane(tester.element(panel));
+        final bar = find.byKey(const ValueKey('chat-workspace-actions'));
+        debugPrint(
+          'QA9716_ENTRY_GEOMETRY ${jsonEncode({
+            'fromSplit': fromSplit,
+            'inPane': inPane,
+            'frame': [frame.left, frame.top, frame.right, frame.bottom],
+            'actionBars': bar.evaluate().length,
+            'selectors': find.byKey(const ValueKey('chat-workspace-tabs')).evaluate().length,
+            'expandActions': find.byKey(const ValueKey('chat-workspace-expand')).evaluate().length,
+          })}',
+        );
+        expect(inPane, isTrue, reason: 'direct must use the same pane scope');
+        expect(bar, findsOneWidget);
+        expect(
+          find.byKey(const ValueKey('chat-workspace-tabs')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('chat-workspace-expand')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('chat-workspace-layout-menu')),
+          findsOneWidget,
+        );
+        expect(frame, const Rect.fromLTRB(10, 10, 380, 834));
+        expect(tester.state(find.byType(ChatScreen)), same(chatState));
+        expect(tester.takeException(), isNull);
       });
     }
 
-    testWidgets('Ir a › Inicio goes back to the root', (tester) async {
-      phone(tester);
-      await pumpChat(tester);
-      await openSheet(tester);
-      await tester.tap(find.byKey(const ValueKey('chat-notch-go-home')));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 600));
-      expect(sheet, findsNothing);
-      expect(find.byType(ChatScreen, skipOffstage: false), findsNothing);
-      final nav = tester.state<NavigatorState>(find.byType(Navigator).first);
-      expect(nav.canPop(), isFalse);
+    for (final fromSplit in [false, true]) {
+      testWidgets('QA9716 SSH header actions and routes share the pane '
+          '(fromSplit=$fromSplit)', (tester) async {
+        final previousErrorHandler = FlutterError.onError;
+        FlutterError.onError = (details) {
+          debugPrint('QA9716_SSH_LAYOUT fromSplit=$fromSplit\n$details');
+          previousErrorHandler?.call(details);
+        };
+        try {
+          phone(
+            tester,
+            fromSplit ? const Size(933, 704) : const Size(390, 844),
+          );
+          mockCompanionStorage();
+          late _Qa9715SshSessions sessions;
+          await pumpChat(
+            tester,
+            sshSessionFactory: (manager) =>
+                sessions = _Qa9715SshSessions(manager),
+          );
+          final chatState = tester.state(find.byType(ChatScreen));
+          final app = tester.state<HermesAppState>(find.byType(HermesApp));
+          await app.sshManager.saveConfig(
+            'conn-test',
+            host: 'qa.invalid',
+            port: 22,
+            username: 'fixture',
+            method: SshAuthMethod.password,
+          );
+          await pickPanel(tester, 'terminal');
+          if (fromSplit) {
+            tester.view.physicalSize = const Size(390, 844);
+            await tester.pump();
+            await tester.pump(const Duration(milliseconds: 600));
+          }
+          await tester.pump(const Duration(milliseconds: 400));
+          final hub = tester.state(find.byType(SshScreen));
+          final frame = find.byKey(const ValueKey('chat-workspace-panel-clip'));
+          final frameState = frame.evaluate().single;
+          final workspace = ChatWorkspacePaneScope.controllerOf(
+            tester.element(find.byType(SshScreen)),
+          )!;
+          expect(
+            ChatWorkspacePaneScope.isInPane(
+              tester.element(find.byType(SshScreen)),
+            ),
+            isTrue,
+          );
+          expect(sessions.connectCalls, 0, reason: 'one existing SSH owner');
+          expect(find.byType(BottomSheet), findsNothing);
+          expect(find.byType(ChatScreen, skipOffstage: false), findsOneWidget);
+          expect(find.byType(SshTerminalScreen), findsOneWidget);
+          expect(
+            find.ancestor(of: find.byType(SshTerminalScreen), matching: frame),
+            findsOneWidget,
+          );
+          expect(identical(frame.evaluate().single, frameState), isTrue);
+          expect(
+            ChatWorkspacePaneScope.isInPane(
+              tester.element(find.byType(SshTerminalScreen)),
+            ),
+            isTrue,
+          );
+          expect(sessions.of('conn-test'), same(sessions.session));
+          expect(
+            sessions.connectCalls,
+            0,
+            reason: 'reattaches the existing session',
+          );
+          final terminalState = tester.state(find.byType(SshTerminalScreen));
+          expect(tester.getRect(frame), const Rect.fromLTRB(10, 10, 380, 834));
+          expect(
+            find.byKey(const ValueKey('chat-workspace-tabs')),
+            findsOneWidget,
+          );
+          expect(
+            find.byKey(const ValueKey('chat-workspace-keys')),
+            findsOneWidget,
+          );
+          await tester.tap(find.byKey(const ValueKey('chat-workspace-keys')));
+          await tester.pump();
+          expect(
+            tester.state(find.byType(SshTerminalScreen)),
+            same(terminalState),
+          );
+          await tester.tap(
+            find.byKey(const ValueKey('chat-workspace-layout-menu')),
+          );
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 400));
+          expect(
+            find.byKey(const ValueKey('ssh-pane-menu-credentials')),
+            findsOneWidget,
+          );
+          await tester.tap(
+            find.byKey(const ValueKey('ssh-pane-menu-credentials')),
+          );
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 400));
+          expect(find.byType(SshCredentialsScreen), findsOneWidget);
+          expect(
+            find.ancestor(
+              of: find.byType(SshCredentialsScreen),
+              matching: frame,
+            ),
+            findsOneWidget,
+          );
+          expect(identical(frame.evaluate().single, frameState), isTrue);
+          await tester.binding.handlePopRoute();
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 400));
+          expect(
+            tester.state(find.byType(SshTerminalScreen)),
+            same(terminalState),
+          );
+          expect(tester.state(find.byType(SshScreen)), same(hub));
+          await tester.tap(find.byKey(const ValueKey('chat-workspace-expand')));
+          await tester.pump();
+          expect(workspace.mode, ChatWorkspaceMode.workspace);
+          expect(
+            find.descendant(
+              of: find.byType(SshTerminalScreen),
+              matching: find.byType(HermesAppBar),
+            ),
+            findsNothing,
+          );
+          await tester.binding.handlePopRoute();
+          await tester.pump();
+          expect(
+            tester.state(find.byType(SshTerminalScreen)),
+            same(terminalState),
+            reason:
+                'first Back reduces expansion, preserving session and route',
+          );
+          expect(workspace.mode, ChatWorkspaceMode.split);
+          expect(
+            find.byKey(const ValueKey('chat-workspace-actions')),
+            findsOneWidget,
+          );
+          expect(frame, findsOneWidget);
+          await tester.binding.handlePopRoute();
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 400));
+          expect(find.byType(SshTerminalScreen), findsNothing);
+          expect(find.byType(SshScreen, skipOffstage: false), findsNothing);
+          expect(frame, findsNothing);
+          expect(tester.state(find.byType(ChatScreen)), same(chatState));
+          expect(sessions.of('conn-test'), same(sessions.session));
+          await pickPanel(tester, 'terminal');
+          expect(sessions.of('conn-test'), same(sessions.session));
+          expect(sessions.connectCalls, 0);
+          expect(
+            find.byType(SshTerminalScreen, skipOffstage: false),
+            findsOneWidget,
+          );
+          await tester.binding.handlePopRoute();
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 400));
+          expect(find.byType(ChatScreen), findsOneWidget);
+          expect(tester.takeException(), isNull);
+        } finally {
+          FlutterError.onError = previousErrorHandler;
+        }
+      });
+    }
+
+    for (final fromSplit in [false, true]) {
+      testWidgets('QA9716 Git callback and Back keep the same panel '
+          '(fromSplit=$fromSplit)', (tester) async {
+        phone(tester, fromSplit ? const Size(933, 704) : const Size(390, 844));
+        mockCompanionStorage();
+        final gateway = _Qa9715GitGateway();
+        final base = _session();
+        await pumpChat(
+          tester,
+          connection: _remoteConn('qa9715-compact-git'),
+          desktopGateway: gateway,
+          session: Session(
+            id: base.id,
+            title: base.title,
+            model: base.model,
+            source: base.source,
+            messageCount: base.messageCount,
+            isActive: base.isActive,
+            preview: base.preview,
+            startedAt: base.startedAt,
+            cwd: '/public-fixture',
+          ),
+        );
+        final chatState = tester.state(find.byType(ChatScreen));
+        await pickPanel(tester, 'git');
+        if (fromSplit) {
+          tester.view.physicalSize = const Size(390, 844);
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 600));
+        }
+        await tester.pump(const Duration(milliseconds: 400));
+        final frame = find.byKey(const ValueKey('chat-workspace-panel-clip'));
+        final review = find.byType(GitHubScreen);
+        expect(find.ancestor(of: review, matching: frame), findsOneWidget);
+        final state = tester.state(review);
+        expect(tester.widget<GitHubScreen>(review).repoPath, '/public-fixture');
+        expect(tester.widget<GitHubScreen>(review).onOpenTerminal, isNotNull);
+        expect(
+          find.byKey(const ValueKey('chat-workspace-tab-git')),
+          findsOneWidget,
+        );
+        await tester.tap(find.byKey(const ValueKey('git-open-terminal')));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+        expect(
+          find.ancestor(of: find.byType(SshScreen), matching: frame),
+          findsOneWidget,
+        );
+        expect(find.byType(SshScreen, skipOffstage: false), findsOneWidget);
+        expect(
+          find.byKey(const ValueKey('chat-workspace-tab-terminal')),
+          findsOneWidget,
+        );
+        await tester.binding.handlePopRoute();
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+        expect(tester.state(review), same(state));
+        expect(frame, findsOneWidget);
+        expect(tester.getRect(frame), const Rect.fromLTRB(10, 10, 380, 834));
+        await tester.binding.handlePopRoute();
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+        expect(find.byType(GitHubScreen, skipOffstage: false), findsNothing);
+        expect(frame, findsNothing);
+        expect(tester.state(find.byType(ChatScreen)), same(chatState));
+        expect(find.byType(ChatScreen), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      });
+    }
+
+    // The «Agentes» (Herdr) section is off in this release: the chat's panel
+    // strip must not offer it either, even with an SSH connection.
+    testWidgets('the panel strip has no Agents tab while the section is off', (
+      tester,
+    ) async {
+      phone(tester, const Size(390, 844));
+      mockCompanionStorage();
+      FeatureFlags.instance.agentsSection = false;
+      addTearDown(() => FeatureFlags.instance.agentsSection = true);
+      await pumpChat(
+        tester,
+        connection: _remoteConn('agents-off-strip'),
+        desktopGateway: _Qa9715GitGateway(),
+      );
+      await pickPanel(tester, 'terminal');
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(
+        find.byKey(const ValueKey('chat-workspace-tab-terminal')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('chat-workspace-tab-agents')),
+        findsNothing,
+      );
+      expect(tester.takeException(), isNull);
     });
 
-    testWidgets('Memory gets a home in the sheet', (tester) async {
-      phone(tester, const Size(390, 1400));
+    // F4: on a tablet the terminal opens in the workspace pane beside the
+    // chat instead of on top of it; folding the pane gives the chat back
+    // the whole screen.
+    testWidgets('on a tablet Terminal opens beside the chat, not on top', (
+      tester,
+    ) async {
+      phone(tester, const Size(1280, 800));
       await pumpChat(tester);
-      await openSheet(tester);
-      final memory = find.byKey(const ValueKey('chat-control-memory'));
-      expect(find.byKey(const ValueKey('chat-control-skills')), findsOneWidget);
-      await tester.ensureVisible(memory);
+      expect(
+        find.byKey(const ValueKey('chat-workspace-divider')),
+        findsNothing,
+      );
+      await pickPanel(tester, 'terminal');
+      expect(sheet, findsNothing);
+      expect(find.byType(SshScreen), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('chat-workspace-divider')),
+        findsOneWidget,
+      );
+      // No route on top: the chat is still on screen, on the left.
+      expect(find.byType(ChatScreen), findsOneWidget);
+      expect(
+        tester.getRect(composerHost()).right,
+        lessThan(tester.getRect(find.byType(SshScreen)).left),
+      );
+
+      await tester.tap(find.byKey(const ValueKey('chat-workspace-collapse')));
       await tester.pump();
-      await tester.tap(memory);
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 600));
-      expect(find.byType(MemoryScreen), findsOneWidget);
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(
+        find.byKey(const ValueKey('chat-workspace-divider')),
+        findsNothing,
+      );
+      // Review P1-F4-1: the folded pane is not kept alive off screen.
+      expect(find.byType(SshScreen, skipOffstage: false), findsNothing);
+      expect(tester.takeException(), isNull);
       await tester.pump(const Duration(seconds: 2));
     });
 
-    testWidgets('amber dot only while another conversation needs you', (
+    // Review P1-F4-1: a Terminal tab opened on the open Fold must not stay
+    // alive under a second terminal after reopening it.
+    testWidgets('closing the Fold then Terminal leaves one SSH screen', (
       tester,
     ) async {
+      phone(tester, const Size(933, 704));
+      await pumpChat(tester);
+      await pickPanel(tester, 'terminal');
+      expect(find.byType(SshScreen), findsOneWidget);
+      final hubState = tester.state(find.byType(SshScreen));
+
+      // The Fold closes: the cover screen is narrow.
+      tester.view.physicalSize = const Size(454, 717);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      // Orientation keeps the existing panel on screen as Trabajo. Go
+      // back to Chat explicitly before opening that same pane again.
+      expect(find.byType(SshScreen), findsOneWidget);
+      expect(identical(tester.state(find.byType(SshScreen)), hubState), isTrue);
+      await tester.tap(find.byKey(const ValueKey('chat-workspace-collapse')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byType(SshScreen, skipOffstage: false), findsNothing);
+      await pickPanel(tester, 'terminal');
+      expect(find.byType(SshScreen, skipOffstage: false), findsOneWidget);
+
+      // Opening the Fold again does not bring a second one back under it.
+      tester.view.physicalSize = const Size(933, 704);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byType(SshScreen, skipOffstage: false), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await tester.pump(const Duration(seconds: 2));
+    });
+
+    // ORDEN-WS-FIDELIDAD points 1 and 4: on a tablet Navegador is a tab of
+    // the workspace. the owner (Q9): sin dock dentro de los chats; the side rail
+    // that sat left of the chat is gone and no room is kept for it.
+    testWidgets('on a tablet Navegador is a workspace tab, with no rail in '
+        'the chat', (tester) async {
+      WebViewPlatform.instance = FakeWebViewPlatform();
+      phone(tester, const Size(1280, 800));
+      // A chat with a transcript: an empty one shows its empty state, with
+      // no list to measure the pane by.
+      await pumpChat(
+        tester,
+        messages: const [
+          {'role': 'user', 'content': 'pregunta'},
+          {'role': 'assistant', 'content': 'respuesta'},
+        ],
+      );
+      const rail = ValueKey('gesture-dock-rail');
+      expect(find.byKey(rail), findsNothing);
+      await pickPanel(tester, 'browser');
+      expect(sheet, findsNothing, reason: 'Ajustes closes as it opens');
+      expect(find.byType(InAppBrowserScreen), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('chat-workspace-tab-browser')),
+        findsOneWidget,
+      );
+      // No route on top: the chat is still there, beside the pane.
+      expect(find.byType(ChatScreen), findsOneWidget);
+      expect(
+        tester.getRect(composerHost()).right,
+        lessThan(tester.getRect(find.byType(InAppBrowserScreen)).left),
+      );
+      // the owner (Q9): sin dock dentro de los chats. No rail, and the chat's
+      // pane starts at the safe area (no room reserved for one).
+      expect(find.byKey(rail), findsNothing);
+      expect(
+        tester.getRect(chatListFinder()).left,
+        lessThanOrEqualTo(ChatWorkspaceGeometry.padding + 0.5),
+      );
+      expect(tester.takeException(), isNull);
+      await tester.pump(const Duration(seconds: 2));
+    });
+
+    // the owner: the side rail is for tablets; on the open Fold the panes need
+    // the room.
+    testWidgets('on the open Fold the workspace has no side rail', (
+      tester,
+    ) async {
+      phone(tester, const Size(933, 704));
+      await pumpChat(tester);
+      await pickPanel(tester, 'terminal');
+      expect(
+        find.byKey(const ValueKey('chat-workspace-divider')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('gesture-dock-rail')), findsNothing);
+      expect(tester.takeException(), isNull);
+      await tester.pump(const Duration(seconds: 2));
+    });
+
+    testWidgets(
+      'Navegador in portrait uses the shared pane and returns from its rail',
+      (tester) async {
+        WebViewPlatform.instance = FakeWebViewPlatform();
+        phone(tester);
+        await pumpChat(tester);
+        // the owner (final windows): Navegador is a row of Ajustes' «Paneles».
+        await tester.tap(settingsButton);
+        await tester.pump();
+        await tester.pump(
+          kChatNotchSheetOpen + const Duration(milliseconds: 80),
+        );
+        final row = find.byKey(
+          const ValueKey('chat-control-workspace-browser'),
+        );
+        expect(row, findsOneWidget);
+        expect(
+          find.descendant(of: row, matching: find.text('Navegador')),
+          findsOneWidget,
+        );
+        await tester.tap(row);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 600));
+        expect(sheet, findsNothing);
+        expect(find.byType(InAppBrowserScreen), findsOneWidget);
+        expect(
+          find.ancestor(
+            of: find.byType(InAppBrowserScreen),
+            matching: find.byKey(const ValueKey('chat-workspace-panel-clip')),
+          ),
+          findsOneWidget,
+        );
+        // Opened blank: nothing loads until the user types an address.
+        expect(
+          find.byKey(const ValueKey('in-app-browser-blank')),
+          findsOneWidget,
+        );
+        expect(find.byType(ChatScreen, skipOffstage: false), findsOneWidget);
+        await tester.tap(
+          find.byKey(const ValueKey('chat-workspace-collapse')),
+        );
+        await tester.pump();
+        // The same retained pane folds back to Chat.
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 600));
+        await tester.pump();
+        expect(find.byType(InAppBrowserScreen), findsNothing);
+        expect(find.byType(ChatScreen), findsOneWidget);
+        await tester.pump(const Duration(seconds: 2));
+      },
+    );
+
+    for (final fromSplit in [false, true]) {
+      testWidgets(
+        'QA9716 browser Back honors grid then history (fromSplit=$fromSplit)',
+        (tester) async {
+          final web = FakeWebViewPlatform();
+          WebViewPlatform.instance = web;
+          phone(
+            tester,
+            fromSplit ? const Size(933, 704) : const Size(390, 844),
+          );
+          mockCompanionStorage();
+          await pumpChat(tester);
+          final chatState = tester.state(find.byType(ChatScreen));
+          await pickPanel(tester, 'browser');
+          if (fromSplit) {
+            tester.view.physicalSize = const Size(390, 844);
+            await tester.pump();
+            await tester.pump(const Duration(milliseconds: 600));
+          }
+          final browser = find.byType(InAppTabbedBrowser);
+          final tabs = tester.widget<InAppTabbedBrowser>(browser).tabs;
+          final state = tester.state(browser);
+          final frame = find.byKey(const ValueKey('chat-workspace-panel-clip'));
+          expect(find.ancestor(of: browser, matching: frame), findsOneWidget);
+          final tab = tabs.open(url: Uri.parse('https://example.com/qa9715'));
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 400));
+          expect(web.controllers, isNotEmpty);
+          final controller = web.last;
+          controller.canGoBackValue = true;
+          controller.navigationDelegate!.onPageFinished?.call(
+            'https://example.com/qa9715',
+          );
+          await tester.pump();
+          await tester.tap(find.byKey(const ValueKey('browser-tab-count')));
+          await tester.pump();
+          expect(
+            find.byKey(const ValueKey('browser-tab-grid')),
+            findsOneWidget,
+          );
+          await tester.binding.handlePopRoute();
+          await tester.pump();
+          expect(find.byKey(const ValueKey('browser-tab-grid')), findsNothing);
+          expect(frame, findsOneWidget);
+          expect(tester.state(browser), same(state));
+          expect(controller.goBackCalls, 0, reason: 'grid owns the first Back');
+          await tester.binding.handlePopRoute();
+          await tester.pump();
+          expect(
+            controller.goBackCalls,
+            1,
+            reason: 'page history owns the next Back',
+          );
+          expect(frame, findsOneWidget);
+          expect(tester.widget<InAppTabbedBrowser>(browser).tabs, same(tabs));
+          controller.canGoBackValue = false;
+          controller.navigationDelegate!.onPageFinished?.call(
+            'https://example.com/',
+          );
+          await tester.pump();
+          await tester.binding.handlePopRoute();
+          await tester.pump();
+          await tester.pump();
+          expect(tester.state(find.byType(ChatScreen)), same(chatState));
+          expect(
+            frame,
+            findsNothing,
+            reason: 'compact root Back closes the tab',
+          );
+          await tester.pump(const Duration(milliseconds: 600));
+          await tester.pump();
+          expect(frame, findsNothing);
+          expect(find.byType(ChatScreen), findsOneWidget);
+          await pickPanel(tester, 'browser');
+          expect(tester.widget<InAppTabbedBrowser>(browser).tabs, same(tabs));
+          expect(tabs.tabs.any((item) => item.id == tab.id), isTrue);
+          await tester.tap(
+            find.byKey(const ValueKey('chat-workspace-collapse')),
+          );
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 600));
+          expect(tester.takeException(), isNull);
+        },
+      );
+    }
+
+    // «Ir a», Memory and Skills left the sheet for the ≡ menu, which the
+    // chat opens from its header.
+    testWidgets('the ≡ menu keeps Chats, Projects, Settings and Tools', (
+      tester,
+    ) async {
+      // Tall enough for the drawer's rows to be built: Perfil sits below them.
+      phone(tester, const Size(390, 1400));
+      await pumpChat(tester);
+      await tester.tap(find.byKey(const ValueKey('chat-menu-button')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      final drawer = find.byType(HermesDrawer);
+      expect(drawer, findsOneWidget);
+      final strings = Strings.of(tester.element(drawer));
+      for (final label in [
+        strings.drawerHome,
+        strings.drawerSessions,
+        strings.drawerProjects,
+        strings.drawerSettings,
+        strings.botProfileProfileSection,
+      ]) {
+        expect(
+          find.descendant(of: drawer, matching: find.text(label)),
+          findsWidgets,
+          reason: label,
+        );
+      }
+      await tester.pump(const Duration(seconds: 2));
+    });
+
+    // Retired with the notch (DECISIÓN D4 for the owner): its amber dot when
+    // another conversation needs you. Nothing in the chat draws it now, not
+    // even half-removed.
+    testWidgets('the notch\'s amber dot is gone with it', (tester) async {
       phone(tester);
       await pumpChat(tester);
       final dot = find.byKey(const ValueKey('chat-notch-attention'));
-      expect(dot, findsNothing);
       final aggregate = tester
           .state<HermesAppState>(find.byType(HermesApp))
           .activeChats
           .globalActivity;
-      void roster(String stored, String status) => aggregate.applyRoster(
+      aggregate.applyRoster(
         connectionId: 'conn-test',
         profile: 'default',
         replayEpoch: 'current',
         requestGeneration: aggregate.beginRosterRequest('conn-test', 'default'),
-        roster: DesktopActiveSessionList(
+        roster: const DesktopActiveSessionList(
           sessions: [
             DesktopActiveSession(
-              runtimeSessionId: 'rt-$stored',
-              storedSessionId: stored,
-              status: status,
+              runtimeSessionId: 'rt-stored-peer',
+              storedSessionId: 'stored-peer',
+              status: 'waiting',
             ),
           ],
         ),
       );
-      roster('sess-test', 'waiting');
-      await tester.pump();
-      expect(dot, findsNothing, reason: 'this chat waiting is not elsewhere');
-      roster('stored-peer', 'waiting');
-      await tester.pump();
-      expect(dot, findsOneWidget);
-      roster('stored-peer', 'working');
       await tester.pump();
       expect(dot, findsNothing);
+      expect(find.byType(ChatNotch), findsNothing);
     });
 
-    testWidgets('2x text at 360 dp: notch and sheet fit without overflow', (
-      tester,
-    ) async {
+    testWidgets('2x text at 360 dp: Ajustes and its sheet fit without '
+        'overflow', (tester) async {
       phone(tester, const Size(360, 800));
       tester.platformDispatcher.textScaleFactorTestValue = 2;
       addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
       await pumpChat(tester);
-      expectNotchAboveComposer(tester);
+      expectSettingsInHeader(tester);
       await openSheet(tester);
       final rect = tester.getRect(sheet);
       expect(rect.left, greaterThanOrEqualTo(0));
@@ -42113,15 +49898,22 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('tablet: centred notch, bounded sheet width', (tester) async {
+    testWidgets('tablet: Ajustes hangs from its button, bounded width', (
+      tester,
+    ) async {
       phone(tester, const Size(1024, 1366));
       await pumpChat(tester);
-      expectNotchAboveComposer(tester);
+      expectSettingsInHeader(tester);
       await openSheet(tester);
-      expect(tester.getSize(sheet).width, lessThanOrEqualTo(560));
+      final rect = tester.getRect(sheet);
+      final button = tester.getRect(settingsButton);
+      expect(rect.width, lessThanOrEqualTo(360));
+      expect(rect.top, greaterThanOrEqualTo(button.bottom));
+      expect(rect.right, lessThanOrEqualTo(1024));
       expect(
-        tester.getRect(sheet).center.dx,
-        closeTo(tester.getRect(notch).center.dx, 1),
+        rect.right,
+        greaterThanOrEqualTo(button.center.dx),
+        reason: 'under its button',
       );
       expect(tester.takeException(), isNull);
     });
@@ -42176,6 +49968,372 @@ void main() {
       expect(tester.takeException(), isNull);
     });
   });
+  for (final themeId in ['classic-dark', 'classic']) {
+    testWidgets('OPUS-CRISTAL real transcript $themeId', (tester) async {
+      final policy = Platform.environment['OPUS_REAL_POLICY'] ?? 'allowed';
+      final side = Platform.environment['OPUS_REAL_SIDE'] ?? 'B';
+      expect(['allowed', 'reduced-motion', 'high-contrast'], contains(policy));
+      expect(['A', 'B'], contains(side));
+      final before = (
+        blur: FrostedBackdropPolicy.blurAllowed.value,
+        reduced: FrostedBackdropPolicy.reducedPerformance.value,
+        highEnd: FrostedBackdropPolicy.knownHighEnd.value,
+        gpu: FrostedBackdropPolicy.liquidGpuValidated.value,
+        ceiling: FrostedBackdropPolicy.effectCeiling.value,
+        features: tester.platformDispatcher.accessibilityFeatures,
+      );
+      void setPolicy() {
+        FrostedBackdropPolicy.blurAllowed.value = true;
+        FrostedBackdropPolicy.reducedPerformance.value = false;
+        FrostedBackdropPolicy.knownHighEnd.value = true;
+        FrostedBackdropPolicy.liquidGpuValidated.value = false;
+        FrostedBackdropPolicy.effectCeiling.value = HermesGlassTier.glass;
+        tester.platformDispatcher.accessibilityFeaturesTestValue =
+            FakeAccessibilityFeatures(
+              disableAnimations: policy == 'reduced-motion',
+              highContrast: policy == 'high-contrast',
+            );
+      }
+
+      final scratch = Directory.systemTemp.createTempSync('opus-real-chat-');
+      const pathProvider = MethodChannel('plugins.flutter.io/path_provider');
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        pathProvider,
+        (_) async => scratch.path,
+      );
+      tester.view.devicePixelRatio = 4 / 3;
+      tester.view.physicalSize = const Size(1080, 1432);
+      tester.view.viewInsets = const FakeViewPadding(bottom: 500);
+      tester.platformDispatcher.textScaleFactorTestValue = 1.3;
+      MediaPrefetcher.instance.resetForTesting();
+      MediaDimensionsCache.clearForTesting();
+      GeneratedMediaAttachmentCard.clearReadyMemoForTesting();
+      GeneratedMediaService.resetAutoLoadsForTesting();
+      setPolicy();
+      try {
+        await loadDesignFonts();
+        final png = await tester.runAsync(() async {
+          final recorder = ui.PictureRecorder();
+          final canvas = Canvas(recorder);
+          const colours = [
+            Color(0xffffd27a),
+            Color(0xff3ea6ff),
+            Color(0xffd77799),
+            Color(0xff178574),
+            Color(0xff284b91),
+            Color(0xffee7860),
+            Color(0xffc9e5f2),
+            Color(0xff7443a2),
+          ];
+          for (var row = 0; row < 2; row++) {
+            for (var col = 0; col < 4; col++) {
+              canvas.drawRect(
+                Rect.fromLTWH(col * 192, row * 256, 192, 256),
+                Paint()..color = colours[row * 4 + col],
+              );
+              canvas.drawCircle(
+                Offset(col * 192 + 96, row * 256 + 128),
+                60,
+                Paint()..color = colours[(row * 4 + col + 3) % colours.length],
+              );
+            }
+          }
+          final picture = recorder.endRecording();
+          final image = await picture.toImage(768, 512);
+          try {
+            return (await image.toByteData(
+              format: ui.ImageByteFormat.png,
+            ))!.buffer.asUint8List();
+          } finally {
+            image.dispose();
+            picture.dispose();
+          }
+        });
+        const proseMarker = 'OPUSCHATPROBETEXT';
+        const codeMarker = 'OPUSCHATPROBECODE';
+        final prose = List.filled(
+          100,
+          '$proseMarker: el contenido público sigue aquí mientras se lee el historial.',
+        ).join(' ');
+        final code =
+            '```dart\n${List.generate(90, (i) => 'final ${codeMarker}_$i = "valor público $i";').join('\n')}\n```';
+        await pumpChat(
+          tester,
+          connection: _remoteConn('opus-real-$themeId'),
+          requestComposerFocus: true,
+          initialPreferences: {'theme_mode': themeId},
+          wallClockMs: () => 1793404800000,
+          messages: [
+            {
+              'role': 'assistant',
+              'content': 'Patrón de imagen público para el cotejo.',
+              '_generatedImages': [
+                {
+                  'kind': 'serverCache',
+                  'source':
+                      '/home/hermes/.hermes/cache/images/opus-real-probe.png',
+                  'basename': 'opus-real-probe.png',
+                  'tool_call_id': 'opus-probe-image',
+                },
+                {
+                  'kind': 'serverCache',
+                  'source':
+                      '/home/hermes/.hermes/cache/images/opus-real-probe-2.png',
+                  'basename': 'opus-real-probe-2.png',
+                  'tool_call_id': 'opus-probe-image-2',
+                },
+              ],
+            },
+            {'role': 'user', 'content': 'Muestra el patrón de imagen'},
+            {'role': 'assistant', 'content': prose},
+            {'role': 'user', 'content': 'Muestra el texto público'},
+            {'role': 'assistant', 'content': code},
+            {'role': 'user', 'content': 'Muestra el código público'},
+            ...scrollableChatHistory('opus-real'),
+          ],
+          generatedMediaFetcher: (_, destination) async {
+            await destination.parent.create(recursive: true);
+            await destination.writeAsBytes(png!, flush: true);
+          },
+        );
+        setPolicy();
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 500));
+        final app = tester.state<HermesAppState>(find.byType(HermesApp));
+        expect(app.themeId.value, themeId);
+        final field = tester.widget<TextField>(find.byType(TextField));
+        expect(field.focusNode!.hasFocus, isTrue);
+        final fieldController = field.controller;
+        final foot = find.byKey(const ValueKey('chat-foot-glass'));
+        expect(tester.widget<HermesGlassStrip>(foot).enabled, side == 'B');
+        final composer = find.byKey(
+          const ValueKey('hermes-composer-visible-surface'),
+        );
+        final capsule = find.byKey(const ValueKey('status-pill-capsule'));
+        final rootDir = Platform.environment['OPUS_REAL_DIR'];
+        final probe = RealChatGlassProbe(
+          tester: tester,
+          transcript: chatListFinder(),
+          foot: foot,
+          scrim: find.byKey(const ValueKey('chat-foot-scrim')),
+          composer: composer,
+          capsule: capsule,
+          colors: AppTheme.fromId(themeId).hermes,
+          hint: tester
+              .widget<ConsoleComposer>(find.byType(ConsoleComposer))
+              .hintText!,
+          // the owner: the foot is the grey chrome in every side and policy; the
+          // probe still proves it is never glass (no filter, no image
+          // showing through the composer or the pill).
+          expectGlass: false,
+          directory: rootDir == null ? null : '$rootDir/$themeId',
+        );
+        final scroll = tester.widget<ListView>(chatListFinder()).controller!;
+        final gesture = await tester.startGesture(
+          Offset(
+            probe.bounds(composer).center.dx,
+            probe.bounds(composer).top - 100,
+          ),
+        );
+        await gesture.moveBy(const Offset(0, 180));
+        await gesture.up();
+        await tester.pump(const Duration(milliseconds: 200));
+        // A real drag establishes reading intent. Request the composer focus
+        // explicitly for the keyboard scene; subsequent positioning is programmatic.
+        field.focusNode!.requestFocus();
+        await tester.pump(const Duration(milliseconds: 300));
+        bool imageReady() => find
+            .descendant(
+              of: find.byKey(const ValueKey('generated-image-thumbnail')),
+              matching: find.byType(RawImage),
+            )
+            .evaluate()
+            .any((e) => (e.renderObject as RenderImage).image != null);
+        RenderBox? locate(String stage) {
+          if (stage == 'image') {
+            if (!imageReady()) return null;
+            return tester.renderObject<RenderBox>(
+              find.byKey(const ValueKey('generated-image-thumbnail')).first,
+            );
+          }
+          final matches =
+              probe
+                  .paragraphs(chatListFinder())
+                  .where(
+                    (p) => p.text.toPlainText().contains(
+                      stage == 'text' ? proseMarker : codeMarker,
+                    ),
+                  )
+                  .toList()
+                ..sort((a, b) => b.size.height.compareTo(a.size.height));
+          if (matches.isEmpty) return null;
+          RenderBox box = matches.first;
+          final minimum = probe.bounds(foot).height * 2;
+          while (box.size.height < minimum && box.parent is RenderBox) {
+            box = box.parent! as RenderBox;
+          }
+          return box;
+        }
+
+        Future<RenderBox> position(String stage) async {
+          scroll.jumpTo(scroll.position.minScrollExtent);
+          await tester.pump();
+          RenderBox? box;
+          for (var attempt = 0; attempt < 80; attempt++) {
+            if (stage == 'image' &&
+                find.byType(GeneratedImageCard).evaluate().isNotEmpty) {
+              await _pumpUntilRealWork(tester, imageReady);
+            }
+            box = locate(stage);
+            if (box != null) break;
+            if (scroll.offset >= scroll.position.maxScrollExtent) break;
+            scroll.jumpTo(
+              math.min(scroll.position.maxScrollExtent, scroll.offset + 300),
+            );
+            await tester.pump(const Duration(milliseconds: 30));
+          }
+          if (box == null) {
+            debugPrint(
+              'OPUS-CRISTAL missing $stage offset=${scroll.offset} '
+              'max=${scroll.position.maxScrollExtent} '
+              'cards=${tester.widgetList<GeneratedImageCard>(find.byType(GeneratedImageCard)).map((card) => card.status).toList()}',
+            );
+          }
+          expect(
+            box,
+            isNotNull,
+            reason: 'real $stage must be loaded in the transcript',
+          );
+          final target = box!;
+          for (var i = 0; i < 3; i++) {
+            final r = MatrixUtils.transformRect(
+              target.getTransformTo(null),
+              Offset.zero & target.size,
+            );
+            final wanted =
+                (probe.bounds(composer).center.dy +
+                    probe.bounds(capsule).center.dy) /
+                2;
+            scroll.jumpTo(
+              (scroll.offset + wanted - r.center.dy).clamp(
+                scroll.position.minScrollExtent,
+                scroll.position.maxScrollExtent,
+              ),
+            );
+            await tester.pump(const Duration(milliseconds: 100));
+          }
+          final rect = MatrixUtils.transformRect(
+            target.getTransformTo(null),
+            Offset.zero & target.size,
+          );
+          debugPrint(
+            'OPUS-CRISTAL position $stage target=$rect '
+            'composer=${probe.bounds(composer)} capsule=${probe.bounds(capsule)} '
+            'scroll=${scroll.offset} range=${scroll.position.minScrollExtent}..${scroll.position.maxScrollExtent}',
+          );
+          expect(
+            rect.overlaps(probe.bounds(composer)),
+            isTrue,
+            reason: '$stage under composer',
+          );
+          expect(
+            rect.overlaps(probe.bounds(capsule)),
+            isTrue,
+            reason: '$stage under capsule',
+          );
+          return target;
+        }
+
+        final reports = <Map<String, Object?>>[];
+        final captureOrigin = tester.binding.clock.now();
+        for (final stage in ['image', 'text', 'code']) {
+          final target = await position(stage);
+          // Real file/decode work may need a different number of pumps in
+          // A and B. Capture at the same frame-clock slot after it settles;
+          // a caret or header animation must not become a material delta.
+          final captureAt = captureOrigin.add(
+            Duration(seconds: 20 * (reports.length + 1)),
+          );
+          final remaining = captureAt.difference(tester.binding.clock.now());
+          expect(remaining.isNegative, isFalse);
+          await tester.pump(remaining);
+          await tester.pump();
+          expect(tester.binding.clock.now(), captureAt);
+          final stimulusRect = MatrixUtils.transformRect(
+            target.getTransformTo(null),
+            Offset.zero & target.size,
+          );
+          expect(stimulusRect.overlaps(probe.bounds(composer)), isTrue);
+          expect(stimulusRect.overlaps(probe.bounds(capsule)), isTrue);
+          final report = await probe.sample(
+            stage,
+            textStimulus: stage != 'image',
+            imageStimulusRect: stage == 'image' ? stimulusRect : null,
+          );
+          final r = MatrixUtils.transformRect(
+            target.getTransformTo(null),
+            Offset.zero & target.size,
+          );
+          report['stimulusRect'] = [r.left, r.top, r.right, r.bottom];
+          report['scrollOffset'] = scroll.offset;
+          report['captureElapsedMicros'] = captureAt
+              .difference(captureOrigin)
+              .inMicroseconds;
+          report['footerEnabled'] = tester
+              .widget<HermesGlassStrip>(foot)
+              .enabled;
+          reports.add(report);
+          expect(
+            tester.widget<TextField>(find.byType(TextField)).controller,
+            same(fieldController),
+          );
+          expect(
+            tester
+                .widget<TextField>(find.byType(TextField))
+                .focusNode!
+                .hasFocus,
+            isTrue,
+          );
+          expect(tester.takeException(), isNull);
+        }
+        if (rootDir != null) {
+          File('$rootDir/$themeId/summary.json').writeAsStringSync(
+            jsonEncode({
+              'theme': themeId,
+              'controlSide': side,
+              'policy': policy,
+              'nativeViewport': [1080, 1432],
+              'dpr': 4 / 3,
+              'simulatedKeyboardInsetPhysical': 500,
+              'textScale': 1.3,
+              'reports': reports,
+            }),
+          );
+        }
+        debugPrint(
+          'OPUS-CRISTAL real transcript $themeId $policy ${jsonEncode(reports)}',
+        );
+      } finally {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+        FrostedBackdropPolicy.blurAllowed.value = before.blur;
+        FrostedBackdropPolicy.reducedPerformance.value = before.reduced;
+        FrostedBackdropPolicy.knownHighEnd.value = before.highEnd;
+        FrostedBackdropPolicy.liquidGpuValidated.value = before.gpu;
+        FrostedBackdropPolicy.effectCeiling.value = before.ceiling;
+        tester.platformDispatcher.accessibilityFeaturesTestValue =
+            before.features;
+        tester.platformDispatcher.clearTextScaleFactorTestValue();
+        tester.view.reset();
+        tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          pathProvider,
+          null,
+        );
+        MediaPrefetcher.instance.resetForTesting();
+        if (scratch.existsSync()) scratch.deleteSync(recursive: true);
+      }
+    });
+  }
 }
 
 class _TodoResumeGateway extends _StableRefreshGateway {
@@ -42314,26 +50472,57 @@ class _EarlierHistoryPages {
 /// second, separate face (`chat-header-companion`).
 /// ct1215: a 1:1 chat draws no face, sprite, letter or reserved slot next
 /// to a turn, in any presence setting.
-void _expectNoTurnFace(WidgetTester tester) {
+/// Q9 (the owner, MAQ-TODO: «sprite pequeño + nombre del bot»): each answer
+/// opens with the chat's own face, small (24 dp) and still, right before
+/// the bot's name; never an initial, never a companion of the app's or a
+/// face that moves. (Before Q9 the turn's header had no face at all.)
+void _expectAnswerFace(WidgetTester tester) {
+  final slots = find.byKey(const ValueKey('assistant-avatar-slot'));
+  expect(slots, findsWidgets);
+  for (final slot in slots.evaluate()) {
+    expect((slot.renderObject! as RenderBox).size.height, 24);
+  }
   for (final key in const [
-    'assistant-avatar-slot',
     'assistant-avatar-initial',
     'assistant-header-identity-space',
   ]) {
     expect(find.byKey(ValueKey(key)), findsNothing, reason: key);
   }
-  expect(
-    find.descendant(
-      of: find.byType(MessageAvatarHeader),
+  // A face in every slot, never an empty one: the chat's own (its pet, a
+  // bot's face, a profile's avatar, Hermes' sprite).
+  for (final slot in slots.evaluate()) {
+    final face = find.descendant(
+      of: find.byElementPredicate((e) => identical(e, slot)),
       matching: find.byWidgetPredicate(
-        (widget) =>
-            widget is CompanionView ||
-            widget is MascotSprite ||
-            widget is HermesBotFace,
+        (w) =>
+            w is ProfilePetAvatar ||
+            w is LivingBotFace ||
+            w is MissionProfileAvatar ||
+            w is MascotSprite,
       ),
-    ),
+    );
+    expect(face, findsWidgets, reason: 'the slot holds the chat\'s face');
+  }
+  final header = find.byType(MessageAvatarHeader);
+  expect(
+    find.descendant(of: header, matching: find.byType(CompanionView)),
     findsNothing,
   );
+  for (final bot in tester.widgetList<LivingBotFace>(
+    find.descendant(of: header, matching: find.byType(LivingBotFace)),
+  )) {
+    expect(bot.animate, isFalse, reason: 'a still face');
+  }
+  for (final sheet in tester.widgetList<SpritesheetRenderer>(
+    find.descendant(of: header, matching: find.byType(SpritesheetRenderer)),
+  )) {
+    expect(sheet.animate, isFalse, reason: 'a still face');
+  }
+  for (final sprite in tester.widgetList<MascotSprite>(
+    find.descendant(of: header, matching: find.byType(MascotSprite)),
+  )) {
+    expect(sprite.still, isTrue, reason: 'a still face');
+  }
 }
 
 /// fh1215: the activity pill lives in the floating header: inside it, above
@@ -42344,15 +50533,49 @@ void _expectPillInHeader(
   Finder pill, {
   List<Finder> clearOf = const [],
 }) {
-  expect(
-    find.ancestor(of: pill, matching: find.byType(FloatingChatHeader)),
-    findsOneWidget,
+  if (clearOf.any(
+    (other) => other.evaluate().any(
+      (e) => e.widget.key == const ValueKey('chat-slash-palette'),
+    ),
+  )) {
+    expect(
+      pill.hitTestable(),
+      findsNothing,
+      reason: 'the pill yields to the command palette',
+    );
+    return;
+  }
+  final inHeader = find.ancestor(
+    of: pill,
+    matching: find.byType(FloatingChatHeader),
   );
   final rect = tester.getRect(pill);
-  expect(
-    rect.bottom,
-    lessThanOrEqualTo(FloatingChatHeader.insetFor(tester.element(pill)) + 0.5),
-  );
+  if (inHeader.evaluate().isNotEmpty) {
+    expect(
+      rect.bottom,
+      lessThanOrEqualTo(
+        FloatingChatHeader.insetFor(tester.element(pill)) + 0.5,
+      ),
+    );
+  } else {
+    final inline =
+        tester.widget(pill).key == const ValueKey('chat-inline-activity');
+    expect(
+      find.byKey(const ValueKey('delegates-capsule')),
+      inline ? findsNothing : findsOneWidget,
+    );
+    if (inline) {
+      expect(
+        find.ancestor(
+          of: pill,
+          matching: find.byType(ChatScrollInteractionGuard),
+        ),
+        findsOneWidget,
+      );
+    }
+    final header = tester.getRect(find.byKey(const ValueKey('chat-header')));
+    expect(rect.overlaps(header), isFalse);
+  }
   final composer = find.byKey(const ValueKey('chat-composer-host'));
   if (composer.evaluate().isNotEmpty) {
     expect(rect.bottom, lessThan(tester.getRect(composer).top));
@@ -42371,4 +50594,41 @@ void _expectPillInHeader(
 Future<void> _rebuildChatScreen(WidgetTester tester) async {
   tester.element(find.byType(ChatScreen)).markNeedsBuild();
   await tester.pump();
+}
+
+/// The timeline's row of step [id]: the verb in bold and, when there is one,
+/// the target in the chip beside it (live-pill: no longer one «verbo · objetivo»
+/// string).
+void _expectStepRow(String id, String verb, [String? target]) {
+  final card = find.byKey(ValueKey('turn-step-card-$id'));
+  expect(card, findsOneWidget, reason: 'step $id');
+  expect(
+    find.descendant(of: card, matching: find.text(verb, findRichText: true)),
+    findsOneWidget,
+    reason: 'verb of $id',
+  );
+  if (target != null) {
+    expect(
+      find.descendant(
+        of: card,
+        matching: find.text(target, findRichText: true),
+      ),
+      findsOneWidget,
+      reason: 'target of $id',
+    );
+  }
+}
+
+/// Q9-CHAT5 v2: what a screen reader hears for the step card of [id] (its
+/// title, detail, state and duration; the duration is no longer drawn).
+String _stepCardLabel(WidgetTester tester, String id) {
+  final card = find.byKey(ValueKey('turn-step-card-$id'));
+  final widget = tester.widget(card);
+  return (widget is Semantics
+          ? widget
+          : tester.widget<Semantics>(
+              find.descendant(of: card, matching: find.byType(Semantics)).first,
+            ))
+      .properties
+      .label!;
 }

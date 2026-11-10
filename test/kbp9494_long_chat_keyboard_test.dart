@@ -397,9 +397,11 @@ void main() {
     final rows = elementsUnder(tester.element(list));
     final rowRebuilds = countRebuildsUnder(tester.element(list));
     final header = rendersUnder(byTypeName('FloatingChatHeader'));
+    // Vistas v3: no notch on the composer any more; its buttons (Vistas,
+    // Ajustes) are the header's, counted with it.
     final notch = rendersUnder(byTypeName('ChatNotch'));
     expect(header, isNotEmpty);
-    expect(notch, isNotEmpty);
+    expect(notch, isEmpty);
     var headerPaints = 0;
     var notchPaints = 0;
     debugProfilePaintsEnabled = true;

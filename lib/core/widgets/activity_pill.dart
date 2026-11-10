@@ -9,16 +9,27 @@ import '../services/notifications/notification_strings.dart'
 import '../models/activity_snapshot.dart';
 import '../models/tool_label.dart';
 import '../theme/app_theme.dart';
+import 'hermes_shiny_text.dart';
+import 'thinking_glyph.dart';
 
 /// `m:ss` (y `h:mm:ss` pasada la hora): el cronómetro vivo de la pastilla.
 String formatTurnElapsed(Duration elapsed) {
-  final totalSeconds = elapsed.inSeconds;
+  final totalSeconds = elapsed.isNegative ? 0 : elapsed.inSeconds;
   final seconds = (totalSeconds % 60).toString().padLeft(2, '0');
   final minutes = totalSeconds ~/ 60;
   if (minutes < 60) return '$minutes:$seconds';
   return '${minutes ~/ 60}:'
       '${(minutes % 60).toString().padLeft(2, '0')}:'
       '$seconds';
+}
+
+/// Hermes Desktop's live activity timer (`components/chat/activity-timer.ts`,
+/// `formatElapsed`): `12s` under a minute, then minutes and seconds, `1:05`
+/// (an hour reads `60:00`, as there).
+String formatActivityElapsed(Duration elapsed) {
+  final seconds = elapsed.isNegative ? 0 : elapsed.inSeconds;
+  if (seconds < 60) return '${seconds}s';
+  return '${seconds ~/ 60}:${(seconds % 60).toString().padLeft(2, '0')}';
 }
 
 /// Duración de un paso terminado: `0.7 s`, `23 s`, `1:05`. Coma decimal en
@@ -49,9 +60,10 @@ enum ActivityGlyph {
   subagents,
 }
 
-IconData _glyphIcon(ActivityGlyph glyph) => switch (glyph) {
+/// Null for [ActivityGlyph.thinking]: the brain is drawn ([ThinkingGlyph]).
+IconData? _glyphIcon(ActivityGlyph glyph) => switch (glyph) {
   ActivityGlyph.connecting => Icons.cloud_queue_rounded,
-  ActivityGlyph.thinking => Icons.psychology_alt_rounded,
+  ActivityGlyph.thinking => null,
   ActivityGlyph.tool => Icons.terminal_rounded,
   ActivityGlyph.skill => Icons.auto_awesome_rounded,
   ActivityGlyph.waiting => Icons.help_outline_rounded,
@@ -255,9 +267,11 @@ class ActivityTicker extends StatefulWidget {
     required this.active,
     required this.builder,
     this.clock,
+    this.until,
     super.key,
   });
 
+  final DateTime? until;
   final bool active;
   final Widget Function(BuildContext context, DateTime now) builder;
   final DateTime Function()? clock;
@@ -302,7 +316,12 @@ class _ActivityTickerState extends State<ActivityTicker>
   }
 
   void _sync() {
-    final shouldTick = widget.active && _foreground && _viewEnabled;
+    final shouldTick =
+        widget.active &&
+        _foreground &&
+        _viewEnabled &&
+        (widget.until == null ||
+            (widget.clock ?? DateTime.now)().isBefore(widget.until!));
     if (shouldTick == (_timer != null)) return;
     if (!shouldTick) {
       _timer?.cancel();
@@ -310,7 +329,10 @@ class _ActivityTickerState extends State<ActivityTicker>
       return;
     }
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted) setState(() {});
+      if (mounted) {
+        setState(() {});
+        _sync();
+      }
     });
   }
 
@@ -380,7 +402,10 @@ class ActivityGlyphBadge extends StatelessWidget {
                     )
                   : CircularProgressIndicator(strokeWidth: 1.8, color: color),
             ),
-          Icon(_glyphIcon(glyph), size: 13, color: color),
+          switch (_glyphIcon(glyph)) {
+            final icon? => Icon(icon, size: 13, color: color),
+            null => ThinkingGlyph(size: 13, color: color),
+          },
         ],
       ),
     );
@@ -531,7 +556,7 @@ class ActivityPillRow extends StatelessWidget {
                 : now.difference(timerStart),
           );
 
-    final text = Text.rich(
+    final plainText = Text.rich(
       TextSpan(
         children: [
           TextSpan(
@@ -553,6 +578,8 @@ class ActivityPillRow extends StatelessWidget {
       overflow: TextOverflow.ellipsis,
       style: const TextStyle(fontSize: 13),
     );
+    // «En curso»: el brillo recorre la línea (sin él cuando ya no corre nada).
+    final text = model.live ? HermesShinyText(child: plainText) : plainText;
 
     Widget row(bool roomy) {
       final children = <Widget>[
@@ -727,6 +754,7 @@ class ActivityPillHost extends StatelessWidget {
     this.clock,
     this.revealAfter = const Duration(seconds: 2),
     this.suspended = false,
+    this.ticking = true,
     this.headerBuilder,
     super.key,
   });
@@ -739,6 +767,7 @@ class ActivityPillHost extends StatelessWidget {
   /// Another floating surface takes the pill's place for now: it keeps its
   /// slot but is neither painted nor touched.
   final bool suspended;
+  final bool ticking;
 
   @override
   Widget build(BuildContext context) {
@@ -746,7 +775,7 @@ class ActivityPillHost extends StatelessWidget {
     final lang = Localizations.localeOf(context).languageCode;
     final header = headerBuilder;
     return ActivityTicker(
-      active: snapshot.isLive,
+      active: ticking && snapshot.isLive,
       clock: clock,
       builder: (context, now) {
         final model = buildActivityPillModel(

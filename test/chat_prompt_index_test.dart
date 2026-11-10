@@ -12,6 +12,35 @@ const String _carrier =
     '(exit code 1).\nCommand: echo hi\nOutput:\nhi\n]';
 
 void main() {
+  test('delegation, auto-continue and display_kind rows are not prompts', () {
+    expect(
+      isChatPromptMessage(
+        _msg(
+          'user',
+          '[ASYNC DELEGATION BATCH COMPLETE — deleg_0123abcd]\nresultado',
+        ),
+      ),
+      isFalse,
+    );
+    expect(
+      isChatPromptMessage({
+        'role': 'user',
+        'content': 'cualquier cosa',
+        'display_kind': 'async_delegation_complete',
+      }),
+      isFalse,
+    );
+    expect(isChatPromptMessage(_msg('user', 'una pregunta real')), isTrue);
+    expect(
+      isChatPromptMessage({
+        'role': 'user',
+        'content': 'envío en curso',
+        '_optimistic': true,
+      }),
+      isTrue,
+    );
+  });
+
   group('chatPromptPreview', () {
     test('collapses whitespace and trims', () {
       expect(chatPromptPreview('  hola \n\n  mundo\t!  '), 'hola mundo !');
@@ -95,8 +124,7 @@ void main() {
         _msg('user', 'pregunta real'),
       ];
       expect(
-        deriveChatPromptEntries(rows, isSystemRow: chip)
-            .map((e) => e.preview),
+        deriveChatPromptEntries(rows, isSystemRow: chip).map((e) => e.preview),
         ['pregunta real'],
       );
       expect(stickyPromptIndex(rows, 0, isSystemRow: chip), 2);

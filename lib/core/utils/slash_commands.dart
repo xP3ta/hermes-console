@@ -252,8 +252,7 @@ List<SlashCommand> slashSuggestionsFor(
   bool sideAgents = false,
   bool branch = false,
 }) {
-  if (!text.startsWith('/')) return const [];
-  if (text.contains(' ') || text.contains('\n')) return const [];
+  if (!slashPaletteApplies(text)) return const [];
   final q = text.substring(1).toLowerCase();
   final cmds = slashCommands(s, sideAgents: sideAgents, branch: branch);
   if (q.isEmpty) return cmds;
@@ -275,6 +274,28 @@ class SlashInvocation {
   const SlashInvocation(this.name, this.arg);
 }
 
+/// Desktop's command rule (`@hermes/shared` `SLASH_COMMAND_RE`,
+/// `chat-runtime.ts` `isSlashCommandText`): a `/` at the start, a bare name
+/// with no second `/`, then a space or the end. `/usr/local` and a pasted
+/// `/home/me/shot.png` are prose. Console also reads a name ending in a file
+/// extension (`/notes.md`) as a path, never a command.
+bool isSlashCommandText(String text) {
+  final t = text.trimLeft();
+  final match = _slashCommandText.firstMatch(t);
+  if (match == null) return false;
+  return !_fileExtension.hasMatch(match.group(1)!);
+}
+
+final RegExp _slashCommandText = RegExp(r'^/([^\s/]*)(?:\s|$)');
+final RegExp _fileExtension = RegExp(r'\.[A-Za-z][A-Za-z0-9]{0,4}$');
+
+/// The command palette is for a name being typed: `/` at the start, no
+/// space or line break yet, and no second `/` (that is a path).
+bool slashPaletteApplies(String text) =>
+    text.startsWith('/') &&
+    !text.contains(RegExp(r'\s')) &&
+    !text.contains('/', 1);
+
 SlashInvocation? parseSlashInvocation(String text) {
   final t = text.trim();
   if (!t.startsWith('/')) return null;
@@ -288,7 +309,7 @@ SlashInvocation? parseSlashInvocation(String text) {
 
 /// Classifies a valid slash before any busy attachment queue decision.
 bool shouldRouteSlashBeforeBusyAttachmentQueue(String text) =>
-    text.trim().startsWith('/');
+    isSlashCommandText(text.trim());
 
 bool isUnavailableSlashName(String name) =>
     name.trim().replaceFirst(RegExp(r'^/+'), '').toLowerCase() == 'compact';

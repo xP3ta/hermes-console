@@ -32,6 +32,7 @@ class RunningWorkActions {
     this.openSubagent,
     this.dismissSubagents,
     this.stopProcess,
+    this.stopAllProcesses,
   });
 
   static const RunningWorkActions none = RunningWorkActions();
@@ -49,6 +50,10 @@ class RunningWorkActions {
 
   /// Stops one background process.
   final void Function(SessionActivityProcess process)? stopProcess;
+
+  /// Stops every background process of the conversation at once; offered
+  /// only while two or more are alive (one has its own «Stop»).
+  final VoidCallback? stopAllProcesses;
 }
 
 /// Type and room of a row: read at the size of a reply, never a footnote.
@@ -75,6 +80,7 @@ class RunningWork extends StatelessWidget {
     this.clock,
     this.padding = EdgeInsets.zero,
     this.title = true,
+    this.showSubagents = true,
     super.key,
   });
 
@@ -91,9 +97,16 @@ class RunningWork extends StatelessWidget {
   /// it leaves it out).
   final bool title;
 
-  /// Whether [snapshot] has anything this section shows.
-  static bool hasContent(ActivitySnapshot snapshot) =>
-      snapshot.hasNonTurnActivity;
+  /// Whether it lists the subagents, one row each. A host whose chat already
+  /// shows them in their group says no: the group is the one place an agent
+  /// is listed (and where its detail opens), and this card keeps what is NOT
+  /// a subagent (processes, loops, the goal).
+  final bool showSubagents;
+
+  /// Whether [snapshot] has anything this section shows ([subagents]: the
+  /// subagents count as content).
+  static bool hasContent(ActivitySnapshot snapshot, {bool subagents = true}) =>
+      snapshot.backgroundCount > 0 || (subagents && snapshot.hasSubagents);
 
   /// How many things are alive: processes, subagents still working, loops
   /// and the goal. Subagents that ended wait to be cleared and are content,
@@ -114,12 +127,48 @@ class RunningWork extends StatelessWidget {
   /// when nothing is alive any more.
   static int endedCount(ActivitySnapshot snapshot) => snapshot.subagentEnded;
 
+  /// What the island says it has to open (QA 9709: the subagents live in
+  /// the pill). Only subagents alive: how many of them («3 subagentes»);
+  /// anything else alive too: how many things («4 en marcha»). Once none
+  /// is: how the subagents still there ended («2 completados · 1 falló»),
+  /// or how many ended when one of them was stopped. Null: only the name.
+  static String? islandMark(Strings s, ActivitySnapshot snapshot) {
+    final alive = aliveCount(snapshot);
+    if (alive > 0) {
+      final others =
+          snapshot.processes.length +
+          snapshot.schedules.length +
+          (snapshot.goal == null ? 0 : 1);
+      // The durable remote tail shares the generic counter without
+      // identifying children. Only its roster confirms subagents.
+      final knownSubagents =
+          snapshot.subagents.isNotEmpty ||
+          (!snapshot.passiveRemote && snapshot.subagentCount > 0);
+      return others == 0 && knownSubagents
+          ? s.subagentUiGroupTitle(alive)
+          : s.runCount(alive);
+    }
+    final ended = endedCount(snapshot);
+    if (ended == 0) return null;
+    var completed = 0;
+    var failed = 0;
+    for (final a in snapshot.subagents) {
+      if (a.phase == SubagentActivityPhase.completed) completed++;
+      if (a.phase == SubagentActivityPhase.failed) failed++;
+    }
+    if (completed + failed < ended) return s.runEnded(ended);
+    return [
+      if (completed > 0) s.subagentActivityAggregateCompleted(completed),
+      if (failed > 0) s.subagentActivityAggregateFailed(failed),
+    ].join(' · ');
+  }
+
   @override
   Widget build(BuildContext context) =>
       ValueListenableBuilder<ActivitySnapshot>(
         valueListenable: snapshot,
         builder: (context, value, _) {
-          if (!hasContent(value)) {
+          if (!hasContent(value, subagents: showSubagents)) {
             return const SizedBox.shrink(key: ValueKey('running-work-empty'));
           }
           return Semantics(
@@ -142,8 +191,9 @@ class RunningWork extends StatelessWidget {
     final s = Strings.of(context);
     final colors = Theme.of(context).hermes;
     final ended = [
-      for (final a in value.subagents)
-        if (a.isTerminal) a,
+      if (showSubagents)
+        for (final a in value.subagents)
+          if (a.isTerminal) a,
     ];
     // What could not be read again says so on its own rows: a stale count
     // of subagents does not put in doubt a process just confirmed alive.
@@ -156,20 +206,26 @@ class RunningWork extends StatelessWidget {
     final dismiss = ended.isNotEmpty && value.subagentLive == 0
         ? actions.dismissSubagents
         : null;
+    final stopAll = value.processes.length >= 2
+        ? actions.stopAllProcesses
+        : null;
     final rows = [
       for (final process in value.processes)
         _process(s, process, now, staleWork),
-      for (final activity in value.subagents)
-        if (!activity.isTerminal)
-          _subagent(s, colors, activity, now, staleAgents),
+      if (showSubagents)
+        for (final activity in value.subagents)
+          if (!activity.isTerminal)
+            _subagent(s, colors, activity, now, staleAgents),
       // Subagents known only by their number.
-      if (value.subagents.isEmpty && value.hasSubagents)
+      if (showSubagents && value.subagents.isEmpty && value.hasSubagents)
         _RunningRow(
           key: const ValueKey('running-subagents-count'),
           icon: Icons.smart_toy_outlined,
           kind: s.runKindSubagent,
-          live: true,
-          title: value.subagentCount == 0
+          live: !value.subagentsStale,
+          title: value.subagentsStale
+              ? s.subagentUiStatusUnconfirmed
+              : value.subagentCount == 0
               ? s.chaBackgroundWorkTitle
               : s.liveSubagentsWorking(value.subagentCount),
           meta: s.runKindSubagent,
@@ -196,15 +252,30 @@ class RunningWork extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(14, 0, 14, 4),
           ),
         for (final (index, row) in rows.indexed) ...[if (index > 0) line, row],
-        if (dismiss != null)
+        if (dismiss != null || stopAll != null)
           Align(
             alignment: AlignmentDirectional.centerEnd,
             child: Padding(
               padding: const EdgeInsetsDirectional.only(end: 12, bottom: 4),
-              child: _RowAction(
-                key: const ValueKey('running-subagents-dismiss'),
-                label: s.inAppDismiss,
-                onPressed: dismiss,
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 4,
+                alignment: WrapAlignment.end,
+                children: [
+                  if (stopAll != null)
+                    _RowAction(
+                      key: const ValueKey('running-processes-stop-all'),
+                      label: s.chatRetouchProcessesStopAll,
+                      about: s.runKindProcess,
+                      onPressed: stopAll,
+                    ),
+                  if (dismiss != null)
+                    _RowAction(
+                      key: const ValueKey('running-subagents-dismiss'),
+                      label: s.inAppDismiss,
+                      onPressed: dismiss,
+                    ),
+                ],
               ),
             ),
           ),
@@ -264,6 +335,10 @@ class RunningWork extends StatelessWidget {
     String? stale,
   ) {
     final status = subagentHumanStatus(s, activity);
+    // Using a tool: which one, by its public name (never its arguments).
+    final tool = activity.phase == SubagentActivityPhase.tool
+        ? activity.details.activeToolName?.trim()
+        : null;
     final elapsed = subagentElapsed(activity, now);
     final ended = activity.isTerminal;
     final open = actions.openSubagent;
@@ -277,7 +352,9 @@ class RunningWork extends StatelessWidget {
       title: subagentTitle(s, activity, maxChars: 120),
       meta: [
         s.runKindSubagent,
-        status.label,
+        tool == null || tool.isEmpty
+            ? status.label
+            : s.subagentUiStepTool(tool),
         if (elapsed != null) formatTurnElapsed(elapsed),
         if (activity.progress case final progress?)
           s.subagentActivityProgress(
@@ -407,7 +484,8 @@ class _RunningRow extends StatelessWidget {
   /// What the icon stands for, in words (read by a screen reader).
   final String kind;
 
-  /// It is running now: the icon and a dot take the accent.
+  /// It is running now. The meta line says so in words; the icon keeps the
+  /// one quiet ink of the chat's step rows (no tinted tile, no dot).
   final bool live;
 
   /// It ended: its name steps back.
@@ -450,21 +528,14 @@ class _RunningRow extends StatelessWidget {
       constraints: const BoxConstraints(minHeight: _Run.minHeight - 20),
       child: Row(
         children: [
-          DecoratedBox(
-            decoration: BoxDecoration(
-              color: live
-                  ? colors.accent.withValues(alpha: 0.16)
-                  : colors.textPrimary.withValues(alpha: 0.07),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: SizedBox.square(
-              dimension: _Run.iconBox,
-              child: Icon(
-                icon,
-                size: _Run.icon,
-                color: live ? colors.accentText : colors.textSecondary,
-                semanticLabel: kind,
-              ),
+          // The icon alone, in the quiet ink: no coloured tile behind it.
+          SizedBox.square(
+            dimension: _Run.iconBox,
+            child: Icon(
+              icon,
+              size: _Run.icon,
+              color: colors.textSecondary,
+              semanticLabel: kind,
             ),
           ),
           const SizedBox(width: 13),
@@ -495,25 +566,7 @@ class _RunningRow extends StatelessWidget {
                 Padding(
                   padding: const EdgeInsets.only(top: 1),
                   child: Text.rich(
-                    TextSpan(
-                      children: [
-                        if (live)
-                          WidgetSpan(
-                            alignment: PlaceholderAlignment.middle,
-                            child: Padding(
-                              padding: const EdgeInsetsDirectional.only(end: 6),
-                              child: DecoratedBox(
-                                decoration: BoxDecoration(
-                                  color: colors.accent,
-                                  shape: BoxShape.circle,
-                                ),
-                                child: const SizedBox.square(dimension: 6),
-                              ),
-                            ),
-                          ),
-                        TextSpan(text: meta),
-                      ],
-                    ),
+                    TextSpan(text: meta),
                     style: quiet.copyWith(color: metaColor),
                   ),
                 ),

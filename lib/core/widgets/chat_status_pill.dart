@@ -5,8 +5,14 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
+import '../design/gel_surface.dart';
+import '../design/glass_strip.dart';
+import '../design/liquid_glass.dart';
+import '../design/liquid_sheen.dart';
+import '../design/smoked_glass.dart';
 import '../models/compaction_progress.dart';
 import '../theme/app_theme.dart';
+import '../theme/hermes_tokens.dart';
 import 'compaction_dock.dart';
 import 'session_context_usage.dart';
 
@@ -32,16 +38,29 @@ Color contextLevelColor(int? percent, HermesThemeColors colors) {
   return colors.accentText;
 }
 
+/// The words after the model name in [ChatStatusPill]: the reasoning level
+/// and the fast-mode mark, joined with « · ». Null when neither applies.
+String? statusPillModelDetail({String? level, String? fast}) {
+  final parts = [
+    if (level != null && level.isNotEmpty) level,
+    if (fast != null && fast.isNotEmpty) fast,
+  ];
+  return parts.isEmpty ? null : parts.join(' · ');
+}
+
 /// The status pill under the composer: `45% ⤓ | Sonnet 5 ▾ | 🛡`.
 ///
 /// Three zones, each opening its own sheet: context usage, model and
 /// session, and the permissions of this session. The capsule itself is 30 px
-/// tall; every zone's hit area is at least 40 px so a thumb can reach it.
+/// tall at the normal text size and grows with larger text, so its label
+/// always sits inside it; every zone's hit area is 48 dp (AUDITORIA-PULIDO
+/// T8).
 /// Only the context zone listens to live usage, so a new percentage never
 /// rebuilds the transcript.
 class ChatStatusPill extends StatelessWidget {
   /// How solid the capsule is: a reply scrolling behind it must not read
-  /// through its labels.
+  /// through its labels. Ola 3 paints it with [HermesChrome.opaque], which
+  /// is solid; this stays the floor `chat_bottom_scrim_test` models.
   static const double fillOpacity = 0.97;
 
   const ChatStatusPill({
@@ -49,8 +68,10 @@ class ChatStatusPill extends StatelessWidget {
     required this.onOpenContext,
     this.compaction,
     this.compressionCount = 0,
+    this.contextPending,
     this.clock,
     this.modelLabel,
+    this.modelDetail,
     this.onOpenModel,
     this.modelLeading,
     this.modelTrailing,
@@ -60,6 +81,7 @@ class ChatStatusPill extends StatelessWidget {
     this.permissionsColor,
     this.onOpenPermissions,
     this.modelPulse,
+    this.material,
     super.key,
   });
 
@@ -68,8 +90,17 @@ class ChatStatusPill extends StatelessWidget {
   /// zone instead (the pill already names the model).
   final Listenable? modelPulse;
 
+  /// Optional shared rim on the visible capsule, never on its larger hit area.
+  /// The reading fill stays opaque and null preserves existing callers.
+  final HermesLiquid? material;
+
   final ValueListenable<SessionContextMetrics> metrics;
   final VoidCallback onOpenContext;
+
+  /// True while the context usage is not known yet (the chat is opening):
+  /// the zone keeps its width and shows its ring empty, with no number, so
+  /// a default never reads as a real value. Null: never pending.
+  final ValueListenable<bool>? contextPending;
 
   /// A compaction running now or just finished. While non-null it takes the
   /// place of the ring and the percentage.
@@ -83,6 +114,10 @@ class ChatStatusPill extends StatelessWidget {
 
   /// Friendly name of the model; null hides the model zone.
   final String? modelLabel;
+
+  /// Reasoning level and fast mark after the name (`Sonnet 5 · Alto`). It
+  /// shares the name's line and is the first thing the ellipsis takes.
+  final String? modelDetail;
   final VoidCallback? onOpenModel;
 
   /// Shown before / after the model name (e.g. the provider logo and a
@@ -103,15 +138,57 @@ class ChatStatusPill extends StatelessWidget {
   final VoidCallback? onOpenPermissions;
 
   static const double capsuleHeight = 30;
-  static const double minTouchHeight = 40;
+  static const double minTouchHeight = HermesSize.tap;
+
+  /// The labels' type: the support step of the scale (it was 10,5 and 11).
+  static const TextStyle labelStyle = HermesType.support;
+
+  /// The capsule's height for [scaler]: [capsuleHeight], or what a label
+  /// line needs with a [HermesSpace.x1] margin above and below once the
+  /// text is larger, never more than the zone's touch height.
+  static double visibleHeight(TextScaler scaler) {
+    final line = scaler.scale(labelStyle.fontSize!) * 1.25;
+    return math.min(
+      minTouchHeight,
+      math.max(capsuleHeight, line + 2 * HermesSpace.x1),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
+    // OPUS-CRISTAL: on the chat foot's smoked glass the pill's status inks
+    // are adjusted, just enough and keeping their hue, to read on all that
+    // can sit under it (HermesSmokedGlass.adaptedInks), as the dock's
+    // selected icon: AA is never lowered. Off the glass: as before.
+    // Always the same tree, so the zones keep their state when the glass
+    // comes or goes; off the glass the theme is the one of before.
+    final tone = HermesGlassStrip.toneOf(context)?.tone;
+    final theme = Theme.of(context);
+    return Theme(
+      data: tone == null
+          ? theme
+          : theme.copyWith(
+              extensions: [
+                for (final extension in theme.extensions.values)
+                  if (extension is! HermesThemeColors) extension,
+                tone.adaptedInks(theme.hermes),
+              ],
+            ),
+      child: Builder(builder: (context) => _build(context, tone)),
+    );
+  }
+
+  Widget _build(BuildContext context, HermesSmokedGlass? tone) {
     final colors = Theme.of(context).hermes;
+    final permissions = tone == null || permissionsColor == null
+        ? permissionsColor
+        : tone.inkOnGlass(permissionsColor!, HermesChrome.of(colors)) ??
+              permissionsColor;
     final strings = Strings.of(context);
     final zones = <Widget>[
       _ContextZone(
         metrics: metrics,
+        pending: contextPending,
         onTap: onOpenContext,
         compaction: compaction,
         compressionCount: compressionCount,
@@ -119,11 +196,15 @@ class ChatStatusPill extends StatelessWidget {
       ),
       if (modelLabel != null && onOpenModel != null)
         Flexible(
+          // With the level and fast mark after the name it claims most of the
+          // room a permission flag leaves free.
+          flex: modelDetail == null ? 1 : 3,
           child: _Zone(
             key: const ValueKey('status-pill-model'),
             onTap: onOpenModel!,
             semanticsLabel: [
               strings.sp1215ModelZone(modelLabel!),
+              ?modelDetail,
               if (limitLevel == SubscriptionLimitLevel.near)
                 strings.sp1215LimitNear,
               if (limitLevel == SubscriptionLimitLevel.reached)
@@ -139,18 +220,39 @@ class ChatStatusPill extends StatelessWidget {
                     const SizedBox(width: 4),
                   ],
                   Flexible(
-                    child: Text(
-                      modelLabel!,
-                      // Keyed by the name: a model swap paints a new label.
-                      key: ValueKey<String>(modelLabel!),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: colors.textPrimary,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
+                    child: modelDetail == null
+                        ? Text(
+                            modelLabel!,
+                            // Keyed by the name: a swap paints a new label.
+                            key: ValueKey<String>(modelLabel!),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: labelStyle.copyWith(
+                              color: colors.textPrimary,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          )
+                        : Text.rich(
+                            TextSpan(
+                              text: modelLabel!,
+                              children: [
+                                TextSpan(
+                                  text: ' · $modelDetail',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.w400,
+                                    color: colors.textSecondary,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            key: ValueKey<String>(modelLabel!),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: labelStyle.copyWith(
+                              color: colors.textPrimary,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
                   ),
                   if (modelTrailing case final trailing?) ...[
                     const SizedBox(width: 4),
@@ -182,7 +284,11 @@ class ChatStatusPill extends StatelessWidget {
           ),
         ),
       if (permissionsLabel != null && onOpenPermissions != null)
+        // Only a flag text may shrink. The bare shield keeps its size: as a
+        // second Flexible it held half the free room, and a narrow chat (a
+        // pane on an open Fold) cut the model to «Sonne…».
         Flexible(
+          flex: permissionsFlag == null ? 0 : 1,
           child: _Zone(
             key: const ValueKey('status-pill-permissions'),
             onTap: onOpenPermissions!,
@@ -197,7 +303,7 @@ class ChatStatusPill extends StatelessWidget {
                   size: 14,
                   color: permissionsFlag == null
                       ? colors.textSecondary
-                      : permissionsColor ?? colors.error,
+                      : permissions ?? colors.error,
                 ),
                 if (permissionsFlag != null) ...[
                   const SizedBox(width: 4),
@@ -206,9 +312,8 @@ class ChatStatusPill extends StatelessWidget {
                       permissionsFlag!,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: permissionsColor ?? colors.error,
-                        fontSize: 10.5,
+                      style: labelStyle.copyWith(
+                        color: permissions ?? colors.error,
                         fontWeight: FontWeight.w700,
                       ),
                     ),
@@ -224,30 +329,46 @@ class ChatStatusPill extends StatelessWidget {
       if (i > 0) children.add(_Divider(color: colors.divider));
       children.add(zones[i]);
     }
+    // Ola 3 (AUDITORIA-PULIDO T2/T3): the one tone of what floats.
+    final chrome = HermesChrome.of(colors);
+    // OPUS-CRISTAL: a piece of the chat foot's toned strip, as the
+    // composer; the opaque chrome of before anywhere else.
+    final glass = HermesGlassStrip.toneOf(context);
+    final shape = RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(HermesRadius.tag),
+    );
+    final capsule = Container(
+      key: const ValueKey('status-pill-capsule'),
+      height: visibleHeight(MediaQuery.textScalerOf(context)),
+      decoration: BoxDecoration(
+        color: glass?.veil ?? chrome.opaque,
+        borderRadius: BorderRadius.circular(HermesRadius.tag),
+        border: Border.all(
+          color: glass == null ? chrome.line : HermesGlassRim.edgeOf(chrome),
+        ),
+        boxShadow: glass == null ? chrome.shadow : null,
+      ),
+    );
+    // The gel of the buttons (rims and sheen) over the capsule's grey fill.
+    final lit = HermesGelSurface(
+      key: const ValueKey('status-pill-gel'),
+      shape: shape,
+      pressable: false,
+      sheenScale: HermesGel.textSheenScale(colors, HermesGelInks.status),
+      child: capsule,
+    );
+    final role = material;
+    final finished = role == null
+        ? lit
+        : HermesSheen(liquid: role, shape: shape, child: lit);
+    final visibleCapsule = HermesGlassStrip.tonedAround(context)
+        ? HermesGlassPiece(shape: shape, child: finished)
+        : finished;
     return Stack(
       alignment: Alignment.center,
       children: [
         // The visible capsule: slim, centred in the taller hit area.
-        Positioned(
-          left: 0,
-          right: 0,
-          child: Container(
-            key: const ValueKey('status-pill-capsule'),
-            height: capsuleHeight,
-            decoration: BoxDecoration(
-              color: colors.surfaceVariant.withValues(alpha: fillOpacity),
-              borderRadius: BorderRadius.circular(999),
-              border: Border.all(color: colors.divider.withValues(alpha: 0.7)),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.24),
-                  blurRadius: 14,
-                  offset: const Offset(0, 6),
-                ),
-              ],
-            ),
-          ),
-        ),
+        Positioned(left: 0, right: 0, child: visibleCapsule),
         Row(mainAxisSize: MainAxisSize.min, children: children),
       ],
     );
@@ -350,7 +471,7 @@ class _Divider extends StatelessWidget {
       Container(width: 1, height: 12, color: color);
 }
 
-/// One tappable zone of the pill: a 40 px tall, labelled button.
+/// One tappable zone of the pill: a 48 dp tall, labelled button.
 class _Zone extends StatelessWidget {
   const _Zone({
     required this.onTap,
@@ -396,6 +517,7 @@ class _Zone extends StatelessWidget {
 class _ContextZone extends StatelessWidget {
   const _ContextZone({
     required this.metrics,
+    required this.pending,
     required this.onTap,
     required this.compaction,
     required this.compressionCount,
@@ -403,6 +525,7 @@ class _ContextZone extends StatelessWidget {
   });
 
   final ValueListenable<SessionContextMetrics> metrics;
+  final ValueListenable<bool>? pending;
   final VoidCallback onTap;
   final CompactionProgress? compaction;
   final int compressionCount;
@@ -413,9 +536,11 @@ class _ContextZone extends StatelessWidget {
     final colors = Theme.of(context).hermes;
     final strings = Strings.of(context);
     final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
-    return ValueListenableBuilder<SessionContextMetrics>(
-      valueListenable: metrics,
-      builder: (context, value, _) {
+    return ListenableBuilder(
+      listenable: Listenable.merge([metrics, ?pending]),
+      builder: (context, _) {
+        final value = metrics.value;
+        final isPending = pending?.value ?? false;
         final compaction = this.compaction;
         final percent = value.percent;
         final level = contextLevelColor(percent, colors);
@@ -426,7 +551,10 @@ class _ContextZone extends StatelessWidget {
               compaction,
               Localizations.localeOf(context).languageCode,
             ),
-          sessionContextTriggerSemanticsLabel(strings, value),
+          if (isPending)
+            strings.chaContextUsageOpen
+          else
+            sessionContextTriggerSemanticsLabel(strings, value),
           if (compressionCount > 0 && compaction == null)
             strings.chaSessionCompactedTooltip(compressionCount),
         ].join(' · ');
@@ -443,12 +571,14 @@ class _ContextZone extends StatelessWidget {
                   ),
                   const SizedBox(width: 5),
                   Text(
-                    sessionContextTriggerText(value),
-                    style: TextStyle(
-                      color: percent != null && percent >= 75
+                    // Pending: the width of a percentage, nothing to read.
+                    isPending ? '00%' : sessionContextTriggerText(value),
+                    style: ChatStatusPill.labelStyle.copyWith(
+                      color: isPending
+                          ? colors.textPrimary.withValues(alpha: 0)
+                          : percent != null && percent >= 75
                           ? level
                           : colors.textPrimary,
-                      fontSize: 10.5,
                       fontWeight: FontWeight.w700,
                       fontFeatures: const [FontFeature.tabularFigures()],
                     ),
@@ -472,9 +602,7 @@ class _ContextZone extends StatelessWidget {
               // No AnimatedSize: this pill sits in the composer footer,
               // which relayouts while the transcript streams.
               AnimatedSwitcher(
-                duration: reduceMotion
-                    ? Duration.zero
-                    : const Duration(milliseconds: 220),
+                duration: reduceMotion ? Duration.zero : HermesMotion.base,
                 layoutBuilder: (current, previous) => Stack(
                   alignment: Alignment.centerLeft,
                   children: [...previous, ?current],

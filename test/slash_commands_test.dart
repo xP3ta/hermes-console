@@ -590,6 +590,45 @@ void main() {
     }
   });
 
+  group('isSlashCommandText (Desktop SLASH_COMMAND_RE)', () {
+    test('a pasted path is a message, never a command', () {
+      expect(isSlashCommandText('/home/x/y.png'), isFalse);
+      expect(isSlashCommandText('/home/x/y.png\n/home/x/z.png'), isFalse);
+      expect(isSlashCommandText('/a/b c'), isFalse);
+      expect(isSlashCommandText('/usr/local'), isFalse);
+      // Console: a name ending in a file extension is a file, not a command.
+      expect(isSlashCommandText('/L3-visor.png'), isFalse);
+      expect(isSlashCommandText('/notes.md más texto'), isFalse);
+      expect(isSlashCommandText('hola /new'), isFalse);
+    });
+
+    test('commands stay commands, arguments and lines included', () {
+      expect(isSlashCommandText('/compress'), isTrue);
+      expect(isSlashCommandText('/model gpt'), isTrue);
+      expect(isSlashCommandText('  /new'), isTrue);
+      expect(isSlashCommandText('/goal primera\nsegunda línea'), isTrue);
+      // A bare name is a command (Desktop): unknown ones are refused later.
+      expect(isSlashCommandText('/tmp'), isTrue);
+      expect(isSlashCommandText('/unknown'), isTrue);
+      expect(isSlashCommandText('/zzz'), isTrue);
+      expect(isSlashCommandText('/'), isTrue);
+    });
+
+    test('the busy queue and the palette follow the same rule', () {
+      expect(
+        shouldRouteSlashBeforeBusyAttachmentQueue('/home/x/y.png'),
+        isFalse,
+      );
+      expect(shouldRouteSlashBeforeBusyAttachmentQueue('/compress'), isTrue);
+      expect(slashPaletteApplies('/home/ana'), isFalse);
+      expect(slashPaletteApplies('/mo'), isTrue);
+      expect(slashPaletteApplies('/'), isTrue);
+      expect(slashPaletteApplies('/model gpt'), isFalse);
+      expect(slashSuggestionsFor('/home/ana/artifacts', s), isEmpty);
+      expect(slashSuggestionsFor('/h', s), isNotEmpty);
+    });
+  });
+
   group('slashSuggestionsFor', () {
     test('vacío si no empieza por /', () {
       expect(slashSuggestionsFor('hola', s), isEmpty);
@@ -1407,6 +1446,64 @@ void main() {
       );
     });
 
+    testWidgets('a pasted path is sent as a message (Desktop rule)', (
+      tester,
+    ) async {
+      final gateway = _SlashGateway();
+      await _pumpSlashChat(tester, gateway);
+      final composer = find.byType(TextField).last;
+      await tester.tap(composer);
+      await tester.pump(const Duration(milliseconds: 250));
+      const path = '/home/ana/artifacts/hermes-132/maquetas/L3-visor.png';
+      await tester.enterText(composer, path);
+      await tester.pump(const Duration(milliseconds: 300));
+      // No command palette and no completion lookup for a path.
+      expect(find.byKey(const ValueKey('chat-slash-palette')), findsNothing);
+      expect(gateway.slashCompletionCalls, 0);
+      await _submitSlash(tester);
+      expect(find.text(s.chaCommandUnknown(path.substring(1))), findsNothing);
+      expect(gateway.submissions, [path]);
+      expect(gateway.dispatchCalls, isEmpty);
+      // Close the turn it started, as the other send tests here do.
+      gateway.emit('message.complete', {'text': 'ok'});
+      await tester.pump(const Duration(milliseconds: 350));
+    });
+
+    testWidgets('several pasted paths, one per line, are one message', (
+      tester,
+    ) async {
+      final gateway = _SlashGateway();
+      await _pumpSlashChat(tester, gateway);
+      final composer = find.byType(TextField).last;
+      await tester.tap(composer);
+      await tester.pump(const Duration(milliseconds: 250));
+      const two = '/home/x/y.png\n/home/x/z.png';
+      await tester.enterText(composer, two);
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byKey(const ValueKey('chat-slash-palette')), findsNothing);
+      await _submitSlash(tester);
+      expect(find.text(s.chaCommandUnknown('home/x/y.png')), findsNothing);
+      expect(gateway.submissions, [two]);
+      gateway.emit('message.complete', {'text': 'ok'});
+      await tester.pump(const Duration(milliseconds: 350));
+    });
+
+    testWidgets('an unknown command is still refused with its notice', (
+      tester,
+    ) async {
+      final gateway = _SlashGateway();
+      await _pumpSlashChat(tester, gateway);
+      final composer = find.byType(TextField).last;
+      await tester.tap(composer);
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.enterText(composer, '/zzz');
+      await tester.pump(const Duration(milliseconds: 300));
+      await _submitSlash(tester);
+      expect(find.text(s.chaCommandUnknown('zzz')), findsOneWidget);
+      expect(gateway.submissions, isEmpty);
+      expect(tester.widget<TextField>(composer).controller?.text, '/zzz');
+    });
+
     testWidgets('a no-argument slash executes immediately exactly once', (
       tester,
     ) async {
@@ -1484,7 +1581,9 @@ void main() {
       expect(find.byType(CapabilitiesHub), findsOneWidget);
       final hub = tester.widget<CapabilitiesHub>(find.byType(CapabilitiesHub));
       expect(hub.connection.id, _connection().id);
-      expect(hub.advancedBuilder, isNotNull);
+      // The Skills tab of the one Extensions screen.
+      expect(hub.initialTab, isNull);
+      expect(hub.initialSegment, CapabilitiesSegment.installed);
       expect(controller.text, isEmpty);
       expect(gateway.submissions, isEmpty);
       expect(gateway.slashCalls, isEmpty);
@@ -1515,8 +1614,9 @@ void main() {
       await tester.tap(more);
       await tester.pumpAndSettle();
       // Install, uninstall, toggle and hub search (skills.sh included) live
-      // in the hub itself; the menu keeps only the extensions center.
-      expect(find.byKey(const ValueKey('cph-menu-advanced')), findsOneWidget);
+      // in the screen itself; the ⋯ keeps what is about the whole server.
+      expect(find.byKey(const ValueKey('exu-more-tools')), findsOneWidget);
+      expect(find.byKey(const ValueKey('exu-more-server')), findsOneWidget);
       expect(find.byKey(const ValueKey('cph-menu-classic')), findsNothing);
     });
     testWidgets(

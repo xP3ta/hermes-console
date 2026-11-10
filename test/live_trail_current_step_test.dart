@@ -109,6 +109,10 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  // QA 9489 + Desktop's ToolRun (CHAT-FLUIDO 5): from the second call on,
+  // a run has one header line and the call in hand, and that is all it
+  // ever takes, however many calls follow. The single call before it has
+  // no header (Desktop shows none for one call either).
   testWidgets('running turn: the lines never grow with more steps', (
     tester,
   ) async {
@@ -116,6 +120,13 @@ void main() {
       _host(_trace(_sequence.skip(2).take(1).toList(), active: true)),
     );
     await tester.pump();
+    expect(find.byKey(const ValueKey('turn-run-header')), findsNothing);
+    expect(find.byType(TurnToolRow), findsOneWidget);
+    await tester.pumpWidget(
+      _host(_trace([_sequence[0], _sequence[2]], active: true)),
+    );
+    await tester.pump();
+    expect(find.byKey(const ValueKey('turn-run-header')), findsOneWidget);
     final first = tester.getSize(
       find.byKey(const ValueKey('thinking-trace-live')),
     );
@@ -134,6 +145,7 @@ void main() {
       find.byKey(const ValueKey('thinking-trace-live')),
     );
     expect(find.byType(TurnToolRow), findsOneWidget);
+    expect(find.byKey(const ValueKey('turn-run-header')), findsOneWidget);
     expect(last.height, first.height);
   });
 
@@ -156,7 +168,7 @@ void main() {
     );
     await tester.pump();
     expect(_rows(tester), ['Ejecutando · pytest']);
-    expect(find.text('0:07'), findsOneWidget);
+    expect(find.text('7s'), findsOneWidget);
   });
 
   testWidgets('the step change is in place, with or without motion', (
@@ -226,7 +238,8 @@ void main() {
     await tester.pumpWidget(_host(_trace(_sequence, active: false)));
     await tester.pump();
     expect(
-      find.text('Pensó durante 1:12 · hyperframes · 1 comando · 1 herramienta'),
+      // Mock 138 v2: a turn that used tools ends saying how long it worked.
+      find.text('Trabajó 1:12 · hyperframes · 1 comando · 1 herramienta'),
       findsOneWidget,
     );
     expect(find.byType(TurnToolRow), findsNothing);

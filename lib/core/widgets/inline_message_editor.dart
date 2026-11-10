@@ -1,10 +1,14 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart'
+    show RenderAbstractViewport, RenderSliverPadding;
 
 import '../../l10n/app_localizations.dart';
 import '../models/composer_reference.dart';
 import '../theme/app_theme.dart';
+import 'agent_name_scope.dart';
 
 class InlineMessageEditor extends StatefulWidget {
   const InlineMessageEditor({
@@ -37,7 +41,16 @@ class _InlineMessageEditorState extends State<InlineMessageEditor>
     with WidgetsBindingObserver {
   late final TextEditingController _controller;
   late final FocusNode _focusNode;
+  final GlobalKey _actionsKey = GlobalKey(debugLabel: 'inline-editor-actions');
   bool _submitted = false;
+
+  /// What the field keeps clear around its caret when it brings it into
+  /// view (focus, typing). Flutter's default is 20 dp of the viewport, but a
+  /// chat's viewport runs under its header and its foot (composer, notch,
+  /// arrow): the caret stayed «visible» under the foot and save, below it,
+  /// ended out of reach on a small phone with the keyboard up (gate
+  /// gint38). It takes the list's own padding and the actions row.
+  EdgeInsets _caretPadding = const EdgeInsets.all(20);
 
   bool get _canSave {
     final value = _controller.text.trim();
@@ -58,6 +71,10 @@ class _InlineMessageEditorState extends State<InlineMessageEditor>
     _focusNode = FocusNode();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
+      _syncCaretPadding();
+      // The focus lands a moment later, so the reveal below may not run;
+      // the actions come into reach either way.
+      _revealActions(Duration.zero);
       _focusNode.requestFocus();
       // Salta sin animar: pedir el foco abre el teclado un frame después, así
       // que animar ya aquí apunta a un objetivo con el viewport todavía sin
@@ -89,9 +106,10 @@ class _InlineMessageEditorState extends State<InlineMessageEditor>
 
   @override
   void didChangeMetrics() {
-    WidgetsBinding.instance.addPostFrameCallback(
-      (_) => _ensureVisible(animate: true),
-    );
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _syncCaretPadding();
+      _ensureVisible(animate: true);
+    });
   }
 
   void _onTextChanged() {
@@ -101,17 +119,89 @@ class _InlineMessageEditorState extends State<InlineMessageEditor>
   void _ensureVisible({required bool animate}) {
     if (!mounted || !_focusNode.hasFocus) return;
     final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    final duration = !animate || reduceMotion
+        ? Duration.zero
+        : const Duration(milliseconds: 160);
     unawaited(
       Scrollable.ensureVisible(
         context,
         alignment: 0.35,
-        duration: !animate || reduceMotion
-            ? Duration.zero
-            : const Duration(milliseconds: 160),
+        duration: duration,
         curve: Curves.easeOutCubic,
-      ),
+      ).then((_) => _revealActions(duration)),
     );
   }
+
+  /// Cancel and save stay clear of what floats over the list: a chat's
+  /// list reserves it as its own padding (the header above; the composer,
+  /// the notch and the arrow below). Placed by the viewport alone, save
+  /// could end under the foot of a small phone with the keyboard up (gate
+  /// gint37).
+  void _revealActions(Duration duration) {
+    if (!mounted) return;
+    final actions = _actionsBox;
+    final padding = actions == null ? null : _listPaddingOf(actions);
+    if (actions == null || padding == null) return;
+    actions.showOnScreen(
+      rect: Rect.fromLTRB(
+        0,
+        -padding.top,
+        actions.size.width,
+        actions.size.height + padding.bottom,
+      ),
+      duration: duration,
+      curve: Curves.easeOutCubic,
+    );
+  }
+
+  RenderBox? get _actionsBox {
+    final actions = _actionsKey.currentContext?.findRenderObject();
+    if (actions is! RenderBox || !actions.attached || !actions.hasSize) {
+      return null;
+    }
+    return actions;
+  }
+
+  /// The padding of the list this editor sits in: what floats over it.
+  static EdgeInsets? _listPaddingOf(RenderObject box) {
+    for (var node = box.parent; node != null; node = node.parent) {
+      if (node is RenderSliverPadding) return node.resolvedPadding;
+      if (node is RenderAbstractViewport) return null;
+    }
+    return null;
+  }
+
+  /// [_caretPadding] from the list's padding and the actions row (the gap
+  /// above it included), once they are laid out.
+  ///
+  /// It must fit the viewport with the caret: a rectangle taller than the
+  /// viewport is aligned by whichever edge is nearer, so where save lands
+  /// is anyone's guess. Measured: a 368 dp viewport with
+  /// 56 + 227 dp of list padding, and the old margins (20 + 20) made 389 dp.
+  /// Below the caret: the foot, the gap and the actions row, plus the rest
+  /// of the caret's line; above it: the header. When even that does not
+  /// fit, the header's side gives way first (the field's top may pass under
+  /// the header; save may not pass under the foot).
+  void _syncCaretPadding() {
+    if (!mounted) return;
+    final actions = _actionsBox;
+    final padding = actions == null ? null : _listPaddingOf(actions);
+    final viewport = Scrollable.maybeOf(context)?.position.viewportDimension;
+    if (actions == null || padding == null || viewport == null) return;
+    // The caret's own line and a little air.
+    const caretRoom = 32.0;
+    final room = math.max(0.0, viewport - caretRoom);
+    final below = math.min(
+      room,
+      padding.bottom + actions.size.height + 4 + _caretLineSlack,
+    );
+    final above = math.max(0.0, math.min(padding.top, room - below));
+    final next = EdgeInsets.fromLTRB(20, above, 20, below);
+    if (next != _caretPadding) setState(() => _caretPadding = next);
+  }
+
+  /// From the caret's bottom to the field's bottom: the rest of a line.
+  static const double _caretLineSlack = 8;
 
   void _save() {
     if (!_canSave) return;
@@ -153,6 +243,7 @@ class _InlineMessageEditorState extends State<InlineMessageEditor>
             controller: _controller,
             focusNode: _focusNode,
             autofocus: true,
+            scrollPadding: _caretPadding,
             // Alto = contenido: arranca con espacio para varias líneas (no una
             // caja diminuta de una sola línea) y sube hasta ~10 antes de
             // desplazar, para que editar se sienta como escribir, no como
@@ -176,7 +267,7 @@ class _InlineMessageEditorState extends State<InlineMessageEditor>
               disabledBorder: InputBorder.none,
               errorBorder: InputBorder.none,
               focusedErrorBorder: InputBorder.none,
-              hintText: strings.chaEditHint,
+              hintText: strings.mpnEditHint(AgentNameScope.of(context)),
               // Una burbuja estrecha partía el aviso en 3 líneas y dejaba un
               // hueco vacío: el alto sale del contenido, no del aviso.
               hintMaxLines: 1,
@@ -188,6 +279,7 @@ class _InlineMessageEditorState extends State<InlineMessageEditor>
           ),
           const SizedBox(height: 4),
           Align(
+            key: _actionsKey,
             alignment: AlignmentDirectional.centerEnd,
             child: Row(
               mainAxisSize: MainAxisSize.min,

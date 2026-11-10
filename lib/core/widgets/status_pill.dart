@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../theme/app_theme.dart';
 import '../theme/motion.dart';
+import 'hermes_shiny_text.dart';
 import '../../l10n/app_localizations.dart';
 
 /// Runtime health status of a Hermes instance.
@@ -154,7 +155,12 @@ class _StatusPillState extends State<StatusPill>
               color: color,
               letterSpacing: 0.8,
             ),
-            child: Text(label.toUpperCase()),
+            child: HermesShinyText(
+              active: isChecking,
+              base: color.withValues(alpha: 0.55),
+              highlight: color,
+              child: Text(label.toUpperCase()),
+            ),
           ),
         ],
       ),

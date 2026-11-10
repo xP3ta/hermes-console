@@ -67,10 +67,34 @@ class EmbedConsentStore extends ChangeNotifier {
     }
   }
 
-  EmbedMode modeFor(EmbedType type) => _modes[type] ?? EmbedMode.off;
+  /// Whether third-party embeds can be turned on at all. They cannot: the chat
+  /// loads nothing from another service, so every link type (YouTube, Vimeo,
+  /// Spotify, X, Instagram, TikTok, Pinterest, Maps) is a plain link. The
+  /// per-type consent module below stays in the code, unreachable from
+  /// Settings, until the owner decides what to do with it.
+  ///
+  /// Only tests flip this, to exercise that deferred module.
+  @visibleForTesting
+  static bool debugAllowThirdPartyEmbeds = false;
+
+  /// What the user stored for [type], whatever [modeFor] makes of it. Settings
+  /// and the "clear allowed" action work on this.
+  EmbedMode storedMode(EmbedType type) => _modes[type] ?? EmbedMode.off;
+
+  /// The mode the chat acts on. A mode saved on this device before third-party
+  /// embeds were switched off (an `always` for YouTube, say) is ignored on
+  /// purpose: honouring it would load another service's page without anyone
+  /// having been asked under the current rules. Link types and Mermaid read as
+  /// `off`. The SVG fence reads as `always`: it is drawn on the device from a
+  /// sanitized copy whose page denies every network request, so there is
+  /// nothing to ask about.
+  EmbedMode modeFor(EmbedType type) {
+    if (debugAllowThirdPartyEmbeds) return storedMode(type);
+    return type == EmbedType.svg ? EmbedMode.always : EmbedMode.off;
+  }
 
   Future<void> setMode(EmbedType type, EmbedMode mode) async {
-    if (modeFor(type) == mode) return;
+    if (storedMode(type) == mode) return;
     if (mode == EmbedMode.off) {
       _modes.remove(type);
     } else {
@@ -89,12 +113,12 @@ class EmbedConsentStore extends ChangeNotifier {
   /// "Clear allowed services": every standing "always" goes back to asking.
   Future<void> clearAllowed() async {
     for (final type in EmbedType.values) {
-      if (modeFor(type) == EmbedMode.always) {
+      if (storedMode(type) == EmbedMode.always) {
         await setMode(type, EmbedMode.ask);
       }
     }
   }
 
   bool get anyAllowed =>
-      EmbedType.values.any((type) => modeFor(type) == EmbedMode.always);
+      EmbedType.values.any((type) => storedMode(type) == EmbedMode.always);
 }

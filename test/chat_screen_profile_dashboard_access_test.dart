@@ -293,8 +293,14 @@ void main() {
     await _close(tester, chats);
   });
 
-  testWidgets('control: any other refresh failure over a chat on screen '
-      'still shows the refresh notice', (tester) async {
+  // conn-registry E3: an automatic read that fails over rows on screen is
+  // retried in silence and never paints the refresh notice (Desktop's
+  // background reads fail silently, use-background-sync.ts:406-408; the
+  // route resume retries 1/2/4/8 s, use-route-resume.ts:46-51). A read the
+  // user asks for still reports its failure (chat_screen_test 'error de
+  // refresco sobre transcript visible').
+  testWidgets('control: any other automatic refresh failure over a chat on '
+      'screen keeps the rows and stays silent', (tester) async {
     final routes = _Routes();
     var loads = 0;
     final (chats, _) = await _open(
@@ -318,7 +324,7 @@ void main() {
 
     expect(loads, greaterThan(1));
     expect(find.textContaining('hola humano'), findsWidgets);
-    expect(find.text(s.chaMessagesError), findsOneWidget);
+    expect(find.text(s.chaMessagesError), findsNothing);
     await _close(tester, chats);
   });
 }

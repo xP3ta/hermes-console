@@ -1792,7 +1792,12 @@ void main() {
           same(optimistic),
         );
         expect(optimistic['_steer'], isNot(true));
-        expect(chat.queuedMessages, ['añade una tabla']);
+        // An acknowledged successor is server-owned and already visible in
+        // the transcript, so it cannot offer local edit/delete queue actions.
+        expect(chat.queuedMessages, isEmpty);
+        expect(chat.queuedEntries, isEmpty);
+        expect(optimistic['_optimistic'], isNot(true));
+        expect(optimistic['_desktopAcceptedQueued'], isTrue);
         expect(chat.subagentActivities, hasLength(1));
         final live = chat.subagentActivities.single;
         expect(live.key, originalActivityKey);
@@ -2145,7 +2150,15 @@ void main() {
               .map((message) => message['content']),
           ['incluye una tabla'],
         );
-        expect(chat.queuedMessages, ['ahora publícalo']);
+        expect(chat.queuedMessages, isEmpty);
+        expect(chat.queuedEntries, isEmpty);
+        final accepted = chat.messages.singleWhere(
+          (message) => message['content'] == 'ahora publícalo',
+        );
+        expect(accepted['role'], 'user');
+        expect(accepted['_steer'], isNot(true));
+        expect(accepted['_optimistic'], isNot(true));
+        expect(accepted.containsKey('_clientTurnId'), isFalse);
 
         desktop.emit('message.complete', {'text': 'primer resultado'});
         await Future<void>.delayed(Duration.zero);

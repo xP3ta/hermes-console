@@ -667,12 +667,7 @@ class ActivityDoneSection extends StatelessWidget {
               padding: const EdgeInsets.symmetric(vertical: 2),
               child: ReasoningPanel(
                 text: step.text!,
-                meta: step.duration == null
-                    ? null
-                    : formatStepDuration(
-                        step.duration!,
-                        languageCode: _lang(context),
-                      ),
+                duration: step.duration,
               ),
             )
           else

@@ -1,0 +1,52 @@
+{
+  "agent-team": {
+    "frameMs": 33,
+    "frames": 12,
+    "size": 64
+  },
+  "check": {
+    "frameMs": 33,
+    "frames": 12,
+    "size": 64
+  },
+  "delegate-task": {
+    "frameMs": 33,
+    "frames": 26,
+    "size": 64
+  },
+  "error": {
+    "frameMs": 33,
+    "frames": 16,
+    "size": 64
+  },
+  "parallel-tools": {
+    "frameMs": 33,
+    "frames": 24,
+    "size": 64
+  },
+  "queued": {
+    "frameMs": 33,
+    "frames": 21,
+    "size": 64
+  },
+  "reasoning": {
+    "frameMs": 33,
+    "frames": 19,
+    "size": 64
+  },
+  "response-stream": {
+    "frameMs": 33,
+    "frames": 18,
+    "size": 64
+  },
+  "terminal-agent": {
+    "frameMs": 33,
+    "frames": 28,
+    "size": 64
+  },
+  "tool-call": {
+    "frameMs": 33,
+    "frames": 16,
+    "size": 64
+  }
+}

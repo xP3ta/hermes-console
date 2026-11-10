@@ -6,6 +6,8 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/material.dart' show Material, MaterialType;
 import 'package:flutter/widgets.dart';
 
+import '../theme/motion.dart';
+
 /// pm1215: one shared motion for every transient surface that grows out of
 /// a pill (the header activity pill, the bottom status pill, the composer
 /// grabber). The surface opens as a container transform from the pill's
@@ -15,11 +17,11 @@ import 'package:flutter/widgets.dart';
 /// Back or the screen reader's dismiss action close it.
 
 /// Open/close duration of a pill morph (critically damped, no overshoot).
-const Duration kPillMorphOpen = Duration(milliseconds: 300);
-const Duration kPillMorphClose = Duration(milliseconds: 260);
+const Duration kPillMorphOpen = HermesMotion.sheetOpen;
+const Duration kPillMorphClose = HermesMotion.sheetClose;
 
 /// Reduced motion: the same surface, only faded.
-const Duration kPillMorphFade = Duration(milliseconds: 120);
+const Duration kPillMorphFade = HermesMotion.fast;
 
 /// Releasing a drag past this distance (logical px) toward the surface's
 /// edge closes it.

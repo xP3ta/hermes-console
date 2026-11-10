@@ -860,4 +860,97 @@ void main() {
       });
     }
   });
+
+  // ORDEN-WS-FIDELIDAD point 6: a chat pane about 330 dp wide beside the
+  // workspace (open Fold) left the field narrower than its hint, which broke
+  // over four lines and grew the composer. The workspace host gives each
+  // pane its own size as the screen size.
+  group('narrow chat pane', () {
+    Future<double> rowHeight(
+      WidgetTester tester, {
+      required double window,
+      required double pane,
+    }) async {
+      tester.view.physicalSize = Size(window, 704);
+      tester.view.devicePixelRatio = 1;
+      await tester.pumpWidget(
+        _host(
+          Builder(
+            builder: (context) => MediaQuery(
+              data: MediaQuery.of(context).copyWith(size: Size(pane, 704)),
+              child: SizedBox(
+                width: pane,
+                child: ConsoleComposer(
+                  controller: controller,
+                  focusNode: focusNode,
+                  onSend: (_, _) {},
+                  onAttach: (_) {},
+                  dictation: dictation(),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      return tester
+          .getSize(find.byKey(const ValueKey('composer-input-row')))
+          .height;
+    }
+
+    int? hintLines(WidgetTester tester) => tester
+        .widget<TextField>(find.byType(TextField))
+        .decoration!
+        .hintMaxLines;
+
+    testWidgets('a 330 dp pane keeps the hint on one line', (tester) async {
+      addTearDown(tester.view.reset);
+      // A pane wide enough for the hint: nothing changes there.
+      final wide = await rowHeight(tester, window: 1280, pane: 700);
+      expect(hintLines(tester), isNull);
+      final narrow = await rowHeight(tester, window: 933, pane: 330);
+      expect(hintLines(tester), 1);
+      expect(narrow, wide);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a phone keeps its composer as it was', (tester) async {
+      addTearDown(tester.view.reset);
+      await rowHeight(tester, window: 330, pane: 330);
+      expect(hintLines(tester), isNull);
+    });
+
+    // Ola 3 (AUDITORIA-PULIDO §2.3): beside the workspace the hint is the
+    // short one of mock 134, not a cut «Pregunta a Herme…»; a phone and a
+    // wide pane keep the whole one.
+    String? hint(WidgetTester tester) =>
+        tester.widget<TextField>(find.byType(TextField)).decoration!.hintText;
+
+    testWidgets('a 330 dp pane shows the short hint', (tester) async {
+      addTearDown(tester.view.reset);
+      await rowHeight(tester, window: 1280, pane: 700);
+      expect(hint(tester), 'Pregunta a Hermes…');
+      await rowHeight(tester, window: 933, pane: 330);
+      expect(hint(tester), 'Pregunta…');
+      await rowHeight(tester, window: 330, pane: 330);
+      expect(hint(tester), 'Pregunta a Hermes…');
+    });
+  });
+
+  // Ola 3: what is written keeps the hint's size (it jumped from 14 to 16
+  // at the first letter), and dictation's send is the accent, as the main
+  // send.
+  testWidgets('the text written is the size of the hint', (tester) async {
+    await tester.pumpWidget(
+      _host(
+        ConsoleComposer(
+          controller: controller,
+          focusNode: focusNode,
+          onSend: (_, _) {},
+        ),
+      ),
+    );
+    final field = tester.widget<TextField>(find.byType(TextField));
+    expect(field.style?.fontSize, field.decoration!.hintStyle?.fontSize);
+    expect(field.style?.fontSize, 14);
+  });
 }

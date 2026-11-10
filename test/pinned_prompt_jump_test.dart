@@ -19,6 +19,7 @@ import 'package:hermes_android/core/services/sftp_transfer_service.dart';
 import 'package:hermes_android/core/services/ssh_manager.dart';
 import 'package:hermes_android/core/services/ssh_session_service.dart';
 import 'package:hermes_android/core/widgets/floating_chat_header.dart';
+import 'package:hermes_android/core/widgets/chat/chat_pinned_prompt_header.dart';
 import 'package:hermes_android/main.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -203,15 +204,12 @@ Future<void> _frames(WidgetTester tester, [int n = 30]) async {
 /// The prompt id the pinned header shows, read from its text.
 int? _stickyId(WidgetTester tester) {
   if (_sticky().evaluate().isEmpty) return null;
-  for (final element
-      in find
-          .descendant(of: _sticky(), matching: find.byType(RichText))
-          .evaluate()) {
-    final text = (element.widget as RichText).text.toPlainText();
-    final match = RegExp(r'Pregunta número (\d+) del lector').firstMatch(text);
-    if (match != null) return int.parse(match.group(1)!);
-  }
-  return null;
+  // The approved round arrow keeps its destination hidden until tapped.
+  // Read the same destination it will reveal, rather than requiring the old
+  // always-visible prompt text. The landing assertions below are unchanged.
+  final text = tester.widget<ChatPinnedPromptHeader>(_sticky()).text;
+  final match = RegExp(r'Pregunta número (\d+) del lector').firstMatch(text);
+  return match == null ? null : int.parse(match.group(1)!);
 }
 
 void main() {
@@ -330,6 +328,17 @@ void main() {
       );
     }
 
+    expect(
+      tester.getSize(find.byKey(const ValueKey('chat-jump-to-prompt'))),
+      const Size(48, 48),
+    );
+    expect(
+      find.descendant(
+        of: _sticky(),
+        matching: find.textContaining('Pregunta número'),
+      ),
+      findsNothing,
+    );
     await tester.tap(_sticky());
     await _frames(tester, 120);
 

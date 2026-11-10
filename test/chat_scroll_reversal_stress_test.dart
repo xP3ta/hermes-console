@@ -9,7 +9,6 @@ import 'package:http/testing.dart';
 import 'package:markdown/markdown.dart' as md;
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:hermes_android/core/widgets/chat/chat_notch.dart';
 import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
 import 'package:hermes_android/core/screens/chat_screen.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
@@ -454,10 +453,11 @@ void main() {
       lessThanOrEqualTo(composerEdge),
       reason: 'el salto debe fundirse dentro del borde inferior del chat',
     );
-    // The notch tab on the composer's edge sits under the jump.
+    // The jump sits right above the composer's edge (Vistas v3: no notch
+    // tab between them any more).
     expect(
       jumpRect.top,
-      greaterThan(composerEdge - 56 - kChatNotchHeight),
+      greaterThan(composerEdge - 56),
       reason: 'el salto no debe abrir una franja separada sobre el compositor',
     );
     for (var burst = 0; burst < 12; burst++) {
@@ -509,7 +509,10 @@ void main() {
     expect(chat.isStreaming, isTrue);
     final hiddenJump = find.byKey(const ValueKey('scroll-to-bottom-hidden'));
     expect(hiddenJump, findsOneWidget);
-    expect(tester.widget<AnimatedOpacity>(hiddenJump).opacity, 0);
+    // The fade keeps one key for both states (so it can animate); the
+    // state key sits on the button inside it.
+    final jumpFade = find.byKey(const ValueKey('chat-scroll-to-bottom-fade'));
+    expect(tester.widget<AnimatedOpacity>(jumpFade).opacity, 0);
     expect(
       tester.getSize(hiddenJump),
       const Size(48, 48),
@@ -523,15 +526,25 @@ void main() {
 
     final guardRect = tester.getRect(find.byType(ChatScrollInteractionGuard));
     final viewportHeightBeforeButton = guardRect.height;
+    // Touch freezes the visible text, not its numeric reversed-list offset:
+    // revealing the first batch or settling the live status can grow below it.
+    final heldLine = find
+        .textContaining('histórica', findRichText: true)
+        .evaluate()
+        .firstWhere((element) {
+          final rect = tester.getRect(
+            find.byElementPredicate((e) => e == element),
+          );
+          return rect.top > guardRect.top && rect.bottom < guardRect.bottom;
+        });
+    final heldFinder = find.byElementPredicate((e) => e == heldLine);
+    final heldTop = tester.getTopLeft(heldFinder).dy;
     final freezeGesture = await tester.startGesture(guardRect.center);
     await tester.pump();
 
+    expect(hiddenJump, findsOneWidget);
     expect(
-      tester
-          .widget<AnimatedOpacity>(
-            find.byKey(const ValueKey('scroll-to-bottom-hidden')),
-          )
-          .opacity,
+      tester.widget<AnimatedOpacity>(jumpFade).opacity,
       0,
       reason:
           'tocar el chat en el fondo congela el seguimiento sin enseñar una '
@@ -544,8 +557,9 @@ void main() {
           'el botón para bajar debe flotar sobre el chat, no encoger el viewport',
     );
     expect(
-      positionBeforeFreeze.pixels,
-      closeTo(positionBeforeFreeze.minScrollExtent, 0.01),
+      tester.getTopLeft(heldFinder).dy,
+      closeTo(heldTop, 1),
+      reason: 'el primer contacto conserva el texto bajo el lector',
     );
 
     final extentBeforeHeldDelta = positionBeforeFreeze.maxScrollExtent;
@@ -565,6 +579,11 @@ void main() {
       find.byKey(const ValueKey('scroll-to-bottom-hidden')),
       findsOneWidget,
       reason: 'la flecha debe seguir oculta mientras el viewport está al final',
+    );
+    expect(
+      tester.getTopLeft(heldFinder).dy,
+      closeTo(heldTop, 1),
+      reason: 'el delta bajo el dedo no desplaza el historial',
     );
     await freezeGesture.up();
     await tester.pump();

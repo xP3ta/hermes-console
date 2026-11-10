@@ -32,8 +32,9 @@ String chatPromptPreview(String text) {
   final flat = text.replaceAll(RegExp(r'\s+'), ' ').trim();
   final runes = flat.runes.toList(growable: false);
   if (runes.length <= chatPromptPreviewMax) return flat;
-  final head = String.fromCharCodes(runes.take(chatPromptPreviewMax - 1))
-      .trimRight();
+  final head = String.fromCharCodes(
+    runes.take(chatPromptPreviewMax - 1),
+  ).trimRight();
   return '$head…';
 }
 
@@ -63,6 +64,9 @@ bool isChatPromptMessage(
   if (content is! String || content.trim().isEmpty) return false;
   if (_completeProcessNotification.hasMatch(content.trim())) return false;
   if (projectedUserVisibleContent(message).trim().isEmpty) return false;
+  // Delegation/auto-continue/process/model-switch carriers are written as user
+  // rows but are system rows, never prompts (sticky header, prompt sheet).
+  if (effectiveUserDisplayKind(message).isNotEmpty) return false;
   return isSystemRow == null || !isSystemRow(message);
 }
 

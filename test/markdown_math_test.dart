@@ -1,6 +1,9 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/utils/markdown_math.dart';
 
+/// Marker that opens an inline formula span.
+const _m = kMathInlineMarker;
+
 void main() {
   group('protectMarkdownMath', () {
     test('text without math delimiters is returned untouched', () {
@@ -11,7 +14,7 @@ void main() {
     test('inline dollar math keeps its characters', () {
       expect(
         protectMarkdownMath(r'Sea $a_1 * b_2$ el valor.'),
-        r'Sea `a_1 * b_2` el valor.',
+        'Sea `${_m}a_1 * b_2` el valor.',
       );
     });
 
@@ -28,7 +31,7 @@ void main() {
     test('currency before a real formula does not swallow it', () {
       expect(
         protectMarkdownMath(r'Pago $5 and $10 y luego $x^2$.'),
-        r'Pago $5 and $10 y luego `x^2`.',
+        'Pago \$5 and \$10 y luego `${_m}x^2`.',
       );
     });
 
@@ -43,7 +46,7 @@ void main() {
     });
 
     test('an even run of backslashes does not escape the closing dollar', () {
-      expect(protectMarkdownMath(r'Sea $a\\$ fin.'), r'Sea `a\\` fin.');
+      expect(protectMarkdownMath(r'Sea $a\\$ fin.'), 'Sea `${_m}a\\\\` fin.');
     });
 
     test('an odd run of backslashes escapes the dollar', () {
@@ -52,13 +55,16 @@ void main() {
     });
 
     test('spaced delimiters still protect the formula', () {
-      expect(protectMarkdownMath(r'valor $ 2 * 2 $ fin'), r'valor `2 * 2` fin');
+      expect(
+        protectMarkdownMath(r'valor $ 2 * 2 $ fin'),
+        'valor `${_m}2 * 2` fin',
+      );
     });
 
     test('spaced delimiters protect formulas without emphasis characters', () {
       expect(
         protectMarkdownMath(r'si $ x + y $ entonces'),
-        r'si `x + y` entonces',
+        'si `${_m}x + y` entonces',
       );
     });
 
@@ -77,21 +83,21 @@ void main() {
     test(r'\( ... \) is normalised to an inline span', () {
       expect(
         protectMarkdownMath(r'Vale \(a_1 * b_2\) aquí.'),
-        r'Vale `a_1 * b_2` aquí.',
+        'Vale `${_m}a_1 * b_2` aquí.',
       );
     });
 
     test('display dollars become a block on their own lines', () {
       expect(
         protectMarkdownMath('Antes\n\$\$\nx_1 * y_2\n\$\$\nDespués'),
-        'Antes\n\n```\nx_1 * y_2\n```\n\nDespués',
+        'Antes\n\n```math\nx_1 * y_2\n```\n\nDespués',
       );
     });
 
     test(r'\[ ... \] is normalised to a display block', () {
       expect(
         protectMarkdownMath('Mira \\[a_1 * b_2\\] listo'),
-        'Mira\n\n```\na_1 * b_2\n```\n\nlisto',
+        'Mira\n\n```math\na_1 * b_2\n```\n\nlisto',
       );
     });
 
@@ -112,7 +118,16 @@ void main() {
     });
 
     test('backticks inside the formula widen the span fence', () {
-      expect(protectMarkdownMath(r'Sea $a`b$ ok.'), r'Sea ``a`b`` ok.');
+      expect(protectMarkdownMath(r'Sea $a`b$ ok.'), 'Sea ``${_m}a`b`` ok.');
+    });
+
+    test('a trailing backtick in the formula gets a trimmed space', () {
+      expect(protectMarkdownMath(r'Sea $a`$ ok.'), 'Sea ``${_m}a` `` ok.');
+    });
+
+    test('a math fence written by the model is left as it is', () {
+      const text = '```math\nx_1 * y_2\n```';
+      expect(protectMarkdownMath(text), text);
     });
 
     test('result is memoised per text', () {

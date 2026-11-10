@@ -9,10 +9,10 @@ import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/chat/chat_notch.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 
-// Chat notch (owner design, GUIA-CHAT §5 and §9): a small glass tab above the
-// composer opens "Ajustes de esta conversación" with "Ir a" on top. These are
-// the widget-level contracts; the chat integration lives in
-// chat_screen_test.dart (group "chat notch").
+// Chat notch (owner design, GUIA-CHAT §5 and §9; notch «mínimo 7» in 1.4.0):
+// a small glass tab above the composer opens the "Esta conversación" sheet,
+// by a tap or a drag up. These are the widget-level contracts; the chat
+// integration lives in chat_screen_test.dart (group "chat notch").
 
 Widget _host(
   Widget child, {
@@ -43,7 +43,6 @@ Widget _notch({
   bool open = false,
   bool attention = false,
   VoidCallback? onOpen,
-  VoidCallback? onOpenGoTo,
   VoidCallback? onFindInChat,
   VoidCallback? onPreviousChat,
   VoidCallback? onNextChat,
@@ -53,16 +52,14 @@ Widget _notch({
   child: ChatNotch(
     open: open,
     attention: attention,
-    semanticLabel: 'Ajustes de la conversación e Ir a',
+    semanticLabel: 'Opciones de esta conversación',
     attentionLabel: 'Algo te necesita en otra conversación',
     onOpen: onOpen ?? () {},
-    onOpenGoTo: onOpenGoTo,
     onFindInChat: onFindInChat,
     onPreviousChat: onPreviousChat,
     onNextChat: onNextChat,
     horizontalSwipeEnabled: horizontalSwipeEnabled,
     gestureLabels: const ChatNotchGestureLabels(
-      goTo: 'Ir a',
       findInChat: 'Buscar en este chat',
       previousChat: 'Chat anterior',
       nextChat: 'Chat siguiente',
@@ -124,7 +121,7 @@ void main() {
       expect(
         tester.getSemantics(find.byKey(const ValueKey('chat-notch'))),
         matchesSemantics(
-          label: 'Ajustes de la conversación e Ir a',
+          label: 'Opciones de esta conversación',
           isButton: true,
           hasTapAction: true,
           hasEnabledState: true,
@@ -137,17 +134,25 @@ void main() {
       semantics.dispose();
     });
 
-    testWidgets('swipe up opens the sheet straight on Ir a', (tester) async {
-      var goTo = 0;
+    testWidgets('a drag up opens the same sheet as a tap', (tester) async {
+      var opened = 0;
+      var found = 0;
       await tester.pumpWidget(
-        _host(_notch(onOpenGoTo: () => goTo++), reduceMotion: true),
+        _host(
+          _notch(onOpen: () => opened++, onFindInChat: () => found++),
+          reduceMotion: true,
+        ),
       );
       await tester.drag(
         find.byKey(const ValueKey('chat-notch')),
         const Offset(0, -40),
       );
       await tester.pump();
-      expect(goTo, 1);
+      expect(opened, 1);
+      await tester.tap(find.byKey(const ValueKey('chat-notch')));
+      await tester.pump();
+      expect(opened, 2);
+      expect(found, 0);
     });
 
     testWidgets('horizontal swipes change recent chats and never open', (
@@ -201,8 +206,8 @@ void main() {
             isButton: true,
             hasEnabledState: true,
             isEnabled: true,
+            // Tap (and drag up) open the sheet: no separate «Ir a» action.
             customActions: <CustomSemanticsAction>[
-              const CustomSemanticsAction(label: 'Ir a'),
               const CustomSemanticsAction(label: 'Buscar en este chat'),
               const CustomSemanticsAction(label: 'Chat anterior'),
               const CustomSemanticsAction(label: 'Chat siguiente'),
