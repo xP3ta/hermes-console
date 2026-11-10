@@ -32,6 +32,15 @@ runner and a warm workstation and are therefore not reproducible source-SBOM
 inputs. Explicit `NOASSERTION` entries remain when a new coordinate has not yet
 been reviewed; they are a review queue, not an approval to redistribute it.
 
+Third-party code copied into the repository, which no package manager
+reports, is listed in `tool/sbom/vendored-components.json` (today noVNC
+1.5.0, its `des.js` under its own grant, and the pako port noVNC ships). Each
+entry names its package URL, version, SPDX licence, the file that proves the
+licence and the paths it covers; the generator emits one CycloneDX component
+per entry with a SHA-256 over those files and fails closed when a path or the
+licence evidence is missing. Vendored files are part of the input
+fingerprint.
+
 The checked-in output is deterministic for the same relevant inputs: lockfile,
 package manifest, Gradle configuration, assets, provenance and the curated
 licence catalogue. Each output records their combined SHA-256 as

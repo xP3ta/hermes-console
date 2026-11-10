@@ -3,6 +3,114 @@
   "bomFormat": "CycloneDX",
   "components": [
     {
+      "bom-ref": "pkg:github/novnc/noVNC@v1.5.0",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "a34f1f37b9f34d8e884dbb53652356efc1c0d6bea05d942ed61712acaaf130f0"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MPL-2.0"
+        }
+      ],
+      "name": "noVNC",
+      "properties": [
+        {
+          "name": "hermes.dependency.source",
+          "value": "vendored"
+        },
+        {
+          "name": "hermes.license.evidence",
+          "value": "assets/novnc/LICENSE.txt"
+        },
+        {
+          "name": "hermes.vendored.paths",
+          "value": "assets/novnc/core"
+        },
+        {
+          "name": "hermes.vendored.files",
+          "value": "39"
+        }
+      ],
+      "purl": "pkg:github/novnc/noVNC@v1.5.0",
+      "type": "library",
+      "version": "1.5.0"
+    },
+    {
+      "bom-ref": "pkg:github/novnc/noVNC@v1.5.0#core/crypto/des.js",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "3e1b800a20472dcea330810321e4f64be2f4b99552596f9a9ca935b1ee5f221f"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "LicenseRef-noVNC-DES"
+        }
+      ],
+      "name": "noVNC-des",
+      "properties": [
+        {
+          "name": "hermes.dependency.source",
+          "value": "vendored"
+        },
+        {
+          "name": "hermes.license.evidence",
+          "value": "LICENSES/LicenseRef-noVNC-DES.txt"
+        },
+        {
+          "name": "hermes.vendored.paths",
+          "value": "assets/novnc/core/crypto/des.js"
+        },
+        {
+          "name": "hermes.vendored.files",
+          "value": "1"
+        }
+      ],
+      "purl": "pkg:github/novnc/noVNC@v1.5.0#core/crypto/des.js",
+      "type": "library",
+      "version": "1.5.0"
+    },
+    {
+      "bom-ref": "pkg:github/novnc/noVNC@v1.5.0#vendor/pako",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "ee4a305c97ebb815a5054dd517821b35c0b81a03d92b9906b35c4c8133318b66"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "name": "pako",
+      "properties": [
+        {
+          "name": "hermes.dependency.source",
+          "value": "vendored"
+        },
+        {
+          "name": "hermes.license.evidence",
+          "value": "assets/novnc/vendor/pako/LICENSE"
+        },
+        {
+          "name": "hermes.vendored.paths",
+          "value": "assets/novnc/vendor/pako"
+        },
+        {
+          "name": "hermes.vendored.files",
+          "value": "14"
+        }
+      ],
+      "purl": "pkg:github/novnc/noVNC@v1.5.0#vendor/pako",
+      "type": "library",
+      "version": "1.0.3"
+    },
+    {
       "bom-ref": "pkg:maven/androidx.activity/activity-ktx@1.12.4",
       "group": "androidx.activity",
       "licenses": [
@@ -4901,7 +5009,7 @@
       "properties": [
         {
           "name": "hermes.dependency.kind",
-          "value": "transitive"
+          "value": "direct"
         },
         {
           "name": "hermes.dependency.source",
@@ -6217,7 +6325,7 @@
       "version": "2.2.0"
     },
     {
-      "bom-ref": "pkg:pub/hermes_android@1.3.1+9650",
+      "bom-ref": "pkg:pub/hermes_android@1.4.0+9812",
       "licenses": [
         {
           "expression": "GPL-3.0-only"
@@ -6238,9 +6346,9 @@
           "value": "LICENSE"
         }
       ],
-      "purl": "pkg:pub/hermes_android@1.3.1+9650",
+      "purl": "pkg:pub/hermes_android@1.4.0+9812",
       "type": "application",
-      "version": "1.3.1+9650"
+      "version": "1.4.0+9812"
     },
     {
       "bom-ref": "pkg:pub/highlight@0.7.0",
@@ -10733,6 +10841,7 @@
         "pkg:pub/archive@4.0.9",
         "pkg:pub/audioplayers@6.7.1",
         "pkg:pub/build_runner@2.15.0",
+        "pkg:pub/clock@1.1.2",
         "pkg:pub/crypto@3.0.7",
         "pkg:pub/cupertino_icons@1.0.9",
         "pkg:pub/dartssh2@2.18.0",
@@ -10784,7 +10893,7 @@
         "pkg:pub/whisper_ggml_plus@1.5.2",
         "pkg:pub/xterm@4.0.0"
       ],
-      "ref": "pkg:pub/hermes_android@1.3.1+9650"
+      "ref": "pkg:pub/hermes_android@1.4.0+9812"
     },
     {
       "dependsOn": [
@@ -11991,7 +12100,7 @@
   ],
   "metadata": {
     "component": {
-      "bom-ref": "pkg:pub/hermes_android@1.3.1+9650",
+      "bom-ref": "pkg:pub/hermes_android@1.4.0+9812",
       "licenses": [
         {
           "expression": "GPL-3.0-only"
@@ -12012,14 +12121,14 @@
           "value": "LICENSE"
         }
       ],
-      "purl": "pkg:pub/hermes_android@1.3.1+9650",
+      "purl": "pkg:pub/hermes_android@1.4.0+9812",
       "type": "application",
-      "version": "1.3.1+9650"
+      "version": "1.4.0+9812"
     },
     "properties": [
       {
         "name": "hermes.input.sha256",
-        "value": "bf934c907a199f091912a59fef1cc6ff204ba81cb6086be10860dbadbdb1f765"
+        "value": "3eaf15f158c81bd1220f58acc4891abcc803034885aa424320cb8d5fbda60e13"
       },
       {
         "name": "hermes.android.variant",
@@ -12031,7 +12140,7 @@
       }
     ]
   },
-  "serialNumber": "urn:uuid:fc9b0495-5dde-4532-ab59-d9f4bd3f0913",
+  "serialNumber": "urn:uuid:c3f7e26d-2928-4d9a-a2a4-2c228078288c",
   "specVersion": "1.6",
   "version": 1
 }

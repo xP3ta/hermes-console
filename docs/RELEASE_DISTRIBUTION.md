@@ -11,7 +11,7 @@ A flavor name is a security boundary, not a rename operation.
 
 The reviewed executable policy is `tool/release/release_contract.json`. The
 source lock is `pubspec.lock` with SHA-256
-`e3f8811963c2c1ab5eb7f62fd8ea86c5a3661bc98214017a720680019d6042c8`.
+`48d6da0ead3f18dc1aa599fdfe314b5ff7825fa834653e5aacd94322300cbe35`.
 Changing a lock, signer, authorized source actor or inspection-tool digest
 requires a normal source review; release scripts never rewrite those values.
 The reviewed contract anchors both channel signer certificates, all public and

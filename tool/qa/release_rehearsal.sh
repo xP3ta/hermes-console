@@ -138,7 +138,7 @@ manifest() {
   grep -q '<uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"' "$merged" ||
     fail "falta el permiso FGS de reproducción declarado en Play"
   grep -q '<uses-permission android:name="android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING"' "$merged" ||
-    fail "falta el permiso FGS de mensajería remota declarado en Play"
+    fail "falta el permiso FGS de mensajeria remota declarado en Play"
   grep -q 'android:foregroundServiceType="dataSync|remoteMessaging|microphone|mediaPlayback"' "$merged" ||
     fail "el servicio Play no declara exactamente dataSync|remoteMessaging|microphone|mediaPlayback"
   for forbidden_permission in \

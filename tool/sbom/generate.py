@@ -32,6 +32,7 @@ INVENTORY_ASSET_SUFFIXES = MODEL_SUFFIXES | BINARY_SUFFIXES | VISUAL_ASSET_SUFFI
 LICENSE_NAMES = ("LICENSE", "LICENSE.txt", "LICENSE.md", "COPYING", "COPYING.txt")
 CATALOG_PATH = ROOT / "tool/sbom/maven-license-catalog.json"
 PACKAGED_CATALOG_PATH = ROOT / "tool/sbom/packaged-license-catalog.json"
+VENDORED_MANIFEST = "tool/sbom/vendored-components.json"
 MAX_POM_BYTES = 2 * 1024 * 1024
 MAX_ARTIFACT_ENTRIES = 10_000
 MAX_ARTIFACT_MEMBER_BYTES = 256 * 1024 * 1024
@@ -112,6 +113,7 @@ def fingerprint_inputs() -> str:
         "tool/sbom/generate.sh",
         "tool/sbom/maven-license-catalog.json",
         "tool/sbom/packaged-license-catalog.json",
+        "tool/sbom/vendored-components.json",
         "android/build.gradle.kts",
         "android/settings.gradle.kts",
         "android/gradle.properties",
@@ -122,6 +124,8 @@ def fingerprint_inputs() -> str:
         if candidate.is_file():
             paths.add(candidate)
     paths.update(inventory_asset_paths())
+    for entry in vendored_entries():
+        paths.update(vendored_files(entry))
     digest = hashlib.sha256()
     for path in sorted(paths, key=lambda candidate: candidate.relative_to(ROOT).as_posix()):
         relative = path.relative_to(ROOT).as_posix().encode()
@@ -243,6 +247,10 @@ def selected_gradle_coordinates(output: str) -> list[tuple[str, str, str]]:
     coordinates: set[tuple[str, str, str]] = set()
     pattern = re.compile(r"--- ([A-Za-z0-9_.-]+):([A-Za-z0-9_.-]+):([^\s()]+)(?: -> ([^\s()]+))?")
     for line in output.splitlines():
+        # Gradle's dependencies task can exit 0 while a subtree is unresolved.
+        # A partial classpath omits transitives and must never become an SBOM.
+        if re.search(r"--- .*\sFAILED(?:\s|$)", line):
+            raise ValueError("Gradle dependency graph contains unresolved entries (FAILED)")
         match = pattern.search(line)
         if not match:
             continue
@@ -430,10 +438,80 @@ def gradle_components(
     return components
 
 
+def vendored_entries() -> list[dict]:
+    """Third-party code copied into the repository (no package manager sees it)."""
+    manifest = ROOT / VENDORED_MANIFEST
+    if not manifest.is_file():
+        return []
+    entries = json.loads(manifest.read_text(encoding="utf-8"))
+    for entry in entries:
+        for key in ("name", "version", "purl", "license", "licenseEvidence", "paths"):
+            if not entry.get(key):
+                raise SystemExit(f"vendored component without {key}: {entry.get('name')}")
+    return entries
+
+
+def vendored_files(entry: dict) -> list[Path]:
+    excluded = {ROOT / relative for relative in entry.get("exclude", [])}
+    files: set[Path] = set()
+    for relative in entry["paths"]:
+        base = ROOT / relative
+        if base.is_file():
+            candidates = [base]
+        elif base.is_dir():
+            candidates = [candidate for candidate in base.rglob("*") if candidate.is_file()]
+        else:
+            raise SystemExit(f"vendored component path missing: {relative}")
+        files.update(candidate for candidate in candidates if candidate not in excluded)
+    if not files:
+        raise SystemExit(f"vendored component has no files: {entry['name']}")
+    return sorted(files, key=lambda candidate: candidate.relative_to(ROOT).as_posix())
+
+
+def vendored_components() -> list[dict]:
+    """One CycloneDX component per vendored library, hashed over its files."""
+    components: list[dict] = []
+    for entry in vendored_entries():
+        evidence = ROOT / entry["licenseEvidence"]
+        if not evidence.is_file():
+            raise SystemExit(f"vendored licence evidence missing: {entry['licenseEvidence']}")
+        files = vendored_files(entry)
+        digest = hashlib.sha256()
+        for path in files:
+            relative = path.relative_to(ROOT).as_posix().encode()
+            digest.update(len(relative).to_bytes(8, "big"))
+            digest.update(relative)
+            digest.update(bytes.fromhex(sha256_file(path)))
+        components.append(
+            {
+                "type": "library",
+                "bom-ref": entry["purl"],
+                "name": entry["name"],
+                "version": entry["version"],
+                "purl": entry["purl"],
+                "licenses": cdx_licences({entry["license"]}),
+                "hashes": [{"alg": "SHA-256", "content": digest.hexdigest()}],
+                "properties": [
+                    {"name": "hermes.dependency.source", "value": "vendored"},
+                    {"name": "hermes.license.evidence", "value": entry["licenseEvidence"]},
+                    {"name": "hermes.vendored.paths", "value": ",".join(entry["paths"])},
+                    {"name": "hermes.vendored.files", "value": str(len(files))},
+                ],
+            }
+        )
+    return components
+
+
 def asset_licence(path: Path) -> tuple[str, str]:
     relative = path.relative_to(ROOT)
     if relative.parts[:2] == ("assets", "fonts") and (ROOT / "assets/fonts/OFL.txt").is_file():
         return "OFL-1.1", "assets/fonts/OFL.txt"
+    if relative.parts[:2] == ("assets", "chat_icons") and (
+        ROOT / "assets/chat_icons/LICENSE.txt"
+    ).is_file():
+        if relative.suffix.lower() == ".webp":
+            return "MIT", "assets/chat_icons/LICENSE.txt"
+        return "GPL-3.0-only", "assets/chat_icons/LICENSE.txt"
     if relative.parts[:2] == ("assets", "companions") and len(relative.parts) >= 4:
         manifest = ROOT.joinpath(*relative.parts[:3], "pet.json")
         if manifest.is_file():
@@ -701,7 +779,8 @@ def main() -> None:
     dart, dependencies = dart_components()
     gradle = gradle_components(args.variant, artifact_mode=args.artifact is not None)
     root_component = next(component for component in dart if component["name"] == "hermes_android")
-    components = sorted(dart + gradle, key=lambda component: component["bom-ref"])
+    vendored = vendored_components()
+    components = sorted(dart + gradle + vendored, key=lambda component: component["bom-ref"])
     bom = {
         "$schema": SCHEMA,
         "bomFormat": "CycloneDX",
@@ -782,7 +861,10 @@ def main() -> None:
             output / f"{args.variant}.artifact.json",
             artifact_inventory,
         )
-    print(f"wrote {args.variant} SBOM: {len(dart)} Dart + {len(gradle)} Gradle components")
+    print(
+        f"wrote {args.variant} SBOM: {len(dart)} Dart + {len(gradle)} Gradle"
+        f" + {len(vendored)} vendored components"
+    )
 
 
 if __name__ == "__main__":

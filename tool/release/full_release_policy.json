@@ -33,6 +33,7 @@
   ],
   "foregroundServices": [
     {"name": "com.hermesagent.hermes_android.HermesExternalDataSyncService", "types": ["dataSync"]},
+    {"name": "com.hermesagent.hermes_android.HermesTurnKeepAliveService", "types": ["dataSync"]},
     {"name": "com.pravera.flutter_foreground_task.service.ForegroundService", "types": ["dataSync", "mediaPlayback", "microphone", "remoteMessaging"]}
   ],
   "packageQueries": []

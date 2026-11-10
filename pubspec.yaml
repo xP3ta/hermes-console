@@ -1,7 +1,7 @@
 name: hermes_android
 description: "Hermes Agent — chat with your Hermes Gateway API Server over LAN. SSE streaming, Bearer auth, session management."
 publish_to: 'none'
-version: 1.3.1+9650
+version: 1.4.0+9812
 
 environment:
   sdk: ^3.12.0
@@ -28,6 +28,9 @@ dependencies:
 
   # Navigation
   go_router: ^14.0.0
+
+  # Wall clock the holdoff windows read (package:clock: the tests drive it).
+  clock: ^1.1.1
 
   # Network
   http: ^1.2.0
@@ -115,6 +118,9 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  shaders:
+    - shaders/live_reply_tail.frag
+    - shaders/liquid_glass.frag
   # Genera la clase Strings (AppLocalizations) desde lib/l10n/*.arb (ver
   # l10n.yaml). Migración de textos a i18n incremental, por pantalla.
   generate: true
@@ -148,6 +154,33 @@ flutter:
     - assets/mascot/pixel.webp
     - assets/mascot/nimbus.webp
     - assets/mascot/violet.webp
+    # The live chat's ten icons (Generative Icons, MIT): pre-rendered frame
+    # strips, listed one by one so atlas.json and SOURCES.json stay out of the
+    # bundle. Licence and provenance: assets/chat_icons/LICENSE.txt.
+    - assets/chat_icons/agent-team.webp
+    - assets/chat_icons/check.webp
+    - assets/chat_icons/delegate-task.webp
+    - assets/chat_icons/error.webp
+    - assets/chat_icons/parallel-tools.webp
+    - assets/chat_icons/queued.webp
+    - assets/chat_icons/reasoning.webp
+    - assets/chat_icons/response-stream.webp
+    - assets/chat_icons/terminal-agent.webp
+    - assets/chat_icons/tool-call.webp
+    # noVNC core (MPL-2.0) plus pako (MIT). Flutter asset directories are not
+    # recursive, so each folder is listed. Notices: THIRD_PARTY_NOTICES.md.
+    - assets/novnc/
+    - assets/novnc/core/
+    - assets/novnc/core/crypto/
+    - assets/novnc/core/decoders/
+    - assets/novnc/core/input/
+    - assets/novnc/core/util/
+    - assets/novnc/docs/
+    - assets/novnc/vendor/
+    - assets/novnc/vendor/pako/
+    - assets/novnc/vendor/pako/lib/
+    - assets/novnc/vendor/pako/lib/utils/
+    - assets/novnc/vendor/pako/lib/zlib/
   # Fuentes empaquetadas localmente bajo SIL OFL 1.1 para el selector de fuente
   # en Ajustes → apariencia. Son archivos locales: nunca se descargan en
   # runtime (no usamos google_fonts; ver docs/PRIVACY_POLICY.md).

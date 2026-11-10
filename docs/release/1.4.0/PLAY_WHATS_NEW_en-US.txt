@@ -1,0 +1,8 @@
+What's new in 1.4.0:
+• Terminal, Git and an in-app browser in the chat options.
+• Artifacts: a conversation's images, files and links in one view.
+• Tablets and foldables: chat and workspace side by side.
+• Subagents with a live list and detail; new look for the running turn.
+• Alerts with the app closed: the optional listening in Settings > Notifications, as in 1.3.1.
+• Haptics and fewer loading flickers.
+• The Bots and Rooms widgets are removed.
