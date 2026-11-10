@@ -1026,13 +1026,17 @@ void main() {
   });
 
   test('row id no acredita el turno de un canonical id homónimo', () {
+    // subagent-roster: the previous turn's child has FINISHED. A child still
+    // running now belongs to the session roster whatever the turn anchor
+    // says (Desktop store/subagents.ts), so only a finished one lets the
+    // anchor decide, which is what this test pins.
     final previousEvent = SubagentActivityEvent.tryParseNative(
-      type: 'subagent.start',
+      type: 'subagent.complete',
       scope: scope,
       payload: const {
         'subagent_id': 'previous-turn-child',
         'delegation_id': 'deleg_previous',
-        'status': 'running',
+        'status': 'completed',
       },
     )!;
     final previousState = SubagentActivityReducer.reduce(
@@ -1064,6 +1068,35 @@ void main() {
     expect(previousProjection.turnAnchor, 'canonical:42');
     expect(projection.turnAnchor, 'row:42');
     expect(projection.state, isNull);
+  });
+
+  // subagent-roster: one roster per session. A child still running from an
+  // earlier turn is kept when the transcript moves on to a newer turn of the
+  // same runtime, even though the scope is the same (no per-turn epoch).
+  test('a running child stays in the session roster across a newer turn', () {
+    final running = SubagentActivityReducer.reduce(
+      SubagentActivityState.empty(scope),
+      SubagentActivityEvent.tryParseNative(
+        type: 'subagent.start',
+        scope: scope,
+        payload: const {
+          'subagent_id': 'outliving-child',
+          'delegation_id': 'deleg_outliving',
+          'status': 'running',
+        },
+      )!,
+    );
+    final projection = projectSubagentsFromTranscript(
+      messagesNewestFirst: const [
+        {'_desktopRowId': 91, 'role': 'user', 'content': 'Turno siguiente.'},
+      ],
+      scope: scope,
+      current: running,
+      currentTurnAnchor: 'row:90',
+    );
+
+    expect(projection.turnAnchor, 'row:91');
+    expect(projection.state, same(running));
   });
 
   test('REST id numérico comparte el ancla tipada de Desktop row_id', () {

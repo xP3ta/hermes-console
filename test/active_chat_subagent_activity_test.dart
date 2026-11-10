@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/models/subagent_activity.dart';
+import 'package:hermes_android/core/screens/subagent_detail_screen.dart'
+    show subagentElapsed, subagentCompletionTime;
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/desktop_gateway_capabilities.dart';
@@ -20,7 +22,11 @@ import 'support/in_memory_compression_restore_storage.dart';
 import 'support/test_api_client.dart';
 
 class _SubagentGateway
-    implements HermesDesktopGateway, HermesDesktopSubagentGateway {
+    implements
+        HermesDesktopGateway,
+        HermesDesktopSubagentGateway,
+        HermesDesktopFailedDelegationGateway,
+        HermesDesktopSessionHistoryGateway {
   final StreamController<TuiGatewayEvent> _events =
       StreamController<TuiGatewayEvent>.broadcast();
 
@@ -33,6 +39,18 @@ class _SubagentGateway
   Completer<List<DesktopSubagentSnapshot>>? listGate;
   int interruptCalls = 0;
   int listCalls = 0;
+  List<Map<String, dynamic>> history = const [];
+  int historyCalls = 0;
+
+  @override
+  Future<SessionMessagesPage> sessionHistory({
+    required String sessionId,
+    String? profile,
+  }) async {
+    historyCalls++;
+    return SessionMessagesPage(messages: history, pagination: null);
+  }
+
   final List<String> interruptedIds = [];
   final steerCalls = <({String runtimeId, String subagentId, String text})>[];
   DesktopSubagentSteerResult steerResult = const DesktopSubagentSteerResult(
@@ -46,8 +64,10 @@ class _SubagentGateway
     truncated: false,
   );
 
+  bool connected = true;
+
   @override
-  bool get isConnected => true;
+  bool get isConnected => connected;
 
   @override
   Future<void> connect() async {}
@@ -85,6 +105,17 @@ class _SubagentGateway
   DesktopGatewayCapabilityState capabilityState(
     DesktopGatewayCapability capability,
   ) => subagentCapability;
+
+  List<DesktopFailedDelegation> failedDelegations = const [];
+  int failedDelegationCalls = 0;
+
+  @override
+  Future<List<DesktopFailedDelegation>> listFailedDelegations(
+    String runtimeSessionId,
+  ) async {
+    failedDelegationCalls += 1;
+    return failedDelegations;
+  }
 
   @override
   Future<List<DesktopSubagentSnapshot>> listSubagents(String runtimeSessionId) {
@@ -165,6 +196,7 @@ class _RecordingNotifications extends NotificationService {
     List<String>? approvalChoices,
     String? command,
     String? description,
+    bool blind = false,
   }) async {
     if (approvalId != null) approvalIds.add(approvalId);
   }
@@ -318,6 +350,400 @@ class _MountedSubagentProbeState extends State<_MountedSubagentProbe> {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  test(
+    'turn duration accepts seconds/milliseconds and rejects impossible origins',
+    () async {
+      for (final origin in <num>[
+        0,
+        1,
+        -1,
+        double.nan,
+        DateTime.now().subtract(const Duration(days: 8)).millisecondsSinceEpoch,
+        DateTime.now()
+            .subtract(const Duration(minutes: 1))
+            .millisecondsSinceEpoch,
+        DateTime.now()
+                .subtract(const Duration(minutes: 1))
+                .millisecondsSinceEpoch /
+            1000,
+      ]) {
+        final gateway = _SubagentGateway();
+        final chat = await _start(gateway);
+        chat.internalMessagesForTesting = [
+          {
+            'role': 'assistant',
+            'content': '',
+            '_pipeline': true,
+            '_activity_duration_seconds': 604800,
+            '_activity_trace': [
+              {
+                'kind': 'tool',
+                'label': 'terminal',
+                'status': 'completed',
+                'timestamp': origin,
+              },
+            ],
+          },
+          ...chat.internalMessagesForTesting.where(
+            (m) => m['role'] != 'assistant',
+          ),
+        ];
+        gateway.emit('message.complete', const {'text': 'finished'});
+        await _settle();
+        final measured = chat.messages.first['_activity_duration_seconds'];
+        final originMs = origin < 1e11 ? origin * 1000 : origin;
+        if (origin.isFinite &&
+            (DateTime.now().millisecondsSinceEpoch - originMs).abs() < 120000) {
+          expect(measured, inInclusiveRange(55, 65));
+        } else {
+          expect(measured, isNull);
+        }
+        chat.dispose();
+      }
+    },
+  );
+
+  group('turn duration after reconciling from the background', () {
+    // The Pixel run: a ~41 s turn settled 186 s after its prompt, when the
+    // app came back, read «Trabajó 186 s». The rows below are what the
+    // recovery graft leaves before the terminal settles: the durable rows,
+    // with the server's own times (seeded here as the graft would leave
+    // them; the graft itself is covered by the recovery tests).
+    double seconds(DateTime at) => at.millisecondsSinceEpoch / 1000;
+
+    Future<Object?> settledDuration({required bool durableFinal}) async {
+      final gateway = _SubagentGateway();
+      final chat = await _start(gateway);
+      final prompt = DateTime.now().subtract(const Duration(seconds: 186));
+      chat.internalMessagesForTesting = [
+        {
+          'role': 'assistant',
+          'content': 'listo',
+          if (durableFinal) ...{
+            'id': 'a-final',
+            'timestamp': seconds(prompt.add(const Duration(seconds: 41))),
+          } else
+            '_pipeline': true,
+          '_activity_trace': [
+            {
+              'kind': 'tool',
+              'label': 'terminal',
+              'status': 'completed',
+              'timestamp': prompt
+                  .add(const Duration(seconds: 2))
+                  .millisecondsSinceEpoch,
+            },
+          ],
+        },
+        {
+          'role': 'tool',
+          'id': 't-1',
+          'content': 'ok',
+          'timestamp': seconds(prompt.add(const Duration(seconds: 33))),
+        },
+        {
+          'role': 'user',
+          'id': 'u-1',
+          'content': 'delegar',
+          'timestamp': seconds(prompt),
+        },
+      ];
+      gateway.emit('message.complete', const {'text': 'listo'});
+      await _settle();
+      final measured = chat.messages.first['_activity_duration_seconds'];
+      chat.dispose();
+      return measured;
+    }
+
+    test('a settled turn with durable rows gets the server duration', () async {
+      expect(
+        await settledDuration(durableFinal: true),
+        closeTo(41, 0.01),
+        reason: 'final row − prompt, not the reconcile time (186 s)',
+      );
+    });
+
+    test('without the durable final row it keeps the local measure', () async {
+      expect(
+        await settledDuration(durableFinal: false),
+        inInclusiveRange(180, 190),
+        reason: 'no server end: never mixes server and phone clocks',
+      );
+    });
+  });
+
+  test(
+    'failed delegations read on refresh stay out of the live roster',
+    () async {
+      final gateway = _SubagentGateway();
+      final chat = await _start(gateway);
+      addTearDown(chat.dispose);
+      expect(chat.failedDelegations, isEmpty);
+
+      gateway.failedDelegations = [
+        DesktopFailedDelegation.tryParse({
+          'delegation_id': 'deleg-x',
+          'task_index': 0,
+          'status': 'failed',
+          'goal': 'Contar archivos',
+          'error': 'boom',
+        })!,
+      ];
+      await chat.refreshSubagentsForTesting();
+      await chat.refreshFailedDelegations();
+
+      expect(chat.failedDelegations.map((r) => r.stableId), ['deleg-x#0']);
+      expect(chat.failedDelegationScope, isNotNull);
+      // They never become live children or take a control authority.
+      expect(chat.conversationSubagents, isEmpty);
+      expect(gateway.failedDelegationCalls, greaterThan(0));
+    },
+  );
+
+  test(
+    'one conversation roster retains two children across disconnect and completion',
+    () async {
+      final gateway = _SubagentGateway();
+      final chat = await _start(gateway);
+      addTearDown(chat.dispose);
+      expect(
+        SubagentGroupCount.of(chat.conversationSubagents),
+        SubagentGroupCount.none,
+      );
+      for (var i = 1; i <= 2; i++) {
+        gateway.emit('subagent.start', {
+          'subagent_id': 'child-$i',
+          'delegation_id': 'deleg-$i',
+          'started_at': '2026-11-03T12:31:00Z',
+          'status': 'running',
+        });
+        await _settle();
+        expect(
+          SubagentGroupCount.of(chat.conversationSubagents),
+          SubagentGroupCount(0, i),
+        );
+      }
+      gateway.connected = false;
+      expect(
+        chat.conversationSubagents.map((a) => a.phase),
+        everyElement(SubagentActivityPhase.unknown),
+      );
+      // The first completion was lost while offline: the repaired roster no
+      // longer lists it. Absence must never manufacture "cancelled" or a clock.
+      gateway.connected = true;
+      gateway.listGate = Completer<List<DesktopSubagentSnapshot>>()
+        ..complete(const [
+          DesktopSubagentSnapshot(
+            subagentId: 'child-2',
+            delegationId: 'deleg-2',
+            status: 'running',
+          ),
+        ]);
+      await chat.refreshSubagentsForTesting();
+      expect(chat.conversationSubagents.map((a) => a.phase), [
+        SubagentActivityPhase.unknown,
+        SubagentActivityPhase.running,
+      ]);
+      gateway.emit('subagent.complete', const {
+        'subagent_id': 'child-1',
+        'delegation_id': 'deleg-1',
+        'status': 'completed',
+        'completed_at': '2026-11-03T12:32:00Z',
+      });
+      await _settle();
+      expect(
+        SubagentGroupCount.of(chat.conversationSubagents),
+        const SubagentGroupCount(1, 2),
+      );
+      expect(
+        chat.conversationSubagents.first.details.completedAt,
+        DateTime.utc(2026, 11, 3, 12, 32),
+      );
+      gateway.emit('subagent.complete', const {
+        'subagent_id': 'child-2',
+        'delegation_id': 'deleg-2',
+        'status': 'failed',
+      });
+      await _settle();
+      expect(
+        SubagentGroupCount.of(chat.conversationSubagents),
+        const SubagentGroupCount(2, 2),
+      );
+    },
+  );
+
+  // subagent-roster (REPORT-MODELO-DESKTOP plan E): was «native proof after
+  // list failure confirms only that identity», which emptied the proof on a
+  // failed read. Desktop use-subagent-snapshot.ts keeps the event-fed frame
+  // when `subagent.list` fails: rows, phases and controls stay as they were.
+  test('a failed list keeps the roster and its controls', () async {
+    final gateway = _SubagentGateway();
+    final chat = await _start(gateway);
+    addTearDown(chat.dispose);
+    for (final id in ['known', 'untouched']) {
+      gateway.emit('subagent.start', {'subagent_id': id, 'goal': 'Goal $id'});
+    }
+    await _settle();
+    expect(chat.conversationSubagents, hasLength(2));
+    final failed = Completer<List<DesktopSubagentSnapshot>>();
+    gateway.listGate = failed;
+    final refresh = chat.refreshSubagentsForTesting();
+    failed.completeError(StateError('list failed'));
+    await refresh;
+    expect(chat.conversationSubagents, hasLength(2));
+    expect(
+      chat.conversationSubagents.every(
+        (a) => a.phase == SubagentActivityPhase.running,
+      ),
+      isTrue,
+    );
+    expect(chat.subagentActivities, hasLength(2));
+    expect(chat.activeSubagentCount, 2);
+    expect(chat.subagentListFailureRevision, 1);
+    gateway.emit('subagent.start', {
+      'subagent_id': 'known',
+      'goal': 'Goal known',
+    });
+    gateway.emit('subagent.start', {'subagent_id': 'new', 'goal': 'New goal'});
+    await _settle();
+    final roster = {
+      for (final a in chat.conversationSubagents) a.subagentId: a,
+    };
+    expect(roster, hasLength(3));
+    expect(roster['known']!.phase, SubagentActivityPhase.running);
+    expect(roster['new']!.phase, SubagentActivityPhase.running);
+    expect(roster['untouched']!.phase, SubagentActivityPhase.running);
+    expect(chat.canInterruptSubagent(roster['known']!), isTrue);
+    expect(chat.canInterruptSubagent(roster['untouched']!), isTrue);
+  });
+
+  test(
+    'unchanged absent identities read history once per runtime and evidence',
+    () async {
+      final gateway = _SubagentGateway();
+      final chat = await _start(gateway);
+      addTearDown(chat.dispose);
+      gateway.emit('subagent.start', {
+        'subagent_id': 'mixed',
+        'delegation_id': 'deleg-mixed',
+      });
+      await _settle();
+      expect(chat.conversationSubagents, hasLength(1));
+      gateway.history = [
+        {
+          'role': 'user',
+          'content': '[ASYNC DELEGATION BATCH COMPLETE — deleg-mixed]',
+          'display_kind': 'async_delegation_complete',
+          'display_metadata': {
+            'delegation_id': 'deleg-mixed',
+            'task_count': 2,
+            'completed_count': 1,
+            'failed_count': 1,
+          },
+        },
+      ];
+      final before = gateway.historyCalls;
+      for (var i = 0; i < 4; i++) {
+        await chat.refreshSubagentsForTesting();
+        await _settle();
+      }
+      expect(gateway.historyCalls - before, 1);
+      expect(
+        chat.conversationSubagents.single.phase,
+        SubagentActivityPhase.unknown,
+      );
+      gateway.emit('subagent.thinking', {
+        'subagent_id': 'mixed',
+        'delegation_id': 'deleg-mixed',
+      });
+      await _settle();
+      await chat.refreshSubagentsForTesting();
+      await _settle();
+      expect(gateway.historyCalls - before, 2);
+      chat.adoptDesktopRuntimeForTesting('runtime-retry');
+      await chat.refreshSubagentsForTesting();
+      await _settle();
+      expect(gateway.historyCalls - before, 3);
+      await chat.refreshSubagentsForTesting();
+      await _settle();
+      expect(gateway.historyCalls - before, 3);
+    },
+  );
+
+  test(
+    'a child completed offline is reconciled from durable history with its end time',
+    () async {
+      final gateway = _SubagentGateway();
+      final chat = await _start(gateway);
+      addTearDown(chat.dispose);
+      gateway.emit('subagent.start', const {
+        'subagent_id': 'sa-offline',
+        'delegation_id': 'deleg_deadbeef',
+        'started_at': '2026-11-03T12:31:00Z',
+      });
+      await _settle();
+      expect(
+        chat.conversationSubagents.single.phase,
+        SubagentActivityPhase.running,
+      );
+      gateway.connected = false;
+      expect(
+        chat.conversationSubagents.single.phase,
+        SubagentActivityPhase.unknown,
+      );
+      gateway.history = [
+        {'role': 'user', 'content': 'delegate', 'message_id': 'u-start'},
+        {
+          'role': 'tool',
+          'tool_name': 'delegate_task',
+          'tool_call_id': 'delegate-call',
+          'content':
+              '{"status":"dispatched","delegation_id":"deleg_deadbeef","subagent_ids":["sa-offline"]}',
+        },
+        {
+          'role': 'user',
+          'message_id': 'u-complete',
+          'content': '[ASYNC DELEGATION BATCH COMPLETE — deleg_deadbeef]',
+          'display_kind': 'async_delegation_complete',
+          'timestamp':
+              DateTime.utc(2026, 11, 3, 12, 32).millisecondsSinceEpoch / 1000,
+          'display_metadata': {
+            'delegation_id': 'deleg_deadbeef',
+            'task_count': 1,
+            'completed_count': 1,
+            'failed_count': 0,
+          },
+        },
+        // Completion belongs to an earlier turn, while the parent works on.
+        {'role': 'user', 'content': 'continue', 'message_id': 'u-next'},
+      ];
+      chat.adoptDesktopRuntimeForTesting('runtime-reconnected');
+      gateway.connected = true;
+      await chat.refreshSubagentsForTesting();
+      await _settle();
+      expect(gateway.historyCalls, greaterThan(0));
+      expect(
+        subagentElapsed(
+          chat.conversationSubagents.single,
+          DateTime.utc(2026, 11, 3, 13),
+        ),
+        const Duration(minutes: 1),
+      );
+      expect(
+        subagentCompletionTime(chat.conversationSubagents.single),
+        isNotNull,
+      );
+      expect(
+        chat.conversationSubagents.single.phase,
+        SubagentActivityPhase.completed,
+      );
+      expect(
+        chat.conversationSubagents.single.details.completedAt,
+        DateTime.utc(2026, 11, 3, 12, 32),
+      );
+    },
+  );
 
   test(
     'presentation owner tokens isolate sibling release and scrub only on 1 to 0',
@@ -1001,8 +1427,12 @@ void main() {
     },
   );
 
+  // subagent-roster: was «…starts a mounted successor row in next turn».
+  // The roster is per session now and, as Desktop's retired set
+  // (store/subagents.ts upsertSubagent), a finished child's id is retired:
+  // a later start for it, in any turn, never brings a second row back.
   test(
-    'same runtime recycled subagent id starts a mounted successor row in next turn',
+    'same runtime finished subagent id stays retired in the next turn',
     () async {
       final gateway = _SubagentGateway();
       final chat = await _start(gateway);
@@ -1035,14 +1465,121 @@ void main() {
       });
       await _settle();
 
-      expect(chat.subagentActivities, hasLength(2));
-      final successor = chat.subagentActivities.singleWhere(
-        (activity) => activity.phase == SubagentActivityPhase.running,
+      expect(
+        chat.subagentActivities.where((activity) => !activity.isTerminal),
+        isEmpty,
       );
-      expect(successor.subagentId, 'turn-recycled-child');
-      expect(successor.key.scope.turnEpoch, greaterThan(0));
+      expect(chat.activeSubagentCount, 0);
+      expect(chat.safeActiveSubagentCount, 0);
     },
   );
+
+  // subagent-roster: the roster is per session (Desktop store/subagents.ts).
+  // A child that outlives the turn that spawned it keeps the same key in the
+  // next turn: its later events update that one row, never add a second.
+  // The finished sibling is pruned into the retired set at the new turn
+  // (pruneFinishedSessionSubagents) and cannot come back.
+  test('a child that outlives its turn stays one row in the next turn', () async {
+    final gateway = _SubagentGateway();
+    final chat = await _start(gateway);
+    addTearDown(chat.dispose);
+
+    gateway.emit('subagent.start', const {
+      'subagent_id': 'outliving',
+      'goal': 'Long job',
+      'status': 'running',
+    });
+    gateway.emit('subagent.complete', const {
+      'subagent_id': 'finished-before',
+      'goal': 'Short job',
+      'status': 'completed',
+    });
+    gateway.emit('message.complete', const {'text': 'parent done'});
+    await _settle();
+    final key = chat.subagentActivities
+        .singleWhere((a) => a.subagentId == 'outliving')
+        .key;
+
+    expect(
+      await chat.send(
+        fullText: 'next turn',
+        model: 'hermes-agent',
+        history: chat.messages,
+      ),
+      isTrue,
+    );
+    gateway.emit('subagent.tool', const {
+      'subagent_id': 'outliving',
+      'status': 'tool',
+      'tool_name': 'terminal',
+    });
+    gateway.emit('subagent.start', const {
+      'subagent_id': 'finished-before',
+      'status': 'running',
+    });
+    await _settle();
+
+    final roster = chat.conversationSubagents;
+    expect(roster.where((a) => a.subagentId == 'outliving'), hasLength(1));
+    final outliving = roster.singleWhere((a) => a.subagentId == 'outliving');
+    expect(outliving.key, key);
+    expect(outliving.phase, SubagentActivityPhase.tool);
+    expect(
+      roster.where(
+        (a) => a.subagentId == 'finished-before' && !a.isTerminal,
+      ),
+      isEmpty,
+    );
+    expect(chat.activeSubagentCount, 1);
+  });
+
+  // clean-stopped: a «Detenido» child of the previous turn leaves the live
+  // block of the new turn (it is reported as finished in an earlier turn) but
+  // stays in the roster the capsule and the sheet read; a child still running
+  // and one that stops inside the new turn are not reported.
+  test('a stopped child of the previous turn is not live in the next', () async {
+    final gateway = _SubagentGateway();
+    final chat = await _start(gateway);
+    addTearDown(chat.dispose);
+
+    gateway.emit('subagent.start', const {
+      'subagent_id': 'running-on',
+      'status': 'running',
+    });
+    gateway.emit('subagent.complete', const {
+      'subagent_id': 'stopped-before',
+      'status': 'interrupted',
+    });
+    gateway.emit('message.complete', const {'text': 'parent done'});
+    await _settle();
+    expect(
+      chat.conversationSubagents.singleWhere(
+        (a) => a.subagentId == 'stopped-before',
+      ).phase,
+      SubagentActivityPhase.cancelled,
+    );
+
+    expect(
+      await chat.send(
+        fullText: 'next turn',
+        model: 'hermes-agent',
+        history: chat.messages,
+      ),
+      isTrue,
+    );
+    gateway.emit('subagent.complete', const {
+      'subagent_id': 'stopped-now',
+      'status': 'interrupted',
+    });
+    await _settle();
+
+    final roster = chat.conversationSubagents;
+    SubagentActivity of(String id) =>
+        roster.singleWhere((a) => a.subagentId == id);
+    expect(chat.isFinishedInEarlierTurn(of('stopped-before')), isTrue);
+    expect(chat.isFinishedInEarlierTurn(of('running-on')), isFalse);
+    expect(chat.isFinishedInEarlierTurn(of('stopped-now')), isFalse);
+  });
 
   test(
     '[console-state 6/7] terminal subagent tombstone absorbs late live event',
@@ -1609,8 +2146,12 @@ void main() {
     },
   );
 
+  // subagent-roster: was «subagent id alone cannot tombstone a successor
+  // turn». The roster is per session and, as Desktop's retired set
+  // (store/subagents.ts upsertSubagent), the finished child's subagent_id is
+  // retired for the session: a later start for it never reopens a live row.
   test(
-    '[console-state 7/7] subagent id alone cannot tombstone a successor turn',
+    '[console-state 7/7] a finished subagent id stays retired in a successor turn',
     () async {
       final gateway = _SubagentGateway();
       final chat = await _start(gateway);
@@ -1641,7 +2182,7 @@ void main() {
           (activity) =>
               activity.subagentId == 'retired-child' && !activity.isTerminal,
         ),
-        isTrue,
+        isFalse,
       );
     },
   );
@@ -1739,7 +2280,11 @@ void main() {
     },
   );
 
-  test('native terminal old epoch yields to the next epoch child', () async {
+  // subagent-roster: was «native terminal old epoch yields to the next
+  // epoch child». One roster per session (Desktop store/subagents.ts): both
+  // children share the session scope, and a late duplicate completion of
+  // the first one updates its row instead of adding a third.
+  test('a finished child and the next turn\'s child share one session roster', () async {
     final gateway = _SubagentGateway();
     final chat = await _start(gateway);
     addTearDown(chat.dispose);
@@ -1750,7 +2295,7 @@ void main() {
       'event_id': 'native-epoch-a-start',
     });
     await _settle();
-    final epochA = chat.subagentActivities.single.key.scope.turnEpoch;
+    final scopeA = chat.subagentActivities.single.key.scope;
 
     gateway.emit('message.complete', const {'text': 'parent finished'});
     await _settle();
@@ -1785,7 +2330,7 @@ void main() {
       (activity) => activity.subagentId == 'native-epoch-b',
     );
     expect(epochBActivity.phase, SubagentActivityPhase.running);
-    expect(epochBActivity.key.scope.turnEpoch, greaterThan(epochA));
+    expect(epochBActivity.key.scope, scopeA);
 
     gateway.emit('subagent.complete', const {
       'subagent_id': 'native-epoch-a',
@@ -1793,12 +2338,12 @@ void main() {
       'event_id': 'native-epoch-a-complete-late-duplicate',
     });
     await _settle();
-    expect(chat.subagentActivities, hasLength(3));
+    expect(chat.subagentActivities, hasLength(2));
     expect(
       chat.subagentActivities.where(
         (activity) => activity.subagentId == 'native-epoch-a',
       ),
-      hasLength(2),
+      hasLength(1),
     );
     expect(
       chat.subagentActivities
@@ -1808,7 +2353,10 @@ void main() {
     );
   });
 
-  test('legacy terminal old epoch yields to the next epoch delegate', () async {
+  // subagent-roster: was «…yields to the next epoch delegate». Both
+  // delegate_task rows live in the one session roster now (same scope);
+  // the late duplicate completion of the first still adds nothing.
+  test('legacy terminal and the next turn\'s delegate share one session roster', () async {
     final gateway = _SubagentGateway();
     final chat = await _start(gateway);
     addTearDown(chat.dispose);
@@ -1818,7 +2366,7 @@ void main() {
       'tool_id': 'legacy-epoch-a',
     });
     await _settle();
-    final epochA = chat.subagentActivities.single.key.scope.turnEpoch;
+    final scopeA = chat.subagentActivities.single.key.scope;
 
     gateway.emit('message.complete', const {'text': 'parent finished'});
     await _settle();
@@ -1852,7 +2400,7 @@ void main() {
       (activity) => activity.legacyToolCallId == 'legacy-epoch-b',
     );
     expect(epochBActivity.phase, SubagentActivityPhase.running);
-    expect(epochBActivity.key.scope.turnEpoch, greaterThan(epochA));
+    expect(epochBActivity.key.scope, scopeA);
 
     gateway.emit('tool.complete', const {
       'name': 'delegate_task',
@@ -1891,7 +2439,7 @@ void main() {
       expect(find.byType(SubagentActivityCard), findsOneWidget);
       // Spec 080: the in-chat row is one flat, stable transcript row; its
       // element must survive submit and completion without remounting.
-      final rowFinder = find.byKey(const ValueKey('subagent-disclosure'));
+      final rowFinder = find.byKey(const ValueKey('subagent-work-pill'));
       expect(rowFinder, findsOneWidget);
       expect(stableKey, isNotNull);
       final stableElement = tester.element(rowFinder);
@@ -2003,5 +2551,198 @@ void main() {
     await Future<void>.delayed(const Duration(milliseconds: 50));
 
     expect(events, ['stop', 'show']);
+  });
+
+  // P0-1 (official comparison, 8 nov): one async delegation painted as
+  // «2 subagentes». The `delegate_task` call's placeholder and its child must
+  // stay ONE row in the roster every surface reads, read after every event
+  // as the chat does. Payload shapes are the real server's.
+  group('one delegation is one subagent in the conversation roster', () {
+    const goal = 'Ejecuta exactamente el bucle for';
+
+    Future<(ActiveChat, _SubagentGateway, List<int>)> begin() async {
+      final gateway = _SubagentGateway();
+      final chat = await _start(gateway);
+      await chat.refreshSubagentsForTesting();
+      return (chat, gateway, <int>[]);
+    }
+
+    Map<String, dynamic> child(String id, {String? goalText, int index = 0}) =>
+        {
+          'subagent_id': id,
+          'goal': goalText ?? goal,
+          'task_index': index,
+          'task_count': 1,
+          'depth': 0,
+          'tool_count': 0,
+        };
+
+    test('placeholder, spawn, start, tool, dispatch result: always 1', () async {
+      final (chat, gateway, seen) = await begin();
+      addTearDown(chat.dispose);
+      Future<void> step(String type, Map<String, dynamic> payload) async {
+        gateway.emit(type, payload);
+        await _settle();
+        seen.add(chat.conversationSubagents.length);
+      }
+
+      await step('tool.start', {'name': 'delegate_task', 'tool_id': 'call-1'});
+      await step('subagent.spawn_requested', child('sa-0-aaaa'));
+      await step('subagent.start', {
+        ...child('sa-0-aaaa'),
+        'child_session_id': 'child-aaaa',
+      });
+      await step('subagent.tool', {
+        ...child('sa-0-aaaa'),
+        'child_session_id': 'child-aaaa',
+        'tool_name': 'terminal',
+        'tool_preview': 'for',
+      });
+      await step('tool.complete', {
+        'name': 'delegate_task',
+        'tool_id': 'call-1',
+        'result': {
+          'status': 'dispatched',
+          'mode': 'background',
+          'count': 1,
+          'delegation_id': 'deleg-1',
+          'goals': [goal],
+          'subagent_ids': ['sa-0-aaaa'],
+        },
+      });
+      await step('message.complete', {'text': 'Lanzado 1 subagente'});
+
+      expect(seen, [1, 1, 1, 1, 1, 1]);
+      final roster = chat.conversationSubagents;
+      expect(roster.single.subagentId, 'sa-0-aaaa');
+      expect(roster.single.goalPreview, goal);
+      expect(SubagentGroupCount.of(roster), const SubagentGroupCount(0, 1));
+      expect(chat.safeActiveSubagentCount, 1);
+      // P0-2: the parent ended and only the child works.
+      expect(chat.isStreaming, isFalse);
+      expect(chat.canStopSessionWork, isTrue);
+      expect(chat.onlySubagentsWork, isTrue);
+
+      await step('subagent.complete', {
+        ...child('sa-0-aaaa'),
+        'child_session_id': 'child-aaaa',
+        'status': 'completed',
+        'summary': 'paso 1..6',
+      });
+      expect(seen.last, 1);
+      expect(
+        SubagentGroupCount.of(chat.conversationSubagents),
+        const SubagentGroupCount(1, 1),
+      );
+      expect(chat.onlySubagentsWork, isFalse);
+    });
+
+    // REVISION-4 (P0 guard): the placeholder and its own child in one batch
+    // (no read in between) are still one subagent.
+    test('placeholder and its child back-to-back, one read: 1', () async {
+      final (chat, gateway, _) = await begin();
+      addTearDown(chat.dispose);
+      gateway.emit('tool.start', {'name': 'delegate_task', 'tool_id': 'call-b'});
+      gateway.emit('subagent.start', {
+        ...child('sa-0-bbbb'),
+        'child_session_id': 'child-bbbb',
+      });
+      await _settle();
+      expect(chat.conversationSubagents, hasLength(1));
+      expect(chat.conversationSubagents.single.subagentId, 'sa-0-bbbb');
+    });
+
+    test('a batch of two goals in one call stays two (no phantom third)',
+        () async {
+      final (chat, gateway, seen) = await begin();
+      addTearDown(chat.dispose);
+      Future<void> step(String type, Map<String, dynamic> payload) async {
+        gateway.emit(type, payload);
+        await _settle();
+        seen.add(chat.conversationSubagents.length);
+      }
+
+      await step('tool.start', {'name': 'delegate_task', 'tool_id': 'call-2'});
+      await step(
+        'subagent.spawn_requested',
+        {...child('sa-0-a', goalText: 'goal A'), 'task_count': 2},
+      );
+      await step('subagent.spawn_requested', {
+        ...child('sa-1-b', goalText: 'goal B', index: 1),
+        'task_count': 2,
+      });
+      for (final id in ['sa-0-a', 'sa-1-b']) {
+        await step('subagent.start', {
+          'subagent_id': id,
+          'child_session_id': 'child-$id',
+          'task_count': 2,
+        });
+      }
+      await step('tool.complete', {
+        'name': 'delegate_task',
+        'tool_id': 'call-2',
+        'result': {
+          'status': 'dispatched',
+          'mode': 'background',
+          'count': 2,
+          'delegation_id': 'deleg-2',
+          'goals': ['goal A', 'goal B'],
+          'subagent_ids': ['sa-0-a', 'sa-1-b'],
+        },
+      });
+
+      expect(seen, [1, 1, 2, 2, 2, 2]);
+      expect(
+        chat.conversationSubagents.map((a) => a.subagentId).toSet(),
+        {'sa-0-a', 'sa-1-b'},
+      );
+      expect(
+        SubagentGroupCount.of(chat.conversationSubagents),
+        const SubagentGroupCount(0, 2),
+      );
+    });
+
+    test('a retry of the same goal after a failure is two: failed + running',
+        () async {
+      final (chat, gateway, seen) = await begin();
+      addTearDown(chat.dispose);
+      Future<void> step(String type, Map<String, dynamic> payload) async {
+        gateway.emit(type, payload);
+        await _settle();
+        seen.add(chat.conversationSubagents.length);
+      }
+
+      await step('tool.start', {'name': 'delegate_task', 'tool_id': 'call-a'});
+      await step('subagent.spawn_requested', child('sa-0-first'));
+      await step('subagent.complete', {
+        ...child('sa-0-first'),
+        'status': 'failed',
+      });
+      await step('tool.complete', {
+        'name': 'delegate_task',
+        'tool_id': 'call-a',
+        'result': {
+          'status': 'failed',
+          'delegation_id': 'deleg-a',
+          'subagent_ids': ['sa-0-first'],
+        },
+        'success': false,
+      });
+      await step('tool.start', {'name': 'delegate_task', 'tool_id': 'call-b'});
+      await step('subagent.spawn_requested', child('sa-0-second'));
+      await step('subagent.start', {
+        ...child('sa-0-second'),
+        'child_session_id': 'child-second',
+      });
+
+      expect(seen, [1, 1, 1, 1, 1, 2, 2]);
+      final phases = {
+        for (final a in chat.conversationSubagents) a.subagentId: a.phase,
+      };
+      expect(phases, {
+        'sa-0-first': SubagentActivityPhase.failed,
+        'sa-0-second': SubagentActivityPhase.running,
+      });
+    });
   });
 }

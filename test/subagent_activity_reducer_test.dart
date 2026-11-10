@@ -50,6 +50,7 @@ SubagentActivityEvent _legacy(
 String _repeat(String value, int count) => List.filled(count, value).join();
 
 void main() {
+  _phantom();
   group('native Hermes 0.19 parsing', () {
     test('recognizes the six event types and their normalized phases', () {
       final scope = _scope();
@@ -238,6 +239,35 @@ void main() {
       expect(activity.usage?.outputTokens, 7);
       expect(activity.details.durationSeconds, 2.5);
       expect(activity.eventRevision, 6);
+    });
+
+    // subagent-roster: as Desktop store/subagents.ts, a child's terminal
+    // outcome is final; even a newer complete cannot flip it.
+    test('a native terminal outcome never flips, even on a newer revision', () {
+      final scope = _scope();
+      var state = SubagentActivityReducer.reduce(
+        SubagentActivityState.empty(scope),
+        _native(
+          'subagent.complete',
+          scope,
+          const {'subagent_id': 'child-a', 'status': 'completed'},
+          revision: 5,
+          eventId: 'complete-5',
+        ),
+      );
+      state = SubagentActivityReducer.reduce(
+        state,
+        _native(
+          'subagent.complete',
+          scope,
+          const {'subagent_id': 'child-a', 'status': 'failed'},
+          revision: 6,
+          eventId: 'complete-6',
+        ),
+      );
+
+      expect(state.entries, hasLength(1));
+      expect(state.activities.single.phase, SubagentActivityPhase.completed);
     });
 
     test('same revision and same event id are idempotent', () {
@@ -750,5 +780,157 @@ void main() {
       ),
       throwsFormatException,
     );
+  });
+}
+
+void _phantom() {
+  group('phantom third subagent', () {
+    test('two native children plus the delegate_task call stay two', () {
+      final scope = _scope();
+      var state = SubagentActivityState.empty(scope);
+      SubagentActivityState step(SubagentActivityEvent e) =>
+          state = SubagentActivityReducer.reduce(state, e);
+      step(_legacy('tool.start', scope, 'call-x'));
+      for (final id in ['sa', 'sb']) {
+        step(_native('subagent.spawn_requested', scope, {
+          'subagent_id': id,
+          'delegation_id': 'del-1',
+          'goal': 'goal $id',
+        }));
+        step(_native('subagent.start', scope, {
+          'subagent_id': id,
+          'delegation_id': 'del-1',
+          'child_session_id': 'child-$id',
+          'goal': 'goal $id',
+        }));
+      }
+      for (final id in ['sa', 'sb']) {
+        step(_native('subagent.complete', scope, {
+          'subagent_id': id,
+          'delegation_id': 'del-1',
+          'child_session_id': 'child-$id',
+          'status': 'failed',
+        }));
+      }
+      step(_legacy('tool.complete', scope, 'call-x', payload: {
+        'result': {
+          'delegation_id': 'del-1',
+          'status': 'failed',
+          'subagent_ids': ['sa', 'sb'],
+        },
+        'success': false,
+      }));
+      expect(state.activities.length, 2,
+          reason: state.activities.map((a) => a.key.stableId).join(','));
+    });
+
+    test('async dispatch result (delegation id, no child ids) adds no row', () {
+      final scope = _scope();
+      var state = SubagentActivityState.empty(scope);
+      SubagentActivityState step(SubagentActivityEvent e) =>
+          state = SubagentActivityReducer.reduce(state, e);
+      step(_legacy('tool.start', scope, 'call-x'));
+      for (final id in ['sa', 'sb']) {
+        step(_native('subagent.start', scope, {
+          'subagent_id': id,
+          'child_session_id': 'child-$id',
+          'goal': 'goal $id',
+        }));
+        step(_native('subagent.complete', scope, {
+          'subagent_id': id,
+          'child_session_id': 'child-$id',
+          'status': 'failed',
+        }));
+      }
+      step(_legacy('tool.complete', scope, 'call-x', payload: {
+        'result': {'status': 'dispatched', 'count': 2, 'delegation_id': 'd1'},
+      }));
+      expect(state.activities.map((a) => a.key.stableId).toSet(), {'sa', 'sb'});
+      expect(state.activities.every((a) => a.phase.isTerminal), isTrue);
+    });
+
+    // P0-1 (official comparison): one async delegation, real payload shapes.
+    test('one async delegation: placeholder and child are one row', () {
+      final scope = _scope();
+      var state = SubagentActivityState.empty(scope);
+      final counts = <int>[];
+      void step(SubagentActivityEvent e) {
+        state = SubagentActivityReducer.reduce(state, e);
+        counts.add(state.activities.length);
+      }
+
+      const goal = 'Ejecuta exactamente el bucle for';
+      step(_legacy('tool.start', scope, 'call-1'));
+      step(_native('subagent.spawn_requested', scope, {
+        'subagent_id': 'sa-0-aaaa',
+        'goal': goal,
+        'task_index': 0,
+        'task_count': 1,
+      }));
+      step(_native('subagent.start', scope, {
+        'subagent_id': 'sa-0-aaaa',
+        'child_session_id': 'child-aaaa',
+        'goal': goal,
+        'task_index': 0,
+        'task_count': 1,
+      }));
+      step(_legacy('tool.complete', scope, 'call-1', payload: {
+        'result': {
+          'status': 'dispatched',
+          'mode': 'background',
+          'count': 1,
+          'delegation_id': 'deleg-1',
+          'goals': [goal],
+          'subagent_ids': ['sa-0-aaaa'],
+        },
+      }));
+      expect(counts, [1, 1, 1, 1]);
+      final only = state.activities.single;
+      expect(only.subagentId, 'sa-0-aaaa');
+      expect(only.delegationId, 'deleg-1');
+      expect(only.legacyToolCallId, 'call-1');
+      expect(only.goalPreview, goal);
+      expect(only.phase, SubagentActivityPhase.running);
+    });
+
+    test('a retry of the same goal after a failure stays two', () {
+      final scope = _scope();
+      var state = SubagentActivityState.empty(scope);
+      SubagentActivityState step(SubagentActivityEvent e) =>
+          state = SubagentActivityReducer.reduce(state, e);
+      step(_legacy('tool.start', scope, 'call-a'));
+      step(_native('subagent.spawn_requested', scope, {
+        'subagent_id': 'first',
+        'goal': 'same goal',
+      }));
+      step(_native('subagent.complete', scope, {
+        'subagent_id': 'first',
+        'status': 'failed',
+      }));
+      step(_legacy('tool.complete', scope, 'call-a', payload: {
+        'result': {
+          'status': 'failed',
+          'delegation_id': 'deleg-a',
+          'subagent_ids': ['first'],
+        },
+        'success': false,
+      }));
+      step(_legacy('tool.start', scope, 'call-b'));
+      step(_native('subagent.spawn_requested', scope, {
+        'subagent_id': 'second',
+        'goal': 'same goal',
+      }));
+      step(_native('subagent.start', scope, {
+        'subagent_id': 'second',
+        'child_session_id': 'child-second',
+        'goal': 'same goal',
+      }));
+      expect({
+        for (final a in state.activities) a.subagentId: a.phase,
+      }, {
+        'first': SubagentActivityPhase.failed,
+        'second': SubagentActivityPhase.running,
+      });
+    });
   });
 }

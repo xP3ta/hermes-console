@@ -3,13 +3,17 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/design/list.dart' show HermesListRow;
+import 'package:hermes_android/core/models/activity_snapshot.dart';
+import 'package:hermes_android/core/models/session_activity.dart';
 import 'package:hermes_android/core/models/subagent_activity.dart';
 import 'package:hermes_android/core/screens/subagent_detail_screen.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart'
     show ProfileTranscriptAccessRequired;
 import 'package:hermes_android/core/theme/app_theme.dart';
-import 'package:hermes_android/core/widgets/accent_card.dart';
 import 'package:hermes_android/core/widgets/subagent_activity_card.dart';
+import 'package:hermes_android/core/widgets/subagent_work_pill.dart';
+import 'package:hermes_android/core/widgets/running_work.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'support/inter_font.dart';
 
@@ -98,67 +102,595 @@ void main() {
   setUpAll(loadInterFont);
 
   group('in-chat row', () {
-    testWidgets('single subagent: flat row with goal, status and elapsed', (
+    testWidgets(
+      'ordinary thinking writing and tool phases never create a supplemental pill',
+      (tester) async {
+        for (final snapshot in [
+          const ActivitySnapshot(turnActive: true, headline: 'Pensando'),
+          const ActivitySnapshot(turnActive: true, headline: 'Respondiendo'),
+          const ActivitySnapshot(
+            turnActive: true,
+            current: ActivityStep(
+              id: 'web',
+              kind: ActivityStepKind.tool,
+              label: 'web_extract',
+              status: ActivityStepStatus.running,
+            ),
+          ),
+        ]) {
+          await tester.pumpWidget(
+            _host(
+              SubagentActivityCard(
+                activities: const [],
+                turnWorking: true,
+                turnSnapshot: snapshot,
+              ),
+            ),
+          );
+          expect(
+            find.byKey(const ValueKey('subagent-work-pill')),
+            findsNothing,
+          );
+        }
+      },
+    );
+
+    testWidgets(
+      'supplemental states are centered and only agents carry a clock',
+      (tester) async {
+        tester.view.physicalSize = const Size(320, 640);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        final now = DateTime.utc(2026, 11, 4, 12, 1);
+        final cases =
+            <
+              ({
+                List<SubagentActivity> agents,
+                ActivitySnapshot snapshot,
+                int queued,
+                String text,
+              })
+            >[
+              (
+                agents: [
+                  _nativeActivity(
+                    startedAt: now.subtract(const Duration(seconds: 20)),
+                  ),
+                ],
+                snapshot: ActivitySnapshot.idle,
+                queued: 0,
+                text: 'Esperando a 1 subagente 0:20',
+              ),
+              (
+                agents: [],
+                snapshot: ActivitySnapshot.idle,
+                queued: 1,
+                text: '1 en cola',
+              ),
+              (
+                agents: [],
+                snapshot: const ActivitySnapshot(waitingForUser: true),
+                queued: 0,
+                text: 'Esperando tu respuesta',
+              ),
+              (
+                agents: [],
+                snapshot: const ActivitySnapshot(
+                  goal: SessionActivityGoal(title: 'Goal', status: 'active'),
+                ),
+                queued: 0,
+                text: '1 proceso',
+              ),
+              (
+                agents: [],
+                snapshot: const ActivitySnapshot(
+                  goal: SessionActivityGoal(title: 'Goal', status: 'active'),
+                ),
+                queued: 1,
+                text: '1 proceso',
+              ),
+            ];
+        for (final scale in [1.0, 2.0]) {
+          for (final value in cases) {
+            await tester.pumpWidget(
+              _host(
+                MediaQuery(
+                  data: MediaQueryData(textScaler: TextScaler.linear(scale)),
+                  child: SubagentActivityCard(
+                    activities: value.agents,
+                    turnWorking: true,
+                    turnSnapshot: value.snapshot,
+                    queuedCount: value.queued,
+                    clock: () => now,
+                  ),
+                ),
+              ),
+            );
+            final pill = find.byKey(const ValueKey('activity-pill'));
+            expect(pill, findsOneWidget);
+            expect(tester.getCenter(pill).dx, closeTo(160, .5));
+            expect(
+              find.byKey(const ValueKey('subagent-work-chevron')),
+              findsOneWidget,
+            );
+            expect(
+              tester
+                  .widget<Text>(
+                    find.byKey(const ValueKey('subagent-work-clock')),
+                  )
+                  .data,
+              value.text,
+            );
+            if (value.text == '1 proceso') {
+              expect(find.text('1 proceso'), findsOneWidget);
+            }
+            expect(find.text('0/0'), findsNothing);
+            expect(tester.takeException(), isNull);
+          }
+        }
+      },
+    );
+
+    testWidgets('a pending question wins over an unconfirmed agent roster', (
       tester,
     ) async {
       await tester.pumpWidget(
         _host(
           SubagentActivityCard(
-            activities: [_nativeActivity(durationSeconds: 83)],
-            canSteer: (_) => true,
-            canInterrupt: (_) => false,
+            activities: [_nativeActivity(phase: SubagentActivityPhase.unknown)],
+            unconfirmed: true,
+            turnWorking: true,
+            turnSnapshot: const ActivitySnapshot(
+              turnActive: true,
+              waitingForUser: true,
+            ),
           ),
         ),
       );
-      expect(find.text('Subagente · Revisar el proyecto'), findsOneWidget);
-      expect(find.bySemanticsLabel(RegExp('Trabajando, 1:23')), findsWidgets);
-      expect(find.byType(AccentCard), findsNothing);
-      // Flat: no elevation, no stadium pill.
-      final material = tester.widget<Material>(
-        find.byKey(const ValueKey('subagent-disclosure')),
-      );
-      expect(material.type, MaterialType.transparency);
       expect(
         tester
-            .getSize(find.byKey(const ValueKey('subagent-disclosure')))
-            .height,
-        greaterThanOrEqualTo(48),
+            .widget<Text>(find.byKey(const ValueKey('subagent-work-clock')))
+            .data,
+        'Esperando tu respuesta',
       );
     });
 
-    testWidgets('several: one grouped row, tap opens floating list', (
+    testWidgets('background counter includes the schedule and goal rows', (
+      tester,
+    ) async {
+      const schedule = SessionActivitySchedule(
+        kind: SessionActivityScheduleKind.loop,
+        status: 'active',
+        interval: Duration(minutes: 5),
+        lastRunAt: null,
+        nextDueAt: null,
+        runCount: 0,
+      );
+      for (final snapshot in [
+        const ActivitySnapshot(schedules: [schedule]),
+        const ActivitySnapshot(
+          goal: SessionActivityGoal(title: 'Goal only', status: 'active'),
+        ),
+        const ActivitySnapshot(
+          schedules: [schedule],
+          goal: SessionActivityGoal(title: 'Both', status: 'active'),
+        ),
+      ]) {
+        final notifier = ValueNotifier(snapshot);
+        await tester.pumpWidget(
+          _host(
+            SubagentActivityCard(
+              activities: const [],
+              turnWorking: true,
+              turnSnapshot: snapshot,
+              backgroundSectionBuilder: (context, close) =>
+                  RunningWork(snapshot: notifier, showSubagents: false),
+            ),
+          ),
+        );
+        expect(
+          tester
+              .widget<SubagentWorkPill>(find.byType(SubagentWorkPill))
+              .processCount,
+          snapshot.backgroundCount,
+        );
+        await tester.tap(find.byKey(const ValueKey('subagent-work-chevron')));
+        await _settle(tester);
+        expect(
+          find.byKey(const ValueKey('running-loop-0')),
+          snapshot.schedules.isEmpty ? findsNothing : findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('running-goal')),
+          snapshot.goal == null ? findsNothing : findsOneWidget,
+        );
+        Navigator.of(
+          tester.element(find.byKey(const ValueKey('subagent-panel'))),
+        ).pop();
+        await _settle(tester);
+        await tester.pumpWidget(const SizedBox());
+        notifier.dispose();
+      }
+    });
+
+    testWidgets('a retained closed live agent has a real row for its count', (
+      tester,
+    ) async {
+      final child = _nativeActivity();
+      await tester.pumpWidget(
+        _host(
+          SubagentActivityCard(
+            activities: const [],
+            reopenable: [child],
+            safeChildCount: 1,
+            queuedCount: 1,
+            turnWorking: true,
+          ),
+        ),
+      );
+      expect(find.text('0/1'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('subagent-work-chevron')));
+      await _settle(tester);
+      expect(
+        find.byKey(const ValueKey('subagent-row-child-card')),
+        findsOneWidget,
+      );
+      expect(find.text('1 agente · Sin confirmar'), findsNothing);
+    });
+
+    testWidgets('a partial roster lists the unknown remainder of its count', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        _host(
+          SubagentActivityCard(
+            activities: [_nativeActivity()],
+            safeChildCount: 2,
+            turnWorking: true,
+          ),
+        ),
+      );
+      expect(find.text('0/2'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('subagent-work-chevron')));
+      await _settle(tester);
+      expect(
+        find.byKey(const ValueKey('subagent-row-child-card')),
+        findsOneWidget,
+      );
+      expect(find.text('1 agente · Sin confirmar'), findsOneWidget);
+    });
+
+    testWidgets(
+      'activity sheet caches unchanged inputs and locks existing controls',
+      (tester) async {
+        final controller = SubagentActivityController();
+        addTearDown(controller.counts.dispose);
+        final child = _nativeActivity();
+        late StateSetter rebuild;
+        var signature = 0;
+        var locked = false;
+        var builds = 0;
+        var actions = 0;
+        var headline = '';
+        await tester.pumpWidget(
+          _host(
+            StatefulBuilder(
+              builder: (context, setState) {
+                rebuild = setState;
+                return SubagentActivityCard(
+                  activities: [child],
+                  controller: controller,
+                  turnWorking: true,
+                  turnSnapshot: ActivitySnapshot(headline: headline),
+                  queuedCount: 1,
+                  sectionSignature: signature,
+                  interactionsLocked: locked,
+                  queueSectionBuilder: (context) {
+                    builds++;
+                    return TextButton(
+                      onPressed: () => actions++,
+                      child: Text('Queue action $signature'),
+                    );
+                  },
+                );
+              },
+            ),
+          ),
+        );
+        controller.open();
+        await _settle(tester);
+        final before = builds;
+        for (var i = 0; i < 30; i++) {
+          rebuild(() => headline = '$i');
+          await tester.pump();
+        }
+        expect(
+          builds,
+          before,
+          reason: 'turn-only bumps do not republish the sheet roster',
+        );
+        rebuild(() => signature++);
+        await tester.pump();
+        await tester.pump();
+        expect(builds, before + 1);
+        expect(find.text('Queue action 1'), findsOneWidget);
+        rebuild(() => locked = true);
+        await tester.pump();
+        await tester.pump();
+        await tester.tap(find.text('Queue action 1'), warnIfMissed: false);
+        expect(actions, 0);
+        final ignore = find.ancestor(
+          of: find.text('Queue action 1'),
+          matching: find.byType(IgnorePointer),
+        );
+        expect(
+          ignore.evaluate().any((e) => (e.widget as IgnorePointer).ignoring),
+          isTrue,
+        );
+        Navigator.of(
+          tester.element(find.byKey(const ValueKey('subagent-panel'))),
+        ).pop();
+        await _settle(tester);
+        controller.open();
+        await _settle(tester);
+        expect(find.byKey(const ValueKey('subagent-panel')), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'status describes pending agents and questions, never the normal tool phase',
+      (tester) async {
+        final agents = [
+          for (final id in ['a', 'b', 'c']) _nativeActivity(subagentId: id),
+        ];
+        Future<String?> show(ActivitySnapshot snapshot) async {
+          await tester.pumpWidget(
+            _host(
+              SubagentActivityCard(
+                activities: agents,
+                turnWorking: true,
+                turnSnapshot: snapshot,
+              ),
+            ),
+          );
+          return tester
+              .widget<Text>(find.byKey(const ValueKey('subagent-work-clock')))
+              .data;
+        }
+
+        expect(
+          await show(const ActivitySnapshot(turnActive: true)),
+          contains('Esperando a 3 subagentes'),
+        );
+        const tool = ActivityStep(
+          id: 'cmd',
+          kind: ActivityStepKind.tool,
+          label: 'terminal',
+          detail: 'npm test',
+          status: ActivityStepStatus.running,
+        );
+        expect(
+          await show(const ActivitySnapshot(turnActive: true, current: tool)),
+          contains('Esperando a 3 subagentes'),
+        );
+        expect(
+          await show(
+            const ActivitySnapshot(
+              turnActive: true,
+              current: tool,
+              waitingForUser: true,
+            ),
+          ),
+          contains('Esperando tu respuesta'),
+        );
+        expect(find.text('0/3'), findsOneWidget);
+      },
+    );
+
+    testWidgets('agents keep a single compact status/count line during tools', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(320, 640);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final now = DateTime.utc(2026, 11, 3, 12, 4, 19);
+      await tester.pumpWidget(
+        _host(
+          SubagentActivityCard(
+            activities: [_nativeActivity()],
+            turnWorking: true,
+            turnStartedAt: now.subtract(
+              const Duration(minutes: 4, seconds: 19),
+            ),
+            clock: () => now,
+            turnSnapshot: const ActivitySnapshot(
+              turnActive: true,
+              current: ActivityStep(
+                id: 'tool',
+                kind: ActivityStepKind.tool,
+                label: 'read_file',
+                detail: 'very-long-source-file.dart',
+                status: ActivityStepStatus.running,
+              ),
+            ),
+          ),
+        ),
+      );
+      expect(
+        tester
+            .widget<Text>(find.byKey(const ValueKey('subagent-work-clock')))
+            .data,
+        contains('4:19'),
+      );
+      expect(find.text('0/1'), findsOneWidget);
+      expect(
+        tester
+            .widget<Text>(find.byKey(const ValueKey('subagent-work-clock')))
+            .data,
+        isNot(contains('very-long-source-file.dart')),
+      );
+      expect(find.byIcon(Icons.keyboard_arrow_down_rounded), findsOneWidget);
+      expect(
+        tester.getSize(find.byKey(const ValueKey('subagent-work-pill'))).height,
+        lessThanOrEqualTo(40),
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+      'unconfirmed count-only roster never claims that children are working',
+      (tester) async {
+        final controller = SubagentActivityController();
+        await tester.pumpWidget(
+          _host(
+            SubagentActivityCard(
+              activities: const [],
+              background: true,
+              safeChildCount: 2,
+              unconfirmed: true,
+              controller: controller,
+            ),
+          ),
+        );
+        await _settle(tester);
+        expect(find.text('Sin confirmar'), findsWidgets);
+        expect(controller.counts.value, const SubagentGroupCount(0, 2));
+        expect(find.textContaining('Trabajando'), findsNothing);
+      },
+    );
+
+    testWidgets('pill opens the agents sheet, including a single child', (
       tester,
     ) async {
       await tester.pumpWidget(
         _host(
           SubagentActivityCard(
             activities: [
-              _nativeActivity(subagentId: 'a', goalPreview: 'Auditar Android'),
-              _nativeActivity(subagentId: 'b', goalPreview: 'Revisar iOS'),
-              _nativeActivity(
-                subagentId: 'c',
-                goalPreview: 'Verificar notas',
-                phase: SubagentActivityPhase.completed,
-              ),
+              _nativeActivity(durationSeconds: 83, model: 'Codex · 6.1 Sol'),
             ],
             canSteer: (_) => true,
             canInterrupt: (_) => false,
           ),
         ),
       );
-      expect(find.text('3 subagentes'), findsOneWidget);
-      expect(find.bySemanticsLabel(RegExp('2 trabajando')), findsWidgets);
-      expect(find.text('Auditar Android'), findsNothing);
-      await tester.tap(find.byKey(const ValueKey('subagent-disclosure')));
+      expect(find.text('0/1'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('subagent-work-chevron')));
+      await _settle(tester);
+      expect(find.text('Agentes'), findsOneWidget);
+      expect(find.text('Revisar el proyecto'), findsOneWidget);
+      expect(find.text('Codex · 6.1 Sol'), findsOneWidget);
+      expect(find.bySemanticsLabel(RegExp('Trabajando, 1:23')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('subagent-stop-child-card')),
+        findsNothing,
+      );
+      await tester.tap(find.byKey(const ValueKey('subagent-row-child-card')));
+      await _settle(tester);
+      expect(find.byType(SubagentDetailScreen), findsOneWidget);
+    });
+
+    testWidgets('sheet stops only capable live agents and preserves unknown', (
+      tester,
+    ) async {
+      final stopped = <String>[];
+      final gate = Completer<bool>();
+      await tester.pumpWidget(
+        _host(
+          SubagentActivityCard(
+            activities: [
+              _nativeActivity(subagentId: 'a'),
+              _nativeActivity(subagentId: 'b'),
+              _nativeActivity(
+                subagentId: 'done',
+                phase: SubagentActivityPhase.completed,
+              ),
+              _nativeActivity(
+                subagentId: 'unknown',
+                phase: SubagentActivityPhase.unknown,
+              ),
+            ],
+            canSteer: (_) => true,
+            canInterrupt: (a) => a.subagentId != 'b',
+            onStopRequested: (a) {
+              stopped.add(a.subagentId!);
+              return gate.future;
+            },
+          ),
+        ),
+      );
+      await tester.tap(find.byKey(const ValueKey('subagent-work-chevron')));
+      await _settle(tester);
+      expect(find.byKey(const ValueKey('subagent-stop-a')), findsOneWidget);
+      for (final id in ['b', 'done', 'unknown']) {
+        expect(find.byKey(ValueKey('subagent-stop-$id')), findsNothing);
+      }
+      expect(find.text('Sin confirmar'), findsWidgets);
+      await tester.tap(find.byKey(const ValueKey('subagent-stop-a')));
+      await tester.pump();
+      expect(stopped, ['a']);
+      expect(
+        tester
+            .widget<IconButton>(find.byKey(const ValueKey('subagent-stop-a')))
+            .onPressed,
+        isNull,
+      );
+      gate.complete(true);
+      await tester.pump();
+    });
+
+    testWidgets('terminal roster wins over a stale generic background hint', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        _host(
+          SubagentActivityCard(
+            activities: [_nativeActivity(phase: SubagentActivityPhase.running)],
+            background: true,
+            unconfirmed: true,
+          ),
+        ),
+      );
+      await tester.pumpWidget(
+        _host(
+          SubagentActivityCard(
+            activities: [
+              _nativeActivity(phase: SubagentActivityPhase.completed),
+            ],
+            background: true,
+            unconfirmed: true,
+          ),
+        ),
+      );
+      expect(find.byKey(const ValueKey('subagent-work-pill')), findsNothing);
+      expect(find.text('1 agente'), findsNothing);
+      expect(find.textContaining('Trabajando'), findsNothing);
+      expect(find.text('Sin confirmar'), findsNothing);
+    });
+
+    testWidgets('the unified pill still opens the floating list', (
+      tester,
+    ) async {
+      final controller = SubagentActivityController();
+      await tester.pumpWidget(
+        _host(
+          SubagentActivityCard(
+            controller: controller,
+            activities: [
+              _nativeActivity(subagentId: 'a', goalPreview: 'Auditar Android'),
+              _nativeActivity(subagentId: 'b', goalPreview: 'Revisar iOS'),
+            ],
+            canSteer: (_) => true,
+            canInterrupt: (_) => false,
+          ),
+        ),
+      );
+      controller.open();
       await _settle(tester);
       expect(find.byKey(const ValueKey('subagent-panel')), findsOneWidget);
       expect(find.byKey(const ValueKey('subagent-row-a')), findsOneWidget);
-      expect(find.byKey(const ValueKey('subagent-row-c')), findsOneWidget);
-      expect(find.bySemanticsLabel(RegExp('Auditar Android')), findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('subagent-row-b')));
       await _settle(tester);
       expect(find.byType(SubagentDetailScreen), findsOneWidget);
-      expect(find.text('Revisar iOS'), findsWidgets);
       await tester.pumpWidget(const SizedBox.shrink());
     });
 
@@ -185,7 +717,19 @@ void main() {
       for (final t in [privateGoal, privateResult, privateId]) {
         expect(find.textContaining(t), findsNothing);
       }
-      await tester.tap(find.byKey(const ValueKey('subagent-disclosure')));
+      await tester.tap(find.byKey(const ValueKey('subagent-work-chevron')));
+      await _settle(tester);
+      // Unfolded, the row describes the task with its masked goal (the
+      // approved video); it still shows no result and no id.
+      expect(find.textContaining(privateGoal), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('subagent-row-description-$privateId')),
+        findsOneWidget,
+      );
+      for (final t in [privateResult, privateId]) {
+        expect(find.textContaining(t), findsNothing);
+      }
+      await tester.tap(find.byKey(ValueKey('subagent-row-$privateId')));
       await _settle(tester);
       expect(find.byType(SubagentDetailScreen), findsOneWidget);
       for (final t in [
@@ -200,82 +744,32 @@ void main() {
       await tester.pumpWidget(const SizedBox.shrink());
     });
 
-    testWidgets('failure and unknown never claim success', (tester) async {
-      for (final phases in [
-        [SubagentActivityPhase.cancelled],
-        [SubagentActivityPhase.completed, SubagentActivityPhase.unknown],
-      ]) {
-        await tester.pumpWidget(
-          _host(
-            SubagentActivityCard(
-              activities: [
-                for (var i = 0; i < phases.length; i++)
-                  _nativeActivity(subagentId: 'c$i', phase: phases[i]),
-              ],
-              canInterrupt: (_) => false,
-            ),
-          ),
-        );
-        expect(
-          find.bySemanticsLabel(RegExp('Terminado|todos terminados')),
-          findsNothing,
-        );
-      }
-      await tester.pumpWidget(
-        _host(
-          SubagentActivityCard(
-            activities: [_nativeActivity(phase: SubagentActivityPhase.failed)],
-            canInterrupt: (_) => false,
-          ),
-        ),
-      );
-      expect(find.bySemanticsLabel(RegExp('Falló')), findsWidgets);
-    });
-
-    testWidgets('dismiss only once nothing is live', (tester) async {
-      var dismissed = 0;
-      Widget build(SubagentActivityPhase phase) => _host(
-        SubagentActivityCard(
-          activities: [_nativeActivity(phase: phase)],
-          canInterrupt: (_) => false,
-          onDismiss: () => dismissed++,
-        ),
-      );
-      await tester.pumpWidget(build(SubagentActivityPhase.running));
-      expect(find.byIcon(Icons.close_rounded), findsNothing);
-      await tester.pumpWidget(build(SubagentActivityPhase.completed));
-      await tester.tap(find.byIcon(Icons.close_rounded));
-      expect(dismissed, 1);
-    });
-
-    testWidgets('2x text at 360 keeps the row bounded without overflow', (
-      tester,
-    ) async {
+    testWidgets('2x text at 320 keeps sheet rows bounded', (tester) async {
       tester.view.devicePixelRatio = 1;
-      tester.view.physicalSize = const Size(360, 800);
+      tester.view.physicalSize = const Size(320, 800);
       addTearDown(tester.view.reset);
       await tester.pumpWidget(
-        MediaQuery(
-          data: const MediaQueryData(
-            size: Size(360, 800),
-            textScaler: TextScaler.linear(2),
-          ),
-          child: _host(
-            SubagentActivityCard(
-              activities: [
-                _nativeActivity(goalPreview: 'objetivo largo ' * 30),
-              ],
-              canSteer: (_) => true,
-              canInterrupt: (_) => true,
+        _host(
+          Builder(
+            builder: (context) => MediaQuery(
+              data: MediaQuery.of(
+                context,
+              ).copyWith(textScaler: const TextScaler.linear(2)),
+              child: SubagentActivityCard(
+                activities: [
+                  _nativeActivity(goalPreview: 'objetivo largo ' * 30),
+                ],
+                canSteer: (_) => true,
+                canInterrupt: (_) => true,
+                onStopRequested: (_) async => true,
+              ),
             ),
           ),
         ),
       );
+      await tester.tap(find.byKey(const ValueKey('subagent-work-chevron')));
+      await _settle(tester);
       expect(tester.takeException(), isNull);
-      final title = tester.widget<Text>(
-        find.byKey(const ValueKey('subagent-row-title')),
-      );
-      expect(title.maxLines, 1);
     });
   });
 
@@ -322,7 +816,8 @@ void main() {
           ),
         ),
       );
-      expect(find.text('3 subagentes'), findsOneWidget);
+      expect(find.text('Subagentes · 3/3'), findsOneWidget);
+      expect(find.text('1 falló · 2 completados'), findsOneWidget);
       expect(find.bySemanticsLabel(RegExp('1 falló')), findsWidgets);
       expect(find.textContaining('sa-one'), findsNothing);
       expect(find.textContaining('deleg_mixed'), findsNothing);
@@ -404,10 +899,11 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('subagent-detail-stop')));
       await tester.pump();
       expect(stopped, isNotNull);
-      final button = tester.widget<FilledButton>(
+      // the owner, style 1: a glass pill, not a filled button.
+      final button = tester.widget<TextButton>(
         find.descendant(
           of: find.byKey(const ValueKey('subagent-detail-stop')),
-          matching: find.byType(FilledButton),
+          matching: find.byType(TextButton),
         ),
       );
       expect(button.onPressed, isNull, reason: 'stays pending until terminal');
@@ -449,21 +945,38 @@ void main() {
       for (final t in [
         'PRIVATE_REASONING',
         'PRIVATE_TOOL_INPUT',
-        'PRIVATE_RESULT_WHILE_RUNNING',
         'PRIVATE_OPAQUE_ID',
       ]) {
         expect(find.textContaining(t), findsNothing, reason: t);
       }
+      // What it has written so far is the (partial) result; its thinking
+      // waits in a closed fold.
+      expect(find.text('RESULTADO PARCIAL'), findsOneWidget);
+      expect(
+        find.textContaining('PRIVATE_RESULT_WHILE_RUNNING', findRichText: true),
+        findsOneWidget,
+      );
       expect(find.text('model-x'), findsNothing);
       await tester.scrollUntilVisible(
         find.byKey(const ValueKey('subagent-detail-technical')),
         200,
         scrollable: find.byType(Scrollable).first,
       );
-      await tester.tap(find.byKey(const ValueKey('subagent-detail-technical')));
+      // Open the fold through the row's own callback: where the row sits in
+      // the (now longer) page is not what this test is about.
+      tester
+          .widget<HermesListRow>(
+            find.byKey(const ValueKey('subagent-detail-technical')),
+          )
+          .onTap!();
       await tester.pump();
-      expect(find.text('model-x'), findsOneWidget);
-      expect(find.text('Llamadas a la API'), findsOneWidget);
+      await tester.drag(find.byType(Scrollable).first, const Offset(0, -400));
+      await tester.pump();
+      expect(find.text('model-x', skipOffstage: false), findsOneWidget);
+      expect(
+        find.text('Llamadas a la API', skipOffstage: false),
+        findsOneWidget,
+      );
     });
 
     testWidgets('hideGoal keeps the goal private', (tester) async {

@@ -38,7 +38,8 @@ SubagentLiveWatch _watch(
 
 void main() {
   test(
-    'projects the upstream child mirror sequence and drops reasoning',
+    'projects the upstream child mirror sequence: reasoning and arguments '
+    'stay out, the command preview stays on its tool',
     () async {
       final gateway = FakeWatchGateway();
       final watch = _watch(gateway)..start();
@@ -52,7 +53,7 @@ void main() {
         'name': 'read_file',
         'tool_id': 'submirror:child:0',
         'args': {'path': 'secret-arg'},
-        'preview': 'secret-preview',
+        'preview': 'notes/plan.md',
       });
       gateway.emit('watch-1', 'reasoning.delta', {'text': 'secret thought'});
       gateway.emit('watch-1', 'tool.complete', {'name': 'read_file'});
@@ -67,9 +68,40 @@ void main() {
 
       expect(watch.value.text, '› read_file\n› write_file\nResumen final');
       expect(watch.value.text, isNot(contains('secret')));
+      expect(watch.value.text, isNot(contains('notes/plan.md')));
+      expect(watch.value.tools.map((t) => t.preview), ['notes/plan.md', null]);
+      expect(watch.value.tools.every((t) => t.finished && !t.failed), isTrue);
       expect(watch.value.status, SubagentLiveWatchStatus.finished);
       // The finished child frees its runtime straight away.
       expect(gateway.closed, ['watch-1']);
+    },
+  );
+
+  test(
+    'typed transcript keeps private envelopes out across tool boundaries',
+    () async {
+      final gateway = FakeWatchGateway();
+      final watch = _watch(gateway)..start();
+      await pumpEventQueue();
+      gateway.emit('watch-1', 'message.delta', {'text': '<think>private'});
+      gateway.emit('watch-1', 'tool.start', {
+        'name': 'git',
+        'tool_id': 'git-typed',
+        'args': 'secret',
+      });
+      gateway.emit('watch-1', 'message.delta', {
+        'text': ' still private</think>› Public prose',
+      });
+      gateway.emit('watch-1', 'tool.complete', {
+        'tool_id': 'git-typed',
+        'status': 'failed',
+      });
+      gateway.emit('watch-1', 'message.complete', {'text': '› Public prose'});
+      final blocks = watch.value.blocks;
+      expect(blocks.where((b) => b.tool != null).single.tool!.id, 'git-typed');
+      expect(blocks.where((b) => b.tool != null).single.tool!.failed, isTrue);
+      expect(blocks.map((b) => b.text).join(), '› Public prose');
+      expect(blocks.every((b) => b.closed), isTrue);
     },
   );
 
@@ -1076,6 +1108,76 @@ void main() {
     expect(gateway.closed, isEmpty);
     expect(gateway.retained, isEmpty);
   });
+
+  test('a tool preview is one bounded line without control characters', () async {
+    final gateway = FakeWatchGateway();
+    final watch = _watch(gateway)..start();
+    await pumpEventQueue();
+    gateway.emit('watch-1', 'tool.start', {
+      'name': 'terminal',
+      'tool_id': 'a',
+      'preview': '\n  git\tstatus \x1b[0m --short\nsecond line',
+    });
+    gateway.emit('watch-1', 'tool.start', {
+      'name': 'terminal',
+      'tool_id': 'b',
+      'preview': 'x' * 400,
+    });
+    gateway.emit('watch-1', 'tool.start', {
+      'name': 'terminal',
+      'tool_id': 'c',
+      'preview': {'not': 'text'},
+    });
+    final previews = watch.value.tools.map((t) => t.preview).toList();
+    expect(previews[0], 'git status [0m --short');
+    expect(previews[1], '${'x' * SubagentLiveWatch.maxPreviewChars}…');
+    expect(previews[2], isNull);
+  });
+
+  test(
+    'a child that writes or thinks again settles its open tool, and a later '
+    'completion of that tool may still say it failed',
+    () async {
+      final gateway = FakeWatchGateway();
+      final watch = _watch(gateway)..start();
+      await pumpEventQueue();
+      gateway.emit('watch-1', 'message.start');
+      gateway.emit('watch-1', 'tool.start', {
+        'name': 'terminal',
+        'tool_id': 'submirror:c:1',
+        'preview': 'sleep 30',
+      });
+      expect(watch.value.tools.single.finished, isFalse);
+      // An empty delta says nothing.
+      gateway.emit('watch-1', 'message.delta', {'text': ''});
+      expect(watch.value.tools.single.finished, isFalse);
+      gateway.emit('watch-1', 'reasoning.delta', {'text': 'hm'});
+      expect(watch.value.tools.single.finished, isTrue);
+      expect(watch.value.tools.single.failed, isFalse);
+      expect(watch.value.text, isNot(contains('hm')));
+      expect(
+        watch.value.blocks.singleWhere((b) => b.tool != null).tool!.finished,
+        isTrue,
+      );
+
+      gateway.emit('watch-1', 'tool.complete', {
+        'tool_id': 'submirror:c:1',
+        'status': 'failed',
+      });
+      expect(watch.value.tools.single.failed, isTrue);
+      // A duplicate completion no longer changes a confirmed result.
+      gateway.emit('watch-1', 'tool.complete', {'tool_id': 'submirror:c:1'});
+      expect(watch.value.tools.single.failed, isTrue);
+
+      gateway.emit('watch-1', 'tool.start', {
+        'name': 'read_file',
+        'tool_id': 'submirror:c:2',
+      });
+      gateway.emit('watch-1', 'message.delta', {'text': 'Listo.'});
+      expect(watch.value.tools.last.finished, isTrue);
+      expect(watch.value.blocks.last.text, 'Listo.');
+    },
+  );
 }
 
 /// A [Listenable] that counts its listeners, to prove they are released.

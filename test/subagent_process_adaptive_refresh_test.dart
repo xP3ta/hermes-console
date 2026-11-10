@@ -1,12 +1,16 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/widgets/running_work.dart';
 import 'package:hermes_android/core/models/desktop_control_center.dart';
 import 'package:hermes_android/core/models/desktop_compression_outcome.dart';
 import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
+import 'package:hermes_android/core/models/subagent_activity.dart';
 import 'package:hermes_android/core/screens/chat_screen.dart';
+import 'package:hermes_android/core/screens/subagent_detail_screen.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/app_lock.dart';
 import 'package:hermes_android/core/services/approval_policy.dart';
@@ -18,8 +22,13 @@ import 'package:hermes_android/core/services/secure_storage.dart';
 import 'package:hermes_android/core/services/sftp_transfer_service.dart';
 import 'package:hermes_android/core/services/ssh_manager.dart';
 import 'package:hermes_android/core/services/ssh_session_service.dart';
+import 'package:hermes_android/core/services/subagent_group_visibility.dart';
+import 'package:hermes_android/core/services/subagent_transcript_projection.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
-import 'package:hermes_android/core/widgets/island.dart';
+import 'package:hermes_android/core/widgets/chat/chat_notch.dart'
+    show kChatNotchSheetOpen;
+import 'package:hermes_android/core/widgets/chat_control_sheet.dart';
+import 'package:hermes_android/core/widgets/subagent_activity_card.dart';
 import 'package:hermes_android/main.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -35,7 +44,9 @@ class _AdaptiveGateway
         HermesDesktopSubagentGateway,
         HermesDesktopProcessStopGateway,
         HermesDesktopControlGateway,
-        HermesDesktopSessionControlGateway {
+        HermesDesktopSessionControlGateway,
+        HermesDesktopRecoverySessionLifecycleGateway,
+        HermesDesktopRosterBoundRecoveryGateway {
   _AdaptiveGateway({required this.changeEventsAvailable});
 
   final bool changeEventsAvailable;
@@ -43,6 +54,9 @@ class _AdaptiveGateway
       StreamController<TuiGatewayEvent>.broadcast();
   bool connected = true;
   bool failReads = false;
+
+  /// Only `subagent.list` fails (process and control reads still answer).
+  bool failList = false;
   bool resumedSessionRunning = true;
   List<DesktopSubagentSnapshot> subagents = const [];
   AgentCenterSnapshot processSnapshot = const AgentCenterSnapshot(
@@ -103,6 +117,35 @@ class _AdaptiveGateway
     );
   }
 
+  // The production gateway implements the recovery interfaces: after a
+  // background cut the service itself reattaches the runtime on resume.
+  @override
+  Future<DesktopSessionSnapshot> resumeExistingForRecovery(
+    String storedSessionId, {
+    String profile = '',
+  }) => resumeExisting(storedSessionId, profile: profile);
+
+  @override
+  Future<DesktopRosterBoundRecovery> resumeAdvertisedExistingForRecovery(
+    String storedSessionId, {
+    String profile = '',
+  }) async => DesktopRosterBoundRecovery.forTesting(
+    await resumeExisting(storedSessionId, profile: profile),
+    this,
+  );
+
+  @override
+  bool consumeRosterBoundRecovery(DesktopRosterBoundRecovery recovery) => true;
+
+  @override
+  bool consumeRosterBoundViewerAttachment(
+    DesktopRosterBoundRecovery recovery,
+  ) => true;
+
+  @override
+  // ignore: deprecated_member_use_from_same_package
+  void commitRecoveryRuntime(String runtimeSessionId) {}
+
   /// Corte de transporte del socket de Desktop (el servicio retira el runtime).
   void dropTransport([Object error = const _SocketLikeDrop()]) =>
       _events.addError(error);
@@ -139,7 +182,7 @@ class _AdaptiveGateway
   ) async {
     listCalls += 1;
     await listGate?.future;
-    if (failReads) throw StateError('subagent snapshot failed');
+    if (failReads || failList) throw StateError('subagent snapshot failed');
     return subagents;
   }
 
@@ -261,6 +304,8 @@ Future<_Fixture> _mountChat(
   bool failReads = false,
   bool attachDesktopRuntimeOnLoad = false,
   bool resumedSessionRunning = true,
+  StoredSessionMessageLoader? storedMessageLoader,
+  List<Map<String, dynamic>>? coldTranscript,
 }) async {
   final prefs = await SharedPreferences.getInstance();
   final manager = await ConnectionManager.create(prefs);
@@ -269,6 +314,10 @@ Future<_Fixture> _mountChat(
     ..subagents = subagents
     ..failReads = failReads
     ..resumedSessionRunning = resumedSessionRunning;
+  final cold = coldTranscript;
+  final StoredSessionMessageLoader? coldLoader = cold == null
+      ? null
+      : (_, _) async => cold;
   final activeChats = ActiveChatService(
     attachDesktopRuntimeOnLoad: attachDesktopRuntimeOnLoad,
     compressionRestoreStore: testCompressionRestoreStore(),
@@ -284,10 +333,20 @@ Future<_Fixture> _mountChat(
     ),
     desktopGateway: gateway,
     attachDesktopRuntimeOnLoad: attachDesktopRuntimeOnLoad,
+    storedMessageLoader: storedMessageLoader ?? coldLoader,
     allowUnownedDesktopSnapshotForTesting: true,
     disableForegroundKeepAlive: true,
   );
-  chat.messagesLoaded = true;
+  if (coldTranscript == null) {
+    chat.messagesLoaded = true;
+  } else {
+    // A cold reopen: the stored transcript is read (and projected) first.
+    final load = chat.loadMessages();
+    for (var i = 0; i < 20; i += 1) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    await load;
+  }
   expect(
     await chat.ensureDesktopRuntime(acquireForExplicitAction: true),
     isTrue,
@@ -347,12 +406,17 @@ void _expectFullReads(_AdaptiveGateway gateway, int count) {
   expect(gateway.controlCalls, count, reason: 'session control reads');
 }
 
-/// The chat's island: what it counts as alive, and its tap.
-ChatIsland _island(WidgetTester tester) =>
-    tester.widget<ChatIsland>(find.byType(ChatIsland).first);
-
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  // These tests pin the adaptive snapshot's cadence (subagents, processes
+  // and control read together at 30/60 s, 5 s eventless, failure backoff).
+  // The visible chat's separate 5 s roster poll (Desktop
+  // use-subagent-snapshot.ts) is tested in subagent_roster_poll_test.dart.
+  setUp(() => ChatScreen.subagentRosterPollInterval = null);
+  tearDown(
+    () => ChatScreen.subagentRosterPollInterval = const Duration(seconds: 5),
+  );
 
   setUp(() {
     SharedPreferences.setMockInitialValues({'onboarding_done': true});
@@ -542,7 +606,20 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 250));
       await tester.pump();
-      expect(_island(tester).mark, isNotNull);
+      // Work moved below the header. Process evidence and Stop survive
+      // stale snapshots until the second authoritative absence.
+      expect(
+        find.byKey(const ValueKey('delegates-capsule')),
+        findsOneWidget,
+      );
+      expect(fixture.chat.backgroundProcesses.map((p) => p.id), [
+        'process-stop-recheck',
+      ]);
+      expect(fixture.chat.canStopSessionWork, isTrue);
+      expect(
+        find.byKey(const ValueKey('delegates-capsule')),
+        findsOneWidget,
+      );
       expect(find.byKey(const ValueKey('stop')), findsOneWidget);
 
       fixture.gateway.processSnapshots.addAll([running, empty, empty]);
@@ -555,21 +632,40 @@ void main() {
       expect(fixture.gateway.processStopRuntimeIds, ['runtime-adaptive']);
       expect(fixture.gateway.killedProcesses, isEmpty);
       expect(fixture.gateway.processCalls - processCallsBeforeStop, 1);
-      expect(_island(tester).mark, isNotNull);
+      expect(
+        find.byKey(const ValueKey('delegates-capsule')),
+        findsOneWidget,
+      );
+      expect(fixture.chat.backgroundProcesses.map((p) => p.id), [
+        'process-stop-recheck',
+      ]);
+      expect(fixture.chat.canStopSessionWork, isTrue);
+      expect(
+        find.byKey(const ValueKey('delegates-capsule')),
+        findsOneWidget,
+      );
       expect(find.byKey(const ValueKey('stop')), findsOneWidget);
       expect(find.text('Background work stopped'), findsNothing);
 
       await tester.pump(const Duration(milliseconds: 1500));
       await tester.pump();
       expect(fixture.gateway.processCalls - processCallsBeforeStop, 2);
-      expect(_island(tester).mark, isNotNull);
+      expect(find.byKey(const ValueKey('delegates-capsule')), findsOneWidget);
+      expect(fixture.chat.backgroundProcesses.map((p) => p.id), [
+        'process-stop-recheck',
+      ]);
+      expect(fixture.chat.canStopSessionWork, isTrue);
+      expect(
+        find.byKey(const ValueKey('delegates-capsule')),
+        findsOneWidget,
+      );
       expect(find.byKey(const ValueKey('stop')), findsOneWidget);
       expect(find.text('Background work stopped'), findsNothing);
 
       await tester.pump(const Duration(milliseconds: 2500));
       await tester.pump();
       expect(fixture.gateway.processCalls - processCallsBeforeStop, 3);
-      expect(_island(tester).mark, isNull);
+      expect(find.byKey(const ValueKey('delegates-capsule')), findsOneWidget);
       expect(fixture.chat.isStreaming, isFalse);
       expect(fixture.chat.remoteSurfaceOwnsLiveTurn, isFalse);
       expect(fixture.chat.safeActiveSubagentCount, 0);
@@ -759,11 +855,12 @@ void main() {
       ]);
       expect(fixture.chat.subagentLivenessStale, isTrue);
 
-      // The island's card of what is alive.
-      _island(tester).onTap!();
+      // Background processes now live in the supplemental Activity sheet.
+      expect(fixture.chat.backgroundProcessesStale, isFalse);
+      await tester.tap(find.byKey(const ValueKey('delegates-capsule')));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 500));
-      final card = find.byKey(const ValueKey('island-card'));
+      final card = find.byKey(const ValueKey('subagent-panel'));
       expect(card, findsOneWidget);
       final process = find.byKey(
         const ValueKey('running-process-process-live'),
@@ -774,11 +871,34 @@ void main() {
         findsNothing,
         reason: 'the processes were just confirmed live by process.list',
       );
-      // The subagents keep their own honest stale mark.
+      // A retained agent may be unconfirmed in the same sheet; it must not
+      // taint the separately live-confirmed process section.
+      final agent = find.descendant(
+        of: card,
+        matching: find.byKey(const ValueKey('subagent-row-child-1')),
+      );
+      expect(agent, findsOneWidget);
       expect(
-        find.descendant(of: card, matching: find.text('Last known state')),
+        find.descendant(
+          of: agent,
+          matching: find.textContaining('Unconfirmed', findRichText: true),
+        ),
         findsOneWidget,
       );
+      final processes = find.descendant(
+        of: card,
+        matching: find.byType(RunningWork),
+      );
+      expect(processes, findsOneWidget);
+      for (final warning in ['Last known state', 'Unconfirmed']) {
+        expect(
+          find.descendant(
+            of: processes,
+            matching: find.textContaining(warning, findRichText: true),
+          ),
+          findsNothing,
+        );
+      }
       Navigator.of(tester.element(card)).pop();
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 500));
@@ -818,13 +938,13 @@ void main() {
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
       await tester.pump();
       expect(fixture.gateway.resumeExistingCalls, 1);
-      // Bouncing through `inactive` invalidates the in-flight attach, so the
-      // next return relaunches exactly one fresh attach instead of none.
+      // The service owns the reattach after a background cut and coalesces it:
+      // bouncing through `inactive` neither duplicates nor drops the attach.
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
       await tester.pump();
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
       await tester.pump();
-      expect(fixture.gateway.resumeExistingCalls, 2);
+      expect(fixture.gateway.resumeExistingCalls, 1);
       expect(fixture.gateway.listCalls, 0);
       expect(fixture.gateway.processCalls, 0);
 
@@ -835,7 +955,7 @@ void main() {
       }
       await tester.pump(const Duration(milliseconds: 500));
       expect(fixture.chat.desktopRuntimeSessionId, 'runtime-adaptive');
-      expect(fixture.gateway.resumeExistingCalls, 2);
+      expect(fixture.gateway.resumeExistingCalls, 1);
       expect(fixture.gateway.listCalls, greaterThanOrEqualTo(1));
       expect(fixture.gateway.processCalls, greaterThanOrEqualTo(1));
 
@@ -915,9 +1035,96 @@ void main() {
       await resume(tester);
       await tester.pump();
       await tester.pump();
-      expect(fixture.gateway.resumeExistingCalls, serviceRecoveryCalls);
+      // Recovery is suspended in the background: the one resume after the
+      // return is the service's own turn recovery, never the screen's attach.
+      expect(fixture.gateway.resumeExistingCalls, serviceRecoveryCalls + 1);
+      for (var i = 0; i < 4; i += 1) {
+        await tester.pump(const Duration(milliseconds: 500));
+      }
+      expect(fixture.gateway.resumeExistingCalls, serviceRecoveryCalls + 1);
       fixture.gateway.resumeExistingGate!.complete();
       fixture.gateway.resumeExistingGate = null;
+
+      await _disposeFixture(tester, fixture);
+    },
+  );
+
+  testWidgets(
+    'C2 resume attaches the idle parent once a stale live turn settles from '
+    'the durable transcript and lists its async child',
+    (tester) async {
+      // The parent delegated an async child and its turn ended while the app
+      // was away: on return the local turn still reads as live, so the
+      // screen defers the attach to the service's resume reconciliation.
+      var durable = <Map<String, dynamic>>[];
+      final fixture = await _mountChat(
+        tester,
+        changeEventsAvailable: true,
+        attachDesktopRuntimeOnLoad: true,
+        resumedSessionRunning: false,
+        storedMessageLoader: (_, _) async => durable,
+      );
+      expect(
+        await fixture.chat.send(
+          fullText: 'Delegate in the background',
+          model: 'hermes-agent',
+          history: const [],
+        ),
+        isTrue,
+      );
+      fixture.gateway.emit('message.start');
+      await tester.pump();
+      expect(fixture.chat.isStreaming, isTrue);
+
+      await background(tester);
+      fixture.gateway.dropTransport();
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 2));
+      expect(fixture.chat.desktopRuntimeSessionId, isNull);
+      expect(fixture.chat.isStreaming, isTrue);
+
+      // Meanwhile the turn finished on the server; its async child runs on.
+      durable = [
+        {
+          'message_id': 'c2-user',
+          'role': 'user',
+          'content': 'Delegate in the background',
+        },
+        {
+          'message_id': 'c2-answer',
+          'role': 'assistant',
+          'content': 'Delegated.',
+        },
+      ];
+      fixture.gateway
+        ..resetCounts()
+        ..resumeExistingCalls = 0
+        ..subagents = const [
+          DesktopSubagentSnapshot(subagentId: 'child-async', status: 'running'),
+        ];
+
+      // No navigation, gesture or layout change: only the return.
+      await resume(tester);
+      for (var i = 0; i < 6; i += 1) {
+        await tester.pump();
+      }
+      for (var i = 0; i < 10; i += 1) {
+        await tester.pump(const Duration(milliseconds: 500));
+      }
+
+      expect(fixture.chat.isStreaming, isFalse);
+      expect(
+        fixture.chat.desktopRuntimeSessionId,
+        'runtime-adaptive',
+        reason: 'the idle parent must be reattached after the return',
+      );
+      expect(
+        fixture.gateway.resumeExistingCalls,
+        1,
+        reason: 'exactly one viewer attach',
+      );
+      expect(fixture.gateway.listCalls, greaterThanOrEqualTo(1));
+      expect(fixture.chat.safeActiveSubagentCount, 1);
 
       await _disposeFixture(tester, fixture);
     },
@@ -1005,4 +1212,598 @@ void main() {
     await tester.pump();
     await _disposeFixture(tester, fixture);
   });
+
+  // subagent-roster: the visible chat's own roster poll, as Desktop
+  // app/chat/composer/status-stack/use-subagent-snapshot.ts: `subagent.list`
+  // every 5 s while visible; a failed read keeps the roster; three failures
+  // in a row stop it until the gateway state changes (or the chat is shown
+  // again). Process and control reads keep their own adaptive cadence.
+  group('roster poll (Desktop 5 s)', () {
+    setUp(
+      () => ChatScreen.subagentRosterPollInterval = const Duration(seconds: 5),
+    );
+
+    testWidgets('the visible chat re-reads only subagent.list every 5 s', (
+      tester,
+    ) async {
+      final fixture = await _mountChat(tester, changeEventsAvailable: true);
+      _expectFullReads(fixture.gateway, 1);
+
+      await tester.pump(const Duration(seconds: 5));
+      expect(fixture.gateway.listCalls, 2);
+      await tester.pump(const Duration(seconds: 5));
+      expect(fixture.gateway.listCalls, 3);
+      await tester.pump(const Duration(seconds: 5));
+      expect(fixture.gateway.listCalls, 4);
+      // The process and control snapshot keeps its 60 s idle backstop.
+      expect(fixture.gateway.processCalls, 1);
+      expect(fixture.gateway.controlCalls, 1);
+
+      await _disposeFixture(tester, fixture);
+    });
+
+    testWidgets('a covered or backgrounded chat does not poll the roster', (
+      tester,
+    ) async {
+      final fixture = await _mountChat(tester, changeEventsAvailable: true);
+      _expectFullReads(fixture.gateway, 1);
+      final navigator = tester.state<NavigatorState>(
+        find.byType(Navigator).first,
+      );
+      unawaited(
+        navigator.push<void>(
+          PageRouteBuilder<void>(
+            transitionDuration: Duration.zero,
+            reverseTransitionDuration: Duration.zero,
+            pageBuilder: (_, _, _) => const SizedBox.expand(),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+      fixture.gateway.resetCounts();
+      await tester.pump(const Duration(seconds: 30));
+      expect(fixture.gateway.listCalls, 0);
+
+      navigator.pop();
+      await tester.pump();
+      await tester.pump();
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      await tester.pump();
+      fixture.gateway.resetCounts();
+      await tester.pump(const Duration(seconds: 30));
+      expect(fixture.gateway.listCalls, 0);
+
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump();
+      await _disposeFixture(tester, fixture);
+    });
+
+    testWidgets('a subagent detail page over the chat keeps the roster poll '
+        'going (REVISION-3 #7); closing it with the chat covered stops it', (
+      tester,
+    ) async {
+      final fixture = await _mountChat(tester, changeEventsAvailable: true);
+      _expectFullReads(fixture.gateway, 1);
+      final navigator = tester.state<NavigatorState>(
+        find.byType(Navigator).first,
+      );
+      // The detail page: a route over the chat that holds its own lease.
+      unawaited(
+        navigator.push<void>(
+          PageRouteBuilder<void>(
+            transitionDuration: Duration.zero,
+            reverseTransitionDuration: Duration.zero,
+            pageBuilder: (_, _, _) => const SizedBox.expand(),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+      final release =
+          (tester.state(find.byType(ChatScreen, skipOffstage: false))
+                  as dynamic)
+              .acquireSubagentDetailLeaseForTesting() as VoidCallback;
+      fixture.gateway.resetCounts();
+      await tester.pump(const Duration(seconds: 5));
+      expect(fixture.gateway.listCalls, greaterThanOrEqualTo(1));
+      final reads = fixture.gateway.listCalls;
+      await tester.pump(const Duration(seconds: 5));
+      expect(fixture.gateway.listCalls, greaterThan(reads));
+
+      release();
+      await tester.pump();
+      fixture.gateway.resetCounts();
+      await tester.pump(const Duration(seconds: 30));
+      expect(fixture.gateway.listCalls, 0, reason: 'covered, no lease');
+
+      navigator.pop();
+      await tester.pump();
+      await _disposeFixture(tester, fixture);
+    });
+
+    testWidgets(
+      'three failed reads stop the poll and keep the roster; the gateway '
+      'coming back reads again at once',
+      (tester) async {
+        final fixture = await _mountChat(
+          tester,
+          changeEventsAvailable: true,
+          subagents: const [
+            DesktopSubagentSnapshot(
+              subagentId: 'kept-child',
+              goal: 'Keep me',
+              status: 'running',
+            ),
+          ],
+        );
+        _expectFullReads(fixture.gateway, 1);
+        expect(fixture.chat.activeSubagentCount, 1);
+
+        fixture.gateway.failList = true;
+        for (var second = 0; second < 28; second++) {
+          await tester.pump(const Duration(seconds: 1));
+        }
+        // Reads at +5, +10 and +15 fail; then the poll rests (the active
+        // adaptive backstop is 30 s, not reached yet).
+        expect(fixture.gateway.listCalls, 4);
+        expect(fixture.gateway.processCalls, 1);
+        // A failed read proves nothing: the child is still shown.
+        expect(fixture.chat.activeSubagentCount, 1);
+        expect(
+          fixture.chat.subagentActivities.map((a) => a.subagentId),
+          ['kept-child'],
+        );
+
+        fixture.gateway.failList = false;
+        fixture.gateway.connected = false;
+        fixture.gateway.emit('status.update', const {'kind': 'process'});
+        await tester.pump();
+        expect(fixture.gateway.listCalls, 4, reason: 'no read while offline');
+
+        fixture.gateway.connected = true;
+        fixture.gateway.emit('status.update', const {'kind': 'process'});
+        await tester.pump();
+        expect(fixture.gateway.listCalls, 5, reason: 'gateway back: read now');
+
+        await _disposeFixture(tester, fixture);
+      },
+    );
+  });
+
+  // oldchat-capsule: a finished async delegation in an old chat, reopened cold
+  // with no live event. The chat shows the editorial capsule «Subagentes ·
+  // 2/2 / 2 completados · 0:06» between the parent's answer and its summary
+  // (Console's advantage over the official app in old chats). The roster's
+  // own reads (the 5 s poll, the idle backstop) answer an empty live list:
+  // they must not hide that capsule behind a group that draws nothing.
+  group('old chat reopened cold (oldchat-capsule)', () {
+    Future<void> expectCapsuleKept(
+      WidgetTester tester, {
+      required Duration? poll,
+      required int seconds,
+    }) async {
+      ChatScreen.subagentRosterPollInterval = poll;
+      final fixture = await _mountChat(
+        tester,
+        changeEventsAvailable: true,
+        resumedSessionRunning: false,
+        coldTranscript: _oldDelegationChat(),
+      );
+      for (var second = 0; second < seconds; second += 1) {
+        await tester.pump(const Duration(seconds: 1));
+      }
+      // One report of every link (transcript card, roster, painted widget),
+      // so a failure says which one broke.
+      final cards = fixture.chat.messages
+          .map(historicalSubagentCompletionOf)
+          .whereType<SubagentCompletionCardData>()
+          .toList();
+      final painted = find
+          .byType(SubagentCompletionCard, skipOffstage: false)
+          .evaluate()
+          .length;
+      final diag = {
+        'listCalls': fixture.gateway.listCalls,
+        'cardOnMessage': cards.map((c) => c.subagentIds).toList(),
+        'roster': fixture.chat.conversationSubagents
+            .map((a) => '${a.subagentId}:${a.phase.name}')
+            .toList(),
+        'paintedCapsules': painted,
+      };
+      expect(
+        fixture.gateway.listCalls,
+        greaterThanOrEqualTo(2),
+        reason: '$diag',
+      );
+      expect(cards, hasLength(1), reason: '$diag');
+      expect(cards.single.subagentIds, [
+        'sa-0-fd1b1751',
+        'sa-1-4b70c0cc',
+      ], reason: '$diag');
+      // No child of that delegation is live: nothing above the composer
+      // stands for them, so the transcript capsule is their one place.
+      expect(
+        fixture.chat.conversationSubagents.where((a) => !a.isTerminal),
+        isEmpty,
+        reason: '$diag',
+      );
+      expect(painted, 1, reason: '$diag');
+      expect(tester.takeException(), isNull);
+      await _disposeFixture(tester, fixture);
+    }
+
+    testWidgets('the 5 s roster poll keeps the finished delegation capsule', (
+      tester,
+    ) async {
+      await expectCapsuleKept(
+        tester,
+        poll: const Duration(seconds: 5),
+        seconds: 11,
+      );
+    });
+
+    testWidgets(
+      'the idle snapshot backstop keeps the finished delegation capsule',
+      (tester) async {
+        await expectCapsuleKept(tester, poll: null, seconds: 65);
+      },
+    );
+
+    // Closing the group never loses the way back, even after a restart: the
+    // closed ids live in the preferences, the snapshots of the closed agents
+    // did not survive. The roster rebuilt from the transcript lists them in
+    // «Subagentes · n», and «Mostrar subagentes ocultos» brings the capsule
+    // back.
+    Future<_Fixture> reopenAfterRestart(
+      WidgetTester tester,
+      List<String> closedIds,
+    ) async {
+      ChatScreen.subagentRosterPollInterval = const Duration(seconds: 5);
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        SubagentGroupVisibility.prefsKey,
+        jsonEncode({'${_connection.id}.${_session.logicalId}': closedIds}),
+      );
+      // A new process: a fresh store read back from the preferences.
+      await SubagentGroupVisibility.load(prefs);
+      addTearDown(SubagentGroupVisibility.shared.debugReset);
+      final fixture = await _mountChat(
+        tester,
+        changeEventsAvailable: true,
+        resumedSessionRunning: false,
+        coldTranscript: _oldDelegationChat(),
+      );
+      for (var second = 0; second < 11; second += 1) {
+        await tester.pump(const Duration(seconds: 1));
+      }
+      return fixture;
+    }
+
+    int paintedCapsules() => find
+        .byType(SubagentCompletionCard, skipOffstage: false)
+        .evaluate()
+        .length;
+
+    Future<ChatControlSheet> openChatMenu(WidgetTester tester) async {
+      await tester.tap(find.byKey(const ValueKey('chat-settings-button')));
+      await tester.pump();
+      await tester.pump(kChatNotchSheetOpen);
+      return tester.widget<ChatControlSheet>(find.byType(ChatControlSheet));
+    }
+
+    testWidgets('closed before a restart: the menu lists them and «Mostrar '
+        'subagentes ocultos» brings the capsule back', (tester) async {
+      final fixture = await reopenAfterRestart(tester, const [
+        'sa-0-fd1b1751',
+        'sa-1-4b70c0cc',
+      ]);
+      // The person closed them: the capsule stays out of the way.
+      expect(paintedCapsules(), 0);
+
+      final menu = await openChatMenu(tester);
+      expect(menu.labels.subagents, 'Subagents · 2');
+      expect(menu.onSubagents, isNotNull);
+      expect(menu.labels.showHiddenSubagents, 'Show hidden subagents');
+      expect(menu.onShowHiddenSubagents, isNotNull);
+      menu.onShowHiddenSubagents!();
+      for (var frame = 0; frame < 8; frame += 1) {
+        await tester.pump(const Duration(milliseconds: 300));
+      }
+      expect(
+        SubagentGroupVisibility.shared.isAgentClosed(
+          '${_connection.id}.${_session.logicalId}',
+          'sa-0-fd1b1751',
+        ),
+        isFalse,
+      );
+      expect(paintedCapsules(), 1);
+      expect(tester.takeException(), isNull);
+      await _disposeFixture(tester, fixture);
+    });
+
+    // A child that FAILED is finished too: its capsule in the transcript
+    // stays, opening the «Failed» notice above the composer does not take it
+    // away, and the capsule opens the failed detail.
+    testWidgets('an old chat whose only child failed keeps its capsule and '
+        'opens the failed detail', (tester) async {
+      ChatScreen.subagentRosterPollInterval = const Duration(seconds: 5);
+      final fixture = await _mountChat(
+        tester,
+        changeEventsAvailable: true,
+        resumedSessionRunning: false,
+        coldTranscript: _oldFailedDelegationChat(),
+      );
+      for (var second = 0; second < 11; second += 1) {
+        await tester.pump(const Duration(seconds: 1));
+      }
+      String diag() => {
+        'listCalls': fixture.gateway.listCalls,
+        'roster': fixture.chat.conversationSubagents
+            .map((a) => '${a.subagentId}:${a.phase.name}')
+            .toList(),
+        'paintedCapsules': paintedCapsules(),
+        'pill': find
+            .byKey(const ValueKey('delegates-capsule'))
+            .evaluate()
+            .length,
+      }.toString();
+      expect(
+        fixture.gateway.listCalls,
+        greaterThanOrEqualTo(2),
+        reason: diag(),
+      );
+      expect(
+        fixture.chat.conversationSubagents.map((a) => a.phase),
+        [SubagentActivityPhase.failed],
+        reason: diag(),
+      );
+      expect(paintedCapsules(), 1, reason: diag());
+
+      // The «Failed» notice above the composer: opening it (which marks the
+      // failure as seen) leaves the transcript capsule where it is.
+      expect(find.byKey(const ValueKey('delegates-capsule')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('delegates-capsule')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.byKey(const ValueKey('subagent-panel')), findsOneWidget);
+      Navigator.of(
+        tester.element(find.byKey(const ValueKey('subagent-panel'))),
+      ).pop();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pump(const Duration(seconds: 6));
+      expect(paintedCapsules(), 1, reason: diag());
+
+      // The capsule opens the delegation with its failed child.
+      final open = find.byKey(const ValueKey('subagent-completion-open'));
+      await tester.ensureVisible(open);
+      await tester.pump();
+      await tester.tap(open);
+      for (var frame = 0; frame < 8; frame += 1) {
+        await tester.pump(const Duration(milliseconds: 300));
+      }
+      expect(find.byKey(const ValueKey('subagent-panel')), findsOneWidget);
+      // Historical rows are keyed «<delegation>#<task>».
+      final row = find.byWidgetPredicate(
+        (widget) =>
+            widget.key is ValueKey<String> &&
+            (widget.key! as ValueKey<String>).value.startsWith(
+              'subagent-row-$_failedDelegationId#',
+            ),
+      );
+      expect(row, findsOneWidget);
+      expect(
+        find.descendant(
+          of: row,
+          matching: find.textContaining('Failed', findRichText: true),
+        ),
+        findsWidgets,
+      );
+      await tester.tap(row);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.byType(SubagentDetailScreen), findsOneWidget);
+      await tester.scrollUntilVisible(
+        find.textContaining('Billing or credits exhausted', findRichText: true),
+        300,
+        scrollable: find
+            .descendant(
+              of: find.byType(SubagentDetailScreen),
+              matching: find.byType(Scrollable),
+            )
+            .first,
+      );
+      expect(tester.takeException(), isNull);
+      await _disposeFixture(tester, fixture);
+    });
+
+    testWidgets('closed ids of other agents hide nothing here and offer no '
+        '«Mostrar subagentes ocultos»', (tester) async {
+      final fixture = await reopenAfterRestart(tester, const [
+        'sa-0-0ldc1d00',
+        'deleg_0ld0ld00',
+      ]);
+      expect(paintedCapsules(), 1);
+      final menu = await openChatMenu(tester);
+      expect(menu.onShowHiddenSubagents, isNull);
+      expect(tester.takeException(), isNull);
+      await _disposeFixture(tester, fixture);
+    });
+  });
 }
+
+const _oldDelegationId = 'deleg_fe60aadc';
+
+/// The stored transcript of the device chat «Hacer prueba con subagentes»
+/// (shapes of a Hermes 0.22 session, as historical_delegation_rows_test).
+List<Map<String, dynamic>> _oldDelegationChat() => [
+  {
+    'id': 1,
+    'message_id': 'old-user',
+    'role': 'user',
+    'content': 'Podríamos hacer una prueba con subagentes?',
+    'timestamp': 1794085960.0,
+  },
+  {
+    'id': 2,
+    'message_id': 'old-call',
+    'role': 'assistant',
+    'content': '',
+    'tool_calls': [
+      {
+        'id': 'call-delegate',
+        'type': 'function',
+        'function': {'name': 'delegate_task', 'arguments': '{}'},
+      },
+    ],
+    'timestamp': 1794085985.0,
+  },
+  {
+    'id': 3,
+    'message_id': 'old-dispatch',
+    'role': 'tool',
+    'tool_name': 'delegate_task',
+    'tool_call_id': 'call-delegate',
+    'content': jsonEncode({
+      'status': 'dispatched',
+      'mode': 'background',
+      'count': 2,
+      'delegation_id': _oldDelegationId,
+      'goals': [
+        'Prueba de delegación A. Analiza esta afirmación.',
+        'Prueba de delegación B. Explica la diferencia entre una copia de '
+            'seguridad y alta disponibilidad.',
+      ],
+      'subagent_ids': ['sa-0-fd1b1751', 'sa-1-4b70c0cc'],
+    }),
+    'timestamp': 1794085987.0,
+  },
+  {
+    'id': 4,
+    'message_id': 'old-ack',
+    'role': 'assistant',
+    'content':
+        'Los dos subagentes están ejecutándose en paralelo; sus resultados '
+        'llegarán aquí al terminar.',
+    'timestamp': 1794085988.0,
+  },
+  {
+    'id': 5,
+    'message_id': 'old-complete',
+    'role': 'user',
+    'content':
+        '[ASYNC DELEGATION BATCH COMPLETE — $_oldDelegationId]\n'
+        'A background fan-out unit you dispatched earlier — 2 subagent(s) — '
+        'has finished; its consolidated results are below.\n\n'
+        'Role: leaf   Model: claude-opus-5-5   Total duration: 6.10s\n\n'
+        '--- ✓ TASK 1/2: Prueba de delegación A.  (status=completed, '
+        'api_calls=1, 4.62s) ---\n'
+        'Un ping no demuestra que la web funcione.\n\n'
+        '--- ✓ TASK 2/2: Prueba de delegación B.  (status=completed, '
+        'api_calls=1, 3.1s) ---\n'
+        'Las copias permiten recuperar datos.\n',
+    'timestamp': 1794085994.0,
+    'display_kind': 'async_delegation_complete',
+    'display_metadata': jsonEncode({
+      'delegation_id': _oldDelegationId,
+      'task_count': 2,
+      'completed_count': 2,
+      'failed_count': 0,
+      'duration_seconds': 6.1,
+    }),
+  },
+  {
+    'id': 6,
+    'message_id': 'old-final',
+    'role': 'assistant',
+    'content':
+        'Prueba completada: ambos subagentes terminaron y devolvieron sus '
+        'respuestas.',
+    'timestamp': 1794085999.0,
+  },
+];
+
+const _failedDelegationId = 'deleg_0fa11ed0';
+
+/// An old chat whose one background child failed (a homogeneous batch: the
+/// transcript proves its outcome, so the roster read makes it public).
+List<Map<String, dynamic>> _oldFailedDelegationChat() => [
+  {
+    'id': 1,
+    'message_id': 'fail-user',
+    'role': 'user',
+    'content': 'Delega una tarea que falle',
+    'timestamp': 1794085960.0,
+  },
+  {
+    'id': 2,
+    'message_id': 'fail-call',
+    'role': 'assistant',
+    'content': '',
+    'tool_calls': [
+      {
+        'id': 'call-fail',
+        'type': 'function',
+        'function': {'name': 'delegate_task', 'arguments': '{}'},
+      },
+    ],
+    'timestamp': 1794085985.0,
+  },
+  {
+    'id': 3,
+    'message_id': 'fail-dispatch',
+    'role': 'tool',
+    'tool_name': 'delegate_task',
+    'tool_call_id': 'call-fail',
+    'content': jsonEncode({
+      'status': 'dispatched',
+      'mode': 'background',
+      'count': 1,
+      'delegation_id': _failedDelegationId,
+      'goals': ['Prueba de delegación C. Resume el informe.'],
+      'subagent_ids': ['sa-0-fa11fa11'],
+    }),
+    'timestamp': 1794085987.0,
+  },
+  {
+    'id': 4,
+    'message_id': 'fail-ack',
+    'role': 'assistant',
+    'content': 'El subagente está trabajando; su resultado llegará aquí.',
+    'timestamp': 1794085988.0,
+  },
+  {
+    'id': 5,
+    'message_id': 'fail-complete',
+    'role': 'user',
+    'content':
+        '[ASYNC DELEGATION BATCH COMPLETE — $_failedDelegationId]\n'
+        'A background fan-out unit you dispatched earlier — 1 subagent(s) — '
+        'has finished; its consolidated results are below.\n\n'
+        'Role: leaf   Model: claude-opus-5-5   Total duration: 6.10s\n\n'
+        '--- ✗ TASK 1/1: Prueba de delegación C. Resume el informe.  '
+        '(status=failed, api_calls=2, 6.1s) ---\n'
+        'Billing or credits exhausted.\n',
+    'timestamp': 1794085994.0,
+    'display_kind': 'async_delegation_complete',
+    'display_metadata': jsonEncode({
+      'delegation_id': _failedDelegationId,
+      'task_count': 1,
+      'completed_count': 0,
+      'failed_count': 1,
+      'duration_seconds': 6.1,
+    }),
+  },
+  {
+    'id': 6,
+    'message_id': 'fail-final',
+    'role': 'assistant',
+    'content': 'El subagente falló: no quedaban créditos.',
+    'timestamp': 1794085999.0,
+  },
+];

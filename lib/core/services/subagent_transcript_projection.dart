@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import '../models/subagent_activity.dart';
+import '../models/activity_snapshot.dart' show activityInstant;
 import '../utils/chat_turn.dart';
 import 'session_reconciler.dart';
 import 'subagent_activity_reducer.dart';
@@ -134,6 +135,7 @@ SubagentTranscriptProjection projectSubagentsFromTranscript({
   required SubagentActivityScope scope,
   SubagentActivityState? current,
   String? currentTurnAnchor,
+  bool includeEarlierTurns = false,
 }) {
   final chronological = messagesNewestFirst.reversed
       .map(Map<String, dynamic>.from)
@@ -152,10 +154,13 @@ SubagentTranscriptProjection projectSubagentsFromTranscript({
 
   final currentHasLiveActivity =
       current?.activities.any((activity) => !activity.isTerminal) ?? false;
+  // A roster with a child still running belongs to the session, whatever
+  // turn the transcript ends on now (subagent-roster: the roster is per
+  // session, as Desktop store/subagents.ts; ActiveChat no longer changes the
+  // scope at each turn, so the newer turn anchor alone marks the crossing).
   final currentCrossedTurn =
       current != null &&
       currentHasLiveActivity &&
-      current.scope != scope &&
       current.scope.durableLineageKey == scope.durableLineageKey &&
       current.scope.runtimeSessionId == scope.runtimeSessionId;
   final currentScopeIsCompatible =
@@ -171,7 +176,9 @@ SubagentTranscriptProjection projectSubagentsFromTranscript({
   final delegateNamesByCallId = <String, String>{};
   var observed = false;
 
-  for (final message in chronological.skip(startIndex + 1)) {
+  for (final message in chronological.skip(
+    includeEarlierTurns ? 0 : startIndex + 1,
+  )) {
     final role = (message['role'] ?? '').toString().trim().toLowerCase();
     if (role == 'assistant') {
       final toolCalls = _list(message['tool_calls']);
@@ -295,7 +302,11 @@ SubagentTranscriptProjection projectSubagentsFromTranscript({
         final event = SubagentActivityEvent.tryParseNative(
           type: 'subagent.complete',
           scope: state.scope,
-          payload: payload,
+          payload: {
+            ...payload,
+            if (activityInstant(message['timestamp']) case final end?)
+              'completed_at': end.toIso8601String(),
+          },
           eventId: _eventIdentity(
             message,
             'delegation-complete',

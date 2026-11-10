@@ -11,6 +11,51 @@ enum SubagentActivityPhase {
 
 enum SubagentAggregatePhase { idle, active, terminalOnly, unknown }
 
+/// How far a group of subagents is: [finished] of [total], the count the
+/// subagent group paints as «Subagentes · 2/3» and the live pill reads as
+/// «2/3 agentes».
+///
+/// [finished] counts every child that ended, whatever way: completed, failed
+/// or stopped (a terminal phase). A child still working, queued or of unknown
+/// state is not finished. [total] is the roster size, or [genericTotal] when
+/// the server only reported a number and no roster (then [finished] is 0).
+final class SubagentGroupCount {
+  final int finished;
+  final int total;
+
+  const SubagentGroupCount(this.finished, this.total);
+
+  static const SubagentGroupCount none = SubagentGroupCount(0, 0);
+
+  factory SubagentGroupCount.of(
+    List<SubagentActivity> activities, {
+    int genericTotal = 0,
+  }) {
+    final total = activities.length > genericTotal
+        ? activities.length
+        : genericTotal;
+    return SubagentGroupCount(
+      activities.where((a) => a.isTerminal).length,
+      total,
+    );
+  }
+
+  /// Every child ended (and there is at least one).
+  bool get allFinished => total > 0 && finished >= total;
+
+  @override
+  bool operator ==(Object other) =>
+      other is SubagentGroupCount &&
+      other.finished == finished &&
+      other.total == total;
+
+  @override
+  int get hashCode => Object.hash(finished, total);
+
+  @override
+  String toString() => 'SubagentGroupCount($finished/$total)';
+}
+
 final class SubagentActivityAggregate {
   static const int _maximumCount = 99;
 
@@ -122,6 +167,24 @@ abstract final class SubagentPayloadLimits {
   static const int toolsetCount = 24;
   static const int rememberedEventIds = 32;
   static const int activeActivities = 32;
+  static const int outputTailTools = 12;
+}
+
+/// One tool of a finished child's `output_tail` (`subagent.complete`):
+/// the public tool name and whether it failed. Its output preview is never
+/// kept.
+final class SubagentTailTool {
+  final String name;
+  final bool failed;
+
+  const SubagentTailTool({required this.name, this.failed = false});
+
+  @override
+  bool operator ==(Object other) =>
+      other is SubagentTailTool && other.name == name && other.failed == failed;
+
+  @override
+  int get hashCode => Object.hash(name, failed);
 }
 
 final class SubagentActivityScope {
@@ -313,6 +376,9 @@ final class SubagentActivityDetails {
   final String? detailPreview;
   final String? summaryPreview;
   final String? outputTailPreview;
+
+  /// The last tools a finished child ran, oldest first (bounded).
+  final List<SubagentTailTool> outputTailTools;
   final String? parentId;
   final int? depth;
   final String? model;
@@ -334,6 +400,7 @@ final class SubagentActivityDetails {
     this.detailPreview,
     this.summaryPreview,
     this.outputTailPreview,
+    this.outputTailTools = const [],
     this.parentId,
     this.depth,
     this.model,
@@ -358,6 +425,7 @@ final class SubagentActivityDetails {
       detailPreview == null &&
       summaryPreview == null &&
       outputTailPreview == null &&
+      outputTailTools.isEmpty &&
       parentId == null &&
       depth == null &&
       model == null &&
@@ -494,6 +562,7 @@ final class SubagentActivityEvent {
           json['output_tail'],
           SubagentPayloadLimits.resultCharacters,
         ),
+        outputTailTools: _tailTools(json['output_tail']),
         parentId: _opaqueId(json['parent_id']),
         depth: _nonNegativeInt(json['depth']),
         model: _boundedText(
@@ -825,6 +894,25 @@ String? _boundedText(Object? value, int maxCharacters) {
   final runes = trimmed.runes;
   if (runes.length <= maxCharacters) return trimmed;
   return String.fromCharCodes(runes.take(maxCharacters));
+}
+
+/// `output_tail` rows (`{tool, preview, is_error}`): name and failure only.
+List<SubagentTailTool> _tailTools(Object? value) {
+  if (value is! List) return const [];
+  final tools = <SubagentTailTool>[];
+  for (final row in value) {
+    if (row is! Map) continue;
+    final name = _boundedText(
+      row['tool'],
+      SubagentPayloadLimits.toolNameCharacters,
+    );
+    if (name == null || name.codeUnits.any((u) => u < 0x20 || u == 0x7f)) {
+      continue;
+    }
+    tools.add(SubagentTailTool(name: name, failed: row['is_error'] == true));
+    if (tools.length == SubagentPayloadLimits.outputTailTools) break;
+  }
+  return List.unmodifiable(tools);
 }
 
 List<String> _boundedStringList(
