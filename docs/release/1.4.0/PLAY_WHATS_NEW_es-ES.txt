@@ -3,6 +3,6 @@ Novedades de la 1.4.0:
 • Artefactos: imágenes, archivos y enlaces de la conversación en una vista.
 • Tablet y plegable: chat y trabajo lado a lado.
 • Subagentes con lista y detalle en vivo; nuevo aspecto del turno en curso.
-• Avisos con la app cerrada: la escucha opcional de Ajustes > Notificaciones, como en la 1.3.1.
+• Avisos con la app cerrada: se sigue un turno en marcha y se avisa de su final; el resto requiere la escucha opcional.
 • Hápticos y menos parpadeos.
 • Los widgets Bots y Salas se retiran.

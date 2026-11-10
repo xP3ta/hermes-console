@@ -33,8 +33,11 @@ A large release on top of 1.3.1. Console still talks only to the Hermes Dashboar
 
 **Alerts**
 
-- With the app closed, alerts use the opt-in background listening (Settings >
-  Notifications > "Listen in background"), as in 1.3.1: off by default, one
+- With the app closed, a turn you started is still followed for up to 30 minutes
+  and a bounded check (up to 10 minutes) announces when it ends; neither needs the
+  opt-in and neither runs under App Lock. Continuous alerts (Cron, Kanban, rooms)
+  use the opt-in background listening (Settings > Notifications > "Listen in
+  background"), as in 1.3.1: off by default, one
   persistent notification with Stop, it checks only your own Hermes server, and it
   resumes after a reboot or update only if you had it on. Console uses no Firebase
   or third-party service for notifications. "Hide sensitive content" is on by

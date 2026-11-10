@@ -95,9 +95,13 @@ service under that provider's terms:
   Camera frames, QR contents, decoded results and scanner metrics are not sent
   to XPeta Lab, Google or any other service.
 
-- Notifications are raised on the device. With the app closed they come only
-  from the opt-in background listening, over your own connection to your
-  server. Console uses no Firebase, push relay or other third-party service
+- Notifications are raised on the device. With the app closed they come
+  over your own connection to your server from: the opt-in background
+  listening (off by default; the only one that keeps watching Cron, Kanban and
+  rooms); the turn service (on by default, switchable in Settings >
+  Notifications; up to 30 minutes while a turn you started is running); and a
+  bounded check (up to 10 minutes) that announces when that turn finishes. The
+  last two need no opt-in and do not run under App Lock. Console uses no Firebase, push relay or other third-party service
   for notifications.
 
 Petdex assets and optional speech/AI models are downloaded from Petdex,

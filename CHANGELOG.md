@@ -6,8 +6,10 @@ are not releases.
 ## 1.4.0 (9812) — 2026-11-10
 
 Console 1.4.0 adds a workspace (terminal, Git, browser, artifacts) next to the
-chat and shows what the agent is doing live. Alerts with the app closed keep
-working as in 1.3.1 (opt-in background listening); Console uses no Firebase or
+chat and shows what the agent is doing live. With the app closed, the
+opt-in background listening works as in 1.3.1 (continuous Cron, Kanban and room
+alerts), and a running turn is also followed for up to 30 minutes and its end
+announced without that opt-in (not under App Lock); Console uses no Firebase or
 third-party service for notifications. It still talks only to the Dashboard.
 
 ### New

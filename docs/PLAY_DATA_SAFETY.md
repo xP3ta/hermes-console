@@ -8,8 +8,9 @@ con `PRIVACY_POLICY.md` y con el comportamiento real de la app. Responde campo a
 campo.
 
 **Revisado 2026-11-10 (1.4.0, build 9812)**: se añade el navegador integrado
-como flujo hacia terceros; los avisos con la app cerrada siguen siendo solo la
-escucha opt-in de 1.3.1 (sin Firebase ni relay). Repetir la comprobación de este
+como flujo hacia terceros; los avisos con la app cerrada siguen sin Firebase ni relay: la
+escucha opt-in de 1.3.1 (continua), el servicio del turno (≤30 min, activo por
+defecto) y la comprobación acotada (≤10 min) del final de ese turno. Repetir la comprobación de este
 formulario sobre el AAB firmado final.
 
 **Revisado 2026-09-03 (candidata 1.2.10, voz manual, lectura, notificaciones
@@ -138,6 +139,9 @@ las respuestas guardadas en Play Console.
   de la tabla + descargas de Petdex/Hugging Face/GitHub sin contenido del usuario (la app ya no usa el Gateway, solo el Dashboard).
   Si se añade un motor/servicio nuevo con red propia, actualizar esta guía y el
   formulario ANTES del release.
-- Avisos con la app cerrada: solo la escucha opt-in de 1.3.1 (la propia
-  conexión del usuario con su servidor). La app no usa Firebase, relay de
+- Avisos con la app cerrada: la escucha opt-in de 1.3.1 (continua, apagada por
+  defecto), el servicio del turno (hasta 30 min mientras corre un turno que el
+  usuario lanzó; activo por defecto, desactivable) y la comprobación acotada
+  (≤10 min, WorkManager) que avisa de su final, estas dos sin opt-in y ninguna
+  bajo App Lock; siempre por la propia conexión del usuario con su servidor. La app no usa Firebase, relay de
   avisos ni otro servicio de terceros para las notificaciones.

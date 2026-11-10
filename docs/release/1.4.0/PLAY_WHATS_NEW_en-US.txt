@@ -3,6 +3,6 @@ What's new in 1.4.0:
 • Artifacts: a conversation's images, files and links in one view.
 • Tablets and foldables: chat and workspace side by side.
 • Subagents with a live list and detail; new look for the running turn.
-• Alerts with the app closed: the optional listening in Settings > Notifications, as in 1.3.1.
+• Alerts with the app closed: a running turn is followed and its end announced; the rest need the optional listening.
 • Haptics and fewer loading flickers.
 • The Bots and Rooms widgets are removed.
