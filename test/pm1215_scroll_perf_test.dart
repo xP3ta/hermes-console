@@ -8,6 +8,8 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:hermes_android/core/design/glass_strip.dart'
+    show HermesGlassStrip;
 import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
 import 'package:hermes_android/core/screens/chat_screen.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
@@ -25,6 +27,9 @@ import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:hermes_android/core/services/turn_outbox_store.dart';
 import 'package:hermes_android/main.dart';
 import 'package:hermes_android/core/widgets/floating_chat_header.dart';
+import 'package:hermes_android/core/widgets/frosted_backdrop.dart'
+    show FrostedZone;
+
 import 'support/test_api_client.dart';
 
 // ignore: unused_element
@@ -310,6 +315,59 @@ void main() {
       for (final e in header)
         if (e.renderObject != null) e.renderObject!,
     };
+    final headerStrip = find.byWidgetPredicate(
+      (widget) => widget is HermesGlassStrip && widget.zone == FrostedZone.top,
+    );
+    expect(headerStrip, findsOneWidget);
+    expect(
+      find.ancestor(of: find.byType(FloatingChatHeader), matching: headerStrip),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: headerStrip, matching: find.byType(HermesGlassStrip)),
+      findsNothing,
+    );
+    final footStrip = find.byKey(const ValueKey('chat-foot-glass'));
+    expect(footStrip, findsOneWidget);
+    expect(tester.widget<HermesGlassStrip>(footStrip).zone, FrostedZone.bottom);
+    expect(find.ancestor(of: footStrip, matching: headerStrip), findsNothing);
+
+    RenderObject stripBoundary(Finder finder) {
+      final render = tester.renderObject<RenderObject>(finder);
+      final creator = render.debugCreator;
+      expect(creator, isA<DebugCreator>());
+      expect(
+        (creator as DebugCreator).element
+            .findAncestorWidgetOfExactType<HermesGlassStrip>(),
+        same(tester.widget<HermesGlassStrip>(finder)),
+      );
+      expect(render.attached, isTrue);
+      expect(render.isRepaintBoundary, isTrue);
+      return render;
+    }
+
+    final headerBoundary = stripBoundary(headerStrip);
+    final footBoundary = stripBoundary(footStrip);
+    List<Layer> filtersUnder(Layer? layer) {
+      final filters = <Layer>[];
+      void walk(Layer? layer) {
+        if (layer == null) return;
+        if (layer is BackdropFilterLayer ||
+            layer is ShaderMaskLayer ||
+            layer is ImageFilterLayer) {
+          filters.add(layer);
+        }
+        if (layer is ContainerLayer) {
+          for (var c = layer.firstChild; c != null; c = c.nextSibling) {
+            walk(c);
+          }
+        }
+      }
+
+      walk(layer);
+      return filters;
+    }
+
     final out = <String, int>{
       'screen': 0,
       'rows': 0,
@@ -318,6 +376,8 @@ void main() {
       'headerPaints': 0,
       'offscreenLayers': 0,
       'filterLayers': 0,
+      'headerFilterLayers': 0,
+      'footFilterLayers': 0,
     };
     final mountedTransitions = <Element>{};
     debugOnRebuildDirtyWidget = (element, _) {
@@ -342,6 +402,12 @@ void main() {
     await drive();
     for (var i = 0; i < 60; i++) {
       await tester.pump(const Duration(milliseconds: 16));
+      // Filter layers are counted per frame and the most kept: the cost of
+      // a frame: the header's one blur. The foot is the grey chrome (no
+      // glass piece, so no blur): its real boundary must own no filter and
+      // the header's its one, on every frame.
+      var frameFilters = 0;
+      final frameFilterLayers = <Layer>[];
       void walk(Layer? l) {
         if (l == null) return;
         if (l is OpacityLayer && (l.alpha ?? 255) < 255) {
@@ -350,7 +416,8 @@ void main() {
         if (l is BackdropFilterLayer ||
             l is ShaderMaskLayer ||
             l is ImageFilterLayer) {
-          out['filterLayers'] = out['filterLayers']! + 1;
+          frameFilters++;
+          frameFilterLayers.add(l);
         }
         if (l is ContainerLayer) {
           var c = l.firstChild;
@@ -362,6 +429,29 @@ void main() {
       }
 
       walk(tester.binding.renderViews.first.debugLayer);
+      final headerLayer = headerBoundary.debugLayer;
+      final footLayer = footBoundary.debugLayer;
+      expect(headerLayer, isNotNull);
+      expect(footLayer, isNotNull);
+      expect(headerLayer!.attached, isTrue);
+      expect(footLayer!.attached, isTrue);
+      final headerFilters = filtersUnder(headerLayer);
+      final footFilters = filtersUnder(footLayer);
+      expect(headerFilters, hasLength(1), reason: 'header frame $i');
+      expect(footFilters, isEmpty, reason: 'foot frame $i');
+      expect(headerFilters.single, isA<BackdropFilterLayer>());
+      expect(frameFilterLayers, [
+        headerFilters.single,
+      ], reason: 'only the header, no other filter on frame $i');
+      if (frameFilters > out['filterLayers']!) {
+        out['filterLayers'] = frameFilters;
+      }
+      if (headerFilters.length > out['headerFilterLayers']!) {
+        out['headerFilterLayers'] = headerFilters.length;
+      }
+      if (footFilters.length > out['footFilterLayers']!) {
+        out['footFilterLayers'] = footFilters.length;
+      }
     }
     debugOnRebuildDirtyWidget = null;
     debugOnProfilePaint = null;
@@ -375,7 +465,8 @@ void main() {
     final gateway = _StreamingGateway();
     await pumpChat(tester, gateway, history: _history(turns: 60));
     // Nothing blurs or masks the transcript (BackdropFilter / ShaderMask
-    // over a scrolling list re-render every frame on Android).
+    // over a scrolling list re-render every frame on Android). The header's
+    // glass (Vistas v3) is one strip layer of its own, counted below.
     for (final type in [BackdropFilter, ShaderMask, ImageFiltered]) {
       expect(
         find.descendant(
@@ -400,7 +491,12 @@ void main() {
     expect(fling['rows'], 0, reason: 'existing rows rebuilt while scrolling');
     expect(fling['header'], 0, reason: 'header rebuilt while scrolling');
     expect(fling['headerPaints'], 0, reason: 'header repainted');
-    expect(fling['filterLayers'], 0);
+    // The header's pieces and pinned prompt still share exactly one blur.
+    // The foot owns none (grey chrome); every frame above rejects any other
+    // filter, mask or image filter anywhere in the scene.
+    expect(fling['headerFilterLayers'], 1, reason: 'the header strip, only');
+    expect(fling['footFilterLayers'], 0, reason: 'the foot is grey chrome');
+    expect(fling['filterLayers'], 1, reason: 'the header\'s, no others');
     // The pinned prompt changes as turns pass under the header: it swaps
     // in place while the list moves, never cross-fades (a fade is an
     // offscreen layer and a rebuild on every frame of the fling).

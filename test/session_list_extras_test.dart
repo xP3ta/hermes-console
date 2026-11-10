@@ -19,6 +19,7 @@ import 'package:hermes_android/core/services/session_repository.dart';
 import 'package:hermes_android/core/services/shared_gateway_pool.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
+import 'package:hermes_android/core/widgets/read_only.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -317,6 +318,56 @@ void main() {
       expect(find.text(s.se1215MenuMove), findsNothing);
       expect(find.text(s.se1215MenuExport), findsOneWidget);
     });
+
+    // gint51: «Archivo» in the header left the title pill too narrow for
+    // the read-only badge, which overflowed. At 320 dp and at 2× text, in
+    // three languages, the header fits and still says it is read-only.
+    for (final lang in const ['es', 'en', 'pt']) {
+      for (final scale in const [1.0, 2.0]) {
+        testWidgets('read only at 320 dp, $scale× text, $lang: the header '
+            'fits', (tester) async {
+          await pump(
+            tester,
+            twoRows(),
+            readOnly: true,
+            wrap: (screen) => Builder(
+              builder: (context) => Localizations.override(
+                context: context,
+                locale: Locale(lang),
+                child: MediaQuery(
+                  data: MediaQuery.of(
+                    context,
+                  ).copyWith(textScaler: TextScaler.linear(scale)),
+                  child: screen,
+                ),
+              ),
+            ),
+          );
+          tester.view.physicalSize = const Size(960, 2532);
+          await tester.pump();
+          await _pumpUntil(tester, find.text('Plan de viaje'));
+          expect(tester.takeException(), isNull, reason: '$lang ×$scale');
+          final badge = find.descendant(
+            of: find.byKey(const ValueKey('hermes-app-bar-title-badge')),
+            matching: find.byType(ReadOnlyBadge),
+          );
+          expect(badge, findsOneWidget, reason: 'still marked read-only');
+          final title = tester.getRect(
+            find.byKey(const ValueKey('hermes-app-bar-plain-title')),
+          );
+          expect(
+            tester.getRect(badge).right,
+            lessThanOrEqualTo(title.right),
+            reason: 'inside the title ($lang ×$scale)',
+          );
+          // «Archivo» is still one tap away, in the header.
+          expect(
+            find.byKey(const ValueKey('session-filter-archived')),
+            findsOneWidget,
+          );
+        });
+      }
+    }
 
     testWidgets('the screen gains no buttons', (tester) async {
       await pump(tester, twoRows());
