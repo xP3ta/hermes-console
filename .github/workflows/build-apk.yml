@@ -77,7 +77,7 @@ jobs:
           docker run --rm \
             -v "$GITHUB_WORKSPACE:/repo:ro" \
             "$GITLEAKS_IMAGE" \
-            git /repo --no-banner --redact=100 --log-opts=HEAD
+            git /repo --config /repo/.gitleaks.toml --no-banner --redact=100 --log-opts=HEAD
           docker run --rm \
             -v "$GITHUB_WORKSPACE:/repo:ro" \
             trufflesecurity/trufflehog@sha256:ff4c95e9df7d645daf2140e3ca1039031c63106268d5fbb25feb43ceca1bcc33 \
