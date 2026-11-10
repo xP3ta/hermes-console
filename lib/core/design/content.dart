@@ -656,11 +656,7 @@ Future<bool> showHermesReviewPage({
                           style: TextButton.styleFrom(
                             minimumSize: const Size.fromHeight(HermesSpace.tap),
                             foregroundColor: colors.textPrimary,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(
-                                HermesRadius.control,
-                              ),
-                            ),
+                            shape: const StadiumBorder(),
                           ),
                           child: Text(s.commonCancel),
                         ),
@@ -678,11 +674,7 @@ Future<bool> showHermesReviewPage({
                             foregroundColor: destructive
                                 ? Colors.white
                                 : colors.onAccent,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(
-                                HermesRadius.control,
-                              ),
-                            ),
+                            shape: const StadiumBorder(),
                           ),
                           child: Text(confirmLabel),
                         ),

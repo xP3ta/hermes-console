@@ -1,10 +1,20 @@
+import 'dart:math' as math;
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
+import '../design/gel_surface.dart';
+import '../design/liquid_glass.dart';
+import '../design/glass_strip.dart';
+import '../design/smoked_glass.dart';
+import '../design/tokens.dart' show HermesChrome, HermesGel;
 import '../models/dock_config.dart';
 import '../theme/app_theme.dart';
+import '../theme/box_fill.dart' show HermesPageTint;
+import '../theme/lines.dart';
+import '../theme/theme_contrast.dart';
+import '../theme/hermes_tokens.dart' show HermesIcon, HermesSize;
 import 'frosted_backdrop.dart';
 
 /// Metadatos visuales de un elemento de catálogo, compartidos por el dock
@@ -37,7 +47,10 @@ const Map<DockItemId, DockItemVisual> _dockItemVisuals = {
   DockItemId.cron: DockItemVisual(icon: Icons.schedule_outlined),
   DockItemId.tasks: DockItemVisual(icon: Icons.view_kanban_outlined),
   DockItemId.sessions: DockItemVisual(icon: Icons.forum_outlined),
-  DockItemId.tools: DockItemVisual(icon: Icons.widgets_outlined),
+  DockItemId.agents: DockItemVisual(
+    icon: Icons.terminal_outlined,
+    selectedIcon: Icons.terminal_rounded,
+  ),
 };
 
 DockItemVisual dockItemVisual(DockItemId id) =>
@@ -83,13 +96,12 @@ String dockItemLabel(Strings strings, DockItemId id) => switch (id) {
   DockItemId.cron => strings.drawerCron,
   DockItemId.tasks => strings.drawerKanban,
   DockItemId.sessions => strings.drawerSessions,
-  DockItemId.tools => strings.drawerTools,
+  DockItemId.agents => strings.navAgents,
 };
 
 String dockItemCompactLabel(Strings strings, DockItemId id) => switch (id) {
   DockItemId.cron => strings.dockCronLabel,
   DockItemId.sessions => strings.dockSessionsLabel,
-  DockItemId.tools => strings.dockToolsLabel,
   _ => dockItemLabel(strings, id),
 };
 
@@ -141,15 +153,17 @@ DockVisual resolveDockVisual(HermesThemeColors colors, DockStyle style) {
   //     con la transparencia, que es lo que de verdad se lee como "borde de
   //     cristal" contra un fondo oscuro sin contraste detrás.
   final bgAlpha = lerpDouble(1.0, 0.32, transparency)!;
-  final borderAlpha = lerpDouble(0.62, 0.95, transparency)!;
   final blurSigma = transparency > 0 ? lerpDouble(6, 26, transparency)! : 0.0;
 
-  var background = Color.lerp(
-    colors.surface,
-    Colors.white,
-    transparency * 0.22,
-  )!;
-  var border = Color.lerp(colors.divider, Colors.white, transparency * 0.4)!;
+  // Every lift towards white keeps the page's hue on a tinted page
+  // ([HermesPageTint.keepHue]); a neutral page gets the plain mix.
+  final page = colors.background;
+  Color lighten(Color from, double amount) => HermesPageTint.keepHue(
+    Color.lerp(from, Colors.white, amount)!,
+    of: from,
+    page: page,
+  );
+  var background = lighten(colors.surface, transparency * 0.22);
   List<BoxShadow> shadows;
   var lift = 0.0;
 
@@ -164,8 +178,7 @@ DockVisual resolveDockVisual(HermesThemeColors colors, DockStyle style) {
       // de aclarar la superficie/borde, aquí a la mitad de intensidad para
       // que "Elevada" quede claramente entre "Plana" y "Flotante" en vez de
       // fundirse con "Plana".
-      background = Color.lerp(background, Colors.white, 0.015)!;
-      border = Color.lerp(border, Colors.white, 0.03)!;
+      background = lighten(background, 0.015);
       shadows = [
         BoxShadow(
           color: Colors.black.withValues(alpha: 0.5),
@@ -178,8 +191,7 @@ DockVisual resolveDockVisual(HermesThemeColors colors, DockStyle style) {
       // aporta la transparencia: en tema oscuro la sombra por sí sola apenas
       // se distingue, así que la profundidad "Flotante" también se lee por
       // contraste de superficie, no solo por sombra.
-      background = Color.lerp(background, Colors.white, 0.03)!;
-      border = Color.lerp(border, Colors.white, 0.06)!;
+      background = lighten(background, 0.03);
       lift = 6;
       shadows = [
         BoxShadow(
@@ -211,9 +223,17 @@ DockVisual resolveDockVisual(HermesThemeColors colors, DockStyle style) {
     ];
   }
 
+  final fill = background.withValues(alpha: background.a * bgAlpha);
+  // The border is the contour of the bar: the page's light (or the main
+  // ink on a light page) raised until the edge of the bar reads against the
+  // page at the edge ratio of a floating piece (3:1). The palette's divider lightened towards
+  // white vanished on every light page and sat near 1.5:1 on the dark ones.
+  final border = HermesLines.of(
+    colors,
+  ).edgeOn(ThemeContrast.composite(fill, page));
   return DockVisual(
-    background: background.withValues(alpha: background.a * bgAlpha),
-    border: border.withValues(alpha: border.a * borderAlpha),
+    background: fill,
+    border: border,
     outerRadius: style.borderShape.outerRadius,
     innerRadius: style.borderShape.innerRadius,
     shadows: shadows,
@@ -242,13 +262,21 @@ class DockBar extends StatelessWidget {
   /// see `Responsive.usesRail`); the default is the bottom bar.
   final Axis axis;
 
+  /// Colour of the active indicator; the palette's `surfaceVariant` by
+  /// default.
+  final Color? indicatorColor;
+
   const DockBar({
     required this.style,
     required this.children,
     this.selectedIndex,
     this.axis = Axis.horizontal,
+    this.indicatorColor,
     super.key,
   });
+
+  /// Height of the bottom bar: the 48 dp touch target of every tile.
+  static const barHeight = HermesSize.tap;
 
   /// Width of the vertical rail form and height of each of its slots.
   static const railWidth = 72.0;
@@ -264,7 +292,9 @@ class DockBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
     final visual = resolveDockVisual(colors, style);
+    final tone = _dockBarTone(colors, visual);
     final radius = BorderRadius.circular(visual.outerRadius);
+    final hairlineInset = math.min(visual.outerRadius, barHeight / 2) / 2;
     final reduceMotion = MediaQuery.disableAnimationsOf(context);
     final index = selectedIndex;
     if (axis == Axis.vertical) {
@@ -279,19 +309,23 @@ class DockBar extends StatelessWidget {
         color: fill,
         border: Border.all(color: visual.border),
         borderRadius: radius,
-        boxShadow: visual.shadows,
+        boxShadow: HermesGlassStrip.of(context)?.tone != null
+            ? null
+            : visual.shadows,
       ),
       child: SizedBox(
-        height: 48,
+        height: barHeight,
         child: Stack(
           children: [
             // Top hairline light: a soft highlight that fades out towards
             // the rounded corners, like light catching the edge of glass.
+            // A pill's radius is cut to half the bar's height when painted;
+            // the hairline keeps clear of that corner, not of the token.
             Positioned(
               key: const ValueKey('dock-top-hairline'),
               top: 0,
-              left: visual.outerRadius / 2,
-              right: visual.outerRadius / 2,
+              left: hairlineInset,
+              right: hairlineInset,
               height: 1,
               child: IgnorePointer(
                 child: DecoratedBox(
@@ -304,6 +338,16 @@ class DockBar extends StatelessWidget {
                       ],
                     ),
                   ),
+                ),
+              ),
+            ),
+            // The gel's sheen and rims over the glass, under the tiles.
+            Positioned.fill(
+              child: IgnorePointer(
+                child: HermesGelSurface(
+                  shape: RoundedRectangleBorder(borderRadius: radius),
+                  pressable: false,
+                  child: const SizedBox.expand(),
                 ),
               ),
             ),
@@ -339,11 +383,9 @@ class DockBar extends StatelessWidget {
                                 width: width,
                                 child: IgnorePointer(
                                   child: DecoratedBox(
-                                    decoration: BoxDecoration(
-                                      color: colors.surfaceVariant,
-                                      borderRadius: BorderRadius.circular(
-                                        visual.innerRadius,
-                                      ),
+                                    decoration: HermesGel.glow(
+                                      indicatorColor ?? colors.accent,
+                                      BorderRadius.circular(visual.innerRadius),
                                     ),
                                   ),
                                 ),
@@ -360,6 +402,10 @@ class DockBar extends StatelessWidget {
       ),
     );
     return FrostedBackdrop(
+      liquid: HermesLiquid.dock,
+      tone: tone,
+      toneInks: HermesSmokedGlass.dockInks(colors),
+      zone: FrostedZone.bottom,
       sigma: visual.blurSigma,
       tint: visual.background,
       borderRadius: radius,
@@ -375,6 +421,7 @@ class DockBar extends StatelessWidget {
     int? index,
   ) {
     final colors = Theme.of(context).hermes;
+    final tone = _dockBarTone(colors, visual);
     final column = Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: children,
@@ -384,7 +431,9 @@ class DockBar extends StatelessWidget {
         color: fill,
         border: Border.all(color: visual.border),
         borderRadius: radius,
-        boxShadow: visual.shadows,
+        boxShadow: HermesGlassStrip.of(context)?.tone != null
+            ? null
+            : visual.shadows,
       ),
       child: SizedBox(
         width: railWidth,
@@ -404,9 +453,9 @@ class DockBar extends StatelessWidget {
                   height: railSlotHeight - 8,
                   child: IgnorePointer(
                     child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        color: colors.surfaceVariant,
-                        borderRadius: BorderRadius.circular(visual.innerRadius),
+                      decoration: HermesGel.glow(
+                        indicatorColor ?? colors.accent,
+                        BorderRadius.circular(visual.innerRadius),
                       ),
                     ),
                   ),
@@ -418,11 +467,46 @@ class DockBar extends StatelessWidget {
       ),
     );
     return FrostedBackdrop(
+      liquid: HermesLiquid.dock,
+      tone: tone,
+      toneInks: HermesSmokedGlass.dockInks(colors),
+      zone: FrostedZone.bottom,
       sigma: visual.blurSigma,
       tint: visual.background,
       borderRadius: radius,
       builder: surface,
     );
+  }
+
+  HermesSmokedGlass? _dockBarTone(HermesThemeColors colors, DockVisual visual) {
+    if (visual.background.a >= 1 || visual.blurSigma <= 0) return null;
+    final chrome = HermesChrome.of(colors);
+    final tone = HermesSmokedGlass.dockOf(
+      chrome,
+    ).withVeilFloor(visual.background.a);
+    if (!tone.readsFor(colors, HermesSmokedGlass.dockInks(colors))) return null;
+    // Classic/rail tiles retain their existing inks and actual indicator.
+    // If an overlay cannot keep them readable, retain the previous material.
+    for (final overlay in [
+      indicatorColor ?? colors.surfaceVariant,
+      colors.accent.withValues(alpha: .14),
+      colors.accent.withValues(alpha: .26),
+    ]) {
+      final floor = math.max(
+        3.05,
+        math.min(
+          4.5,
+          ThemeContrast.ratio(
+            colors.accentText,
+            ThemeContrast.composite(overlay, chrome.opaque),
+          ),
+        ),
+      );
+      if (tone.worstRatio(colors.accentText, chrome, over: overlay) < floor) {
+        return null;
+      }
+    }
+    return tone;
   }
 }
 
@@ -448,6 +532,14 @@ class DockItemTile extends StatelessWidget {
   /// sets this to false because [DockBar] paints one sliding indicator.
   final bool selectionBackground;
 
+  /// Only the icon, no label in any state (QA 9709, the gesture dock's
+  /// rail). The label stays for a screen reader and the tooltip.
+  final bool iconOnly;
+
+  /// Colour of an item that is neither selected nor the accent one; the
+  /// palette's `textSecondary` by default.
+  final Color? idleColor;
+
   const DockItemTile({
     required this.icon,
     required this.label,
@@ -463,6 +555,8 @@ class DockItemTile extends StatelessWidget {
     this.onTap,
     this.focusNode,
     this.selectionBackground = true,
+    this.iconOnly = false,
+    this.idleColor,
     super.key,
   });
 
@@ -473,7 +567,7 @@ class DockItemTile extends StatelessWidget {
         ? colors.accentText
         : selected
         ? colors.textPrimary
-        : colors.textSecondary;
+        : idleColor ?? colors.textSecondary;
     // The active destination gets an accent icon over its indicator pill.
     final iconColor = selected ? colors.accentText : color;
     // The "+" stays a same-size tile; a faint accent pill marks it instead
@@ -533,7 +627,13 @@ class DockItemTile extends StatelessWidget {
                     // segmento. El modo en línea (usado hoy solo por la vista
                     // previa de Ajustes › Dock, con más espacio disponible) se
                     // mantiene igual que antes.
-                    child: compact
+                    child: iconOnly
+                        ? Icon(
+                            displayIcon,
+                            size: HermesIcon.xl,
+                            color: iconColor,
+                          )
+                        : compact
                         ? Column(
                             mainAxisSize: MainAxisSize.min,
                             mainAxisAlignment: MainAxisAlignment.center,

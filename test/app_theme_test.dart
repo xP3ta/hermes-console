@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/design/tokens.dart' show HermesType;
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/hermes_ui.dart';
 
@@ -40,10 +41,16 @@ void main() {
         reason: preset.id,
       );
       expect(switchTheme.thumbIcon?.resolve(idle), isNull, reason: preset.id);
-      expect(switchTheme.thumbColor!.resolve(selected), Colors.white);
+      // The on thumb is the on-accent ink (white fell under 3:1 on a light
+      // accent); the idle outline is the control border, 3:1 on the body.
+      expect(switchTheme.thumbColor!.resolve(selected), colors.onAccent);
       expect(switchTheme.thumbColor!.resolve(idle), colors.textSecondary);
       expect(switchTheme.trackColor!.resolve(selected), colors.accent);
       expect(switchTheme.trackColor!.resolve(idle), colors.surfaceVariant);
+      expect(
+        switchTheme.trackOutlineColor!.resolve(idle),
+        colors.controlBorder,
+      );
       expect(
         switchTheme.thumbColor!.resolve(selected)!.a,
         1.0,
@@ -113,7 +120,10 @@ void main() {
     expect(theme.listTileTheme.titleTextStyle?.fontSize, 14);
     expect(theme.listTileTheme.titleTextStyle?.fontWeight, FontWeight.w600);
     expect(theme.listTileTheme.titleTextStyle?.letterSpacing, 0);
-    expect(theme.listTileTheme.subtitleTextStyle?.fontSize, 12);
+    expect(
+      theme.listTileTheme.subtitleTextStyle?.fontSize,
+      HermesType.subtitleSize,
+    );
     expect(theme.listTileTheme.subtitleTextStyle?.height, 1.35);
 
     for (final entity in Directory('lib/core').listSync(recursive: true)) {

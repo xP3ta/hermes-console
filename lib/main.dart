@@ -8,10 +8,12 @@ import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'core/design/ambient_backdrop.dart';
 import 'core/guide/guide_layer.dart';
 import 'core/widgets/artifact_viewer/code_view_prefs.dart';
 import 'core/widgets/chat_row_boundary.dart';
 import 'core/widgets/floating_chat_header.dart';
+import 'core/widgets/hermes_theme_reveal.dart';
 import 'core/widgets/instance_kind_picker.dart';
 import 'core/widgets/mascot/header_mascot.dart';
 import 'core/widgets/mascot/float/mascot_overlay.dart';
@@ -21,8 +23,16 @@ import 'core/widgets/mascot/mascot_sprite.dart';
 import 'core/widgets/mission_profile_avatar.dart';
 import 'core/widgets/profile_face.dart';
 import 'core/models/profile_identity.dart';
+import 'core/characters/bot_character_store.dart';
+import 'core/characters/bot_motion.dart';
+import 'core/characters/character_library.dart';
+import 'core/services/release_log.dart';
 import 'core/services/message_reaction_prefs.dart';
 import 'core/services/pinned_prompt_prefs.dart';
+import 'core/services/release_logging.dart';
+import 'core/services/subagent_group_visibility.dart';
+import 'core/services/motion_prefs.dart';
+import 'core/services/reasoning_disclosure_prefs.dart';
 import 'core/services/retired_prefs.dart';
 import 'core/app_header_title.dart';
 import 'core/companion/data/companion_preferences.dart';
@@ -49,7 +59,9 @@ import 'core/config/flavor.dart';
 import 'core/models/new_session_launch_action.dart';
 import 'core/models/home_widget_snapshot.dart';
 import 'core/navigation/chat_route.dart';
+import 'core/browser/agent_browser_bridge.dart';
 import 'core/screens/chat_screen.dart';
+import 'core/screens/shared_review_screen.dart';
 import 'core/screens/home_dashboard_screen.dart';
 import 'core/screens/mission_control_screen.dart';
 import 'core/screens/session_list_screen.dart';
@@ -73,6 +85,7 @@ import 'core/services/pairing_link.dart';
 import 'core/services/pairing_link_delivery_gate.dart';
 import 'core/services/active_chat_service.dart';
 import 'core/services/compression_restore_store.dart';
+import 'core/services/cache_settings.dart';
 import 'core/services/cold_start_store.dart';
 import 'core/services/android_launch_action_inbox.dart';
 import 'core/services/android_share_inbox.dart';
@@ -85,9 +98,13 @@ import 'core/services/chat_draft_store.dart';
 import 'core/services/connection_manager.dart';
 import 'core/services/new_session_factory.dart';
 import 'core/services/font_size_service.dart';
+import 'core/home/launcher/launcher_widget_images.dart';
 import 'core/services/home_widget_publisher.dart';
 import 'core/services/notifications/background_listener.dart';
+import 'core/services/notifications/notification_payload_seal.dart';
 import 'core/services/notifications/notification_service.dart';
+import 'core/services/notifications/rich_notifications.dart'
+    show PlatformRichNotifications;
 import 'core/services/performance_trace.dart';
 import 'core/bots/data/gateway_socket_meter.dart';
 import 'core/services/hermes_update_monitor.dart';
@@ -97,12 +114,19 @@ import 'core/services/new_session_launch_coordinator.dart';
 import 'core/services/profile_pet_service.dart';
 import 'core/services/platform/native_appearance.dart';
 import 'core/services/secure_storage.dart';
+import 'core/services/save_to_device.dart' show SavedDocument;
 import 'core/services/screen_security.dart';
 import 'core/services/session_archive.dart';
 import 'core/services/sftp_transfer_service.dart';
+import 'core/services/ssh_dashboard_tunnel.dart';
 import 'core/services/ssh_manager.dart';
+import 'core/services/ssh_tunnel_connector.dart';
 import 'core/services/ssh_session_service.dart';
 import 'core/services/tui_gateway_client.dart';
+import 'core/services/notifications/live_turn_check.dart'
+    show liveTurnAppLocked;
+import 'core/services/turn_keepalive_controller.dart';
+import 'core/services/turn_keepalive_hold.dart';
 import 'core/services/voice/conversation/gpt_live_voice_conversation_controller.dart';
 import 'core/services/voice/conversation/local_voice_conversation_controller.dart';
 import 'core/services/voice/conversation/voice_conversation_coordinator.dart';
@@ -119,6 +143,10 @@ import 'core/services/voice/voice_settings.dart';
 import 'core/theme/active_theme_appearance.dart';
 import 'core/theme/app_theme.dart';
 import 'core/theme/component_profile.dart';
+import 'core/theme/glass_look.dart';
+import 'core/theme/hermes_style.dart';
+import 'core/theme/look_feel.dart';
+import 'core/theme/theme_profile_adapter.dart';
 import 'core/theme/scroll_behavior.dart';
 import 'core/theme/theme_profile_store.dart';
 import 'core/widgets/attachment_source_sheet.dart';
@@ -126,10 +154,13 @@ import 'core/widgets/chat/embeds/embed_consent_store.dart';
 import 'core/widgets/frosted_backdrop.dart';
 import 'core/widgets/hermes_notice.dart';
 import 'core/widgets/hermes_premium_ui.dart';
+import 'core/widgets/save_to_device_feedback.dart'
+    show showSavedDocumentActions;
 import 'core/widgets/startup_handoff.dart';
 import 'core/services/notifications/ui_notification_actions.dart';
 import 'l10n/app_localizations.dart';
 import 'core/feedback/feedback_policy.dart';
+import 'core/feedback/haptics.dart';
 
 /// Observador global de rutas. Lo usa [ChatScreen] (vía RouteAware) para saber
 /// cuándo su pantalla es la visible en pila y fijar/limpiar
@@ -279,6 +310,9 @@ Future<T?> pushNotificationOwnerRoute<T>(
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // H8: en release, ninguna línea de log lleva URLs, IPs ni tokens.
+  installReleaseLogRedaction();
+  silenceDebugPrintInRelease(); // M5
   AppErrorLog.install();
   installChatRowErrorWidget();
   PerformanceTrace.qa.start();
@@ -301,11 +335,23 @@ Future<Widget> bootstrapHermesApp() async {
   await MessageReactionPrefs.load(prefs);
   await CodeViewPrefs.load(prefs);
   await PinnedPromptPrefs.load(prefs);
+  await SubagentGroupVisibility.load(prefs);
+  await ReasoningDisclosurePrefs.load(prefs);
+  await MotionPrefs.load(prefs);
+  await GlassLookPrefs.load(prefs);
+  await HermesStylePrefs.load(prefs);
+  await BotMotionPrefs.load(prefs);
+  await HapticPrefs.load(prefs);
+  await BotCharacterStore.load(prefs);
+  await BotCharacterLibrary.load(prefs);
   await clearRetiredPrefs(prefs);
+  // desktop_preview read/act are answered by the in-app browser (consent
+  // first, on screen only); without it they keep the 'no handler' answer.
+  TuiGatewayClient.previewRequestBridge = AgentBrowserBridge.instance;
   final themeProfileStore = ThemeProfileStore(prefs);
   final cancelledTurnStore = CancelledTurnTombstoneStore.secure();
   final compressionRestoreStore = CompressionRestoreStore();
-  final coldStartStore = ColdStartStore();
+  final coldStartStore = ColdStartStore(settings: CacheSettings(prefs));
   ActiveChatService? coldStartOwner;
   // The tombstone store and the connection list touch disjoint keys; the
   // store is only consulted by ConnectionManager when a connection is
@@ -363,14 +409,28 @@ Future<Widget> bootstrapHermesApp() async {
   final approvalPolicy = ApprovalPolicyService(prefs);
   final fontSize = FontSizeService(prefs);
   final sshManager = SshManager(SecureStorage(), connManager);
+  // The Dashboard tunnels follow the active connection and the foreground;
+  // nothing stays open while the app is in the background.
+  final sshTunnels = SshDashboardTunnels(
+    clientFactory: sshTunnelClientFactory(sshManager),
+  );
+  SshTunnelConnector.current = SshTunnelConnector(
+    tunnels: sshTunnels,
+    manager: sshManager,
+    connections: connManager,
+  )..start();
   final notifications = NotificationService(prefs);
+  NotificationPayloadSeal.ensure(prefs);
   // A chat read on another device (or opened here) retracts this phone's
   // notification on the next session list read the app already makes; never
   // while App Lock is locked.
   SessionArchive.listReadObserver = notifications.enableChatReadSync(
     locked: appLock.locked,
   );
-  final sftpTransfers = SftpTransferService(sshManager, notifications);
+  final sftpTransfers = SftpTransferService(sshManager, notifications)
+    // After the first frame, never before runApp: the clean up of share
+    // copies and of 9708's downloads folder waits for nothing of the start.
+    ..cleanUpAfter(WidgetsBinding.instance.waitUntilFirstFrameRasterized);
   final sshSessions = SshSessionService(sshManager);
   final activeChats = ActiveChatService(
     notifications: notifications,
@@ -591,18 +651,25 @@ final class NetworkAvailabilityRecoveryListener {
     required Stream<dynamic> events,
     required this.onAvailable,
     VoidCallback? onLost,
+    this.isForeground,
   }) {
     _subscription = events.listen((event) {
       if (event == 'lost') {
         _pending?.cancel();
         _pending = null;
+        _deferredAvailable = false;
         onLost?.call();
         return;
       }
       _pending?.cancel();
       _pending = Timer(debounce, () {
         _pending = null;
-        onAvailable();
+        if (isForeground?.call() ?? true) {
+          _deferredAvailable = false;
+          onAvailable();
+        } else {
+          _deferredAvailable = true;
+        }
       });
     }, onError: (_) {});
   }
@@ -610,12 +677,21 @@ final class NetworkAvailabilityRecoveryListener {
   static const debounce = Duration(seconds: 2);
 
   final VoidCallback onAvailable;
+  final bool Function()? isForeground;
+  bool _deferredAvailable = false;
   late final StreamSubscription<dynamic> _subscription;
   Timer? _pending;
+
+  void resume() {
+    if (!_deferredAvailable || !(isForeground?.call() ?? true)) return;
+    _deferredAvailable = false;
+    onAvailable();
+  }
 
   Future<void> dispose() {
     _pending?.cancel();
     _pending = null;
+    _deferredAvailable = false;
     return _subscription.cancel();
   }
 }
@@ -705,6 +781,10 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
   late final ThemeProfileStore themeProfileStore;
   late final ValueNotifier<ThemeProfileStoreSnapshot> themeProfiles;
 
+  /// Look & Feel choices (appearance, accent, backgrounds) and whether they
+  /// or a theme of the catalogue («Más temas») are in force.
+  late final LookFeelPrefs lookFeel;
+
   /// Vigilante de sesiones SSH ociosas mientras la app está en background
   /// (U-11, spec 028). Se arma al pasar a paused y se cancela al volver.
   Timer? _sshIdleTimer;
@@ -712,7 +792,7 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
   /// Closes lingering (unleased) pooled gateway sockets after the app has
   /// been in the background for a while; leased ones stay with their owner.
   Timer? _gatewayIdleTimer;
-  static const _gatewayIdleGrace = Duration(seconds: 60);
+  static const _gatewayIdleGrace = chatTransportBackgroundGrace;
 
   late final ExternalDataSyncDemandGate _externalDataSyncDemandGate;
   static const MethodChannel _externalDataSyncControl = MethodChannel(
@@ -838,10 +918,11 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
 
   Future<void> updateHomeWidget(
     HermesHomeWidgetSnapshot Function(HermesHomeWidgetSnapshot current)
-    transform,
-  ) async {
+    transform, {
+    bool restamp = true,
+  }) async {
     try {
-      await homeWidgetPublisher.update(transform);
+      await homeWidgetPublisher.update(transform, restamp: restamp);
     } catch (error) {
       debugPrint(
         '[home-widget] publicación no disponible (${error.runtimeType})',
@@ -875,7 +956,10 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
   /// pantalla de chat también. Con el gate en false, nunca llega a existir.
   late final VoiceConversationCoordinator voiceConvo =
       VoiceConversationCoordinator(
-        chained: LocalVoiceConversationController(voice),
+        chained: LocalVoiceConversationController(
+          voice,
+          audioEvents: platformLiveAudioEvents,
+        ),
         liveFactory: () => GptLiveVoiceConversationController(
           apiFactory: (chat) =>
               DashboardVoiceLiveApi(DashboardClient.lazy(chat.connection)),
@@ -892,6 +976,7 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
                 _foregroundAudioOwner == ForegroundAudioOwner.voiceConversation,
             viewAttached: _appLifecycle != AppLifecycleState.detached,
           ),
+          stopPhrases: () => voice.stopPhrases.value,
         ),
         // The server's `voice.voice_chat_mode` decides, per connection and
         // profile; the same preferences back the Voice settings screen.
@@ -1297,11 +1382,95 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
   }
 
   HomeWidgetTheme _homeWidgetTheme(ThemeProfileStoreSnapshot profiles) =>
-      homeWidgetThemeFor(
-        profiles,
-        platformBrightness:
-            WidgetsBinding.instance.platformDispatcher.platformBrightness,
-      );
+      _activeBrightness(profiles) == Brightness.light
+      ? HomeWidgetTheme.light
+      : HomeWidgetTheme.dark;
+
+  /// Brightness of what is really painted: Look & Feel's when it is in
+  /// force, else the preset's or custom theme's (see
+  /// [activeThemeBrightness]). The native day/night setting and the home
+  /// widget read this, so neither can disagree with the app.
+  Brightness _activeBrightness(ThemeProfileStoreSnapshot profiles) {
+    final platform =
+        WidgetsBinding.instance.platformDispatcher.platformBrightness;
+    final look = lookFeel.settings;
+    if (look.derived) return look.resolveBrightness(platform);
+    return activeThemeBrightness(profiles, platformBrightness: platform);
+  }
+
+  /// Whether the app swaps theme by itself when the system does.
+  bool get _followsSystem {
+    final look = lookFeel.settings;
+    return look.derived
+        ? look.appearance == LookAppearance.system
+        : followSystemThemeIds(themeProfiles.value) != null;
+  }
+
+  /// The colours really painted: Look & Feel's when in force, else the
+  /// custom profile's or the preset's (with "Auto", the system's side). The
+  /// launcher widgets are drawn in them.
+  HermesThemeColors _activeThemeColors() {
+    final profiles = themeProfiles.value;
+    final look = lookFeel.settings;
+    final platform =
+        WidgetsBinding.instance.platformDispatcher.platformBrightness;
+    if (look.derived) {
+      return LookFeel.colors(look, look.resolveBrightness(platform));
+    }
+    final custom = profiles.customById(profiles.activeProfileId);
+    if (custom != null) return ThemeProfileAdapter.colorsFromProfile(custom);
+    final auto = followSystemThemeIds(profiles);
+    final id = auto == null
+        ? AppTheme.migrateStoredThemeId(profiles.activeProfileId)
+        : platform == Brightness.light
+        ? auto.light
+        : auto.dark;
+    return AppTheme.presetById(id).colors;
+  }
+
+  Locale _activeLocale() => AppLocales.resolve(
+    AppLocales.byId(localeId.value).locale ??
+        WidgetsBinding.instance.platformDispatcher.locale,
+    Strings.supportedLocales,
+  );
+
+  /// The launcher widgets are pictures the app draws in its theme: this
+  /// tells their publisher where to read the theme, font, language and
+  /// text size from, and asks for a drawing whenever one of them changes.
+  void _configureLauncherWidgetImages() {
+    final dispatcher = WidgetsBinding.instance.platformDispatcher;
+    LauncherWidgetImagePublisher.instance.configure(
+      LauncherWidgetImageEnvironment(
+        colors: _activeThemeColors,
+        fontFamily: () => AppFonts.resolvedFamily(AppFonts.byId(fontId.value)),
+        locale: _activeLocale,
+        textScale: () => dispatcher.textScaleFactor,
+        devicePixelRatio: () => dispatcher.views.isEmpty
+            ? 2.0
+            : dispatcher.views.first.devicePixelRatio,
+        use24h: () => dispatcher.alwaysUse24HourFormat,
+        themeId: () => themeId.value,
+        appLockEnabled: () =>
+            widget.connManager.prefs.getBool('app_lock_enabled') == true,
+      ),
+    );
+    LauncherWidgetImagePublisher.instance.attachPlatformChannel();
+  }
+
+  void _redrawLauncherWidgets() {
+    LauncherWidgetImagePublisher.instance.request();
+  }
+
+  void _onLookFeelChanged() {
+    unawaited(_syncNativeAppearance(themeProfiles.value));
+    _redrawLauncherWidgets();
+    unawaited(
+      updateHomeWidget(
+        (current) =>
+            current.copyWith(theme: _homeWidgetTheme(themeProfiles.value)),
+      ),
+    );
+  }
 
   /// Menu actions of the floating mascot: a new chat and the Mascotas
   /// screen.
@@ -1418,6 +1587,7 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
       homeWidgetPublisher,
       activeConnectionId: _activeHomeWidgetConnection()?.id,
     );
+    _configureLauncherWidgetImages();
     // A confirmed delete on any screen leaves the widget too.
     unawaited(
       _homeWidgetDeletedSessions.follow(_activeHomeWidgetConnection()?.id),
@@ -1465,6 +1635,8 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
         );
     themeProfiles = ValueNotifier(initialThemes);
     themeId = ValueNotifier(initialThemes.activeProfileId);
+    lookFeel = LookFeelPrefs(widget.connManager.prefs)
+      ..addListener(_onLookFeelChanged);
     unawaited(_syncNativeAppearance(initialThemes));
     if (widget.initialThemeProfiles == null) {
       unawaited(refreshThemeProfiles(force: true));
@@ -1504,13 +1676,17 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     if (Platform.isAndroid) {
       _networkAvailabilityListener = NetworkAvailabilityRecoveryListener(
         events: _networkAvailabilityEvents.receiveBroadcastStream(),
+        isForeground: () => _appLifecycle == AppLifecycleState.resumed,
         onAvailable: () {
+          if (_appLifecycle != AppLifecycleState.resumed) return;
           GatewaySocketMeter.instance.recordNetworkAvailable();
           ConnectionStatusRegistry.instance.setNetworkLost(false);
-          widget.activeChats.requestImmediateTransportRecovery();
+          widget.activeChats.requestImmediateTransportRecovery(
+            networkChanged: true,
+          );
           // Pooled observers (Home, library, rooms, pet) are probed too, so a
           // half-open socket from the old network fails now, not in 45 s.
-          unawaited(SharedGatewayPool.instance.probeAll());
+          unawaited(SharedGatewayPool.instance.probeAll(networkChanged: true));
         },
         onLost: () {
           GatewaySocketMeter.instance.recordNetworkLost();
@@ -1533,6 +1709,13 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     // Approve / Deny / Stop / Reply tapped on rich notifications or Bot Mode
     // widgets (spec 070): same server calls as the in-app controls.
     if (Platform.isAndroid) {
+      // The background check of live rows asks this engine, which owns them.
+      PlatformRichNotifications.liveTurnCheck = (attempt, elapsed, inTray) =>
+          widget.notifications.checkLiveTurnsInBackground(
+            attempt: attempt,
+            elapsed: elapsed,
+            inTray: inTray,
+          );
       _uiNotificationActionHandler = UiNotificationActionHandler(
         connManager: widget.connManager,
         activeChats: activeChats,
@@ -1633,6 +1816,7 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
         _readAloudNeedsForeground ||
         widget.sftpTransfers.hasActive ||
         widget.sshSessions.hasActive;
+    _initTurnKeepAlive();
     // SFTP y las sesiones de terminal levantan el foreground service al empezar y
     // delegan su parada en la coordinación central (que respeta voz/runs/el otro).
     _externalDataSyncDemandGate = ExternalDataSyncDemandGate(
@@ -1655,6 +1839,87 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     _syncExternalDataSyncDemand();
   }
 
+  void _armGatewayIdleTimer() {
+    _gatewayIdleTimer ??= Timer(_gatewayIdleGrace, _onGatewayIdleGrace);
+  }
+
+  void _onGatewayIdleGrace() {
+    _gatewayIdleTimer = null;
+    if (TurnKeepAliveHold.held) {
+      // A running turn holds the process (turn keep-alive): the next round
+      // decides again. Only sockets with nothing live on them are retired
+      // below (refs <= 0, or canPark says the chat socket is at rest), so
+      // the turn's own sockets stay.
+      _armGatewayIdleTimer();
+    }
+    if (_appLifecycle != AppLifecycleState.resumed) {
+      SharedGatewayPool.instance.disconnectIdle();
+      // co1215: released chats' parked sockets follow the same rule.
+      widget.activeChats.closeWarmGateways();
+      // The leased sockets with nothing live on them (Home's and the
+      // list's observers, a chat socket whose chats are all at rest)
+      // are parked too, not left to die on the server while the app is
+      // cached: the return is then a quiet connect, not a loss. Voice
+      // keeps its own sockets; ActiveChat owns chat transport parking.
+      if (!(kVoiceRuntimeEnabled && voiceConvo.active)) {
+        SharedGatewayPool.instance.parkIdleLeased(
+          canPark: ({required connectionId, required chatLane, profile}) =>
+              !chatLane ||
+              widget.activeChats.chatSocketIdle(
+                connectionId,
+                profile ?? '',
+              ),
+        );
+      }
+    }
+  }
+
+  /// Turn-bounded keep-alive (Desktop «while working»): see
+  /// [TurnKeepAliveController]. Android only; the controller decides when.
+  TurnKeepAliveController? _turnKeepAlive;
+
+  void _initTurnKeepAlive() {
+    if (!Platform.isAndroid) return;
+    final chats = widget.activeChats;
+    final notifications = widget.notifications;
+    final prefs = widget.connManager.prefs;
+    final controller = TurnKeepAliveController(
+      platform: MethodChannelTurnKeepAlivePlatform(),
+      working: () => anyChatTurnWorking(chats),
+      transportUp: () => workingChatsConnected(chats),
+      allTransportUp: () => allWorkingChatsConnected(chats),
+      enabled: () => notifications.keepAliveWhileWorking,
+      // Same rule as the background check: with App Lock nothing runs.
+      appLocked: () =>
+          liveTurnAppLocked(prefs) || widget.appLock.locked.value,
+      notificationsAllowed: notifications.permissionGranted,
+      copy: notifications.keepAliveNoticeCopy,
+      onReleasedMidTurn: notifications.restartLiveTurnCheck,
+    );
+    _turnKeepAlive = controller;
+    chats.liveStatusRevision.addListener(controller.reevaluate);
+    chats.activeIds.addListener(controller.reevaluate);
+    ConnectionStatusRegistry.instance.changes.addListener(
+      controller.reevaluate,
+    );
+    widget.appLock.locked.addListener(controller.reevaluate);
+    notifications.onKeepAliveChanged = controller.reevaluate;
+  }
+
+  void _disposeTurnKeepAlive() {
+    final controller = _turnKeepAlive;
+    if (controller == null) return;
+    _turnKeepAlive = null;
+    widget.activeChats.liveStatusRevision.removeListener(controller.reevaluate);
+    widget.activeChats.activeIds.removeListener(controller.reevaluate);
+    ConnectionStatusRegistry.instance.changes.removeListener(
+      controller.reevaluate,
+    );
+    widget.appLock.locked.removeListener(controller.reevaluate);
+    widget.notifications.onKeepAliveChanged = null;
+    controller.dispose();
+  }
+
   @override
   void didHaveMemoryPressure() {
     super.didHaveMemoryPressure();
@@ -1675,15 +1940,20 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _appLifecycle = state;
+    _turnKeepAlive?.lifecycleChanged(state);
     // Battery saver can change while the app is in the background.
     if (state == AppLifecycleState.resumed) {
       unawaited(FrostedBackdropPolicy.refresh());
+      // Widgets placed or resized meanwhile get their pictures now.
+      _redrawLauncherWidgets();
     }
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.hidden ||
         state == AppLifecycleState.detached) {
       unawaited(widget.activeChats.globalActivity.flushJournal());
-      unawaited(updateHomeWidget((snapshot) => snapshot));
+      // Not news: keep the snapshot's own time so the launcher does not
+      // show a finished turn as fresh for another freshness window.
+      unawaited(updateHomeWidget((snapshot) => snapshot, restamp: false));
       // cs1215: Android may kill the process from here; keep what is on
       // screen for the next cold start (encrypted, bounded).
       widget.activeChats.persistColdStartTails();
@@ -1709,6 +1979,7 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     GatewayReconnectBackoff.backgroundCadence =
         state != AppLifecycleState.resumed;
     if (state == AppLifecycleState.resumed) {
+      _networkAvailabilityListener?.resume();
       _gatewayIdleTimer?.cancel();
       _gatewayIdleTimer = null;
       _sshIdleTimer?.cancel();
@@ -1719,10 +1990,15 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
           unawaited(widget.notifications.recoverPlatformOpen());
         }
       });
+      // Back in the foreground is a wake, as a validated network is: the
+      // sockets parked while idle redial quietly, the live ones are probed
+      // (one may have died, unclosed, while the app was frozen; the chats'
+      // own probe shares the flight), and the backoff ladder built in the
+      // background (up to 60 s) is forgotten once per holdoff so nobody
+      // waits it out in the foreground.
+      unawaited(SharedGatewayPool.instance.wakeAfterResume());
+      widget.activeChats.requestImmediateTransportRecovery();
       widget.activeChats.reconcileAfterResume();
-      // The list's and Home's sockets too: one may have died, unclosed,
-      // while the app was frozen (the chats' own probe shares the flight).
-      unawaited(SharedGatewayPool.instance.probeLive());
       _resumeHermesUpdates();
       // Volver a primer plano no deshace una pausa explícita; el usuario puede
       // continuar con el orbe o desde la notificación.
@@ -1733,20 +2009,11 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     } else if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.hidden ||
         state == AppLifecycleState.detached) {
-      _gatewayIdleTimer ??= Timer(_gatewayIdleGrace, () {
-        _gatewayIdleTimer = null;
-        if (_appLifecycle != AppLifecycleState.resumed) {
-          SharedGatewayPool.instance.disconnectIdle();
-          // co1215: released chats' parked sockets follow the same rule.
-          widget.activeChats.closeWarmGateways();
-        }
-      });
-      // No cerramos el WebSocket por lifecycle. Android puede encadenar
-      // hidden/paused/detached durante un selector, un cambio de red o una
-      // suspensión breve; cerrar aquí convierte una transición local en
-      // client_gone y el gateway puede cancelar un turno remoto aún activo.
-      // Al volver a foreground, reconcileAfterResume recupera cualquier corte
-      // real de transporte sin destruir trabajo deliberadamente.
+      _armGatewayIdleTimer();
+      // ActiveChat parks its chat transport after the shared background grace
+      // and reconciles durable completion on resume. Repeated
+      // hidden/paused/detached edges share that same park; while the app is
+      // away, alerts come from the opt-in background listening.
       // Sin opt-in de pantalla bloqueada, pausa y silencia micro+TTS. Con opt-in
       // no se toca el bucle: ya está protegido por el FGS iniciado en foreground.
       // GPT-Live follows the same opt-in for a session that is already open
@@ -2050,8 +2317,29 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     if (taskId != null && taskId.isNotEmpty) {
       nav.push(
         MaterialPageRoute(
-          builder: (_) =>
-              TasksScreen(connection: connection, initialTaskId: taskId),
+          builder: (_) => TasksScreen(
+            connection: connection,
+            initialBoard: open.boardId,
+            initialTaskId: taskId,
+          ),
+        ),
+      );
+      await WidgetsBinding.instance.endOfFrame;
+      return NavigationDeliveryOutcome.delivered;
+    }
+
+    // A finished SFTP download, written where the user chose: Abrir,
+    // Compartir and Guardar otra copia… of that document.
+    final download = open.downloadUri;
+    if (download != null && download.isNotEmpty) {
+      final menuContext = nav.overlay?.context ?? nav.context;
+      // Read after awaits: the navigator may be gone by now. Then nothing
+      // was shown, and the notification stays to be delivered.
+      if (!menuContext.mounted) return NavigationDeliveryOutcome.deferred;
+      unawaited(
+        showSavedDocumentActions(
+          menuContext,
+          SavedDocument(uri: download, name: open.downloadName ?? '', bytes: 0),
         ),
       );
       await WidgetsBinding.instance.endOfFrame;
@@ -2763,19 +3051,17 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
   }
 
   /// [followSystem] is the "Auto" segment: the family follows the system.
+  ///
+  /// Choosing a theme of the catalogue puts it in force over Look & Feel
+  /// (which keeps its own choices for «Volver al Look & Feel»).
   Future<void> setThemeId(String id, {bool followSystem = false}) async {
     await themeProfileStore.activate(id, followSystem: followSystem);
+    await lookFeel.useList();
     await refreshThemeProfiles();
   }
 
   Future<void> _syncNativeAppearance(ThemeProfileStoreSnapshot snapshot) =>
-      NativeAppearance.sync(
-        activeThemeBrightness(
-          snapshot,
-          platformBrightness:
-              WidgetsBinding.instance.platformDispatcher.platformBrightness,
-        ),
-      );
+      NativeAppearance.sync(_activeBrightness(snapshot));
 
   @override
   void didChangePlatformBrightness() {
@@ -2783,8 +3069,9 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     // With "Auto" the app swaps theme on its own (MaterialApp.darkTheme);
     // the native day/night setting and the home widget follow here.
     final snapshot = themeProfiles.value;
-    if (followSystemThemeIds(snapshot) == null) return;
+    if (!_followsSystem) return;
     unawaited(_syncNativeAppearance(snapshot));
+    _redrawLauncherWidgets();
     unawaited(
       updateHomeWidget(
         (current) => current.copyWith(theme: _homeWidgetTheme(snapshot)),
@@ -2800,6 +3087,7 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     themeProfiles.value = snapshot;
     themeId.value = snapshot.activeProfileId;
     unawaited(_syncNativeAppearance(snapshot));
+    _redrawLauncherWidgets();
     unawaited(
       updateHomeWidget(
         (current) => current.copyWith(theme: _homeWidgetTheme(snapshot)),
@@ -2811,11 +3099,26 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
   Future<void> setFontId(String id) async {
     await HermesApp.setFontId(widget.connManager.prefs, id);
     fontId.value = id;
+    _redrawLauncherWidgets();
+  }
+
+  @override
+  void didChangeTextScaleFactor() {
+    super.didChangeTextScaleFactor();
+    // The pictures are typeset at the system's text size.
+    _redrawLauncherWidgets();
+  }
+
+  @override
+  void didChangeLocales(List<Locale>? locales) {
+    super.didChangeLocales(locales);
+    _redrawLauncherWidgets();
   }
 
   Future<void> setLocaleId(String id) async {
     await HermesApp.setLocaleId(widget.connManager.prefs, id);
     localeId.value = id;
+    _redrawLauncherWidgets();
   }
 
   /// Inicializa la escucha de deep links `hermes://pair` (enlace de emparejado).
@@ -2989,17 +3292,38 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
         return;
       }
 
+      // The user sees what arrived before it becomes a draft: can drop
+      // items and pick the instance. Backing out discards the share.
+      final review = await nav.push<SharedReviewResult>(
+        MaterialPageRoute(
+          builder: (_) => SharedReviewScreen(
+            content: content,
+            connections: connections,
+            initialConnectionId: connection.id,
+          ),
+        ),
+      );
+      if (review == null) {
+        await _shareInbox.acknowledge(content.id);
+        WidgetsBinding.instance.addPostFrameCallback(
+          (_) => _retryPendingShare(),
+        );
+        return;
+      }
+      final reviewed = review.content;
+      connection = review.connection;
+
       final sessionId = generateSessionId();
       await ChatDraftStore(
         widget.connManager.prefs,
-      ).save(connection.id, sessionId, content.text, content.attachments);
-      await _shareInbox.acknowledge(content.id);
+      ).save(connection.id, sessionId, reviewed.text, reviewed.attachments);
+      await _shareInbox.acknowledge(reviewed.id);
       if (!mounted) return;
 
-      final textTitle = Session.titleFromText(content.text);
-      final attachmentTitle = content.attachments.isEmpty
+      final textTitle = Session.titleFromText(reviewed.text);
+      final attachmentTitle = reviewed.attachments.isEmpty
           ? ''
-          : content.attachments.first.name.trim();
+          : reviewed.attachments.first.name.trim();
       final title = textTitle.isNotEmpty
           ? textTitle
           : attachmentTitle.isNotEmpty
@@ -3013,14 +3337,14 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
         source: 'android-share',
         messageCount: 0,
         isActive: false,
-        preview: content.text,
+        preview: reviewed.text,
         startedAt: now,
         updatedAt: now,
         hasLocalDraft: true,
         profile: _sessionProfileOwner(connection),
       );
       _shareWaitingNoticeShown = false;
-      if (content.rejectedAttachments > 0) {
+      if (reviewed.rejectedAttachments > 0) {
         AppFeedback.ofNavigator(nav)?.notify(
           FeedbackKind.error,
           Strings.of(nav.context).shareSomeFilesRejected,
@@ -3058,6 +3382,7 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
 
     _sshIdleTimer?.cancel();
     _gatewayIdleTimer?.cancel();
+    _disposeTurnKeepAlive();
     _externalDataSyncControl.setMethodCallHandler(null);
     _linkSub?.cancel();
     widget.appLock.locked.removeListener(_openCatalogLinks);
@@ -3075,6 +3400,7 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
       _onHomeWidgetConnectionChanged,
     );
     _homeWidgetDeletedSessions.dispose();
+    LauncherWidgetImagePublisher.instance.configure(null);
     widget.appLock.locked.removeListener(_retryPendingNewSessionLaunch);
     widget.appLock.locked.removeListener(_onAppLockNoticeGateChanged);
     widget.appLock.locked.removeListener(_restoreColdStartTailsAfterUnlock);
@@ -3095,6 +3421,9 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     companionPresence.dispose();
     themeId.dispose();
     themeProfiles.dispose();
+    lookFeel
+      ..removeListener(_onLookFeelChanged)
+      ..dispose();
     fontId.dispose();
     localeId.dispose();
     voice.prepareReadAloudPlayback = null;
@@ -3116,7 +3445,18 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => ListenableBuilder(
+    // The glass level and the style re-derive the theme (the button gradient,
+    // the capitals); the backdrop and the surfaces listen on their own.
+    listenable: Listenable.merge([
+      GlassLookPrefs.shared,
+      HermesStylePrefs.shared,
+      lookFeel,
+    ]),
+    builder: (context, _) => _buildApp(context),
+  );
+
+  Widget _buildApp(BuildContext context) {
     return ValueListenableBuilder<ThemeProfileStoreSnapshot>(
       valueListenable: themeProfiles,
       builder: (context, profiles, _) {
@@ -3126,14 +3466,27 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
         // "Auto": the family's light variant is the theme and its dark
         // variant the darkTheme, so Material follows the system itself.
         final auto = followSystemThemeIds(profiles);
-        final activeTheme = auto != null
+        // Look & Feel in force: its derived theme (and, with «Sistema», the
+        // dark one for Material to swap to). Otherwise the catalogue.
+        final look = lookFeel.settings.derived
+            ? LookFeel.materialThemes(
+                lookFeel.settings,
+                componentProfile: component,
+              )
+            : null;
+        final activeTheme = look != null
+            ? look.theme
+            : auto != null
             ? AppTheme.fromId(auto.light, componentProfile: component)
             : custom == null
             ? AppTheme.fromId(id, componentProfile: component)
             : AppTheme.fromProfile(custom, componentProfile: component);
-        final darkTheme = auto == null
+        final darkTheme = look != null
+            ? look.darkTheme
+            : auto == null
             ? null
             : AppTheme.fromId(auto.dark, componentProfile: component);
+        final style = HermesStylePrefs.shared.style;
         return ValueListenableBuilder<String>(
           valueListenable: fontId,
           builder: (context, font, _) => ValueListenableBuilder<String>(
@@ -3148,12 +3501,24 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
               localizationsDelegates: Strings.localizationsDelegates,
               supportedLocales: Strings.supportedLocales,
               localeResolutionCallback: AppLocales.resolve,
-              theme: AppFonts.applyToTheme(activeTheme, AppFonts.byId(font)),
+              theme: hermesAmbientTheme(
+                applyHermesStyle(
+                  AppFonts.applyToTheme(activeTheme, AppFonts.byId(font)),
+                  style,
+                ),
+              ),
               darkTheme: darkTheme == null
                   ? null
-                  : AppFonts.applyToTheme(darkTheme, AppFonts.byId(font)),
+                  : hermesAmbientTheme(
+                      applyHermesStyle(
+                        AppFonts.applyToTheme(darkTheme, AppFonts.byId(font)),
+                        style,
+                      ),
+                    ),
               // Transición suave al cambiar de tema (sensación premium).
-              themeAnimationDuration: const Duration(milliseconds: 420),
+              // The theme change is the circle reveal (HermesThemeRevealHost),
+              // always on: the theme itself must switch at once under it.
+              themeAnimationDuration: Duration.zero,
               themeAnimationCurve: Curves.easeInOutCubic,
               navigatorKey: _navigatorKey,
               scaffoldMessengerKey: _messengerKey,
@@ -3211,7 +3576,25 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
                               sources: _mascot.sources,
                               actions: _mascotActions(),
                               suspended: _showOnboarding || _homeHeldByLock,
-                              child: navChild!,
+                              // Pages are transparent over the ambient light:
+                              // this one sits behind the whole navigator, so
+                              // a route that brings none of its own (the
+                              // lock, onboarding) is never a hole.
+                              child: HermesThemeRevealHost(
+                                child: GlassLookScope(
+                                  prefs: GlassLookPrefs.shared,
+                                  child: HermesStyleScope(
+                                    prefs: HermesStylePrefs.shared,
+                                    child: HermesAmbientBackdrop(
+                                      child: BotMotionScope(
+                                        child: HermesTapHaptics(
+                                          child: navChild!,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
                             ),
                           ),
                         ),

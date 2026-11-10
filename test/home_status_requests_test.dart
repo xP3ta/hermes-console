@@ -4,10 +4,16 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/home/board/home_board_model.dart';
+import 'package:hermes_android/core/home/board/home_board_store.dart';
+import 'package:hermes_android/core/home/board/home_board_view.dart';
 import 'package:hermes_android/core/screens/home_dashboard_screen.dart';
 import 'package:hermes_android/core/models/kanban.dart';
 import 'package:hermes_android/core/models/mission_control.dart';
 import 'package:hermes_android/core/models/home_widget_snapshot.dart';
+import 'package:hermes_android/core/models/agent_profile.dart';
+import 'package:hermes_android/core/services/bot_roster_cache.dart';
+import 'package:hermes_android/core/services/bot_roster_store.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/home_widget_publisher.dart';
 import 'package:hermes_android/core/services/mission_control_repository.dart';
@@ -144,6 +150,11 @@ void main() {
     MissionSnapshotPrewarm? prewarm,
     bool botModeOpened = false,
     HermesHomeWidgetPublisher? homeWidget,
+    Future<void> Function(
+      ConnectionManager manager,
+      SavedConnection connection,
+    )?
+    beforeMount,
   }) async {
     final manager = await ConnectionManager.create(
       await SharedPreferences.getInstance(),
@@ -160,6 +171,7 @@ void main() {
     if (botModeOpened) {
       await MissionSnapshotPrewarm.markOpened(manager.prefs, connection.id);
     }
+    await beforeMount?.call(manager, connection);
     await tester.pumpWidget(
       MaterialApp(
         locale: const Locale('en'),
@@ -204,6 +216,51 @@ void main() {
     expect(find.text('Hola'), findsWidgets);
     expect(server.count('/api/status'), 1);
     expect(server.count('/api/sessions'), 1);
+    await unmount(tester);
+  });
+
+  // qrc: a Home covered by another route (a chat) does not re-probe on a
+  // resume; its own refresh runs when it is uncovered again (didPopNext).
+  testWidgets('a covered Home does not re-probe the server on resume', (
+    tester,
+  ) async {
+    final server = _Server();
+    await pumpHome(tester, server);
+    await settleHome(tester);
+    final visibleBefore = server.count('/api/status');
+    final state = tester.state(find.byType(HomeDashboardScreen));
+    (state as WidgetsBindingObserver).didChangeAppLifecycleState(
+      AppLifecycleState.resumed,
+    );
+    await settleHome(tester);
+    expect(
+      server.count('/api/status'),
+      visibleBefore + 1,
+      reason: 'a visible Home re-probes',
+    );
+
+    final context = tester.element(find.byType(HomeDashboardScreen));
+    unawaited(
+      Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => const Scaffold(body: Text('over home')),
+        ),
+      ),
+    );
+    await settleHome(tester);
+    expect(find.text('over home'), findsOneWidget);
+    final coveredBefore = server.count('/api/status');
+    (tester.state(find.byType(HomeDashboardScreen, skipOffstage: false))
+            as WidgetsBindingObserver)
+        .didChangeAppLifecycleState(AppLifecycleState.resumed);
+    await settleHome(tester);
+    expect(
+      server.count('/api/status'),
+      coveredBefore,
+      reason: 'covered: nothing competes with the chat on top',
+    );
+    Navigator.of(context).pop();
+    await settleHome(tester);
     await unmount(tester);
   });
 
@@ -285,6 +342,13 @@ void main() {
       expect(find.text('online · Default'), findsOneWidget);
       expect(find.text('Hola'), findsWidgets);
 
+      final knownChats = tester
+          .widget<HomeBoardView>(find.byType(HomeBoardView))
+          .data
+          .chats
+          .map((chat) => (chat.key, chat.title))
+          .toList();
+
       if (failure == '503') {
         server.sessionsStatus = 503;
       } else {
@@ -308,7 +372,25 @@ void main() {
       expect(offlineSeconds, 0);
       expect(find.text('offline · QA'), findsNothing);
       expect(find.text('online · Default'), findsOneWidget);
-      expect(find.text('Hola'), findsWidgets, reason: 'keep the known list');
+      // The warning takes room from the adaptive board, which may omit chat
+      // preview rows. Test cached identities/titles independently of its size.
+      expect(
+        tester
+            .widget<HomeBoardView>(find.byType(HomeBoardView))
+            .data
+            .chats
+            .map((chat) => (chat.key, chat.title)),
+        orderedEquals(knownChats),
+        reason: 'a list failure must retain the actual cached chat data',
+      );
+      server
+        ..sessionsStatus = 200
+        ..sessionsDelay = Duration.zero;
+      (state as WidgetsBindingObserver).didChangeAppLifecycleState(
+        AppLifecycleState.resumed,
+      );
+      await settleHome(tester);
+      expect(find.text('Hola'), findsWidgets, reason: 'chat preview returns');
       await unmount(tester);
     });
   }
@@ -558,6 +640,51 @@ void main() {
     });
   });
 
+  group('Bots widget after a cold start', () {
+    // The roster restored from disk is display data: it must paint the Bots
+    // widget while the live read is still on the wire, not a placeholder.
+    testWidgets('a cached roster paints before any live read', (tester) async {
+      final hold = Completer<void>();
+      final warm = MissionSnapshotPrewarm(
+        cache: MissionSnapshotCache(),
+        sourceFactory: (_) => _WarmSource(hold: hold),
+      );
+      const profiles = [
+        AgentProfile(name: 'default', isDefault: true, displayName: 'Main'),
+        AgentProfile(name: 'nova', displayName: 'Nova Cached'),
+      ];
+      var cachedSeeded = false;
+      await pumpHome(
+        tester,
+        _Server(),
+        prewarm: warm,
+        beforeMount: (manager, connection) async {
+          BotRosterRegistry.shared.forget(connection.id);
+          await BotRosterCache(manager.prefs).write(connection, profiles);
+          await manager.prefs.setString(
+            HomeBoardStore.keyFor(connection.id, 'default'),
+            HomeBoardLayout([
+              HomeWidgetInstance(
+                id: 't',
+                kind: HomeWidgetKind.team,
+                size: HomeWidgetSize.wide,
+              ),
+            ]).encode(),
+          );
+          BotRosterRegistry.shared.hydrate(connection, prefs: manager.prefs);
+          cachedSeeded =
+              BotRosterRegistry.shared.store(connection.id).snapshot != null;
+        },
+      );
+      await tester.pump(const Duration(seconds: 1));
+      expect(cachedSeeded, isTrue, reason: 'the fixture restored a roster');
+      expect(find.text('nova'), findsOneWidget, reason: 'the cached roster');
+      hold.complete();
+      await tester.pump();
+      await unmount(tester);
+    });
+  });
+
   group('Bot Mode prewarm from Home', () {
     ({MissionSnapshotPrewarm warm, List<_WarmSource> built}) prewarm({
       Completer<void>? hold,
@@ -574,60 +701,39 @@ void main() {
       return (warm: warm, built: built);
     }
 
-    testWidgets('Bot Mode used before: one background read once Home idles', (
+    testWidgets('Home reads Bot Mode itself, at most once a minute', (
       tester,
     ) async {
       final p = prewarm();
-      await pumpHome(tester, _Server(), prewarm: p.warm, botModeOpened: true);
-      expect(p.built, isEmpty, reason: 'not before Home is idle');
-      await tester.pump(const Duration(seconds: 2));
+      await pumpHome(tester, _Server(), prewarm: p.warm);
       await tester.pump();
-      expect(p.built, hasLength(1));
+      expect(p.built, hasLength(1), reason: 'Bots and Salas paint from it');
       expect(p.built.single.loads, 1);
-      await tester.pump(const Duration(seconds: 10));
-      expect(p.built, hasLength(1), reason: 'never periodic');
+      await tester.pump(const Duration(seconds: 12));
+      await tester.pump();
+      expect(p.built, hasLength(1), reason: 'not on every ~10 s refresh');
       await unmount(tester);
     });
 
-    testWidgets('Bot Mode never used here: no prewarm, no extra network', (
+    testWidgets('never opened Bot Mode here: Home still reads it', (
       tester,
     ) async {
       final p = prewarm();
       final server = _Server();
       await pumpHome(tester, server, prewarm: p.warm);
       await tester.pump(const Duration(seconds: 5));
-      expect(p.built, isEmpty);
+      expect(p.built, hasLength(1));
       expect(server.count('/api/sessions'), 1);
       await unmount(tester);
     });
 
-    testWidgets('going to background before Home idles cancels it', (
-      tester,
-    ) async {
-      final p = prewarm();
-      await pumpHome(tester, _Server(), prewarm: p.warm, botModeOpened: true);
-      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
-      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
-      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
-      await tester.pump(const Duration(seconds: 5));
-      expect(p.built, isEmpty);
-      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
-      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
-      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
-      // Back in front: Home refreshes and, once idle, warms exactly once.
-      await tester.pump(const Duration(seconds: 3));
-      await tester.pump();
-      expect(p.built, hasLength(1));
-      await unmount(tester);
-    });
-
-    testWidgets('going to background mid-read tears the read down', (
+    testWidgets('going to background mid-read tears it down and Home retries', (
       tester,
     ) async {
       final hold = Completer<void>();
       final p = prewarm(hold: hold);
-      await pumpHome(tester, _Server(), prewarm: p.warm, botModeOpened: true);
-      await tester.pump(const Duration(seconds: 2));
+      await pumpHome(tester, _Server(), prewarm: p.warm);
+      await tester.pump();
       expect(p.built.single.loads, 1);
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
@@ -637,17 +743,19 @@ void main() {
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pump();
+      expect(
+        p.built.length,
+        greaterThanOrEqualTo(2),
+        reason: 'a cancelled read does not count as read',
+      );
       await unmount(tester);
     });
 
     testWidgets('an offline instance is not prewarmed', (tester) async {
       final p = prewarm();
-      await pumpHome(
-        tester,
-        _Server(healthStatus: 503),
-        prewarm: p.warm,
-        botModeOpened: true,
-      );
+      await pumpHome(tester, _Server(healthStatus: 503), prewarm: p.warm);
       await tester.pump(const Duration(seconds: 5));
       expect(p.built, isEmpty);
       await unmount(tester);

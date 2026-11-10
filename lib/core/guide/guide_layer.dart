@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 
 import '../../l10n/app_localizations.dart';
+import '../design/ambient_backdrop.dart' show hermesTonalButtonStyle;
 import '../theme/app_theme.dart';
 import 'guided_tour.dart';
 
@@ -434,6 +435,7 @@ class _GuideLayerState extends State<GuideLayer> {
             child: Text(strings.gdTourBack),
           ),
         FilledButton.tonal(
+          style: hermesTonalButtonStyle,
           key: const ValueKey('guide-next'),
           onPressed: _c.next,
           child: Text(last ? strings.gdTourDone : strings.gdTourNext),

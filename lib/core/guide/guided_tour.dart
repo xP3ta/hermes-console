@@ -96,9 +96,10 @@ List<GuideStep> guideStepsFor(GuideTourId tour) => switch (tour) {
       title: (s) => s.gt1215ChatComposerTitle,
       body: (s) => s.gt1215ChatComposerBody,
     ),
+    // Vistas v3: the notch's sheet is «Ajustes», a button of the header.
     GuideStep(
-      id: 'chat-notch',
-      targets: const ['chat-notch'],
+      id: 'chat-settings',
+      targets: const ['chat-settings-button'],
       title: (s) => s.gt1215ChatNotchTitle,
       body: (s) => s.gt1215ChatNotchBody,
     ),

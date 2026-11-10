@@ -22,6 +22,8 @@ const _finalIds = [
   'gruvbox-light',
   'sage-garden',
   'sage-garden-light',
+  'indigo-glass',
+  'indigo-glass-light',
   'nous',
   'nous-dark',
   'github',
@@ -101,7 +103,7 @@ void main() {
       }
     });
 
-    test('20 families, each with exactly one light and one dark variant', () {
+    test('21 families, each with exactly one light and one dark variant', () {
       final families = <String, List<HermesThemePreset>>{};
       for (final preset in AppTheme.presets) {
         families.putIfAbsent(preset.familyId, () => []).add(preset);
@@ -115,6 +117,7 @@ void main() {
         'dracula',
         'gruvbox',
         'sage-garden',
+        'indigo-glass',
         'nous',
         'github',
         'catppuccin',
@@ -128,7 +131,7 @@ void main() {
         'slate',
         'cyberpunk',
       ]);
-      expect(AppTheme.familyCount, 20);
+      expect(AppTheme.familyCount, 21);
       families.forEach((family, variants) {
         expect(variants, hasLength(2), reason: family);
         expect(variants.map((p) => p.brightness).toSet(), {

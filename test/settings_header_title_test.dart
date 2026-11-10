@@ -70,6 +70,17 @@ void main() {
         .data;
   }
 
+  /// The instance card's brand label (screenSettingsBrand) is the only text
+  /// that may still say «HERMES CONSOLE»: the title row (checked apart) must
+  /// not.
+  void expectOnlyTheBrand() {
+    expect(
+      find.text('HERMES CONSOLE').evaluate().length,
+      lessThanOrEqualTo(1),
+      reason: 'only the brand label of the instance card',
+    );
+  }
+
   test('a fresh install reads CONSOLE', () async {
     SharedPreferences.setMockInitialValues({});
     final prefs = await SharedPreferences.getInstance();
@@ -130,7 +141,7 @@ void main() {
   testWidgets('Settings: a fresh install shows CONSOLE', (tester) async {
     await pumpSettings(tester);
     expect(await rowTitle(tester), 'CONSOLE');
-    expect(find.text('HERMES CONSOLE'), findsNothing);
+    expectOnlyTheBrand();
   });
 
   testWidgets('Settings: the former default, stored, shows CONSOLE', (
@@ -138,7 +149,7 @@ void main() {
   ) async {
     await pumpSettings(tester, stored: 'HERMES CONSOLE');
     expect(await rowTitle(tester), 'CONSOLE');
-    expect(find.text('HERMES CONSOLE'), findsNothing);
+    expectOnlyTheBrand();
   });
 
   testWidgets('Ajustes y la cabecera comparten siempre el mismo título', (

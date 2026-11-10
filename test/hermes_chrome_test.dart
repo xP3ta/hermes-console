@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/design/floating.dart';
 import 'package:hermes_android/core/design/tokens.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
+import 'package:hermes_android/core/theme/lines.dart';
 import 'package:hermes_android/core/theme/theme_contrast.dart';
 
 /// CIE L* of [color] (perceptual lightness, 0–100).
@@ -144,7 +145,17 @@ void main() {
       final chrome = HermesChrome.of(colors);
       expect(chrome.dark, isFalse);
       expect(chrome.fill.withValues(alpha: 1), const Color(0xFFFFFFFF));
-      expect(chrome.line.a, closeTo(0.11, 0.005));
+      // The hairline is the main ink, from its floor up to where the edge
+      // of a piece reads against the page at the contour ratio.
+      expect(chrome.line.withValues(alpha: 1), colors.textPrimary);
+      expect(chrome.line.a, greaterThanOrEqualTo(HermesChrome.lineFloorLight));
+      expect(
+        ThemeContrast.ratio(
+          ThemeContrast.composite(chrome.line, chrome.opaque),
+          colors.background,
+        ),
+        greaterThanOrEqualTo(HermesLines.contourRatio),
+      );
     });
   });
 

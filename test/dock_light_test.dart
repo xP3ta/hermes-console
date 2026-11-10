@@ -10,6 +10,7 @@
 // one just picked, settles under it and goes out. At rest there is no
 // light at all.
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show BackdropFilterLayer;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/config/feature_flags.dart';
 import 'package:hermes_android/core/shell/dock_geometry.dart';
@@ -28,9 +29,12 @@ const _tabs = [
   GestureDockTab.create,
   GestureDockTab.search,
   GestureDockTab.bots,
-  GestureDockTab.tools,
+  GestureDockTab.settings,
 ];
 
+// QA 9709 (dock-final): «Nuevo chat» is the round piece beside the pill, so
+// the light runs over the pill's places only: Inicio 0, Chats 1, Bots 2,
+// Ajustes 3.
 const _lightKey = ValueKey('gesture-dock-light');
 
 Finder _item(GestureDockTab tab) =>
@@ -170,10 +174,10 @@ void main() {
         moreOrLessEquals(_slotCenter(tester, GestureDockTab.home)),
       );
 
-      await tester.tap(_item(GestureDockTab.tools));
+      await tester.tap(_item(GestureDockTab.settings));
       // The light left on the tap, before the next screen is there.
       expect(_light.moving, isTrue);
-      expect(_light.target, 4);
+      expect(_light.target, 3);
       rebuild(() {});
       final frames = await _watch(tester);
 
@@ -183,16 +187,16 @@ void main() {
         expect(positions[i], greaterThanOrEqualTo(positions[i - 1]));
       }
       expect(positions.first, lessThan(1), reason: 'it starts where it was');
-      final arrived = positions.indexWhere((p) => p > 3.999);
+      final arrived = positions.indexWhere((p) => p > 2.999);
       expect((arrived + 1) * 16, inInclusiveRange(240, 320));
       // Lit while it travels.
       expect(frames[arrived ~/ 2].$2, greaterThan(.9));
       // It ends centred on the item, and dark.
-      expect(_light.position, 4);
+      expect(_light.position, 3);
       expect(_light.strength, 0);
       expect(
         _measure(tester).light.center.dx,
-        moreOrLessEquals(_slotCenter(tester, GestureDockTab.tools)),
+        moreOrLessEquals(_slotCenter(tester, GestureDockTab.settings)),
       );
       expect(tester.binding.hasScheduledFrame, isFalse);
     });
@@ -202,18 +206,18 @@ void main() {
       _phone(tester);
       await tester.pumpWidget(_app(_screen(GestureDockTab.home)));
       await tester.pump();
-      await tester.tap(_item(GestureDockTab.tools));
+      await tester.tap(_item(GestureDockTab.settings));
       for (var i = 0; i < 6; i++) {
         await tester.pump(const Duration(milliseconds: 16));
       }
       final reached = _light.position;
       final lit = _light.strength;
-      expect(reached, inExclusiveRange(1, 4));
+      expect(reached, inExclusiveRange(1, 3));
 
       await tester.tap(_item(GestureDockTab.search));
       expect(_light.position, reached, reason: 'no restart from the origin');
       expect(_light.strength, lit, reason: 'it does not blink');
-      expect(_light.target, 2);
+      expect(_light.target, 1);
       final frames = await _watch(tester);
       final positions = [reached, for (final f in frames) f.$1];
       for (var i = 1; i < positions.length; i++) {
@@ -222,9 +226,9 @@ void main() {
           lessThanOrEqualTo(positions[i - 1]),
           reason: 'straight to the new item, never past it and back',
         );
-        expect(positions[i], greaterThanOrEqualTo(2));
+        expect(positions[i], greaterThanOrEqualTo(1));
       }
-      expect(_light.position, 2);
+      expect(_light.position, 1);
       expect(_light.strength, 0);
     });
 
@@ -241,7 +245,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 16));
       expect(_light.position, greaterThan(reached));
       await _watch(tester);
-      expect(_light.position, 3);
+      expect(_light.position, 2);
     });
 
     testWidgets('right-to-left: the light is under the item as drawn', (
@@ -256,11 +260,11 @@ void main() {
         _measure(tester).light.center.dx,
         moreOrLessEquals(_slotCenter(tester, GestureDockTab.home)),
       );
-      await tester.tap(_item(GestureDockTab.tools));
+      await tester.tap(_item(GestureDockTab.settings));
       await _watch(tester);
       expect(
         _measure(tester).light.center.dx,
-        moreOrLessEquals(_slotCenter(tester, GestureDockTab.tools)),
+        moreOrLessEquals(_slotCenter(tester, GestureDockTab.settings)),
       );
     });
   });
@@ -280,8 +284,8 @@ void main() {
       expect(taps, [GestureDockTab.create]);
       expect(_light.moving, isFalse);
       expect(_light.strength, 0);
-      expect(_light.position, 2);
-      expect(_light.target, 2);
+      expect(_light.position, 1);
+      expect(_light.target, 1);
     });
 
     testWidgets('a long press and a slide over the bar leave it too', (
@@ -291,7 +295,7 @@ void main() {
       await tester.pumpWidget(_app(_screen(GestureDockTab.search)));
       await tester.pump();
       final hold = await tester.startGesture(
-        tester.getCenter(_item(GestureDockTab.tools)),
+        tester.getCenter(_item(GestureDockTab.settings)),
       );
       await tester.pump(const Duration(milliseconds: 600));
       await hold.up();
@@ -303,7 +307,7 @@ void main() {
       await slide.up();
       await tester.pump();
       expect(_light.moving, isFalse);
-      expect(_light.position, 2);
+      expect(_light.position, 1);
       expect(_light.strength, 0);
     });
 
@@ -322,13 +326,13 @@ void main() {
 
       _light.addListener(record);
       addTearDown(() => _light.removeListener(record));
-      await tester.tap(_item(GestureDockTab.tools));
-      expect(_light.position, 4);
+      await tester.tap(_item(GestureDockTab.settings));
+      expect(_light.position, 3);
       expect(_light.moving, isFalse);
       for (var i = 0; i < 30; i++) {
         await tester.pump(const Duration(milliseconds: 16));
       }
-      expect(seen, {0.0, 4.0});
+      expect(seen, {0.0, 3.0});
       expect(tester.binding.hasScheduledFrame, isFalse);
     });
   });
@@ -371,7 +375,7 @@ void main() {
       for (var i = 1; i < positions.length; i++) {
         expect(positions[i], greaterThanOrEqualTo(positions[i - 1]));
       }
-      expect(_light.position, 3);
+      expect(_light.position, 2);
       expect(_light.strength, 0);
 
       // Back: Home's dock is in view again and the light returns to Inicio.
@@ -396,7 +400,7 @@ void main() {
             GestureDockTab.projects,
             GestureDockTab.search,
             GestureDockTab.bots,
-            GestureDockTab.tools,
+            GestureDockTab.settings,
           ],
         ),
       );
@@ -473,12 +477,13 @@ void main() {
         ),
         findsNothing,
       );
-      // The bar itself no longer blurs what is behind it either.
-      expect(find.byType(BackdropFilter), findsNothing);
+      // The pill frosts what is behind it (QA 9709): one filter, around
+      // the pill, outside the light's own layer.
+      expect(tester.layers.whereType<BackdropFilterLayer>(), hasLength(1));
 
       await _c.setOpaque(true);
       await tester.pump();
-      expect(find.byType(BackdropFilter), findsNothing);
+      expect(tester.layers.whereType<BackdropFilterLayer>(), isEmpty);
       expect(
         find.descendant(
           of: find.byKey(const ValueKey('gesture-dock-opaque')),
@@ -486,9 +491,9 @@ void main() {
         ),
         findsOneWidget,
       );
-      await tester.tap(_item(GestureDockTab.tools));
+      await tester.tap(_item(GestureDockTab.settings));
       await _watch(tester);
-      expect(_light.position, 4);
+      expect(_light.position, 3);
     });
 
     testWidgets('a glide repaints the light and rebuilds nothing', (
@@ -515,7 +520,7 @@ void main() {
         element.visitChildren(count);
       }
 
-      await tester.tap(_item(GestureDockTab.tools));
+      await tester.tap(_item(GestureDockTab.settings));
       // The pressed item springs back for 120 ms (its own small rebuild).
       for (var i = 0; i < 10; i++) {
         await tester.pump(const Duration(milliseconds: 16));
@@ -537,13 +542,13 @@ void main() {
       _phone(tester);
       await tester.pumpWidget(_app(_screen(GestureDockTab.home)));
       await tester.pump();
-      await tester.tap(_item(GestureDockTab.tools));
+      await tester.tap(_item(GestureDockTab.settings));
       await tester.pump(const Duration(milliseconds: 32));
       expect(_light.moving, isTrue);
       await tester.pumpWidget(const SizedBox());
       expect(_light.moving, isFalse);
       expect(_light.strength, 0);
-      expect(_light.position, 4, reason: 'it ends where it was going');
+      expect(_light.position, 3, reason: 'it ends where it was going');
       await tester.pump(const Duration(milliseconds: 16));
       expect(tester.binding.hasScheduledFrame, isFalse);
     });
@@ -629,12 +634,12 @@ void main() {
       tester,
     ) async {
       _phone(tester);
-      await tester.pumpWidget(_app(_screen(GestureDockTab.tools)));
+      await tester.pumpWidget(_app(_screen(GestureDockTab.settings)));
       await tester.pump();
-      expect(_light.position, 4);
+      expect(_light.position, 3);
       await _c.setTabs([
         GestureDockTab.home,
-        GestureDockTab.tools,
+        GestureDockTab.settings,
         GestureDockTab.search,
       ]);
       await tester.pump();

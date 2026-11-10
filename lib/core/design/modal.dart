@@ -8,6 +8,7 @@ import '../theme/motion.dart';
 import '../theme/scroll_behavior.dart';
 import '../widgets/pill_morph.dart' show PillMorphDrag;
 import 'floating.dart';
+import 'glass_strip.dart';
 import 'tokens.dart';
 
 /// Call right before pushing a sheet or popup route over a screen with a text
@@ -91,6 +92,10 @@ class _KeyboardHandBack with WidgetsBindingObserver {
 ///   settles back. One that needs an answer ([barrierDismissible] false)
 ///   does not move.
 /// * IME and safe-area aware; scrollables inside clamp (no bounce).
+/// * [coversPage] false: a popup over the page (a menu, a popover), not a
+///   page, so a screen under it is not told it was left and came back.
+/// * [lifted]: a window that stands out over the page, with a deeper shadow
+///   and a rim of light (`HermesFloatingSurface.lifted`).
 Future<T?> showHermesSurface<T>({
   required BuildContext context,
   required WidgetBuilder builder,
@@ -103,6 +108,8 @@ Future<T?> showHermesSurface<T>({
   GlobalKey? anchorKey,
   Rect? originRect,
   HermesScrim scrim = HermesScrim.sheet,
+  bool coversPage = true,
+  bool lifted = false,
 }) {
   assert(maxWidth > 0);
   assert(maxHeightFactor > 0 && maxHeightFactor <= 1);
@@ -116,7 +123,28 @@ Future<T?> showHermesSurface<T>({
       origin = box.localToGlobal(Offset.zero) & box.size;
     }
   }
-  return Navigator.of(context, rootNavigator: useRootNavigator).push<T>(
+  final navigator = Navigator.of(context, rootNavigator: useRootNavigator);
+  if (!coversPage) {
+    return navigator.push<T>(
+      _HermesPopoverRoute<T>(
+        builder: builder,
+        focusScopeNode: focusScopeNode,
+        surfaceKey: surfaceKey,
+        maxWidth: maxWidth,
+        maxHeightFactor: maxHeightFactor,
+        barrierDismissible: barrierDismissible,
+        systemDismissible: systemDismissible,
+        barrierLabel: MaterialLocalizations.of(
+          context,
+        ).modalBarrierDismissLabel,
+        reduceMotion: reduceMotion,
+        origin: origin,
+        scrim: scrim,
+        lifted: lifted,
+      ),
+    );
+  }
+  return navigator.push<T>(
     _HermesSurfaceRoute<T>(
       builder: builder,
       focusScopeNode: focusScopeNode,
@@ -129,6 +157,7 @@ Future<T?> showHermesSurface<T>({
       reduceMotion: reduceMotion,
       origin: origin,
       scrim: scrim,
+      lifted: lifted,
     ),
   );
 }
@@ -171,49 +200,171 @@ class _HermesSurfaceRoute<T> extends PageRouteBuilder<T> {
     required bool reduceMotion,
     required Rect? origin,
     required HermesScrim scrim,
+    required bool lifted,
   }) : _focusScopeNode = focusScopeNode,
        super(
          opaque: false,
          barrierColor: scrim.color,
          barrierLabel: barrierLabel,
          maintainState: true,
-         transitionDuration: reduceMotion
-             ? Duration.zero
-             : const Duration(milliseconds: 200),
-         reverseTransitionDuration: reduceMotion
-             ? Duration.zero
-             : const Duration(milliseconds: 180),
+         transitionDuration: reduceMotion ? Duration.zero : _kSurfaceIn,
+         reverseTransitionDuration: reduceMotion ? Duration.zero : _kSurfaceOut,
+         // This route skips the theme's transitions: its page freezes
+         // while covered by hand (kbc1215 checks it is here).
          pageBuilder: (context, animation, secondaryAnimation) =>
              CoveredRouteMediaQueryFreeze(
-               child: PopScope(
-                 canPop: systemDismissible,
-                 child: FocusScope(
-                   node: focusScopeNode,
-                   child: HermesModalScrollScope(
-                     child: _HermesSurfaceFrame(
-                       surfaceKey: surfaceKey,
-                       maxWidth: maxWidth,
-                       maxHeightFactor: maxHeightFactor,
-                       reduceMotion: reduceMotion,
-                       origin: origin,
-                       draggable: barrierDismissible && systemDismissible,
-                       child: Builder(builder: builder),
-                     ),
-                   ),
-                 ),
+               child: _surfacePage(
+                 builder: builder,
+                 focusScopeNode: focusScopeNode,
+                 surfaceKey: surfaceKey,
+                 maxWidth: maxWidth,
+                 maxHeightFactor: maxHeightFactor,
+                 systemDismissible: systemDismissible,
+                 draggable: barrierDismissible && systemDismissible,
+                 reduceMotion: reduceMotion,
+                 origin: origin,
+                 lifted: lifted,
                ),
              ),
-         transitionsBuilder: (context, animation, secondaryAnimation, child) {
-           if (reduceMotion) return child;
-           return _SurfaceMotion(
-             animation: animation,
-             origin: origin,
-             child: child,
-           );
-         },
+         transitionsBuilder: (context, animation, secondaryAnimation, child) =>
+             _surfaceTransition(animation, origin, reduceMotion, child),
        );
 
   final FocusScopeNode _focusScopeNode;
+
+  @override
+  bool didPop(T? result) {
+    _focusScopeNode.unfocus(disposition: UnfocusDisposition.scope);
+    return super.didPop(result);
+  }
+
+  @override
+  void dispose() {
+    _focusScopeNode.dispose();
+    super.dispose();
+  }
+}
+
+const Duration _kSurfaceIn = Duration(milliseconds: 200);
+const Duration _kSurfaceOut = Duration(milliseconds: 180);
+
+/// What a surface's route shows: the frame, its focus scope, its scroll
+/// rules and how the system's back closes it. Each route wraps it in
+/// [CoveredRouteMediaQueryFreeze] itself.
+Widget _surfacePage({
+  required WidgetBuilder builder,
+  required FocusScopeNode focusScopeNode,
+  required Key surfaceKey,
+  required double maxWidth,
+  required double maxHeightFactor,
+  required bool systemDismissible,
+  required bool draggable,
+  required bool reduceMotion,
+  required Rect? origin,
+  required bool lifted,
+}) => PopScope(
+  canPop: systemDismissible,
+  child: FocusScope(
+    node: focusScopeNode,
+    child: HermesModalScrollScope(
+      child: _HermesSurfaceFrame(
+        surfaceKey: surfaceKey,
+        maxWidth: maxWidth,
+        maxHeightFactor: maxHeightFactor,
+        reduceMotion: reduceMotion,
+        origin: origin,
+        draggable: draggable,
+        lifted: lifted,
+        child: Builder(builder: builder),
+      ),
+    ),
+  ),
+);
+
+Widget _surfaceTransition(
+  Animation<double> animation,
+  Rect? origin,
+  bool reduceMotion,
+  Widget child,
+) => reduceMotion
+    ? child
+    : _SurfaceMotion(animation: animation, origin: origin, child: child);
+
+/// [showHermesSurface] with `coversPage: false`: the same surface as a
+/// popup over the page, not a page. A screen that reacts to a page covering
+/// it and coming back (`RouteAware.didPushNext`/`didPopNext`: a chat
+/// re-reads its transcript, its profile and its model) is not told: a menu
+/// over it is not leaving it (gint72: closing the chat's «Vistas» popover
+/// resynced the chat; the notch's sheet before it was a popup too).
+class _HermesPopoverRoute<T> extends PopupRoute<T> {
+  _HermesPopoverRoute({
+    required this.builder,
+    required this._focusScopeNode,
+    required this.surfaceKey,
+    required this.maxWidth,
+    required this.maxHeightFactor,
+    required this.barrierDismissible,
+    required this.systemDismissible,
+    required this.barrierLabel,
+    required this.reduceMotion,
+    required this.origin,
+    required HermesScrim scrim,
+    required this.lifted,
+  }) : barrierColor = scrim.color;
+
+  final WidgetBuilder builder;
+  final FocusScopeNode _focusScopeNode;
+  final bool lifted;
+  final Key surfaceKey;
+  final double maxWidth;
+  final double maxHeightFactor;
+  final bool systemDismissible;
+  final bool reduceMotion;
+  final Rect? origin;
+
+  @override
+  final bool barrierDismissible;
+
+  @override
+  final String barrierLabel;
+
+  @override
+  final Color barrierColor;
+
+  @override
+  Duration get transitionDuration => reduceMotion ? Duration.zero : _kSurfaceIn;
+
+  @override
+  Duration get reverseTransitionDuration =>
+      reduceMotion ? Duration.zero : _kSurfaceOut;
+
+  @override
+  Widget buildPage(
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+  ) => CoveredRouteMediaQueryFreeze(
+    child: _surfacePage(
+      builder: builder,
+      focusScopeNode: _focusScopeNode,
+      surfaceKey: surfaceKey,
+      maxWidth: maxWidth,
+      maxHeightFactor: maxHeightFactor,
+      systemDismissible: systemDismissible,
+      draggable: barrierDismissible && systemDismissible,
+      reduceMotion: reduceMotion,
+      origin: origin,
+      lifted: lifted,
+    ),
+  );
+
+  @override
+  Widget buildTransitions(
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+    Widget child,
+  ) => _surfaceTransition(animation, origin, reduceMotion, child);
 
   @override
   bool didPop(T? result) {
@@ -356,10 +507,12 @@ class _HermesSurfaceFrame extends StatefulWidget {
     required this.reduceMotion,
     required this.origin,
     required this.draggable,
+    required this.lifted,
     required this.child,
   });
 
   final Key surfaceKey;
+  final bool lifted;
   final double maxWidth;
   final double maxHeightFactor;
   final bool reduceMotion;
@@ -444,6 +597,7 @@ class _HermesSurfaceFrameState extends State<_HermesSurfaceFrame>
     Widget surface = HermesFloatingSurface(
       key: widget.surfaceKey,
       modal: true,
+      lifted: widget.lifted,
       shape: HermesFloatingSurface.rounded(),
       child: ConstrainedBox(
         constraints: BoxConstraints(maxWidth: width, maxHeight: maxHeight),
@@ -477,7 +631,10 @@ class _HermesSurfaceFrameState extends State<_HermesSurfaceFrame>
               child: surface,
               builder: (context, child) => Transform.translate(
                 offset: Offset(0, _drag.offset * sign),
-                child: child,
+                child: HermesLiquidMotion(
+                  moving: _drag.offset != 0,
+                  child: child!,
+                ),
               ),
             ),
           ),
@@ -648,8 +805,10 @@ class _DragAwayState extends State<_DragAway>
       child: AnimatedBuilder(
         animation: _drag,
         child: widget.child,
-        builder: (context, child) =>
-            Transform.translate(offset: Offset(0, _drag.offset), child: child),
+        builder: (context, child) => Transform.translate(
+          offset: Offset(0, _drag.offset),
+          child: HermesLiquidMotion(moving: _drag.offset != 0, child: child!),
+        ),
       ),
     );
   }
@@ -687,7 +846,12 @@ class HermesSurfaceHeader extends StatelessWidget {
                   header: true,
                   child: Text(
                     title,
-                    style: HermesType.title.copyWith(color: colors.textPrimary),
+                    style: HermesType.title.copyWith(
+                      color: HermesFloatingSurface.windowInk(
+                        colors,
+                        colors.textPrimary,
+                      ),
+                    ),
                   ),
                 ),
                 if (subtitle != null && subtitle!.isNotEmpty) ...[
@@ -695,7 +859,10 @@ class HermesSurfaceHeader extends StatelessWidget {
                   Text(
                     subtitle!,
                     style: HermesType.support.copyWith(
-                      color: colors.textSecondary,
+                      color: HermesFloatingSurface.windowInk(
+                        colors,
+                        colors.textSecondary,
+                      ),
                     ),
                   ),
                 ],
@@ -1108,7 +1275,10 @@ Future<T?> showHermesMenu<T>({
                       child: Text(
                         section,
                         style: HermesType.caption.copyWith(
-                          color: colors.textTertiary,
+                          color: HermesFloatingSurface.windowInk(
+                            colors,
+                            colors.textTertiary,
+                          ),
                         ),
                       ),
                     ),
@@ -1129,8 +1299,14 @@ Future<T?> showHermesMenu<T>({
                                   ordered[i].icon,
                                   size: 20,
                                   color: ordered[i].destructive
-                                      ? colors.error
-                                      : colors.textSecondary,
+                                      ? HermesFloatingSurface.windowInk(
+                                          colors,
+                                          colors.error,
+                                        )
+                                      : HermesFloatingSurface.windowInk(
+                                          colors,
+                                          colors.textSecondary,
+                                        ),
                                 ),
                                 const SizedBox(width: 14),
                               ],
@@ -1139,8 +1315,14 @@ Future<T?> showHermesMenu<T>({
                                   ordered[i].label,
                                   style: HermesType.body.copyWith(
                                     color: ordered[i].destructive
-                                        ? colors.error
-                                        : colors.textPrimary,
+                                        ? HermesFloatingSurface.windowInk(
+                                            colors,
+                                            colors.error,
+                                          )
+                                        : HermesFloatingSurface.windowInk(
+                                            colors,
+                                            colors.textPrimary,
+                                          ),
                                   ),
                                 ),
                               ),
@@ -1149,7 +1331,10 @@ Future<T?> showHermesMenu<T>({
                                 Icon(
                                   Icons.check_rounded,
                                   size: 20,
-                                  color: colors.accent,
+                                  color: HermesFloatingSurface.windowInk(
+                                    colors,
+                                    colors.accent,
+                                  ),
                                 ),
                               ],
                             ],
@@ -1227,7 +1412,10 @@ Future<T?> showHermesDialog<T>({
                     child: Text(
                       title,
                       style: HermesType.title.copyWith(
-                        color: colors.textPrimary,
+                        color: HermesFloatingSurface.windowInk(
+                          colors,
+                          colors.textPrimary,
+                        ),
                       ),
                     ),
                   ),
@@ -1236,7 +1424,10 @@ Future<T?> showHermesDialog<T>({
                     Text(
                       message,
                       style: HermesType.text.copyWith(
-                        color: colors.textSecondary,
+                        color: HermesFloatingSurface.windowInk(
+                          colors,
+                          colors.textSecondary,
+                        ),
                       ),
                     ),
                   ],
@@ -1281,7 +1472,10 @@ class _DialogPill extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
     final (Color? bg, Color fg) = switch (style) {
-      HermesDialogActionStyle.cancel => (null, colors.textPrimary),
+      HermesDialogActionStyle.cancel => (
+        null,
+        HermesFloatingSurface.windowInk(colors, colors.textPrimary),
+      ),
       HermesDialogActionStyle.primary => (colors.accent, colors.onAccent),
       HermesDialogActionStyle.destructive => (
         colors.error,
@@ -1423,6 +1617,9 @@ class HermesModelGroup {
   });
 }
 
+/// Provider value of the explicit "inherit the main model" choice.
+const kHermesInheritMainProvider = 'main';
+
 /// A picked model. [isDefault] means "use the default" (profile/server).
 class HermesModelChoice {
   final String provider;
@@ -1455,6 +1652,8 @@ Future<HermesModelChoice?> showHermesModelPicker({
   HermesModelChoice? current,
   String? defaultLabel,
   String? defaultSubtitle,
+  String? inheritLabel,
+  String? inheritSubtitle,
   String? title,
   String? subtitle,
   Key surfaceKey = const ValueKey('hermes-model-picker'),
@@ -1470,6 +1669,15 @@ Future<HermesModelChoice?> showHermesModelPicker({
         label: defaultLabel,
         subtitle: defaultSubtitle,
         icon: Icons.auto_mode_rounded,
+      ),
+    // An explicit "follow the main model" row: provider `main`, no model.
+    if (inheritLabel != null)
+      HermesOption(
+        key: ValueKey('$keyPrefix-inherit'),
+        value: const HermesModelChoice(kHermesInheritMainProvider, ''),
+        label: inheritLabel,
+        subtitle: inheritSubtitle,
+        icon: Icons.subdirectory_arrow_right_rounded,
       ),
     for (final group in groups)
       for (final model in group.models)

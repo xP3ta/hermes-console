@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- One tap target over a picture. The outer frame fills the widget and its
+     padding (set by the provider, in pixels, from the zone's rect in dp)
+     places the inner, clickable frame exactly where the drawing put the
+     button or the row. The inner frame carries the tap and the words a
+     screen reader says for it. -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/lw_zone"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:importantForAccessibility="no">
+
+    <FrameLayout
+        android:id="@+id/lw_zone_hit"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@android:color/transparent"
+        android:clickable="true"
+        android:focusable="true" />
+</FrameLayout>

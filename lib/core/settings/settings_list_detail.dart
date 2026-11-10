@@ -3,6 +3,8 @@ import 'package:flutter/scheduler.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../theme/app_theme.dart';
+import '../theme/hermes_tokens.dart';
+import '../widgets/hermes_ui.dart';
 import '../theme/motion.dart';
 import '../utils/responsive.dart';
 import 'settings_deep_link.dart';
@@ -197,7 +199,7 @@ class _CategoryPage extends StatelessWidget {
     if (scope == null || !scope.expanded) return const SizedBox.shrink();
     final section = scope.selected;
     return ColoredBox(
-      color: Theme.of(context).scaffoldBackgroundColor,
+      color: Theme.of(context).hermes.background,
       child: Material(
         type: MaterialType.transparency,
         child: Align(
@@ -227,16 +229,33 @@ class _Categories extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final strings = Strings.of(context);
+    // The categories sit in one panel (same material as the phone groups),
+    // so the left pane reads as a list card beside the detail.
     return ListView(
-      padding: const EdgeInsets.symmetric(vertical: 8),
+      padding: const EdgeInsets.fromLTRB(
+        HermesSpace.x3,
+        HermesSpace.x2,
+        HermesSpace.x3,
+        HermesSpace.x4,
+      ),
       children: [
-        for (final section in SettingsSection.values)
-          _CategoryRow(
-            section: section,
-            title: settingsSectionTitle(strings, section),
-            selected: section == selected,
-            onTap: () => onSelect(section),
+        HermesPanel(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                for (final section in SettingsSection.values)
+                  _CategoryRow(
+                    section: section,
+                    title: settingsSectionTitle(strings, section),
+                    selected: section == selected,
+                    onTap: () => onSelect(section),
+                  ),
+              ],
+            ),
           ),
+        ),
       ],
     );
   }
@@ -270,7 +289,7 @@ class _CategoryRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
-    final radius = BorderRadius.circular(12);
+    final radius = BorderRadius.circular(HermesRadius.control);
     return Padding(
       key: ValueKey('settings-category-${section.name}'),
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),

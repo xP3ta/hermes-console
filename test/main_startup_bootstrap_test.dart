@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
@@ -12,6 +13,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   const channel = MethodChannel('plugins.it_nomads.com/flutter_secure_storage');
+  // The app's folders, as the rest of the suite gives them: a temporary one.
+  const pathProvider = MethodChannel('plugins.flutter.io/path_provider');
+  final pathCalls = <String>[];
+  late Directory folders;
   final secure = <String, String>{};
   final writes = <String>[];
   final reads = <String>[];
@@ -23,6 +28,18 @@ void main() {
     writes.clear();
     reads.clear();
     failReadKey = null;
+    pathCalls.clear();
+    folders = Directory.systemTemp.createTempSync('startup-folders-');
+    TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(pathProvider, (call) async {
+          pathCalls.add(call.method);
+          return folders.path;
+        });
+    addTearDown(() {
+      TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(pathProvider, null);
+      if (folders.existsSync()) folders.deleteSync(recursive: true);
+    });
     TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (call) async {
           final args = (call.arguments as Map).cast<String, dynamic>();
@@ -78,6 +95,25 @@ void main() {
       AppErrorLog.recent.map((r) => (r.source, r.errorType)),
       contains(('startup', 'FormatException')),
     );
+  });
+
+  test('the clean up of downloads waits for the first frame', () async {
+    // Nothing of DESCARGAS-DIRECTAS runs before runApp: the share copies
+    // and APK 9708's downloads folder are cleaned once the first frame is
+    // on screen, so they never delay a cold start.
+    SharedPreferences.setMockInitialValues(savedConnection());
+    secure['api_key_conn-a'] = 'key-a';
+    final legacy = Directory('${folders.path}/sftp_downloads')..createSync();
+    File('${legacy.path}/informe.pdf').writeAsBytesSync([1]);
+
+    final app = await bootstrapHermesApp();
+    for (var i = 0; i < 20; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+
+    expect(app, isA<HermesApp>());
+    expect(pathCalls, isNot(contains('getTemporaryDirectory')));
+    expect(legacy.existsSync(), isTrue);
   });
 
   test('an unreadable activity journal does not block startup', () async {

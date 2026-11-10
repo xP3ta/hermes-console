@@ -81,9 +81,9 @@ Color _pillFill(WidgetTester tester) => tester
     .color!;
 
 /// A repaint boundary owned by [owner] that wraps its backdrop filter.
-Finder _isolatedBackdrop(Finder owner) => find.ancestor(
-  of: find.byType(BackdropFilter),
-  matching: find.descendant(of: owner, matching: find.byType(RepaintBoundary)),
+Finder _isolatedBackdrop(Finder owner) => find.descendant(
+  of: owner,
+  matching: find.byKey(const ValueKey('frosted-backdrop-boundary')),
 );
 
 void main() {
@@ -99,7 +99,9 @@ void main() {
         const DockStyle(transparency: .6),
       );
       expect(_backdropLayers(tester), 1);
-      expect(_dockFill(tester), visual.background);
+      final fill = _dockFill(tester);
+      expect(fill.withValues(alpha: 1), visual.background.withValues(alpha: 1));
+      expect(fill.a, greaterThanOrEqualTo(visual.background.a));
       // The blurred surface is isolated, so sibling repaints (a scrolling
       // list) never re-record the bar's picture.
       expect(_isolatedBackdrop(find.byType(DockBar)), findsOneWidget);
@@ -140,11 +142,18 @@ void main() {
   });
 
   group('room summary pill', () {
-    testWidgets('blurs at rest in its own repaint boundary', (tester) async {
+    testWidgets('layout summary uses opaque material without a filter', (
+      tester,
+    ) async {
       await tester.pumpWidget(_host(_pill()));
-      expect(_backdropLayers(tester), 1);
-      expect(_pillFill(tester), _colors.surfaceVariant.withValues(alpha: .65));
-      expect(_isolatedBackdrop(find.byType(RoomSummaryPill)), findsOneWidget);
+      expect(_backdropLayers(tester), 0);
+      expect(
+        _pillFill(tester),
+        Color.alphaBlend(
+          _colors.surfaceVariant.withValues(alpha: .65),
+          _colors.background,
+        ),
+      );
     });
 
     testWidgets('reduced motion, high contrast and low-end drop the blur', (

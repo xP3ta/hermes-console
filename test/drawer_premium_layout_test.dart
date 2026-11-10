@@ -27,6 +27,11 @@ void main() {
     required ConnectionManager connManager,
     http.Client? sessionsClient,
   }) async {
+    // Tall enough for the whole list: the drawer has a row for Perfil and one
+    // for Agentes, and the recents come after them.
+    tester.view.physicalSize = const Size(800, 1400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
     final scaffoldKey = GlobalKey<ScaffoldState>();
     final connection = SavedConnection(
       id: 'drawer-premium-qa',
@@ -232,6 +237,16 @@ void main() {
         ),
     ];
 
+    // The recents come after the sections, below the built part of the list
+    // on a phone: scroll to them (each section row added pushes them down).
+    Future<void> revealRecents(WidgetTester tester) async {
+      await tester.drag(
+        find.byKey(const ValueKey('drawer-scroll')),
+        const Offset(0, -700),
+      );
+      await tester.pumpAndSettle();
+    }
+
     testWidgets('a long history of chats reads one page', (tester) async {
       final queries = <Map<String, String>>[];
       await pumpDrawer(
@@ -239,6 +254,7 @@ void main() {
         connManager: await manager(),
         sessionsClient: pagedServer(queries, total: 1000),
       );
+      await revealRecents(tester);
       expect(recentIds(), ['s-0', 's-1', 's-2', 's-3']);
       expect(queries, hasLength(1));
       expect(queries.single['limit'], '40');
@@ -259,6 +275,7 @@ void main() {
           leadingAutomation: 77,
         ),
       );
+      await revealRecents(tester);
       expect(recentIds(), ['s-77', 's-78', 's-79', 's-80']);
       expect([for (final q in queries) q['offset']], ['0', '40', '80']);
       expect(queries.every((q) => q['limit'] == '40'), isTrue);
@@ -277,6 +294,7 @@ void main() {
           leadingAutomation: 1000,
         ),
       );
+      await revealRecents(tester);
       expect(recentIds(), isEmpty);
       expect([for (final q in queries) q['offset']], ['0', '40', '80']);
     });

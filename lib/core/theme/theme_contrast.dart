@@ -91,12 +91,20 @@ abstract final class ThemeContrast {
   }
 
   /// Returns the smallest deterministic RGB adjustment towards black or white
-  /// that reaches [minimum] against every supplied background.
+  /// that reaches [minimum] against every supplied background. When given,
+  /// [maximumHueShift] also bounds the hue change, in degrees, after RGB
+  /// rounding. A chromatic ink retains enough chroma to encode its hue.
   static Color adjustForContrast(
     Color original,
     Iterable<Color> backgrounds, {
     required double minimum,
-  }) => adjustForContrastResult(original, backgrounds, minimum: minimum).color;
+    double? maximumHueShift,
+  }) => adjustForContrastResult(
+    original,
+    backgrounds,
+    minimum: minimum,
+    maximumHueShift: maximumHueShift,
+  ).color;
 
   /// Same search as [adjustForContrast], but makes an impossible target
   /// explicit. Returning only the best-effort color made callers treat an
@@ -105,7 +113,9 @@ abstract final class ThemeContrast {
     Color original,
     Iterable<Color> backgrounds, {
     required double minimum,
+    double? maximumHueShift,
   }) {
+    assert(maximumHueShift == null || maximumHueShift > 0);
     final targets = List<Color>.unmodifiable(backgrounds);
     final originalWorst = targets.isEmpty
         ? double.infinity
@@ -120,13 +130,55 @@ abstract final class ThemeContrast {
       );
     }
 
+    final hueLimit = maximumHueShift;
+    final originalHsl = hueLimit == null ? null : HSLColor.fromColor(original);
+    bool keepsHue(Color candidate) {
+      final hsl = originalHsl;
+      if (hsl == null || hueLimit == null || hsl.saturation == 0) return true;
+      final next = HSLColor.fromColor(candidate);
+      if (next.saturation == 0) return false;
+      final delta = (next.hue - hsl.hue).abs();
+      return math.min(delta, 360 - delta) < hueLimit;
+    }
+
+    final channels = [_red(original), _green(original), _blue(original)];
+    final originalLow = channels.reduce(math.min);
+    final originalSpan = channels.reduce(math.max) - originalLow;
+    Color? matchHue(Color candidate, {required bool lighter}) {
+      if (keepsHue(candidate)) return candidate;
+      final values = [_red(candidate), _green(candidate), _blue(candidate)];
+      final low = values.reduce(math.min);
+      final high = values.reduce(math.max);
+      // Near black or white, rounding can erase the smaller channel
+      // differences. Keep only as much of the original chroma as the hue
+      // needs, anchored at the channel moving towards the endpoint.
+      for (var span = high - low; span <= originalSpan; span++) {
+        final floor = lighter ? high - span : low;
+        if (floor < 0 || floor + span > 255) continue;
+        int channel(int value) =>
+            floor + ((value - originalLow) * span / originalSpan).round();
+        final matched = Color.fromARGB(
+          _alpha(candidate),
+          channel(channels[0]),
+          channel(channels[1]),
+          channel(channels[2]),
+        );
+        if (keepsHue(matched)) return matched;
+      }
+      return null;
+    }
+
     const endpoints = [Color(0xFF000000), Color(0xFFFFFFFF)];
     Color? best;
     var bestStep = 1001;
     var bestWorstRatio = 0.0;
     for (final endpoint in endpoints) {
       for (var step = 1; step <= 1000; step++) {
-        final candidate = blend(original, endpoint, step / 1000);
+        final candidate = matchHue(
+          blend(original, endpoint, step / 1000),
+          lighter: endpoint == endpoints.last,
+        );
+        if (candidate == null) continue;
         final worst = targets
             .map((background) => ratio(candidate, background))
             .reduce(math.min);

@@ -6,10 +6,14 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter/semantics.dart';
 
 import '../../l10n/app_localizations.dart';
+import '../design/gel_surface.dart';
+import '../design/glass_strip.dart';
 import '../design/tokens.dart';
 import '../theme/app_theme.dart';
 import '../theme/motion.dart';
 import '../theme/theme_contrast.dart';
+import 'pill_morph.dart'
+    show kPillMorphClose, kPillMorphCurve, kPillMorphFade, kPillMorphOpen;
 
 // The island: the small pill at the top centre of every chat surface (plain
 // chats, bot chats, rooms). At rest it carries the NAME and ONE status dot,
@@ -218,6 +222,22 @@ abstract final class IslandMetrics {
   static const double radius = 24;
   static const double maxWidth = 520;
 
+  /// The voice capsule's corners (135 v2 §2): the pane radius.
+  static const double voiceRadius = HermesRadius.pane;
+
+  /// The voice capsule is never wider than this (135 v2 §1), nor the
+  /// notice it shows as its first row.
+  static const double voiceMaxWidth = 360;
+
+  /// The size of the pill's line (the name and its state word).
+  static const double lineFontSize = 13.5;
+
+  /// How far the face standing on the island reaches into its top edge: its
+  /// base rests ON the pill, a little inside it, with no air between them.
+  /// The pill's line keeps this much room above itself so the face never
+  /// covers it.
+  static const double faceReach = 8;
+
   /// How far the one waiting behind peeks out below.
   static const double peek = 6;
 }
@@ -226,16 +246,11 @@ abstract final class IslandMetrics {
 /// of the page ([HermesChrome]). Every island shape (rest, event, the one
 /// waiting behind, the notice lane) is painted through here and nowhere
 /// else.
-({Color fill, Color solid, Color line, List<BoxShadow> shadow}) _islandSurface(
+({Color solid, Color line, List<BoxShadow> shadow}) _islandSurface(
   HermesThemeColors colors,
 ) {
   final chrome = HermesChrome.of(colors);
-  return (
-    fill: chrome.fill,
-    solid: chrome.opaque,
-    line: chrome.line,
-    shadow: chrome.shadow,
-  );
+  return (solid: chrome.opaque, line: chrome.line, shadow: chrome.shadow);
 }
 
 Color _toneColor(HermesThemeColors colors, IslandTone tone) => switch (tone) {
@@ -274,10 +289,14 @@ class IslandSurface extends StatelessWidget {
     this.raised = false,
     this.behind = false,
     this.marked = false,
+    this.radius = IslandMetrics.radius,
     super.key,
   });
 
   final Widget child;
+
+  /// Corner radius: the pill's, or the voice capsule's (135 v2: 18 → 28).
+  final double radius;
 
   /// Frames the shape: amber when it needs you, red when something failed.
   final IslandTone? tone;
@@ -285,8 +304,8 @@ class IslandSurface extends StatelessWidget {
   /// It has something to open: its hairline takes the accent.
   final bool marked;
 
-  /// An event is solid: nothing of the conversation shows through its
-  /// line. At rest the island is as translucent as every floating piece.
+  /// An event. Every island is solid, at rest too: the chrome's opaque
+  /// tone, so nothing of the conversation shows through its line.
   final bool raised;
 
   /// The one waiting behind: flatter and quieter.
@@ -302,21 +321,22 @@ class IslandSurface extends StatelessWidget {
       _ => marked ? colors.accent.withValues(alpha: 0.55) : null,
     };
     final shape = RoundedRectangleBorder(
-      borderRadius: BorderRadius.circular(IslandMetrics.radius),
+      borderRadius: BorderRadius.circular(radius),
     );
+    // In a frosting header (Vistas v3) the island is a piece of its strip:
+    // the composer's veil over the strip's one blur, and no shadow.
+    final glass = HermesGlassStrip.of(context);
+    final fill = glass?.veil ?? surface.solid;
     // The soft shadow is the chrome's own, static: it never animates.
-    return DecoratedBox(
+    final island = DecoratedBox(
       decoration: ShapeDecoration(
         shape: shape,
-        shadows: behind ? null : surface.shadow,
+        shadows: behind || glass != null ? null : surface.shadow,
       ),
       child: Material(
         color: behind
-            ? Color.alphaBlend(
-                colors.background.withValues(alpha: 0.35),
-                surface.solid,
-              )
-            : (raised ? surface.solid : surface.fill),
+            ? Color.alphaBlend(colors.background.withValues(alpha: 0.35), fill)
+            : fill,
         surfaceTintColor: Colors.transparent,
         animationDuration: Motion.duration(context, Motion.base),
         clipBehavior: Clip.antiAlias,
@@ -329,31 +349,20 @@ class IslandSurface extends StatelessWidget {
         child: child,
       ),
     );
-  }
-}
-
-/// The state dot. Reconnecting is a ring, so it is told from «needs you»
-/// without relying on colour.
-class IslandStatusDot extends StatelessWidget {
-  const IslandStatusDot({required this.status, this.size = 8, super.key});
-
-  final IslandStatus status;
-  final double size;
-
-  @override
-  Widget build(BuildContext context) {
-    final color = islandStatusColor(Theme.of(context).hermes, status);
-    final ring = status == IslandStatus.reconnecting;
-    return SizedBox.square(
-      key: ValueKey('island-dot-${status.name}'),
-      dimension: size,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: ring ? null : color,
-          border: ring ? Border.all(color: color, width: 2) : null,
-        ),
-      ),
+    // The same tree with or without a strip, blurring or not: outside a
+    // strip the piece is nothing.
+    // The gel of the buttons (rims and sheen), not on the one waiting behind.
+    return HermesGlassPiece(
+      shape: shape,
+      child: behind
+          ? island
+          : HermesGelSurface(
+              key: const ValueKey('island-gel'),
+              shape: shape,
+              pressable: false,
+              sheenScale: HermesGel.textSheenScale(colors, HermesGelInks.name),
+              child: island,
+            ),
     );
   }
 }
@@ -547,8 +556,9 @@ class IslandEventTileState extends State<IslandEventTile> {
     if (_open) {
       // Opened it shows the whole text, in the room there is: never down
       // to the composer, whatever the text size or the keyboard.
-      final media = MediaQuery.of(context);
-      final room = (media.size.height - media.viewInsets.bottom) * 0.36;
+      final height = MediaQuery.sizeOf(context).height;
+      final keyboard = MediaQuery.viewInsetsOf(context).bottom;
+      final room = (height - keyboard) * 0.36;
       final hasButtons =
           action != null || event.secondary != null || dismissControl != null;
       final chrome = 17.0 + (hasButtons ? 48 : 5);
@@ -1110,6 +1120,31 @@ class IslandHeadroom extends InheritedWidget {
       height != oldWidget.height;
 }
 
+/// What a voice conversation puts in the island (see [ChatIsland.voice]).
+@immutable
+class IslandVoice {
+  const IslandVoice({
+    required this.child,
+    required this.expanded,
+    this.tone,
+    this.onTap,
+  });
+
+  /// Minimized: what the face above the pill does, «Abrir modo voz».
+  final VoidCallback? onTap;
+
+  /// The capsule ([expanded]) or the minimized voice pill. It brings its own
+  /// semantics and gestures.
+  final Widget child;
+
+  /// The capsule (radius 28, its own rows) rather than the minimized pill.
+  final bool expanded;
+
+  /// Frames the island like an event: amber while an approval waits, red
+  /// on a failure.
+  final IslandTone? tone;
+}
+
 /// The island of a chat surface.
 ///
 /// At rest: [name] after one [status] dot. A tap (also on the face that
@@ -1124,7 +1159,9 @@ class ChatIsland extends StatefulWidget {
     this.events = const [],
     this.notices,
     this.statusDetail,
+    this.activity,
     this.trailing,
+    this.elapsed,
     this.headroom,
     this.onTap,
     this.onLongPress,
@@ -1134,11 +1171,19 @@ class ChatIsland extends StatefulWidget {
     this.mark,
     this.open = false,
     this.flat = false,
+    this.voice,
     super.key,
   });
 
   final String name;
   final IslandStatus status;
+
+  /// A voice conversation has the island (135 v2): while non-null the island
+  /// IS [IslandVoice.child] — the capsule, or its pill when minimized — and
+  /// neither an event nor a notice takes its place. They come back when the
+  /// voice leaves; the caller keeps the app's notices in the lower lane
+  /// meanwhile (v2 decision 3).
+  final IslandVoice? voice;
 
   /// What the island has to open, in a few words after the name («4 en
   /// marcha»), with a chevron: the invitation to tap it. Null: it is only
@@ -1156,6 +1201,10 @@ class ChatIsland extends StatefulWidget {
   /// Spoken after the state at rest: what is running, for a screen reader.
   final String? statusDetail;
 
+  /// The live turn's one line inside this same island surface. Its own
+  /// semantics say the phase; the island keeps identity, count and action.
+  final Widget? activity;
+
   /// What this conversation has to say now. An event stays in this list for
   /// as long as it is true; the island decides when its words have been
   /// shown long enough.
@@ -1164,8 +1213,13 @@ class ChatIsland extends StatefulWidget {
   /// The app's notices; null keeps them out of this island.
   final IslandNoticeFeed? notices;
 
-  /// After the name at rest (the running turn's timer).
+  /// After the name at rest, on a line with neither [mark] nor [elapsed]
+  /// (a room's clock).
   final Widget? trailing;
+
+  /// The running turn's timer at rest («0:08»): the last words of the
+  /// island's line, after [mark].
+  final String? elapsed;
 
   /// Height above the pill that also answers a tap: where the face stands.
   /// Null takes the [IslandHeadroom] around it.
@@ -1223,6 +1277,11 @@ class ChatIslandState extends State<ChatIsland> {
   /// closed again, or until this island stops showing it.
   IslandEvent? _heldNotice;
 
+  /// The voice capsule just left: its way back to the pill is the morph's
+  /// too, and only that one. Cleared once the morph's close is over.
+  bool _voiceLeaving = false;
+  Timer? _voiceLeft;
+
   /// The event shown now, or null at rest.
   IslandEvent? get front => _front;
 
@@ -1258,6 +1317,14 @@ class ChatIslandState extends State<ChatIsland> {
   @override
   void didUpdateWidget(ChatIsland oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.voice != null && widget.voice == null) {
+      _voiceLeaving = true;
+      _voiceLeft?.cancel();
+      _voiceLeft = Timer(kPillMorphClose, () => _voiceLeaving = false);
+    } else if (widget.voice != null) {
+      _voiceLeft?.cancel();
+      _voiceLeaving = false;
+    }
     final was = oldWidget.notices, now = widget.notices;
     if (!identical(was, now)) {
       was?.removeListener(_onChange);
@@ -1275,6 +1342,7 @@ class ChatIslandState extends State<ChatIsland> {
   void dispose() {
     _inView = false;
     _expiry?.cancel();
+    _voiceLeft?.cancel();
     _releaseHeldNotice();
     widget.notices?.removeListener(_onChange);
     IslandPresenters.revision.removeListener(_onChange);
@@ -1304,8 +1372,11 @@ class ChatIslandState extends State<ChatIsland> {
       for (final e in events)
         if (_said[e.id] != e.revision) e,
     ];
+    // The capsule open (135 v2): this conversation's events wait (the voice
+    // says the state itself); only the app's notices come in.
+    final voiceOpen = widget.voice?.expanded ?? false;
     IslandEvent? top;
-    for (final e in own) {
+    for (final e in voiceOpen ? const <IslandEvent>[] : own) {
       if (top == null || e.rank > top.rank) top = e;
     }
     final feed = widget.notices;
@@ -1326,12 +1397,13 @@ class ChatIslandState extends State<ChatIsland> {
     }
     // A passing line of this conversation («Trabajando», who replies in a
     // room) is said when it comes or not at all: it never queues up behind
-    // something else to be said late. What stays does wait its turn.
+    // something else to be said late. What stays does wait its turn (out
+    // of the count while the capsule has the island).
     var behind = 0;
     for (final e in own) {
       if (identical(e, front)) continue;
       if (e.sticky) {
-        behind++;
+        if (!voiceOpen) behind++;
       } else {
         _said[e.id] = e.revision;
       }
@@ -1412,73 +1484,126 @@ class ChatIslandState extends State<ChatIsland> {
     _armExpiry();
   }
 
+  /// The tile of [front]: an event of this conversation or an app notice.
+  Widget _frontTile(IslandEvent front) {
+    final tile = IslandEventTile(
+      key: ValueKey(_frontKey),
+      event: front,
+      waiting: _waiting,
+      onDismiss: _dismiss,
+      onPlainTap: _frontIsNotice ? _dismiss : widget.onTap,
+      onLongPress: widget.onLongPress,
+      onActed: _acted,
+      onHold: _hold,
+      actionKey: _frontIsNotice
+          ? const ValueKey('hermes-notice-action')
+          : const ValueKey('island-action'),
+    );
+    return _frontIsNotice
+        ? widget.notices!.present(context, front, tile)
+        : front.key == null
+        ? tile
+        : KeyedSubtree(key: front.key, child: tile);
+  }
+
   @override
   Widget build(BuildContext context) {
     final strings = _strings(context);
     final front = _front;
+    // A voice conversation has the island (135 v2): the capsule, or its
+    // pill when minimized. Minimized, an event or a notice takes the island
+    // for its turn as at rest. With the capsule open only the app's notices
+    // come ([_reconcile]), as its first row: nothing floats over it.
+    final voice = widget.voice;
+    final IslandVoice? shownVoice =
+        voice != null && (voice.expanded || front == null) ? voice : null;
 
     final Widget content;
-    if (front == null) {
-      content = _IslandRest(
-        key: widget.restKey ?? const ValueKey('island-rest'),
-        name: widget.name,
-        status: widget.status,
-        trailing: widget.trailing,
-        mark: widget.mark,
-        open: widget.open,
-      );
+    if (shownVoice != null) {
+      // The capsule is the column's last child with or without a notice
+      // above it, so a notice coming or going never builds it again.
+      content = shownVoice.expanded
+          ? ConstrainedBox(
+              key: const ValueKey('island-voice-capsule'),
+              constraints: const BoxConstraints(
+                maxWidth: IslandMetrics.voiceMaxWidth,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (front != null) _frontTile(front),
+                  shownVoice.child,
+                ],
+              ),
+            )
+          : shownVoice.child;
+    } else if (front == null) {
+      content = widget.activity != null
+          ? KeyedSubtree(key: widget.restKey, child: widget.activity!)
+          : _IslandRest(
+              key: widget.restKey ?? const ValueKey('island-rest'),
+              name: widget.name,
+              status: widget.status,
+              trailing: widget.trailing,
+              elapsed: widget.elapsed,
+              mark: widget.mark,
+              open: widget.open,
+            );
     } else {
-      final tile = IslandEventTile(
-        key: ValueKey(_frontKey),
-        event: front,
-        waiting: _waiting,
-        onDismiss: _dismiss,
-        onPlainTap: _frontIsNotice ? _dismiss : widget.onTap,
-        onLongPress: widget.onLongPress,
-        onActed: _acted,
-        onHold: _hold,
-        actionKey: _frontIsNotice
-            ? const ValueKey('hermes-notice-action')
-            : const ValueKey('island-action'),
-      );
-      content = _frontIsNotice
-          ? widget.notices!.present(context, front, tile)
-          : front.key == null
-          ? tile
-          : KeyedSubtree(key: front.key, child: tile);
+      content = _frontTile(front);
     }
 
+    // The same shell in every case, so going from the pill to the capsule
+    // and back is ONE size animation of the same surface (gate review P1).
+    // Its content keys are the island's own: none may repeat a key of the
+    // chat (the composer's voice button is `voice`).
     final pill = IslandShell(
       surfaceKey: ChatIsland._surfaceKey,
-      contentKey: ValueKey(_frontKey ?? 'rest'),
-      tone: front?.tone,
-      raised: front != null,
-      marked: front == null && widget.mark != null,
-      waiting: _waiting,
+      contentKey: ValueKey(
+        shownVoice != null
+            ? (shownVoice.expanded ? 'island-voice' : 'island-voice-pill')
+            : (_frontKey ?? 'rest'),
+      ),
+      tone: shownVoice != null ? shownVoice.tone : front?.tone,
+      raised: shownVoice != null || front != null,
+      marked: shownVoice == null && front == null && widget.mark != null,
+      waiting: shownVoice != null ? 0 : _waiting,
+      morph: voice != null || _voiceLeaving,
+      radius: shownVoice != null && shownVoice.expanded
+          ? IslandMetrics.voiceRadius
+          : IslandMetrics.radius,
       child: content,
     );
 
     final name = widget.semanticsName ?? widget.name;
     final statusLabel = islandStatusLabel(strings, widget.status);
-    final rest = front == null;
+    // Only the plain pill is one button; the voice brings its own nodes.
+    final rest = front == null && voice == null;
+    // Minimized, the face above the voice pill opens the capsule too: with
+    // the pill, an 84 dp target (135 v2 §8).
+    final headroomTap = voice != null && !voice.expanded
+        ? voice.onTap ?? widget.onTap
+        : widget.onTap;
     final tappable = widget.onTap != null;
+    final hasActivity = rest && widget.activity != null;
     final restLabel = [
       name,
-      statusLabel,
-      ?widget.statusDetail,
+      if (!hasActivity) statusLabel,
+      if (!hasActivity) ?widget.statusDetail,
       ?widget.mark,
     ].join(', ');
 
     if (widget.flat) {
       return Semantics(
         container: true,
-        explicitChildNodes: !rest,
+        explicitChildNodes: !rest || hasActivity,
         header: rest,
         button: rest && tappable,
         label: rest ? restLabel : null,
         hint: rest && tappable ? widget.hint : null,
         onTap: rest ? widget.onTap : null,
-        excludeSemantics: rest,
+        excludeSemantics: rest && !hasActivity,
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           excludeFromSemantics: true,
@@ -1509,20 +1634,20 @@ class ChatIslandState extends State<ChatIsland> {
               key: const ValueKey('island-headroom'),
               behavior: HitTestBehavior.opaque,
               excludeFromSemantics: true,
-              onTap: widget.onTap,
+              onTap: headroomTap,
               onLongPress: widget.onLongPress,
               child: SizedBox(width: IslandMetrics.minWidth, height: headroom),
             ),
           Semantics(
             container: true,
-            explicitChildNodes: !rest,
+            explicitChildNodes: !rest || hasActivity,
             header: rest,
             button: rest && tappable,
             label: rest ? restLabel : null,
             hint: rest && tappable ? widget.hint : null,
             onTap: rest ? widget.onTap : null,
             onLongPress: rest ? widget.onLongPress : null,
-            excludeSemantics: rest,
+            excludeSemantics: rest && !hasActivity,
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
               excludeFromSemantics: true,
@@ -1549,10 +1674,18 @@ class IslandShell extends StatelessWidget {
     this.marked = false,
     this.waiting = 0,
     this.surfaceKey,
+    this.morph = false,
+    this.radius = IslandMetrics.radius,
     super.key,
   });
 
   final Widget child;
+
+  /// The voice capsule comes or goes (135 v2 §2): the pill morph's own
+  /// motion, 300 ms in on a critically damped curve and 260 ms out, instead
+  /// of the island's size change; with motion reduced, its 120 ms fade.
+  final bool morph;
+  final double radius;
 
   /// Changes when the island has something else to show: the new content
   /// fades in while the surface takes its size.
@@ -1571,7 +1704,9 @@ class IslandShell extends StatelessWidget {
       constraints: const BoxConstraints(minWidth: IslandMetrics.minWidth),
       child: _FadeIn(
         key: contentKey,
-        duration: reduce ? Duration.zero : Motion.base,
+        duration: reduce
+            ? (morph ? kPillMorphFade : Duration.zero)
+            : Motion.base,
         child: child,
       ),
     );
@@ -1598,13 +1733,16 @@ class IslandShell extends StatelessWidget {
           tone: tone,
           raised: raised,
           marked: marked,
+          radius: radius,
           // With animations off the surface simply IS its content's size:
-          // no size animation at all (not one of zero length).
+          // no size animation at all (not one of zero length). It grows
+          // only downwards: its top edge stays put.
           child: reduce
               ? content
               : AnimatedSize(
-                  duration: Motion.base,
-                  curve: Motion.size,
+                  duration: morph ? kPillMorphOpen : Motion.base,
+                  reverseDuration: morph ? kPillMorphClose : null,
+                  curve: morph ? kPillMorphCurve : Motion.size,
                   alignment: Alignment.topCenter,
                   child: content,
                 ),
@@ -1624,12 +1762,31 @@ class IslandShell extends StatelessWidget {
   }
 }
 
-/// The island at rest: the dot, the name and, while a turn runs, its timer.
+/// The island at rest: ONE line in one size. The name, what is alive («2
+/// en marcha») and the running turn's timer read as one phrase, joined by
+/// the same small dot: «Hermes · 2 en marcha · 0:08».
+///
+/// the owner (gint72): no state dot of colour before the name; it confused the
+/// colours. A state that asks for attention (no connection, reconnecting,
+/// needs you, an error) is said in words, in the muted ink, right after the
+/// name: «Hermes · Sin conexión». At rest and at work nothing is added: the
+/// count, the timer and the turn's own pills say it. A screen reader hears
+/// the state in every case (the island's label).
+/// As in Desktop's status row (`status.tsx`, `ActivityTimerText`) the words
+/// come first and the timer last, never shrunk, in tabular figures and
+/// told apart only by its colour.
+///
+/// Where the line does not fit it gives way in this order, and it never
+/// overflows nor cuts the count or the timer: the name is cut, then left
+/// out; then the timer leaves the count alone (the turn's row in the
+/// transcript keeps it, and Desktop's header has none); last, what follows
+/// the dot is drawn smaller as a whole, never one part of it.
 class _IslandRest extends StatelessWidget {
   const _IslandRest({
     required this.name,
     required this.status,
     this.trailing,
+    this.elapsed,
     this.mark,
     this.open = false,
     super.key,
@@ -1638,114 +1795,214 @@ class _IslandRest extends StatelessWidget {
   final String name;
   final IslandStatus status;
   final Widget? trailing;
+  final String? elapsed;
   final String? mark;
   final bool open;
+
+  static const double _restPadding = 14;
+  static const double _fontSize = IslandMetrics.lineFontSize;
+
+  /// The state said in words, or null when the line needs none.
+  static String? stateWord(Strings? strings, IslandStatus status) =>
+      switch (status) {
+        IslandStatus.idle || IslandStatus.working => null,
+        _ => islandStatusLabel(strings, status),
+      };
+
+  /// The small dot between two parts of the line, with its room.
+  static const double _joint = 8 + 3 + 8;
+
+  /// The chevron, with its room.
+  static const double _chevron = 3 + 18;
 
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
-    final mark = this.mark;
-    if (mark != null) {
-      // The count never gives way to the name: where the two do not fit,
-      // the name is cut first and then the count is drawn a little smaller,
-      // whole. Never an overflow.
-      return LayoutBuilder(
-        builder: (context, constraints) => _row(
-          colors,
-          markRoom: constraints.maxWidth.isFinite
-              ? (constraints.maxWidth - _restPadding * 2 - 28).clamp(
-                  0.0,
-                  double.infinity,
-                )
-              : null,
-        ),
-      );
-    }
-    return _row(colors);
-  }
-
-  static const double _restPadding = 14;
-
-  Widget _row(HermesThemeColors colors, {double? markRoom}) {
-    final mark = this.mark;
-    return ConstrainedBox(
-      constraints: const BoxConstraints(minHeight: IslandMetrics.restHeight),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(
-          horizontal: _restPadding,
-          vertical: 4,
-        ),
-        child: Row(
+    final chrome = HermesChrome.of(colors);
+    final nameStyle = TextStyle(
+      fontSize: _fontSize,
+      height: 1.2,
+      fontWeight: FontWeight.w700,
+      color: chrome.ink,
+    );
+    final mark = this.mark, elapsed = this.elapsed;
+    final word = stateWord(_strings(context), status);
+    final wordStyle = nameStyle.copyWith(
+      fontWeight: FontWeight.w600,
+      color: chrome.mutedInk,
+    );
+    Widget stateText(String text) => Text(
+      text,
+      key: ValueKey('island-state-${status.name}'),
+      maxLines: 1,
+      softWrap: false,
+      style: wordStyle,
+    );
+    if (mark == null && elapsed == null) {
+      return _frame(
+        Row(
           mainAxisSize: MainAxisSize.min,
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            IslandStatusDot(status: status),
-            const SizedBox(width: 8),
-            Flexible(
-              child: Text(
-                name,
-                key: const ValueKey('island-name'),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 14,
-                  height: 1.2,
-                  fontWeight: FontWeight.w700,
-                  color: colors.textPrimary,
-                ),
-              ),
-            ),
+            Flexible(child: _name(nameStyle)),
+            if (word != null) ...[_jointDot(colors), stateText(word)],
             if (trailing != null) ...[const SizedBox(width: 8), trailing!],
-            if (mark != null)
-              ConstrainedBox(
-                constraints: BoxConstraints(
-                  maxWidth: markRoom ?? double.infinity,
-                ),
-                child: FittedBox(
-                  fit: BoxFit.scaleDown,
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 8),
-                        child: DecoratedBox(
-                          decoration: BoxDecoration(
-                            color: colors.textSecondary.withValues(alpha: 0.6),
-                            shape: BoxShape.circle,
-                          ),
-                          child: const SizedBox.square(dimension: 3),
-                        ),
-                      ),
-                      Text(
-                        mark,
-                        key: const ValueKey('island-mark'),
-                        maxLines: 1,
-                        softWrap: false,
-                        style: TextStyle(
-                          fontSize: 13.5,
-                          height: 1.2,
-                          fontWeight: FontWeight.w600,
-                          color: colors.accentText,
-                        ),
-                      ),
-                      const SizedBox(width: 3),
-                      Icon(
-                        open
-                            ? Icons.keyboard_arrow_up_rounded
-                            : Icons.keyboard_arrow_down_rounded,
-                        key: const ValueKey('island-chevron'),
-                        size: 18,
-                        color: colors.textSecondary,
-                      ),
-                    ],
-                  ),
-                ),
-              ),
           ],
         ),
-      ),
+      );
+    }
+    final markStyle = TextStyle(
+      fontSize: _fontSize,
+      height: 1.2,
+      fontWeight: FontWeight.w600,
+      color: colors.accentText,
+    );
+    final elapsedStyle = markStyle.copyWith(
+      color: chrome.mutedInk,
+      fontFeatures: const [FontFeature.tabularFigures()],
+    );
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        double width(String text, TextStyle style) =>
+            _measure(context, text, style);
+        final room = constraints.maxWidth - _restPadding * 2;
+        bool fits(double needed) => !room.isFinite || needed + 1 <= room;
+        final markWidth = mark == null ? 0.0 : width(mark, markStyle);
+        final chevron = mark == null ? 0.0 : _chevron;
+        // The state's word opens the phrase, before what is alive.
+        final lead = word == null ? 0.0 : width(word, wordStyle) + _joint;
+        final line =
+            lead +
+            markWidth +
+            (mark != null && elapsed != null ? _joint : 0.0) +
+            (elapsed == null ? 0.0 : width(elapsed, elapsedStyle)) +
+            chevron;
+        // The name stays while at least its first letter and «…» fit;
+        // narrower, it leaves no empty gap behind it.
+        final showName =
+            name.isNotEmpty &&
+            fits(
+              line +
+                  _joint +
+                  math.min(
+                    width(name, nameStyle),
+                    width(name.characters.first, nameStyle) +
+                        width('…', nameStyle),
+                  ),
+            );
+        final showElapsed =
+            elapsed != null && (mark == null || showName || fits(line));
+        final shown = showElapsed ? line : lead + markWidth + chevron;
+        final phraseRow = Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (word != null) ...[
+              stateText(word),
+              if (mark != null || (elapsed != null && showElapsed))
+                _jointDot(colors),
+            ],
+            if (mark != null)
+              Text(
+                mark,
+                key: const ValueKey('island-mark'),
+                maxLines: 1,
+                softWrap: false,
+                style: markStyle,
+              ),
+            if (mark != null && showElapsed) _jointDot(colors),
+            if (elapsed != null && showElapsed)
+              Text(
+                elapsed,
+                // The activity pill's timer of old, found by this key.
+                key: const ValueKey('activity-pill-elapsed'),
+                maxLines: 1,
+                softWrap: false,
+                style: elapsedStyle,
+              ),
+            if (mark != null) ...[
+              const SizedBox(width: 3),
+              Icon(
+                open
+                    ? Icons.keyboard_arrow_up_rounded
+                    : Icons.keyboard_arrow_down_rounded,
+                key: const ValueKey('island-chevron'),
+                size: 18,
+                color: chrome.mutedInk,
+              ),
+            ],
+          ],
+        );
+        return _frame(
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              if (showName) ...[
+                Flexible(child: _name(nameStyle)),
+                _jointDot(colors),
+              ],
+              if (showName || fits(shown))
+                phraseRow
+              else
+                ConstrainedBox(
+                  constraints: BoxConstraints(maxWidth: math.max(0.0, room)),
+                  child: FittedBox(fit: BoxFit.scaleDown, child: phraseRow),
+                ),
+            ],
+          ),
+        );
+      },
     );
   }
+
+  /// The width [text] takes in [style], as a `Text` here draws it.
+  static double _measure(BuildContext context, String text, TextStyle style) {
+    final painter = TextPainter(
+      text: TextSpan(
+        text: text,
+        style: DefaultTextStyle.of(context).style.merge(style),
+      ),
+      textDirection: Directionality.of(context),
+      textScaler: MediaQuery.textScalerOf(context),
+      maxLines: 1,
+    )..layout();
+    final width = painter.width;
+    painter.dispose();
+    return width;
+  }
+
+  Widget _name(TextStyle style) => Text(
+    name,
+    key: const ValueKey('island-name'),
+    maxLines: 1,
+    overflow: TextOverflow.ellipsis,
+    style: style,
+  );
+
+  static Widget _jointDot(HermesThemeColors colors) => Padding(
+    padding: const EdgeInsets.symmetric(horizontal: 8),
+    child: DecoratedBox(
+      decoration: BoxDecoration(
+        color: colors.textSecondary.withValues(alpha: 0.6),
+        shape: BoxShape.circle,
+      ),
+      child: const SizedBox.square(dimension: 3),
+    ),
+  );
+
+  /// The same room on both sides of the line, whatever it says.
+  static Widget _frame(Widget line) => ConstrainedBox(
+    constraints: const BoxConstraints(minHeight: IslandMetrics.restHeight),
+    child: Padding(
+      padding: const EdgeInsets.symmetric(
+        horizontal: _restPadding,
+        // The face stands IslandMetrics.faceReach into the pill's edge: the
+        // line starts below it at every text size.
+        vertical: IslandMetrics.faceReach,
+      ),
+      child: line,
+    ),
+  );
 }
 
 /// «+1»: how many events wait behind the one shown.

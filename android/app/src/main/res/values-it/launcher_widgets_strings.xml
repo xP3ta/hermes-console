@@ -9,6 +9,7 @@
     <string name="lw_cron_description">La prossima attività programmata; nel widget grande, tutte le attività con gli errori in vista</string>
     <string name="lw_new">Nuova</string>
     <string name="lw_ask_hint">Chiedi a Hermes…</string>
+    <string name="lw_ask_hint_named">Chiedi a %1$s…</string>
     <string name="lw_new_description">Nuova chat</string>
     <string name="lw_voice_description">Nuova chat vocale</string>
     <string name="lw_camera_description">Nuova chat con la fotocamera</string>
@@ -151,4 +152,9 @@
     <string name="lw_sample_room_line">Builder risponde</string>
     <string name="lw_sample_run_title">Hermes · Terminale</string>
     <string name="lw_sample_run_about">Resoconto settimanale</string>
+
+    <!-- Quick Settings tiles -->
+    <string name="widgets_qs_new_chat_label">Nuova chat</string>
+    <string name="widgets_qs_voice_chat_label">Chat vocale</string>
+    <string name="widgets_qs_camera_chat_label">Chat con fotocamera</string>
 </resources>

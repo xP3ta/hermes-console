@@ -11,9 +11,9 @@ import '../services/app_error_log.dart';
 import '../services/connection_manager.dart';
 import '../services/diagnostic_bundle_service.dart';
 import '../services/turn_outbox_store.dart';
-import '../theme/app_theme.dart';
 import '../feedback/feedback_policy.dart';
 import '../design/modal.dart' show showHermesDialogRoute;
+import 'hermes_ui.dart' show HermesNavRow;
 
 class DiagnosticRuntimeInfo {
   final String version;
@@ -249,28 +249,24 @@ class _DiagnosticBundleTileState extends State<DiagnosticBundleTile> {
 
   @override
   Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
     final s = Strings.of(context);
-    // Settings paints this row inside a tinted group. A ListTile draws its
-    // ink on the nearest Material, which that tint would cover, so the row
-    // brings its own transparent one.
+    // The same row as its neighbours in the Data group (Copia de seguridad,
+    // Caché): a ListTile here had its own height, type and padding, so the
+    // group's rows did not line up. HermesNavRow brings its own ink.
     return Material(
       type: MaterialType.transparency,
-      child: ListTile(
-        leading: Icon(Icons.bug_report_outlined, color: colors.textSecondary),
-        title: Text(s.diagBundleTitle),
-        subtitle: Text(
-          s.diagBundleSubtitle,
-          style: TextStyle(fontSize: 12, color: colors.textSecondary),
-        ),
+      child: HermesNavRow(
+        icon: Icons.bug_report_outlined,
+        title: s.diagBundleTitle,
+        subtitle: s.diagBundleSubtitle,
         trailing: _busy
             ? const SizedBox(
                 width: 20,
                 height: 20,
                 child: CircularProgressIndicator(strokeWidth: 2),
               )
-            : Icon(Icons.chevron_right, color: colors.textDisabled),
-        onTap: _busy ? null : _generate,
+            : null,
+        onTap: _busy ? () {} : _generate,
       ),
     );
   }

@@ -48,18 +48,29 @@ class MainActivity : FlutterFragmentActivity() {
     private val memoryChannelName = "hermes/memory"
     private val networkAvailabilityEventsName = "hermes/network_availability"
     private val platformInfoChannelName = "hermes/platform_info"
+    private val LAUNCHER_WIDGETS_CHANNEL = "hermes/launcher_widgets"
     private val foregroundRestartContractChannelName =
         "hermes/foreground_restart_contract"
     private val foregroundExternalDataSyncChannelName =
         "hermes/foreground_external_data_sync"
+    private val TURN_KEEPALIVE_CHANNEL = "hermes/turn_keepalive"
     private var shareChannel: MethodChannel? = null
     private var richNotificationsChannel: MethodChannel? = null
     private var newSessionLaunchChannel: MethodChannel? = null
     private var memoryChannel: MethodChannel? = null
     private var externalDataSyncChannel: MethodChannel? = null
+    private var turnKeepAliveChannel: MethodChannel? = null
     private var pcmStreamHandler: HermesPcmStreamHandler? = null
     private var fullDuplexCaptureHandler: HermesFullDuplexCaptureHandler? = null
     private var documentPreviewHandler: HermesDocumentPreviewHandler? = null
+    private var saveToDeviceHandler: HermesSaveToDeviceHandler? = null
+
+    // Registered with the activity (before it starts, as the API requires):
+    // every «Guardar» of the app asks Android where to write the file.
+    private val saveCreateDocument =
+        registerForActivityResult(SaveCreateDocument()) { uri ->
+            saveToDeviceHandler?.onDocumentCreated(uri)
+        }
     private var clipboardImageHandler: HermesClipboardImageHandler? = null
     private var pendingShare: Map<String, Any?>? = null
     private var pendingNewSessionLaunch: Map<String, Any?>? = null
@@ -156,6 +167,21 @@ class MainActivity : FlutterFragmentActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        // The launcher widgets' sizes changed (one placed, resized, a new
+        // font scale): the app, while its engine lives, redraws its pictures.
+        val launcherWidgetsChannel =
+            MethodChannel(flutterEngine.dartExecutor.binaryMessenger, LAUNCHER_WIDGETS_CHANNEL)
+        LauncherWidgetSizes.onChanged = {
+            runOnUiThread {
+                try {
+                    launcherWidgetsChannel.invokeMethod("sizesChanged", null)
+                } catch (_: Exception) {
+                }
+            }
+        }
+        ScreenAssetHost.register(this, flutterEngine)
+        HermesHapticsSwitch.register(this, flutterEngine)
+        WebViewRenderGuard.register(flutterEngine)
         DurableSecretWriter.attach(applicationContext, flutterEngine.dartExecutor.binaryMessenger)
         clipboardImageHandler?.close()
         clipboardImageHandler = HermesClipboardImageHandler(applicationContext).also { handler ->
@@ -169,6 +195,16 @@ class MainActivity : FlutterFragmentActivity() {
             MethodChannel(
                 flutterEngine.dartExecutor.binaryMessenger,
                 documentPreviewChannelName,
+            ).setMethodCallHandler(handler)
+        }
+        saveToDeviceHandler?.close()
+        saveToDeviceHandler = HermesSaveToDeviceHandler(applicationContext) { name, mimeType ->
+            Log.i("HermesSave", "[save] launcher state=${lifecycle.currentState}")
+            saveCreateDocument.launch(name to mimeType)
+        }.also { handler ->
+            MethodChannel(
+                flutterEngine.dartExecutor.binaryMessenger,
+                HermesSaveToDeviceHandler.CHANNEL_NAME,
             ).setMethodCallHandler(handler)
         }
         pcmStreamHandler?.close()
@@ -235,10 +271,60 @@ class MainActivity : FlutterFragmentActivity() {
                     val activity =
                         getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
                     val power = getSystemService(Context.POWER_SERVICE) as PowerManager
+                    val memory = ActivityManager.MemoryInfo()
+                    activity.getMemoryInfo(memory)
+                    // Q9-CHAT5: whether frosted glass may blur. The system's own
+                    // switch (battery saver, «reduce transparency and blur», a GPU
+                    // that cannot) and the device's tier.
+                    val crossWindowBlur =
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                            windowManager.isCrossWindowBlurEnabled
+                        } else {
+                            true
+                        }
+                    // Q9-CRISTAL-DETRAS: cross-window blur is about blurring
+                    // between windows; a device can lack it (Samsung reports it
+                    // off) and still frost inside the app. What the person
+                    // switched off says no: «Allow window-level blurs» in the
+                    // developer options, and One UI's «Reduce transparency and
+                    // blur» (read where it exists).
+                    // A hidden key: with a recent targetSdk it may be refused
+                    // (SecurityException); then it does not count, as Samsung's.
+                    val windowBlursDisabled =
+                        try {
+                            Settings.Global.getInt(
+                                contentResolver,
+                                "disable_window_blurs",
+                                0,
+                            ) == 1
+                        } catch (_: Exception) {
+                            false
+                        }
+                    val reduceTransparency =
+                        try {
+                            Settings.System.getInt(
+                                contentResolver,
+                                "accessibility_reduce_transparency",
+                                0,
+                            ) == 1
+                        } catch (_: Exception) {
+                            false
+                        }
+                    val mediaClass =
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                            Build.VERSION.MEDIA_PERFORMANCE_CLASS
+                        } else {
+                            0
+                        }
                     result.success(
                         mapOf(
                             "lowRamDevice" to activity.isLowRamDevice,
                             "powerSaveMode" to power.isPowerSaveMode,
+                            "crossWindowBlurEnabled" to crossWindowBlur,
+                            "windowBlursDisabled" to windowBlursDisabled,
+                            "reduceTransparency" to reduceTransparency,
+                            "mediaPerformanceClass" to mediaClass,
+                            "totalMemoryBytes" to memory.totalMem,
                         ),
                     )
                 }
@@ -330,6 +416,49 @@ class MainActivity : FlutterFragmentActivity() {
                         HermesExternalDataSyncService.acknowledgeOwnerStop(
                             applicationContext,
                         )
+                        result.success(null)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+        }
+        turnKeepAliveChannel = MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            TURN_KEEPALIVE_CHANNEL,
+        ).also { channel ->
+            // Native ends (system timeout, backstop cap, start refused) reach
+            // Dart so it stops counting on the hold; nothing is restarted.
+            HermesTurnKeepAliveService.onEnded = { reason ->
+                runOnUiThread {
+                    try {
+                        channel.invokeMethod("ended", mapOf("reason" to reason))
+                    } catch (_: Exception) {
+                    }
+                }
+            }
+            channel.setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "start" -> {
+                        val applied =
+                            try {
+                                HermesTurnKeepAliveService.start(
+                                    applicationContext,
+                                    call.argument<String>("title"),
+                                    call.argument<String>("text"),
+                                    (call.argument<Number>("capMs") ?: 0).toLong(),
+                                )
+                            } catch (_: Exception) {
+                                // Background start not allowed (Android 12+
+                                // start grace over) or the budget is spent.
+                                false
+                            }
+                        result.success(applied)
+                    }
+                    "stop" -> {
+                        try {
+                            HermesTurnKeepAliveService.stop(applicationContext)
+                        } catch (_: Exception) {
+                        }
                         result.success(null)
                     }
                     else -> result.notImplemented()
@@ -463,6 +592,7 @@ class MainActivity : FlutterFragmentActivity() {
     }
 
     override fun onDestroy() {
+        LauncherWidgetSizes.onChanged = null
         richNotificationsChannel?.let { HermesRichNotifications.detach(it) }
         richNotificationsChannel = null
         if (externalDataSyncStopReceiverRegistered) {
@@ -470,11 +600,21 @@ class MainActivity : FlutterFragmentActivity() {
             externalDataSyncStopReceiverRegistered = false
         }
         externalDataSyncChannel = null
+        // The keep-alive belongs to this engine's turns: stopWithTask also
+        // ends it with the task; an Activity destroyed alone releases it.
+        HermesTurnKeepAliveService.onEnded = null
+        turnKeepAliveChannel = null
+        try {
+            HermesTurnKeepAliveService.stop(applicationContext)
+        } catch (_: Exception) {
+        }
         newSessionLaunchChannel = null
         memoryChannel = null
         stopNetworkAvailabilityEvents()
         documentPreviewHandler?.close()
         documentPreviewHandler = null
+        saveToDeviceHandler?.close()
+        saveToDeviceHandler = null
         clipboardImageHandler?.close()
         clipboardImageHandler = null
         fullDuplexCaptureHandler?.close()

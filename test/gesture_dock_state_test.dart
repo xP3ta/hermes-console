@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/services/ssh_profile_presence.dart';
 import 'package:hermes_android/core/shell/gesture_dock_state.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -43,7 +44,7 @@ void main() {
   });
 
   group('layout (edit mode)', () {
-    test('normalize keeps Inicio, drops repeats and caps at 5', () {
+    test('normalize keeps Inicio, drops repeats and caps at 6', () {
       expect(
         GestureDockTab.normalize([
           GestureDockTab.projects,
@@ -56,19 +57,19 @@ void main() {
           GestureDockTab.search,
           GestureDockTab.cron,
           GestureDockTab.tasks,
-          GestureDockTab.tools,
+          GestureDockTab.settings,
           GestureDockTab.bots,
           GestureDockTab.activity,
           GestureDockTab.home,
         ]),
-        hasLength(5),
+        hasLength(6),
       );
       expect(
         GestureDockTab.normalize([
           GestureDockTab.search,
           GestureDockTab.cron,
           GestureDockTab.tasks,
-          GestureDockTab.tools,
+          GestureDockTab.settings,
           GestureDockTab.bots,
           GestureDockTab.activity,
           GestureDockTab.home,
@@ -112,14 +113,15 @@ void main() {
           'search',
           'cron',
           'tasks',
-          'tools',
+          'agents',
           'activity',
         ],
       );
     });
   });
 
-  // Owner: "Yo pondría: Inicio, crear chat, Chats, Bots y Herramientas".
+  // 1.4.0: Herramientas was split; Ajustes (and Agentes, with an SSH
+  // profile) took its place on the bar.
   group('default layout', () {
     Map<String, Object?> stored(List<String> tabs, {int? layoutVersion}) => {
       'schema_version': 1,
@@ -131,13 +133,14 @@ void main() {
 
     const legacy = ['home', 'create', 'projects', 'settings'];
 
-    test('Inicio, Nuevo chat, Chats, Bots, Herramientas', () {
+    test('Inicio, Nuevo chat, Chats, Bots, Agentes, Ajustes', () {
       expect(GestureDockTab.defaultLayout, [
         GestureDockTab.home,
         GestureDockTab.create,
         GestureDockTab.search,
         GestureDockTab.bots,
-        GestureDockTab.tools,
+        GestureDockTab.agents,
+        GestureDockTab.settings,
       ]);
       expect(const GestureDockSettings().tabs, GestureDockTab.defaultLayout);
       expect(
@@ -167,7 +170,7 @@ void main() {
         ['home', 'create', 'projects'],
         ['home', 'create', 'projects', 'settings', 'bots'],
         ['home', 'search'],
-        ['create', 'home', 'tools', 'activity', 'cron'],
+        ['create', 'home', 'settings', 'activity', 'cron'],
       ]) {
         expect(
           [
@@ -209,8 +212,59 @@ void main() {
       final raw =
           jsonDecode(prefs.getString(GestureDockController.storageKey)!)
               as Map<String, dynamic>;
-      expect(raw['tabs'], ['home', 'create', 'search', 'bots', 'tools']);
-      expect(raw['layout_version'], 2);
+      expect(raw['tabs'], [
+        'home',
+        'create',
+        'search',
+        'bots',
+        'agents',
+        'settings',
+      ]);
+      expect(raw['layout_version'], 3);
+    });
+
+    test('the 1.3.x default (with Herramientas) moves to the new one', () {
+      final loaded = GestureDockSettings.fromJson(
+        stored(['home', 'create', 'search', 'bots', 'tools'], layoutVersion: 2),
+      );
+      expect(loaded.tabs, GestureDockTab.defaultLayout);
+      // Without a layout version too.
+      expect(
+        GestureDockSettings.fromJson(
+          stored(['home', 'create', 'search', 'bots', 'tools']),
+        ).tabs,
+        GestureDockTab.defaultLayout,
+      );
+    });
+
+    test(
+      'a stored Herramientas in an edited dock becomes Ajustes in place',
+      () {
+        final loaded = GestureDockSettings.fromJson(
+          stored(['home', 'tools', 'cron', 'settings'], layoutVersion: 2),
+        );
+        expect(loaded.tabs, [
+          GestureDockTab.home,
+          GestureDockTab.settings,
+          GestureDockTab.cron,
+        ]);
+        expect(GestureDockTab.parse('tools'), GestureDockTab.settings);
+      },
+    );
+
+    test('Agentes is on the bar only while there is an SSH profile', () {
+      final without = SshProfilePresence();
+      final with_ = SshProfilePresence()..value = true;
+      expect(
+        gestureDockShownTabs(GestureDockTab.defaultLayout, presence: without),
+        isNot(contains(GestureDockTab.agents)),
+      );
+      expect(
+        gestureDockShownTabs(GestureDockTab.defaultLayout, presence: with_),
+        GestureDockTab.defaultLayout,
+      );
+      // The stored layout keeps it either way.
+      expect(GestureDockTab.defaultLayout, contains(GestureDockTab.agents));
     });
 
     test('a device that never stored anything gets it too', () async {
@@ -230,12 +284,12 @@ void main() {
   group('persistence', () {
     test('settings round-trip through SharedPreferences', () async {
       await c.setOpaque(true);
-      await c.setTabs([GestureDockTab.home, GestureDockTab.tools]);
+      await c.setTabs([GestureDockTab.home, GestureDockTab.agents]);
       final prefs = await SharedPreferences.getInstance();
       final raw = prefs.getString(GestureDockController.storageKey)!;
       final loaded = GestureDockSettings.fromJson(jsonDecode(raw));
       expect(loaded.opaque, isTrue);
-      expect(loaded.tabs, [GestureDockTab.home, GestureDockTab.tools]);
+      expect(loaded.tabs, [GestureDockTab.home, GestureDockTab.agents]);
     });
 
     test('a fresh controller loads what was stored', () async {
@@ -274,7 +328,8 @@ void main() {
       expect(fresh.value.tabs, [
         GestureDockTab.home,
         GestureDockTab.search,
-        GestureDockTab.tools,
+        // The stored «tools» is read as Ajustes.
+        GestureDockTab.settings,
       ]);
       expect(fresh.value.opaque, isTrue);
       expect(fresh.hidden.value, isFalse, reason: 'auto-hide is gone');

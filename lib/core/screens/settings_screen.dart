@@ -12,6 +12,7 @@ import '../services/dock_preferences_store.dart';
 import 'package:http/http.dart' as http;
 
 import '../app_header_title.dart';
+import 'cache_settings_screen.dart';
 import '../services/chat_draft_store.dart';
 import '../services/connection_manager.dart';
 import '../services/active_profile_scope.dart';
@@ -25,7 +26,10 @@ import '../settings/settings_sections.dart';
 import '../services/session_deletion.dart';
 import '../services/turn_outbox_store.dart';
 import '../theme/app_theme.dart';
+import '../theme/hermes_tokens.dart';
 import '../theme/motion.dart';
+import '../theme/readable_ink.dart';
+import '../theme/text_scale.dart';
 import '../theme/theme_profile_adapter.dart';
 import '../theme/theme_profile_store.dart';
 import '../utils/api_error.dart';
@@ -36,6 +40,7 @@ import '../services/hermes_update_monitor.dart';
 import '../services/hermes_update_probes.dart';
 import '../../main.dart';
 import '../widgets/general_dock_shell.dart';
+import '../widgets/dock_scroll_clearance.dart';
 import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_ui.dart';
 import '../widgets/hermes_update_card.dart';
@@ -46,18 +51,21 @@ import 'gateway_manager_screen.dart';
 import 'instance_edit_screen.dart';
 import 'models_screen.dart';
 import 'permissions_screen.dart';
+import 'vault_screen.dart';
 import 'security_info_screen.dart';
-import 'themes_screen.dart';
+import 'look_feel_screen.dart';
+import '../theme/look_feel.dart';
 import 'gesture_dock_settings_screen.dart';
 import 'guided_tours_screen.dart';
-import 'embed_settings_screen.dart';
 import 'notification_settings_screen.dart';
 import 'voice_settings_screen.dart';
 
 import 'package:package_info_plus/package_info_plus.dart';
 
 import '../services/message_reaction_prefs.dart';
+import '../services/motion_prefs.dart';
 import '../services/pinned_prompt_prefs.dart';
+import '../services/reasoning_disclosure_prefs.dart';
 import '../widgets/hermes_app_bar.dart';
 import 'backup_restore_screen.dart';
 import '../widgets/diagnostic_bundle_tile.dart';
@@ -72,6 +80,9 @@ import '../design/hermes_design.dart'
         showHermesDialog,
         showHermesDialogRoute;
 import '../feedback/feedback_policy.dart';
+import '../characters/bot_motion.dart';
+import 'characters/character_studio_screen.dart';
+import 'characters/studio_ask_agent.dart';
 
 /// Readable, localized label for a gateway platform state (`connected`…).
 /// Unknown states are shown raw as a fallback (spec 028 A-026).
@@ -119,7 +130,10 @@ Map<String, String> currentGatewayPlatformStates(Map<String, dynamic>? status) {
 /// así que no se reserva nada: dejar el hueco muerto sería el bug opuesto.
 @visibleForTesting
 double dockScrollReservation(BuildContext context, {required bool useDock}) =>
-    useDock ? 48 + 12 + 6 + MediaQuery.paddingOf(context).bottom + 16 : 0;
+    !useDock
+    ? 0
+    : DockScrollClearance.maybeOf(context) ??
+          48 + 12 + 6 + MediaQuery.paddingOf(context).bottom + 16;
 
 /// Presentación de la fila de temas en Ajustes. Mantenerla pura evita que un
 /// id personalizado pase por `presetById` y se anuncie falsamente como Amber.
@@ -171,6 +185,119 @@ class SettingsScreen extends StatelessWidget {
     // instancia con el mismo id. La revisión forma parte de la key de
     // autocompresión para cerrar el cliente anterior y volver a cargar URL,
     // auth, permisos y schema sin tener que reabrir Ajustes.
+    return _ActiveSettingsConnection(
+      connection: connection,
+      connManager: connManager,
+      builder: (context, conn) => SettingsListDetail(
+        rowsFor: (context, section) => _sectionRows(context, conn, section),
+        scaffold: (context, body) => _buildScaffold(context, conn, body),
+        list: (context, scroll) => _buildList(context, conn, scroll),
+      ),
+    );
+  }
+
+  Widget _buildScaffold(
+    BuildContext context,
+    SavedConnection conn,
+    Widget body,
+  ) {
+    return Scaffold(
+      appBar: HermesAppBar(title: Text(Strings.of(context).setTitle)),
+      // Ajustes es una pantalla de navegación de nivel superior alcanzable
+      // en 1 salto desde Inicio: sin el dock aquí, el usuario lo veía
+      // "desaparecer" al salir de Inicio/Mission Control (bug confirmado en
+      // dispositivo real). `includeSettingsAction: false` evita apilar
+      // Ajustes sobre sí misma si el usuario toca el propio item.
+      body: GeneralDockShell(
+        connection: conn,
+        connManager: connManager,
+        pet: false,
+        includeSettingsAction: false,
+        // Expanded windows: categories and page side by side over the full
+        // width beside the rail.
+        paneLayout: true,
+        bodyBuilder: (_, _) => body,
+      ),
+    );
+  }
+
+  /// The rows of one Settings category, exactly as the phone list shows
+  /// them. The tablet list-detail shows one category at a time with the same
+  /// rows, built with the right pane's context so their pages open there.
+  List<Widget> _sectionRows(
+    BuildContext context,
+    SavedConnection conn,
+    SettingsSection section,
+  ) => settingsSectionRows(
+    context,
+    conn,
+    connManager,
+    section,
+    verifyHistoryCleanupForTesting: verifyHistoryCleanupForTesting,
+  );
+
+  Widget _buildList(
+    BuildContext context,
+    SavedConnection conn,
+    ScrollController scroll,
+  ) {
+    // El dock se pinta ENCIMA de este cuerpo, así que la lista tiene que
+    // reservar su hueco o la última sección ("Acerca de") queda detrás de
+    // la barra. `ListenableBuilder` es necesario porque el interruptor
+    // "Usar dock flotante" vive en esta misma pantalla: al apagarlo la
+    // reserva debe desaparecer sin salir y volver a entrar.
+    return ListenableBuilder(
+      listenable: DockPreferencesController.instance.listenable,
+      builder: (context, _) => ListView(
+        clipBehavior: hermesUnderHeader,
+        controller: scroll,
+        padding: EdgeInsets.fromLTRB(
+          HermesSpace.x4,
+          0,
+          HermesSpace.x4,
+          dockScrollReservation(
+            context,
+            useDock: DockPreferencesController.instance.value.useDock,
+          ),
+        ),
+        // Orden de secciones: de lo esencial (a qué instancia hablas) a lo
+        // avanzado, con voz y notificaciones como apartados propios en vez
+        // de filas sueltas dentro de "chat" (spec 028 U-08).
+        // Built sections stay alive: at the bottom of this bouncing list a
+        // section on the cache edge was disposed and rebuilt over and over,
+        // re-running its async check and changing its height each time,
+        // and the screen never stopped drawing frames.
+        children: _keptAlive([
+          for (final section in SettingsSection.values)
+            ..._sectionRows(context, conn, section),
+        ]),
+      ),
+    );
+  }
+}
+
+/// Resolves the instance Settings shows and rebuilds when it changes.
+///
+/// The screens that show Settings are rebuilt when the ACTIVE instance
+/// changes (same pattern as HomeDashboardScreen) and on material edits of an
+/// instance with the same id. The revision is part of the key of the
+/// auto-compression tile, so the old client is closed and URL, auth,
+/// permissions and schema load again without reopening Settings. «Todos los
+/// ajustes» and the screen of one section share this, so neither can lag
+/// behind the other.
+class _ActiveSettingsConnection extends StatelessWidget {
+  const _ActiveSettingsConnection({
+    required this.connection,
+    required this.connManager,
+    required this.builder,
+  });
+
+  final SavedConnection connection;
+  final ConnectionManager connManager;
+  final Widget Function(BuildContext context, SavedConnection conn) builder;
+
+  @override
+  Widget build(BuildContext context) {
     return ValueListenableBuilder<String?>(
       valueListenable: connManager.activeConnectionId,
       builder: (context, activeId, _) {
@@ -196,14 +323,7 @@ class SettingsScreen extends StatelessWidget {
                       (candidate) => candidate.id == id,
                     );
                     final conn = matches.isEmpty ? connection : matches.first;
-                    return SettingsListDetail(
-                      rowsFor: (context, section) =>
-                          _sectionRows(context, conn, section),
-                      scaffold: (context, body) =>
-                          _buildScaffold(context, conn, body),
-                      list: (context, scroll) =>
-                          _buildList(context, conn, scroll),
-                    );
+                    return builder(context, conn);
                   },
                 );
               },
@@ -213,179 +333,321 @@ class SettingsScreen extends StatelessWidget {
       },
     );
   }
+}
 
-  Widget _buildScaffold(
-    BuildContext context,
-    SavedConnection conn,
-    Widget body,
-  ) {
-    return Scaffold(
-      appBar: HermesAppBar(title: Text(Strings.of(context).setTitle)),
-      // Ajustes es una pantalla de navegación de nivel superior alcanzable
-      // en 1 salto desde Inicio: sin el dock aquí, el usuario lo veía
-      // "desaparecer" al salir de Inicio/Mission Control (bug confirmado en
-      // dispositivo real). `includeSettingsAction: false` evita apilar
-      // Ajustes sobre sí misma si el usuario toca el propio item.
-      body: GeneralDockShell(
-        connection: conn,
-        connManager: connManager,
-        pet: false,
-        includeSettingsAction: false,
-        // Expanded windows: categories and page side by side over the full
-        // width beside the rail.
-        paneLayout: true,
-        body: body,
-      ),
+/// One section of Settings on a screen of its own: its title in the app bar,
+/// its back arrow, and only its cards. It is the same rows «Todos los
+/// ajustes» list shows for that section ([settingsSectionRows]), so no preference
+/// is lost or kept twice. [embedded] shows just the cards under a title, for
+/// the detail pane of a wide window (the pane has its own chrome).
+class SettingsSectionScreen extends StatelessWidget {
+  const SettingsSectionScreen({
+    required this.section,
+    required this.connection,
+    required this.connManager,
+    this.embedded = false,
+    this.verifyHistoryCleanupForTesting,
+    super.key,
+  });
+
+  final SettingsSection section;
+  final SavedConnection connection;
+  final ConnectionManager connManager;
+  final bool embedded;
+  @visibleForTesting
+  final Future<bool> Function()? verifyHistoryCleanupForTesting;
+
+  @override
+  Widget build(BuildContext context) {
+    return _ActiveSettingsConnection(
+      connection: connection,
+      connManager: connManager,
+      builder: (context, conn) {
+        final title = settingsSectionScreenTitle(Strings.of(context), section);
+        if (embedded) return _body(context, conn, title: title);
+        return Scaffold(
+          appBar: HermesAppBar(title: Text(title)),
+          body: GeneralDockShell(
+            connection: conn,
+            connManager: connManager,
+            pet: false,
+            includeSettingsAction: false,
+            bodyBuilder: (_, _) => _body(context, conn),
+          ),
+        );
+      },
     );
   }
 
-  /// The rows of one Settings category, exactly as the phone list shows
-  /// them. The tablet list-detail shows one category at a time with the same
-  /// rows, built with the right pane's context so their pages open there.
-  List<Widget> _sectionRows(
-    BuildContext context,
-    SavedConnection conn,
-    SettingsSection section,
-  ) => switch (section) {
-    SettingsSection.connection => [
-      _SectionHeader(Strings.of(context).setSecConnection),
-      SettingsDeepLinkTarget(
-        section: SettingsSection.connection,
-        child: _ConnectionCard(connection: conn, connManager: connManager),
-      ),
-    ],
-    SettingsSection.appearance => [
-      _SectionHeader(Strings.of(context).setSecAppearance),
-      SettingsDeepLinkTarget(
-        section: SettingsSection.appearance,
-        child: HermesGroup(
-          children: [
-            _ThemesEntry(),
-            _FontStyleEntry(),
-            _LanguageEntry(),
-            _HeaderTitleField(),
-            _UseDockTile(),
-            _DockTile(),
-            _GuidedTourTile(connection: conn, connManager: connManager),
-            _StartupDestinationTile(),
-          ],
+  Widget _body(BuildContext context, SavedConnection conn, {String? title}) {
+    final rows = settingsSectionRows(
+      context,
+      conn,
+      connManager,
+      section,
+      verifyHistoryCleanupForTesting: verifyHistoryCleanupForTesting,
+      header: false,
+    );
+    return ListenableBuilder(
+      listenable: DockPreferencesController.instance.listenable,
+      builder: (context, _) => ListView(
+        key: ValueKey('settings-section-screen-${section.name}'),
+        clipBehavior: hermesUnderHeader,
+        padding: EdgeInsets.fromLTRB(
+          HermesSpace.x4,
+          HermesSpace.x4,
+          HermesSpace.x4,
+          // Embedded in a pane there is no floating bar to clear.
+          title != null
+              ? HermesSpace.x6
+              : dockScrollReservation(
+                  context,
+                  useDock: DockPreferencesController.instance.value.useDock,
+                ),
         ),
-      ),
-    ],
-    SettingsSection.chat => [
-      _SectionHeader(Strings.of(context).setSecChat),
-      SettingsDeepLinkTarget(
-        section: SettingsSection.chat,
-        child: HermesGroup(
-          children: [
-            _ActiveModelTile(
-              key: ValueKey((
-                conn.id,
-                connManager.connectionRevisionFor(conn.id).value,
-              )),
-              connection: conn,
-              profileScope: ActiveProfileScope.of(connManager, conn.id),
-            ),
-            HermesNavRow(
-              key: const ValueKey('settings-rich-embeds'),
-              icon: Icons.play_circle_outline_rounded,
-              title: Strings.of(context).embedSettingsTitle,
-              subtitle: Strings.of(context).embedSettingsSubtitle,
-              onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const EmbedSettingsScreen()),
-              ),
-            ),
-            ListenableBuilder(
-              listenable: MessageReactionPrefs.shared,
-              builder: (context, _) => HermesToggleRow(
-                key: const ValueKey('settings-reactions'),
-                icon: Icons.add_reaction_outlined,
-                title: Strings.of(context).reactSettingsTitle,
-                subtitle: Strings.of(context).reactSettingsSubtitle,
-                value: MessageReactionPrefs.shared.enabled,
-                onChanged: MessageReactionPrefs.shared.setEnabled,
-              ),
-            ),
-            ListenableBuilder(
-              listenable: PinnedPromptPrefs.shared,
-              builder: (context, _) => HermesToggleRow(
-                key: const ValueKey('settings-pinned-prompt'),
-                icon: Icons.vertical_align_top_rounded,
-                title: Strings.of(context).cs1215PinnedPromptSetting,
-                subtitle: Strings.of(context).cs1215PinnedPromptSettingSubtitle,
-                value: PinnedPromptPrefs.shared.enabled,
-                onChanged: PinnedPromptPrefs.shared.setEnabled,
-              ),
-            ),
-          ],
-        ),
-      ),
-    ],
-    SettingsSection.voice => [
-      _SectionHeader(Strings.of(context).voiceTitle),
-      SettingsDeepLinkTarget(
-        section: SettingsSection.voice,
-        child: HermesGroup(children: [_VoiceTile(connection: conn)]),
-      ),
-    ],
-    SettingsSection.notifications => [
-      _SectionHeader(Strings.of(context).notifTitle),
-      SettingsDeepLinkTarget(
-        section: SettingsSection.notifications,
-        child: HermesGroup(children: [_NotificationsTile()]),
-      ),
-    ],
-    SettingsSection.security => [
-      _SectionHeader(Strings.of(context).setSecSecurity),
-      SettingsDeepLinkTarget(
-        section: SettingsSection.security,
-        child: HermesGroup(
-          children: [
-            HermesNavRow(
-              icon: Icons.shield_outlined,
-              title: Strings.of(context).setSecurity,
-              subtitle: Strings.of(context).setSecuritySub,
-              onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => SecurityInfoScreen(connManager: connManager),
+        children: _keptAlive([
+          if (title != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: HermesSpace.x3),
+              child: Semantics(
+                header: true,
+                child: Text(
+                  title,
+                  key: const ValueKey('settings-section-pane-title'),
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    color: Theme.of(context).hermes.textPrimary,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ),
             ),
-            HermesNavRow(
-              icon: Icons.verified_user_outlined,
-              title: Strings.of(context).setPermissions,
-              subtitle: Strings.of(context).setPermissionsSub,
-              onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => PermissionsScreen(connection: conn),
+          ...rows,
+        ]),
+      ),
+    );
+  }
+}
+
+/// The screen that shows [section] and only it. Voice and Notifications have
+/// had screens of their own since before; the rest is [SettingsSectionScreen].
+/// This is the one place that says where a section lives: the rows of
+/// Ajustes, the wide-window pane and [openSettingsSection] (the deep link) all
+/// go through it.
+Widget settingsSectionScreen({
+  required SettingsSection section,
+  required SavedConnection connection,
+  required ConnectionManager connManager,
+  bool embedded = false,
+}) => switch (section) {
+  SettingsSection.voice => VoiceSettingsScreen(connection: connection),
+  SettingsSection.notifications => const NotificationSettingsScreen(),
+  _ => SettingsSectionScreen(
+    section: section,
+    connection: connection,
+    connManager: connManager,
+    embedded: embedded,
+  ),
+};
+
+/// Opens the screen of [section]: where every request for a part of Settings
+/// ends (a notification, a widget or a search result), instead of the whole
+/// list scrolled to it.
+Future<void> openSettingsSection(
+  BuildContext context, {
+  required SettingsSection section,
+  required SavedConnection connection,
+  required ConnectionManager connManager,
+}) => Navigator.of(context).push(
+  MaterialPageRoute<void>(
+    builder: (_) => settingsSectionScreen(
+      section: section,
+      connection: connection,
+      connManager: connManager,
+    ),
+  ),
+);
+
+/// The rows of one Settings section, built once for every place that shows
+/// it: the phone list of «Todos los ajustes» (every section in a row), the
+/// tablet detail pane and the section's own screen
+/// ([SettingsSectionScreen]). One builder, so a preference lives in one place
+/// and never in two. [header] false leaves out the section's title row (the
+/// screen that shows only this section has it in its app bar).
+List<Widget> settingsSectionRows(
+  BuildContext context,
+  SavedConnection conn,
+  ConnectionManager connManager,
+  SettingsSection section, {
+  Future<bool> Function()? verifyHistoryCleanupForTesting,
+  bool header = true,
+}) => switch (section) {
+  SettingsSection.connection => [
+    if (header) _SectionHeader(Strings.of(context).setSecConnection),
+    SettingsDeepLinkTarget(
+      section: SettingsSection.connection,
+      child: _ConnectionCard(connection: conn, connManager: connManager),
+    ),
+  ],
+  SettingsSection.appearance => [
+    if (header) _SectionHeader(Strings.of(context).setSecAppearance),
+    SettingsDeepLinkTarget(
+      section: SettingsSection.appearance,
+      child: HermesGroup(
+        children: [
+          _ThemesEntry(),
+          _FontStyleEntry(),
+          _LanguageEntry(),
+          _HeaderTitleField(),
+          _UseDockTile(),
+          _DockTile(),
+          _GuidedTourTile(connection: conn, connManager: connManager),
+          _StartupDestinationTile(),
+          _AnimateBotsTile(),
+          _CharactersTile(connection: conn, connManager: connManager),
+        ],
+      ),
+    ),
+  ],
+  SettingsSection.chat => [
+    if (header) _SectionHeader(Strings.of(context).setSecChat),
+    SettingsDeepLinkTarget(
+      section: SettingsSection.chat,
+      child: HermesGroup(
+        children: [
+          _ActiveModelTile(
+            key: ValueKey((
+              conn.id,
+              connManager.connectionRevisionFor(conn.id).value,
+            )),
+            connection: conn,
+            profileScope: ActiveProfileScope.of(connManager, conn.id),
+          ),
+          ListenableBuilder(
+            listenable: MessageReactionPrefs.shared,
+            builder: (context, _) => HermesToggleRow(
+              key: const ValueKey('settings-reactions'),
+              icon: Icons.add_reaction_outlined,
+              title: Strings.of(context).reactSettingsTitle,
+              subtitle: Strings.of(context).reactSettingsSubtitle,
+              value: MessageReactionPrefs.shared.enabled,
+              onChanged: MessageReactionPrefs.shared.setEnabled,
+            ),
+          ),
+          ListenableBuilder(
+            listenable: PinnedPromptPrefs.shared,
+            builder: (context, _) => HermesToggleRow(
+              key: const ValueKey('settings-pinned-prompt'),
+              icon: Icons.vertical_align_top_rounded,
+              title: Strings.of(context).cs1215PinnedPromptSetting,
+              subtitle: Strings.of(context).cs1215PinnedPromptSettingSubtitle,
+              value: PinnedPromptPrefs.shared.enabled,
+              onChanged: PinnedPromptPrefs.shared.setEnabled,
+            ),
+          ),
+          // Hermes Desktop's «Collapse thinking by default».
+          ListenableBuilder(
+            listenable: ReasoningDisclosurePrefs.shared,
+            builder: (context, _) => HermesToggleRow(
+              key: const ValueKey('settings-reasoning-collapsed'),
+              icon: Icons.unfold_less_rounded,
+              title: Strings.of(context).fluidReasoningCollapsedTitle,
+              subtitle: Strings.of(context).fluidReasoningCollapsedDesc,
+              value: ReasoningDisclosurePrefs.shared.collapsedByDefault,
+              onChanged: ReasoningDisclosurePrefs.shared.setCollapsedByDefault,
+            ),
+          ),
+          // The typing cursor is how a reply looks while it streams: a chat
+          // preference, so it is here and not with the look of the app.
+          _StreamingCursorTile(),
+        ],
+      ),
+    ),
+  ],
+  SettingsSection.voice => [
+    if (header) _SectionHeader(Strings.of(context).voiceTitle),
+    SettingsDeepLinkTarget(
+      section: SettingsSection.voice,
+      child: HermesGroup(children: [_VoiceTile(connection: conn)]),
+    ),
+  ],
+  SettingsSection.notifications => [
+    if (header) _SectionHeader(Strings.of(context).notifTitle),
+    SettingsDeepLinkTarget(
+      section: SettingsSection.notifications,
+      child: HermesGroup(children: [_NotificationsTile()]),
+    ),
+  ],
+  SettingsSection.security => [
+    if (header) _SectionHeader(Strings.of(context).setSecSecurity),
+    SettingsDeepLinkTarget(
+      section: SettingsSection.security,
+      child: HermesGroup(
+        children: [
+          HermesNavRow(
+            key: const ValueKey('settings-security-info'),
+            icon: Icons.shield_outlined,
+            title: Strings.of(context).setSecurity,
+            subtitle: Strings.of(context).setSecuritySub,
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => SecurityInfoScreen(connManager: connManager),
+              ),
+            ),
+          ),
+          HermesNavRow(
+            icon: Icons.verified_user_outlined,
+            title: Strings.of(context).setPermissions,
+            subtitle: Strings.of(context).setPermissionsSub,
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => PermissionsScreen(connection: conn),
+              ),
+            ),
+          ),
+          // Hermes Desktop's Settings → Passwords & Logins: the server's
+          // vault of the profile these Settings show.
+          HermesNavRow(
+            key: const ValueKey('settings-vault'),
+            icon: Icons.key_outlined,
+            title: Strings.of(context).vltSettingsTitle,
+            subtitle: Strings.of(context).vltSettingsSubtitle,
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => VaultScreen(
+                  connection: conn,
+                  profile: Session.profileOwner(
+                    connManager.activeProfileFor(conn.id),
+                  ),
                 ),
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
-    ],
-    SettingsSection.system => [
-      _SectionHeader(Strings.of(context).setSecSystem),
-      SettingsDeepLinkTarget(
-        section: SettingsSection.system,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            _MaintenanceSection(
-              key: ValueKey('maint-${conn.id}'),
-              connection: conn,
-              connManager: connManager,
-            ),
-          ],
-        ),
+    ),
+  ],
+  SettingsSection.system => [
+    if (header) _SectionHeader(Strings.of(context).setSecSystem),
+    SettingsDeepLinkTarget(
+      section: SettingsSection.system,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _MaintenanceSection(
+            key: ValueKey('maint-${conn.id}'),
+            connection: conn,
+            connManager: connManager,
+          ),
+        ],
       ),
-    ],
-    SettingsSection.data => [
-      _SectionHeader(Strings.of(context).setSecData),
+    ),
+  ],
+  SettingsSection.data => [
+    if (header) _SectionHeader(Strings.of(context).setSecData),
+    ..._stackedCards([
       SettingsDeepLinkTarget(
         section: SettingsSection.data,
         child: HermesGroup(
@@ -415,6 +677,35 @@ class SettingsScreen extends StatelessWidget {
                   ),
                 ),
               ),
+            if (context
+                    .findAncestorStateOfType<HermesAppState>()
+                    ?.activeChats
+                    .coldStartStore
+                    ?.settings !=
+                null)
+              HermesNavRow(
+                key: const ValueKey('settings-cache'),
+                icon: Icons.storage_rounded,
+                title: Strings.of(context).cacheTitle,
+                subtitle: Strings.of(context).cacheSubtitle,
+                onTap: () {
+                  final store = context
+                      .findAncestorStateOfType<HermesAppState>()
+                      ?.activeChats
+                      .coldStartStore;
+                  final cacheSettings = store?.settings;
+                  if (store == null || cacheSettings == null) return;
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => CacheSettingsScreen(
+                        store: store,
+                        settings: cacheSettings,
+                      ),
+                    ),
+                  );
+                },
+              ),
             DiagnosticBundleTile(
               controller: DiagnosticBundleController(manager: connManager),
             ),
@@ -428,58 +719,34 @@ class SettingsScreen extends StatelessWidget {
         verifyHistoryCleanupForTesting: verifyHistoryCleanupForTesting,
       ),
       _OrphanDataTile(connManager: connManager),
-    ],
-    SettingsSection.about => [
-      _SectionHeader(Strings.of(context).setSecAbout),
-      SettingsDeepLinkTarget(
-        section: SettingsSection.about,
-        child: _AboutCard(),
-      ),
-      const SizedBox(height: 10),
-      const InstallSourceSection(),
-      const SizedBox(height: 24),
-    ],
-  };
+    ]),
+  ],
+  SettingsSection.about => [
+    if (header) _SectionHeader(Strings.of(context).setSecAbout),
+    SettingsDeepLinkTarget(section: SettingsSection.about, child: _AboutCard()),
+    // The panel above has 3 dp of margin of its own; the group below none.
+    const SizedBox(height: settingsCardGap - 3),
+    const InstallSourceSection(),
+    const SizedBox(height: 24),
+  ],
+};
 
-  Widget _buildList(
-    BuildContext context,
-    SavedConnection conn,
-    ScrollController scroll,
-  ) {
-    // El dock se pinta ENCIMA de este cuerpo, así que la lista tiene que
-    // reservar su hueco o la última sección ("Acerca de") queda detrás de
-    // la barra. `ListenableBuilder` es necesario porque el interruptor
-    // "Usar dock flotante" vive en esta misma pantalla: al apagarlo la
-    // reserva debe desaparecer sin salir y volver a entrar.
-    return ListenableBuilder(
-      listenable: DockPreferencesController.instance.listenable,
-      builder: (context, _) => ListView(
-        clipBehavior: hermesUnderHeader,
-        controller: scroll,
-        padding: EdgeInsets.fromLTRB(
-          16,
-          0,
-          16,
-          dockScrollReservation(
-            context,
-            useDock: DockPreferencesController.instance.value.useDock,
-          ),
-        ),
-        // Orden de secciones: de lo esencial (a qué instancia hablas) a lo
-        // avanzado, con voz y notificaciones como apartados propios en vez
-        // de filas sueltas dentro de "chat" (spec 028 U-08).
-        // Built sections stay alive: at the bottom of this bouncing list a
-        // section on the cache edge was disposed and rebuilt over and over,
-        // re-running its async check and changing its height each time,
-        // and the screen never stopped drawing frames.
-        children: _keptAlive([
-          for (final section in SettingsSection.values)
-            ..._sectionRows(context, conn, section),
-        ]),
-      ),
-    );
-  }
-}
+/// The gap between two cards (or groups) of one section. Every sibling pair
+/// in Settings is this far apart; before, the groups of the data section had
+/// no gap at all and their borders and shadows touched.
+const double settingsCardGap = HermesSpace.x3;
+
+/// A [HermesPanel] already brings 3 dp of margin on each side, so between two
+/// panels this much more makes the same [settingsCardGap] the groups have.
+const double _panelGap = settingsCardGap - 6;
+
+/// [cards] one under the other with [settingsCardGap] between them.
+List<Widget> _stackedCards(List<Widget> cards) => [
+  for (var i = 0; i < cards.length; i++) ...[
+    if (i > 0) const SizedBox(height: settingsCardGap),
+    cards[i],
+  ],
+];
 
 List<Widget> _keptAlive(List<Widget> sections) => [
   for (final section in sections) _KeptAliveSection(child: section),
@@ -532,20 +799,26 @@ class _PrefField extends StatelessWidget {
     required this.title,
     required this.caption,
     required this.child,
+    super.key,
   });
 
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 14, 12, 14),
+      padding: const EdgeInsets.fromLTRB(
+        HermesSpace.x4,
+        14,
+        HermesSpace.x3,
+        14,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             title,
             style: TextStyle(
-              fontSize: 14.5,
+              fontSize: HermesType.bodySize,
               fontWeight: FontWeight.w600,
               color: colors.textPrimary,
             ),
@@ -575,6 +848,17 @@ class _Choice extends StatelessWidget {
     required this.onTap,
   });
 
+  /// How much accent fills the chosen option.
+  static const double fill = 0.16;
+
+  /// The chosen label: the readable accent ink, kept at 4.5:1 on its own
+  /// accent fill over any surface of the theme.
+  static Color selectedInk(HermesThemeColors colors) => readableInkOnTint(
+    colors.accentText,
+    colors.accent.withValues(alpha: fill),
+    colors,
+  );
+
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
@@ -596,7 +880,7 @@ class _Choice extends StatelessWidget {
               padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 7),
               decoration: BoxDecoration(
                 color: selected
-                    ? colors.accent.withValues(alpha: 0.16)
+                    ? colors.accent.withValues(alpha: fill)
                     : Colors.transparent,
                 borderRadius: BorderRadius.circular(9),
               ),
@@ -605,7 +889,7 @@ class _Choice extends StatelessWidget {
                 style: TextStyle(
                   fontSize: 13.5,
                   fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                  color: selected ? colors.accentHover : colors.textSecondary,
+                  color: selected ? selectedInk(colors) : colors.textSecondary,
                 ),
               ),
             ),
@@ -627,7 +911,7 @@ class _ThemesEntryState extends State<_ThemesEntry> {
   Future<void> _open() async {
     await Navigator.of(
       context,
-    ).push(MaterialPageRoute(builder: (_) => const ThemesScreen()));
+    ).push(MaterialPageRoute(builder: (_) => const LookFeelScreen()));
     if (mounted) setState(() {}); // refresca el nombre/preview al volver
   }
 
@@ -643,17 +927,35 @@ class _ThemesEntryState extends State<_ThemesEntry> {
         total: AppTheme.familyCount,
       );
     }
-    return ValueListenableBuilder(
-      valueListenable: root.themeProfiles,
-      builder: (context, snapshot, _) {
-        final presentation = settingsThemePresentation(snapshot);
-        return _buildEntry(
-          context,
-          activeName: presentation.name,
-          previewColors: presentation.colors,
-          total: presentation.total,
-        );
-      },
+    return ListenableBuilder(
+      listenable: root.lookFeel,
+      builder: (context, _) => ValueListenableBuilder(
+        valueListenable: root.themeProfiles,
+        builder: (context, snapshot, _) {
+          final look = root.lookFeel.settings;
+          if (look.derived) {
+            // Look & Feel in force: its background and the derived colours.
+            final brightness = Theme.of(context).brightness;
+            return _buildEntry(
+              context,
+              activeName: lookFeelBackgroundName(
+                Strings.of(context),
+                look,
+                brightness,
+              ),
+              previewColors: LookFeel.colors(look, brightness),
+              total: AppTheme.familyCount,
+            );
+          }
+          final presentation = settingsThemePresentation(snapshot);
+          return _buildEntry(
+            context,
+            activeName: presentation.name,
+            previewColors: presentation.colors,
+            total: presentation.total,
+          );
+        },
+      ),
     );
   }
 
@@ -667,7 +969,10 @@ class _ThemesEntryState extends State<_ThemesEntry> {
     return InkWell(
       onTap: _open,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        padding: const EdgeInsets.symmetric(
+          horizontal: HermesSpace.x4,
+          vertical: 14,
+        ),
         child: Row(
           children: [
             // Mini-swatch del tema activo (compacto, sin overflow).
@@ -678,9 +983,9 @@ class _ThemesEntryState extends State<_ThemesEntry> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    Strings.of(context).themesTitle,
+                    Strings.of(context).lflTitle,
                     style: TextStyle(
-                      fontSize: 14.5,
+                      fontSize: HermesType.bodySize,
                       fontWeight: FontWeight.w600,
                       color: colors.textPrimary,
                     ),
@@ -697,7 +1002,7 @@ class _ThemesEntryState extends State<_ThemesEntry> {
                         TextSpan(
                           text: activeName,
                           style: TextStyle(
-                            color: colors.accentHover,
+                            color: colors.accentText,
                             fontWeight: FontWeight.w700,
                           ),
                         ),
@@ -711,7 +1016,7 @@ class _ThemesEntryState extends State<_ThemesEntry> {
               ),
             ),
             const SizedBox(width: 8),
-            Icon(Icons.chevron_right, size: 18, color: colors.textDisabled),
+            Icon(Icons.chevron_right, size: 18, color: colors.textTertiary),
           ],
         ),
       ),
@@ -807,12 +1112,15 @@ class _FontStyleEntryState extends State<_FontStyleEntry> {
         icon: const Icon(Icons.keyboard_arrow_down_rounded),
         style: TextStyle(
           color: colors.textPrimary,
-          fontSize: 14,
+          fontSize: HermesType.textSize,
           fontWeight: FontWeight.w500,
           letterSpacing: 0,
         ),
         decoration: const InputDecoration(
-          contentPadding: EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          contentPadding: EdgeInsets.symmetric(
+            horizontal: 14,
+            vertical: HermesSpace.x3,
+          ),
         ),
         options: [
           for (final font in AppFonts.all)
@@ -861,7 +1169,7 @@ class _TextSizeEntryState extends State<_TextSizeEntry> {
             strings.setTextSizePreview,
             style: TextStyle(
               color: colors.textPrimary,
-              fontSize: 14 * current,
+              fontSize: HermesType.textSize * current,
               height: 1.35,
             ),
           ),
@@ -876,21 +1184,30 @@ class _TextSizeEntryState extends State<_TextSizeEntry> {
             onChanged: _select,
           ),
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4),
+            padding: const EdgeInsets.symmetric(horizontal: HermesSpace.x1),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text(
                   strings.setTextSizeSmaller,
-                  style: TextStyle(color: colors.textSecondary, fontSize: 11.5),
+                  style: TextStyle(
+                    color: colors.textSecondary,
+                    fontSize: HermesType.captionSize,
+                  ),
                 ),
                 Text(
                   strings.setTextSizeStandard,
-                  style: TextStyle(color: colors.textSecondary, fontSize: 11.5),
+                  style: TextStyle(
+                    color: colors.textSecondary,
+                    fontSize: HermesType.captionSize,
+                  ),
                 ),
                 Text(
                   strings.setTextSizeLarger,
-                  style: TextStyle(color: colors.textSecondary, fontSize: 11.5),
+                  style: TextStyle(
+                    color: colors.textSecondary,
+                    fontSize: HermesType.captionSize,
+                  ),
                 ),
               ],
             ),
@@ -992,6 +1309,96 @@ class _UseDockTile extends StatelessWidget {
           subtitle: strings.settingsUseDockSubtitle,
           value: controller.value.useDock,
           onChanged: (value) => unawaited(controller.setUseDock(value)),
+        ),
+      ),
+    );
+  }
+}
+
+/// Ajustes › Aspecto: cursor opcional bajo la respuesta que llega.
+class _StreamingCursorTile extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    final strings = Strings.of(context);
+    final prefs = MotionPrefs.shared;
+    final labels = {
+      StreamingCursorStyle.off: strings.motionCursorOff,
+      StreamingCursorStyle.line: strings.motionCursorLine,
+      StreamingCursorStyle.block: strings.motionCursorBlock,
+      StreamingCursorStyle.underscore: strings.motionCursorUnderscore,
+    };
+    return ListenableBuilder(
+      listenable: prefs,
+      builder: (context, _) => _PrefField(
+        key: const ValueKey('settings-streaming-cursor'),
+        title: strings.motionCursorTitle,
+        caption: strings.motionCursorCaption,
+        child: Wrap(
+          spacing: 4,
+          runSpacing: 4,
+          children: [
+            for (final entry in labels.entries)
+              _Choice(
+                label: entry.value,
+                selected: prefs.cursor == entry.key,
+                onTap: () => unawaited(prefs.setCursor(entry.key)),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Ajustes › Animar bots: the one switch that stills every bot face. The
+/// system's reduced motion still applies when it is on.
+class _AnimateBotsTile extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    final strings = Strings.of(context);
+    final prefs = BotMotionPrefs.shared;
+    return ListenableBuilder(
+      listenable: prefs,
+      builder: (context, _) => Material(
+        type: MaterialType.transparency,
+        child: HermesSwitchTile(
+          controlKey: const ValueKey('settings-animate-bots'),
+          title: strings.charactersAnimateTitle,
+          subtitle: strings.charactersAnimateSubtitle,
+          value: prefs.animate,
+          onChanged: (value) => unawaited(prefs.setAnimate(value)),
+        ),
+      ),
+    );
+  }
+}
+
+/// Ajustes › Personajes: the character editor of the active profile.
+class _CharactersTile extends StatelessWidget {
+  final SavedConnection connection;
+  final ConnectionManager connManager;
+
+  const _CharactersTile({required this.connection, required this.connManager});
+
+  @override
+  Widget build(BuildContext context) {
+    final strings = Strings.of(context);
+    return HermesNavRow(
+      key: const ValueKey('settings-characters'),
+      icon: Icons.face_outlined,
+      title: strings.charactersTitle,
+      subtitle: strings.charactersSettingsSubtitle,
+      onTap: () => Navigator.push(
+        context,
+        MaterialPageRoute<void>(
+          builder: (_) {
+            final profile = connManager.activeProfileFor(connection.id);
+            return CharacterStudioScreen(
+              profileName: profile,
+              connectionId: connection.id,
+              askAgent: studioAskAgentFor(connection, profile),
+            );
+          },
         ),
       ),
     );
@@ -1132,7 +1539,10 @@ class _HeaderTitleField extends StatelessWidget {
       builder: (context, title, _) => InkWell(
         onTap: () => _edit(context, title),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
+          padding: const EdgeInsets.symmetric(
+            horizontal: HermesSpace.x4,
+            vertical: 15,
+          ),
           child: Row(
             children: [
               Icon(
@@ -1148,7 +1558,7 @@ class _HeaderTitleField extends StatelessWidget {
                     Text(
                       Strings.of(context).setHeaderTitle,
                       style: TextStyle(
-                        fontSize: 14.5,
+                        fontSize: HermesType.bodySize,
                         fontWeight: FontWeight.w600,
                         color: colors.textPrimary,
                       ),
@@ -1160,7 +1570,7 @@ class _HeaderTitleField extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         fontSize: 12,
-                        color: colors.accentHover,
+                        color: colors.accentText,
                         fontWeight: FontWeight.w700,
                         letterSpacing: 0.5,
                       ),
@@ -1186,29 +1596,63 @@ class _ConnectionCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
-    return HermesGroup(
+    final strings = Strings.of(context);
+    final radius = BorderRadius.circular(HermesRadius.row);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // Fila informativa (no navegable): instancia activa + URL.
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
+        // Featured card (informational, not navigable): the brand, which
+        // instance is active and where it lives, over an accent gradient.
+        Container(
+          key: const ValueKey('settings-instance-card'),
+          margin: const EdgeInsets.only(bottom: HermesSpace.x3),
+          padding: const EdgeInsets.symmetric(
+            horizontal: HermesSpace.x4,
+            vertical: 15,
+          ),
+          decoration: BoxDecoration(
+            borderRadius: radius,
+            border: Border.all(color: colors.accent.withValues(alpha: .45)),
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                colors.accent.withValues(alpha: .42),
+                colors.accent.withValues(alpha: .14),
+              ],
+            ),
+          ),
           child: Row(
             children: [
-              Icon(Icons.router_outlined, size: 20, color: colors.accentHover),
+              Icon(Icons.dns_outlined, size: 22, color: colors.textPrimary),
               const SizedBox(width: 15),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    Text(
+                      strings.screenSettingsBrand,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: HermesType.bodySize,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: .4,
+                        color: colors.textPrimary,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
                     Row(
                       children: [
                         Flexible(
                           child: Text(
-                            connection.label,
+                            '${strings.drawerActiveInstance} · '
+                            '${connection.label}',
+                            maxLines: labelMaxLines(context),
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
-                              fontSize: 14.5,
-                              fontWeight: FontWeight.w600,
-                              color: colors.textPrimary,
+                              fontSize: 12.5,
+                              color: colors.textPrimary.withValues(alpha: .85),
                             ),
                           ),
                         ),
@@ -1218,7 +1662,6 @@ class _ConnectionCard extends StatelessWidget {
                         ],
                       ],
                     ),
-                    const SizedBox(height: 2),
                     Text(
                       connection.baseUrl,
                       maxLines: 1,
@@ -1234,15 +1677,21 @@ class _ConnectionCard extends StatelessWidget {
             ],
           ),
         ),
-        HermesNavRow(
-          icon: Icons.lan_outlined,
-          title: Strings.of(context).setManageInstances,
-          onTap: () => Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => GatewayManagerScreen(connManager: connManager),
+        HermesGroup(
+          children: [
+            HermesNavRow(
+              icon: Icons.lan_outlined,
+              title: strings.setManageInstances,
+              value: '${connManager.getConnections().length}',
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) =>
+                      GatewayManagerScreen(connManager: connManager),
+                ),
+              ),
             ),
-          ),
+          ],
         ),
       ],
     );
@@ -1617,7 +2066,7 @@ class _HistoryCleanupScopeDialogState extends State<HistoryCleanupScopeDialog> {
                     s.au1215CleanupChats(counts.chats),
                     key: const ValueKey('history-cleanup-count-chats'),
                     style: TextStyle(
-                      fontSize: 11.5,
+                      fontSize: HermesType.captionSize,
                       color: colors.textSecondary,
                     ),
                   ),
@@ -1636,7 +2085,10 @@ class _HistoryCleanupScopeDialogState extends State<HistoryCleanupScopeDialog> {
                   ? s.slFilterReports
                   : s.au1215CleanupRuns(counts.automations),
               key: const ValueKey('history-cleanup-count-automations'),
-              style: TextStyle(fontSize: 11.5, color: colors.textSecondary),
+              style: TextStyle(
+                fontSize: HermesType.captionSize,
+                color: colors.textSecondary,
+              ),
             ),
             onChanged: (value) => setState(
               () =>
@@ -1651,7 +2103,10 @@ class _HistoryCleanupScopeDialogState extends State<HistoryCleanupScopeDialog> {
                     (_selection.automations ? counts.automations : 0),
               ),
               key: const ValueKey('history-cleanup-will-delete'),
-              style: TextStyle(fontSize: 12.5, color: colors.textSecondary),
+              style: TextStyle(
+                fontSize: HermesType.supportSize,
+                color: colors.textSecondary,
+              ),
             ),
           ],
         ],
@@ -2126,7 +2581,10 @@ class _HistoryCleanupActionRow extends StatelessWidget {
         child: ConstrainedBox(
           constraints: const BoxConstraints(minHeight: 64),
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+            padding: const EdgeInsets.symmetric(
+              horizontal: HermesSpace.x4,
+              vertical: 11,
+            ),
             // El avance NO va dentro de la columna de texto: creciendo ahí
             // hacía que el `Row` (alineado al centro) recolocara el icono de
             // la izquierda y el spinner de la derecha respecto al título, y la
@@ -2297,16 +2755,18 @@ class _OrphanDataTileState extends State<_OrphanDataTile> {
   Widget build(BuildContext context) {
     // Fila compacta coherente con el resto de la pantalla en vez de un
     // ListTile genérico: reutiliza _HistoryCleanupActionRow.
-    return HermesPanel(
-      child: _HistoryCleanupActionRow(
-        actionKey: const ValueKey('orphan-data-clean'),
-        icon: Icons.cleaning_services_outlined,
-        title: Strings.of(context).secOrphanTitle,
-        subtitle: Strings.of(context).secOrphanSubtitle,
-        busy: _cleaning,
-        onTap: _cleaning ? null : _clean,
-        destructive: false,
-      ),
+    return HermesGroup(
+      children: [
+        _HistoryCleanupActionRow(
+          actionKey: const ValueKey('orphan-data-clean'),
+          icon: Icons.cleaning_services_outlined,
+          title: Strings.of(context).secOrphanTitle,
+          subtitle: Strings.of(context).secOrphanSubtitle,
+          busy: _cleaning,
+          onTap: _cleaning ? null : _clean,
+          destructive: false,
+        ),
+      ],
     );
   }
 }
@@ -2477,7 +2937,10 @@ class HermesUpdateProgressPanel extends StatelessWidget {
     };
     return HermesPanel(
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        padding: const EdgeInsets.symmetric(
+          horizontal: HermesSpace.x4,
+          vertical: 14,
+        ),
         child: Semantics(
           liveRegion: true,
           child: Column(
@@ -2498,7 +2961,10 @@ class HermesUpdateProgressPanel extends StatelessWidget {
                   Expanded(
                     child: Text(
                       progress.label(s),
-                      style: TextStyle(fontSize: 13, color: colors.textPrimary),
+                      style: TextStyle(
+                        fontSize: HermesType.valueSize,
+                        color: colors.textPrimary,
+                      ),
                     ),
                   ),
                   const SizedBox(width: 10),
@@ -3253,7 +3719,10 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
     if (_loading) {
       return HermesPanel(
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+          padding: const EdgeInsets.symmetric(
+            horizontal: HermesSpace.x4,
+            vertical: HermesSpace.x4,
+          ),
           child: Row(
             children: [
               const SizedBox(
@@ -3262,9 +3731,16 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
                 child: CircularProgressIndicator(strokeWidth: 2),
               ),
               const SizedBox(width: 14),
-              Text(
-                Strings.of(context).setCheckingStatus,
-                style: TextStyle(color: colors.textSecondary, fontSize: 13),
+              // Expanded: at large text the sentence wraps, it does not run
+              // past the card.
+              Expanded(
+                child: Text(
+                  Strings.of(context).setCheckingStatus,
+                  style: TextStyle(
+                    color: colors.textSecondary,
+                    fontSize: HermesType.valueSize,
+                  ),
+                ),
               ),
             ],
           ),
@@ -3274,7 +3750,10 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
     if (_error != null) {
       return HermesPanel(
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          padding: const EdgeInsets.symmetric(
+            horizontal: HermesSpace.x4,
+            vertical: HermesSpace.x3,
+          ),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -3317,29 +3796,29 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
     return Column(
       children: [
         _diagnosticsCard(colors),
-        const SizedBox(height: 8),
+        const SizedBox(height: _panelGap),
         _updateCard(),
         // Progreso real de la actualización (barra + paso n/N). Si no hay
         // actualización en curso pero el gateway está volviendo (p. ej. tras
         // "Reiniciar gateway"), se conserva el aviso simple de reinicio.
         if (_updateProgress != null) ...[
-          const SizedBox(height: 8),
+          const SizedBox(height: _panelGap),
           HermesUpdateProgressPanel(progress: _updateProgress!),
         ] else if (_waitingGateway) ...[
-          const SizedBox(height: 8),
+          const SizedBox(height: _panelGap),
           _restartingBanner(colors),
         ],
         // La auto-actualización de Hermes va por el endpoint del dashboard, que
         // no aplica al agente local (ese se actualiza desde su propio panel).
         if (!widget.connection.onDeviceLoopback) ...[
-          const SizedBox(height: 8),
+          const SizedBox(height: _panelGap),
           _hermesAutoUpdateTile(colors),
         ],
         // "Reiniciar gateway" reconecta plataformas del multiplexer; en el
         // agente local on-device no hay gateway ni plataformas, así que la
         // acción no aplica (para reiniciar el agente local está su panel).
         if (!widget.connection.onDeviceLoopback) ...[
-          const SizedBox(height: 8),
+          const SizedBox(height: _panelGap),
           _restartCard(colors),
         ],
       ],
@@ -3354,7 +3833,12 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
 
     return HermesPanel(
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 14, 8, 14),
+        padding: const EdgeInsets.fromLTRB(
+          HermesSpace.x4,
+          14,
+          HermesSpace.x2,
+          14,
+        ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -3376,7 +3860,7 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
                   style: TextStyle(
                     color: ok ? colors.success : colors.warning,
                     fontWeight: FontWeight.w700,
-                    fontSize: 13,
+                    fontSize: HermesType.valueSize,
                   ),
                 ),
                 const Spacer(),
@@ -3446,21 +3930,21 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
                   icon: Icon(
                     Icons.sync_rounded,
                     size: 16,
-                    color: colors.accent,
+                    color: colors.accentText,
                   ),
                   label: Text(
                     Strings.of(context).setUpdateSchemaShort(
                       '${_status?['config_version']}',
                       '${_status?['latest_config_version']}',
                     ),
-                    style: TextStyle(fontSize: 12.5, color: colors.accent),
+                    style: TextStyle(fontSize: 12.5, color: colors.accentText),
                   ),
                   style: OutlinedButton.styleFrom(
                     side: BorderSide(
                       color: colors.accent.withValues(alpha: 0.5),
                     ),
                     padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
+                      horizontal: HermesSpace.x3,
                       vertical: 6,
                     ),
                   ),
@@ -3511,7 +3995,10 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
             width: 130,
             child: Text(
               label,
-              style: TextStyle(fontSize: 12.5, color: colors.textSecondary),
+              style: TextStyle(
+                fontSize: HermesType.supportSize,
+                color: colors.textSecondary,
+              ),
             ),
           ),
           if (!neutral) ...[
@@ -3526,7 +4013,7 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
             child: Text(
               value,
               style: TextStyle(
-                fontSize: 12.5,
+                fontSize: HermesType.supportSize,
                 color: neutral
                     ? colors.textSecondary
                     : (good ? colors.textPrimary : colors.warning),
@@ -3544,7 +4031,10 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
   Widget _restartingBanner(HermesThemeColors colors) {
     return HermesPanel(
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        padding: const EdgeInsets.symmetric(
+          horizontal: HermesSpace.x4,
+          vertical: 14,
+        ),
         child: Row(
           children: [
             SizedBox(
@@ -3559,7 +4049,10 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
             Expanded(
               child: Text(
                 Strings.of(context).setRestartingBanner,
-                style: TextStyle(fontSize: 13, color: colors.textSecondary),
+                style: TextStyle(
+                  fontSize: HermesType.valueSize,
+                  color: colors.textSecondary,
+                ),
               ),
             ),
           ],
@@ -3575,7 +4068,10 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
     return HermesPanel(
       child: MergeSemantics(
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          padding: const EdgeInsets.symmetric(
+            horizontal: HermesSpace.x4,
+            vertical: HermesSpace.x2,
+          ),
           child: Row(
             children: [
               Icon(Icons.system_update_alt, size: 20, color: colors.accent),
@@ -3587,7 +4083,7 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
                     Text(
                       Strings.of(context).setHermesAutoUpdateTitle,
                       style: TextStyle(
-                        fontSize: 14.5,
+                        fontSize: HermesType.bodySize,
                         fontWeight: FontWeight.w600,
                         color: colors.textPrimary,
                       ),
@@ -3741,7 +4237,10 @@ class _HeaderTitleEditScreenState extends State<_HeaderTitleEditScreen> {
           onPressed: () => Navigator.pop(context),
           child: Text(
             Strings.of(context).commonCancel,
-            style: TextStyle(color: colors.textSecondary, fontSize: 13),
+            style: TextStyle(
+              color: colors.textSecondary,
+              fontSize: HermesType.valueSize,
+            ),
           ),
         ),
         leadingWidth: 90,
@@ -3751,7 +4250,7 @@ class _HeaderTitleEditScreenState extends State<_HeaderTitleEditScreen> {
             child: Text(
               Strings.of(context).commonSave,
               style: TextStyle(
-                color: colors.accent,
+                color: colors.accentText,
                 fontWeight: FontWeight.bold,
               ),
             ),
@@ -3759,7 +4258,7 @@ class _HeaderTitleEditScreenState extends State<_HeaderTitleEditScreen> {
         ],
       ),
       body: Padding(
-        padding: const EdgeInsets.all(20),
+        padding: const EdgeInsets.all(HermesSpace.x5),
         child: TextField(
           controller: _ctrl,
           autofocus: true,

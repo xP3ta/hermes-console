@@ -2,8 +2,11 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
-import '../design/tokens.dart' show HermesChrome;
+import '../design/tokens.dart' show HermesChrome, HermesType;
+import 'box_fill.dart';
 import 'component_profile.dart';
+import 'glass_look.dart' show GlassMaterial;
+import 'lines.dart';
 import 'motion.dart';
 import 'theme_contrast.dart';
 import 'theme_profile.dart';
@@ -44,8 +47,12 @@ class HermesThemeColors extends ThemeExtension<HermesThemeColors> {
     required this.divider,
     this.secondary = const Color(0xFFE8821C),
     this.uppercaseTitles = false,
+    this.outlined = false,
     Color? accentText,
     Color? textTertiary,
+    Color? toneInkPrimary,
+    Color? toneInkSecondary,
+    Color? toneInkTertiary,
     // El parámetro público se llama `accentText` (el token que consumirán
     // las pantallas); `this._accentText` rompería ese nombre de cara al
     // llamador, así que se asigna a mano en el initializer.
@@ -53,7 +60,13 @@ class HermesThemeColors extends ThemeExtension<HermesThemeColors> {
     // ignore: prefer_initializing_formals
     : _accentText = accentText,
        // ignore: prefer_initializing_formals
-       _textTertiary = textTertiary;
+       _textTertiary = textTertiary,
+       // ignore: prefer_initializing_formals
+       _toneInkPrimary = toneInkPrimary,
+       // ignore: prefer_initializing_formals
+       _toneInkSecondary = toneInkSecondary,
+       // ignore: prefer_initializing_formals
+       _toneInkTertiary = toneInkTertiary;
 
   final Color background;
   final Color surface;
@@ -78,6 +91,11 @@ class HermesThemeColors extends ThemeExtension<HermesThemeColors> {
   /// pantalla en MAYÚSCULAS. Lo inyecta el preset; default false.
   final bool uppercaseTitles;
 
+  /// The Outline style is on: flat surfaces with a thin outline, no glass and
+  /// no clouds. Set by `applyHermesStyle`; a terminal preset that merely
+  /// carries [uppercaseTitles] is not outlined and wears the glass.
+  final bool outlined;
+
   /// Valor declarado por el preset para [accentText]; `null` cuando el preset
   /// no necesita anular el fallback (paletas oscuras, donde `accent` ya
   /// cumple AA de sobra sobre `background`).
@@ -93,6 +111,21 @@ class HermesThemeColors extends ThemeExtension<HermesThemeColors> {
 
   /// Explicit tertiary ink (set by the presets); `null` derives it.
   final Color? _textTertiary;
+
+  final Color? _toneInkPrimary;
+  final Color? _toneInkSecondary;
+  final Color? _toneInkTertiary;
+
+  /// The inks as the palette had them BEFORE the legibility pass
+  /// ([withReadableInk]). The glass tones (the dock, the chat foot, the side
+  /// panel, the gel of the buttons) certify their material against these, so
+  /// a brighter ink does not move a material the owner already settled; what
+  /// is painted is the brighter [textPrimary] / [textSecondary], which only
+  /// reads better on the same tone. A palette that never went through the
+  /// pass answers with its own inks.
+  Color get toneInkPrimary => _toneInkPrimary ?? textPrimary;
+  Color get toneInkSecondary => _toneInkSecondary ?? textSecondary;
+  Color get toneInkTertiary => _toneInkTertiary ?? textTertiary;
 
   static final Expando<Color> _derivedTertiary = Expando<Color>('textTertiary');
 
@@ -119,34 +152,184 @@ class HermesThemeColors extends ThemeExtension<HermesThemeColors> {
     'controlBorder',
   );
 
-  /// ONB6: resting outline of a control (text field, secondary pill). On a
-  /// light palette [divider] is a hairline made for separators and sits near
-  /// 1.1:1 on the page (WCAG 1.4.11 asks 3:1 for a control's boundary), so it
-  /// is darkened, same hue and smallest step, until it reads at 3:1 on the
-  /// background, the surface and the surface variant. Dark palettes keep
-  /// [divider] untouched. Light palettes whose component profile draws no
-  /// resting outline still get a 1 dp one on text fields (their fill alone
-  /// is ~1.0:1 on the page).
+  /// ONB6: resting outline of a control (text field, secondary pill).
+  /// [divider] is a hairline made for separators and sits near 1.1:1 on the
+  /// page and on the body of a group (WCAG 1.4.11 asks 3:1 for a control's
+  /// boundary), so it is moved, same hue and smallest step, until it reads
+  /// at 3:1 on the background, the surface, the surface variant and the
+  /// bodies of the boxes. Dark palettes get the same (their fields had no
+  /// resting outline and their fill was ~1.0:1 on the body of a group: a
+  /// box inside a box nobody could see). Light palettes whose component
+  /// profile draws no resting outline still get a 1 dp one on text fields.
   Color get controlBorder {
-    if (!isLightPalette) return divider;
-    return _derivedControlBorder[this] ??= ThemeContrast.adjustForContrast(
-      divider,
-      [background, surface, surfaceVariant],
-      minimum: 3.05,
+    return _derivedControlBorder[this] ??= () {
+      final fill = HermesBoxFill.of(this);
+      return ThemeContrast.adjustForContrast(divider, [
+        background,
+        surface,
+        surfaceVariant,
+        fill.group,
+        fill.card,
+      ], minimum: 3.05);
+    }();
+  }
+
+  static final Expando<Map<int, Color>> _derivedDisabledInk = Expando(
+    'disabledInk',
+  );
+
+  /// The ink of a disabled label on [body]: [textDisabled] moved, same hue
+  /// and smallest step, until it reads at 3:1 there. WCAG exempts a disabled
+  /// control from the minimum; the label still has to say what the button
+  /// would do (a disabled «Guardar» at 2:1 on its grey fill read as a blank
+  /// block on the device).
+  Color disabledInkOn(Color body) {
+    final cache = _derivedDisabledInk[this] ??= <int, Color>{};
+    return cache[body.toARGB32()] ??= ThemeContrast.adjustForContrast(
+      textDisabled,
+      [ThemeContrast.composite(body, background)],
+      minimum: disabledInkRatio,
     );
   }
 
-  /// Smallest lift of [disabled] that reads at AA on all three surfaces.
+  /// The least a disabled label reads at on its fill.
+  static const double disabledInkRatio = 3.0;
+
+  /// Smallest lift of [disabled] that reads at AA on all three surfaces (and
+  /// on [also], where given), or at [minimum] when the caller asks for more.
   static Color readableTertiary(
     Color disabled, {
     required Color background,
     required Color surface,
     required Color surfaceVariant,
+    Iterable<Color> also = const [],
+    double minimum = 4.5,
   }) => ThemeContrast.adjustForContrast(disabled, [
     background,
     surface,
     surfaceVariant,
-  ], minimum: 4.5);
+    ...also,
+  ], minimum: minimum);
+
+  /// The main ink must read at least this well on every surface text is read
+  /// on (AAA: the body text of the app).
+  static const double primaryInkRatio = 7.0;
+
+  /// The secondary ink (subtitles, values, captions, placeholders).
+  static const double secondaryInkRatio = 7.0;
+
+  /// The tertiary ink (timestamps, metadata, small labels): AA with room.
+  static const double tertiaryInkRatio = 5.5;
+
+  /// A link and the status inks (error, warning, success) as text: AA on
+  /// every body they are set in.
+  static const double statusInkRatio = 4.5;
+
+  /// The accent as a control or an informative icon: WCAG 1.4.11.
+  static const double accentControlRatio = 3.0;
+
+  /// These colours with their text inks derived for legibility: the smallest
+  /// move of each ink, towards black or white and keeping its hue, that
+  /// reaches its ratio on EVERY surface text is read on ([HermesBoxFill.
+  /// readingBacks]: the page and its glow, the bodies of the cards, groups
+  /// and notices, the theme's own surfaces and the user's bubble). The bodies
+  /// of the boxes are derived from the page alone, so the inks follow them
+  /// and never the other way round. An ink that already reads is untouched;
+  /// the call is idempotent. [copyWith] does not do it: a colour set by hand
+  /// stays as it was set.
+  HermesThemeColors withReadableInk() {
+    // The accent first: what is lifted from it (a notice's tint) is a back
+    // the inks are read on, so the inks are derived against the settled
+    // accent and a second pass finds nothing to move.
+    //
+    // The accent as a control (a switch's track, a selected ring, an
+    // informative icon) keeps 1.4.11's 3:1 on the page, the surfaces and
+    // the bodies of the boxes: the smallest step towards black or white,
+    // hue kept, as the Look & Feel derivation already does for its accents.
+    // A preset whose accent reads is untouched.
+    final boxesNow = HermesBoxFill.of(this);
+    final control = ThemeContrast.adjustForContrast(accent, [
+      background,
+      surface,
+      surfaceVariant,
+      boxesNow.group,
+      boxesNow.card,
+      // The track of a segmented control: the small glass over a group.
+      GlassMaterial.pieceOverGroup(this),
+    ], minimum: accentControlRatio);
+    // The label on the accent keeps AA on the accent as settled.
+    final onControl =
+        ThemeContrast.ratio(onAccent, control) + 1e-9 >= statusInkRatio
+        ? onAccent
+        : ThemeContrast.bestBlackOrWhite(control);
+    final settled = control == accent && onControl == onAccent
+        ? this
+        : copyWith(accent: control, onAccent: onControl);
+    final boxes = HermesBoxFill.of(settled);
+    final backs = boxes.readingBacks(settled);
+    Color ink(Color color, double minimum) =>
+        ThemeContrast.adjustForContrast(color, backs, minimum: minimum);
+    // A disabled label is exempt from AA, but it still has to be read:
+    // 3:1 on every body ([disabledInkRatio]). Keeps its hue; a palette
+    // whose disabled ink already reads is untouched. The tertiary ink is
+    // derived from it, further along the same line.
+    final disabled = ink(textDisabled, disabledInkRatio);
+    // The floating pieces (a sheet's pill, a menu) are read on as well.
+    final chrome = HermesChrome.of(settled);
+    final tertiary = readableTertiary(
+      disabled,
+      background: background,
+      surface: surface,
+      surfaceVariant: surfaceVariant,
+      also: [...backs, chrome.opaque, chrome.raised],
+      minimum: tertiaryInkRatio,
+    );
+    // A link reads at AA on the theme's own surfaces and on the bodies of
+    // the boxes it is set in (a card, a group, a notice, the track of a
+    // segmented control).
+    final linkBacks = [
+      background,
+      surface,
+      surfaceVariant,
+      boxes.group,
+      boxes.card,
+      HermesBoxFill.banner(settled, boxes.card),
+      GlassMaterial.pieceOverGroup(settled),
+    ];
+    final link = ThemeContrast.adjustForContrast(
+      accentText,
+      linkBacks,
+      minimum: statusInkRatio,
+    );
+    // The status inks are read as text too (a row's error, a warning line,
+    // a success note), on the same bodies: AA there, keeping their hue.
+    Color status(Color color) => ThemeContrast.adjustForContrast(
+      color,
+      linkBacks,
+      minimum: statusInkRatio,
+    );
+    final primary = ink(textPrimary, primaryInkRatio);
+    double worst(Color color) =>
+        backs.map((back) => ThemeContrast.ratio(color, back)).reduce(math.min);
+    // Secondary keeps a visible step above tertiary, never past the primary.
+    final secondaryMinimum = math.max(
+      secondaryInkRatio,
+      math.min(worst(tertiary) * 1.1, worst(primary)),
+    );
+    return settled.copyWith(
+      textPrimary: primary,
+      textSecondary: ink(textSecondary, secondaryMinimum),
+      textTertiary: tertiary,
+      textDisabled: disabled,
+      accentText: link == accentText ? null : link,
+      error: status(error),
+      warning: status(warning),
+      success: status(success),
+      toneInkPrimary: toneInkPrimary,
+      toneInkSecondary: toneInkSecondary,
+      toneInkTertiary: toneInkTertiary,
+    );
+  }
 
   @override
   HermesThemeColors copyWith({
@@ -165,8 +348,12 @@ class HermesThemeColors extends ThemeExtension<HermesThemeColors> {
     Color? divider,
     Color? secondary,
     bool? uppercaseTitles,
+    bool? outlined,
     Color? accentText,
     Color? textTertiary,
+    Color? toneInkPrimary,
+    Color? toneInkSecondary,
+    Color? toneInkTertiary,
   }) {
     // A new page or disabled ink invalidates an explicit tertiary: let the
     // copy derive its own.
@@ -191,8 +378,18 @@ class HermesThemeColors extends ThemeExtension<HermesThemeColors> {
       divider: divider ?? this.divider,
       secondary: secondary ?? this.secondary,
       uppercaseTitles: uppercaseTitles ?? this.uppercaseTitles,
+      outlined: outlined ?? this.outlined,
       accentText: accentText ?? _accentText,
       textTertiary: textTertiary ?? (keepTertiary ? _textTertiary : null),
+      // An ink set by hand is its own tone ink; one left alone keeps its.
+      toneInkPrimary:
+          toneInkPrimary ?? (textPrimary == null ? _toneInkPrimary : null),
+      toneInkSecondary:
+          toneInkSecondary ??
+          (textSecondary == null ? _toneInkSecondary : null),
+      toneInkTertiary:
+          toneInkTertiary ??
+          (textTertiary == null && keepTertiary ? _toneInkTertiary : null),
     );
   }
 
@@ -215,8 +412,16 @@ class HermesThemeColors extends ThemeExtension<HermesThemeColors> {
       divider: Color.lerp(divider, other.divider, t)!,
       secondary: Color.lerp(secondary, other.secondary, t)!,
       uppercaseTitles: t < 0.5 ? uppercaseTitles : other.uppercaseTitles,
+      outlined: t < 0.5 ? outlined : other.outlined,
       accentText: Color.lerp(accentText, other.accentText, t)!,
       textTertiary: Color.lerp(textTertiary, other.textTertiary, t)!,
+      toneInkPrimary: Color.lerp(toneInkPrimary, other.toneInkPrimary, t)!,
+      toneInkSecondary: Color.lerp(
+        toneInkSecondary,
+        other.toneInkSecondary,
+        t,
+      )!,
+      toneInkTertiary: Color.lerp(toneInkTertiary, other.toneInkTertiary, t)!,
     );
   }
 }
@@ -462,6 +667,46 @@ class AppTheme {
     error: Color(0xFFB23A30),
     warning: Color(0xFF8F6420),
     success: Color(0xFF4A7550),
+  );
+  // Índigo cristal: la paleta exacta de la maqueta aprobada (variables CSS
+  // del escenario oscuro y de `.stage.light`). Es deliberadamente más
+  // oscura/saturada que las bandas Claude (theme_claude_bands_test la exime).
+  // Superficies = el cristal (blanco translúcido) compuesto sobre el fondo;
+  // `textSecondary` = el `--mut` compuesto sobre el fondo. Donde la maqueta
+  // no llega a AA (acento como texto, `--mut`/`--warn`/`--ok` del claro), el
+  // tono se oscurece o aclara dentro del mismo matiz y el acento queda en
+  // #5B6CFF (con tinta oscura encima: la blanca da 4.2:1, bajo AA).
+  static const _indigoGlassPalette = HermesThemeColors(
+    background: Color(0xFF08090F),
+    surface: Color(0xFF12141F),
+    surfaceVariant: Color(0xFF1A1D2E),
+    accent: Color(0xFF5B6CFF),
+    accentHover: Color(0xFF9B86FF),
+    onAccent: Color(0xFF08090F),
+    accentText: Color(0xFF8591FF),
+    textPrimary: Color(0xFFF3F4F8),
+    textSecondary: Color(0xFF8C8D92),
+    textDisabled: Color(0xFF6C6E7A),
+    divider: Color(0xFF2B2B31),
+    error: Color(0xFFF0707C),
+    warning: Color(0xFFFFB454),
+    success: Color(0xFF4CD6A4),
+  );
+  static const _indigoGlassLightPalette = HermesThemeColors(
+    background: Color(0xFFF1EEF8),
+    surface: Color(0xFFFBFBFD),
+    surfaceVariant: Color(0xFFE7E4F0),
+    accent: Color(0xFF5B6CFF),
+    accentHover: Color(0xFF5A3EDB),
+    onAccent: Color(0xFF08090F),
+    accentText: Color(0xFF3F4FE0),
+    textPrimary: Color(0xFF1B1B1F),
+    textSecondary: Color(0xFF5E5D66),
+    textDisabled: Color(0xFF9A9AA2),
+    divider: Color(0xFFD7D5DE),
+    error: Color(0xFFB3261E),
+    warning: Color(0xFF9A5208),
+    success: Color(0xFF0F7050),
   );
   static const _amberPalette = HermesThemeColors(
     background: Color(0xFF202020),
@@ -1315,6 +1560,33 @@ class AppTheme {
       titleSpacing: 0.0,
       family: 'sage-garden',
     ),
+    // ── Índigo cristal: la paleta de la maqueta (los dos modos) ──
+    HermesThemePreset(
+      id: 'indigo-glass',
+      name: 'Índigo cristal',
+      tagline: 'midnight indigo · glass',
+      brightness: Brightness.dark,
+      colors: _indigoGlassPalette,
+      fontFamily: 'Inter',
+      radius: 16.0,
+      secondary: Color(0xFF9B86FF),
+      titleWeight: FontWeight.w600,
+      titleSpacing: 0.0,
+      family: 'indigo-glass',
+    ),
+    HermesThemePreset(
+      id: 'indigo-glass-light',
+      name: 'Índigo cristal',
+      tagline: 'lavender mist · glass',
+      brightness: Brightness.light,
+      colors: _indigoGlassLightPalette,
+      fontFamily: 'Inter',
+      radius: 16.0,
+      secondary: Color(0xFF5A3EDB),
+      titleWeight: FontWeight.w600,
+      titleSpacing: 0.0,
+      family: 'indigo-glass',
+    ),
     // ── Catálogo oficial de Hermes Desktop ──
     // Mismo orden que BUILTIN_THEMES en apps/desktop/src/themes/presets.ts.
     HermesThemePreset(
@@ -1617,13 +1889,17 @@ class AppTheme {
     ),
   ]);
 
-  /// rt1215: secondary text (`onSurfaceVariant`), tertiary text and links
-  /// are read; nudge them, only when needed, to WCAG AA 4.5:1 on the
-  /// background, the surface and the surface variant. Tertiary is the
-  /// disabled ink lifted to AA; secondary then keeps a visible step above it
-  /// ([_hierarchyStep]), never past the theme's own primary text. Identity
-  /// colours (background, surfaces, primary text, accent) stay as designed.
+  /// rt1215 and legibility: secondary text (`onSurfaceVariant`), tertiary text
+  /// and links are read; nudge them, only when needed, to AA 4.5:1 on the
+  /// background, the surface and the surface variant (tertiary is the
+  /// disabled ink lifted; secondary keeps a step above it, [_hierarchyStep]).
+  /// Then the legibility pass ([HermesThemeColors.withReadableInk]) raises the
+  /// text inks on the bodies of the content boxes. Identity colours
+  /// (background, surfaces, accent) stay as designed.
   static HermesThemePreset _withReadableInk(HermesThemePreset p) {
+    // The pass of rt1215 as it was: it settles the inks the glass tones are
+    // certified against ([HermesThemeColors.toneInkPrimary] and company);
+    // the legibility pass then raises what is painted on top of it.
     final c = p.colors;
     final surfaces = [c.background, c.surface, c.surfaceVariant];
     double worst(Color ink) =>
@@ -1647,16 +1923,17 @@ class AppTheme {
       surfaces,
       minimum: 4.5,
     );
+    final settled = c.copyWith(
+      textSecondary: secondary,
+      accentText: link == c.accentText ? null : link,
+      textTertiary: tertiary,
+    );
     return HermesThemePreset(
       id: p.id,
       name: p.name,
       tagline: p.tagline,
       brightness: p.brightness,
-      colors: c.copyWith(
-        textSecondary: secondary,
-        accentText: link == c.accentText ? null : link,
-        textTertiary: tertiary,
-      ),
+      colors: settled.withReadableInk(),
       fontFamily: p.fontFamily,
       radius: p.radius,
       secondary: p.secondary,
@@ -1747,7 +2024,54 @@ class AppTheme {
     String? id, {
     ComponentProfile componentProfile = ComponentProfiles.minimal,
   }) {
-    final preset = presetById(id);
+    return fromPreset(presetById(id), componentProfile: componentProfile);
+  }
+
+  /// The readable-ink pass every catalogue preset goes through, for a preset
+  /// built elsewhere (Look & Feel): secondary text, tertiary text and links
+  /// reach AA on all its surfaces.
+  static HermesThemePreset readablePreset(HermesThemePreset preset) =>
+      _withReadableInk(preset);
+
+  /// The alphas the selection of a field is tried at, densest first.
+  static const List<double> textSelectionAlphas = [0.34, 0.28, 0.22, 0.16];
+
+  /// The fill under selected text: the accent at the densest of
+  /// [textSelectionAlphas] at which the main ink still reads at AA over it
+  /// on the body of a field (the raised surface over the page and over the
+  /// body of a group) and on the chrome of the composer.
+  static Color textSelectionFill(HermesThemeColors colors) {
+    final boxes = HermesBoxFill.of(colors);
+    final field = ThemeContrast.composite(
+      colors.surfaceVariant.withValues(alpha: 0.3),
+      boxes.group,
+    );
+    final backs = [
+      field,
+      ThemeContrast.composite(colors.surfaceVariant, boxes.page),
+      HermesChrome.of(colors).opaque,
+    ];
+    for (final alpha in textSelectionAlphas) {
+      final fill = colors.accent.withValues(alpha: alpha);
+      final reads = backs.every(
+        (back) =>
+            ThemeContrast.ratio(
+              colors.textPrimary,
+              ThemeContrast.composite(fill, back),
+            ) >=
+            4.5,
+      );
+      if (reads) return fill;
+    }
+    return colors.accent.withValues(alpha: textSelectionAlphas.last);
+  }
+
+  /// Builds the [ThemeData] of a preset, whether it comes from [presets] or
+  /// was derived (Look & Feel): the same builders either way.
+  static ThemeData fromPreset(
+    HermesThemePreset preset, {
+    ComponentProfile componentProfile = ComponentProfiles.minimal,
+  }) {
     final base = preset.isDark
         ? _buildRichDark(
             preset.colors,
@@ -1800,7 +2124,7 @@ class AppTheme {
       warning: palette.warning,
       divider: palette.divider,
       uppercaseTitles: profile.typography.uppercaseTitles,
-    );
+    ).withReadableInk();
     final weight = FontWeight.values.firstWhere(
       (candidate) => candidate.value == profile.typography.titleWeight,
       orElse: () => FontWeight.w600,
@@ -2081,7 +2405,19 @@ class AppTheme {
         backgroundColor: colors.background,
         surfaceTintColor: Colors.transparent,
       ),
-      dividerTheme: DividerThemeData(color: colors.divider),
+      // A bare Divider: the least line that is seen on the body of a group
+      // and on the page ([HermesLines.dividerRatio]); the palette's divider
+      // token sat near 1.1:1 on most light pages.
+      dividerTheme: DividerThemeData(color: HermesLines.of(colors).bareDivider),
+      // What is selected in a field: the accent, as dense as the main ink
+      // allows over it (the framework's default, the primary at 40 %, hid
+      // the words under opaque blocks on a dark page); the caret and the
+      // handles in the accent.
+      textSelectionTheme: TextSelectionThemeData(
+        cursorColor: colors.accent,
+        selectionColor: textSelectionFill(colors),
+        selectionHandleColor: colors.accent,
+      ),
       floatingActionButtonTheme: FloatingActionButtonThemeData(
         backgroundColor: sec,
         foregroundColor: onSec,
@@ -2092,20 +2428,19 @@ class AppTheme {
         style: FilledButton.styleFrom(
           backgroundColor: colors.accent,
           foregroundColor: colors.onAccent,
-          disabledBackgroundColor: colors.textDisabled,
-          disabledForegroundColor: colors.textSecondary,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(radius),
-          ),
+          // Disabled: the raised surface with a label that still reads at
+          // 3:1 on it. (The disabled ink as a FILL under the secondary ink
+          // was a grey block at ~2.3:1: a button with no words.)
+          disabledBackgroundColor: colors.surfaceVariant,
+          disabledForegroundColor: colors.disabledInkOn(colors.surfaceVariant),
+          shape: actionButtonShape(radius),
         ),
       ),
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
           backgroundColor: colors.surfaceVariant,
           foregroundColor: colors.textPrimary,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(radius),
-          ),
+          shape: actionButtonShape(radius),
         ),
       ),
       textButtonTheme: TextButtonThemeData(
@@ -2147,7 +2482,7 @@ class AppTheme {
         titleTextStyle: controlTextStyle.copyWith(fontWeight: FontWeight.w600),
         subtitleTextStyle: controlTextStyle.copyWith(
           color: colors.textSecondary,
-          fontSize: 12,
+          fontSize: HermesType.subtitleSize,
           fontWeight: FontWeight.w400,
           height: 1.35,
         ),
@@ -2229,10 +2564,12 @@ class AppTheme {
           final selected = states.contains(WidgetState.selected);
           if (states.contains(WidgetState.disabled)) {
             return selected
-                ? Colors.white.withValues(alpha: 0.7)
+                ? colors.onAccent.withValues(alpha: 0.7)
                 : colors.textDisabled;
           }
-          return selected ? Colors.white : colors.textSecondary;
+          // On: the on-accent ink, which reads on the track in every
+          // theme (white fell under 3:1 on a light accent).
+          return selected ? colors.onAccent : colors.textSecondary;
         }),
         trackColor: WidgetStateProperty.resolveWith((states) {
           if (states.contains(WidgetState.disabled)) {
@@ -2243,7 +2580,10 @@ class AppTheme {
         }),
         trackOutlineColor: WidgetStateProperty.resolveWith((states) {
           if (states.contains(WidgetState.selected)) return Colors.transparent;
-          return colors.textDisabled;
+          // The outline is what tells an idle switch from its row: a
+          // control's boundary, 3:1 on the body of a group (1.4.11). The
+          // disabled ink sat at ~2.3:1 on a dark card.
+          return colors.controlBorder;
         }),
         trackOutlineWidth: const WidgetStatePropertyAll(1.5),
         overlayColor: WidgetStatePropertyAll(
@@ -2270,6 +2610,14 @@ class AppTheme {
     );
   }
 
+  /// The shape of a theme's filled / elevated action buttons: a theme whose
+  /// corner radius is under 12 dp drew them as near-square blocks (the SSH
+  /// setup screen), so they are pills; the rounder themes keep their radius.
+  @visibleForTesting
+  static OutlinedBorder actionButtonShape(double radius) => radius < 12
+      ? const StadiumBorder()
+      : RoundedRectangleBorder(borderRadius: BorderRadius.circular(radius));
+
   static ThemeData _applyComponentProfile(
     ThemeData base,
     ComponentProfile profile, {
@@ -2288,10 +2636,14 @@ class AppTheme {
 
     final colors = base.hermes;
     final terminal = profile.id == ComponentProfiles.terminal.id;
+    // The terminal profile drew 6 dp rectangles for its action buttons (the
+    // SSH screens); those are pills now. Every other profile is untouched.
     final shape = WidgetStatePropertyAll<OutlinedBorder>(
-      RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(profile.shape.buttonRadius),
-      ),
+      terminal
+          ? const StadiumBorder()
+          : RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(profile.shape.buttonRadius),
+            ),
     );
     final padding = WidgetStatePropertyAll<EdgeInsetsGeometry>(
       EdgeInsets.symmetric(
@@ -2314,10 +2666,17 @@ class AppTheme {
       return colors.accent.withValues(alpha: profile.effects.staticTintOpacity);
     });
 
+    final iconShape = WidgetStatePropertyAll<OutlinedBorder>(
+      RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(profile.shape.buttonRadius),
+      ),
+    );
+
     ButtonStyle tune(
       ButtonStyle? current, {
       bool outlined = false,
       bool forceBorderless = false,
+      bool icon = false,
     }) {
       final borderWidth = outlined
           ? profile.border.emphasizedWidth.clamp(1.0, 3.0)
@@ -2334,7 +2693,7 @@ class AppTheme {
               BorderSide(color: colors.divider, width: borderWidth),
             );
       return (current ?? const ButtonStyle()).copyWith(
-        shape: shape,
+        shape: icon ? iconShape : shape,
         padding: padding,
         minimumSize: minimumSize,
         elevation: elevation,
@@ -2403,7 +2762,11 @@ class AppTheme {
         style: tune(base.textButtonTheme.style, forceBorderless: terminal),
       ),
       iconButtonTheme: IconButtonThemeData(
-        style: tune(base.iconButtonTheme.style, forceBorderless: terminal),
+        style: tune(
+          base.iconButtonTheme.style,
+          forceBorderless: terminal,
+          icon: true,
+        ),
       ),
       inputDecorationTheme: base.inputDecorationTheme.copyWith(
         fillColor: colors.surfaceVariant.withValues(

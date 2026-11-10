@@ -1,39 +1,132 @@
 import 'package:flutter/widgets.dart';
 
-/// Catálogo único de movimiento de la app (spec 041).
+/// The motion scale of the app (audit 1.4.0, §3.6): a few durations and
+/// curves, taken from the approved mocks (v25, 134, 136 v2-A) and from what
+/// already moves well (the pill morph).
 ///
-/// Un solo punto de verdad para duraciones y curvas de animación, más el
-/// apagado por accesibilidad ("reducir movimiento" / ahorro de batería). Ningún
-/// widget debe declarar duraciones o curvas de animación fuera de aquí, para que
-/// el lenguaje de movimiento sea coherente y auditable.
+/// Every new animation takes its duration and curve from here, and passes
+/// the duration through [duration] so that «reduce motion» turns it off.
+abstract final class HermesMotion {
+  /// Fades, an icon swap, a pressed state; also what a sheet or morph does
+  /// instead of moving when motion is reduced.
+  static const Duration fast = Duration(milliseconds: 120);
+
+  /// A tab or segment change, folding and unfolding (v25 .2 s; 134 .2 s).
+  static const Duration base = Duration(milliseconds: 200);
+
+  /// A block of the live turn coming in: a slight slide with a fade.
+  static const Duration enter = Duration(milliseconds: 450);
+
+  /// Related turn steps delivered together, inside one display frame.
+  static const Duration stagger = Duration(milliseconds: 50);
+
+  /// Navigation between full pages.
+  static const Duration page = Duration(milliseconds: 260);
+
+  /// A sheet, the pill morph or the work pane coming in (v25 `.sheet`
+  /// .32 s).
+  static const Duration sheetOpen = Duration(milliseconds: 300);
+
+  /// The same going out: a little quicker than coming in.
+  static const Duration sheetClose = Duration(milliseconds: 260);
+
+  /// A group of rows folding open or closed (height, not a jump): the
+  /// subagent group's disclosure.
+  static const Duration fold = Duration(milliseconds: 450);
+
+  /// A chevron turning with the disclosure it belongs to.
+  static const Duration chevron = Duration(milliseconds: 350);
+
+  /// A small badge popping in once (the «done» dot of a finished subagent).
+  static const Duration pop = Duration(milliseconds: 450);
+
+  /// One turn of the ring that says a row is working.
+  static const Duration spin = Duration(milliseconds: 850);
+
+  /// One breath of the notch, the pulse of «running».
+  static const Duration breath = Duration(milliseconds: 2000);
+
+  /// Voice mode: the dock's cross-fade with the input row and between its
+  /// own states.
+  static const Duration voiceSwap = Duration(milliseconds: 250);
+
+  /// Voice mode: the capsule's content swap and the live draft's fade.
+  static const Duration voiceFade = Duration(milliseconds: 180);
+
+  /// Voice mode: one breath of the thinking halo.
+  static const Duration voiceBreath = Duration(milliseconds: 2400);
+
+  /// One frame of the chat's pre-rendered live icons (about 30 fps).
+  static const Duration liveIconFrame = Duration(milliseconds: 33);
+
+  /// How long a live icon rests on its last frame before it plays back.
+  static const Duration liveIconHold = Duration(milliseconds: 700);
+
+  /// How long the jump-to-prompt arrow stays open after a tap.
+  static const Duration promptReveal = Duration(milliseconds: 1200);
+
+  /// Extra time a finger may stay down past the long-press timeout and still
+  /// count as a tap for the haptic tick on a control.
+  static const Duration tapGrace = Duration(milliseconds: 50);
+
+  /// Pause between two haptic events that come from the app, not a finger.
+  static const Duration hapticCooldown = Duration(milliseconds: 400);
+
+  /// How long a load may take before its skeleton shows: a quicker read
+  /// lands on the content with no flash of placeholder shapes.
+  static const Duration skeletonGrace = Duration(milliseconds: 180);
+
+  /// What comes in: v25's `cubic-bezier(.2, .8, .2, 1)`.
+  static const Curve emphasized = Cubic(0.2, 0.8, 0.2, 1);
+
+  /// Everything else; already the curve the app uses most.
+  static const Curve standard = Curves.easeOutCubic;
+
+  /// What goes out.
+  static const Curve exit = Curves.easeInCubic;
+
+  /// A change of size (folding and unfolding).
+  static const Curve size = Curves.easeInOutCubic;
+
+  /// True when the system asks to reduce motion (accessibility, battery).
+  static bool reduced(BuildContext context) =>
+      MediaQuery.maybeDisableAnimationsOf(context) ?? false;
+
+  /// The effective duration: [nominal], or zero when motion is reduced.
+  static Duration duration(BuildContext context, Duration nominal) =>
+      reduced(context) ? Duration.zero : nominal;
+}
+
+/// Catálogo de movimiento de la spec 041, ahora con los valores de
+/// [HermesMotion] (una sola fuente). Sigue para el código que ya lo usa; lo
+/// nuevo usa [HermesMotion].
 class Motion {
   const Motion._();
 
   /// Cambios de estado pequeños (píldoras de estado, colores) y salidas.
-  static const Duration fast = Duration(milliseconds: 120);
+  static const Duration fast = HermesMotion.fast;
 
   /// Entradas de contenido y listas, y plegado/desplegado.
-  static const Duration base = Duration(milliseconds: 200);
+  static const Duration base = HermesMotion.base;
 
   /// Transiciones de navegación entre pantallas.
-  static const Duration page = Duration(milliseconds: 260);
+  static const Duration page = HermesMotion.page;
 
   /// Curva de entrada (aparición de contenido).
-  static const Curve enter = Curves.easeOutCubic;
+  static const Curve enter = HermesMotion.standard;
 
   /// Curva de salida.
-  static const Curve exit = Curves.easeInCubic;
+  static const Curve exit = HermesMotion.exit;
 
   /// Curva de cambio de tamaño (plegado/desplegado).
-  static const Curve size = Curves.easeInOutCubic;
+  static const Curve size = HermesMotion.size;
 
   /// True si el sistema pide reducir el movimiento (accesibilidad/ahorro).
-  static bool reduced(BuildContext context) =>
-      MediaQuery.maybeDisableAnimationsOf(context) ?? false;
+  static bool reduced(BuildContext context) => HermesMotion.reduced(context);
 
   /// Duración efectiva: la nominal, o cero si hay que reducir el movimiento.
   static Duration duration(BuildContext context, Duration nominal) =>
-      reduced(context) ? Duration.zero : nominal;
+      HermesMotion.duration(context, nominal);
 }
 
 /// A floating route's enter and exit curves, held for as long as its

@@ -1,13 +1,22 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../design/floating.dart';
+import '../design/gel_surface.dart';
+import '../design/glass_strip.dart';
+import '../design/liquid_glass.dart';
 import '../design/modal.dart'
     show HermesAction, HermesMenuButton, showHermesMenu;
 import '../design/tokens.dart';
 import '../feedback/screen_help.dart' show ScreenHelpButton, showScreenHelp;
 import '../theme/app_theme.dart';
+import '../theme/glass_look.dart';
+import '../theme/theme_contrast.dart';
+import '../utils/responsive.dart';
+import 'dock.dart' show dockRailFootprint;
 
 /// Header of every screen that is not a chat: floating pieces, no band.
 ///
@@ -25,9 +34,12 @@ import '../theme/app_theme.dart';
 ///    buttons that say what they do (a tooltip) move into a "more" menu.
 ///    A text or filled button, or any widget this bar does not know, is
 ///    left as it is, outside the pill;
-///  * a gradient of the page colour behind the pieces keeps them and the
-///    status bar readable over rows passing underneath. Nothing is blurred
-///    and nothing listens to the scroll.
+///  * the pieces are one [HermesGlassStrip] (Q9-CRISTAL): the composer's
+///    glass, one blur for all of them, over a soft fade of the page colour
+///    that keeps the status bar readable over rows passing underneath.
+///    Without blur (the device, reduced motion, high contrast) they are the
+///    chrome's lifted fill over the denser gradient of before. Nothing
+///    listens to the scroll.
 ///
 /// In the terminal themes ([HermesThemeColors.uppercaseTitles]) the title is
 /// shown in capitals: a plain [Text], or the first [Text] of a [Column] or
@@ -54,10 +66,11 @@ class HermesAppBar extends StatelessWidget implements PreferredSizeWidget {
     this.toolbarHeight,
     this.maxPillActions = 3,
     this.titleBadge,
-    this.titleInPill = true,
+    this.titleInPill = false,
     this.actionsInPill = true,
     this.floatingLeading = true,
     this.scrim = true,
+    this.glass = true,
   }) : assert(maxPillActions >= 2);
 
   /// The page's name, in one line. Anything else the header has to say goes
@@ -88,8 +101,10 @@ class HermesAppBar extends StatelessWidget implements PreferredSizeWidget {
   /// Most icons the actions pill shows, the "more" button included.
   final int maxPillActions;
 
-  /// False leaves the title as plain text at the start of the bar, for a
-  /// page that never scrolls anything under its header.
+  /// True puts the title in a floating pill, centred. False (the default)
+  /// leaves it as plain text at the start of the bar, 17 dp and semibold, with
+  /// the glass kept for the round buttons and the actions: the page's name is
+  /// not a button, so it is not drawn as one.
   final bool titleInPill;
 
   /// False leaves the actions as they come, for ones that are already
@@ -102,6 +117,12 @@ class HermesAppBar extends StatelessWidget implements PreferredSizeWidget {
   /// False paints no scrim: a page that never scrolls under its header has
   /// nothing to keep away from it.
   final bool scrim;
+
+  /// False keeps the pieces in the chrome of before, without blur: a page
+  /// where nothing passes under the header (a terminal, an editor, a
+  /// viewer, a search field above its list) pays for no blur it cannot
+  /// show (Q9-CRISTAL).
+  final bool glass;
 
   // Accepted so call sites keep compiling; a header without a band has no
   // elevation, shape or tint, and its title pill is always centred.
@@ -116,16 +137,83 @@ class HermesAppBar extends StatelessWidget implements PreferredSizeWidget {
   static const double pieceSize = 44;
 
   /// How far below the header its scrim runs.
-  static const double scrimTail = 20;
+  static const double scrimTail = HermesGlassStrip.fadeTail;
+
+  /// How far below the header its veil fades out. It never reaches past the
+  /// gap a page leaves under its header ([HermesSpace.pageTop]) nor the one
+  /// its floating controls keep ([HermesSpace.x2]): the first row of a page
+  /// at rest is never dimmed by it.
+  static const double veilTail = HermesSpace.x2;
+
+  /// The least contrast (WCAG AA) the title reads at over the glass band.
+  static const double bandContrast = 4.5;
+
+  /// How much denser the band is over the status bar than over the toolbar.
+  static const double statusLift = 0.08;
+
+  /// The band's page colour tint at the toolbar (the density that keeps the
+  /// title at [bandContrast] over the worst content that can pass behind):
+  /// the least alpha, from the strip's own fade floor
+  /// ([HermesGlassStrip.fadeEdge]) up, at which the chrome's ink reads over
+  /// the page colour at that alpha laid on white (a dark theme) or black (a
+  /// light one). The blur gets no credit: a plain white card stays white.
+  /// 1.0 means no translucency left (no theme does today; the test says so).
+  static double bandAlpha(HermesThemeColors colors) =>
+      _bandAlpha[colors] ??= _resolveBandAlpha(colors);
+
+  static final Expando<double> _bandAlpha = Expando<double>('HermesAppBar');
+
+  /// What the band's tint at [alpha] lays over the worst content: the page
+  /// colour on white behind a dark theme, on black behind a light one.
+  static Color bandUnder(HermesThemeColors colors, double alpha) {
+    final worst = HermesChrome.of(colors).dark ? Colors.white : Colors.black;
+    return ThemeContrast.composite(
+      colors.background.withValues(alpha: alpha.clamp(0.0, 1.0)),
+      worst,
+    );
+  }
+
+  static double _resolveBandAlpha(HermesThemeColors colors) {
+    final chrome = HermesChrome.of(colors);
+    // The title (the chrome's ink) and, for the badge that sits on the band
+    // with its own tint, the extreme of its side (white on a dark page,
+    // black on a light one): the furthest its ink can be moved to.
+    final badgeTint = chrome.ink.withValues(
+      alpha: HermesTitleBadge.tintOpacity,
+    );
+    final extreme = chrome.dark ? Colors.white : Colors.black;
+    // A little over the minimum: the painted alpha is quantised to 8 bits.
+    const margin = 0.1;
+    for (
+      var alpha = HermesGlassStrip.fadeEdge;
+      alpha < 1;
+      alpha += bandAlphaStep
+    ) {
+      final under = bandUnder(colors, alpha);
+      if (ThemeContrast.ratio(chrome.ink, under) >= bandContrast + margin &&
+          ThemeContrast.ratio(
+                extreme,
+                ThemeContrast.composite(badgeTint, under),
+              ) >=
+              bandContrast + margin) {
+        return alpha;
+      }
+    }
+    return 1;
+  }
+
+  /// The step the band's density is searched in.
+  static const double bandAlphaStep = 0.02;
 
   @override
   Size get preferredSize => Size.fromHeight(
     (toolbarHeight ?? kToolbarHeight) + (bottom?.preferredSize.height ?? 0.0),
   );
 
-  /// The round floating look of the leading button (48 dp target).
-  static ButtonStyle roundButtonStyle(HermesChrome chrome) =>
-      HermesFloatingIconButton.style(chrome);
+  /// The round floating look of the leading button (48 dp target); [fill]
+  /// is a header strip's glass.
+  static ButtonStyle roundButtonStyle(HermesChrome chrome, {Color? fill}) =>
+      HermesFloatingIconButton.style(chrome, fill: fill);
 
   @override
   Widget build(BuildContext context) {
@@ -135,7 +223,7 @@ class HermesAppBar extends StatelessWidget implements PreferredSizeWidget {
     final resolvedTitle = colors.uppercaseTitles
         ? _applyUppercase(title)
         : title;
-    final page = backgroundColor ?? theme.scaffoldBackgroundColor;
+    final page = backgroundColor ?? colors.background;
     final dark = ThemeData.estimateBrightnessForColor(page) == Brightness.dark;
 
     Widget? lead = leading;
@@ -153,53 +241,64 @@ class HermesAppBar extends StatelessWidget implements PreferredSizeWidget {
     final baseTitle =
         titleTextStyle ??
         (theme.appBarTheme.titleTextStyle ?? const TextStyle()).copyWith(
-          fontSize: 14.5,
-          fontWeight: FontWeight.w700,
+          fontSize: titleInPill ? 14.5 : HermesType.titleSize,
+          fontWeight: titleInPill ? FontWeight.w700 : FontWeight.w600,
         );
     final shown = actions ?? const <Widget>[];
+    // The glass level asked for: off is the solid veil of before (the band
+    // only exists where the strip frosts it).
+    final band =
+        scrim && glass && GlassLookScope.levelOf(context) != GlassLevel.off;
     // One layer for the whole header: rows scrolling under it repaint their
-    // own layer only.
+    // own layer only. Its pieces are one strip of glass where rows pass
+    // under it (the scrim says so).
     return RepaintBoundary(
-      child: AppBar(
-        automaticallyImplyLeading: false,
-        leading: lead == null || !floatingLeading
-            ? lead
-            : _FloatingLeading(child: lead),
-        leadingWidth: kToolbarHeight,
-        title: !_hasTitle(resolvedTitle)
-            ? null
-            : titleInPill
-            ? _TitlePill(badge: titleBadge, child: resolvedTitle!)
-            : resolvedTitle,
-        centerTitle: titleInPill,
-        titleSpacing: titleInPill ? 8 : titleSpacing,
-        actions: shown.isEmpty
-            ? null
-            : actionsInPill
-            ? [_FloatingActions(actions: shown, max: maxPillActions)]
-            : shown,
-        bottom: bottom,
-        backgroundColor: Colors.transparent,
-        surfaceTintColor: Colors.transparent,
-        foregroundColor: foregroundColor ?? chrome.ink,
-        elevation: 0,
-        scrolledUnderElevation: 0,
-        forceMaterialTransparency: true,
-        iconTheme: iconTheme,
-        titleTextStyle: baseTitle.copyWith(
-          color: baseTitle.color ?? chrome.ink,
+      child: HermesGlassStrip(
+        enabled: scrim && glass,
+        liquid: HermesLiquid.header,
+        backdropFade: HermesGlassStrip.fadeEdge,
+        band: band,
+        child: AppBar(
+          automaticallyImplyLeading: false,
+          leading: lead == null || !floatingLeading
+              ? lead
+              : _FloatingLeading(child: lead),
+          leadingWidth: kToolbarHeight,
+          title: !_hasTitle(resolvedTitle)
+              ? null
+              : titleInPill
+              ? _TitlePill(badge: titleBadge, child: resolvedTitle!)
+              : _PlainTitle(badge: titleBadge, child: resolvedTitle!),
+          centerTitle: titleInPill,
+          titleSpacing: titleInPill ? 8 : titleSpacing,
+          actions: shown.isEmpty
+              ? null
+              : actionsInPill
+              ? [_FloatingActions(actions: shown, max: maxPillActions)]
+              : shown,
+          bottom: bottom,
+          backgroundColor: Colors.transparent,
+          surfaceTintColor: Colors.transparent,
+          foregroundColor: foregroundColor ?? chrome.ink,
+          elevation: 0,
+          scrolledUnderElevation: 0,
+          forceMaterialTransparency: true,
+          iconTheme: iconTheme,
+          titleTextStyle: baseTitle.copyWith(
+            color: baseTitle.color ?? chrome.ink,
+          ),
+          systemOverlayStyle:
+              systemOverlayStyle ??
+              SystemUiOverlayStyle(
+                statusBarColor: Colors.transparent,
+                statusBarIconBrightness: dark
+                    ? Brightness.light
+                    : Brightness.dark,
+                statusBarBrightness: dark ? Brightness.dark : Brightness.light,
+              ),
+          toolbarHeight: toolbarHeight,
+          flexibleSpace: scrim ? _HeaderScrim(color: page, band: band) : null,
         ),
-        systemOverlayStyle:
-            systemOverlayStyle ??
-            SystemUiOverlayStyle(
-              statusBarColor: Colors.transparent,
-              statusBarIconBrightness: dark
-                  ? Brightness.light
-                  : Brightness.dark,
-              statusBarBrightness: dark ? Brightness.dark : Brightness.light,
-            ),
-        toolbarHeight: toolbarHeight,
-        flexibleSpace: scrim ? _HeaderScrim(color: page) : null,
       ),
     );
   }
@@ -275,16 +374,42 @@ class HermesAppBar extends StatelessWidget implements PreferredSizeWidget {
 /// field or a view switch above it would paint its rows over them.
 const Clip hermesUnderHeader = Clip.none;
 
-/// The scrim behind the floating pieces: the page colour, dense over the
-/// status bar and gone [HermesAppBar.scrimTail] below the header.
+/// What is behind the floating pieces.
+///
+/// With glass (the strip frosts, or only lost the zone to another strip) the
+/// header is a BAND of glass, as the dock is: the strip's one blur fills the
+/// measured rectangle of the header (status bar and bottom included) and a
+/// tint of the page colour, [HermesAppBar.bandAlpha] over the toolbar and a
+/// little more over the status bar, keeps the title at AA over any content
+/// that passes behind; it melts into the page in [HermesAppBar.veilTail]. No
+/// blur of its own and no listener to the scroll.
+///
+/// Without glass (high contrast, reduced motion, the policy: the strip is the
+/// chrome of before) it is the scrim ([HermesGlassStrip.fade]'s denser
+/// gradient) with the page colour SOLID from the top of the screen to the
+/// foot of the header and the same short fade below it: a row scrolled under
+/// the title never reads through it.
+///
+/// Both ignore pointers. Where a side rail is on screen the fade leaves its
+/// column alone: the rail sits in the body right under the header and a fade
+/// over its first control would dim it.
 class _HeaderScrim extends StatelessWidget {
-  const _HeaderScrim({required this.color});
+  const _HeaderScrim({required this.color, required this.band});
 
   final Color color;
 
+  /// Whether the header is a band of glass (see [HermesAppBar.build]).
+  final bool band;
+
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).hermes;
     final statusBar = MediaQuery.paddingOf(context).top;
+    final glass = band && HermesGlassStrip.of(context) != null;
+    final railColumn = Responsive.usesRail(context)
+        ? dockRailFootprint(context)
+        : 0.0;
+    final alpha = HermesAppBar.bandAlpha(colors);
     return IgnorePointer(
       child: LayoutBuilder(
         builder: (context, constraints) {
@@ -292,28 +417,97 @@ class _HeaderScrim extends StatelessWidget {
           final statusStop = extent.isFinite && extent > 0
               ? (statusBar / extent).clamp(0.0, 0.6)
               : 0.0;
+          final foot = glass ? alpha : 1.0;
+          final Widget body;
+          if (glass && constraints.maxHeight.isFinite) {
+            final bandStop = constraints.maxHeight > 0
+                ? (statusBar / constraints.maxHeight).clamp(0.0, 1.0)
+                : 0.0;
+            body = HermesGlassPiece.band(
+              child: DecoratedBox(
+                key: const ValueKey('hermes-app-bar-glass'),
+                position: DecorationPosition.background,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      color.withValues(
+                        alpha: (alpha + HermesAppBar.statusLift).clamp(
+                          0.0,
+                          1.0,
+                        ),
+                      ),
+                      color.withValues(alpha: alpha),
+                      color.withValues(alpha: alpha),
+                    ],
+                    stops: [0, bandStop, 1],
+                  ),
+                ),
+                child: Align(
+                  alignment: Alignment.bottomCenter,
+                  child: SizedBox(
+                    height: 1,
+                    width: double.infinity,
+                    child: DecoratedBox(
+                      key: const ValueKey('hermes-app-bar-glass-edge'),
+                      decoration: BoxDecoration(
+                        color: HermesGlassRim.edgeOf(HermesChrome.of(colors)),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            );
+          } else {
+            body = ColoredBox(
+              key: const ValueKey('hermes-app-bar-veil'),
+              color: color,
+            );
+          }
           return Stack(
             clipBehavior: Clip.none,
             fit: StackFit.expand,
             children: [
+              if (!glass)
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  top: 0,
+                  bottom: -HermesAppBar.scrimTail,
+                  child: DecoratedBox(
+                    key: const ValueKey('hermes-app-bar-scrim'),
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          color.withValues(alpha: 0.97),
+                          color.withValues(alpha: 0.9),
+                          color.withValues(alpha: 0.62),
+                          color.withValues(alpha: 0),
+                        ],
+                        stops: [0, statusStop, 0.68, 1],
+                      ),
+                    ),
+                  ),
+                ),
+              Positioned.fill(child: body),
               Positioned(
-                left: 0,
+                left: railColumn,
                 right: 0,
-                top: 0,
-                bottom: -HermesAppBar.scrimTail,
+                bottom: -HermesAppBar.veilTail,
+                height: HermesAppBar.veilTail,
                 child: DecoratedBox(
-                  key: const ValueKey('hermes-app-bar-scrim'),
+                  key: const ValueKey('hermes-app-bar-veil-tail'),
                   decoration: BoxDecoration(
                     gradient: LinearGradient(
                       begin: Alignment.topCenter,
                       end: Alignment.bottomCenter,
                       colors: [
-                        color.withValues(alpha: 0.97),
-                        color.withValues(alpha: 0.9),
-                        color.withValues(alpha: 0.62),
+                        color.withValues(alpha: foot),
                         color.withValues(alpha: 0),
                       ],
-                      stops: [0, statusStop, 0.68, 1],
                     ),
                   ),
                 ),
@@ -335,25 +529,94 @@ class _FloatingLeading extends StatelessWidget {
   Widget build(BuildContext context) {
     final chrome = HermesChrome.ofContext(context);
     return Center(
-      child: Stack(
-        alignment: Alignment.center,
-        children: [
-          HermesFloatingIconButton.shadow(chrome),
-          IconButtonTheme(
-            key: const ValueKey('hermes-app-bar-leading'),
-            data: IconButtonThemeData(
-              style: HermesAppBar.roundButtonStyle(chrome),
+      child: HermesFloatingIconButton.gel(
+        Stack(
+          alignment: Alignment.center,
+          children: [
+            HermesFloatingIconButton.shadow(chrome),
+            IconButtonTheme(
+              key: const ValueKey('hermes-app-bar-leading'),
+              data: IconButtonThemeData(
+                style: HermesAppBar.roundButtonStyle(
+                  chrome,
+                  fill: HermesGlassStrip.of(context)?.veil,
+                ),
+              ),
+              child: child,
             ),
-            child: child,
-          ),
-        ],
+          ],
+        ),
       ),
+    );
+  }
+}
+
+/// The page's name as plain text at the start of the bar. A state badge
+/// (read only, the scope the page is limited to) still follows it: moving the
+/// name out of the pill must not take the mark of what matters with it.
+class _PlainTitle extends StatelessWidget {
+  const _PlainTitle({required this.child, this.badge});
+
+  final Widget child;
+  final Widget? badge;
+
+  @override
+  Widget build(BuildContext context) {
+    // One line, whatever the page passes: a long name is cut, not wrapped.
+    final name = DefaultTextStyle.merge(
+      maxLines: 1,
+      softWrap: false,
+      overflow: TextOverflow.ellipsis,
+      child: child,
+    );
+    return KeyedSubtree(
+      key: const ValueKey('hermes-app-bar-plain-title'),
+      child: badge == null
+          ? name
+          : LayoutBuilder(
+              // The badge never runs past the bar: it gets what is left of
+              // the title's least and adapts to it, as it did in the pill.
+              builder: (context, constraints) {
+                final room = _TitlePill._badgeRoom(constraints.maxWidth);
+                if (room < 1) return name;
+                return Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Flexible(child: name),
+                    const SizedBox(width: _TitlePill._badgeGap),
+                    KeyedSubtree(
+                      key: const ValueKey('hermes-app-bar-title-badge'),
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(maxWidth: room),
+                        child: badge!,
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
     );
   }
 }
 
 class _TitlePill extends StatelessWidget {
   const _TitlePill({required this.child, this.badge});
+
+  static const double _badgeGap = 8;
+
+  /// The least the title keeps: a word and its ellipsis. QA 9709: on the
+  /// open Fold's list column the title went down to nothing and the pill
+  /// was left empty around the connection dot.
+  static const double minTitleWidth = HermesSpace.tap;
+
+  /// What the badge may take of [width]: all but the gap and the title's
+  /// least. The badge never runs past the pill (gint51), and the title is
+  /// never squeezed out of it: a pill always says what it is.
+  static double _badgeRoom(double width) {
+    if (width == double.infinity) return width;
+    final room = width - _badgeGap - math.min(minTitleWidth, width);
+    return room < 0 ? 0 : room;
+  }
 
   final Widget child;
   final Widget? badge;
@@ -379,16 +642,30 @@ class _TitlePill extends StatelessWidget {
           heightFactor: 1,
           child: badge == null
               ? name
-              : Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Flexible(child: name),
-                    const SizedBox(width: 8),
-                    KeyedSubtree(
-                      key: const ValueKey('hermes-app-bar-title-badge'),
-                      child: badge!,
-                    ),
-                  ],
+              : LayoutBuilder(
+                  // The badge never runs past the pill: it gets what is left
+                  // and adapts to it (gint51: a read-only badge overflowed
+                  // by 32 dp).
+                  builder: (context, constraints) {
+                    final room = _badgeRoom(constraints.maxWidth);
+                    // No room for the badge beside the title's least: the
+                    // title alone, never an empty pill around the badge.
+                    if (room < 1) return name;
+                    return Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Flexible(child: name),
+                        const SizedBox(width: _badgeGap),
+                        KeyedSubtree(
+                          key: const ValueKey('hermes-app-bar-title-badge'),
+                          child: ConstrainedBox(
+                            constraints: BoxConstraints(maxWidth: room),
+                            child: badge!,
+                          ),
+                        ),
+                      ],
+                    );
+                  },
                 ),
         ),
       ),
@@ -406,14 +683,74 @@ class HermesTitleBadge extends StatelessWidget {
   /// What a screen reader says instead of the bare word.
   final String? semanticsLabel;
 
+  /// How much of the chrome's ink tints the badge.
+  static const double tintOpacity = 0.08;
+
+  /// The badge's ink for [colors]: the chrome's muted ink, moved just as
+  /// far as AA (4.5) needs over its tint on every surface it can sit on:
+  /// the chrome of before ([HermesChrome.opaque]), and the header's glass
+  /// over the worst page and over its own (REVIEW-Q9-CRISTAL C1; the dark
+  /// themes fell short even before the glass). One ink for all of them, so
+  /// the badge does not change as its header goes in or out of glass.
+  static Color inkFor(HermesThemeColors colors) =>
+      _ink[colors] ??= _resolveInk(colors);
+
+  static final Expando<Color> _ink = Expando<Color>('HermesTitleBadge');
+
+  /// [inkFor] moved, if it must, just as far as AA (4.5) needs over the
+  /// header's band at its worst ([HermesAppBar.bandUnder]) and the badge's own
+  /// tint: a title's badge has no piece of its own, it sits on the band. Only
+  /// ever towards more contrast, so everything [inkFor] reads on still reads.
+  static Color inkOnBand(HermesThemeColors colors) =>
+      _bandInk[colors] ??= _resolveBandInk(colors);
+
+  static final Expando<Color> _bandInk = Expando<Color>('HermesTitleBadgeBand');
+
+  static Color _resolveInk(HermesThemeColors colors) {
+    final chrome = HermesChrome.of(colors);
+    final tint = chrome.ink.withValues(alpha: tintOpacity);
+    Color on(Color under) => ThemeContrast.composite(tint, under);
+    final under = [
+      on(chrome.opaque),
+      on(HermesGlassStrip.worstUnder(colors)),
+      on(HermesGlassStrip.ownUnder(colors)),
+    ];
+    return ThemeContrast.adjustForContrast(
+      chrome.mutedInk,
+      under,
+      minimum: 4.5,
+    );
+  }
+
+  static Color _resolveBandInk(HermesThemeColors colors) {
+    final chrome = HermesChrome.of(colors);
+    final tint = chrome.ink.withValues(alpha: tintOpacity);
+    final under = ThemeContrast.composite(
+      tint,
+      HermesAppBar.bandUnder(colors, HermesAppBar.bandAlpha(colors)),
+    );
+    // Towards the ink's own side only (white on a dark page, black on a
+    // light one): never across, so the chrome it already reads on keeps it.
+    final start = inkFor(colors);
+    final end = chrome.dark ? Colors.white : Colors.black;
+    for (var step = 0; step <= 50; step++) {
+      final ink = ThemeContrast.blend(start, end, step / 50);
+      if (ThemeContrast.ratio(ink, under) >= HermesAppBar.bandContrast) {
+        return ink;
+      }
+    }
+    return end;
+  }
+
   @override
   Widget build(BuildContext context) {
-    final chrome = HermesChrome.ofContext(context);
+    final colors = Theme.of(context).hermes;
+    final chrome = HermesChrome.of(colors);
     return Container(
       constraints: const BoxConstraints(maxWidth: 104),
       padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
       decoration: ShapeDecoration(
-        color: chrome.ink.withValues(alpha: 0.08),
+        color: chrome.ink.withValues(alpha: tintOpacity),
         shape: StadiumBorder(side: BorderSide(color: chrome.line)),
       ),
       child: Text(
@@ -427,7 +764,7 @@ class HermesTitleBadge extends StatelessWidget {
           height: 1.25,
           fontWeight: FontWeight.w500,
           letterSpacing: 0,
-          color: chrome.mutedInk,
+          color: inkOnBand(colors),
         ),
       ),
     );
@@ -589,7 +926,12 @@ class _ActionsPill extends StatelessWidget {
             bottom: (48 - HermesAppBar.pieceSize) / 2,
             child: const HermesFloatingSurface(
               key: ValueKey('hermes-app-bar-actions'),
-              child: SizedBox.expand(),
+              // The capsule's gel: its sheen over the one blur of the strip.
+              child: HermesGelSurface(
+                shape: StadiumBorder(),
+                pressable: false,
+                child: SizedBox.expand(),
+              ),
             ),
           ),
           Padding(

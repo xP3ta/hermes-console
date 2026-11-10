@@ -129,7 +129,7 @@ void main() {
         for (final id in [
           DockItemId.cron,
           DockItemId.sessions,
-          DockItemId.tools,
+          DockItemId.agents,
           DockItemId.settings,
           DockItemId.bots,
         ])
@@ -179,8 +179,8 @@ void main() {
         s.roomSummaryCompact: 15,
         s.roomRecipientsAll(12): 14,
         s.roomRecipientsSome(12, 12): 15,
-        s.chaQueuedCount(12): 13,
-        s.chaQueuedPausedCount(12): 13,
+        s.queuePillCount(12): 13,
+        s.queuePillPaused: 13,
         s.chaBackgroundTaskDoneShort: 13,
         s.chaBackgroundTaskErrorShort: 15,
         s.chaGoalTurnLabel(12, 99): 12,

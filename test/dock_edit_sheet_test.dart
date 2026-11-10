@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/shell/dock_edit_sheet.dart';
+import 'package:hermes_android/core/services/ssh_profile_presence.dart';
 import 'package:hermes_android/core/shell/gesture_dock_state.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
@@ -100,16 +101,18 @@ void main() {
     );
   });
 
-  testWidgets('Inicio cannot be removed; at most 5, at least 2', (
+  testWidgets('Inicio cannot be removed; at most 6, at least 2', (
     tester,
   ) async {
     await _open(tester);
     expect(_button(tester, 'dock-edit-remove-home').onPressed, isNull);
     await tester.tap(find.byKey(const ValueKey('dock-edit-add-bots')));
     await tester.pump();
-    expect(_selected(tester), hasLength(5));
-    expect(_button(tester, 'dock-edit-add-search').onPressed, isNull);
-    for (final t in ['create', 'projects', 'settings']) {
+    await tester.tap(find.byKey(const ValueKey('dock-edit-add-search')));
+    await tester.pump();
+    expect(_selected(tester), hasLength(6));
+    expect(_button(tester, 'dock-edit-add-cron').onPressed, isNull);
+    for (final t in ['create', 'projects', 'settings', 'search']) {
       await tester.tap(find.byKey(ValueKey('dock-edit-remove-$t')));
       await tester.pump();
     }
@@ -127,7 +130,27 @@ void main() {
     expect(_selected(tester), ['home', 'search']);
     await tester.tap(find.byKey(const ValueKey('dock-edit-reset')));
     await tester.pump();
-    expect(_selected(tester), ['home', 'create', 'search', 'bots', 'tools']);
+    expect(_selected(tester), [
+      'home',
+      'create',
+      'search',
+      'bots',
+      'agents',
+      'settings',
+    ]);
+  });
+
+  testWidgets('Agentes is offered only once there is an SSH profile', (
+    tester,
+  ) async {
+    SshProfilePresence.instance.value = false;
+    await _open(tester);
+    expect(find.byKey(const ValueKey('dock-edit-add-agents')), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+    SshProfilePresence.instance.value = true;
+    addTearDown(() => SshProfilePresence.instance.value = false);
+    await _open(tester);
+    expect(find.byKey(const ValueKey('dock-edit-add-agents')), findsOneWidget);
   });
 
   testWidgets('TalkBack reorders with move actions', (tester) async {

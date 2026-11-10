@@ -49,6 +49,13 @@ object NewSessionLaunchContract {
     const val SOURCE_SHORTCUT = "shortcut"
     const val SOURCE_WIDGET = "widget"
 
+    /**
+     * The Android assistant gesture or button (a `VoiceInteractionSession`).
+     * It can only open a blank chat with the voice ready: no prompt, no
+     * screen content, nothing is sent.
+     */
+    const val SOURCE_ASSISTANT = "assistant"
+
     private val opaqueId = Regex("^[A-Za-z0-9._:-]+$")
 
     fun parse(source: Intent?): Map<String, Any?>? {
@@ -64,7 +71,14 @@ object NewSessionLaunchContract {
         if (version != CONTRACT_VERSION) return null
 
         val launchSource = source.getStringExtra(EXTRA_SOURCE) ?: SOURCE_SHORTCUT
-        if (launchSource != SOURCE_SHORTCUT && launchSource != SOURCE_WIDGET) {
+        if (
+            launchSource != SOURCE_SHORTCUT &&
+            launchSource != SOURCE_WIDGET &&
+            launchSource != SOURCE_ASSISTANT
+        ) {
+            return null
+        }
+        if (launchSource == SOURCE_ASSISTANT && source.action != ACTION_NEW_SESSION_VOICE) {
             return null
         }
         if (launchSource == SOURCE_SHORTCUT && source.action != ACTION_NEW_SESSION) {
@@ -141,7 +155,10 @@ object NewSessionLaunchContract {
         target: NewSessionLaunchTarget = NewSessionLaunchTarget.COMPOSER,
         requestedInstanceId: String? = null,
     ): Intent {
-        require(source == SOURCE_SHORTCUT || source == SOURCE_WIDGET)
+        require(
+            source == SOURCE_SHORTCUT || source == SOURCE_WIDGET || source == SOURCE_ASSISTANT,
+        )
+        require(source != SOURCE_ASSISTANT || target == NewSessionLaunchTarget.VOICE)
         require(requestedInstanceId == null || isSafeOpaqueId(requestedInstanceId, 256))
         val eventId = UUID.randomUUID().toString()
         val kind = HermesWidgetLaunchKind.NEW_SESSION

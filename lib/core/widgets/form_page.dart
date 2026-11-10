@@ -134,9 +134,7 @@ class _HermesFormPageState extends State<HermesFormPage> {
                 onPressed: widget.busy ? null : widget.onSubmit,
                 style: FilledButton.styleFrom(
                   minimumSize: const Size(64, 40),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(HermesRadius.control),
-                  ),
+                  shape: const StadiumBorder(),
                   padding: const EdgeInsets.symmetric(horizontal: 18),
                 ),
                 child: widget.busy

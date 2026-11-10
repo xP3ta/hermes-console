@@ -29,6 +29,42 @@ void main() {
       expect(parsed.nativeEventId, 'evt_123');
     });
 
+    test('assistant source only opens a new chat with the voice ready', () {
+      Map<String, Object?> payload(String kind, String? target) =>
+          <String, Object?>{
+            'contract_version': 1,
+            'kind': kind,
+            'source': 'assistant',
+            'native_event_id': 'evt-assistant',
+            'target': ?target,
+            if (kind == 'open_session') 'session_id': 'abc',
+            'received_elapsed_ms': 5,
+          };
+
+      final ok = NewSessionLaunchAction.tryParse(
+        payload('new_session', 'voice'),
+      );
+      expect(ok, isNotNull);
+      expect(ok!.source, NewSessionLaunchSource.assistant);
+      expect(ok.target, NewSessionLaunchTarget.voice);
+
+      expect(
+        NewSessionLaunchAction.tryParse(payload('new_session', 'camera')),
+        isNull,
+      );
+      expect(
+        NewSessionLaunchAction.tryParse(payload('new_session', null)),
+        isNull,
+      );
+      for (final kind in ['open_app', 'open_session', 'open_setup']) {
+        expect(
+          NewSessionLaunchAction.tryParse(payload(kind, 'voice')),
+          isNull,
+          reason: kind,
+        );
+      }
+    });
+
     test('accepts only the four allowlisted widget destinations', () {
       for (final target in NewSessionLaunchTarget.values) {
         final parsed = NewSessionLaunchAction.tryParse(<String, Object?>{

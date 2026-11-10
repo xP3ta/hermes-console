@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../services/ssh_profile_presence.dart';
 import 'dock_light.dart';
 
 /// Every item the dock can show (edit mode picks 2–5 of them, in the user's
@@ -17,16 +18,30 @@ enum GestureDockTab {
   search,
   cron,
   tasks,
-  tools,
+  agents,
   activity;
 
-  /// Inicio, Nuevo chat, Chats, Bots, Herramientas.
+  /// Inicio, Nuevo chat, Chats, Bots, Agentes, Ajustes. Agentes only shows
+  /// while the app has an SSH profile (see `SshProfilePresence`); without
+  /// one the bar is Inicio · Chats · Bots · Ajustes and «+».
   static const List<GestureDockTab> defaultLayout = [
     GestureDockTab.home,
     GestureDockTab.create,
     GestureDockTab.search,
     GestureDockTab.bots,
-    GestureDockTab.tools,
+    GestureDockTab.agents,
+    GestureDockTab.settings,
+  ];
+
+  /// What the dock showed in 1.3.x when nobody had edited it: Herramientas
+  /// stood where Ajustes is now. A stored layout equal to it was never
+  /// edited and moves to [defaultLayout].
+  static const List<GestureDockTab> toolsDefaultLayout = [
+    GestureDockTab.home,
+    GestureDockTab.create,
+    GestureDockTab.search,
+    GestureDockTab.bots,
+    GestureDockTab.settings,
   ];
 
   /// What the dock showed until 1.2.15 when nobody had edited it: Inicio,
@@ -38,16 +53,31 @@ enum GestureDockTab {
     GestureDockTab.settings,
   ];
   static const int minTabs = 2;
-  static const int maxTabs = 5;
+
+  /// Five places and «Nuevo chat».
+  static const int maxTabs = 6;
 
   /// A place the user can be at, so the item that can show as selected.
   /// "Nuevo chat" and "Actividad" do something and stay where they are.
   bool get isPlace =>
       this != GestureDockTab.create && this != GestureDockTab.activity;
 
-  static GestureDockTab? parse(Object? value) => values
-      .cast<GestureDockTab?>()
-      .firstWhere((t) => t?.name == value, orElse: () => null);
+  /// Names stored by older versions. «Herramientas» (`tools`) was split:
+  /// what is of the app and the server is in Ajustes, what is of a bot is in
+  /// its profile, so a stored `tools` is read as Ajustes.
+  static const Map<String, GestureDockTab> _legacyNames = {
+    'tools': GestureDockTab.settings,
+  };
+
+  static GestureDockTab? parse(Object? value) {
+    if (value is String && _legacyNames.containsKey(value)) {
+      return _legacyNames[value];
+    }
+    return values.cast<GestureDockTab?>().firstWhere(
+      (t) => t?.name == value,
+      orElse: () => null,
+    );
+  }
 
   /// A valid layout: no repeats, Inicio always present, 2–5 entries.
   static List<GestureDockTab> normalize(Iterable<GestureDockTab> raw) {
@@ -70,6 +100,21 @@ enum GestureDockTab {
   }
 }
 
+/// [tabs] as the bar shows them now: «Agentes» only while the app has an SSH
+/// profile. The stored layout keeps it either way, so an SSH profile saved
+/// later brings it back in the place the user gave it.
+List<GestureDockTab> gestureDockShownTabs(
+  List<GestureDockTab> tabs, {
+  SshProfilePresence? presence,
+}) {
+  if ((presence ?? SshProfilePresence.instance).value) return tabs;
+  if (!tabs.contains(GestureDockTab.agents)) return tabs;
+  return [
+    for (final tab in tabs)
+      if (tab != GestureDockTab.agents) tab,
+  ];
+}
+
 /// Everything the dock keeps per device.
 ///
 /// Payloads written while the dock had gestures and a first-run welcome
@@ -86,7 +131,11 @@ class GestureDockSettings {
   /// current default. Any other layout is the user's and is kept, and so is
   /// that same set of four once it is stored under this version (someone
   /// chose it in the editor).
-  static const layoutVersion = 2;
+  ///
+  /// Version 3 (1.4.0): Herramientas is gone; Ajustes (and Agentes) took its
+  /// place in the default. The 1.3.x default, stored as `tools`, moves to the
+  /// new default; any other stored `tools` becomes Ajustes in place.
+  static const layoutVersion = 3;
 
   /// The items the dock shows, in the user's order.
   final List<GestureDockTab> tabs;
@@ -131,10 +180,19 @@ class GestureDockSettings {
           ])
         : GestureDockTab.defaultLayout;
     final storedLayout = raw['layout_version'];
+    final older = storedLayout is! int || storedLayout < layoutVersion;
     final untouched =
-        (storedLayout is! int || storedLayout < layoutVersion) &&
+        (storedLayout is! int || storedLayout < 2) &&
         listEquals(tabs, GestureDockTab.legacyDefaultLayout);
-    if (untouched) tabs = GestureDockTab.defaultLayout;
+    // The 1.3.x default, written with its Herramientas item.
+    final toolsDefault =
+        older &&
+        rawTabs is List &&
+        listEquals(
+          [for (final entry in rawTabs) entry.toString()],
+          const ['home', 'create', 'search', 'bots', 'tools'],
+        );
+    if (untouched || toolsDefault) tabs = GestureDockTab.defaultLayout;
     return GestureDockSettings(tabs: tabs, opaque: flag('opaque', false));
   }
 }

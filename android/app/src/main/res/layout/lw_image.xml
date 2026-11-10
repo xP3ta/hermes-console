@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A widget drawn by the app: its picture, exactly the size of the cell,
+     and over it the transparent tap targets of lw_zone.xml, one per zone
+     the drawing named (added by the provider; nothing is sized here). -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@android:id/background"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <ImageView
+        android:id="@+id/lw_picture"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:adjustViewBounds="false"
+        android:scaleType="fitXY" />
+
+    <FrameLayout
+        android:id="@+id/lw_zones"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+</FrameLayout>

@@ -71,7 +71,7 @@ void main() {
         size: _small,
         data: asking,
       );
-      expect(find.text('Ahora'), findsOneWidget);
+      expect(find.text('AHORA'), findsOneWidget);
       expect(find.text('Astra'), findsOneWidget);
       expect(find.text('te pregunta'), findsOneWidget);
       expect(find.text('Responder'), findsOneWidget);
@@ -140,7 +140,7 @@ void main() {
       );
       expect(find.text('Astra te pregunta'), findsOneWidget);
       expect(find.text(homeQuestion), findsOneWidget);
-      expect(find.text('3 en marcha'), findsOneWidget);
+      expect(find.text('3 EN MARCHA'), findsOneWidget);
       expect(find.text('Sí, úsalo'), findsOneWidget);
       expect(find.text('No'), findsOneWidget);
       expect(find.text('Responder'), findsOneWidget);
@@ -240,7 +240,7 @@ void main() {
         data: live,
       );
       expect(_key('home-now-running'), findsOneWidget);
-      expect(find.text('3 en marcha'), findsOneWidget);
+      expect(find.text('3 EN MARCHA'), findsOneWidget);
       // Two rows fit a wide cell: the room, then the main agent's chat.
       expect(_keys('home-now-run-'), findsOneWidget);
       final text = _plain(tester);
@@ -299,7 +299,7 @@ void main() {
         size: _large,
         data: asking,
       );
-      expect(find.text('1 para ti · 3 en marcha'), findsOneWidget);
+      expect(find.text('1 PARA TI · 3 EN MARCHA'), findsOneWidget);
       expect(find.text(homeQuestion), findsOneWidget);
       expect(find.text('Sí, úsalo'), findsOneWidget);
       expect(_keys('home-now-run-'), findsOneWidget);
@@ -331,7 +331,7 @@ void main() {
       );
       expect(find.text('Hermes falló'), findsOneWidget);
       expect(find.text('Migración'), findsOneWidget);
-      expect(find.text('1 para ti'), findsOneWidget);
+      expect(find.text('1 PARA TI'), findsOneWidget);
     });
 
     testWidgets('edit mode: nothing answers and nothing opens', (tester) async {
@@ -361,9 +361,9 @@ void main() {
         data: asking,
         locale: const Locale('en'),
       );
-      expect(find.text('Now'), findsOneWidget);
+      expect(find.text('NOW'), findsOneWidget);
       expect(find.text('Astra asks you'), findsOneWidget);
-      expect(find.text('1 for you · 3 running'), findsOneWidget);
+      expect(find.text('1 FOR YOU · 3 RUNNING'), findsOneWidget);
       expect(find.text('Reply'), findsOneWidget);
       expect(find.text('View'), findsOneWidget);
     });
@@ -391,7 +391,7 @@ void main() {
         size: _small,
         data: data,
       );
-      expect(find.text('Chats'), findsOneWidget);
+      expect(find.text('CHATS'), findsOneWidget);
       expect(find.text(homeT1), findsOneWidget);
       expect(find.text('2 subagentes'), findsOneWidget);
       expect(find.text('0:41'), findsOneWidget);
@@ -460,7 +460,7 @@ void main() {
       await tester.tap(_key('home-continue-t4'));
       expect(c.log, ['chat:t4']);
       // The header opens the whole list.
-      await tester.tap(find.text('Chats'));
+      await tester.tap(find.text('CHATS'));
       expect(c.log.last, 'sessions');
     });
 
@@ -539,7 +539,7 @@ void main() {
         size: _small,
         data: live,
       );
-      expect(find.text('Bots'), findsOneWidget);
+      expect(find.text('BOTS'), findsOneWidget);
       for (final name in ['forja', 'fable', 'astra', 'radar']) {
         expect(_key('home-face-$name'), findsOneWidget, reason: name);
       }
@@ -576,7 +576,7 @@ void main() {
         size: _wide,
         data: live,
       );
-      expect(find.text('1 trabaja · 1 te espera'), findsOneWidget);
+      expect(find.text('1 TRABAJA · 1 TE ESPERA'), findsOneWidget);
       final names = ['forja', 'fable', 'astra', 'radar'];
       final lefts = [
         for (final name in names)
@@ -599,7 +599,7 @@ void main() {
         size: _large,
         data: working,
       );
-      expect(find.text('1 trabaja'), findsOneWidget);
+      expect(find.text('1 TRABAJA'), findsOneWidget);
       // Who works first, then by what finished last; nothing done, last.
       final order = ['forja', 'radar', 'fable', 'astra', 'argos'];
       final tops = [
@@ -630,7 +630,7 @@ void main() {
         size: _large,
         data: live,
       );
-      expect(find.text('1 trabaja · 1 te espera'), findsOneWidget);
+      expect(find.text('1 TRABAJA · 1 TE ESPERA'), findsOneWidget);
       expect(
         tester.getRect(_key('home-bot-row-astra')).top,
         lessThan(tester.getRect(_key('home-bot-row-forja')).top),
@@ -713,7 +713,7 @@ void main() {
         size: _small,
         data: live,
       );
-      expect(find.text('Salas'), findsOneWidget);
+      expect(find.text('SALAS'), findsOneWidget);
       expect(find.text('Console Devs'), findsOneWidget);
       expect(_key('home-room-unread'), findsOneWidget);
       expect(find.text('3'), findsOneWidget);
@@ -749,7 +749,7 @@ void main() {
         size: _wide,
         data: live,
       );
-      expect(find.text('1 respondiendo'), findsOneWidget);
+      expect(find.text('1 RESPONDIENDO'), findsOneWidget);
       expect(_keys('home-room-last-'), findsNWidgets(2));
       expect(
         tester.getRect(_key('home-room-devs')).top,
@@ -861,13 +861,13 @@ void main() {
         size: _small,
         data: data,
       );
-      expect(find.text('Cron'), findsOneWidget);
-      expect(find.text('03:00'), findsOneWidget);
+      expect(find.text('CRON'), findsOneWidget);
+      expect(find.text('3:00'), findsOneWidget);
       expect(find.text('Copia de seguridad'), findsOneWidget);
-      // 22:04 to 03:00, to the nearest hour.
-      expect(find.text('en 5 h'), findsOneWidget);
+      // The same exact hours and minutes as the launcher.
+      expect(find.text('en 4 h 56 min'), findsOneWidget);
       expect(_key('home-auto-failed'), findsOneWidget);
-      expect(find.text('1 falló'), findsOneWidget);
+      expect(find.text('1 FALLÓ'), findsOneWidget);
       expect(find.text('Revisar disco'), findsNothing);
       await tester.tap(find.text('Copia de seguridad'));
       expect(c.log, ['cron:backup']);
@@ -884,7 +884,7 @@ void main() {
       );
       expect(find.text('lun 12'), findsOneWidget);
       expect(find.text('Entrada RRHH'), findsOneWidget);
-      expect(find.text('07:00 · en 9 h'), findsOneWidget);
+      expect(find.text('7:00 · en 8 h 56 min'), findsOneWidget);
       expect(_key('home-auto-failed'), findsNothing);
       await tester.tap(find.text('Entrada RRHH'));
       expect(c.log, ['cron:hr']);
@@ -897,22 +897,22 @@ void main() {
         size: _wide,
         data: data,
       );
-      expect(find.text('1 falló'), findsOneWidget);
+      expect(find.text('1 FALLÓ'), findsOneWidget);
       expect(_keys('home-run-'), findsNWidgets(2));
       final tops = [
         for (final key in ['backup', 'disk'])
           tester.getRect(_key('home-run-$key')).top,
       ];
       expect(tops, [...tops]..sort());
-      expect(find.text('03:00'), findsOneWidget);
-      expect(find.text('04:00'), findsOneWidget);
+      expect(find.text('3:00'), findsOneWidget);
+      expect(find.text('4:00'), findsOneWidget);
       expect(_key('home-run-hr'), findsNothing);
-      expect(find.text('en 5 h'), findsOneWidget);
-      expect(find.text('en 6 h'), findsOneWidget);
+      expect(find.text('en 4 h 56 min'), findsOneWidget);
+      expect(find.text('en 5 h 56 min'), findsOneWidget);
       expect(find.text('lun 12 · en 9 h'), findsNothing);
       await tester.tap(_key('home-run-disk'));
       expect(c.log, ['cron:disk']);
-      await tester.tap(find.text('Cron'));
+      await tester.tap(find.text('CRON'));
       expect(c.log.last, 'cron:all');
     });
 
@@ -930,15 +930,15 @@ void main() {
         for (final key in order) tester.getRect(_key('home-run-$key')).top,
       ];
       expect(tops, [...tops]..sort());
-      expect(find.text('Bien · 03:00'), findsOneWidget);
+      expect(find.text('Bien · 3:00'), findsOneWidget);
       expect(find.text('Revisar disco · cada 6 h'), findsOneWidget);
       expect(find.text('Bien · 22:00'), findsOneWidget);
       expect(find.text('Bien · vie 9'), findsOneWidget);
-      expect(find.text('Falló · 08:30'), findsOneWidget);
+      expect(find.text('Falló · 8:30'), findsOneWidget);
       expect(find.text('En pausa'), findsOneWidget);
       expect(find.text('lun 12'), findsNWidgets(2));
-      expect(find.text('en 10 h'), findsOneWidget);
-      expect(find.text('1 falló'), findsOneWidget);
+      expect(find.text('en 10 h 26 min'), findsOneWidget);
+      expect(find.text('1 FALLÓ'), findsOneWidget);
       await tester.tap(_key('home-run-daily'));
       expect(c.log, ['cron:daily']);
     });
@@ -1053,10 +1053,11 @@ void main() {
         size: _small,
         data: data,
       );
-      expect(find.text('Tareas'), findsOneWidget);
-      expect(find.text('2 en curso'), findsOneWidget);
+      expect(find.text('TAREAS'), findsOneWidget);
+      expect(find.text('2 EN CURSO'), findsOneWidget);
       expect(find.text('Publicar 1.2.15'), findsOneWidget);
-      expect(find.text('Forja · en curso'), findsOneWidget);
+      expect(find.text('2'), findsOneWidget);
+      expect(find.text('en curso'), findsOneWidget);
       expect(find.text('4 pendientes'), findsOneWidget);
       await tester.tap(find.text('Publicar 1.2.15'));
       expect(c.log, ['task:k1']);
@@ -1087,7 +1088,7 @@ void main() {
         size: _wide,
         data: data,
       );
-      expect(find.text('2 en curso · 4 pendientes'), findsOneWidget);
+      expect(find.text('2 EN CURSO · 4 PENDIENTES'), findsOneWidget);
       expect(_keys('home-task-'), findsNWidgets(2));
       expect(find.text('Publicar 1.2.15'), findsOneWidget);
       expect(find.text('Forja'), findsOneWidget);
@@ -1096,7 +1097,7 @@ void main() {
       expect(find.text('Probar GPT-Live con pantalla apagada'), findsNothing);
       await tester.tap(_key('home-task-k2'));
       expect(c.log, ['task:k2']);
-      await tester.tap(find.text('Tareas'));
+      await tester.tap(find.text('TAREAS'));
       expect(c.log.last, 'task:all');
     });
 
@@ -1279,7 +1280,7 @@ void main() {
           );
           expect(
             _keys(prefix),
-            findsNWidgets(row < 146 && count == 2 ? 1 : count),
+            findsNWidgets(row < 152 && count == 2 ? 1 : count),
             reason: '$kind at $row',
           );
           expect(tester.takeException(), isNull);
@@ -1307,7 +1308,7 @@ void main() {
         data: full,
         textScale: 2,
       );
-      expect(find.text('03:00'), findsOneWidget);
+      expect(find.text('3:00'), findsOneWidget);
       expect(find.text('Copia de seguridad'), findsOneWidget);
       expect(tester.takeException(), isNull);
     });

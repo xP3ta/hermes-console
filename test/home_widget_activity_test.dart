@@ -10,7 +10,9 @@ import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/home_widget_activity.dart';
 import 'package:hermes_android/core/services/home_widget_publisher.dart';
+import 'package:hermes_android/core/services/notifications/notification_service.dart';
 import 'package:hermes_android/core/services/notifications/rich_notifications.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class _Store implements HomeWidgetStore {
   final values = <String, Object?>{};
@@ -362,8 +364,9 @@ void main() {
         hideSensitive: true,
       )!;
       expect(need.text, isNull);
-      // It can still be answered.
-      expect(need.actionPayload, isNotNull);
+      // A command nobody can read is not approved from the home screen:
+      // no answer payload, the widget only opens the chat.
+      expect(need.actionPayload, isNull);
     });
   });
 
@@ -622,11 +625,18 @@ void main() {
 
     int now() => _t0 + clock.elapsed.inMilliseconds;
 
-    ActiveChat boot(FakeAsync async, {bool readOnly = false}) {
+    ActiveChat boot(
+      FakeAsync async, {
+      bool readOnly = false,
+      NotificationService? notifications,
+    }) {
       clock = async;
       store = _Store();
       publisher = HermesHomeWidgetPublisher(store: store, nowMs: now);
-      service = ActiveChatService(homeWidgetNowMs: now)
+      service = ActiveChatService(
+        homeWidgetNowMs: now,
+        notifications: notifications,
+      )
         ..bindHomeWidgetPublisher(publisher, activeConnectionId: 'conn-1');
       final chat = service.attach(
         connection: _connection(readOnly: readOnly),
@@ -707,14 +717,11 @@ void main() {
         final waiting = store.snapshot.active.single;
         expect(waiting.needsYou, isTrue);
         expect(waiting.need!.requestId, 'req-9');
-        expect(waiting.need!.text, 'rm -rf build/');
-        final payload = NotificationActionPayload.tryParse(
-          waiting.need!.actionPayload,
-        )!;
-        expect(payload.route, NotificationActionRoute.chat);
-        expect(payload.connId, 'conn-1');
-        expect(payload.sessionId, 'sess-1');
-        expect(payload.requestId, 'req-9');
+        // The home screen is as visible as a lock screen: until the user says
+        // otherwise (A6) the command is not written on it, and what is not
+        // shown cannot be approved there either (no Allow/Deny buttons).
+        expect(waiting.need!.text, isNull);
+        expect(waiting.need!.actionPayload, isNull);
         expect(store.snapshot.agentState, HomeWidgetAgentState.waitingApproval);
 
         // Answered (here or anywhere): nothing left to answer on the widget.
@@ -724,6 +731,40 @@ void main() {
         async.flushMicrotasks();
         expect(store.snapshot.active.single.need, isNull);
         expect(store.snapshot.active.single.needsYou, isFalse);
+        service.dispose();
+      });
+    });
+
+    test('with «hide details» switched off the widget names the command', () async {
+      SharedPreferences.setMockInitialValues({
+        'notif_hide_sensitive_content': false,
+      });
+      final notifications = NotificationService(
+        await SharedPreferences.getInstance(),
+      );
+      fakeAsync((async) {
+        final chat = boot(async, notifications: notifications);
+        chat.state = ChatPipelineState.executing;
+        service.debugHomeWidgetChatEvent(chat, ActiveChatEvent.toolProgress);
+        async.flushMicrotasks();
+        chat.pendingApproval = {
+          'request_id': 'req-9',
+          'command': 'rm -rf build/',
+          'choices': ['once', 'deny'],
+        };
+        service.debugHomeWidgetChatEvent(chat, ActiveChatEvent.approvalRequest);
+        async.flushMicrotasks();
+        final need = store.snapshot.active.single.need!;
+        expect(need.text, 'rm -rf build/');
+        // The command is on screen: it may be answered from the widget.
+        final payload = NotificationActionPayload.tryParse(
+          need.actionPayload,
+        )!;
+        expect(payload.route, NotificationActionRoute.chat);
+        expect(payload.connId, 'conn-1');
+        expect(payload.sessionId, 'sess-1');
+        expect(payload.requestId, 'req-9');
+        expect(payload.choices, containsAll(['once', 'deny']));
         service.dispose();
       });
     });

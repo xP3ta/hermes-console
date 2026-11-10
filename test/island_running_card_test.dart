@@ -9,7 +9,7 @@ import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/floating_chat_header.dart';
 import 'package:hermes_android/core/widgets/hermes_notice.dart';
 import 'package:hermes_android/core/widgets/island.dart';
-import 'package:hermes_android/core/widgets/island_card.dart';
+import 'support/legacy_island_card.dart';
 import 'package:hermes_android/core/widgets/running_work.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 
@@ -326,7 +326,10 @@ void main() {
     expect(card.width, greaterThan(island.width));
     expect(card.left, greaterThanOrEqualTo(0));
     expect(card.right, lessThanOrEqualTo(390));
-    expect(tester.getRect(_key('sprite')).bottom, lessThan(card.top + 8));
+    expect(
+      tester.getRect(_key('sprite')).bottom,
+      lessThanOrEqualTo(card.top + FloatingChatHeader.faceOverlap),
+    );
     // Its first line repeats the island, the chevron pointing back up.
     final line = tester.getRect(_key('island-card-line'));
     expect(line.top, closeTo(card.top, 1));

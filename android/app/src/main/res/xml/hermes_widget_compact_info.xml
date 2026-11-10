@@ -1,14 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Chat rápido. Two cells by default; widened to four it gains the field
-     and the camera. One row only. -->
+     and the camera. Drawn by the app it also grows to two rows (the
+     large "Nueva conversación" card); the native drawing stays one row. -->
 <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
     android:description="@string/lw_quick_description"
     android:initialLayout="@layout/lw_quick_small"
     android:minWidth="110dp"
     android:minHeight="40dp"
     android:minResizeWidth="110dp"
+    android:minResizeHeight="40dp"
     android:previewLayout="@layout/lw_quick_small"
-    android:resizeMode="horizontal"
+    android:resizeMode="horizontal|vertical"
     android:targetCellWidth="2"
     android:targetCellHeight="1"
     android:updatePeriodMillis="0"

@@ -118,6 +118,14 @@ void main() {
 
     await tester.tap(find.text('Esta sesión'));
     await tester.tap(find.text('Siempre'));
+    await tester.pumpAndSettle();
+    // Ola 5: «Siempre» asks first, as Desktop (tool/approval.tsx:390-416);
+    // at text scale 2 its confirmation is reachable too.
+    expect(choices, ['session']);
+    final confirm = find.byKey(const ValueKey('approval-always-confirm'));
+    expect(tester.getSize(confirm).height, greaterThanOrEqualTo(48));
+    await tester.tap(confirm);
+    await tester.pumpAndSettle();
     expect(choices, ['session', 'always']);
     expect(tester.takeException(), isNull);
     semantics.dispose();
@@ -204,12 +212,16 @@ void main() {
       ),
     );
 
-    await tester.tap(find.byKey(const ValueKey('subagent-disclosure')));
+    await tester.tap(find.byKey(const ValueKey('subagent-work-pill')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 600));
+    await tester.tap(find.byKey(const ValueKey('subagent-row-child')));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
+    // the owner, style 1: the action is a glass pill (a TextButton).
     final stop = find.descendant(
       of: find.byKey(const ValueKey('subagent-detail-stop')),
-      matching: find.byType(FilledButton),
+      matching: find.byType(TextButton),
     );
     expect(tester.getSize(stop).height, greaterThanOrEqualTo(48));
     expect(tester.getSize(stop).width, greaterThanOrEqualTo(48));

@@ -9,6 +9,7 @@
     <string name="lw_cron_description">Die nächste geplante Aufgabe; im großen Widget alle, auch fehlgeschlagene</string>
     <string name="lw_new">Neu</string>
     <string name="lw_ask_hint">Frag Hermes…</string>
+    <string name="lw_ask_hint_named">Frag %1$s…</string>
     <string name="lw_new_description">Neuer Chat</string>
     <string name="lw_voice_description">Neuer Sprachchat</string>
     <string name="lw_camera_description">Neuer Chat mit Kamera</string>
@@ -151,4 +152,9 @@
     <string name="lw_sample_room_line">Builder antwortet</string>
     <string name="lw_sample_run_title">Hermes · Terminal</string>
     <string name="lw_sample_run_about">Wochenbericht</string>
+
+    <!-- Quick Settings tiles -->
+    <string name="widgets_qs_new_chat_label">Neuer Chat</string>
+    <string name="widgets_qs_voice_chat_label">Sprachchat</string>
+    <string name="widgets_qs_camera_chat_label">Kamerachat</string>
 </resources>

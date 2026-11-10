@@ -555,7 +555,19 @@ void main() {
   );
 
   test('ChatScreen liga rehydrate y autosaves al lifecycle owner vigente', () {
-    final source = File('lib/core/screens/chat_screen.dart').readAsStringSync();
+    final fileSource = File(
+      'lib/core/screens/chat_screen.dart',
+    ).readAsStringSync();
+    // The compact workspace navigator also has a dispose above this State.
+    // Bind every lifecycle assertion to ChatScreen's owner, not that helper.
+    final ownerStart = fileSource.indexOf(
+      'class _ChatScreenState extends State<ChatScreen>',
+    );
+    expect(ownerStart, greaterThanOrEqualTo(0));
+    final ownerEnd = fileSource.indexOf('\nclass ', ownerStart + 1);
+    expect(ownerEnd, greaterThan(ownerStart));
+    final source = fileSource.substring(ownerStart, ownerEnd);
+    expect(RegExp(r'  void dispose\(\)').allMatches(source), hasLength(1));
     final initStart = source.indexOf('  void initState()');
     final restoreStart = source.indexOf('  Future<void> _restoreDraft()');
     // `_restoreDraft` is the App Lock read-fence wrapper; the restore itself

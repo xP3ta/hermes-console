@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 
 import '../theme/app_theme.dart';
+import '../theme/hermes_tokens.dart';
+import '../theme/readable_ink.dart';
 import '../widgets/hermes_app_bar.dart';
-import 'tokens.dart';
+import '../widgets/dock_scroll_clearance.dart';
 
 /// Page scaffold: one-line app-bar title (left, title style) + ONE vertical
 /// page scroll with the reference padding. Never `title: Column`.
@@ -38,23 +40,30 @@ class HermesPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    Widget list = ListView(
-      key: listKey,
-      controller: controller,
-      clipBehavior: hermesUnderHeader,
-      padding: EdgeInsets.fromLTRB(
-        HermesSpace.pageH,
-        HermesSpace.pageTop,
-        HermesSpace.pageH,
-        HermesSpace.pageBottom +
-            bottomInset +
-            MediaQuery.paddingOf(context).bottom,
-      ),
-      children: children,
+    final originalSafeBottom = MediaQuery.paddingOf(context).bottom;
+    final list = Builder(
+      builder: (context) {
+        final dockClearance = DockScrollClearance.maybeOf(context);
+        final bottom = dockClearance == null
+            ? bottomInset + originalSafeBottom
+            : dockClearance + MediaQuery.paddingOf(context).bottom;
+        final scroll = ListView(
+          key: listKey,
+          controller: controller,
+          clipBehavior: hermesUnderHeader,
+          padding: EdgeInsets.fromLTRB(
+            HermesSpace.pageH,
+            HermesSpace.pageTop,
+            HermesSpace.pageH,
+            HermesSpace.pageBottom + bottom,
+          ),
+          children: children,
+        );
+        return onRefresh == null
+            ? scroll
+            : RefreshIndicator(onRefresh: onRefresh!, child: scroll);
+      },
     );
-    if (onRefresh != null) {
-      list = RefreshIndicator(onRefresh: onRefresh!, child: list);
-    }
     return Scaffold(
       appBar: HermesAppBar(
         centerTitle: false,
@@ -311,6 +320,73 @@ class HermesActionButton extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 12),
       ),
       child: child,
+    );
+  }
+}
+
+/// An action as a glass pill (the owner, style 1 of the action buttons: «Detener»,
+/// «Reintentar», «Abrir conversación»): the language of the turn's pills,
+/// 34 dp tall on a 48 dp target, the chrome's raised surface and its
+/// hairline, icon and words. No coloured fill: colour goes only on the icon
+/// and the words, and only when [destructive] (the theme's error colour).
+/// Pressed, the surface takes the ink's overlay; disabled, the muted ink.
+class HermesGlassActionButton extends StatelessWidget {
+  const HermesGlassActionButton({
+    required this.label,
+    required this.onPressed,
+    this.icon,
+    this.destructive = false,
+    super.key,
+  });
+
+  final String label;
+  final IconData? icon;
+  final VoidCallback? onPressed;
+  final bool destructive;
+
+  /// How tall the pill looks; its target is [HermesSpace.tap].
+  static const double height = 34;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).hermes;
+    final chrome = HermesChrome.of(colors);
+    // REVIEW-Q9-VENT P2-1: the error's red made readable (4.5:1) on the
+    // pill, its hue kept.
+    final ink = destructive
+        ? readableInkOnTint(colors.error, chrome.raised, colors)
+        : chrome.ink;
+    // Keep the theme family (Inter): a bare TextStyle drops it.
+    final textStyle =
+        (Theme.of(context).textTheme.labelLarge ?? const TextStyle()).copyWith(
+          fontSize: HermesType.valueSize,
+          fontWeight: FontWeight.w600,
+        );
+    return TextButton(
+      onPressed: onPressed,
+      style: TextButton.styleFrom(
+        minimumSize: const Size(HermesSpace.tap, height),
+        tapTargetSize: MaterialTapTargetSize.padded,
+        padding: const EdgeInsets.symmetric(horizontal: HermesSpace.x4),
+        shape: StadiumBorder(side: BorderSide(color: chrome.line)),
+        backgroundColor: chrome.raised,
+        foregroundColor: ink,
+        disabledForegroundColor: chrome.mutedInk,
+        disabledBackgroundColor: chrome.raised,
+        textStyle: textStyle,
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (icon case final glyph?) ...[
+            Icon(glyph, size: HermesIcon.sm),
+            const SizedBox(width: HermesSpace.x2),
+          ],
+          Flexible(
+            child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
+          ),
+        ],
+      ),
     );
   }
 }

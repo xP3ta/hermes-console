@@ -29,9 +29,9 @@ import 'package:hermes_android/core/screens/home_dashboard_screen.dart';
 import 'package:hermes_android/core/screens/cron_screen.dart';
 import 'package:hermes_android/core/screens/mission_control_screen.dart';
 import 'package:hermes_android/core/screens/session_list_screen.dart';
-import 'package:hermes_android/core/screens/settings_screen.dart';
+import 'package:hermes_android/core/bots/ui/profile/profile_hub_screen.dart';
+import 'package:hermes_android/core/screens/app_settings_screen.dart';
 import 'package:hermes_android/core/screens/tasks_screen.dart';
-import 'package:hermes_android/core/screens/tools_hub_screen.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/screens/lock_screen.dart';
 import 'package:hermes_android/core/services/app_lock.dart';
@@ -53,6 +53,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../support/profile_model_fakes.dart' show FakeModelGateway;
 import '../support/fake_connection_link.dart';
 import '../support/account_usage_fixtures.dart';
 import '../support/desktop_chat_socket.dart';
@@ -564,22 +565,11 @@ void main() {
         (decoration.border! as Border).top.color,
         Theme.of(tester.element(button)).hermes.accent,
       );
-      // The chevron badge sits on the ring's bottom-right edge, inside the
-      // touch target.
-      final chevron = tester.getRect(
-        find.byKey(const ValueKey('profile-switcher-chevron')),
-      );
+      // A tap opens the switcher, and the chevron on the avatar says so.
       expect(
-        find.descendant(
-          of: find.byKey(const ValueKey('profile-switcher-chevron')),
-          matching: find.byIcon(Icons.expand_more_rounded),
-        ),
+        find.byKey(const ValueKey('profile-switcher-chevron')),
         findsOneWidget,
       );
-      expect(chevron.overlaps(ring), isTrue);
-      expect(chevron.right, greaterThan(ring.right));
-      expect(chevron.bottom, greaterThan(ring.bottom));
-      expect(target.expandToInclude(chevron), target);
       // The same margin as the menu icon on the other side: never against
       // the screen edge.
       final menu = tester.getRect(
@@ -594,7 +584,11 @@ void main() {
     });
 
     testWidgets('the avatar button is a button named after the active '
-        'profile and opens the profile list', (tester) async {
+        'profile: a tap opens the profile list, a long press its page', (
+      tester,
+    ) async {
+      ProfileHubScreen.debugGateway = FakeModelGateway();
+      addTearDown(() => ProfileHubScreen.debugGateway = null);
       final h = await harness(tester);
       h.roster.publish(h.connection.id, 'QA', [
         _profile('default', isDefault: true, displayName: 'Hermes'),
@@ -608,6 +602,7 @@ void main() {
         isSemantics(
           isButton: true,
           hasTapAction: true,
+          hasLongPressAction: true,
           label: 'Perfil: Hermes',
           hint: 'Cambiar de perfil',
         ),
@@ -625,6 +620,93 @@ void main() {
           findsOneWidget,
         );
       }
+      await tester.tapAt(const Offset(4, 4));
+      await settle(tester);
+      expect(
+        find.byKey(const ValueKey('profile-switcher-sheet')),
+        findsNothing,
+      );
+      // The long press opens the page of the active profile.
+      await tester.longPress(button);
+      await settle(tester);
+      expect(find.byType(ProfileHubScreen), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('profile-switcher-sheet')),
+        findsNothing,
+      );
+      await unmount(tester);
+    });
+
+    testWidgets('a tap on the avatar opens the switcher; a pick makes the '
+        'profile active and Home follows; «Ver perfil» opens the page of the '
+        'active profile', (tester) async {
+      ProfileHubScreen.debugGateway = FakeModelGateway();
+      addTearDown(() => ProfileHubScreen.debugGateway = null);
+      final h = await harness(tester);
+      h.roster.publish(h.connection.id, 'QA', [
+        _profile('default', isDefault: true, displayName: 'Hermes'),
+        _profile('ana'),
+      ]);
+      await tester.runAsync(
+        () => h.manager.setActiveProfile(h.connection.id, 'ana'),
+      );
+      await pumpHome(tester, h);
+      final button = find.byKey(const ValueKey('profile-switcher-compact'));
+      await tester.tap(button);
+      await settle(tester);
+      expect(find.byType(ProfileHubScreen), findsNothing);
+      expect(
+        find.byKey(const ValueKey('profile-switcher-sheet')),
+        findsOneWidget,
+      );
+      // The active profile carries the check; the other one does not.
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('profile-switcher-option-ana')),
+          matching: find.byIcon(Icons.check_rounded),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('profile-switcher-option-default')),
+          matching: find.byIcon(Icons.check_rounded),
+        ),
+        findsNothing,
+      );
+      // A pick changes the active profile, says so, and Home follows.
+      await tester.tap(
+        find.byKey(const ValueKey('profile-switcher-option-default')),
+      );
+      await settle(tester);
+      expect(h.manager.activeProfileFor(h.connection.id), '');
+      expect(find.text('Perfil activo: Hermes'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: button,
+          matching: find.byKey(const ValueKey('profile-face-default')),
+        ),
+        findsOneWidget,
+      );
+      // «Ver perfil» opens the hub of the profile that is active now (once
+      // the short notice, which floats over the avatar, is gone).
+      await tester.pump(const Duration(seconds: 6));
+      await settle(tester);
+      await tester.tap(button);
+      await settle(tester);
+      await tester.tap(
+        find.byKey(const ValueKey('profile-switcher-view-profile')),
+      );
+      await settle(tester);
+      expect(
+        find.byKey(const ValueKey('profile-switcher-sheet')),
+        findsNothing,
+      );
+      final hub = tester.widget<ProfileHubScreen>(
+        find.byType(ProfileHubScreen),
+      );
+      expect(hub.profile, 'default');
+      expect(hub.connection.id, h.connection.id);
       await unmount(tester);
     });
 
@@ -810,7 +892,10 @@ void main() {
         (HomeWidgetKind.team, 'Bots'),
       ]) {
         expect(
-          find.descendant(of: tileOf(kind), matching: find.text(name)),
+          find.descendant(
+            of: tileOf(kind),
+            matching: find.text(name.toUpperCase()),
+          ),
           findsOneWidget,
         );
         expect(tester.getSemantics(tileOf(kind)).label, startsWith(name));
@@ -1764,7 +1849,7 @@ void main() {
           ],
         );
         expect(find.byKey(const ValueKey('home-auto-failed')), findsOneWidget);
-        expect(find.text('1 falló'), findsOneWidget);
+        expect(find.text('1 FALLÓ'), findsOneWidget);
         expect(find.text('Falló · 14:30'), findsOneWidget);
         final target = find.byKey(ValueKey('home-run-$id'));
         expect(
@@ -2654,8 +2739,10 @@ void main() {
       await unmount(tester);
     });
 
-    testWidgets('Servidor never says Conectado while the chat socket is down '
-        '(REST answers)', (tester) async {
+    testWidgets('Servidor says Conectado while the chat socket is down only '
+        'through the quiet window of a first redial (REST answers)', (
+      tester,
+    ) async {
       final registry = ConnectionStatusRegistry.instance;
       addTearDown(registry.reset);
       final h = await harness(tester);
@@ -2670,7 +2757,26 @@ void main() {
       final id = h.manager.getConnections().single.id;
       final link = FakeConnectionLink();
       registry.bind(id, link);
-      link.change(() => link.linkReconnectAt = DateTime(2026));
+      // A first redial is quiet for the screens (no flash on every resume):
+      // the raw status knows the loss, the tile holds its last good state.
+      link.change(() {
+        link.linkReconnectAt = DateTime(2026);
+        link.linkReconnectAttempt = 1;
+      });
+      await tester.pump();
+      expect(registry.currentRaw(id)!.isConnected, isFalse);
+      expect(find.text('Conectado'), findsOneWidget, reason: 'quiet window');
+      expect(find.text('Reconectando…'), findsNothing);
+
+      // The window runs out: the socket is still down, REST still answers,
+      // and the tile says the loss. Never Conectado from here on.
+      await tester.pump(ConnectionStatusRegistry.quietWindow);
+      await tester.pump();
+      expect(find.text('Conectado'), findsNothing);
+      expect(find.text('Reconectando…'), findsOneWidget);
+
+      // A second attempt is a fact: shown at once, no quiet window.
+      link.change(() => link.linkReconnectAttempt = 2);
       await tester.pump();
       expect(find.text('Conectado'), findsNothing);
       expect(find.text('Reconectando…'), findsOneWidget);
@@ -2736,7 +2842,7 @@ void main() {
       await pumpHome(tester, h);
       expect(find.byType(GestureDockHost), findsOneWidget);
       expect(find.text('Crear'), findsNothing);
-      expect(find.text('Bots'), findsNothing);
+      expect(find.text('BOTS'), findsNothing);
       // The last row ends just above the bar, with a little air.
       final last = tester.getRect(tileById('last'));
       final dock = tester.getRect(find.byKey(const ValueKey('gesture-dock')));
@@ -2750,11 +2856,11 @@ void main() {
     // it builds: the real screens need a server.
     for (final (id, screen) in const <(DockItemId, Type)>[
       (DockItemId.bots, MissionControlScreen),
-      (DockItemId.settings, SettingsScreen),
+      (DockItemId.settings, AppSettingsScreen),
       (DockItemId.sessions, SessionListScreen),
       (DockItemId.cron, CronScreen),
       (DockItemId.tasks, TasksScreen),
-      (DockItemId.tools, ToolsHubScreen),
+      (DockItemId.agents, Scaffold),
     ]) {
       testWidgets('Home\'s dock: Inicio is where you are and ${id.name} '
           'opens $screen above Home', (tester) async {

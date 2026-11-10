@@ -108,14 +108,11 @@ void main() {
       await tester.pumpWidget(
         _app(HermesDetailScaffold(title: 'Copia diaria', sections: _fill())),
       );
-      const pill = ValueKey('hermes-app-bar-title');
-      expect(find.byKey(pill), findsNothing, reason: 'the page shows it');
+      final title = find.byWidgetPredicate(_isAppBarTitle);
+      expect(title, findsNothing, reason: 'the page shows it');
       await _expectUnderHeader(tester, scrollable: find.byType(ListView));
       expect(
-        find.descendant(
-          of: find.byKey(pill),
-          matching: find.text('Copia diaria'),
-        ),
+        find.descendant(of: title, matching: find.text('Copia diaria')),
         findsOneWidget,
       );
     });
@@ -180,10 +177,7 @@ void main() {
       final list = find.byType(ListView);
       expect(_clipOf(tester, list), Clip.none);
       expect(tester.getRect(list).top, bar.bottom);
-      expect(
-        find.byKey(const ValueKey('hermes-app-bar-title')),
-        findsOneWidget,
-      );
+      expect(find.byWidgetPredicate(_isAppBarTitle), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
 
@@ -231,14 +225,12 @@ void main() {
         'lib/core/design/content.dart',
         'lib/core/design/schedule_builder.dart',
         'lib/core/widgets/form_page.dart',
-        'lib/core/screens/appearance_screen.dart',
         'lib/core/screens/backup_restore_screen.dart',
         'lib/core/screens/bot_profile_settings_screen.dart',
         'lib/core/screens/chat_content_screen.dart',
         'lib/core/screens/credential_pool_screen.dart',
         'lib/core/screens/dock_settings_screen.dart',
         'lib/core/screens/embed_settings_screen.dart',
-        'lib/core/screens/extensions_center_screen.dart',
         'lib/core/screens/external_provider_screen.dart',
         'lib/core/screens/foreign_session_import_screen.dart',
         'lib/core/screens/gesture_dock_settings_screen.dart',
@@ -567,16 +559,14 @@ void main() {
         tester.widget<HermesFloatingSurface>(pill).shape,
         isA<StadiumBorder>(),
       );
-      final selected = tester.widget<AnimatedContainer>(
-        find
-            .ancestor(
-              of: find.text('Lista'),
-              matching: find.byType(AnimatedContainer),
-            )
-            .first,
+      final selected = tester.widget<DecoratedBox>(
+        find.descendant(
+          of: find.byKey(const ValueKey('hermes-segmented-indicator')),
+          matching: find.byType(DecoratedBox),
+        ),
       );
       expect(
-        (selected.decoration! as BoxDecoration).borderRadius,
+        (selected.decoration as BoxDecoration).borderRadius,
         BorderRadius.circular(999),
       );
       final before = tester.getRect(pill);
@@ -615,7 +605,6 @@ void main() {
       ];
       const sticky = [
         'lib/core/screens/tasks_screen.dart',
-        'lib/core/screens/admin_integrations_screen.dart',
         'lib/core/screens/sftp_browser_screen.dart',
       ];
       const ownList = [
@@ -641,6 +630,13 @@ void main() {
           reason: path,
         );
       }
+      // The server integrations keep their section switch in the flow, with
+      // the page's own top inset, so nothing sits flush against the header.
+      final admin = File(
+        'lib/core/screens/admin_integrations_screen.dart',
+      ).readAsStringSync();
+      expect(admin, isNot(contains('HermesStickyControls')));
+      expect(admin, contains('HermesSpace.pageTop'));
     });
   });
 
@@ -792,3 +788,9 @@ void main() {
     expect(gradient.colors.last, page);
   });
 }
+
+/// The page's title in the header: the pill, or the plain title that replaced
+/// it as the default.
+bool _isAppBarTitle(Widget w) =>
+    w.key == const ValueKey('hermes-app-bar-title') ||
+    w.key == const ValueKey('hermes-app-bar-plain-title');
