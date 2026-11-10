@@ -4,6 +4,8 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:dartssh2/dartssh2.dart';
+// ignore: depend_on_referenced_packages
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
@@ -160,6 +162,47 @@ class _FakeSshManager extends SshManager {
   }
 }
 
+/// An `execute` channel that opens only after the probe stopped waiting.
+class _LateExec extends _FakeExec {
+  _LateExec() : super(0, out: '/usr/bin/tmux\n');
+
+  int closed = 0;
+
+  @override
+  void close() => closed++;
+}
+
+/// A client whose probe channel opens [delay] after it was asked for.
+class _SlowProbeClient extends _FakeClient {
+  _SlowProbeClient(this.delay) : super(_FakeShell(), probeOut: '');
+
+  final Duration delay;
+  final lateChannel = _LateExec();
+
+  @override
+  Future<SSHSession> execute(
+    String command, {
+    SSHPtyConfig? pty,
+    SSHX11Config? x11,
+    Map<String, String>? environment,
+  }) {
+    executed.add(command);
+    return Future<SSHSession>.delayed(delay, () => lateChannel);
+  }
+}
+
+class _SlowProbeSshManager extends _FakeSshManager {
+  _SlowProbeSshManager(this.client) : super(SshSessionKind.tmux);
+
+  final _SlowProbeClient client;
+
+  @override
+  Future<SSHClient> connect(
+    String connectionId, {
+    required Future<bool> Function(SshHostKeyPrompt) onHostKey,
+  }) async => client;
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -263,5 +306,21 @@ void main() {
     await pumpEventQueue();
     expect(monitor.view.value.notRunning, isTrue);
     monitor.dispose();
+  });
+
+  test('a probe channel that opens after its timeout is closed', () {
+    fakeAsync((async) {
+      final client = _SlowProbeClient(
+        SshSessionService.probeTimeout + const Duration(seconds: 1),
+      );
+      final service = SshSessionService(_SlowProbeSshManager(client));
+      unawaited(service.connect('c1', onHostKey: (_) async => true));
+      async.elapse(SshSessionService.probeTimeout);
+      async.flushMicrotasks();
+      expect(client.executed, [sshTmuxProbeCommand]);
+      expect(client.lateChannel.closed, 0, reason: 'not open yet');
+      async.elapse(const Duration(seconds: 2));
+      expect(client.lateChannel.closed, 1, reason: 'closed once it opened');
+    });
   });
 }

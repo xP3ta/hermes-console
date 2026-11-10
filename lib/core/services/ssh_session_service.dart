@@ -341,7 +341,15 @@ class SshSessionService {
   Future<String?> _probeProgram(SSHClient client, String command) async {
     SSHSession? probe;
     try {
-      probe = await client.execute(command).timeout(probeTimeout);
+      final opening = client.execute(command);
+      try {
+        probe = await opening.timeout(probeTimeout);
+      } on TimeoutException {
+        // The channel may still open after the timeout: close it then, as
+        // runRemote does, or every slow connect leaves one open.
+        unawaited(opening.then((opened) => opened.close(), onError: (_) {}));
+        rethrow;
+      }
       final channel = probe;
       final out = BytesBuilder(copy: false);
       await Future.wait<void>([
