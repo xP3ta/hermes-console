@@ -135,9 +135,11 @@ class HermesAutomationRebootReceiver : BroadcastReceiver() {
         }
     }
 
+    // Only system-protected broadcasts (BOOT_COMPLETED, MY_PACKAGE_REPLACED).
+    // The receiver is exported, so a non-protected legacy action such as the
+    // HTC QUICKBOOT_POWERON could be sent by any app; minSdk 24 does not need it.
     private fun isSupported(action: String?): Boolean =
         action == Intent.ACTION_BOOT_COMPLETED ||
-            action == "android.intent.action.QUICKBOOT_POWERON" ||
             action == Intent.ACTION_MY_PACKAGE_REPLACED
 
     private companion object {

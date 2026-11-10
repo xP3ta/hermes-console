@@ -141,7 +141,7 @@ void main() {
         block().indexOf("if (id != 'stop') return;"),
       );
       final off = stop.indexOf(
-        'prefs.setBool(BackgroundListener.prefKey, false)',
+        'BackgroundListener.recordOptOut(prefs)',
       );
       expect(off, isNonNegative);
       // The UI hears it first (it closes real transfers), then the opt-in

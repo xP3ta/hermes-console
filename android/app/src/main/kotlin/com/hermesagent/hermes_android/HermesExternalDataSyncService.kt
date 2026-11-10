@@ -13,12 +13,12 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 
 /**
- * Lease nativa efímera para SSH/SFTP en Android 15+.
+ * Ephemeral native lease for SSH/SFTP on Android 15+.
  *
- * Mantener dataSync fuera del servicio Flutter permanente es deliberado: su
- * cuota/timeout del sistema puede terminar esta transferencia, pero nunca el
- * listener remoteMessaging de chats, Cron y Kanban. No restaura trabajo tras
- * process death, boot ni actualización y no conserva destinos ni credenciales.
+ * Keeping dataSync out of the shared Flutter service is deliberate: the
+ * system quota/timeout may end this transfer without touching a voice or
+ * read-aloud session. It restores no work after process death, boot or an
+ * update and keeps no destinations or credentials.
  */
 class HermesExternalDataSyncService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null

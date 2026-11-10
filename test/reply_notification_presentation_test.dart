@@ -18,6 +18,7 @@ void main() {
       addTearDown(() => debugDefaultTargetPlatformOverride = null);
       SharedPreferences.setMockInitialValues({
         'app_locale': 'es',
+        'notif_hide_sensitive_content': false, // these tests read the text of the notices (the default hides it)
         'notif_perm_requested': true,
       });
       final calls = <MethodCall>[];
@@ -66,7 +67,7 @@ void main() {
           args['title'],
           'Hermes respondió en Server privado · Plan de precios detalle oculto',
         );
-        expect(args['body'], 'Respuesta lista. Toca para abrir.');
+        expect(args['body'], 'Modelo recomendado texto privado');
         expect(android['style'], 0); // AndroidNotificationStyle.defaultStyle
         expect(android.containsKey('actions'), isFalse);
         expect(android['subText'], isNull);
@@ -78,8 +79,8 @@ void main() {
         expect(payload['title'], 'Plan de precios detalle oculto');
         expect(payload['surface'], 'bot');
         expect(payload['profile'], 'builder');
-        expect(jsonEncode(args), isNot(contains('Modelo recomendado')));
-        expect(jsonEncode(args), isNot(contains('texto privado')));
+        expect(args['body'], contains('Modelo recomendado'));
+        expect(args['body'], contains('texto privado'));
         expect(jsonEncode(args), isNot(contains('**')));
       }
 
@@ -116,10 +117,12 @@ void main() {
       expect(notificationLogs.join('\n'), isNot(contains('token-secreto')));
 
       final readyId = (shown.first.arguments as Map)['id'] as int;
-      expect(
-        readyId,
-        6201,
-      ); // FNV-1a estable también tras reiniciar el proceso.
+      // FNV-1a estable también tras reiniciar el proceso, en el rango de
+      // 28 bits de las respuestas (0x10000000–0x1FFFFFFF, e72933ab): el
+      // mismo hash que antes daba 6000 + 201 en el rango viejo de 512.
+      expect(readyId, 451121353);
+      expect(readyId, inInclusiveRange(0x10000000, 0x1FFFFFFF));
+      expect(readyId & 0x1ff, 201);
       expect((failedCall.arguments as Map)['id'], readyId);
       await service.replyReady(
         preview: 'otra respuesta privada',
@@ -130,6 +133,13 @@ void main() {
       );
       final otherCall = calls.where((call) => call.method == 'show').last;
       expect((otherCall.arguments as Map)['id'], isNot(readyId));
+      await prefs.setBool('notif_hide_sensitive_content', true);
+      await service.replyReady(preview: 'Respuesta oculta', session: 'Chat oculto',
+          connId: 'conn-1', sessionId: 'session-hidden');
+      final hidden = calls.where((call) => call.method == 'show').last.arguments as Map;
+      expect(jsonEncode(hidden), isNot(contains('Respuesta oculta')));
+      expect(hidden['title'], isNot(contains('Chat oculto')));
+      expect((hidden['platformSpecifics'] as Map)['visibility'], NotificationVisibility.secret.index);
       expect(
         NotificationService.compactSessionLabel(
           '${'x' * 80}\u202E**control**',

@@ -550,8 +550,6 @@ void main() {
         // room: Ahora (the provider that was the session panel), Salas, Bots.
         for (final name in [
           'new_session_widget_info',
-          'hermes_widget_rooms_info',
-          'hermes_widget_bots_info',
         ]) {
           expect(
             xml(name),

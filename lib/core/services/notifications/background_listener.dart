@@ -30,6 +30,7 @@ import '../tui_gateway_client.dart';
 import '../../utils/session_title.dart';
 import '../../utils/transport_privacy.dart';
 import 'bot_mode_background.dart';
+import 'cron_notice_policy.dart';
 import 'notification_delivery_store.dart';
 import 'notification_mute_store.dart';
 import 'notification_service.dart';
@@ -1699,6 +1700,9 @@ class _HermesTaskHandler extends TaskHandler {
       }
       final notif = _notif ??= (NotificationService(prefs)
         ..appInForeground = false);
+      // App Lock on: notices of the closed app carry no content.
+      notif.forceHideSensitiveContent =
+          prefs.getBool('app_lock_enabled') == true;
       await notif.init();
       final watchesCron = await _discovery.discoverCronRuns(
         notif,
@@ -1862,7 +1866,7 @@ class _HermesTaskHandler extends TaskHandler {
     );
     unawaited(() async {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setBool(BackgroundListener.prefKey, false);
+      await BackgroundListener.recordOptOut(prefs);
       await Future<void>.delayed(
         BackgroundListener.terminalActionDeliveryGrace,
       );
@@ -2174,10 +2178,15 @@ class BackgroundAutomationDiscovery {
           // Spec 080: honour the per-job preference ("Notify me when it
           // finishes" / "Only if it fails") on the real delivery path. The
           // cursor still advances so re-enabling never replays old runs.
-          final jobAllowed = mutes.shouldDeliverCron(
-            connId: connection.id,
-            profile: normalizedProfile,
-            jobId: execution.jobId,
+          // The device-wide Cron mode (Auto / all / failures only / off)
+          // applies on top of the per-job preference.
+          final jobAllowed = CronNoticePolicy.allows(
+            notif.cronNoticeMode,
+            mutes.cronPolicy(
+              connId: connection.id,
+              profile: normalizedProfile,
+              jobId: execution.jobId,
+            ),
             ok: execution.ok,
           );
           final group = (
@@ -2797,7 +2806,13 @@ class BackgroundListener {
         await prefs.setBool(uiForegroundKey, value);
       });
 
+  /// Widget tests that mount the whole app with the opt-in on must not leave
+  /// a periodic timer behind.
+  @visibleForTesting
+  static bool debugDisableUiHeartbeat = false;
+
   static void _armUiHeartbeat() {
+    if (debugDisableUiHeartbeat) return;
     _uiHeartbeat ??= Timer.periodic(
       const Duration(minutes: 1),
       (_) => _uiHeartbeatTick(),
@@ -2942,9 +2957,25 @@ class BackgroundListener {
   static Future<void> stopAutomation() =>
       _foregroundMutations.run(_stopAutomationSerialized);
 
+  /// The user (or the system) ended the opt-in listening. Writes `false` only
+  /// if the key exists: an install that never opted in stays untouched, so the
+  /// legacy key never reads as an explicit opt-out. Before it flips, the Cron
+  /// mode the key was implying is frozen, so ending the listening does not
+  /// silently turn the Cron notices of the open app off.
+  static Future<void> recordOptOut(SharedPreferences prefs) async {
+    if (!prefs.containsKey(prefKey)) return;
+    if (prefs.getString(CronNoticePolicy.preferenceKey) == null) {
+      await prefs.setString(
+        CronNoticePolicy.preferenceKey,
+        CronNoticePolicy.read(prefs).name,
+      );
+    }
+    await prefs.setBool(prefKey, false);
+  }
+
   static Future<void> _stopAutomationSerialized() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(prefKey, false);
+    await recordOptOut(prefs);
     // The heartbeat was idle while the opt-in was on; refresh it before the
     // listener may evaluate auto-stop without the opt-in.
     await _touchUiAlive();
@@ -3831,7 +3862,7 @@ class BackgroundListener {
     }
     await _clearLegacyFiniteSessionState(prefs);
     if (!NotificationService.automationNotificationsEnabled) {
-      await prefs.setBool(prefKey, false);
+      await recordOptOut(prefs);
       await BackgroundWatch.clearAll();
       await BackgroundCronWatch.syncConnections(const <SavedConnection>[]);
       try {

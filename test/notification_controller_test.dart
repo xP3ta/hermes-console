@@ -61,6 +61,7 @@ class _FakeNotif implements RunNotificationFacade {
     NotificationChatSurface surface = NotificationChatSurface.normal,
     String? profile,
     String? roomId,
+    bool blind = false,
   }) async {
     calls.add('approvalPending:$tool');
     approvalPendingOwners.add((connId: connId, profile: profile, runId: runId));

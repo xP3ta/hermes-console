@@ -3,6 +3,7 @@ import 'dart:ui' show Locale, PlatformDispatcher;
 
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../models/agent_profile.dart' show kMainProfileFallbackName;
 import 'strings/notif_es.dart';
 import 'strings/notif_en.dart';
 import 'strings/notif_pt.dart';
@@ -79,6 +80,16 @@ class NotifL10n {
   String get privateBody =>
       message('privateBody');
 
+  /// Title of the end of a chat turn the background check found («xPeta ·
+  /// terminó»): the agent's name only, never the conversation.
+  String liveFinishedTitle(String who) =>
+      message('liveFinishedTitle', {'who': who});
+
+  /// The turn keep-alive's own card: shown only when no live row of a chat
+  /// sits under it (replies off); never names a chat.
+  String get keepAliveTitle => message('keepAliveTitle');
+  String get keepAliveText => message('keepAliveText');
+
   /// Resumen del grupo con el número real de avisos activos (más concreto que
   /// "varios" y estable a la vista en la bandeja).
   String groupSummaryCount(int n) =>
@@ -101,6 +112,10 @@ class NotifL10n {
 
   // ── Aprobaciones ──────────────────────────────────────────────────────────
   String get approvalTitle => message('approvalTitle');
+
+  /// The title for the agent [agent] (the main profile's own name) instead
+  /// of «Hermes»; unchanged without one.
+  String approvalTitleFor(String? agent) => _named(approvalTitle, agent);
   String approvalBody(String tool, String where) => message('approvalBody');
 
   // ── Ejecuciones ───────────────────────────────────────────────────────────
@@ -144,22 +159,41 @@ class NotifL10n {
       title.isEmpty ? message('goalBody') : title;
 
   // ── Respuestas ────────────────────────────────────────────────────────────
-  String replyTitle(String? session) {
+  String replyTitle(String? session, {String? agent}) {
     final s = session?.trim() ?? '';
     if (s.isEmpty) {
-      return message('replyTitle');
+      return _named(message('replyTitle'), agent);
     }
-    return message('replyTitle2', {'s': s});
+    return _named(
+      message('replyTitle2', {'s': _slot}),
+      agent,
+    ).replaceAll(_slot, s);
   }
 
   String get replyReadyBody => message('replyReadyBody');
 
-  String replyFailedTitle(String? session) {
+  String replyFailedTitle(String? session, {String? agent}) {
     final s = session?.trim() ?? '';
     if (s.isEmpty) {
-      return message('replyFailedTitle');
+      return _named(message('replyFailedTitle'), agent);
     }
-    return message('replyFailedTitle2', {'s': s});
+    return _named(
+      message('replyFailedTitle2', {'s': _slot}),
+      agent,
+    ).replaceAll(_slot, s);
+  }
+
+  /// Stands for the session name while [agent] is placed, so a session called
+  /// «Hermes» keeps its name.
+  static const _slot = '\u0001';
+
+  /// [text] speaking of «Hermes» as the agent, with the main profile's own
+  /// name instead.
+  static String _named(String text, String? agent) {
+    final name = agent?.trim() ?? '';
+    return name.isEmpty
+        ? text
+        : text.replaceAll(kMainProfileFallbackName, name);
   }
 
   String get replyFailedBody => message('replyFailedBody');
