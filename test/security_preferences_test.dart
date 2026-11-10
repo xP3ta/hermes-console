@@ -7,14 +7,19 @@ import 'package:shared_preferences/shared_preferences.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('ocultación de notificaciones persiste y es opt-in', () async {
+  test('ocultación de notificaciones: activa por defecto y persiste la elección', () async {
     SharedPreferences.setMockInitialValues({});
     final prefs = await SharedPreferences.getInstance();
     final notifications = NotificationService(prefs);
 
-    expect(notifications.hideSensitiveContent, isFalse);
-    await notifications.setHideSensitiveContent(true);
+    // Nobody chose: the text of a notice is not on the lock screen, a watch
+    // or any notification listener (audit A6).
     expect(notifications.hideSensitiveContent, isTrue);
+    await notifications.setHideSensitiveContent(false);
+    expect(notifications.hideSensitiveContent, isFalse);
+    expect(NotificationService(prefs).hideSensitiveContent, isFalse);
+    await notifications.setHideSensitiveContent(true);
+    expect(NotificationService(prefs).hideSensitiveContent, isTrue);
   });
 
   test(

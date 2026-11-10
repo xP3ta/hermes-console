@@ -1,8 +1,159 @@
 title = "Hermes Console gitleaks configuration"
 
+# Load gitleaks' built-in rules. Without this block a config that only declares
+# allowlists loads ZERO rules and every scan passes silently (that was the case
+# until 1.4.0). tool/security/gitleaks_canary.sh fails CI if it ever regresses.
+[extend]
+useDefault = true
+
+# Every allowlist below is a verified false positive. Keep them narrow: scope by
+# path AND exact value (or a tight shape), never by path alone, so a real
+# secret added to the same file is still reported.
+# Each path-scoped allowlist MUST name its targetRules: gitleaks 8.30 skips a
+# whole file when a global allowlist path matches and no targetRules are set,
+# even with condition = "AND". The canary checks this for test/.
+
 [[allowlists]]
 description = "SharedPreferences key; not a credential"
 regexTarget = "match"
 regexes = [
-  '''_executionStateKey = 'bg_cron_executions_v2' ''',
+  '''_executionStateKey = ['"]bg_cron_executions_v2['"]''',
+]
+
+# Preference key names such as `mascot_float_position_v1` assigned to *Key
+# constants trip generic-api-key.
+[[allowlists]]
+description = "SharedPreferences key names; not credentials"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = [
+  '''^lib/core/shell/gesture_dock_state\.dart$''',
+  '''^lib/core/widgets/mascot/float/mascot_prefs\.dart$''',
+]
+regexes = [
+  '''^(gesture_dock|mascot_float_[a-z_]+)_v[0-9]+$''',
+]
+
+# gen-l10n message keys (`s.hr1215KeyRejectedBody`, `i18n1215Ssh...`) next to
+# words like "key" or "password" trip generic-api-key / vault-service-token.
+[[allowlists]]
+description = "Localization message keys; not credentials"
+targetRules = ["generic-api-key", "vault-service-token"]
+condition = "AND"
+paths = [
+  '''^lib/l10n/app_[a-z]{2}(_[A-Za-z]+)?\.arb$''',
+  '''^lib/core/widgets/provider_reauth\.dart$''',
+]
+regexes = [
+  '''^(s\.)?(hr|i18n)1215[A-Z][A-Za-z]+$''',
+]
+
+# Hand-written fake credentials the redaction and safety tests feed in
+# (SYNTHETIC_*, abc123, sk-test-..., a JWT with sub=1234567890 and a literal
+# fake signature). Exact values only: any other secret under test/ is reported.
+[[allowlists]]
+description = "Synthetic credentials in unit tests (exact values)"
+targetRules = ["generic-api-key", "curl-auth-header", "curl-auth-user", "jwt"]
+condition = "AND"
+paths = [
+  '''^test/''',
+]
+regexes = [
+  '''^SYNTHETIC_CREDENTIAL$''',
+  '''^a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8$''',
+  '''^abc123xyz$''',
+  '''^abcdef123456$''',
+  '''^c1/default/cron/job/x$''',
+  '''^eyJhbGciOiJIUzI1NiJ9\.eyJzdWIiOiIxMjM0NTY3ODkwIn0\.signature8$''',
+  '''^eyJhbGciOiJIUzI1NiJ9\.eyJzdWIiOiJzY29wZSJ9\.abcdefghijklmnop$''',
+  '''^mk1215-synthetic$''',
+  '''^sk-live-123$''',
+  '''^sk-test-0123456789abcdef$''',
+  '''^sk-test-SECRET-0123456789$''',
+  '''^user:SYNTHETIC_CREDENTIAL$''',
+  '''^zz-synthetic-secret-91827$''',
+]
+
+# Fake credentials in the redaction and masking tests of subagent, delegated
+# and video command rows: short Bearer/x-key samples and an API_KEY= line the
+# tests assert are hidden. Exact files and exact values only.
+[[allowlists]]
+description = "Synthetic command credentials in redaction tests (exact values)"
+targetRules = ["curl-auth-header", "generic-api-key"]
+condition = "AND"
+paths = [
+  '''^test/delegated_capsule_test\.dart$''',
+  '''^test/subagent_finished_record_test\.dart$''',
+  '''^test/subagent_live_child_test\.dart$''',
+  '''^test/subagent_tail_rows_test\.dart$''',
+  '''^test/video_align_test\.dart$''',
+  '''^test/video_masking_test\.dart$''',
+]
+regexes = [
+  '''^abc123def456$''',
+  '''^abcdef0123456789$''',
+  '''^eyJhbGciOiJIUzI1NiJ9\.payload\.sig$''',
+  '''^sk-live-1$''',
+  '''^sk-live-abcdef123456$''',
+]
+
+# Inputs of the notification preview redaction test: a JWT with sub=1234567890,
+# an AIza-shaped placeholder and two truncated PEM headers with no key body.
+# The test asserts none of them reaches the preview. "[S]", "\." and "-{5}"
+# keep this config from matching the rules itself. Exact values only.
+[[allowlists]]
+description = "Synthetic secrets in the notification preview redaction test (exact values)"
+targetRules = ["gcp-api-key", "jwt", "private-key"]
+condition = "AND"
+paths = [
+  '''^test/notification_hardening_test\.dart$''',
+]
+regexes = [
+  '''^AIza[S]yA1234567890abcdefghijklmnopqrstuv$''',
+  '''^eyJhbGciOiJIUzI1NiJ9\.eyJzdWIiOiIxMjM0NTY3ODkwIn0\.dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk$''',
+  '''^-{5}BEGIN RSA PRIVATE KEY-{5}\\nMIIEowIBAAKCAQEA\\n-{5}END RSA PRIVATE KEY-{5}',\n {8}'-{5}BEGIN OPENSSH PRIVATE KEY-{5}$''',
+]
+
+# Fake key in the release-log redaction test input; the test asserts it is
+# removed. The "[_]" keeps this config from matching the rule itself.
+[[allowlists]]
+description = "Synthetic token in the release-log redaction test (exact value)"
+targetRules = ["stripe-access-token"]
+condition = "AND"
+paths = [
+  '''^test/release_log_redaction_test\.dart$''',
+]
+regexes = [
+  '''^sk[_]live_AbCdEf0123456789AbCdEf0123$''',
+]
+
+# Throwaway ED25519 keys (one plain, one passphrase-locked) that exist only to
+# exercise the SSH tunnel parser. Their fingerprints match no maintainer key.
+# Each is pinned by its public section (header through the embedded public
+# key), which names exactly one key pair; "-{5}" keeps this config from
+# matching the rule itself. Any other private key in these files is reported.
+[[allowlists]]
+description = "Test-only OpenSSH keys for the SSH tunnel tests (exact keys)"
+targetRules = ["private-key"]
+condition = "AND"
+paths = [
+  '''^test/ssh_tunnel/ssh_tunnel_connector_test\.dart$''',
+  '''^test/cnx/ssh_tunnel_page_test\.dart$''',
+]
+regexes = [
+  '''^-{5}BEGIN OPENSSH PRIVATE KEY-{5}\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW\nQyNTUxOQAAACDAx3Sp5BJuMiqLqX3FP2vJBoNNxQ\+lvMNHEyghJ\+ZktQAA[A-Za-z0-9+/=\n]+-{5}END OPENSSH PRIVATE KEY-{5}$''',
+  '''^-{5}BEGIN OPENSSH PRIVATE KEY-{5}\nb3BlbnNzaC1rZXktdjEAAAAACmFlczI1Ni1jdHIAAAAGYmNyeXB0AAAAGAAAABCAQ4/lel\nSBtqdfJMhQnslaAAAABAAAAAEAAAAzAAAAC3NzaC1lZDI1NTE5AAAAIAcMJ65mib0cYrg3\nwvznIkRJRzDi8\+gZixMatGScEqml[A-Za-z0-9+/=\n]+-{5}END OPENSSH PRIVATE KEY-{5}$''',
+]
+
+# History only (the script was deleted in 1.3.x): the QA smoke test wrote the
+# placeholder 0123456789abcdef x2 as API_SERVER_KEY into a temporary .env.
+[[allowlists]]
+description = "Placeholder API key in a removed QA smoke script"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = [
+  '''^tool/qa/windows_pairing_upgrade_smoke\.ps1$''',
+]
+regexes = [
+  '''^(0123456789abcdef){2}$''',
 ]

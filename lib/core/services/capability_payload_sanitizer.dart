@@ -1,3 +1,6 @@
+import '../models/command_descriptor.dart'
+    show commandDispatchMessageMaxLength;
+
 /// Frontera común para payloads de capacidades remotas.
 ///
 /// Los métodos operacionales conservan únicamente los campos que necesita la
@@ -45,7 +48,12 @@ final class CapabilityPayloadSanitizer {
     final type = _identifier(value['type'], 32);
     final status = _identifier(value['status'], 32);
     final output = commandOutput(value['output']);
-    final message = boundedText(value['message'], 8000, preserveNewlines: true);
+    // The prompt a command sends (`/goal` kickoff): never cut short.
+    final message = boundedText(
+      value['message'],
+      commandDispatchMessageMaxLength,
+      preserveNewlines: true,
+    );
     final notice = boundedText(
       value['notice'] ?? value['warning'],
       1000,

@@ -158,6 +158,30 @@ void main() {
     });
   });
 
+  group('IPv4 literal, strict (#14)', () {
+    test('octal, hex or signed octets are not loopback nor private', () {
+      for (final host in [
+        '0127.0.0.1',
+        '0x7f.0.0.1',
+        '+127.0.0.1',
+        '010.0.0.1',
+      ]) {
+        expect(
+          TransportPrivacy.isEncryptedPath('http://$host:9119'),
+          isFalse,
+          reason: host,
+        );
+        expect(
+          TransportPrivacy.classify('http://$host:9119'),
+          TransportPrivacyClass.publicCleartext,
+          reason: host,
+        );
+      }
+      expect(TransportPrivacy.isEncryptedPath('http://127.0.0.1:9119'), isTrue);
+      expect(TransportPrivacy.isEncryptedPath('http://127.0.0.0:9119'), isTrue);
+    });
+  });
+
   group('TransportPrivacy.requireAllowed', () {
     test('bloquea HTTP público', () {
       expect(
