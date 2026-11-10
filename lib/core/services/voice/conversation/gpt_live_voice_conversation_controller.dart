@@ -11,10 +11,12 @@ import '../live/live_rtc_transport.dart';
 import '../live/voice_live_api.dart';
 import '../live/voice_live_protocol.dart';
 import '../live/voice_live_session.dart';
+import '../session/voice_care.dart';
 import '../spoken_text.dart';
 import '../voice_phase.dart';
 import '../voice_service.dart' show SttCheck, SttStatus;
 import '../voice_settings.dart' show SttEngineKind;
+import '../voice_stop_phrases.dart';
 import 'local_voice_command_detector.dart';
 import 'voice_conversation_engine.dart';
 
@@ -68,6 +70,7 @@ class GptLiveVoiceConversationController extends ChangeNotifier
     required this._audioEvents,
     required this._languageCode,
     this._continueWhenHidden,
+    this._stopPhrases,
   });
 
   static const Duration _noReplyGrace = Duration(seconds: 15);
@@ -86,8 +89,9 @@ class GptLiveVoiceConversationController extends ChangeNotifier
       'Stop speaking immediately. Do not continue or repeat the previous '
       'answer. Stay quiet and wait for the user to speak again.';
 
-  /// A whole utterance that ends the conversation (Desktop parity: a bare
-  /// "stop" ends it). "Enough" / "basta" ask for silence instead and go
+  /// Console's bare stop words, kept in default mode next to Desktop's list
+  /// (voice_stop_phrases.dart). A custom or empty `voice.stop_phrases`
+  /// replaces them too. "Enough" / "basta" ask for silence instead and go
   /// through the detector.
   static const Set<String> _bareStopWords = {
     'stop',
@@ -105,6 +109,12 @@ class GptLiveVoiceConversationController extends ChangeNotifier
   /// lock-screen opt-in, and the microphone foreground service actually
   /// running. Absent means never.
   final bool Function()? _continueWhenHidden;
+
+  /// `voice.stop_phrases` of the profile: Desktop judges the live transcript
+  /// with the same matcher as the chained loop
+  /// (use-voice-live-conversation.ts:270 and :302). Absent means the backend
+  /// default.
+  final VoiceStopPhraseConfig Function()? _stopPhrases;
   final StreamController<SttCheck> _unavailable =
       StreamController<SttCheck>.broadcast();
 
@@ -159,6 +169,25 @@ class GptLiveVoiceConversationController extends ChangeNotifier
   @override
   String? note;
 
+  VoiceCare? _care;
+
+  /// A route change reopens the session once; another one soon after leaves
+  /// it closed with the usual note instead of looping on a flapping link.
+  Timer? _routeReopenCooldown;
+
+  /// How long after a reopen another route change reopens again.
+  @visibleForTesting
+  static const Duration routeReopenCooldown = Duration(seconds: 20);
+
+  @override
+  VoiceCare? get care => _care;
+
+  @override
+  String? get heldTurnText => null;
+
+  @override
+  String? takeHeldTurnText() => null;
+
   @override
   bool get paused => _overlayPaused;
 
@@ -172,10 +201,17 @@ class GptLiveVoiceConversationController extends ChangeNotifier
   bool get userPaused => _userPaused;
 
   @override
+  bool get privacyHidden => _privacyBlocked;
+
+  @override
   bool get whisper => false;
 
   @override
   String get partialTranscript => _partial;
+
+  /// Every fragment already notifies the controller.
+  @override
+  Listenable get partialTranscriptChanges => this;
 
   @override
   String get userTranscript => _userTranscript;
@@ -201,6 +237,11 @@ class GptLiveVoiceConversationController extends ChangeNotifier
   @override
   bool get spokenInterruptionArmed =>
       active && _session?.started == true && !_userPaused;
+
+  /// The live model's WebRTC audio is not the TTS playback a typed send
+  /// interrupts in Desktop (voice-playback.ts:824-826).
+  @override
+  bool get voicePlaybackActive => false;
 
   @override
   ActiveChat? get ownerChat => active ? _chat : null;
@@ -298,6 +339,7 @@ class GptLiveVoiceConversationController extends ChangeNotifier
     final epoch = ++_epoch;
     _starting = true;
     note = null;
+    _care = null;
     _seenDelegations.clear();
     _notify();
     if (epoch != _epoch || _disposed || _privacyBlocked) return;
@@ -343,7 +385,7 @@ class GptLiveVoiceConversationController extends ChangeNotifier
       _starting = false;
       if (session.finished) return;
       _audioSub = _audioEvents().listen(
-        (_) => unawaited(endSession(LiveSessionEnd.audioInterrupted)),
+        (event) => unawaited(_onAudioEvent(event)),
         onError: (Object _) {},
       );
       _notify();
@@ -353,6 +395,12 @@ class GptLiveVoiceConversationController extends ChangeNotifier
       _unavailable.add(
         const SttCheck(SttStatus.needsMicPermission, SttEngineKind.system),
       );
+      _notify();
+    } on LiveMicrophoneBusyException {
+      if (epoch != _epoch) return;
+      _releaseSession(session);
+      note = _strings.voiceGptLiveCouldNotStart;
+      _care = VoiceCare.micBusy;
       _notify();
     } on VoiceLiveSessionException catch (error) {
       if (epoch != _epoch) return;
@@ -368,6 +416,31 @@ class GptLiveVoiceConversationController extends ChangeNotifier
       note = _strings.voiceGptLiveCouldNotStart;
       _notify();
     }
+  }
+
+  /// Another app or call taking audio ends the session. A headset or
+  /// Bluetooth change reopens it once on the new route, with a notice, because
+  /// the old session keeps talking to the device that went away.
+  Future<void> _onAudioEvent(LiveAudioEvent event) async {
+    await endSession(LiveSessionEnd.audioInterrupted);
+    if (event != LiveAudioEvent.routeChanged ||
+        !active ||
+        _disposed ||
+        _privacyBlocked ||
+        _appHidden ||
+        _teardown != null ||
+        _session != null ||
+        _starting ||
+        _routeReopenCooldown != null) {
+      return;
+    }
+    _routeReopenCooldown = Timer(routeReopenCooldown, () {
+      _routeReopenCooldown = null;
+    });
+    _userPaused = false;
+    unawaited(_startSession());
+    _care = VoiceCare.routeRestarted;
+    _notify();
   }
 
   /// Retire identity synchronously, but retain its physical audio lease until
@@ -488,6 +561,9 @@ class GptLiveVoiceConversationController extends ChangeNotifier
     _epoch++;
     active = false;
     note = null;
+    _care = null;
+    _routeReopenCooldown?.cancel();
+    _routeReopenCooldown = null;
     _userPaused = false;
     _overlayPaused = false;
     _starting = false;
@@ -519,6 +595,7 @@ class GptLiveVoiceConversationController extends ChangeNotifier
     active = false;
     _graceTimer?.cancel();
     _stopTimer?.cancel();
+    _routeReopenCooldown?.cancel();
     unawaited(_chatSub?.cancel());
     unawaited(_audioSub?.cancel());
     final session = _session;
@@ -553,11 +630,17 @@ class GptLiveVoiceConversationController extends ChangeNotifier
   }
 
   LocalVoiceCommand? _commandFor(String text) {
+    final stopPhrases =
+        _stopPhrases?.call() ?? VoiceStopPhraseConfig.backendDefault;
+    if (isVoiceStopCommand(text, stopPhrases)) return LocalVoiceCommand.end;
     final lower = text
         .toLowerCase()
         .replaceAll(RegExp(r'[^\p{L}\p{N} ]', unicode: true), '')
         .trim();
-    if (_bareStopWords.contains(lower)) return LocalVoiceCommand.end;
+    if (stopPhrases.mode == VoiceStopPhraseMode.defaults &&
+        _bareStopWords.contains(lower)) {
+      return LocalVoiceCommand.end;
+    }
     return const LocalVoiceCommandDetector().detect(
       text,
       language: _languageCode(),
@@ -743,6 +826,10 @@ class GptLiveVoiceConversationController extends ChangeNotifier
 
   void _onFragment(VoiceLiveFragment fragment) {
     if (!active || _disposed) return;
+    // A notice that only informs (the route changed) ends with the first
+    // words of the conversation that goes on.
+    final informing = _care;
+    if (informing != null && !informing.blocking) _care = null;
     if (fragment.speaker == VoiceLiveSpeaker.user) {
       if (_lastSpeaker != VoiceLiveSpeaker.user) {
         _partial = '';

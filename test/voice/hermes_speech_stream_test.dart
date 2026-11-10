@@ -1042,4 +1042,61 @@ void main() {
       );
     }
   });
+  group('first audio cap', () {
+    Future<HermesSpeechStreamSession> openWithCap(
+      _FakeSpeechSocket socket,
+      _FakePcmSink sink,
+    ) async {
+      final session = HermesSpeechStreamSession(
+        socket: socket,
+        sink: sink,
+        finishTimeout: const Duration(seconds: 30),
+        firstAudioTimeout: const Duration(milliseconds: 60),
+      );
+      await session.open();
+      await socket.emit(
+        jsonEncode({'type': 'start', 'sample_rate': 24000, 'channels': 1}),
+      );
+      return session;
+    }
+
+    test('an open socket that never sends audio falls back', () async {
+      final socket = _FakeSpeechSocket();
+      final sink = _FakePcmSink();
+      final session = await openWithCap(socket, sink);
+
+      expect(await session.append('Hola, ¿qué tal?'), isTrue);
+      final outcome = await session.done.timeout(const Duration(seconds: 2));
+
+      expect(outcome, HermesSpeechStreamOutcome.fallback);
+      expect(session.fallbackKind, HermesSpeechStreamFallbackKind.transport);
+      expect(sink.stopped, isTrue);
+      expect(socket.closed, isTrue);
+    });
+
+    test('the first audio disarms it', () async {
+      final socket = _FakeSpeechSocket();
+      final sink = _FakePcmSink();
+      final session = await openWithCap(socket, sink);
+
+      await session.append('Hola.');
+      await socket.emit(Uint8List(8));
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+
+      expect(session.receivedPcm, isTrue);
+      expect(session.fallbackKind, isNull);
+      await session.cancel();
+    });
+
+    test('without text sent there is nothing to wait for', () async {
+      final socket = _FakeSpeechSocket();
+      final sink = _FakePcmSink();
+      final session = await openWithCap(socket, sink);
+
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+
+      expect(session.fallbackKind, isNull);
+      await session.cancel();
+    });
+  });
 }

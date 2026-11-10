@@ -128,7 +128,7 @@ class _ServerListenOperation {
 }
 
 class ServerSttEngine implements SttEngine {
-  /// Base del WebSocket, p.ej. `ws://192.168.1.10:9123`. Sin el `?token`.
+  /// Base del WebSocket, p.ej. `ws://192.0.2.10:9123`. Sin el `?token`.
   final String baseUrl;
 
   /// Token del servidor (se añade como `?token=`). Puede ir vacío.

@@ -1,4 +1,10 @@
 // SPDX-License-Identifier: MIT
+// HISTORICAL (review T2-C, P3): this is the voice v1 surface, the line and
+// the controls of the composer. Voice v2 (maqueta 135 v2) moved the
+// conversation into the header's capsule (`voice_capsule_test.dart`); the
+// pieces drawn here survive only where a surface still uses them, and these
+// shots are kept as the record of the v1 design, not as the current one.
+//
 // Visual evidence of the in-chat voice conversation: the thin status line
 // above the composer and the conversation controls at the composer's
 // trailing end, in every state, at 390×844 dark with the app's real fonts.

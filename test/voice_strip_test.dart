@@ -375,10 +375,22 @@ void main() {
         expect(glyph, findsOneWidget);
         final named = statusWidth();
 
-        // Tighter: the name alone, so the status is still read whole.
-        await pump(580);
+        // Tighter: the name alone, so the status is still read whole. Where
+        // that starts depends on the type of the status and of the name
+        // (Ola 3 set the status in HermesType.value, 13 instead of 13.5), so
+        // the band is found, not pinned: going narrower, the first width
+        // without the glyph still shows the name and the whole status.
+        double? nameAlone;
+        for (var width = 618.0; width > 450; width -= 2) {
+          await pump(width);
+          if (!tester.any(glyph)) {
+            nameAlone = width;
+            break;
+          }
+          expect(find.text('Ver aprobación'), findsOneWidget);
+        }
+        expect(nameAlone, isNotNull, reason: 'the glyph goes before the name');
         expect(find.text('Ver aprobación'), findsOneWidget);
-        expect(glyph, findsNothing);
         expect(statusWidth(), greaterThanOrEqualTo(named - 30));
 
         // A status that cannot fit anyway is cut; the action keeps its name,

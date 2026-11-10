@@ -131,6 +131,10 @@ const _deVoiceMessages = <String, String>{
   'responseRequired': 'Hermes benötigt deine Antwort. Öffne die App, um fortzufahren.',
   'stopNotSaved': 'Der Stopp konnte nicht sicher gespeichert werden. Versuche es erneut.',
   'recognitionUnavailable': 'Die Spracherkennung ist nicht bereit ({status}).',
+  'providerError': 'Der Sprachanbieter antwortete: {detail}',
+  'noAudioHeard':
+      'Es ist nichts zu hören. '
+      'Ist das Mikrofon das des Autos oder eines Headsets?',
 };
 
 const _deSmallNumbers = [

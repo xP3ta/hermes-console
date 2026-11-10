@@ -7,6 +7,7 @@ import '../../l10n/app_localizations.dart';
 import '../services/connection_manager.dart';
 import '../services/voice/tts_toolset_config.dart';
 import '../theme/app_theme.dart';
+import '../theme/readable_ink.dart';
 import 'hermes_premium_ui.dart';
 import 'hermes_ui.dart';
 import '../feedback/feedback_policy.dart';
@@ -1816,12 +1817,15 @@ class _InfoPill extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
+    final tint = colors.accent.withValues(alpha: 0.12);
+    // The accent label keeps 4.5:1 on its tint in light themes too (Ola 8).
+    final ink = accent
+        ? readableInkOnTint(colors.accent, tint, colors)
+        : colors.textSecondary;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
-        color: accent
-            ? colors.accent.withValues(alpha: 0.12)
-            : colors.background.withValues(alpha: 0.7),
+        color: accent ? tint : colors.background.withValues(alpha: 0.7),
         borderRadius: BorderRadius.circular(999),
         border: Border.all(
           color: accent
@@ -1832,7 +1836,7 @@ class _InfoPill extends StatelessWidget {
       child: Text(
         label,
         style: TextStyle(
-          color: accent ? colors.accent : colors.textSecondary,
+          color: ink,
           fontSize: 9.5,
           fontWeight: FontWeight.w600,
         ),

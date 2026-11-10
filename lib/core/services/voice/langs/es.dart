@@ -222,7 +222,10 @@ const _esVoiceMessages = <String, String>{
   "approvalRequired": "Hermes necesita tu aprobación. Abre la aplicación para revisarla.",
   "responseRequired": "Hermes necesita tu respuesta. Abre la aplicación para continuar.",
   "stopNotSaved": "No se pudo guardar Stop de forma segura. Reinténtalo.",
-  "recognitionUnavailable": "El reconocimiento de voz no está listo ({status})."
+  "recognitionUnavailable": "El reconocimiento de voz no está listo ({status}).",
+  "providerError": "El proveedor de voz respondió: {detail}",
+  "noAudioHeard":
+      "No se oye nada. ¿El micrófono es el del coche o unos auriculares?",
 };
 
 class _EsSpeechGrammar extends VoiceSpeechGrammar {

@@ -27,7 +27,7 @@ void main() {
   });
 
   test('all eleven messages are native and preserve interpolation', () {
-    expect(language.messages.length, 11);
+    expect(language.messages.length, 13);
     expect(language.message('didNotHear'), 'Je ne vous ai pas entendu.');
     expect(language.message('recognitionUnavailable', {'status': 'indisponible'}),
         'La reconnaissance vocale n’est pas prête (indisponible).');

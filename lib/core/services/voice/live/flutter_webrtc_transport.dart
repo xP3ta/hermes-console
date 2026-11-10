@@ -81,6 +81,10 @@ class FlutterWebRtcTransport implements LiveRtcTransport {
       if (error.toString().contains('NotAllowedError')) {
         throw const LiveMicrophoneDeniedException();
       }
+      // A device another app or a call holds: its own message, with Retry.
+      if (error.toString().contains('NotReadableError')) {
+        throw const LiveMicrophoneBusyException();
+      }
       rethrow;
     }
     // Disposal owns late acquisitions too; its lease waits for this operation.

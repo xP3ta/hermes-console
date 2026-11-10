@@ -114,6 +114,10 @@ const _itVoiceMessages = <String, String>{
   'responseRequired': 'Hermes ha bisogno della tua risposta. Apri l’app per continuare.',
   'stopNotSaved': 'Non è stato possibile salvare l’arresto in sicurezza. Riprova.',
   'recognitionUnavailable': 'Il riconoscimento vocale non è pronto ({status}).',
+  'providerError': 'Il fornitore vocale ha risposto: {detail}',
+  'noAudioHeard':
+      'Non si sente nulla. '
+      'Il microfono è quello dell’auto o di un auricolare?',
 };
 
 const _itTranscriptGrammar = VoiceTranscriptGrammar(

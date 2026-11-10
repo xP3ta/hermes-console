@@ -506,6 +506,21 @@ final class VoiceConversationRuntime {
     return _beginSubmittedTurn();
   }
 
+  /// Puts a message that did not reach Hermes back into submission, as a new
+  /// turn. Only while nothing else owns the conversation (a failed submit
+  /// leaves it idle), so a retry can never overlap a capture or a playback.
+  VoiceTurnBinding? beginResubmission() {
+    if (_state.lifecycle != VoiceRuntimeLifecycle.running ||
+        _state.backendState != VoiceBackendState.idle ||
+        _state.captureOwner != VoiceCaptureOwner.none ||
+        _state.transcriptionOwner != VoiceTranscriptionOwner.none ||
+        _state.playbackOwner != VoicePlaybackOwner.none ||
+        _state.bargeSpeechActive) {
+      return null;
+    }
+    return _beginSubmittedTurn();
+  }
+
   bool failTranscription(VoiceRuntimeToken token, {bool rearm = true}) {
     if (!_ownsTranscription(token, token._kind) ||
         _state.transcriptionOwner == VoiceTranscriptionOwner.none) {

@@ -1296,7 +1296,12 @@ void main() {
           NativeVoiceConsentStore(prefs).read(identity),
           NativeVoiceConsent.accepted,
         );
-        expect(paths, ['/api/audio/transcribe']);
+        // The probe is still the only audio request; `/api/config` is the
+        // live-dictation gate (`stt.streaming`, VOZ-V3), never voice-config.
+        expect(
+          paths,
+          unorderedEquals(['/api/audio/transcribe', '/api/config']),
+        );
         expect(configured, HermesServerDictationConfigurationResult.configured);
         expect(voice.hermesServerDictationReady, isTrue);
         expect(voice.nativeVoiceActive, isFalse);

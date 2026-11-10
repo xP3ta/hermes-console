@@ -22,7 +22,7 @@ void main() {
     expect(language.streamingVoiceId, 'af_heart');
     expect(language.systemTtsOnly, isFalse);
     expect(language.messages.keys.toSet(), voiceLanguageFor('en').messages.keys.toSet());
-    expect(language.messages, hasLength(11));
+    expect(language.messages, hasLength(13));
     for (final entry in language.messages.entries) {
       expect(entry.value, isNot(voiceLanguageFor('en').messages[entry.key]));
       expect(entry.value.trim(), isNotEmpty);

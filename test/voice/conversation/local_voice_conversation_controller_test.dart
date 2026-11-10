@@ -4,21 +4,30 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/models/agent_profile.dart';
 import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
+import 'package:hermes_android/core/services/bot_roster_store.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/prompt_client_surface.dart';
 import 'package:hermes_android/core/services/secure_storage.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:hermes_android/core/services/voice/conversation/full_duplex_barge_in_monitor.dart';
 import 'package:hermes_android/core/services/voice/conversation/local_voice_conversation_controller.dart';
+import 'package:hermes_android/core/services/voice/conversation/voice_turn_latency_log.dart';
 import 'package:hermes_android/core/services/voice/hermes_pcm_stream.dart';
 import 'package:hermes_android/core/services/voice/hermes_speech_stream.dart';
+import 'package:hermes_android/core/services/voice/live/live_audio_environment.dart';
+import 'package:hermes_android/core/services/voice/session/voice_care.dart';
 import 'package:hermes_android/core/services/voice/stt_engine.dart';
+import 'package:hermes_android/core/services/voice/voice_client_direct.dart';
+import 'package:hermes_android/core/services/voice/voice_language.dart';
 import 'package:hermes_android/core/services/voice/voice_latency_trace.dart';
 import 'package:hermes_android/core/services/voice/voice_phase.dart';
+import 'package:hermes_android/core/services/voice/voice_server_prefs.dart';
 import 'package:hermes_android/core/services/voice/voice_service.dart';
 import 'package:hermes_android/core/services/voice/voice_settings.dart';
+import 'package:hermes_android/core/services/voice/voice_stop_phrases.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -39,6 +48,11 @@ class _FakeVoice extends VoiceService {
   final List<String> spoken = [];
   final List<String> prewarmed = [];
   final List<String> localSpoken = [];
+  bool languageFellBack = false;
+
+  @override
+  bool get sttLanguageFellBack => languageFellBack;
+
   int stopDictationCalls = 0;
   int cancelDictationCalls = 0;
   int stopSpeakingCalls = 0;
@@ -441,6 +455,11 @@ class _FakeGateway {
   void toolStarted(int turn, String tool, String preview) =>
       socket.toolStarted(turn, tool, context: preview);
 
+  void interim(int turn, String text, {bool alreadyStreamed = false}) =>
+      socket.interim(turn, text, alreadyStreamed: alreadyStreamed);
+
+  void toolCompleted(int turn, String tool) => socket.toolCompleted(turn, tool);
+
   void approval(int turn, {String command = 'rm archivo', String? requestId}) =>
       socket.approval(
         turn,
@@ -691,6 +710,22 @@ class _NoLiveMutationVoiceGateway
   Future<void> close() => _events.close();
 }
 
+/// Each part was spoken exactly once, in this order.
+void _expectSpokenOnceInOrder(List<String> spoken, List<String> parts) {
+  final said = spoken.join(' ');
+  var from = 0;
+  for (final part in parts) {
+    expect(
+      RegExp(RegExp.escape(part)).allMatches(said),
+      hasLength(1),
+      reason: '"$part" once in $spoken',
+    );
+    final at = said.indexOf(part, from);
+    expect(at, greaterThanOrEqualTo(0), reason: '"$part" in order: $spoken');
+    from = at + part.length;
+  }
+}
+
 Future<_Harness> _harness({
   FullDuplexBargeInMonitor? fullDuplexMonitor,
   Future<void> Function(String prompt)? onBeforeSend,
@@ -699,10 +734,14 @@ Future<_Harness> _harness({
   bool continueWhenLocked = false,
   bool captureReadyAutomatically = true,
   bool allowTransportFallback = false,
+  VoiceTurnLatencyLog? turnLatencyLog,
+  Stream<LiveAudioEvent> Function()? audioEvents,
+  bool languageFellBack = false,
 }) async {
   final prefs = await SharedPreferences.getInstance();
   final voice = _FakeVoice(prefs, bargeInEnabled: bargeInEnabled);
   voice.captureReadyAutomatically = captureReadyAutomatically;
+  voice.languageFellBack = languageFellBack;
   if (continueWhenLocked) {
     await voice.acceptVoiceDisclosure(continueWhenLocked: true);
   }
@@ -724,6 +763,9 @@ Future<_Harness> _harness({
     voice,
     fullDuplexMonitor: fullDuplexMonitor,
     playbackTailDelay: playbackTailDelay ?? (_) async {},
+    turnLatencyLog: turnLatencyLog,
+    audioEvents: audioEvents,
+    routeChangeSettle: Duration.zero,
   );
   await controller.enter(
     chat: chat,
@@ -1306,6 +1348,88 @@ void main() {
     await h.close();
   });
 
+  // voice.stop_phrases, as Desktop applies it to the spoken turn
+  // (use-voice-conversation.ts:302 and :523 → voice-stop-word.ts:97-129).
+  VoiceStopPhraseConfig stopPhrases(List<String> list) =>
+      VoiceStopPhraseConfig.fromServerConfig({
+        'voice': {'stop_phrases': list},
+      });
+
+  test('a custom stop phrase ends without sending a turn', () async {
+    final h = await _harness();
+    h.voice.stopPhrases.value = stopPhrases(['отбой']);
+
+    h.voice.captures.single.add(const SttResult('Hermes, отбой!', true));
+    await _waitFor(() => !h.controller.active);
+
+    expect(h.gateway.submitTexts, isEmpty);
+    expect(h.controller.userTranscript, isEmpty);
+    await h.close();
+  });
+
+  test('a custom list turns the built-in Stop into a normal turn', () async {
+    final h = await _harness();
+    h.voice.stopPhrases.value = stopPhrases(['отбой']);
+
+    h.voice.captures.single.add(const SttResult('Stop.', true));
+    await _waitFor(() => h.gateway.submitTexts.length == 1);
+
+    expect(h.gateway.submitTexts.single, 'Stop.');
+    expect(h.controller.active, isTrue);
+    h.chat.cancel();
+    await h.close();
+  });
+
+  test('an empty stop_phrases list sends Stop as a normal turn', () async {
+    final h = await _harness();
+    h.voice.stopPhrases.value = stopPhrases(const []);
+
+    h.voice.captures.single.add(const SttResult('Stop.', true));
+    await _waitFor(() => h.gateway.submitTexts.length == 1);
+
+    expect(h.gateway.submitTexts.single, 'Stop.');
+    expect(h.controller.active, isTrue);
+    h.chat.cancel();
+    await h.close();
+  });
+
+  // Desktop submit.ts:332-357: typing over the spoken reply stops it and the
+  // typed turn carries `interrupted`, so Hermes tells the model it was cut.
+  test('a typed send over the spoken reply stops it and is the interrupted '
+      'turn', () async {
+    final h = await _harness();
+    expect(h.controller.voicePlaybackActive, isFalse, reason: 'listening');
+
+    h.voice.holdSpeech = true;
+    h.voice.captures.single.add(const SttResult('cuéntame algo', true));
+    await _waitFor(() => h.gateway.submitTexts.length == 1);
+    expect(h.controller.voicePlaybackActive, isFalse, reason: 'thinking');
+    h.gateway.token(1, 'Primera frase.');
+    await _waitFor(() => h.voice.spoken.length == 1);
+    await h.gateway.complete(1, 'Primera frase.');
+    await _waitFor(() => !h.chat.isStreaming);
+    expect(h.controller.voicePlaybackActive, isTrue, reason: 'speaking');
+
+    final stopsBefore = h.voice.stopSpeakingCalls;
+    expect(
+      await h.chat.send(
+        fullText: 'mejor otra cosa',
+        model: 'hermes-agent',
+        history: const [],
+        voicePlaybackInterrupted: h.controller.voicePlaybackActive,
+      ),
+      isTrue,
+    );
+    await _waitFor(() => h.voice.stopSpeakingCalls > stopsBefore);
+
+    expect(h.gateway.socket.submits.last['text'], 'mejor otra cosa');
+    expect(h.gateway.socket.submits.last['kind'], 'interrupted');
+    await _waitFor(() => !h.controller.voicePlaybackActive);
+    h.voice.finishSpeech();
+    h.chat.cancel();
+    await h.close();
+  });
+
   test(
     'cerrar el ActiveChat propietario termina Voz sin dejar captura',
     () async {
@@ -1757,6 +1881,35 @@ void main() {
     expect(h.gateway.submitTexts, isEmpty);
     await h.close();
   });
+
+  test(
+    'la aprobación hablada llama al perfil principal por su nombre',
+    () async {
+      BotRosterRegistry.shared.publish('voice-local-controller', 'QA', const [
+        AgentProfile(
+          name: 'default',
+          isDefault: true,
+          botModeUiMeta: {'title': 'xPeta'},
+        ),
+      ]);
+      addTearDown(
+        () => BotRosterRegistry.shared.forget('voice-local-controller'),
+      );
+      final h = await _harness();
+      h.voice.captures.single.add(
+        const SttResult('haz una acción sensible', true),
+      );
+      await _waitFor(() => h.gateway.submitTexts.length == 1);
+      h.gateway.approval(1);
+      await _waitFor(() => h.controller.phase == VoicePhase.waitingPermission);
+      await _waitFor(() => h.voice.localSpoken.length == 1);
+      expect(
+        h.voice.localSpoken.single,
+        'xPeta necesita tu aprobación. Abre la aplicación para revisarla.',
+      );
+      await h.close();
+    },
+  );
 
   test(
     'una aprobación avisa una vez, silencia el micro y solo se resuelve por UI',
@@ -2698,8 +2851,9 @@ void main() {
       );
       await _waitFor(() => h.gateway.submitTexts.length == 1);
       h.gateway.token(1, 'Respuesta que ningún TTS aceptará.');
+      // The first token batch is painted (and narrated) on the next turn of the
+      // event loop, so a rejected attempt may already be recorded here.
       await Future<void>.delayed(const Duration(milliseconds: 20));
-      expect(h.voice.spoken, isEmpty);
 
       await h.gateway.complete(1, 'Respuesta que ningún TTS aceptará.');
       await _waitFor(
@@ -2715,6 +2869,7 @@ void main() {
       expect(points, isNot(contains(VoiceLatencyPoint.pcmFirstReceived)));
       expect(points, isNot(contains(VoiceLatencyPoint.pcmFirstAccepted)));
 
+      final rejectedAttempts = h.voice.spoken.length;
       h.voice.acceptSpeech = true;
       h.controller.pauseConversation();
       await _waitFor(
@@ -2723,7 +2878,7 @@ void main() {
       );
       h.controller.playConversation();
       await _waitFor(
-        () => h.voice.spoken.length == 2,
+        () => h.voice.spoken.length == rejectedAttempts + 1,
         diagnostics: () =>
             'retry spoken=${h.voice.spoken} phase=${h.controller.phase} '
             'paused=${h.controller.userPaused} '
@@ -2735,10 +2890,10 @@ void main() {
             'rearm phase=${h.controller.phase} spoken=${h.voice.spoken} '
             'cursor=${h.controller.debugNarrationCursor}',
       );
-      expect(h.voice.spoken, [
+      expect(h.voice.spoken.length, rejectedAttempts + 1);
+      expect(h.voice.spoken.toSet(), {
         'Respuesta que ningún TTS aceptará.',
-        'Respuesta que ningún TTS aceptará.',
-      ]);
+      }, reason: 'the same text is retried, never lost or altered');
     });
     addTearDown(h.close);
   });
@@ -2891,8 +3046,11 @@ void main() {
     await h.close();
   });
 
+  // Desktop `awaitFallbackSpeech` (use-voice-conversation.ts:703-842, since
+  // e39900cc91 in v0.22.0): without PCM, each completed sentence is POSTed
+  // while the reply is still being generated, and none twice.
   test(
-    'fallback antes de PCM espera terminal y hace un solo POST ordenado',
+    'fallback antes de PCM habla cada frase durante la generación',
     () async {
       final h = await _harness();
       final socket = _ControllerSpeechSocket();
@@ -2906,29 +3064,37 @@ void main() {
       await _waitFor(() => socket.sent.any((frame) => frame['text'] != null));
 
       await socket.emit(jsonEncode({'type': 'fallback'}));
-      await Future<void>.delayed(const Duration(milliseconds: 20));
+      await _waitFor(() => h.voice.spoken.isNotEmpty);
       expect(h.chat.isStreaming, isTrue);
-      expect(h.voice.spoken, isEmpty);
+      expect(h.voice.spoken, ['Primera frase.']);
 
       h.gateway.token(1, ' Segunda frase.');
-      await Future<void>.delayed(const Duration(milliseconds: 30));
-      expect(h.voice.spoken, isEmpty);
+      h.voice.finishSpeech();
+      await _waitFor(
+        () => h.voice.spoken.join(' ').contains('Segunda frase.'),
+        diagnostics: () => 'spoken=${h.voice.spoken}',
+      );
+      expect(h.chat.isStreaming, isTrue);
 
       h.gateway.token(1, ' Cola sin cerrar');
       await Future<void>.delayed(const Duration(milliseconds: 30));
-      expect(h.voice.spoken, isEmpty);
+      expect(h.voice.spoken.join(' '), isNot(contains('Cola sin cerrar')));
 
       await h.gateway.complete(
         1,
         'Primera frase. Segunda frase. Cola sin cerrar',
       );
-      await _waitFor(() => h.voice.spoken.length == 1);
-      h.voice.finishSpeech();
+      await _waitFor(
+        () => h.voice.spoken.join(' ').contains('Cola sin cerrar'),
+        diagnostics: () => 'spoken=${h.voice.spoken}',
+      );
       await _waitFor(() => h.controller.phase == VoicePhase.listening);
 
       expect(sink.writes, isEmpty);
-      expect(h.voice.spoken, [
-        'Primera frase. Segunda frase. Cola sin cerrar.',
+      _expectSpokenOnceInOrder(h.voice.spoken, [
+        'Primera frase.',
+        'Segunda frase.',
+        'Cola sin cerrar',
       ]);
       await h.close();
     },
@@ -2952,19 +3118,27 @@ void main() {
       h.gateway.token(1, accepted);
       await _waitFor(() => socket.sent.any((frame) => frame['text'] != null));
       await socket.emit(jsonEncode({'type': 'fallback'}));
-      await Future<void>.delayed(const Duration(milliseconds: 20));
-      expect(h.voice.spoken, isEmpty);
+      // The accepted sentence is spoken at once, before the final arrives.
+      await _waitFor(() => h.voice.spoken.isNotEmpty);
+      expect(h.voice.spoken, [accepted]);
 
       await h.gateway.complete(1, '¡Listo! $accepted Ceuta sigue abierta.');
       await _waitFor(
         () => h.controller.assistantResponse.contains('Ceuta sigue abierta.'),
       );
-      await _waitFor(() => h.voice.spoken.length == 1);
       h.voice.finishSpeech();
+      await _waitFor(
+        () => h.voice.spoken.join(' ').contains('Ceuta sigue abierta.'),
+        diagnostics: () => 'spoken=${h.voice.spoken}',
+      );
       await _waitFor(() => h.controller.phase == VoicePhase.listening);
 
       expect(sink.writes, isEmpty);
-      expect(h.voice.spoken, ['¡Listo! $accepted Ceuta sigue abierta.']);
+      // The final only adds its authoritative tail; the body is not re-read.
+      _expectSpokenOnceInOrder(h.voice.spoken, [
+        accepted,
+        'Ceuta sigue abierta.',
+      ]);
       await h.close();
     },
   );
@@ -2986,14 +3160,13 @@ void main() {
       h.gateway.token(1, 'Primera frase. Esta cola forma un único fallback.');
       await _waitFor(() => socket.sent.any((frame) => frame['text'] != null));
       await socket.emit(jsonEncode({'type': 'fallback'}));
-      await Future<void>.delayed(const Duration(milliseconds: 20));
-      expect(h.voice.spoken, isEmpty);
+      await _waitFor(() => h.voice.spoken.isNotEmpty);
+      expect(h.voice.spoken.first, 'Primera frase.');
 
       await h.gateway.complete(
         1,
         'Primera frase. Esta cola forma un único fallback.',
       );
-      await _waitFor(() => h.voice.spoken.length == 1);
 
       h.controller.stopAndTalk();
       await _waitFor(() => h.voice.stopSpeakingCalls == 1);
@@ -3002,9 +3175,10 @@ void main() {
 
       h.voice.releaseStopSpeaking();
       await _waitFor(() => h.voice.captures.length == 2);
-      expect(h.voice.spoken, [
-        'Primera frase. Esta cola forma un único fallback.',
-      ]);
+      expect(
+        RegExp('Primera frase').allMatches(h.voice.spoken.join(' ')),
+        hasLength(1),
+      );
       await h.close();
     },
   );
@@ -3165,38 +3339,40 @@ void main() {
     },
   );
 
+  test('fallback providerUnsupported pre-PCM habla cada frase durante la '
+      'generación', () async {
+    final h = await _harness();
+    final socket = _ControllerSpeechSocket();
+    final sink = _ControllerPcmSink();
+    _enableStreamingVoice(h.voice, socket, sink, fallbackBeforeReturn: true);
+
+    h.voice.captures.single.add(
+      const SttResult('usa el fallback inmediato', true),
+    );
+    await _waitFor(() => h.gateway.submitTexts.length == 1);
+    h.gateway.token(1, 'Primera inmediata.');
+    await _waitFor(() => h.voice.spoken.isNotEmpty);
+    expect(h.voice.spoken, ['Primera inmediata.']);
+    expect(h.chat.isStreaming, isTrue);
+    h.gateway.token(1, ' Segunda inmediata.');
+    await _waitFor(
+      () => h.voice.spoken.join(' ').contains('Segunda inmediata.'),
+    );
+    expect(h.chat.isStreaming, isTrue);
+    await h.gateway.complete(1, 'Primera inmediata. Segunda inmediata.');
+    await _waitFor(() => h.controller.phase == VoicePhase.listening);
+
+    expect(sink.writes, isEmpty);
+    expect(socket.sent.where((frame) => frame['text'] != null), isEmpty);
+    _expectSpokenOnceInOrder(h.voice.spoken, [
+      'Primera inmediata.',
+      'Segunda inmediata.',
+    ]);
+    await h.close();
+  });
+
   test(
-    'fallback providerUnsupported pre-PCM espera terminal y hace un solo POST',
-    () async {
-      final h = await _harness();
-      final socket = _ControllerSpeechSocket();
-      final sink = _ControllerPcmSink();
-      _enableStreamingVoice(h.voice, socket, sink, fallbackBeforeReturn: true);
-
-      h.voice.captures.single.add(
-        const SttResult('usa el fallback inmediato', true),
-      );
-      await _waitFor(() => h.gateway.submitTexts.length == 1);
-      h.gateway.token(1, 'Primera inmediata.');
-      await Future<void>.delayed(const Duration(milliseconds: 20));
-      expect(h.voice.spoken, isEmpty);
-      expect(h.chat.isStreaming, isTrue);
-      h.gateway.token(1, ' Segunda inmediata.');
-      await Future<void>.delayed(const Duration(milliseconds: 20));
-      expect(h.voice.spoken, isEmpty);
-      await h.gateway.complete(1, 'Primera inmediata. Segunda inmediata.');
-      await _waitFor(() => h.voice.spoken.length == 1);
-      await _waitFor(() => h.controller.phase == VoicePhase.listening);
-
-      expect(sink.writes, isEmpty);
-      expect(socket.sent.where((frame) => frame['text'] != null), isEmpty);
-      expect(h.voice.spoken, ['Primera inmediata. Segunda inmediata.']);
-      await h.close();
-    },
-  );
-
-  test(
-    'endpoint speak-stream ausente espera terminal y hace un solo POST',
+    'endpoint speak-stream ausente habla cada frase durante la generación',
     () async {
       final h = await _harness();
       var streamAttempts = 0;
@@ -3217,17 +3393,20 @@ void main() {
       await _waitFor(() => h.gateway.submitTexts.length == 1);
       h.gateway.token(1, 'Primera parte.');
       h.gateway.token(1, ' Segunda parte.');
-      await Future<void>.delayed(const Duration(milliseconds: 20));
-
+      await _waitFor(
+        () => h.voice.spoken.join(' ').contains('Segunda parte.'),
+        diagnostics: () => 'spoken=${h.voice.spoken}',
+      );
       expect(h.chat.isStreaming, isTrue);
-      expect(h.voice.spoken, isEmpty);
 
       await h.gateway.complete(1, 'Primera parte. Segunda parte.');
-      await _waitFor(() => h.voice.spoken.length == 1);
       await _waitFor(() => h.controller.phase == VoicePhase.listening);
 
       expect(streamAttempts, 1);
-      expect(h.voice.spoken, ['Primera parte. Segunda parte.']);
+      _expectSpokenOnceInOrder(h.voice.spoken, [
+        'Primera parte.',
+        'Segunda parte.',
+      ]);
       await h.close();
     },
   );
@@ -3680,5 +3859,501 @@ void main() {
 
     h.chat.cancel();
     await h.close();
+  });
+
+  test('client-direct speech narrates each sentence without speak-stream, '
+      'like Desktop', () async {
+    final h = await _harness();
+    var opens = 0;
+    h.voice.enableNativeVoice(
+      speak: (text) async => <String, dynamic>{'ok': false},
+      transcribe: (dataUrl, mimeType) async => <String, dynamic>{'text': ''},
+      speechStream: () async {
+        opens++;
+        throw StateError('client-direct speech must not open speak-stream');
+      },
+      clientDirectSpeech: true,
+    );
+
+    h.voice.captures.single.add(const SttResult('cuéntame algo', true));
+    await _waitFor(() => h.gateway.submitTexts.length == 1);
+    h.gateway.token(1, 'Primera frase.');
+    await _waitFor(() => h.voice.spoken.isNotEmpty);
+
+    expect(h.voice.spoken, ['Primera frase.']);
+    expect(opens, 0);
+    await h.gateway.complete(1, 'Primera frase.');
+    h.chat.cancel();
+    await h.close();
+  });
+
+  test('relayed server speech without speak-stream also narrates each '
+      'sentence as it streams, like Desktop', () async {
+    final h = await _harness();
+    h.voice.enableNativeVoice(
+      speak: (text) async => <String, dynamic>{'ok': false},
+      transcribe: (dataUrl, mimeType) async => <String, dynamic>{'text': ''},
+    );
+
+    h.voice.captures.single.add(const SttResult('cuéntame algo', true));
+    await _waitFor(() => h.gateway.submitTexts.length == 1);
+    h.gateway.token(1, 'Primera frase.');
+    await _waitFor(() => h.voice.spoken.isNotEmpty);
+
+    expect(h.chat.isStreaming, isTrue);
+    expect(h.voice.spoken, ['Primera frase.']);
+    await h.gateway.complete(1, 'Primera frase.');
+    await _waitFor(() => h.controller.phase == VoicePhase.listening);
+    expect(h.voice.spoken, ['Primera frase.']);
+    h.chat.cancel();
+    await h.close();
+  });
+
+  // Desktop speaks a sealed interim bubble while its tool still runs
+  // (use-voice-conversation.ts:687-693: `session.flush()` when busy).
+  group('interim commentary during a tool, like Desktop', () {
+    String sentText(_ControllerSpeechSocket socket) => [
+      for (final frame in socket.sent)
+        if (frame['text'] is String) frame['text'] as String,
+    ].join();
+
+    test('an interim with no final stop is spoken before its tool ends, '
+        'and the answer does not repeat it', () async {
+      final h = await _harness();
+      h.voice.enableNativeVoice(
+        speak: (text) async => <String, dynamic>{'ok': false},
+        transcribe: (dataUrl, mimeType) async => <String, dynamic>{'text': ''},
+        speechStream: () async =>
+            throw StateError('client-direct speech never opens speak-stream'),
+        clientDirectSpeech: true,
+      );
+
+      h.voice.captures.single.add(
+        const SttResult('revisa el repositorio', true),
+      );
+      await _waitFor(() => h.gateway.submitTexts.length == 1);
+      h.gateway.token(1, 'Voy a revisar el repositorio');
+      h.gateway.interim(
+        1,
+        'Voy a revisar el repositorio',
+        alreadyStreamed: true,
+      );
+      h.gateway.toolStarted(1, 'terminal', 'git status');
+
+      // Nothing completes the tool before this point.
+      await _waitFor(
+        () => h.voice.spoken.isNotEmpty && h.controller.activeTool != null,
+        diagnostics: () => 'spoken=${h.voice.spoken}',
+      );
+      expect(
+        h.voice.spoken.join(' '),
+        contains('Voy a revisar el repositorio'),
+      );
+
+      h.gateway.toolCompleted(1, 'terminal');
+      h.gateway.token(1, 'Todo está en orden.');
+      await h.gateway.complete(1, 'Todo está en orden.');
+      await _waitFor(
+        () => h.voice.spoken.join(' ').contains('Todo está en orden.'),
+        diagnostics: () => 'spoken=${h.voice.spoken}',
+      );
+      final said = h.voice.spoken.join(' ');
+      expect(
+        RegExp('Voy a revisar el repositorio').allMatches(said),
+        hasLength(1),
+      );
+      expect(said, isNot(contains('repositorioTodo')));
+      h.chat.cancel();
+      await h.close();
+    });
+
+    test('the QA latency line says the interim played during the tool, '
+        'and carries no words', () async {
+      final lines = <String>[];
+      var micros = 0;
+      final h = await _harness(
+        turnLatencyLog: VoiceTurnLatencyLog(
+          enabled: true,
+          nowMicros: () => micros += 1000,
+          sink: lines.add,
+        ),
+      );
+      h.voice.enableNativeVoice(
+        speak: (text) async => <String, dynamic>{'ok': false},
+        transcribe: (dataUrl, mimeType) async => <String, dynamic>{'text': ''},
+        speechStream: () async =>
+            throw StateError('client-direct speech never opens speak-stream'),
+        clientDirectSpeech: true,
+      );
+
+      h.voice.captures.single.add(
+        const SttResult('revisa el repositorio', true),
+      );
+      await _waitFor(() => h.gateway.submitTexts.length == 1);
+      h.gateway.token(1, 'Voy a revisar el repositorio');
+      h.gateway.interim(
+        1,
+        'Voy a revisar el repositorio',
+        alreadyStreamed: true,
+      );
+      h.gateway.toolStarted(1, 'terminal', 'git status');
+      await _waitFor(
+        () => h.voice.spoken.isNotEmpty && h.controller.activeTool != null,
+        diagnostics: () => 'spoken=${h.voice.spoken}',
+      );
+      h.gateway.toolCompleted(1, 'terminal');
+      h.gateway.token(1, 'Todo está en orden.');
+      await h.gateway.complete(1, 'Todo está en orden.');
+      await _waitFor(
+        () => h.voice.spoken.join(' ').contains('Todo está en orden.'),
+      );
+      // Printed when the turn closes: the re-arm after the answer, or exit.
+      // Every value is a number: audio never precedes the text it reads, and
+      // the interim counts as the first reply text even when it reaches the
+      // narration before any token event.
+      await h.controller.exit();
+
+      expect(lines, hasLength(1));
+      expect(
+        lines.single,
+        matches(
+          RegExp(
+            r'^\[hermes-voice-latency\] turn=1 '
+            r'endpoint_to_token_ms=\d+ endpoint_to_audio_ms=\d+ '
+            r'token_to_audio_ms=\d+ audio=queue tool=yes '
+            r'audio_during_tool=yes$',
+          ),
+        ),
+      );
+      for (final word in ['revisa', 'repositorio', 'orden', 'git']) {
+        expect(lines.single, isNot(contains(word)));
+      }
+      h.chat.cancel();
+      await h.close();
+    });
+
+    test('a sealed interim reaches speak-stream mid-tool', () async {
+      final h = await _harness();
+      final socket = _ControllerSpeechSocket();
+      final sink = _ControllerPcmSink();
+      _enableStreamingVoice(h.voice, socket, sink);
+
+      h.voice.captures.single.add(const SttResult('mira el registro', true));
+      await _waitFor(() => h.gateway.submitTexts.length == 1);
+      // Sealed without deltas and ending in ':': no stable chunk changes.
+      h.gateway.interim(1, 'Miro el registro:');
+      h.gateway.toolStarted(1, 'terminal', 'tail app.log');
+
+      await _waitFor(
+        () => sentText(socket).contains('Miro el registro:'),
+        diagnostics: () => 'sent=${socket.sent}',
+      );
+      expect(h.controller.activeTool, isNotNull);
+
+      h.gateway.toolCompleted(1, 'terminal');
+      h.gateway.token(1, 'Sin errores.');
+      await h.gateway.complete(1, 'Sin errores.');
+      await _waitFor(() => sentText(socket).contains('Sin errores.'));
+      expect(
+        RegExp('Miro el registro').allMatches(sentText(socket)),
+        hasLength(1),
+      );
+      expect(sentText(socket), isNot(contains(':Sin')));
+      h.chat.cancel();
+      await h.close();
+    });
+  });
+
+  // QA 9709 (the owner): the sound of the voice while the agent works was very
+  // uncomfortable. Desktop's ambient blips (`thinking-sound.ts`) played
+  // every 0.8-1.2 s from 400 ms on, on the media stream; Console is silent
+  // while it works, whatever the profile's `voice.thinking_sound` says.
+  test('silent while it works: nothing is played or spoken, even with '
+      'voice.thinking_sound on', () async {
+    final h = await _harness();
+    h.voice.serverVoicePrefs
+      ..select('thinking')
+      ..apply(
+        'thinking',
+        const VoiceServerPrefs(thinkingSound: true, beepVolume: 1),
+      );
+    h.voice.enableNativeVoice(
+      speak: (text) async => <String, dynamic>{'ok': false},
+      transcribe: (dataUrl, mimeType) async => <String, dynamic>{'text': ''},
+      speechStream: () async =>
+          throw StateError('client-direct speech never opens speak-stream'),
+      clientDirectSpeech: true,
+    );
+    h.voice.captures.single.add(const SttResult('cuéntame algo', true));
+    await _waitFor(() => h.gateway.submitTexts.length == 1);
+    h.gateway.toolStarted(1, 'terminal', 'ls');
+    await _waitFor(() => h.controller.activeTool != null);
+    expect(h.controller.phase, anyOf(VoicePhase.thinking, VoicePhase.toolCall));
+
+    // Longer than the old loop's first blip (400 ms) and its next one
+    // (0.8-1.2 s): nothing comes out while the tool runs.
+    await Future<void>.delayed(const Duration(milliseconds: 1700));
+    expect(h.controller.activeTool, isNotNull);
+    expect(h.voice.spoken, isEmpty);
+    expect(h.voice.localSpoken, isEmpty);
+    expect(h.voice.prewarmed, isEmpty);
+
+    // The reply is what speaks, once it comes.
+    h.gateway.token(1, 'Hola.');
+    await _waitFor(() => h.voice.spoken.isNotEmpty);
+    await h.gateway.complete(1, 'Hola.');
+    h.chat.cancel();
+    await h.close();
+  });
+
+  test('a voice provider rejection is said, not hidden as a mic problem '
+      '(REVIEW-R5-B #12)', () async {
+    final h = await _harness();
+    h.voice.captures.single.addError(
+      const VoiceDirectProviderException('STT failed (401): invalid key'),
+    );
+    await _waitFor(
+      () => h.controller.note != null,
+      diagnostics: () => 'note=${h.controller.note}',
+    );
+    expect(h.controller.note, contains('STT failed (401): invalid key'));
+    expect(
+      h.controller.note,
+      isNot(
+        isIn([
+          for (final language in voiceLanguages.values)
+            language.message('microphoneUnclear'),
+        ]),
+      ),
+    );
+    await h.close();
+  });
+
+  test('a capture with nothing in it tells the user to check the mic '
+      '(backlog item 7)', () async {
+    final h = await _harness();
+    h.voice.captures.single.addError(const SttNoAudioError());
+    await _waitFor(() => h.controller.note != null);
+    expect(
+      h.controller.note,
+      isIn([
+        for (final language in voiceLanguages.values)
+          language.message('noAudioHeard'),
+      ]),
+    );
+    await h.close();
+  });
+  group('voice care', () {
+    // A chat whose Hermes cannot be reached: every send fails.
+    Future<
+      ({
+        _FakeVoice voice,
+        LocalVoiceConversationController controller,
+        List<String> prompts,
+        Future<void> Function() close,
+      })
+    >
+    unreachableChat() async {
+      final prefs = await SharedPreferences.getInstance();
+      final voice = _FakeVoice(prefs);
+      final desktop = _FailingVoiceDesktopGateway();
+      final service = ActiveChatService(
+        compressionRestoreStore: testCompressionRestoreStore(),
+      );
+      final chat = service.attach(
+        connection: _connection(),
+        sessionId: 'voice-care-unreachable',
+        sessionTitle: 'Voz',
+        api: testApiClient(
+          baseUrl: 'http://hermes.test:8642',
+          httpClient: HostCounter(),
+        ),
+        desktopGateway: desktop,
+      );
+      final controller = LocalVoiceConversationController(
+        voice,
+        playbackTailDelay: (_) async {},
+      );
+      final prompts = <String>[];
+      await controller.enter(
+        chat: chat,
+        model: 'hermes-agent',
+        onBeforeSend: (prompt) async => prompts.add(prompt),
+      );
+      return (
+        voice: voice,
+        controller: controller,
+        prompts: prompts,
+        close: () async {
+          await controller.exit();
+          controller.dispose();
+          service.dispose();
+          await desktop.close();
+        },
+      );
+    }
+
+    test('a message that does not reach Hermes is held, not lost', () async {
+      final h = await unreachableChat();
+      h.voice.captures.single.add(const SttResult('mensaje que falla', true));
+      await _waitFor(() => h.controller.heldTurnText != null);
+
+      expect(h.controller.heldTurnText, 'mensaje que falla');
+      expect(h.controller.care, VoiceCare.sendFailed);
+      expect(h.controller.note, isNotNull);
+      expect(h.controller.phase, VoicePhase.idle);
+      // Opening the microphone again would clear the notice and the words.
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(h.voice.captures, hasLength(1));
+
+      expect(h.controller.takeHeldTurnText(), 'mensaje que falla');
+      expect(h.controller.heldTurnText, isNull);
+      expect(h.controller.takeHeldTurnText(), isNull);
+      await h.close();
+    });
+
+    test('pausing and resuming over a held message does not stall', () async {
+      final h = await unreachableChat();
+      h.voice.captures.single.add(const SttResult('texto retenido', true));
+      await _waitFor(() => h.controller.heldTurnText != null);
+
+      h.controller.pauseConversation();
+      await _waitFor(() => h.controller.userPaused);
+      h.controller.playConversation();
+      await _waitFor(() => h.voice.captures.length == 2);
+
+      // The conversation listens again and keeps rearming after an empty take.
+      h.voice.captures[1].add(const SttResult('', true));
+      await _waitFor(() => h.voice.captures.length == 3);
+      expect(h.controller.takeHeldTurnText(), 'texto retenido');
+      await h.close();
+    });
+
+    test('Retry sends the same held message again', () async {
+      final h = await unreachableChat();
+      h.voice.captures.single.add(const SttResult('mismo mensaje', true));
+      await _waitFor(() => h.controller.heldTurnText != null);
+      expect(h.prompts, ['mismo mensaje']);
+
+      h.controller.retry();
+      await _waitFor(
+        () => h.prompts.length == 2 && h.controller.heldTurnText != null,
+      );
+
+      expect(h.prompts, ['mismo mensaje', 'mismo mensaje']);
+      expect(h.voice.captures, hasLength(1));
+      await h.close();
+    });
+
+    test('a busy microphone gets its own care and Retry reopens it', () async {
+      final h = await _harness();
+      h.voice.captures.single.addError(
+        const SttCaptureFailure(SttCaptureFailureKind.micBusy),
+      );
+      await _waitFor(() => h.controller.care == VoiceCare.micBusy);
+      expect(h.controller.care!.blocking, isTrue);
+      expect(h.controller.note, isNotNull);
+
+      h.controller.retry();
+      await _waitFor(() => h.voice.captures.length == 2);
+      expect(h.controller.care, isNull);
+      await h.close();
+    });
+
+    test('a transcription that timed out is told apart', () async {
+      final h = await _harness();
+      h.voice.captures.single.addError(const SttTimeoutError());
+      await _waitFor(
+        () => h.controller.care == VoiceCare.transcriptionTimedOut,
+      );
+      expect(h.controller.note, isNotNull);
+      await h.close();
+    });
+
+    test('a recognizer that needs the network is told apart', () async {
+      final h = await _harness();
+      h.voice.captures.single.addError(
+        const SttCaptureFailure(SttCaptureFailureKind.needsNetwork),
+      );
+      await _waitFor(() => h.controller.care == VoiceCare.needsNetwork);
+      await h.close();
+    });
+
+    test(
+      'a missing language pack is announced while listening goes on',
+      () async {
+        final h = await _harness(languageFellBack: true);
+        expect(h.controller.phase, VoicePhase.listening);
+        expect(h.controller.care, VoiceCare.languageFallback);
+        expect(h.controller.care!.blocking, isFalse);
+
+        // It informs about the capture only: the answer's phases get the line
+        // back once the words are in.
+        h.voice.captures.single.add(const SttResult('hola', true));
+        await _waitFor(() => h.controller.care == null);
+        await h.close();
+      },
+    );
+
+    test('the background pause says so and Continue resumes it', () async {
+      final h = await _harness();
+      await h.controller.onAppBackgrounded();
+      expect(h.controller.userPaused, isTrue);
+      expect(h.controller.care, VoiceCare.pausedByBackground);
+
+      // Coming back does not resume by itself.
+      h.controller.onAppResumed(appUnlocked: true);
+      expect(h.controller.userPaused, isTrue);
+      expect(h.controller.care, VoiceCare.pausedByBackground);
+
+      h.controller.playConversation();
+      await _waitFor(() => !h.controller.userPaused);
+      expect(h.controller.care, isNull);
+      await h.close();
+    });
+
+    test('an App Lock suspension is not worded as the background', () async {
+      final h = await _harness();
+      await h.controller.suspendForPrivacy();
+      expect(h.controller.userPaused, isTrue);
+      expect(h.controller.care, isNull);
+      await h.close();
+    });
+
+    test(
+      'a route change while listening reopens the microphone once',
+      () async {
+        final events = StreamController<LiveAudioEvent>.broadcast();
+        addTearDown(events.close);
+        final h = await _harness(audioEvents: () => events.stream);
+        expect(h.voice.captures, hasLength(1));
+
+        events.add(LiveAudioEvent.focusLost);
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        expect(h.voice.captures, hasLength(1));
+
+        events
+          ..add(LiveAudioEvent.routeChanged)
+          ..add(LiveAudioEvent.routeChanged);
+        await _waitFor(() => h.voice.captures.length == 2);
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        expect(h.voice.captures, hasLength(2));
+        expect(h.controller.care, VoiceCare.routeRestarted);
+        await h.close();
+      },
+    );
+
+    test('a route change while paused leaves the microphone closed', () async {
+      final events = StreamController<LiveAudioEvent>.broadcast();
+      addTearDown(events.close);
+      final h = await _harness(audioEvents: () => events.stream);
+      h.controller.pauseConversation();
+      await _waitFor(() => h.controller.userPaused);
+
+      events.add(LiveAudioEvent.routeChanged);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(h.voice.captures, hasLength(1));
+      await h.close();
+    });
   });
 }

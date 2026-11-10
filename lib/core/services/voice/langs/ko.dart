@@ -91,6 +91,8 @@ const _koVoiceMessages = <String, String>{
   'responseRequired': '헤르메스에 답변이 필요해요. 앱을 열어 계속해 주세요.',
   'stopNotSaved': '중지 요청을 안전하게 저장하지 못했어요. 다시 시도해 주세요.',
   'recognitionUnavailable': '음성 인식을 사용할 준비가 되지 않았어요 ({status}).',
+  'providerError': '음성 공급자 응답: {detail}',
+  'noAudioHeard': '아무 소리도 들리지 않아요. 마이크가 차량이나 헤드셋으로 연결되어 있지 않나요?',
 };
 
 // Shared strong markers use substring matching, so no Korean courtesy or

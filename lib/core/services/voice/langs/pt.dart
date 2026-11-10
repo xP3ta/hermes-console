@@ -233,7 +233,10 @@ const _ptVoiceMessages = <String, String>{
   "approvalRequired": "Hermes precisa da sua aprovação. Abra o app para revisar.",
   "responseRequired": "Hermes precisa da sua resposta. Abra o app para continuar.",
   "stopNotSaved": "Não foi possível salvar o Stop com segurança. Tente novamente.",
-  "recognitionUnavailable": "O reconhecimento de voz não está pronto ({status})."
+  "recognitionUnavailable": "O reconhecimento de voz não está pronto ({status}).",
+  "providerError": "O provedor de voz respondeu: {detail}",
+  "noAudioHeard":
+      "Não se ouve nada. O microfone é o do carro ou de um fone de ouvido?",
 };
 
 class _PtSpeechGrammar extends VoiceSpeechGrammar {
