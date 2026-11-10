@@ -66,7 +66,7 @@ jobs:
           docker run --rm \
             -v "$GITHUB_WORKSPACE:/repo:ro" \
             "$GITLEAKS_IMAGE" \
-            git /repo --no-banner --redact=100
+            git /repo --no-banner --redact=100 --log-opts=HEAD
 
       - name: Scan verified and unknown secrets with TruffleHog
         run: |
