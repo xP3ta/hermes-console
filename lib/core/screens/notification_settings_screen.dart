@@ -1,7 +1,8 @@
 import 'dart:async';
 import 'dart:io';
 // Notification settings. With the app open its own sockets raise local
-// notices; with it closed only the opt-in background listening can. The user
+// notices; with it closed the opt-in background listening keeps alerting; a running
+// turn is also followed (30 min) and announced without it. The user
 // chooses which events.
 import 'package:flutter/material.dart';
 

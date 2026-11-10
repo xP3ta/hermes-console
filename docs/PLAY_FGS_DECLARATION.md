@@ -8,9 +8,11 @@ SSH/SFTP `dataSync` en API ≤34. `HermesExternalDataSyncService` (notificación
 ID 257) mantiene únicamente SSH/SFTP `dataSync` en API ≥35.
 `HermesTurnKeepAliveService` (notificación ID 258, 1.4.0) mantiene `dataSync`
 solo mientras corre un turno que el usuario lanzó y la app acaba de pasar a
-segundo plano. Con la app cerrada solo sondea el servidor propio del usuario la
-escucha opt-in (la de 1.3.1, restaurada en 1.4.0), apagada hasta que el usuario
-la activa (ver «Escucha opt-in» más abajo). La app no usa Firebase, relay de
+segundo plano. Con la app cerrada también avisa, sin opt-in, la comprobación acotada
+(WorkManager, ≤10 min, una lectura al servidor propio para anunciar el final de
+ese turno; no corre con App Lock). La única que sondea de forma continua el
+servidor propio es la escucha opt-in (la de 1.3.1, restaurada en 1.4.0),
+apagada hasta que el usuario la activa (ver «Escucha opt-in» más abajo). La app no usa Firebase, relay de
 push ni otro servicio de terceros para los avisos.
 
 **Revisado**: 2026-11-10 para el candidato `1.4.0 (9812)`. Los tipos y los

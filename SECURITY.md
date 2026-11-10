@@ -27,9 +27,13 @@ directly affected.
 ## Notifications
 
 Console raises its notifications on the device. With the app open they come
-from its own connection to the user's Hermes; with the app closed only from
-the opt-in background listening (Settings > Notifications), which uses that
-same connection. Console uses no Firebase, push relay or other third-party
+from its own connection to the user's Hermes. With the app closed they come
+from three sources, all using that same connection: the opt-in background
+listening (Settings > Notifications; off by default, the only one that keeps
+watching Cron, Kanban and rooms), the turn service (on by default, switchable
+in Settings > Notifications, up to 30 minutes while a turn you started runs)
+and a bounded check (up to 10 minutes) that announces when that turn finishes.
+The last two need no opt-in and do not run under App Lock. Console uses no Firebase, push relay or other third-party
 service for notifications. Reports about notification content shown on a
 locked device, tap payloads, or actions taken from a notification are in
 scope.

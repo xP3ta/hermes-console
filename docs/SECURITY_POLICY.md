@@ -123,7 +123,7 @@ Keystore; la caché en memoria no se persiste.
 |----------------------|-----------------------------------------------|
 | INTERNET             | Conexión al servidor Hermes del propio usuario (imprescindible) |
 | ACCESS_NETWORK_STATE | Reintento inmediato al recuperar conectividad  |
-| POST_NOTIFICATIONS   | Notificaciones locales de respuestas, aprobaciones y preguntas; con la app cerrada solo las de la escucha opt-in (conexión propia con el servidor, sin Firebase ni terceros) |
+| POST_NOTIFICATIONS   | Notificaciones locales de respuestas, aprobaciones y preguntas; con la app cerrada, las de la escucha opt-in (continua), las del servicio del turno (≤30 min, activo por defecto) y las de la comprobación acotada (≤10 min) que avisa del final de ese turno; sin opt-in estas dos, ninguna con App Lock (conexión propia con el servidor, sin Firebase ni terceros) |
 | POST_PROMOTED_NOTIFICATIONS | Live Updates de Android 16 para un turno en marcha |
 | RECORD_AUDIO         | Dictado y conversación iniciados por el usuario |
 | MODIFY_AUDIO_SETTINGS | Audio mode of the opt-in GPT-Live WebRTC session (flutter_webrtc); normal permission |

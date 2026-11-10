@@ -71,8 +71,9 @@ WHAT YOU GET
   one view. On tablets and open foldables chat and workspace sit side by side.
 • Approvals for the agent's actions, answerable from the notification.
 • Live notification for a running turn, with Stop.
-• Alerts with the app closed only if you turn on the optional listening in
-  Settings > Notifications; no Firebase or third-party service.
+• Alerts with the app closed: a running turn you started is followed for up to
+  30 minutes and its end is announced; continuous alerts only if you turn on the
+  optional listening in Settings > Notifications. No Firebase or third parties.
 • Launcher widgets that resize.
 • Attachments with visible progress.
 • Several Hermes connections, a read-only mode and an optional App Lock with your
@@ -139,8 +140,9 @@ QUÉ OBTIENES
 • Aprobaciones de las acciones del agente, que puedes responder desde la
   notificación.
 • Notificación en vivo de un turno en marcha, con Parar.
-• Avisos con la app cerrada solo si activas la escucha opcional en Ajustes >
-  Notificaciones; sin Firebase ni servicios de terceros.
+• Avisos con la app cerrada: se sigue un turno que lanzaste hasta 30 minutos y
+  se avisa de su final; avisos continuos solo si activas la escucha opcional en
+  Ajustes > Notificaciones. Sin Firebase ni terceros.
 • Widgets del escritorio que cambian de tamaño.
 • Adjuntos con progreso visible.
 • Varias conexiones a Hermes, modo de solo lectura y un App Lock opcional con la
@@ -178,7 +180,7 @@ What's new in 1.4.0:
 • Artifacts: a conversation's images, files and links in one view.
 • Tablets and foldables: chat and workspace side by side.
 • Subagents with a live list and detail; new look for the running turn.
-• Alerts with the app closed: the optional listening in Settings > Notifications, as in 1.3.1.
+• Alerts with the app closed: a running turn is followed and its end announced; the rest need the optional listening.
 • Haptics and fewer loading flickers.
 • The Bots and Rooms widgets are removed.
 ```
@@ -191,7 +193,7 @@ Novedades de la 1.4.0:
 • Artefactos: imágenes, archivos y enlaces de la conversación en una vista.
 • Tablet y plegable: chat y trabajo lado a lado.
 • Subagentes con lista y detalle en vivo; nuevo aspecto del turno en curso.
-• Avisos con la app cerrada: la escucha opcional de Ajustes > Notificaciones, como en la 1.3.1.
+• Avisos con la app cerrada: se sigue un turno en marcha y se avisa de su final; el resto requiere la escucha opcional.
 • Hápticos y menos parpadeos.
 • Los widgets Bots y Salas se retiran.
 ```
