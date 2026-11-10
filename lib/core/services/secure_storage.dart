@@ -95,7 +95,8 @@ class SecureStorage {
   //
   // Todo lo de SSH vive aquí por simplicidad y porque la credencial (clave
   // privada / contraseña / passphrase) es sensible y debe ir al Keystore.
-  // Campos: user, host, port, method, password, privkey, passphrase, hostkey.
+  // Campos: user, host, port, method, session (tipo de sesión del terminal,
+  // no secreto), password, privkey, passphrase, hostkey, tunnel (dashboard host:port behind an SSH tunnel).
 
   static String _sshKey(String connectionId, String field) =>
       'ssh_${field}_$connectionId';
@@ -112,10 +113,12 @@ class SecureStorage {
       'host',
       'port',
       'method',
+      'session',
       'password',
       'privkey',
       'passphrase',
       'hostkey',
+      'tunnel',
     ]) {
       await _storage.delete(key: _sshKey(connectionId, f));
     }

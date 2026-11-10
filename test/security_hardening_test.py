@@ -118,8 +118,66 @@ class GatewayMutationFenceSourceTest(unittest.TestCase):
             "Future<DesktopRedirectDisposition> redirect(", "Future<void> interrupt("
         )
         for method in (steer, redirect):
-            self.assertIn("_requestExclusiveSessionMutation", method)
-            self.assertNotIn("await _request(", method)
+            self.assertIn("await _correction(", method)
+            self.assertNotIn("_request(", method)
+            self.assertNotIn("_requestConnected(", method)
+
+        # Follow the shared helper instead of demanding a direct legacy call
+        # in each public entrypoint. Canonical corrections carry a proven
+        # session and execution generation; legacy corrections still require
+        # the same exclusive capability and current transport proof.
+        correction = self._method_body(
+            "Future<Map<String, dynamic>> _correction(", "Future<void> steer("
+        )
+        self.assertIn("return _requestExclusiveSessionMutation(method, {", correction)
+        self.assertNotIn("_request(", correction)
+        self.assertIn("_sessionAuthority.isCanonical", correction)
+        self.assertIn("await _canonicalNow()", correction)
+        self.assertIn("_readyCanonicalLedger(", correction)
+        self.assertIn("_validatedRuntimeId(method, runtimeSessionId)", correction)
+        self.assertIn("'session_id': ledger.sessionId", correction)
+        self.assertIn("'execution_generation': ledger.currentGeneration", correction)
+        self.assertIn("'profile': ledger.profile", correction)
+
+        ready = self._method_body(
+            "CanonicalSessionLedger _readyCanonicalLedger(",
+            "Future<DesktopSessionSnapshot> _createCanonical(",
+        )
+        self.assertIn("ledger == null || !ledger.isSendReady", ready)
+        self.assertIn("throw TuiGatewayRpcError(", ready)
+        exclusive = self._method_body(
+            "Future<Map<String, dynamic>> _requestExclusiveSessionMutation(",
+            "int _canonicalSubmissionCounter",
+        )
+        self.assertIn("await _requireExclusiveSubmitCapabilityProof(", exclusive)
+        self.assertIn("proof.generation != _socketGeneration", exclusive)
+        self.assertIn("!identical(_channel, proof.channel)", exclusive)
+        self.assertIn("!_connected", exclusive)
+
+    def test_correction_guard_rejects_legacy_exclusive_fence_bypass(self):
+        # A negative control is meaningful only if the unchanged source passes.
+        self.test_steer_and_redirect_use_the_exclusive_session_fence()
+        correction = self._method_body(
+            "Future<Map<String, dynamic>> _correction(", "Future<void> steer("
+        )
+        guarded = "return _requestExclusiveSessionMutation(method, {"
+        self.assertEqual(correction.count(guarded), 1)
+        mutant = correction.replace(guarded, "return _requestConnected(method, {", 1)
+        with mock.patch.object(self, "gateway", self.gateway.replace(correction, mutant, 1)):
+            with self.assertRaises(AssertionError):
+                self.test_steer_and_redirect_use_the_exclusive_session_fence()
+
+    def test_correction_guard_rejects_missing_canonical_execution_generation(self):
+        self.test_steer_and_redirect_use_the_exclusive_session_fence()
+        correction = self._method_body(
+            "Future<Map<String, dynamic>> _correction(", "Future<void> steer("
+        )
+        generation = "'execution_generation': ledger.currentGeneration,"
+        self.assertEqual(correction.count(generation), 1)
+        mutant = correction.replace(generation, "", 1)
+        with mock.patch.object(self, "gateway", self.gateway.replace(correction, mutant, 1)):
+            with self.assertRaises(AssertionError):
+                self.test_steer_and_redirect_use_the_exclusive_session_fence()
 
 
 class BotOwnedNavigationSourceTest(unittest.TestCase):

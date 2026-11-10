@@ -30,7 +30,7 @@ class TransportPrivacy {
   /// Clasifica [url] según su esquema y, si es cleartext, según si el host
   /// es de red privada o público.
   ///
-  /// Acepta URLs sin esquema (p.ej. `192.168.1.5:8642`): se asume `http://`
+  /// Acepta URLs sin esquema (p.ej. `192.0.2.5:8642`): se asume `http://`
   /// como la app hace al normalizar (ver `SavedConnection.normalizeHostAndPort`).
   /// URLs vacías o irreconocibles devuelven [TransportPrivacyClass.secure]
   /// (no hay host que avisar todavía).
@@ -72,6 +72,39 @@ class TransportPrivacy {
     return url;
   }
 
+  /// Whether credentials may be sent to [url] with nobody at the keyboard (a
+  /// push that reads a transcript, a pairing code fetched in the background).
+  /// The app can be open on any Wi-Fi when that happens, so "private address"
+  /// is not enough: a rogue network answers for a LAN IP, a `.local` name or
+  /// a bare host name just as well. Only a path nobody on the local network
+  /// can read qualifies: TLS, loopback, or a Tailscale address/name while a
+  /// VPN interface is up ([overlayActive]; the tunnel is WireGuard).
+  static bool isEncryptedPath(String url, {bool overlayActive = false}) {
+    var raw = url.trim();
+    if (raw.isEmpty) return false;
+    if (!raw.contains('://')) {
+      if (!raw.startsWith('[') && ':'.allMatches(raw).length > 1) {
+        raw = '[$raw]';
+      }
+      raw = 'http://$raw';
+    }
+    final uri = Uri.tryParse(raw);
+    if (uri == null || uri.host.isEmpty) return false;
+    final scheme = uri.scheme.toLowerCase();
+    if (scheme == 'https' || scheme == 'wss') return true;
+    if (scheme != 'http' && scheme != 'ws') return false;
+    final h = uri.host.toLowerCase();
+    if (h == 'localhost' || h == '::1') return true;
+    final octets = _ipv4Octets(h);
+    if (octets != null && octets[0] == 127) return true;
+    if (!overlayActive) return false;
+    if (h.endsWith('.ts.net')) return true;
+    return octets != null &&
+        octets[0] == 100 &&
+        octets[1] >= 64 &&
+        octets[1] <= 127;
+  }
+
   /// True si [host] pertenece a una red que el usuario controla directamente:
   /// loopback, LAN privada (RFC 1918), CGNAT de Tailscale (100.64.0.0/10),
   /// MagicDNS de Tailscale (`*.ts.net`) o `localhost`/`*.local`.
@@ -99,12 +132,18 @@ class TransportPrivacy {
     return false;
   }
 
+  static final RegExp _octet = RegExp(r'^(0|[1-9][0-9]{0,2})$');
+
   /// Devuelve los 4 octetos de [host] si es una IPv4 literal, o null.
+  ///
+  /// Only canonical decimal octets: `0127.0.0.1` (octal to some resolvers),
+  /// `0x7f.0.0.1` or `+1.0.0.1` are not read as an address at all.
   static List<int>? _ipv4Octets(String host) {
     final parts = host.split('.');
     if (parts.length != 4) return null;
     final octets = <int>[];
     for (final p in parts) {
+      if (!_octet.hasMatch(p)) return null;
       final n = int.tryParse(p);
       if (n == null || n < 0 || n > 255) return null;
       octets.add(n);

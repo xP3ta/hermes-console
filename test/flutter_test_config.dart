@@ -24,6 +24,8 @@ Future<void> testExecutable(FutureOr<void> Function() testMain) async {
   // until they are ported, and the dock's own suites opt in with
   // resetForTesting(gestureDock: true).
   FeatureFlags.instance.resetForTesting();
+  // The Agents section is switched off in the app; its suites still test it.
+  FeatureFlags.instance.agentsSection = true;
   sqfliteFfiInit();
   final databaseDirectory = await Directory.systemTemp.createTemp(
     'hermes-sqflite-worker-',

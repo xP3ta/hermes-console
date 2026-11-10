@@ -9,3 +9,7 @@ GeneratedPluginRegistrant.java
 key.properties
 **/*.keystore
 **/*.jks
+
+# Google services config: Console builds without Firebase; never versioned.
+app/google-services.json
+**/google-services.json

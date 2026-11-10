@@ -2207,7 +2207,7 @@ class WorkflowContractTest(unittest.TestCase):
         self.assertIn("v1.2.9", policy)
         self.assertIn("86edaa150fabd33d8184f5b958400cabadacb49632f7ec50ecbe49608058d159", policy)
         self.assertIn(
-            "e3f8811963c2c1ab5eb7f62fd8ea86c5a3661bc98214017a720680019d6042c8",
+            "48d6da0ead3f18dc1aa599fdfe314b5ff7825fa834653e5aacd94322300cbe35",
             policy,
         )
 
@@ -2231,7 +2231,7 @@ class WorkflowContractTest(unittest.TestCase):
         self.assertIn("./tool/sbom/generate.sh", workflow)
         self.assertIn("git diff --exit-code -- sbom", workflow)
         self.assertIn(
-            "e3f8811963c2c1ab5eb7f62fd8ea86c5a3661bc98214017a720680019d6042c8",
+            "48d6da0ead3f18dc1aa599fdfe314b5ff7825fa834653e5aacd94322300cbe35",
             workflow,
         )
 
@@ -2620,7 +2620,7 @@ class ReleaseContractAndDoubleBuildTest(unittest.TestCase):
         )
         self.assertEqual(
             policy["source"]["authoritativeLockSha256"],
-            "e3f8811963c2c1ab5eb7f62fd8ea86c5a3661bc98214017a720680019d6042c8",
+            "48d6da0ead3f18dc1aa599fdfe314b5ff7825fa834653e5aacd94322300cbe35",
         )
         self.assertEqual(policy["android"]["packageId"], "dev.xpetalab.hermesconsole")
         self.assertEqual(set(policy["channels"]), {"direct-public", "play-private"})
@@ -2717,7 +2717,7 @@ class ReleaseContractAndDoubleBuildTest(unittest.TestCase):
         self.assertIn("git clone --no-local", source)
         self.assertIn("PUB_CACHE", source)
         self.assertIn("GRADLE_USER_HOME", source)
-        self.assertIn("e3f8811963c2c1ab5eb7f62fd8ea86c5a3661bc98214017a720680019d6042c8", source)
+        self.assertIn("48d6da0ead3f18dc1aa599fdfe314b5ff7825fa834653e5aacd94322300cbe35", source)
         self.assertIn("compare_rebuilds.py", source)
         self.assertIn("ANDROID_HOME", source)
         self.assertIn("ANDROID_SDK_ROOT", source)
@@ -2725,6 +2725,111 @@ class ReleaseContractAndDoubleBuildTest(unittest.TestCase):
         for tool in ("flutter", "git", "python3", "java", "sha256sum", "install", "mktemp", "mv"):
             self.assertIn(f'command -v "$tool"', source)
         self.assertNotIn("gh release", source)
+
+    def test_checked_in_lock_matches_every_local_reviewed_pin(self):
+        # A pubspec.lock change without a reviewed bump of the pins must fail here,
+        # by name, instead of only deep inside the double-build fixtures. The
+        # workflow pin is also asserted literally in WorkflowContractTest.
+        actual = hashlib.sha256((ROOT / "pubspec.lock").read_bytes()).hexdigest()
+        workflow = (ROOT / ".github/workflows/build-apk.yml").read_text(encoding="utf-8")
+        workflow_pins = [
+            line.split('"')[1].split()[0]
+            for line in workflow.splitlines()
+            if line.strip().startswith("echo \"") and line.strip().endswith('  pubspec.lock" \\')
+        ]
+        self.assertEqual(workflow_pins, [actual])
+        script = (ROOT / "tool/release/double_build.sh").read_text(encoding="utf-8")
+        pinned = [
+            line.split('"')[1]
+            for line in script.splitlines()
+            if line.startswith("readonly LOCK_SHA256=")
+        ]
+        self.assertEqual(pinned, [actual])
+        policy = json.loads(
+            (ROOT / "tool/release/release_contract.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(policy["source"]["authoritativeLockSha256"], actual)
+        distribution = (ROOT / "docs/RELEASE_DISTRIBUTION.md").read_text(encoding="utf-8")
+        self.assertIn(f"`{actual}`", distribution)
+
+    def test_workflow_lock_check_refuses_a_drifted_lock_before_flutter(self):
+        workflow = (ROOT / ".github/workflows/build-apk.yml").read_text(encoding="utf-8")
+        lines = workflow.splitlines()
+        index = next(
+            i for i, line in enumerate(lines) if line.strip().endswith('  pubspec.lock" \\')
+        )
+        self.assertEqual(lines[index + 1].strip(), "| sha256sum --strict -c -")
+        first_flutter = next(i for i, line in enumerate(lines) if "flutter" in line)
+        self.assertLess(index, first_flutter)
+        command = lines[index].strip()[: -len("\\")] + lines[index + 1].strip()
+        lock = (ROOT / "pubspec.lock").read_bytes()
+        for content, expected_ok in ((lock, True), (lock + b"# unreviewed drift\n", False)):
+            with tempfile.TemporaryDirectory(prefix="s09-wf-lock-") as temporary:
+                (Path(temporary) / "pubspec.lock").write_bytes(content)
+                result = subprocess.run(
+                    ["bash", "-c", f"set -Eeuo pipefail\n{command}"],
+                    cwd=temporary,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(result.returncode == 0, expected_ok, result.stdout + result.stderr)
+
+    def test_double_build_refuses_a_lock_that_is_not_the_reviewed_one(self):
+        with tempfile.TemporaryDirectory(prefix="s09-lock-drift-") as temporary:
+            root = Path(temporary)
+            source = root / "source"
+            source.mkdir()
+            git = Slice3BuildBindingTest()
+            git.git(source, "init")
+            git.git(source, "config", "user.email", "fixture@example.invalid")
+            git.git(source, "config", "user.name", "Fixture")
+            drifted = (ROOT / "pubspec.lock").read_bytes() + b"# unreviewed drift\n"
+            (source / "pubspec.lock").write_bytes(drifted)
+            (source / "pubspec.yaml").write_text(
+                "name: fixture\nversion: 1.2.3+4\n", encoding="utf-8"
+            )
+            git.git(source, "add", ".")
+            git.git(source, "commit", "-m", "fixture")
+            commit = git.git(source, "rev-parse", "HEAD").stdout.strip()
+            key_properties = root / "key.properties"
+            key_properties.write_text("storeFile=/nonexistent-fixture\n", encoding="utf-8")
+            tools = root / "tools"
+            tools.mkdir()
+            invoked = root / "flutter-invoked"
+            flutter = tools / "flutter"
+            flutter.write_text(
+                f"#!/bin/sh\ntouch '{invoked}'\nexit 0\n", encoding="utf-8"
+            )
+            flutter.chmod(0o700)
+            output = root / "double-output"
+            result = subprocess.run(
+                [
+                    "bash",
+                    str(ROOT / "tool/release/double_build.sh"),
+                    "direct-public",
+                    str(source),
+                    commit,
+                    str(key_properties),
+                    str(output),
+                    "ab" * 32,
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                env={
+                    **os.environ,
+                    "PATH": f"{tools}:{os.environ['PATH']}",
+                    "ANDROID_HOME": "/fixture/android-home",
+                    "ANDROID_SDK_ROOT": "/fixture/android-sdk-root",
+                    "JAVA_HOME": "/fixture/java-home",
+                },
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("did NOT match", result.stderr)
+            self.assertIn("clean double-build gate failed", result.stderr)
+            self.assertFalse(invoked.exists())
+            self.assertFalse((output / "double-build-manifest.json").exists())
 
     def test_release_gate_rejects_artifacts_not_emitted_by_the_bound_double_build(self):
         with tempfile.TemporaryDirectory(prefix="s09-double-build-") as temporary:

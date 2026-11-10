@@ -19,6 +19,9 @@ concurrency:
 jobs:
   classify:
     name: Classify core paths
+    # Pull requests from forks get a read-only GITHUB_TOKEN, so labelling
+    # would fail there. Skip them instead of widening permissions.
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
