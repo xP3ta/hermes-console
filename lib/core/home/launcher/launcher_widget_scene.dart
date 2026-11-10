@@ -347,9 +347,14 @@ class LwChatsScene {
     if (list == null) return const LwChatsScene(mood: LwMood.setup);
     final stale =
         list.updatedAtMs <= 0 || nowMs - list.updatedAtMs > lwStaleAfterMs;
+    // What runs is the chat's instance; after a switch the list can be
+    // another instance's, whose session ids say nothing here (the native
+    // renderer's `sameInstance`).
     final chatFresh =
         chat.updatedAtMs > 0 &&
         nowMs - chat.updatedAtMs <= lwStaleAfterMs &&
+        chat.instanceId != null &&
+        chat.instanceId == list.connectionId &&
         (chat.connectionState == HomeWidgetConnectionState.connected ||
             chat.connectionState == HomeWidgetConnectionState.connecting);
     final live = <String, HomeWidgetChatActivity>{
