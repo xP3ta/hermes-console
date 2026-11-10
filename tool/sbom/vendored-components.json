@@ -1,0 +1,30 @@
+[
+  {
+    "name": "noVNC",
+    "version": "1.5.0",
+    "purl": "pkg:github/novnc/noVNC@v1.5.0",
+    "license": "MPL-2.0",
+    "licenseEvidence": "assets/novnc/LICENSE.txt",
+    "paths": ["assets/novnc/core"],
+    "exclude": ["assets/novnc/core/crypto/des.js"],
+    "note": "Unmodified upstream core of the v1.5.0 tag."
+  },
+  {
+    "name": "noVNC-des",
+    "version": "1.5.0",
+    "purl": "pkg:github/novnc/noVNC@v1.5.0#core/crypto/des.js",
+    "license": "LicenseRef-noVNC-DES",
+    "licenseEvidence": "LICENSES/LicenseRef-noVNC-DES.txt",
+    "paths": ["assets/novnc/core/crypto/des.js"],
+    "note": "Part of the noVNC v1.5.0 tag under its own BSD-style grant."
+  },
+  {
+    "name": "pako",
+    "version": "1.0.3",
+    "purl": "pkg:github/novnc/noVNC@v1.5.0#vendor/pako",
+    "license": "MIT",
+    "licenseEvidence": "assets/novnc/vendor/pako/LICENSE",
+    "paths": ["assets/novnc/vendor/pako"],
+    "note": "noVNC's ES-module port of pako 1.0.3, as shipped in noVNC v1.5.0."
+  }
+]

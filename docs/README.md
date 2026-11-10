@@ -19,7 +19,8 @@
 **Releases**
 
 - [Changelog](../CHANGELOG.md)
-- [Release notes 1.2.15](RELEASE_1.2.15_NOTES.md) (earlier: [1.2.13](RELEASE_1.2.13_NOTES.md),
+- [Release notes 1.4.0](release/1.4.0/GITHUB_RELEASE_NOTES.md) (earlier: [1.3.1](release/1.3.1/GITHUB_RELEASE_NOTES.md),
+  [1.2.15](RELEASE_1.2.15_NOTES.md), [1.2.13](RELEASE_1.2.13_NOTES.md),
   [1.2.12](RELEASE_1.2.12_NOTES.md), [1.2.11](RELEASE_1.2.11_NOTES.md),
   [1.2.10](RELEASE_1.2.10_NOTES.md), [1.2.9](RELEASE_1.2.9_NOTES.md))
 - [Release and distribution](RELEASE_DISTRIBUTION.md)

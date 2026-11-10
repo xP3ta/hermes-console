@@ -36,6 +36,7 @@ path = [
   "assets/icon/**",
   "docs/**",
   "lib/**",
+  "shaders/liquid_glass.frag",
   "sbom/**",
   "scripts/**",
   "server-patches/**",
@@ -114,6 +115,15 @@ precedence = "override"
 SPDX-FileCopyrightText = "Simple Icons contributors"
 SPDX-License-Identifier = "CC0-1.0"
 
+# Link brand glyphs of «Artefactos»: Hermes Desktop's host table with
+# Simple Icons 16.8.0 path data (CC0-1.0); see ASSET_PROVENANCE.md. Brand
+# marks remain their owners'.
+[[annotations]]
+path = "lib/core/widgets/link_brand_glyphs.dart"
+precedence = "override"
+SPDX-FileCopyrightText = "Simple Icons contributors"
+SPDX-License-Identifier = "CC0-1.0"
+
 # Provider-logo path data copied from LobeHub Icons
 # (@lobehub/icons-static-svg@1.95.1, MIT); see ASSET_PROVENANCE.md and
 # THIRD_PARTY_NOTICES.md. Brand marks remain their owners'.
@@ -138,3 +148,92 @@ precedence = "override"
 SPDX-FileCopyrightText = "Copyright (c) Obtainium contributors"
 SPDX-License-Identifier = "GPL-3.0-only"
 
+# noVNC core (vendored for the bot-screen viewer). The library default is
+# MPL-2.0; see assets/novnc/LICENSE.txt and assets/novnc/docs/LICENSE.MPL-2.0.
+# core/crypto/des.js keeps its own BSD-style grant and is annotated apart.
+[[annotations]]
+path = [
+  "assets/novnc/core/*.js",
+  "assets/novnc/core/decoders/**",
+  "assets/novnc/core/input/**",
+  "assets/novnc/core/util/**",
+  "assets/novnc/core/crypto/aes.js",
+  "assets/novnc/core/crypto/bigint.js",
+  "assets/novnc/core/crypto/crypto.js",
+  "assets/novnc/core/crypto/dh.js",
+  "assets/novnc/core/crypto/md5.js",
+  "assets/novnc/core/crypto/rsa.js",
+  "assets/novnc/LICENSE.txt",
+  "assets/novnc/docs/LICENSE.MPL-2.0",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "Copyright (C) The noVNC Authors"
+SPDX-License-Identifier = "MPL-2.0"
+
+[[annotations]]
+path = "assets/novnc/core/crypto/des.js"
+precedence = "override"
+SPDX-FileCopyrightText = [
+  "Copyright (C) 1999 AT&T Laboratories Cambridge",
+  "Copyright (c) 1996 Widget Workshop, Inc.",
+  "Copyright (C) 1996 Jef Poskanzer",
+]
+SPDX-License-Identifier = "LicenseRef-noVNC-DES"
+
+# pako, bundled by noVNC for zlib in the browser.
+[[annotations]]
+path = "assets/novnc/vendor/pako/**"
+precedence = "override"
+SPDX-FileCopyrightText = "Copyright (C) 2014-2016 Vitaly Puzrin"
+SPDX-License-Identifier = "MIT"
+
+# Project-authored pages that load the vendored noVNC core and relay its
+# socket.
+[[annotations]]
+path = [
+  "assets/novnc/bridge.html",
+  "assets/novnc/null-origin-socket.js",
+  "assets/novnc/ws-relay.html",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "Copyright (c) 2026 XPeta Lab"
+SPDX-License-Identifier = "GPL-3.0-only"
+
+# Hermes Desktop's in-page act engine and overlay (hermes-agent,
+# apps/desktop/src/lib/preview-act), generated with one Console privacy
+# patch; see THIRD_PARTY_NOTICES.md and tool/browser/.
+[[annotations]]
+path = "lib/core/browser/hermes_preview_engine.g.dart"
+precedence = "override"
+SPDX-FileCopyrightText = "Copyright (c) 2025 Nous Research"
+SPDX-License-Identifier = "MIT"
+
+# Console's port of preview-act.ts: its script templates are copied from
+# Hermes Desktop (MIT); the rest is this project's.
+[[annotations]]
+path = "lib/core/browser/agent_preview_act.dart"
+precedence = "override"
+SPDX-FileCopyrightText = [
+  "Copyright (c) 2026 XPeta Lab",
+  "Copyright (c) 2025 Nous Research",
+]
+SPDX-License-Identifier = "GPL-3.0-only AND MIT"
+
+# The live chat's ten icons: frame strips derived from the MIT-licensed
+# Generative Icons library (https://generativeicons.com, LottieFiles). See
+# assets/chat_icons/LICENSE.txt and ASSET_PROVENANCE.md.
+[[annotations]]
+path = "assets/chat_icons/*.webp"
+precedence = "override"
+SPDX-FileCopyrightText = "Generative Icons (LottieFiles); frame strips Copyright (c) 2026 XPeta Lab"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = [
+  "assets/chat_icons/LICENSE.txt",
+  "assets/chat_icons/SOURCES.json",
+  "assets/chat_icons/atlas.json",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "Copyright (c) 2026 XPeta Lab"
+SPDX-License-Identifier = "GPL-3.0-only"

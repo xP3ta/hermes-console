@@ -1,12 +1,8 @@
 # Privacy Policy — Hermes Console
 
-> **DRAFT of proposed changes for the owner's review. This is not the deployed
-> policy.** The date below is deliberately unchanged; the owner decides the
-> final wording, the date and the declaration made to Google Play.
+**Last updated:** 2026-11-10
 
-**Last updated:** 2026-10-12
-
-**Release scope:** `1.2.15 (9540)`. This file is the canonical policy for the
+**Release scope:** `1.4.0 (9812)`. This file is the canonical policy for the
 current source. The deployed Spanish and English pages must match this revision
 and identify the same date; a responding URL alone is not release evidence.
 
@@ -78,6 +74,17 @@ service under that provider's terms:
   allow one when asked, opening that embed loads a page from the service in a
   sandboxed web view, so that service sees your IP address and browser. The
   choice is stored on the device only.
+- Integrated browser (Workspace, and web links you tap in a chat): when you
+  open a page, type an address or let the agent show you one, the web view
+  loads that page directly from the site's own server, so that site (and its
+  own third-party content) sees your IP address and browser, and may store
+  cookies or site data in the app's web view, exactly as in any browser. It
+  only loads `http` and `https` addresses, adds no channel that lets a page
+  call into the app, and Console keeps no browsing history of its own and sends
+  none to XPeta Lab. If the agent in your chat asks to read a page it opened,
+  the text of that page goes to your Hermes server as the result of that tool
+  call. Opening a page in the system browser instead hands only its address to
+  the browser you have installed.
 - SSH and SFTP: if you add an SSH host, Console connects directly to the host
   you enter; the host, user and credentials you save stay on the device.
 - Signing in with your account: if your Dashboard uses an account sign-in,
@@ -87,6 +94,11 @@ service under that provider's terms:
   open-source ZXing library and runs entirely on-device.
   Camera frames, QR contents, decoded results and scanner metrics are not sent
   to XPeta Lab, Google or any other service.
+
+- Notifications are raised on the device. With the app closed they come only
+  from the opt-in background listening, over your own connection to your
+  server. Console uses no Firebase, push relay or other third-party service
+  for notifications.
 
 Petdex assets and optional speech/AI models are downloaded from Petdex,
 Hugging Face, or GitHub. These downloads do not contain conversation content,

@@ -1,7 +1,8 @@
 # Google Play listing — Hermes Console
 
-Listing text and assets for `1.3.1` (build 9650; the
-1.3.0 texts are kept in [`release/1.3.0/`](release/1.3.0/)). Default language: **English
+Listing text and assets for `1.4.0` (build 9812; the
+1.3.1 and 1.3.0 texts are kept in [`release/1.3.1/`](release/1.3.1/) and
+[`release/1.3.0/`](release/1.3.0/)). Default language: **English
 (United States)**, followed by the Spanish (Spain) translation. The listing is
 not authorised for submission until the signed AAB, the deployed privacy policy,
 Data Safety, the foreground-service videos, the screenshots and the emulator QA
@@ -57,16 +58,21 @@ WHAT YOU GET
   copyable code blocks.
 • Voice: talk inside the chat, dictate a message, hear replies read aloud. Speech
   can run on the phone or on your Hermes server.
-• A Home board of widgets for what is happening now, chats, bots, rooms, scheduled
-  jobs and tasks.
+• A Home board of widgets for what is happening now, chats, scheduled jobs and
+  tasks.
 • Bots and rooms: every Hermes profile has its own identity, and several can talk
   in a room with @mentions.
 • Cron jobs and a task board or list, with a mute switch for each one.
 • Models, skills, tools, MCP servers and memory, edited from the phone.
 • SSH terminal and SFTP, inline viewers for PDFs, images and Markdown, and the
   files Hermes generates.
+• Workspace next to the chat: full-screen terminal, a local Git review (no push)
+  and an in-app browser, plus the images, files and links of a conversation in
+  one view. On tablets and open foldables chat and workspace sit side by side.
 • Approvals for the agent's actions, answerable from the notification.
 • Live notification for a running turn, with Stop.
+• Alerts with the app closed only if you turn on the optional listening in
+  Settings > Notifications; no Firebase or third-party service.
 • Launcher widgets that resize.
 • Attachments with visible progress.
 • Several Hermes connections, a read-only mode and an optional App Lock with your
@@ -83,7 +89,7 @@ Console is a client, not an AI service, and it does not host your conversations.
 You need a compatible Hermes Agent that you run. Your messages and attachments go
 to that server, which may pass them to the model providers you configured there.
 Some optional features (downloading pets or voice models, GPT-Live voice when your
-server enables it) contact the services involved; Console explains those flows.
+server enables it, the web pages you open in the in-app browser) contact the services involved; Console explains those flows.
 
 Console is an independent, unofficial app. It is not affiliated with, sponsored by
 or maintained by Nous Research or the authors of Hermes Agent.
@@ -117,8 +123,8 @@ QUÉ OBTIENES
   Markdown en streaming y bloques de código copiables.
 • Voz: habla dentro del chat, dicta un mensaje, escucha las respuestas en voz
   alta. La voz puede funcionar en el móvil o en tu servidor Hermes.
-• Un tablero de Inicio con widgets de lo que pasa ahora, chats, bots, salas,
-  tareas programadas y tareas.
+• Un tablero de Inicio con widgets de lo que pasa ahora, chats, tareas
+  programadas y tareas.
 • Bots y salas: cada perfil de Hermes tiene su propia identidad, y varios pueden
   conversar en una sala con @menciones.
 • Tareas programadas de Cron y un tablero o lista de tareas, con un interruptor
@@ -126,9 +132,15 @@ QUÉ OBTIENES
 • Modelos, skills, herramientas, servidores MCP y memoria, editados desde el móvil.
 • Terminal SSH y SFTP, visores integrados de PDF, imágenes y Markdown, y los
   archivos que genera Hermes.
+• Espacio de trabajo junto al chat: terminal a pantalla completa, revisión de Git
+  local (sin push) y navegador integrado, además de las imágenes, archivos y
+  enlaces de la conversación en una vista. En tablets y plegables abiertos, chat
+  y trabajo van lado a lado.
 • Aprobaciones de las acciones del agente, que puedes responder desde la
   notificación.
 • Notificación en vivo de un turno en marcha, con Parar.
+• Avisos con la app cerrada solo si activas la escucha opcional en Ajustes >
+  Notificaciones; sin Firebase ni servicios de terceros.
 • Widgets del escritorio que cambian de tamaño.
 • Adjuntos con progreso visible.
 • Varias conexiones a Hermes, modo de solo lectura y un App Lock opcional con la
@@ -145,28 +157,43 @@ Console es un cliente, no un servicio de IA, y no aloja tus conversaciones.
 Necesitas un Hermes Agent compatible que ejecutes tú. Tus mensajes y adjuntos van
 a ese servidor, que puede pasarlos a los proveedores de modelos que hayas
 configurado allí. Algunas funciones opcionales (descargar mascotas o modelos de
-voz, voz GPT-Live cuando tu servidor la activa) contactan con los servicios
+voz, voz GPT-Live cuando tu servidor la activa, las páginas web que abres en el
+navegador integrado) contactan con los servicios
 implicados; Console explica esos flujos.
 
 Console es una aplicación independiente y no oficial. No está afiliada,
 patrocinada ni mantenida por Nous Research ni por los autores de Hermes Agent.
 
-## What's new — `1.3.1`
+## What's new — `1.4.0`
 
-The same texts are kept as files in [`release/1.3.1/`](release/1.3.1/). Every
-statement below is taken from the commits between the previous release and this
-one; nothing promises automatic setup, discovery or Cloud.
+The same texts are kept as files in [`release/1.4.0/`](release/1.4.0/). Every
+statement below comes from the `1.4.0` section of the changelog; nothing
+promises automatic setup, discovery or Cloud.
 
 ### English (United States), maximum 500 characters
 
 ```text
-Fixes and polish. Named profiles open and keep their chats again, with no false "Messages missing". Works with Hermes 0.22.4. The whole interface, notifications, widgets and voice come in nine languages. Sending a photo or file no longer asks to confirm. Dialogs no longer close the chat on foldables and tablets. The "Sign in" notice clears itself, a chat no longer stays on "Working" or "Offline", the list shows running chats, and Back in the guided setup no longer freezes the app.
+What's new in 1.4.0:
+• Terminal, Git and an in-app browser in the chat options.
+• Artifacts: a conversation's images, files and links in one view.
+• Tablets and foldables: chat and workspace side by side.
+• Subagents with a live list and detail; new look for the running turn.
+• Alerts with the app closed: the optional listening in Settings > Notifications, as in 1.3.1.
+• Haptics and fewer loading flickers.
+• The Bots and Rooms widgets are removed.
 ```
 
 ### Español (España), máximo 500 caracteres
 
 ```text
-Correcciones y mejoras. Los perfiles con nombre vuelven a abrir y conservar sus chats, sin el falso «Faltan mensajes». Compatible con Hermes 0.22.4. Interfaz, avisos, widgets y voz en nueve idiomas. Enviar una foto o archivo ya no pide confirmación. Los diálogos no cierran el chat en plegables y tabletas. El aviso «Iniciar sesión» se quita solo, un chat no se queda en «Trabajando» ni «Sin conexión», la lista muestra los chats en marcha y Atrás en la configuración guiada ya no congela la app.
+Novedades de la 1.4.0:
+• Terminal, Git y navegador integrados en las opciones del chat.
+• Artefactos: imágenes, archivos y enlaces de la conversación en una vista.
+• Tablet y plegable: chat y trabajo lado a lado.
+• Subagentes con lista y detalle en vivo; nuevo aspecto del turno en curso.
+• Avisos con la app cerrada: la escucha opcional de Ajustes > Notificaciones, como en la 1.3.1.
+• Hápticos y menos parpadeos.
+• Los widgets Bots y Salas se retiran.
 ```
 
 ## Graphic assets
@@ -175,7 +202,8 @@ Correcciones y mejoras. Los perfiles con nombre vuelven a abrir y conservar sus 
   (`assets/icon/`).
 - **Feature graphic** (1024 x 500): `docs/store/feature-graphic.png`.
 - **Phone screenshots**: eight, in this order, from the 1.2.15 set in
-  `docs/screenshots/1.2.15/`:
+  `docs/screenshots/1.2.15/` (no 1.4.0 set has been captured; the Home shot must
+  not show the retired Bots and Rooms widgets):
 
   | # | File | Shows |
   |---|---|---|
