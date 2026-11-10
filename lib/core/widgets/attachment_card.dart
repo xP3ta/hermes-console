@@ -6,7 +6,6 @@ import 'dart:ui' as ui;
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:crypto/crypto.dart';
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:gal/gal.dart';
@@ -20,11 +19,14 @@ import '../services/generated_media_service.dart';
 import '../services/media_dimensions.dart';
 import '../services/media_prefetcher.dart';
 import '../theme/app_theme.dart';
-import '../design/modal.dart' show releaseTextFocusIfKeyboardHidden;
-import '../theme/motion.dart';
+import '../theme/theme_contrast.dart';
+import '../design/tokens.dart' show HermesRadius;
+import '../theme/motion.dart' show HermesMotion;
 import 'generated_image_card.dart';
 import 'hermes_app_bar.dart';
 import 'hermes_notice.dart';
+import 'media_viewer/media_viewer.dart';
+import 'save_to_device_feedback.dart' show saveFileToDevice;
 
 /// Tipo visual de adjunto, derivado del mime/extensión. Gobierna el badge de
 /// color y la etiqueta corta (estilo ChatGPT: "PDF", "DOC", "IMG"…).
@@ -125,6 +127,43 @@ Color _badgeColor(AttachmentKind kind) {
     AttachmentKind.image => const Color(0xFF2E9E5B),
     AttachmentKind.other => const Color(0xFF8A8F98),
   };
+}
+
+/// How much of a kind's colour tints its badge tile.
+const double _badgeTint = 0.16;
+
+/// The tint of a badge tile of [kind], drawn over the surface below it.
+Color attachmentBadgeTint(AttachmentKind kind) =>
+    _badgeColor(kind).withValues(alpha: _badgeTint);
+
+final Map<(AttachmentKind, int, double, bool), Color> _badgeInks = {};
+
+/// The colour of [kind] made readable over [under], the surface its badge
+/// sits on (through the badge's own tint when [tinted]): the hue stays, and
+/// the ink moves toward black or white only as far as [minimum] needs
+/// (4.5:1 for a label, 3:1 for an icon). The fixed kind colours were tuned
+/// for a dark page; on a light one some fell to 2.4:1.
+Color attachmentBadgeInk(
+  AttachmentKind kind,
+  Color under, {
+  double minimum = 4.5,
+  bool tinted = true,
+}) {
+  final key = (kind, under.toARGB32(), minimum, tinted);
+  return _badgeInks[key] ??= _readableBadgeInk(kind, under, minimum, tinted);
+}
+
+Color _readableBadgeInk(
+  AttachmentKind kind,
+  Color under,
+  double minimum,
+  bool tinted,
+) {
+  final hue = _badgeColor(kind);
+  final behind = tinted
+      ? ThemeContrast.composite(attachmentBadgeTint(kind), under)
+      : under;
+  return ThemeContrast.adjustForContrast(hue, [behind], minimum: minimum);
 }
 
 /// Tarjeta de adjunto estilo ChatGPT: imágenes como miniatura, documentos como
@@ -289,50 +328,92 @@ class AttachmentCard extends StatelessWidget {
     );
   }
 
+  /// The L2 chat design's file card (`v2-cadu-console.html` `.card`): the
+  /// type tile, the name, «PDF · 2,4 MB» in mono, and a chevron when it
+  /// opens. Only what is known: no page count, no reading time.
   Widget _fileCard(BuildContext context, AttachmentKind kind) {
     final colors = Theme.of(context).hermes;
+    // A card that opens is a button for TalkBack too (REVIEW-R5-B #19).
+    return Semantics(
+      container: onTap != null,
+      button: onTap != null,
+      child: _fileCardBody(colors, context, kind),
+    );
+  }
+
+  Widget _fileCardBody(
+    HermesThemeColors colors,
+    BuildContext context,
+    AttachmentKind kind,
+  ) {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        constraints: const BoxConstraints(maxWidth: 260),
-        padding: const EdgeInsets.all(8),
+        key: const ValueKey('attachment-file-card'),
+        constraints: const BoxConstraints(maxWidth: 360),
+        padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
           color: colors.surfaceVariant,
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(HermesRadius.floating),
           border: Border.all(color: colors.divider.withValues(alpha: 0.5)),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             _badge(context, kind),
-            const SizedBox(width: 10),
+            const SizedBox(width: 12),
+            // The chevron sits over the end of the text block, which keeps
+            // its room: only the badge and the gap are fixed, so a narrow
+            // card (a room's file row beside its three actions) shrinks the
+            // name instead of overflowing (gint26).
             Flexible(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
+              child: Stack(
+                alignment: AlignmentDirectional.centerEnd,
                 children: [
-                  Text(
-                    name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: colors.textPrimary,
-                      fontWeight: FontWeight.w600,
-                      fontSize: 13,
+                  Padding(
+                    padding: EdgeInsetsDirectional.only(
+                      end: onTap != null ? 28 : 0,
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: colors.textPrimary,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 14.5,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          _fileSubtitle(context, kind),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: uploadState == AttachmentUploadState.error
+                                ? colors.error
+                                : colors.textSecondary,
+                            fontFamily: 'monospace',
+                            fontSize: 11,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                  const SizedBox(height: 2),
-                  Text(
-                    _fileSubtitle(context, kind),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: uploadState == AttachmentUploadState.error
-                          ? colors.error
-                          : colors.textSecondary,
-                      fontSize: 11,
+                  if (onTap != null)
+                    PositionedDirectional(
+                      end: 0,
+                      child: Icon(
+                        Icons.chevron_right_rounded,
+                        key: const ValueKey('attachment-file-card-open'),
+                        size: 20,
+                        color: colors.textSecondary,
+                      ),
                     ),
-                  ),
                 ],
               ),
             ),
@@ -368,7 +449,14 @@ class AttachmentCard extends StatelessWidget {
             Icon(
               _tileIcon(kind),
               size: 22,
-              color: failed ? colors.error : _badgeColor(kind),
+              color: failed
+                  ? colors.error
+                  : attachmentBadgeInk(
+                      kind,
+                      colors.surfaceVariant,
+                      minimum: 3,
+                      tinted: false,
+                    ),
             ),
             const SizedBox(height: 4),
             // Fixed tile: the name may grow a little with the text scale but
@@ -459,22 +547,31 @@ class AttachmentCard extends StatelessWidget {
     );
   }
 
+  /// L2 `.ft`: the file type on a tile tinted with its colour.
   Widget _badge(BuildContext context, AttachmentKind kind) {
     final color = _badgeColor(kind);
+    final ink = attachmentBadgeInk(
+      kind,
+      Theme.of(context).hermes.surfaceVariant,
+    );
     return Container(
-      width: 40,
-      height: 44,
+      width: 46,
+      height: 56,
       alignment: Alignment.center,
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.16),
-        borderRadius: BorderRadius.circular(8),
+        color: attachmentBadgeTint(kind),
+        borderRadius: BorderRadius.circular(HermesRadius.control),
+        border: Border.all(color: color.withValues(alpha: 0.35)),
       ),
       child: Text(
         _badgeLabel(kind, name, Strings.of(context)),
+        maxLines: 1,
+        overflow: TextOverflow.clip,
         style: TextStyle(
-          color: color,
-          fontWeight: FontWeight.w800,
-          fontSize: 10,
+          color: ink,
+          fontFamily: 'monospace',
+          fontWeight: FontWeight.w700,
+          fontSize: 11,
           letterSpacing: 0.3,
         ),
       ),
@@ -812,13 +909,19 @@ class GeneratedMediaAttachmentCard extends StatefulWidget {
 
   static const int _readyMemoCapacity = 128;
 
+  /// M1: characters of decoded text previews the memo keeps across all
+  /// entries; past it the oldest previews are read again on remount.
+  static const int _readyMemoTextBudget = 1024 * 1024;
+
   /// Insertion-ordered, so the first entry is the least recently used.
-  static final Map<String, ({File file, int length})> _readyMemo = {};
+  /// [text]/[lines] keep a text file's decoded preview and whole-file line
+  /// count, so a remount neither reads nor decodes it again.
+  static final Map<String, _ReadyEntry> _readyMemo = {};
 
   @visibleForTesting
   static void clearReadyMemoForTesting() => _readyMemo.clear();
 
-  static ({File file, int length})? _recallReady(String key) {
+  static _ReadyEntry? _recallReady(String key) {
     final entry = _readyMemo.remove(key);
     if (entry == null) return null;
     // The cache may have been evicted or replaced on disk since.
@@ -829,11 +932,33 @@ class GeneratedMediaAttachmentCard extends StatefulWidget {
     return entry;
   }
 
-  static void _rememberReady(String key, File file, int length) {
+  static void _rememberReady(
+    String key,
+    File file,
+    int length, {
+    String? text,
+    int? lines,
+  }) {
     _readyMemo.remove(key);
-    _readyMemo[key] = (file: file, length: length);
+    _readyMemo[key] = (file: file, length: length, text: text, lines: lines);
     while (_readyMemo.length > _readyMemoCapacity) {
       _readyMemo.remove(_readyMemo.keys.first);
+    }
+    var chars = 0;
+    for (final entry in _readyMemo.values) {
+      chars += entry.text?.length ?? 0;
+    }
+    for (final MapEntry(key: older, :value) in _readyMemo.entries.toList()) {
+      if (chars <= _readyMemoTextBudget) break;
+      final text = value.text;
+      if (text == null) continue;
+      chars -= text.length;
+      _readyMemo[older] = (
+        file: value.file,
+        length: value.length,
+        text: null,
+        lines: value.lines,
+      );
     }
   }
 
@@ -842,12 +967,21 @@ class GeneratedMediaAttachmentCard extends StatefulWidget {
       _GeneratedMediaAttachmentCardState();
 }
 
+typedef _ReadyEntry = ({File file, int length, String? text, int? lines});
+
+/// M1: an inline text preview reads at most this much of the file; the
+/// full viewer reads the whole file when it opens.
+const int _textPreviewMaxBytes = 64 * 1024;
+
 class _GeneratedMediaAttachmentCardState
     extends State<GeneratedMediaAttachmentCard>
     with WidgetsBindingObserver {
   GeneratedFileStatus _status = GeneratedFileStatus.consent;
   File? _file;
   String? _text;
+
+  /// Lines of the whole file when [_text] holds only its first 64 KB.
+  int? _textLines;
   int _receivedBytes = 0;
   int? _totalBytes;
   String? _errorLabel;
@@ -913,7 +1047,12 @@ class _GeneratedMediaAttachmentCardState
           final length = cached.lengthSync();
           if (length > 0 && length <= _autoLimit) {
             GeneratedMediaAttachmentCard._rememberReady(key, cached, length);
-            remembered = (file: cached, length: length);
+            remembered = (
+              file: cached,
+              length: length,
+              text: null,
+              lines: null,
+            );
           }
         } catch (_) {
           // Evicted meanwhile: load normally.
@@ -922,7 +1061,9 @@ class _GeneratedMediaAttachmentCardState
     }
     if (remembered == null) return;
     _file = remembered.file;
-    _text = _readTextPreview(remembered.file, remembered.length);
+    _text =
+        remembered.text ?? _readTextPreview(remembered.file, remembered.length);
+    _textLines = remembered.lines;
     _receivedBytes = remembered.length;
     _totalBytes = remembered.length;
     _status = GeneratedFileStatus.ready;
@@ -951,6 +1092,7 @@ class _GeneratedMediaAttachmentCardState
       _autoLoadCancellation = null;
       _file = null;
       _text = null;
+      _textLines = null;
       _receivedBytes = 0;
       _totalBytes = widget.reference.sizeBytes;
       _errorLabel = null;
@@ -981,7 +1123,9 @@ class _GeneratedMediaAttachmentCardState
   }
 
   bool _isWithinViewport() {
-    final renderObject = context.findRenderObject();
+    final renderObject =
+        _contentKey.currentContext?.findRenderObject() ??
+        context.findRenderObject();
     if (renderObject is! RenderBox ||
         !renderObject.attached ||
         !renderObject.hasSize) {
@@ -1149,13 +1293,23 @@ class _GeneratedMediaAttachmentCardState
         return;
       }
       final text = _readTextPreview(file, length);
+      final lines = text != null && length > _textPreviewMaxBytes
+          ? await _countLines(file)
+          : null;
       if (!mounted || generation != _generation || _cancelled) return;
       if (memoKey != null) {
-        GeneratedMediaAttachmentCard._rememberReady(memoKey, file, length);
+        GeneratedMediaAttachmentCard._rememberReady(
+          memoKey,
+          file,
+          length,
+          text: text,
+          lines: lines,
+        );
       }
       setState(() {
         _file = file;
         _text = text;
+        _textLines = lines;
         _receivedBytes = length;
         _totalBytes = length;
         _status = GeneratedFileStatus.ready;
@@ -1195,8 +1349,18 @@ class _GeneratedMediaAttachmentCardState
       return null;
     }
     try {
-      final bytes = file.readAsBytesSync();
-      final text = utf8.decode(bytes, allowMalformed: false);
+      // M1: only the head; a 2 MB read and decode blocked the UI thread.
+      final Uint8List bytes;
+      final reader = file.openSync();
+      try {
+        bytes = reader.readSync(_textPreviewMaxBytes);
+      } finally {
+        reader.closeSync();
+      }
+      final text = utf8.decode(
+        length > bytes.length ? _wholeUtf8Prefix(bytes) : bytes,
+        allowMalformed: false,
+      );
       if (GeneratedMediaService.isTextLike(widget.reference) ||
           !text.contains('\u0000')) {
         return text;
@@ -1205,6 +1369,44 @@ class _GeneratedMediaAttachmentCardState
       return null;
     }
     return null;
+  }
+
+  /// [bytes] without a UTF-8 sequence cut at its end.
+  static Uint8List _wholeUtf8Prefix(Uint8List bytes) {
+    for (var back = 1; back <= 4 && back <= bytes.length; back++) {
+      final byte = bytes[bytes.length - back];
+      if (byte & 0xC0 == 0x80) continue; // continuation byte
+      final need = switch (byte) {
+        < 0x80 => 1,
+        >= 0xF0 => 4,
+        >= 0xE0 => 3,
+        _ => 2,
+      };
+      return need > back
+          ? Uint8List.sublistView(bytes, 0, bytes.length - back)
+          : bytes;
+    }
+    return bytes;
+  }
+
+  /// Lines of [file] as [LineSplitter] counts them, read in chunks.
+  static Future<int> _countLines(File file) async {
+    var lines = 0;
+    var last = -1;
+    var afterCr = false;
+    await for (final chunk in file.openRead()) {
+      for (final byte in chunk) {
+        if (byte == 0x0A) {
+          if (!afterCr) lines++;
+        } else if (byte == 0x0D) {
+          lines++;
+        }
+        afterCr = byte == 0x0D;
+        last = byte;
+      }
+    }
+    if (last != -1 && last != 0x0A && last != 0x0D) lines++;
+    return lines;
   }
 
   void _finishCancelled(int generation) {
@@ -1264,15 +1466,13 @@ class _GeneratedMediaAttachmentCardState
   Future<void> _save() async {
     final file = _file;
     if (file == null) return;
-    try {
-      await FilePicker.platform.saveFile(
-        dialogTitle: 'Console',
-        fileName: widget.reference.displayName,
-        bytes: await file.readAsBytes(),
-      );
-    } catch (_) {
-      if (mounted) _showActionError();
-    }
+    // Copied by blocks to the place chosen; a failure says why.
+    await saveFileToDevice(
+      context,
+      file,
+      name: widget.reference.displayName,
+      source: 'attachment_card',
+    );
   }
 
   Future<void> _open() async {
@@ -1281,11 +1481,16 @@ class _GeneratedMediaAttachmentCardState
     // A host-provided opener (the chat's in-app artifact viewer) takes text
     // too, so Markdown/HTML/code render natively instead of as raw source.
     if (_text != null && widget.onOpen == null) {
+      // The preview may hold only the head: the viewer gets the whole file.
+      final text = _textLines == null
+          ? _text!
+          : utf8.decode(await file.readAsBytes(), allowMalformed: true);
+      if (!mounted) return;
       await Navigator.of(context).push<void>(
         MaterialPageRoute(
           builder: (_) => GeneratedTextViewerScreen(
             name: widget.reference.displayName,
-            text: _text!,
+            text: text,
             sizeBytes: _receivedBytes,
             onShare: _share,
             onSave: _save,
@@ -1363,7 +1568,7 @@ class _GeneratedMediaAttachmentCardState
     if (child == null) return null;
     if (MediaQuery.maybeDisableAnimationsOf(context) ?? false) return child;
     return AnimatedSize(
-      duration: const Duration(milliseconds: 200),
+      duration: HermesMotion.base,
       curve: Curves.easeOut,
       alignment: Alignment.topLeft,
       child: child,
@@ -1388,8 +1593,33 @@ class _GeneratedMediaAttachmentCardState
     super.dispose();
   }
 
+  /// The card's own content, under the size animation: whether it is on
+  /// screen is measured on it, not on the animating box around it, which
+  /// can still be at an old (even empty) size (gint56: a video after a
+  /// zero-sized tile was never seen, so never loaded).
+  final GlobalKey _contentKey = GlobalKey(debugLabel: 'generated-media');
+
   @override
   Widget build(BuildContext context) {
+    final card = KeyedSubtree(key: _contentKey, child: _buildCard(context));
+    // F5 (REPORT-AUDITORIA-FLUIDEZ §3, A3/A4/A5): the download card giving
+    // way to the file's own card (a PDF page, a player, a text or HTML
+    // preview, the actions of a finished file) eases instead of jumping.
+    // A presized image already does it in its own frame. Instant with
+    // reduced motion.
+    if (_presizedImage ||
+        (MediaQuery.maybeDisableAnimationsOf(context) ?? false)) {
+      return card;
+    }
+    return AnimatedSize(
+      duration: HermesMotion.base,
+      curve: HermesMotion.emphasized,
+      alignment: AlignmentDirectional.topStart,
+      child: card,
+    );
+  }
+
+  Widget _buildCard(BuildContext context) {
     final file = _file;
     final mayOpen =
         file != null &&
@@ -1407,6 +1637,7 @@ class _GeneratedMediaAttachmentCardState
         return GeneratedTextPreviewCard(
           name: widget.reference.displayName,
           text: _text!,
+          lineCount: _textLines,
           sizeBytes: _receivedBytes,
           onOpen: _open,
           onShare: _share,
@@ -1464,10 +1695,14 @@ class GeneratedTextPreviewCard extends StatelessWidget {
   final VoidCallback onShare;
   final VoidCallback onSave;
 
+  /// Lines of the whole file when [text] is only its head.
+  final int? lineCount;
+
   const GeneratedTextPreviewCard({
     super.key,
     required this.name,
     required this.text,
+    this.lineCount,
     required this.sizeBytes,
     required this.onOpen,
     required this.onShare,
@@ -1480,7 +1715,8 @@ class GeneratedTextPreviewCard extends StatelessWidget {
     final colors = Theme.of(context).hermes;
     final lines = const LineSplitter().convert(text);
     final previewLines = lines.take(12).toList();
-    final truncated = lines.length > previewLines.length;
+    final totalLines = lineCount ?? lines.length;
+    final truncated = totalLines > previewLines.length;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 5),
       child: Column(
@@ -1528,7 +1764,7 @@ class GeneratedTextPreviewCard extends StatelessWidget {
                   const SizedBox(height: 8),
                   Text(
                     strings.genMediaTextSummary(
-                      lines.length,
+                      totalLines,
                       _formatFileBytes(sizeBytes),
                     ),
                     style: TextStyle(color: colors.textSecondary, fontSize: 11),
@@ -1585,6 +1821,8 @@ class GeneratedTextViewerScreen extends StatelessWidget {
     final colors = Theme.of(context).hermes;
     return Scaffold(
       appBar: HermesAppBar(
+        // No glass (Q9-CRISTAL): nothing scrolls under it.
+        glass: false,
         title: Text(name),
         actions: [
           IconButton(
@@ -1646,6 +1884,11 @@ class GeneratedPdfPreviewCard extends StatefulWidget {
   final VoidCallback onShare;
   final VoidCallback onSave;
 
+  /// Eases its own size changes. Off inside a card that already eases its
+  /// child ([GeneratedMediaAttachmentCard]): two nested size animations
+  /// retarget each other (REVIEW-T3-B).
+  final bool animateSize;
+
   const GeneratedPdfPreviewCard({
     super.key,
     required this.file,
@@ -1654,6 +1897,7 @@ class GeneratedPdfPreviewCard extends StatefulWidget {
     required this.onOpen,
     required this.onShare,
     required this.onSave,
+    this.animateSize = true,
   });
 
   @override
@@ -1719,28 +1963,17 @@ class _GeneratedPdfPreviewCardState extends State<GeneratedPdfPreviewCard> {
   Widget build(BuildContext context) {
     final strings = Strings.of(context);
     final colors = Theme.of(context).hermes;
+    final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 5),
       child: FutureBuilder<({Uint8List bytes, int pageCount, double aspectRatio})?>(
         future: _preview,
         builder: (context, snapshot) {
+          final loading = snapshot.connectionState != ConnectionState.done;
           final preview = snapshot.data;
-          if (snapshot.connectionState != ConnectionState.done) {
-            return Container(
-              key: const ValueKey<String>('generated-pdf-loading'),
-              width: 260,
-              height: 180,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: colors.surfaceVariant,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: colors.divider),
-              ),
-              child: const CircularProgressIndicator(strokeWidth: 2),
-            );
-          }
-          if (preview == null) {
-            return GeneratedFileCard(
+          final Widget card;
+          if (!loading && preview == null) {
+            card = GeneratedFileCard(
               name: widget.name,
               mimeType: 'application/pdf',
               status: GeneratedFileStatus.ready,
@@ -1751,90 +1984,133 @@ class _GeneratedPdfPreviewCardState extends State<GeneratedPdfPreviewCard> {
               onShare: widget.onShare,
               onSave: widget.onSave,
             );
+          } else {
+            card = _previewCard(strings, colors, preview);
           }
-          final aspectRatio = preview.aspectRatio.clamp(0.5, 2.4).toDouble();
-          final previewWidth = math.min(260.0, 320.0 * aspectRatio);
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              SizedBox(
-                key: const ValueKey<String>('generated-pdf-preview-card'),
-                width: previewWidth,
-                child: Material(
-                  color: colors.surfaceVariant,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    side: BorderSide(color: colors.divider),
-                  ),
-                  clipBehavior: Clip.antiAlias,
-                  child: InkWell(
-                    onTap: widget.onOpen,
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        AspectRatio(
-                          aspectRatio: aspectRatio,
-                          child: ColoredBox(
-                            color: colors.surface,
-                            child: Image.memory(
+          // F5 (REPORT-AUDITORIA-FLUIDEZ §3, A4): while the first page
+          // renders, the card already has an A4 page, its caption and its
+          // actions, so an A4 PDF takes its place without moving the chat;
+          // another shape eases into its own. Instant with reduced motion.
+          if (reduceMotion || !widget.animateSize) return card;
+          return AnimatedSize(
+            duration: HermesMotion.base,
+            curve: HermesMotion.emphasized,
+            alignment: AlignmentDirectional.topStart,
+            child: card,
+          );
+        },
+      ),
+    );
+  }
+
+  /// The preview card; with no [preview] yet, the same card holding an A4
+  /// page with a spinner and its actions not yet active.
+  Widget _previewCard(
+    Strings strings,
+    HermesThemeColors colors,
+    ({Uint8List bytes, int pageCount, double aspectRatio})? preview,
+  ) {
+    final aspectRatio = preview == null
+        ? 1 / math.sqrt2
+        : preview.aspectRatio.clamp(0.5, 2.4).toDouble();
+    final previewWidth = math.min(260.0, 320.0 * aspectRatio);
+    final ready = preview != null;
+    final caption = ready
+        ? '${widget.name} · ${strings.genMediaPages(preview.pageCount)} · ${_formatFileBytes(widget.sizeBytes)}'
+        : '${widget.name} · ${_formatFileBytes(widget.sizeBytes)}';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        SizedBox(
+          key: ValueKey<String>(
+            ready ? 'generated-pdf-preview-card' : 'generated-pdf-loading',
+          ),
+          width: previewWidth,
+          child: Material(
+            color: colors.surfaceVariant,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+              side: BorderSide(color: colors.divider),
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+              onTap: ready ? widget.onOpen : null,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  AspectRatio(
+                    aspectRatio: aspectRatio,
+                    child: ColoredBox(
+                      color: colors.surface,
+                      child: ready
+                          ? Image.memory(
                               preview.bytes,
                               key: const ValueKey<String>(
                                 'generated-pdf-thumbnail',
                               ),
                               fit: BoxFit.contain,
                               gaplessPlayback: true,
+                            )
+                          : Center(
+                              // TalkBack hears what the spinner shows, as
+                              // a node of its own: merged into the card it
+                              // was lost in the caption's label (gint58).
+                              child: Semantics(
+                                container: true,
+                                label: strings.genMediaLoading,
+                                child: const CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              ),
                             ),
-                          ),
-                        ),
-                        Container(
-                          key: const ValueKey<String>('generated-pdf-caption'),
-                          width: double.infinity,
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 7,
-                          ),
-                          color: colors.surfaceVariant,
-                          child: Text(
-                            '${widget.name} · ${strings.genMediaPages(preview.pageCount)} · ${_formatFileBytes(widget.sizeBytes)}',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: colors.textSecondary,
-                              fontSize: 11,
-                            ),
-                          ),
-                        ),
-                      ],
                     ),
                   ),
-                ),
-              ),
-              Wrap(
-                key: const ValueKey<String>('generated-pdf-actions'),
-                spacing: 4,
-                children: [
-                  TextButton.icon(
-                    onPressed: widget.onOpen,
-                    icon: const Icon(Icons.open_in_full_rounded),
-                    label: Text(strings.commonOpen),
-                  ),
-                  TextButton.icon(
-                    onPressed: widget.onShare,
-                    icon: const Icon(Icons.share_outlined),
-                    label: Text(strings.commonShare),
-                  ),
-                  TextButton.icon(
-                    onPressed: widget.onSave,
-                    icon: const Icon(Icons.save_alt_rounded),
-                    label: Text(strings.commonSave),
+                  Container(
+                    key: const ValueKey<String>('generated-pdf-caption'),
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 7,
+                    ),
+                    color: colors.surfaceVariant,
+                    child: Text(
+                      caption,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: colors.textSecondary,
+                        fontSize: 11,
+                      ),
+                    ),
                   ),
                 ],
               ),
-            ],
-          );
-        },
-      ),
+            ),
+          ),
+        ),
+        Wrap(
+          key: const ValueKey<String>('generated-pdf-actions'),
+          spacing: 4,
+          children: [
+            TextButton.icon(
+              onPressed: ready ? widget.onOpen : null,
+              icon: const Icon(Icons.open_in_full_rounded),
+              label: Text(strings.commonOpen),
+            ),
+            TextButton.icon(
+              onPressed: ready ? widget.onShare : null,
+              icon: const Icon(Icons.share_outlined),
+              label: Text(strings.commonShare),
+            ),
+            TextButton.icon(
+              onPressed: ready ? widget.onSave : null,
+              icon: const Icon(Icons.save_alt_rounded),
+              label: Text(strings.commonSave),
+            ),
+          ],
+        ),
+      ],
     );
   }
 }
@@ -1892,6 +2168,9 @@ class GeneratedAudioPlayerCard extends StatefulWidget {
   final bool showOpenAction;
   final GeneratedAudioPlayback? playback;
 
+  /// Starts playing on the first frame: the user already asked for it.
+  final bool autoplay;
+
   const GeneratedAudioPlayerCard({
     super.key,
     required this.file,
@@ -1903,6 +2182,7 @@ class GeneratedAudioPlayerCard extends StatefulWidget {
     this.onOpen,
     this.showOpenAction = true,
     this.playback,
+    this.autoplay = false,
   });
 
   @override
@@ -1933,6 +2213,11 @@ class _GeneratedAudioPlayerCardState extends State<GeneratedAudioPlayerCard> {
         if (mounted) setState(() => _playing = value);
       }),
     ]);
+    if (widget.autoplay) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) unawaited(_toggle());
+      });
+    }
   }
 
   @override
@@ -2063,6 +2348,8 @@ class GeneratedAudioViewerScreen extends StatelessWidget {
     final strings = Strings.of(context);
     return Scaffold(
       appBar: HermesAppBar(
+        // No glass (Q9-CRISTAL): nothing scrolls under it.
+        glass: false,
         title: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis),
         actions: [
           IconButton(
@@ -2122,6 +2409,8 @@ class GeneratedFileViewerScreen extends StatelessWidget {
     final kind = attachmentKindFor(name, mimeType);
     return Scaffold(
       appBar: HermesAppBar(
+        // No glass (Q9-CRISTAL): nothing scrolls under it.
+        glass: false,
         title: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis),
         actions: [
           IconButton(
@@ -2191,19 +2480,19 @@ class GeneratedFileViewerScreen extends StatelessWidget {
   }
 
   Widget _badgeForViewer(BuildContext context, AttachmentKind kind) {
-    final color = _badgeColor(kind);
+    final ink = attachmentBadgeInk(kind, Theme.of(context).hermes.background);
     return Container(
       width: 88,
       height: 96,
       alignment: Alignment.center,
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.16),
+        color: attachmentBadgeTint(kind),
         borderRadius: BorderRadius.circular(18),
       ),
       child: Text(
         _badgeLabel(kind, name, Strings.of(context)),
         style: TextStyle(
-          color: color,
+          color: ink,
           fontSize: 18,
           fontWeight: FontWeight.w800,
         ),
@@ -2218,206 +2507,43 @@ String _formatAudioDuration(Duration value) {
   return '$minutes:$seconds';
 }
 
-/// Abre la imagen [file] a pantalla completa con zoom (pinch/double-tap),
-/// fondo negro y cierre por toque/atrás. Visor ligero, sin dependencias extra.
-Future<void> showImageViewer(BuildContext context, File file) =>
-    showImageGallery(context, [file]);
+/// Abre la imagen [file] en el visor de medios ([MediaViewerScreen]):
+/// zoom, guardar, compartir y cierre por botón, gesto o atrás. [name] es el
+/// nombre que enseña; sin él dice «Imagen».
+Future<void> showImageViewer(BuildContext context, File file, {String? name}) {
+  return showImageGallery(context, [file], names: [name]);
+}
 
-/// Full-screen viewer over [files] (one or more images of the same reply),
-/// starting at [initialIndex]. Swipe pages between them; pinch or double
-/// tap zooms the one on screen, and paging pauses while it is zoomed.
+/// The media viewer over [files] (one or more images of the same reply),
+/// starting at [initialIndex]. Swipe pages between them; pinch, double tap
+/// or the zoom bar zooms the one on screen, and paging pauses while it is
+/// zoomed. [names] are their names, in the same order, when known.
 Future<void> showImageGallery(
   BuildContext context,
   List<File> files, {
   int initialIndex = 0,
+  List<String?> names = const [],
 }) {
   assert(files.isNotEmpty);
-  releaseTextFocusIfKeyboardHidden(context);
-  return Navigator.of(context).push(
-    PageRouteBuilder<void>(
-      opaque: false,
-      barrierColor: Colors.black,
-      barrierDismissible: true,
-      transitionDuration: const Duration(milliseconds: 180),
-      pageBuilder: (_, anim, _) => CoveredRouteMediaQueryFreeze(
-        child: FadeTransition(
-          opacity: anim,
-          child: _GeneratedImageViewer(
-            files: files,
-            initialIndex: initialIndex.clamp(0, files.length - 1),
-          ),
-        ),
+  final items = [
+    for (var i = 0; i < files.length; i++)
+      MediaViewerItem(
+        kind: MediaViewerKind.image,
+        file: files[i],
+        name: i < names.length ? names[i] : null,
+        mimeType: _imageMimeType(files[i].path),
       ),
-    ),
-  );
+  ];
+  return showMediaViewer(context, items, initialIndex: initialIndex);
 }
 
-class _GeneratedImageViewer extends StatefulWidget {
-  final List<File> files;
-  final int initialIndex;
-
-  const _GeneratedImageViewer({required this.files, this.initialIndex = 0});
-
-  @override
-  State<_GeneratedImageViewer> createState() => _GeneratedImageViewerState();
-}
-
-class _GeneratedImageViewerState extends State<_GeneratedImageViewer> {
-  late final PageController _pages = PageController(
-    initialPage: widget.initialIndex,
-  );
-  late int _index = widget.initialIndex;
-  bool _zoomed = false;
-
-  @override
-  void dispose() {
-    _pages.dispose();
-    super.dispose();
-  }
-
-  File get _file => widget.files[_index];
-
-  @override
-  Widget build(BuildContext context) {
-    final count = widget.files.length;
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: SafeArea(
-        child: Stack(
-          key: const ValueKey<String>('generated-image-viewer-safe-area'),
-          children: [
-            Positioned.fill(
-              child: PageView.builder(
-                key: const ValueKey<String>('image-gallery-pages'),
-                controller: _pages,
-                physics: _zoomed || count < 2
-                    ? const NeverScrollableScrollPhysics()
-                    : const PageScrollPhysics(),
-                itemCount: count,
-                onPageChanged: (i) => setState(() {
-                  _index = i;
-                  _zoomed = false;
-                }),
-                itemBuilder: (_, i) => _ZoomableImagePage(
-                  key: ValueKey<String>('image-gallery-page-$i'),
-                  file: widget.files[i],
-                  onZoomChanged: (zoomed) {
-                    if (zoomed != _zoomed) setState(() => _zoomed = zoomed);
-                  },
-                ),
-              ),
-            ),
-            Positioned(
-              top: 8,
-              right: 8,
-              left: 8,
-              child: Row(
-                children: [
-                  IconButton(
-                    icon: const Icon(
-                      Icons.download_rounded,
-                      color: Colors.white,
-                    ),
-                    tooltip: Strings.of(context).imgSaveToGallery,
-                    onPressed: () => saveMediaToGallery(context, _file),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.share_outlined, color: Colors.white),
-                    tooltip: Strings.of(context).commonShare,
-                    onPressed: () => shareMediaFile(_file),
-                  ),
-                  const Spacer(),
-                  if (count > 1)
-                    Text(
-                      Strings.of(
-                        context,
-                      ).fh1215GalleryPosition(_index + 1, count),
-                      key: const ValueKey<String>('image-gallery-position'),
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  const Spacer(),
-                  IconButton(
-                    icon: const Icon(Icons.close, color: Colors.white),
-                    tooltip: Strings.of(context).commonClose,
-                    onPressed: () => Navigator.of(context).pop(),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _ZoomableImagePage extends StatefulWidget {
-  final File file;
-  final ValueChanged<bool> onZoomChanged;
-
-  const _ZoomableImagePage({
-    required this.file,
-    required this.onZoomChanged,
-    super.key,
-  });
-
-  @override
-  State<_ZoomableImagePage> createState() => _ZoomableImagePageState();
-}
-
-class _ZoomableImagePageState extends State<_ZoomableImagePage> {
-  final TransformationController _transformation = TransformationController();
-  TapDownDetails? _doubleTapDetails;
-
-  @override
-  void dispose() {
-    _transformation.dispose();
-    super.dispose();
-  }
-
-  void _toggleZoom() {
-    if (_transformation.value != Matrix4.identity()) {
-      _transformation.value = Matrix4.identity();
-      widget.onZoomChanged(false);
-      return;
-    }
-    final point = _doubleTapDetails?.localPosition ?? Offset.zero;
-    _transformation.value = Matrix4.identity()
-      ..translateByDouble(-point.dx * 2, -point.dy * 2, 0, 1)
-      ..scaleByDouble(3, 3, 1, 1);
-    widget.onZoomChanged(true);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onDoubleTapDown: (details) => _doubleTapDetails = details,
-      onDoubleTap: _toggleZoom,
-      child: InteractiveViewer(
-        transformationController: _transformation,
-        minScale: 1,
-        maxScale: 5,
-        onInteractionEnd: (_) => widget.onZoomChanged(
-          _transformation.value.getMaxScaleOnAxis() > 1.01,
-        ),
-        child: Center(
-          child: Image.file(
-            widget.file,
-            fit: BoxFit.contain,
-            errorBuilder: (_, _, _) => const Icon(
-              Icons.broken_image_outlined,
-              color: Colors.white54,
-              size: 64,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
+String _imageMimeType(String path) {
+  final lower = path.toLowerCase();
+  if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
+  if (lower.endsWith('.gif')) return 'image/gif';
+  if (lower.endsWith('.webp')) return 'image/webp';
+  if (lower.endsWith('.bmp')) return 'image/bmp';
+  return 'image/png';
 }
 
 /// Guarda [file] en la galería del sistema (spec 030). En Android 13+ `gal`

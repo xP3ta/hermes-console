@@ -666,7 +666,7 @@ void main() {
     await tester.tap(find.text('Launch'));
     await tester.pumpAndSettle();
 
-    final close = find.byIcon(Icons.close);
+    final close = find.byKey(const ValueKey('media-viewer-handle'));
     final viewer = find.byKey(
       const ValueKey('generated-image-viewer-safe-area'),
     );

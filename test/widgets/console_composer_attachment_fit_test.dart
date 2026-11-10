@@ -299,21 +299,69 @@ void main() {
     }
   });
 
-  testWidgets('compact IME (landscape + keyboard) has no overflow', (
+  // the owner, Fold horizontal (APK 9708): with the keyboard up the tray of
+  // thumbs grew the composer up to the header. In landscape with the
+  // keyboard the attachments are chips in the input row: one row.
+  for (final (name, size, keyboard) in const [
+    ('phone landscape', Size(915, 412), 190.0),
+    ('open Fold', Size(933, 704), 305.0),
+  ]) {
+    testWidgets('compact IME, $name: the attachments are chips in one row', (
+      tester,
+    ) async {
+      final removed = <String>[];
+      final drafts = [
+        _draft(portrait, 'p1'),
+        _draft(landscape, 'l1'),
+        _draft(square, 's1'),
+      ];
+      await _pumpComposer(
+        tester,
+        attachments: drafts,
+        size: size,
+        keyboard: keyboard,
+        onRemove: removed.add,
+      );
+      await _capture(tester, 'chips_compact_ime_${size.width.toInt()}');
+      expect(tester.takeException(), isNull, reason: 'no layout overflow');
+      expect(find.byKey(_stripKey), findsNothing);
+      final chips = find.byKey(const ValueKey('composer-attachment-chips'));
+      expect(chips, findsOneWidget);
+      final row = tester.getRect(
+        find.byKey(const ValueKey('composer-input-row')),
+      );
+      final surface = tester.getRect(find.byKey(_surfaceKey));
+      // One row: the chips sit in the input row, inside the surface, and
+      // the surface is not taller than that row.
+      expect(_contains(row, tester.getRect(chips)), isTrue);
+      expect(_contains(surface, row), isTrue);
+      expect(surface.height, lessThanOrEqualTo(64));
+      final remove = tester.getRect(
+        find.byKey(const ValueKey('composer-attachment-chip-remove-p1')),
+      );
+      expect(remove.width, greaterThanOrEqualTo(48));
+      expect(remove.height, greaterThanOrEqualTo(48));
+      await tester.tapAt(remove.center);
+      await tester.pump();
+      expect(removed, ['p1']);
+    });
+  }
+
+  testWidgets('portrait with the keyboard keeps the tray of thumbs', (
     tester,
   ) async {
-    final drafts = [
-      _draft(portrait, 'p1'),
-      _draft(landscape, 'l1'),
-      _draft(square, 's1'),
-    ];
+    final drafts = [_draft(portrait, 'p1')];
     await _pumpComposer(
       tester,
       attachments: drafts,
-      size: const Size(915, 412),
-      keyboard: 190,
+      size: const Size(412, 915),
+      keyboard: 300,
     );
-    await expectFitsInside(tester, drafts, capture: 'three_compact_ime');
+    expect(
+      find.byKey(const ValueKey('composer-attachment-chips')),
+      findsNothing,
+    );
+    await expectFitsInside(tester, drafts, capture: 'one_portrait_keyboard');
   });
 
   testWidgets('remove and retry respond at their visible centre', (

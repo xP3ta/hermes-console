@@ -3,6 +3,10 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/main.dart';
 import 'package:hermes_android/core/screens/ssh_screen.dart';
+import 'package:hermes_android/core/screens/ssh_terminal_screen.dart';
+import 'package:hermes_android/core/widgets/hermes_app_bar.dart';
+import 'package:hermes_android/core/widgets/workspace/chat_workspace.dart';
+import 'package:hermes_android/core/widgets/workspace/chat_workspace_host.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/app_lock.dart';
 import 'package:hermes_android/core/services/approval_policy.dart';
@@ -163,4 +167,110 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  // ORDEN-WS-FIDELIDAD point 2: in the workspace pane the Terminal tab goes
+  // straight to the terminal; the hub's credential actions are on the
+  // floating bar's «⋯», and removing SSH there brings the setup back.
+  // With a live session the menu also opens the Sessions sheet.
+  testWidgets('in the pane the hub is the terminal, its actions in «⋯»', (
+    tester,
+  ) async {
+    final prefs = await SharedPreferences.getInstance();
+    final manager = await ConnectionManager.create(prefs);
+    final connection = SavedConnection(
+      id: 'ssh-remote',
+      label: 'Remote',
+      host: 'example.invalid',
+      port: 443,
+      apiKey: '',
+      useHttps: true,
+    );
+    await manager.upsertConnection(connection);
+    final ssh = SshManager(SecureStorage(), manager);
+    await ssh.saveConfig(
+      connection.id,
+      host: 'example.invalid',
+      port: 22,
+      username: 'demo',
+      method: SshAuthMethod.password,
+      password: 'not-a-real-secret',
+    );
+    final sessions = _LiveSessionService(ssh)
+      ..live = (SshTerminalSession(connection.id, Terminal())
+        ..phase.value = SshSessionPhase.ready);
+    final activeChats = ActiveChatService(
+      compressionRestoreStore: testCompressionRestoreStore(),
+    );
+    addTearDown(activeChats.dispose);
+    final workspace = ChatWorkspaceController()
+      ..open(ChatWorkspaceTab.terminal);
+    addTearDown(workspace.dispose);
+    final toolbar = ValueNotifier(ChatWorkspaceToolbar.none);
+    addTearDown(toolbar.dispose);
+
+    await tester.pumpWidget(
+      HermesApp(
+        connManager: manager,
+        appLock: AppLockService(prefs),
+        approvalPolicy: ApprovalPolicyService(prefs),
+        fontSize: FontSizeService(prefs),
+        sshManager: ssh,
+        sftpTransfers: SftpTransferService(ssh, NotificationService(prefs)),
+        sshSessions: sessions,
+        notifications: NotificationService(prefs),
+        activeChats: activeChats,
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 4));
+    await tester.pump(const Duration(milliseconds: 500));
+    Navigator.of(tester.element(find.byType(Navigator).first)).push(
+      MaterialPageRoute<void>(
+        builder: (_) => ChatWorkspacePaneScope(
+          tab: ChatWorkspaceTab.terminal,
+          controller: workspace,
+          toolbar: toolbar,
+          child: SshScreen(connection: connection),
+        ),
+      ),
+    );
+    for (var i = 0; i < 10; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+
+    expect(find.byType(SshTerminalScreen), findsOneWidget);
+    expect(find.text('Open terminal'), findsNothing);
+    expect(find.byType(HermesAppBar), findsNothing);
+    expect(find.text('demo@example.invalid:22 · Remote'), findsOneWidget);
+    expect(toolbar.value.menu.map((entry) => entry.label), [
+      'Files (SFTP)',
+      'Sessions',
+      'Edit credentials',
+      'Forget host key',
+      'Remove SSH',
+      'Close SSH session',
+    ]);
+    expect(
+      toolbar.value.menu.firstWhere((e) => e.label == 'Remove SSH').destructive,
+      isTrue,
+    );
+
+    toolbar.value.menu.firstWhere((e) => e.label == 'Remove SSH').onSelected();
+    for (var i = 0; i < 5; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    await tester.tap(find.text('Remove'));
+    for (var i = 0; i < 10; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+
+    expect(await ssh.loadConfig(connection.id), isNull);
+    expect(sessions.closed, [connection.id]);
+    expect(find.byType(SshTerminalScreen), findsNothing);
+    // Back to the setup, still without a header of its own.
+    expect(find.text('Configure SSH'), findsOneWidget);
+    expect(find.byType(HermesAppBar), findsNothing);
+    expect(toolbar.value, ChatWorkspaceToolbar.none);
+    expect(tester.takeException(), isNull);
+  });
 }

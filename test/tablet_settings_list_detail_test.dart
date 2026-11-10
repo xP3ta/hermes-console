@@ -3,7 +3,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:hermes_android/core/screens/embed_settings_screen.dart';
+import 'package:hermes_android/core/screens/security_info_screen.dart';
+import 'package:hermes_android/core/screens/look_feel_screen.dart';
 import 'package:hermes_android/core/screens/settings_screen.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/settings/settings_deep_link.dart';
@@ -157,17 +158,17 @@ void main() {
       final observer = await _pump(tester, size);
 
       expect(
-        _inDetail(find.byKey(const ValueKey('settings-rich-embeds'))),
+        _inDetail(find.byKey(const ValueKey('settings-security-info'))),
         findsNothing,
       );
-      await tester.tap(find.byKey(_category(SettingsSection.chat)));
+      await tester.tap(find.byKey(_category(SettingsSection.security)));
       await tester.pumpAndSettle();
 
       expect(
-        _inDetail(find.byKey(const ValueKey('settings-rich-embeds'))),
+        _inDetail(find.byKey(const ValueKey('settings-security-info'))),
         findsOneWidget,
       );
-      expect(_selected(tester, SettingsSection.chat), isTrue);
+      expect(_selected(tester, SettingsSection.security), isTrue);
       expect(_selected(tester, SettingsSection.connection), isFalse);
       expect(observer.pushes, 0, reason: 'no app route for a category');
       expect(tester.takeException(), isNull);
@@ -176,16 +177,16 @@ void main() {
     testWidgets('$label: a category page opens inside the right pane and '
         'Back closes it before leaving Settings', (tester) async {
       final observer = await _pump(tester, size);
-      await tester.tap(find.byKey(_category(SettingsSection.chat)));
+      await tester.tap(find.byKey(_category(SettingsSection.security)));
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byKey(const ValueKey('settings-rich-embeds')));
+      await tester.tap(find.byKey(const ValueKey('settings-security-info')));
       await tester.pumpAndSettle();
 
-      expect(_inDetail(find.byType(EmbedSettingsScreen)), findsOneWidget);
+      expect(_inDetail(find.byType(SecurityInfoScreen)), findsOneWidget);
       expect(find.byKey(_categories), findsOneWidget, reason: 'list stays');
       expect(
-        tester.getRect(find.byType(EmbedSettingsScreen)).left,
+        tester.getRect(find.byType(SecurityInfoScreen)).left,
         greaterThanOrEqualTo(tester.getRect(find.byKey(_categories)).right),
       );
       expect(observer.pushes, 0, reason: 'pushed in the pane, not the app');
@@ -193,9 +194,9 @@ void main() {
       // Back: the page closes, the category stays selected.
       await tester.binding.handlePopRoute();
       await tester.pumpAndSettle();
-      expect(find.byType(EmbedSettingsScreen), findsNothing);
+      expect(find.byType(SecurityInfoScreen), findsNothing);
       expect(find.byType(SettingsScreen), findsOneWidget);
-      expect(_selected(tester, SettingsSection.chat), isTrue);
+      expect(_selected(tester, SettingsSection.security), isTrue);
 
       // Back again leaves Settings.
       await tester.binding.handlePopRoute();
@@ -208,20 +209,40 @@ void main() {
       tester,
     ) async {
       await _pump(tester, size);
-      await tester.tap(find.byKey(_category(SettingsSection.chat)));
+      await tester.tap(find.byKey(_category(SettingsSection.security)));
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('settings-rich-embeds')));
+      await tester.tap(find.byKey(const ValueKey('settings-security-info')));
       await tester.pumpAndSettle();
 
       await tester.tap(find.byKey(_category(SettingsSection.about)));
       await tester.pumpAndSettle();
 
-      expect(find.byType(EmbedSettingsScreen), findsNothing);
+      expect(find.byType(SecurityInfoScreen), findsNothing);
       expect(_selected(tester, SettingsSection.about), isTrue);
       expect(
         _inDetail(find.byKey(const ValueKey('settings-section-about'))),
         findsOneWidget,
       );
+    });
+
+    testWidgets('$label: Appearance opens Themes straight away and has no '
+        'Style, Glass or circle switch', (tester) async {
+      await _pump(tester, size);
+      await tester.tap(find.byKey(_category(SettingsSection.appearance)));
+      await tester.pumpAndSettle();
+
+      expect(_inDetail(find.text('Look & Feel')), findsOneWidget);
+      expect(find.text('Style'), findsNothing);
+      expect(find.text('Glass'), findsNothing);
+      expect(find.text('Circle theme change'), findsNothing);
+      expect(find.byKey(const ValueKey('settings-theme-reveal')), findsNothing);
+
+      await tester.tap(_inDetail(find.text('Look & Feel')));
+      await tester.pumpAndSettle();
+      expect(_inDetail(find.byType(LookFeelScreen)), findsOneWidget);
+      expect(find.text('Style'), findsNothing);
+      expect(find.text('Glass'), findsNothing);
+      expect(tester.takeException(), isNull);
     });
 
     testWidgets('$label: a deep link opens its page in the right pane', (
@@ -247,15 +268,15 @@ void main() {
   testWidgets('a deep link while a page is open closes it and selects the '
       'requested category', (tester) async {
     await _pump(tester, const Size(1280, 800));
-    await tester.tap(find.byKey(_category(SettingsSection.chat)));
+    await tester.tap(find.byKey(_category(SettingsSection.security)));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('settings-rich-embeds')));
+    await tester.tap(find.byKey(const ValueKey('settings-security-info')));
     await tester.pumpAndSettle();
 
     SettingsDeepLink.request(SettingsSection.about);
     await tester.pumpAndSettle();
 
-    expect(find.byType(EmbedSettingsScreen), findsNothing);
+    expect(find.byType(SecurityInfoScreen), findsNothing);
     expect(_selected(tester, SettingsSection.about), isTrue);
     await tester.pump(const Duration(seconds: 3));
   });
@@ -290,23 +311,23 @@ void main() {
     tester,
   ) async {
     await _pump(tester, const Size(1024, 768));
-    await tester.tap(find.byKey(_category(SettingsSection.chat)));
+    await tester.tap(find.byKey(_category(SettingsSection.security)));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('settings-rich-embeds')));
+    await tester.tap(find.byKey(const ValueKey('settings-security-info')));
     await tester.pumpAndSettle();
 
     await _resize(tester, const Size(768, 1024));
-    expect(find.byType(EmbedSettingsScreen), findsOneWidget);
+    expect(find.byType(SecurityInfoScreen), findsOneWidget);
     expect(tester.takeException(), isNull);
 
     // Back closes the page and shows the single list again.
     await tester.binding.handlePopRoute();
     await tester.pumpAndSettle();
-    expect(find.byType(EmbedSettingsScreen), findsNothing);
+    expect(find.byType(SecurityInfoScreen), findsNothing);
     expect(find.byType(SettingsScreen), findsOneWidget);
 
     await _resize(tester, const Size(1024, 768));
-    expect(_selected(tester, SettingsSection.chat), isTrue);
+    expect(_selected(tester, SettingsSection.security), isTrue);
     expect(tester.takeException(), isNull);
   });
 }

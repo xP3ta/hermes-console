@@ -9,6 +9,9 @@ import '../../l10n/app_localizations.dart';
 
 import 'connection_manager.dart';
 import 'secure_storage.dart';
+import 'ssh_keepalive.dart';
+import 'ssh_profile_presence.dart';
+import 'ssh_session_kind.dart';
 import 'voice/voice_lang.dart';
 
 /// Método de autenticación SSH elegido por instancia.
@@ -33,14 +36,29 @@ class SshConfig {
   final String username;
   final SshAuthMethod method;
 
+  /// What the terminal runs after the shell opens (1.4.0). Not a secret;
+  /// stored with the rest of the profile.
+  final SshSessionKind sessionKind;
+
   const SshConfig({
     required this.host,
     required this.port,
     required this.username,
     required this.method,
+    this.sessionKind = SshSessionKind.shell,
   });
 
   String get target => '$username@$host:$port';
+}
+
+/// The secrets of one SSH login, kept in memory. Only what the chosen method
+/// uses is set.
+class SshCredentials {
+  const SshCredentials({this.password, this.privateKeyPem, this.passphrase});
+
+  final String? password;
+  final String? privateKeyPem;
+  final String? passphrase;
 }
 
 /// Datos del prompt de verificación de host key (TOFU). La pantalla decide si
@@ -76,6 +94,15 @@ enum SshFailure {
   refused,
   timeout,
   hostLookup,
+
+  /// The user (or the automatic reconnection) did not trust the server key.
+  hostKeyRejected,
+
+  /// SFTP: the user cannot read or change that path.
+  permissionDenied,
+
+  /// SFTP: the path is gone (deleted or moved).
+  noSuchFile,
   unknown,
 }
 
@@ -133,7 +160,29 @@ class SshManager {
     final method = SshAuthMethod.fromId(
       await _secure.readSsh(connectionId, 'method'),
     );
-    return SshConfig(host: host, port: port, username: user, method: method);
+    final sessionKind = SshSessionKind.fromStored(
+      await _secure.readSsh(connectionId, 'session'),
+    );
+    return SshConfig(
+      host: host,
+      port: port,
+      username: user,
+      method: method,
+      sessionKind: sessionKind,
+    );
+  }
+
+  /// Session type of the profile for the terminal. Any read failure falls
+  /// back to the plain shell, which is what the terminal did before 1.4.0.
+  Future<SshSessionKind> loadSessionKind(String connectionId) async {
+    try {
+      return SshSessionKind.fromStored(
+        await _secure.readSsh(connectionId, 'session'),
+      );
+    } catch (e) {
+      debugPrint('[ssh-manager] session type unreadable (${e.runtimeType})');
+      return SshSessionKind.shell;
+    }
   }
 
   /// Guarda config + credencial. Pasa solo el secreto del método elegido.
@@ -143,6 +192,7 @@ class SshManager {
     required int port,
     required String username,
     required SshAuthMethod method,
+    SshSessionKind? sessionKind,
     String? password,
     String? privateKeyPem,
     String? passphrase,
@@ -151,6 +201,10 @@ class SshManager {
     await _secure.writeSsh(connectionId, 'host', host.trim());
     await _secure.writeSsh(connectionId, 'port', '$port');
     await _secure.writeSsh(connectionId, 'method', method.id);
+    // An omitted session type keeps the stored one.
+    if (sessionKind != null) {
+      await _secure.writeSsh(connectionId, 'session', sessionKind.storedId);
+    }
     if (password != null) {
       await _secure.writeSsh(connectionId, 'password', password);
     }
@@ -162,9 +216,42 @@ class SshManager {
     if (privateKeyPem != null || passphrase != null) {
       await _secure.writeSsh(connectionId, 'passphrase', passphrase ?? '');
     }
+    SshProfilePresence.instance.noteSaved();
   }
 
-  Future<void> clear(String connectionId) => _secure.deleteSsh(connectionId);
+  /// The secrets saved for [connectionId]; what was not kept comes back null.
+  Future<SshCredentials> loadCredentials(String connectionId) async {
+    String? read(String? v) => (v == null || v.isEmpty) ? null : v;
+    return SshCredentials(
+      password: read(await _secure.readSsh(connectionId, 'password')),
+      privateKeyPem: read(await _secure.readSsh(connectionId, 'privkey')),
+      passphrase: read(await _secure.readSsh(connectionId, 'passphrase')),
+    );
+  }
+
+  /// A connection that reaches its Dashboard through an SSH tunnel keeps the
+  /// Dashboard as the SSH server sees it ("host:port").
+  Future<void> saveTunnelTarget(String connectionId, String host, int port) =>
+      _secure.writeSsh(connectionId, 'tunnel', '$host:$port');
+
+  /// The Dashboard behind the tunnel of [connectionId], or null when it is
+  /// not a tunnel connection.
+  Future<({String host, int port})?> loadTunnelTarget(
+    String connectionId,
+  ) async {
+    final raw = await _secure.readSsh(connectionId, 'tunnel');
+    if (raw == null) return null;
+    final cut = raw.lastIndexOf(':');
+    if (cut <= 0) return null;
+    final port = int.tryParse(raw.substring(cut + 1));
+    if (port == null) return null;
+    return (host: raw.substring(0, cut), port: port);
+  }
+
+  Future<void> clear(String connectionId) async {
+    await _secure.deleteSsh(connectionId);
+    SshProfilePresence.instance.noteCleared();
+  }
 
   // ── TOFU host keys ────────────────────────────────────────────────────
 
@@ -247,17 +334,45 @@ class SshManager {
       throw const SshConfigException(SshFailure.missingUser);
     }
 
+    final SshCredentials credentials;
+    if (cfg.method == SshAuthMethod.key) {
+      credentials = SshCredentials(
+        privateKeyPem: (await _secure.readSsh(connectionId, 'privkey')) ?? '',
+        passphrase: await _secure.readSsh(connectionId, 'passphrase'),
+      );
+    } else {
+      credentials = SshCredentials(
+        password: (await _secure.readSsh(connectionId, 'password')) ?? '',
+      );
+    }
+    return connectWith(
+      cfg,
+      credentials,
+      hostKeyScopes: [connectionId],
+      onHostKey: onHostKey,
+    );
+  }
+
+  /// Same as [connect] with the config and the secrets in hand (nothing is
+  /// read from the Keystore), for callers that may not keep them. The server
+  /// key is looked up in every scope of [hostKeyScopes] and saved to all of
+  /// them; a tunnel passes [serverScope] so the key belongs to the server.
+  Future<SSHClient> connectWith(
+    SshConfig cfg,
+    SshCredentials credentials, {
+    required List<String> hostKeyScopes,
+    required Future<bool> Function(SshHostKeyPrompt) onHostKey,
+  }) async {
     List<SSHKeyPair>? identities;
     SSHPasswordRequestHandler? onPassword;
     if (cfg.method == SshAuthMethod.key) {
-      final pem = (await _secure.readSsh(connectionId, 'privkey')) ?? '';
-      final pass = await _secure.readSsh(connectionId, 'passphrase');
+      final pass = credentials.passphrase;
       identities = SSHKeyPair.fromPem(
-        pem.trim(),
+        (credentials.privateKeyPem ?? '').trim(),
         (pass == null || pass.isEmpty) ? null : pass,
       );
     } else {
-      final pw = (await _secure.readSsh(connectionId, 'password')) ?? '';
+      final pw = credentials.password ?? '';
       onPassword = () => pw;
     }
 
@@ -267,36 +382,87 @@ class SshManager {
       timeout: const Duration(seconds: 12),
     );
 
-    return SSHClient(
+    final client = SSHClient(
       socket,
       username: cfg.username,
       identities: identities,
-      // U-11 (spec 028): el default de dartssh2 es un keepalive cada 10s —
-      // un wakeup de radio constante mientras haya sesión viva en 2º plano.
-      keepAliveInterval: const Duration(seconds: 60),
+      // U-11 (spec 028): un keepalive por minuto, no cada 10 s. M2: el de
+      // dartssh2 espera la respuesta sin plazo y nunca detecta un enlace
+      // medio abierto; lo sustituye el vigilante con plazo.
+      keepAliveInterval: null,
       onPasswordRequest: onPassword,
-      onVerifyHostKey: (type, fingerprint) async {
-        final fp = decodeFingerprint(fingerprint);
-        final known = await knownFingerprint(connectionId);
-        if (known != null && known == fp) return true;
-        final accepted = await onHostKey(
-          SshHostKeyPrompt(
-            type: type,
-            fingerprint: fp,
-            isNew: known == null,
-            changed: known != null,
-          ),
-        );
-        if (accepted) await saveFingerprint(connectionId, fp);
-        return accepted;
-      },
+      onVerifyHostKey: (type, fingerprint) =>
+          verifyHostKey(hostKeyScopes, type, fingerprint, onHostKey),
     );
+    watchSshKeepAlive(client);
+    return client;
+  }
+
+  /// TOFU: a key equal to the saved one passes unasked; a new or changed one
+  /// goes to [onHostKey] and is saved to every scope only when trusted. A
+  /// refused key never overwrites the one on record.
+  Future<bool> verifyHostKey(
+    List<String> scopes,
+    String type,
+    Uint8List fingerprint,
+    Future<bool> Function(SshHostKeyPrompt) onHostKey,
+  ) async {
+    final fp = decodeFingerprint(fingerprint);
+    String? known;
+    for (final scope in scopes) {
+      known = await knownFingerprint(scope);
+      if (known != null) break;
+    }
+    if (known != null && known == fp) return true;
+    final accepted = await onHostKey(
+      SshHostKeyPrompt(
+        type: type,
+        fingerprint: fp,
+        isNew: known == null,
+        changed: known != null,
+      ),
+    );
+    if (accepted) {
+      for (final scope in scopes) {
+        await saveFingerprint(scope, fp);
+      }
+    }
+    return accepted;
+  }
+
+  /// Where a server's key is kept apart from any connection.
+  static String serverScope(String host, int port) =>
+      'srv:${host.trim().toLowerCase()}:$port';
+
+  /// true when [text] is a public key (or a certificate) rather than the
+  /// private key an SSH login needs.
+  static bool looksLikePublicKey(String text) {
+    final t = text.trimLeft();
+    return t.startsWith('ssh-') ||
+        t.startsWith('ecdsa-sha2-') ||
+        t.startsWith('sk-ssh-') ||
+        t.startsWith('sk-ecdsa-') ||
+        t.startsWith('-----BEGIN PUBLIC KEY-----') ||
+        t.startsWith('-----BEGIN RSA PUBLIC KEY-----') ||
+        t.startsWith('---- BEGIN SSH2 PUBLIC KEY ----');
   }
 
   /// Clasifica excepciones de dartssh2/socket en un [SshFailure] tipado; la UI
   /// lo traduce al idioma de la app.
   static SshFailure classifyError(Object e) {
     if (e is SshConfigException) return e.failure;
+    // A refused host key closes the transport before authentication, so it
+    // can also arrive wrapped as the abort's reason.
+    if (e is SSHHostkeyError ||
+        e is SSHAuthAbortError && e.reason is SSHHostkeyError) {
+      return SshFailure.hostKeyRejected;
+    }
+    if (e is SftpStatusError) {
+      if (e.code == SftpStatusCode.permissionDenied) {
+        return SshFailure.permissionDenied;
+      }
+      if (e.code == SftpStatusCode.noSuchFile) return SshFailure.noSuchFile;
+    }
     if (e is SSHAuthFailError) return SshFailure.authRejected;
     if (e is SSHKeyDecryptError) return SshFailure.wrongPassphrase;
     if (e is SSHKeyDecodeError) return SshFailure.invalidKey;
@@ -311,5 +477,20 @@ class SshManager {
     }
     debugPrint('[ssh-manager] unclassified failure (${e.runtimeType})');
     return SshFailure.unknown;
+  }
+
+  /// true when [e] looks like the network (worth an automatic retry) rather
+  /// than configuration, credentials or keys, which a retry cannot fix. A
+  /// host key that failed verification is never transient (TOFU).
+  static bool isTransientFailure(Object e) {
+    if (e is SSHHostkeyError) return false;
+    return switch (classifyError(e)) {
+      SshFailure.refused ||
+      SshFailure.timeout ||
+      SshFailure.hostLookup ||
+      SshFailure.handshakeFailed ||
+      SshFailure.unknown => true,
+      _ => false,
+    };
   }
 }

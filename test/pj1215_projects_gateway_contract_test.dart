@@ -160,6 +160,39 @@ Map<String, dynamic>? _params(List<Map<String, dynamic>> requests, String m) =>
         as Map<String, dynamic>?;
 
 void main() {
+  for (final folder in [
+    '/home/demo',
+    r'D:\Hermes\workspace',
+    r'\\server\share\workspace',
+  ]) {
+    test('default-cwd and listing preserve the server path $folder', () async {
+      final h = _client();
+      final child = folder.startsWith('/') ? '$folder/child' : '$folder\\child';
+      h.dashboard.respond = (endpoint) => endpoint == 'fs/default-cwd'
+          ? {'cwd': folder}
+          : {
+              'entries': [
+                {'name': 'child', 'path': child, 'isDirectory': true},
+              ],
+            };
+      expect(await h.client.projectDefaultFolder(), folder);
+      final listing = await h.client.listProjectDirectory(folder);
+      expect(listing.entries.single.path, child);
+      expect(h.dashboard.calls, [
+        ('GET', 'fs/default-cwd', null),
+        ('GET', 'fs/list?path=${Uri.encodeQueryComponent(folder)}', null),
+      ]);
+    });
+  }
+
+  test('default-cwd rejects relative and drive-relative paths', () async {
+    final h = _client();
+    for (final folder in ['workspace', r'D:workspace', r'\workspace']) {
+      h.dashboard.respond = (_) => {'cwd': folder};
+      expect(await h.client.projectDefaultFolder(), isNull, reason: folder);
+    }
+  });
+
   test('projects.update sends id + changed fields only', () async {
     final h = _client();
     await h.client.updateProject('p_abc', name: 'Console');

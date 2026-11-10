@@ -14,6 +14,7 @@ import '../../../l10n/app_localizations.dart';
 import '../../services/artifact_viewer_kind.dart';
 import '../../design/modal.dart';
 import '../../theme/app_theme.dart';
+import '../../theme/code_syntax_palette.dart';
 import '../chat/chat_markdown_body.dart';
 import '../hermes_app_bar.dart';
 import 'artifact_html_policy.dart';
@@ -81,6 +82,13 @@ class ArtifactViewerScreen extends StatefulWidget {
     this.launchExternalLink,
     this.webViewSettingsFor = defaultArtifactWebViewSettings,
     this.highlightLanguage,
+    this.sourcePath,
+    this.initialLine,
+    this.endLine,
+    this.allowActiveContent = true,
+    this.allowShare = true,
+    this.notice,
+    this.onOpenFolder,
   });
 
   final String name;
@@ -105,6 +113,28 @@ class ArtifactViewerScreen extends StatefulWidget {
   /// `highlight` language for text whose name carries no extension (a chat
   /// code block); null derives it from [name]/[mimeType].
   final String? highlightLanguage;
+
+  /// Where the file lives (a file opened from a chat reply): adds «Copiar
+  /// ruta» to the menu.
+  final String? sourcePath;
+
+  /// A 1-based line (and the end of a range) to show highlighted and scrolled
+  /// into view; the document opens as text, not rendered.
+  final int? initialLine;
+  final int? endLine;
+
+  /// False for a file the user did not make themselves: HTML and SVG are
+  /// shown as text and nothing is rendered or run.
+  final bool allowActiveContent;
+
+  /// False for a document that may hold secrets: no «Compartir» of its text.
+  final bool allowShare;
+
+  /// A line above the document (the server cut the file).
+  final String? notice;
+
+  /// «Abrir carpeta»: shows the file's folder in the explorer.
+  final VoidCallback? onOpenFolder;
 
   @override
   State<ArtifactViewerScreen> createState() => _ArtifactViewerScreenState();
@@ -137,6 +167,18 @@ class _ArtifactViewerScreenState extends State<ArtifactViewerScreen> {
             icon: Icons.copy_rounded,
             label: strings.commonCopy,
           ),
+        if (widget.sourcePath != null)
+          HermesAction(
+            value: 'copy-path',
+            icon: Icons.link_rounded,
+            label: strings.fcoCopyPath,
+          ),
+        if (widget.onOpenFolder != null)
+          HermesAction(
+            value: 'open-folder',
+            icon: Icons.folder_open_rounded,
+            label: strings.fcoOpenFolder,
+          ),
         if (widget.onShare != null)
           HermesAction(
             value: 'share',
@@ -165,6 +207,10 @@ class _ArtifactViewerScreenState extends State<ArtifactViewerScreen> {
         unawaited(CodeViewPrefs.shared.stepFont(-1));
       case 'copy':
         unawaited(_copy());
+      case 'copy-path':
+        unawaited(_copyPath());
+      case 'open-folder':
+        widget.onOpenFolder?.call();
       case 'share':
         widget.onShare?.call();
       case 'open':
@@ -180,8 +226,13 @@ class _ArtifactViewerScreenState extends State<ArtifactViewerScreen> {
   );
   late final Future<Uint8List> _bytes = widget.loadBytes();
   final GlobalKey<_TextArtifactViewState> _textKey = GlobalKey();
-  bool _showSource = false;
+  late bool _showSource = widget.initialLine != null;
   String? _decoded;
+
+  /// HTML and SVG that must not be rendered: they are read as text.
+  bool get _blockActive =>
+      !widget.allowActiveContent &&
+      (_kind == ArtifactViewerKind.html || _kind == ArtifactViewerKind.svg);
 
   bool get _isTextual => switch (_kind) {
     ArtifactViewerKind.html ||
@@ -192,7 +243,8 @@ class _ArtifactViewerScreenState extends State<ArtifactViewerScreen> {
   };
 
   bool get _showsTextView =>
-      _kind == ArtifactViewerKind.text || (_isTextual && _showSource);
+      _kind == ArtifactViewerKind.text ||
+      (_isTextual && (_showSource || _blockActive));
 
   String _decode(Uint8List bytes) =>
       _decoded ??= utf8.decode(bytes, allowMalformed: true);
@@ -214,6 +266,16 @@ class _ArtifactViewerScreenState extends State<ArtifactViewerScreen> {
     }
   }
 
+  Future<void> _copyPath() async {
+    final path = widget.sourcePath;
+    if (path == null) return;
+    await Clipboard.setData(ClipboardData(text: path));
+    if (!mounted) return;
+    AppFeedback.of(
+      context,
+    ).notify(FeedbackKind.routine, Strings.of(context).chcPathCopied);
+  }
+
   Future<void> _copy() async {
     final bytes = await _bytes;
     await Clipboard.setData(ClipboardData(text: _decode(bytes)));
@@ -228,6 +290,8 @@ class _ArtifactViewerScreenState extends State<ArtifactViewerScreen> {
     final strings = Strings.of(context);
     return Scaffold(
       appBar: HermesAppBar(
+        // No glass (Q9-CRISTAL): nothing scrolls under it.
+        glass: false,
         // Search, source, edit and this viewer's own menu: all four stay.
         maxPillActions: 4,
         title: Text(widget.name, maxLines: 1, overflow: TextOverflow.ellipsis),
@@ -241,7 +305,7 @@ class _ArtifactViewerScreenState extends State<ArtifactViewerScreen> {
             ),
             const CodeWrapButton(),
           ],
-          if (_isTextual && _kind != ArtifactViewerKind.text)
+          if (_isTextual && _kind != ArtifactViewerKind.text && !_blockActive)
             IconButton(
               key: const ValueKey('artifact-viewer-source-toggle'),
               tooltip: _showSource
@@ -272,29 +336,40 @@ class _ArtifactViewerScreenState extends State<ArtifactViewerScreen> {
         ],
       ),
       body: SafeArea(
-        child: FutureBuilder<Uint8List>(
-          future: _bytes,
-          builder: (context, snapshot) {
-            if (snapshot.connectionState != ConnectionState.done) {
-              return const Center(child: ConsoleLoader.large());
-            }
-            final bytes = snapshot.data;
-            if (snapshot.hasError || bytes == null) {
-              return _FallbackCard(
-                name: widget.name,
-                mimeType: widget.mimeType,
-                sizeBytes: widget.sizeBytes,
-                message: strings.vw1215LoadFailed,
-                onOpenExternal: widget.onOpenExternal,
-                onShare: widget.onShare,
-              );
-            }
-            return _buildBody(context, bytes);
-          },
+        child: Column(
+          children: [
+            if (widget.notice != null)
+              _NoticeBanner(
+                key: const ValueKey('artifact-viewer-notice'),
+                text: widget.notice!,
+              ),
+            Expanded(child: _body(strings)),
+          ],
         ),
       ),
     );
   }
+
+  Widget _body(Strings strings) => FutureBuilder<Uint8List>(
+    future: _bytes,
+    builder: (context, snapshot) {
+      if (snapshot.connectionState != ConnectionState.done) {
+        return const Center(child: ConsoleLoader.large());
+      }
+      final bytes = snapshot.data;
+      if (snapshot.hasError || bytes == null) {
+        return _FallbackCard(
+          name: widget.name,
+          mimeType: widget.mimeType,
+          sizeBytes: widget.sizeBytes,
+          message: strings.vw1215LoadFailed,
+          onOpenExternal: widget.onOpenExternal,
+          onShare: widget.onShare,
+        );
+      }
+      return _buildBody(context, bytes);
+    },
+  );
 
   Widget _buildBody(BuildContext context, Uint8List bytes) {
     if (_showsTextView) {
@@ -310,8 +385,10 @@ class _ArtifactViewerScreenState extends State<ArtifactViewerScreen> {
                   )
             : (_kind == ArtifactViewerKind.markdown ? 'markdown' : 'xml'),
         compact: _compact,
+        initialLine: widget.initialLine,
+        endLine: widget.endLine,
         onCopy: () => unawaited(_copy()),
-        onShare: () => unawaited(_share()),
+        onShare: widget.allowShare ? () => unawaited(_share()) : null,
       );
     }
     switch (_kind) {
@@ -406,6 +483,27 @@ class _TruncationBanner extends StatelessWidget {
             child: Text(strings.vw1215ShowAll),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// A quiet line above the document (the server cut it, for one).
+class _NoticeBanner extends StatelessWidget {
+  const _NoticeBanner({super.key, required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).hermes;
+    return Container(
+      width: double.infinity,
+      color: colors.surfaceVariant,
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+      child: Text(
+        text,
+        style: TextStyle(color: colors.textSecondary, fontSize: 12),
       ),
     );
   }
@@ -673,7 +771,7 @@ class _FallbackCard extends StatelessWidget {
 
 /// A flat run of text with an optional syntax colour, used to split a
 /// highlighted document into lines.
-typedef _Run = ({String text, Color? color});
+typedef _Run = ({String text, CodeSyntaxRole? role});
 
 class _SearchMatch {
   const _SearchMatch(this.line, this.start);
@@ -745,6 +843,8 @@ class _TextArtifactView extends StatefulWidget {
     required this.totalBytes,
     this.language,
     this.compact = false,
+    this.initialLine,
+    this.endLine,
     this.onCopy,
     this.onShare,
   });
@@ -752,6 +852,10 @@ class _TextArtifactView extends StatefulWidget {
   final String text;
   final int totalBytes;
   final String? language;
+
+  /// 1-based line (and range end) to highlight and scroll to.
+  final int? initialLine;
+  final int? endLine;
 
   /// Phone layout: actions and search live in a bottom bar.
   final bool compact;
@@ -771,6 +875,8 @@ class _TextArtifactViewState extends State<_TextArtifactView> {
   bool _searching = false;
   late List<String> _lines;
   List<List<_Run>>? _highlighted;
+  CodeSyntaxPalette? _palette;
+  HermesThemeColors? _paletteColors;
   int _shownBytes = 0;
   List<_SearchMatch> _matches = const [];
   int _current = 0;
@@ -792,6 +898,31 @@ class _TextArtifactViewState extends State<_TextArtifactView> {
     super.initState();
     _prefs.addListener(_onPrefsChanged);
     _prepare();
+    if (widget.initialLine != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _revealLine());
+    }
+  }
+
+  /// Whether [index] (0-based) is inside the range the caller pointed at.
+  bool _marked(int index) {
+    final from = widget.initialLine;
+    if (from == null) return false;
+    final to = widget.endLine ?? from;
+    return index + 1 >= from && index + 1 <= to;
+  }
+
+  /// Scrolls the pointed line to a third of the viewport, once laid out.
+  void _revealLine() {
+    final from = widget.initialLine;
+    if (!mounted || from == null || !_vertical.hasClients) return;
+    final position = _vertical.position;
+    final line = (from - 1).clamp(0, _lines.length - 1);
+    final target =
+        (_rowOf(line, 0) * _builtExtent - position.viewportDimension / 3).clamp(
+          0.0,
+          position.maxScrollExtent,
+        );
+    _vertical.jumpTo(target);
   }
 
   @override
@@ -1044,27 +1175,38 @@ class _TextArtifactViewState extends State<_TextArtifactView> {
           ),
         );
 
-    Widget row(int index, {int chunk = 0, int? start, int? end}) => Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        numberCell(index, numbered: chunk == 0),
-        const SizedBox(width: _gutterGap),
-        Expanded(
-          child: Text.rich(
-            _lineSpan(index, currentMatch, colors, start: start, end: end),
-            key: ValueKey(
-              chunk == 0
-                  ? 'artifact-viewer-line-$index'
-                  : 'artifact-viewer-line-$index-$chunk',
+    Widget row(
+      int index, {
+      int chunk = 0,
+      int? start,
+      int? end,
+    }) => DecoratedBox(
+      key: _marked(index) ? ValueKey('artifact-viewer-marked-$index') : null,
+      decoration: BoxDecoration(
+        color: _marked(index) ? colors.accent.withValues(alpha: 0.16) : null,
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          numberCell(index, numbered: chunk == 0),
+          const SizedBox(width: _gutterGap),
+          Expanded(
+            child: Text.rich(
+              _lineSpan(index, currentMatch, colors, start: start, end: end),
+              key: ValueKey(
+                chunk == 0
+                    ? 'artifact-viewer-line-$index'
+                    : 'artifact-viewer-line-$index-$chunk',
+              ),
+              style: style,
+              maxLines: 1,
+              softWrap: false,
+              strutStyle: _lineStrut,
+              textScaler: scaler,
             ),
-            style: style,
-            maxLines: 1,
-            softWrap: false,
-            strutStyle: _lineStrut,
-            textScaler: scaler,
           ),
-        ),
-      ],
+        ],
+      ),
     );
 
     const padding = EdgeInsets.symmetric(horizontal: _hPadding, vertical: 12);
@@ -1380,13 +1522,26 @@ class _TextArtifactViewState extends State<_TextArtifactView> {
     if (runs == null || index >= runs.length) {
       return [(text: line, style: null)];
     }
+    final palette = _syntaxPalette(colors);
     return [
       for (final run in runs[index])
         (
           text: run.text,
-          style: run.color == null ? null : TextStyle(color: run.color),
+          style: switch (run.role) {
+            final role? => TextStyle(color: palette.colorOf(role)),
+            null => null,
+          },
         ),
     ];
+  }
+
+  /// Syntax colours of the theme, readable on the page the code sits on.
+  CodeSyntaxPalette _syntaxPalette(HermesThemeColors colors) {
+    if (!identical(colors, _paletteColors) || _palette == null) {
+      _paletteColors = colors;
+      _palette = CodeSyntaxPalette(colors, colors.background);
+    }
+    return _palette!;
   }
 }
 
@@ -1402,14 +1557,14 @@ List<List<_Run>>? _highlightLines(String text, String? language) {
   }
   if (nodes == null || nodes.isEmpty) return null;
   final runs = <_Run>[];
-  void walk(List<Node> list, Color? inherited) {
+  void walk(List<Node> list, CodeSyntaxRole? inherited) {
     for (final node in list) {
-      final color = _syntaxColor(node.className) ?? inherited;
+      final role = CodeSyntaxPalette.roleOf(node.className) ?? inherited;
       final value = node.value;
       if (value != null) {
-        runs.add((text: value, color: color));
+        runs.add((text: value, role: role));
       } else if (node.children != null) {
-        walk(node.children!, color);
+        walk(node.children!, role);
       }
     }
   }
@@ -1421,31 +1576,8 @@ List<List<_Run>>? _highlightLines(String text, String? language) {
     for (var i = 0; i < parts.length; i++) {
       if (i > 0) lines.add(<_Run>[]);
       final part = parts[i].replaceAll('\r', '');
-      if (part.isNotEmpty) lines.last.add((text: part, color: run.color));
+      if (part.isNotEmpty) lines.last.add((text: part, role: run.role));
     }
   }
   return lines;
 }
-
-Color? _syntaxColor(String? cls) => switch (cls) {
-  'keyword' ||
-  'built_in' ||
-  'literal' ||
-  'type' ||
-  'meta' ||
-  'meta-keyword' ||
-  'selector-tag' ||
-  'tag' ||
-  'name' => const Color(0xFFE8821C),
-  'string' ||
-  'regexp' ||
-  'symbol' ||
-  'template-string' ||
-  'addition' ||
-  'attr' ||
-  'attribute' => const Color(0xFF6BBF59),
-  'comment' || 'quote' || 'deletion' => const Color(0xFF7A7A7A),
-  'number' => const Color(0xFF9CB98A),
-  'title' || 'function' || 'section' => const Color(0xFFDCB67A),
-  _ => null,
-};

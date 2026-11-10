@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
+import 'package:hermes_android/core/theme/motion.dart';
 import 'package:hermes_android/core/widgets/generated_image_card.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 
@@ -81,7 +82,14 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(InteractiveViewer), findsOneWidget);
-    expect(find.byIcon(Icons.close), findsOneWidget);
+    // The viewer is the L3 sheet: like Desktop's lightbox it has no close
+    // button; its handle closes it, and says so to TalkBack.
+    final handle = find.byKey(const ValueKey('media-viewer-handle'));
+    expect(handle, findsOneWidget);
+    expect(find.byTooltip('Cerrar'), findsOneWidget);
+    await tester.tap(handle);
+    await tester.pumpAndSettle();
+    expect(find.byType(InteractiveViewer), findsNothing);
   });
 
   testWidgets('estado error muestra Reintentar y dispara el callback', (
@@ -101,17 +109,91 @@ void main() {
     expect(retried, 1);
   });
 
-  testWidgets('estado descargando muestra spinner y texto', (tester) async {
+  // F5 (REPORT-AUDITORIA-FLUIDEZ §3, A1, P1): downloading used to be a
+  // one-line card (~31 dp) that the picture then replaced with a ~200 dp
+  // frame in one frame. It now holds the image's own box; the words stay
+  // for TalkBack.
+  testWidgets('estado descargando reserva el hueco de la imagen', (
+    tester,
+  ) async {
+    final semantics = tester.ensureSemantics();
     await tester.pumpWidget(
       _wrap(const GeneratedImageCard(status: GeneratedImageStatus.downloading)),
     );
-    expect(find.byType(CircularProgressIndicator), findsOneWidget);
-    expect(find.text('Descargando imagen…'), findsOneWidget);
+    final skeleton = find.byKey(const ValueKey('generated-image-skeleton'));
+    expect(skeleton, findsOneWidget);
+    // 16:9 of the thumbnail's width (232) while its size is unknown.
+    expect(tester.getSize(skeleton).width, 232);
+    expect(tester.getSize(skeleton).height, closeTo(232 * 9 / 16, 0.5));
+    expect(find.bySemanticsLabel('Descargando imagen…'), findsOneWidget);
+    semantics.dispose();
+  });
+
+  testWidgets('del hueco a la imagen: el alto cambia suave, sin salto', (
+    tester,
+  ) async {
+    final f = File('${tmp.path}/b.png')..writeAsBytesSync(_tinyPng);
+    final card = find.byType(GeneratedImageCard);
+    await tester.pumpWidget(
+      // In a column, as in the chat: an unbounded height, so the card has
+      // its own (gint56/57: as the Scaffold's body, or under an Align, the
+      // frame's own Align filled the 600 it was given).
+      _wrap(
+        const Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            GeneratedImageCard(status: GeneratedImageStatus.downloading),
+          ],
+        ),
+      ),
+    );
+    final before = tester.getSize(card).height;
+    await tester.pumpWidget(
+      _wrap(
+        Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            GeneratedImageCard(status: GeneratedImageStatus.ready, file: f),
+          ],
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(HermesMotion.base ~/ 2);
+    final midway = tester.getSize(card).height;
+    await tester.pump(HermesMotion.base);
+    await tester.pumpAndSettle();
+    final after = tester.getSize(card).height;
+    // A 1×1 picture is a square box (232): taller than the 16:9 hole.
+    expect(after, greaterThan(before));
+    expect(midway, greaterThan(before));
+    expect(midway, lessThan(after));
+  });
+
+  testWidgets('con «reducir movimiento» el cambio es instantáneo', (
+    tester,
+  ) async {
+    final f = File('${tmp.path}/c.png')..writeAsBytesSync(_tinyPng);
+    Widget still(Widget child) => _wrap(
+      MediaQuery(
+        data: const MediaQueryData(disableAnimations: true),
+        child: child,
+      ),
+    );
+    await tester.pumpWidget(
+      still(const GeneratedImageCard(status: GeneratedImageStatus.downloading)),
+    );
+    expect(find.byType(AnimatedSize), findsNothing);
+    await tester.pumpWidget(
+      still(GeneratedImageCard(status: GeneratedImageStatus.ready, file: f)),
+    );
+    await tester.pump();
+    expect(find.byType(AnimatedSize), findsNothing);
     expect(
-      tester
-          .getSize(find.byKey(const ValueKey('generated-image-status')))
-          .width,
-      lessThanOrEqualTo(320),
+      find.byKey(const ValueKey('generated-image-thumbnail')),
+      findsOneWidget,
     );
   });
 

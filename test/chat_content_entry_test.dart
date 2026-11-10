@@ -1,5 +1,6 @@
-// sa1215: the chat menu opens «Archivos y enlaces» with what the loaded
-// transcript shared, including tool deliveries that never render as text.
+// sa1215: the chat menu opens «Artefactos» (Desktop's Artifacts view) with
+// what the loaded transcript shared, including tool deliveries that never
+// render as text.
 import 'dart:convert';
 import 'dart:io';
 
@@ -12,7 +13,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:hermes_android/core/screens/chat_content_screen.dart';
 import 'package:hermes_android/core/screens/chat_screen.dart';
-import 'package:hermes_android/core/screens/image_viewer_screen.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/app_lock.dart';
 import 'package:hermes_android/core/services/approval_policy.dart';
@@ -24,6 +24,8 @@ import 'package:hermes_android/core/services/sftp_transfer_service.dart';
 import 'package:hermes_android/core/services/ssh_manager.dart';
 import 'package:hermes_android/core/services/ssh_session_service.dart';
 import 'package:hermes_android/core/services/turn_outbox_store.dart';
+import 'package:hermes_android/core/theme/hermes_style.dart';
+import 'package:hermes_android/core/widgets/media_viewer/media_viewer.dart';
 import 'package:hermes_android/main.dart';
 import 'support/test_api_client.dart';
 
@@ -85,8 +87,8 @@ List<Map<String, dynamic>> _history() => [
   },
 ];
 
-/// The sheet builds rows lazily and Search / Ir a sit above the tools, so
-/// drag the sheet list until [target] is built and inside it.
+/// The sheet builds rows lazily and the workspace row and Search sit above
+/// the grid, so drag the sheet list until [target] is built and inside it.
 Future<void> _scrollSheetTo(WidgetTester tester, Finder target) async {
   final list = find.byKey(const ValueKey('chat-control-sheet'));
   for (var i = 0; i < 20; i++) {
@@ -108,7 +110,11 @@ void main() {
         .setMockMethodCallHandler(MethodChannel(name), (_) async => null);
   }
 
+  tearDown(() => HermesStylePrefs.debugUse(null));
+
   setUp(() {
+    // These tests read titles as written; Contour upper-cases them.
+    HermesStylePrefs.debugUse(HermesStylePrefs.inMemory(HermesStyle.soft));
     secureStore.clear();
     TurnOutboxStore.resetSerializationForTesting();
     TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
@@ -217,26 +223,35 @@ void main() {
     return chat;
   }
 
-  testWidgets('el menú del chat abre Archivos y enlaces con su contenido', (
+  testWidgets('el menú del chat abre Artefactos con su contenido', (
     tester,
   ) async {
     await pumpChat(tester, history: _history());
     await tester.pump(const Duration(milliseconds: 200));
 
-    await tester.tap(find.byKey(const ValueKey('chat-notch')));
+    await tester.tap(find.byKey(const ValueKey('chat-settings-button')));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     final entry = find.byKey(const ValueKey('chat-control-content'));
     await _scrollSheetTo(tester, entry);
     expect(
-      find.descendant(of: entry, matching: find.text('Archivos y enlaces')),
+      find.descendant(of: entry, matching: find.text('Artefactos')),
       findsOneWidget,
     );
+    // One entry, as Desktop: the empty second artifacts sheet is gone.
+    expect(find.byKey(const ValueKey('chat-control-artifacts')), findsNothing);
     await tester.tap(entry);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 600));
 
     expect(find.byType(ChatContentScreen), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byType(ChatContentScreen),
+        matching: find.text('Artefactos'),
+      ),
+      findsOneWidget,
+    );
     for (final label in ['guia', 'gato.png', 'brief.pdf']) {
       expect(
         find.byKey(ValueKey('sa1215-item-$label')),
@@ -280,7 +295,7 @@ void main() {
     );
     await tester.pump(const Duration(milliseconds: 200));
 
-    await tester.tap(find.byKey(const ValueKey('chat-notch')));
+    await tester.tap(find.byKey(const ValueKey('chat-settings-button')));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     final entry = find.byKey(const ValueKey('chat-control-content'));
@@ -297,7 +312,12 @@ void main() {
       await tester.pump(const Duration(milliseconds: 20));
     }
     expect(fetched.last, serverPath);
-    expect(find.byType(ImageViewerScreen), findsOneWidget);
+    final viewer = find.byType(MediaViewerScreen);
+    expect(viewer, findsOneWidget);
+    expect(
+      find.descendant(of: viewer, matching: find.byType(InteractiveViewer)),
+      findsOneWidget,
+    );
   });
 }
 

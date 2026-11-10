@@ -78,6 +78,7 @@ void main() {
         remotePath: '/tmp/notes.txt',
         fileName: 'notes.txt',
         totalBytes: 10,
+        document: 'content://test.documents/document/notes',
       );
       expect(notifications.titles, [failedTitle]);
     });

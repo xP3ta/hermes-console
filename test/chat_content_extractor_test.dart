@@ -9,9 +9,14 @@ import 'package:hermes_android/core/services/chat_content_extractor.dart';
 List<ChatContentItem> _collect(List<Map<String, dynamic>> chronological) =>
     collectChatContent(chronological.reversed.toList());
 
-List<String> _values(List<Map<String, dynamic>> chronological) => [
-  for (final item in _collect(chronological).reversed) item.value,
-];
+/// Desktop `collectArtifactsForSession` order.
+List<String> _values(List<Map<String, dynamic>> chronological) {
+  final newestFirst = chronological.reversed.toList();
+  return [
+    for (final item in collectChatContentChronological(newestFirst))
+      item.value,
+  ];
+}
 
 Map<String, dynamic> _tool(String name, Object content, {num? ts}) => {
   'role': 'tool',
@@ -40,14 +45,14 @@ void main() {
 
     test('strips Markdown code delimiters from discovered links', () {
       expect(
-        _values([_assistant('Preview URL: `https://voice.qwickapps.com`')]),
-        ['https://voice.qwickapps.com'],
+        _values([_assistant('Preview URL: `https://voice.example.test`')]),
+        ['https://voice.example.test'],
       );
       expect(
         _values([
-          _assistant('Deployed at `https://voice.qwickapps.com`, take a look.'),
+          _assistant('Deployed at `https://voice.example.test`, take a look.'),
         ]),
-        ['https://voice.qwickapps.com'],
+        ['https://voice.example.test'],
       );
     });
 
@@ -428,7 +433,7 @@ void main() {
               '@image:/home/u/.hermes/uploads/foto.jpg\n'
               '@file:"/home/u/.hermes/uploads/informe final.pdf"',
         },
-      ]).reversed.toList();
+      ]);
       expect(items.map((item) => item.value), [
         'https://example.com/ref',
         '/home/u/.hermes/uploads/foto.jpg',
@@ -518,6 +523,23 @@ void main() {
         'https://a.example/one',
       ]);
       expect(items.last.timestamp!.millisecondsSinceEpoch, 100000);
+    });
+
+    test('inside one message the order is the message\'s (Desktop)', () {
+      // Desktop sorts by timestamp with a stable sort: items of one message
+      // keep the order the message names them; newer messages come first.
+      final items = _collect([
+        _assistant('MEDIA:/tmp/gen/old.png', ts: 100),
+        _assistant('MEDIA:/tmp/gen/a.png\nMEDIA:/tmp/gen/b.png', ts: 200),
+        _assistant('MEDIA:/tmp/gen/c.png\nMEDIA:/tmp/gen/d.png', ts: 300),
+      ]);
+      expect(items.map((item) => item.label), [
+        'c.png',
+        'd.png',
+        'a.png',
+        'b.png',
+        'old.png',
+      ]);
     });
 
     test('system and private rows are ignored', () {

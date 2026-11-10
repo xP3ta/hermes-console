@@ -37,11 +37,47 @@ class AdaptiveListDetail extends StatefulWidget {
   /// covered or uncovered by another app route.
   final RouteObserver<PageRoute<dynamic>>? visibilityObserver;
 
+  /// Expanded: width of the list beside the open item.
+  final double listWidth;
+
+  /// Expanded, with an item open: whether the list shows beside it. Hidden,
+  /// it stays mounted (its scroll and search survive) and the item takes
+  /// the whole width. Without an open item the list always shows.
+  final bool listVisible;
+
+  /// Expanded, the list hidden: shows it over the open item for a moment,
+  /// without taking a column ([onDismissListOverlay] when the user taps
+  /// beside it).
+  final bool listOverlay;
+  final VoidCallback? onDismissListOverlay;
+
+  /// Label of the dismissable scrim behind [listOverlay].
+  final String? listOverlayDismissLabel;
+
+  /// Expanded, list beside the item: room left above and below the line
+  /// between them, and how strong it is. By default a full-height divider;
+  /// the Chats screen draws mock 134's short, faint line.
+  final EdgeInsetsGeometry dividerMargin;
+  final double dividerOpacity;
+
+  /// Expanded, the list folded away with an item open: wraps the pane with
+  /// what stands in for the list on its leading edge (the Chats screen's
+  /// rail of agents). Null: the item takes the whole width.
+  final Widget Function(Widget pane)? foldedListRail;
+
   const AdaptiveListDetail({
     required this.list,
     required this.placeholder,
     this.onCollapsedWithDetail,
     this.visibilityObserver,
+    this.listWidth = Responsive.listPaneWidth,
+    this.listVisible = true,
+    this.listOverlay = false,
+    this.onDismissListOverlay,
+    this.listOverlayDismissLabel,
+    this.dividerMargin = EdgeInsets.zero,
+    this.dividerOpacity = 1,
+    this.foldedListRail,
     super.key,
   });
 
@@ -149,13 +185,25 @@ class AdaptiveListDetailState extends State<AdaptiveListDetail>
     final sizeClass = Responsive.sizeClassOf(context);
     final previous = _lastClass;
     _lastClass = sizeClass;
+    if (previous != sizeClass) {
+      // QA 9709 (Fold): what the window reports when it folds or unfolds,
+      // in logcat as `[layout]`.
+      debugPrint(
+        '[layout] list-detail ${previous?.name ?? '-'} -> ${sizeClass.name} '
+        'width=${MediaQuery.sizeOf(context).width.toStringAsFixed(0)} '
+        'depth=$_depth',
+      );
+    }
     if (sizeClass == WindowSizeClass.compact) {
-      if (previous != null &&
-          previous != WindowSizeClass.compact &&
-          hasDetail) {
+      if (previous != null && previous != WindowSizeClass.compact) {
+        // The pane's navigator leaves the tree with this frame, and with
+        // it every page it held: none is open any more. Its observer
+        // forgets them too (a disposed navigator tells it nothing).
+        final hadDetail = hasDetail;
         _depth = 0;
+        _depthObserver.reset();
         final callback = widget.onCollapsedWithDetail;
-        if (callback != null) {
+        if (hadDetail && callback != null) {
           WidgetsBinding.instance.addPostFrameCallback((_) => callback());
         }
       }
@@ -166,36 +214,64 @@ class AdaptiveListDetailState extends State<AdaptiveListDetail>
       );
     }
 
+    // The count answers to the navigator itself: one that cannot pop holds
+    // only the placeholder, so nothing is open, whatever was counted. A
+    // medium window must never show the placeholder in place of the list
+    // (QA 9709, the owner's 2219 capture).
+    final navigator = _navigatorKey.currentState;
+    if (_depth > 0 && navigator != null && !navigator.canPop()) {
+      _depth = 0;
+      _depthObserver.keepTop();
+    }
+
     final list = KeyedSubtree(key: _listKey, child: widget.list);
     // The navigator's own GlobalKey moves the open page between layouts.
+    //
+    // A semantics container of its own: every route of the pane (the
+    // placeholder too) has a modal barrier, and a barrier blocks the
+    // semantics of what was painted before it in the same container. Side
+    // by side that was the whole list column (and, folded, the agent
+    // rail): TalkBack and uiautomator saw only the placeholder (QA 9970
+    // SC11, Pixel on its side: one node, «Elige una conversación…»).
     final pane = KeyedSubtree(
-      child: HeroControllerScope.none(
-        child: Navigator(
-          key: _navigatorKey,
-          observers: [_depthObserver],
-          onGenerateInitialRoutes: (_, _) => [
-            PageRouteBuilder<void>(
-              settings: const RouteSettings(name: 'detail-placeholder'),
-              pageBuilder: (_, _, _) =>
-                  CoveredRouteMediaQueryFreeze(child: widget.placeholder),
-              transitionDuration: Duration.zero,
-              reverseTransitionDuration: Duration.zero,
-            ),
-          ],
+      child: Semantics(
+        container: true,
+        child: HeroControllerScope.none(
+          child: Navigator(
+            key: _navigatorKey,
+            observers: [_depthObserver],
+            onGenerateInitialRoutes: (_, _) => [
+              PageRouteBuilder<void>(
+                settings: const RouteSettings(name: 'detail-placeholder'),
+                pageBuilder: (_, _, _) =>
+                    CoveredRouteMediaQueryFreeze(child: widget.placeholder),
+                transitionDuration: Duration.zero,
+                reverseTransitionDuration: Duration.zero,
+              ),
+            ],
+          ),
         ),
       ),
     );
 
+    final divider = Theme.of(context).hermes.divider;
     final Widget layout;
-    if (sizeClass == WindowSizeClass.expanded) {
+    if (sizeClass == WindowSizeClass.expanded &&
+        (widget.listVisible || !hasDetail)) {
       layout = Row(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          SizedBox(width: Responsive.listPaneWidth, child: list),
-          VerticalDivider(
-            width: 1,
-            thickness: 1,
-            color: Theme.of(context).hermes.divider,
+          SizedBox(width: widget.listWidth, child: list),
+          Padding(
+            key: const ValueKey('adaptive-list-divider'),
+            padding: widget.dividerMargin,
+            child: VerticalDivider(
+              width: 1,
+              thickness: 1,
+              color: divider.withValues(
+                alpha: divider.a * widget.dividerOpacity,
+              ),
+            ),
           ),
           Expanded(
             child: KeyedSubtree(
@@ -205,18 +281,81 @@ class AdaptiveListDetailState extends State<AdaptiveListDetail>
           ),
         ],
       );
-    } else {
-      // Medium: one pane. Both stay mounted so switching keeps their state;
-      // the hidden one neither paints, ticks nor takes input.
+    } else if (sizeClass == WindowSizeClass.expanded) {
+      // The list folded away: the open item takes the whole width. Shown
+      // over it on request, it does not push it.
+      final overlay = widget.listOverlay;
+      final colors = Theme.of(context).hermes;
+      final folded = KeyedSubtree(
+        key: const ValueKey('adaptive-detail-pane'),
+        child: pane,
+      );
       layout = Stack(
         fit: StackFit.expand,
         children: [
-          _Hideable(hidden: hasDetail, child: list),
+          widget.foldedListRail?.call(folded) ?? folded,
+          if (overlay)
+            ModalBarrier(
+              key: const ValueKey('adaptive-list-overlay-scrim'),
+              color: Colors.black.withValues(alpha: 0.24),
+              semanticsLabel: widget.listOverlayDismissLabel,
+              onDismiss: widget.onDismissListOverlay,
+            ),
+          Positioned(
+            left: 0,
+            top: 0,
+            bottom: 0,
+            width: widget.listWidth,
+            child: _Hideable(
+              hidden: !overlay,
+              child: Material(
+                key: const ValueKey('adaptive-list-overlay'),
+                color: colors.background,
+                elevation: 8,
+                child: list,
+              ),
+            ),
+          ),
+        ],
+      );
+    } else {
+      // Medium: one pane. Both stay mounted so switching keeps their state;
+      // the hidden one neither paints, ticks nor takes input. With an item
+      // open, [listOverlay] brings the list over it for a moment.
+      final overlay = widget.listOverlay && hasDetail;
+      layout = Stack(
+        fit: StackFit.expand,
+        children: [
           _Hideable(
             hidden: !hasDetail,
             child: KeyedSubtree(
               key: const ValueKey('adaptive-detail-pane'),
               child: pane,
+            ),
+          ),
+          if (overlay)
+            ModalBarrier(
+              key: const ValueKey('adaptive-list-overlay-scrim'),
+              color: Colors.black.withValues(alpha: 0.24),
+              semanticsLabel: widget.listOverlayDismissLabel,
+              onDismiss: widget.onDismissListOverlay,
+            ),
+          Positioned(
+            left: 0,
+            top: 0,
+            bottom: 0,
+            width: overlay ? widget.listWidth : null,
+            right: overlay ? null : 0,
+            child: _Hideable(
+              hidden: hasDetail && !overlay,
+              child: overlay
+                  ? Material(
+                      key: const ValueKey('adaptive-list-overlay'),
+                      color: Theme.of(context).hermes.background,
+                      elevation: 8,
+                      child: list,
+                    )
+                  : list,
             ),
           ),
         ],
@@ -265,8 +404,22 @@ class _DepthObserver extends NavigatorObserver {
 
   void _report() => onDepth(_stack.isEmpty ? 0 : _stack.length - 1);
 
+  /// The pane's navigator went away (a compact window): no page is open.
+  void reset() => _stack.clear();
+
+  /// The navigator holds only its first route: that one is all there is.
+  void keepTop() {
+    if (_stack.length > 1) _stack.removeRange(0, _stack.length - 1);
+  }
+
   @override
   void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    // A push with nothing below is a navigator's first route: a new pane
+    // navigator (the window widened again after a compact one). Whatever
+    // the old one held is gone; counting it would leave an "open item"
+    // that is only the placeholder, with the list hidden and Back eaten
+    // (QA 9709, folding the Fold on Chats).
+    if (previousRoute == null) _stack.clear();
     _stack.add(route);
     _report();
     visibility()?.didPush(route, previousRoute);

@@ -15,6 +15,7 @@ import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
+import 'package:hermes_android/core/utils/chat_turn.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -291,6 +292,248 @@ void main() {
         expect(terminalBytes, lessThan(3 * 220 * 1024));
       },
     );
+  }
+
+  // QA 9709 (the owner, APK 9709): for a moment the chat showed rows twice. A
+  // read held while a turn ran (Hermes had saved its prompt and said so with
+  // `sessions.changed`) goes out as soon as the turn ends, before the reply
+  // is saved. That tail page holds the saved prompt but not the reply, so it
+  // cannot prove the turn: the local turn stays shown, and the page brought
+  // its prompt in beside it. With one turn before it, or two.
+  for (final turns in [1, 2]) {
+    test('$turns turn(s): a read before the reply is saved shows each row '
+        'once', () async {
+      final server = _Server(2500);
+      final gateway = _Gateway()
+        ..snapshot = const DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-long',
+          storedSessionId: 'stored-long',
+          created: false,
+          messagesProvided: false,
+          messageCount: 2500,
+        );
+      final chat = _chat(server, gateway);
+      addTearDown(chat.dispose);
+      addTearDown(gateway.close);
+      await chat.loadMessages(expectedMessageCount: 2500);
+      await _settle();
+
+      void expectEachOnce(String when) {
+        final contents = chat.messages.map((m) => m['content']).toList();
+        for (final text in [
+          'Vale hazlo',
+          'Respuesta final',
+          if (turns == 2) ...['Primero', 'Respuesta primera'],
+        ]) {
+          expect(
+            contents.where((c) => c == text),
+            hasLength(1),
+            reason: '$when: «$text»',
+          );
+        }
+        expect(contents.take(2).toList(), [
+          'Respuesta final',
+          'Vale hazlo',
+        ], reason: when);
+        final ids = chat.messages.map((m) => m['id']).whereType<int>();
+        expect(ids.toSet(), hasLength(ids.length), reason: when);
+      }
+
+      if (turns == 2) {
+        await chat.send(
+          fullText: 'Primero',
+          model: 'hermes-agent',
+          history: chat.buildHistory(),
+        );
+        server.append('user', content: 'Primero');
+        server.append('assistant', content: 'Respuesta primera');
+        gateway.emit(
+          'message.delta',
+          payload: const {'text': 'Respuesta primera'},
+        );
+        gateway.emit(
+          'message.complete',
+          payload: const {'text': 'Respuesta primera'},
+        );
+        await _settle();
+      }
+
+      await chat.send(
+        fullText: 'Vale hazlo',
+        model: 'hermes-agent',
+        history: chat.buildHistory(),
+      );
+      // Hermes saves the prompt as the turn starts; the reply comes later.
+      server.append('user', content: 'Vale hazlo');
+      gateway.emit('message.delta', payload: const {'text': 'Respuesta final'});
+      gateway.emit(
+        'message.complete',
+        payload: const {'text': 'Respuesta final'},
+      );
+      await _settle();
+      expect(chat.isStreaming, isFalse);
+      expectEachOnce('turn ended, reply not saved');
+
+      // The read held during the turn (the prompt's `sessions.changed`).
+      await chat.loadMessages(passiveOnly: true);
+      await _settle();
+      expectEachOnce('passive read, reply not saved');
+
+      // The reply is saved: the next read proves the turn.
+      server.append('assistant', content: 'Respuesta final');
+      await chat.loadMessages(passiveOnly: true);
+      await _settle();
+      expectEachOnce('reply saved');
+      expect(chat.messages[0]['id'], server.rows.last['id']);
+      expect(chat.messages[1]['id'], server.rows[server.rows.length - 2]['id']);
+    });
+  }
+
+  // QA 9709 round 2 (the owner, captures 1167/1169): the same turn twice, its
+  // local copy (prompt with no time, reply with its live trace) beside the
+  // stored one (user 497589, reply 497592; the server holds ONE copy). The
+  // local rows had no identity. Hermes names the rows it stored for the turn
+  // in `message.complete.persisted_turn`; the client never read it. Here the
+  // stored turn is four rows (prompt, tool call, tool result, reply), as in
+  // the owner's store, and the reads come after the turn, with one turn before
+  // it or with a second turn started before the first one was read back.
+  for (final secondTurn in [false, true]) {
+    test('persisted_turn binds the turn to its stored rows: shown once'
+        '${secondTurn ? ', a second turn right after' : ''}', () async {
+      final server = _Server(2500);
+      final gateway = _Gateway()
+        ..snapshot = const DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-long',
+          storedSessionId: 'stored-long',
+          created: false,
+          messagesProvided: false,
+          messageCount: 2500,
+        );
+      final chat = _chat(server, gateway);
+      addTearDown(chat.dispose);
+      addTearDown(gateway.close);
+      await chat.loadMessages(expectedMessageCount: 2500);
+      await _settle();
+
+      /// Hermes stores the turn: its prompt, the tool call and its result,
+      /// the reply. Returns the receipt `message.complete` carries.
+      Map<String, dynamic> store(String prompt, String reply) {
+        final first = server.rows.length + 1;
+        server.rows.addAll([
+          {'id': first, 'role': 'user', 'content': prompt},
+          {
+            'id': first + 1,
+            'role': 'assistant',
+            'content': '',
+            'tool_calls': [
+              {
+                'id': 'call-$first',
+                'type': 'function',
+                'function': {'name': 'terminal', 'arguments': '{}'},
+              },
+            ],
+          },
+          {
+            'id': first + 2,
+            'role': 'tool',
+            'tool_call_id': 'call-$first',
+            'content': 'ok',
+          },
+          {'id': first + 3, 'role': 'assistant', 'content': reply},
+        ]);
+        return {
+          'row_ids': [first, first + 1, first + 2, first + 3],
+          'complete': true,
+          'user_row_id': first,
+          'user_row_ids': [first],
+          'final_assistant_row_id': first + 3,
+        };
+      }
+
+      Future<void> turn(
+        String prompt,
+        String reply, {
+        bool settle = true,
+      }) async {
+        expect(
+          await chat.send(
+            fullText: prompt,
+            model: 'hermes-agent',
+            history: chat.buildHistory(),
+          ),
+          isTrue,
+          reason: 'precondition: «$prompt» sent',
+        );
+        gateway.emit('message.start');
+        gateway.emit(
+          'tool.start',
+          payload: const {'tool_id': 'tool-1', 'name': 'terminal'},
+        );
+        gateway.emit(
+          'tool.complete',
+          payload: const {'tool_id': 'tool-1', 'name': 'terminal'},
+        );
+        gateway.emit('message.delta', payload: {'text': reply});
+        final receipt = store(prompt, reply);
+        gateway.emit(
+          'message.complete',
+          payload: {
+            'text': reply,
+            'status': 'complete',
+            'persisted_turn': receipt,
+          },
+        );
+        if (settle) {
+          await _settle();
+        } else {
+          // The next turn goes out before this one is read back.
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+        }
+      }
+
+      const prompt = 'Quiza es algo puntual, dame la maqueta';
+      const reply = 'Todavía no está.';
+      await turn(prompt, reply, settle: !secondTurn);
+      if (secondTurn) {
+        await turn('Vale, sigue', 'Sigo.');
+      }
+
+      void expectOnce(String when) {
+        final users = chat.messages
+            .where((m) => m['role'] == 'user' && m['content'] == prompt)
+            .toList();
+        final replies = chat.messages
+            .where((m) => m['role'] == 'assistant' && m['content'] == reply)
+            .toList();
+        expect(users, hasLength(1), reason: '$when: the prompt');
+        expect(replies, hasLength(1), reason: '$when: the reply');
+        final rowIds = chat.messages
+            .map(canonicalTranscriptRowId)
+            .whereType<int>()
+            .toList();
+        expect(rowIds.toSet(), hasLength(rowIds.length), reason: when);
+      }
+
+      expectOnce('turn ended');
+      // Bound by identity: the prompt and the reply carry their stored rows.
+      final storedUser = server.rows.firstWhere(
+        (row) => row['content'] == prompt,
+      )['id'];
+      expect(
+        chat.messages
+            .where((m) => m['content'] == prompt)
+            .map(canonicalTranscriptRowId)
+            .single,
+        storedUser,
+      );
+
+      // Coming back from another app, a backstop, `sessions.changed`: reads.
+      for (var read = 0; read < 2; read++) {
+        await chat.loadMessages(passiveOnly: true);
+        await _settle();
+        expectOnce('passive read ${read + 1}');
+      }
+    });
   }
 
   // Editorial `role=user` rows (model/personality switch) right before a

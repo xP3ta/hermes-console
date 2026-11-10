@@ -76,4 +76,23 @@ abstract final class PrivateRenderCaches {
       clear();
     }
   }
+
+  static final Set<void Function(String connectionId)> _connectionForgetters =
+      {};
+
+  /// [forget] drops what a static cache keeps for one connection.
+  static void registerConnection(void Function(String connectionId) forget) =>
+      _connectionForgetters.add(forget);
+
+  static void unregisterConnection(
+    void Function(String connectionId) forget,
+  ) => _connectionForgetters.remove(forget);
+
+  /// One connection's data changed authority: it was removed, or its
+  /// credentials, Dashboard secrets or active profile changed.
+  static void forgetConnection(String connectionId) {
+    for (final forget in List.of(_connectionForgetters)) {
+      forget(connectionId);
+    }
+  }
 }

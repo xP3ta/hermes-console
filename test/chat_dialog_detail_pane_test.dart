@@ -354,8 +354,9 @@ void main() {
     final chatState = tester.state(chatScreen);
     final strings = Strings.of(tester.element(chatScreen));
 
-    final notch = find.byKey(const ValueKey('chat-notch'));
-    _expectOnScreen(tester, notch, 'The chat notch');
+    // Vistas v3: the chat's settings, from their header button.
+    final notch = find.byKey(const ValueKey('chat-settings-button'));
+    _expectOnScreen(tester, notch, 'The chat settings button');
     await tester.tap(notch);
     final sheet = find.byKey(const ValueKey('chat-control-sheet'));
     await _pumpUntil(

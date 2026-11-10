@@ -1,12 +1,12 @@
 import 'dart:io';
 
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import '../theme/app_theme.dart';
 import 'attachment_card.dart';
 import 'cover_resize_image.dart';
 import 'generated_video_card.dart';
+import 'save_to_device_feedback.dart' show saveFileToDevice;
 
 /// How a sent or received attachment is previewed, wherever it appears
 /// (main chat, bot chats, rooms).
@@ -115,7 +115,7 @@ class AttachmentPreview extends StatelessWidget {
               mimeType: mimeType,
               sizeBytes: _lengthOf(file),
               onShare: () => shareMediaFile(file),
-              onSave: () => _saveCopy(file),
+              onSave: () => _saveCopy(context, file),
               showOpenAction: false,
             ),
           );
@@ -186,15 +186,13 @@ class AttachmentPreview extends StatelessWidget {
     }
   }
 
-  Future<void> _saveCopy(File file) async {
-    try {
-      await FilePicker.platform.saveFile(
-        dialogTitle: 'Console',
-        fileName: name,
-        bytes: await file.readAsBytes(),
-      );
-    } catch (_) {
-      // The picker reports its own failures; nothing to roll back.
-    }
+  /// Copied by blocks to the place chosen; a failure says why.
+  Future<void> _saveCopy(BuildContext context, File file) async {
+    await saveFileToDevice(
+      context,
+      file,
+      name: name,
+      source: 'attachment_preview',
+    );
   }
 }

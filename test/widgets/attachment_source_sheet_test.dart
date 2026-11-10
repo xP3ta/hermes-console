@@ -6,6 +6,7 @@ import 'package:hermes_android/l10n/app_localizations.dart';
 
 Widget _host({
   required ValueChanged<AttachmentSourceChoice> onSelected,
+  VoidCallback? onScanDocument,
   double textScale = 1,
   bool reduceMotion = false,
 }) {
@@ -28,6 +29,7 @@ Widget _host({
           key: const ValueKey('attachment-anchor'),
           semanticLabel: 'Adjuntar',
           onSelected: onSelected,
+          onScanDocument: onScanDocument,
         ),
       ),
     ),
@@ -62,6 +64,29 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(selected, [AttachmentSourceChoice.photos]);
+      expect(find.byType(MenuItemButton), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'con escáner el menú añade Escanear documento como cuarta entrada',
+    (tester) async {
+      final selected = <AttachmentSourceChoice>[];
+      var scans = 0;
+      await tester.pumpWidget(
+        _host(onSelected: selected.add, onScanDocument: () => scans++),
+      );
+      await tester.tap(find.byKey(const ValueKey('attachment-anchor')));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(MenuItemButton), findsNWidgets(4));
+      expect(find.text('Escanear documento'), findsOneWidget);
+
+      await tester.tap(find.text('Escanear documento'));
+      await tester.pumpAndSettle();
+
+      expect(scans, 1);
+      expect(selected, isEmpty);
       expect(find.byType(MenuItemButton), findsNothing);
     },
   );

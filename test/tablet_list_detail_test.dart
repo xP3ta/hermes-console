@@ -186,6 +186,79 @@ void main() {
       expect(offset(), before);
     }
   });
+
+  // QA 9970 SC11 (Pixel on its side): every route of the pane has a modal
+  // barrier, and a barrier blocks the semantics of what was painted before
+  // it in its container. Side by side the list column was gone from the
+  // tree: TalkBack and uiautomator saw only the placeholder.
+  for (final size in const [Size(952, 427), Size(1280, 800)]) {
+    testWidgets('expanded ${size.width.toInt()}: the list beside the pane '
+        'stays in the semantics tree, with or without an open item', (
+      tester,
+    ) async {
+      final semantics = tester.ensureSemantics();
+      await _size(tester, size);
+      await tester.pumpWidget(_app());
+      await tester.pumpAndSettle();
+      expect(find.text('Pick one'), findsOneWidget);
+      expect(find.bySemanticsLabel('row a'), findsOneWidget);
+      expect(find.bySemanticsLabel('Pick one'), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('row-b')));
+      await tester.pumpAndSettle();
+      expect(find.text('page b'), findsOneWidget);
+      expect(find.bySemanticsLabel('row a'), findsOneWidget);
+      expect(find.bySemanticsLabel('page b'), findsOneWidget);
+      semantics.dispose();
+    });
+  }
+
+  testWidgets('expanded, list folded: what stands in for it beside the '
+      'pane stays in the semantics tree', (tester) async {
+    final semantics = tester.ensureSemantics();
+    await _size(tester, const Size(1280, 800));
+    var open = false;
+    late StateSetter setOuter;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: StatefulBuilder(
+            builder: (context, setState) {
+              setOuter = setState;
+              return AdaptiveListDetail(
+                placeholder: const Center(child: Text('Pick one')),
+                listVisible: !open,
+                foldedListRail: (pane) => Row(
+                  children: [
+                    const SizedBox(width: 64, child: Text('Agents rail')),
+                    Expanded(child: pane),
+                  ],
+                ),
+                list: Builder(
+                  builder: (context) => ListTile(
+                    key: const ValueKey('row-a'),
+                    title: const Text('row a'),
+                    onTap: () => pushInDetailPane<void>(
+                      context,
+                      MaterialPageRoute(builder: (_) => const _Page('a')),
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.byKey(const ValueKey('row-a')));
+    await tester.pumpAndSettle();
+    setOuter(() => open = true);
+    await tester.pumpAndSettle();
+    expect(find.text('Agents rail'), findsOneWidget);
+    expect(find.bySemanticsLabel('Agents rail'), findsOneWidget);
+    expect(find.bySemanticsLabel('page a'), findsOneWidget);
+    semantics.dispose();
+  });
 }
 
 class _Recorder extends NavigatorObserver {

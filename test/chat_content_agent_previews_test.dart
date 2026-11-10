@@ -47,6 +47,7 @@ class _Harness {
   List<Map<String, dynamic>> transcript;
   final opened = <ChatContentItem>[];
   final launched = <Uri>[];
+  final inApp = <Uri>[];
 
   Widget app() => MaterialApp(
     theme: AppTheme.hermesRedDark,
@@ -57,11 +58,12 @@ class _Harness {
       transcript: () => transcript,
       hasOlder: () => false,
       loadOlder: () async {},
-      onOpenFile: (item) async => opened.add(item),
+      onOpenFile: (item, _) async => opened.add(item),
       launchExternal: (uri) async {
         launched.add(uri);
         return true;
       },
+      openInApp: (_, uri) => inApp.add(uri),
     ),
   );
 }
@@ -85,7 +87,9 @@ void main() {
     expect(find.text('https://example.com/app'), findsOneWidget);
   });
 
-  testWidgets('tapping a public URL opens the system browser', (tester) async {
+  testWidgets('tapping a public URL opens it in the in-app browser', (
+    tester,
+  ) async {
     final harness = _Harness(
       _transcript([
         {'action': 'open', 'url': 'www.example.com/docs', 'label': 'Docs'},
@@ -97,7 +101,8 @@ void main() {
     await tester.tap(_tile('Docs'));
     await tester.pumpAndSettle();
 
-    expect(harness.launched, [Uri.parse('https://www.example.com/docs')]);
+    expect(harness.inApp, [Uri.parse('https://www.example.com/docs')]);
+    expect(harness.launched, isEmpty);
     expect(harness.opened, isEmpty);
   });
 
@@ -135,6 +140,7 @@ void main() {
       await tester.pumpAndSettle();
     }
     expect(harness.launched, isEmpty);
+    expect(harness.inApp, isEmpty);
     expect(harness.opened, isEmpty);
   });
 
