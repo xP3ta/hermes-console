@@ -12,6 +12,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
+import 'package:hermes_android/core/services/connection_status.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/chat_connection_recovery_row.dart';
@@ -205,7 +206,6 @@ Widget _recoveryHarness({
           appForeground: appForeground,
           offlineLabel: 'Connection lost. You can keep drafting.',
           reconnectingLabel: 'Reconnecting… Your chat stays available.',
-          recoveredLabel: 'Reconnected',
           clock: _testNow,
         ),
         const Expanded(
@@ -325,6 +325,70 @@ void main() {
 
     tearDown(() => visibility.dispose());
 
+    // conn-registry: the chat waits five minutes for any loss, except a
+    // refused credential, which shows at once (Desktop use-gateway-boot.ts:
+    // 564-585 vs. RECONNECT_ESCALATE_AFTER_MS 590-608).
+    test('chat grace: a refused link shows at once, a redial waits 5 min', () {
+      fakeAsync((async) {
+        final chatVisibility = ChatTransportVisibility(
+          activeGrace: connectionPersistentNoticeAfter,
+          clock: () => now,
+        );
+        addTearDown(chatVisibility.dispose);
+        void feedLink(ConnectionStatusKind kind) => chatVisibility.update(
+          status: chatTransportWithLink(
+            const ChatTransportStatus(ChatTransportState.connected),
+            ConnectionStatus(kind, since: now),
+          ),
+          activeTurn: true,
+          authRequired: false,
+          appForeground: true,
+          link: ConnectionStatus(kind, since: now),
+        );
+        feedLink(ConnectionStatusKind.reconnecting);
+        advance(async, const Duration(minutes: 4));
+        expect(chatVisibility.visible, isFalse);
+        advance(async, const Duration(minutes: 1, seconds: 1));
+        expect(chatVisibility.visible, isTrue);
+        expect(chatVisibility.persistent, isTrue);
+
+        final refused = ChatTransportVisibility(
+          activeGrace: connectionPersistentNoticeAfter,
+          clock: () => now,
+        );
+        addTearDown(refused.dispose);
+        refused.update(
+          status: chatTransportWithLink(
+            const ChatTransportStatus(ChatTransportState.connected),
+            ConnectionStatus(ConnectionStatusKind.authRequired, since: now),
+          ),
+          activeTurn: false,
+          authRequired: false,
+          appForeground: true,
+          link: ConnectionStatus(ConnectionStatusKind.authRequired, since: now),
+        );
+        async.flushMicrotasks();
+        expect(refused.visible, isTrue);
+        expect(refused.linkKind, ConnectionStatusKind.authRequired);
+        // REVISION-4 BAJO 8: the credential is accepted again but the socket
+        // still redials: that is an ordinary loss, silent for the grace.
+        refused.update(
+          status: chatTransportWithLink(
+            const ChatTransportStatus(ChatTransportState.connected),
+            ConnectionStatus(ConnectionStatusKind.reconnecting, since: now),
+          ),
+          activeTurn: false,
+          authRequired: false,
+          appForeground: true,
+          link: ConnectionStatus(ConnectionStatusKind.reconnecting, since: now),
+        );
+        async.flushMicrotasks();
+        expect(refused.visible, isFalse);
+        advance(async, const Duration(minutes: 5, seconds: 1));
+        expect(refused.visible, isTrue);
+      });
+    });
+
     test('a 1 s offline → reconnecting → connected blip never shows', () {
       fakeAsync((async) {
         feed(const ChatTransportStatus(ChatTransportState.connected));
@@ -348,6 +412,80 @@ void main() {
         expect(visibility.visible, isFalse);
         expect(edges, isEmpty);
         expect(visibility.recoveries, 0);
+      });
+    });
+
+    test(
+      'a socket that died in the background stays silent on a quick resume',
+      () {
+        fakeAsync((async) {
+          feed(const ChatTransportStatus(ChatTransportState.connected));
+          final lostAt = now;
+          feed(
+            const ChatTransportStatus(ChatTransportState.connected),
+            foreground: false,
+          );
+          advance(async, const Duration(seconds: 70));
+          feed(
+            ChatTransportStatus(
+              ChatTransportState.reconnecting,
+              disconnectedSince: lostAt,
+            ),
+          );
+          // Back in the foreground: the loss is 70 s old, the return is new.
+          feed(
+            ChatTransportStatus(
+              ChatTransportState.reconnecting,
+              disconnectedSince: lostAt,
+            ),
+          );
+          advance(async, const Duration(seconds: 2));
+          expect(visibility.visible, isFalse);
+          feed(const ChatTransportStatus(ChatTransportState.connected));
+          advance(async, const Duration(seconds: 10));
+          expect(visibility.visible, isFalse);
+          expect(edges, isEmpty);
+          expect(visibility.recoveries, 0);
+        });
+      },
+    );
+
+    test('a visible outage clears in background and a new resume loss gets grace', () {
+      fakeAsync((async) {
+        feed(ChatTransportStatus(ChatTransportState.offline, disconnectedSince: now));
+        advance(async, const Duration(seconds: 4));
+        expect(visibility.visible, isTrue);
+        feed(ChatTransportStatus(ChatTransportState.offline, disconnectedSince: now), foreground: false);
+        expect(visibility.visible, isFalse);
+        advance(async, const Duration(minutes: 1));
+        feed(const ChatTransportStatus(ChatTransportState.connected));
+        advance(async, const Duration(seconds: 1));
+        feed(ChatTransportStatus(ChatTransportState.offline, disconnectedSince: now));
+        advance(async, const Duration(seconds: 4));
+        expect(visibility.visible, isFalse, reason: 'loss first observed after resume has six second grace');
+        advance(async, const Duration(seconds: 2));
+        expect(visibility.visible, isTrue, reason: 'real foreground outage still appears');
+      });
+    });
+
+    test('a redial that outlasts the resume grace is shown', () {
+      fakeAsync((async) {
+        feed(const ChatTransportStatus(ChatTransportState.connected));
+        final lostAt = now;
+        feed(
+          const ChatTransportStatus(ChatTransportState.connected),
+          foreground: false,
+        );
+        advance(async, const Duration(seconds: 70));
+        final status = ChatTransportStatus(
+          ChatTransportState.reconnecting,
+          disconnectedSince: lostAt,
+        );
+        feed(status);
+        advance(async, const Duration(seconds: 5));
+        expect(visibility.visible, isFalse);
+        advance(async, const Duration(seconds: 2));
+        expect(visibility.visible, isTrue);
       });
     });
 
@@ -453,7 +591,7 @@ void main() {
   });
 
   testWidgets(
-    'flapping produces one visible episode and one recovered notice',
+    'flapping produces one visible episode and no recovered notice',
     (tester) async {
       var visibleTransitions = 0;
       var wasVisible = false;
@@ -543,35 +681,52 @@ void main() {
         find.byKey(const ValueKey('chat-connection-recovery-row')),
         findsNothing,
       );
-      expect(find.text('Reconnected'), findsOneWidget);
+      // conn-registry E2: the end of a loss says nothing. Desktop has no
+      // «reconnected» notice (no match in apps/desktop/src) and the official
+      // app shows none (lanes/official-compare/S3).
+      expect(find.text('Reconnected'), findsNothing);
     },
   );
 
-  testWidgets('resume derives visibility from the original loss timestamp', (
-    tester,
-  ) async {
-    final down = _disconnected(
-      ChatTransportState.offline,
-      since: _testNow().subtract(const Duration(seconds: 10)),
-    );
-    await tester.pumpWidget(
-      _recoveryHarness(status: down, activeTurn: true, appForeground: false),
-    );
-    await tester.pump(const Duration(seconds: 10));
-    expect(
-      find.byKey(const ValueKey('chat-connection-recovery-row')),
-      findsNothing,
-    );
+  testWidgets(
+    'resume counts the grace from the return, not the original loss',
+    (tester) async {
+      final down = _disconnected(
+        ChatTransportState.offline,
+        since: _testNow().subtract(const Duration(seconds: 10)),
+      );
+      await tester.pumpWidget(
+        _recoveryHarness(status: down, activeTurn: true, appForeground: false),
+      );
+      await tester.pump(const Duration(seconds: 10));
+      expect(
+        find.byKey(const ValueKey('chat-connection-recovery-row')),
+        findsNothing,
+      );
 
-    await tester.pumpWidget(
-      _recoveryHarness(status: down, activeTurn: true, appForeground: true),
-    );
-    await tester.pump();
-    expect(
-      find.byKey(const ValueKey('chat-connection-recovery-row')),
-      findsOneWidget,
-    );
-  });
+      await tester.pumpWidget(
+        _recoveryHarness(status: down, activeTurn: true, appForeground: true),
+      );
+      await tester.pump();
+      // The socket died while the app was away: reopening it on return is
+      // silent for the resume grace…
+      expect(
+        find.byKey(const ValueKey('chat-connection-recovery-row')),
+        findsNothing,
+      );
+      await tester.pump(const Duration(seconds: 5));
+      expect(
+        find.byKey(const ValueKey('chat-connection-recovery-row')),
+        findsNothing,
+      );
+      // …and a redial that outlasts it is shown.
+      await tester.pump(const Duration(seconds: 2));
+      expect(
+        find.byKey(const ValueKey('chat-connection-recovery-row')),
+        findsOneWidget,
+      );
+    },
+  );
 
   testWidgets('idle chat retains Desktop five-minute grace', (tester) async {
     await tester.pumpWidget(

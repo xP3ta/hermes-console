@@ -23,6 +23,7 @@ import '../models/connection.dart';
 import '../models/cron_job.dart';
 import '../models/core_read.dart';
 import '../utils/transport_privacy.dart';
+import '../utils/vpn_interface.dart';
 import '../models/memory_info.dart';
 import '../models/model_active_info.dart';
 import '../models/model_provider.dart';
@@ -107,6 +108,7 @@ class ConnectionManager {
   final SecureStorage _secure;
   final DashboardClientFactory _dashboardClientFactory;
   final ClearCancelledTurnsForConnection? _clearCancelledTurns;
+
   // In-memory cache populated by [_loadApiKeys]. Keeps getConnections() sync.
   final Map<String, String> _apiKeyCache = {};
 
@@ -210,6 +212,7 @@ class ConnectionManager {
       _connectionWillChangeNotifierFor(connId);
 
   void _publishConnectionWillChange(String connId) {
+    PrivateRenderCaches.forgetConnection(connId);
     _connectionWillChangeNotifierFor(connId).emit();
   }
 
@@ -338,6 +341,37 @@ class ConnectionManager {
     activeConnectionId.value = id;
   }
 
+  /// Id de la instancia activa, resuelto siempre igual: el valor vivo de
+  /// [activeConnectionId] si sigue existiendo, si no la última usada
+  /// ([lastConnKey]) si es válida, si no la predeterminada, si no la única
+  /// conexión guardada. `null` solo si no hay conexiones o hay varias y nada
+  /// indica cuál. Usar esto en lugar de leer `activeConnectionId.value` a
+  /// pelo: ese notifier puede estar vacío aunque la app esté conectada (una
+  /// sola instancia que nunca se marcó como predeterminada).
+  String? resolveActiveConnectionId() {
+    final connections = getConnections();
+    if (connections.isEmpty) return null;
+    bool exists(String? id) =>
+        id != null && id.isNotEmpty && connections.any((c) => c.id == id);
+    final live = activeConnectionId.value;
+    if (exists(live)) return live;
+    final last = prefs.getString(lastConnKey);
+    if (exists(last)) return last;
+    final preferred = defaultConnectionId;
+    if (preferred != null) return preferred;
+    return connections.length == 1 ? connections.single.id : null;
+  }
+
+  /// La conexión de [resolveActiveConnectionId], o `null`.
+  SavedConnection? resolveActiveConnection() {
+    final id = resolveActiveConnectionId();
+    if (id == null) return null;
+    for (final c in getConnections()) {
+      if (c.id == id) return c;
+    }
+    return null;
+  }
+
   /// Siembra la instancia activa con la predeterminada en el arranque en frío.
   /// Llamar una sola vez en `main()` antes de construir la app: así el home abre
   /// con la predeterminada, pero el cambio de instancia en caliente (que escribe
@@ -367,6 +401,10 @@ class ConnectionManager {
       clearCancelledTurns: clearCancelledTurns,
     );
     await manager._loadApiKeys();
+    // Siembra el notifier con la instancia que se resolvería (última usada,
+    // predeterminada o la única): sin esto arrancaba en null salvo con una
+    // predeterminada y las pantallas que lo leen creían no tener conexión.
+    manager.activeConnectionId.value = manager.resolveActiveConnectionId();
     // Cold start: every screen sees the last known bot roster until its
     // first live read lands.
     BotRosterRegistry.shared.attachPersistence(prefs, manager.getConnections());
@@ -885,6 +923,8 @@ class ConnectionManager {
     'approval_activity_',
     'approval_rules_',
     'archived_sessions_',
+    'pinned_sessions_',
+    'pinned_sync_',
     'hidden_sessions_',
     'hidden_rows_',
     'deleted_sessions_',
@@ -893,6 +933,8 @@ class ConnectionManager {
     'mission_control.organizations.v1.',
     'mission_control.rooms.v1.',
     'mission_control.bot_chat_pins.v1.',
+    // CleartextNoticeMemory.keyPrefix (one-line plain-http note, seen once).
+    'krh_http_seen_',
   ];
   static const List<String> _connScopedDoubleColon = [
     'memory_draft_ts::',
@@ -906,6 +948,10 @@ class ConnectionManager {
     'companion.enabled.',
     'companion.scale.',
     'companion.size_multiplier.',
+    // PrefsHerdrAgentsStore: `hda.<hint|folders|kind>.<connId>`.
+    'hda.hint.',
+    'hda.folders.',
+    'hda.kind.',
   ];
 
   /// Devuelve el id de conexión codificado en [key], o null si no es una clave
@@ -1705,18 +1751,42 @@ class ApiClient {
 
   /// True when the Dashboard answered, even to refuse: a 401/403 means the
   /// server is there and the login is what is missing, never an outage.
-  Future<bool> _dashboardReachable(DashboardClient dashboard) async {
-    try {
-      await dashboard.getServerStatus().timeout(const Duration(seconds: 10));
-      return true;
-    } on DashboardAuthException {
-      return true;
-    } on DashboardHttpException catch (error) {
-      return error.statusCode == 401 || error.statusCode == 403;
-    } catch (e) {
-      debugPrint('[connection] excepción silenciada (se asume false): $e');
-      return false;
-    }
+  Future<bool> _dashboardReachable(DashboardClient dashboard) =>
+      _sharedStatusProbe(() async {
+        try {
+          await dashboard.getServerStatus().timeout(
+            const Duration(seconds: 10),
+          );
+          return true;
+        } on DashboardAuthException {
+          return true;
+        } on DashboardHttpException catch (error) {
+          return error.statusCode == 401 || error.statusCode == 403;
+        } catch (e) {
+          debugPrint('[connection] excepción silenciada (se asume false): $e');
+          return false;
+        }
+      });
+
+  /// Status probes in flight, one per server: Home, the session list and
+  /// the drawer each own a client of the same connection and all re-probe
+  /// on the same resume, while the server answers in series. A probe that
+  /// is still running serves them all; a result is never reused, so the
+  /// next probe after it asks the server again.
+  static final Map<String, Future<bool>> _statusProbesInFlight = {};
+
+  Future<bool> _sharedStatusProbe(Future<bool> Function() probe) {
+    final key = '$baseUrl|${_apiKey.hashCode}';
+    final existing = _statusProbesInFlight[key];
+    if (existing != null) return existing;
+    late final Future<bool> flight;
+    flight = probe().whenComplete(() {
+      if (identical(_statusProbesInFlight[key], flight)) {
+        _statusProbesInFlight.remove(key);
+      }
+    });
+    _statusProbesInFlight[key] = flight;
+    return flight;
   }
 
   // ── Session management ───────────────────────────────────────────────
@@ -2132,7 +2202,6 @@ class DashboardClient {
   /// al manejo del fichero y a la codificación base64. Hermes Desktop les da
   /// un margen propio de 180–600 s sin alargar el timeout corto del resto del
   /// Dashboard. La síntesis escala por longitud del texto.
-  @visibleForTesting
   static Duration audioSpeakRequestTimeout(String text) {
     final milliseconds = (text.length * 35).clamp(180000, 600000);
     return Duration(milliseconds: milliseconds);
@@ -2903,11 +2972,19 @@ class DashboardClient {
   Future<Map<String, dynamic>> apiGet(
     String endpoint, {
     bool retried = false,
+  }) => apiGetWithin(endpoint, timeout: _kTimeout, retried: retried);
+
+  /// [apiGet] with its own deadline, for a route whose server work may take
+  /// longer than the default (Git: Desktop's 30 s fetch deadline).
+  Future<Map<String, dynamic>> apiGetWithin(
+    String endpoint, {
+    required Duration timeout,
+    bool retried = false,
   }) async {
     final headers = await _authHeaders();
     _requireOpen();
     final res = await _http
-        .within(_kTimeout)
+        .within(timeout)
         .get(Uri.parse('$_baseUrl/api/$endpoint'), headers: headers);
     _ingestSetCookie(res, sentCookie: headers['Cookie']);
     if (res.statusCode == 401) {
@@ -2917,7 +2994,7 @@ class DashboardClient {
         retried: retried,
       );
       if (nextRetried != null) {
-        return apiGet(endpoint, retried: nextRetried);
+        return apiGetWithin(endpoint, timeout: timeout, retried: nextRetried);
       }
     }
     if (res.statusCode != 200) {
@@ -2926,37 +3003,120 @@ class DashboardClient {
     return await _decodeMapResponse(res);
   }
 
+  @visibleForTesting
+  static Future<bool> Function() vpnProbe = vpnInterfaceActive;
+  Future<bool> _vpnActive() => vpnProbe();
+
+  /// A background read spends one request only: already saved/live credentials,
+  /// without login, token scraping, renewal or an automatic 401 retry.
+  Future<Map<String, dynamic>> notificationRead(
+    String endpoint, {
+    required Duration timeout,
+    int maxBytes = 512 * 1024,
+  }) async {
+    // Nobody is looking at the phone: it may be on a rogue Wi-Fi. Credentials
+    // only go over TLS, loopback or a Tailscale tunnel that is really up.
+    if (!TransportPrivacy.isEncryptedPath(_baseUrl,
+        overlayActive: await _vpnActive())) {
+      throw const BackgroundTransportRefused();
+    }
+    await _ensureSecrets();
+    _requireOpen();
+    final headers = <String, String>{};
+    if (_hasNativeEnvelope) {
+      final raw = await SecureStorage().readDashboardSecret(_nativeOwner, 'token');
+      final native = MobileOAuthSession.decode(raw, _nativeOwner, _baseUrl);
+      if (native == null ||
+          native.expiresAt <= _now().millisecondsSinceEpoch ~/ 1000) {
+        throw const MobileOAuthException();
+      }
+      headers['Authorization'] = 'Bearer ${native.accessToken}';
+    } else {
+      final token = _manualToken ?? _token ?? _sharedPageTokens[_pageTokenKey];
+      final cookie = _hasPasswordCreds
+          ? _cookieHeaderFor(_sharedPasswordSession.cookies)
+          : _cookieHeader;
+      if (cookie != null) {
+        headers['Cookie'] = cookie;
+      } else if (token != null && token.isNotEmpty) {
+        headers['X-Hermes-Session-Token'] = token;
+        final basic = _basicAuthHeader;
+        if (basic != null) headers['Authorization'] = basic;
+      } else {
+        throw const DashboardAuthException(DashboardAuthFailureCode.loginRequired);
+      }
+    }
+    return _apiGetBoundedWithin(endpoint, maxBytes: maxBytes,
+        timeout: timeout, notificationHeaders: headers);
+  }
+
+  /// Total time a bounded read may take, body included: 30 s plus a second
+  /// per 256 KiB it may carry, at most 60 s (Desktop's fetch timeout is
+  /// 30 s). A full 4 MiB transcript page gets 46 s instead of 10 s.
+  @visibleForTesting
+  static Duration boundedReadDeadline(int maxBytes) =>
+      Duration(seconds: (30 + maxBytes ~/ (256 * 1024)).clamp(30, 60));
+
   /// [apiGet] for a caller with a byte budget (a capped transcript read): it
   /// gives up with [SessionTranscriptTooLargeException] as soon as the body
   /// passes [maxBytes], by the declared length or by what has arrived,
-  /// without buffering the rest. Same session, deadline, retry and errors as
-  /// [apiGet]; a rotated cookie is kept even when the body is refused.
+  /// without buffering the rest. Same session, retry and errors as
+  /// [apiGet], with [boundedReadDeadline] for the whole read; a rotated
+  /// cookie is kept even when the body is refused.
   Future<Map<String, dynamic>> apiGetBounded(
     String endpoint, {
     required int maxBytes,
     bool retried = false,
+  }) => apiGetBoundedWithin(
+    endpoint,
+    maxBytes: maxBytes,
+    timeout: boundedReadDeadline(maxBytes),
+    retried: retried,
+  );
+
+  /// [apiGetBounded] with its own deadline for the whole read (see
+  /// [apiGetWithin]); [apiGetBounded] passes [boundedReadDeadline].
+  Future<Map<String, dynamic>> apiGetBoundedWithin(
+    String endpoint, {
+    required int maxBytes,
+    required Duration timeout,
+    bool retried = false,
+  }) => _apiGetBoundedWithin(endpoint, maxBytes: maxBytes,
+      timeout: timeout, retried: retried);
+
+  Future<Map<String, dynamic>> _apiGetBoundedWithin(
+    String endpoint, {
+    required int maxBytes,
+    required Duration timeout,
+    bool retried = false,
+    Map<String, String>? notificationHeaders,
   }) async {
-    final headers = await _authHeaders();
+    final headers = notificationHeaders ?? await _authHeaders();
     _requireOpen();
     final request = http.Request('GET', Uri.parse('$_baseUrl/api/$endpoint'))
       ..headers.addAll(headers);
-    final streamed = await _http.within(_kTimeout).send(request);
+    final streamed = await _http.within(timeout).send(request);
     _ingestSetCookie(
       http.Response('', streamed.statusCode, headers: streamed.headers),
       sentCookie: headers['Cookie'],
     );
     if (streamed.statusCode != 200) {
+      if (notificationHeaders != null) {
+        await _cancelResponseStream(streamed.stream);
+        throw DashboardHttpException(streamed.statusCode);
+      }
       final res = await http.Response.fromStream(streamed);
-      if (res.statusCode == 401) {
+      if (res.statusCode == 401 && notificationHeaders == null) {
         final nextRetried = _unauthorizedRetry(
           sentCookie: headers['Cookie'],
           sentAuthorization: headers['Authorization'],
           retried: retried,
         );
         if (nextRetried != null) {
-          return apiGetBounded(
+          return apiGetBoundedWithin(
             endpoint,
             maxBytes: maxBytes,
+            timeout: timeout,
             retried: nextRetried,
           );
         }
@@ -2968,15 +3128,16 @@ class DashboardClient {
       await _cancelResponseStream(streamed.stream);
       throw const SessionTranscriptTooLargeException();
     }
-    final bytes = <int>[];
+    // Packed bytes, not a growing List<int> (4 to 8 times their size).
+    final bytes = BytesBuilder(copy: false);
     await for (final chunk in streamed.stream) {
-      bytes.addAll(chunk);
+      bytes.add(chunk);
       if (bytes.length > maxBytes) {
         throw const SessionTranscriptTooLargeException();
       }
     }
     return await _decodeMapResponse(
-      http.Response.bytes(bytes, 200, headers: streamed.headers),
+      http.Response.bytes(bytes.takeBytes(), 200, headers: streamed.headers),
     );
   }
 
@@ -3213,6 +3374,10 @@ class DashboardClient {
   /// Streams an authenticated download directly to [target]. Unlike
   /// [apiDownload], this keeps memory bounded for generated videos while
   /// preserving the same auth retry and response-size limits.
+  ///
+  /// [timeout] bounds the wait for the answer's headers. [deadline], when
+  /// set, bounds the whole download, body included: past it the stream is
+  /// cancelled, the partial file deleted and a [TimeoutException] thrown.
   Future<Map<String, String>> apiDownloadToFile(
     String endpoint,
     File target, {
@@ -3220,6 +3385,7 @@ class DashboardClient {
     String? profile,
     bool retried = false,
     Duration timeout = const Duration(minutes: 3),
+    Duration? deadline,
     void Function(int received, int? total)? onProgress,
     bool Function()? isCancelled,
   }) async {
@@ -3238,10 +3404,18 @@ class DashboardClient {
         queryParameters: {...uri.queryParameters, 'profile': owner},
       );
     }
+    // One end time for the whole download: headers, an error body, a retry
+    // after a 401 and the body all count against it.
+    final until = deadline == null ? null : _now().add(deadline);
+    Duration? left() => until?.difference(_now());
     final request = http.Request('GET', uri);
     request.followRedirects = false;
     request.headers.addAll(await _authHeaders());
-    final streamed = await _http.send(request).timeout(timeout);
+    final headerLeft = left();
+    final wait = headerLeft != null && headerLeft < timeout
+        ? headerLeft
+        : timeout;
+    final streamed = await _http.send(request).timeout(wait);
     final responseMetadata = http.Response(
       '',
       streamed.statusCode,
@@ -3263,17 +3437,19 @@ class DashboardClient {
           profile: profile,
           retried: nextRetried,
           timeout: timeout,
+          deadline: left(),
           onProgress: onProgress,
           isCancelled: isCancelled,
         );
       }
     }
     if (streamed.statusCode < 200 || streamed.statusCode >= 300) {
-      final errorBytes = await _readResponseStream(
+      final errorRead = _readResponseStream(
         streamed.stream,
         maxBytes: 2048,
         truncate: true,
       );
+      final errorBytes = await errorRead.timeout(left() ?? timeout);
       throw DashboardHttpException(
         streamed.statusCode,
         body: utf8.decode(errorBytes, allowMalformed: true),
@@ -3293,6 +3469,16 @@ class DashboardClient {
     }
 
     final iterator = StreamIterator<List<int>>(streamed.stream);
+    // Past the deadline the stream is cancelled: a pending moveNext then
+    // answers false and the loop below ends.
+    var expired = false;
+    final bodyLeft = left();
+    final timer = bodyLeft == null
+        ? null
+        : Timer(bodyLeft, () {
+            expired = true;
+            unawaited(iterator.cancel());
+          });
     IOSink? sink;
     var completed = false;
     var received = 0;
@@ -3313,6 +3499,9 @@ class DashboardClient {
           throw const DashboardDownloadCancelled();
         }
       }
+      if (expired) {
+        throw TimeoutException('Dashboard download took too long', deadline);
+      }
       if (declaredLength != null && received != declaredLength) {
         throw StateError('Dashboard download ended before Content-Length');
       }
@@ -3322,6 +3511,7 @@ class DashboardClient {
       completed = true;
       return Map<String, String>.unmodifiable(streamed.headers);
     } finally {
+      timer?.cancel();
       await iterator.cancel();
       if (sink != null) {
         try {
@@ -3999,26 +4189,37 @@ class DashboardClient {
   /// más reciente) del transcript Dashboard, igual que
   /// [ApiClient.getMessagesPage]. Dashboards antiguos responden sin metadata
   /// `pagination`: el llamador lo trata como transcript completo.
+  ///
+  /// [oldestFirst] pages from the start (Desktop `getSessionMessages` with
+  /// `order: 'oldest'`). [inlineImages] false asks Hermes to send `[image]`
+  /// for an inline image instead of its bytes. [maxBodyBytes] bounds the
+  /// read: a larger page throws [SessionTranscriptTooLargeException].
   Future<SessionMessagesPage> getSessionMessagesPage(
     String sessionId, {
     String profile = '',
     int limit = 120,
     int offset = 0,
+    bool oldestFirst = false,
+    bool inlineImages = true,
+    int? maxBodyBytes,
   }) async {
     final normalizedProfile = profile.trim();
     final boundedLimit = limit.clamp(1, 500);
     final query = Uri(
       queryParameters: {
         'limit': '$boundedLimit',
-        'order': 'latest',
+        'order': oldestFirst ? 'oldest' : 'latest',
         'offset': '$offset',
         'include_compacted': 'true',
+        if (!inlineImages) 'inline_images': 'false',
         if (normalizedProfile.isNotEmpty) 'profile': normalizedProfile,
       },
     ).query;
-    final data = await apiGet(
-      'sessions/${Uri.encodeComponent(sessionId)}/messages?$query',
-    );
+    final endpoint =
+        'sessions/${Uri.encodeComponent(sessionId)}/messages?$query';
+    final data = maxBodyBytes == null
+        ? await apiGet(endpoint)
+        : await apiGetBounded(endpoint, maxBytes: maxBodyBytes);
     final raw = data.containsKey('messages') ? data['messages'] : data['data'];
     final resolved = data['session_id'];
     return SessionMessagesPage.fromRaw(
@@ -4053,6 +4254,12 @@ class DashboardClient {
   /// Dashboard lo hace profile-aware en una versión posterior.
   Future<Map<String, dynamic>> getServerConfigSchema({String? profile}) =>
       apiGet('config/schema${_profileQuery(profile)}');
+
+  /// GET /api/config/defaults — Hermes' built-in defaults, global like in
+  /// Hermes Desktop (`getHermesConfigDefaults`, api/config.ts:165-170). Tells
+  /// a value the user set apart from the default `/api/config` merges in.
+  Future<Map<String, dynamic>> getServerConfigDefaults() =>
+      apiGet('config/defaults');
 
   /// PUT /api/config con el registro completo leído y editado en memoria.
   ///
@@ -4132,6 +4339,13 @@ class DashboardClient {
     timeout: timeout ?? audioTranscribeRequestTimeout(dataUrl),
   );
 
+  /// GET /api/audio/voice-config — the profile's STT/TTS resolution for
+  /// client-direct voice (Hermes Desktop `voice-client-direct.ts`). Unlike the
+  /// other audio routes the answer can carry the provider's key: callers keep
+  /// it in memory only (`VoiceClientConfigCache`) and never log the body.
+  Future<Map<String, dynamic>> getVoiceClientConfig({String? profile}) =>
+      apiGet('audio/voice-config${_profileQuery(profile)}');
+
   /// POST /api/audio/tts-lease — señal de precalentamiento/liberación del
   /// motor TTS, igual que los interruptores de voz de Desktop. Hermes informa
   /// de un fallo de precarga en el cuerpo, nunca como error HTTP.
@@ -4147,6 +4361,24 @@ class DashboardClient {
 
   /// Adquirir puede cargar un modelo local en el servidor; Desktop usa 180 s.
   static const Duration audioTtsLeaseRequestTimeout = Duration(seconds: 180);
+
+  /// POST /api/audio/stt-lease — warm-up / release of the host's local STT
+  /// model for a voice-input session (Desktop `setSttLease`,
+  /// `api/system.ts:241-261`). A failed pre-load comes in the body, never as
+  /// an HTTP error.
+  Future<Map<String, dynamic>> setSttLease(
+    String lease, {
+    required bool active,
+    String? profile,
+  }) => apiPost(
+    'audio/stt-lease${_profileQuery(profile)}',
+    body: {'lease': lease, 'active': active},
+    timeout: audioSttLeaseRequestTimeout,
+  );
+
+  /// Desktop `AUDIO_STT_LEASE_REQUEST_TIMEOUT_MS` (180 s): the first use
+  /// can download and load the model.
+  static const Duration audioSttLeaseRequestTimeout = Duration(seconds: 180);
 
   /// Sonda sin efectos de una ruta de audio (spec 048/US5), por el MISMO
   /// camino autenticado que el resto del Dashboard. Es un `POST` con cuerpo
@@ -4278,6 +4510,25 @@ class DashboardClient {
     return (res['ok'] as bool?) ?? false;
   }
 
+  /// POST /api/env/reveal — el valor real de UNA variable del `.env`, solo a
+  /// petición explícita del usuario (hoja de Keys, «Mostrar valor»). El
+  /// servidor exige su token de sesión, limita a 5 por 30 s y lo audita. El
+  /// valor sale solo por el retorno: nunca se guarda, se cachea ni se registra
+  /// aquí. Sin [profile] (o `default`) el servidor usa su perfil por defecto,
+  /// igual que [setEnvVar].
+  Future<String?> revealEnvVar(String key, {String? profile}) async {
+    final target = profile?.trim() ?? '';
+    final res = await apiPost(
+      'env/reveal',
+      body: {
+        'key': key,
+        if (target.isNotEmpty && target != 'default') 'profile': target,
+      },
+    );
+    final value = res['value'];
+    return value is String ? value : null;
+  }
+
   /// DELETE /api/env — borra una variable de entorno (p.ej. la API key de un
   /// proveedor) para desconfigurarlo. Sin [profile] el servidor actúa sobre el
   /// perfil por defecto, así que la pantalla debe pasar siempre el suyo
@@ -4312,6 +4563,15 @@ class DashboardClient {
     '${_profileQuery(profile)}',
   );
 
+  /// DELETE /api/providers/oauth/sessions/{session} — cancels a pending
+  /// device-code sign-in on the server, so an approval that lands later in
+  /// the browser is not saved after the person gave up here.
+  Future<void> cancelOAuthSession(String sessionId, {String? profile}) =>
+      apiDelete(
+        'providers/oauth/sessions/${Uri.encodeComponent(sessionId)}'
+        '${_profileQuery(profile)}',
+      );
+
   /// GET /api/providers/oauth/{id}/poll/{session} — estado del login OAuth.
   Future<Map<String, dynamic>> pollOAuth(
     String providerId,
@@ -4345,17 +4605,26 @@ class DashboardClient {
   /// GET /api/logs — tail del log elegido con filtros server-side.
   /// Contrato (web_server.py): file ∈ {agent,errors,gateway,gui,desktop},
   /// lines ≤ 500, level/search opcionales. Devuelve {file, lines: [String]}.
+  /// [component] ∈ {gateway,agent,tools,cli,cron,gui} (otro valor: 400);
+  /// [profile] elige los logs de ese perfil en servidores que lo admiten (los
+  /// anteriores ignoran el parámetro). Sin ellos el servidor no filtra.
   Future<List<String>> getLogs({
     String file = 'agent',
     int lines = 200,
     String? level,
     String? search,
+    String? component,
+    String? profile,
   }) async {
+    final scopedProfile = profile?.trim() ?? '';
     final params = <String, String>{
       'file': file,
       'lines': '$lines',
       if (level != null && level.isNotEmpty) 'level': level,
       if (search != null && search.isNotEmpty) 'search': search,
+      if (component != null && component.isNotEmpty) 'component': component,
+      if (scopedProfile.isNotEmpty && scopedProfile != 'default')
+        'profile': scopedProfile,
     };
     final query = params.entries
         .map((e) => '${e.key}=${Uri.encodeQueryComponent(e.value)}')
@@ -4499,4 +4768,13 @@ String classifyRestFailure(Object error) {
     return code == 401 || code == 403 ? 'auth' : 'http($code)';
   }
   return classifyTransportFailure(error);
+}
+
+/// A background read refused because its transport is not encrypted. The
+/// notification falls back to its generic text.
+class BackgroundTransportRefused implements Exception {
+  const BackgroundTransportRefused();
+
+  @override
+  String toString() => 'BackgroundTransportRefused';
 }

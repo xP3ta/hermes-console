@@ -38,6 +38,10 @@ final _knownEventDrift = <String, String>{
       'transport-adapted: the `approval` server request is re-emitted under '
       'its legacy event name (tui_gateway_client._serverRequestLegacyEvents)',
   'clarify.request': 'transport-adapted `clarify` server request',
+  'approval.settled':
+      'canonical session authority frame (capability-negotiated adapter); '
+      'drops or dispatches the prompt it settles (session_authority.dart)',
+  'clarify.settled': 'canonical session authority frame, as approval.settled',
   'sudo.request': 'transport-adapted `sudo` server request',
   'secret.request': 'transport-adapted `secret` server request',
   'terminal.read.request': 'transport-adapted `terminal.read` server request',

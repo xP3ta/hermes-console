@@ -76,4 +76,58 @@ void main() {
     expect(result.accepted, DesktopCommandAcceptance.accepted);
     expect(result.output, hasLength(4000));
   });
+
+  group('free-text arguments (ORDEN-COMANDOS)', () {
+    final spec = CommandArgumentSpec(kind: CommandArgumentKind.freeText);
+    final multiline = [
+      'Primera línea con «comillas», "dobles" y \'simples\'',
+      'Segunda: tildes áéíóú ñ ç, emoji 🚀👩🏽‍💻',
+      '',
+      '  sangría que se conserva dentro del texto',
+    ].join('\n');
+
+    test('Console sets no limit of its own: the bound is the safety one', () {
+      expect(spec.maxLength, commandArgumentMaxLength);
+      expect(commandArgumentMaxLength, greaterThanOrEqualTo(20000));
+    });
+
+    test('short, 600, 5000, multiline and unicode pass as typed', () {
+      for (final arg in [
+        'short',
+        'a' * 600,
+        'b' * 5000,
+        multiline,
+        'x' * commandArgumentMaxLength,
+      ]) {
+        expect(spec.validate(arg), arg, reason: '${arg.length} chars');
+      }
+      // Only the ends are trimmed, as before.
+      expect(spec.validate('  \n$multiline\n  '), multiline);
+    });
+
+    test('past the safety bound it is refused before any RPC', () {
+      expect(
+        () => spec.validate('x' * (commandArgumentMaxLength + 1)),
+        throwsFormatException,
+      );
+      expect(
+        () => CommandArgumentSpec(
+          kind: CommandArgumentKind.freeText,
+          maxLength: commandArgumentMaxLength + 1,
+        ),
+        throwsFormatException,
+      );
+    });
+
+    test('a command\'s kickoff prompt is kept whole', () {
+      final prompt = 'p' * 100000;
+      final result = DesktopCommandRpcResult.fromJson({
+        'type': 'send',
+        'message': prompt,
+        'notice': 'Goal set',
+      });
+      expect(result.kind, DesktopCommandDispatchKind.send);
+      expect(result.message, prompt);
+    });
+  });
 }

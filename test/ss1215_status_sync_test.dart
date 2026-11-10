@@ -209,7 +209,7 @@ void main() {
       expect(_pillAction(chat), 'Ejecutando · pytest');
       expect(
         sessionLiveStatusLabel(_es, _listStatus(service)),
-        'Ejecutando · pytest · 1/3 tareas',
+        'Ejecutando · pytest -q · 1/3 tareas',
       );
 
       await emit('tool.complete', {'tool_id': 't1', 'name': 'terminal'});

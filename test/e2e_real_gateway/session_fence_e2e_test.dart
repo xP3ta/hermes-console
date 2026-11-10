@@ -71,6 +71,7 @@ void main() {
       final again = await deleteDashboardSession(dashboard, id, null);
       expect(again['already_absent'], isTrue);
     },
+    tags: 'opt-in',
     skip:
         _env.skipReason ??
         (_fence ? null : 'needs Hermes >= 22063fc0 (mutation fence)'),

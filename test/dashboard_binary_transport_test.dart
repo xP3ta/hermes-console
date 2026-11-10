@@ -369,6 +369,33 @@ void main() {
     expect(transport.calls, 2);
     expect(unauthorized.cancelled, isTrue);
   });
+
+  test('a download past its deadline stops and leaves no partial', () async {
+    // R5C C-V3: a server that sends a little and then nothing must not hold
+    // the download forever.
+    final temp = await Directory.systemTemp.createTemp('dashboard-deadline-');
+    addTearDown(() => temp.delete(recursive: true));
+    final target = File('${temp.path}/slow.png');
+    final trickle = StreamController<List<int>>();
+    addTearDown(trickle.close);
+    trickle.add(const [1, 2, 3]);
+    final transport = _StreamingClient((_, _) async {
+      return http.StreamedResponse(trickle.stream, 200);
+    });
+    final client = dashboard(transport);
+    addTearDown(client.close);
+
+    await expectLater(
+      client.apiDownloadToFile(
+        'fs/download?path=slow.png',
+        target,
+        maxBytes: 100,
+        deadline: const Duration(milliseconds: 50),
+      ),
+      throwsA(isA<TimeoutException>()),
+    );
+    expect(await target.exists(), isFalse);
+  });
 }
 
 typedef _SendHandler =

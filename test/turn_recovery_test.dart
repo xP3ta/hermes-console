@@ -640,7 +640,7 @@ void main() {
     ]);
   });
 
-  test('fallo al borrar cancelación mantiene el turno bloqueado', () async {
+  test('fallo al persistir cancelación mantiene el turno bloqueado', () async {
     final store = _FailingDeleteOutbox();
     final gateway = _DesktopGateway();
     final api = testApiClient(
@@ -686,6 +686,7 @@ void main() {
       ),
       isTrue,
     );
+    store.failState = PreparedTurnState.terminal;
     expect(await chat.cancelQueuedTurn('cancel-falla'), isFalse);
     gateway.emit('message.complete');
     await Future<void>.delayed(const Duration(milliseconds: 1800));
@@ -693,7 +694,8 @@ void main() {
     expect(gateway.submittedTexts, ['turno vivo']);
     expect(chat.queuedTurns.single.turn.clientTurnId, 'cancel-falla');
 
-    store.failDelete = false;
+    store.failState =
+        null; // Physical delete may still fail after the durable tombstone.
     expect(await chat.cancelQueuedTurn('cancel-falla'), isTrue);
     expect(chat.queuedTurns, isEmpty);
   });
@@ -946,34 +948,36 @@ void main() {
     },
   );
 
-  test('un turno nuevo reabre la admisión después de Stop seguro', () async {
-    final store = _MemoryOutbox();
-    final gateway = _DesktopGateway();
-    final api = testApiClient(
-      baseUrl: 'https://example.invalid',
-      answerAfterClose: true,
-      httpClient: MockClient((_) async => http.Response('unused', 500)),
-    );
-    final chat = ActiveChat(
-      compressionRestoreStore: testCompressionRestoreStore(),
-      connection: SavedConnection(
-        id: 'conn-test',
-        label: 'Test',
-        host: 'example.invalid',
-        port: 443,
-        apiKey: String.fromCharCodes(const [116, 101, 115, 116]),
-        useHttps: true,
-      ),
-      sessionId: 'session-test',
-      sessionTitle: 'Test',
-      notifications: null,
-      onTerminal: () {},
-      api: api,
-      desktopGateway: gateway,
-      storedMessageLoader: (_, _) async => const [],
-      terminalReconcileBudget: Duration.zero,
-    );
-    addTearDown(chat.dispose);
+  test(
+    'un turno nuevo reabre admisión sin adelantar la cola retenida',
+    () async {
+      final store = _MemoryOutbox();
+      final gateway = _DesktopGateway();
+      final api = testApiClient(
+        baseUrl: 'https://example.invalid',
+        answerAfterClose: true,
+        httpClient: MockClient((_) async => http.Response('unused', 500)),
+      );
+      final chat = ActiveChat(
+        compressionRestoreStore: testCompressionRestoreStore(),
+        connection: SavedConnection(
+          id: 'conn-test',
+          label: 'Test',
+          host: 'example.invalid',
+          port: 443,
+          apiKey: String.fromCharCodes(const [116, 101, 115, 116]),
+          useHttps: true,
+        ),
+        sessionId: 'session-test',
+        sessionTitle: 'Test',
+        notifications: null,
+        onTerminal: () {},
+        api: api,
+        desktopGateway: gateway,
+        storedMessageLoader: (_, _) async => const [],
+        terminalReconcileBudget: Duration.zero,
+      );
+      addTearDown(chat.dispose);
 
     await chat.restoreQueuedTurns(
       [_queuedPrepared('stop-before-reuse', 'cancelar primero')],
@@ -994,8 +998,14 @@ void main() {
     gateway.emit('message.complete');
     await Future<void>.delayed(const Duration(milliseconds: 1800));
 
-    expect(gateway.submittedTexts, ['nuevo turno', 'seguimiento nuevo']);
-  });
+      // Stop parked the old unpositioned head: a later text must not pass it.
+      expect(gateway.submittedTexts, ['nuevo turno']);
+      expect(chat.queuedMessages, ['cancelar primero', 'seguimiento nuevo']);
+      expect(await chat.cancelQueuedTurn('stop-before-reuse'), isTrue);
+      await Future<void>.delayed(const Duration(milliseconds: 1800));
+      expect(gateway.submittedTexts, ['nuevo turno', 'seguimiento nuevo']);
+    },
+  );
 
   test('un Stop repetido conserva nuevas entradas estacionadas', () async {
     final store = _MemoryOutbox();
@@ -1267,6 +1277,124 @@ void main() {
     expect(gateway.interruptCalls, 1);
   });
 
+  for (final restored in [false, true]) {
+    testWidgets(
+      'chat sync review queued survives resume (restored queue: $restored)',
+      (tester) async {
+        final gateway = _DesktopGateway()
+          ..redirectDisposition = DesktopRedirectDisposition.queued;
+        final store = _MemoryOutbox();
+        var history = <Map<String, dynamic>>[];
+        final chat = ActiveChat(
+          compressionRestoreStore: testCompressionRestoreStore(),
+          connection: SavedConnection(
+            id: 'conn-test',
+            label: 'Test',
+            host: 'example.invalid',
+            port: 443,
+            apiKey: 'synthetic-test-key',
+            useHttps: true,
+          ),
+          sessionId: 'session-test',
+          sessionTitle: 'Test',
+          notifications: null,
+          onTerminal: () {},
+          desktopGateway: gateway,
+          api: testApiClient(
+            httpClient: MockClient((_) async => http.Response('unused', 500)),
+          ),
+          storedMessageLoader: (_, _) async => history,
+        );
+        addTearDown(chat.dispose);
+        expect(
+          await chat.send(
+            fullText: 'first prompt',
+            model: 'hermes-agent',
+            history: const [],
+          ),
+          isTrue,
+        );
+        chat.messagesLoaded = true;
+        if (restored) {
+          await chat.restoreQueuedTurns(
+            [_queuedPrepared('restored-review', 'local waiting')],
+            store,
+            scheduleDrain: false,
+          );
+          expect(chat.queueParked, isTrue);
+        }
+        expect(
+          await chat.steer('server next', clientTurnId: 'queued-review'),
+          DesktopRedirectDisposition.queued,
+        );
+        final pending = chat.internalMessagesForTesting.singleWhere(
+          (m) => m['_clientTurnId'] == 'queued-review',
+        );
+        expect(pending['_desktopAcceptedQueued'], isTrue);
+        expect(pending['_steer'], isNot(true));
+        expect(pending['_optimistic'], isNot(true));
+        history = [
+          {'role': 'user', 'content': 'first prompt', 'row_id': 10},
+          {'role': 'assistant', 'content': 'first answer', 'row_id': 11},
+        ];
+        gateway.emit('message.complete', {'text': 'first answer'});
+        for (var i = 0; i < 30; i++) {
+          await tester.pump(const Duration(milliseconds: 20));
+        }
+        if (restored) {
+          expect(
+            chat.reopenTranscriptSnapshot()?.where(
+              (m) => m['_clientTurnId'] == 'queued-review',
+            ),
+            hasLength(1),
+            reason: 'the accepted queued row must survive the reopen cache',
+          );
+        }
+        if (!restored) {
+          final started = chat.internalMessagesForTesting.singleWhere(
+            (m) => m['_clientTurnId'] == 'queued-review',
+          );
+          expect(started['_desktopAcceptedQueued'], isNot(true));
+          expect(started['_optimistic'], isNot(true));
+        }
+        history = [
+          ...history,
+          {'role': 'user', 'content': 'server next', 'row_id': 12},
+          {'role': 'assistant', 'content': 'second answer', 'row_id': 13},
+        ];
+        gateway.emit('message.start');
+        gateway.emit('message.complete', {'text': 'second answer'});
+        for (var i = 0; i < 30; i++) {
+          await tester.pump(const Duration(milliseconds: 20));
+        }
+        expect(chat.isStreaming, isFalse);
+        await chat.reconcileAfterResume();
+        expect(
+          chat.messages.where(
+            (m) => m['role'] == 'user' && m['content'] == 'server next',
+          ),
+          hasLength(1),
+        );
+        expect(
+          chat.messages.where(
+            (m) => m['role'] == 'user' && m['content'] == 'first prompt',
+          ),
+          hasLength(1),
+        );
+        expect(gateway.submittedTexts, ['first prompt']);
+        expect(gateway.redirectedTexts, ['server next']);
+        expect(gateway.interruptCalls, 0);
+        if (restored) {
+          expect(chat.queueParked, isTrue);
+          expect(chat.queuedTurns.single.turn.clientTurnId, 'restored-review');
+          expect(store.deletes, isEmpty);
+        }
+        chat.dispose();
+        await tester.pump();
+      },
+    );
+  }
+
   test(
     'Stop estaciona y reconcilia un prompt queued aceptado por gateway',
     () async {
@@ -1306,7 +1434,7 @@ void main() {
       );
       await chat.steer('siguiente aceptado');
       expect(gateway.redirectedTexts, ['siguiente aceptado']);
-      expect(chat.queuedTextMessages, ['siguiente aceptado']);
+      expect(chat.queuedTextMessages, isEmpty);
 
       await chat.cancel();
       expect(chat.queueParked, isTrue);

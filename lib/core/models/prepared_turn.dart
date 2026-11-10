@@ -158,6 +158,9 @@ class PreparedTurn {
   final String text;
   final String fullText;
   final String? desktopText;
+
+  /// Exact prompt handed to Desktop, including the acknowledged file refs.
+  final String? submittedText;
   final String mentionAnnotation;
   final List<BotMention> mentions;
   final List<AttachmentDraft> attachments;
@@ -182,6 +185,7 @@ class PreparedTurn {
     required this.text,
     String? fullText,
     this.desktopText,
+    this.submittedText,
     this.mentionAnnotation = '',
     this.mentions = const [],
     required this.attachments,
@@ -241,6 +245,7 @@ class PreparedTurn {
     List<AttachmentDraft>? attachments,
     String? fullText,
     String? desktopText,
+    String? submittedText,
     PreparedTurnTransport? transport,
     PreparedTurnState? state,
     bool? restoresComposer,
@@ -256,6 +261,7 @@ class PreparedTurn {
     text: text ?? this.text,
     fullText: fullText ?? this.fullText,
     desktopText: desktopText ?? this.desktopText,
+    submittedText: submittedText ?? this.submittedText,
     mentionAnnotation: mentionAnnotation ?? this.mentionAnnotation,
     mentions: mentions ?? this.mentions,
     attachments: attachments ?? this.attachments,
@@ -282,6 +288,7 @@ class PreparedTurn {
     if (mentions.isNotEmpty)
       'mentions': mentions.map((bot) => bot.toJson()).toList(),
     if (desktopText != null) 'desktop_text': desktopText,
+    if (submittedText != null) 'submitted_text': submittedText,
     'attachments': attachments.map((item) => item.toJson()).toList(),
     'model': model,
     'profile': profile,
@@ -371,6 +378,7 @@ class PreparedTurn {
       desktopText: persistedSchema != 1 && persistedSchema != 2
           ? json['desktop_text']?.toString()
           : null,
+      submittedText: json['submitted_text'] as String?,
       mentionAnnotation: json['mention_annotation'] as String? ?? '',
       mentions: List.unmodifiable(
         (json['mentions'] as List? ?? const []).map(

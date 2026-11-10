@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
 import '../../l10n/app_localizations.dart';
@@ -14,6 +16,11 @@ enum ConnectionStatusKind {
   /// The Dashboard answers 502/503/504: it is booting (Desktop
   /// `backend-health.ts`), not refusing the credential.
   starting,
+
+  /// The socket never reached `ready` on this client and its first dials are
+  /// failing: a cold start against a slow server or a network not yet
+  /// validated. Nothing was lost, so it is not a reconnect.
+  connecting,
 }
 
 /// A reconnect that keeps failing this long earns one persistent notice
@@ -86,14 +93,24 @@ abstract interface class ServerStartingLinkSource {
   bool get linkServerStarting;
 }
 
+/// A socket that also remembers whether it ever reached `ready`. A failing
+/// dial before that is `connecting`, not `reconnecting`. Optional, like
+/// [ServerStartingLinkSource]: a source without it counts as having been up.
+abstract interface class LinkHistorySource {
+  bool get linkHasBeenUp;
+}
+
 /// Pure derivation. A ready socket is `connected` whatever REST says; REST
 /// only tells «no server» from «reconnecting» while the socket is down.
+/// [linkHasBeenUp] false turns a plain `reconnecting` into `connecting`: the
+/// first dials of a socket that never was up are a start, not a loss.
 ConnectionStatus deriveConnectionStatus({
   required bool socketReady,
   required bool authRejected,
   required bool networkLost,
   bool serverStarting = false,
   bool? restReachable,
+  bool linkHasBeenUp = true,
   int attempt = 0,
   DateTime? nextAt,
   DateTime? since,
@@ -109,7 +126,9 @@ ConnectionStatus deriveConnectionStatus({
       ? ConnectionStatusKind.starting
       : restReachable == false
       ? ConnectionStatusKind.noServer
-      : ConnectionStatusKind.reconnecting;
+      : linkHasBeenUp
+      ? ConnectionStatusKind.reconnecting
+      : ConnectionStatusKind.connecting;
   return ConnectionStatus(kind, attempt: attempt, nextAt: nextAt, since: since);
 }
 
@@ -118,24 +137,82 @@ ConnectionStatus deriveConnectionStatus({
 /// REST probe is auxiliary and can never say «connected» over a down socket.
 /// `current` is null while no socket proves anything (nothing dialled, parked,
 /// closed): screens then fall back to their own REST probe.
+///
+/// A loss whose first redial is still running is not published for
+/// [quietWindow]: the screens without their own grace (Home, the drawer, the
+/// list header) keep the last good state, and only a redial that is taking
+/// longer, a second failed attempt, or a real failure (credential refused,
+/// no network, no server, server booting) changes the word. [currentRaw]
+/// bypasses the window for the chat, which has its own grace.
 class ConnectionStatusRegistry {
   ConnectionStatusRegistry({DateTime Function()? clock})
-    : _clock = clock ?? DateTime.now;
+    : _clock = clock ?? DateTime.now {
+    _changes.onListenersChanged = _onListenersChanged;
+  }
 
   static final ConnectionStatusRegistry instance = ConnectionStatusRegistry();
+
+  /// How long a first redial may run before its loss is shown. The usual
+  /// redial (jitter, ticket, upgrade, `ready`) ends well inside it.
+  static const quietWindow = Duration(seconds: 2, milliseconds: 500);
 
   final DateTime Function() _clock;
   final Map<String, Set<ConnectionLinkSource>> _sources = {};
   final Map<String, ConnectionStatus?> _current = {};
+  final Map<String, ConnectionStatus?> _raw = {};
   final Map<String, bool> _rest = {};
   final Map<String, DateTime> _downSince = {};
+  final Map<String, Timer> _quietTimers = {};
+
+  /// Connections whose quiet window already ran out (its timer fired): the
+  /// loss is shown from then on, whatever the clock says.
+  final Set<String> _quietSpent = {};
   final ConnectionSignal _changes = ConnectionSignal();
   bool _networkLost = false;
 
-  /// Fires when any connection's status changes.
+  /// Fires when any connection's status (published or raw) changes.
   Listenable get changes => _changes;
 
-  ConnectionStatus? current(String connectionId) => _current[connectionId];
+  /// The status every screen shows: the derived one, except inside the quiet
+  /// window of a fresh loss, where it stays what it was (connected, or null
+  /// when nothing had proven anything yet).
+  ConnectionStatus? current(String connectionId) {
+    // With nobody listening no timer ends the window: a read settles it
+    // (nobody is notified, so a read during a build is safe).
+    if (!_changes.hasListeners && _inQuietWindow(connectionId)) {
+      _recompute(connectionId);
+    }
+    return _current[connectionId];
+  }
+
+  bool _inQuietWindow(String connectionId) {
+    final raw = _raw[connectionId];
+    return raw != null && !raw.isConnected && _current[connectionId] != raw;
+  }
+
+  /// The window's timer only exists to repaint a listener: without one it
+  /// is not armed (a disposed screen leaves nothing pending), and the first
+  /// listener to arrive settles the windows that were left open.
+  void _onListenersChanged(bool hasListeners) {
+    if (hasListeners) {
+      // Not inside addListener (a screen subscribes while it builds).
+      scheduleMicrotask(() {
+        if (!_changes.hasListeners) return;
+        for (final id in _raw.keys.toList()) {
+          if (_inQuietWindow(id)) _recompute(id);
+        }
+      });
+      return;
+    }
+    for (final timer in _quietTimers.values) {
+      timer.cancel();
+    }
+    _quietTimers.clear();
+  }
+
+  /// The derived status without the quiet window, for a consumer with its
+  /// own grace (the chat's connection row).
+  ConnectionStatus? currentRaw(String connectionId) => _raw[connectionId];
 
   void bind(String connectionId, ConnectionLinkSource source) {
     final sources = _sources.putIfAbsent(connectionId, () => {});
@@ -164,9 +241,10 @@ class ConnectionStatusRegistry {
     final sources = _sources[connectionId];
     if (sources == null) return;
     sources.removeWhere((source) => source.isClosed);
-    ConnectionStatus? next;
+    final now = _clock();
+    ConnectionStatus? raw;
     if (sources.any((source) => source.isConnected)) {
-      next = const ConnectionStatus(ConnectionStatusKind.connected);
+      raw = const ConnectionStatus(ConnectionStatusKind.connected);
     } else {
       final down = sources.where(
         (source) =>
@@ -175,8 +253,8 @@ class ConnectionStatusRegistry {
       );
       if (down.isNotEmpty) {
         final first = down.first;
-        final since = _downSince[connectionId] ??= _clock();
-        next = deriveConnectionStatus(
+        final since = _downSince[connectionId] ??= now;
+        raw = deriveConnectionStatus(
           socketReady: false,
           authRejected: down.every((source) => source.linkAuthRejected),
           networkLost: _networkLost,
@@ -186,22 +264,73 @@ class ConnectionStatusRegistry {
                 (source as ServerStartingLinkSource).linkServerStarting,
           ),
           restReachable: _rest[connectionId],
+          linkHasBeenUp: down.any(
+            (source) =>
+                source is! LinkHistorySource ||
+                (source as LinkHistorySource).linkHasBeenUp,
+          ),
           attempt: first.linkReconnectAttempt,
           nextAt: first.linkReconnectAt,
           since: since,
         );
       }
     }
-    if (next == null || next.isConnected) _downSince.remove(connectionId);
-    if (_current[connectionId] == next) return;
+    if (raw == null || raw.isConnected) {
+      _downSince.remove(connectionId);
+      _quietSpent.remove(connectionId);
+    }
+    final rawChanged = _raw[connectionId] != raw;
+    _raw[connectionId] = raw;
+
+    ConnectionStatus? next = raw;
+    final previous = _current[connectionId];
+    if (raw != null && !raw.isConnected) {
+      final elapsed = now.difference(_downSince[connectionId] ?? now);
+      final remaining = quietWindow - elapsed;
+      final quiet =
+          (previous == null || previous.isConnected) &&
+          _isQuietKind(raw.kind) &&
+          raw.attempt <= 1 &&
+          !_quietSpent.contains(connectionId) &&
+          remaining > Duration.zero;
+      if (quiet) {
+        next = previous;
+        if (_changes.hasListeners) {
+          _quietTimers[connectionId] ??= Timer(remaining, () {
+            _quietTimers.remove(connectionId);
+            _quietSpent.add(connectionId);
+            _recompute(connectionId);
+          });
+        }
+      }
+    }
+    if (next != previous || raw == null || raw.isConnected) {
+      _quietTimers.remove(connectionId)?.cancel();
+    }
+    if (previous == next) {
+      if (rawChanged) _changes.notify();
+      return;
+    }
     _current[connectionId] = next;
     _changes.notify();
   }
 
+  /// Only a plain redial is quiet; every other state is a fact the user
+  /// should see at once.
+  static bool _isQuietKind(ConnectionStatusKind kind) =>
+      kind == ConnectionStatusKind.reconnecting ||
+      kind == ConnectionStatusKind.connecting;
+
   @visibleForTesting
   void reset() {
+    for (final timer in _quietTimers.values) {
+      timer.cancel();
+    }
+    _quietTimers.clear();
+    _quietSpent.clear();
     _sources.clear();
     _current.clear();
+    _raw.clear();
     _rest.clear();
     _downSince.clear();
     _networkLost = false;
@@ -212,11 +341,25 @@ class ConnectionStatusRegistry {
 final class ConnectionSignal implements Listenable {
   final Set<VoidCallback> _listeners = <VoidCallback>{};
 
-  @override
-  void addListener(VoidCallback listener) => _listeners.add(listener);
+  /// Fires with `true` when the first listener arrives and with `false`
+  /// when the last one leaves.
+  void Function(bool hasListeners)? onListenersChanged;
+
+  bool get hasListeners => _listeners.isNotEmpty;
 
   @override
-  void removeListener(VoidCallback listener) => _listeners.remove(listener);
+  void addListener(VoidCallback listener) {
+    final wasEmpty = _listeners.isEmpty;
+    _listeners.add(listener);
+    if (wasEmpty && _listeners.isNotEmpty) onListenersChanged?.call(true);
+  }
+
+  @override
+  void removeListener(VoidCallback listener) {
+    if (_listeners.remove(listener) && _listeners.isEmpty) {
+      onListenersChanged?.call(false);
+    }
+  }
 
   void notify() {
     for (final listener in List<VoidCallback>.of(_listeners)) {
@@ -234,4 +377,5 @@ String connectionStatusWord(Strings s, ConnectionStatusKind kind) =>
       ConnectionStatusKind.authRequired => s.connStatusAuthRequired,
       ConnectionStatusKind.noServer => s.connStatusNoServer,
       ConnectionStatusKind.starting => s.serverStartingTitle,
+      ConnectionStatusKind.connecting => s.qrcConnecting,
     };

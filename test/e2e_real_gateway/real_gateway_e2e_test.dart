@@ -134,7 +134,7 @@ void main() {
     expect(bytes, lessThanOrEqualTo(_openBytesBudget));
     expect(rpc.length, lessThanOrEqualTo(_openRpcBudget), reason: '$rpc');
     expect(phone.meter.sockets, hasLength(_socketsPerChat));
-  }, skip: skip);
+  }, tags: 'opt-in', skip: skip);
 
   test('send: streaming deltas then message.complete within the terminal '
       'read budget', () async {
@@ -187,7 +187,7 @@ void main() {
     expect(canonicalTranscriptRowId(painted), stored['id']);
     expect(await _env.modelTurnsFor(_tag('STREAM', 's1')), 1);
     expect(phone.meter.openSockets, _socketsPerChat);
-  }, skip: skip);
+  }, tags: 'opt-in', skip: skip);
 
   test('clarify (single) is answered through the server request and the '
       'turn finishes', () async {
@@ -213,7 +213,7 @@ void main() {
       (f) => f['id'] == prompt.key.requestId && f.containsKey('result'),
     );
     expect(answer.single['result'], {'answer': 'blue'});
-  }, skip: skip);
+  }, tags: 'opt-in', skip: skip);
 
   test('clarify (batch, one open-ended question with choices: null) locks '
       'every answer', () async {
@@ -245,7 +245,7 @@ void main() {
       what: 'turn after the batch',
     );
     expect(phone.meter.sockets.single.count('clarify.lock'), 2);
-  }, skip: skip);
+  }, tags: 'opt-in', skip: skip);
 
   test('a clarify open across a socket cut comes back from the reconnect '
       'snapshot open_requests and is answered exactly once', () async {
@@ -295,7 +295,7 @@ void main() {
         .length;
     expect(viaProxy + direct, 1, reason: 'answered exactly once');
     expect(phone.meter.openSockets, _socketsPerChat);
-  }, skip: skip);
+  }, tags: 'opt-in', skip: skip);
 
   test('reconnect mid-stream replays the turn: one final reply, one '
       'model turn, one socket', () async {
@@ -374,7 +374,7 @@ void main() {
     expect(chat.messages.where((m) => m['role'] == 'assistant_error'), isEmpty);
     expect(await _env.modelTurnsFor(_tag('SLOW', 'k1')), 1);
     expect(phone.meter.openSockets, _socketsPerChat);
-  }, skip: skip);
+  }, tags: 'opt-in', skip: skip);
 
   test(
     'a prompt queued during a turn reaches the model exactly once',
@@ -408,7 +408,7 @@ void main() {
           .length;
       expect(submits, 1);
     },
-    skip: skip,
+    tags: 'opt-in', skip: skip,
   );
 
   test('a mid-turn compaction re-inserts the prompt; Console paints it '
@@ -440,7 +440,7 @@ void main() {
           .length;
       expect(prompts, 1, reason: 'the re-inserted prompt shows once');
     }
-  }, skip: skip);
+  }, tags: 'opt-in', skip: skip);
 
   test('a sessions.changed burst from another chat costs an idle chat at '
       'most $_sessionsChangedReadBudget transcript reads', () async {
@@ -467,5 +467,5 @@ void main() {
     expect(ticks, greaterThan(0), reason: 'the backend must broadcast');
     expect(idleReads, lessThanOrEqualTo(_sessionsChangedReadBudget));
     expect(phone.meter.openSockets, 2 * _socketsPerChat);
-  }, skip: skip);
+  }, tags: 'opt-in', skip: skip);
 }

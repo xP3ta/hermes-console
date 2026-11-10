@@ -27,6 +27,12 @@ class FeatureFlags {
   /// code.
   ValueListenable<bool> get gestureDock => _gestureDock;
 
+  /// The «Agentes» section (Herdr agents over SSH: the dock item, the drawer
+  /// row and the profile-hub row). Off in this release: the view is not ready
+  /// and it comes back by turning this on. Its code and suites stay; the
+  /// suites turn it on (`test/flutter_test_config.dart`).
+  bool agentsSection = false;
+
   bool _loaded = false;
 
   /// Once per process: drops what an older version stored. Safe to call

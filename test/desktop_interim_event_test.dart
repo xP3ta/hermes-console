@@ -963,4 +963,57 @@ void main() {
       },
     );
   });
+
+  group('voice narration across a sealed interim (Desktop bubbles)', () {
+    Future<void> delta(_InterimFixture fixture, String text) async {
+      final token = fixture.chat.changes.firstWhere(
+        (event) => event == ActiveChatEvent.token,
+      );
+      fixture.gateway.emit('message.delta', {'text': text});
+      await token.timeout(const Duration(seconds: 1));
+    }
+
+    test('the next bubble is its own paragraph; seal is known', () async {
+      final fixture = await _startChat();
+      addTearDown(fixture.dispose);
+
+      await _emitAndSettle(fixture, 'message.interim', const {
+        'text': 'Voy a revisar el repositorio',
+      });
+      expect(fixture.chat.assistantNarrationSealed, isTrue);
+
+      await delta(fixture, 'Todo en orden.');
+      expect(fixture.chat.assistantNarrationSealed, isFalse);
+      expect(
+        fixture.chat.assistantNarrationContent,
+        'Voy a revisar el repositorio\n\nTodo en orden.',
+      );
+
+      await _complete(fixture, const {'text': 'Todo en orden.'});
+      expect(fixture.chat.assistantNarrationSealed, isTrue);
+      expect(
+        fixture.chat.assistantNarrationContent,
+        'Voy a revisar el repositorio\n\nTodo en orden.',
+      );
+    });
+
+    // Desktop: after `message.interim` the next delta opens a new bubble
+    // (`streamId: null`, use-message-stream/index.ts:655-730), and speech
+    // trims each bubble before joining them with a blank line
+    // (`collectUnspokenTurnSpeech`, parts.ts:362-400). The public projection
+    // trims the start of the answer, so the leading space never arrives.
+    test('a delta that starts with a space is still the next bubble', () async {
+      final fixture = await _startChat();
+      addTearDown(fixture.dispose);
+
+      await _emitAndSettle(fixture, 'message.interim', const {
+        'text': 'Voy a revisar los archivos.',
+      });
+      await delta(fixture, ' No hay errores.');
+      expect(
+        fixture.chat.assistantNarrationContent,
+        'Voy a revisar los archivos.\n\nNo hay errores.',
+      );
+    });
+  });
 }

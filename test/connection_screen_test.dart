@@ -369,8 +369,25 @@ void main() {
       expect(publicNote, findsNothing);
       await tester.enterText(address, 'http://hermes.local:8642');
       await tester.pumpAndSettle();
+      // A private network gets a small info icon with a tooltip, no sentence.
       expect(privateNote, findsOneWidget);
-      expect(find.text(s.commonCleartextPrivate), findsOneWidget);
+      expect(find.text(s.commonCleartextPrivate), findsNothing);
+      expect(find.text(s.commonCleartextPublic), findsNothing);
+      expect(
+        find.descendant(
+          of: privateNote,
+          matching: find.byIcon(Icons.info_outline_rounded),
+        ),
+        findsOneWidget,
+      );
+      expect(find.byTooltip(s.krhPrivateHttpInfo), findsOneWidget);
+      await tester.enterText(address, 'http://100.101.102.103:8642');
+      await tester.pumpAndSettle();
+      expect(privateNote, findsOneWidget);
+      await tester.enterText(address, 'http://hermes.tail1234.ts.net:8642');
+      await tester.pumpAndSettle();
+      expect(privateNote, findsOneWidget);
+      expect(publicNote, findsNothing);
       await tester.enterText(address, 'http://hermes.example.com:8642');
       await tester.pumpAndSettle();
       expect(publicNote, findsOneWidget);

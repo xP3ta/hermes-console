@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:isolate';
 import 'dart:typed_data';
 
 const int maxSafeJsonInteger = 9007199254740991;
@@ -79,16 +80,94 @@ final class GlobalGatewayEvent extends ParsedGatewayEvent {
   String? get sessionId => null;
 }
 
+/// Top-level stamps of a canonical session-authority event frame
+/// (`SessionEvents.publish`): `replay_epoch`, and the execution stamp
+/// `authority_epoch` / `execution_generation` / `admission_id`. Standalone
+/// frames carry none of them. A stamp that is present with the wrong type is
+/// kept as [malformed] instead of being guessed at: only a connection that
+/// negotiated the authority reads it, and it then fails closed.
+final class CanonicalEventEnvelope {
+  final String? replayEpoch;
+  final int? authorityEpoch;
+  final int? executionGeneration;
+  final String? admissionId;
+  final bool malformed;
+
+  const CanonicalEventEnvelope({
+    this.replayEpoch,
+    this.authorityEpoch,
+    this.executionGeneration,
+    this.admissionId,
+    this.malformed = false,
+  });
+
+  static const CanonicalEventEnvelope none = CanonicalEventEnvelope();
+
+  bool get isEmpty =>
+      replayEpoch == null &&
+      authorityEpoch == null &&
+      executionGeneration == null &&
+      admissionId == null &&
+      !malformed;
+
+  static CanonicalEventEnvelope parse(Map<String, dynamic> fields) {
+    var malformed = false;
+    String? text(String key) {
+      if (!fields.containsKey(key)) return null;
+      final value = fields[key];
+      if (value is String && value.isNotEmpty && value == value.trim()) {
+        return value;
+      }
+      malformed = true;
+      return null;
+    }
+
+    int? number(String key) {
+      if (!fields.containsKey(key)) return null;
+      final value = fields[key];
+      if (value is int && value >= 0 && value <= maxSafeJsonInteger) {
+        return value;
+      }
+      malformed = true;
+      return null;
+    }
+
+    final epoch = text('replay_epoch');
+    final authority = number('authority_epoch');
+    final generation = number('execution_generation');
+    final admission = text('admission_id');
+    if (!malformed &&
+        epoch == null &&
+        authority == null &&
+        generation == null &&
+        admission == null) {
+      return none;
+    }
+    return CanonicalEventEnvelope(
+      replayEpoch: epoch,
+      authorityEpoch: authority,
+      executionGeneration: generation,
+      admissionId: admission,
+      malformed: malformed,
+    );
+  }
+}
+
 final class SessionGatewayEvent extends ParsedGatewayEvent {
   @override
   final String sessionId;
+
+  /// Canonical authority stamps; [CanonicalEventEnvelope.none] on a
+  /// standalone frame.
+  final CanonicalEventEnvelope envelope;
 
   const SessionGatewayEvent(
     super.type,
     this.sessionId,
     super.sequence,
-    super.payload,
-  );
+    super.payload, {
+    this.envelope = CanonicalEventEnvelope.none,
+  });
 }
 
 final class JsonRpcEventFrame extends JsonRpcWireFrame {
@@ -173,7 +252,13 @@ abstract final class EventEnvelopeParser {
         'sequenced session event required',
       );
     }
-    return SessionGatewayEvent(rawType, sessionId, sequence, payload);
+    return SessionGatewayEvent(
+      rawType,
+      sessionId,
+      sequence,
+      payload,
+      envelope: CanonicalEventEnvelope.parse(fields),
+    );
   }
 }
 
@@ -182,29 +267,58 @@ abstract final class JsonRpcWireDecoder {
     Object? raw, {
     required bool replayCapable,
   }) {
-    final String text;
-    if (raw is String) {
-      text = raw;
-    } else {
-      final Uint8List? bytes = switch (raw) {
-        ByteData value => value.buffer.asUint8List(
-          value.offsetInBytes,
-          value.lengthInBytes,
-        ),
-        ByteBuffer value => value.asUint8List(),
-        List<int> value => Uint8List.fromList(value),
-        _ => null,
-      };
-      if (bytes == null) return null;
-      try {
-        text = utf8.decode(bytes, allowMalformed: false);
-      } on FormatException {
-        return null;
-      }
-    }
+    final text = _transportText(raw);
+    if (text == null) return null;
     final value = _DuplicateAwareJsonParser(text).parse();
     if (value is! Map<String, dynamic>) return null;
     return _parseFrame(value, replayCapable: replayCapable);
+  }
+
+  /// [decodeTransportFrame] with the JSON parse (the costly, pure part) in
+  /// a short-lived isolate, for frames too large for the UI thread. The same
+  /// duplicate-aware parser runs there, so a duplicated key is refused the
+  /// same way; the frame grammar is checked here. Same result, same errors.
+  static Future<JsonRpcWireFrame?> decodeTransportFrameOffMain(
+    Object? raw, {
+    required bool replayCapable,
+  }) async {
+    final text = _transportText(raw);
+    if (text == null) return null;
+    final outcome = await Isolate.run(() => _parseOffMain(text));
+    final rejected = outcome.rejected;
+    if (rejected != null) throw JsonRpcWireFormatException(rejected);
+    final value = outcome.value;
+    if (value is! Map<String, dynamic>) return null;
+    return _parseFrame(value, replayCapable: replayCapable);
+  }
+
+  /// Runs in the decode isolate: the parse outcome travels back as plain
+  /// data (the value, or the message of the refusal).
+  static _OffMainParse _parseOffMain(String text) {
+    try {
+      return _OffMainParse(_DuplicateAwareJsonParser(text).parse(), null);
+    } on JsonRpcWireFormatException catch (error) {
+      return _OffMainParse(null, error.message);
+    }
+  }
+
+  static String? _transportText(Object? raw) {
+    if (raw is String) return raw;
+    final Uint8List? bytes = switch (raw) {
+      ByteData value => value.buffer.asUint8List(
+        value.offsetInBytes,
+        value.lengthInBytes,
+      ),
+      ByteBuffer value => value.asUint8List(),
+      List<int> value => Uint8List.fromList(value),
+      _ => null,
+    };
+    if (bytes == null) return null;
+    try {
+      return utf8.decode(bytes, allowMalformed: false);
+    } on FormatException {
+      return null;
+    }
   }
 
   static JsonRpcWireFrame decodeText(
@@ -318,6 +432,15 @@ abstract final class JsonRpcWireDecoder {
     }
     return JsonRpcNotificationFrame(method, params, hasParams);
   }
+}
+
+final class _OffMainParse {
+  const _OffMainParse(this.value, this.rejected);
+
+  final Object? value;
+
+  /// Message of the [JsonRpcWireFormatException] the parse raised, if any.
+  final String? rejected;
 }
 
 final class _DuplicateAwareJsonParser {

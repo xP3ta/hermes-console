@@ -323,10 +323,10 @@ void main() {
     await _unmountApp(tester);
   });
 
-  testWidgets('A4: the foreground probe does not redial a socket waiting '
-      'out its backoff', (tester) async {
+  testWidgets('A4: the foreground wake cuts a backoff gap once per holdoff; '
+      'a second wake inside it leaves the gap alone', (tester) async {
     await _mountApp(tester);
-    final tickets = _Tickets(failures: 1);
+    final tickets = _Tickets(failures: 2);
     final lease = SharedGatewayPool.instance.acquire(
       _conn('disc-a4'),
       factory: (connection) => TuiGatewayClient(
@@ -352,16 +352,31 @@ void main() {
     client.connect().then<void>((_) {}, onError: (Object _) {});
     await tester.pump();
 
+    // Back in the foreground the backoff ladder is forgotten: the waiting
+    // owner redials at once instead of waiting out the gap (Desktop's
+    // reconnectNow on focus). That dial fails too and opens a new gap.
+    await _backgroundAndBack(tester);
+    await tester.pump(const Duration(seconds: 1));
+    expect(tickets.tickets, 2, reason: 'the wake redials the waiting owner');
+    expect(client.isBackingOff, isTrue, reason: 'a failed dial backs off');
+    // The failed dial released the owner; one waits again for the new gap.
+    client.connect().then<void>((_) {}, onError: (Object _) {});
+    await tester.pump();
+
+    // A second wake inside the 15 s holdoff is no reset: the new gap stands
+    // and its own redial ends it (a flap of resumes cannot hammer the
+    // server).
     await _backgroundAndBack(tester);
     await tester.pump(const Duration(seconds: 1));
     expect(
       tickets.tickets,
-      1,
-      reason: 'the gap stands: a probe never redials or resets the backoff',
+      2,
+      reason: 'the holdoff stands: a second wake never redials',
     );
+    expect(client.isBackingOff, isTrue);
 
     await tester.pump(const Duration(seconds: 10));
-    expect(tickets.tickets, 2, reason: 'the gap ends with its own redial');
+    expect(tickets.tickets, 3, reason: 'the gap ends with its own redial');
     lease.release();
     await _unmountApp(tester);
   });

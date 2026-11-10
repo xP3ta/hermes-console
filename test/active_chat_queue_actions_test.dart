@@ -39,6 +39,7 @@ class _QueueGateway implements HermesDesktopGateway {
   final List<String> submissions = [];
   bool rejectSteer = false;
   bool settleOnInterrupt = false;
+  Completer<void>? submitGate;
 
   @override
   Stream<TuiGatewayEvent> get events => controller.stream;
@@ -60,6 +61,7 @@ class _QueueGateway implements HermesDesktopGateway {
   @override
   Future<void> submitPrompt(String runtimeSessionId, String text) async {
     submissions.add(text);
+    await submitGate?.future;
   }
 
   @override
@@ -101,6 +103,8 @@ class _RedirectQueueGateway extends _QueueGateway
   DesktopRedirectDisposition disposition =
       DesktopRedirectDisposition.redirected;
   Object? redirectError;
+  Completer<void>? redirectGate;
+  void Function()? onRedirect;
 
   @override
   Future<DesktopRedirectDisposition> redirect(
@@ -108,9 +112,46 @@ class _RedirectQueueGateway extends _QueueGateway
     String text,
   ) async {
     redirects.add(text);
+    onRedirect?.call();
+    await redirectGate?.future;
     final error = redirectError;
     if (error != null) throw error;
     return disposition;
+  }
+}
+
+class _PreflightQueueChat extends ActiveChat {
+  final entered = Completer<void>();
+  final preflight = Completer<void>();
+
+  _PreflightQueueChat(HermesDesktopGateway gateway)
+    : super(
+        compressionRestoreStore: testCompressionRestoreStore(),
+        connection: _connection('queue-prepared'),
+        sessionId: 'session-queue-prepared',
+        sessionTitle: 'Preflight queue',
+        notifications: null,
+        onTerminal: () {},
+        desktopGateway: gateway,
+      );
+
+  @override
+  Future<DesktopRedirectDisposition> steer(
+    String fullText, {
+    bool mentionsFrozen = false,
+    bool interrupt = true,
+    bool allowLegacyFallback = true,
+    String? clientTurnId,
+  }) async {
+    entered.complete();
+    await preflight.future;
+    return super.steer(
+      fullText,
+      mentionsFrozen: mentionsFrozen,
+      interrupt: interrupt,
+      allowLegacyFallback: allowLegacyFallback,
+      clientTurnId: clientTurnId,
+    );
   }
 }
 
@@ -182,6 +223,47 @@ class _QueuedDrainGateway extends _QueueGateway
   }
 }
 
+class _TerminalRedirectQueueGateway extends _QueuedDrainGateway
+    implements HermesDesktopRedirectGateway {
+  final redirectEntered = Completer<void>();
+  final redirectResult = Completer<DesktopRedirectDisposition>();
+  final queuedSubmitted = Completer<void>();
+
+  @override
+  Future<DesktopRedirectDisposition> redirect(
+    String runtimeSessionId,
+    String text,
+  ) {
+    redirectEntered.complete();
+    return redirectResult.future;
+  }
+
+  void _submitted() {
+    if (!queuedSubmitted.isCompleted) queuedSubmitted.complete();
+  }
+
+  @override
+  Future<void> submitQueuedPrompt(String runtimeSessionId, String text) async {
+    await super.submitQueuedPrompt(runtimeSessionId, text);
+    _submitted();
+  }
+
+  @override
+  Future<DesktopTurnAck> submitQueuedPromptIdempotent(
+    String runtimeSessionId,
+    String text,
+    String clientTurnId,
+  ) async {
+    final ack = await super.submitQueuedPromptIdempotent(
+      runtimeSessionId,
+      text,
+      clientTurnId,
+    );
+    _submitted();
+    return ack;
+  }
+}
+
 class _MentionLifecycleGateway extends _QueueGateway
     implements HermesDesktopSessionLifecycleGateway {
   @override
@@ -203,17 +285,23 @@ class _MemoryOutbox implements TurnOutboxPersistence {
   final List<PreparedTurn> writes = [];
   final List<PreparedTurn> deletes = [];
   Completer<void>? nextSaveGate;
+  bool failDelete = false;
+  bool failSave = false;
 
   @override
   Future<void> save(PreparedTurn turn) async {
     final gate = nextSaveGate;
     nextSaveGate = null;
     if (gate != null) await gate.future;
+    if (failSave) throw StateError('save unavailable');
     writes.add(turn);
   }
 
   @override
-  Future<void> delete(PreparedTurn turn) async => deletes.add(turn);
+  Future<void> delete(PreparedTurn turn) async {
+    if (failDelete) throw StateError('delete unavailable');
+    deletes.add(turn);
+  }
 }
 
 PreparedTurn _prepared(String id, String text) {
@@ -235,6 +323,523 @@ PreparedTurn _prepared(String id, String text) {
 }
 
 void main() {
+  test(
+    'run_not preflight failures are safe; transport loss stays ambiguous',
+    () {
+      for (final message in ['run_not_active', 'run_not_ready']) {
+        expect(
+          activeChatSteerFailureIsSafeToQueue(StateError(message)),
+          isTrue,
+        );
+      }
+      expect(
+        activeChatSteerFailureIsSafeToQueue(StateError('socket lost')),
+        isFalse,
+      );
+    },
+  );
+
+  for (final source in ['text', 'prepared', 'composer']) {
+    for (final stopped in [false, true]) {
+      test(
+        'terminal during rejected redirect rearms drain, source=$source Stop=$stopped',
+        () async {
+          final gateway = _TerminalRedirectQueueGateway();
+          final chat = _chat('queue-prepared', gateway: gateway)
+            ..state = ChatPipelineState.idle;
+          addTearDown(chat.dispose);
+          addTearDown(gateway.close);
+          expect(
+            await chat.send(
+              fullText: 'initial',
+              model: 'hermes-agent',
+              history: const [],
+            ),
+            isTrue,
+          );
+          if (source == 'prepared') {
+            expect(
+              await chat.enqueuePreparedTurn(
+                ActiveTurnDelivery(
+                  prepared: _prepared('terminal-rpc-head', 'head'),
+                  store: _MemoryOutbox(),
+                ),
+              ),
+              isTrue,
+            );
+          } else {
+            expect(chat.enqueue('head'), isTrue);
+          }
+          expect(chat.enqueue('tail'), isTrue);
+          final ids = chat.queuedEntries.map((row) => row.id).toList();
+          final Future<bool> rejected;
+          if (source == 'composer') {
+            rejected = chat
+                .redirectPreparedComposerTurn(
+                  ActiveTurnDelivery(
+                    prepared: _prepared('terminal-rpc-composer', 'correction'),
+                    store: _MemoryOutbox(),
+                  ),
+                )
+                .then(
+                  (result) => result == DesktopRedirectDisposition.rejected,
+                );
+          } else {
+            rejected = chat
+                .steerQueuedTurnWithOutcome(ids.first)
+                .then((result) => result == QueuedSteerOutcome.rejected);
+          }
+          await gateway.redirectEntered.future;
+          if (stopped) {
+            await chat.cancel();
+            expect(chat.queueParked, isTrue);
+          } else {
+            final done = chat.changes.firstWhere(
+              (e) => e == ActiveChatEvent.done,
+            );
+            gateway.controller.add(
+              const TuiGatewayEvent(
+                type: 'message.complete',
+                sessionId: 'runtime-queue',
+                payload: {'text': 'initial complete'},
+              ),
+            );
+            await done.timeout(const Duration(seconds: 2));
+          }
+          // Let the terminal's one scheduled drain observe the pending RPC.
+          await Future<void>.delayed(const Duration(milliseconds: 20));
+          expect(chat.isStreaming, isFalse);
+          expect(gateway.queuedSubmissions, isEmpty);
+          expect(chat.queuedEntries.map((row) => row.id), ids);
+          gateway.redirectResult.complete(DesktopRedirectDisposition.rejected);
+          expect(await rejected, isTrue);
+          if (stopped) {
+            await Future<void>.delayed(const Duration(milliseconds: 100));
+            expect(chat.queueParked, isTrue);
+            expect(gateway.queuedSubmissions, isEmpty);
+            expect(chat.queuedEntries.map((row) => row.id), ids);
+          } else {
+            await gateway.queuedSubmitted.future.timeout(
+              const Duration(seconds: 2),
+            );
+            await Future<void>.delayed(const Duration(milliseconds: 20));
+            expect(gateway.queuedSubmissions, ['head']);
+            expect(chat.queuedEntries.map((row) => row.id), [ids.last]);
+            expect(chat.queuedEntries.single.text, 'tail');
+            expect(chat.queuedEntries.single.deliveryUnknown, isFalse);
+          }
+        },
+      );
+    }
+  }
+
+  for (final prepared in [false, true]) {
+    test(
+      'Stop during queued redirect preflight, prepared=$prepared: stays actionable in FIFO',
+      () async {
+        final gateway = _RedirectQueueGateway();
+        final chat = _PreflightQueueChat(gateway)
+          ..state = ChatPipelineState.streaming;
+        addTearDown(chat.dispose);
+        addTearDown(gateway.close);
+        ActiveTurnDelivery? delivery;
+        if (prepared) {
+          delivery = ActiveTurnDelivery(
+            prepared: _prepared('preflight', 'head'),
+            store: _MemoryOutbox(),
+          );
+          await chat.enqueuePreparedTurn(delivery);
+        } else {
+          chat.enqueue('head');
+        }
+        chat.enqueue('tail');
+        final ids = chat.queuedEntries.map((e) => e.id).toList();
+        final flight = chat.steerQueuedTurnWithOutcome(ids.first);
+        await chat.entered.future;
+        // A safe preflight failure stays queued when Stop explicitly paused it.
+        // Without Stop the terminal/RPC race above must rearm its drain.
+        await chat.cancel();
+        expect(chat.queueParked, isTrue);
+        chat.state = ChatPipelineState.idle;
+        chat.preflight.complete();
+        expect(await flight, QueuedSteerOutcome.rejected);
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        expect(gateway.redirects, isEmpty);
+        expect(gateway.steers, isEmpty);
+        expect(gateway.submissions, isEmpty);
+        expect(chat.queuedEntries.map((e) => e.id), ids);
+        expect(chat.queuedEntries.first.deliveryUnknown, isFalse);
+        expect(chat.holdQueuedTurn(ids.first), isTrue);
+        if (delivery != null) expect(delivery.transportStarted, isFalse);
+      },
+    );
+
+    for (final ambiguous in [false, true]) {
+      test(
+        'rejected queued redirect preserves Stop pause, prepared=$prepared ambiguous=$ambiguous',
+        () async {
+          final gateway = _RedirectQueueGateway();
+          final chat = _chat('queue-prepared', gateway: gateway)
+            ..state = ChatPipelineState.idle;
+          addTearDown(chat.dispose);
+          addTearDown(gateway.close);
+          await chat.send(
+            fullText: 'initial',
+            model: 'hermes-agent',
+            history: const [],
+          );
+          if (prepared) {
+            await chat.enqueuePreparedTurn(
+              ActiveTurnDelivery(
+                prepared: _prepared('paused', 'head'),
+                store: _MemoryOutbox(),
+              ),
+            );
+          } else {
+            chat.enqueue('head');
+          }
+          chat.enqueue('tail');
+          await chat.cancel();
+          expect(chat.queueParked, isTrue);
+          final ids = chat.queuedEntries.map((e) => e.id).toList();
+          chat.state = ChatPipelineState.streaming;
+          gateway.onRedirect = () => chat.state = ChatPipelineState.idle;
+          gateway.disposition = DesktopRedirectDisposition.rejected;
+          if (ambiguous) gateway.redirectError = StateError('lost ACK');
+          expect(
+            await chat.steerQueuedTurnWithOutcome(ids.first),
+            ambiguous
+                ? QueuedSteerOutcome.unconfirmed
+                : QueuedSteerOutcome.rejected,
+          );
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+          expect(chat.queueParked, isTrue);
+          expect(chat.queueDrainSuspendedForTesting, isTrue);
+          expect(chat.queuedEntries.map((e) => e.id), ids);
+          expect(gateway.redirects, ['head']);
+          expect(gateway.submissions, ['initial']);
+        },
+      );
+    }
+  }
+
+  test(
+    'accepted redirect stays in transcript, never in local queue; Stop parks once',
+    () async {
+      final gateway = _RedirectQueueGateway()
+        ..disposition = DesktopRedirectDisposition.queued;
+      final chat = _chat('accepted-redirect', gateway: gateway)
+        ..state = ChatPipelineState.idle;
+      addTearDown(chat.dispose);
+      addTearDown(gateway.close);
+      await chat.send(
+        fullText: 'initial',
+        model: 'hermes-agent',
+        history: const [],
+      );
+      expect(
+        await chat.steer('WAF request'),
+        DesktopRedirectDisposition.queued,
+      );
+      expect(
+        chat.messages.where((row) => row['content'] == 'WAF request'),
+        hasLength(1),
+      );
+      expect(chat.queuedEntries, isEmpty);
+      expect(chat.queuedMessages, isEmpty);
+      expect(chat.queuedTextMessages, isEmpty);
+      // Stop takes back the server-owned pending input through its existing
+      // interrupt protocol, giving it a real cancellable local identity.
+      await chat.cancel();
+      final parked = chat.queuedEntries.single;
+      expect(chat.queueParked, isTrue);
+      expect(parked.id, startsWith('parked-accepted:'));
+      expect(await chat.cancelQueuedByIdentity(parked.id), isTrue);
+      expect(chat.queuedEntries, isEmpty);
+      expect(gateway.redirects, ['WAF request']);
+      expect(gateway.submissions, ['initial']);
+    },
+  );
+
+  test(
+    'delete parks a durable tombstone even if physical outbox delete fails',
+    () async {
+      final chat = _chat('queue-prepared');
+      addTearDown(chat.dispose);
+      final store = _MemoryOutbox()..failDelete = true;
+      final delivery = ActiveTurnDelivery(
+        prepared: _prepared('delete', 'keep until deleted'),
+        store: store,
+      );
+      await chat.enqueuePreparedTurn(delivery);
+      chat.enqueue('tail');
+      expect(await chat.cancelQueuedByIdentity('prepared:delete'), isTrue);
+      expect(store.writes.last.state, PreparedTurnState.terminal);
+      expect(delivery.discarded, isTrue);
+      expect(await delivery.updatePreparedText('late edit'), isFalse);
+      expect(
+        await delivery.beginTransport(PreparedTurnTransport.desktop),
+        isFalse,
+      );
+      expect(chat.queuedMessages, ['tail']);
+    },
+  );
+
+  test(
+    'failed durable delete stays visible in FIFO and can be retried',
+    () async {
+      final chat = _chat('queue-prepared');
+      addTearDown(chat.dispose);
+      final store = _MemoryOutbox();
+      await chat.enqueuePreparedTurn(
+        ActiveTurnDelivery(prepared: _prepared('delete', 'head'), store: store),
+      );
+      chat.enqueue('tail');
+      store.failSave = true;
+      expect(await chat.cancelQueuedByIdentity('prepared:delete'), isFalse);
+      expect(chat.queuedMessages, ['head', 'tail']);
+      store.failSave = false;
+      expect(await chat.cancelQueuedByIdentity('prepared:delete'), isTrue);
+      expect(chat.queuedMessages, ['tail']);
+    },
+  );
+
+  test(
+    'text in flight refuses deletion; later rows keep their place',
+    () async {
+      final gateway = _QueueGateway();
+      final chat = _chat('inflight-delete', gateway: gateway)
+        ..state = ChatPipelineState.idle;
+      addTearDown(chat.dispose);
+      addTearDown(gateway.close);
+      await chat.send(
+        fullText: 'initial',
+        model: 'hermes-agent',
+        history: const [],
+      );
+      chat
+        ..enqueue('head')
+        ..enqueue('tail');
+      final id = chat.queuedEntries.first.id;
+      gateway.submitGate = Completer<void>();
+      chat.state = ChatPipelineState.idle;
+      final sending = chat.sendQueuedNow(id);
+      for (var i = 0; i < 100 && gateway.submissions.length < 2; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      expect(chat.queuedEntries.first.sending, isTrue);
+      expect(await chat.cancelQueuedByIdentity(id), isFalse);
+      gateway.submitGate!.complete();
+      await sending;
+      expect(chat.queuedMessages, ['tail']);
+      expect(gateway.submissions, ['initial', 'head']);
+    },
+  );
+
+  test('blocked prepared head cannot be overtaken by later text', () async {
+    final gateway = _QueueGateway();
+    final chat = _chat('queue-prepared', gateway: gateway)
+      ..state = ChatPipelineState.idle;
+    addTearDown(chat.dispose);
+    addTearDown(gateway.close);
+    await chat.send(
+      fullText: 'initial',
+      model: 'hermes-agent',
+      history: const [],
+    );
+    await chat.restoreQueuedTurns([
+      _prepared('unpositioned', 'blocked head'),
+    ], _MemoryOutbox());
+    chat.state = ChatPipelineState.idle;
+    chat.enqueue('later text');
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    expect(gateway.submissions, ['initial']);
+    expect(chat.queuedMessages, ['blocked head', 'later text']);
+    expect(await chat.cancelQueuedByIdentity('prepared:unpositioned'), isTrue);
+  });
+
+  test(
+    'queued redirect reserves its identity across terminal and removes accepted outbox row',
+    () async {
+      final gateway = _RedirectQueueGateway()..redirectGate = Completer<void>();
+      final chat = _chat('queue-prepared', gateway: gateway)
+        ..state = ChatPipelineState.idle;
+      addTearDown(chat.dispose);
+      addTearDown(gateway.close);
+      await chat.send(
+        fullText: 'initial',
+        model: 'hermes-agent',
+        history: const [],
+      );
+      final store = _MemoryOutbox()..failDelete = true;
+      final delivery = ActiveTurnDelivery(
+        prepared: _prepared('redirect', 'correction'),
+        store: store,
+      );
+      await chat.enqueuePreparedTurn(delivery);
+      final flight = chat.steerQueuedTurnWithOutcome('prepared:redirect');
+      for (var i = 0; i < 100 && gateway.redirects.isEmpty; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      expect(delivery.current.state, PreparedTurnState.submitting);
+      expect(await chat.cancelQueuedTurn('redirect'), isFalse);
+      expect(
+        await chat.steerQueuedTurnWithOutcome('prepared:redirect'),
+        QueuedSteerOutcome.rejected,
+      );
+      gateway.controller.add(
+        const TuiGatewayEvent(
+          type: 'message.complete',
+          sessionId: 'runtime-queue',
+          payload: {'text': 'done'},
+        ),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(gateway.submissions, ['initial']);
+      gateway.redirectGate!.complete();
+      expect(await flight, QueuedSteerOutcome.accepted);
+      expect(chat.queuedEntries, isEmpty);
+      expect(store.writes.last.state, PreparedTurnState.terminal);
+      expect(gateway.redirects, ['correction']);
+      expect(gateway.submissions, ['initial']);
+    },
+  );
+
+  test(
+    'ambiguous queued redirect remains protected, never becomes a fresh send',
+    () async {
+      final gateway = _RedirectQueueGateway()
+        ..redirectError = StateError('socket lost after dispatch');
+      final chat = _chat('queue-prepared', gateway: gateway)
+        ..state = ChatPipelineState.idle;
+      addTearDown(chat.dispose);
+      addTearDown(gateway.close);
+      await chat.send(
+        fullText: 'initial',
+        model: 'hermes-agent',
+        history: const [],
+      );
+      final delivery = ActiveTurnDelivery(
+        prepared: _prepared('unknown', 'correction'),
+        store: _MemoryOutbox(),
+      );
+      await chat.enqueuePreparedTurn(delivery);
+      expect(
+        await chat.steerQueuedTurnWithOutcome('prepared:unknown'),
+        QueuedSteerOutcome.unconfirmed,
+      );
+      expect(delivery.current.state, PreparedTurnState.ambiguous);
+      expect(chat.queuedEntries.single.deliveryUnknown, isTrue);
+      expect(await chat.cancelQueuedByIdentity('prepared:unknown'), isFalse);
+      expect(
+        await chat.steerQueuedTurnWithOutcome('prepared:unknown'),
+        QueuedSteerOutcome.rejected,
+      );
+      expect(gateway.redirects, ['correction']);
+      expect(gateway.submissions, ['initial']);
+    },
+  );
+
+  test('legacy indexed delete uses the displayed mixed queue order', () async {
+    final chat = _chat('queue-prepared');
+    addTearDown(chat.dispose);
+    chat.enqueue('first');
+    await chat.enqueuePreparedTurn(
+      ActiveTurnDelivery(
+        prepared: _prepared('middle', 'prepared middle'),
+        store: _MemoryOutbox(),
+      ),
+    );
+    chat.enqueue('last');
+    expect(chat.queuedEntryCount, 3);
+    expect(chat.queuedEntryCount, chat.queuedEntries.length);
+    chat.cancelQueued(1);
+    await Future<void>.delayed(Duration.zero);
+    expect(chat.queuedMessages, ['first', 'last']);
+    expect(chat.queuedEntryCount, 2);
+  });
+
+  test(
+    'ambiguous legacy redirect keeps its FIFO slot until explicitly abandoned',
+    () async {
+      final gateway = _RedirectQueueGateway()
+        ..redirectError = StateError('lost ACK');
+      final chat = _chat('legacy-unknown', gateway: gateway)
+        ..state = ChatPipelineState.idle;
+      addTearDown(chat.dispose);
+      addTearDown(gateway.close);
+      await chat.send(
+        fullText: 'initial',
+        model: 'hermes-agent',
+        history: const [],
+      );
+      chat
+        ..enqueue('unknown')
+        ..enqueue('later');
+      final id = chat.queuedEntries.first.id;
+      expect(
+        await chat.steerQueuedTurnWithOutcome(id),
+        QueuedSteerOutcome.unconfirmed,
+      );
+      expect(chat.queuedEntries.first.deliveryUnknown, isTrue);
+      gateway.controller.add(
+        const TuiGatewayEvent(
+          type: 'message.complete',
+          sessionId: 'runtime-queue',
+          payload: {'text': 'done'},
+        ),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      expect(gateway.submissions, ['initial']);
+      expect(await chat.sendQueuedNow(id), isFalse);
+      expect(await chat.editQueuedTurn(id, 'changed'), isFalse);
+      expect(chat.holdQueuedTurn(id), isFalse);
+      expect(await chat.abandonUncertainQueuedTurn(id), isTrue);
+      expect(chat.queuedMessages, ['later']);
+    },
+  );
+
+  test(
+    'public send acceptance retires the same queued delivery without cancelling its live turn',
+    () async {
+      final gateway = _QueueGateway();
+      final chat = _chat('queue-prepared', gateway: gateway)
+        ..state = ChatPipelineState.idle;
+      addTearDown(chat.dispose);
+      addTearDown(gateway.close);
+      await chat.send(
+        fullText: 'initial',
+        model: 'hermes-agent',
+        history: const [],
+      );
+      final delivery = ActiveTurnDelivery(
+        prepared: _prepared('accepted-outside-drain', 'accepted follow up'),
+        store: _MemoryOutbox(),
+      );
+      await chat.enqueuePreparedTurn(delivery);
+      chat.state = ChatPipelineState.idle;
+      expect(
+        await chat.send(
+          fullText: delivery.current.fullText,
+          model: 'hermes-agent',
+          history: const [],
+          delivery: delivery,
+        ),
+        isTrue,
+      );
+      expect(delivery.acknowledged, isTrue);
+      expect(delivery.current.state, PreparedTurnState.running);
+      expect(chat.isStreaming, isTrue);
+      expect(chat.queuedEntries, isEmpty);
+      expect(chat.queuedTurns, isEmpty);
+      expect(gateway.submissions, ['initial', 'accepted follow up']);
+      expect(
+        chat.messages.where((row) => row['content'] == 'accepted follow up'),
+        hasLength(1),
+      );
+    },
+  );
+
   setUp(BotMentionRoster.shared.clear);
   tearDown(BotMentionRoster.shared.clear);
   void mentionRoster() => BotMentionRoster.shared.replace(

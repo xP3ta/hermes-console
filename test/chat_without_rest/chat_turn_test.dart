@@ -121,6 +121,9 @@ void main() {
               settleTimeout: const Duration(milliseconds: 300),
             )
           : await chat.cancel();
+      // The voice path stops waiting after its settle time (300 ms); under
+      // load Hermes may read the frame later. Wait for it to arrive.
+      await _until(() => hermes.rpc('session.interrupt').isNotEmpty);
       expect(hermes.rpc('session.interrupt'), isNotEmpty);
       expect(hermes.restHits, isEmpty, reason: '${hermes.paths}');
     }

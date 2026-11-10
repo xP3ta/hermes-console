@@ -1002,6 +1002,13 @@ void main() {
     );
     scaffoldKey.currentState!.openDrawer();
     await tester.pumpAndSettle();
+    // The recents come after the sections: scroll them into the built part
+    // of the list (each section row added pushes them further down).
+    await tester.drag(
+      find.byKey(const ValueKey('drawer-scroll')),
+      const Offset(0, -700),
+    );
+    await tester.pumpAndSettle();
 
     expect(
       find.byKey(const ValueKey('drawer-recent-kept'), skipOffstage: false),

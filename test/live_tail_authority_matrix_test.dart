@@ -42,6 +42,7 @@ DesktopSessionProjection project({
   String? error,
   String? status,
   bool streaming = true,
+  bool running = true,
   List<Map<String, dynamic>> chronological = const [],
   List<Map<String, dynamic>> previousChronological = const [],
   bool bridgeOwnedLiveUser = false,
@@ -63,7 +64,7 @@ DesktopSessionProjection project({
         if (error != null) 'recoverable': true,
       },
       if (queued != null) 'queued': {'user': queued},
-      'running': true,
+      'running': running,
     }),
     fallbackNewestFirst: chronological.reversed.toList(growable: false),
     previousNewestFirst: previousChronological.reversed.toList(growable: false),
@@ -85,9 +86,8 @@ int roleCount(DesktopSessionProjection projection, String role) => projection
 int toolActivityCount(DesktopSessionProjection projection) => projection
     .messagesNewestFirst
     .expand(
-      (message) => normalizeAssistantActivityTrace(
-        message[assistantActivityTraceKey],
-      ),
+      (message) =>
+          normalizeAssistantActivityTrace(message[assistantActivityTraceKey]),
     )
     .where((activity) => activity['kind'] == 'tool')
     .length;
@@ -594,27 +594,41 @@ void main() {
       expect(toolActivityCount(result), 1);
     });
 
-    test('recoverable error keeps one live correction and one error', () {
-      final result = project(
-        corrections: const ['recover this'],
-        assistant: 'partial before drop',
-        error: 'connection reset',
-        status: 'error',
-        streaming: false,
-        previousChronological: [
-          row('old-answer', 'assistant', 'done', timestamp: 90),
-        ],
-        chronological: [
-          row('old-answer', 'assistant', 'done', timestamp: 90),
-          row('current-user', 'user', 'same prompt'),
-          row('local-correction', 'user', 'recover this', steer: true),
-        ],
-      );
+    for (final running in [false, true]) {
+      test('recoverable error keeps one correction; '
+          'failure requires no live activity (running: $running)', () {
+        final result = project(
+          corrections: const ['recover this'],
+          assistant: 'partial before drop',
+          error: 'connection reset',
+          status: 'error',
+          streaming: false,
+          running: running,
+          previousChronological: [
+            row('old-answer', 'assistant', 'done', timestamp: 90),
+          ],
+          chronological: [
+            row('old-answer', 'assistant', 'done', timestamp: 90),
+            row('current-user', 'user', 'same prompt'),
+            row('local-correction', 'user', 'recover this', steer: true),
+          ],
+        );
 
-      expect(userCount(result, 'same prompt'), 1);
-      expect(userCount(result, 'recover this'), 1);
-      expect(roleCount(result, 'assistant_error'), 1);
-    });
+        expect(userCount(result, 'same prompt'), 1);
+        expect(userCount(result, 'recover this'), 1);
+        expect(roleCount(result, 'assistant_error'), running ? 0 : 1);
+        expect(result.failed, !running);
+        expect(result.running, running);
+        expect(
+          result.messagesNewestFirst.where(
+            (row) =>
+                row['role'] == 'assistant' &&
+                row['content'] == 'partial before drop',
+          ),
+          hasLength(1),
+        );
+      });
+    }
 
     test('queued equal text remains a separate singleton', () {
       final result = project(

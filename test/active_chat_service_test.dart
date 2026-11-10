@@ -411,6 +411,35 @@ class _AttachmentDesktopGateway
   Future<void> close() => _events.close();
 }
 
+// Models server persistence independently from the RPC acknowledgement.
+class _LostPromptAckGateway extends _AttachmentDesktopGateway {
+  final List<Map<String, dynamic>> durable = [
+    {'id': 1, 'role': 'user', 'content': 'previous'},
+    {'id': 2, 'role': 'assistant', 'content': 'done'},
+  ];
+  bool receiveFirstSubmit = true;
+
+  @override
+  Future<void> submitPrompt(String runtimeSessionId, String text) async {
+    submitCalls++;
+    if (submitCalls > 1 || receiveFirstSubmit) {
+      durable.add({
+        'id': durable.length + 1,
+        'role': 'user',
+        'content': text,
+        'timestamp': DateTime.now().millisecondsSinceEpoch / 1000,
+      });
+    }
+    if (submitCalls == 1) {
+      throw const TuiGatewayRpcError(
+        'prompt.submit',
+        'Connection lost before acknowledgement',
+        failureKind: TuiGatewayRpcFailureKind.connectionLost,
+      );
+    }
+  }
+}
+
 class _DelayedProcessGateway extends _AttachmentDesktopGateway
     implements HermesDesktopControlGateway {
   Completer<AgentCenterSnapshot> processSnapshot = Completer();
@@ -616,6 +645,7 @@ ActiveChat _attachmentChat(_AttachmentDesktopGateway gateway) => ActiveChat(
   connection: _conn(id: 'conn-attachment'),
   sessionId: 'sess-attachment',
   sessionTitle: 'Adjuntos',
+  storedMessageLoader: (_, _) async => const [],
   notifications: null,
   onTerminal: () {},
   desktopGateway: gateway,
@@ -2048,6 +2078,14 @@ void main() {
         isEmpty,
         reason: 'no chat keeps the dead network path backoff',
       );
+      // A second VPN replacement is a new path even inside the wake holdoff.
+      for (final client in clients) {
+        await client.connectForeground().then((_) {}, onError: (Object _) {});
+      }
+      expect(clients.every((client) => client.isBackingOff), isTrue);
+      service.requestImmediateTransportRecovery(networkChanged: true);
+      expect(clients.where((client) => client.isBackingOff), isEmpty);
+
     },
   );
 
@@ -2094,6 +2132,267 @@ void main() {
       );
     },
   );
+
+  group('lost prompt acknowledgement', () {
+    for (final withAttachment in [false, true]) {
+      for (final received in [false, true]) {
+        test(
+          'received=$received attachment=$withAttachment reconciles before retry',
+          () async {
+            final directory = await Directory.systemTemp.createTemp(
+              'lost-ack-',
+            );
+            addTearDown(() => directory.delete(recursive: true));
+            final attachment = await _privateTestAttachment(
+              directory,
+              localId: 'pasted',
+            );
+            final gateway = _LostPromptAckGateway()
+              ..receiveFirstSubmit = received;
+            final chat = ActiveChat(
+              compressionRestoreStore: testCompressionRestoreStore(),
+              connection: _conn(id: 'conn-attachment'),
+              sessionId: 'sess-attachment',
+              sessionTitle: 'Lost ACK',
+              notifications: null,
+              onTerminal: () {},
+              desktopGateway: gateway,
+              storedMessageLoader: (_, _) async =>
+                  gateway.durable.map(Map<String, dynamic>.of).toList(),
+            );
+            addTearDown(chat.dispose);
+            await chat.loadMessages(passiveOnly: true);
+            final now = DateTime.now().millisecondsSinceEpoch;
+            final prepared = PreparedTurn(
+              connectionId: 'conn-attachment',
+              sessionId: 'sess-attachment',
+              clientTurnId: 'stable-send',
+              createdAtMs: now,
+              updatedAtMs: now,
+              text: 'revisa',
+              fullText: withAttachment ? '[📎 pasted.txt]\nrevisa' : 'revisa',
+              desktopText: withAttachment
+                  ? '[📎 pasted.txt]\nrevisa'
+                  : 'revisa',
+              attachments: withAttachment ? [attachment] : [],
+              model: 'hermes-agent',
+              profile: '',
+            );
+            final store = _AttachmentMemoryOutbox();
+            final delivery = ActiveTurnDelivery(
+              prepared: prepared,
+              store: store,
+            );
+            Future<bool> send(ActiveTurnDelivery target) => chat.send(
+              fullText: target.current.fullText,
+              desktopText: target.current.desktopText,
+              model: 'hermes-agent',
+              history: const [],
+              nativeAttachments: target.current.activeAttachments,
+              delivery: target,
+            );
+            expect(await send(delivery), isFalse);
+            expect(delivery.current.state, PreparedTurnState.ambiguous);
+            // The same durable batch can be restored after background/process death.
+            final restored = ActiveTurnDelivery(
+              prepared: PreparedTurn.fromJson(delivery.current.toJson()),
+              store: store,
+            );
+            await chat.reconcileAfterResume();
+            expect(await Future.wait([send(restored), send(restored)]), [
+              true,
+              true,
+            ]);
+            expect(gateway.submitCalls, received ? 1 : 2);
+            expect(
+              gateway.durable.where((row) => row['role'] == 'user').length,
+              2,
+            );
+            expect(
+              chat.messages.where((row) => row['role'] == 'user').length,
+              2,
+            );
+            expect(gateway.fileAttachCalls, withAttachment ? 1 : 0);
+            final second = ActiveTurnDelivery(
+              prepared: PreparedTurn(
+                connectionId: prepared.connectionId,
+                sessionId: prepared.sessionId,
+                clientTurnId: 'second-intent',
+                createdAtMs: now,
+                updatedAtMs: now,
+                text: prepared.text,
+                fullText: prepared.fullText,
+                desktopText: prepared.desktopText,
+                attachments: restored.current.activeAttachments,
+                model: prepared.model,
+                profile: '',
+              ),
+              store: store,
+            );
+            expect(await send(second), isTrue);
+            expect(gateway.submitCalls, received ? 2 : 3);
+            expect(
+              gateway.durable.where((row) => row['role'] == 'user').length,
+              3,
+            );
+          },
+        );
+      }
+    }
+  });
+
+  for (final withAttachment in [false, true]) {
+    for (final received in [false, true]) {
+      test(
+        'lost ACK over parked socket received=$received attachment=$withAttachment',
+        () async {
+          final directory = await Directory.systemTemp.createTemp(
+            'parked-ack-',
+          );
+          addTearDown(() => directory.delete(recursive: true));
+          final attachment = await _privateTestAttachment(
+            directory,
+            localId: 'pasted_content',
+          );
+          final durable = <Map<String, dynamic>>[
+            {'id': 1, 'role': 'user', 'content': 'previous'},
+            {'id': 2, 'role': 'assistant', 'content': 'done'},
+          ];
+          var submits = 0;
+          var attaches = 0;
+          var connections = 0;
+          final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+          final sockets = <WebSocket>[];
+          addTearDown(() async {
+            for (final socket in sockets) {
+              await socket.close();
+            }
+            await server.close(force: true);
+          });
+          server.listen((request) async {
+            final socket = await WebSocketTransformer.upgrade(request);
+            sockets.add(socket);
+            connections++;
+            socket.add(
+              jsonEncode({
+                'jsonrpc': '2.0',
+                'method': 'event',
+                'params': {'type': 'gateway.ready', 'payload': {}},
+              }),
+            );
+            await for (final raw in socket) {
+              final frame = jsonDecode(raw as String) as Map<String, dynamic>;
+              final params = frame['params'] as Map<String, dynamic>? ?? {};
+              final method = frame['method'];
+              Map<String, dynamic> result = {};
+              if (method == 'gateway.capabilities') {
+                result = {'per_session_exclusive_submit': true};
+              } else if (method == 'session.resume') {
+                result = {
+                  'session_id': 'runtime-parked',
+                  'stored_session_id': 'stored-parked',
+                  'created': false,
+                };
+              } else if (method == 'file.attach') {
+                attaches++;
+                result = {
+                  'attached': true,
+                  'path': '/remote/pasted_content.txt',
+                  'ref_text': '@file:/remote/pasted_content.txt',
+                };
+              } else if (method == 'prompt.submit') {
+                submits++;
+                if (submits > 1 || received) {
+                  durable.add({
+                    'id': durable.length + 1,
+                    'role': 'user',
+                    'content': params['text'],
+                    'timestamp': DateTime.now().millisecondsSinceEpoch / 1000,
+                  });
+                }
+                if (submits == 1) {
+                  await socket.close();
+                  continue;
+                }
+                result = {'status': 'streaming'};
+              }
+              if (frame['id'] != null && socket.readyState == WebSocket.open) {
+                socket.add(
+                  jsonEncode({
+                    'jsonrpc': '2.0',
+                    'id': frame['id'],
+                    'result': result,
+                  }),
+                );
+              }
+            }
+          });
+          final connection = SavedConnection(
+            id: 'conn-parked',
+            label: 'Parked',
+            host: '127.0.0.1',
+            port: 8642,
+            apiKey: 'unused',
+            dashboardUrl: 'http://127.0.0.1:${server.port}',
+          );
+          final gateway = TuiGatewayClient(
+            connection,
+            dashboard: _StaticWebSocketAuthDashboardClient(),
+            heartbeatInterval: Duration.zero,
+          );
+          final chat = ActiveChat(
+            compressionRestoreStore: testCompressionRestoreStore(),
+            connection: connection,
+            sessionId: 'stored-parked',
+            sessionTitle: 'Parked',
+            notifications: null,
+            onTerminal: () {},
+            desktopGateway: gateway,
+            storedMessageLoader: (_, _) async =>
+                durable.map(Map<String, dynamic>.of).toList(),
+          );
+          addTearDown(chat.dispose);
+          await chat.loadMessages(passiveOnly: true);
+          final now = DateTime.now().millisecondsSinceEpoch;
+          final delivery = ActiveTurnDelivery(
+            prepared: PreparedTurn(
+              connectionId: connection.id,
+              sessionId: 'stored-parked',
+              clientTurnId: 'parked-send',
+              createdAtMs: now,
+              updatedAtMs: now,
+              text: 'revisa',
+              attachments: withAttachment ? [attachment] : [],
+              model: 'hermes-agent',
+              profile: '',
+            ),
+            store: _AttachmentMemoryOutbox(),
+          );
+          Future<bool> send() => chat.send(
+            fullText: 'revisa',
+            model: 'hermes-agent',
+            history: const [],
+            nativeAttachments: delivery.current.activeAttachments,
+            delivery: delivery,
+          );
+          expect(await send(), isFalse);
+          expect(delivery.current.state, PreparedTurnState.ambiguous);
+          await gateway.connectForeground();
+          await gateway.disconnectIdle();
+          expect(gateway.linkParked, isTrue);
+          await gateway.redialParked();
+          expect(gateway.linkParked, isFalse);
+          await chat.reconcileAfterResume();
+          expect(await send(), isTrue);
+          expect(submits, received ? 1 : 2);
+          expect(attaches, withAttachment ? 1 : 0);
+          expect(connections, greaterThanOrEqualTo(3));
+          expect(durable.where((row) => row['role'] == 'user').length, 2);
+          expect(chat.messages.where((row) => row['role'] == 'user').length, 2);
+        },
+      );
+    }
+  }
 
   group('ActiveTurnDelivery — FSM de adjuntos', () {
     const pending = AttachmentDraft(
@@ -2214,6 +2513,7 @@ void main() {
         );
         final gateway = _AttachmentDesktopGateway()..failNextSubmit = true;
         final chat = _attachmentChat(gateway);
+        await chat.loadMessages(passiveOnly: true);
         addTearDown(chat.dispose);
 
         final firstAccepted = await chat.send(
@@ -2260,6 +2560,7 @@ void main() {
       );
       final gateway = _AttachmentDesktopGateway()..failNextSubmit = true;
       final chat = _attachmentChat(gateway);
+      await chat.loadMessages(passiveOnly: true);
       addTearDown(chat.dispose);
 
       expect(
@@ -2308,6 +2609,7 @@ void main() {
         final gateway = _AttachmentDesktopGateway()
           ..attachGate = Completer<void>();
         final chat = _attachmentChat(gateway);
+        await chat.loadMessages(passiveOnly: true);
         addTearDown(chat.dispose);
 
         final send = chat.send(
@@ -2347,6 +2649,7 @@ void main() {
       final gateway = _AttachmentDesktopGateway()
         ..attachGate = Completer<void>();
       final chat = _attachmentChat(gateway);
+      await chat.loadMessages(passiveOnly: true);
       addTearDown(chat.dispose);
 
       final send = chat.send(
@@ -2394,6 +2697,7 @@ void main() {
           ..attachGate = Completer<void>()
           ..gateOnImageAttachCall = 2;
         final chat = _attachmentChat(gateway);
+        await chat.loadMessages(passiveOnly: true);
         addTearDown(chat.dispose);
 
         final send = chat.send(
@@ -2443,6 +2747,7 @@ void main() {
         );
         final gateway = _AttachmentDesktopGateway();
         final chat = _attachmentChat(gateway);
+        await chat.loadMessages(passiveOnly: true);
         addTearDown(chat.dispose);
 
         expect(
@@ -2499,6 +2804,7 @@ void main() {
         );
         final gateway = _AttachmentDesktopGateway(eventLog: events);
         final chat = _attachmentChat(gateway);
+        await chat.loadMessages(passiveOnly: true);
         addTearDown(chat.dispose);
 
         expect(
@@ -2512,11 +2818,12 @@ void main() {
           isTrue,
         );
 
-        expect(events.take(5), [
+        expect(events.take(6), [
           'persist:submitting:pending',
           'persist:submitting:uploading',
           'rpc:file.attach',
           'persist:submitting:attached',
+          'persist:submitting:attached', // exact wire prompt persisted
           'rpc:prompt.submit',
         ]);
       },
@@ -2541,6 +2848,7 @@ void main() {
         final gateway = _AttachmentDesktopGateway(eventLog: events)
           ..failNextSubmit = true;
         final chat = _attachmentChat(gateway);
+        await chat.loadMessages(passiveOnly: true);
         addTearDown(chat.dispose);
 
         expect(
@@ -2555,11 +2863,12 @@ void main() {
         );
         expect(delivery.current.state, PreparedTurnState.ambiguous);
         expect(gateway.fileAttachCalls, 1);
-        expect(events.take(5), [
+        expect(events.take(6), [
           'persist:submitting:pending',
           'persist:submitting:uploading',
           'rpc:file.attach',
           'persist:submitting:attached',
+          'persist:submitting:attached', // exact wire prompt persisted
           'rpc:prompt.submit',
         ]);
 

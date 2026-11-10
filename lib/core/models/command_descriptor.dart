@@ -20,6 +20,23 @@ enum CommandExecutorKind { native, typedRpc, slashExec, dispatch, legacy }
 
 enum CommandArgumentKind { none, freeText, enumeration }
 
+/// Longest argument Console sends with a slash command, in UTF-16 units.
+///
+/// Neither Hermes nor Desktop limit it: `/goal`, `/plan`, `/queue`,
+/// `/steer`, `/loop`… take the text as typed (Desktop
+/// `use-prompt-actions/slash.ts`, `parseSlashCommand`; the gateway's
+/// `slash.exec` / `command.dispatch`). The 500 Console used to enforce was
+/// its own. This bound only keeps a pathological paste from becoming one
+/// enormous frame: 64 Ki units is far past any goal or plan a person
+/// writes, and the same order as a group message (64 KiB).
+const int commandArgumentMaxLength = 65536;
+
+/// Longest model-facing `message` a command answers with (`type: send`):
+/// the server builds it from the argument plus its own scaffolding (the
+/// `/goal` kickoff), so it may be well past [commandArgumentMaxLength]. It
+/// is never cut short of this: a truncated prompt would run something else.
+const int commandDispatchMessageMaxLength = 262144;
+
 final class CommandArgumentSpec {
   final CommandArgumentKind kind;
   final String? hint;
@@ -31,10 +48,10 @@ final class CommandArgumentSpec {
     required CommandArgumentKind kind,
     String? hint,
     bool required = false,
-    int maxLength = 500,
+    int maxLength = commandArgumentMaxLength,
     Iterable<String> allowedValues = const [],
   }) {
-    if (maxLength < 0 || maxLength > 4096) {
+    if (maxLength < 0 || maxLength > commandArgumentMaxLength) {
       throw const FormatException('invalid command argument limit');
     }
     final values = <String>{};
@@ -415,10 +432,7 @@ final class CommandCatalogEntry {
     category: category,
     origin: CommandOrigin.catalog,
     surface: CommandSurface.remote,
-    argumentSpec: CommandArgumentSpec(
-      kind: CommandArgumentKind.freeText,
-      maxLength: 500,
-    ),
+    argumentSpec: CommandArgumentSpec(kind: CommandArgumentKind.freeText),
     executor: CommandExecutorKind.slashExec,
     capabilityKey: 'slash.exec',
     scope: scope,
@@ -667,7 +681,10 @@ final class DesktopCommandRpcResult {
     final json = Map<Object?, Object?>.from(value);
     final type = json['type'];
     final output = _boundedText(json['output'], 4000);
-    final message = _boundedText(json['message'], 8000);
+    final message = _boundedText(
+      json['message'],
+      commandDispatchMessageMaxLength,
+    );
     final notice = _boundedText(json['notice'] ?? json['warning'], 1000);
     final target = CommandDescriptor.tryNormalizeName(json['target']);
     final commandName = CommandDescriptor.tryNormalizeName(json['name']);

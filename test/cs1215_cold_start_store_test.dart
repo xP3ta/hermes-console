@@ -135,37 +135,44 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   group('ColdStartStore bounds', () {
-    test('keeps the last 8 chats and the newest 120 rows of each', () async {
-      final storage = MemoryColdStartStorage();
-      final store = ColdStartStore(storage: storage);
-      for (var i = 0; i < 10; i++) {
-        await store.saveTail(
-          connectionId: 'c',
-          profile: 'default',
-          storedSessionId: 's$i',
-          routeSessionId: 's$i',
-          aliases: {'s$i'},
-          newestFirst: _rows('s$i', 200),
+    test(
+      'keeps the last maxTails chats and the newest 120 rows of each',
+      () async {
+        final storage = MemoryColdStartStorage();
+        final store = ColdStartStore(storage: storage);
+        const saved = ColdStartStore.maxTails + 2;
+        for (var i = 0; i < saved; i++) {
+          await store.saveTail(
+            connectionId: 'c',
+            profile: 'default',
+            storedSessionId: 's$i',
+            routeSessionId: 's$i',
+            aliases: {'s$i'},
+            newestFirst: _rows('s$i', 200),
+          );
+        }
+        final tails = await ColdStartStore(storage: storage).loadTails();
+        expect(tails.map((t) => t.storedSessionId), [
+          for (var i = saved - 1; i >= 2; i--) 's$i',
+        ]);
+        expect(tails.first.newestFirst, hasLength(ColdStartStore.maxRows));
+        // Newest rows, newest first.
+        expect(
+          tails.first.newestFirst.first['content'],
+          startsWith('s${saved - 1}-200'),
         );
-      }
-      final tails = await ColdStartStore(storage: storage).loadTails();
-      expect(tails.map((t) => t.storedSessionId), [
-        for (var i = 9; i >= 2; i--) 's$i',
-      ]);
-      expect(tails.first.newestFirst, hasLength(ColdStartStore.maxRows));
-      // Newest rows, newest first.
-      expect(tails.first.newestFirst.first['content'], startsWith('s9-200'));
-      // Evicted tails are deleted from storage, not just unindexed.
-      expect(
-        storage.values.keys.where((k) => k.startsWith('cold_start_tail_v1.')),
-        hasLength(8),
-      );
-    });
+        // Evicted tails are deleted from storage, not just unindexed.
+        expect(
+          storage.values.keys.where((k) => k.startsWith('cold_start_tail_v1.')),
+          hasLength(ColdStartStore.maxTails),
+        );
+      },
+    );
 
     test('total encrypted bytes stay under the budget', () async {
       final storage = MemoryColdStartStorage();
       final store = ColdStartStore(storage: storage);
-      for (var i = 0; i < 8; i++) {
+      for (var i = 0; i < ColdStartStore.maxTails; i++) {
         await store.saveTail(
           connectionId: 'c',
           profile: 'default',
@@ -181,8 +188,8 @@ void main() {
           .fold<int>(0, (sum, e) => sum + utf8.encode(e.value).length);
       expect(total, lessThanOrEqualTo(ColdStartStore.maxTotalBytes));
       final tails = await ColdStartStore(storage: storage).loadTails();
-      expect(tails.first.storedSessionId, 'big7');
-      expect(tails.length, lessThan(8));
+      expect(tails.first.storedSessionId, 'big${ColdStartStore.maxTails - 1}');
+      expect(tails.length, lessThan(ColdStartStore.maxTails));
     });
 
     test('an unchanged tail is not rewritten', () async {

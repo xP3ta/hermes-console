@@ -27,6 +27,7 @@ enum DesktopGatewayCapability {
   composerPathCompletion,
   turnSide,
   turnBranch,
+  gitReview,
 }
 
 enum DesktopGatewayCapabilityState { unknown, supported, unsupported, invalid }

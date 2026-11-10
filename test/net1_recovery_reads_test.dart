@@ -571,6 +571,12 @@ void main() {
 
     final resume = service.reconcileAfterResume();
     await Future<void>.delayed(const Duration(milliseconds: 50));
+    expect(order, ['c-visible'], reason: 'the visible chat reads first');
+    // The covered chats wait out one stagger behind the visible one (its
+    // probe, ticket and first read reach the server first), then two run.
+    await Future<void>.delayed(
+      ActiveChatService.resumeFanoutStagger + const Duration(milliseconds: 100),
+    );
     expect(order.first, 'c-visible');
     expect(order, hasLength(2), reason: 'two at a time');
     gates['c-visible']!.complete();

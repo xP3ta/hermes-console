@@ -11,6 +11,7 @@ import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:hermes_android/core/models/core_read.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
+import 'package:hermes_android/core/utils/cleartext_notice_memory.dart';
 import 'package:hermes_android/core/services/session_repository.dart';
 import 'package:hermes_android/core/utils/byte_bounded_lru_cache.dart';
 
@@ -817,6 +818,11 @@ void main() {
           'capabilities_keep': '{}',
           'active_profile_keep': 'qa',
           'archived_sessions_keep': <String>['s1'],
+          'pinned_sessions_keep': <String>['s1'],
+          'pinned_sync_keep': <String>['v2', 'c:s1'],
+          'hda.folders.keep': <String>['/srv/a'],
+          'hda.hint.keep': '/usr/bin/herdr',
+          'hda.kind.keep': 'k',
           'mission_control.organizations.v1.keep': '[]',
           'mission_control.rooms.v1.keep': '[]',
           'mission_control.bot_chat_pins.v1.keep': '{}',
@@ -826,7 +832,12 @@ void main() {
           'runs_gone': '[]',
           'approval_rules_gone': '[]',
           'hidden_sessions_gone': <String>['x'],
+          'pinned_sessions_gone': <String>['x'],
+          'pinned_sync_gone': <String>['v2', 'c:x'],
           'hidden_rows_gone': <String>['{"id":"x"}'],
+          'hda.folders.gone': <String>['/srv/a'],
+          'hda.hint.gone': '/usr/bin/herdr',
+          'hda.kind.gone': 'k',
           'session_auto_titles_gone': <String>['x\tTitle'],
           'mission_control.organizations.v1.gone': '[]',
           'mission_control.rooms.v1.gone': '[]',
@@ -847,6 +858,11 @@ void main() {
         expect(prefs.containsKey('approval_rules_gone'), isFalse);
         expect(prefs.containsKey('hidden_sessions_gone'), isFalse);
         expect(prefs.containsKey('hidden_rows_gone'), isFalse);
+        expect(prefs.containsKey('pinned_sessions_gone'), isFalse);
+        expect(prefs.containsKey('pinned_sync_gone'), isFalse);
+        expect(prefs.containsKey('hda.folders.gone'), isFalse);
+        expect(prefs.containsKey('hda.hint.gone'), isFalse);
+        expect(prefs.containsKey('hda.kind.gone'), isFalse);
         expect(prefs.containsKey('session_auto_titles_gone'), isFalse);
         expect(
           prefs.containsKey('mission_control.organizations.v1.gone'),
@@ -861,6 +877,11 @@ void main() {
         expect(prefs.containsKey('memory_draft_ts::gone::vieja'), isFalse);
         // Vivos y globales intactos.
         expect(prefs.containsKey('capabilities_keep'), isTrue);
+        expect(prefs.containsKey('pinned_sessions_keep'), isTrue);
+        expect(prefs.containsKey('pinned_sync_keep'), isTrue);
+        expect(prefs.containsKey('hda.folders.keep'), isTrue);
+        expect(prefs.containsKey('hda.hint.keep'), isTrue);
+        expect(prefs.containsKey('hda.kind.keep'), isTrue);
         expect(prefs.containsKey('active_profile_keep'), isTrue);
         expect(prefs.containsKey('memory_draft::keep::nota'), isTrue);
         expect(
@@ -1022,6 +1043,43 @@ void main() {
       final prefs = await SharedPreferences.getInstance();
       return (manager: await ConnectionManager.create(prefs), prefs: prefs);
     }
+
+    test('deleteConnection quita hda.* solo de esa conexión', () async {
+      final fixture = await managerWithCapabilities();
+      final prefs = fixture.prefs;
+      await prefs.setStringList('hda.folders.$id', ['/srv/a']);
+      await prefs.setString('hda.hint.$id', '/usr/bin/herdr');
+      await prefs.setString('hda.kind.$id', 'k');
+      await prefs.setStringList('hda.folders.other', ['/srv/b']);
+      await prefs.setString('hda.hint.other', '/usr/bin/herdr');
+
+      await fixture.manager.deleteConnection(id);
+
+      expect(prefs.getKeys().where((k) => k.startsWith('hda.')).toSet(), {
+        'hda.folders.other',
+        'hda.hint.other',
+      });
+    });
+
+    test(
+      'deleteConnection olvida el aviso http ya visto de esa conexión',
+      () async {
+        final fixture = await managerWithCapabilities();
+        final prefs = fixture.prefs;
+        final memory = CleartextNoticeMemory(prefs);
+        await memory.markSeen(id);
+        await memory.markSeen('other');
+        expect(memory.seen(id), isTrue);
+
+        await fixture.manager.deleteConnection(id);
+
+        expect(prefs.getKeys().where((k) => k.startsWith('krh_http_seen_')), [
+          CleartextNoticeMemory.keyFor('other'),
+        ]);
+        expect(CleartextNoticeMemory(prefs).seen(id), isFalse);
+        expect(CleartextNoticeMemory(prefs).seen('other'), isTrue);
+      },
+    );
 
     test('updateConnection invalida capacidades al cambiar el host', () async {
       final fixture = await managerWithCapabilities();

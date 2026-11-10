@@ -65,6 +65,7 @@ void main() {
 
   test(
     'exact external upstream parser accepts local fixture and rejects mixed fields',
+    tags: 'opt-in',
     () async {
       final upstream = Platform.environment['HERMES_UPSTREAM_CHECKOUT'];
       if (upstream == null || upstream.trim().isEmpty) {

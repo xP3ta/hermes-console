@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/models/desktop_active_session.dart';
 import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
+import 'package:hermes_android/core/services/approval_response.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/compression_restore_store.dart';
 import 'package:hermes_android/core/services/desktop_gateway_capabilities.dart';
@@ -531,6 +532,103 @@ void main() {
       }
     },
   );
+
+  test('approval sends are request-bound, shared and retryable after failure', () async {
+    final gateway = _ViewerGateway(DesktopSessionSnapshot.fromJson(
+      const {'session_id': 'runtime-live', 'session_key': 'stored-live', 'messages': <Object>[], 'running': true,
+        'pending_approval': {'request_id': 'locked-request', 'tool': 'terminal', 'choices': ['once', 'deny']}},
+      requestedStoredSessionId: 'stored-live', created: false, method: 'session.resume',
+    ))..approvalGate = Completer<DesktopApprovalResult>();
+    final chat = _chat(gateway, restCalls: () => 0);
+    addTearDown(() async { chat.dispose(); await gateway.close(); });
+    chat.messagesLoaded = true;
+    expect(await chat.attachExistingRuntimeViewer(), isTrue);
+    final first = chat.resolveApproval('once');
+    final second = chat.resolveApproval('deny');
+    expect(identical(first, second), isTrue);
+    expect(gateway.approvalCalls.length, 1);
+    final failed = expectLater(first, throwsStateError);
+    gateway.approvalGate!.completeError(StateError('offline'));
+    await failed;
+    expect(chat.pendingApproval?['request_id'], 'locked-request');
+    gateway.approvalGate = null;
+    await chat.resolveApproval('deny');
+    expect(gateway.approvalCalls.length, 2);
+    expect(chat.pendingApproval, isNull);
+    expect(chat.approvalDisplayChoice, 'deny');
+  });
+
+  for (final inPlace in [false, true]) {
+  test('submission ignores replaced authority in flight (in place: $inPlace)', () async {
+    final gateway = _ViewerGateway(DesktopSessionSnapshot.fromJson(
+      const {'session_id': 'runtime-live', 'session_key': 'stored-live', 'messages': <Object>[], 'running': true,
+        'pending_approval': {'request_id': 'same-id', 'command': 'echo old', 'choices': ['once', 'deny']}},
+      requestedStoredSessionId: 'stored-live', created: false, method: 'session.resume',
+    ))..approvalGate = Completer<DesktopApprovalResult>();
+    final chat = _chat(gateway, restCalls: () => 0);
+    addTearDown(() async { chat.dispose(); await gateway.close(); });
+    chat.messagesLoaded = true;
+    expect(await chat.attachExistingRuntimeViewer(), isTrue);
+    chat.pendingApproval = {...chat.pendingApproval!};
+    final old = ApprovalSubmission(ApprovalTarget.of(chat.pendingApproval!), 'once');
+    final sending = chat.submitApproval(old);
+    final replacement = inPlace ? chat.pendingApproval! : {...chat.pendingApproval!};
+    replacement['command'] = 'rm -rf /home/other';
+    chat.pendingApproval = replacement;
+    gateway.approvalGate!.complete(const DesktopApprovalResult(resolved: 1));
+    expect(await sending, ApprovalSendResult.ignored);
+    expect(chat.pendingApproval, same(replacement));
+    expect(await chat.submitApproval(old), ApprovalSendResult.ignored);
+    expect(gateway.approvalCalls.length, 1);
+    gateway.approvalGate = null;
+    expect(await chat.submitApproval(ApprovalSubmission(ApprovalTarget.of(replacement), 'once')), ApprovalSendResult.accepted);
+    expect(gateway.approvalCalls.length, 2);
+    expect(chat.pendingApproval, isNull);
+  });
+
+  }
+
+  test('native approval queue keeps the latest prompt; settlement of A cannot clear B', () async {
+    final gateway = _ViewerGateway(DesktopSessionSnapshot.fromJson(
+      const {'session_id': 'runtime-live', 'session_key': 'stored-live', 'messages': <Object>[], 'running': true},
+      requestedStoredSessionId: 'stored-live', created: false, method: 'session.resume',
+    ));
+    final chat = _chat(gateway, restCalls: () => 0);
+    addTearDown(() async { chat.dispose(); await gateway.close(); });
+    chat.messagesLoaded = true;
+    expect(await chat.attachExistingRuntimeViewer(), isTrue);
+    gateway.emit('approval.request', const {'request_id': 'A', 'command': 'echo A', 'choices': ['once', 'deny']});
+    await Future<void>.delayed(Duration.zero);
+    final a = ApprovalSubmission(ApprovalTarget.of(chat.pendingApproval!), 'once');
+    gateway.emit('approval.request', const {'request_id': 'B', 'command': 'echo B', 'choices': ['once', 'deny']});
+    await Future<void>.delayed(Duration.zero);
+    expect(chat.pendingApproval?['request_id'], 'B');
+    expect(await chat.submitApproval(a), ApprovalSendResult.ignored);
+    gateway.emit('approval_resolved', const {'request_id': 'A', 'choice': 'deny'});
+    await Future<void>.delayed(Duration.zero);
+    expect(chat.pendingApproval?['request_id'], 'B');
+    expect(gateway.approvalCalls, isEmpty);
+  });
+
+  test('approval_resolved removes a pending request and suppresses replay', () async {
+    final gateway = _ViewerGateway(DesktopSessionSnapshot.fromJson(
+      const {'session_id': 'runtime-live', 'session_key': 'stored-live', 'messages': <Object>[], 'running': true,
+        'pending_approval': {'request_id': 'remote-request', 'tool': 'terminal', 'choices': ['once', 'deny']}},
+      requestedStoredSessionId: 'stored-live', created: false, method: 'session.resume',
+    ));
+    final chat = _chat(gateway, restCalls: () => 0);
+    addTearDown(() async { chat.dispose(); await gateway.close(); });
+    chat.messagesLoaded = true;
+    expect(await chat.attachExistingRuntimeViewer(), isTrue);
+    gateway.emit('approval_resolved', const {'request_id': 'remote-request', 'choice': 'once'});
+    await Future<void>.delayed(Duration.zero);
+    expect(chat.pendingApproval, isNull);
+    expect(chat.approvalDisplayChoice, 'once');
+    gateway.emit('approval.request', const {'request_id': 'remote-request', 'tool': 'terminal', 'choices': ['once', 'deny']});
+    await Future<void>.delayed(Duration.zero);
+    expect(chat.pendingApproval, isNull);
+    expect(gateway.approvalCalls, isEmpty);
+  });
 
   test(
     'resolved zero retires only request A and cannot erase replacement B',

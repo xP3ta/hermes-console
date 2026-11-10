@@ -149,7 +149,7 @@ void main() {
     await _wait(15);
     await judge('net1-s1-flap', 10, measured: true);
     await expectConverged(chats.first, 's1');
-  }, skip: skip);
+  }, tags: 'opt-in', skip: skip);
 
   test('net1 S2: blackhole 20 s with a long turn in flight', () async {
     final chat = await openIdle('e2e-chat-04');
@@ -182,7 +182,7 @@ void main() {
       [1, 1],
       reason: 'prompt and reply, neither duplicated nor lost',
     );
-  }, skip: skip);
+  }, tags: 'opt-in', skip: skip);
 
   test('net1 S3: rst 30 s, then refuse 30 s (the backoff ladder)', () async {
     final chat = await openIdle('e2e-chat-05');
@@ -193,7 +193,7 @@ void main() {
       await judge('net1-s3-$mode', 1);
     }
     await expectConverged(chat, 's3');
-  }, skip: skip);
+  }, tags: 'opt-in', skip: skip);
 
   test('net1 S4: 120 s idle with a visible chat', () async {
     await openIdle('e2e-chat-01');
@@ -209,5 +209,5 @@ void main() {
       'rpc': rpc.join(','),
     });
     expect(perMinute, lessThanOrEqualTo(_idleProbesPerMinute));
-  }, skip: skip);
+  }, tags: 'opt-in', skip: skip);
 }

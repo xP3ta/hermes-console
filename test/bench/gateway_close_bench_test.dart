@@ -47,6 +47,7 @@ void main() {
         }
       }
     },
+    tags: 'opt-in',
     skip: ports == null ? 'set HERMES_WS_BENCH_PORTS to run' : false,
     timeout: const Timeout(Duration(minutes: 3)),
   );

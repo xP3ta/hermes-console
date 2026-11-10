@@ -235,7 +235,9 @@ void main() {
       }
       expect(backoff.attempt, 4, reason: 'short-lived sockets never reset');
 
-      // A socket that stays up 30 s resets the counter when it is lost.
+      // A socket that stays up 5 s resets the counter when it is lost
+      // (conn-registry E5; Desktop RECONNECT_STABLE_OPEN_MS,
+      // apps/shared/src/reconnect-backoff.ts:33).
       final stable = GatewayReconnectBackoff(random: () => 0)
         ..nextDelay()
         ..nextDelay();
@@ -249,7 +251,7 @@ void main() {
         channelFactory: (_, _) => channel = _DroppingChannel(dropAfter: 99),
       );
       other.connect();
-      async.elapse(const Duration(seconds: 31));
+      async.elapse(const Duration(seconds: 6));
       unawaited(channel._incoming.close());
       async.flushMicrotasks();
       expect(stable.attempt, 1);

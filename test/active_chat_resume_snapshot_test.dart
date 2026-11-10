@@ -20,10 +20,23 @@ import 'package:hermes_android/core/services/session_reconciler.dart';
 import 'package:hermes_android/core/services/subagent_transcript_projection.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
+import 'package:hermes_android/core/services/turn_outbox_store.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'support/test_api_client.dart';
+
+class _MergeOutbox implements TurnOutboxPersistence {
+  final Map<String, PreparedTurn> pending = {};
+  @override
+  Future<void> save(PreparedTurn turn) async {
+    pending[turn.clientTurnId] = turn;
+  }
+  @override
+  Future<void> delete(PreparedTurn turn) async {
+    pending.remove(turn.clientTurnId);
+  }
+}
 
 class _MemoryCompressionFenceStorage implements CompressionRestoreStorage {
   String? value;
@@ -72,7 +85,8 @@ class _SnapshotGateway
         HermesDesktopSessionLifecycleGateway,
         HermesDesktopSessionActivityGateway,
         HermesDesktopCommandGateway,
-        HermesDesktopContextUsageGateway {
+        HermesDesktopContextUsageGateway,
+        HermesDesktopRedirectGateway {
   final StreamController<TuiGatewayEvent> _events =
       StreamController<TuiGatewayEvent>.broadcast();
   DesktopSessionSnapshot? snapshot;
@@ -94,6 +108,8 @@ class _SnapshotGateway
   int commandDispatchCalls = 0;
   int submitPromptCalls = 0;
   int steerCalls = 0;
+  Future<void> Function()? onRedirect;
+  DesktopRedirectDisposition redirectDisposition = DesktopRedirectDisposition.redirected;
   int contextBreakdownCalls = 0;
   String? slashRuntimeId;
   String? slashCommand;
@@ -251,6 +267,16 @@ class _SnapshotGateway
   }
 
   @override
+  Future<DesktopRedirectDisposition> redirect(
+    String runtimeSessionId,
+    String text,
+  ) async {
+    steerCalls++;
+    await onRedirect?.call();
+    return redirectDisposition;
+  }
+
+  @override
   Future<void> interrupt(String runtimeSessionId) async {}
 
   @override
@@ -349,14 +375,16 @@ class _ReplayProbeGateway extends _SnapshotGateway
   }
 }
 
-SavedConnection _connection(String id) => SavedConnection(
-  id: id,
-  label: id,
-  host: '127.0.0.1',
-  port: 8642,
-  apiKey: 'test-key',
-  kind: InstanceKind.vps,
-);
+SavedConnection _connection(String id, {bool readOnly = false}) =>
+    SavedConnection(
+      id: id,
+      label: id,
+      host: '127.0.0.1',
+      port: 8642,
+      apiKey: 'test-key',
+      kind: InstanceKind.vps,
+      readOnly: readOnly,
+    );
 
 /// `session.history` devuelve el almacén durable con `display_metadata`.
 class _DurableHistorySnapshotGateway extends _SnapshotGateway
@@ -515,8 +543,10 @@ ActiveChat _chat(
   CompressionRestoreStore? compressionRestoreStore,
   int Function()? wallClockMs,
   void Function(ActiveChatEvent)? onEvent,
+  bool readOnly = false,
+  Future<void> Function()? onForegroundKeepAlive,
 }) => ActiveChat(
-  connection: _connection(id),
+  connection: _connection(id, readOnly: readOnly),
   sessionId: sessionId,
   logicalSessionId: logicalSessionId,
   sessionTitle: 'Snapshot',
@@ -540,6 +570,7 @@ ActiveChat _chat(
   initialCancelledTurnTombstones: initialCancelledTurnTombstones,
   onCancelledTurn: onCancelledTurn,
   onEvent: onEvent,
+  onForegroundKeepAlive: onForegroundKeepAlive,
 );
 
 List<Map<String, dynamic>> _generatedImageRefs(Map<String, dynamic> message) {
@@ -1340,7 +1371,15 @@ void main() {
     expect(gateway.createCalls, 0);
     expect(chat.messagesLoaded, isTrue);
     expect(chat.messages.first['content'], 'parcial');
-    expect(chat.queuedMessages, ['después']);
+    expect(chat.queuedMessages, isEmpty);
+    expect(
+      chat.messages.where(
+        (row) =>
+            row['content'] == 'después' &&
+            row['_desktopAcceptedQueued'] == true,
+      ),
+      hasLength(1),
+    );
     expect(chat.state, ChatPipelineState.streaming);
     expect(chat.storedSessionId, 'stored-chat');
     expect(chat.serverSessionId, 'stored-chat');
@@ -1766,12 +1805,17 @@ void main() {
         'haz la auditoría',
         'trabajando',
         'y documéntala',
+        'después publícala',
       ]);
       expect(
         chat.messages.where((message) => message['_steer'] == true),
         hasLength(1),
       );
-      expect(chat.queuedMessages, ['después publícala']);
+      expect(chat.queuedMessages, isEmpty);
+      expect(
+        chat.messages.where((row) => row['content'] == 'después publícala'),
+        hasLength(1),
+      );
     },
   );
 
@@ -2474,6 +2518,382 @@ void main() {
       );
     },
   );
+
+  group('rec-error: fallo retenido tras un final durable', () {
+    // Hermes keeps a failed inflight until the next turn starts. Raised after
+    // the final reply was persisted (post-turn exception: inflight already
+    // cleared, so `user` is empty) or by a failed runtime-event turn, it is
+    // reported on every resume and every device below the durable final.
+    List<Map<String, dynamic>> durableTurn() => [
+      {
+        'id': 1,
+        'role': 'user',
+        'content': 'revisa el parche',
+        'timestamp': 1000,
+      },
+      {
+        'id': 2,
+        'role': 'assistant',
+        'content': 'He comprobado el parche.',
+        'timestamp': 1001,
+      },
+    ];
+
+    DesktopSessionSnapshot retainedFailure(
+      String runtime, {
+      String user = '',
+      bool withMessages = true,
+      num? startedAt,
+      String error = 'AttributeError: post-turn bookkeeping failed',
+    }) => _snapshot({
+      'session_id': runtime,
+      'session_key': 'stored-chat',
+      if (withMessages) 'messages': durableTurn(),
+      'running': false,
+      'status': 'idle',
+      'inflight': {
+        'user': user,
+        'assistant': '',
+        'streaming': false,
+        'error': error,
+        'status': 'error',
+        'recoverable': true,
+        'started_at': ?startedAt,
+      },
+    });
+
+    void expectSettled(ActiveChat chat) {
+      expect(
+        chat.messages.where((row) => row['role'] == 'assistant_error'),
+        isEmpty,
+      );
+      expect(
+        chat.messages.where(
+          (row) => row['content'] == 'He comprobado el parche.',
+        ),
+        hasLength(1),
+      );
+      expect(chat.messages.first['content'], 'He comprobado el parche.');
+      expect(chat.state, isNot(ChatPipelineState.failed));
+      expect(chat.isStreaming, isFalse);
+    }
+
+    for (final (label, user, startedAt) in [
+      ('sin prompt (excepción tras el final)', '', null),
+      // Same prompt: settled only because it began before the saved final.
+      ('con el mismo prompt', 'revisa el parche', 1000),
+    ]) {
+      test('(a/c) abrir en frío o en otro cliente: $label', () async {
+        final gateway = _SnapshotGateway()
+          ..snapshot = retainedFailure(
+            'runtime-settled-cold',
+            user: user,
+            startedAt: startedAt,
+          );
+        final chat = _chat(
+          'settled-cold-${user.length}',
+          gateway,
+          storedMessageLoader: (_, _) async => durableTurn(),
+        );
+        addTearDown(chat.dispose);
+
+        await chat.loadMessages(expectedMessageCount: 2);
+
+        expectSettled(chat);
+      });
+    }
+
+    test('(a) historial diferido (defer_history): sin Error al hidratar',
+        () async {
+      final deferred = _snapshot({
+        'session_id': 'runtime-settled-deferred',
+        'session_key': 'stored-chat',
+        'messages': <Object>[],
+        'message_count': 2,
+        'hydrating': true,
+        'running': false,
+        'status': 'idle',
+        'inflight': {
+          'user': '',
+          'assistant': '',
+          'streaming': false,
+          'error': 'AttributeError: post-turn bookkeeping failed',
+          'status': 'error',
+          'recoverable': true,
+        },
+      });
+      final gateway = _SnapshotGateway()
+        ..snapshot = deferred
+        ..deferredSnapshot = deferred;
+      final chat = _chat(
+        'settled-deferred',
+        gateway,
+        storedMessageLoader: (_, _) async => durableTurn(),
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages(expectedMessageCount: 2);
+
+      expectSettled(chat);
+    });
+
+    test('(a) un Error retenido de una versión anterior se retira al reabrir',
+        () async {
+      final gateway = _SnapshotGateway()
+        ..snapshot = retainedFailure('runtime-settled-legacy-card');
+      final chat = _chat(
+        'settled-legacy-card',
+        gateway,
+        storedMessageLoader: (_, _) async => durableTurn(),
+      );
+      addTearDown(chat.dispose);
+      chat.internalMessagesForTesting = [
+        {
+          'role': 'assistant_error',
+          'content': 'No se pudo recuperar el turno. Inténtalo de nuevo.',
+          '_prompt': 'revisa el parche',
+        },
+        ...durableTurn().reversed,
+      ];
+
+      await chat.loadMessages(expectedMessageCount: 2);
+
+      expectSettled(chat);
+    });
+
+    test('(b) volver de segundo plano reconcilia sin Error', () async {
+      final gateway = _SnapshotGateway()
+        ..snapshot = retainedFailure('runtime-settled-resume');
+      final chat = _chat(
+        'settled-resume',
+        gateway,
+        storedMessageLoader: (_, _) async => durableTurn(),
+      );
+      addTearDown(chat.dispose);
+      await chat.loadMessages(expectedMessageCount: 2);
+      gateway.snapshot = retainedFailure(
+        'runtime-settled-resume-2',
+        withMessages: false,
+      );
+
+      await chat.reconcileAfterResume();
+
+      expectSettled(chat);
+    });
+
+    test('(d) el turno de evento de 3 subagentes asíncronos que falla no '
+        'deja Error', () async {
+      const marker = '[ASYNC DELEGATION COMPLETE — deleg_0a1b2c3d]';
+      final rows = [
+        ...durableTurn().take(1),
+        {
+          'id': 10,
+          'role': 'assistant',
+          'content': '',
+          'tool_calls': [
+            {
+              'id': 'call-rec',
+              'type': 'function',
+              'function': {'name': 'delegate_task', 'arguments': '{}'},
+            },
+          ],
+        },
+        {
+          'id': 11,
+          'role': 'tool',
+          'tool_call_id': 'call-rec',
+          'tool_name': 'delegate_task',
+          'content': jsonEncode({
+            'status': 'dispatched',
+            'delegation_id': 'deleg_0a1b2c3d',
+            'subagent_ids': ['sa-rec-1', 'sa-rec-2', 'sa-rec-3'],
+          }),
+        },
+        {...durableTurn()[1], 'id': 12},
+        {
+          'id': 13,
+          'role': 'user',
+          'content': '$marker\n3 tareas terminadas',
+          'display_kind': 'async_delegation_complete',
+          'display_metadata': {
+            'delegation_id': 'deleg_0a1b2c3d',
+            'task_count': 3,
+            'completed_count': 3,
+            'failed_count': 0,
+          },
+        },
+      ];
+      final gateway = _SnapshotGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-settled-async',
+          'session_key': 'stored-chat',
+          'messages': rows,
+          'running': false,
+          'status': 'idle',
+          'inflight': {
+            'user': '$marker\n3 tareas terminadas',
+            'assistant': '',
+            'streaming': false,
+            'error': 'provider error',
+            'status': 'error',
+            'recoverable': true,
+          },
+        });
+      final chat = _chat(
+        'settled-async',
+        gateway,
+        storedMessageLoader: (_, _) async => rows,
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages(expectedMessageCount: rows.length);
+
+      expect(
+        chat.messages.where((row) => row['role'] == 'assistant_error'),
+        isEmpty,
+      );
+      expect(chat.state, isNot(ChatPipelineState.failed));
+      expect(
+        chat.messages.where(
+          (row) => row['content'] == 'He comprobado el parche.',
+        ),
+        hasLength(1),
+      );
+    });
+
+    // Two identical «sí»: the second was never saved (busy session, a
+    // dispatcher exception, a failed start). Its failure names the text of
+    // the saved one; on a device that did not send it (another phone, a new
+    // install) only its start time tells them apart.
+    group('dos «sí» iguales, el segundo nunca se guardó', () {
+      List<Map<String, dynamic>> yesTurn() => [
+        {'id': 1, 'role': 'user', 'content': 'sí', 'timestamp': 1000},
+        {'id': 2, 'role': 'assistant', 'content': 'Hecho.', 'timestamp': 1001},
+      ];
+
+      DesktopSessionSnapshot failedSecondYes(
+        String runtime, {
+        num? startedAt,
+        bool withMessages = true,
+      }) => _snapshot({
+        'session_id': runtime,
+        'session_key': 'stored-chat',
+        if (withMessages) 'messages': yesTurn(),
+        'running': false,
+        'status': 'idle',
+        'inflight': {
+          'user': 'sí',
+          'assistant': '',
+          'streaming': false,
+          'error': 'Your message was not processed',
+          'status': 'error',
+          'recoverable': true,
+          'started_at': ?startedAt,
+        },
+      });
+
+      void expectRetryable(ActiveChat chat) {
+        expect(chat.state, ChatPipelineState.failed);
+        expect(chat.messages.first['role'], 'assistant_error');
+        expect(chat.messages.first['recoverable'], isTrue);
+        expect(
+          chat.messages.where(
+            (row) => row['role'] == 'user' && row['content'] == 'sí',
+          ),
+          hasLength(2),
+          reason: 'the unsaved «sí» stays visible above its Error',
+        );
+        expect(
+          chat.messages.where((row) => row['content'] == 'Hecho.'),
+          hasLength(1),
+        );
+      }
+
+      for (final (label, startedAt) in [
+        ('empezó después del final guardado', 1005),
+        ('sin hora de inicio', null),
+      ]) {
+        test('abrir en frío: $label', () async {
+          final gateway = _SnapshotGateway()
+            ..snapshot = failedSecondYes(
+              'runtime-yes-cold-${startedAt ?? 0}',
+              startedAt: startedAt,
+            );
+          final chat = _chat(
+            'yes-cold-${startedAt ?? 0}',
+            gateway,
+            storedMessageLoader: (_, _) async => yesTurn(),
+          );
+          addTearDown(chat.dispose);
+
+          await chat.loadMessages(expectedMessageCount: 2);
+
+          expectRetryable(chat);
+        });
+      }
+
+      test('el mismo «sí» que empezó antes de su final sigue resuelto',
+          () async {
+        final gateway = _SnapshotGateway()
+          ..snapshot = failedSecondYes('runtime-yes-settled', startedAt: 1000);
+        final chat = _chat(
+          'yes-settled',
+          gateway,
+          storedMessageLoader: (_, _) async => yesTurn(),
+        );
+        addTearDown(chat.dispose);
+
+        await chat.loadMessages(expectedMessageCount: 2);
+
+        expect(
+          chat.messages.where((row) => row['role'] == 'assistant_error'),
+          isEmpty,
+        );
+        expect(chat.state, isNot(ChatPipelineState.failed));
+        expect(chat.messages.first['content'], 'Hecho.');
+      });
+    });
+
+    test('un fallo real sin final durable conserva Error y Reintentar',
+        () async {
+      final rows = [
+        ...durableTurn(),
+        {'id': 3, 'role': 'user', 'content': 'revisa el parche', 'timestamp': 1002},
+      ];
+      final gateway = _SnapshotGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-genuine-failure',
+          'session_key': 'stored-chat',
+          'messages': rows,
+          'running': false,
+          'status': 'idle',
+          'inflight': {
+            'user': 'revisa el parche',
+            'assistant': '',
+            'streaming': false,
+            'error': 'Rate limited by the provider',
+            'status': 'error',
+            'recoverable': true,
+          },
+        });
+      final chat = _chat(
+        'genuine-failure',
+        gateway,
+        storedMessageLoader: (_, _) async => rows,
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages(expectedMessageCount: rows.length);
+
+      expect(chat.state, ChatPipelineState.failed);
+      expect(chat.messages.first['role'], 'assistant_error');
+      expect(
+        chat.messages.first['content'],
+        'No se pudo recuperar el turno. Inténtalo de nuevo.',
+      );
+      expect(chat.messages.first['recoverable'], isTrue);
+    });
+  });
 
   test('resume retenido fallido deja el chat terminal y recuperable', () async {
     final gateway = _SnapshotGateway()
@@ -4765,7 +5185,8 @@ void main() {
       final chat = _chat('parked-accepted-delete', gateway);
       addTearDown(chat.dispose);
       await chat.loadMessages();
-      expect(chat.queuedEntries.single.kind, QueuedEntryKind.desktopAccepted);
+      expect(chat.queuedEntries, isEmpty);
+      expect(chat.messages.any((row) => row['content'] == 'después'), isTrue);
 
       await chat.cancel();
 
@@ -5565,9 +5986,169 @@ void main() {
     expect(chat.desktopCompressionInFlight, isFalse);
   });
 
-  test(
-    'comando remoto rechaza argumentos mayores de 500 antes del RPC',
-    () async {
+  group('slash commands as on Desktop (ORDEN-COMANDOS)', () {
+    // the owner, APK 9708, a new empty chat: a ~900-character /goal answered
+    // «Hermes no pudo ejecutar ese comando». Console refused any argument
+    // past 500 (code 4004) before reaching Hermes; neither Hermes nor
+    // Desktop have such a limit.
+    const freeText = [
+      'goal',
+      'plan',
+      'queue',
+      'steer',
+      'subgoal',
+      'loop',
+      'heartbeat',
+    ];
+    final args = <String, String>{
+      'short': 'revisar la app',
+      '600': List<String>.filled(600, 'a').join(),
+      '5000': List<String>.filled(5000, 'b').join(),
+      'multiline': 'Primera línea\nSegunda línea\n\n  tercera, sangrada',
+      'unicode': 'Objetivo «sí» — "comillas", \'simples\', áéíóú ñ, 🚀👩🏽‍💻',
+    };
+
+    DesktopSessionSnapshot created() => DesktopSessionSnapshot.fromJson(
+      const {
+        'session_id': 'runtime-created',
+        'session_key': 'stored-created',
+        'messages': <Object>[],
+      },
+      requestedStoredSessionId: '',
+      created: true,
+      method: 'session.create',
+    );
+
+    test('a session that is stopped: every free-text command, every '
+        'argument, reaches Hermes as typed', () async {
+      final gateway = _SnapshotGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-stopped',
+          'session_key': 'stored-chat',
+        });
+      final chat = _chat('commands-stopped', gateway);
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+
+      for (final name in freeText) {
+        for (final MapEntry(key: shape, value: arg) in args.entries) {
+          await chat.executeDesktopSlash(name, arg: arg);
+          expect(gateway.slashRuntimeId, 'runtime-stopped');
+          expect(gateway.slashCommand, '$name $arg', reason: '$name $shape');
+        }
+      }
+      expect(gateway.slashExecCalls, freeText.length * args.length);
+      expect(gateway.createCalls, 0);
+    });
+
+    test('a turn running: the command still reaches Hermes', () async {
+      final gateway = _SnapshotGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-live',
+          'session_key': 'stored-chat',
+          'running': true,
+          'status': 'working',
+        });
+      final chat = _chat('commands-live', gateway);
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+      // A turn in flight on the server (nothing streamed yet: executing).
+      expect(
+        chat.state,
+        anyOf(ChatPipelineState.executing, ChatPipelineState.streaming),
+      );
+
+      await chat.executeDesktopSlash('goal', arg: args['5000']!);
+
+      expect(gateway.slashExecCalls, 1);
+      expect(gateway.slashCommand, 'goal ${args['5000']}');
+    });
+
+    for (final markedMissing in [true, false]) {
+      test('a new empty chat (${markedMissing ? 'known' : 'not yet known'} '
+          'to be missing): Hermes creates the session first, as Desktop '
+          'does, then runs the command in it', () async {
+        final gateway = _SnapshotGateway()
+          ..createSnapshot = created()
+          ..resumeExistingError = const TuiGatewayRpcError(
+            'session.resume',
+            'session not found',
+            code: 4007,
+          );
+        final chat = _chat(
+          'commands-empty-$markedMissing',
+          gateway,
+          sessionId: 'mob-empty-$markedMissing',
+        );
+        addTearDown(chat.dispose);
+        if (markedMissing) chat.markStoredSessionMissing();
+
+        await chat.executeDesktopSlash('goal', arg: args['multiline']!);
+
+        expect(gateway.createCalls, 1);
+        expect(gateway.resumeExistingCalls, 0);
+        expect(gateway.slashExecCalls, 1);
+        expect(gateway.slashRuntimeId, 'runtime-created');
+        expect(gateway.slashCommand, 'goal ${args['multiline']}');
+        expect(chat.storedSessionId, 'stored-created');
+        expect(chat.createdDraftSessionId, 'stored-created');
+        expect(chat.storedSessionKnownMissing, isFalse);
+
+        // A second command uses that same session.
+        await chat.executeDesktopSlash('goal', arg: 'status');
+        expect(gateway.createCalls, 1);
+        expect(gateway.slashRuntimeId, 'runtime-created');
+      });
+    }
+
+    test(
+      'a new empty chat whose create Hermes refuses: its reason, as is',
+      () async {
+        final gateway = _SnapshotGateway()
+          ..createSnapshot = null
+          ..resumeExistingError = const TuiGatewayRpcError(
+            'session.resume',
+            'session not found',
+            code: 4007,
+          );
+        final chat = _chat(
+          'commands-create-fails',
+          gateway,
+          sessionId: 'mob-x',
+        );
+        addTearDown(chat.dispose);
+
+        await expectLater(
+          chat.executeDesktopSlash('goal', arg: 'algo'),
+          throwsA(isA<StateError>()),
+        );
+        expect(gateway.createCalls, 1);
+        expect(gateway.slashExecCalls, 0);
+      },
+    );
+
+    test('read-only: refused with 403 before anything runs', () async {
+      final gateway = _SnapshotGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-ro',
+          'session_key': 'stored-chat',
+        });
+      final chat = _chat('commands-ro', gateway, readOnly: true);
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+
+      await expectLater(
+        chat.executeDesktopSlash('goal', arg: 'algo'),
+        throwsA(
+          isA<TuiGatewayRpcError>().having((error) => error.code, 'code', 403),
+        ),
+      );
+      expect(gateway.slashExecCalls, 0);
+      expect(gateway.createCalls, 0);
+    });
+
+    test('only past the safety bound is an argument refused before the RPC',
+        () async {
       final gateway = _SnapshotGateway()
         ..snapshot = _snapshot({
           'session_id': 'runtime-command-limit',
@@ -5577,18 +6158,32 @@ void main() {
       addTearDown(chat.dispose);
       await chat.loadMessages();
 
-      await expectLater(
-        chat.executeDesktopSlash(
-          'usage',
-          arg: List<String>.filled(501, 'x').join(),
-        ),
-        throwsA(
-          isA<TuiGatewayRpcError>().having((error) => error.code, 'code', 4004),
-        ),
-      );
-      expect(gateway.slashExecCalls, 0);
-    },
-  );
+        // 501, the old limit plus one, and the bound itself go through.
+        for (final length in [501, commandArgumentMaxLength]) {
+          await chat.executeDesktopSlash(
+            'usage',
+            arg: List<String>.filled(length, 'x').join(),
+          );
+        }
+        expect(gateway.slashExecCalls, 2);
+
+        await expectLater(
+          chat.executeDesktopSlash(
+            'usage',
+            arg: List<String>.filled(commandArgumentMaxLength + 1, 'x').join(),
+          ),
+          throwsA(
+            isA<TuiGatewayRpcError>().having(
+              (error) => error.code,
+              'code',
+              4004,
+            ),
+          ),
+        );
+        expect(gateway.slashExecCalls, 2);
+      },
+    );
+  });
 
   test('compresión bloquea otra compresión y nuevos turnos', () async {
     final gate = Completer<DesktopCommandRpcResult>();
@@ -5650,7 +6245,7 @@ void main() {
   });
 
   test(
-    'artefactos se indexan al abrir sin otra lectura ni transcript textual',
+    'un mensaje estructurado guarda su id interno sin publicarlo ni releer',
     () async {
       final gateway = _SnapshotGateway()
         ..snapshot = _snapshot({
@@ -5685,25 +6280,13 @@ void main() {
 
       await chat.loadMessages();
 
-      expect(chat.resolvedArtifactIndex, isNull);
       expect(gateway.resumeExistingCalls, 1);
-      final artifacts = chat.resolveSessionArtifacts();
-      final firstIndex = chat.resolvedArtifactIndex;
-
-      expect(artifacts.single.id, 'artifact-1');
-      expect(artifacts.single.primarySource.messageId, 'message-artifact');
-      expect(firstIndex?.buildStats.inspectedMessages, 1);
-      expect(firstIndex?.revision.scope.logicalSessionId, 'lineage-root');
       expect(
         chat.internalMessagesForTesting.first['_desktopMessageId'],
         'message-artifact',
       );
       expect(chat.messages.first.containsKey('_desktopMessageId'), isFalse);
-      expect(chat.resolveSessionArtifacts(), same(artifacts));
-      expect(chat.resolvedArtifactIndex, same(firstIndex));
       await chat.loadMessages();
-      expect(chat.resolveSessionArtifacts(), same(artifacts));
-      expect(chat.resolvedArtifactIndex, same(firstIndex));
       expect(gateway.resumeExistingCalls, 2);
     },
   );
@@ -5736,7 +6319,7 @@ void main() {
   });
 
   test(
-    'fallback REST separa texto renderizable de artefactos estructurados',
+    'fallback REST deja solo el texto renderizable de un mensaje estructurado',
     () async {
       final gateway = _SnapshotGateway()
         ..resumeExistingError = const TuiGatewayRpcError(
@@ -5765,9 +6348,6 @@ void main() {
         isTrue,
       );
       expect(ChatRenderProjection.build(chat.messages).units, hasLength(1));
-      final artifact = chat.resolveSessionArtifacts().single;
-      expect(artifact.id, 'artifact-rest');
-      expect(artifact.primarySource.messageId, 'message-rest');
       expect(gateway.createCalls, 0);
     },
   );
@@ -5895,9 +6475,6 @@ void main() {
             .expand(_generatedImageRefs),
         isEmpty,
       );
-      final artifact = chat.resolveSessionArtifacts().single;
-      expect(artifact.displayName, 'informe.pdf');
-      expect(artifact.managedReference, '/home/hermes/work/informe.pdf');
     },
   );
 
@@ -6445,6 +7022,744 @@ void main() {
       expect(gateway.historyCalls, 1, reason: 'afterTurns=$callsAfterTurn');
     },
   );
+  testWidgets('connected state is visible before foreground keep-alive completes', (tester) async {
+    final gateway = _SnapshotGateway()..snapshot = _snapshot({
+      'session_id': 'runtime-foreground', 'session_key': 'stored-chat',
+      'messages': <Object>[],
+    });
+    final gate = Completer<void>();
+    final events = <ActiveChatEvent>[];
+    final chat = _chat('foreground-status', gateway,
+      onForegroundKeepAlive: () => gate.future, onEvent: events.add);
+    addTearDown(chat.dispose);
+    final sent = chat.send(fullText: 'synthetic prompt', model: 'hermes-agent', history: const []);
+    await tester.pump();
+    expect(chat.state, ChatPipelineState.waiting);
+    expect(events, contains(ActiveChatEvent.connected));
+    expect(gateway.submitPromptCalls, 0, reason: 'foreground protection still gates network');
+    expect(chat.messages.where((m) => m['content'] == 'synthetic prompt'), hasLength(1));
+    gate.complete();
+    expect(await sent, isTrue);
+    chat.dispose();
+    await tester.pump();
+  });
+
+  for (final recovery in ['terminal', 'resume']) {
+    test(
+      'terminal authority ignores accepted queued user, recovery=$recovery',
+      () async {
+        const prompt = 'Finish the current request';
+        const next = 'Accepted next request';
+        const user = {'role': 'user', 'content': prompt, '_desktopRowId': 10};
+        var durable = <Map<String, dynamic>>[];
+        final gateway = _SnapshotGateway()
+          ..snapshot = _snapshot({
+            'session_id': 'runtime-terminal-queued',
+            'session_key': 'stored-chat',
+            'messages': [
+              {'role': 'user', 'content': prompt, 'row_id': 10},
+              {
+                'role': 'tool',
+                'name': 'terminal',
+                'content': 'Current lookup',
+                'row_id': 11,
+              },
+            ],
+            'running': true,
+            'inflight': {'user': prompt, 'assistant': '', 'streaming': true},
+          })
+          ..redirectDisposition = DesktopRedirectDisposition.queued;
+        final chat = _chat(
+          'terminal-accepted-$recovery',
+          gateway,
+          storedMessageLoader: (_, _) async => durable,
+        );
+        addTearDown(chat.dispose);
+        await chat.loadMessages();
+        expect(await chat.steer(next), DesktopRedirectDisposition.queued);
+        expect(
+          chat.internalMessagesForTesting.where(
+            (m) => m['_desktopAcceptedQueued'] == true,
+          ),
+          hasLength(1),
+        );
+        expect(
+          chat.internalMessagesForTesting.where(
+            (m) =>
+                m['role'] == 'user' &&
+                m['_steer'] != true &&
+                m['_desktopAcceptedQueued'] != true,
+          ),
+          hasLength(1),
+        );
+        durable = [
+          user,
+          {
+            'role': 'assistant',
+            'content': 'Authoritative current final',
+            '_desktopRowId': 11,
+          },
+        ];
+        gateway.snapshot = _snapshot({
+          'session_id': 'runtime-terminal-queued',
+          'session_key': 'stored-chat',
+          'messages': durable,
+          'running': false,
+        });
+        if (recovery == 'terminal') {
+          final done = chat.changes.firstWhere(
+            (e) => e == ActiveChatEvent.done,
+          );
+          gateway.emit('message.complete', {'text': ''});
+          await done.timeout(const Duration(seconds: 2));
+        } else {
+          chat.state = ChatPipelineState.completed;
+          final changed = await chat.reconcileAfterResume();
+          expect(changed, isTrue);
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        final finalRow = chat.messages.singleWhere(
+          (m) => m['content'] == 'Authoritative current final',
+        );
+        expect(finalRow['role'], 'assistant');
+        expect(
+          chat.messages.where((m) => m['content'] == prompt),
+          hasLength(1),
+        );
+        expect(chat.messages.where((m) => m['content'] == next), hasLength(1));
+        expect(gateway.submitPromptCalls, 0);
+      },
+    );
+  }
+
+  test(
+    'separate queued intents with identical text both survive Stop',
+    () async {
+      const next = 'Same text, independent intent';
+      final gateway = _SnapshotGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-distinct-queued',
+          'session_key': 'stored-chat',
+          'messages': [
+            {'role': 'user', 'content': 'Current request', 'row_id': 10},
+          ],
+          'running': true,
+          'inflight': {
+            'user': 'Current request',
+            'assistant': 'working',
+            'streaming': true,
+          },
+        })
+        ..redirectDisposition = DesktopRedirectDisposition.queued;
+      final chat = _chat('distinct-queued', gateway);
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+      for (final id in ['queued-one', 'queued-two']) {
+        expect(
+          await chat.steer(next, clientTurnId: id),
+          DesktopRedirectDisposition.queued,
+        );
+      }
+      expect(
+        chat.messages.where((row) => row['content'] == next),
+        hasLength(2),
+      );
+      expect(
+        chat.internalMessagesForTesting
+            .where((row) => row['content'] == next)
+            .map((row) => row['_clientTurnId']),
+        containsAll(['queued-one', 'queued-two']),
+      );
+      await chat.cancel();
+      expect(chat.queuedEntries.single.text, '$next\n\n$next');
+    },
+  );
+
+  for (final prepared in [false, true]) {
+    test(
+      'queued snapshot during pending redirect stays one bubble and one parked input, prepared=$prepared',
+      () async {
+        const prompt = 'Current request';
+        const next = 'Como va?';
+        DesktopSessionSnapshot snapshot({bool queued = false}) => _snapshot({
+          'session_id': 'runtime-pending-queued',
+          'session_key': 'stored-chat',
+          'messages': [
+            {'role': 'user', 'content': prompt, 'row_id': 10},
+            {
+              'role': 'tool',
+              'name': 'terminal',
+              'content': 'Current lookup',
+              'row_id': 11,
+            },
+          ],
+          'running': true,
+          'inflight': {
+            'user': prompt,
+            'assistant': 'working',
+            'streaming': true,
+          },
+          if (queued) 'queued': {'user': next},
+        });
+        final gateway = _SnapshotGateway()
+          ..snapshot = snapshot()
+          ..redirectDisposition = DesktopRedirectDisposition.queued;
+        final chat = _chat('pending-queued-$prepared', gateway);
+        addTearDown(chat.dispose);
+        await chat.loadMessages();
+        ActiveTurnDelivery? delivery;
+        if (prepared) {
+          final now = DateTime.now().millisecondsSinceEpoch;
+          delivery = ActiveTurnDelivery(
+            prepared: PreparedTurn(
+              connectionId: chat.connection.id,
+              sessionId: chat.sessionId,
+              clientTurnId: 'pending-queued-intent',
+              createdAtMs: now,
+              updatedAtMs: now,
+              text: next,
+              fullText: next,
+              desktopText: next,
+              attachments: const [],
+              model: 'hermes-agent',
+              profile: chat.sessionProfile,
+              queued: true,
+            ),
+            store: _MergeOutbox(),
+          );
+          expect(await chat.enqueuePreparedTurn(delivery), isTrue);
+        } else {
+          expect(chat.enqueue(next), isTrue);
+        }
+        expect(chat.enqueue('Local tail'), isTrue);
+        final ids = chat.queuedEntries.map((row) => row.id).toList();
+        Object? callbackError;
+        StackTrace? callbackStack;
+        String? clientId;
+        gateway.onRedirect = () async {
+          try {
+            final before = chat.internalMessagesForTesting.singleWhere(
+              (m) => m['content'] == next,
+            );
+            clientId = before['_clientTurnId'] as String;
+            expect(before['_steer'], isTrue);
+            expect(before['_optimistic'], isTrue);
+            gateway.snapshot = snapshot(queued: true);
+            await chat.loadMessages();
+            expect(
+              chat.messages.where((m) => m['content'] == next),
+              hasLength(1),
+            );
+            expect(chat.queuedEntries.map((row) => row.id), ids);
+          } catch (error, stack) {
+            callbackError = error;
+            callbackStack = stack;
+            rethrow;
+          }
+        };
+        final outcome = await chat.steerQueuedTurnWithOutcome(ids.first);
+        if (callbackError != null) {
+          Error.throwWithStackTrace(callbackError!, callbackStack!);
+        }
+        expect(outcome, QueuedSteerOutcome.accepted);
+        final accepted = chat.internalMessagesForTesting.singleWhere(
+          (m) => m['content'] == next,
+        );
+        expect(accepted['_clientTurnId'], clientId);
+        expect(accepted['_desktopAcceptedQueued'], isTrue);
+        expect(chat.steerProjections, isEmpty);
+        expect(chat.queuedEntries.map((row) => row.id), [ids.last]);
+        // The snapshot and ACK describe the same input. Stop must park T,
+        // never concatenate it to T\n\nT or displace the unsent local tail.
+        await chat.cancel();
+        expect(chat.queueParked, isTrue);
+        expect(chat.queuedEntries.map((row) => row.text), [next, 'Local tail']);
+        expect(chat.queuedEntries.last.id, ids.last);
+        expect(gateway.steerCalls, 1);
+        expect(gateway.submitPromptCalls, 0);
+      },
+    );
+  }
+
+  group('queue and chat-sync integration', () {
+    const prompt = 'Dame la lista exacta de reglas WAF';
+    const correction = 'Como va?';
+    const next = 'Server accepted follow up';
+    for (final prepared in [false, true]) {
+      for (final identified in [false, true]) {
+        for (final disposition in [
+          DesktopRedirectDisposition.redirected,
+          DesktopRedirectDisposition.queued,
+        ]) {
+          test(
+            'queued row echo before ACK and two snapshots: prepared=$prepared identified=$identified disposition=${disposition.name}',
+            () async {
+              DesktopSessionSnapshot snapshot({
+                bool echo = false,
+                String? queued,
+              }) => _snapshot({
+                'session_id': 'runtime-queue-sync',
+                'session_key': 'stored-chat',
+                'messages': [
+                  {'role': 'user', 'content': prompt, 'row_id': 10},
+                  {
+                    'role': 'tool',
+                    'content': 'Synthetic lookup',
+                    'name': 'terminal',
+                    'row_id': 11,
+                  },
+                  if (echo && identified)
+                    {
+                      'role': 'user',
+                      'content': correction,
+                      'display_kind': 'steer',
+                      'row_id': 20,
+                    },
+                ],
+                'messages_omitted': echo && !identified,
+                'running': true,
+                'inflight': {
+                  'user': prompt,
+                  'assistant': 'working',
+                  'streaming': true,
+                  if (echo) 'corrections': [correction],
+                },
+                if (queued != null) 'queued': {'user': queued},
+              });
+              final gateway = _SnapshotGateway()
+                ..snapshot = snapshot()
+                ..redirectDisposition = disposition;
+              final chat = _chat(
+                'queue-sync-$prepared-$identified-${disposition.name}',
+                gateway,
+              );
+              addTearDown(chat.dispose);
+              await chat.loadMessages();
+              final outbox = _MergeOutbox();
+              ActiveTurnDelivery? delivery;
+              if (prepared) {
+                final now = DateTime.now().millisecondsSinceEpoch;
+                delivery = ActiveTurnDelivery(
+                  prepared: PreparedTurn(
+                    connectionId: chat.connection.id,
+                    sessionId: chat.sessionId,
+                    clientTurnId: 'queue-sync-intent',
+                    createdAtMs: now,
+                    updatedAtMs: now,
+                    text: correction,
+                    fullText: correction,
+                    desktopText: correction,
+                    attachments: const [],
+                    model: 'hermes-agent',
+                    profile: chat.sessionProfile,
+                    queued: true,
+                  ),
+                  store: outbox,
+                );
+                expect(await chat.enqueuePreparedTurn(delivery), isTrue);
+              } else {
+                expect(chat.enqueue(correction), isTrue);
+              }
+              expect(chat.enqueue('Unsent local tail'), isTrue);
+              final ids = chat.queuedEntries.map((row) => row.id).toList();
+              String? clientId;
+              Object? callbackError;
+              StackTrace? callbackStack;
+              gateway.onRedirect = () async {
+                try {
+                  final row = chat.internalMessagesForTesting.singleWhere(
+                    (row) => row['content'] == correction,
+                  );
+                  clientId = row['_clientTurnId'] as String;
+                  if (prepared) {
+                    expect(clientId, delivery!.current.clientTurnId);
+                  }
+                  expect(row['_steer'], isTrue);
+                  expect(row['_optimistic'], isTrue);
+                  expect(chat.queuedEntries.first.sending, isTrue);
+                  gateway.snapshot = snapshot(echo: true);
+                  await chat.loadMessages();
+                  expect(
+                    chat.messages.where((row) => row['content'] == correction),
+                    hasLength(1),
+                  );
+                  expect(
+                    chat.internalMessagesForTesting.singleWhere(
+                      (row) => row['content'] == correction,
+                    )['_clientTurnId'],
+                    clientId,
+                  );
+                  expect(chat.queuedEntries.map((row) => row.id), ids);
+                } catch (error, stack) {
+                  callbackError = error;
+                  callbackStack = stack;
+                  rethrow;
+                }
+              };
+              final outcome = await chat.steerQueuedTurnWithOutcome(ids.first);
+              if (callbackError != null) {
+                Error.throwWithStackTrace(callbackError!, callbackStack!);
+              }
+              expect(outcome, QueuedSteerOutcome.accepted);
+              final accepted = chat.internalMessagesForTesting.singleWhere(
+                (row) => row['content'] == correction,
+              );
+              expect(accepted['_clientTurnId'], clientId);
+              if (disposition == DesktopRedirectDisposition.queued) {
+                expect(accepted['_desktopAcceptedQueued'], isTrue);
+                expect(accepted['_steer'], isNot(true));
+                expect(accepted['_optimistic'], isNot(true));
+                expect(accepted['_desktopSnapshotKind'], isNot('inflight'));
+                expect(chat.steerProjections, isEmpty);
+              }
+              if (delivery != null) {
+                expect(delivery.acknowledged, isTrue);
+                expect(delivery.current.state, PreparedTurnState.terminal);
+                expect(outbox.pending, isEmpty);
+              }
+              gateway.snapshot = snapshot(
+                echo: disposition == DesktopRedirectDisposition.redirected,
+                queued: disposition == DesktopRedirectDisposition.queued
+                    ? correction
+                    : next,
+              );
+              await chat.loadMessages();
+              final first = chat.messages
+                  .map(Map<String, dynamic>.from)
+                  .toList();
+              await chat.loadMessages();
+              expect(
+                chat.messages,
+                first,
+                reason: 'the accepted next-turn row cannot shift correction anchors',
+              );
+              expect(
+                chat.messages.where((row) => row['content'] == correction),
+                hasLength(1),
+              );
+              expect(
+                chat.messages.where((row) => row['content'] == prompt),
+                hasLength(1),
+              );
+              expect(
+                chat.internalMessagesForTesting.singleWhere(
+                  (row) => row['content'] == correction,
+                )['_clientTurnId'],
+                clientId,
+              );
+              expect(chat.queuedEntries.map((row) => row.id), [ids.last]);
+              expect(chat.queuedEntries.single.text, 'Unsent local tail');
+              expect(chat.queuedEntries.single.deliveryUnknown, isFalse);
+              expect(
+                chat.queuedEntries.any((row) => row.id == 'desktop-accepted'),
+                isFalse,
+              );
+              expect(gateway.steerCalls, 1);
+              expect(gateway.submitPromptCalls, 0);
+            },
+          );
+        }
+      }
+    }
+  });
+
+  group('chat sync review', () {
+    const prompt = 'Review prompt';
+    const correction = 'Review correction';
+    const clientId = 'review-intent';
+    DesktopSessionSnapshot snapshot({
+      bool echo = false,
+      bool durable = false,
+    }) => _snapshot({
+      'session_id': 'runtime-review',
+      'session_key': 'stored-chat',
+      'messages': [
+        {'role': 'user', 'content': prompt, 'row_id': 10},
+        {
+          'role': 'tool',
+          'content': 'Synthetic lookup',
+          'name': 'terminal',
+          'row_id': 11,
+        },
+        if (durable)
+          {
+            'role': 'user',
+            'content': correction,
+            'display_kind': 'steer',
+            'row_id': 20,
+          },
+      ],
+      'messages_omitted': echo && !durable,
+      'running': true,
+      'inflight': {
+        'user': prompt,
+        'assistant': '',
+        'streaming': true,
+        if (echo) 'corrections': [correction],
+      },
+    });
+
+    for (final inflightEcho in [false, true]) {
+      test(
+        'queued ACK updates the current row after merge (echo: $inflightEcho)',
+        () async {
+          final gateway = _SnapshotGateway()
+            ..snapshot = snapshot()
+            ..redirectDisposition = DesktopRedirectDisposition.queued;
+          final chat = _chat('review-queued-$inflightEcho', gateway);
+          addTearDown(chat.dispose);
+          await chat.loadMessages();
+          Map<String, dynamic>? replacement;
+          gateway.onRedirect = () async {
+            final original = chat.internalMessagesForTesting.singleWhere(
+              (m) => m['_clientTurnId'] == clientId,
+            );
+            gateway.snapshot = snapshot(echo: inflightEcho)
+                .withoutPersistedMessages();
+            await chat.loadMessages();
+            replacement = chat.internalMessagesForTesting.singleWhere(
+              (m) => m['_clientTurnId'] == clientId,
+            );
+            expect(replacement, isNot(same(original)));
+          };
+          expect(
+            await chat.steer(correction, clientTurnId: clientId),
+            DesktopRedirectDisposition.queued,
+          );
+          final row = chat.internalMessagesForTesting.singleWhere(
+            (m) => m['_clientTurnId'] == clientId,
+          );
+          expect(row, same(replacement));
+          expect(row['_steer'], isNot(true));
+          expect(row['_desktopAcceptedQueued'], isTrue);
+          expect(row['_optimistic'], isNot(true));
+          expect(row['_desktopSnapshotKind'], isNot('inflight'));
+          expect(chat.steerProjections, isEmpty);
+          expect(chat.queuedMessages, isEmpty);
+          expect(chat.messages.where((m) => m['content'] == correction), hasLength(1));
+        },
+      );
+    }
+
+    for (final path in ['rollback', 'inflight echo', 'durable echo']) {
+      test('$path preserves assistant_error with the same client ID', () async {
+        final gateway = _SnapshotGateway()..snapshot = snapshot();
+        final chat = _chat('review-error-$path', gateway);
+        addTearDown(chat.dispose);
+        await chat.loadMessages();
+        gateway.onRedirect = () async {
+          chat.internalMessagesForTesting.insert(0, {
+            'role': 'assistant_error',
+            'content': 'Synthetic failure',
+            '_prompt': correction,
+            '_clientTurnId': clientId,
+          });
+          if (path == 'rollback') {
+            throw StateError('synthetic redirect failure');
+          }
+          gateway.snapshot = snapshot(
+            echo: true,
+            durable: path == 'durable echo',
+          );
+          await chat.loadMessages();
+        };
+        final redirected = chat.steer(correction, clientTurnId: clientId);
+        if (path == 'rollback') {
+          await expectLater(redirected, throwsStateError);
+          expect(
+            chat.messages.where(
+              (m) => m['role'] == 'user' && m['content'] == correction,
+            ),
+            isEmpty,
+          );
+        } else {
+          await redirected;
+          expect(
+            chat.messages.where(
+              (m) => m['role'] == 'user' && m['content'] == correction,
+            ),
+            hasLength(1),
+          );
+        }
+        expect(
+          chat.internalMessagesForTesting.where(
+            (m) =>
+                m['role'] == 'assistant_error' &&
+                m['_clientTurnId'] == clientId,
+          ),
+          hasLength(1),
+        );
+      });
+    }
+
+    test(
+      'later merges preserve the Map of an already identified durable echo',
+      () async {
+        final gateway = _SnapshotGateway()..snapshot = snapshot();
+        final chat = _chat('review-map-identity', gateway);
+        addTearDown(chat.dispose);
+        await chat.loadMessages();
+        gateway.onRedirect = () async {
+          gateway.snapshot = snapshot(echo: true, durable: true);
+          await chat.loadMessages();
+        };
+        await chat.steer(correction, clientTurnId: clientId);
+        final durable = chat.internalMessagesForTesting.singleWhere(
+          (m) => m['_desktopRowId'] == 20,
+        );
+        expect(durable['_clientTurnId'], clientId);
+        gateway.onRedirect = null;
+        for (final text in ['Another correction', 'Third correction']) {
+          await chat.steer(text);
+          expect(
+            chat.internalMessagesForTesting.singleWhere(
+              (m) => m['_desktopRowId'] == 20,
+            ),
+            same(durable),
+          );
+        }
+      },
+    );
+  });
+
+  for (final identified in [false, true]) {
+    test('live redirect echo before ACK stays single (row ID: $identified)', () async {
+      const prompt = 'Dame la lista exacta de reglas WAF';
+      const correction = 'Como va?';
+      final rows = <Map<String, dynamic>>[
+        {'role': 'user', 'content': prompt, 'row_id': 10},
+        {
+          'role': 'tool',
+          'content': 'Synthetic lookup',
+          'name': 'terminal',
+          'row_id': 11,
+        },
+      ];
+      DesktopSessionSnapshot snapshot({bool echo = false}) => _snapshot({
+        'session_id': 'runtime-live-echo',
+        'session_key': 'stored-chat',
+        'messages': [
+          ...rows,
+          if (echo)
+            {
+              'role': 'user',
+              'content': correction,
+              'display_kind': 'steer',
+              if (identified) 'row_id': 20,
+            },
+        ],
+        'running': true,
+        'messages_omitted': echo && !identified,
+        'inflight': {
+          'user': prompt,
+          'assistant': '',
+          'streaming': true,
+          if (echo) 'corrections': [correction],
+        },
+      });
+      final gateway = _SnapshotGateway()..snapshot = snapshot();
+      final chat = _chat('live-echo-$identified', gateway);
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+      gateway.onRedirect = () async {
+        expect(
+          chat.messages.where((m) => m['content'] == correction),
+          hasLength(1),
+        );
+        gateway.snapshot = snapshot(echo: true);
+        await chat.loadMessages();
+        expect(
+          chat.messages.where((m) => m['content'] == correction),
+          hasLength(1),
+          reason:
+              'server echo before redirect ACK: ${chat.internalMessagesForTesting}',
+        );
+      };
+      await chat.steer(correction, interrupt: true);
+      await chat.loadMessages();
+      await chat.reconcileAfterResume();
+      expect(gateway.steerCalls, 1);
+      expect(
+        chat.messages.where((m) => m['content'] == correction),
+        hasLength(1),
+      );
+    });
+  }
+
+  test(
+    'equal real steers keep distinct IDs across inflight and durable refresh',
+    () async {
+      const prompt = 'WAF rules';
+      const correction = 'Como va?';
+      DesktopSessionSnapshot snapshot(int count, {bool durable = false}) =>
+          _snapshot({
+            'session_id': 'runtime-equal-echo',
+            'session_key': 'stored-chat',
+            'messages': [
+              {'role': 'user', 'content': prompt, 'row_id': 10},
+              {
+                'role': 'tool',
+                'content': 'Synthetic lookup',
+                'name': 'terminal',
+                'row_id': 11,
+              },
+              if (durable)
+                for (var i = 0; i < count; i++)
+                  {
+                    'role': 'user',
+                    'content': correction,
+                    'display_kind': 'steer',
+                    'row_id': 20 + i,
+                  },
+            ],
+            'messages_omitted': !durable && count > 0,
+            'running': true,
+            'inflight': {
+              'user': prompt,
+              'assistant': '',
+              'streaming': true,
+              'corrections': List.filled(count, correction),
+            },
+          });
+      final gateway = _SnapshotGateway()..snapshot = snapshot(0);
+      final chat = _chat('equal-live-echo', gateway);
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+      await chat.steer(correction);
+      await chat.steer(correction);
+      List<Map<String, dynamic>> steers() => chat
+          .internalMessagesForTesting
+          .reversed
+          .where((m) => m['content'] == correction)
+          .toList();
+      final ids = steers().map((m) => m['_clientTurnId']).toList();
+      expect(ids, everyElement(isA<String>()));
+      expect(ids.toSet(), hasLength(2));
+      gateway.snapshot = snapshot(2);
+      await chat.loadMessages();
+      await chat.loadMessages();
+      expect(steers().map((m) => m['_clientTurnId']), ids);
+      gateway.snapshot = snapshot(2, durable: true);
+      await chat.loadMessages();
+      await chat.loadMessages();
+      expect(steers().map((m) => m['_clientTurnId']), ids);
+      expect(steers().map((m) => m['_desktopRowId']), [20, 21]);
+      expect(chat.steerProjections, isEmpty);
+      expect(gateway.steerCalls, 2);
+
+      // An already persisted identical steer cannot consume a new intent.
+      await chat.steer(correction);
+      final thirdId = steers().last['_clientTurnId'];
+      expect(ids, isNot(contains(thirdId)));
+      expect(steers(), hasLength(3));
+      expect(chat.steerProjections, hasLength(1));
+      gateway.snapshot = snapshot(3, durable: true);
+      await chat.loadMessages();
+      expect(steers().map((m) => m['_clientTurnId']), [...ids, thirdId]);
+      expect(chat.steerProjections, isEmpty);
+    },
+  );
+
   group('tg1215 una corrección durable aparece una sola vez', () {
     const steer = 'Lo quité ese modelo, puse otro';
     const toolCall = {

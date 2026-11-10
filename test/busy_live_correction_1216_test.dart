@@ -1,9 +1,8 @@
-// BUSY: text sent while this chat owns a live turn is a live correction
-// (`session.redirect`), exactly as Hermes Desktop's composer does
-// (use-composer-submit.ts submitWhileBusy). Everything else keeps the durable
-// next-turn queue: the long press, a blocking prompt, and any redirect that
-// proved nothing was accepted. An ambiguous failure never queues, because the
-// server may already hold the correction.
+// BUSY: server-selected interrupt mode redirects the owned live turn atomically.
+// A proven rejection falls back through the durable queue and Stop/ACK;
+// queue mode, long press and a blocking prompt wait for the next turn instead.
+// An ambiguous redirect stays durable and in the draft, without joining the
+// live queue or being submitted again: the server may hold the correction.
 import 'dart:async';
 import 'dart:convert';
 
@@ -67,6 +66,8 @@ class _Gateway
   final submissions = <String>[];
   final redirects = <String>[];
   final steers = <String>[];
+  final interrupts = <String>[];
+  Completer<void>? interruptAck;
   Object? redirectError;
   DesktopRedirectDisposition redirectDisposition =
       DesktopRedirectDisposition.redirected;
@@ -132,6 +133,19 @@ class _Gateway
   @override
   Future<void> steer(String runtimeSessionId, String text) async {
     steers.add(text);
+  }
+
+  @override
+  Future<void> interrupt(String runtimeSessionId) async {
+    interrupts.add(runtimeSessionId);
+    await interruptAck?.future;
+    eventsController.add(
+      TuiGatewayEvent(
+        type: 'message.complete',
+        sessionId: runtimeSessionId,
+        payload: const {'text': '', 'status': 'interrupted'},
+      ),
+    );
   }
 
   void complete(String reply) {
@@ -218,7 +232,11 @@ class _MemorySecureStorage extends FlutterSecureStorage {
 typedef _Fixture = ({ActiveChat chat, ChatDraftStore drafts});
 
 /// The chat open with its first turn running (Hermes is working).
-Future<_Fixture> _mountBusy(WidgetTester tester, _Gateway gateway) async {
+Future<_Fixture> _mountBusy(
+  WidgetTester tester,
+  _Gateway gateway, {
+  String mode = 'interrupt',
+}) async {
   tester.platformDispatcher.localesTestValue = [const Locale('es')];
   addTearDown(tester.platformDispatcher.clearLocalesTestValue);
   final prefs = await SharedPreferences.getInstance();
@@ -230,15 +248,23 @@ Future<_Fixture> _mountBusy(WidgetTester tester, _Gateway gateway) async {
     compressionRestoreStore: testCompressionRestoreStore(),
     desktopGatewayFactory: (_) => gateway,
   );
+  final routes = MockClient(
+    (request) async => http.Response(
+      request.url.path == '/api/config'
+          ? jsonEncode({
+              'display': {'busy_input_mode': mode},
+            })
+          : '{}',
+      200,
+    ),
+  );
   final chat = service.attach(
     connection: _connection,
     sessionId: _session.id,
     sessionTitle: _session.title,
     sessionSnapshot: _session,
-    api: testApiClient(
-      baseUrl: 'https://example.invalid',
-      httpClient: MockClient((_) async => http.Response('{}', 200)),
-    ),
+    api: testApiClient(baseUrl: 'https://example.invalid', httpClient: routes),
+    transcriptDashboard: testDashboardClient(httpClient: routes),
     desktopGateway: gateway,
     attachDesktopRuntimeOnLoad: false,
     disableForegroundKeepAlive: true,
@@ -284,6 +310,7 @@ Future<_Fixture> _mountBusy(WidgetTester tester, _Gateway gateway) async {
   await _tapSend(tester);
   expect(gateway.submissions, ['Primera petición']);
   expect(chat.isStreaming, isTrue);
+  expect(chat.busyInputMode.name, mode);
   return (chat: chat, drafts: drafts);
 }
 
@@ -310,7 +337,8 @@ Future<String> _draft(_Fixture fixture) async => (await fixture.drafts.load(
   fixture.chat.storedSessionId!,
 )).text;
 
-/// Turns of the durable outbox still waiting as next turns.
+/// Durable records originating from the busy composer/next-turn queue.
+/// An ambiguous redirect keeps this origin flag without joining the live queue.
 List<PreparedTurn> _queuedOutbox() {
   final raw = _secure['chat_turn_outbox_v1'];
   if (raw == null) return const [];
@@ -378,6 +406,7 @@ void main() {
     expect(gateway.redirects, ['Siguiente turno']);
     expect(gateway.submissions, ['Primera petición']);
     expect(gateway.steers, isEmpty);
+    expect(gateway.interrupts, isEmpty);
     expect(fixture.chat.queuedMessages, isEmpty);
     expect(_queuedOutbox(), isEmpty);
     final rows = _userRows(fixture.chat, 'Siguiente turno').toList();
@@ -392,35 +421,42 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('R2 a rejected redirect falls back to the queue and drains '
-      'once, with no duplicate bubble', (tester) async {
+  testWidgets('R2 a rejected interrupt redirect durably queues until Stop ACK '
+      'and drains once, with no duplicate bubble', (tester) async {
     final gateway = _Gateway()
-      ..redirectDisposition = DesktopRedirectDisposition.rejected;
+      ..redirectDisposition = DesktopRedirectDisposition.rejected
+      ..interruptAck = Completer<void>();
     final fixture = await _mountBusy(tester, gateway);
 
     await _type(tester, 'Siguiente turno');
     await _tapSend(tester);
 
     expect(gateway.redirects, ['Siguiente turno']);
+    expect(gateway.interrupts, ['runtime-fixture']);
+    expect(gateway.submissions, ['Primera petición']);
     expect(fixture.chat.queuedMessages, ['Siguiente turno']);
     expect(_queuedOutbox(), hasLength(1));
     expect(_userRows(fixture.chat, 'Siguiente turno'), isEmpty);
-    expect(_composerText(tester), isEmpty);
+    expect(_composerText(tester), 'Siguiente turno');
 
-    gateway.complete('hecho');
+    gateway.interruptAck!.complete();
     await _flush(tester, steps: 15);
     expect(gateway.submissions, ['Primera petición', 'Siguiente turno']);
     expect(fixture.chat.queuedMessages, isEmpty);
+    expect(_composerText(tester), isEmpty);
+    expect(await _draft(fixture), isEmpty);
+    expect(_userRows(fixture.chat, 'Siguiente turno'), hasLength(1));
     gateway.complete('segundo hecho');
     await _flush(tester, steps: 10);
     expect(gateway.submissions, ['Primera petición', 'Siguiente turno']);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('R3a a redirect the server refused (4010) queues the text', (
+  testWidgets('R3a a refused interrupt redirect (4010) queues until Stop ACK', (
     tester,
   ) async {
     final gateway = _Gateway()
+      ..interruptAck = Completer<void>()
       ..redirectError = const TuiGatewayRpcError(
         'session.redirect',
         'not supported',
@@ -432,14 +468,48 @@ void main() {
     await _tapSend(tester);
 
     expect(gateway.redirects, ['Siguiente turno']);
+    expect(gateway.interrupts, ['runtime-fixture']);
+    expect(gateway.submissions, ['Primera petición']);
     expect(fixture.chat.queuedMessages, ['Siguiente turno']);
+    expect(_queuedOutbox(), hasLength(1));
+    expect(_userRows(fixture.chat, 'Siguiente turno'), isEmpty);
+    expect(_composerText(tester), 'Siguiente turno');
+    gateway.interruptAck!.complete();
+    await _flush(tester, steps: 15);
+    expect(gateway.submissions, ['Primera petición', 'Siguiente turno']);
+    expect(fixture.chat.queuedMessages, isEmpty);
+    expect(_composerText(tester), isEmpty);
+    expect(await _draft(fixture), isEmpty);
+    expect(_userRows(fixture.chat, 'Siguiente turno'), hasLength(1));
+    gateway.complete('segundo hecho');
+    await _flush(tester, steps: 10);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('server queue mode persists and drains once without a redirect', (
+    tester,
+  ) async {
+    final gateway = _Gateway();
+    final fixture = await _mountBusy(tester, gateway, mode: 'queue');
+    await _type(tester, 'Siguiente turno');
+    await _tapSend(tester);
+    expect(gateway.redirects, isEmpty);
+    expect(gateway.steers, isEmpty);
+    expect(gateway.interrupts, isEmpty);
+    expect(gateway.submissions, ['Primera petición']);
+    expect(fixture.chat.queuedMessages, ['Siguiente turno']);
+    expect(_queuedOutbox(), hasLength(1));
     expect(_userRows(fixture.chat, 'Siguiente turno'), isEmpty);
     expect(_composerText(tester), isEmpty);
+    expect(await _draft(fixture), isEmpty);
     gateway.complete('hecho');
     await _flush(tester, steps: 15);
     expect(gateway.submissions, ['Primera petición', 'Siguiente turno']);
+    expect(fixture.chat.queuedMessages, isEmpty);
+    expect(_userRows(fixture.chat, 'Siguiente turno'), hasLength(1));
     gateway.complete('segundo hecho');
     await _flush(tester, steps: 10);
+    expect(gateway.submissions, ['Primera petición', 'Siguiente turno']);
     expect(tester.takeException(), isNull);
   });
 
@@ -457,8 +527,12 @@ void main() {
 
       expect(gateway.redirects, ['Siguiente turno']);
       expect(gateway.steers, isEmpty);
+      expect(gateway.interrupts, isEmpty);
       expect(fixture.chat.queuedMessages, isEmpty);
-      expect(_queuedOutbox(), isEmpty);
+      final pending = _queuedOutbox();
+      expect(pending, hasLength(1));
+      expect(pending.single.state, PreparedTurnState.ambiguous);
+      expect(pending.single.fullText, 'Siguiente turno');
       expect(_userRows(fixture.chat, 'Siguiente turno'), isEmpty);
       expect(_composerText(tester), 'Siguiente turno');
       await tester.pump(const Duration(milliseconds: 400));
@@ -468,6 +542,8 @@ void main() {
       gateway.complete('hecho');
       await _flush(tester, steps: 15);
       expect(gateway.submissions, ['Primera petición']);
+      expect(_queuedOutbox().single.clientTurnId, pending.single.clientTurnId);
+      expect(_queuedOutbox().single.state, PreparedTurnState.ambiguous);
       expect(tester.takeException(), isNull);
     });
   }
@@ -482,13 +558,17 @@ void main() {
     await _tapSend(tester);
 
     expect(gateway.redirects, ['Siguiente turno']);
+    expect(gateway.interrupts, isEmpty);
     expect(_queuedOutbox(), isEmpty);
     final rows = _userRows(fixture.chat, 'Siguiente turno').toList();
     expect(rows, hasLength(1));
     expect(rows.single['_desktopAcceptedQueued'], isTrue);
     expect(_composerText(tester), isEmpty);
     expect(await _draft(fixture), isEmpty);
-    expect(find.text(_strings(tester).chaSteerQueued), findsOneWidget);
+    expect(
+      find.text(_strings(tester).mpnSteerQueued('Hermes')),
+      findsOneWidget,
+    );
     gateway.complete('hecho');
     await _flush(tester, steps: 15);
     gateway.complete('segundo hecho');

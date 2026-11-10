@@ -103,6 +103,11 @@ void main() {
                 },
               ],
             },
+            'mcp.servers.list' => {
+              'servers': [
+                {'name': 'blender'},
+              ],
+            },
             'tools.configure' => {
               'changed': ['web'],
               'unknown': <String>[],
@@ -140,6 +145,8 @@ void main() {
       expect(restore.historyRemoved, 3);
       expect(inventory.plugins.single.name, 'memory-tools');
       expect(inventory.toolsets.single.tools, ['search', 'fetch']);
+      expect(inventory.mcpServers.single.name, 'blender');
+      expect(inventory.builtinToolsets.single.name, 'web');
       expect(
         client.capabilityState(DesktopGatewayCapability.recoveryCenter),
         DesktopGatewayCapabilityState.supported,
@@ -183,6 +190,7 @@ void main() {
         'enable': false,
       });
       expect(requestFor('tools.list')['params'], {'session_id': 'runtime-a'});
+      expect(requestFor('mcp.servers.list')['params'], isEmpty);
       expect(requestFor('tools.configure')['params'], {
         'action': 'enable',
         'names': ['web'],

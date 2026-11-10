@@ -9,6 +9,7 @@ import '../models/turn_error_surface.dart';
 import '../models/transcript_privacy_state.dart';
 import '../utils/assistant_content.dart';
 import '../utils/chat_turn.dart';
+import '../utils/session_timestamp.dart' show normalizeEpochTimestamp;
 import 'agent_preview_extractor.dart' show agentPreviewEvidenceArguments;
 import 'terminal_transcript_authority.dart';
 
@@ -18,6 +19,80 @@ final _unsafeDisplayTextPattern = RegExp(
   '${String.fromCharCode(0x202a)}-${String.fromCharCode(0x202e)}'
   '${String.fromCharCode(0x2066)}-${String.fromCharCode(0x2069)}]',
 );
+
+/// Live activity overrides stale error fields carried by a resume snapshot.
+bool desktopSnapshotReportsTurnFailure(DesktopSessionSnapshot snapshot) =>
+    !snapshot.running &&
+    snapshot.inflight?.streaming != true &&
+    (snapshot.inflight?.error?.trim().isNotEmpty == true ||
+        snapshot.inflight?.status?.trim().toLowerCase() == 'error' ||
+        const {'error', 'failed'}.contains(snapshot.status?.trim().toLowerCase()));
+
+/// Hermes keeps a failed turn's inflight (`_fail_inflight_turn`) until the
+/// next turn starts. An exception raised after the final reply was persisted
+/// (post-turn bookkeeping, inflight already cleared, so `user` is empty) or a
+/// failed runtime-event turn (`async_delegation_complete`/`process_complete`)
+/// after it therefore reports a failure on every resume, on every device,
+/// below a durable final. That failure is settled when, in [chronological]:
+/// - the newest real prompt is followed by a durable final assistant reply;
+/// - nothing after that prompt opens a turn: no other user input except
+///   runtime-event rows;
+/// - the failure names no other prompt: its `user` is empty, that same
+///   prompt, or a runtime-event carrier.
+/// A failure with no durable final after its prompt is never settled.
+///
+/// The same non-empty text is not proof on its own: a repeated prompt («sí»
+/// twice) that Hermes failed without saving names the saved one's text. It is
+/// that prompt's failure only when it began no later than the saved final
+/// answer (`inflight.started_at` <= the final's `timestamp`); a missing time
+/// is not settled. An empty `user` keeps the old rule: Hermes stamps the
+/// failure time as its start there.
+bool retainedFailureIsSettledByDurableFinal(
+  List<Map<String, dynamic>> chronological,
+  DesktopInflightTurn? inflight,
+) {
+  bool isRuntimeEvent(Map<String, dynamic> message) => const {
+    'async_delegation_complete',
+    'process_complete',
+  }.contains(effectiveUserDisplayKind(message));
+  var promptIndex = -1;
+  for (var index = chronological.length - 1; index >= 0; index--) {
+    final message = chronological[index];
+    // Local error cards are never durable evidence either way; whether they
+    // stay is decided by the recovery-error reconciliation, not here.
+    if (message['role'] != 'user') continue;
+    if (isRealUserTurn(message)) {
+      promptIndex = index;
+      break;
+    }
+    if (!isRuntimeEvent(message)) return false;
+  }
+  if (promptIndex < 0) return false;
+  var closed = false;
+  double? finalAt;
+  for (final message in chronological.skip(promptIndex + 1)) {
+    if (message['role'] == 'user') break;
+    if (message['role'] == 'assistant' &&
+        (message['content']?.toString().trim().isNotEmpty ?? false) &&
+        message['_cancelled'] != true &&
+        DesktopSessionReconciler._isDurableTerminalAssistant(message)) {
+      closed = true;
+      finalAt = normalizeEpochTimestamp(message['timestamp']);
+    }
+  }
+  if (!closed) return false;
+  String normalized(Object? text) =>
+      (text?.toString() ?? '').trim().replaceAll(RegExp(r'\s+'), ' ');
+  final user = normalized(inflight?.user);
+  if (user.isEmpty) return true;
+  if (user == normalized(chronological[promptIndex]['content'])) {
+    final startedAt = inflight?.startedAt;
+    if (startedAt == null || finalAt == null || finalAt <= 0) return false;
+    return startedAt.microsecondsSinceEpoch <=
+        (finalAt * Duration.microsecondsPerSecond).round();
+  }
+  return isRuntimeEvent({'role': 'user', 'content': inflight!.user});
+}
 
 /// Pure projection of a Hermes Desktop 0.19 resume/activate snapshot into the
 /// newest-first message shape consumed by [ActiveChat].
@@ -662,9 +737,10 @@ class DesktopSessionReconciler {
           message['display_kind']?.toString().trim() == 'steer');
 
   static bool _isDurableOpenInput(Map<String, dynamic> message) =>
-      isRealUserTurn(message) ||
-      _isSteerInput(message) ||
-      _isStructuredUserEvent(message);
+      message['_desktopAcceptedQueued'] != true &&
+      (isRealUserTurn(message) ||
+          _isSteerInput(message) ||
+          _isStructuredUserEvent(message));
 
   /// Removes the single optimistic prompt of the open turn (after the last
   /// durable terminal assistant) when the runtime reports the same prompt
@@ -721,6 +797,7 @@ class DesktopSessionReconciler {
     for (var index = chronological.length - 1; index >= 0; index--) {
       final message = chronological[index];
       if (_isDurableTerminalAssistant(message)) break;
+      if (message['_desktopAcceptedQueued'] == true) continue;
       if (message['role'] != 'user') continue;
       if (isRealUserTurn(message)) prompts++;
       if (isRealUserTurn(message) || _isSteerInput(message)) first = message;
@@ -751,6 +828,9 @@ class DesktopSessionReconciler {
   ) {
     TranscriptMessageIdentity? anchor;
     for (final previous in previousNewestFirst) {
+      // Accepted next-turn input is visible, but is not the current turn's
+      // prompt or an id-less durable boundary. Keep it out of live anchors.
+      if (previous['_desktopAcceptedQueued'] == true) continue;
       if (_isCrossableNonUserLiveProjection(previous)) continue;
       if (bridgeOwnedLiveUser &&
           _isBridgeableOwnedLiveUserProjection(previous)) {
@@ -1152,12 +1232,19 @@ class DesktopSessionReconciler {
       );
     }
 
-    final inflight = snapshot.inflight;
+    // A failed inflight the durable rows already settled is not this turn's
+    // outcome: project the snapshot as idle (no error row, no live row).
+    final settledFailure =
+        desktopSnapshotReportsTurnFailure(snapshot) &&
+        retainedFailureIsSettledByDurableFinal(
+          chronological,
+          snapshot.inflight,
+        );
+    final inflight = settledFailure ? null : snapshot.inflight;
     final inflightUser = inflight?.user;
     final inflightError = inflight?.error?.trim() ?? '';
-    final inflightStatus = inflight?.status?.trim().toLowerCase() ?? '';
     final inflightFailed =
-        inflightError.isNotEmpty || inflightStatus == 'error';
+        !settledFailure && desktopSnapshotReportsTurnFailure(snapshot);
     final liveUserPlan = _liveUserProjectionPlan(
       chronological,
       previousNewestFirst,
@@ -1364,7 +1451,11 @@ class DesktopSessionReconciler {
           : 'user-queued-${snapshot.runtimeSessionId}',
       running: !inflightFailed && (snapshot.running || inflight != null),
       failed: inflightFailed,
-      status: inflightFailed ? 'error' : snapshot.status,
+      status: inflightFailed
+          ? 'error'
+          : settledFailure
+          ? 'idle'
+          : snapshot.status,
     );
   }
 

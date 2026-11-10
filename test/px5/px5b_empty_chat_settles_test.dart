@@ -104,14 +104,21 @@ void main() {
       'session', () async {
     final rig = await _rig();
     await _cutAndReturn(rig);
+    // REVISION-4 A: the chat is connected as soon as the socket is up, so
+    // wait for the row check itself before sending.
     await _until(
-      () => rig.chat.transportStatus.isConnected,
+      () => rig.hermes.restPaths.isNotEmpty,
       timeout: const Duration(seconds: 3),
-      reason: 'the chat settled instead of staying on Reconnecting',
+      reason: 'the row was verified',
     );
+    await _until(
+      () => rig.chat.storedSessionKnownMissing,
+      timeout: const Duration(seconds: 3),
+      reason: 'the 404 row made the chat a draft',
+    );
+    expect(rig.chat.transportStatus.isConnected, isTrue);
     expect(rig.gateway.isConnected, isTrue);
     expect(rig.hermes.methods, contains('session.resume'));
-    expect(rig.hermes.restPaths, isNotEmpty, reason: 'the row was verified');
     final sent = await rig.chat.send(
       fullText: 'hi',
       model: 'm',
@@ -123,8 +130,11 @@ void main() {
 
   // The row survived the restart: publishing connected would make the next
   // send fork a session beside the live one. Stay honest.
-  test('empty chat, resume 4007 but the row answers 200: reconnecting, no '
-      'session.create', () async {
+  // REVISION-4 A: a socket that is up is never «reconnecting» (Desktop's
+    // status pill mirrors the socket: use-statusbar-items.tsx:376-407); the
+    // loop keeps reconciling behind a connected chat.
+  test('empty chat, resume 4007 but the row answers 200: connected socket, '
+      'no session.create', () async {
     final rig = await _rig();
     rig.hermes.rowSurvives = true;
     await _cutAndReturn(rig);
@@ -133,7 +143,7 @@ void main() {
       reason: 'the row was verified',
     );
     await Future<void>.delayed(const Duration(milliseconds: 800));
-    expect(rig.chat.transportStatus.state, ChatTransportState.reconnecting);
+    expect(rig.chat.transportStatus.state, ChatTransportState.connected);
     expect(rig.chat.storedSessionKnownMissing, isFalse);
     expect(rig.hermes.methods, isNot(contains('session.create')));
   });
@@ -144,7 +154,7 @@ void main() {
     '-32602 invalid params': {'code': -32602, 'message': 'invalid params'},
     '5009 unclassified': {'code': 5009, 'message': 'unclassified'},
   }.entries) {
-    test('empty chat, resume ${stop.key}: reconnecting, no REST read, no '
+    test('empty chat, resume ${stop.key}: connected socket, no REST read, no '
         'session.create', () async {
       final rig = await _rig(resumeError: stop.value);
       await _cutAndReturn(rig);
@@ -153,7 +163,10 @@ void main() {
         reason: 'resume attempted',
       );
       await Future<void>.delayed(const Duration(milliseconds: 800));
-      expect(rig.chat.transportStatus.state, ChatTransportState.reconnecting);
+      // REVISION-4 A: a socket that is up is never «reconnecting» (Desktop's
+      // status pill mirrors the socket: use-statusbar-items.tsx:376-407); the
+      // loop keeps reconciling behind a connected chat.
+      expect(rig.chat.transportStatus.state, ChatTransportState.connected);
       expect(rig.hermes.restPaths, isEmpty);
       expect(rig.hermes.methods, isNot(contains('session.create')));
     });
@@ -172,18 +185,24 @@ void main() {
     },
   );
 
-  test('a transient resume failure keeps reconnecting and retries', () async {
+  // REVISION-4 A: a socket that is up is never «reconnecting» (Desktop's
+    // status pill mirrors the socket: use-statusbar-items.tsx:376-407); the
+    // loop keeps reconciling behind a connected chat.
+  test('a transient resume failure retries behind a connected socket', () async {
     final rig = await _rig(resumeError: {'code': 5001, 'message': 'try again'});
     await _cutAndReturn(rig);
     await _until(
       () => rig.hermes.methods.contains('session.resume'),
       reason: 'resume attempted',
     );
+    final resumes = rig.hermes.methods.where((m) => m == 'session.resume').length;
     await Future<void>.delayed(const Duration(milliseconds: 800));
-    expect(
-      rig.chat.transportStatus.state,
-      ChatTransportState.reconnecting,
-      reason: 'a transient failure is not a stop: no false connected',
+    expect(rig.chat.transportStatus.state, ChatTransportState.connected);
+    await _until(
+      () =>
+          rig.hermes.methods.where((m) => m == 'session.resume').length >
+          resumes,
+      reason: 'a transient failure is not a stop: it keeps retrying',
     );
   });
 }

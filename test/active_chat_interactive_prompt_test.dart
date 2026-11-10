@@ -130,6 +130,16 @@ class _InteractiveGateway
     }, method: 'clarify.respond');
   }
 
+  final List<String> skippedClarify = [];
+
+  @override
+  Future<DesktopPromptResponse> skipClarify(String requestId) async {
+    skippedClarify.add(requestId);
+    return DesktopPromptResponse.fromJson(const {
+      'status': 'ok',
+    }, method: 'request.answer');
+  }
+
   @override
   Future<DesktopPromptResponse> respondToSudo(
     String requestId,
@@ -586,6 +596,31 @@ void main() {
     expect(gateway.clarifyAnswer, 'B');
     expect(chat.pendingInteractivePrompt, isNull);
     expect(chat.needsInput, isFalse);
+  });
+
+  // Ola 5: «Omitir» answers the request with no pick (Desktop skipClarify)
+  // and the turn goes on: no answer is sent and the server is on the clock
+  // again, exactly as after answering.
+  test('«Omitir» salta la pregunta y el turno sigue', () async {
+    final gateway = _InteractiveGateway();
+    final chat = await _start(gateway);
+    addTearDown(chat.dispose);
+
+    gateway.emit('clarify.request', const {
+      'request_id': 'clarify-skip',
+      'question': '¿Qué opción?',
+      'choices': ['A', 'B'],
+    });
+    await _waitUntil(() => chat.pendingInteractivePrompt != null);
+    expect(chat.activityWatchdogArmed, isFalse);
+
+    await chat.skipClarify(chat.pendingInteractivePrompt!.key);
+
+    expect(gateway.skippedClarify, ['clarify-skip']);
+    expect(gateway.clarifyAnswer, isNull);
+    expect(chat.pendingInteractivePrompt, isNull);
+    expect(chat.needsInput, isFalse);
+    expect(chat.activityWatchdogArmed, isTrue);
   });
 
   test(
